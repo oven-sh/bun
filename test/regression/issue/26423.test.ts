@@ -115,16 +115,36 @@ console.log("PASS: Buffer created with correct data");
 
 // Clear reference and trigger GC
 buf = null;
-if (process.isBun) {
-  Bun.gc(true);
-} else if (global.gc) {
-  global.gc();
+
+function triggerGC() {
+  if (process.isBun) {
+    Bun.gc(true);
+  } else if (global.gc) {
+    global.gc();
+  }
 }
 
-// Small delay to let finalizers run
-setTimeout(() => {
-  console.log("PASS: Test completed successfully");
-}, 100);
+// Poll for finalizer to be called with a bounded timeout
+async function waitForFinalizer(maxAttempts = 20, intervalMs = 100) {
+  for (let i = 0; i < maxAttempts; i++) {
+    triggerGC();
+    if (addon.getFinalizerCalled()) {
+      return true;
+    }
+    await new Promise(resolve => setTimeout(resolve, intervalMs));
+  }
+  return false;
+}
+
+waitForFinalizer().then(finalizerCalled => {
+  if (finalizerCalled) {
+    console.log("PASS: Finalizer was called correctly");
+    console.log("PASS: Test completed successfully");
+  } else {
+    console.log("FAIL: Finalizer was not called within timeout");
+    process.exit(1);
+  }
+});
 `,
       "package.json": JSON.stringify({
         name: "test-external-buffer",

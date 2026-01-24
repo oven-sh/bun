@@ -1838,6 +1838,8 @@ static void external_buffer_test_finalizer(napi_env env, void *data, void *hint)
   external_buffer_finalizer_call_count++;
   external_buffer_finalizer_received_data = data;
   external_buffer_finalizer_received_hint = hint;
+  // Free the malloc'd buffer
+  free(data);
 }
 
 static napi_value

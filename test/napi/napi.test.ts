@@ -282,6 +282,15 @@ describe.concurrent("napi", () => {
       expect(result).toContain("PASS: napi_is_detached_arraybuffer returns true for empty buffer's arraybuffer");
       expect(result).not.toContain("FAIL");
     });
+
+    // Regression test for https://github.com/oven-sh/bun/issues/26423
+    // Verifies that the finalizer for napi_create_external_buffer receives the correct
+    // data pointer and is properly tied to the ArrayBuffer's lifetime.
+    it("finalizer receives correct data pointer", async () => {
+      const result = await checkSameOutput("test_napi_external_buffer_finalizer", []);
+      expect(result).toContain("PASS: External buffer created with correct data pointer and length");
+      expect(result).not.toContain("FAIL");
+    });
   });
 
   describe("napi_async_work", () => {

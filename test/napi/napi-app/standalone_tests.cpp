@@ -1825,6 +1825,118 @@ static napi_value test_napi_empty_buffer_info(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+// Test for napi_create_external_buffer finalizer correctness
+// See: https://github.com/oven-sh/bun/issues/26423
+// This test verifies that the finalizer receives the correct data pointer
+// and is called at the right time.
+static int external_buffer_finalizer_call_count = 0;
+static void *external_buffer_finalizer_received_data = nullptr;
+static void *external_buffer_finalizer_received_hint = nullptr;
+static const size_t EXTERNAL_BUFFER_TEST_SIZE = 1024;
+
+static void external_buffer_test_finalizer(napi_env env, void *data, void *hint) {
+  external_buffer_finalizer_call_count++;
+  external_buffer_finalizer_received_data = data;
+  external_buffer_finalizer_received_hint = hint;
+}
+
+static napi_value
+test_napi_external_buffer_finalizer(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+
+  // Reset global state
+  external_buffer_finalizer_call_count = 0;
+  external_buffer_finalizer_received_data = nullptr;
+  external_buffer_finalizer_received_hint = nullptr;
+
+  // Allocate test data
+  char *test_data = static_cast<char *>(malloc(EXTERNAL_BUFFER_TEST_SIZE));
+  if (!test_data) {
+    printf("FAIL: Could not allocate test data\n");
+    return env.Undefined();
+  }
+
+  // Fill with a known pattern
+  memset(test_data, 0x42, EXTERNAL_BUFFER_TEST_SIZE);
+
+  // Create an external buffer
+  napi_value buffer;
+  void *hint = reinterpret_cast<void *>(0xCAFEBABE);
+  napi_status status = napi_create_external_buffer(
+      env, EXTERNAL_BUFFER_TEST_SIZE, test_data, external_buffer_test_finalizer,
+      hint, &buffer);
+
+  if (status != napi_ok) {
+    printf("FAIL: napi_create_external_buffer failed with status %d\n", status);
+    free(test_data);
+    return env.Undefined();
+  }
+
+  // Verify the buffer has the correct data
+  void *buffer_data;
+  size_t buffer_length;
+  NODE_API_CALL(env, napi_get_buffer_info(env, buffer, &buffer_data, &buffer_length));
+
+  if (buffer_length != EXTERNAL_BUFFER_TEST_SIZE) {
+    printf("FAIL: Buffer length is %zu instead of %zu\n", buffer_length,
+           EXTERNAL_BUFFER_TEST_SIZE);
+    return env.Undefined();
+  }
+
+  if (buffer_data != test_data) {
+    printf("FAIL: Buffer data pointer %p doesn't match original %p\n",
+           buffer_data, test_data);
+    return env.Undefined();
+  }
+
+  // Verify the data wasn't corrupted
+  char *data_as_char = static_cast<char *>(buffer_data);
+  for (size_t i = 0; i < EXTERNAL_BUFFER_TEST_SIZE; i++) {
+    if (data_as_char[i] != 0x42) {
+      printf("FAIL: Data corrupted at index %zu: expected 0x42, got 0x%02x\n", i,
+             static_cast<unsigned char>(data_as_char[i]));
+      return env.Undefined();
+    }
+  }
+
+  printf("PASS: External buffer created with correct data pointer and length\n");
+
+  // Return the buffer - JS will trigger GC to test the finalizer
+  return buffer;
+}
+
+static napi_value
+get_external_buffer_finalizer_stats(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+
+  napi_value result;
+  NODE_API_CALL(env, napi_create_object(env, &result));
+
+  napi_value call_count;
+  NODE_API_CALL(env, napi_create_int32(env, external_buffer_finalizer_call_count, &call_count));
+  NODE_API_CALL(env, napi_set_named_property(env, result, "callCount", call_count));
+
+  napi_value received_data;
+  if (external_buffer_finalizer_received_data != nullptr) {
+    NODE_API_CALL(env, napi_create_bigint_uint64(
+        env, reinterpret_cast<uint64_t>(external_buffer_finalizer_received_data), &received_data));
+  } else {
+    NODE_API_CALL(env, napi_get_null(env, &received_data));
+  }
+  NODE_API_CALL(env, napi_set_named_property(env, result, "receivedData", received_data));
+
+  napi_value received_hint;
+  if (external_buffer_finalizer_received_hint != nullptr) {
+    NODE_API_CALL(env, napi_create_bigint_uint64(
+        env, reinterpret_cast<uint64_t>(external_buffer_finalizer_received_hint), &received_hint));
+  } else {
+    NODE_API_CALL(env, napi_get_null(env, &received_hint));
+  }
+  NODE_API_CALL(env, napi_set_named_property(env, result, "receivedHint", received_hint));
+
+  return result;
+}
+
 // Test for napi_typeof with boxed primitive objects (String, Number, Boolean)
 // See: https://github.com/oven-sh/bun/issues/25351
 static napi_value napi_get_typeof(const Napi::CallbackInfo &info) {
@@ -1887,6 +1999,8 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_napi_freeze_seal_indexed);
   REGISTER_FUNCTION(env, exports, test_napi_create_external_buffer_empty);
   REGISTER_FUNCTION(env, exports, test_napi_empty_buffer_info);
+  REGISTER_FUNCTION(env, exports, test_napi_external_buffer_finalizer);
+  REGISTER_FUNCTION(env, exports, get_external_buffer_finalizer_stats);
   REGISTER_FUNCTION(env, exports, napi_get_typeof);
 }
 

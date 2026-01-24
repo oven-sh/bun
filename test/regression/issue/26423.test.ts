@@ -185,6 +185,7 @@ waitForFinalizer().then(finalizerCalled => {
     }
 
     expect(stdout).toContain("PASS: Buffer created with correct data");
+    expect(stdout).toContain("PASS: Finalizer was called correctly");
     expect(stdout).not.toContain("FAIL");
     expect(exitCode).toBe(0);
   }, 60000);

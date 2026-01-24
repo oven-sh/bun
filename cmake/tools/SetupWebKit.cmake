@@ -2,7 +2,7 @@ option(WEBKIT_VERSION "The version of WebKit to use")
 option(WEBKIT_LOCAL "If a local version of WebKit should be used instead of downloading")
 
 if(NOT WEBKIT_VERSION)
-  set(WEBKIT_VERSION autobuild-preview-pr-143-1e0c7499)
+  set(WEBKIT_VERSION 8141f014346b29382a7003bb4297fbd053b83a3c)
 endif()
 
 # Use preview build URL for Windows ARM64 until the fix is merged to main

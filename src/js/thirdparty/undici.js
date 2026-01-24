@@ -263,8 +263,12 @@ class MockAgent {
 function mockErrors() {}
 
 class Dispatcher extends EventEmitter {
-  async close() {}
-  async destroy() {}
+  async close() {
+    return null;
+  }
+  async destroy() {
+    return null;
+  }
 }
 class Agent extends Dispatcher {}
 class Pool extends Dispatcher {

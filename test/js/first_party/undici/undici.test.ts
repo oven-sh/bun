@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { request } from "undici";
+import { Agent, Client, Pool, request } from "undici";
 
 import { createServer } from "../../../http-test-server";
 
@@ -158,30 +158,26 @@ describe("undici", () => {
 
   describe("Dispatcher", () => {
     it("Agent should have close() method that returns a promise", async () => {
-      const { Agent } = await import("undici");
       const agent = new Agent();
       expect(typeof agent.close).toBe("function");
       const result = await agent.close();
-      expect(result).toBe(undefined);
+      expect(result).toBe(null);
     });
 
     it("Agent should have destroy() method that returns a promise", async () => {
-      const { Agent } = await import("undici");
       const agent = new Agent();
       expect(typeof agent.destroy).toBe("function");
       const result = await agent.destroy();
-      expect(result).toBe(undefined);
+      expect(result).toBe(null);
     });
 
-    it("Pool should have close() and destroy() methods", async () => {
-      const { Pool } = await import("undici");
+    it("Pool should have close() and destroy() methods", () => {
       const pool = new Pool();
       expect(typeof pool.close).toBe("function");
       expect(typeof pool.destroy).toBe("function");
     });
 
-    it("Client should have close() and destroy() methods", async () => {
-      const { Client } = await import("undici");
+    it("Client should have close() and destroy() methods", () => {
       const client = new Client();
       expect(typeof client.close).toBe("function");
       expect(typeof client.destroy).toBe("function");

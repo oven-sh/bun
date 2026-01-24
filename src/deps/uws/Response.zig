@@ -56,8 +56,8 @@ pub fn NewResponse(ssl_flag: i32) type {
             return this.state().isHttpConnectionClose();
         }
 
-        pub fn prepareForSendfile(res: *Response) void {
-            c.uws_res_prepare_for_sendfile(ssl_flag, res.downcast());
+        pub fn prepareForSendfile(res: *Response) usize {
+            return c.uws_res_prepare_for_sendfile(ssl_flag, res.downcast());
         }
 
         pub fn uncork(res: *Response) void {
@@ -706,7 +706,7 @@ const c = struct {
         close: bool,
     ) bool;
     pub extern fn uws_res_end_stream(ssl: i32, res: *c.uws_res, close_connection: bool) void;
-    pub extern fn uws_res_prepare_for_sendfile(ssl: i32, res: *c.uws_res) void;
+    pub extern fn uws_res_prepare_for_sendfile(ssl: i32, res: *c.uws_res) usize;
     pub extern fn uws_res_get_native_handle(ssl: i32, res: *c.uws_res) *Socket;
     pub extern fn uws_res_get_remote_address_as_text(ssl: i32, res: *c.uws_res, dest: *[*]const u8) usize;
 

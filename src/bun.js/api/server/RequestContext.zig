@@ -1015,13 +1015,26 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 return;
             }
 
+            // If there's buffered data (headers not fully flushed to kernel socket),
+            // we must wait for the socket to become writable before calling sendfile.
+            // Otherwise, sendfile would write file content before the headers, causing
+            // clients to see HTTP/0.9 responses (content without headers).
+            if (resp.getBufferedAmount() > 0) {
+                this.sendfile.has_set_on_writable = true;
+                this.flags.has_marked_pending = true;
+                resp.onWritable(*RequestContext, onWritableSendfile, this);
+                return;
+            }
+
             _ = this.onSendfile();
         }
 
         pub fn renderMetadataAndNewline(this: *RequestContext) void {
             if (this.resp) |resp| {
                 this.renderMetadata();
-                resp.prepareForSendfile();
+                // Discard the buffered amount here - we'll check getBufferedAmount()
+                // after the corked call completes in renderSendFile().
+                _ = resp.prepareForSendfile();
             }
         }
 

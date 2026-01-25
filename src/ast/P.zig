@@ -4860,7 +4860,6 @@ pub fn NewParser_(
             stmts.append(closure) catch unreachable;
         }
 
-
         pub fn lowerClass(
             noalias p: *P,
             stmtorexpr: js_ast.StmtOrExpr,

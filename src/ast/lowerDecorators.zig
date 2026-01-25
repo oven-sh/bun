@@ -1398,7 +1398,8 @@ pub fn LowerDecorators(
     };
 }
 
-const string = []const u8;
+const std = @import("std");
+const ListManaged = std.array_list.Managed;
 
 const bun = @import("bun");
 const logger = bun.logger;
@@ -1412,6 +1413,7 @@ const Flags = js_ast.Flags;
 const S = js_ast.S;
 const Stmt = js_ast.Stmt;
 const Symbol = js_ast.Symbol;
+
 const G = js_ast.G;
 const Arg = G.Arg;
 const Decl = G.Decl;
@@ -1421,6 +1423,3 @@ const js_parser = bun.js_parser;
 const JSXTransformType = js_parser.JSXTransformType;
 const Ref = js_parser.Ref;
 const arguments_str = js_parser.arguments_str;
-
-const std = @import("std");
-const ListManaged = std.array_list.Managed;

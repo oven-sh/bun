@@ -293,6 +293,14 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             JSC::Options::useJIT() = true;
             JSC::Options::useBBQJIT() = true;
             JSC::Options::useConcurrentJIT() = true;
+
+#if OS(LINUX) && CPU(X86_64)
+            // Workaround for JSC Wasm OSR bug on Linux x64 that causes crashes
+            // with repeated direct method calls on Emscripten WASM modules.
+            // https://github.com/oven-sh/bun/issues/26366
+            // https://bugs.webkit.org/show_bug.cgi?id=289009
+            JSC::Options::useWasmOSR() = false;
+#endif
             // JSC::Options::useSigillCrashAnalyzer() = true;
             JSC::Options::useSourceProviderCache() = true;
             // JSC::Options::useUnlinkedCodeBlockJettisoning() = false;

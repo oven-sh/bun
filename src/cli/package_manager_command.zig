@@ -143,6 +143,15 @@ pub const PackageManagerCommand = struct {
         const is_direct_whoami = if (bun.argv.len > 1) strings.eqlComptime(bun.argv[1], "whoami") else false;
 
         const cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, .pm);
+
+        // Handle "cache" subcommand before PackageManager.init since it doesn't require a package.json
+        var cli_positionals = cli.positionals;
+        const early_subcommand = getSubcommand(&cli_positionals);
+        if (strings.eqlComptime(early_subcommand, "cache")) {
+            execCacheSubcommand(ctx, cli.positionals);
+            return;
+        }
+
         var pm, const cwd = PackageManager.init(ctx, cli, PackageManager.Subcommand.pm) catch |err| {
             if (err == error.MissingPackageJSON) {
                 var cwd_buf: bun.PathBuffer = undefined;
@@ -247,64 +256,6 @@ pub const PackageManagerCommand = struct {
             handleLoadLockfileErrors(load_lockfile, pm);
 
             _ = try pm.lockfile.hasMetaHashChanged(true, pm.lockfile.packages.len);
-            Global.exit(0);
-        } else if (strings.eqlComptime(subcommand, "cache")) {
-            var dir: bun.PathBuffer = undefined;
-            var fd = pm.getCacheDirectory();
-            const outpath = bun.getFdPath(.fromStdDir(fd), &dir) catch |err| {
-                Output.prettyErrorln("{s} getting cache directory", .{@errorName(err)});
-                Global.crash();
-            };
-
-            if (pm.options.positionals.len > 1 and strings.eqlComptime(pm.options.positionals[1], "rm")) {
-                fd.close();
-
-                var had_err = false;
-
-                std.fs.deleteTreeAbsolute(outpath) catch |err| {
-                    Output.err(err, "Could not delete {s}", .{outpath});
-                    had_err = true;
-                };
-                Output.prettyln("Cleared 'bun install' cache", .{});
-
-                bunx: {
-                    const tmp = bun.fs.FileSystem.RealFS.platformTempDir();
-                    const tmp_dir = std.fs.openDirAbsolute(tmp, .{ .iterate = true }) catch |err| {
-                        Output.err(err, "Could not open {s}", .{tmp});
-                        had_err = true;
-                        break :bunx;
-                    };
-                    var iter = tmp_dir.iterate();
-
-                    // This is to match 'bunx_command.BunxCommand.exec's logic
-                    const prefix = try std.fmt.allocPrint(ctx.allocator, "bunx-{d}-", .{
-                        if (bun.Environment.isPosix) bun.c.getuid() else bun.windows.userUniqueId(),
-                    });
-
-                    var deleted: usize = 0;
-                    while (iter.next() catch |err| {
-                        Output.err(err, "Could not read {s}", .{tmp});
-                        had_err = true;
-                        break :bunx;
-                    }) |entry| {
-                        if (std.mem.startsWith(u8, entry.name, prefix)) {
-                            tmp_dir.deleteTree(entry.name) catch |err| {
-                                Output.err(err, "Could not delete {s}", .{entry.name});
-                                had_err = true;
-                                continue;
-                            };
-
-                            deleted += 1;
-                        }
-                    }
-
-                    Output.prettyln("Cleared {d} cached 'bunx' packages", .{deleted});
-                }
-
-                Global.exit(if (had_err) 1 else 0);
-            }
-
-            Output.writer().writeAll(outpath) catch {};
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "default-trusted")) {
             try DefaultTrustedCommand.exec();
@@ -456,6 +407,129 @@ pub const PackageManagerCommand = struct {
         }
     }
 };
+
+/// Get the cache directory path without requiring a PackageManager instance.
+/// This uses the same logic as PackageManager.fetchCacheDirectoryPath but with direct env access.
+fn getCachePathWithoutPackageManager() []const u8 {
+    // Check BUN_INSTALL_CACHE_DIR first (via system env since we don't have DotEnv loaded)
+    if (bun.getenvZ("BUN_INSTALL_CACHE_DIR")) |dir| {
+        return Fs.FileSystem.instance.abs(&[_]string{dir});
+    }
+
+    // Check BUN_INSTALL
+    if (bun.getenvZ("BUN_INSTALL")) |dir| {
+        var parts = [_]string{ dir, "install/", "cache/" };
+        return Fs.FileSystem.instance.abs(&parts);
+    }
+
+    // Check XDG_CACHE_HOME
+    if (bun.env_var.XDG_CACHE_HOME.get()) |dir| {
+        var parts = [_]string{ dir, ".bun/", "install/", "cache/" };
+        return Fs.FileSystem.instance.abs(&parts);
+    }
+
+    // Fall back to HOME
+    if (bun.env_var.HOME.get()) |dir| {
+        var parts = [_]string{ dir, ".bun/", "install/", "cache/" };
+        return Fs.FileSystem.instance.abs(&parts);
+    }
+
+    // Ultimate fallback to node_modules/.bun-cache
+    var fallback_parts = [_]string{"node_modules/.bun-cache"};
+    return Fs.FileSystem.instance.abs(&fallback_parts);
+}
+
+const ClearBunxCacheResult = struct {
+    deleted: usize,
+    had_err: bool,
+};
+
+/// Clear cached bunx packages from the temp directory.
+/// Returns the number of deleted packages and whether any errors occurred.
+fn clearBunxCache(allocator: std.mem.Allocator) ClearBunxCacheResult {
+    var result = ClearBunxCacheResult{ .deleted = 0, .had_err = false };
+
+    const tmp = bun.fs.FileSystem.RealFS.platformTempDir();
+    var tmp_dir = std.fs.openDirAbsolute(tmp, .{ .iterate = true }) catch |err| {
+        Output.err(err, "Could not open {s}", .{tmp});
+        result.had_err = true;
+        return result;
+    };
+    defer tmp_dir.close();
+
+    var iter = tmp_dir.iterate();
+
+    // This is to match 'bunx_command.BunxCommand.exec's logic
+    const prefix = std.fmt.allocPrint(allocator, "bunx-{d}-", .{
+        if (bun.Environment.isPosix) bun.c.getuid() else bun.windows.userUniqueId(),
+    }) catch |err| {
+        Output.err(err, "Could not allocate prefix", .{});
+        result.had_err = true;
+        return result;
+    };
+    defer allocator.free(prefix);
+
+    while (iter.next() catch |err| {
+        Output.err(err, "Could not read {s}", .{tmp});
+        result.had_err = true;
+        return result;
+    }) |entry| {
+        if (std.mem.startsWith(u8, entry.name, prefix)) {
+            tmp_dir.deleteTree(entry.name) catch |err| {
+                Output.err(err, "Could not delete {s}", .{entry.name});
+                result.had_err = true;
+                continue;
+            };
+
+            result.deleted += 1;
+        }
+    }
+
+    return result;
+}
+
+/// Handle "bun pm cache" and "bun pm cache rm" without requiring a package.json.
+/// This is a standalone function because the cache directory can be determined
+/// independently from the project's package.json.
+fn execCacheSubcommand(ctx: Command.Context, positionals: []const string) void {
+    // Get cache directory path without requiring a PackageManager instance.
+    const cache_path = getCachePathWithoutPackageManager();
+
+    // Check if this is "cache rm" (positionals would be ["pm", "cache", "rm"] or ["cache", "rm"])
+    // We need to find "rm" after "cache" in the positionals
+    const has_rm = for (positionals, 0..) |pos, i| {
+        if (strings.eqlComptime(pos, "cache")) {
+            if (i + 1 < positionals.len and strings.eqlComptime(positionals[i + 1], "rm")) {
+                break true;
+            }
+        }
+    } else false;
+
+    if (has_rm) {
+        var had_err = false;
+
+        std.fs.deleteTreeAbsolute(cache_path) catch |err| {
+            // FileNotFound is not an error - the cache may not exist yet
+            if (err != error.FileNotFound) {
+                Output.err(err, "Could not delete {s}", .{cache_path});
+                had_err = true;
+            }
+        };
+        Output.prettyln("Cleared 'bun install' cache", .{});
+
+        const bunx_result = clearBunxCache(ctx.allocator);
+        if (bunx_result.had_err) {
+            had_err = true;
+        }
+        Output.prettyln("Cleared {d} cached 'bunx' packages", .{bunx_result.deleted});
+
+        Global.exit(if (had_err) 1 else 0);
+    }
+
+    // Just print the cache path
+    Output.writer().writeAll(cache_path) catch {};
+    Global.exit(0);
+}
 
 fn printNodeModulesFolderStructure(
     directory: *const NodeModulesFolder,

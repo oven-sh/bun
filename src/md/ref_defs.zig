@@ -1,29 +1,3 @@
-const std = @import("std");
-const types = @import("types.zig");
-const helpers = @import("helpers.zig");
-const entity_mod = @import("entity.zig");
-const unicode = @import("unicode.zig");
-const parser_mod = @import("parser.zig");
-
-const OFF = types.OFF;
-const SZ = types.SZ;
-const Mark = types.Mark;
-const MarkFlags = types.MarkFlags;
-const Container = types.Container;
-const BlockType = types.BlockType;
-const SpanType = types.SpanType;
-const TextType = types.TextType;
-const Line = types.Line;
-const LineType = types.LineType;
-const VerbatimLine = types.VerbatimLine;
-const Flags = types.Flags;
-const Attribute = types.Attribute;
-const Align = types.Align;
-const Allocator = std.mem.Allocator;
-
-const Parser = parser_mod.Parser;
-const BlockHeader = Parser.BlockHeader;
-
 pub const RefDef = struct {
     label: []const u8, // normalized label
     dest: []const u8, // raw destination (slice of source)
@@ -356,3 +330,15 @@ pub fn buildRefDefHashtable(self: *Parser) error{OutOfMemory}!void {
     }
 }
 
+const helpers = @import("./helpers.zig");
+const parser_mod = @import("./parser.zig");
+const std = @import("std");
+const unicode = @import("./unicode.zig");
+
+const Parser = parser_mod.Parser;
+const BlockHeader = Parser.BlockHeader;
+
+const types = @import("./types.zig");
+const Align = types.Align;
+const Mark = types.Mark;
+const VerbatimLine = types.VerbatimLine;

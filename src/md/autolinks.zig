@@ -1,12 +1,3 @@
-const std = @import("std");
-const types = @import("types.zig");
-const helpers = @import("helpers.zig");
-const parser_mod = @import("parser.zig");
-
-const OFF = types.OFF;
-const Parser = parser_mod.Parser;
-const EmphDelim = Parser.EmphDelim;
-
 pub fn isListBullet(c: u8) bool {
     return c == '-' or c == '+' or c == '*';
 }
@@ -259,3 +250,9 @@ pub fn findPermissiveAutolink(content: []const u8, pos: usize, allow_emph: bool)
     return .{ .found = false, .beg = 0, .end = 0 };
 }
 
+const helpers = @import("./helpers.zig");
+const parser_mod = @import("./parser.zig");
+const std = @import("std");
+
+const Parser = parser_mod.Parser;
+const EmphDelim = Parser.EmphDelim;

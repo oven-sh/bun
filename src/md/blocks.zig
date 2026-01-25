@@ -1,31 +1,3 @@
-const std = @import("std");
-const types = @import("types.zig");
-const helpers = @import("helpers.zig");
-const entity_mod = @import("entity.zig");
-const unicode = @import("unicode.zig");
-const parser_mod = @import("parser.zig");
-
-const OFF = types.OFF;
-const SZ = types.SZ;
-const Mark = types.Mark;
-const MarkFlags = types.MarkFlags;
-const Container = types.Container;
-const BlockType = types.BlockType;
-const SpanType = types.SpanType;
-const TextType = types.TextType;
-const Line = types.Line;
-const LineType = types.LineType;
-const VerbatimLine = types.VerbatimLine;
-const Flags = types.Flags;
-const Attribute = types.Attribute;
-const Align = types.Align;
-const Allocator = std.mem.Allocator;
-
-const Parser = parser_mod.Parser;
-const BlockHeader = Parser.BlockHeader;
-
-const autolinks_mod = @import("autolinks.zig");
-const isListItemMark = autolinks_mod.isListItemMark;
 pub fn processDoc(self: *Parser) error{OutOfMemory}!void {
     const dummy_blank = Line{ .type = .blank };
     var pivot_line = dummy_blank;
@@ -846,3 +818,20 @@ pub fn getBlockAt(self: *Parser, off: usize) *BlockHeader {
     return self.getBlockHeaderAt(off);
 }
 
+const helpers = @import("./helpers.zig");
+const parser_mod = @import("./parser.zig");
+const std = @import("std");
+
+const autolinks_mod = @import("./autolinks.zig");
+const isListItemMark = autolinks_mod.isListItemMark;
+
+const Parser = parser_mod.Parser;
+const BlockHeader = Parser.BlockHeader;
+
+const types = @import("./types.zig");
+const Align = types.Align;
+const BlockType = types.BlockType;
+const Container = types.Container;
+const Line = types.Line;
+const OFF = types.OFF;
+const VerbatimLine = types.VerbatimLine;

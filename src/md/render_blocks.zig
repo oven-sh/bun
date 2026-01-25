@@ -1,17 +1,3 @@
-const std = @import("std");
-const types = @import("types.zig");
-const helpers = @import("helpers.zig");
-const parser_mod = @import("parser.zig");
-
-const OFF = types.OFF;
-const BlockType = types.BlockType;
-const VerbatimLine = types.VerbatimLine;
-const Align = types.Align;
-const Allocator = std.mem.Allocator;
-
-const Parser = parser_mod.Parser;
-const BlockHeader = Parser.BlockHeader;
-
 pub fn enterBlock(self: *Parser, block_type: BlockType, data: u32, flags: u32) void {
     if (self.image_nesting_level > 0) return;
     self.renderer.enterBlock(block_type, data, flags);
@@ -155,3 +141,13 @@ pub fn processTableRow(self: *Parser, vline: VerbatimLine, is_header: bool, col_
         cell_index += 1;
     }
 }
+
+const helpers = @import("./helpers.zig");
+
+const parser_mod = @import("./parser.zig");
+const Parser = parser_mod.Parser;
+
+const types = @import("./types.zig");
+const BlockType = types.BlockType;
+const OFF = types.OFF;
+const VerbatimLine = types.VerbatimLine;

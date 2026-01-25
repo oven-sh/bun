@@ -1,18 +1,3 @@
-const std = @import("std");
-const types = @import("types.zig");
-const entity_mod = @import("entity.zig");
-const helpers = @import("helpers.zig");
-
-const BlockType = types.BlockType;
-const SpanType = types.SpanType;
-const TextType = types.TextType;
-const Align = types.Align;
-const Renderer = types.Renderer;
-const SpanDetail = types.SpanDetail;
-const OFF = types.OFF;
-
-const Allocator = std.mem.Allocator;
-
 pub const HtmlRenderer = struct {
     out: OutputBuffer,
     allocator: Allocator,
@@ -656,3 +641,16 @@ pub const HtmlRenderer = struct {
         return .{ .found = false, .end_pos = 0 };
     }
 };
+
+const entity_mod = @import("./entity.zig");
+const helpers = @import("./helpers.zig");
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+const types = @import("./types.zig");
+const Align = types.Align;
+const BlockType = types.BlockType;
+const Renderer = types.Renderer;
+const SpanDetail = types.SpanDetail;
+const SpanType = types.SpanType;
+const TextType = types.TextType;

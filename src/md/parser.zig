@@ -1,36 +1,4 @@
-const std = @import("std");
-const types = @import("types.zig");
-const helpers = @import("helpers.zig");
-
-const OFF = types.OFF;
-const SZ = types.SZ;
-const Mark = types.Mark;
-const MarkFlags = types.MarkFlags;
-const Container = types.Container;
-const BlockType = types.BlockType;
-const SpanType = types.SpanType;
-const TextType = types.TextType;
-const Line = types.Line;
-const LineType = types.LineType;
-const VerbatimLine = types.VerbatimLine;
-const Flags = types.Flags;
-const Attribute = types.Attribute;
-const Align = types.Align;
-
-const Allocator = std.mem.Allocator;
-
-const Renderer = types.Renderer;
-const HtmlRenderer = @import("html_renderer.zig").HtmlRenderer;
-
 // Sub-modules
-const render_blocks_mod = @import("render_blocks.zig");
-const blocks_mod = @import("blocks.zig");
-const containers_mod = @import("containers.zig");
-const inlines_mod = @import("inlines.zig");
-const links_mod = @import("links.zig");
-const autolinks_mod = @import("autolinks.zig");
-const line_analysis_mod = @import("line_analysis.zig");
-const ref_defs_mod = @import("ref_defs.zig");
 
 /// Parser context holding all state during parsing.
 pub const Parser = struct {
@@ -276,3 +244,25 @@ pub fn renderWithRenderer(text: []const u8, allocator: Allocator, flags: Flags, 
 
     try p.processDoc();
 }
+
+const blocks_mod = @import("./blocks.zig");
+const containers_mod = @import("./containers.zig");
+const helpers = @import("./helpers.zig");
+const inlines_mod = @import("./inlines.zig");
+const line_analysis_mod = @import("./line_analysis.zig");
+const links_mod = @import("./links.zig");
+const ref_defs_mod = @import("./ref_defs.zig");
+const render_blocks_mod = @import("./render_blocks.zig");
+const std = @import("std");
+const HtmlRenderer = @import("./html_renderer.zig").HtmlRenderer;
+const Allocator = std.mem.Allocator;
+
+const types = @import("./types.zig");
+const Align = types.Align;
+const BlockType = types.BlockType;
+const Container = types.Container;
+const Flags = types.Flags;
+const Mark = types.Mark;
+const OFF = types.OFF;
+const Renderer = types.Renderer;
+const VerbatimLine = types.VerbatimLine;

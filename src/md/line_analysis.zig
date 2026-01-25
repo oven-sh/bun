@@ -1,29 +1,3 @@
-const std = @import("std");
-const types = @import("types.zig");
-const helpers = @import("helpers.zig");
-const entity_mod = @import("entity.zig");
-const unicode = @import("unicode.zig");
-const parser_mod = @import("parser.zig");
-
-const OFF = types.OFF;
-const SZ = types.SZ;
-const Mark = types.Mark;
-const MarkFlags = types.MarkFlags;
-const Container = types.Container;
-const BlockType = types.BlockType;
-const SpanType = types.SpanType;
-const TextType = types.TextType;
-const Line = types.Line;
-const LineType = types.LineType;
-const VerbatimLine = types.VerbatimLine;
-const Flags = types.Flags;
-const Attribute = types.Attribute;
-const Align = types.Align;
-const Allocator = std.mem.Allocator;
-
-const Parser = parser_mod.Parser;
-const BlockHeader = Parser.BlockHeader;
-
 pub fn isSetextUnderline(self: *const Parser, off: OFF) struct { is_setext: bool, level: u32 } {
     const c = self.text[off];
     if (c != '=' and c != '-') return .{ .is_setext = false, .level = 0 };
@@ -503,3 +477,13 @@ pub fn isContainerMark(self: *const Parser, indent: u32, off: OFF) struct {
     return .{ .is_container = false, .container = .{}, .off = off };
 }
 
+const helpers = @import("./helpers.zig");
+const std = @import("std");
+
+const parser_mod = @import("./parser.zig");
+const Parser = parser_mod.Parser;
+
+const types = @import("./types.zig");
+const Attribute = types.Attribute;
+const Container = types.Container;
+const OFF = types.OFF;

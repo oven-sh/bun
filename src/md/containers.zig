@@ -1,31 +1,3 @@
-const std = @import("std");
-const types = @import("types.zig");
-const helpers = @import("helpers.zig");
-const entity_mod = @import("entity.zig");
-const unicode = @import("unicode.zig");
-const parser_mod = @import("parser.zig");
-
-const OFF = types.OFF;
-const SZ = types.SZ;
-const Mark = types.Mark;
-const MarkFlags = types.MarkFlags;
-const Container = types.Container;
-const BlockType = types.BlockType;
-const SpanType = types.SpanType;
-const TextType = types.TextType;
-const Line = types.Line;
-const LineType = types.LineType;
-const VerbatimLine = types.VerbatimLine;
-const Flags = types.Flags;
-const Attribute = types.Attribute;
-const Align = types.Align;
-const Allocator = std.mem.Allocator;
-
-const Parser = parser_mod.Parser;
-const BlockHeader = Parser.BlockHeader;
-
-const autolinks_mod = @import("autolinks.zig");
-const isListBullet = autolinks_mod.isListBullet;
 pub fn pushContainer(self: *Parser, c: *const Container) error{OutOfMemory}!void {
     if (self.n_containers >= self.containers.items.len) {
         try self.containers.append(self.allocator, c.*);
@@ -205,3 +177,16 @@ pub fn processAllBlocks(self: *Parser) error{OutOfMemory}!void {
     }
 }
 
+const parser_mod = @import("./parser.zig");
+
+const autolinks_mod = @import("./autolinks.zig");
+const isListBullet = autolinks_mod.isListBullet;
+
+const Parser = parser_mod.Parser;
+const BlockHeader = Parser.BlockHeader;
+
+const types = @import("./types.zig");
+const Align = types.Align;
+const BlockType = types.BlockType;
+const Container = types.Container;
+const VerbatimLine = types.VerbatimLine;

@@ -1,15 +1,3 @@
-const std = @import("std");
-const types = @import("types.zig");
-const helpers = @import("helpers.zig");
-const parser_mod = @import("parser.zig");
-
-const OFF = types.OFF;
-const Allocator = std.mem.Allocator;
-
-const Parser = parser_mod.Parser;
-
-const ref_defs_mod = @import("ref_defs.zig");
-const RefDef = ref_defs_mod.RefDef;
 pub fn processLink(self: *Parser, content: []const u8, start: usize, base_off: OFF, is_image: bool) struct { found: bool, end_pos: usize } {
     _ = base_off;
     // start points at '['
@@ -530,3 +518,14 @@ pub fn renderAutolink(self: *Parser, url: []const u8, is_email: bool) void {
     self.emitText(.normal, url);
     self.renderer.leaveSpan(.a);
 }
+
+const helpers = @import("./helpers.zig");
+
+const parser_mod = @import("./parser.zig");
+const Parser = parser_mod.Parser;
+
+const ref_defs_mod = @import("./ref_defs.zig");
+const RefDef = ref_defs_mod.RefDef;
+
+const types = @import("./types.zig");
+const OFF = types.OFF;

@@ -1,32 +1,3 @@
-const std = @import("std");
-const types = @import("types.zig");
-const helpers = @import("helpers.zig");
-const entity_mod = @import("entity.zig");
-const parser_mod = @import("parser.zig");
-
-const OFF = types.OFF;
-const SZ = types.SZ;
-const Mark = types.Mark;
-const MarkFlags = types.MarkFlags;
-const Container = types.Container;
-const BlockType = types.BlockType;
-const SpanType = types.SpanType;
-const TextType = types.TextType;
-const Line = types.Line;
-const LineType = types.LineType;
-const VerbatimLine = types.VerbatimLine;
-const Flags = types.Flags;
-const Attribute = types.Attribute;
-const Align = types.Align;
-const Allocator = std.mem.Allocator;
-
-const Parser = parser_mod.Parser;
-const BlockHeader = Parser.BlockHeader;
-
-const autolinks_mod = @import("autolinks.zig");
-const findPermissiveAutolink = autolinks_mod.findPermissiveAutolink;
-const isEmphBoundaryResolved = autolinks_mod.isEmphBoundaryResolved;
-const AutolinkResult = autolinks_mod.AutolinkResult;
 /// Emphasis delimiter entry for CommonMark emphasis algorithm.
 pub const MAX_EMPH_MATCHES = 6;
 
@@ -845,3 +816,20 @@ pub fn findHtmlTag(self: *const Parser, content: []const u8, start: usize) struc
 
     return .{ .found = false, .end_pos = 0 };
 }
+
+const entity_mod = @import("./entity.zig");
+const helpers = @import("./helpers.zig");
+
+const autolinks_mod = @import("./autolinks.zig");
+const findPermissiveAutolink = autolinks_mod.findPermissiveAutolink;
+const isEmphBoundaryResolved = autolinks_mod.isEmphBoundaryResolved;
+
+const parser_mod = @import("./parser.zig");
+const Parser = parser_mod.Parser;
+
+const types = @import("./types.zig");
+const Attribute = types.Attribute;
+const OFF = types.OFF;
+const SpanType = types.SpanType;
+const TextType = types.TextType;
+const VerbatimLine = types.VerbatimLine;

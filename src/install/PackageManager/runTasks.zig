@@ -368,10 +368,11 @@ pub fn runTasks(
                 const metadata = task.response.metadata orelse {
                     const err = task.response.fail orelse error.TarballFailedToDownload;
 
-                    if (@TypeOf(callbacks.onPackageDownloadError) != void) {
+                    if (comptime @TypeOf(callbacks.onPackageDownloadError) != void) {
                         const package_id = manager.lockfile.buffers.resolutions.items[extract.dependency_id];
                         callbacks.onPackageDownloadError(
                             extract_ctx,
+                            task.task_id,
                             package_id,
                             extract.name.slice(),
                             &extract.resolution,
@@ -394,6 +395,8 @@ pub fn runTasks(
                                 extract.resolution.fmt(manager.lockfile.buffers.string_bytes.items, .auto),
                             },
                         ) catch |e| bun.handleOom(e);
+                        // Prevent install from running if a required tarball download failed
+                        manager.options.do.install_packages = false;
                     } else {
                         manager.log.addWarningFmt(
                             null,
@@ -424,7 +427,7 @@ pub fn runTasks(
                 const response = metadata.response;
 
                 if (response.status_code > 399) {
-                    if (@TypeOf(callbacks.onPackageDownloadError) != void) {
+                    if (comptime @TypeOf(callbacks.onPackageDownloadError) != void) {
                         const err = switch (response.status_code) {
                             400 => error.TarballHTTP400,
                             401 => error.TarballHTTP401,
@@ -438,6 +441,7 @@ pub fn runTasks(
 
                         callbacks.onPackageDownloadError(
                             extract_ctx,
+                            task.task_id,
                             package_id,
                             extract.name.slice(),
                             &extract.resolution,
@@ -458,6 +462,8 @@ pub fn runTasks(
                                 response.status_code,
                             },
                         ) catch |err| bun.handleOom(err);
+                        // Prevent install from running if a required tarball download failed
+                        manager.options.do.install_packages = false;
                     } else {
                         manager.log.addWarningFmt(
                             null,
@@ -590,9 +596,10 @@ pub fn runTasks(
                 if (task.status == .fail) {
                     const err = task.err orelse error.TarballFailedToExtract;
 
-                    if (@TypeOf(callbacks.onPackageDownloadError) != void) {
+                    if (comptime @TypeOf(callbacks.onPackageDownloadError) != void) {
                         callbacks.onPackageDownloadError(
                             extract_ctx,
+                            task.id,
                             package_id,
                             alias,
                             resolution,

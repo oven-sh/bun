@@ -85,6 +85,30 @@ pub const Installer = struct {
         }
     }
 
+    /// Called from main thread when a package download fails.
+    /// Fetches all entries waiting for this task and marks them as failed.
+    pub fn onPackageDownloadError(
+        this: *Installer,
+        task_id: install.Task.Id,
+        _: PackageID,
+        _: []const u8,
+        _: *const Resolution,
+        err: anyerror,
+        _: []const u8,
+    ) void {
+        if (this.manager.task_queue.fetchRemove(task_id)) |removed| {
+            const entry_steps = this.store.entries.items(.step);
+
+            for (removed.value.items) |install_ctx| {
+                const entry_id = install_ctx.isolated_package_install_context;
+
+                // Mark the entry as done (failed)
+                entry_steps[entry_id.get()].store(.done, .monotonic);
+                this.onTaskFail(entry_id, .{ .download = err });
+            }
+        }
+    }
+
     pub fn applyPackagePatch(this: *Installer, entry_id: Store.Entry.Id, patch: PatchInfo.Patch, log: *bun.logger.Log) void {
         const store = this.store;
         const entry_node_ids = store.entries.items(.node_id);
@@ -144,6 +168,12 @@ pub const Installer = struct {
                     pkg_res.fmt(string_buf, .auto),
                 });
                 patch_log.print(Output.errorWriter()) catch {};
+            },
+            .download => |download_err| {
+                Output.err(download_err, "failed to download package: {s}@{f}", .{
+                    pkg_name.slice(string_buf),
+                    pkg_res.fmt(string_buf, .auto),
+                });
             },
             else => {},
         }
@@ -353,6 +383,7 @@ pub const Installer = struct {
             run_scripts: anyerror,
             binaries: anyerror,
             patching: bun.logger.Log,
+            download: anyerror,
 
             pub fn clone(this: *const Error, allocator: std.mem.Allocator) Error {
                 return switch (this.*) {
@@ -361,6 +392,7 @@ pub const Installer = struct {
                     .binaries => |err| .{ .binaries = err },
                     .run_scripts => |err| .{ .run_scripts = err },
                     .patching => |log| .{ .patching = log },
+                    .download => |err| .{ .download = err },
                 };
             }
         };

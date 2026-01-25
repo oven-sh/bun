@@ -837,9 +837,9 @@ const identifier = @import("../js_lexer/identifier.zig");
 const std = @import("std");
 
 const bun = @import("bun");
-const strings = bun.strings;
 const OOM = bun.OOM;
 const logger = bun.logger;
+const strings = bun.strings;
 
 const E = bun.ast.E;
 const Expr = bun.ast.Expr;

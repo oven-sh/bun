@@ -1081,6 +1081,28 @@ pub const JSBundler = struct {
             return globalThis.throwInvalidArguments("Expected a config object to be passed to Bun.build", .{});
         }
 
+        const vm = globalThis.bunVM();
+
+        // Detect and prevent calling Bun.build from within a macro during bundling.
+        // This would cause a deadlock because:
+        // 1. The bundler thread (singleton) is processing the outer Bun.build
+        // 2. During parsing, it encounters a macro and evaluates it
+        // 3. The macro calls Bun.build, which tries to enqueue to the same singleton thread
+        // 4. The singleton thread is blocked waiting for the macro to complete -> deadlock
+        if (vm.macro_mode) {
+            return globalThis.throw(
+                \\Bun.build cannot be called from within a macro during bundling.
+                \\
+                \\This would cause a deadlock because the bundler is waiting for the macro to complete,
+                \\but the macro's Bun.build call is waiting for the bundler.
+                \\
+                \\To bundle code at compile time in a macro, use Bun.spawnSync to invoke the CLI:
+                \\  const result = Bun.spawnSync(["bun", "build", entrypoint, "--format=esm"]);
+            ,
+                .{},
+            );
+        }
+
         var plugins: ?*Plugin = null;
         const config = try Config.fromJS(globalThis, arguments[0], &plugins, bun.default_allocator);
 
@@ -1088,7 +1110,7 @@ pub const JSBundler = struct {
             config,
             plugins,
             globalThis,
-            globalThis.bunVM().eventLoop(),
+            vm.eventLoop(),
             bun.default_allocator,
         );
     }

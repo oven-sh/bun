@@ -1,5 +1,3 @@
-const std = @import("std");
-
 pub const FoldInfo = struct {
     codepoints: [3]u21,
     n_codepoints: u2,
@@ -475,3 +473,5 @@ test "Kelvin sign" {
     try std.testing.expectEqual(@as(u21, 0x006b), info.codepoints[0]);
     try std.testing.expectEqual(@as(u2, 1), info.n_codepoints);
 }
+
+const std = @import("std");

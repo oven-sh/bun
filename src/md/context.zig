@@ -1,22 +1,3 @@
-const std = @import("std");
-const types = @import("types.zig");
-const helpers = @import("helpers.zig");
-
-const OFF = types.OFF;
-const SZ = types.SZ;
-const Mark = types.Mark;
-const Container = types.Container;
-const Block = types.Block;
-const BlockType = types.BlockType;
-const Line = types.Line;
-const VerbatimLine = types.VerbatimLine;
-const Flags = types.Flags;
-const OpenerStack = types.OpenerStack;
-const RefDef = types.RefDef;
-const Attribute = types.Attribute;
-
-const Allocator = std.mem.Allocator;
-
 pub const Context = struct {
     allocator: Allocator,
 
@@ -283,3 +264,20 @@ pub const Context = struct {
         self.table_cell_boundaries_tail = -1;
     }
 };
+
+const helpers = @import("./helpers.zig");
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+const types = @import("./types.zig");
+const Attribute = types.Attribute;
+const Block = types.Block;
+const BlockType = types.BlockType;
+const Container = types.Container;
+const Flags = types.Flags;
+const Line = types.Line;
+const Mark = types.Mark;
+const OFF = types.OFF;
+const OpenerStack = types.OpenerStack;
+const RefDef = types.RefDef;
+const VerbatimLine = types.VerbatimLine;

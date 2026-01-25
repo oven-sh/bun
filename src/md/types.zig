@@ -1,5 +1,3 @@
-const std = @import("std");
-
 /// Offset into the input document.
 pub const OFF = u32;
 /// Size type.

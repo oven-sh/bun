@@ -1,26 +1,3 @@
-const std = @import("std");
-const types = @import("types.zig");
-const helpers = @import("helpers.zig");
-const entity_mod = @import("entity.zig");
-const unicode = @import("unicode.zig");
-
-const OFF = types.OFF;
-const SZ = types.SZ;
-const Mark = types.Mark;
-const MarkFlags = types.MarkFlags;
-const Container = types.Container;
-const BlockType = types.BlockType;
-const SpanType = types.SpanType;
-const TextType = types.TextType;
-const Line = types.Line;
-const LineType = types.LineType;
-const VerbatimLine = types.VerbatimLine;
-const Flags = types.Flags;
-const Attribute = types.Attribute;
-const Align = types.Align;
-
-const Allocator = std.mem.Allocator;
-
 /// Result buffer for HTML output.
 const OutputBuffer = struct {
     list: std.ArrayListUnmanaged(u8),
@@ -4271,3 +4248,22 @@ pub fn renderToHtml(text: []const u8, allocator: Allocator, flags: Flags) error{
 
     return output.list.toOwnedSlice(allocator);
 }
+
+const entity_mod = @import("./entity.zig");
+const helpers = @import("./helpers.zig");
+const std = @import("std");
+const unicode = @import("./unicode.zig");
+const Allocator = std.mem.Allocator;
+
+const types = @import("./types.zig");
+const Align = types.Align;
+const Attribute = types.Attribute;
+const BlockType = types.BlockType;
+const Container = types.Container;
+const Flags = types.Flags;
+const Line = types.Line;
+const Mark = types.Mark;
+const OFF = types.OFF;
+const SpanType = types.SpanType;
+const TextType = types.TextType;
+const VerbatimLine = types.VerbatimLine;

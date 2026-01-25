@@ -33,8 +33,6 @@ fn orderStrings(a: []const u8, b: []const u8) std.math.Order {
     return std.math.order(a.len, b.len);
 }
 
-const std = @import("std");
-
 const entity_map: []const Entity = &.{
     .{ .name = "&AElig;", .codepoints = .{ 198, 0 } },
     .{ .name = "&AMP;", .codepoints = .{ 38, 0 } },
@@ -2162,3 +2160,5 @@ const entity_map: []const Entity = &.{
     .{ .name = "&zwj;", .codepoints = .{ 8205, 0 } },
     .{ .name = "&zwnj;", .codepoints = .{ 8204, 0 } },
 };
+
+const std = @import("std");

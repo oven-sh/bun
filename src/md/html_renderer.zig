@@ -1,16 +1,3 @@
-const std = @import("std");
-const types = @import("types.zig");
-const entity_mod = @import("entity.zig");
-const helpers = @import("helpers.zig");
-
-const BlockType = types.BlockType;
-const SpanType = types.SpanType;
-const TextType = types.TextType;
-const Attribute = types.Attribute;
-const OFF = types.OFF;
-
-const Allocator = std.mem.Allocator;
-
 pub const HtmlRenderer = struct {
     output: *std.ArrayListUnmanaged(u8),
     allocator: Allocator,
@@ -411,3 +398,14 @@ pub const HtmlRenderer = struct {
         self.write(buf[i..]);
     }
 };
+
+const entity_mod = @import("./entity.zig");
+const helpers = @import("./helpers.zig");
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+const types = @import("./types.zig");
+const Attribute = types.Attribute;
+const BlockType = types.BlockType;
+const SpanType = types.SpanType;
+const TextType = types.TextType;

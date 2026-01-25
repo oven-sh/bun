@@ -1,9 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const types = @import("types.zig");
-
-const OFF = types.OFF;
-
 /// Check if a byte is ASCII whitespace (space, tab, LF, CR, FF, VT).
 pub inline fn isWhitespace(c: u8) bool {
     return switch (c) {
@@ -265,3 +259,9 @@ pub fn asciiCaseEql(a: []const u8, b: []const u8) bool {
     }
     return true;
 }
+
+const bun = @import("bun");
+const std = @import("std");
+
+const types = @import("./types.zig");
+const OFF = types.OFF;

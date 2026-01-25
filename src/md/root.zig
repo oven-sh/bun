@@ -1,7 +1,3 @@
-const std = @import("std");
-const parser = @import("parser.zig");
-const Flags = @import("types.zig").Flags;
-
 pub const Options = struct {
     tables: bool = true,
     strikethrough: bool = true,
@@ -63,3 +59,7 @@ pub fn renderToHtml(text: []const u8, allocator: std.mem.Allocator) error{OutOfM
 pub fn renderToHtmlWithOptions(text: []const u8, allocator: std.mem.Allocator, options: Options) error{OutOfMemory}![]u8 {
     return parser.renderToHtml(text, allocator, options.toFlags());
 }
+
+const parser = @import("./parser.zig");
+const std = @import("std");
+const Flags = @import("./types.zig").Flags;

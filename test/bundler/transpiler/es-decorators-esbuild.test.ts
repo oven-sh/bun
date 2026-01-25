@@ -23,9 +23,6 @@ function prettyPrint(x) {
   try { return x + ''; } catch { return 'typeof ' + typeof x; }
 }
 
-let _testName = '';
-let _failures = 0;
-
 function assertEq(callback, expected) {
   let x;
   try { x = callback(); } catch (e) {
@@ -68,6 +65,7 @@ async function runDecoratorTest(code: string) {
     cmd: [bunExe(), "test.ts"],
     env: bunEnv,
     cwd: String(dir),
+    stdout: "pipe",
     stderr: "pipe",
   });
 

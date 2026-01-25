@@ -68,9 +68,9 @@ function parseSpecFile(path: string): SpecExample[] {
   return examples;
 }
 
-const Markdown = (Bun as any).Markdown;
+const markdown = (Bun as any).markdown;
 
-function renderMarkdown(markdown: string, flags?: string[]): string {
+function renderMarkdown(md: string, flags?: string[]): string {
   const options: Record<string, boolean> = {};
   if (flags && flags.length > 0) {
     for (const flag of flags) {
@@ -79,7 +79,7 @@ function renderMarkdown(markdown: string, flags?: string[]): string {
       options[name] = true;
     }
   }
-  return Markdown.renderToHTML(markdown + "\n", options);
+  return markdown.html(md + "\n", options);
 }
 
 // Normalize HTML for comparison, ported from md4c's normalize.py.

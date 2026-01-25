@@ -2,8 +2,8 @@ pub fn create(globalThis: *jsc.JSGlobalObject) jsc.JSValue {
     const object = JSValue.createEmptyObject(globalThis, 2);
     object.put(
         globalThis,
-        ZigString.static("renderToHTML"),
-        jsc.JSFunction.create(globalThis, "renderToHTML", renderToHTML, 1, .{}),
+        ZigString.static("html"),
+        jsc.JSFunction.create(globalThis, "html", renderToHTML, 1, .{}),
     );
     object.put(
         globalThis,

@@ -10,10 +10,10 @@ import { describe, expect, test } from "bun:test";
  * Each section corresponds to a known incompatibility between md4c and GFM.
  */
 
-const Markdown = (Bun as any).Markdown;
+const md = (Bun as any).markdown;
 
-function render(md: string, options?: Record<string, boolean>): string {
-  return Markdown.renderToHTML(md + "\n", options ?? {});
+function render(input: string, options?: Record<string, boolean>): string {
+  return md.html(input + "\n", options ?? {});
 }
 
 function renderGFM(md: string): string {

@@ -13,7 +13,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionTty_isatty, (JSGlobalObject * globalObject, C
         return JSValue::encode(jsBoolean(false));
     }
 
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     int fd = callFrame->argument(0).toInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 

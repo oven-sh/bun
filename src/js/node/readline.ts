@@ -98,9 +98,7 @@ const ObjectCreate = Object.create;
  * Returns the number of columns required to display the given string.
  */
 var getStringWidth = function getStringWidth(str, removeControlChars = true) {
-  if (removeControlChars) str = stripVTControlCharacters(str);
-  str = StringPrototypeNormalize.$call(str, "NFC");
-  return internalGetStringWidth(str);
+  return internalGetStringWidth(str, removeControlChars);
 };
 
 const stripANSI = Bun.stripANSI;
@@ -1536,7 +1534,7 @@ var _Interface = class Interface extends InterfaceConstructor {
         prefix +
         StringPrototypeSlice.$call(this.line, this.cursor, this.line.length);
       this.cursor = this.cursor - completeOn.length + prefix.length;
-      this._refreshLine();
+      this[kRefreshLine]();
       return;
     }
 

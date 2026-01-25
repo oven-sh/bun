@@ -147,3 +147,81 @@ http://example.com
 ````````````````````````````````
 
 
+## Disallowed Raw HTML
+
+```````````````````````````````` example
+<strong> <title> <style> <em>
+
+<blockquote>
+  <xmp> is disallowed.  <XMP> is also disallowed.
+</blockquote>
+.
+<p><strong> &lt;title> &lt;style> <em></p>
+<blockquote>
+  &lt;xmp> is disallowed.  &lt;XMP> is also disallowed.
+</blockquote>
+.
+--ftag-filter
+````````````````````````````````
+
+```````````````````````````````` example
+<script>alert('xss')</script>
+.
+&lt;script>alert('xss')&lt;/script>
+.
+--ftag-filter
+````````````````````````````````
+
+```````````````````````````````` example
+<style>
+body { color: red; }
+</style>
+.
+&lt;style>
+body { color: red; }
+&lt;/style>
+.
+--ftag-filter
+````````````````````````````````
+
+```````````````````````````````` example
+<textarea>
+form content
+</textarea>
+.
+&lt;textarea>
+form content
+&lt;/textarea>
+.
+--ftag-filter
+````````````````````````````````
+
+Inline disallowed tags are also filtered:
+
+```````````````````````````````` example
+Inline <iframe src="x"> and <noembed> and <plaintext> tags.
+.
+<p>Inline &lt;iframe src="x"> and &lt;noembed> and &lt;plaintext> tags.</p>
+.
+--ftag-filter
+````````````````````````````````
+
+Allowed tags pass through:
+
+```````````````````````````````` example
+<b>bold</b> and <em>emphasis</em> are fine.
+.
+<p><b>bold</b> and <em>emphasis</em> are fine.</p>
+.
+--ftag-filter
+````````````````````````````````
+
+Without the tag filter, disallowed tags pass through:
+
+```````````````````````````````` example
+<strong> <title> <style> <em>
+.
+<p><strong> <title> <style> <em></p>
+````````````````````````````````
+
+

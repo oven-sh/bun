@@ -220,11 +220,11 @@ pub const Parser = struct {
 // Public API
 // ========================================
 
-pub fn renderToHtml(text: []const u8, allocator: Allocator, flags: Flags) error{OutOfMemory}![]u8 {
+pub fn renderToHtml(text: []const u8, allocator: Allocator, flags: Flags, tag_filter: bool) error{OutOfMemory}![]u8 {
     // Skip UTF-8 BOM
     const input = helpers.skipUtf8Bom(text);
 
-    var html_renderer = HtmlRenderer.init(allocator, input);
+    var html_renderer = HtmlRenderer.init(allocator, input, tag_filter);
 
     var parser = Parser.init(allocator, input, flags, html_renderer.renderer());
     defer parser.deinit();

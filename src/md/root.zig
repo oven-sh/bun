@@ -24,6 +24,9 @@ pub const Options = struct {
     no_indented_code_blocks: bool = false,
     no_html_blocks: bool = false,
     no_html_spans: bool = false,
+    /// GFM tag filter: replaces `<` with `&lt;` for disallowed HTML tags
+    /// (title, textarea, style, xmp, iframe, noembed, noframes, script, plaintext).
+    tag_filter: bool = false,
 
     pub const commonmark: Options = .{
         .tables = false,
@@ -38,6 +41,7 @@ pub const Options = struct {
         .permissive_autolinks = true,
         .permissive_www_autolinks = true,
         .permissive_email_autolinks = true,
+        .tag_filter = true,
     };
 
     pub fn toFlags(self: Options) Flags {
@@ -66,7 +70,7 @@ pub fn renderToHtml(text: []const u8, allocator: std.mem.Allocator) error{OutOfM
 }
 
 pub fn renderToHtmlWithOptions(text: []const u8, allocator: std.mem.Allocator, options: Options) error{OutOfMemory}![]u8 {
-    return parser.renderToHtml(text, allocator, options.toFlags());
+    return parser.renderToHtml(text, allocator, options.toFlags(), options.tag_filter);
 }
 
 /// Parse and render using a custom renderer implementation.

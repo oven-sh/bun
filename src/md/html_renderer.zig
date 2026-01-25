@@ -4,6 +4,7 @@ pub const HtmlRenderer = struct {
     src_text: []const u8,
     image_nesting_level: u32 = 0,
     saved_img_title: []const u8 = "",
+    tag_filter: bool = false,
 
     pub const OutputBuffer = struct {
         list: std.ArrayListUnmanaged(u8),
@@ -25,11 +26,12 @@ pub const HtmlRenderer = struct {
         }
     };
 
-    pub fn init(allocator: Allocator, src_text: []const u8) HtmlRenderer {
+    pub fn init(allocator: Allocator, src_text: []const u8, tag_filter: bool) HtmlRenderer {
         return .{
             .out = .{ .list = .{}, .allocator = allocator, .oom = false },
             .allocator = allocator,
             .src_text = src_text,
+            .tag_filter = tag_filter,
         };
     }
 
@@ -323,7 +325,13 @@ pub const HtmlRenderer = struct {
             .softbr => {
                 if (in_image) self.write(" ") else self.write("\n");
             },
-            .html => self.write(content),
+            .html => {
+                if (self.tag_filter) {
+                    self.writeHtmlWithTagFilter(content);
+                } else {
+                    self.write(content);
+                }
+            },
             .entity => self.writeEntity(content),
             .code => {
                 // In code spans, newlines become spaces
@@ -351,6 +359,23 @@ pub const HtmlRenderer = struct {
 
     fn writeByte(self: *HtmlRenderer, b: u8) void {
         self.out.writeByte(b);
+    }
+
+    /// Write HTML content with GFM tag filter applied. Scans for disallowed
+    /// tags and replaces their leading `<` with `&lt;`.
+    fn writeHtmlWithTagFilter(self: *HtmlRenderer, content: []const u8) void {
+        var start: usize = 0;
+        var i: usize = 0;
+        while (i < content.len) {
+            if (content[i] == '<' and isDisallowedTag(content[i..])) {
+                // Write everything before this '<'
+                if (i > start) self.write(content[start..i]);
+                self.write("&lt;");
+                start = i + 1;
+            }
+            i += 1;
+        }
+        if (start < content.len) self.write(content[start..]);
     }
 
     fn ensureNewline(self: *HtmlRenderer) void {
@@ -594,6 +619,39 @@ pub const HtmlRenderer = struct {
 
     fn hexDigit(v: u8) u8 {
         return if (v < 10) '0' + v else 'A' + v - 10;
+    }
+
+    /// GFM 6.11: Check if HTML content starts with a disallowed tag.
+    /// Disallowed tags have their leading `<` replaced with `&lt;`.
+    fn isDisallowedTag(content: []const u8) bool {
+        // Must start with '<', optionally followed by '/'
+        if (content.len < 2 or content[0] != '<') return false;
+        const after_lt: usize = if (content[1] == '/') 2 else 1;
+        if (after_lt >= content.len) return false;
+
+        const disallowed = [_][]const u8{
+            "title",   "textarea", "style",  "xmp",       "iframe",
+            "noembed", "noframes", "script", "plaintext",
+        };
+        inline for (disallowed) |tag| {
+            if (matchTagNameCI(content, after_lt, tag)) return true;
+        }
+        return false;
+    }
+
+    /// Case-insensitive match of tag name at `pos` in `content`.
+    /// After the name, the next char must be '>', '/', whitespace, or end of string.
+    fn matchTagNameCI(content: []const u8, pos: usize, tag: []const u8) bool {
+        if (pos + tag.len > content.len) return false;
+        for (tag, 0..) |tc, i| {
+            const cc = content[pos + i] | 0x20; // lowercase
+            if (cc != tc) return false;
+        }
+        // Check delimiter after tag name
+        const end = pos + tag.len;
+        if (end >= content.len) return true;
+        const next = content[end];
+        return next == '>' or next == ' ' or next == '\t' or next == '\n' or next == '/';
     }
 
     /// Find an entity in text starting at `start`. This is a pure function

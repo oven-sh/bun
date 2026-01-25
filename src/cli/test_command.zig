@@ -1786,6 +1786,8 @@ pub const TestCommand = struct {
             vm.exit_handler.exit_code = 1;
         } else if (reporter.jest.unhandled_errors_between_tests > 0) {
             vm.exit_handler.exit_code = 1;
+        } else {
+            vm.exit_handler.exit_code = 0;
         }
         vm.is_shutting_down = true;
         vm.runWithAPILock(jsc.VirtualMachine, vm, jsc.VirtualMachine.globalExit);

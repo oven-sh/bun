@@ -361,7 +361,7 @@ declare module "bun:sqlite" {
      * // setup
      * import { Database } from "bun:sqlite";
      * const db = Database.open(":memory:");
-     * db.exec(
+     * db.run(
      *   "CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, age INTEGER)"
      * );
      *
@@ -423,9 +423,9 @@ declare module "bun:sqlite" {
      * ```ts
      * test("supports serialize/deserialize", () => {
      *     const db = Database.open(":memory:");
-     *     db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)");
-     *     db.exec('INSERT INTO test (name) VALUES ("Hello")');
-     *     db.exec('INSERT INTO test (name) VALUES ("World")');
+     *     db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)");
+     *     db.run('INSERT INTO test (name) VALUES ("Hello")');
+     *     db.run('INSERT INTO test (name) VALUES ("World")');
      *
      *     const input = db.serialize();
      *     const db2 = new Database(input);
@@ -493,9 +493,9 @@ declare module "bun:sqlite" {
      * ```ts
      * test("supports serialize/deserialize", () => {
      *     const db = Database.open(":memory:");
-     *     db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)");
-     *     db.exec('INSERT INTO test (name) VALUES ("Hello")');
-     *     db.exec('INSERT INTO test (name) VALUES ("World")');
+     *     db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)");
+     *     db.run('INSERT INTO test (name) VALUES ("Hello")');
+     *     db.run('INSERT INTO test (name) VALUES ("World")');
      *
      *     const input = db.serialize();
      *     const db2 = Database.deserialize(input, { strict: true });
@@ -926,7 +926,7 @@ declare module "bun:sqlite" {
      * }
      *
      * const db = new Database(":memory:");
-     * db.exec("CREATE TABLE users (id INTEGER PRIMARY KEY, rawBirthdate TEXT)");
+     * db.run("CREATE TABLE users (id INTEGER PRIMARY KEY, rawBirthdate TEXT)");
      * db.run("INSERT INTO users (rawBirthdate) VALUES ('1995-12-19')");
      * const query = db.query("SELECT * FROM users");
      * query.as(User);
@@ -1109,7 +1109,7 @@ declare module "bun:sqlite" {
      * const db = Database.open("mydb.sqlite");
      * db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, 0);
      * // enable WAL
-     * db.exec("PRAGMA journal_mode = WAL");
+     * db.run("PRAGMA journal_mode = WAL");
      * // .. do some work
      * db.close();
      * ```

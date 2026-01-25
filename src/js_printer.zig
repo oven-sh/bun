@@ -4496,6 +4496,7 @@ fn NewPrinter(
                         // sqlite_embedded only relevant when bundling
                         .sqlite, .sqlite_embedded => p.printWhitespacer(ws(" with { type: \"sqlite\" }")),
                         .html => p.printWhitespacer(ws(" with { type: \"html\" }")),
+                        .md => p.printWhitespacer(ws(" with { type: \"md\" }")),
                     };
                     p.printSemicolonAfterStatement();
                 },

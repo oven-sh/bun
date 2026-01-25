@@ -63,6 +63,7 @@ pub const BunObject = struct {
     pub const SHA512 = toJSLazyPropertyCallback(Crypto.SHA512.getter);
     pub const SHA512_256 = toJSLazyPropertyCallback(Crypto.SHA512_256.getter);
     pub const JSONC = toJSLazyPropertyCallback(Bun.getJSONCObject);
+    pub const Markdown = toJSLazyPropertyCallback(Bun.getMarkdownObject);
     pub const TOML = toJSLazyPropertyCallback(Bun.getTOMLObject);
     pub const YAML = toJSLazyPropertyCallback(Bun.getYAMLObject);
     pub const Transpiler = toJSLazyPropertyCallback(Bun.getTranspilerConstructor);
@@ -130,6 +131,7 @@ pub const BunObject = struct {
         @export(&BunObject.SHA512, .{ .name = lazyPropertyCallbackName("SHA512") });
         @export(&BunObject.SHA512_256, .{ .name = lazyPropertyCallbackName("SHA512_256") });
         @export(&BunObject.JSONC, .{ .name = lazyPropertyCallbackName("JSONC") });
+        @export(&BunObject.Markdown, .{ .name = lazyPropertyCallbackName("Markdown") });
         @export(&BunObject.TOML, .{ .name = lazyPropertyCallbackName("TOML") });
         @export(&BunObject.YAML, .{ .name = lazyPropertyCallbackName("YAML") });
         @export(&BunObject.Glob, .{ .name = lazyPropertyCallbackName("Glob") });
@@ -1265,6 +1267,9 @@ pub fn getHashObject(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSVa
 pub fn getJSONCObject(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
     return JSONCObject.create(globalThis);
 }
+pub fn getMarkdownObject(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
+    return MarkdownObject.create(globalThis);
+}
 pub fn getTOMLObject(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
     return TOMLObject.create(globalThis);
 }
@@ -2067,6 +2072,7 @@ const api = bun.api;
 const FFIObject = bun.api.FFIObject;
 const HashObject = bun.api.HashObject;
 const JSONCObject = bun.api.JSONCObject;
+const MarkdownObject = bun.api.MarkdownObject;
 const TOMLObject = bun.api.TOMLObject;
 const UnsafeObject = bun.api.UnsafeObject;
 const YAMLObject = bun.api.YAMLObject;

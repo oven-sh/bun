@@ -112,7 +112,7 @@ pub fn transpileSourceCode(
     }
 
     switch (loader) {
-        .js, .jsx, .ts, .tsx, .json, .jsonc, .toml, .yaml, .text => {
+        .js, .jsx, .ts, .tsx, .json, .jsonc, .toml, .yaml, .text, .md => {
             // Ensure that if there was an ASTMemoryAllocator in use, it's not used anymore.
             var ast_scope = js_ast.ASTMemoryAllocator.Scope{};
             ast_scope.enter();

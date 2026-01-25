@@ -634,6 +634,7 @@ pub const Loader = enum(u8) {
     sqlite_embedded = 16,
     html = 17,
     yaml = 18,
+    md = 19,
 
     pub const Optional = enum(u8) {
         none = 254,
@@ -704,7 +705,7 @@ pub const Loader = enum(u8) {
             .css => bun.http.MimeType.css,
             .toml, .yaml, .json, .jsonc => bun.http.MimeType.json,
             .wasm => bun.http.MimeType.wasm,
-            .html => bun.http.MimeType.html,
+            .html, .md => bun.http.MimeType.html,
             else => {
                 for (paths) |path| {
                     var extname = std.fs.path.extension(path);
@@ -756,6 +757,7 @@ pub const Loader = enum(u8) {
         map.set(.text, "input.txt");
         map.set(.bunsh, "input.sh");
         map.set(.html, "input.html");
+        map.set(.md, "input.md");
         break :brk map;
     };
 
@@ -775,7 +777,7 @@ pub const Loader = enum(u8) {
         if (zig_str.len == 0) return null;
 
         return fromString(zig_str.slice()) orelse {
-            return global.throwInvalidArguments("invalid loader - must be js, jsx, tsx, ts, css, file, toml, yaml, wasm, bunsh, or json", .{});
+            return global.throwInvalidArguments("invalid loader - must be js, jsx, tsx, ts, css, file, toml, yaml, wasm, bunsh, json, or md", .{});
         };
     }
 
@@ -805,6 +807,8 @@ pub const Loader = enum(u8) {
         .{ "sqlite", .sqlite },
         .{ "sqlite_embedded", .sqlite_embedded },
         .{ "html", .html },
+        .{ "md", .md },
+        .{ "markdown", .md },
     });
 
     pub const api_names = bun.ComptimeStringMap(api.Loader, .{
@@ -831,6 +835,8 @@ pub const Loader = enum(u8) {
         .{ "sh", .file },
         .{ "sqlite", .sqlite },
         .{ "html", .html },
+        .{ "md", .md },
+        .{ "markdown", .md },
     });
 
     pub fn fromString(slice_: string) ?Loader {
@@ -868,6 +874,7 @@ pub const Loader = enum(u8) {
             .dataurl => .dataurl,
             .text => .text,
             .sqlite_embedded, .sqlite => .sqlite,
+            .md => .md,
         };
     }
 
@@ -893,6 +900,7 @@ pub const Loader = enum(u8) {
             .html => .html,
             .sqlite => .sqlite,
             .sqlite_embedded => .sqlite_embedded,
+            .md => .md,
             _ => .file,
         };
     }
@@ -932,7 +940,7 @@ pub const Loader = enum(u8) {
 
     pub fn sideEffects(this: Loader) bun.resolver.SideEffects {
         return switch (this) {
-            .text, .json, .jsonc, .toml, .yaml, .file => bun.resolver.SideEffects.no_side_effects__pure_data,
+            .text, .json, .jsonc, .toml, .yaml, .file, .md => bun.resolver.SideEffects.no_side_effects__pure_data,
             else => bun.resolver.SideEffects.has_side_effects,
         };
     }
@@ -1111,6 +1119,8 @@ const default_loaders_posix = .{
     .{ ".text", .text },
     .{ ".html", .html },
     .{ ".jsonc", .jsonc },
+    .{ ".md", .md },
+    .{ ".markdown", .md },
 };
 const default_loaders_win32 = default_loaders_posix ++ .{
     .{ ".sh", .bunsh },

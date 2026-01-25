@@ -368,6 +368,22 @@ fn getAST(
             ast.addUrlForCss(allocator, source, "text/plain", null);
             return ast;
         },
+        .md => {
+            const html = bun.md.renderToHtml(source.contents, allocator) catch {
+                log.addError(
+                    source,
+                    Logger.Loc.Empty,
+                    "Failed to render markdown to HTML",
+                ) catch |err| bun.handleOom(err);
+                return error.ParserError;
+            };
+            const root = Expr.init(E.String, E.String{
+                .data = html,
+            }, Logger.Loc{ .start = 0 });
+            var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, source, "")).?);
+            ast.addUrlForCss(allocator, source, "text/html", null);
+            return ast;
+        },
 
         .sqlite_embedded, .sqlite => {
             if (!transpiler.options.target.isBun()) {

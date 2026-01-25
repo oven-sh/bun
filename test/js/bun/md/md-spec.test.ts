@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
-import { tmpdir } from "os";
+import { readFileSync } from "fs";
 import { join } from "path";
 
 const SPEC_DIR = import.meta.dir;
@@ -69,34 +68,18 @@ function parseSpecFile(path: string): SpecExample[] {
   return examples;
 }
 
-const tempBase = tmpdir();
-let tempCounter = 0;
+const Markdown = (Bun as any).Markdown;
 
 function renderMarkdown(markdown: string, flags?: string[]): string {
+  const options: Record<string, boolean> = {};
   if (flags && flags.length > 0) {
-    // Use Bun.Markdown.renderToHTML with per-example options
-    const options: Record<string, boolean> = {};
     for (const flag of flags) {
       // Strip --f prefix, replace - with _
       const name = flag.slice(3).replace(/-/g, "_");
       options[name] = true;
     }
-    return (Bun as any).Markdown.renderToHTML(markdown + "\n", options);
   }
-
-  const dir = join(tempBase, `md-spec-${process.pid}-${tempCounter++}`);
-  mkdirSync(dir, { recursive: true });
-  const mdPath = join(dir, "input.md");
-  writeFileSync(mdPath, markdown + "\n");
-
-  try {
-    const mod = require(mdPath);
-    return mod.default || "";
-  } finally {
-    try {
-      rmSync(dir, { recursive: true, force: true });
-    } catch {}
-  }
+  return Markdown.renderToHTML(markdown + "\n", options);
 }
 
 // Normalize HTML for comparison, ported from md4c's normalize.py.
@@ -243,6 +226,7 @@ const specFiles = [
   { name: "GFM Strikethrough", file: "spec-strikethrough.txt" },
   { name: "GFM Tasklists", file: "spec-tasklists.txt" },
   { name: "Permissive Autolinks", file: "spec-permissive-autolinks.txt" },
+  { name: "GFM", file: "spec-gfm.txt" },
   { name: "Coverage", file: "coverage.txt" },
   { name: "Regressions", file: "regressions.txt" },
 ];

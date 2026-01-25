@@ -1,3 +1,17 @@
+const std = @import("std");
+const parser = @import("parser.zig");
+const types = @import("types.zig");
+const Flags = types.Flags;
+
+// Re-export types needed by external renderers (e.g. JS callback renderer).
+pub const Renderer = types.Renderer;
+pub const BlockType = types.BlockType;
+pub const SpanType = types.SpanType;
+pub const TextType = types.TextType;
+pub const SpanDetail = types.SpanDetail;
+pub const Align = types.Align;
+pub const entity = @import("entity.zig");
+
 pub const Options = struct {
     tables: bool = true,
     strikethrough: bool = true,
@@ -31,7 +45,7 @@ pub const Options = struct {
         .permissive_email_autolinks = true,
     };
 
-    fn toFlags(self: Options) Flags {
+    pub fn toFlags(self: Options) Flags {
         return .{
             .tables = self.tables,
             .strikethrough = self.strikethrough,
@@ -60,6 +74,7 @@ pub fn renderToHtmlWithOptions(text: []const u8, allocator: std.mem.Allocator, o
     return parser.renderToHtml(text, allocator, options.toFlags());
 }
 
-const parser = @import("./parser.zig");
-const std = @import("std");
-const Flags = @import("./types.zig").Flags;
+/// Parse and render using a custom renderer implementation.
+pub fn renderWithRenderer(text: []const u8, allocator: std.mem.Allocator, options: Options, renderer: Renderer) error{OutOfMemory}!void {
+    return parser.renderWithRenderer(text, allocator, options.toFlags(), renderer);
+}

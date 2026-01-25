@@ -110,6 +110,50 @@ pub const WikilinkDetail = struct {
     target: Attribute,
 };
 
+/// Renderer interface. The parser calls these methods to produce output.
+pub const Renderer = struct {
+    ptr: *anyopaque,
+    vtable: *const VTable,
+
+    pub const VTable = struct {
+        enterBlock: *const fn (ptr: *anyopaque, block_type: BlockType, data: u32, flags: u32) void,
+        leaveBlock: *const fn (ptr: *anyopaque, block_type: BlockType, data: u32) void,
+        enterSpan: *const fn (ptr: *anyopaque, span_type: SpanType, detail: SpanDetail) void,
+        leaveSpan: *const fn (ptr: *anyopaque, span_type: SpanType) void,
+        text: *const fn (ptr: *anyopaque, text_type: TextType, content: []const u8) void,
+    };
+
+    pub inline fn enterBlock(self: Renderer, block_type: BlockType, data: u32, flags: u32) void {
+        self.vtable.enterBlock(self.ptr, block_type, data, flags);
+    }
+    pub inline fn leaveBlock(self: Renderer, block_type: BlockType, data: u32) void {
+        self.vtable.leaveBlock(self.ptr, block_type, data);
+    }
+    pub inline fn enterSpan(self: Renderer, span_type: SpanType, detail: SpanDetail) void {
+        self.vtable.enterSpan(self.ptr, span_type, detail);
+    }
+    pub inline fn leaveSpan(self: Renderer, span_type: SpanType) void {
+        self.vtable.leaveSpan(self.ptr, span_type);
+    }
+    pub inline fn text(self: Renderer, text_type: TextType, content: []const u8) void {
+        self.vtable.text(self.ptr, text_type, content);
+    }
+};
+
+/// Detail data for span events (links, images, wikilinks).
+pub const SpanDetail = struct {
+    href: []const u8 = "",
+    title: []const u8 = "",
+    /// Standard autolink (angle-bracket): use writeUrlEscaped (no entity/escape processing)
+    autolink: bool = false,
+    /// Standard autolink is an email: prepend "mailto:" to href
+    autolink_email: bool = false,
+    /// Permissive autolink: use HTML-escaping for href (not URL-escaping)
+    permissive_autolink: bool = false,
+    /// Permissive www autolink: prepend "http://" to href
+    autolink_www: bool = false,
+};
+
 /// An attribute is a string that may contain embedded entities.
 /// The text is split into substrings, each with a type (normal or entity).
 pub const Attribute = struct {

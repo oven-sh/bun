@@ -215,8 +215,11 @@ pub fn VisitStmt(
                 switch (data.value) {
                     .expr => |expr| {
                         const was_anonymous_named_expr = expr.isAnonymousNamed();
-
+                        if (was_anonymous_named_expr and expr.data == .e_class and expr.data.e_class.should_lower_standard_decorators) {
+                            p.decorator_class_name = js_ast.ClauseItem.default_alias;
+                        }
                         data.value.expr = p.visitExpr(expr);
+                        p.decorator_class_name = null;
 
                         if (p.is_control_flow_dead) {
                             return;

@@ -70,6 +70,14 @@ pub fn CreateBinaryExpressionVisitor(
                 // const is_stmt_expr = @as(Expr.Tag, p.stmt_expr_value) == .e_binary and expr.data.e_binary == p.stmt_expr_value.e_binary;
                 const was_anonymous_named_expr = e_.right.isAnonymousNamed();
 
+                // Propagate name for anonymous decorated class expressions in assignments
+                if (e_.op == .bin_assign and was_anonymous_named_expr and
+                    e_.right.data == .e_class and e_.right.data.e_class.should_lower_standard_decorators and
+                    e_.left.data == .e_identifier)
+                {
+                    p.decorator_class_name = p.loadNameFromRef(e_.left.data.e_identifier.ref);
+                }
+
                 // Mark the control flow as dead if the branch is never taken
                 switch (e_.op) {
                     .bin_logical_or => {
@@ -112,6 +120,7 @@ pub fn CreateBinaryExpressionVisitor(
                         e_.right = p.visitExpr(e_.right);
                     },
                 }
+                p.decorator_class_name = null;
 
                 // Always put constants on the right for equality comparisons to help
                 // reduce the number of cases we have to check during pattern matching. We

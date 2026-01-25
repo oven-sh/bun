@@ -99,6 +99,7 @@ pub fn NewParser_(
         pub const parseStmtsUpTo = parse_zig.parseStmtsUpTo;
         pub const parseAsyncPrefixExpr = parse_zig.parseAsyncPrefixExpr;
         pub const parseTypeScriptDecorators = parse_zig.parseTypeScriptDecorators;
+        pub const parseStandardDecorator = parse_zig.parseStandardDecorator;
         pub const parseTypeScriptNamespaceStmt = parse_zig.parseTypeScriptNamespaceStmt;
         pub const parseTypeScriptImportEqualsStmt = parse_zig.parseTypeScriptImportEqualsStmt;
         pub const parseTypescriptEnumStmt = parse_zig.parseTypescriptEnumStmt;
@@ -485,6 +486,10 @@ pub fn NewParser_(
 
         /// Used for react refresh, it must be able to insert `const _s = $RefreshSig$();`
         nearest_stmt_list: ?*ListManaged(Stmt) = null,
+
+        /// Name from assignment context for anonymous decorated class expressions.
+        /// Set before visitExpr, consumed by lowerStandardDecoratorsImpl.
+        decorator_class_name: ?[]const u8 = null,
 
         const RecentlyVisitedTSNamespace = struct {
             expr: Expr.Data = Expr.empty.data,
@@ -4851,12 +4856,2045 @@ pub fn NewParser_(
             stmts.append(closure) catch unreachable;
         }
 
+        /// Info about a lowered private member.
+        const PrivateLoweredInfo = struct {
+            storage_ref: Ref, // WeakMap (fields) or WeakSet (methods/getters/setters) ref
+            method_fn_ref: ?Ref = null, // For k=1 (method): ref to decorated function variable
+            getter_fn_ref: ?Ref = null, // For k=2 (getter): ref to decorated getter function variable
+            setter_fn_ref: ?Ref = null, // For k=3 (setter): ref to decorated setter function variable
+            accessor_desc_ref: ?Ref = null, // For k=4 private accessor: ref to captured descriptor
+        };
+
+        /// Map type for tracking private members that need lowering to WeakMap/WeakSet.
+        /// Maps private identifier inner_index -> storage info.
+        const PrivateLoweredMap = std.AutoHashMapUnmanaged(u32, PrivateLoweredInfo);
+
+        /// Recursively walk an expression tree and rewrite private member accesses
+        /// that have been lowered to WeakMap/WeakSet storage.
+        fn rewritePrivateAccessesInExpr(p: *P, expr: *Expr, map: *const PrivateLoweredMap) void {
+            switch (expr.data) {
+                .e_index => |e| {
+                    // Recurse into target first
+                    p.rewritePrivateAccessesInExpr(&e.target, map);
+                    // Check if index is a private identifier that needs lowering
+                    if (e.index.data == .e_private_identifier) {
+                        if (map.get(e.index.data.e_private_identifier.ref.innerIndex())) |info| {
+                            if (info.accessor_desc_ref) |desc_ref| {
+                                // Private auto-accessor: obj.#prop → __privateGet(obj, _wm, _acc.get)
+                                const args = bun.handleOom(p.allocator.alloc(Expr, 3));
+                                args[0] = e.target;
+                                p.recordUsage(info.storage_ref);
+                                args[1] = p.newExpr(E.Identifier{ .ref = info.storage_ref }, expr.loc);
+                                p.recordUsage(desc_ref);
+                                args[2] = p.newExpr(E.Dot{
+                                    .target = p.newExpr(E.Identifier{ .ref = desc_ref }, expr.loc),
+                                    .name = "get",
+                                    .name_loc = expr.loc,
+                                }, expr.loc);
+                                expr.* = p.callRuntime(expr.loc, "__privateGet", args);
+                            } else if (info.getter_fn_ref) |fn_ref| {
+                                // Private getter: obj.#prop → __privateGet(obj, _ws, _getter_fn)
+                                const args = bun.handleOom(p.allocator.alloc(Expr, 3));
+                                args[0] = e.target;
+                                p.recordUsage(info.storage_ref);
+                                args[1] = p.newExpr(E.Identifier{ .ref = info.storage_ref }, expr.loc);
+                                p.recordUsage(fn_ref);
+                                args[2] = p.newExpr(E.Identifier{ .ref = fn_ref }, expr.loc);
+                                expr.* = p.callRuntime(expr.loc, "__privateGet", args);
+                            } else if (info.method_fn_ref) |fn_ref| {
+                                // Private method: obj.#method → __privateMethod(obj, _ws, _fn)
+                                const args = bun.handleOom(p.allocator.alloc(Expr, 3));
+                                args[0] = e.target;
+                                p.recordUsage(info.storage_ref);
+                                args[1] = p.newExpr(E.Identifier{ .ref = info.storage_ref }, expr.loc);
+                                p.recordUsage(fn_ref);
+                                args[2] = p.newExpr(E.Identifier{ .ref = fn_ref }, expr.loc);
+                                expr.* = p.callRuntime(expr.loc, "__privateMethod", args);
+                            } else {
+                                // Private field/accessor: obj.#name → __privateGet(obj, _wm)
+                                const args = bun.handleOom(p.allocator.alloc(Expr, 2));
+                                args[0] = e.target;
+                                p.recordUsage(info.storage_ref);
+                                args[1] = p.newExpr(E.Identifier{ .ref = info.storage_ref }, expr.loc);
+                                expr.* = p.callRuntime(expr.loc, "__privateGet", args);
+                            }
+                            return;
+                        }
+                    }
+                    p.rewritePrivateAccessesInExpr(&e.index, map);
+                },
+                .e_binary => |e| {
+                    // Check for assignment to private member: obj.#name = val
+                    if (e.op == .bin_assign and e.left.data == .e_index) {
+                        if (e.left.data.e_index.index.data == .e_private_identifier) {
+                            if (map.get(e.left.data.e_index.index.data.e_private_identifier.ref.innerIndex())) |info| {
+                                p.rewritePrivateAccessesInExpr(&e.left.data.e_index.target, map);
+                                p.rewritePrivateAccessesInExpr(&e.right, map);
+                                if (info.accessor_desc_ref) |desc_ref| {
+                                    // Private auto-accessor: obj.#prop = val → __privateSet(obj, _wm, val, _acc.set)
+                                    const args = bun.handleOom(p.allocator.alloc(Expr, 4));
+                                    args[0] = e.left.data.e_index.target;
+                                    p.recordUsage(info.storage_ref);
+                                    args[1] = p.newExpr(E.Identifier{ .ref = info.storage_ref }, expr.loc);
+                                    args[2] = e.right;
+                                    p.recordUsage(desc_ref);
+                                    args[3] = p.newExpr(E.Dot{
+                                        .target = p.newExpr(E.Identifier{ .ref = desc_ref }, expr.loc),
+                                        .name = "set",
+                                        .name_loc = expr.loc,
+                                    }, expr.loc);
+                                    expr.* = p.callRuntime(expr.loc, "__privateSet", args);
+                                } else if (info.setter_fn_ref) |fn_ref| {
+                                    // Private setter: obj.#prop = val → __privateSet(obj, _ws, val, _setter_fn)
+                                    const args = bun.handleOom(p.allocator.alloc(Expr, 4));
+                                    args[0] = e.left.data.e_index.target;
+                                    p.recordUsage(info.storage_ref);
+                                    args[1] = p.newExpr(E.Identifier{ .ref = info.storage_ref }, expr.loc);
+                                    args[2] = e.right;
+                                    p.recordUsage(fn_ref);
+                                    args[3] = p.newExpr(E.Identifier{ .ref = fn_ref }, expr.loc);
+                                    expr.* = p.callRuntime(expr.loc, "__privateSet", args);
+                                } else {
+                                    // Private field: obj.#name = val → __privateSet(obj, _wm, val)
+                                    const args = bun.handleOom(p.allocator.alloc(Expr, 3));
+                                    args[0] = e.left.data.e_index.target;
+                                    p.recordUsage(info.storage_ref);
+                                    args[1] = p.newExpr(E.Identifier{ .ref = info.storage_ref }, expr.loc);
+                                    args[2] = e.right;
+                                    expr.* = p.callRuntime(expr.loc, "__privateSet", args);
+                                }
+                                return;
+                            }
+                        }
+                    }
+                    // Check for #name in obj
+                    if (e.op == .bin_in and e.left.data == .e_private_identifier) {
+                        if (map.get(e.left.data.e_private_identifier.ref.innerIndex())) |info| {
+                            p.rewritePrivateAccessesInExpr(&e.right, map);
+                            const args = bun.handleOom(p.allocator.alloc(Expr, 2));
+                            p.recordUsage(info.storage_ref);
+                            args[0] = p.newExpr(E.Identifier{ .ref = info.storage_ref }, expr.loc);
+                            args[1] = e.right;
+                            expr.* = p.callRuntime(expr.loc, "__privateIn", args);
+                            return;
+                        }
+                    }
+                    p.rewritePrivateAccessesInExpr(&e.left, map);
+                    p.rewritePrivateAccessesInExpr(&e.right, map);
+                },
+                .e_unary => |e| {
+                    p.rewritePrivateAccessesInExpr(&e.value, map);
+                },
+                .e_call => |e| {
+                    // Check for obj.#method(args) → __privateMethod(obj, _ws, _fn).call(obj, args)
+                    // or obj.#field(args) → __privateGet(obj, _wm).call(obj, args)
+                    if (e.target.data == .e_index) {
+                        if (e.target.data.e_index.index.data == .e_private_identifier) {
+                            if (map.get(e.target.data.e_index.index.data.e_private_identifier.ref.innerIndex())) |info| {
+                                p.rewritePrivateAccessesInExpr(&e.target.data.e_index.target, map);
+                                const obj_expr = e.target.data.e_index.target;
+                                // Build the accessor call
+                                const private_access = brk: {
+                                    if (info.getter_fn_ref) |fn_ref| {
+                                        // Private getter called as function: __privateGet(obj, _ws, _getter_fn)
+                                        const get_args = bun.handleOom(p.allocator.alloc(Expr, 3));
+                                        get_args[0] = obj_expr;
+                                        p.recordUsage(info.storage_ref);
+                                        get_args[1] = p.newExpr(E.Identifier{ .ref = info.storage_ref }, expr.loc);
+                                        p.recordUsage(fn_ref);
+                                        get_args[2] = p.newExpr(E.Identifier{ .ref = fn_ref }, expr.loc);
+                                        break :brk p.callRuntime(expr.loc, "__privateGet", get_args);
+                                    } else if (info.method_fn_ref) |fn_ref| {
+                                        // Private method: __privateMethod(obj, _ws, _fn)
+                                        const method_args = bun.handleOom(p.allocator.alloc(Expr, 3));
+                                        method_args[0] = obj_expr;
+                                        p.recordUsage(info.storage_ref);
+                                        method_args[1] = p.newExpr(E.Identifier{ .ref = info.storage_ref }, expr.loc);
+                                        p.recordUsage(fn_ref);
+                                        method_args[2] = p.newExpr(E.Identifier{ .ref = fn_ref }, expr.loc);
+                                        break :brk p.callRuntime(expr.loc, "__privateMethod", method_args);
+                                    } else {
+                                        // Private field/accessor: __privateGet(obj, _wm)
+                                        const get_args = bun.handleOom(p.allocator.alloc(Expr, 2));
+                                        get_args[0] = obj_expr;
+                                        p.recordUsage(info.storage_ref);
+                                        get_args[1] = p.newExpr(E.Identifier{ .ref = info.storage_ref }, expr.loc);
+                                        break :brk p.callRuntime(expr.loc, "__privateGet", get_args);
+                                    }
+                                };
+                                // Build .call(obj, ...original_args)
+                                const call_target = p.newExpr(E.Dot{
+                                    .target = private_access,
+                                    .name = "call",
+                                    .name_loc = expr.loc,
+                                }, expr.loc);
+                                const orig_args = e.args.slice();
+                                const new_args = bun.handleOom(p.allocator.alloc(Expr, 1 + orig_args.len));
+                                new_args[0] = obj_expr; // 'this' for .call
+                                for (orig_args, 0..) |*arg, ai| {
+                                    p.rewritePrivateAccessesInExpr(arg, map);
+                                    new_args[1 + ai] = arg.*;
+                                }
+                                e.target = call_target;
+                                e.args = ExprNodeList.fromOwnedSlice(new_args);
+                                return;
+                            }
+                        }
+                    }
+                    p.rewritePrivateAccessesInExpr(&e.target, map);
+                    for (e.args.slice()) |*arg| {
+                        p.rewritePrivateAccessesInExpr(arg, map);
+                    }
+                },
+                .e_dot => |e| {
+                    p.rewritePrivateAccessesInExpr(&e.target, map);
+                },
+                .e_spread => |e| {
+                    p.rewritePrivateAccessesInExpr(&e.value, map);
+                },
+                .e_if => |e| {
+                    p.rewritePrivateAccessesInExpr(&e.test_, map);
+                    p.rewritePrivateAccessesInExpr(&e.yes, map);
+                    p.rewritePrivateAccessesInExpr(&e.no, map);
+                },
+                .e_await => |e| {
+                    p.rewritePrivateAccessesInExpr(&e.value, map);
+                },
+                .e_yield => |e| {
+                    if (e.value) |*v| p.rewritePrivateAccessesInExpr(v, map);
+                },
+                .e_new => |e| {
+                    p.rewritePrivateAccessesInExpr(&e.target, map);
+                    for (e.args.slice()) |*arg| {
+                        p.rewritePrivateAccessesInExpr(arg, map);
+                    }
+                },
+                .e_array => |e| {
+                    for (e.items.slice()) |*item| {
+                        p.rewritePrivateAccessesInExpr(item, map);
+                    }
+                },
+                .e_object => |e| {
+                    for (e.properties.slice()) |*prop| {
+                        if (prop.value) |*v| p.rewritePrivateAccessesInExpr(v, map);
+                        if (prop.initializer) |*ini| p.rewritePrivateAccessesInExpr(ini, map);
+                    }
+                },
+                .e_template => |e| {
+                    if (e.tag) |*t| p.rewritePrivateAccessesInExpr(t, map);
+                    for (e.parts) |*part| {
+                        p.rewritePrivateAccessesInExpr(&part.value, map);
+                    }
+                },
+                .e_function => |e| {
+                    p.rewritePrivateAccessesInStmts(e.func.body.stmts, map);
+                },
+                .e_arrow => |e| {
+                    p.rewritePrivateAccessesInStmts(e.body.stmts, map);
+                },
+                else => {},
+            }
+        }
+
+        /// Recursively walk a statement list and rewrite private member accesses.
+        fn rewritePrivateAccessesInStmts(p: *P, stmts: []Stmt, map: *const PrivateLoweredMap) void {
+            for (stmts) |*stmt_item| {
+                switch (stmt_item.data) {
+                    .s_expr => |data| p.rewritePrivateAccessesInExpr(&data.value, map),
+                    .s_return => |data| {
+                        if (data.value) |*v| p.rewritePrivateAccessesInExpr(v, map);
+                    },
+                    .s_throw => |data| p.rewritePrivateAccessesInExpr(&data.value, map),
+                    .s_local => |data| {
+                        for (data.decls.slice()) |*decl| {
+                            if (decl.value) |*v| p.rewritePrivateAccessesInExpr(v, map);
+                        }
+                    },
+                    .s_if => |data| {
+                        p.rewritePrivateAccessesInExpr(&data.test_, map);
+                        p.rewritePrivateAccessesInStmts((&data.yes)[0..1], map);
+                        if (data.no) |*no| p.rewritePrivateAccessesInStmts(no[0..1], map);
+                    },
+                    .s_block => |data| p.rewritePrivateAccessesInStmts(data.stmts, map),
+                    .s_for => |data| {
+                        if (data.init) |*for_init| p.rewritePrivateAccessesInStmts(for_init[0..1], map);
+                        if (data.test_) |*t| p.rewritePrivateAccessesInExpr(t, map);
+                        if (data.update) |*u| p.rewritePrivateAccessesInExpr(u, map);
+                        p.rewritePrivateAccessesInStmts((&data.body)[0..1], map);
+                    },
+                    .s_for_in => |data| {
+                        p.rewritePrivateAccessesInExpr(&data.value, map);
+                        p.rewritePrivateAccessesInStmts((&data.body)[0..1], map);
+                    },
+                    .s_for_of => |data| {
+                        p.rewritePrivateAccessesInExpr(&data.value, map);
+                        p.rewritePrivateAccessesInStmts((&data.body)[0..1], map);
+                    },
+                    .s_while => |data| {
+                        p.rewritePrivateAccessesInExpr(&data.test_, map);
+                        p.rewritePrivateAccessesInStmts((&data.body)[0..1], map);
+                    },
+                    .s_do_while => |data| {
+                        p.rewritePrivateAccessesInExpr(&data.test_, map);
+                        p.rewritePrivateAccessesInStmts((&data.body)[0..1], map);
+                    },
+                    .s_switch => |data| {
+                        p.rewritePrivateAccessesInExpr(&data.test_, map);
+                        for (data.cases) |*case| {
+                            if (case.value) |*v| p.rewritePrivateAccessesInExpr(v, map);
+                            p.rewritePrivateAccessesInStmts(case.body, map);
+                        }
+                    },
+                    .s_try => |data| {
+                        p.rewritePrivateAccessesInStmts(data.body, map);
+                        if (data.catch_) |c| p.rewritePrivateAccessesInStmts(c.body, map);
+                        if (data.finally) |f| p.rewritePrivateAccessesInStmts(f.stmts, map);
+                    },
+                    .s_label => |data| p.rewritePrivateAccessesInStmts((&data.stmt)[0..1], map),
+                    .s_with => |data| {
+                        p.rewritePrivateAccessesInExpr(&data.value, map);
+                        p.rewritePrivateAccessesInStmts((&data.body)[0..1], map);
+                    },
+                    else => {},
+                }
+            }
+        }
+
+        /// Lower standard (TC39) decorators on a class statement.
+        /// Emits: var _init = __decoratorStart(base); class Foo { ... } __decorateElement(...); ...
+        fn lowerStandardDecoratorsStmt(p: *P, stmt: Stmt) []Stmt {
+            return p.lowerStandardDecoratorsImpl(stmt, .stmt);
+        }
+
+        pub fn lowerStandardDecoratorsExpr(p: *P, class: *G.Class, loc: logger.Loc, name_from_context: ?[]const u8) Expr {
+            const result = p.lowerStandardDecoratorsImpl(Stmt.empty(), .{ .expr = .{ .class = class, .loc = loc, .name_from_context = name_from_context } });
+            if (result.len == 0) return p.newExpr(E.Missing{}, loc);
+            // For expressions, result[0] contains the comma expression
+            return result[0].data.s_expr.value;
+        }
+
+        const StdDecMode = union(enum) {
+            stmt,
+            expr: struct {
+                class: *G.Class,
+                loc: logger.Loc,
+                name_from_context: ?[]const u8 = null,
+            },
+        };
+
+        /// Core lowering logic for standard (TC39) decorators.
+        /// Handles both statement and expression forms.
+        fn lowerStandardDecoratorsImpl(p: *P, stmt: Stmt, mode: StdDecMode) []Stmt {
+            const is_expr = mode == .expr;
+            var class = switch (mode) {
+                .stmt => &stmt.data.s_class.class,
+                .expr => |e| e.class,
+            };
+            const loc = switch (mode) {
+                .stmt => stmt.loc,
+                .expr => |e| e.loc,
+            };
+            const name_from_context: ?[]const u8 = switch (mode) {
+                .expr => |e| e.name_from_context,
+                .stmt => null,
+            };
+
+            // For expressions, create a temp variable to capture the class
+            var class_name_ref: Ref = undefined;
+            var class_name_loc: logger.Loc = undefined;
+            var expr_class_ref: ?Ref = null;
+            var expr_class_is_anonymous = false;
+
+            // For expressions, collect refs that need var declarations
+            var expr_var_decls = ListManaged(G.Decl).init(p.allocator);
+
+            if (is_expr) {
+                // Create a temp ref for the class expression value
+                expr_class_ref = p.newSymbol(.other, "_class") catch unreachable;
+                bun.handleOom(p.current_scope.generated.append(p.allocator, expr_class_ref.?));
+                expr_var_decls.append(.{ .binding = p.b(B.Identifier{ .ref = expr_class_ref.? }, loc) }) catch unreachable;
+
+                // For class expressions, create or use the class name binding
+                if (class.class_name) |cn| {
+                    class_name_ref = cn.ref.?;
+                    class_name_loc = cn.loc;
+                    // Don't declare class_name_ref (e.g., Foo) as var here.
+                    // For class binding semantics, Foo must remain undeclared in the
+                    // outer scope so that class decorator closures over Foo get
+                    // ReferenceError. We'll swap class_name_ref to expr_class_ref
+                    // after pre-eval replacement for all suffix operations.
+                } else {
+                    // Anonymous class: use _class ref for both class value and name target
+                    class_name_ref = expr_class_ref.?;
+                    class_name_loc = loc;
+                    expr_class_is_anonymous = true;
+
+                    // If we have a name from assignment context (e.g., { Foo: @dec class {} }),
+                    // set the class name so the class expression preserves .name property
+                    if (name_from_context) |name| {
+                        const name_ref = p.newSymbol(.other, name) catch unreachable;
+                        bun.handleOom(p.current_scope.generated.append(p.allocator, name_ref));
+                        class.class_name = .{ .ref = name_ref, .loc = loc };
+                    }
+                }
+            } else {
+                class_name_ref = class.class_name.?.ref.?;
+                class_name_loc = class.class_name.?.loc;
+            }
+
+            // For proper class binding semantics (TC39 15.7.14): element decorators
+            // should capture an inner class name binding that survives mutation of the
+            // outer class name binding. In statement mode, we create an inner `let _Foo = Foo`
+            // after the suffix. In expression mode, element decorators use expr_class_ref.
+            // Element decorator pre-eval expressions will have class_name_ref replaced
+            // with inner_class_ref so their closures capture the inner binding.
+            var inner_class_ref: Ref = class_name_ref;
+            if (!is_expr) {
+                const class_name_str = p.symbols.items[class_name_ref.innerIndex()].original_name;
+                const inner_name = std.fmt.allocPrint(p.allocator, "_{s}", .{class_name_str}) catch unreachable;
+                inner_class_ref = p.newSymbol(.other, inner_name) catch unreachable;
+                bun.handleOom(p.current_scope.generated.append(p.allocator, inner_class_ref));
+            }
+
+            // Save and clear class-level decorators
+            const class_decorators = class.ts_decorators;
+            class.ts_decorators = .{};
+
+            // Create the _init symbol for the decorator context
+            const init_ref = p.newSymbol(.other, "_init") catch unreachable;
+            bun.handleOom(p.current_scope.generated.append(p.allocator, init_ref));
+            if (is_expr) {
+                expr_var_decls.append(.{ .binding = p.b(B.Identifier{ .ref = init_ref }, loc) }) catch unreachable;
+            }
+
+            // If class extends a base, extract the extends expression into a temp variable
+            // to avoid double evaluation (once for __decoratorStart, once for class extends).
+            // Input:  class Foo extends (expr) { ... }
+            // Output: var _base = expr; var _init = __decoratorStart(_base); class Foo extends _base { ... }
+            var base_ref: ?Ref = null;
+            if (class.extends != null) {
+                base_ref = p.newSymbol(.other, "_base") catch unreachable;
+                bun.handleOom(p.current_scope.generated.append(p.allocator, base_ref.?));
+                if (is_expr) {
+                    expr_var_decls.append(.{ .binding = p.b(B.Identifier{ .ref = base_ref.? }, loc) }) catch unreachable;
+                }
+            }
+
+            // === Pre-evaluate decorator expressions in source order ===
+            // TC39 spec requires all decorator expressions and computed property keys
+            // to be evaluated in source order before the class body. We extract them
+            // into temp variables in the prefix.
+            var dec_counter: usize = 0;
+
+            // Pre-evaluate class decorator expressions (evaluated before extends)
+            var class_dec_ref: ?Ref = null;
+            var class_dec_stmt: Stmt = Stmt.empty();
+            var class_dec_assign_expr: ?Expr = null;
+            if (class_decorators.len > 0) {
+                dec_counter += 1;
+                class_dec_ref = p.newSymbol(.other, "_dec") catch unreachable;
+                bun.handleOom(p.current_scope.generated.append(p.allocator, class_dec_ref.?));
+                const class_dec_array = p.newExpr(E.Array{ .items = class_decorators }, loc);
+                if (is_expr) {
+                    expr_var_decls.append(.{ .binding = p.b(B.Identifier{ .ref = class_dec_ref.? }, loc) }) catch unreachable;
+                    p.recordUsage(class_dec_ref.?);
+                    class_dec_assign_expr = Expr.assign(
+                        p.newExpr(E.Identifier{ .ref = class_dec_ref.? }, loc),
+                        class_dec_array,
+                    );
+                } else {
+                    const decls = bun.handleOom(p.allocator.alloc(G.Decl, 1));
+                    decls[0] = .{
+                        .binding = p.b(B.Identifier{ .ref = class_dec_ref.? }, loc),
+                        .value = class_dec_array,
+                    };
+                    class_dec_stmt = p.s(S.Local{ .decls = Decl.List.fromOwnedSlice(decls) }, loc);
+                }
+            }
+
+            // Pre-evaluate property decorator expressions and computed keys
+            // Maps property index (in class.properties) to its pre-evaluated decorator ref
+            var prop_dec_refs = std.AutoHashMapUnmanaged(usize, Ref){};
+            var computed_key_refs = std.AutoHashMapUnmanaged(usize, Ref){};
+            // Collect all pre-evaluation declarations in source order
+            var pre_eval_stmts = ListManaged(Stmt).init(p.allocator);
+            var computed_key_counter: usize = 0;
+            for (class.properties, 0..) |*prop, prop_idx| {
+                if (prop.kind == .class_static_block) continue;
+
+                // Pre-evaluate decorator expressions for this property
+                if (prop.ts_decorators.len > 0) {
+                    dec_counter += 1;
+                    const dec_name = if (dec_counter == 1)
+                        "_dec"
+                    else
+                        std.fmt.allocPrint(p.allocator, "_dec{d}", .{dec_counter}) catch unreachable;
+                    const dec_ref = p.newSymbol(.other, dec_name) catch unreachable;
+                    bun.handleOom(p.current_scope.generated.append(p.allocator, dec_ref));
+                    prop_dec_refs.put(p.allocator, prop_idx, dec_ref) catch unreachable;
+
+                    const dec_array = p.newExpr(E.Array{ .items = prop.ts_decorators }, loc);
+                    if (is_expr) {
+                        expr_var_decls.append(.{ .binding = p.b(B.Identifier{ .ref = dec_ref }, loc) }) catch unreachable;
+                    }
+                    const dec_decls = bun.handleOom(p.allocator.alloc(G.Decl, 1));
+                    dec_decls[0] = .{
+                        .binding = p.b(B.Identifier{ .ref = dec_ref }, loc),
+                        .value = dec_array,
+                    };
+                    pre_eval_stmts.append(p.s(S.Local{ .decls = Decl.List.fromOwnedSlice(dec_decls) }, loc)) catch unreachable;
+                }
+
+                // Pre-evaluate computed property keys (for decorated properties or properties
+                // in decorated classes where source-order evaluation matters)
+                if (prop.flags.contains(.is_computed) and prop.key != null and prop.ts_decorators.len > 0) {
+                    computed_key_counter += 1;
+                    const key_name = if (computed_key_counter == 1)
+                        "_computedKey"
+                    else
+                        std.fmt.allocPrint(p.allocator, "_computedKey{d}", .{computed_key_counter}) catch unreachable;
+                    const key_ref = p.newSymbol(.other, key_name) catch unreachable;
+                    bun.handleOom(p.current_scope.generated.append(p.allocator, key_ref));
+                    computed_key_refs.put(p.allocator, prop_idx, key_ref) catch unreachable;
+
+                    if (is_expr) {
+                        expr_var_decls.append(.{ .binding = p.b(B.Identifier{ .ref = key_ref }, loc) }) catch unreachable;
+                    }
+                    const key_decls = bun.handleOom(p.allocator.alloc(G.Decl, 1));
+                    key_decls[0] = .{
+                        .binding = p.b(B.Identifier{ .ref = key_ref }, loc),
+                        .value = prop.key.?,
+                    };
+                    pre_eval_stmts.append(p.s(S.Local{ .decls = Decl.List.fromOwnedSlice(key_decls) }, loc)) catch unreachable;
+
+                    // Replace the property key with the temp variable reference
+                    p.recordUsage(key_ref);
+                    prop.key = p.newExpr(E.Identifier{ .ref = key_ref }, prop.key.?.loc);
+                    // Computed keys referenced via temp var are no longer "computed" in the
+                    // traditional sense (they're simple identifier lookups), but we keep the
+                    // flag so downstream code still treats them as dynamic keys.
+                }
+            }
+
+            // Replace class name refs in element decorator pre-eval expressions.
+            // Element decorators should capture the inner class binding, not the outer one.
+            {
+                const replacement_ref = if (is_expr) (expr_class_ref orelse class_name_ref) else inner_class_ref;
+                if (!replacement_ref.eql(class_name_ref)) {
+                    for (pre_eval_stmts.items) |*pre_stmt| {
+                        switch (pre_stmt.data) {
+                            .s_local => |local| {
+                                for (local.decls.slice()) |*decl| {
+                                    if (decl.value) |*v| {
+                                        p.replaceRefInExpr(v, class_name_ref, replacement_ref);
+                                    }
+                                }
+                            },
+                            else => {},
+                        }
+                    }
+                }
+            }
+
+            // For named class expressions: swap class_name_ref to expr_class_ref so that
+            // all suffix operations (class decorator assignment, __runInitializers, metadata)
+            // use expr_class_ref (_class) instead of the original class name (Foo).
+            // This keeps Foo undeclared in the outer scope, so class decorator closures
+            // over Foo correctly throw ReferenceError.
+            var original_class_name_for_decorator: ?[]const u8 = null;
+            if (is_expr and !expr_class_is_anonymous and expr_class_ref != null) {
+                original_class_name_for_decorator = p.symbols.items[class_name_ref.inner_index].original_name;
+                class_name_ref = expr_class_ref.?;
+                class_name_loc = loc;
+            }
+
+            // Build: var _init = __decoratorStart(base) (for statements)
+            // or: _init = __decoratorStart(base) (for expressions, part of comma chain)
+            const init_start_expr: Expr = brk: {
+                const base_expr = if (base_ref) |br|
+                    p.newExpr(E.Identifier{ .ref = br }, loc)
+                else
+                    p.newExpr(E.Undefined{}, loc);
+
+                const start_args = bun.handleOom(p.allocator.alloc(Expr, 1));
+                start_args[0] = base_expr;
+                break :brk p.callRuntime(loc, "__decoratorStart", start_args);
+            };
+
+            // For statement mode: base decl goes before init decl
+            var base_decl_stmt: Stmt = Stmt.empty();
+            if (!is_expr) {
+                if (base_ref) |br| {
+                    const base_decls = bun.handleOom(p.allocator.alloc(G.Decl, 1));
+                    base_decls[0] = .{
+                        .binding = p.b(B.Identifier{ .ref = br }, loc),
+                        .value = class.extends,
+                    };
+                    base_decl_stmt = p.s(S.Local{ .decls = Decl.List.fromOwnedSlice(base_decls) }, loc);
+                }
+            }
+
+            // For expressions: store base assignment to be added to comma chain later
+            const base_assign_expr: ?Expr = if (is_expr and base_ref != null) brk: {
+                p.recordUsage(base_ref.?);
+                break :brk Expr.assign(
+                    p.newExpr(E.Identifier{ .ref = base_ref.? }, loc),
+                    class.extends.?,
+                );
+            } else null;
+
+            // Update class.extends to use the temp variable
+            if (base_ref) |br| {
+                p.recordUsage(br);
+                class.extends = p.newExpr(E.Identifier{ .ref = br }, loc);
+            }
+
+            const init_decl_stmt: Stmt = if (!is_expr) brk: {
+                const decls = bun.handleOom(p.allocator.alloc(G.Decl, 1));
+                decls[0] = .{
+                    .binding = p.b(B.Identifier{ .ref = init_ref }, loc),
+                    .value = init_start_expr,
+                };
+                break :brk p.s(S.Local{ .decls = Decl.List.fromOwnedSlice(decls) }, loc);
+            } else Stmt.empty();
+
+            // Collect suffix expressions to be emitted as statements after the class
+            var suffix_exprs = ListManaged(Expr).init(p.allocator);
+
+            // Collect statements to inject into the constructor (for instance fields/methods)
+            var constructor_inject_stmts = ListManaged(Stmt).init(p.allocator);
+
+            // New class properties (decorated fields removed from class body)
+            var new_properties = ListManaged(Property).init(p.allocator);
+
+            // Categorize decorated elements for __decorateElement ordering
+            // Per TC39 spec, the order is: static non-fields → instance non-fields → static fields → instance fields
+            // Accessors (k=4) go in the NON-FIELD group for __decorateElement ordering,
+            // but need field-like init/extra-init tracking.
+            var static_non_field_elements = ListManaged(Expr).init(p.allocator);
+            var instance_non_field_elements = ListManaged(Expr).init(p.allocator);
+            // Track private methods separately (they go in prefix, not suffix)
+            var has_static_private_methods = false;
+            var has_instance_private_methods = false;
+
+            // Separate field-only __decorateElement lists (k=5, NOT accessors)
+            var static_field_decorate = ListManaged(Expr).init(p.allocator);
+            var instance_field_decorate = ListManaged(Expr).init(p.allocator);
+
+            // Accessor counts for field_idx computation
+            var static_accessor_count: usize = 0;
+            var instance_accessor_count: usize = 0;
+
+            // Combined field/accessor init entries in source order (for init/extra-init)
+            const FieldInitEntry = struct {
+                prop: Property,
+                is_private: bool,
+                is_accessor: bool,
+            };
+            var static_init_entries = ListManaged(FieldInitEntry).init(p.allocator);
+            var instance_init_entries = ListManaged(FieldInitEntry).init(p.allocator);
+
+            // Track source order of static elements (blocks + field/accessor inits)
+            const StaticElementKind = enum { block, field_or_accessor };
+            const StaticElement = struct {
+                kind: StaticElementKind,
+                index: usize, // index into static_init_entries (for field_or_accessor) or extracted_static_blocks
+            };
+            var static_element_order = ListManaged(StaticElement).init(p.allocator);
+            var extracted_static_blocks = ListManaged(*G.ClassStaticBlock).init(p.allocator);
+
+            // For private members, track WeakMap/WeakSet refs and prefix statements
+            var prefix_stmts = ListManaged(Stmt).init(p.allocator);
+
+            // Map private identifier refs to their WeakMap/WeakSet storage refs
+            // Used to rewrite this.#x → __privateGet(this, _x) in the class body
+            var private_lowered_map = PrivateLoweredMap{};
+
+            // Counter for unique accessor storage names (used for computed keys)
+            var accessor_storage_counter: usize = 0;
+
+            // Track which private names already had __privateAdd emitted (for getter+setter pairs)
+            var emitted_private_adds = std.AutoHashMapUnmanaged(u32, void){};
+            // Static private __privateAdd calls need to be static blocks at the START of the class body
+            var static_private_add_blocks = ListManaged(Property).init(p.allocator);
+
+            // Pre-scan: if any private member is decorated OR if the class has both
+            // private members and decorated members, ALL private members need lowering.
+            // This is because:
+            // 1. Extracted decorator functions may reference other private members
+            // 2. Decorator expressions pre-evaluated outside the class may reference
+            //    private names (e.g., `@(dec(() => new Foo().#priv)) method() {}`)
+            var lower_all_private = false;
+            {
+                var has_any_private = false;
+                var has_any_decorated = false;
+                for (class.properties) |cprop| {
+                    if (cprop.kind == .class_static_block) continue;
+                    if (cprop.ts_decorators.len > 0) {
+                        has_any_decorated = true;
+                        if (cprop.key != null and cprop.key.?.data == .e_private_identifier) {
+                            // If a private member itself is decorated, always lower
+                            lower_all_private = true;
+                            break;
+                        }
+                    }
+                    if (cprop.key != null and cprop.key.?.data == .e_private_identifier) {
+                        has_any_private = true;
+                    }
+                }
+                // Also lower if the class has both private members and decorated members,
+                // since decorator expressions may reference private names
+                if (!lower_all_private and has_any_private and has_any_decorated) {
+                    lower_all_private = true;
+                }
+            }
+
+            // Process each property
+            for (class.properties, 0..) |*prop, prop_idx| {
+                if (prop.ts_decorators.len == 0) {
+                    // Non-decorated property
+                    if (lower_all_private and prop.key != null and prop.key.?.data == .e_private_identifier and prop.kind != .class_static_block) {
+                        // Lower this non-decorated private member to WeakMap/WeakSet
+                        // so that references from extracted decorated functions can be rewritten
+                        const nk_expr = prop.key.?;
+                        const npriv_orig = p.symbols.items[nk_expr.data.e_private_identifier.ref.inner_index].original_name;
+                        const npriv_inner = nk_expr.data.e_private_identifier.ref.innerIndex();
+
+                        if (prop.flags.contains(.is_method)) {
+                            // Non-decorated private method/getter/setter: lower to WeakSet
+                            const nk: u8 = switch (prop.kind) {
+                                .get => 2,
+                                .set => 3,
+                                else => 1,
+                            };
+                            const existing2 = private_lowered_map.get(npriv_inner);
+                            const ws_ref2 = if (existing2) |ex| ex.storage_ref else brk2: {
+                                const ws_nm = std.fmt.allocPrint(p.allocator, "_{s}", .{npriv_orig[1..]}) catch unreachable;
+                                const ref2 = p.newSymbol(.other, ws_nm) catch unreachable;
+                                bun.handleOom(p.current_scope.generated.append(p.allocator, ref2));
+                                break :brk2 ref2;
+                            };
+                            const fn_sfx = if (nk == 2) "_get" else if (nk == 3) "_set" else "_fn";
+                            const fn_nm = std.fmt.allocPrint(p.allocator, "_{s}{s}", .{ npriv_orig[1..], fn_sfx }) catch unreachable;
+                            const fn_ref2 = p.newSymbol(.other, fn_nm) catch unreachable;
+                            bun.handleOom(p.current_scope.generated.append(p.allocator, fn_ref2));
+
+                            var new_info2 = if (existing2) |ex| ex else PrivateLoweredInfo{ .storage_ref = ws_ref2 };
+                            if (nk == 1) {
+                                new_info2.method_fn_ref = fn_ref2;
+                            } else if (nk == 2) {
+                                new_info2.getter_fn_ref = fn_ref2;
+                            } else {
+                                new_info2.setter_fn_ref = fn_ref2;
+                            }
+                            private_lowered_map.put(p.allocator, npriv_inner, new_info2) catch unreachable;
+
+                            if (existing2 == null) {
+                                // Create WeakSet declaration
+                                const ws_gr = p.newSymbol(.unbound, "WeakSet") catch unreachable;
+                                bun.handleOom(p.current_scope.generated.append(p.allocator, ws_gr));
+                                const ws_new2 = p.newExpr(E.New{
+                                    .target = p.newExpr(E.Identifier{ .ref = ws_gr }, loc),
+                                    .args = ExprNodeList.empty,
+                                    .close_parens_loc = loc,
+                                }, loc);
+                                const ws_d = bun.handleOom(p.allocator.alloc(G.Decl, 2));
+                                ws_d[0] = .{ .binding = p.b(B.Identifier{ .ref = ws_ref2 }, loc), .value = ws_new2 };
+                                ws_d[1] = .{ .binding = p.b(B.Identifier{ .ref = fn_ref2 }, loc), .value = null };
+                                prefix_stmts.append(p.s(S.Local{ .decls = Decl.List.fromOwnedSlice(ws_d) }, loc)) catch unreachable;
+                            } else {
+                                const fn_d = bun.handleOom(p.allocator.alloc(G.Decl, 1));
+                                fn_d[0] = .{ .binding = p.b(B.Identifier{ .ref = fn_ref2 }, loc), .value = null };
+                                prefix_stmts.append(p.s(S.Local{ .decls = Decl.List.fromOwnedSlice(fn_d) }, loc)) catch unreachable;
+                            }
+
+                            // Assign the function: _fn = function() { ... }
+                            p.recordUsage(fn_ref2);
+                            const fn_assign = Expr.assign(
+                                p.newExpr(E.Identifier{ .ref = fn_ref2 }, loc),
+                                if (prop.value) |v| v else p.newExpr(E.Undefined{}, loc),
+                            );
+                            prefix_stmts.append(p.s(S.SExpr{ .value = fn_assign }, loc)) catch unreachable;
+
+                            // Add __privateAdd (once per name)
+                            if (!emitted_private_adds.contains(npriv_inner)) {
+                                emitted_private_adds.put(p.allocator, npriv_inner, {}) catch unreachable;
+                                if (!prop.flags.contains(.is_static)) {
+                                    const pa_args = bun.handleOom(p.allocator.alloc(Expr, 2));
+                                    pa_args[0] = p.newExpr(E.This{}, loc);
+                                    p.recordUsage(ws_ref2);
+                                    pa_args[1] = p.newExpr(E.Identifier{ .ref = ws_ref2 }, loc);
+                                    constructor_inject_stmts.append(
+                                        p.s(S.SExpr{ .value = p.callRuntime(loc, "__privateAdd", pa_args) }, loc),
+                                    ) catch unreachable;
+                                } else {
+                                    const sa_args = bun.handleOom(p.allocator.alloc(Expr, 2));
+                                    sa_args[0] = p.newExpr(E.This{}, loc);
+                                    p.recordUsage(ws_ref2);
+                                    sa_args[1] = p.newExpr(E.Identifier{ .ref = ws_ref2 }, loc);
+                                    const add_call2 = p.callRuntime(loc, "__privateAdd", sa_args);
+                                    const blk_stmts = bun.handleOom(p.allocator.alloc(Stmt, 1));
+                                    blk_stmts[0] = p.s(S.SExpr{ .value = add_call2 }, loc);
+                                    const sb = bun.handleOom(p.allocator.create(G.ClassStaticBlock));
+                                    sb.* = .{ .loc = loc, .stmts = bun.BabyList(Stmt).fromOwnedSlice(blk_stmts) };
+                                    static_private_add_blocks.append(.{
+                                        .kind = .class_static_block,
+                                        .class_static_block = sb,
+                                    }) catch unreachable;
+                                }
+                            }
+                            // Don't add to new_properties (removed from class body)
+                            continue;
+                        } else {
+                            // Non-decorated private field: lower to WeakMap
+                            const wm_nm = std.fmt.allocPrint(p.allocator, "_{s}", .{npriv_orig[1..]}) catch unreachable;
+                            const wm_ref2 = p.newSymbol(.other, wm_nm) catch unreachable;
+                            bun.handleOom(p.current_scope.generated.append(p.allocator, wm_ref2));
+                            private_lowered_map.put(p.allocator, npriv_inner, .{
+                                .storage_ref = wm_ref2,
+                            }) catch unreachable;
+
+                            const wm_new2 = p.newExpr(E.New{
+                                .target = p.newExpr(E.Identifier{ .ref = (p.findSymbol(loc, "WeakMap") catch unreachable).ref }, loc),
+                                .args = ExprNodeList.empty,
+                                .close_parens_loc = loc,
+                            }, loc);
+                            const wm_d = bun.handleOom(p.allocator.alloc(G.Decl, 1));
+                            wm_d[0] = .{ .binding = p.b(B.Identifier{ .ref = wm_ref2 }, loc), .value = wm_new2 };
+                            prefix_stmts.append(p.s(S.Local{ .decls = Decl.List.fromOwnedSlice(wm_d) }, loc)) catch unreachable;
+
+                            // Add __privateAdd(this/ClassName, _wm, initializer) to constructor/suffix
+                            const init_val2 = if (prop.initializer) |iv| iv else p.newExpr(E.Undefined{}, loc);
+                            if (!prop.flags.contains(.is_static)) {
+                                const pa_args2 = bun.handleOom(p.allocator.alloc(Expr, 3));
+                                pa_args2[0] = p.newExpr(E.This{}, loc);
+                                p.recordUsage(wm_ref2);
+                                pa_args2[1] = p.newExpr(E.Identifier{ .ref = wm_ref2 }, loc);
+                                pa_args2[2] = init_val2;
+                                constructor_inject_stmts.append(
+                                    p.s(S.SExpr{ .value = p.callRuntime(loc, "__privateAdd", pa_args2) }, loc),
+                                ) catch unreachable;
+                            } else {
+                                p.recordUsage(wm_ref2);
+                                const sa_args2 = bun.handleOom(p.allocator.alloc(Expr, 3));
+                                sa_args2[0] = p.newExpr(E.This{}, loc);
+                                sa_args2[1] = p.newExpr(E.Identifier{ .ref = wm_ref2 }, loc);
+                                sa_args2[2] = init_val2;
+                                const add_call3 = p.callRuntime(loc, "__privateAdd", sa_args2);
+                                const blk_stmts2 = bun.handleOom(p.allocator.alloc(Stmt, 1));
+                                blk_stmts2[0] = p.s(S.SExpr{ .value = add_call3 }, loc);
+                                const sb2 = bun.handleOom(p.allocator.create(G.ClassStaticBlock));
+                                sb2.* = .{ .loc = loc, .stmts = bun.BabyList(Stmt).fromOwnedSlice(blk_stmts2) };
+                                static_private_add_blocks.append(.{
+                                    .kind = .class_static_block,
+                                    .class_static_block = sb2,
+                                }) catch unreachable;
+                            }
+                            // Don't add to new_properties (removed from class body)
+                            continue;
+                        }
+                    }
+                    // Check for undecorated auto-accessor that needs lowering
+                    if (prop.kind == .auto_accessor) {
+                        // Lower undecorated auto-accessor to WeakMap storage + getter/setter
+                        const accessor_name = brk: {
+                            if (prop.key.?.data == .e_string) {
+                                break :brk std.fmt.allocPrint(p.allocator, "_{s}", .{prop.key.?.data.e_string.data}) catch unreachable;
+                            }
+                            const name = std.fmt.allocPrint(p.allocator, "_accessor_storage{d}", .{accessor_storage_counter}) catch unreachable;
+                            accessor_storage_counter += 1;
+                            break :brk name;
+                        };
+                        const wm_ref = p.newSymbol(.other, accessor_name) catch unreachable;
+                        bun.handleOom(p.current_scope.generated.append(p.allocator, wm_ref));
+
+                        const wm_new = p.newExpr(E.New{
+                            .target = p.newExpr(E.Identifier{ .ref = (p.findSymbol(loc, "WeakMap") catch unreachable).ref }, loc),
+                            .args = ExprNodeList.empty,
+                            .close_parens_loc = loc,
+                        }, loc);
+                        const wm_decls = bun.handleOom(p.allocator.alloc(G.Decl, 1));
+                        wm_decls[0] = .{
+                            .binding = p.b(B.Identifier{ .ref = wm_ref }, loc),
+                            .value = wm_new,
+                        };
+                        prefix_stmts.append(p.s(S.Local{ .decls = Decl.List.fromOwnedSlice(wm_decls) }, loc)) catch unreachable;
+
+                        // Create getter: get foo() { return __privateGet(this, _foo); }
+                        const get_args = bun.handleOom(p.allocator.alloc(Expr, 2));
+                        get_args[0] = p.newExpr(E.This{}, loc);
+                        p.recordUsage(wm_ref);
+                        get_args[1] = p.newExpr(E.Identifier{ .ref = wm_ref }, loc);
+                        const get_body_stmts = bun.handleOom(p.allocator.alloc(Stmt, 1));
+                        get_body_stmts[0] = p.s(S.Return{ .value = p.callRuntime(loc, "__privateGet", get_args) }, loc);
+                        const get_fn = bun.handleOom(p.allocator.create(G.Fn));
+                        get_fn.* = .{ .body = .{ .stmts = get_body_stmts, .loc = loc } };
+
+                        // Create setter: set foo(v) { __privateSet(this, _foo, v); }
+                        const setter_param_ref = p.newSymbol(.other, "v") catch unreachable;
+                        bun.handleOom(p.current_scope.generated.append(p.allocator, setter_param_ref));
+                        const set_args = bun.handleOom(p.allocator.alloc(Expr, 3));
+                        set_args[0] = p.newExpr(E.This{}, loc);
+                        p.recordUsage(wm_ref);
+                        set_args[1] = p.newExpr(E.Identifier{ .ref = wm_ref }, loc);
+                        p.recordUsage(setter_param_ref);
+                        set_args[2] = p.newExpr(E.Identifier{ .ref = setter_param_ref }, loc);
+                        const set_body_stmts = bun.handleOom(p.allocator.alloc(Stmt, 1));
+                        set_body_stmts[0] = p.s(S.SExpr{ .value = p.callRuntime(loc, "__privateSet", set_args) }, loc);
+                        const setter_fn_args = bun.handleOom(p.allocator.alloc(G.Arg, 1));
+                        setter_fn_args[0] = .{ .binding = p.b(B.Identifier{ .ref = setter_param_ref }, loc) };
+                        const set_fn = bun.handleOom(p.allocator.create(G.Fn));
+                        set_fn.* = .{ .args = setter_fn_args, .body = .{ .stmts = set_body_stmts, .loc = loc } };
+
+                        // Add getter and setter properties
+                        var getter_flags = prop.flags;
+                        getter_flags.insert(.is_method);
+                        new_properties.append(.{
+                            .key = prop.key,
+                            .value = p.newExpr(E.Function{ .func = get_fn.* }, loc),
+                            .kind = .get,
+                            .flags = getter_flags,
+                        }) catch unreachable;
+                        new_properties.append(.{
+                            .key = prop.key,
+                            .value = p.newExpr(E.Function{ .func = set_fn.* }, loc),
+                            .kind = .set,
+                            .flags = getter_flags,
+                        }) catch unreachable;
+
+                        // Add initialization: __privateAdd(this/ClassName, _wm, initValue)
+                        const init_val = if (prop.initializer) |iv| iv else p.newExpr(E.Undefined{}, loc);
+                        if (!prop.flags.contains(.is_static)) {
+                            const add_args = bun.handleOom(p.allocator.alloc(Expr, 3));
+                            add_args[0] = p.newExpr(E.This{}, loc);
+                            p.recordUsage(wm_ref);
+                            add_args[1] = p.newExpr(E.Identifier{ .ref = wm_ref }, loc);
+                            add_args[2] = init_val;
+                            constructor_inject_stmts.append(
+                                p.s(S.SExpr{ .value = p.callRuntime(loc, "__privateAdd", add_args) }, loc),
+                            ) catch unreachable;
+                        } else {
+                            p.recordUsage(wm_ref);
+                            p.recordUsage(class_name_ref);
+                            const sa_args = bun.handleOom(p.allocator.alloc(Expr, 3));
+                            sa_args[0] = p.newExpr(E.Identifier{ .ref = class_name_ref }, class_name_loc);
+                            sa_args[1] = p.newExpr(E.Identifier{ .ref = wm_ref }, loc);
+                            sa_args[2] = init_val;
+                            suffix_exprs.append(p.callRuntime(loc, "__privateAdd", sa_args)) catch unreachable;
+                        }
+                        continue;
+                    }
+
+                    // Extract static blocks from class body - they'll be emitted in the suffix
+                    // interleaved with static field/accessor inits in source order
+                    if (prop.kind == .class_static_block) {
+                        if (prop.class_static_block) |sb| {
+                            static_element_order.append(.{ .kind = .block, .index = extracted_static_blocks.items.len }) catch unreachable;
+                            extracted_static_blocks.append(sb) catch unreachable;
+                        }
+                        continue;
+                    }
+
+                    new_properties.append(prop.*) catch unreachable;
+                    continue;
+                }
+
+                // Compute kind flag
+                var flags: f64 = 0;
+                if (prop.flags.contains(.is_method)) {
+                    switch (prop.kind) {
+                        .get => flags = 2,
+                        .set => flags = 3,
+                        else => flags = 1, // method
+                    }
+                } else {
+                    switch (prop.kind) {
+                        .auto_accessor => flags = 4,
+                        else => flags = 5, // field
+                    }
+                }
+
+                // Add static flag
+                if (prop.flags.contains(.is_static)) {
+                    flags += 8;
+                }
+
+                const is_private = prop.key.?.data == .e_private_identifier;
+
+                // Add private flag
+                if (is_private) {
+                    flags += 16;
+                }
+
+                // Use pre-evaluated decorator array reference (for source-order evaluation)
+                const decorator_array = if (prop_dec_refs.get(prop_idx)) |dec_ref| brk: {
+                    p.recordUsage(dec_ref);
+                    break :brk p.newExpr(E.Identifier{ .ref = dec_ref }, loc);
+                } else p.newExpr(E.Array{
+                    .items = prop.ts_decorators,
+                }, loc);
+
+                const key_expr = prop.key.?;
+                const k = @as(u8, @intFromFloat(flags)) & 7;
+
+                // For private members, we need WeakMap/WeakSet storage and string name
+                var dec_arg_count: usize = 5;
+                var private_storage_ref: ?Ref = null;
+                var private_extra_ref: ?Ref = null;
+                var private_method_fn_ref: ?Ref = null;
+
+                if (is_private) {
+                    if (k >= 1 and k <= 3) {
+                        // Private method/getter/setter: use WeakSet for membership tracking
+                        const private_orig = p.symbols.items[key_expr.data.e_private_identifier.ref.inner_index].original_name;
+                        const priv_inner = key_expr.data.e_private_identifier.ref.innerIndex();
+
+                        // Check if a WeakSet already exists for this private name (getter+setter pair)
+                        const existing = private_lowered_map.get(priv_inner);
+                        const ws_ref = if (existing) |ex| ex.storage_ref else brk: {
+                            const ws_name = std.fmt.allocPrint(p.allocator, "_{s}", .{private_orig[1..]}) catch unreachable;
+                            const ref = p.newSymbol(.other, ws_name) catch unreachable;
+                            bun.handleOom(p.current_scope.generated.append(p.allocator, ref));
+                            break :brk ref;
+                        };
+                        private_storage_ref = ws_ref;
+
+                        // Create function variable with kind-specific suffix: _fn, _get, _set
+                        const fn_suffix = if (k == 2) "_get" else if (k == 3) "_set" else "_fn";
+                        const fn_name = std.fmt.allocPrint(p.allocator, "_{s}{s}", .{ private_orig[1..], fn_suffix }) catch unreachable;
+                        const fn_ref = p.newSymbol(.other, fn_name) catch unreachable;
+                        bun.handleOom(p.current_scope.generated.append(p.allocator, fn_ref));
+                        private_method_fn_ref = fn_ref;
+
+                        // Update or create map entry
+                        var new_info = if (existing) |ex| ex else PrivateLoweredInfo{ .storage_ref = ws_ref };
+                        if (k == 1) {
+                            new_info.method_fn_ref = fn_ref;
+                        } else if (k == 2) {
+                            new_info.getter_fn_ref = fn_ref;
+                        } else {
+                            new_info.setter_fn_ref = fn_ref;
+                        }
+                        private_lowered_map.put(p.allocator, priv_inner, new_info) catch unreachable;
+
+                        if (existing == null) {
+                            // First time seeing this private name: create WeakSet declaration
+                            const ws_global_ref = p.newSymbol(.unbound, "WeakSet") catch unreachable;
+                            bun.handleOom(p.current_scope.generated.append(p.allocator, ws_global_ref));
+                            const ws_new = p.newExpr(E.New{
+                                .target = p.newExpr(E.Identifier{ .ref = ws_global_ref }, loc),
+                                .args = ExprNodeList.empty,
+                                .close_parens_loc = loc,
+                            }, loc);
+                            const ws_decls = bun.handleOom(p.allocator.alloc(G.Decl, 2));
+                            ws_decls[0] = .{
+                                .binding = p.b(B.Identifier{ .ref = ws_ref }, loc),
+                                .value = ws_new,
+                            };
+                            ws_decls[1] = .{
+                                .binding = p.b(B.Identifier{ .ref = fn_ref }, loc),
+                                .value = null,
+                            };
+                            prefix_stmts.append(p.s(S.Local{ .decls = Decl.List.fromOwnedSlice(ws_decls) }, loc)) catch unreachable;
+                        } else {
+                            // Getter+setter pair: WeakSet already declared, just add fn variable
+                            const fn_decls = bun.handleOom(p.allocator.alloc(G.Decl, 1));
+                            fn_decls[0] = .{
+                                .binding = p.b(B.Identifier{ .ref = fn_ref }, loc),
+                                .value = null,
+                            };
+                            prefix_stmts.append(p.s(S.Local{ .decls = Decl.List.fromOwnedSlice(fn_decls) }, loc)) catch unreachable;
+                        }
+
+                        // For private methods, the function itself is passed as extra (6th arg)
+                        dec_arg_count = 6;
+                    } else if (k == 5) {
+                        // Private field: use WeakMap for storage
+                        const private_orig2 = p.symbols.items[key_expr.data.e_private_identifier.ref.inner_index].original_name;
+                        const wm_name = std.fmt.allocPrint(p.allocator, "_{s}", .{private_orig2[1..]}) catch unreachable;
+                        const wm_ref = p.newSymbol(.other, wm_name) catch unreachable;
+                        bun.handleOom(p.current_scope.generated.append(p.allocator, wm_ref));
+                        private_storage_ref = wm_ref;
+                        private_lowered_map.put(p.allocator, key_expr.data.e_private_identifier.ref.innerIndex(), .{
+                            .storage_ref = wm_ref,
+                        }) catch unreachable;
+
+                        // var _name = new WeakMap()
+                        const wm_new = p.newExpr(E.New{
+                            .target = p.newExpr(E.Identifier{ .ref = (p.findSymbol(loc, "WeakMap") catch unreachable).ref }, loc),
+                            .args = ExprNodeList.empty,
+                            .close_parens_loc = loc,
+                        }, loc);
+                        const wm_decls = bun.handleOom(p.allocator.alloc(G.Decl, 1));
+                        wm_decls[0] = .{
+                            .binding = p.b(B.Identifier{ .ref = wm_ref }, loc),
+                            .value = wm_new,
+                        };
+                        prefix_stmts.append(p.s(S.Local{ .decls = Decl.List.fromOwnedSlice(wm_decls) }, loc)) catch unreachable;
+                        dec_arg_count = 5;
+                    } else if (k == 4) {
+                        // Private auto-accessor: need WeakMap for the accessor storage
+                        const private_orig3 = p.symbols.items[key_expr.data.e_private_identifier.ref.inner_index].original_name;
+                        const wm_name3 = std.fmt.allocPrint(p.allocator, "_{s}", .{private_orig3[1..]}) catch unreachable;
+                        const wm_ref = p.newSymbol(.other, wm_name3) catch unreachable;
+                        bun.handleOom(p.current_scope.generated.append(p.allocator, wm_ref));
+                        private_storage_ref = wm_ref;
+
+                        // Create descriptor variable: var _foo_acc;
+                        const acc_name = std.fmt.allocPrint(p.allocator, "_{s}_acc", .{private_orig3[1..]}) catch unreachable;
+                        const acc_ref = p.newSymbol(.other, acc_name) catch unreachable;
+                        bun.handleOom(p.current_scope.generated.append(p.allocator, acc_ref));
+                        private_method_fn_ref = acc_ref; // Reuse to capture __decorateElement return
+
+                        private_lowered_map.put(p.allocator, key_expr.data.e_private_identifier.ref.innerIndex(), .{
+                            .storage_ref = wm_ref,
+                            .accessor_desc_ref = acc_ref,
+                        }) catch unreachable;
+
+                        const wm_new = p.newExpr(E.New{
+                            .target = p.newExpr(E.Identifier{ .ref = (p.findSymbol(loc, "WeakMap") catch unreachable).ref }, loc),
+                            .args = ExprNodeList.empty,
+                            .close_parens_loc = loc,
+                        }, loc);
+                        const wm_decls = bun.handleOom(p.allocator.alloc(G.Decl, 2));
+                        wm_decls[0] = .{
+                            .binding = p.b(B.Identifier{ .ref = wm_ref }, loc),
+                            .value = wm_new,
+                        };
+                        wm_decls[1] = .{
+                            .binding = p.b(B.Identifier{ .ref = acc_ref }, loc),
+                            .value = null,
+                        };
+                        prefix_stmts.append(p.s(S.Local{ .decls = Decl.List.fromOwnedSlice(wm_decls) }, loc)) catch unreachable;
+                        dec_arg_count = 6;
+                    }
+                } else if (k == 4) {
+                    // Public auto-accessor: need WeakMap for the accessor storage
+                    const accessor_name = brk: {
+                        if (key_expr.data == .e_string) {
+                            break :brk std.fmt.allocPrint(p.allocator, "_{s}", .{key_expr.data.e_string.data}) catch unreachable;
+                        }
+                        const name = std.fmt.allocPrint(p.allocator, "_accessor_storage{d}", .{accessor_storage_counter}) catch unreachable;
+                        accessor_storage_counter += 1;
+                        break :brk name;
+                    };
+                    const wm_ref = p.newSymbol(.other, accessor_name) catch unreachable;
+                    bun.handleOom(p.current_scope.generated.append(p.allocator, wm_ref));
+                    private_extra_ref = wm_ref;
+
+                    const wm_new = p.newExpr(E.New{
+                        .target = p.newExpr(E.Identifier{ .ref = (p.findSymbol(loc, "WeakMap") catch unreachable).ref }, loc),
+                        .args = ExprNodeList.empty,
+                        .close_parens_loc = loc,
+                    }, loc);
+                    const wm_decls = bun.handleOom(p.allocator.alloc(G.Decl, 1));
+                    wm_decls[0] = .{
+                        .binding = p.b(B.Identifier{ .ref = wm_ref }, loc),
+                        .value = wm_new,
+                    };
+                    prefix_stmts.append(p.s(S.Local{ .decls = Decl.List.fromOwnedSlice(wm_decls) }, loc)) catch unreachable;
+                    dec_arg_count = 6;
+                }
+
+                // For expression mode, use the _class temp ref (expr_class_ref) as the target,
+                // since class_name_ref (Foo) isn't assigned until the class decorator runs.
+                const target_ref = if (is_expr and expr_class_ref != null) expr_class_ref.? else class_name_ref;
+                p.recordUsage(target_ref);
+                const class_ident = p.newExpr(E.Identifier{ .ref = target_ref }, class_name_loc);
+
+                // Build __decorateElement(_init, flags, name, [decorators], target, extra?)
+                const dec_args = bun.handleOom(p.allocator.alloc(Expr, dec_arg_count));
+                dec_args[0] = p.newExpr(E.Identifier{ .ref = init_ref }, loc);
+                dec_args[1] = p.newExpr(E.Number{ .value = flags }, loc);
+                if (is_private) {
+                    // For private members, pass the name as a string "#name"
+                    const orig_name = p.symbols.items[key_expr.data.e_private_identifier.ref.inner_index].original_name;
+                    dec_args[2] = p.newExpr(E.String{ .data = orig_name }, loc);
+                } else {
+                    dec_args[2] = key_expr;
+                }
+                dec_args[3] = decorator_array;
+
+                if (is_private and private_storage_ref != null) {
+                    // For private members, target is the WeakMap/WeakSet ref
+                    p.recordUsage(private_storage_ref.?);
+                    dec_args[4] = p.newExpr(E.Identifier{ .ref = private_storage_ref.? }, loc);
+                    if (dec_arg_count == 6) {
+                        if (k >= 1 and k <= 3) {
+                            // Private method/getter/setter: pass the function as extra
+                            dec_args[5] = if (prop.value) |v| v else p.newExpr(E.Undefined{}, loc);
+                        } else if (k == 4) {
+                            // Private auto-accessor: extra = same WeakMap as target
+                            // (used for value storage via __privateGet/Set in the generated descriptor)
+                            p.recordUsage(private_storage_ref.?);
+                            dec_args[5] = p.newExpr(E.Identifier{ .ref = private_storage_ref.? }, loc);
+                        } else {
+                            dec_args[5] = p.newExpr(E.Undefined{}, loc);
+                        }
+                    }
+                } else {
+                    dec_args[4] = class_ident;
+                    if (dec_arg_count == 6) {
+                        if (private_extra_ref) |extra_ref| {
+                            // Public auto-accessor: pass WeakMap as extra
+                            p.recordUsage(extra_ref);
+                            dec_args[5] = p.newExpr(E.Identifier{ .ref = extra_ref }, loc);
+                        } else {
+                            dec_args[5] = p.newExpr(E.Undefined{}, loc);
+                        }
+                    }
+                }
+
+                const raw_element = p.callRuntime(loc, "__decorateElement", dec_args);
+
+                // For private methods, capture the return value: _fn = __decorateElement(...)
+                const element = if (private_method_fn_ref) |fn_ref| brk: {
+                    p.recordUsage(fn_ref);
+                    break :brk Expr.assign(p.newExpr(E.Identifier{ .ref = fn_ref }, loc), raw_element);
+                } else raw_element;
+
+                // Categorize the element
+                if (k >= 4) {
+                    // field (k=5) or accessor (k=4) - remove from class body
+                    var prop_copy = prop.*;
+                    prop_copy.ts_decorators = .{};
+                    if (is_private) {
+                        // Store the private storage ref in the property for later use
+                        if (private_storage_ref) |ps_ref| {
+                            prop_copy.key = p.newExpr(E.Identifier{ .ref = ps_ref }, loc);
+                        }
+                    }
+                    if (private_extra_ref) |pe_ref| {
+                        // For auto-accessors, we store the extra ref through the value field
+                        prop_copy.value = p.newExpr(E.Identifier{ .ref = pe_ref }, loc);
+                    }
+
+                    const is_accessor = (k == 4);
+                    const init_entry = FieldInitEntry{
+                        .prop = prop_copy,
+                        .is_private = is_private,
+                        .is_accessor = is_accessor,
+                    };
+
+                    if (prop.flags.contains(.is_static)) {
+                        // __decorateElement ordering: accessors go with non-fields, fields go separate
+                        if (is_accessor) {
+                            static_non_field_elements.append(element) catch unreachable;
+                            static_accessor_count += 1;
+                        } else {
+                            static_field_decorate.append(element) catch unreachable;
+                        }
+                        // Track init entry and source order for interleaving with static blocks
+                        static_element_order.append(.{
+                            .kind = .field_or_accessor,
+                            .index = static_init_entries.items.len,
+                        }) catch unreachable;
+                        static_init_entries.append(init_entry) catch unreachable;
+                    } else {
+                        if (is_accessor) {
+                            instance_non_field_elements.append(element) catch unreachable;
+                            instance_accessor_count += 1;
+                        } else {
+                            instance_field_decorate.append(element) catch unreachable;
+                        }
+                        instance_init_entries.append(init_entry) catch unreachable;
+                    }
+                } else if (is_private and private_storage_ref != null) {
+                    // Private method/getter/setter - remove from class body
+                    // The function is passed to __decorateElement as the 6th arg (extra)
+                    // and access goes through WeakSet via __privateGet/__privateMethod
+
+                    // Add __privateAdd (only once per unique private name, for getter+setter pairs)
+                    const priv_inner2 = key_expr.data.e_private_identifier.ref.innerIndex();
+                    if (!emitted_private_adds.contains(priv_inner2)) {
+                        emitted_private_adds.put(p.allocator, priv_inner2, {}) catch unreachable;
+                        if (!prop.flags.contains(.is_static)) {
+                            const private_add_args = bun.handleOom(p.allocator.alloc(Expr, 2));
+                            private_add_args[0] = p.newExpr(E.This{}, loc);
+                            p.recordUsage(private_storage_ref.?);
+                            private_add_args[1] = p.newExpr(E.Identifier{ .ref = private_storage_ref.? }, loc);
+                            constructor_inject_stmts.append(
+                                p.s(S.SExpr{ .value = p.callRuntime(loc, "__privateAdd", private_add_args) }, loc),
+                            ) catch unreachable;
+                        } else {
+                            // Static: inject as static block at beginning of class body
+                            // (must run before other static blocks that may access private members)
+                            const static_add_args = bun.handleOom(p.allocator.alloc(Expr, 2));
+                            static_add_args[0] = p.newExpr(E.This{}, loc); // 'this' = class in static block
+                            p.recordUsage(private_storage_ref.?);
+                            static_add_args[1] = p.newExpr(E.Identifier{ .ref = private_storage_ref.? }, loc);
+                            const add_call = p.callRuntime(loc, "__privateAdd", static_add_args);
+
+                            const block_stmts = bun.handleOom(p.allocator.alloc(Stmt, 1));
+                            block_stmts[0] = p.s(S.SExpr{ .value = add_call }, loc);
+                            const static_block = bun.handleOom(p.allocator.create(G.ClassStaticBlock));
+                            static_block.* = .{ .loc = loc, .stmts = bun.BabyList(Stmt).fromOwnedSlice(block_stmts) };
+                            static_private_add_blocks.append(.{
+                                .kind = .class_static_block,
+                                .class_static_block = static_block,
+                            }) catch unreachable;
+                        }
+                    }
+
+                    // Private method __decorateElement goes in suffix (same ordering as public)
+                    // Static blocks are extracted to suffix, so __decorateElement doesn't need to be in prefix
+                    if (prop.flags.contains(.is_static)) {
+                        static_non_field_elements.append(element) catch unreachable;
+                        has_static_private_methods = true;
+                    } else {
+                        instance_non_field_elements.append(element) catch unreachable;
+                        has_instance_private_methods = true;
+                    }
+                } else {
+                    // Public method, getter, setter - keep in class body (but clear decorators)
+                    var new_prop = prop.*;
+                    new_prop.ts_decorators = .{};
+                    new_properties.append(new_prop) catch unreachable;
+
+                    if (prop.flags.contains(.is_static)) {
+                        static_non_field_elements.append(element) catch unreachable;
+                    } else {
+                        instance_non_field_elements.append(element) catch unreachable;
+                    }
+                }
+            }
+
+            // === Rewrite private member accesses ===
+            // If any private members were lowered to WeakMap/WeakSet, rewrite all
+            // references in the remaining class body (methods, field initializers)
+            // AND in prefix statements and extracted static blocks
+            if (private_lowered_map.count() > 0) {
+                // Rewrite in remaining class body (method bodies etc.)
+                for (new_properties.items) |*nprop| {
+                    if (nprop.value) |*v| {
+                        p.rewritePrivateAccessesInExpr(v, &private_lowered_map);
+                    }
+                    if (nprop.class_static_block) |sb| {
+                        p.rewritePrivateAccessesInStmts(sb.stmts.slice(), &private_lowered_map);
+                    }
+                }
+                // Rewrite in field/accessor initializers
+                for (instance_init_entries.items) |*entry| {
+                    if (entry.prop.initializer) |*ini| {
+                        p.rewritePrivateAccessesInExpr(ini, &private_lowered_map);
+                    }
+                }
+                for (static_init_entries.items) |*entry| {
+                    if (entry.prop.initializer) |*ini| {
+                        p.rewritePrivateAccessesInExpr(ini, &private_lowered_map);
+                    }
+                }
+                // Rewrite in extracted static blocks
+                for (extracted_static_blocks.items) |sb| {
+                    p.rewritePrivateAccessesInStmts(sb.stmts.slice(), &private_lowered_map);
+                }
+                // Rewrite in __decorateElement calls (suffix non-field elements + field decorate lists).
+                // These contain function bodies that may reference other private names
+                // (e.g., a decorated getter `get #foo() { return this.#bar }` where #bar is non-decorated).
+                for (static_non_field_elements.items) |*elem| {
+                    p.rewritePrivateAccessesInExpr(elem, &private_lowered_map);
+                }
+                for (instance_non_field_elements.items) |*elem| {
+                    p.rewritePrivateAccessesInExpr(elem, &private_lowered_map);
+                }
+                for (static_field_decorate.items) |*elem| {
+                    p.rewritePrivateAccessesInExpr(elem, &private_lowered_map);
+                }
+                for (instance_field_decorate.items) |*elem| {
+                    p.rewritePrivateAccessesInExpr(elem, &private_lowered_map);
+                }
+                // Rewrite in pre-evaluated decorator expressions (may contain private name references
+                // like `@(dec(() => new Foo().#foo))` that need rewriting when pre-evaluated outside the class)
+                p.rewritePrivateAccessesInStmts(pre_eval_stmts.items, &private_lowered_map);
+                // Rewrite in prefix statements (extracted functions that may reference other private members)
+                p.rewritePrivateAccessesInStmts(prefix_stmts.items, &private_lowered_map);
+            }
+
+            // === Compute field_idx base indices ===
+            // The _init array slots are allocated dynamically by __decorateElement for k>3 (field/accessor).
+            // The call order determines slot assignment. Our suffix order is:
+            // 1. static non-fields (includes accessors) 2. instance non-fields (includes accessors)
+            // 3. static fields 4. instance fields
+            // So slots are allocated: static accessors, instance accessors, static fields, instance fields.
+            const static_field_count = static_field_decorate.items.len;
+            const total_accessor_count = static_accessor_count + instance_accessor_count;
+            const static_field_base_idx = total_accessor_count;
+            const instance_accessor_base_idx = static_accessor_count;
+            const instance_field_base_idx = total_accessor_count + static_field_count;
+
+            // === Emit suffix in correct order (per TC39 spec) ===
+
+            // 1. Static non-field __decorateElement calls (methods, getters, setters, accessors)
+            suffix_exprs.appendSlice(static_non_field_elements.items) catch unreachable;
+
+            // 2. Instance non-field __decorateElement calls (methods, getters, setters, accessors)
+            suffix_exprs.appendSlice(instance_non_field_elements.items) catch unreachable;
+
+            // 3. Static field __decorateElement calls (fields only, NOT accessors)
+            suffix_exprs.appendSlice(static_field_decorate.items) catch unreachable;
+
+            // 4. Instance field __decorateElement calls (fields only, NOT accessors)
+            suffix_exprs.appendSlice(instance_field_decorate.items) catch unreachable;
+
+            // 5. Class decorator: ClassName = __decorateElement(_init, 0, "ClassName", [decorators], target)
+            if (class_decorators.len > 0) {
+                p.recordUsage(class_name_ref);
+
+                const class_name_str: []const u8 = if (original_class_name_for_decorator) |name|
+                    name
+                else if (is_expr and expr_class_is_anonymous)
+                    (name_from_context orelse "")
+                else
+                    p.symbols.items[class_name_ref.inner_index].original_name;
+                const cls_dec_args = bun.handleOom(p.allocator.alloc(Expr, 5));
+                cls_dec_args[0] = p.newExpr(E.Identifier{ .ref = init_ref }, loc);
+                cls_dec_args[1] = p.newExpr(E.Number{ .value = 0 }, loc);
+                cls_dec_args[2] = p.newExpr(E.String{ .data = class_name_str }, loc);
+                cls_dec_args[3] = if (class_dec_ref) |cdr| brk: {
+                    p.recordUsage(cdr);
+                    break :brk p.newExpr(E.Identifier{ .ref = cdr }, loc);
+                } else p.newExpr(E.Array{ .items = class_decorators }, loc);
+                if (is_expr) {
+                    p.recordUsage(expr_class_ref.?);
+                    cls_dec_args[4] = p.newExpr(E.Identifier{ .ref = expr_class_ref.? }, loc);
+                } else {
+                    cls_dec_args[4] = p.newExpr(E.Identifier{ .ref = class_name_ref }, class_name_loc);
+                }
+
+                const decorate_class = p.callRuntime(loc, "__decorateElement", cls_dec_args);
+                p.recordUsage(class_name_ref);
+                suffix_exprs.append(
+                    Expr.assign(p.newExpr(E.Identifier{ .ref = class_name_ref }, class_name_loc), decorate_class),
+                ) catch unreachable;
+            }
+
+            // 6. Static method extra initializers: __runInitializers(_init, 3, ClassName)
+            if (static_non_field_elements.items.len > 0 or has_static_private_methods) {
+                p.recordUsage(init_ref);
+                p.recordUsage(class_name_ref);
+                const run_args = bun.handleOom(p.allocator.alloc(Expr, 3));
+                run_args[0] = p.newExpr(E.Identifier{ .ref = init_ref }, loc);
+                run_args[1] = p.newExpr(E.Number{ .value = 3 }, loc); // array[1], call mode (1<<1|1=3)
+                run_args[2] = p.newExpr(E.Identifier{ .ref = class_name_ref }, class_name_loc);
+                suffix_exprs.append(p.callRuntime(loc, "__runInitializers", run_args)) catch unreachable;
+            }
+
+            // 7. Static elements in source order: static blocks + static field/accessor init + extra-init
+            {
+                var s_accessor_idx: usize = 0;
+                var s_field_idx: usize = 0;
+                for (static_element_order.items) |elem| {
+                    switch (elem.kind) {
+                        .block => {
+                            // Emit extracted static block statements.
+                            // Replace `this` with the class name since we're moving
+                            // the static block outside the class body.
+                            const sb = extracted_static_blocks.items[elem.index];
+                            p.replaceThisInStmts(sb.stmts.slice(), class_name_ref, class_name_loc);
+                            for (sb.stmts.slice()) |sb_stmt| {
+                                if (sb_stmt.data == .s_expr) {
+                                    suffix_exprs.append(sb_stmt.data.s_expr.value) catch unreachable;
+                                }
+                            }
+                        },
+                        .field_or_accessor => {
+                            const entry = static_init_entries.items[elem.index];
+                            const field_idx: usize = if (entry.is_accessor) brk: {
+                                const idx = s_accessor_idx;
+                                s_accessor_idx += 1;
+                                break :brk idx; // static accessor base = 0
+                            } else brk: {
+                                const idx = static_field_base_idx + s_field_idx;
+                                s_field_idx += 1;
+                                break :brk idx;
+                            };
+
+                            const init_flags_val: f64 = @floatFromInt((4 + 2 * field_idx) << 1);
+                            const extra_flags_val: f64 = @floatFromInt(((5 + 2 * field_idx) << 1) | 1);
+
+                            // Init: ClassName.x = __runInitializers(_init, initFlags, ClassName, initValue?)
+                            p.recordUsage(init_ref);
+                            p.recordUsage(class_name_ref);
+                            const run_args_count: usize = if (entry.prop.initializer != null) 4 else 3;
+                            const run_args = bun.handleOom(p.allocator.alloc(Expr, run_args_count));
+                            run_args[0] = p.newExpr(E.Identifier{ .ref = init_ref }, loc);
+                            run_args[1] = p.newExpr(E.Number{ .value = init_flags_val }, loc);
+                            run_args[2] = p.newExpr(E.Identifier{ .ref = class_name_ref }, class_name_loc);
+                            if (entry.prop.initializer) |init_val| {
+                                run_args[3] = init_val;
+                            }
+                            const run_init_call = p.callRuntime(loc, "__runInitializers", run_args);
+
+                            if (entry.is_accessor or entry.is_private) {
+                                const wm_ref_expr = if (entry.is_accessor and !entry.is_private)
+                                    entry.prop.value.?
+                                else
+                                    entry.prop.key.?;
+                                p.recordUsage(class_name_ref);
+                                const add_args = bun.handleOom(p.allocator.alloc(Expr, 3));
+                                add_args[0] = p.newExpr(E.Identifier{ .ref = class_name_ref }, class_name_loc);
+                                add_args[1] = wm_ref_expr;
+                                add_args[2] = run_init_call;
+                                suffix_exprs.append(p.callRuntime(loc, "__privateAdd", add_args)) catch unreachable;
+                            } else {
+                                p.recordUsage(class_name_ref);
+                                const class_target = p.newExpr(E.Identifier{ .ref = class_name_ref }, class_name_loc);
+                                const assign_target = p.buildDecoratedMemberTarget(class_target, entry.prop);
+                                suffix_exprs.append(Expr.assign(assign_target, run_init_call)) catch unreachable;
+                            }
+
+                            // Extra initializer: __runInitializers(_init, extraFlags, ClassName)
+                            p.recordUsage(init_ref);
+                            p.recordUsage(class_name_ref);
+                            const extra_args = bun.handleOom(p.allocator.alloc(Expr, 3));
+                            extra_args[0] = p.newExpr(E.Identifier{ .ref = init_ref }, loc);
+                            extra_args[1] = p.newExpr(E.Number{ .value = extra_flags_val }, loc);
+                            extra_args[2] = p.newExpr(E.Identifier{ .ref = class_name_ref }, class_name_loc);
+                            suffix_exprs.append(p.callRuntime(loc, "__runInitializers", extra_args)) catch unreachable;
+                        },
+                    }
+                }
+            }
+
+            // 8. Class extra initializers (if class decorators exist)
+            if (class_decorators.len > 0) {
+                p.recordUsage(init_ref);
+                p.recordUsage(class_name_ref);
+                const run_args = bun.handleOom(p.allocator.alloc(Expr, 3));
+                run_args[0] = p.newExpr(E.Identifier{ .ref = init_ref }, loc);
+                run_args[1] = p.newExpr(E.Number{ .value = 1 }, loc); // array[0], call mode (0<<1|1=1)
+                run_args[2] = p.newExpr(E.Identifier{ .ref = class_name_ref }, class_name_loc);
+                suffix_exprs.append(p.callRuntime(loc, "__runInitializers", run_args)) catch unreachable;
+            }
+
+            // 9. __decoratorMetadata(_init, ClassName)
+            {
+                p.recordUsage(init_ref);
+                p.recordUsage(class_name_ref);
+                const metadata_args = bun.handleOom(p.allocator.alloc(Expr, 2));
+                metadata_args[0] = p.newExpr(E.Identifier{ .ref = init_ref }, loc);
+                metadata_args[1] = p.newExpr(E.Identifier{ .ref = class_name_ref }, class_name_loc);
+                suffix_exprs.append(p.callRuntime(loc, "__decoratorMetadata", metadata_args)) catch unreachable;
+            }
+
+            // === Build constructor injection ===
+
+            // Instance method extra initializers: __runInitializers(_init, 5, this)
+            if (instance_non_field_elements.items.len > 0 or has_instance_private_methods) {
+                p.recordUsage(init_ref);
+                const run_args = bun.handleOom(p.allocator.alloc(Expr, 3));
+                run_args[0] = p.newExpr(E.Identifier{ .ref = init_ref }, loc);
+                run_args[1] = p.newExpr(E.Number{ .value = 5 }, loc); // array[2], call mode (2<<1|1=5)
+                run_args[2] = p.newExpr(E.This{}, loc);
+                constructor_inject_stmts.append(
+                    p.s(S.SExpr{ .value = p.callRuntime(loc, "__runInitializers", run_args) }, loc),
+                ) catch unreachable;
+            }
+
+            // Instance field/accessor init + extra-init in source order
+            {
+                var i_accessor_idx: usize = 0;
+                var i_field_idx: usize = 0;
+                for (instance_init_entries.items) |entry| {
+                    const field_idx: usize = if (entry.is_accessor) brk: {
+                        const idx = instance_accessor_base_idx + i_accessor_idx;
+                        i_accessor_idx += 1;
+                        break :brk idx;
+                    } else brk: {
+                        const idx = instance_field_base_idx + i_field_idx;
+                        i_field_idx += 1;
+                        break :brk idx;
+                    };
+
+                    const init_flags_val: f64 = @floatFromInt((4 + 2 * field_idx) << 1);
+                    const extra_flags_val: f64 = @floatFromInt(((5 + 2 * field_idx) << 1) | 1);
+
+                    // this.x = __runInitializers(_init, initFlags, this, initValue?)
+                    p.recordUsage(init_ref);
+                    const run_args_count: usize = if (entry.prop.initializer != null) 4 else 3;
+                    const run_args = bun.handleOom(p.allocator.alloc(Expr, run_args_count));
+                    run_args[0] = p.newExpr(E.Identifier{ .ref = init_ref }, loc);
+                    run_args[1] = p.newExpr(E.Number{ .value = init_flags_val }, loc);
+                    run_args[2] = p.newExpr(E.This{}, loc);
+                    if (entry.prop.initializer) |init_val| {
+                        run_args[3] = init_val;
+                    }
+                    const run_init_call = p.callRuntime(loc, "__runInitializers", run_args);
+
+                    if (entry.is_accessor or entry.is_private) {
+                        const wm_ref_expr = if (entry.is_accessor and !entry.is_private)
+                            entry.prop.value.?
+                        else
+                            entry.prop.key.?;
+                        const add_args = bun.handleOom(p.allocator.alloc(Expr, 3));
+                        add_args[0] = p.newExpr(E.This{}, loc);
+                        add_args[1] = wm_ref_expr;
+                        add_args[2] = run_init_call;
+                        constructor_inject_stmts.append(
+                            p.s(S.SExpr{ .value = p.callRuntime(loc, "__privateAdd", add_args) }, loc),
+                        ) catch unreachable;
+                    } else {
+                        const this_expr = p.newExpr(E.This{}, loc);
+                        const assign_target = p.buildDecoratedMemberTarget(this_expr, entry.prop);
+                        constructor_inject_stmts.append(
+                            Stmt.assign(assign_target, run_init_call),
+                        ) catch unreachable;
+                    }
+
+                    // Extra initializer: __runInitializers(_init, extraFlags, this)
+                    p.recordUsage(init_ref);
+                    const extra_args = bun.handleOom(p.allocator.alloc(Expr, 3));
+                    extra_args[0] = p.newExpr(E.Identifier{ .ref = init_ref }, loc);
+                    extra_args[1] = p.newExpr(E.Number{ .value = extra_flags_val }, loc);
+                    extra_args[2] = p.newExpr(E.This{}, loc);
+                    constructor_inject_stmts.append(
+                        p.s(S.SExpr{ .value = p.callRuntime(loc, "__runInitializers", extra_args) }, loc),
+                    ) catch unreachable;
+                }
+            }
+
+            // === Inject into constructor if needed ===
+            if (constructor_inject_stmts.items.len > 0) {
+                // Find existing constructor in new_properties
+                var found_constructor = false;
+                for (new_properties.items) |*prop| {
+                    if (prop.flags.contains(.is_method) and prop.key != null and
+                        prop.key.?.data == .e_string and prop.key.?.data.e_string.eqlComptime("constructor"))
+                    {
+                        const func = prop.value.?.data.e_function;
+                        var body_stmts = ListManaged(Stmt).fromOwnedSlice(p.allocator, func.func.body.stmts);
+
+                        // Find super() call
+                        var super_index: ?usize = null;
+                        for (body_stmts.items, 0..) |item, index| {
+                            if (item.data != .s_expr) continue;
+                            if (item.data.s_expr.value.data != .e_call) continue;
+                            if (item.data.s_expr.value.data.e_call.target.data != .e_super) continue;
+                            super_index = index;
+                            break;
+                        }
+
+                        const insert_at = if (super_index) |j| j + 1 else 0;
+                        body_stmts.insertSlice(insert_at, constructor_inject_stmts.items) catch unreachable;
+                        func.func.body.stmts = body_stmts.items;
+                        found_constructor = true;
+                        break;
+                    }
+                }
+
+                if (!found_constructor) {
+                    var ctor_stmts = ListManaged(Stmt).init(p.allocator);
+                    if (class.extends != null) {
+                        const target = p.newExpr(E.Super{}, loc);
+                        const args_ref = p.newSymbol(.unbound, arguments_str) catch unreachable;
+                        bun.handleOom(p.current_scope.generated.append(p.allocator, args_ref));
+                        const spread = p.newExpr(E.Spread{ .value = p.newExpr(E.Identifier{ .ref = args_ref }, loc) }, loc);
+                        const call_args = bun.handleOom(ExprNodeList.initOne(p.allocator, spread));
+                        ctor_stmts.append(
+                            p.s(S.SExpr{ .value = p.newExpr(E.Call{ .target = target, .args = call_args }, loc) }, loc),
+                        ) catch unreachable;
+                    }
+                    ctor_stmts.appendSlice(constructor_inject_stmts.items) catch unreachable;
+
+                    new_properties.insert(0, G.Property{
+                        .flags = Flags.Property.init(.{ .is_method = true }),
+                        .key = p.newExpr(E.String{ .data = "constructor" }, loc),
+                        .value = p.newExpr(E.Function{ .func = G.Fn{
+                            .name = null,
+                            .open_parens_loc = logger.Loc.Empty,
+                            .args = &[_]Arg{},
+                            .body = .{ .loc = loc, .stmts = ctor_stmts.items },
+                            .flags = Flags.Function.init(.{}),
+                        } }, loc),
+                    }) catch unreachable;
+                }
+            }
+
+            // Insert static private __privateAdd blocks at the beginning of class body
+            if (static_private_add_blocks.items.len > 0) {
+                new_properties.insertSlice(0, static_private_add_blocks.items) catch unreachable;
+            }
+
+            // Update class properties (decorated fields/static blocks removed)
+            class.properties = new_properties.items;
+
+            // Clear class-level decorator flags
+            class.has_decorators = false;
+            class.should_lower_standard_decorators = false;
+
+            // === Build result ===
+            if (is_expr) {
+                // For expressions, build a comma expression:
+                // (_dec = [class_decs], _base = extends, pre_evals..., prefix..., _init = __decoratorStart(_base), _class = class { }, suffix..., result)
+                var comma_parts = ListManaged(Expr).init(p.allocator);
+
+                // 1. Class decorator pre-evaluation (before extends)
+                if (class_dec_assign_expr) |cda| {
+                    comma_parts.append(cda) catch unreachable;
+                }
+
+                // 2. _base = extends_expr (if extends exists)
+                if (base_assign_expr) |base_assign| {
+                    comma_parts.append(base_assign) catch unreachable;
+                }
+
+                // Helper to convert S.Local decls to comma assignments
+                const appendDeclsAsAssigns = struct {
+                    fn f(parts: *ListManaged(Expr), var_decls: *ListManaged(G.Decl), stmts_list: []const Stmt, parser: *P, l: logger.Loc) void {
+                        for (stmts_list) |pstmt| {
+                            if (pstmt.data == .s_local) {
+                                for (pstmt.data.s_local.decls.slice()) |decl| {
+                                    const ref = decl.binding.data.b_identifier.ref;
+                                    var_decls.append(.{ .binding = parser.b(B.Identifier{ .ref = ref }, l) }) catch unreachable;
+                                    if (decl.value) |val| {
+                                        parser.recordUsage(ref);
+                                        parts.append(
+                                            Expr.assign(parser.newExpr(E.Identifier{ .ref = ref }, l), val),
+                                        ) catch unreachable;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }.f;
+
+                // 3. Property decorator + computed key pre-evaluations (source order)
+                appendDeclsAsAssigns(&comma_parts, &expr_var_decls, pre_eval_stmts.items, p, loc);
+
+                // 4. Prefix statements as comma expressions (WeakMap/WeakSet declarations)
+                appendDeclsAsAssigns(&comma_parts, &expr_var_decls, prefix_stmts.items, p, loc);
+
+                // 5. _init = __decoratorStart(_base)
+                p.recordUsage(init_ref);
+                comma_parts.append(
+                    Expr.assign(p.newExpr(E.Identifier{ .ref = init_ref }, loc), init_start_expr),
+                ) catch unreachable;
+
+                // _class = class { ... }
+                p.recordUsage(expr_class_ref.?);
+                comma_parts.append(
+                    Expr.assign(
+                        p.newExpr(E.Identifier{ .ref = expr_class_ref.? }, loc),
+                        p.newExpr(class.*, loc),
+                    ),
+                ) catch unreachable;
+
+                // suffix expressions
+                comma_parts.appendSlice(suffix_exprs.items) catch unreachable;
+
+                // Final value: class_name_ref if decorated (has the decorated class), else _class
+                const final_ref = if (class_decorators.len > 0) class_name_ref else expr_class_ref.?;
+                p.recordUsage(final_ref);
+                comma_parts.append(p.newExpr(E.Identifier{ .ref = final_ref }, loc)) catch unreachable;
+
+                // Build comma expression chain
+                var result = comma_parts.items[0];
+                for (comma_parts.items[1..]) |part| {
+                    result = p.newExpr(E.Binary{
+                        .op = .bin_comma,
+                        .left = result,
+                        .right = part,
+                    }, loc);
+                }
+
+                // Emit var declarations for temp variables via nearest_stmt_list
+                if (expr_var_decls.items.len > 0) {
+                    const var_decl_stmt = p.s(S.Local{
+                        .decls = Decl.List.fromOwnedSlice(expr_var_decls.items),
+                    }, loc);
+                    if (p.nearest_stmt_list) |stmt_list| {
+                        stmt_list.append(var_decl_stmt) catch unreachable;
+                    }
+                }
+
+                // Return as a single statement wrapping the comma expression
+                var stmts = ListManaged(Stmt).initCapacity(p.allocator, 1) catch unreachable;
+                stmts.appendAssumeCapacity(p.s(S.SExpr{ .value = result }, loc));
+                return stmts.items;
+            }
+
+            // Statement mode: [var _dec = [...], var _base = ..., pre_eval_stmts..., prefix_stmts..., var _init = ..., class Foo { ... }, suffix...]
+            // Order ensures decorator expressions and computed keys are evaluated in source order before the class.
+            var stmts = ListManaged(Stmt).initCapacity(p.allocator, prefix_stmts.items.len + pre_eval_stmts.items.len + 5 + suffix_exprs.items.len) catch unreachable;
+            // 1. Class decorator pre-evaluation (before extends)
+            if (class_dec_stmt.data != .s_empty) {
+                stmts.append(class_dec_stmt) catch unreachable;
+            }
+            // 2. Extends expression extraction
+            if (base_decl_stmt.data != .s_empty) {
+                stmts.append(base_decl_stmt) catch unreachable;
+            }
+            // 3. Property decorator + computed key pre-evaluations (source order)
+            stmts.appendSlice(pre_eval_stmts.items) catch unreachable;
+            // 4. WeakMap/WeakSet declarations
+            stmts.appendSlice(prefix_stmts.items) catch unreachable;
+            // 5. __decoratorStart
+            stmts.appendAssumeCapacity(init_decl_stmt);
+            // 6. Class declaration
+            stmts.appendAssumeCapacity(stmt);
+            for (suffix_exprs.items) |expr| {
+                stmts.append(p.s(S.SExpr{ .value = expr }, expr.loc)) catch unreachable;
+            }
+            // 7. Inner class binding: let _Foo = Foo
+            // Element decorator closures capture inner_class_ref (which is set via `let`
+            // with TDZ), so mutations to the outer class_name_ref don't affect them.
+            if (!inner_class_ref.eql(class_name_ref)) {
+                p.recordUsage(class_name_ref);
+                const inner_decls = bun.handleOom(p.allocator.alloc(G.Decl, 1));
+                inner_decls[0] = .{
+                    .binding = p.b(B.Identifier{ .ref = inner_class_ref }, loc),
+                    .value = p.newExpr(E.Identifier{ .ref = class_name_ref }, class_name_loc),
+                };
+                stmts.append(p.s(S.Local{
+                    .kind = .k_let,
+                    .decls = Decl.List.fromOwnedSlice(inner_decls),
+                }, loc)) catch unreachable;
+            }
+
+            return stmts.items;
+        }
+
+        /// Build a property access expression for decorated member targets.
+        /// For string keys: target.name
+        /// For computed/number keys: target[key]
+        fn buildDecoratedMemberTarget(p: *P, target_expr: Expr, prop: Property) Expr {
+            const key_expr = prop.key.?;
+            if (prop.flags.contains(.is_computed) or key_expr.data == .e_number) {
+                return p.newExpr(E.Index{
+                    .target = target_expr,
+                    .index = key_expr,
+                }, key_expr.loc);
+            } else if (key_expr.data == .e_string) {
+                return p.newExpr(E.Dot{
+                    .target = target_expr,
+                    .name = key_expr.data.e_string.data,
+                    .name_loc = key_expr.loc,
+                }, key_expr.loc);
+            } else {
+                // For private or other key types, use index
+                return p.newExpr(E.Index{
+                    .target = target_expr,
+                    .index = key_expr,
+                }, key_expr.loc);
+            }
+        }
+
+        /// Replace all E.This nodes in an expression tree with a given replacement expression.
+        /// Does NOT descend into regular functions or classes (they have their own `this`),
+        /// but DOES descend into arrow functions (they inherit `this`).
+        fn replaceThisInExpr(p: *P, expr: *Expr, replacement_ref: Ref, replacement_loc: logger.Loc) void {
+            switch (expr.data) {
+                .e_this => {
+                    p.recordUsage(replacement_ref);
+                    expr.* = p.newExpr(E.Identifier{ .ref = replacement_ref }, replacement_loc);
+                },
+                .e_binary => |bin| {
+                    p.replaceThisInExpr(&bin.left, replacement_ref, replacement_loc);
+                    p.replaceThisInExpr(&bin.right, replacement_ref, replacement_loc);
+                },
+                .e_call => |call| {
+                    p.replaceThisInExpr(&call.target, replacement_ref, replacement_loc);
+                    for (call.args.slice()) |*arg| {
+                        p.replaceThisInExpr(arg, replacement_ref, replacement_loc);
+                    }
+                },
+                .e_new => |new_expr| {
+                    p.replaceThisInExpr(&new_expr.target, replacement_ref, replacement_loc);
+                    for (new_expr.args.slice()) |*arg| {
+                        p.replaceThisInExpr(arg, replacement_ref, replacement_loc);
+                    }
+                },
+                .e_index => |idx| {
+                    p.replaceThisInExpr(&idx.target, replacement_ref, replacement_loc);
+                    p.replaceThisInExpr(&idx.index, replacement_ref, replacement_loc);
+                },
+                .e_dot => |d| {
+                    p.replaceThisInExpr(&d.target, replacement_ref, replacement_loc);
+                },
+                .e_spread => |spr| {
+                    p.replaceThisInExpr(&spr.value, replacement_ref, replacement_loc);
+                },
+                .e_unary => |u| {
+                    p.replaceThisInExpr(&u.value, replacement_ref, replacement_loc);
+                },
+                .e_if => |i| {
+                    p.replaceThisInExpr(&i.yes, replacement_ref, replacement_loc);
+                    p.replaceThisInExpr(&i.no, replacement_ref, replacement_loc);
+                    p.replaceThisInExpr(&i.test_, replacement_ref, replacement_loc);
+                },
+                .e_array => |a| {
+                    for (a.items.slice()) |*item| {
+                        p.replaceThisInExpr(item, replacement_ref, replacement_loc);
+                    }
+                },
+                .e_object => |o| {
+                    for (o.properties.slice()) |*property| {
+                        if (property.value) |*v| {
+                            p.replaceThisInExpr(v, replacement_ref, replacement_loc);
+                        }
+                        if (property.initializer) |*prop_init| {
+                            p.replaceThisInExpr(prop_init, replacement_ref, replacement_loc);
+                        }
+                    }
+                },
+                .e_template => |t| {
+                    if (t.tag) |*tag| {
+                        p.replaceThisInExpr(tag, replacement_ref, replacement_loc);
+                    }
+                },
+                .e_arrow => |arrow| {
+                    // Arrow functions inherit `this`, so descend into their bodies
+                    p.replaceThisInStmts(arrow.body.stmts, replacement_ref, replacement_loc);
+                },
+                // Don't descend into regular functions or classes (they have their own `this`)
+                .e_function, .e_class => {},
+                // Leaf nodes - nothing to replace
+                else => {},
+            }
+        }
+
+        /// Replace all E.Identifier nodes matching old_ref with new_ref in an expression tree.
+        /// Unlike replaceThisInExpr, this walks into all nested scopes since ref identity
+        /// is unique and won't clash with same-named bindings in nested scopes.
+        fn replaceRefInExpr(p: *P, expr: *Expr, old_ref: Ref, new_ref: Ref) void {
+            switch (expr.data) {
+                .e_identifier => |id| {
+                    if (id.ref.eql(old_ref)) {
+                        p.recordUsage(new_ref);
+                        expr.data = .{ .e_identifier = .{ .ref = new_ref } };
+                    }
+                },
+                .e_binary => |bin| {
+                    p.replaceRefInExpr(&bin.left, old_ref, new_ref);
+                    p.replaceRefInExpr(&bin.right, old_ref, new_ref);
+                },
+                .e_call => |call| {
+                    p.replaceRefInExpr(&call.target, old_ref, new_ref);
+                    for (call.args.slice()) |*arg| {
+                        p.replaceRefInExpr(arg, old_ref, new_ref);
+                    }
+                },
+                .e_new => |new_expr| {
+                    p.replaceRefInExpr(&new_expr.target, old_ref, new_ref);
+                    for (new_expr.args.slice()) |*arg| {
+                        p.replaceRefInExpr(arg, old_ref, new_ref);
+                    }
+                },
+                .e_index => |idx| {
+                    p.replaceRefInExpr(&idx.target, old_ref, new_ref);
+                    p.replaceRefInExpr(&idx.index, old_ref, new_ref);
+                },
+                .e_dot => |d| {
+                    p.replaceRefInExpr(&d.target, old_ref, new_ref);
+                },
+                .e_spread => |spr| {
+                    p.replaceRefInExpr(&spr.value, old_ref, new_ref);
+                },
+                .e_unary => |u| {
+                    p.replaceRefInExpr(&u.value, old_ref, new_ref);
+                },
+                .e_if => |i| {
+                    p.replaceRefInExpr(&i.yes, old_ref, new_ref);
+                    p.replaceRefInExpr(&i.no, old_ref, new_ref);
+                    p.replaceRefInExpr(&i.test_, old_ref, new_ref);
+                },
+                .e_array => |a| {
+                    for (a.items.slice()) |*item| {
+                        p.replaceRefInExpr(item, old_ref, new_ref);
+                    }
+                },
+                .e_object => |o| {
+                    for (o.properties.slice()) |*property| {
+                        if (property.value) |*v| {
+                            p.replaceRefInExpr(v, old_ref, new_ref);
+                        }
+                        if (property.initializer) |*prop_init| {
+                            p.replaceRefInExpr(prop_init, old_ref, new_ref);
+                        }
+                    }
+                },
+                .e_template => |t| {
+                    if (t.tag) |*tag| {
+                        p.replaceRefInExpr(tag, old_ref, new_ref);
+                    }
+                },
+                .e_arrow => |arrow| {
+                    p.replaceRefInStmts(arrow.body.stmts, old_ref, new_ref);
+                },
+                .e_function => |func| {
+                    if (func.func.body.stmts.len > 0) {
+                        p.replaceRefInStmts(func.func.body.stmts, old_ref, new_ref);
+                    }
+                },
+                // Don't descend into nested classes (they may rebind the class name)
+                .e_class => {},
+                else => {},
+            }
+        }
+
+        /// Replace all E.Identifier nodes matching old_ref with new_ref in statements.
+        fn replaceRefInStmts(p: *P, stmts: []Stmt, old_ref: Ref, new_ref: Ref) void {
+            for (stmts) |*cur_stmt| {
+                switch (cur_stmt.data) {
+                    .s_expr => |sexpr| {
+                        var val = sexpr.value;
+                        p.replaceRefInExpr(&val, old_ref, new_ref);
+                        cur_stmt.* = p.s(S.SExpr{ .value = val, .does_not_affect_tree_shaking = sexpr.does_not_affect_tree_shaking }, cur_stmt.loc);
+                    },
+                    .s_local => |local| {
+                        for (local.decls.slice()) |*decl| {
+                            if (decl.value) |*v| {
+                                p.replaceRefInExpr(v, old_ref, new_ref);
+                            }
+                        }
+                    },
+                    .s_return => |ret| {
+                        if (ret.value) |*v| {
+                            p.replaceRefInExpr(v, old_ref, new_ref);
+                        }
+                    },
+                    else => {},
+                }
+            }
+        }
+
+        /// Replace E.This in a slice of statements.
+        fn replaceThisInStmts(p: *P, stmts: []Stmt, replacement_ref: Ref, replacement_loc: logger.Loc) void {
+            for (stmts) |*cur_stmt| {
+                switch (cur_stmt.data) {
+                    .s_expr => |sexpr| {
+                        var val = sexpr.value;
+                        p.replaceThisInExpr(&val, replacement_ref, replacement_loc);
+                        cur_stmt.* = p.s(S.SExpr{ .value = val, .does_not_affect_tree_shaking = sexpr.does_not_affect_tree_shaking }, cur_stmt.loc);
+                    },
+                    .s_local => |local| {
+                        for (local.decls.slice()) |*decl| {
+                            if (decl.value) |*v| {
+                                p.replaceThisInExpr(v, replacement_ref, replacement_loc);
+                            }
+                        }
+                    },
+                    .s_return => |ret| {
+                        if (ret.value) |*v| {
+                            p.replaceThisInExpr(v, replacement_ref, replacement_loc);
+                        }
+                    },
+                    else => {},
+                }
+            }
+        }
+
         pub fn lowerClass(
             noalias p: *P,
             stmtorexpr: js_ast.StmtOrExpr,
         ) []Stmt {
             switch (stmtorexpr) {
                 .stmt => |stmt| {
+                    // Standard decorator lowering path (for both JS and TS files)
+                    if (stmt.data.s_class.class.should_lower_standard_decorators) {
+                        return p.lowerStandardDecoratorsStmt(stmt);
+                    }
+
                     if (comptime !is_typescript_enabled) {
                         if (!stmt.data.s_class.class.has_decorators) {
                             var stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
@@ -5007,7 +7045,7 @@ pub fn NewParser_(
                                             }
                                         }
                                     },
-                                    .spread, .declare => {}, // not allowed in a class
+                                    .spread, .declare, .auto_accessor => {}, // not allowed in a class (auto_accessor is standard decorators only)
                                     .class_static_block => {}, // not allowed to decorate this
                                 }
                             }

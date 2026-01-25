@@ -25,7 +25,7 @@ test("passing test that sets process.exitCode=1", () => {
 `,
     });
 
-    const { exited, stderr } = Bun.spawn({
+    await using proc = Bun.spawn({
       cmd: [bunExe(), "test", "leak.test.ts"],
       cwd: String(dir),
       stdout: "ignore",
@@ -34,7 +34,7 @@ test("passing test that sets process.exitCode=1", () => {
       env: bunEnv,
     });
 
-    const [err, exitCode] = await Promise.all([stderr.text(), exited]);
+    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
     expect(err).toContain("1 pass");
     expect(err).toContain("0 fail");
@@ -63,7 +63,7 @@ test("sets exitCode to 1", () => {
 `,
     });
 
-    const { exited, stderr } = Bun.spawn({
+    await using proc = Bun.spawn({
       cmd: [bunExe(), "test", "various.test.ts"],
       cwd: String(dir),
       stdout: "ignore",
@@ -72,7 +72,7 @@ test("sets exitCode to 1", () => {
       env: bunEnv,
     });
 
-    const [err, exitCode] = await Promise.all([stderr.text(), exited]);
+    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
     expect(err).toContain("3 pass");
     expect(err).toContain("0 fail");
@@ -98,7 +98,7 @@ test("second test", () => {
 `,
     });
 
-    const { exited, stderr } = Bun.spawn({
+    await using proc = Bun.spawn({
       cmd: [bunExe(), "test", "aftereach.test.ts"],
       cwd: String(dir),
       stdout: "ignore",
@@ -107,7 +107,7 @@ test("second test", () => {
       env: bunEnv,
     });
 
-    const [err, exitCode] = await Promise.all([stderr.text(), exited]);
+    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
     expect(err).toContain("2 pass");
     expect(err).toContain("0 fail");
@@ -131,7 +131,7 @@ test("also passes", () => {
 `,
     });
 
-    const { exited, stderr } = Bun.spawn({
+    await using proc = Bun.spawn({
       cmd: [bunExe(), "test", "pass.test.ts"],
       cwd: String(dir),
       stdout: "ignore",
@@ -140,7 +140,7 @@ test("also passes", () => {
       env: bunEnv,
     });
 
-    const [err, exitCode] = await Promise.all([stderr.text(), exited]);
+    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
     expect(err).toContain("2 pass");
     expect(err).toContain("0 fail");
@@ -162,7 +162,7 @@ test("fails", () => {
 `,
     });
 
-    const { exited, stderr } = Bun.spawn({
+    await using proc = Bun.spawn({
       cmd: [bunExe(), "test", "fail.test.ts"],
       cwd: String(dir),
       stdout: "ignore",
@@ -171,7 +171,7 @@ test("fails", () => {
       env: bunEnv,
     });
 
-    const [err, exitCode] = await Promise.all([stderr.text(), exited]);
+    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
     expect(err).toContain("1 pass");
     expect(err).toContain("1 fail");
@@ -197,7 +197,7 @@ test("fails 3", () => {
 `,
     });
 
-    const { exited, stderr } = Bun.spawn({
+    await using proc = Bun.spawn({
       cmd: [bunExe(), "test", "multifail.test.ts"],
       cwd: String(dir),
       stdout: "ignore",
@@ -206,7 +206,7 @@ test("fails 3", () => {
       env: bunEnv,
     });
 
-    const [err, exitCode] = await Promise.all([stderr.text(), exited]);
+    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
     expect(err).toContain("0 pass");
     expect(err).toContain("3 fail");
@@ -232,7 +232,7 @@ test("test 2 passes", () => {
 `,
     });
 
-    const { exited, stderr } = Bun.spawn({
+    await using proc = Bun.spawn({
       cmd: [bunExe(), "test", "unhandled.test.ts"],
       cwd: String(dir),
       stdout: "ignore",
@@ -241,7 +241,7 @@ test("test 2 passes", () => {
       env: bunEnv,
     });
 
-    const [err, exitCode] = await Promise.all([stderr.text(), exited]);
+    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
     // Exit code should be > 0 due to unhandled error
     expect(exitCode).toBeGreaterThan(0);

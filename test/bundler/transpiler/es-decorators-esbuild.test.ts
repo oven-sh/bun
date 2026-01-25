@@ -76,7 +76,7 @@ async function runDecoratorTest(code: string) {
 }
 
 // Read the esbuild decorator test source and extract individual tests
-const esbuildTestPath = join(import.meta.dir, "../../../vendor/esbuild/scripts/decorator-tests.ts");
+const esbuildTestPath = join(import.meta.dir, "esbuild-decorator-tests.ts");
 const esbuildSource = readFileSync(esbuildTestPath, "utf8");
 
 interface TestEntry {

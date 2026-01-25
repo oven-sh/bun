@@ -12,9 +12,10 @@ import { bunEnv, bunExe, tempDir } from "harness";
 // Also tests that process.exitCode set inside tests does not leak into bun test's exit code.
 // The test runner should determine exit code based on test outcomes, not user-set process.exitCode.
 
-test("process.exitCode=1 at end of passing test does not affect bun test exit", async () => {
-  using dir = tempDir("exitcode-leak", {
-    "leak.test.ts": `
+describe.concurrent("process.exitCode leak", () => {
+  test("exitCode=1 at end of passing test does not affect bun test exit", async () => {
+    using dir = tempDir("exitcode-leak", {
+      "leak.test.ts": `
 import { test, expect } from "bun:test";
 
 test("passing test that sets process.exitCode=1", () => {
@@ -22,27 +23,27 @@ test("passing test that sets process.exitCode=1", () => {
   process.exitCode = 1; // Should not leak to bun test exit code
 });
 `,
+    });
+
+    const { exited, stderr } = Bun.spawn({
+      cmd: [bunExe(), "test", "leak.test.ts"],
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+      stdin: "ignore",
+      env: bunEnv,
+    });
+
+    const [err, exitCode] = await Promise.all([stderr.text(), exited]);
+
+    expect(err).toContain("1 pass");
+    expect(err).toContain("0 fail");
+    expect(exitCode).toBe(0);
   });
 
-  const { exited, stdout, stderr } = Bun.spawn({
-    cmd: [bunExe(), "test", "leak.test.ts"],
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-    stdin: "ignore",
-    env: bunEnv,
-  });
-
-  const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
-
-  expect(err).toContain("1 pass");
-  expect(err).toContain("0 fail");
-  expect(exitCode).toBe(0);
-});
-
-test("process.exitCode set to various values in passing tests does not affect exit", async () => {
-  using dir = tempDir("exitcode-various", {
-    "various.test.ts": `
+  test("various exitCode values in passing tests do not affect exit", async () => {
+    using dir = tempDir("exitcode-various", {
+      "various.test.ts": `
 import { test, expect } from "bun:test";
 
 test("sets exitCode to 42", () => {
@@ -60,27 +61,27 @@ test("sets exitCode to 1", () => {
   process.exitCode = 1;
 });
 `,
+    });
+
+    const { exited, stderr } = Bun.spawn({
+      cmd: [bunExe(), "test", "various.test.ts"],
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+      stdin: "ignore",
+      env: bunEnv,
+    });
+
+    const [err, exitCode] = await Promise.all([stderr.text(), exited]);
+
+    expect(err).toContain("3 pass");
+    expect(err).toContain("0 fail");
+    expect(exitCode).toBe(0);
   });
 
-  const { exited, stderr } = Bun.spawn({
-    cmd: [bunExe(), "test", "various.test.ts"],
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-    stdin: "ignore",
-    env: bunEnv,
-  });
-
-  const [err, exitCode] = await Promise.all([stderr.text(), exited]);
-
-  expect(err).toContain("3 pass");
-  expect(err).toContain("0 fail");
-  expect(exitCode).toBe(0);
-});
-
-test("afterEach setting process.exitCode does not affect bun test exit", async () => {
-  using dir = tempDir("exitcode-aftereach", {
-    "aftereach.test.ts": `
+  test("afterEach setting exitCode does not affect bun test exit", async () => {
+    using dir = tempDir("exitcode-aftereach", {
+      "aftereach.test.ts": `
 import { test, expect, afterEach } from "bun:test";
 
 afterEach(() => {
@@ -95,27 +96,26 @@ test("second test", () => {
   expect(true).toBe(true);
 });
 `,
+    });
+
+    const { exited, stderr } = Bun.spawn({
+      cmd: [bunExe(), "test", "aftereach.test.ts"],
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+      stdin: "ignore",
+      env: bunEnv,
+    });
+
+    const [err, exitCode] = await Promise.all([stderr.text(), exited]);
+
+    expect(err).toContain("2 pass");
+    expect(err).toContain("0 fail");
+    expect(exitCode).toBe(0);
   });
-
-  const { exited, stderr } = Bun.spawn({
-    cmd: [bunExe(), "test", "aftereach.test.ts"],
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-    stdin: "ignore",
-    env: bunEnv,
-  });
-
-  const [err, exitCode] = await Promise.all([stderr.text(), exited]);
-
-  expect(err).toContain("2 pass");
-  expect(err).toContain("0 fail");
-  expect(exitCode).toBe(0);
 });
 
-// Positive tests: verify documented exit code behavior
-
-describe("documented exit codes", () => {
+describe.concurrent("documented exit codes", () => {
   test("exits 0 when all tests pass", async () => {
     using dir = tempDir("exitcode-pass", {
       "pass.test.ts": `
@@ -134,7 +134,7 @@ test("also passes", () => {
     const { exited, stderr } = Bun.spawn({
       cmd: [bunExe(), "test", "pass.test.ts"],
       cwd: String(dir),
-      stdout: "pipe",
+      stdout: "ignore",
       stderr: "pipe",
       stdin: "ignore",
       env: bunEnv,
@@ -165,7 +165,7 @@ test("fails", () => {
     const { exited, stderr } = Bun.spawn({
       cmd: [bunExe(), "test", "fail.test.ts"],
       cwd: String(dir),
-      stdout: "pipe",
+      stdout: "ignore",
       stderr: "pipe",
       stdin: "ignore",
       env: bunEnv,
@@ -200,7 +200,7 @@ test("fails 3", () => {
     const { exited, stderr } = Bun.spawn({
       cmd: [bunExe(), "test", "multifail.test.ts"],
       cwd: String(dir),
-      stdout: "pipe",
+      stdout: "ignore",
       stderr: "pipe",
       stdin: "ignore",
       env: bunEnv,
@@ -218,17 +218,15 @@ test("fails 3", () => {
       "unhandled.test.ts": `
 import { test, expect } from "bun:test";
 
-test("test 1 passes", async () => {
+test("test 1 passes", () => {
   expect(true).toBe(true);
-  // Schedule an unhandled error to fire after this test completes
-  setTimeout(() => {
+  // Schedule unhandled error via setImmediate (fires after test completes)
+  setImmediate(() => {
     throw new Error("Unhandled error between tests");
-  }, 10);
+  });
 });
 
-test("test 2 passes", async () => {
-  // Give time for the scheduled error to fire between tests
-  await Bun.sleep(50);
+test("test 2 passes", () => {
   expect(true).toBe(true);
 });
 `,
@@ -237,7 +235,7 @@ test("test 2 passes", async () => {
     const { exited, stderr } = Bun.spawn({
       cmd: [bunExe(), "test", "unhandled.test.ts"],
       cwd: String(dir),
-      stdout: "pipe",
+      stdout: "ignore",
       stderr: "pipe",
       stdin: "ignore",
       env: bunEnv,

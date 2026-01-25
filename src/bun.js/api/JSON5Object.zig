@@ -317,7 +317,7 @@ const Stringifier = struct {
     }
 
     fn appendQuotedString(this: *Stringifier, str: bun.String) void {
-        this.builder.append(.lchar, '"');
+        this.builder.append(.lchar, '\'');
         for (0..str.length()) |i| {
             const c = str.charAt(i);
             switch (c) {
@@ -328,7 +328,7 @@ const Stringifier = struct {
                 0x0b => this.builder.append(.latin1, "\\v"),
                 0x0c => this.builder.append(.latin1, "\\f"),
                 0x0d => this.builder.append(.latin1, "\\r"),
-                0x22 => this.builder.append(.latin1, "\\\""), // double quote
+                0x27 => this.builder.append(.latin1, "\\'"), // single quote
                 0x5c => this.builder.append(.latin1, "\\\\"), // backslash
                 0x01...0x07, 0x0e...0x1f, 0x7f => {
                     // Other control chars → \xHH
@@ -339,7 +339,7 @@ const Stringifier = struct {
                 else => this.builder.append(.uchar, c),
             }
         }
-        this.builder.append(.lchar, '"');
+        this.builder.append(.lchar, '\'');
     }
 
     fn hexDigit(v: u16) u8 {

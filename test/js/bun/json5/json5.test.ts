@@ -693,33 +693,37 @@ describe("stringify", () => {
     expect(JSON5.stringify(NaN)).toEqual("NaN");
   });
 
-  test("stringifies strings with double quotes", () => {
-    expect(JSON5.stringify("hello")).toEqual('"hello"');
+  test("stringifies strings with single quotes", () => {
+    expect(JSON5.stringify("hello")).toEqual("'hello'");
   });
 
-  test("escapes double quotes in strings", () => {
-    expect(JSON5.stringify('he said "hi"')).toEqual('"he said \\"hi\\""');
+  test("escapes single quotes in strings", () => {
+    expect(JSON5.stringify("it's")).toEqual("'it\\'s'");
+  });
+
+  test("does not escape double quotes in strings", () => {
+    expect(JSON5.stringify('he said "hi"')).toEqual("'he said \"hi\"'");
   });
 
   test("escapes control characters in strings", () => {
-    expect(JSON5.stringify("line\nnew")).toEqual('"line\\nnew"');
-    expect(JSON5.stringify("tab\there")).toEqual('"tab\\there"');
-    expect(JSON5.stringify("back\\slash")).toEqual('"back\\\\slash"');
+    expect(JSON5.stringify("line\nnew")).toEqual("'line\\nnew'");
+    expect(JSON5.stringify("tab\there")).toEqual("'tab\\there'");
+    expect(JSON5.stringify("back\\slash")).toEqual("'back\\\\slash'");
   });
 
   test("stringifies objects with unquoted keys", () => {
-    expect(JSON5.stringify({ a: 1, b: "two" })).toEqual('{a:1,b:"two"}');
+    expect(JSON5.stringify({ a: 1, b: "two" })).toEqual("{a:1,b:'two'}");
   });
 
   test("quotes keys that are not valid identifiers", () => {
-    expect(JSON5.stringify({ "foo bar": 1 })).toEqual('{"foo bar":1}');
-    expect(JSON5.stringify({ "0key": 1 })).toEqual('{"0key":1}');
-    expect(JSON5.stringify({ "key-name": 1 })).toEqual('{"key-name":1}');
-    expect(JSON5.stringify({ "": 1 })).toEqual('{"":1}');
+    expect(JSON5.stringify({ "foo bar": 1 })).toEqual("{'foo bar':1}");
+    expect(JSON5.stringify({ "0key": 1 })).toEqual("{'0key':1}");
+    expect(JSON5.stringify({ "key-name": 1 })).toEqual("{'key-name':1}");
+    expect(JSON5.stringify({ "": 1 })).toEqual("{'':1}");
   });
 
   test("stringifies arrays", () => {
-    expect(JSON5.stringify([1, "two", true])).toEqual('[1,"two",true]');
+    expect(JSON5.stringify([1, "two", true])).toEqual("[1,'two',true]");
   });
 
   test("stringifies nested structures", () => {
@@ -771,6 +775,43 @@ describe("stringify", () => {
     const obj: any = {};
     obj.self = obj;
     expect(() => JSON5.stringify(obj)).toThrow();
+  });
+
+  // Verified against json5@2.2.3 reference implementation
+  test("matches json5 npm output for all types", () => {
+    expect(JSON5.stringify(null)).toEqual("null");
+    expect(JSON5.stringify(true)).toEqual("true");
+    expect(JSON5.stringify(false)).toEqual("false");
+    expect(JSON5.stringify(42)).toEqual("42");
+    expect(JSON5.stringify(3.14)).toEqual("3.14");
+    expect(JSON5.stringify(-1)).toEqual("-1");
+    expect(JSON5.stringify(0)).toEqual("0");
+    expect(JSON5.stringify(Infinity)).toEqual("Infinity");
+    expect(JSON5.stringify(-Infinity)).toEqual("-Infinity");
+    expect(JSON5.stringify(NaN)).toEqual("NaN");
+    expect(JSON5.stringify("hello")).toEqual("'hello'");
+    expect(JSON5.stringify('he said "hi"')).toEqual("'he said \"hi\"'");
+    expect(JSON5.stringify("line\nnew")).toEqual("'line\\nnew'");
+    expect(JSON5.stringify("tab\there")).toEqual("'tab\\there'");
+    expect(JSON5.stringify("back\\slash")).toEqual("'back\\\\slash'");
+    expect(JSON5.stringify({ a: 1, b: "two" })).toEqual("{a:1,b:'two'}");
+    expect(JSON5.stringify({ "foo bar": 1 })).toEqual("{'foo bar':1}");
+    expect(JSON5.stringify({ "0key": 1 })).toEqual("{'0key':1}");
+    expect(JSON5.stringify({ "key-name": 1 })).toEqual("{'key-name':1}");
+    expect(JSON5.stringify({ "": 1 })).toEqual("{'':1}");
+    expect(JSON5.stringify([1, "two", true])).toEqual("[1,'two',true]");
+    expect(JSON5.stringify({ a: [1, { b: 2 }] })).toEqual("{a:[1,{b:2}]}");
+    expect(JSON5.stringify({ x: Infinity, y: NaN })).toEqual("{x:Infinity,y:NaN}");
+    expect(JSON5.stringify([Infinity, -Infinity, NaN])).toEqual("[Infinity,-Infinity,NaN]");
+    expect(JSON5.stringify(undefined)).toBeUndefined();
+    expect(JSON5.stringify(() => {})).toBeUndefined();
+  });
+
+  test("matches json5 npm pretty-print output", () => {
+    expect(JSON5.stringify({ a: 1 }, null, 2)).toEqual("{\n  a: 1,\n}");
+    expect(JSON5.stringify({ a: 1 }, null, "\t")).toEqual("{\n\ta: 1,\n}");
+    expect(JSON5.stringify({ a: 1, b: 2 }, null, 2)).toEqual("{\n  a: 1,\n  b: 2,\n}");
+    expect(JSON5.stringify([1, 2, 3], null, 2)).toEqual("[\n  1,\n  2,\n  3,\n]");
   });
 });
 

@@ -1439,8 +1439,8 @@ const default_allocator = bun.default_allocator;
 const js_parser = bun.js_parser;
 const strings = bun.strings;
 const BabyList = bun.collections.BabyList;
-const TOML = bun.interchange.toml.TOML;
 const JSON5 = bun.interchange.json5.JSON5Parser;
+const TOML = bun.interchange.toml.TOML;
 const YAML = bun.interchange.yaml.YAML;
 
 const js_ast = bun.ast;

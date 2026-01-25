@@ -1618,8 +1618,8 @@ const jsc = bun.jsc;
 const logger = bun.logger;
 const strings = bun.strings;
 const api = bun.schema.api;
-const TOML = bun.interchange.toml.TOML;
 const JSON5 = bun.interchange.json5.JSON5Parser;
+const TOML = bun.interchange.toml.TOML;
 const YAML = bun.interchange.yaml.YAML;
 const default_macro_js_value = jsc.JSValue.zero;
 

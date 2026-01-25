@@ -57,7 +57,7 @@ describe("comments", () => {
   });
 
   test("block comment in string", () => {
-    const input: string = "\"This /* block comment */ isn't really a block comment.\"";
+    const input: string = '"This /* block comment */ isn\'t really a block comment."';
     const parsed = JSON5.parse(input);
     const expected: any = "This /* block comment */ isn't really a block comment.";
     expect(parsed).toEqual(expected);
@@ -71,7 +71,8 @@ describe("comments", () => {
   });
 
   test("block comment with asterisks", () => {
-    const input: string = "/**\n * This is a JavaDoc-like block comment.\n * It contains asterisks inside of it.\n * It might also be closed with multiple asterisks.\n * Like this:\n **/\ntrue";
+    const input: string =
+      "/**\n * This is a JavaDoc-like block comment.\n * It contains asterisks inside of it.\n * It might also be closed with multiple asterisks.\n * Like this:\n **/\ntrue";
     const parsed = JSON5.parse(input);
     const expected: any = true;
     expect(parsed).toEqual(expected);
@@ -92,7 +93,7 @@ describe("comments", () => {
   });
 
   test("inline comment in string", () => {
-    const input: string = "\"This inline comment // isn't really an inline comment.\"";
+    const input: string = '"This inline comment // isn\'t really an inline comment."';
     const parsed = JSON5.parse(input);
     const expected: any = "This inline comment // isn't really an inline comment.";
     expect(parsed).toEqual(expected);
@@ -116,7 +117,8 @@ describe("comments", () => {
   });
 
   test("unterminated block comment (throws)", () => {
-    const input: string = "true\n/*\n    This block comment doesn't terminate.\n    There was a legitimate value before this,\n    but this is still invalid JS/JSON5.\n";
+    const input: string =
+      "true\n/*\n    This block comment doesn't terminate.\n    There was a legitimate value before this,\n    but this is still invalid JS/JSON5.\n";
     expect(() => JSON5.parse(input)).toThrow("Unterminated multi-line comment");
   });
 });
@@ -128,7 +130,8 @@ describe("misc", () => {
   });
 
   test("npm package", () => {
-    const input: string = "{\n  \"name\": \"npm\",\n  \"publishConfig\": {\n    \"proprietary-attribs\": false\n  },\n  \"description\": \"A package manager for node\",\n  \"keywords\": [\n    \"package manager\",\n    \"modules\",\n    \"install\",\n    \"package.json\"\n  ],\n  \"version\": \"1.1.22\",\n  \"preferGlobal\": true,\n  \"config\": {\n    \"publishtest\": false\n  },\n  \"homepage\": \"http://npmjs.org/\",\n  \"author\": \"Isaac Z. Schlueter <i@izs.me> (http://blog.izs.me)\",\n  \"repository\": {\n    \"type\": \"git\",\n    \"url\": \"https://github.com/isaacs/npm\"\n  },\n  \"bugs\": {\n    \"email\": \"npm-@googlegroups.com\",\n    \"url\": \"http://github.com/isaacs/npm/issues\"\n  },\n  \"directories\": {\n    \"doc\": \"./doc\",\n    \"man\": \"./man\",\n    \"lib\": \"./lib\",\n    \"bin\": \"./bin\"\n  },\n  \"main\": \"./lib/npm.js\",\n  \"bin\": \"./bin/npm-cli.js\",\n  \"dependencies\": {\n    \"semver\": \"~1.0.14\",\n    \"ini\": \"1\",\n    \"slide\": \"1\",\n    \"abbrev\": \"1\",\n    \"graceful-fs\": \"~1.1.1\",\n    \"minimatch\": \"~0.2\",\n    \"nopt\": \"1\",\n    \"node-uuid\": \"~1.3\",\n    \"proto-list\": \"1\",\n    \"rimraf\": \"2\",\n    \"request\": \"~2.9\",\n    \"which\": \"1\",\n    \"tar\": \"~0.1.12\",\n    \"fstream\": \"~0.1.17\",\n    \"block-stream\": \"*\",\n    \"inherits\": \"1\",\n    \"mkdirp\": \"0.3\",\n    \"read\": \"0\",\n    \"lru-cache\": \"1\",\n    \"node-gyp\": \"~0.4.1\",\n    \"fstream-npm\": \"0 >=0.0.5\",\n    \"uid-number\": \"0\",\n    \"archy\": \"0\",\n    \"chownr\": \"0\"\n  },\n  \"bundleDependencies\": [\n    \"slide\",\n    \"ini\",\n    \"semver\",\n    \"abbrev\",\n    \"graceful-fs\",\n    \"minimatch\",\n    \"nopt\",\n    \"node-uuid\",\n    \"rimraf\",\n    \"request\",\n    \"proto-list\",\n    \"which\",\n    \"tar\",\n    \"fstream\",\n    \"block-stream\",\n    \"inherits\",\n    \"mkdirp\",\n    \"read\",\n    \"lru-cache\",\n    \"node-gyp\",\n    \"fstream-npm\",\n    \"uid-number\",\n    \"archy\",\n    \"chownr\"\n  ],\n  \"devDependencies\": {\n    \"ronn\": \"https://github.com/isaacs/ronnjs/tarball/master\"\n  },\n  \"engines\": {\n    \"node\": \"0.6 || 0.7 || 0.8\",\n    \"npm\": \"1\"\n  },\n  \"scripts\": {\n    \"test\": \"node ./test/run.js\",\n    \"prepublish\": \"npm prune; rm -rf node_modules/*/{test,example,bench}*; make -j4 doc\",\n    \"dumpconf\": \"env | grep npm | sort | uniq\"\n  },\n  \"licenses\": [\n    {\n      \"type\": \"MIT +no-false-attribs\",\n      \"url\": \"http://github.com/isaacs/npm/raw/master/LICENSE\"\n    }\n  ]\n}\n";
+    const input: string =
+      '{\n  "name": "npm",\n  "publishConfig": {\n    "proprietary-attribs": false\n  },\n  "description": "A package manager for node",\n  "keywords": [\n    "package manager",\n    "modules",\n    "install",\n    "package.json"\n  ],\n  "version": "1.1.22",\n  "preferGlobal": true,\n  "config": {\n    "publishtest": false\n  },\n  "homepage": "http://npmjs.org/",\n  "author": "Isaac Z. Schlueter <i@izs.me> (http://blog.izs.me)",\n  "repository": {\n    "type": "git",\n    "url": "https://github.com/isaacs/npm"\n  },\n  "bugs": {\n    "email": "npm-@googlegroups.com",\n    "url": "http://github.com/isaacs/npm/issues"\n  },\n  "directories": {\n    "doc": "./doc",\n    "man": "./man",\n    "lib": "./lib",\n    "bin": "./bin"\n  },\n  "main": "./lib/npm.js",\n  "bin": "./bin/npm-cli.js",\n  "dependencies": {\n    "semver": "~1.0.14",\n    "ini": "1",\n    "slide": "1",\n    "abbrev": "1",\n    "graceful-fs": "~1.1.1",\n    "minimatch": "~0.2",\n    "nopt": "1",\n    "node-uuid": "~1.3",\n    "proto-list": "1",\n    "rimraf": "2",\n    "request": "~2.9",\n    "which": "1",\n    "tar": "~0.1.12",\n    "fstream": "~0.1.17",\n    "block-stream": "*",\n    "inherits": "1",\n    "mkdirp": "0.3",\n    "read": "0",\n    "lru-cache": "1",\n    "node-gyp": "~0.4.1",\n    "fstream-npm": "0 >=0.0.5",\n    "uid-number": "0",\n    "archy": "0",\n    "chownr": "0"\n  },\n  "bundleDependencies": [\n    "slide",\n    "ini",\n    "semver",\n    "abbrev",\n    "graceful-fs",\n    "minimatch",\n    "nopt",\n    "node-uuid",\n    "rimraf",\n    "request",\n    "proto-list",\n    "which",\n    "tar",\n    "fstream",\n    "block-stream",\n    "inherits",\n    "mkdirp",\n    "read",\n    "lru-cache",\n    "node-gyp",\n    "fstream-npm",\n    "uid-number",\n    "archy",\n    "chownr"\n  ],\n  "devDependencies": {\n    "ronn": "https://github.com/isaacs/ronnjs/tarball/master"\n  },\n  "engines": {\n    "node": "0.6 || 0.7 || 0.8",\n    "npm": "1"\n  },\n  "scripts": {\n    "test": "node ./test/run.js",\n    "prepublish": "npm prune; rm -rf node_modules/*/{test,example,bench}*; make -j4 doc",\n    "dumpconf": "env | grep npm | sort | uniq"\n  },\n  "licenses": [\n    {\n      "type": "MIT +no-false-attribs",\n      "url": "http://github.com/isaacs/npm/raw/master/LICENSE"\n    }\n  ]\n}\n';
     const parsed = JSON5.parse(input);
     const expected: any = {
       name: "npm",
@@ -215,7 +218,8 @@ describe("misc", () => {
   });
 
   test("npm package", () => {
-    const input: string = "{\n  name: 'npm',\n  publishConfig: {\n    'proprietary-attribs': false,\n  },\n  description: 'A package manager for node',\n  keywords: [\n    'package manager',\n    'modules',\n    'install',\n    'package.json',\n  ],\n  version: '1.1.22',\n  preferGlobal: true,\n  config: {\n    publishtest: false,\n  },\n  homepage: 'http://npmjs.org/',\n  author: 'Isaac Z. Schlueter <i@izs.me> (http://blog.izs.me)',\n  repository: {\n    type: 'git',\n    url: 'https://github.com/isaacs/npm',\n  },\n  bugs: {\n    email: 'npm-@googlegroups.com',\n    url: 'http://github.com/isaacs/npm/issues',\n  },\n  directories: {\n    doc: './doc',\n    man: './man',\n    lib: './lib',\n    bin: './bin',\n  },\n  main: './lib/npm.js',\n  bin: './bin/npm-cli.js',\n  dependencies: {\n    semver: '~1.0.14',\n    ini: '1',\n    slide: '1',\n    abbrev: '1',\n    'graceful-fs': '~1.1.1',\n    minimatch: '~0.2',\n    nopt: '1',\n    'node-uuid': '~1.3',\n    'proto-list': '1',\n    rimraf: '2',\n    request: '~2.9',\n    which: '1',\n    tar: '~0.1.12',\n    fstream: '~0.1.17',\n    'block-stream': '*',\n    inherits: '1',\n    mkdirp: '0.3',\n    read: '0',\n    'lru-cache': '1',\n    'node-gyp': '~0.4.1',\n    'fstream-npm': '0 >=0.0.5',\n    'uid-number': '0',\n    archy: '0',\n    chownr: '0',\n  },\n  bundleDependencies: [\n    'slide',\n    'ini',\n    'semver',\n    'abbrev',\n    'graceful-fs',\n    'minimatch',\n    'nopt',\n    'node-uuid',\n    'rimraf',\n    'request',\n    'proto-list',\n    'which',\n    'tar',\n    'fstream',\n    'block-stream',\n    'inherits',\n    'mkdirp',\n    'read',\n    'lru-cache',\n    'node-gyp',\n    'fstream-npm',\n    'uid-number',\n    'archy',\n    'chownr',\n  ],\n  devDependencies: {\n    ronn: 'https://github.com/isaacs/ronnjs/tarball/master',\n  },\n  engines: {\n    node: '0.6 || 0.7 || 0.8',\n    npm: '1',\n  },\n  scripts: {\n    test: 'node ./test/run.js',\n    prepublish: 'npm prune; rm -rf node_modules/*/{test,example,bench}*; make -j4 doc',\n    dumpconf: 'env | grep npm | sort | uniq',\n  },\n  licenses: [\n    {\n      type: 'MIT +no-false-attribs',\n      url: 'http://github.com/isaacs/npm/raw/master/LICENSE',\n    },\n  ],\n}\n";
+    const input: string =
+      "{\n  name: 'npm',\n  publishConfig: {\n    'proprietary-attribs': false,\n  },\n  description: 'A package manager for node',\n  keywords: [\n    'package manager',\n    'modules',\n    'install',\n    'package.json',\n  ],\n  version: '1.1.22',\n  preferGlobal: true,\n  config: {\n    publishtest: false,\n  },\n  homepage: 'http://npmjs.org/',\n  author: 'Isaac Z. Schlueter <i@izs.me> (http://blog.izs.me)',\n  repository: {\n    type: 'git',\n    url: 'https://github.com/isaacs/npm',\n  },\n  bugs: {\n    email: 'npm-@googlegroups.com',\n    url: 'http://github.com/isaacs/npm/issues',\n  },\n  directories: {\n    doc: './doc',\n    man: './man',\n    lib: './lib',\n    bin: './bin',\n  },\n  main: './lib/npm.js',\n  bin: './bin/npm-cli.js',\n  dependencies: {\n    semver: '~1.0.14',\n    ini: '1',\n    slide: '1',\n    abbrev: '1',\n    'graceful-fs': '~1.1.1',\n    minimatch: '~0.2',\n    nopt: '1',\n    'node-uuid': '~1.3',\n    'proto-list': '1',\n    rimraf: '2',\n    request: '~2.9',\n    which: '1',\n    tar: '~0.1.12',\n    fstream: '~0.1.17',\n    'block-stream': '*',\n    inherits: '1',\n    mkdirp: '0.3',\n    read: '0',\n    'lru-cache': '1',\n    'node-gyp': '~0.4.1',\n    'fstream-npm': '0 >=0.0.5',\n    'uid-number': '0',\n    archy: '0',\n    chownr: '0',\n  },\n  bundleDependencies: [\n    'slide',\n    'ini',\n    'semver',\n    'abbrev',\n    'graceful-fs',\n    'minimatch',\n    'nopt',\n    'node-uuid',\n    'rimraf',\n    'request',\n    'proto-list',\n    'which',\n    'tar',\n    'fstream',\n    'block-stream',\n    'inherits',\n    'mkdirp',\n    'read',\n    'lru-cache',\n    'node-gyp',\n    'fstream-npm',\n    'uid-number',\n    'archy',\n    'chownr',\n  ],\n  devDependencies: {\n    ronn: 'https://github.com/isaacs/ronnjs/tarball/master',\n  },\n  engines: {\n    node: '0.6 || 0.7 || 0.8',\n    npm: '1',\n  },\n  scripts: {\n    test: 'node ./test/run.js',\n    prepublish: 'npm prune; rm -rf node_modules/*/{test,example,bench}*; make -j4 doc',\n    dumpconf: 'env | grep npm | sort | uniq',\n  },\n  licenses: [\n    {\n      type: 'MIT +no-false-attribs',\n      url: 'http://github.com/isaacs/npm/raw/master/LICENSE',\n    },\n  ],\n}\n";
     const parsed = JSON5.parse(input);
     const expected: any = {
       name: "npm",
@@ -302,7 +306,8 @@ describe("misc", () => {
   });
 
   test("readme example", () => {
-    const input: string = "{\n    foo: 'bar',\n    while: true,\n\n    this: 'is a \\\nmulti-line string',\n\n    // this is an inline comment\n    here: 'is another', // inline comment\n\n    /* this is a block comment\n       that continues on another line */\n\n    hex: 0xDEADbeef,\n    half: .5,\n    delta: +10,\n    to: Infinity,   // and beyond!\n\n    finally: 'a trailing comma',\n    oh: [\n        \"we shouldn't forget\",\n        'arrays can have',\n        'trailing commas too',\n    ],\n}\n";
+    const input: string =
+      "{\n    foo: 'bar',\n    while: true,\n\n    this: 'is a \\\nmulti-line string',\n\n    // this is an inline comment\n    here: 'is another', // inline comment\n\n    /* this is a block comment\n       that continues on another line */\n\n    hex: 0xDEADbeef,\n    half: .5,\n    delta: +10,\n    to: Infinity,   // and beyond!\n\n    finally: 'a trailing comma',\n    oh: [\n        \"we shouldn't forget\",\n        'arrays can have',\n        'trailing commas too',\n    ],\n}\n";
     const parsed = JSON5.parse(input);
     const expected: any = {
       foo: "bar",
@@ -320,7 +325,8 @@ describe("misc", () => {
   });
 
   test("valid whitespace", () => {
-    const input: string = "{\n \f   // An invalid form feed character (\\x0c) has been entered before this comment.\n    // Be careful not to delete it.\n  \"a\": true\n}\n";
+    const input: string =
+      '{\n \f   // An invalid form feed character (\\x0c) has been entered before this comment.\n    // Be careful not to delete it.\n  "a": true\n}\n';
     const parsed = JSON5.parse(input);
     const expected: any = { a: true };
     expect(parsed).toEqual(expected);
@@ -357,7 +363,8 @@ describe("new-lines", () => {
   });
 
   test("escaped crlf", () => {
-    const input: string = "{\r\n    // the following string contains an escaped `\\r\\n`\r\n    a: 'line 1 \\\r\nline 2'\r\n}\r\n";
+    const input: string =
+      "{\r\n    // the following string contains an escaped `\\r\\n`\r\n    a: 'line 1 \\\r\nline 2'\r\n}\r\n";
     const parsed = JSON5.parse(input);
     const expected: any = { a: "line 1 line 2" };
     expect(parsed).toEqual(expected);
@@ -807,7 +814,7 @@ describe("numbers", () => {
 
 describe("objects", () => {
   test("duplicate keys", () => {
-    const input: string = "{\n    \"a\": true,\n    \"a\": false\n}\n";
+    const input: string = '{\n    "a": true,\n    "a": false\n}\n';
     const parsed = JSON5.parse(input);
     const expected: any = { a: false };
     expect(parsed).toEqual(expected);
@@ -821,17 +828,17 @@ describe("objects", () => {
   });
 
   test("illegal unquoted key number (throws)", () => {
-    const input: string = "{\n    10twenty: \"ten twenty\"\n}";
+    const input: string = '{\n    10twenty: "ten twenty"\n}';
     expect(() => JSON5.parse(input)).toThrow("Invalid identifier start character");
   });
 
   test("illegal unquoted key symbol (throws)", () => {
-    const input: string = "{\n    multi-word: \"multi-word\"\n}";
+    const input: string = '{\n    multi-word: "multi-word"\n}';
     expect(() => JSON5.parse(input)).toThrow("Expected ':' after object key");
   });
 
   test("leading comma object (throws)", () => {
-    const input: string = "{\n    ,\"foo\": \"bar\"\n}";
+    const input: string = '{\n    ,"foo": "bar"\n}';
     expect(() => JSON5.parse(input)).toThrow("Invalid identifier start character");
   });
 
@@ -841,7 +848,7 @@ describe("objects", () => {
   });
 
   test("no comma object (throws)", () => {
-    const input: string = "{\n    \"foo\": \"bar\"\n    \"hello\": \"world\"\n}";
+    const input: string = '{\n    "foo": "bar"\n    "hello": "world"\n}';
     expect(() => JSON5.parse(input)).toThrow("Expected ',' or '}' in object");
   });
 
@@ -860,14 +867,15 @@ describe("objects", () => {
   });
 
   test("trailing comma object", () => {
-    const input: string = "{\n    \"foo\": \"bar\",\n}";
+    const input: string = '{\n    "foo": "bar",\n}';
     const parsed = JSON5.parse(input);
     const expected: any = { foo: "bar" };
     expect(parsed).toEqual(expected);
   });
 
   test("unquoted keys", () => {
-    const input: string = "{\n    hello: \"world\",\n    _: \"underscore\",\n    $: \"dollar sign\",\n    one1: \"numerals\",\n    _$_: \"multiple symbols\",\n    $_$hello123world_$_: \"mixed\"\n}";
+    const input: string =
+      '{\n    hello: "world",\n    _: "underscore",\n    $: "dollar sign",\n    one1: "numerals",\n    _$_: "multiple symbols",\n    $_$hello123world_$_: "mixed"\n}';
     const parsed = JSON5.parse(input);
     const expected: any = {
       hello: "world",
@@ -904,21 +912,21 @@ describe("strings", () => {
   });
 
   test("unescaped multi line string (throws)", () => {
-    const input: string = "\"foo\nbar\"\n";
+    const input: string = '"foo\nbar"\n';
     expect(() => JSON5.parse(input)).toThrow("Unterminated string");
   });
 });
 
 describe("todo", () => {
   test("unicode escaped unquoted key", () => {
-    const input: string = "{\n    sig\\u03A3ma: \"the sum of all things\"\n}";
+    const input: string = '{\n    sig\\u03A3ma: "the sum of all things"\n}';
     const parsed = JSON5.parse(input);
     const expected: any = { "sigΣma": "the sum of all things" };
     expect(parsed).toEqual(expected);
   });
 
   test("unicode unquoted key", () => {
-    const input: string = "{\n    ümlåût: \"that's not really an ümlaüt, but this is\"\n}";
+    const input: string = '{\n    ümlåût: "that\'s not really an ümlaüt, but this is"\n}';
     const parsed = JSON5.parse(input);
     const expected: any = { "ümlåût": "that's not really an ümlaüt, but this is" };
     expect(parsed).toEqual(expected);

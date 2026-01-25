@@ -833,11 +833,13 @@ pub const JSON5Parser = struct {
     }
 };
 
-const std = @import("std");
-const bun = @import("bun");
-const logger = bun.logger;
-const Expr = bun.ast.Expr;
-const E = bun.ast.E;
-const G = bun.ast.G;
-const OOM = bun.OOM;
 const identifier = @import("../js_lexer/identifier.zig");
+const std = @import("std");
+
+const bun = @import("bun");
+const OOM = bun.OOM;
+const logger = bun.logger;
+
+const E = bun.ast.E;
+const Expr = bun.ast.Expr;
+const G = bun.ast.G;

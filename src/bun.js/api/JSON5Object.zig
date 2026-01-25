@@ -422,14 +422,16 @@ fn exprToJS(expr: Expr, global: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
     }
 }
 
-const bun = @import("bun");
 const std = @import("std");
-const ast = bun.ast;
+
+const bun = @import("bun");
 const logger = bun.logger;
 const json5 = bun.interchange.json5;
+
+const ast = bun.ast;
 const Expr = ast.Expr;
 
 const jsc = bun.jsc;
-const wtf = jsc.wtf;
 const JSValue = jsc.JSValue;
 const ZigString = jsc.ZigString;
+const wtf = jsc.wtf;

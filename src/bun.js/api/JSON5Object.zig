@@ -309,7 +309,16 @@ const Stringifier = struct {
     }
 
     fn appendKey(this: *Stringifier, name: bun.String) void {
-        if (isIdentifier(name)) {
+        const is_identifier = is_identifier: {
+            if (name.length() == 0) break :is_identifier false;
+            if (!bun.js_lexer.isIdentifierStart(@intCast(name.charAt(0)))) break :is_identifier false;
+            for (1..name.length()) |i| {
+                if (!bun.js_lexer.isIdentifierContinue(@intCast(name.charAt(i)))) break :is_identifier false;
+            }
+            break :is_identifier true;
+        };
+
+        if (is_identifier) {
             this.builder.append(.string, name);
         } else {
             this.appendQuotedString(name);
@@ -345,25 +354,6 @@ const Stringifier = struct {
     fn hexDigit(v: u16) u8 {
         const nibble: u8 = @intCast(v & 0x0f);
         return if (nibble < 10) '0' + nibble else 'a' + nibble - 10;
-    }
-
-    fn isIdentifier(str: bun.String) bool {
-        const len = str.length();
-        if (len == 0) return false;
-        const first = str.charAt(0);
-        if (!isIdStart(first)) return false;
-        for (1..len) |i| {
-            if (!isIdContinue(str.charAt(i))) return false;
-        }
-        return true;
-    }
-
-    fn isIdStart(c: u16) bool {
-        return (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or c == '_' or c == '$';
-    }
-
-    fn isIdContinue(c: u16) bool {
-        return isIdStart(c) or (c >= '0' and c <= '9');
     }
 
     fn newline(this: *Stringifier) void {

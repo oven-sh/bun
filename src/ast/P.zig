@@ -4883,13 +4883,30 @@ pub fn NewParser_(
                             break :blk std.fmt.allocPrint(p.allocator, "#{s}", .{str.data}) catch unreachable;
                         }
                     }
-                    // Computed key -> counter-based name
-                    const offset: u8 = @intCast(@min(auto_accessor_count, 25));
-                    const name = std.fmt.allocPrint(p.allocator, "#{c}", .{
-                        @as(u8, 'a' + offset),
-                    }) catch unreachable;
-                    auto_accessor_count += 1;
-                    break :blk name;
+                    // Computed key -> counter-based name, skipping any
+                    // that collide with existing private names in the class
+                    // (private names are not subject to automatic renaming).
+                    while (true) : (auto_accessor_count += 1) {
+                        const offset: u8 = @intCast(@min(auto_accessor_count, 25));
+                        const candidate = std.fmt.allocPrint(p.allocator, "#{c}", .{
+                            @as(u8, 'a' + offset),
+                        }) catch unreachable;
+                        var collides = false;
+                        for (properties) |other| {
+                            if (other.key != null and other.key.?.data == .e_private_identifier) {
+                                const other_name = p.loadNameFromRef(other.key.?.data.e_private_identifier.ref);
+                                if (strings.eql(candidate, other_name)) {
+                                    collides = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if (!collides) {
+                            auto_accessor_count += 1;
+                            break :blk candidate;
+                        }
+                    }
+                    unreachable;
                 };
 
                 // Create backing field symbol

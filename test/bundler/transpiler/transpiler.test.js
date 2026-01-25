@@ -885,6 +885,12 @@ function foo() {}
       exp("class Foo { declare accessor x: number }", "class Foo {\n}");
       exp("abstract class Foo { abstract accessor x: number }", "class Foo {\n}");
 
+      // Computed backing field skips existing private names to avoid collisions
+      exp(
+        "class Foo { accessor [x]; #a = 1 }",
+        "var _a;\n\nclass Foo {\n  #b;\n  get [_a = x]() {\n    return this.#b;\n  }\n  set [_a](_) {\n    this.#b = _;\n  }\n  #a = 1;\n}",
+      );
+
       // Contextual keyword edge cases (not auto-accessor syntax)
       exp("class Foo { accessor() {} }", "class Foo {\n  accessor() {}\n}");
       exp("class Foo { accessor = 1 }", "class Foo {\n  accessor = 1;\n}");

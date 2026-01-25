@@ -172,10 +172,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
    * Returns the number of columns required to display the given string.
    */
   var getStringWidth = function getStringWidth(str, removeControlChars = true) {
-    if (removeControlChars) str = stripVTControlCharacters(str);
-    str = StringPrototypeNormalize.$call(str, "NFC");
-
-    return internalGetStringWidth(str);
+    return internalGetStringWidth(str, removeControlChars);
   };
 
   const tableChars = {

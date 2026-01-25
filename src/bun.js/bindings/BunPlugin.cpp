@@ -813,12 +813,16 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, BunS
 
         JSC::JSObject* paramsObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
         const auto& builtinNames = WebCore::builtinNames(vm);
+        auto* pathJS = Bun::toJS(globalObject, *path);
+        RETURN_IF_EXCEPTION(scope, {});
         paramsObject->putDirect(
             vm, builtinNames.pathPublicName(),
-            Bun::toJS(globalObject, *path));
+            pathJS);
+        auto* importerJS = Bun::toJS(globalObject, *importer);
+        RETURN_IF_EXCEPTION(scope, {});
         paramsObject->putDirect(
             vm, builtinNames.importerPublicName(),
-            Bun::toJS(globalObject, *importer));
+            importerJS);
         arguments.append(paramsObject);
 
         auto result = AsyncContextFrame::call(globalObject, function, JSC::jsUndefined(), arguments);

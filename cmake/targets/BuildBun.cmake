@@ -939,7 +939,7 @@ if(WIN32)
 endif()
 
 if(USE_MIMALLOC_AS_DEFAULT_ALLOCATOR)
-  target_compile_definitions(${bun} PRIVATE USE_MIMALLOC=1)
+  target_compile_definitions(${bun} PRIVATE USE_BUN_MIMALLOC=1)
 endif()
 
 target_compile_definitions(${bun} PRIVATE
@@ -1253,6 +1253,7 @@ if(WIN32)
     target_link_libraries(${bun} PRIVATE
       ${WEBKIT_LIB_PATH}/WTF.lib
       ${WEBKIT_LIB_PATH}/JavaScriptCore.lib
+      ${WEBKIT_LIB_PATH}/bmalloc.lib
       ${WEBKIT_LIB_PATH}/sicudtd.lib
       ${WEBKIT_LIB_PATH}/sicuind.lib
       ${WEBKIT_LIB_PATH}/sicuucd.lib
@@ -1261,6 +1262,7 @@ if(WIN32)
     target_link_libraries(${bun} PRIVATE
       ${WEBKIT_LIB_PATH}/WTF.lib
       ${WEBKIT_LIB_PATH}/JavaScriptCore.lib
+      ${WEBKIT_LIB_PATH}/bmalloc.lib
       ${WEBKIT_LIB_PATH}/sicudt.lib
       ${WEBKIT_LIB_PATH}/sicuin.lib
       ${WEBKIT_LIB_PATH}/sicuuc.lib

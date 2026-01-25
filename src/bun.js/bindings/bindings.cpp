@@ -10,7 +10,7 @@
 #include "root.h"
 
 #include "JavaScriptCore/ErrorType.h"
-#include "JavaScriptCore/CatchScope.h"
+#include "JavaScriptCore/TopExceptionScope.h"
 #include "JavaScriptCore/Exception.h"
 #include "ErrorCode+List.h"
 #include "ErrorCode.h"
@@ -2179,16 +2179,16 @@ extern "C" JSC::EncodedJSValue ZigString__toJSONObject(const ZigString* strPtr, 
         }
     }
 
-    auto catchScope = DECLARE_CATCH_SCOPE(globalObject->vm());
+    auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
     // JSONParseWithException does not propagate exceptions as expected. See #5859
     JSValue result = JSONParse(globalObject, str);
 
-    if (!result && !catchScope.exception())
+    if (!result && !topExceptionScope.exception())
         scope.throwException(globalObject, createSyntaxError(globalObject, "Failed to parse JSON"_s));
 
-    if (catchScope.exception()) {
-        auto* exception = catchScope.exception();
-        catchScope.clearExceptionExceptTermination();
+    if (topExceptionScope.exception()) {
+        auto* exception = topExceptionScope.exception();
+        topExceptionScope.clearExceptionExceptTermination();
         return JSC::JSValue::encode(exception->value());
     }
 
@@ -2216,7 +2216,7 @@ JSC::EncodedJSValue SystemError__toErrorInstance(const SystemError* arg0, JSC::J
     SystemError err = *arg0;
 
     auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     WTF::String message = WTF::emptyString();
     if (err.message.tag != BunStringTag::Empty) {
@@ -2921,7 +2921,7 @@ JSC::JSObject* JSC__JSString__toObject(JSC::JSString* arg0, JSC::JSGlobalObject*
 extern "C" JSC::JSInternalPromise* JSModuleLoader__import(JSC::JSGlobalObject* globalObject, const BunString* moduleNameStr)
 {
     auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* promise = JSC::importModule(globalObject, JSC::Identifier::fromString(vm, moduleNameStr->toWTFString()), jsUndefined(), jsUndefined(), jsUndefined());
 
     EXCEPTION_ASSERT(!!scope.exception() == !promise);
@@ -3353,7 +3353,7 @@ JSC__JSModuleLoader__loadAndEvaluateModule(JSC::JSGlobalObject* globalObject,
     const BunString* arg1)
 {
     auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto name = makeAtomString(arg1->toWTFString());
 
     auto* promise = JSC::loadAndEvaluateModule(globalObject, name, JSC::jsUndefined(), JSC::jsUndefined());
@@ -3372,7 +3372,7 @@ JSC__JSModuleLoader__loadAndEvaluateModule(JSC::JSGlobalObject* globalObject,
 void JSC__AnyPromise__wrap(JSC::JSGlobalObject* globalObject, EncodedJSValue encodedPromise, void* ctx, JSC::EncodedJSValue (*func)(void*, JSC::JSGlobalObject*))
 {
     auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     JSValue promiseValue = JSC::JSValue::decode(encodedPromise);
     ASSERT(!promiseValue.isEmpty());
@@ -4455,7 +4455,7 @@ JSC::JSObject* JSC__JSValue__toObject(JSC::EncodedJSValue JSValue0, JSC::JSGloba
 bool JSC__JSValue__stringIncludes(JSC::EncodedJSValue value, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue other)
 {
     VM& vm = globalObject->vm();
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     WTF::String stringToSearchIn = JSC::JSValue::decode(value).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
@@ -5022,7 +5022,7 @@ static void JSC__JSValue__forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC:
     }
 
     size_t prototypeCount = 0;
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     JSC::Structure* structure = object->structure();
     bool fast = !nonIndexedOnly && canPerformFastPropertyEnumerationForIterationBun(structure);
@@ -5293,7 +5293,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
         return;
 
     auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     JSC::PropertyNameArrayBuilder properties(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
     {
@@ -5378,7 +5378,7 @@ bool JSC__JSValue__isInstanceOf(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObjec
 {
     VM& vm = globalObject->vm();
 
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     JSValue jsValue = JSValue::decode(JSValue0);
     JSValue jsValue1 = JSValue::decode(JSValue1);
@@ -5897,22 +5897,22 @@ extern "C" EncodedJSValue JSArray__constructEmptyArray(
 
 extern "C" bool JSGlobalObject__hasException(JSC::JSGlobalObject* globalObject)
 {
-    return DECLARE_CATCH_SCOPE(globalObject->vm()).exception() != 0;
+    return DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm()).exception() != 0;
 }
 
 extern "C" void JSGlobalObject__clearException(JSC::JSGlobalObject* globalObject)
 {
-    (void)DECLARE_CATCH_SCOPE(globalObject->vm()).tryClearException();
+    (void)DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm()).tryClearException();
 }
 
 extern "C" bool JSGlobalObject__clearExceptionExceptTermination(JSC::JSGlobalObject* globalObject)
 {
-    return DECLARE_CATCH_SCOPE(globalObject->vm()).clearExceptionExceptTermination();
+    return DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm()).clearExceptionExceptTermination();
 }
 
 extern "C" JSC::EncodedJSValue JSGlobalObject__tryTakeException(JSC::JSGlobalObject* globalObject)
 {
-    auto scope = DECLARE_CATCH_SCOPE(globalObject->vm());
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
 
     if (auto exception = scope.exception()) {
         (void)scope.tryClearException();
@@ -6012,7 +6012,7 @@ extern "C" EncodedJSValue Bun__JSObject__getCodePropertyVMInquiry(JSC::JSGlobalO
     }
 
     auto& vm = global->vm();
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     if (object->type() == JSC::ProxyObjectType) [[unlikely]] {
         return {};
     }

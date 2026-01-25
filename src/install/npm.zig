@@ -869,6 +869,9 @@ pub const PackageVersion = extern struct {
     /// `hasInstallScript` field in registry API.
     has_install_script: bool = false,
 
+    /// `deprecated` field in registry API - contains deprecation message if package version is deprecated
+    deprecated: ExternalString = ExternalString{},
+
     /// Unix timestamp when this version was published (0 if unknown)
     publish_timestamp_ms: f64 = 0,
 
@@ -878,7 +881,7 @@ pub const PackageVersion = extern struct {
 };
 
 comptime {
-    if (@sizeOf(Npm.PackageVersion) != 240) {
+    if (@sizeOf(Npm.PackageVersion) != 256) {
         @compileError(std.fmt.comptimePrint("Npm.PackageVersion has unexpected size {d}", .{@sizeOf(Npm.PackageVersion)}));
     }
 }
@@ -1996,6 +1999,13 @@ pub const PackageManifest = struct {
                         }
                     }
 
+                    // Count deprecated message string if present
+                    if (prop.value.?.asProperty("deprecated")) |deprecated| {
+                        if (deprecated.expr.asString(allocator)) |msg| {
+                            string_builder.count(msg);
+                        }
+                    }
+
                     bundled_deps_set.map.clearRetainingCapacity();
                     bundle_all_deps = false;
                     if (prop.value.?.get("bundleDependencies") orelse prop.value.?.get("bundledDependencies")) |bundled_deps_expr| {
@@ -2191,6 +2201,12 @@ pub const PackageManifest = struct {
                                 package_version.has_install_script = val.value;
                             },
                             else => {},
+                        }
+                    }
+
+                    if (prop.value.?.asProperty("deprecated")) |deprecated| {
+                        if (deprecated.expr.asString(allocator)) |msg| {
+                            package_version.deprecated = string_builder.append(ExternalString, msg);
                         }
                     }
 

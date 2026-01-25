@@ -774,7 +774,7 @@ pub fn init(
     fs.top_level_dir = cwd_buf[0..fs.top_level_dir.len :0];
     root_package_json_path = try bun.getFdPathZ(.fromStdFile(root_package_json_file), &root_package_json_path_buf);
 
-    const entries_option = try fs.fs.readDirectory(fs.top_level_dir, null, 0, true);
+    const entries_option = try fs.readDirectory(fs.top_level_dir, null, 0, true);
     if (entries_option.* == .err) {
         return entries_option.err.canonical_error;
     }
@@ -1009,7 +1009,7 @@ pub fn initWithRuntimeOnce(
     const cpu_count = bun.getThreadCount();
     PackageManager.allocatePackageManager();
     const manager = PackageManager.get();
-    var root_dir = Fs.FileSystem.instance.fs.readDirectory(
+    var root_dir = Fs.FileSystem.instance.readDirectory(
         Fs.FileSystem.instance.top_level_dir,
         null,
         0,

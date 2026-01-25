@@ -916,7 +916,7 @@ pub const upgrade_js_bindings = struct {
         const w = std.os.windows;
 
         var buf: bun.WPathBuffer = undefined;
-        const tmpdir_path = fs.FileSystem.RealFS.getDefaultTempDir();
+        const tmpdir_path = fs.FileSystem.getDefaultTempDir();
         const path = switch (bun.sys.normalizePathWindows(u8, bun.invalid_fd, tmpdir_path, &buf, .{})) {
             .err => return .js_undefined,
             .result => |norm| norm,

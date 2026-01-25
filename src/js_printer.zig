@@ -2275,6 +2275,11 @@ fn NewPrinter(
                         p.print("require");
                     }
                 },
+                .e_uint8array_identifier => {
+                    p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(expr.loc);
+                    p.print("Uint8Array");
+                },
                 .e_require_resolve_call_target => {
                     p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(expr.loc);
@@ -4496,6 +4501,7 @@ fn NewPrinter(
                         // sqlite_embedded only relevant when bundling
                         .sqlite, .sqlite_embedded => p.printWhitespacer(ws(" with { type: \"sqlite\" }")),
                         .html => p.printWhitespacer(ws(" with { type: \"html\" }")),
+                        .bytes => p.printWhitespacer(ws(" with { type: \"bytes\" }")),
                     };
                     p.printSemicolonAfterStatement();
                 },

@@ -626,7 +626,7 @@ pub const Transpiler = struct {
         };
 
         switch (loader) {
-            .jsx, .tsx, .js, .ts, .json, .jsonc, .toml, .yaml, .text => {
+            .jsx, .tsx, .js, .ts, .json, .jsonc, .toml, .yaml, .text, .bytes => {
                 var result = transpiler.parse(
                     ParseOptions{
                         .allocator = transpiler.allocator,
@@ -1350,6 +1350,60 @@ pub const Transpiler = struct {
 
                 return ParseResult{
                     .ast = js_ast.Ast.fromParts(parts),
+                    .source = source.*,
+                    .loader = loader,
+                    .input_fd = input_fd,
+                };
+            },
+            .bytes => {
+                // Convert to base64 for efficiency
+                const encoded_len = std.base64.standard.Encoder.calcSize(source.contents.len);
+                const encoded = allocator.alloc(u8, encoded_len) catch unreachable;
+                _ = bun.base64.encode(encoded, source.contents);
+
+                // Create base64 string argument
+                const base64_string = js_ast.Expr.init(js_ast.E.String, js_ast.E.String{
+                    .data = encoded,
+                }, logger.Loc.Empty);
+
+                // Create Uint8Array identifier using the special type
+                const uint8array_ident = js_ast.Expr{
+                    .data = .{ .e_uint8array_identifier = {} },
+                    .loc = logger.Loc.Empty,
+                };
+
+                // Create Uint8Array.fromBase64 dot access
+                const from_base64 = js_ast.Expr.init(js_ast.E.Dot, js_ast.E.Dot{
+                    .target = uint8array_ident,
+                    .name = "fromBase64",
+                    .name_loc = logger.Loc.Empty,
+                }, logger.Loc.Empty);
+
+                // Create the call expression
+                const args = allocator.alloc(js_ast.Expr, 1) catch unreachable;
+                args[0] = base64_string;
+
+                const uint8array_call = js_ast.Expr.init(js_ast.E.Call, js_ast.E.Call{
+                    .target = from_base64,
+                    .args = bun.collections.BabyList(js_ast.Expr).fromOwnedSlice(args),
+                }, logger.Loc.Empty);
+
+                // Create AST from the expression
+                var parser_opts = js_parser.Parser.Options.init(transpiler.options.jsx, loader);
+                parser_opts.features.allow_runtime = transpiler.options.allow_runtime;
+
+                const ast = (js_parser.newLazyExportAST(
+                    allocator,
+                    transpiler.options.define,
+                    parser_opts,
+                    transpiler.log,
+                    uint8array_call,
+                    source,
+                    "",
+                ) catch return null) orelse return null;
+
+                return ParseResult{
+                    .ast = ast,
                     .source = source.*,
                     .loader = loader,
                     .input_fd = input_fd,

@@ -100,7 +100,7 @@ pub fn transpileSourceCode(
     const disable_transpilying = comptime flags.disableTranspiling();
 
     if (comptime disable_transpilying) {
-        if (!(loader.isJavaScriptLike() or loader == .toml or loader == .yaml or loader == .text or loader == .json or loader == .jsonc)) {
+        if (!(loader.isJavaScriptLike() or loader == .toml or loader == .yaml or loader == .text or loader == .json or loader == .jsonc or loader == .bytes)) {
             // Don't print "export default <file path>"
             return ResolvedSource{
                 .allocator = null,
@@ -112,7 +112,7 @@ pub fn transpileSourceCode(
     }
 
     switch (loader) {
-        .js, .jsx, .ts, .tsx, .json, .jsonc, .toml, .yaml, .text => {
+        .js, .jsx, .ts, .tsx, .json, .jsonc, .toml, .yaml, .text, .bytes => {
             // Ensure that if there was an ASTMemoryAllocator in use, it's not used anymore.
             var ast_scope = js_ast.ASTMemoryAllocator.Scope{};
             ast_scope.enter();
@@ -262,7 +262,7 @@ pub fn transpileSourceCode(
             }
 
             var parse_result: ParseResult = switch (disable_transpilying or
-                (loader == .json)) {
+                (loader == .json or loader == .bytes)) {
                 inline else => |return_file_only| brk: {
                     break :brk jsc_vm.transpiler.parseMaybeReturnFileOnly(
                         parse_options,
@@ -507,17 +507,40 @@ pub fn transpileSourceCode(
             var printer = source_code_printer.*;
             printer.ctx.reset();
             defer source_code_printer.* = printer;
-            _ = brk: {
-                var mapper = jsc_vm.sourceMapHandler(&printer);
 
-                break :brk try jsc_vm.transpiler.printWithSourceMap(
-                    parse_result,
-                    @TypeOf(&printer),
-                    &printer,
-                    .esm_ascii,
-                    mapper.get(),
-                );
-            };
+            // Special handling for bytes loader at runtime
+            if (loader == .bytes and globalObject != null) {
+                // At runtime, we create a Uint8Array directly from the source contents
+                // The transpiler already parsed the file and stored it in parse_result.source
+                // TODO: should we add code for not reading the BOM?
+                const contents = parse_result.source.contents;
+                const uint8_array = try jsc.ArrayBuffer.create(globalObject.?, contents, .Uint8Array);
+
+                // The TC39 import-bytes proposal requires the Uint8Array to be immutable
+                // In bundled mode, freezing is done by the __base64ToUint8Array helper
+                // For runtime imports, we should also freeze but need to implement JSValue.freeze() first
+                // TODO: Call Object.freeze(uint8_array) and Object.freeze(uint8_array.buffer)
+
+                return ResolvedSource{
+                    .allocator = null,
+                    .specifier = input_specifier,
+                    .source_url = input_specifier.createIfDifferent(path.text),
+                    .jsvalue_for_export = uint8_array,
+                    .tag = .export_default_object,
+                };
+            } else {
+                _ = brk: {
+                    var mapper = jsc_vm.sourceMapHandler(&printer);
+
+                    break :brk try jsc_vm.transpiler.printWithSourceMap(
+                        parse_result,
+                        @TypeOf(&printer),
+                        &printer,
+                        .esm_ascii,
+                        mapper.get(),
+                    );
+                };
+            }
 
             if (comptime Environment.dump_source) {
                 dumpSource(jsc_vm, specifier, &printer);

@@ -443,7 +443,7 @@ pub const JSON5Parser = struct {
             }
 
             // Regular character - handle multi-byte UTF-8
-            const cp_len = std.unicode.utf8ByteSequenceLength(c) catch 1;
+            const cp_len = strings.wtf8ByteSequenceLength(c);
             if (self.pos + cp_len > self.source.len) {
                 try buf.append(c);
                 self.pos += 1;
@@ -806,12 +806,13 @@ pub const JSON5Parser = struct {
         if (first < 0x80) {
             return .{ .cp = @intCast(first), .len = 1 };
         }
-        const seq_len = std.unicode.utf8ByteSequenceLength(first) catch return .{ .cp = @intCast(first), .len = 1 };
+        const seq_len = strings.wtf8ByteSequenceLength(first);
         if (self.pos + seq_len > self.source.len) {
             return .{ .cp = @intCast(first), .len = 1 };
         }
-        const cp = std.unicode.utf8Decode(self.source[self.pos..][0..seq_len]) catch return .{ .cp = @intCast(first), .len = 1 };
-        return .{ .cp = @intCast(cp), .len = seq_len };
+        const decoded = strings.decodeWTF8RuneT(self.source[self.pos..].ptr[0..4], seq_len, i32, -1);
+        if (decoded < 0) return .{ .cp = @intCast(first), .len = 1 };
+        return .{ .cp = decoded, .len = @intCast(seq_len) };
     }
 
     fn appendCodepointToUtf8(self: *JSON5Parser, buf: *std.array_list.Managed(u8), cp: i32) ParseError!void {
@@ -819,9 +820,8 @@ pub const JSON5Parser = struct {
         if (cp < 0 or cp > 0x10FFFF) {
             return error.SyntaxError;
         }
-        const ucp: u21 = @intCast(cp);
         var encoded: [4]u8 = undefined;
-        const len = std.unicode.utf8Encode(ucp, &encoded) catch return error.SyntaxError;
+        const len = strings.encodeWTF8Rune(&encoded, cp);
         try buf.appendSlice(encoded[0..len]);
     }
 
@@ -837,6 +837,7 @@ const identifier = @import("../js_lexer/identifier.zig");
 const std = @import("std");
 
 const bun = @import("bun");
+const strings = bun.strings;
 const OOM = bun.OOM;
 const logger = bun.logger;
 

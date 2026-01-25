@@ -242,7 +242,7 @@ export var __decorateElement = (array, flags, name, decorators, target, extra) =
                 return __privateGet(this, extra);
               },
               set [name](x) {
-                return __privateSet(this, extra, x);
+                __privateSet(this, extra, x);
               },
             },
         name,

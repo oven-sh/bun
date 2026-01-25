@@ -94,9 +94,8 @@ pub fn LowerDecorators(
 
         /// new WeakSet() expression.
         fn newWeakSetExpr(p: *P, l: logger.Loc) Expr {
-            const ref = newSym(p, .unbound, "WeakSet");
             return p.newExpr(E.New{
-                .target = p.newExpr(E.Identifier{ .ref = ref }, l),
+                .target = p.newExpr(E.Identifier{ .ref = (p.findSymbol(l, "WeakSet") catch unreachable).ref }, l),
                 .args = ExprNodeList.empty,
                 .close_parens_loc = l,
             }, l);
@@ -702,7 +701,8 @@ pub fn LowerDecorators(
                 if (prop.ts_decorators.len == 0) {
                     // ── Non-decorated property ──
                     if (lower_all_private and prop.key != null and
-                        prop.key.?.data == .e_private_identifier and prop.kind != .class_static_block)
+                        prop.key.?.data == .e_private_identifier and prop.kind != .class_static_block and
+                        prop.kind != .auto_accessor)
                     {
                         const nk_expr = prop.key.?;
                         const npriv_orig = p.symbols.items[nk_expr.data.e_private_identifier.ref.inner_index].original_name;
@@ -1312,7 +1312,9 @@ pub fn LowerDecorators(
                 const appendDeclsAsAssigns = struct {
                     fn f(parts: *ListManaged(Expr), var_decls: *ListManaged(G.Decl), stmts_list: []const Stmt, parser: *P, l: logger.Loc) void {
                         for (stmts_list) |pstmt| {
-                            if (pstmt.data == .s_local) {
+                            if (pstmt.data == .s_expr) {
+                                parts.append(pstmt.data.s_expr.value) catch unreachable;
+                            } else if (pstmt.data == .s_local) {
                                 for (pstmt.data.s_local.decls.slice()) |decl_item| {
                                     const ref = decl_item.binding.data.b_identifier.ref;
                                     var_decls.append(.{ .binding = parser.b(B.Identifier{ .ref = ref }, l) }) catch unreachable;

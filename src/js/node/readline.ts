@@ -1534,7 +1534,7 @@ var _Interface = class Interface extends InterfaceConstructor {
         prefix +
         StringPrototypeSlice.$call(this.line, this.cursor, this.line.length);
       this.cursor = this.cursor - completeOn.length + prefix.length;
-      this._refreshLine();
+      this[kRefreshLine]();
       return;
     }
 

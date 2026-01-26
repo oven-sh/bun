@@ -553,8 +553,10 @@ pub fn resolveEmphasisDelimiters(self: *Parser) void {
 
                 // If closer still has remaining, re-process it (don't increment closer_idx)
                 if (delims[closer_idx].remaining > 0 and delims[closer_idx].can_close) {
-                    // Reset the while condition — we'll re-check this closer
-                    closer_idx -%= 1; // will be incremented by while loop
+                    // Decrement so the while loop's `: (closer_idx += 1)` brings us back
+                    // to this same index, allowing another matching attempt with the
+                    // remaining delimiter characters
+                    closer_idx -%= 1;
                 }
                 break;
             }

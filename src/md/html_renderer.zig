@@ -491,9 +491,18 @@ pub const HtmlRenderer = struct {
     }
 
     fn ensureNewline(self: *HtmlRenderer) void {
-        const items = self.out.list.items;
-        if (items.len > 0 and items[items.len - 1] != '\n') {
-            self.out.writeByte('\n');
+        if (self.in_heading) {
+            const items = self.heading_buf.items;
+            if (items.len > 0 and items[items.len - 1] != '\n') {
+                self.heading_buf.append(self.allocator, '\n') catch {
+                    self.out.oom = true;
+                };
+            }
+        } else {
+            const items = self.out.list.items;
+            if (items.len > 0 and items[items.len - 1] != '\n') {
+                self.out.writeByte('\n');
+            }
         }
     }
 

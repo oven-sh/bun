@@ -82,6 +82,9 @@ pub fn render(
         return globalThis.throwOutOfMemory();
     };
 
+    if (js_renderer.has_oom) {
+        return globalThis.throwOutOfMemory();
+    }
     if (js_renderer.has_js_error) {
         return error.JSError;
     }
@@ -146,6 +149,7 @@ const JsCallbackRenderer = struct {
     stack: std.ArrayListUnmanaged(StackEntry) = .{},
     callbacks: Callbacks = .{},
     has_js_error: bool = false,
+    has_oom: bool = false,
     heading_ids: bool = false,
     in_heading_block: bool = false,
     heading_text_buf: std.ArrayListUnmanaged(u8) = .{},
@@ -226,6 +230,7 @@ const JsCallbackRenderer = struct {
         if (self.stack.items.len == 0) return;
         const top = &self.stack.items[self.stack.items.len - 1];
         top.buffer.appendSlice(self.allocator, data) catch {
+            self.has_oom = true;
             self.has_js_error = true;
         };
     }
@@ -286,6 +291,7 @@ const JsCallbackRenderer = struct {
             self.in_heading_block = true;
         }
         self.stack.append(self.allocator, .{ .data = data, .flags = flags }) catch {
+            self.has_oom = true;
             self.has_js_error = true;
         };
     }
@@ -316,6 +322,7 @@ const JsCallbackRenderer = struct {
         const self: *JsCallbackRenderer = @ptrCast(@alignCast(ptr));
         if (self.has_js_error) return;
         self.stack.append(self.allocator, .{ .detail = detail }) catch {
+            self.has_oom = true;
             self.has_js_error = true;
         };
     }
@@ -406,6 +413,7 @@ const JsCallbackRenderer = struct {
 
     fn appendHeadingText(self: *JsCallbackRenderer, content: []const u8) void {
         self.heading_text_buf.appendSlice(self.allocator, content) catch {
+            self.has_oom = true;
             self.has_js_error = true;
         };
     }

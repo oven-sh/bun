@@ -245,6 +245,9 @@ describe("Bun.markdown.render", () => {
   });
 
   test("works with parser options", () => {
+    // The second argument is a dual-purpose options object: it accepts both
+    // parser configuration (e.g., strikethrough) and renderer hooks (e.g.,
+    // paragraph callback).
     const result = Markdown.render("~~strike~~\n", {
       strikethrough: false,
       paragraph: (children: string) => children,

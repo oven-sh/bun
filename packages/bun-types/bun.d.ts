@@ -997,11 +997,11 @@ declare module "bun" {
       /** Called for blockquote blocks. */
       blockquote?: (children: string) => string | null | undefined | void;
       /** Called for fenced or indented code blocks. `meta.language` is set when a language is specified on the fence. */
-      code?: (children: string, meta?: { language: string }) => string | null | undefined | void;
+      code?: (children: string, meta?: { language?: string }) => string | null | undefined | void;
       /** Called for ordered and unordered lists. `meta.ordered` indicates the list type. `meta.start` is the start number for ordered lists. */
       list?: (children: string, meta: { ordered: boolean; start?: number }) => string | null | undefined | void;
       /** Called for list items. `meta.checked` is present for task list items. */
-      listItem?: (children: string, meta?: { checked: boolean }) => string | null | undefined | void;
+      listItem?: (children: string, meta?: { checked?: boolean }) => string | null | undefined | void;
       /** Called for horizontal rules (`---`, `***`, `___`). */
       hr?: (children: string) => string | null | undefined | void;
       /** Called for table blocks. */
@@ -1013,9 +1013,9 @@ declare module "bun" {
       /** Called for table rows. */
       tr?: (children: string) => string | null | undefined | void;
       /** Called for table header cells. `meta.align` is set when column alignment is specified. */
-      th?: (children: string, meta?: { align: "left" | "center" | "right" }) => string | null | undefined | void;
+      th?: (children: string, meta?: { align?: "left" | "center" | "right" }) => string | null | undefined | void;
       /** Called for table data cells. `meta.align` is set when column alignment is specified. */
-      td?: (children: string, meta?: { align: "left" | "center" | "right" }) => string | null | undefined | void;
+      td?: (children: string, meta?: { align?: "left" | "center" | "right" }) => string | null | undefined | void;
       /** Called for raw HTML content. */
       html?: (children: string) => string | null | undefined | void;
       /** Called for strong emphasis (`**text**` or `__text__`). */

@@ -386,8 +386,12 @@ pub fn generateSlug(
     const gop = slug_counts.getOrPut(allocator, base_slug) catch return base_slug;
 
     if (!gop.found_existing) {
-        // First occurrence — store a duped key
-        gop.key_ptr.* = allocator.dupe(u8, base_slug) catch return base_slug;
+        // First occurrence — store a duped key so the map owns it
+        gop.key_ptr.* = allocator.dupe(u8, base_slug) catch {
+            // Dupe failed: remove the entry so deinit won't free a pointer into text_buf
+            slug_counts.removeByPtr(gop.key_ptr);
+            return base_slug;
+        };
         gop.value_ptr.* = 0;
         return base_slug;
     }

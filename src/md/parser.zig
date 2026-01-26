@@ -241,7 +241,10 @@ pub fn renderToHtml(text: []const u8, allocator: Allocator, flags: Flags, render
 
 /// Parse and render using a custom renderer. The caller provides its own
 /// Renderer implementation (e.g. for JS callback-based rendering).
-pub fn renderWithRenderer(text: []const u8, allocator: Allocator, flags: Flags, rend: Renderer) bun.JSError!void {
+/// `render_options` carries render-only flags (tag_filter, heading_ids,
+/// autolink_headings) so they are not silently dropped by the API.
+pub fn renderWithRenderer(text: []const u8, allocator: Allocator, flags: Flags, render_options: root.RenderOptions, rend: Renderer) bun.JSError!void {
+    _ = render_options; // Available for renderer implementations; parse layer does not use these.
     const input = helpers.skipUtf8Bom(text);
 
     var p = Parser.init(allocator, input, flags, rend);

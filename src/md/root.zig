@@ -6,8 +6,6 @@ pub const TextType = types.TextType;
 pub const SpanDetail = types.SpanDetail;
 pub const Align = types.Align;
 pub const BLOCK_FENCED_CODE = types.BLOCK_FENCED_CODE;
-pub const entity = @import("./entity.zig");
-pub const helpers = @import("./helpers.zig");
 
 pub const RenderOptions = struct {
     tag_filter: bool = false,
@@ -93,12 +91,14 @@ pub fn renderToHtmlWithOptions(text: []const u8, allocator: std.mem.Allocator, o
 
 /// Parse and render using a custom renderer implementation.
 pub fn renderWithRenderer(text: []const u8, allocator: std.mem.Allocator, options: Options, renderer: Renderer) bun.JSError!void {
-    return parser.renderWithRenderer(text, allocator, options.toFlags(), renderer);
+    return parser.renderWithRenderer(text, allocator, options.toFlags(), options.toRenderOptions(), renderer);
 }
 
 pub const types = @import("./types.zig");
 const Flags = types.Flags;
 
 const bun = @import("bun");
+pub const entity = @import("./entity.zig");
+pub const helpers = @import("./helpers.zig");
 const parser = @import("./parser.zig");
 const std = @import("std");

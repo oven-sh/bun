@@ -123,6 +123,7 @@
 #include "JSReadableStreamDefaultReader.h"
 #include "JSSink.h"
 #include "JSSocketAddressDTO.h"
+#include "JSReactElement.h"
 #include "JSSQLStatement.h"
 #include "JSStringDecoder.h"
 #include "JSTextEncoder.h"
@@ -1855,6 +1856,11 @@ void GlobalObject::finishCreation(VM& vm)
     m_JSSocketAddressDTOStructure.initLater(
         [](const Initializer<Structure>& init) {
             init.set(Bun::JSSocketAddressDTO::createStructure(init.vm, init.owner));
+        });
+
+    m_JSReactElementStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            init.set(Bun::JSReactElement::createStructure(init.vm, init.owner));
         });
 
     m_JSSQLStatementStructure.initLater(

@@ -31,7 +31,7 @@ class JSString;
 class JSCell;
 class JSMap;
 class JSPromise;
-class CatchScope;
+class TopExceptionScope;
 class VM;
 class ThrowScope;
 class CallFrame;

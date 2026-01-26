@@ -666,16 +666,20 @@ extern "C" napi_status napi_is_typedarray(napi_env env, napi_value value, bool* 
     NAPI_RETURN_SUCCESS(env);
 }
 
-// This is more efficient than using WTF::String::FromUTF8
-// it doesn't copy the string
-// but it's only safe to use if we are not setting a property
-// because we can't guarantee the lifetime of it
-#define PROPERTY_NAME_FROM_UTF8(identifierName)                                                                                      \
-    size_t utf8Len = strlen(utf8Name);                                                                                               \
-    WTF::String&& nameString = WTF::charactersAreAllASCII(std::span { reinterpret_cast<const Latin1Character*>(utf8Name), utf8Len }) \
-        ? WTF::String(WTF::StringImpl::createWithoutCopying({ utf8Name, utf8Len }))                                                  \
-        : WTF::String::fromUTF8(utf8Name);                                                                                           \
-    const JSC::PropertyName identifierName = JSC::Identifier::fromString(vm, nameString);
+// For ASCII input (the common case), avoids UTF-8 decoding overhead by going
+// directly through Identifier::fromString(VM&, span<Latin1>), which uses the
+// span for a hash lookup in the atom string table without creating an
+// intermediate WTF::String. If the atom already exists, no copy occurs at all.
+// If the atom does not exist and gets inserted into the table, the characters
+// are cloned because we cannot guarantee the lifetime of the input span.
+JSC::Identifier identifierFromUtf8ForGetOperationsOnly(JSC::VM& vm, const char* utf8Name)
+{
+    size_t utf8Len = strlen(utf8Name);
+    std::span<const Latin1Character> utf8Span { reinterpret_cast<const Latin1Character*>(utf8Name), utf8Len };
+    return WTF::charactersAreAllASCII(utf8Span)
+        ? JSC::Identifier::fromString(vm, utf8Span)
+        : JSC::Identifier::fromString(vm, WTF::String::fromUTF8(utf8Span));
+}
 
 extern "C" napi_status napi_has_named_property(napi_env env, napi_value object,
     const char* utf8Name,
@@ -692,10 +696,10 @@ extern "C" napi_status napi_has_named_property(napi_env env, napi_value object,
     JSObject* target = toJS(object).toObject(globalObject);
     NAPI_RETURN_IF_EXCEPTION(env);
 
-    PROPERTY_NAME_FROM_UTF8(name);
+    JSC::Identifier propertyName = identifierFromUtf8ForGetOperationsOnly(vm, utf8Name);
 
     PropertySlot slot(target, PropertySlot::InternalMethodType::HasProperty);
-    *result = target->getPropertySlot(globalObject, name, slot);
+    *result = target->getPropertySlot(globalObject, propertyName, slot);
     NAPI_RETURN_SUCCESS_UNLESS_EXCEPTION(env);
 }
 extern "C" napi_status napi_get_named_property(napi_env env, napi_value object,
@@ -713,9 +717,9 @@ extern "C" napi_status napi_get_named_property(napi_env env, napi_value object,
     JSObject* target = toJS(object).toObject(globalObject);
     NAPI_RETURN_IF_EXCEPTION(env);
 
-    PROPERTY_NAME_FROM_UTF8(name);
+    JSC::Identifier propertyName = identifierFromUtf8ForGetOperationsOnly(vm, utf8Name);
 
-    *result = toNapi(target->get(globalObject, name), globalObject);
+    *result = toNapi(target->get(globalObject, propertyName), globalObject);
     NAPI_RETURN_SUCCESS_UNLESS_EXCEPTION(env);
 }
 
@@ -2014,6 +2018,35 @@ extern "C" napi_status napi_create_buffer(napi_env env, size_t length,
     NAPI_RETURN_SUCCESS(env);
 }
 
+// SharedTask subclass with an armed flag so that the destructor can be
+// armed only after JSUint8Array::create succeeds.  If creation throws,
+// the destructor runs disarmed and skips finalize_cb.
+class NapiExternalBufferDestructor final : public SharedTask<void(void*)> {
+public:
+    NapiExternalBufferDestructor(WTF::Ref<NapiEnv>&& env, napi_finalize cb, void* hint)
+        : m_env(WTF::move(env))
+        , m_cb(cb)
+        , m_hint(hint)
+    {
+    }
+
+    void run(void* data) override
+    {
+        if (m_armed) {
+            NAPI_LOG("external buffer finalizer");
+            m_env->doFinalizer(m_cb, data, m_hint);
+        }
+    }
+
+    void arm() { m_armed = true; }
+
+private:
+    WTF::Ref<NapiEnv> m_env;
+    napi_finalize m_cb;
+    void* m_hint;
+    bool m_armed { false };
+};
+
 extern "C" napi_status napi_create_external_buffer(napi_env env, size_t length,
     void* data,
     napi_finalize finalize_cb,
@@ -2044,19 +2077,19 @@ extern "C" napi_status napi_create_external_buffer(napi_env env, size_t length,
         NAPI_RETURN_SUCCESS(env);
     }
 
-    auto arrayBuffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(data), length }, createSharedTask<void(void*)>([](void*) {
-        // do nothing
-    }));
+    // Uses NapiExternalBufferDestructor instead of createSharedTask because
+    // JSUint8Array::create can throw, and we must not call finalize_cb on failure.
+    Ref<NapiExternalBufferDestructor> destructor = adoptRef(*new NapiExternalBufferDestructor(WTF::Ref<NapiEnv>(*env), finalize_cb, finalize_hint));
+    // Get pointer before using WTF::move
+    auto* destructorPtr = destructor.ptr();
+    auto arrayBuffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(data), length }, WTF::move(destructor));
 
     auto* buffer = JSC::JSUint8Array::create(globalObject, subclassStructure, WTF::move(arrayBuffer), 0, length);
     NAPI_RETURN_IF_EXCEPTION(env);
 
-    // setup finalizer after creating the array. if it throws callers of napi_create_external_buffer are expected
-    // to free input
-    vm.heap.addFinalizer(buffer, [env = WTF::Ref<NapiEnv>(*env), finalize_cb, data, finalize_hint](JSCell* cell) -> void {
-        NAPI_LOG("external buffer finalizer");
-        env->doFinalizer(finalize_cb, data, finalize_hint);
-    });
+    // Arm only after successful creation: if create threw, the destructor
+    // runs disarmed and skips finalize_cb (caller retains ownership).
+    destructorPtr->arm();
 
     *result = toNapi(buffer, globalObject);
     NAPI_RETURN_SUCCESS(env);
@@ -2071,7 +2104,7 @@ extern "C" napi_status napi_create_external_arraybuffer(napi_env env, void* exte
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = JSC::getVM(globalObject);
 
-    auto arrayBuffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(external_data), byte_length }, createSharedTask<void(void*)>([env, finalize_hint, finalize_cb](void* p) {
+    auto arrayBuffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(external_data), byte_length }, createSharedTask<void(void*)>([env = WTF::Ref<NapiEnv>(*env), finalize_hint, finalize_cb](void* p) {
         NAPI_LOG("external ArrayBuffer finalizer");
         env->doFinalizer(finalize_cb, p, finalize_hint);
     }));

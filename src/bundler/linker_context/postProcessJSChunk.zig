@@ -1023,6 +1023,7 @@ pub fn generateEntryPointTailJS(
     };
 }
 
+const analyze_transpiled_module = @import("../../analyze_transpiled_module.zig");
 const std = @import("std");
 
 const bun = @import("bun");
@@ -1046,7 +1047,6 @@ const ResolvedExports = bun.bundle_v2.ResolvedExports;
 const ThreadPool = bun.bundle_v2.ThreadPool;
 const js_printer = bun.bundle_v2.js_printer;
 const renamer = bun.bundle_v2.renamer;
-const analyze_transpiled_module = @import("../../analyze_transpiled_module.zig");
 
 const LinkerContext = bun.bundle_v2.LinkerContext;
 const GenerateChunkCtx = bun.bundle_v2.LinkerContext.GenerateChunkCtx;

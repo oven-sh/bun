@@ -655,6 +655,7 @@ pub const ThreadPool = bun.bundle_v2.ThreadPool;
 
 const debugPartRanges = Output.scoped(.PartRanges, .hidden);
 
+const analyze_transpiled_module = @import("../../analyze_transpiled_module.zig");
 const std = @import("std");
 
 const bun = @import("bun");
@@ -688,6 +689,5 @@ const generateCompileResultForJSChunk = LinkerContext.generateCompileResultForJS
 const Logger = bun.logger;
 const Loc = Logger.Loc;
 
-const analyze_transpiled_module = @import("../../analyze_transpiled_module.zig");
 const options = bun.options;
 const OutputFile = bun.options.OutputFile;

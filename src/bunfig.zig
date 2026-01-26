@@ -402,6 +402,11 @@ pub const Bunfig = struct {
                         this.ctx.test_options.repeat_count = expr.data.e_number.toU32();
                     }
 
+                    if (test_.get("retry")) |expr| {
+                        try this.expect(expr, .e_number);
+                        this.ctx.test_options.retry = expr.data.e_number.toU32();
+                    }
+
                     if (test_.get("concurrentTestGlob")) |expr| {
                         switch (expr.data) {
                             .e_string => |str| {

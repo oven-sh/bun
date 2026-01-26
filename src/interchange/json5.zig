@@ -13,8 +13,6 @@ pub const JSON5Parser = struct {
     pos: usize,
     allocator: std.mem.Allocator,
     stack_check: bun.StackCheck,
-    error_message: []const u8,
-    error_pos: usize,
     token: Token,
 
     const Token = struct {
@@ -23,61 +21,161 @@ pub const JSON5Parser = struct {
 
         const Data = union(enum) {
             eof,
-            // Structural (single-byte, scanner advances past them)
+            // Structural
             left_brace,
             right_brace,
             left_bracket,
             right_bracket,
             colon,
             comma,
-            plus,
-            minus,
-            // Values (scanner fully parses the content)
+            // Values
             string: []u8,
             number: f64,
-            // Keywords (scanner checks word boundary)
-            true_,
-            false_,
-            null_,
-            nan,
-            infinity,
+            boolean: bool,
+            null,
             // Identifiers (for unquoted keys that aren't keywords)
             identifier: []u8,
+
+            fn canStartValue(data: Data) bool {
+                return switch (data) {
+                    .string, .number, .boolean, .identifier, .null, .left_brace, .left_bracket => true,
+                    .eof, .right_brace, .right_bracket, .colon, .comma => false,
+                };
+            }
         };
     };
 
-    const ParseError = error{ SyntaxError, StackOverflow } || OOM;
+    const ParseError = OOM || error{
+        UnexpectedCharacter,
+        UnexpectedToken,
+        UnexpectedEof,
+        UnterminatedString,
+        UnterminatedComment,
+        UnterminatedObject,
+        UnterminatedArray,
+        UnterminatedEscape,
+        InvalidNumber,
+        LeadingZeros,
+        InvalidHexNumber,
+        InvalidHexEscape,
+        InvalidUnicodeEscape,
+        OctalEscape,
+        ExpectedColon,
+        ExpectedComma,
+        ExpectedClosingBrace,
+        ExpectedClosingBracket,
+        InvalidIdentifier,
+        TrailingData,
+        StackOverflow,
+    };
 
-    pub fn parse(source: *const logger.Source, log: *logger.Log, allocator: std.mem.Allocator) ParseError!Expr {
+    pub const Error = union(enum) {
+        oom,
+        stack_overflow,
+        unexpected_character: struct { pos: usize },
+        unexpected_token: struct { pos: usize },
+        unexpected_eof: struct { pos: usize },
+        unterminated_string: struct { pos: usize },
+        unterminated_comment: struct { pos: usize },
+        unterminated_object: struct { pos: usize },
+        unterminated_array: struct { pos: usize },
+        unterminated_escape: struct { pos: usize },
+        invalid_number: struct { pos: usize },
+        leading_zeros: struct { pos: usize },
+        invalid_hex_number: struct { pos: usize },
+        invalid_hex_escape: struct { pos: usize },
+        invalid_unicode_escape: struct { pos: usize },
+        octal_escape: struct { pos: usize },
+        expected_colon: struct { pos: usize },
+        expected_comma: struct { pos: usize },
+        expected_closing_brace: struct { pos: usize },
+        expected_closing_bracket: struct { pos: usize },
+        invalid_identifier: struct { pos: usize },
+        trailing_data: struct { pos: usize },
+
+        pub fn addToLog(this: *const Error, source: *const logger.Source, log: *logger.Log) (OOM || error{StackOverflow})!void {
+            const loc: logger.Loc = switch (this.*) {
+                .oom => return error.OutOfMemory,
+                .stack_overflow => return error.StackOverflow,
+                inline else => |e| .{ .start = @intCast(e.pos) },
+            };
+            const msg: []const u8 = switch (this.*) {
+                .oom, .stack_overflow => unreachable,
+                .unexpected_character => "Unexpected character",
+                .unexpected_token => "Unexpected token",
+                .unexpected_eof => "Unexpected end of input",
+                .unterminated_string => "Unterminated string",
+                .unterminated_comment => "Unterminated multi-line comment",
+                .unterminated_object => "Unterminated object",
+                .unterminated_array => "Unterminated array",
+                .unterminated_escape => "Unexpected end of input in escape sequence",
+                .invalid_number => "Invalid number",
+                .leading_zeros => "Leading zeros are not allowed in JSON5",
+                .invalid_hex_number => "Invalid hex number",
+                .invalid_hex_escape => "Invalid hex escape",
+                .invalid_unicode_escape => "Invalid unicode escape: expected 4 hex digits",
+                .octal_escape => "Octal escape sequences are not allowed in JSON5",
+                .expected_colon => "Expected ':' after object key",
+                .expected_comma => "Expected ','",
+                .expected_closing_brace => "Expected '}'",
+                .expected_closing_bracket => "Expected ']'",
+                .invalid_identifier => "Invalid identifier start character",
+                .trailing_data => "Unexpected token after JSON5 value",
+            };
+            try log.addError(source, loc, msg);
+        }
+    };
+
+    fn toError(err: ParseError, parser: *const JSON5Parser) Error {
+        const token_pos = parser.token.loc.toUsize();
+        const scan_pos = parser.pos;
+        return switch (err) {
+            error.OutOfMemory => .oom,
+            error.StackOverflow => .stack_overflow,
+            // Scanner errors use scan position
+            error.UnexpectedCharacter => .{ .unexpected_character = .{ .pos = scan_pos } },
+            error.UnterminatedString => .{ .unterminated_string = .{ .pos = scan_pos } },
+            error.UnterminatedComment => .{ .unterminated_comment = .{ .pos = scan_pos } },
+            error.UnterminatedEscape => .{ .unterminated_escape = .{ .pos = scan_pos } },
+            error.InvalidNumber => .{ .invalid_number = .{ .pos = scan_pos } },
+            error.LeadingZeros => .{ .leading_zeros = .{ .pos = scan_pos } },
+            error.InvalidHexNumber => .{ .invalid_hex_number = .{ .pos = scan_pos } },
+            error.InvalidHexEscape => .{ .invalid_hex_escape = .{ .pos = scan_pos } },
+            error.InvalidUnicodeEscape => .{ .invalid_unicode_escape = .{ .pos = scan_pos } },
+            error.OctalEscape => .{ .octal_escape = .{ .pos = scan_pos } },
+            error.InvalidIdentifier => .{ .invalid_identifier = .{ .pos = scan_pos } },
+            // Parser errors use token position
+            error.UnexpectedToken => .{ .unexpected_token = .{ .pos = token_pos } },
+            error.UnexpectedEof => if (parser.token.data == .eof)
+                .{ .unexpected_eof = .{ .pos = token_pos } }
+            else
+                .{ .unexpected_token = .{ .pos = token_pos } },
+            error.TrailingData => .{ .trailing_data = .{ .pos = token_pos } },
+            error.ExpectedColon => .{ .expected_colon = .{ .pos = token_pos } },
+            error.UnterminatedObject => .{ .unterminated_object = .{ .pos = token_pos } },
+            error.ExpectedComma => .{ .expected_comma = .{ .pos = token_pos } },
+            error.ExpectedClosingBrace => .{ .expected_closing_brace = .{ .pos = token_pos } },
+            error.UnterminatedArray => .{ .unterminated_array = .{ .pos = token_pos } },
+            error.ExpectedClosingBracket => .{ .expected_closing_bracket = .{ .pos = token_pos } },
+        };
+    }
+
+    const ExternalError = OOM || error{ SyntaxError, StackOverflow };
+
+    pub fn parse(source: *const logger.Source, log: *logger.Log, allocator: std.mem.Allocator) ExternalError!Expr {
         var parser = JSON5Parser{
             .source = source.contents,
             .pos = 0,
             .allocator = allocator,
             .stack_check = .init(),
-            .error_message = "",
-            .error_pos = 0,
             .token = .{ .loc = .{}, .data = .eof },
         };
-        const result = parser.parseRoot() catch |err| switch (err) {
-            error.SyntaxError => {
-                try log.addError(source, .{ .start = @intCast(parser.error_pos) }, parser.error_message);
-                return error.SyntaxError;
-            },
-            else => |e| return e,
+        const result = parser.parseRoot() catch |err| {
+            const e = toError(err, &parser);
+            try e.addToLog(source, log);
+            return error.SyntaxError;
         };
         return result;
-    }
-
-    fn fail(self: *JSON5Parser, msg: []const u8) error{SyntaxError} {
-        self.error_message = msg;
-        self.error_pos = self.pos;
-        return error.SyntaxError;
-    }
-
-    fn failAtLoc(self: *JSON5Parser, loc: logger.Loc, msg: []const u8) error{SyntaxError} {
-        self.error_message = msg;
-        self.error_pos = @intCast(loc.start);
-        return error.SyntaxError;
     }
 
     // ── Scanner ──
@@ -134,12 +232,12 @@ pub const JSON5Parser = struct {
             '+' => {
                 self.token.loc = .{ .start = @intCast(self.pos) };
                 self.pos += 1;
-                break :next .plus;
+                break :next .{ .number = try self.scanSignedValue(false) };
             },
             '-' => {
                 self.token.loc = .{ .start = @intCast(self.pos) };
                 self.pos += 1;
-                break :next .minus;
+                break :next .{ .number = try self.scanSignedValue(true) };
             },
             // Strings
             '"', '\'' => {
@@ -163,24 +261,24 @@ pub const JSON5Parser = struct {
                     try self.skipBlockComment();
                     continue :next self.peek();
                 }
-                return self.fail("Unexpected character");
+                return error.UnexpectedCharacter;
             },
             else => |c| {
                 if (c == 't') {
                     self.token.loc = .{ .start = @intCast(self.pos) };
-                    break :next if (self.scanKeyword("true")) .true_ else .{ .identifier = try self.scanIdentifier() };
+                    break :next if (self.scanKeyword("true")) .{ .boolean = true } else .{ .identifier = try self.scanIdentifier() };
                 } else if (c == 'f') {
                     self.token.loc = .{ .start = @intCast(self.pos) };
-                    break :next if (self.scanKeyword("false")) .false_ else .{ .identifier = try self.scanIdentifier() };
+                    break :next if (self.scanKeyword("false")) .{ .boolean = false } else .{ .identifier = try self.scanIdentifier() };
                 } else if (c == 'n') {
                     self.token.loc = .{ .start = @intCast(self.pos) };
-                    break :next if (self.scanKeyword("null")) .null_ else .{ .identifier = try self.scanIdentifier() };
+                    break :next if (self.scanKeyword("null")) .null else .{ .identifier = try self.scanIdentifier() };
                 } else if (c == 'N') {
                     self.token.loc = .{ .start = @intCast(self.pos) };
-                    break :next if (self.scanKeyword("NaN")) .nan else .{ .identifier = try self.scanIdentifier() };
+                    break :next if (self.scanKeyword("NaN")) .{ .number = std.math.nan(f64) } else .{ .identifier = try self.scanIdentifier() };
                 } else if (c == 'I') {
                     self.token.loc = .{ .start = @intCast(self.pos) };
-                    break :next if (self.scanKeyword("Infinity")) .infinity else .{ .identifier = try self.scanIdentifier() };
+                    break :next if (self.scanKeyword("Infinity")) .{ .number = std.math.inf(f64) } else .{ .identifier = try self.scanIdentifier() };
                 } else if ((c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or c == '_' or c == '$' or c == '\\') {
                     self.token.loc = .{ .start = @intCast(self.pos) };
                     break :next .{ .identifier = try self.scanIdentifier() };
@@ -193,15 +291,15 @@ pub const JSON5Parser = struct {
                     }
                     self.token.loc = .{ .start = @intCast(self.pos) };
                     const cp = self.readCodepoint() orelse {
-                        return self.fail("Unexpected character");
+                        return error.UnexpectedCharacter;
                     };
                     if (identifier.isIdentifierStart(cp.cp)) {
                         break :next .{ .identifier = try self.scanIdentifier() };
                     } else {
-                        return self.fail("Unexpected character");
+                        return error.UnexpectedCharacter;
                     }
                 } else {
-                    return self.fail("Unexpected character");
+                    return error.UnexpectedCharacter;
                 }
             },
         };
@@ -219,13 +317,37 @@ pub const JSON5Parser = struct {
         return true;
     }
 
+    fn scanSignedValue(self: *JSON5Parser, is_negative: bool) ParseError!f64 {
+        switch (self.peek()) {
+            '0'...'9', '.' => {
+                const n = try self.scanNumber();
+                return if (is_negative) -n else n;
+            },
+            'I' => {
+                if (self.scanKeyword("Infinity")) {
+                    return if (is_negative) -std.math.inf(f64) else std.math.inf(f64);
+                }
+                return error.UnexpectedCharacter;
+            },
+            'N' => {
+                if (self.scanKeyword("NaN")) {
+                    const nan = std.math.nan(f64);
+                    return if (is_negative) -nan else nan;
+                }
+                return error.UnexpectedCharacter;
+            },
+            0 => return error.UnexpectedEof,
+            else => return error.UnexpectedCharacter,
+        }
+    }
+
     // ── Parser ──
 
     fn parseRoot(self: *JSON5Parser) ParseError!Expr {
         try self.scan();
         const result = try self.parseValue();
         if (self.token.data != .eof) {
-            return self.failAtLoc(self.token.loc, "Unexpected token after JSON5 value");
+            return error.TrailingData;
         }
         return result;
     }
@@ -248,59 +370,16 @@ pub const JSON5Parser = struct {
                 try self.scan();
                 return Expr.init(E.Number, .{ .value = n }, loc);
             },
-            .true_ => {
+            .boolean => |b| {
                 try self.scan();
-                return Expr.init(E.Boolean, .{ .value = true }, loc);
+                return Expr.init(E.Boolean, .{ .value = b }, loc);
             },
-            .false_ => {
-                try self.scan();
-                return Expr.init(E.Boolean, .{ .value = false }, loc);
-            },
-            .null_ => {
+            .null => {
                 try self.scan();
                 return Expr.init(E.Null, .{}, loc);
             },
-            .nan => {
-                try self.scan();
-                return Expr.init(E.Number, .{ .value = std.math.nan(f64) }, loc);
-            },
-            .infinity => {
-                try self.scan();
-                return Expr.init(E.Number, .{ .value = std.math.inf(f64) }, loc);
-            },
-            .plus => {
-                try self.scan();
-                return self.parseAfterSign(false, loc);
-            },
-            .minus => {
-                try self.scan();
-                return self.parseAfterSign(true, loc);
-            },
-            .eof => return self.failAtLoc(loc, "Unexpected end of input"),
-            .identifier => return self.failAtLoc(loc, "Unexpected identifier"),
-            else => return self.failAtLoc(loc, "Unexpected character"),
-        }
-    }
-
-    fn parseAfterSign(self: *JSON5Parser, is_negative: bool, loc: logger.Loc) ParseError!Expr {
-        switch (self.token.data) {
-            .number => |n| {
-                const val = if (is_negative) -n else n;
-                try self.scan();
-                return Expr.init(E.Number, .{ .value = val }, loc);
-            },
-            .infinity => {
-                const val: f64 = if (is_negative) -std.math.inf(f64) else std.math.inf(f64);
-                try self.scan();
-                return Expr.init(E.Number, .{ .value = val }, loc);
-            },
-            .nan => {
-                const val = if (is_negative) -std.math.nan(f64) else std.math.nan(f64);
-                try self.scan();
-                return Expr.init(E.Number, .{ .value = val }, loc);
-            },
-            .eof => return self.failAtLoc(loc, "Unexpected end of input after sign"),
-            else => return self.failAtLoc(loc, "Unexpected character after sign"),
+            .eof => return error.UnexpectedEof,
+            else => return error.UnexpectedToken,
         }
     }
 
@@ -314,7 +393,7 @@ pub const JSON5Parser = struct {
             const key = try self.parseObjectKey();
 
             if (self.token.data != .colon) {
-                return self.failAtLoc(self.token.loc, "Expected ':' after object key");
+                return error.ExpectedColon;
             }
             try self.scan(); // advance past ':'
 
@@ -328,8 +407,8 @@ pub const JSON5Parser = struct {
             switch (self.token.data) {
                 .comma => try self.scan(),
                 .right_brace => {},
-                .eof => return self.failAtLoc(self.token.loc, "Unterminated object"),
-                else => return self.failAtLoc(self.token.loc, "Expected ',' or '}' in object"),
+                .eof => return error.UnterminatedObject,
+                else => return if (self.token.data.canStartValue()) error.ExpectedComma else error.ExpectedClosingBrace,
             }
         }
 
@@ -350,33 +429,21 @@ pub const JSON5Parser = struct {
                 try self.scan();
                 return Expr.init(E.String, E.String.init(s), loc);
             },
-            .true_ => {
+            .number => |n| {
+                if (!std.math.isNan(n) and !std.math.isInf(n)) return error.InvalidIdentifier;
                 try self.scan();
-                const str = try bun.default_allocator.dupe(u8, "true");
-                return Expr.init(E.String, E.String.init(str), loc);
+                return Expr.init(E.Number, .{ .value = n }, loc);
             },
-            .false_ => {
+            .boolean => |b| {
                 try self.scan();
-                const str = try bun.default_allocator.dupe(u8, "false");
-                return Expr.init(E.String, E.String.init(str), loc);
+                return Expr.init(E.Boolean, .{ .value = b }, loc);
             },
-            .null_ => {
+            .null => {
                 try self.scan();
-                const str = try bun.default_allocator.dupe(u8, "null");
-                return Expr.init(E.String, E.String.init(str), loc);
+                return Expr.init(E.Null, .{}, loc);
             },
-            .nan => {
-                try self.scan();
-                const str = try bun.default_allocator.dupe(u8, "NaN");
-                return Expr.init(E.String, E.String.init(str), loc);
-            },
-            .infinity => {
-                try self.scan();
-                const str = try bun.default_allocator.dupe(u8, "Infinity");
-                return Expr.init(E.String, E.String.init(str), loc);
-            },
-            .eof => return self.failAtLoc(loc, "Unexpected end of input in object key"),
-            else => return self.failAtLoc(loc, "Invalid identifier start character"),
+            .eof => return error.UnexpectedEof,
+            else => return error.InvalidIdentifier,
         }
     }
 
@@ -393,8 +460,8 @@ pub const JSON5Parser = struct {
             switch (self.token.data) {
                 .comma => try self.scan(),
                 .right_bracket => {},
-                .eof => return self.failAtLoc(self.token.loc, "Unterminated array"),
-                else => return self.failAtLoc(self.token.loc, "Expected ',' or ']' in array"),
+                .eof => return error.UnterminatedArray,
+                else => return if (self.token.data.canStartValue()) error.ExpectedComma else error.ExpectedClosingBracket,
             }
         }
 
@@ -410,8 +477,7 @@ pub const JSON5Parser = struct {
         const quote = self.source[self.pos];
         self.pos += 1; // skip opening quote
 
-        var buf = std.array_list.Managed(u8).init(bun.default_allocator);
-        errdefer buf.deinit();
+        var buf = std.array_list.Managed(u8).init(self.allocator);
 
         while (self.pos < self.source.len) {
             const c = self.source[self.pos];
@@ -429,7 +495,7 @@ pub const JSON5Parser = struct {
 
             // Line terminators are not allowed unescaped in strings
             if (c == '\n' or c == '\r') {
-                return self.fail("Unterminated string");
+                return error.UnterminatedString;
             }
 
             // Check for U+2028/U+2029 (allowed unescaped in JSON5 strings)
@@ -453,12 +519,12 @@ pub const JSON5Parser = struct {
             }
         }
 
-        return self.fail("Unterminated string");
+        return error.UnterminatedString;
     }
 
     fn parseEscapeSequence(self: *JSON5Parser, buf: *std.array_list.Managed(u8)) ParseError!void {
         if (self.pos >= self.source.len) {
-            return self.fail("Unexpected end of input in escape sequence");
+            return error.UnterminatedEscape;
         }
 
         const c = self.source[self.pos];
@@ -479,7 +545,7 @@ pub const JSON5Parser = struct {
                 if (self.pos < self.source.len) {
                     const next = self.source[self.pos];
                     if (next >= '0' and next <= '9') {
-                        return self.fail("Octal escape sequences are not allowed in JSON5");
+                        return error.OctalEscape;
                     }
                 }
                 try buf.append(0);
@@ -487,13 +553,13 @@ pub const JSON5Parser = struct {
             'x' => {
                 // \xHH hex escape
                 const hi = self.readHexDigit() orelse {
-                    return self.fail("Invalid hex escape");
+                    return error.InvalidHexEscape;
                 };
                 const lo = self.readHexDigit() orelse {
-                    return self.fail("Invalid hex escape");
+                    return error.InvalidHexEscape;
                 };
                 const value: u8 = (@as(u8, hi) << 4) | lo;
-                try self.appendCodepointToUtf8(buf, @intCast(value));
+                try appendCodepointToUtf8(buf, @intCast(value));
             },
             'u' => {
                 // \uHHHH unicode escape
@@ -509,17 +575,17 @@ pub const JSON5Parser = struct {
                         const low = try self.readHex4();
                         if (low >= 0xDC00 and low <= 0xDFFF) {
                             const full_cp: i32 = 0x10000 + (cp - 0xD800) * 0x400 + (low - 0xDC00);
-                            try self.appendCodepointToUtf8(buf, full_cp);
+                            try appendCodepointToUtf8(buf, full_cp);
                         } else {
                             // Invalid low surrogate - just encode both independently
-                            try self.appendCodepointToUtf8(buf, cp);
-                            try self.appendCodepointToUtf8(buf, low);
+                            try appendCodepointToUtf8(buf, cp);
+                            try appendCodepointToUtf8(buf, low);
                         }
                     } else {
-                        try self.appendCodepointToUtf8(buf, cp);
+                        try appendCodepointToUtf8(buf, cp);
                     }
                 } else {
-                    try self.appendCodepointToUtf8(buf, cp);
+                    try appendCodepointToUtf8(buf, cp);
                 }
             },
             '\r' => {
@@ -532,7 +598,7 @@ pub const JSON5Parser = struct {
                 // Line continuation: \LF
             },
             '1'...'9' => {
-                return self.fail("Octal escape sequences are not allowed in JSON5");
+                return error.OctalEscape;
             },
             0xE2 => {
                 // Check for U+2028/U+2029 line continuation
@@ -556,71 +622,76 @@ pub const JSON5Parser = struct {
 
     fn scanNumber(self: *JSON5Parser) ParseError!f64 {
         const start = self.pos;
-        const c = self.source[self.pos];
 
-        // Hexadecimal: 0x or 0X
-        if (c == '0' and self.pos + 1 < self.source.len) {
-            const next = self.source[self.pos + 1];
-            if (next == 'x' or next == 'X') {
-                return self.scanHexNumber();
+        // Leading zero: check for hex prefix or invalid leading zeros
+        if (self.peek() == '0' and self.pos + 1 < self.source.len) {
+            switch (self.source[self.pos + 1]) {
+                'x', 'X' => return self.scanHexNumber(),
+                '0'...'9' => return error.LeadingZeros,
+                else => {},
             }
         }
-
-        // Check for leading zero followed by digit (invalid)
-        if (c == '0' and self.pos + 1 < self.source.len) {
-            const next = self.source[self.pos + 1];
-            if (next >= '0' and next <= '9') {
-                return self.fail("Leading zeros are not allowed in JSON5");
-            }
-        }
-
-        // Parse decimal number
-        var has_digits = false;
 
         // Integer part
-        if (c >= '0' and c <= '9') {
-            has_digits = true;
-            self.pos += 1;
-            while (self.pos < self.source.len and self.source[self.pos] >= '0' and self.source[self.pos] <= '9') {
-                self.pos += 1;
+        var has_digits = false;
+        while (self.pos < self.source.len) {
+            switch (self.source[self.pos]) {
+                '0'...'9' => {
+                    self.pos += 1;
+                    has_digits = true;
+                },
+                else => break,
             }
         }
 
         // Fractional part
-        if (self.pos < self.source.len and self.source[self.pos] == '.') {
+        if (self.peek() == '.') {
             self.pos += 1;
             var has_frac_digits = false;
-            while (self.pos < self.source.len and self.source[self.pos] >= '0' and self.source[self.pos] <= '9') {
-                self.pos += 1;
-                has_frac_digits = true;
+            while (self.pos < self.source.len) {
+                switch (self.source[self.pos]) {
+                    '0'...'9' => {
+                        self.pos += 1;
+                        has_frac_digits = true;
+                    },
+                    else => break,
+                }
             }
             if (!has_digits and !has_frac_digits) {
-                return self.fail("Invalid number: lone decimal point");
+                return error.InvalidNumber;
             }
             has_digits = true;
         }
 
         if (!has_digits) {
-            return self.fail("Invalid number");
+            return error.InvalidNumber;
         }
 
         // Exponent part
-        if (self.pos < self.source.len and (self.source[self.pos] == 'e' or self.source[self.pos] == 'E')) {
-            self.pos += 1;
-            if (self.pos < self.source.len and (self.source[self.pos] == '+' or self.source[self.pos] == '-')) {
+        switch (self.peek()) {
+            'e', 'E' => {
                 self.pos += 1;
-            }
-            if (self.pos >= self.source.len or self.source[self.pos] < '0' or self.source[self.pos] > '9') {
-                return self.fail("Invalid exponent in number");
-            }
-            while (self.pos < self.source.len and self.source[self.pos] >= '0' and self.source[self.pos] <= '9') {
-                self.pos += 1;
-            }
+                switch (self.peek()) {
+                    '+', '-' => self.pos += 1,
+                    else => {},
+                }
+                switch (self.peek()) {
+                    '0'...'9' => self.pos += 1,
+                    else => return error.InvalidNumber,
+                }
+                while (self.pos < self.source.len) {
+                    switch (self.source[self.pos]) {
+                        '0'...'9' => self.pos += 1,
+                        else => break,
+                    }
+                }
+            },
+            else => {},
         }
 
         const num_str = self.source[start..self.pos];
         return std.fmt.parseFloat(f64, num_str) catch {
-            return self.fail("Invalid number");
+            return error.InvalidNumber;
         };
     }
 
@@ -629,46 +700,43 @@ pub const JSON5Parser = struct {
         const hex_start = self.pos;
 
         while (self.pos < self.source.len) {
-            const c = self.source[self.pos];
-            if ((c >= '0' and c <= '9') or (c >= 'a' and c <= 'f') or (c >= 'A' and c <= 'F')) {
-                self.pos += 1;
-            } else {
-                break;
+            switch (self.source[self.pos]) {
+                '0'...'9', 'a'...'f', 'A'...'F' => self.pos += 1,
+                else => break,
             }
         }
 
         if (self.pos == hex_start) {
-            return self.fail("Expected hex digits after '0x'");
+            return error.InvalidHexNumber;
         }
 
         const hex_str = self.source[hex_start..self.pos];
         const value = std.fmt.parseInt(u64, hex_str, 16) catch {
-            return self.fail("Hex number too large");
+            return error.InvalidHexNumber;
         };
         return @floatFromInt(value);
     }
 
     fn scanIdentifier(self: *JSON5Parser) ParseError![]u8 {
-        var buf = std.array_list.Managed(u8).init(bun.default_allocator);
-        errdefer buf.deinit();
+        var buf = std.array_list.Managed(u8).init(self.allocator);
 
         // First character must be IdentifierStart
         const start_cp = self.readCodepoint() orelse {
-            return self.fail("Expected identifier");
+            return error.InvalidIdentifier;
         };
 
         if (start_cp.cp == '\\') {
             // Unicode escape in identifier
             const escaped_cp = try self.parseIdentifierUnicodeEscape();
             if (!identifier.isIdentifierStart(escaped_cp)) {
-                return self.fail("Invalid identifier start character");
+                return error.InvalidIdentifier;
             }
-            try self.appendCodepointToUtf8(&buf, @intCast(escaped_cp));
+            try appendCodepointToUtf8(&buf, @intCast(escaped_cp));
         } else if (identifier.isIdentifierStart(start_cp.cp)) {
             self.pos += start_cp.len;
-            try self.appendCodepointToUtf8(&buf, @intCast(start_cp.cp));
+            try appendCodepointToUtf8(&buf, @intCast(start_cp.cp));
         } else {
-            return self.fail("Invalid identifier start character");
+            return error.InvalidIdentifier;
         }
 
         // Continue characters
@@ -680,10 +748,10 @@ pub const JSON5Parser = struct {
                 if (!identifier.isIdentifierPart(escaped_cp)) {
                     break;
                 }
-                try self.appendCodepointToUtf8(&buf, @intCast(escaped_cp));
+                try appendCodepointToUtf8(&buf, @intCast(escaped_cp));
             } else if (identifier.isIdentifierPart(cont_cp.cp)) {
                 self.pos += cont_cp.len;
-                try self.appendCodepointToUtf8(&buf, @intCast(cont_cp.cp));
+                try appendCodepointToUtf8(&buf, @intCast(cont_cp.cp));
             } else {
                 break;
             }
@@ -696,7 +764,7 @@ pub const JSON5Parser = struct {
         // We already consumed the '\', now expect 'u' + 4 hex digits
         self.pos += 1; // skip '\'
         if (self.pos >= self.source.len or self.source[self.pos] != 'u') {
-            return self.fail("Expected 'u' after '\\' in identifier");
+            return error.InvalidUnicodeEscape;
         }
         self.pos += 1;
         return self.readHex4();
@@ -727,7 +795,7 @@ pub const JSON5Parser = struct {
             }
             self.pos += 1;
         }
-        return self.fail("Unterminated multi-line comment");
+        return error.UnterminatedComment;
     }
 
     /// Check if the current position has a multi-byte whitespace character.
@@ -788,7 +856,7 @@ pub const JSON5Parser = struct {
         comptime var i: usize = 0;
         inline while (i < 4) : (i += 1) {
             const digit = self.readHexDigit() orelse {
-                return self.fail("Invalid unicode escape: expected 4 hex digits");
+                return error.InvalidUnicodeEscape;
             };
             value = (value << 4) | @as(i32, digit);
         }
@@ -815,10 +883,9 @@ pub const JSON5Parser = struct {
         return .{ .cp = decoded, .len = @intCast(seq_len) };
     }
 
-    fn appendCodepointToUtf8(self: *JSON5Parser, buf: *std.array_list.Managed(u8), cp: i32) ParseError!void {
-        _ = self;
+    fn appendCodepointToUtf8(buf: *std.array_list.Managed(u8), cp: i32) ParseError!void {
         if (cp < 0 or cp > 0x10FFFF) {
-            return error.SyntaxError;
+            return error.InvalidUnicodeEscape;
         }
         var encoded: [4]u8 = undefined;
         const len = strings.encodeWTF8Rune(&encoded, cp);

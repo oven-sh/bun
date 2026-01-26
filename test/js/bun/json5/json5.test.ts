@@ -233,14 +233,14 @@ describe("numbers - additional", () => {
   });
 
   test("lone decimal point throws", () => {
-    expect(() => JSON5.parse(".")).toThrow("Invalid number: lone decimal point");
-    expect(() => JSON5.parse("+.")).toThrow("Invalid number: lone decimal point");
-    expect(() => JSON5.parse("-.")).toThrow("Invalid number: lone decimal point");
+    expect(() => JSON5.parse(".")).toThrow("Invalid number");
+    expect(() => JSON5.parse("+.")).toThrow("Invalid number");
+    expect(() => JSON5.parse("-.")).toThrow("Invalid number");
   });
 
   test("hex with no digits throws", () => {
-    expect(() => JSON5.parse("0x")).toThrow("Expected hex digits after '0x'");
-    expect(() => JSON5.parse("0X")).toThrow("Expected hex digits after '0x'");
+    expect(() => JSON5.parse("0x")).toThrow("Invalid hex number");
+    expect(() => JSON5.parse("0X")).toThrow("Invalid hex number");
   });
 
   test("large hex number", () => {
@@ -356,15 +356,15 @@ describe("arrays - additional", () => {
   });
 
   test("double trailing comma throws", () => {
-    expect(() => JSON5.parse("[1,,]")).toThrow("Unexpected character");
+    expect(() => JSON5.parse("[1,,]")).toThrow("Unexpected token");
   });
 
   test("leading comma throws", () => {
-    expect(() => JSON5.parse("[,1]")).toThrow("Unexpected character");
+    expect(() => JSON5.parse("[,1]")).toThrow("Unexpected token");
   });
 
   test("lone comma throws", () => {
-    expect(() => JSON5.parse("[,]")).toThrow("Unexpected character");
+    expect(() => JSON5.parse("[,]")).toThrow("Unexpected token");
   });
 });
 
@@ -447,7 +447,7 @@ describe("error messages", () => {
       expect.unreachable();
     } catch (e: any) {
       expect(e).toBeInstanceOf(SyntaxError);
-      expect(e.message).toContain("Unexpected identifier");
+      expect(e.message).toContain("Unexpected token");
     }
   });
 
@@ -470,8 +470,8 @@ describe("error messages", () => {
   // -- Unexpected character --
   test("unexpected character at top level", () => {
     expect(() => JSON5.parse("@")).toThrow("Unexpected character");
-    expect(() => JSON5.parse("undefined")).toThrow("Unexpected identifier");
-    expect(() => JSON5.parse("{a: hello}")).toThrow("Unexpected identifier");
+    expect(() => JSON5.parse("undefined")).toThrow("Unexpected token");
+    expect(() => JSON5.parse("{a: hello}")).toThrow("Unexpected token");
   });
 
   // -- Unterminated multi-line comment --
@@ -483,70 +483,70 @@ describe("error messages", () => {
 
   // -- Unexpected end of input after sign --
   test("sign with no value", () => {
-    expect(() => JSON5.parse("+")).toThrow("Unexpected end of input after sign");
-    expect(() => JSON5.parse("-")).toThrow("Unexpected end of input after sign");
-    expect(() => JSON5.parse("+ ")).toThrow("Unexpected end of input after sign");
+    expect(() => JSON5.parse("+")).toThrow("Unexpected end of input");
+    expect(() => JSON5.parse("-")).toThrow("Unexpected end of input");
+    expect(() => JSON5.parse("+ ")).toThrow("Unexpected character");
   });
 
   // -- Unexpected character after sign --
   test("sign followed by invalid character", () => {
     expect(() => JSON5.parse("+@")).toThrow("Unexpected character");
-    expect(() => JSON5.parse("-z")).toThrow("Unexpected character after sign");
-    expect(() => JSON5.parse("+true")).toThrow("Unexpected character after sign");
+    expect(() => JSON5.parse("-z")).toThrow("Unexpected character");
+    expect(() => JSON5.parse("+true")).toThrow("Unexpected character");
   });
 
   // -- Unexpected identifier --
   test("incomplete true literal", () => {
-    expect(() => JSON5.parse("tru")).toThrow("Unexpected identifier");
-    expect(() => JSON5.parse("tr")).toThrow("Unexpected identifier");
+    expect(() => JSON5.parse("tru")).toThrow("Unexpected token");
+    expect(() => JSON5.parse("tr")).toThrow("Unexpected token");
   });
 
   test("true followed by identifier char", () => {
-    expect(() => JSON5.parse("truex")).toThrow("Unexpected identifier");
-    expect(() => JSON5.parse("truely")).toThrow("Unexpected identifier");
+    expect(() => JSON5.parse("truex")).toThrow("Unexpected token");
+    expect(() => JSON5.parse("truely")).toThrow("Unexpected token");
   });
 
   test("incomplete false literal", () => {
-    expect(() => JSON5.parse("fals")).toThrow("Unexpected identifier");
-    expect(() => JSON5.parse("fal")).toThrow("Unexpected identifier");
+    expect(() => JSON5.parse("fals")).toThrow("Unexpected token");
+    expect(() => JSON5.parse("fal")).toThrow("Unexpected token");
   });
 
   test("false followed by identifier char", () => {
-    expect(() => JSON5.parse("falsex")).toThrow("Unexpected identifier");
-    expect(() => JSON5.parse("falsely")).toThrow("Unexpected identifier");
+    expect(() => JSON5.parse("falsex")).toThrow("Unexpected token");
+    expect(() => JSON5.parse("falsely")).toThrow("Unexpected token");
   });
 
   test("incomplete null literal", () => {
-    expect(() => JSON5.parse("nul")).toThrow("Unexpected identifier");
-    expect(() => JSON5.parse("no")).toThrow("Unexpected identifier");
+    expect(() => JSON5.parse("nul")).toThrow("Unexpected token");
+    expect(() => JSON5.parse("no")).toThrow("Unexpected token");
   });
 
   test("null followed by identifier char", () => {
-    expect(() => JSON5.parse("nullify")).toThrow("Unexpected identifier");
-    expect(() => JSON5.parse("nullx")).toThrow("Unexpected identifier");
+    expect(() => JSON5.parse("nullify")).toThrow("Unexpected token");
+    expect(() => JSON5.parse("nullx")).toThrow("Unexpected token");
   });
 
   test("NaN followed by identifier char", () => {
-    expect(() => JSON5.parse("NaNx")).toThrow("Unexpected identifier");
-    expect(() => JSON5.parse("NaNs")).toThrow("Unexpected identifier");
+    expect(() => JSON5.parse("NaNx")).toThrow("Unexpected token");
+    expect(() => JSON5.parse("NaNs")).toThrow("Unexpected token");
   });
 
   test("Infinity followed by identifier char", () => {
-    expect(() => JSON5.parse("Infinityx")).toThrow("Unexpected identifier");
-    expect(() => JSON5.parse("Infinitys")).toThrow("Unexpected identifier");
+    expect(() => JSON5.parse("Infinityx")).toThrow("Unexpected token");
+    expect(() => JSON5.parse("Infinitys")).toThrow("Unexpected token");
   });
 
   // -- Unexpected identifier (N/I not followed by keyword) --
   test("N not followed by NaN", () => {
-    expect(() => JSON5.parse("N")).toThrow("Unexpected identifier");
-    expect(() => JSON5.parse("Na")).toThrow("Unexpected identifier");
-    expect(() => JSON5.parse("Nope")).toThrow("Unexpected identifier");
+    expect(() => JSON5.parse("N")).toThrow("Unexpected token");
+    expect(() => JSON5.parse("Na")).toThrow("Unexpected token");
+    expect(() => JSON5.parse("Nope")).toThrow("Unexpected token");
   });
 
   test("I not followed by Infinity", () => {
-    expect(() => JSON5.parse("I")).toThrow("Unexpected identifier");
-    expect(() => JSON5.parse("Inf")).toThrow("Unexpected identifier");
-    expect(() => JSON5.parse("Iffy")).toThrow("Unexpected identifier");
+    expect(() => JSON5.parse("I")).toThrow("Unexpected token");
+    expect(() => JSON5.parse("Inf")).toThrow("Unexpected token");
+    expect(() => JSON5.parse("Iffy")).toThrow("Unexpected token");
   });
 
   // -- Expected ':' after object key --
@@ -561,15 +561,15 @@ describe("error messages", () => {
     expect(() => JSON5.parse('{"a": 1')).toThrow("Unterminated object");
   });
 
-  // -- Expected ',' or '}' in object --
+  // -- Expected ',' --
   test("missing comma in object", () => {
-    expect(() => JSON5.parse("{a: 1 b: 2}")).toThrow("Expected ',' or '}' in object");
+    expect(() => JSON5.parse("{a: 1 b: 2}")).toThrow("Expected ','");
   });
 
   // -- Unexpected end of input in object key --
   test("object key at EOF", () => {
-    expect(() => JSON5.parse("{")).toThrow("Unexpected end of input in object key");
-    expect(() => JSON5.parse("{a: 1,")).toThrow("Unexpected end of input in object key");
+    expect(() => JSON5.parse("{")).toThrow("Unexpected end of input");
+    expect(() => JSON5.parse("{a: 1,")).toThrow("Unexpected end of input");
   });
 
   // -- Invalid identifier start character --
@@ -580,7 +580,7 @@ describe("error messages", () => {
 
   // -- Expected 'u' after '\\' in identifier --
   test("non-u escape in identifier key", () => {
-    expect(() => JSON5.parse("{\\x0041: 1}")).toThrow("Expected 'u' after '\\' in identifier");
+    expect(() => JSON5.parse("{\\x0041: 1}")).toThrow("Invalid unicode escape");
   });
 
   // -- Unterminated array --
@@ -590,9 +590,9 @@ describe("error messages", () => {
     expect(() => JSON5.parse("[1")).toThrow("Unterminated array");
   });
 
-  // -- Expected ',' or ']' in array --
+  // -- Expected ',' --
   test("missing comma in array", () => {
-    expect(() => JSON5.parse("[1 2]")).toThrow("Expected ',' or ']' in array");
+    expect(() => JSON5.parse("[1 2]")).toThrow("Expected ','");
   });
 
   // -- Unterminated string --
@@ -643,27 +643,27 @@ describe("error messages", () => {
 
   // -- Invalid number: lone decimal point --
   test("lone decimal point", () => {
-    expect(() => JSON5.parse(".")).toThrow("Invalid number: lone decimal point");
+    expect(() => JSON5.parse(".")).toThrow("Invalid number");
   });
 
   // -- Invalid exponent in number --
   test("invalid exponent", () => {
-    expect(() => JSON5.parse("1e")).toThrow("Invalid exponent in number");
-    expect(() => JSON5.parse("1e+")).toThrow("Invalid exponent in number");
-    expect(() => JSON5.parse("1E-")).toThrow("Invalid exponent in number");
-    expect(() => JSON5.parse("1ex")).toThrow("Invalid exponent in number");
+    expect(() => JSON5.parse("1e")).toThrow("Invalid number");
+    expect(() => JSON5.parse("1e+")).toThrow("Invalid number");
+    expect(() => JSON5.parse("1E-")).toThrow("Invalid number");
+    expect(() => JSON5.parse("1ex")).toThrow("Invalid number");
   });
 
   // -- Expected hex digits after '0x' --
   test("hex with no digits", () => {
-    expect(() => JSON5.parse("0x")).toThrow("Expected hex digits after '0x'");
-    expect(() => JSON5.parse("0X")).toThrow("Expected hex digits after '0x'");
-    expect(() => JSON5.parse("0xGG")).toThrow("Expected hex digits after '0x'");
+    expect(() => JSON5.parse("0x")).toThrow("Invalid hex number");
+    expect(() => JSON5.parse("0X")).toThrow("Invalid hex number");
+    expect(() => JSON5.parse("0xGG")).toThrow("Invalid hex number");
   });
 
   // -- Hex number too large --
   test("hex number too large", () => {
-    expect(() => JSON5.parse("0xFFFFFFFFFFFFFFFFFF")).toThrow("Hex number too large");
+    expect(() => JSON5.parse("0xFFFFFFFFFFFFFFFFFF")).toThrow("Invalid hex number");
   });
 });
 
@@ -866,20 +866,14 @@ describe("comments in all structural positions", () => {
     expect(JSON5.parse("[1, // c\n]")).toEqual([1]);
   });
 
-  test("comment between sign and number", () => {
-    expect(JSON5.parse("+ /* c */ 1")).toEqual(1);
-    expect(JSON5.parse("- /* c */ 1")).toEqual(-1);
-    expect(JSON5.parse("+ // c\n1")).toEqual(1);
-  });
-
-  test("comment between sign and Infinity", () => {
-    expect(JSON5.parse("+ /* c */ Infinity")).toEqual(Infinity);
-    expect(JSON5.parse("- /* c */ Infinity")).toEqual(-Infinity);
-  });
-
-  test("comment between sign and NaN", () => {
-    expect(Number.isNaN(JSON5.parse("+ /* c */ NaN"))).toBe(true);
-    expect(Number.isNaN(JSON5.parse("- /* c */ NaN"))).toBe(true);
+  test("no whitespace/comments allowed between sign and value (per spec)", () => {
+    expect(() => JSON5.parse("+ /* c */ 1")).toThrow();
+    expect(() => JSON5.parse("- /* c */ 1")).toThrow();
+    expect(() => JSON5.parse("+ // c\n1")).toThrow();
+    expect(() => JSON5.parse("+ /* c */ Infinity")).toThrow();
+    expect(() => JSON5.parse("- /* c */ Infinity")).toThrow();
+    expect(() => JSON5.parse("+ /* c */ NaN")).toThrow();
+    expect(() => JSON5.parse("- /* c */ NaN")).toThrow();
   });
 
   test("block comment with asterisks inside", () => {
@@ -900,17 +894,14 @@ describe("comments in all structural positions", () => {
 });
 
 describe("whitespace in all structural positions", () => {
-  test("whitespace between sign and value", () => {
-    expect(JSON5.parse("+  1")).toEqual(1);
-    expect(JSON5.parse("-  1")).toEqual(-1);
-    expect(JSON5.parse("+ \t 1")).toEqual(1);
-    expect(JSON5.parse("- \n 1")).toEqual(-1);
-  });
-
-  test("unicode whitespace between sign and value", () => {
-    expect(JSON5.parse("+\u00A01")).toEqual(1);
-    expect(JSON5.parse("-\u00A01")).toEqual(-1);
-    expect(JSON5.parse("+\u20001")).toEqual(1);
+  test("no whitespace allowed between sign and value (per spec)", () => {
+    expect(() => JSON5.parse("+  1")).toThrow();
+    expect(() => JSON5.parse("-  1")).toThrow();
+    expect(() => JSON5.parse("+ \t 1")).toThrow();
+    expect(() => JSON5.parse("- \n 1")).toThrow();
+    expect(() => JSON5.parse("+\u00A01")).toThrow();
+    expect(() => JSON5.parse("-\u00A01")).toThrow();
+    expect(() => JSON5.parse("+\u20001")).toThrow();
   });
 
   test("all unicode whitespace types as separators", () => {
@@ -1007,17 +998,17 @@ describe("reserved words as keys", () => {
   });
 
   test("keyword-like identifiers as values should error", () => {
-    expect(() => JSON5.parse("{a: undefined}")).toThrow("Unexpected identifier");
-    expect(() => JSON5.parse("{a: class}")).toThrow("Unexpected identifier");
-    expect(() => JSON5.parse("{a: var}")).toThrow("Unexpected identifier");
+    expect(() => JSON5.parse("{a: undefined}")).toThrow("Unexpected token");
+    expect(() => JSON5.parse("{a: class}")).toThrow("Unexpected token");
+    expect(() => JSON5.parse("{a: var}")).toThrow("Unexpected token");
   });
 });
 
 describe("number edge cases", () => {
   test("double sign throws", () => {
     expect(() => JSON5.parse("++1")).toThrow("Unexpected character");
-    expect(() => JSON5.parse("--1")).toThrow("Unexpected character after sign");
-    expect(() => JSON5.parse("+-1")).toThrow("Unexpected character after sign");
+    expect(() => JSON5.parse("--1")).toThrow("Unexpected character");
+    expect(() => JSON5.parse("+-1")).toThrow("Unexpected character");
   });
 
   test("negative hex zero", () => {
@@ -1205,11 +1196,11 @@ describe("garbage input", () => {
   });
 
   test("random words throw", () => {
-    expect(() => JSON5.parse("undefined")).toThrow("Unexpected identifier");
-    expect(() => JSON5.parse("foo")).toThrow("Unexpected identifier");
-    expect(() => JSON5.parse("var")).toThrow("Unexpected identifier");
-    expect(() => JSON5.parse("function")).toThrow("Unexpected identifier");
-    expect(() => JSON5.parse("return")).toThrow("Unexpected identifier");
+    expect(() => JSON5.parse("undefined")).toThrow("Unexpected token");
+    expect(() => JSON5.parse("foo")).toThrow("Unexpected token");
+    expect(() => JSON5.parse("var")).toThrow("Unexpected token");
+    expect(() => JSON5.parse("function")).toThrow("Unexpected token");
+    expect(() => JSON5.parse("return")).toThrow("Unexpected token");
   });
 
   test("javascript expressions throw", () => {
@@ -1269,5 +1260,258 @@ describe("input types", () => {
 
   test("throws on null argument", () => {
     expect(() => JSON5.parse(null as any)).toThrow();
+  });
+});
+
+// Helper for comparing values that may contain NaN
+function deepEqual(a: any, b: any): boolean {
+  if (typeof a === "number" && typeof b === "number") {
+    if (Number.isNaN(a) && Number.isNaN(b)) return true;
+    return Object.is(a, b);
+  }
+  if (a === b) return true;
+  if (a == null || b == null) return a === b;
+  if (typeof a !== typeof b) return false;
+  if (Array.isArray(a)) {
+    if (!Array.isArray(b) || a.length !== b.length) return false;
+    return a.every((v: any, i: number) => deepEqual(v, b[i]));
+  }
+  if (typeof a === "object") {
+    const aKeys = Object.keys(a);
+    const bKeys = Object.keys(b);
+    if (aKeys.length !== bKeys.length) return false;
+    return aKeys.every(k => deepEqual(a[k], b[k]));
+  }
+  return false;
+}
+
+describe("round-trip: parse → stringify → parse", () => {
+  // Parse JSON5 input, stringify the result, parse again — values must match
+  function psp(input: string) {
+    const first = JSON5.parse(input);
+    const stringified = JSON5.stringify(first);
+    const second = JSON5.parse(stringified);
+    expect(deepEqual(first, second)).toBe(true);
+  }
+
+  describe("primitives", () => {
+    test("null", () => psp("null"));
+    test("true", () => psp("true"));
+    test("false", () => psp("false"));
+  });
+
+  describe("numbers", () => {
+    test("zero", () => psp("0"));
+    test("positive integer", () => psp("42"));
+    test("negative integer", () => psp("-42"));
+    test("float", () => psp("3.14"));
+    test("negative float", () => psp("-3.14"));
+    test("leading decimal point", () => psp(".5"));
+    test("negative leading decimal", () => psp("-.5"));
+    test("exponent notation", () => psp("1e10"));
+    test("negative exponent", () => psp("1e-5"));
+    test("positive exponent", () => psp("1E+3"));
+    test("hex integer", () => psp("0xFF"));
+    test("negative hex", () => psp("-0xFF"));
+    test("Infinity", () => psp("Infinity"));
+    test("-Infinity", () => psp("-Infinity"));
+    test("+Infinity", () => psp("+Infinity"));
+    test("NaN", () => psp("NaN"));
+    test("explicit positive", () => psp("+42"));
+    test("explicit positive float", () => psp("+3.14"));
+  });
+
+  describe("strings", () => {
+    test("empty single-quoted", () => psp("''"));
+    test("empty double-quoted", () => psp('""'));
+    test("simple single-quoted", () => psp("'hello'"));
+    test("simple double-quoted", () => psp('"hello"'));
+    test("string with spaces", () => psp("'hello world'"));
+    test("string with escape sequences", () => psp("'\\n\\t\\r\\b\\f'"));
+    test("string with unicode escape", () => psp("'\\u0041'"));
+    test("string with backslash", () => psp("'\\\\'"));
+    test("string with single quote escape", () => psp("'it\\'s'"));
+    test("string with null char escape", () => psp("'\\0'"));
+    test("unicode characters", () => psp("'日本語'"));
+    test("emoji", () => psp("'😀'"));
+  });
+
+  describe("arrays", () => {
+    test("empty array", () => psp("[]"));
+    test("single element", () => psp("[1]"));
+    test("multiple elements", () => psp("[1, 2, 3]"));
+    test("mixed types", () => psp("[1, 'two', true, null, Infinity]"));
+    test("nested arrays", () => psp("[[1, 2], [3, 4]]"));
+    test("array with trailing comma", () => psp("[1, 2, 3,]"));
+    test("sparse-looking array with nulls", () => psp("[null, null, null]"));
+  });
+
+  describe("objects", () => {
+    test("empty object", () => psp("{}"));
+    test("single property", () => psp("{a: 1}"));
+    test("multiple properties", () => psp("{a: 1, b: 2, c: 3}"));
+    test("quoted keys", () => psp("{'a': 1, \"b\": 2}"));
+    test("nested objects", () => psp("{a: {b: {c: 1}}}"));
+    test("mixed values", () => psp("{a: 1, b: 'two', c: true, d: null, e: [1, 2]}"));
+    test("trailing comma", () => psp("{a: 1, b: 2,}"));
+    test("NaN as key", () => psp("{NaN: 1}"));
+    test("Infinity as key", () => psp("{Infinity: 1}"));
+    test("null as key", () => psp("{null: 1}"));
+    test("true as key", () => psp("{true: 1}"));
+    test("false as key", () => psp("{false: 1}"));
+    test("key with $ prefix", () => psp("{$key: 1}"));
+    test("key with _ prefix", () => psp("{_key: 1}"));
+    test("key with unicode letters", () => psp("{café: 1}"));
+  });
+
+  describe("complex structures", () => {
+    test("array of objects", () => psp("[{a: 1}, {b: 2}, {c: 3}]"));
+    test("object with array values", () => psp("{a: [1, 2], b: [3, 4]}"));
+    test("deeply nested", () => psp("{a: {b: [{c: {d: [1, 2, 3]}}]}}"));
+    test("config-like structure", () =>
+      psp(`{
+        name: 'my-app',
+        version: '1.0.0',
+        debug: true,
+        port: 3000,
+        tags: ['web', 'api'],
+        db: {
+          host: 'localhost',
+          port: 5432,
+        },
+      }`));
+  });
+});
+
+describe("round-trip: stringify → parse → stringify", () => {
+  // Stringify a JS value, parse the result, stringify again — strings must match
+  function sps(value: any) {
+    const first = JSON5.stringify(value);
+    const parsed = JSON5.parse(first);
+    const second = JSON5.stringify(parsed);
+    expect(second).toBe(first);
+  }
+
+  // With a space argument for pretty printing
+  function spsPretty(value: any, space: number | string = 2) {
+    const first = JSON5.stringify(value, null, space);
+    const parsed = JSON5.parse(first);
+    const second = JSON5.stringify(parsed, null, space);
+    expect(second).toBe(first);
+  }
+
+  describe("primitives", () => {
+    test("null", () => sps(null));
+    test("true", () => sps(true));
+    test("false", () => sps(false));
+  });
+
+  describe("numbers", () => {
+    test("zero", () => sps(0));
+    test("positive integer", () => sps(42));
+    test("negative integer", () => sps(-42));
+    test("float", () => sps(3.14));
+    test("negative float", () => sps(-3.14));
+    test("very small float", () => sps(0.000001));
+    test("very large number", () => sps(1e20));
+    test("Infinity", () => sps(Infinity));
+    test("-Infinity", () => sps(-Infinity));
+    test("NaN", () => sps(NaN));
+    test("MAX_SAFE_INTEGER", () => sps(Number.MAX_SAFE_INTEGER));
+    test("MIN_SAFE_INTEGER", () => sps(Number.MIN_SAFE_INTEGER));
+  });
+
+  describe("strings", () => {
+    test("empty string", () => sps(""));
+    test("simple string", () => sps("hello"));
+    test("string with spaces", () => sps("hello world"));
+    test("string with newline", () => sps("line1\nline2"));
+    test("string with tab", () => sps("col1\tcol2"));
+    test("string with backslash", () => sps("path\\to\\file"));
+    test("string with single quotes", () => sps("it's"));
+    test("string with null char", () => sps("null\0char"));
+    test("unicode string", () => sps("日本語"));
+    test("emoji string", () => sps("😀🎉"));
+    test("string with control chars", () => sps("\x01\x02\x03"));
+  });
+
+  describe("arrays", () => {
+    test("empty array", () => sps([]));
+    test("single element", () => sps([1]));
+    test("multiple numbers", () => sps([1, 2, 3]));
+    test("mixed types", () => sps([1, "two", true, null]));
+    test("nested arrays", () =>
+      sps([
+        [1, 2],
+        [3, 4],
+      ]));
+    test("array with special numbers", () => sps([Infinity, -Infinity, NaN]));
+    test("array with objects", () => sps([{ a: 1 }, { b: 2 }]));
+  });
+
+  describe("objects", () => {
+    test("empty object", () => sps({}));
+    test("single property", () => sps({ a: 1 }));
+    test("multiple properties", () => sps({ a: 1, b: 2, c: 3 }));
+    test("nested object", () => sps({ a: { b: { c: 1 } } }));
+    test("mixed value types", () => sps({ num: 42, str: "hello", bool: true, nil: null }));
+    test("object with array value", () => sps({ items: [1, 2, 3] }));
+    test("object with special number values", () => sps({ inf: Infinity, ninf: -Infinity, nan: NaN }));
+    test("key needing quotes (has space)", () => sps({ "key with spaces": 1 }));
+    test("key needing quotes (starts with number)", () => sps({ "0abc": 1 }));
+    test("key needing quotes (has hyphen)", () => sps({ "my-key": 1 }));
+    test("key with $", () => sps({ $key: 1 }));
+    test("key with _", () => sps({ _key: 1 }));
+  });
+
+  describe("complex structures", () => {
+    test("package.json-like", () =>
+      sps({
+        name: "my-package",
+        version: "1.0.0",
+        private: true,
+        dependencies: { react: "^18.0.0", next: "^13.0.0" },
+        scripts: { build: "next build", dev: "next dev" },
+      }));
+
+    test("config with arrays and nesting", () =>
+      sps({
+        server: { host: "localhost", port: 8080 },
+        features: ["auth", "logging"],
+        limits: { maxRequests: Infinity, timeout: 30000 },
+      }));
+  });
+
+  describe("pretty-printed", () => {
+    test("simple object with 2-space indent", () => spsPretty({ a: 1, b: 2 }));
+    test("nested object with 4-space indent", () => spsPretty({ a: { b: 1 } }, 4));
+    test("array with tab indent", () => spsPretty([1, 2, 3], "\t"));
+    test("complex structure", () =>
+      spsPretty({
+        name: "test",
+        items: [1, "two", true],
+        nested: { a: { b: [null, Infinity] } },
+      }));
+    test("empty containers pretty-printed", () => spsPretty({ arr: [], obj: {} }));
+  });
+
+  describe("undefined/symbol/function values", () => {
+    test("undefined in object is omitted", () => {
+      const obj = { a: 1, b: undefined, c: 3 };
+      const s1 = JSON5.stringify(obj);
+      const parsed = JSON5.parse(s1);
+      const s2 = JSON5.stringify(parsed);
+      expect(s2).toBe(s1);
+      expect(parsed).toEqual({ a: 1, c: 3 });
+    });
+
+    test("undefined in array becomes null", () => {
+      const arr = [1, undefined, 3];
+      const s1 = JSON5.stringify(arr);
+      const parsed = JSON5.parse(s1);
+      const s2 = JSON5.stringify(parsed);
+      expect(s2).toBe(s1);
+      expect(parsed).toEqual([1, null, 3]);
+    });
   });
 });

@@ -221,11 +221,11 @@ pub const Parser = struct {
 // Public API
 // ========================================
 
-pub fn renderToHtml(text: []const u8, allocator: Allocator, flags: Flags, tag_filter: bool) error{OutOfMemory}![]u8 {
+pub fn renderToHtml(text: []const u8, allocator: Allocator, flags: Flags, render_opts: root.RenderOptions) error{OutOfMemory}![]u8 {
     // Skip UTF-8 BOM
     const input = helpers.skipUtf8Bom(text);
 
-    var html_renderer = HtmlRenderer.init(allocator, input, tag_filter);
+    var html_renderer = HtmlRenderer.init(allocator, input, render_opts);
     errdefer html_renderer.deinit();
 
     var parser = Parser.init(allocator, input, flags, html_renderer.renderer());
@@ -256,6 +256,7 @@ const links_mod = @import("./links.zig");
 const ref_defs_mod = @import("./ref_defs.zig");
 const render_blocks_mod = @import("./render_blocks.zig");
 const std = @import("std");
+const root = @import("./root.zig");
 const HtmlRenderer = @import("./html_renderer.zig").HtmlRenderer;
 const Allocator = std.mem.Allocator;
 

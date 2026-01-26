@@ -68,6 +68,7 @@ pub fn render(
         .globalObject = globalThis,
         .allocator = bun.default_allocator,
         .src_text = input,
+        .heading_ids = options.heading_ids,
     };
     js_renderer.stack.append(bun.default_allocator, .{}) catch {
         return globalThis.throwOutOfMemory();
@@ -116,6 +117,10 @@ const JsCallbackRenderer = struct {
     stack: std.ArrayListUnmanaged(StackEntry) = .{},
     callbacks: Callbacks = .{},
     has_js_error: bool = false,
+    heading_ids: bool = false,
+    in_heading_block: bool = false,
+    heading_text_buf: std.ArrayListUnmanaged(u8) = .{},
+    slug_counts: std.StringHashMapUnmanaged(u32) = .{},
 
     const Callbacks = struct {
         heading: JSValue = .zero,
@@ -164,6 +169,12 @@ const JsCallbackRenderer = struct {
             entry.buffer.deinit(self.allocator);
         }
         self.stack.deinit(self.allocator);
+        self.heading_text_buf.deinit(self.allocator);
+        var it = self.slug_counts.iterator();
+        while (it.next()) |entry| {
+            self.allocator.free(@constCast(entry.key_ptr.*));
+        }
+        self.slug_counts.deinit(self.allocator);
     }
 
     fn renderer(self: *JsCallbackRenderer) md.Renderer {
@@ -242,6 +253,9 @@ const JsCallbackRenderer = struct {
         const self: *JsCallbackRenderer = @ptrCast(@alignCast(ptr));
         if (self.has_js_error) return;
         if (block_type == .doc) return;
+        if (block_type == .h and self.heading_ids) {
+            self.in_heading_block = true;
+        }
         self.stack.append(self.allocator, .{ .data = data, .flags = flags }) catch {
             self.has_js_error = true;
         };
@@ -252,6 +266,10 @@ const JsCallbackRenderer = struct {
         if (self.has_js_error) return;
         if (block_type == .doc) return;
 
+        if (block_type == .h) {
+            self.in_heading_block = false;
+        }
+
         const callback = self.getBlockCallback(block_type);
         const saved = if (self.stack.items.len > 1)
             self.stack.items[self.stack.items.len - 1]
@@ -259,6 +277,10 @@ const JsCallbackRenderer = struct {
             StackEntry{};
         const meta = self.createBlockMeta(block_type, saved.data, saved.flags);
         self.popAndCallback(callback, meta);
+
+        if (block_type == .h) {
+            self.heading_text_buf.clearRetainingCapacity();
+        }
     }
 
     fn enterSpanImpl(ptr: *anyopaque, _: md.SpanType, detail: md.SpanDetail) void {
@@ -285,6 +307,17 @@ const JsCallbackRenderer = struct {
     fn textImpl(ptr: *anyopaque, text_type: md.TextType, content: []const u8) void {
         const self: *JsCallbackRenderer = @ptrCast(@alignCast(ptr));
         if (self.has_js_error) return;
+
+        // Track plain text for slug generation when inside a heading
+        if (self.in_heading_block) {
+            switch (text_type) {
+                .null_char => self.appendHeadingText("\xEF\xBF\xBD"),
+                .br, .softbr => self.appendHeadingText(" "),
+                .html => {}, // skip HTML tags in slug
+                .entity => self.appendEntityToHeadingText(content),
+                else => self.appendHeadingText(content),
+            }
+        }
 
         switch (text_type) {
             .null_char => self.appendToTop("\xEF\xBF\xBD"),
@@ -389,6 +422,129 @@ const JsCallbackRenderer = struct {
     }
 
     // ========================================
+    // Heading ID / slug generation
+    // ========================================
+
+    fn appendHeadingText(self: *JsCallbackRenderer, content: []const u8) void {
+        self.heading_text_buf.appendSlice(self.allocator, content) catch {
+            self.has_js_error = true;
+        };
+    }
+
+    fn appendEntityToHeadingText(self: *JsCallbackRenderer, entity_text: []const u8) void {
+        var buf: [4]u8 = undefined;
+        if (entity_text.len >= 4 and entity_text[0] == '&' and entity_text[1] == '#') {
+            var cp: u32 = 0;
+            if (entity_text[2] == 'x' or entity_text[2] == 'X') {
+                for (entity_text[3..]) |ec| {
+                    if (ec == ';') break;
+                    cp = cp *% 16 +% switch (ec) {
+                        '0'...'9' => ec - '0',
+                        'a'...'f' => ec - 'a' + 10,
+                        'A'...'F' => ec - 'A' + 10,
+                        else => 0,
+                    };
+                }
+            } else {
+                for (entity_text[2..]) |ec| {
+                    if (ec == ';') break;
+                    cp = cp *% 10 +% (ec - '0');
+                }
+            }
+            if (cp == 0 or cp > 0x10FFFF or (cp >= 0xD800 and cp <= 0xDFFF)) cp = 0xFFFD;
+            const len = encodeUtf8(@intCast(cp), &buf) orelse {
+                self.appendHeadingText("\xEF\xBF\xBD");
+                return;
+            };
+            self.appendHeadingText(buf[0..len]);
+        } else if (md.entity.lookup(entity_text)) |codepoints| {
+            const len1 = encodeUtf8(codepoints[0], &buf) orelse return;
+            self.appendHeadingText(buf[0..len1]);
+            if (codepoints[1] != 0) {
+                const len2 = encodeUtf8(codepoints[1], &buf) orelse return;
+                self.appendHeadingText(buf[0..len2]);
+            }
+        } else {
+            self.appendHeadingText(entity_text);
+        }
+    }
+
+    fn generateSlug(self: *JsCallbackRenderer) []const u8 {
+        const text_items = self.heading_text_buf.items;
+        var out_len: usize = 0;
+        var prev_hyphen: bool = true; // true to trim leading hyphens
+
+        for (text_items) |c| {
+            if (c >= 'A' and c <= 'Z') {
+                self.heading_text_buf.items[out_len] = c + 32;
+                out_len += 1;
+                prev_hyphen = false;
+            } else if ((c >= 'a' and c <= 'z') or (c >= '0' and c <= '9')) {
+                self.heading_text_buf.items[out_len] = c;
+                out_len += 1;
+                prev_hyphen = false;
+            } else if (c == '-' or c == ' ') {
+                if (!prev_hyphen) {
+                    self.heading_text_buf.items[out_len] = '-';
+                    out_len += 1;
+                    prev_hyphen = true;
+                }
+            }
+        }
+
+        // Trim trailing hyphens
+        while (out_len > 0 and self.heading_text_buf.items[out_len - 1] == '-') {
+            out_len -= 1;
+        }
+
+        const base_slug = self.heading_text_buf.items[0..out_len];
+
+        const gop = self.slug_counts.getOrPut(self.allocator, base_slug) catch {
+            self.has_js_error = true;
+            return base_slug;
+        };
+
+        if (!gop.found_existing) {
+            gop.key_ptr.* = self.allocator.dupe(u8, base_slug) catch {
+                self.has_js_error = true;
+                return base_slug;
+            };
+            gop.value_ptr.* = 0;
+            return base_slug;
+        }
+
+        const count = gop.value_ptr.* + 1;
+        gop.value_ptr.* = count;
+        self.heading_text_buf.shrinkRetainingCapacity(out_len);
+        self.heading_text_buf.append(self.allocator, '-') catch {
+            self.has_js_error = true;
+            return base_slug;
+        };
+        self.appendDecimalToTextBuf(count);
+        return self.heading_text_buf.items;
+    }
+
+    fn appendDecimalToTextBuf(self: *JsCallbackRenderer, value: u32) void {
+        var buf: [10]u8 = undefined;
+        var v = value;
+        var i: usize = buf.len;
+        if (v == 0) {
+            self.heading_text_buf.append(self.allocator, '0') catch {
+                self.has_js_error = true;
+            };
+            return;
+        }
+        while (v > 0) {
+            i -= 1;
+            buf[i] = @intCast('0' + v % 10);
+            v /= 10;
+        }
+        self.heading_text_buf.appendSlice(self.allocator, buf[i..]) catch {
+            self.has_js_error = true;
+        };
+    }
+
+    // ========================================
     // Callback lookup
     // ========================================
 
@@ -432,8 +588,13 @@ const JsCallbackRenderer = struct {
         const g = self.globalObject;
         switch (block_type) {
             .h => {
-                const obj = JSValue.createEmptyObject(g, 1);
+                const field_count: usize = if (self.heading_ids) 2 else 1;
+                const obj = JSValue.createEmptyObject(g, field_count);
                 obj.put(g, ZigString.static("level"), JSValue.jsNumber(data));
+                if (self.heading_ids) {
+                    const slug = self.generateSlug();
+                    obj.put(g, ZigString.static("id"), bun.String.createUTF8ForJS(g, slug) catch return null);
+                }
                 return obj;
             },
             .ol => {

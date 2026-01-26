@@ -6,6 +6,12 @@ pub const HtmlRenderer = struct {
     saved_img_title: []const u8 = "",
     tag_filter: bool = false,
     tag_filter_raw_depth: u32 = 0,
+    heading_ids: bool = false,
+    autolink_headings: bool = false,
+    in_heading: bool = false,
+    heading_buf: std.ArrayListUnmanaged(u8) = .{},
+    heading_text_buf: std.ArrayListUnmanaged(u8) = .{},
+    slug_counts: std.StringHashMapUnmanaged(u32) = .{},
 
     pub const OutputBuffer = struct {
         list: std.ArrayListUnmanaged(u8),
@@ -27,17 +33,26 @@ pub const HtmlRenderer = struct {
         }
     };
 
-    pub fn init(allocator: Allocator, src_text: []const u8, tag_filter: bool) HtmlRenderer {
+    pub fn init(allocator: Allocator, src_text: []const u8, render_opts: RenderOptions) HtmlRenderer {
         return .{
             .out = .{ .list = .{}, .allocator = allocator, .oom = false },
             .allocator = allocator,
             .src_text = src_text,
-            .tag_filter = tag_filter,
+            .tag_filter = render_opts.tag_filter,
+            .heading_ids = render_opts.heading_ids,
+            .autolink_headings = render_opts.autolink_headings,
         };
     }
 
     pub fn deinit(self: *HtmlRenderer) void {
         self.out.list.deinit(self.allocator);
+        self.heading_buf.deinit(self.allocator);
+        self.heading_text_buf.deinit(self.allocator);
+        var it = self.slug_counts.iterator();
+        while (it.next()) |entry| {
+            self.allocator.free(@constCast(entry.key_ptr.*));
+        }
+        self.slug_counts.deinit(self.allocator);
     }
 
     pub fn toOwnedSlice(self: *HtmlRenderer) error{OutOfMemory}![]u8 {
@@ -130,17 +145,22 @@ pub const HtmlRenderer = struct {
                 self.write("<hr />\n");
             },
             .h => {
-                self.ensureNewline();
-                const level = data;
-                const tag = switch (level) {
-                    1 => "<h1>",
-                    2 => "<h2>",
-                    3 => "<h3>",
-                    4 => "<h4>",
-                    5 => "<h5>",
-                    else => "<h6>",
-                };
-                self.write(tag);
+                if (self.heading_ids) {
+                    self.ensureNewline();
+                    self.in_heading = true;
+                } else {
+                    self.ensureNewline();
+                    const level = data;
+                    const tag = switch (level) {
+                        1 => "<h1>",
+                        2 => "<h2>",
+                        3 => "<h3>",
+                        4 => "<h4>",
+                        5 => "<h5>",
+                        else => "<h6>",
+                    };
+                    self.write(tag);
+                }
             },
             .code => {
                 self.ensureNewline();
@@ -199,15 +219,52 @@ pub const HtmlRenderer = struct {
             .li => self.write("</li>\n"),
             .hr => {},
             .h => {
-                const tag = switch (data) {
-                    1 => "</h1>\n",
-                    2 => "</h2>\n",
-                    3 => "</h3>\n",
-                    4 => "</h4>\n",
-                    5 => "</h5>\n",
-                    else => "</h6>\n",
-                };
-                self.write(tag);
+                if (self.heading_ids) {
+                    self.in_heading = false;
+                    const slug = self.generateSlug();
+                    // Write opening tag with id
+                    self.out.write(switch (data) {
+                        1 => "<h1",
+                        2 => "<h2",
+                        3 => "<h3",
+                        4 => "<h4",
+                        5 => "<h5",
+                        else => "<h6",
+                    });
+                    self.out.write(" id=\"");
+                    self.out.write(slug);
+                    self.out.write("\">");
+                    if (self.autolink_headings) {
+                        self.out.write("<a href=\"#");
+                        self.out.write(slug);
+                        self.out.write("\">");
+                    }
+                    // Flush buffered heading content
+                    self.out.write(self.heading_buf.items);
+                    if (self.autolink_headings) {
+                        self.out.write("</a>");
+                    }
+                    self.out.write(switch (data) {
+                        1 => "</h1>\n",
+                        2 => "</h2>\n",
+                        3 => "</h3>\n",
+                        4 => "</h4>\n",
+                        5 => "</h5>\n",
+                        else => "</h6>\n",
+                    });
+                    self.heading_buf.clearRetainingCapacity();
+                    self.heading_text_buf.clearRetainingCapacity();
+                } else {
+                    const tag = switch (data) {
+                        1 => "</h1>\n",
+                        2 => "</h2>\n",
+                        3 => "</h3>\n",
+                        4 => "</h4>\n",
+                        5 => "</h5>\n",
+                        else => "</h6>\n",
+                    };
+                    self.write(tag);
+                }
             },
             .code => self.write("</code></pre>\n"),
             .html => {},
@@ -318,6 +375,18 @@ pub const HtmlRenderer = struct {
 
     pub fn text(self: *HtmlRenderer, text_type: TextType, content: []const u8) void {
         const in_image = self.image_nesting_level > 0;
+
+        // Track plain text for slug generation when inside a heading
+        if (self.in_heading) {
+            switch (text_type) {
+                .null_char => self.appendHeadingText("\xEF\xBF\xBD"),
+                .br, .softbr => self.appendHeadingText(" "),
+                .html => {}, // skip HTML tags in slug
+                .entity => self.appendEntityToHeadingText(content),
+                else => self.appendHeadingText(content),
+            }
+        }
+
         switch (text_type) {
             .null_char => self.write("\xEF\xBF\xBD"),
             .br => {
@@ -364,11 +433,23 @@ pub const HtmlRenderer = struct {
     // ========================================
 
     pub fn write(self: *HtmlRenderer, data: []const u8) void {
-        self.out.write(data);
+        if (self.in_heading) {
+            self.heading_buf.appendSlice(self.allocator, data) catch {
+                self.out.oom = true;
+            };
+        } else {
+            self.out.write(data);
+        }
     }
 
     fn writeByte(self: *HtmlRenderer, b: u8) void {
-        self.out.writeByte(b);
+        if (self.in_heading) {
+            self.heading_buf.append(self.allocator, b) catch {
+                self.out.oom = true;
+            };
+        } else {
+            self.out.writeByte(b);
+        }
     }
 
     /// Track whether we're inside a disallowed tag's raw zone.
@@ -624,6 +705,118 @@ pub const HtmlRenderer = struct {
     }
 
     // ========================================
+    // Heading ID / slug generation
+    // ========================================
+
+    fn appendHeadingText(self: *HtmlRenderer, content: []const u8) void {
+        self.heading_text_buf.appendSlice(self.allocator, content) catch {
+            self.out.oom = true;
+        };
+    }
+
+    /// Decode an entity and append the raw character(s) to heading_text_buf for slug generation.
+    fn appendEntityToHeadingText(self: *HtmlRenderer, entity_text: []const u8) void {
+        if (parseEntityCodepoint(entity_text)) |cp| {
+            var buf: [4]u8 = undefined;
+            const len = helpers.encodeUtf8(cp, &buf);
+            self.appendHeadingText(buf[0..len]);
+            return;
+        }
+        if (entity_mod.lookup(entity_text)) |codepoints| {
+            var buf: [4]u8 = undefined;
+            var len = helpers.encodeUtf8(codepoints[0], &buf);
+            self.appendHeadingText(buf[0..len]);
+            if (codepoints[1] != 0) {
+                len = helpers.encodeUtf8(codepoints[1], &buf);
+                self.appendHeadingText(buf[0..len]);
+            }
+        } else {
+            self.appendHeadingText(entity_text);
+        }
+    }
+
+    /// Generate a GitHub-compatible slug from heading_text_buf contents.
+    /// The slug is built in-place in heading_text_buf and deduplicated via slug_counts.
+    fn generateSlug(self: *HtmlRenderer) []const u8 {
+        const text_items = self.heading_text_buf.items;
+        var out_len: usize = 0;
+        var prev_hyphen: bool = true; // true to trim leading hyphens
+
+        for (text_items) |c| {
+            if (c >= 'A' and c <= 'Z') {
+                self.heading_text_buf.items[out_len] = c + 32;
+                out_len += 1;
+                prev_hyphen = false;
+            } else if ((c >= 'a' and c <= 'z') or (c >= '0' and c <= '9')) {
+                self.heading_text_buf.items[out_len] = c;
+                out_len += 1;
+                prev_hyphen = false;
+            } else if (c == '-' or c == ' ') {
+                if (!prev_hyphen) {
+                    self.heading_text_buf.items[out_len] = '-';
+                    out_len += 1;
+                    prev_hyphen = true;
+                }
+            }
+            // else: skip non-alphanumeric characters
+        }
+
+        // Trim trailing hyphens
+        while (out_len > 0 and self.heading_text_buf.items[out_len - 1] == '-') {
+            out_len -= 1;
+        }
+
+        const base_slug = self.heading_text_buf.items[0..out_len];
+
+        // Deduplicate via slug_counts
+        const gop = self.slug_counts.getOrPut(self.allocator, base_slug) catch {
+            self.out.oom = true;
+            return base_slug;
+        };
+
+        if (!gop.found_existing) {
+            // First occurrence — store a duped key
+            gop.key_ptr.* = self.allocator.dupe(u8, base_slug) catch {
+                self.out.oom = true;
+                return base_slug;
+            };
+            gop.value_ptr.* = 0;
+            return base_slug;
+        }
+
+        // Already seen — append -N suffix
+        const count = gop.value_ptr.* + 1;
+        gop.value_ptr.* = count;
+        self.heading_text_buf.shrinkRetainingCapacity(out_len);
+        self.heading_text_buf.append(self.allocator, '-') catch {
+            self.out.oom = true;
+            return base_slug;
+        };
+        self.appendDecimalToTextBuf(count);
+        return self.heading_text_buf.items;
+    }
+
+    fn appendDecimalToTextBuf(self: *HtmlRenderer, value: u32) void {
+        var buf: [10]u8 = undefined;
+        var v = value;
+        var i: usize = buf.len;
+        if (v == 0) {
+            self.heading_text_buf.append(self.allocator, '0') catch {
+                self.out.oom = true;
+            };
+            return;
+        }
+        while (v > 0) {
+            i -= 1;
+            buf[i] = @intCast('0' + v % 10);
+            v /= 10;
+        }
+        self.heading_text_buf.appendSlice(self.allocator, buf[i..]) catch {
+            self.out.oom = true;
+        };
+    }
+
+    // ========================================
     // Static helpers
     // ========================================
 
@@ -672,8 +865,10 @@ pub const HtmlRenderer = struct {
 const bun = @import("bun");
 const entity_mod = @import("./entity.zig");
 const helpers = @import("./helpers.zig");
+const root = @import("./root.zig");
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const RenderOptions = root.RenderOptions;
 
 const types = @import("./types.zig");
 const Align = types.Align;

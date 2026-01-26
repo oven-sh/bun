@@ -968,6 +968,17 @@ declare module "bun" {
        * HTML tags (e.g. `<script>`, `<style>`, `<iframe>`). Default: `false`.
        */
       tag_filter?: boolean;
+      /**
+       * Generate `id` attributes on heading tags from their text content.
+       * Uses GitHub-compatible slug generation (lowercase, strip non-alphanumeric,
+       * deduplicate with `-1`, `-2` suffixes). Default: `false`.
+       */
+      heading_ids?: boolean;
+      /**
+       * Wrap heading content in `<a href="#slug">` anchor tags. Requires `heading_ids`
+       * to be enabled to have an effect. Default: `false`.
+       */
+      autolink_headings?: boolean;
     }
 
     /**
@@ -979,8 +990,8 @@ declare module "bun" {
      * `null`/`undefined` to omit the element from the output.
      */
     interface Callbacks {
-      /** Called for heading blocks (`# ... ######`). */
-      heading?: (children: string, meta: { level: number }) => string | null | undefined | void;
+      /** Called for heading blocks (`# ... ######`). When `heading_ids` is enabled, `meta.id` contains the generated slug. */
+      heading?: (children: string, meta: { level: number; id?: string }) => string | null | undefined | void;
       /** Called for paragraph blocks. */
       paragraph?: (children: string) => string | null | undefined | void;
       /** Called for blockquote blocks. */

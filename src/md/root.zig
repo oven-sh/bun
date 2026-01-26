@@ -8,6 +8,12 @@ pub const Align = types.Align;
 pub const BLOCK_FENCED_CODE = types.BLOCK_FENCED_CODE;
 pub const entity = @import("./entity.zig");
 
+pub const RenderOptions = struct {
+    tag_filter: bool = false,
+    heading_ids: bool = false,
+    autolink_headings: bool = false,
+};
+
 pub const Options = struct {
     tables: bool = true,
     strikethrough: bool = true,
@@ -28,6 +34,8 @@ pub const Options = struct {
     /// GFM tag filter: replaces `<` with `&lt;` for disallowed HTML tags
     /// (title, textarea, style, xmp, iframe, noembed, noframes, script, plaintext).
     tag_filter: bool = false,
+    heading_ids: bool = false,
+    autolink_headings: bool = false,
 
     pub const commonmark: Options = .{
         .tables = false,
@@ -64,6 +72,14 @@ pub const Options = struct {
             .no_html_spans = self.no_html_spans,
         };
     }
+
+    pub fn toRenderOptions(self: Options) RenderOptions {
+        return .{
+            .tag_filter = self.tag_filter,
+            .heading_ids = self.heading_ids,
+            .autolink_headings = self.autolink_headings,
+        };
+    }
 };
 
 pub fn renderToHtml(text: []const u8, allocator: std.mem.Allocator) error{OutOfMemory}![]u8 {
@@ -71,7 +87,7 @@ pub fn renderToHtml(text: []const u8, allocator: std.mem.Allocator) error{OutOfM
 }
 
 pub fn renderToHtmlWithOptions(text: []const u8, allocator: std.mem.Allocator, options: Options) error{OutOfMemory}![]u8 {
-    return parser.renderToHtml(text, allocator, options.toFlags(), options.tag_filter);
+    return parser.renderToHtml(text, allocator, options.toFlags(), options.toRenderOptions());
 }
 
 /// Parse and render using a custom renderer implementation.

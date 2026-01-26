@@ -46,7 +46,7 @@ fn generateCompileResultForJSChunkImpl(worker: *ThreadPool.Worker, c: *LinkerCon
     const toESMRef = c.graph.symbols.follow(runtime_members.get("__toESM").?.ref);
     const runtimeRequireRef = if (c.options.output_format == .cjs) null else c.graph.symbols.follow(runtime_members.get("__require").?.ref);
 
-    const collect_decls = c.options.generate_bytecode_cache and c.options.output_format == .esm and c.resolver.opts.compile;
+    const collect_decls = c.options.generate_bytecode_cache and c.options.output_format == .esm and c.options.compile;
     var dc = DeclCollector{ .allocator = allocator };
 
     const result = c.generateCodeForFileInChunkJS(

@@ -308,7 +308,7 @@ pub fn generateChunksInParallel(
     // cross-chunk import specifiers. During printing, cross-chunk imports use
     // unique_key placeholders as paths. Now that final paths are known, replace
     // those placeholders with the resolved paths and serialize.
-    if (c.options.generate_bytecode_cache and c.options.output_format == .esm and c.resolver.opts.compile) {
+    if (c.options.generate_bytecode_cache and c.options.output_format == .esm and c.options.compile) {
         // Build map from unique_key -> final resolved path
         const b = @as(*bun.bundle_v2.BundleV2, @fieldParentPtr("linker", c));
         var unique_key_to_path = std.StringHashMap([]const u8).init(c.allocator());
@@ -550,8 +550,15 @@ pub fn generateChunksInParallel(
 
             // Create module_info output file for ESM bytecode in --compile builds
             const module_info_output_file: ?options.OutputFile = brk: {
-                if (c.options.generate_bytecode_cache and c.options.output_format == .esm and c.resolver.opts.compile) {
-                    if (chunk.content == .javascript) {
+                if (c.options.generate_bytecode_cache and c.options.output_format == .esm and c.options.compile) {
+                    const loader: Loader = if (chunk.entry_point.is_entry_point)
+                        c.parse_graph.input_files.items(.loader)[
+                            chunk.entry_point.source_index
+                        ]
+                    else
+                        .js;
+
+                    if (chunk.content == .javascript and loader.isJavaScriptLike()) {
                         const module_info_bytes = chunk.content.javascript.module_info_bytes;
                         if (module_info_bytes.len > 0) {
                             break :brk options.OutputFile.init(.{

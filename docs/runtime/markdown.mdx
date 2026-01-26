@@ -40,32 +40,34 @@ const html = Bun.markdown.html("some markdown", {
   tables: true, // GFM tables (default: true)
   strikethrough: true, // GFM strikethrough (default: true)
   tasklists: true, // GFM task lists (default: true)
-  tag_filter: true, // GFM tag filter for disallowed HTML tags
-  permissive_autolinks: true, // Autolink URLs, emails, and www. links
+  tagFilter: true, // GFM tag filter for disallowed HTML tags
+  permissiveAutolinks: true, // Autolink URLs, emails, and www. links
 });
 ```
 
 All available options:
 
-| Option                       | Default | Description                                       |
-| ---------------------------- | ------- | ------------------------------------------------- |
-| `tables`                     | `true`  | GFM tables                                        |
-| `strikethrough`              | `true`  | GFM strikethrough (`~~text~~`)                    |
-| `tasklists`                  | `true`  | GFM task lists (`- [x] item`)                     |
-| `permissive_autolinks`       | `false` | Enable all autolink types (URL, WWW, email)       |
-| `permissive_url_autolinks`   | `false` | Autolink URLs like `https://example.com`          |
-| `permissive_www_autolinks`   | `false` | Autolink `www.example.com`                        |
-| `permissive_email_autolinks` | `false` | Autolink `user@example.com`                       |
-| `hard_soft_breaks`           | `false` | Treat soft line breaks as hard breaks             |
-| `wiki_links`                 | `false` | Enable `[[wiki links]]`                           |
-| `underline`                  | `false` | `__text__` renders as `<u>` instead of `<strong>` |
-| `latex_math`                 | `false` | Enable `$inline$` and `$$display$$` math          |
-| `collapse_whitespace`        | `false` | Collapse whitespace in text                       |
-| `permissive_atx_headers`     | `false` | ATX headers without space after `#`               |
-| `no_indented_code_blocks`    | `false` | Disable indented code blocks                      |
-| `no_html_blocks`             | `false` | Disable HTML blocks                               |
-| `no_html_spans`              | `false` | Disable inline HTML                               |
-| `tag_filter`                 | `false` | GFM tag filter for disallowed HTML tags           |
+| Option                     | Default | Description                                       |
+| -------------------------- | ------- | ------------------------------------------------- |
+| `tables`                   | `true`  | GFM tables                                        |
+| `strikethrough`            | `true`  | GFM strikethrough (`~~text~~`)                    |
+| `tasklists`                | `true`  | GFM task lists (`- [x] item`)                     |
+| `permissiveAutolinks`      | `false` | Enable all autolink types (URL, WWW, email)       |
+| `permissiveUrlAutolinks`   | `false` | Autolink URLs like `https://example.com`          |
+| `permissiveWwwAutolinks`   | `false` | Autolink `www.example.com`                        |
+| `permissiveEmailAutolinks` | `false` | Autolink `user@example.com`                       |
+| `hardSoftBreaks`           | `false` | Treat soft line breaks as hard breaks             |
+| `wikiLinks`                | `false` | Enable `[[wiki links]]`                           |
+| `underline`                | `false` | `__text__` renders as `<u>` instead of `<strong>` |
+| `latexMath`                | `false` | Enable `$inline$` and `$$display$$` math          |
+| `collapseWhitespace`       | `false` | Collapse whitespace in text                       |
+| `permissiveAtxHeaders`     | `false` | ATX headers without space after `#`               |
+| `noIndentedCodeBlocks`     | `false` | Disable indented code blocks                      |
+| `noHtmlBlocks`             | `false` | Disable HTML blocks                               |
+| `noHtmlSpans`              | `false` | Disable inline HTML                               |
+| `tagFilter`                | `false` | GFM tag filter for disallowed HTML tags           |
+| `headingIds`               | `false` | Generate `id` attributes on heading tags          |
+| `autolinkHeadings`         | `false` | Wrap heading content in `<a href="#slug">` tags   |
 
 ---
 
@@ -95,7 +97,7 @@ Return a string to replace the element's rendering. Return `null` or `undefined`
 
 | Callback     | Meta                                       | Description                                                                                |
 | ------------ | ------------------------------------------ | ------------------------------------------------------------------------------------------ |
-| `heading`    | `{ level: number }`                        | Heading level 1–6                                                                          |
+| `heading`    | `{ level: number, id?: string }`           | Heading level 1–6. `id` is set when `headingIds` is enabled                                |
 | `paragraph`  | —                                          | Paragraph block                                                                            |
 | `blockquote` | —                                          | Blockquote block                                                                           |
 | `code`       | `{ language: string }`                     | Fenced or indented code block. `language` is set when a language is specified on the fence |
@@ -190,13 +192,12 @@ const result = Bun.markdown.render("```js\nconsole.log('hi')\n```", {
 Parser options can be included in the same object as callbacks:
 
 ```ts
-const result = Bun.markdown.render("Visit www.example.com and ~~old link~~", {
+const result = Bun.markdown.render("Visit www.example.com", {
   // Callbacks
   link: (children, { href }) => `[${children}](${href})`,
   paragraph: children => children,
 
   // Parser options
-  permissive_autolinks: true,
-  strikethrough: true,
+  permissiveAutolinks: true,
 });
 ```

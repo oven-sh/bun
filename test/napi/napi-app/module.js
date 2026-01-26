@@ -768,6 +768,44 @@ nativeTests.test_ref_unref_underflow = () => {
   }
 };
 
+// Test for napi_create_external_buffer finalizer timing
+// See: https://github.com/oven-sh/bun/issues/26446
+nativeTests.test_issue_26446 = async () => {
+  // Create buffer and verify data integrity
+  let buffer = nativeTests.test_napi_external_buffer_finalizer();
+
+  if (!buffer) {
+    console.log("FAIL: Could not create external buffer");
+    return;
+  }
+
+  // Verify we can read the buffer data
+  {
+    const data = new Uint8Array(buffer.buffer || buffer);
+    let dataValid = true;
+    for (let i = 0; i < data.length; i++) {
+      if (data[i] !== (i & 0xff)) {
+        console.log(`FAIL: Data corruption at offset ${i}: expected ${i & 0xff}, got ${data[i]}`);
+        dataValid = false;
+        break;
+      }
+    }
+
+    if (dataValid) {
+      console.log("PASS: Buffer data is correct after creation");
+    }
+  }
+  // data goes out of scope here, allowing GC
+
+  // Clear the buffer reference to allow GC
+  buffer = null;
+
+  // Use gcUntil to deterministically wait for finalizer to be called
+  await gcUntil(() => nativeTests.test_napi_external_buffer_finalizer_check());
+
+  console.log("PASS: External buffer finalizer was called");
+};
+
 nativeTests.test_get_value_string = () => {
   function to16Bit(string) {
     if (typeof Bun != "object") return string;

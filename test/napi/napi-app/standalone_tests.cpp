@@ -1825,6 +1825,99 @@ static napi_value test_napi_empty_buffer_info(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+// Test for napi_create_external_buffer finalizer timing
+// See: https://github.com/oven-sh/bun/issues/26446
+// The finalizer must be tied directly to the ArrayBuffer lifecycle to prevent
+// native code from freeing/reusing memory while JS still holds a reference.
+static bool g_external_buffer_finalizer_called = false;
+static void *g_external_buffer_finalized_data = nullptr;
+
+static void external_buffer_timing_finalizer(napi_env env, void *data,
+                                              void *hint) {
+  g_external_buffer_finalizer_called = true;
+  g_external_buffer_finalized_data = data;
+  // Free the data that was allocated in the test
+  free(data);
+}
+
+static napi_value
+test_napi_external_buffer_finalizer(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+
+  // Reset global state
+  g_external_buffer_finalizer_called = false;
+  g_external_buffer_finalized_data = nullptr;
+
+  // Allocate data that will be owned by the external buffer
+  const size_t data_size = 32 * 1024; // 32KB, larger than 16KB boundary
+  uint8_t *data = static_cast<uint8_t *>(malloc(data_size));
+  if (!data) {
+    printf("FAIL: Could not allocate test data\n");
+    return env.Undefined();
+  }
+
+  // Fill with a pattern we can verify
+  for (size_t i = 0; i < data_size; i++) {
+    data[i] = static_cast<uint8_t>(i & 0xFF);
+  }
+
+  // Create external buffer - the finalizer should be tied to the ArrayBuffer
+  napi_value buffer;
+  napi_status status = napi_create_external_buffer(
+      env, data_size, data, external_buffer_timing_finalizer, nullptr, &buffer);
+
+  if (status != napi_ok) {
+    printf("FAIL: napi_create_external_buffer failed with status %d\n", status);
+    free(data);
+    return env.Undefined();
+  }
+
+  // Verify we can read the data correctly
+  void *buffer_data;
+  size_t buffer_length;
+  status = napi_get_buffer_info(env, buffer, &buffer_data, &buffer_length);
+
+  if (status != napi_ok) {
+    printf("FAIL: napi_get_buffer_info failed with status %d\n", status);
+    return env.Undefined();
+  }
+
+  if (buffer_length != data_size) {
+    printf("FAIL: Buffer length is %zu, expected %zu\n", buffer_length,
+           data_size);
+    return env.Undefined();
+  }
+
+  if (buffer_data != data) {
+    printf("FAIL: Buffer data pointer does not match original data\n");
+    return env.Undefined();
+  }
+
+  // Verify the data content is correct (not corrupted)
+  uint8_t *verify_data = static_cast<uint8_t *>(buffer_data);
+  for (size_t i = 0; i < data_size; i++) {
+    if (verify_data[i] != static_cast<uint8_t>(i & 0xFF)) {
+      printf("FAIL: Data corruption at offset %zu: expected %u, got %u\n", i,
+             static_cast<unsigned>(i & 0xFF),
+             static_cast<unsigned>(verify_data[i]));
+      return env.Undefined();
+    }
+  }
+
+  // Return the buffer for JavaScript to hold
+  // The finalizer should NOT be called until this buffer is garbage collected
+  printf("PASS: napi_create_external_buffer created buffer with correct data\n");
+  return buffer;
+}
+
+static napi_value
+test_napi_external_buffer_finalizer_check(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+
+  // Return boolean indicating whether finalizer was called
+  return Napi::Boolean::New(env, g_external_buffer_finalizer_called);
+}
+
 // Test for napi_typeof with boxed primitive objects (String, Number, Boolean)
 // See: https://github.com/oven-sh/bun/issues/25351
 static napi_value napi_get_typeof(const Napi::CallbackInfo &info) {
@@ -1887,6 +1980,8 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_napi_freeze_seal_indexed);
   REGISTER_FUNCTION(env, exports, test_napi_create_external_buffer_empty);
   REGISTER_FUNCTION(env, exports, test_napi_empty_buffer_info);
+  REGISTER_FUNCTION(env, exports, test_napi_external_buffer_finalizer);
+  REGISTER_FUNCTION(env, exports, test_napi_external_buffer_finalizer_check);
   REGISTER_FUNCTION(env, exports, napi_get_typeof);
 }
 

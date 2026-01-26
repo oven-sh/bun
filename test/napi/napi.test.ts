@@ -282,6 +282,14 @@ describe.concurrent("napi", () => {
       expect(result).toContain("PASS: napi_is_detached_arraybuffer returns true for empty buffer's arraybuffer");
       expect(result).not.toContain("FAIL");
     });
+
+    // https://github.com/oven-sh/bun/issues/26446
+    it("calls finalizer when buffer is garbage collected", async () => {
+      const result = await checkSameOutput("test_issue_26446", []);
+      expect(result).toContain("PASS: napi_create_external_buffer created buffer with correct data");
+      expect(result).toContain("PASS: Buffer data is correct after creation");
+      expect(result).not.toContain("FAIL");
+    });
   });
 
   describe("napi_async_work", () => {

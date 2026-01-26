@@ -250,8 +250,8 @@ pub fn renderWithRenderer(text: []const u8, allocator: Allocator, flags: Flags, 
     try p.processDoc();
 }
 
-const bun = @import("bun");
 const blocks_mod = @import("./blocks.zig");
+const bun = @import("bun");
 const containers_mod = @import("./containers.zig");
 const helpers = @import("./helpers.zig");
 const inlines_mod = @import("./inlines.zig");

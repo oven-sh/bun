@@ -142,7 +142,7 @@ const wasmFixtures = [
 
 const preloadPath = path.join(import.meta.dir, "preload.js");
 
-describe("JSC JIT Stress Tests", () => {
+describe.concurrent("JSC JIT Stress Tests", () => {
   describe("JS (Baseline/DFG/FTL)", () => {
     for (const fixture of jsFixtures) {
       test(fixture, async () => {

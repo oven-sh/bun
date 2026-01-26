@@ -111,7 +111,7 @@ extern "C" void JSC_JSModuleRecord__addRequestedModuleJSON(JSModuleRecord* modul
 }
 extern "C" void JSC_JSModuleRecord__addRequestedModuleHostDefined(JSModuleRecord* moduleRecord, Identifier* identifierArray, uint32_t moduleName, uint32_t hostDefinedImportType)
 {
-    Ref<ScriptFetchParameters> attributes = ScriptFetchParameters::create(identifierArray[hostDefinedImportType].string());
+    Ref<ScriptFetchParameters> attributes = ScriptFetchParameters::create(getFromIdentifierArray(moduleRecord->vm(), identifierArray, hostDefinedImportType).string());
     moduleRecord->appendRequestedModule(getFromIdentifierArray(moduleRecord->vm(), identifierArray, moduleName), std::move(attributes));
 }
 

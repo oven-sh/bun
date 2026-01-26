@@ -960,7 +960,7 @@ fn writeFileWithEmptySourceToDestination(ctx: *jsc.JSGlobalObject, destination_b
 
             const promise = jsc.JSPromise.Strong.init(ctx);
             const promise_value = promise.value();
-            const proxy = ctx.bunVM().transpiler.env.getHttpProxy(true, null);
+            const proxy = ctx.bunVM().transpiler.env.getHttpProxy(true, null, null);
             const proxy_url = if (proxy) |p| p.href else null;
             destination_store.ref();
             try S3.upload(
@@ -1102,7 +1102,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
             return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, ctx.takeException(err));
         };
         defer aws_options.deinit();
-        const proxy = ctx.bunVM().transpiler.env.getHttpProxy(true, null);
+        const proxy = ctx.bunVM().transpiler.env.getHttpProxy(true, null, null);
         const proxy_url = if (proxy) |p| p.href else null;
         switch (source_store.data) {
             .bytes => |bytes| {
@@ -1390,7 +1390,7 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                                 destination_blob.detach();
                                 return globalThis.throwInvalidArguments("ReadableStream has already been used", .{});
                             }
-                            const proxy = globalThis.bunVM().transpiler.env.getHttpProxy(true, null);
+                            const proxy = globalThis.bunVM().transpiler.env.getHttpProxy(true, null, null);
                             const proxy_url = if (proxy) |p| p.href else null;
 
                             return S3.uploadStream(
@@ -1454,7 +1454,7 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                                 destination_blob.detach();
                                 return globalThis.throwInvalidArguments("ReadableStream has already been used", .{});
                             }
-                            const proxy = globalThis.bunVM().transpiler.env.getHttpProxy(true, null);
+                            const proxy = globalThis.bunVM().transpiler.env.getHttpProxy(true, null, null);
                             const proxy_url = if (proxy) |p| p.href else null;
                             return S3.uploadStream(
                                 (if (options.extra_options != null) aws_options.credentials.dupe() else s3.getCredentials()),
@@ -2266,13 +2266,13 @@ const S3BlobDownloadTask = struct {
         if (blob.offset > 0) {
             const len: ?usize = if (blob.size != Blob.max_size) @intCast(blob.size) else null;
             const offset: usize = @intCast(blob.offset);
-            try S3.downloadSlice(credentials, path, offset, len, @ptrCast(&S3BlobDownloadTask.onS3DownloadResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null, s3_store.request_payer);
+            try S3.downloadSlice(credentials, path, offset, len, @ptrCast(&S3BlobDownloadTask.onS3DownloadResolved), this, if (env.getHttpProxy(true, null, null)) |proxy| proxy.href else null, s3_store.request_payer);
         } else if (blob.size == Blob.max_size) {
-            try S3.download(credentials, path, @ptrCast(&S3BlobDownloadTask.onS3DownloadResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null, s3_store.request_payer);
+            try S3.download(credentials, path, @ptrCast(&S3BlobDownloadTask.onS3DownloadResolved), this, if (env.getHttpProxy(true, null, null)) |proxy| proxy.href else null, s3_store.request_payer);
         } else {
             const len: usize = @intCast(blob.size);
             const offset: usize = @intCast(blob.offset);
-            try S3.downloadSlice(credentials, path, offset, len, @ptrCast(&S3BlobDownloadTask.onS3DownloadResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null, s3_store.request_payer);
+            try S3.downloadSlice(credentials, path, offset, len, @ptrCast(&S3BlobDownloadTask.onS3DownloadResolved), this, if (env.getHttpProxy(true, null, null)) |proxy| proxy.href else null, s3_store.request_payer);
         }
         return promise;
     }
@@ -2432,7 +2432,7 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, re
         defer aws_options.deinit();
 
         const path = s3.path();
-        const proxy = globalThis.bunVM().transpiler.env.getHttpProxy(true, null);
+        const proxy = globalThis.bunVM().transpiler.env.getHttpProxy(true, null, null);
         const proxy_url = if (proxy) |p| p.href else null;
 
         return S3.uploadStream(
@@ -2646,7 +2646,7 @@ pub fn getWriter(
     if (this.isS3()) {
         const s3 = &this.store.?.data.s3;
         const path = s3.path();
-        const proxy = globalThis.bunVM().transpiler.env.getHttpProxy(true, null);
+        const proxy = globalThis.bunVM().transpiler.env.getHttpProxy(true, null, null);
         const proxy_url = if (proxy) |p| p.href else null;
         if (arguments.len > 0) {
             const options = arguments.ptr[0];

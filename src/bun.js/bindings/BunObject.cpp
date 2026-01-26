@@ -919,6 +919,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     SHA512                                         BunObject_lazyPropCb_wrap_SHA512                                    DontDelete|PropertyCallback
     SHA512_256                                     BunObject_lazyPropCb_wrap_SHA512_256                                DontDelete|PropertyCallback
     JSONC                                          BunObject_lazyPropCb_wrap_JSONC                                     DontDelete|PropertyCallback
+    JSON5                                          BunObject_lazyPropCb_wrap_JSON5                                     DontDelete|PropertyCallback
     JSONL                                          constructJSONLObject                                                ReadOnly|DontDelete|PropertyCallback
     TOML                                           BunObject_lazyPropCb_wrap_TOML                                      DontDelete|PropertyCallback
     YAML                                           BunObject_lazyPropCb_wrap_YAML                                      DontDelete|PropertyCallback
@@ -1145,13 +1146,13 @@ static void exportBunObject(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC:
 
     for (const auto& propertyName : propertyNames) {
         exportNames.append(propertyName);
-        auto catchScope = DECLARE_CATCH_SCOPE(vm);
+        auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
         // Yes, we have to call getters :(
         JSValue value = object->get(globalObject, propertyName);
 
-        if (catchScope.exception()) {
-            (void)catchScope.tryClearException();
+        if (topExceptionScope.exception()) {
+            (void)topExceptionScope.tryClearException();
             value = jsUndefined();
         }
         exportValues.append(value);

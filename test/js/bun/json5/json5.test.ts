@@ -997,6 +997,30 @@ describe("reserved words as keys", () => {
     expect(JSON5.parse("{Infinity: 2}")).toEqual({ Infinity: 2 });
   });
 
+  test("signed NaN/Infinity as keys should error", () => {
+    expect(() => JSON5.parse("{-Infinity: 1}")).toThrow();
+    expect(() => JSON5.parse("{+Infinity: 1}")).toThrow();
+    expect(() => JSON5.parse("{-NaN: 1}")).toThrow();
+    expect(() => JSON5.parse("{+NaN: 1}")).toThrow();
+  });
+
+  test("numeric literals as keys should error", () => {
+    expect(() => JSON5.parse("{123: 1}")).toThrow();
+    expect(() => JSON5.parse("{0xFF: 1}")).toThrow();
+    expect(() => JSON5.parse("{3.14: 1}")).toThrow();
+    expect(() => JSON5.parse("{-1: 1}")).toThrow();
+    expect(() => JSON5.parse("{+1: 1}")).toThrow();
+  });
+
+  test("NaN and Infinity as values still work", () => {
+    expect(Number.isNaN(JSON5.parse("{a: NaN}").a)).toBe(true);
+    expect(JSON5.parse("{a: Infinity}").a).toBe(Infinity);
+    expect(JSON5.parse("{a: -Infinity}").a).toBe(-Infinity);
+    expect(Number.isNaN(JSON5.parse("{a: +NaN}").a)).toBe(true);
+    expect(Number.isNaN(JSON5.parse("{a: -NaN}").a)).toBe(true);
+    expect(JSON5.parse("{a: +Infinity}").a).toBe(Infinity);
+  });
+
   test("keyword-like identifiers as values should error", () => {
     expect(() => JSON5.parse("{a: undefined}")).toThrow("Unexpected token");
     expect(() => JSON5.parse("{a: class}")).toThrow("Unexpected token");

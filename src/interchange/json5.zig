@@ -273,12 +273,6 @@ pub const JSON5Parser = struct {
                 } else if (c == 'n') {
                     self.token.loc = .{ .start = @intCast(self.pos) };
                     break :next if (self.scanKeyword("null")) .null else .{ .identifier = try self.scanIdentifier() };
-                } else if (c == 'N') {
-                    self.token.loc = .{ .start = @intCast(self.pos) };
-                    break :next if (self.scanKeyword("NaN")) .{ .number = std.math.nan(f64) } else .{ .identifier = try self.scanIdentifier() };
-                } else if (c == 'I') {
-                    self.token.loc = .{ .start = @intCast(self.pos) };
-                    break :next if (self.scanKeyword("Infinity")) .{ .number = std.math.inf(f64) } else .{ .identifier = try self.scanIdentifier() };
                 } else if ((c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or c == '_' or c == '$' or c == '\\') {
                     self.token.loc = .{ .start = @intCast(self.pos) };
                     break :next .{ .identifier = try self.scanIdentifier() };
@@ -378,6 +372,16 @@ pub const JSON5Parser = struct {
                 try self.scan();
                 return Expr.init(E.Null, .{}, loc);
             },
+            .identifier => |s| {
+                if (std.mem.eql(u8, s, "NaN")) {
+                    try self.scan();
+                    return Expr.init(E.Number, .{ .value = std.math.nan(f64) }, loc);
+                } else if (std.mem.eql(u8, s, "Infinity")) {
+                    try self.scan();
+                    return Expr.init(E.Number, .{ .value = std.math.inf(f64) }, loc);
+                }
+                return error.UnexpectedToken;
+            },
             .eof => return error.UnexpectedEof,
             else => return error.UnexpectedToken,
         }
@@ -429,11 +433,7 @@ pub const JSON5Parser = struct {
                 try self.scan();
                 return Expr.init(E.String, E.String.init(s), loc);
             },
-            .number => |n| {
-                if (!std.math.isNan(n) and !std.math.isInf(n)) return error.InvalidIdentifier;
-                try self.scan();
-                return Expr.init(E.Number, .{ .value = n }, loc);
-            },
+            .number => return error.InvalidIdentifier,
             .boolean => |b| {
                 try self.scan();
                 return Expr.init(E.Boolean, .{ .value = b }, loc);

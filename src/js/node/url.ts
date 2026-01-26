@@ -461,8 +461,14 @@ function getHostname(self, rest, hostname: string, url) {
 }
 
 // format a parsed object into a url string
-declare function urlFormat(urlObject: string | URL | Url): string;
-function urlFormat(urlObject: unknown) {
+interface UrlFormatOptions {
+  auth?: boolean;
+  fragment?: boolean;
+  search?: boolean;
+  unicode?: boolean;
+}
+declare function urlFormat(urlObject: string | URL | Url, options?: UrlFormatOptions): string;
+function urlFormat(urlObject: unknown, options?: UrlFormatOptions) {
   /*
    * ensure it's an object, and not a string url.
    * If it's an obj, this is a no-op.
@@ -476,10 +482,77 @@ function urlFormat(urlObject: unknown) {
     throw $ERR_INVALID_ARG_TYPE("urlObject", ["Object", "string"], urlObject);
   }
 
+  // Handle WHATWG URL objects
+  if (urlObject instanceof URL) {
+    if (options !== undefined && typeof options !== "object") {
+      throw $ERR_INVALID_ARG_TYPE("options", "object", options);
+    }
+    return formatWhatwgUrl(urlObject, options);
+  }
+
   if (!(urlObject instanceof Url)) {
     return Url.prototype.format.$call(urlObject);
   }
   return urlObject.format();
+}
+
+function formatWhatwgUrl(urlObject: URL, options?: UrlFormatOptions): string {
+  // Default all options to true
+  let auth = true;
+  let fragment = true;
+  let search = true;
+  let unicode = false;
+
+  if (options) {
+    if (options.auth !== undefined) {
+      auth = Boolean(options.auth);
+    }
+    if (options.fragment !== undefined) {
+      fragment = Boolean(options.fragment);
+    }
+    if (options.search !== undefined) {
+      search = Boolean(options.search);
+    }
+    if (options.unicode !== undefined) {
+      unicode = Boolean(options.unicode);
+    }
+  }
+
+  let result = urlObject.protocol;
+
+  if (urlObject.host) {
+    result += "//";
+
+    if (auth && (urlObject.username || urlObject.password)) {
+      result += urlObject.username;
+      if (urlObject.password) {
+        result += ":" + urlObject.password;
+      }
+      result += "@";
+    }
+
+    if (unicode) {
+      result += domainToUnicode(urlObject.hostname);
+    } else {
+      result += urlObject.hostname;
+    }
+
+    if (urlObject.port) {
+      result += ":" + urlObject.port;
+    }
+  }
+
+  result += urlObject.pathname;
+
+  if (search && urlObject.search) {
+    result += urlObject.search;
+  }
+
+  if (fragment && urlObject.hash) {
+    result += urlObject.hash;
+  }
+
+  return result;
 }
 
 Url.prototype.format = function format() {

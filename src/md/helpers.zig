@@ -411,6 +411,63 @@ pub fn generateSlug(
     return text_buf.items;
 }
 
+/// Shared heading-ID state used by all renderers (HTML, React AST, JS callbacks).
+/// Tracks whether we're inside a heading, accumulates text for slug generation,
+/// and deduplicates slugs via a count map.
+pub const HeadingIdTracker = struct {
+    enabled: bool,
+    in_heading: bool = false,
+    text_buf: std.ArrayListUnmanaged(u8) = .{},
+    slug_counts: bun.StringHashMapUnmanaged(u32) = .{},
+
+    pub fn init(enabled: bool) HeadingIdTracker {
+        return .{ .enabled = enabled };
+    }
+
+    pub fn deinit(self: *HeadingIdTracker, allocator: Allocator) void {
+        self.text_buf.deinit(allocator);
+        var it = self.slug_counts.iterator();
+        while (it.next()) |entry| {
+            allocator.free(@constCast(entry.key_ptr.*));
+        }
+        self.slug_counts.deinit(allocator);
+    }
+
+    /// Call on entering a heading block.
+    pub fn enterHeading(self: *HeadingIdTracker) void {
+        if (self.enabled) self.in_heading = true;
+    }
+
+    /// Call from text callback to accumulate text for slug.
+    /// No-op if not inside a heading or disabled.
+    pub fn trackText(self: *HeadingIdTracker, text_type: TextType, content: []const u8, allocator: Allocator) void {
+        if (!self.in_heading) return;
+        switch (text_type) {
+            .null_char => self.text_buf.appendSlice(allocator, "\xEF\xBF\xBD") catch {},
+            .br, .softbr => self.text_buf.appendSlice(allocator, " ") catch {},
+            .html => {}, // skip HTML tags in slug
+            .entity => {
+                var buf: [8]u8 = undefined;
+                const decoded = decodeEntityToUtf8(content, &buf) orelse content;
+                self.text_buf.appendSlice(allocator, decoded) catch {};
+            },
+            else => self.text_buf.appendSlice(allocator, content) catch {},
+        }
+    }
+
+    /// Call on leaving a heading block. Returns slug (valid until clearAfterHeading).
+    pub fn leaveHeading(self: *HeadingIdTracker, allocator: Allocator) ?[]const u8 {
+        if (!self.enabled) return null;
+        self.in_heading = false;
+        return generateSlug(&self.text_buf, &self.slug_counts, allocator);
+    }
+
+    /// Call after using the slug to reset text buffer.
+    pub fn clearAfterHeading(self: *HeadingIdTracker) void {
+        self.text_buf.clearRetainingCapacity();
+    }
+};
+
 const bun = @import("bun");
 const entity_mod = @import("./entity.zig");
 const std = @import("std");
@@ -418,3 +475,4 @@ const Allocator = std.mem.Allocator;
 
 const types = @import("./types.zig");
 const OFF = types.OFF;
+const TextType = types.TextType;

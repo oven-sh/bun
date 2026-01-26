@@ -6,12 +6,9 @@ pub const HtmlRenderer = struct {
     saved_img_title: []const u8 = "",
     tag_filter: bool = false,
     tag_filter_raw_depth: u32 = 0,
-    heading_ids: bool = false,
     autolink_headings: bool = false,
-    in_heading: bool = false,
     heading_buf: std.ArrayListUnmanaged(u8) = .{},
-    heading_text_buf: std.ArrayListUnmanaged(u8) = .{},
-    slug_counts: bun.StringHashMapUnmanaged(u32) = .{},
+    heading_tracker: helpers.HeadingIdTracker = helpers.HeadingIdTracker.init(false),
 
     pub const OutputBuffer = struct {
         list: std.ArrayListUnmanaged(u8),
@@ -39,20 +36,15 @@ pub const HtmlRenderer = struct {
             .allocator = allocator,
             .src_text = src_text,
             .tag_filter = render_opts.tag_filter,
-            .heading_ids = render_opts.heading_ids,
             .autolink_headings = render_opts.autolink_headings,
+            .heading_tracker = helpers.HeadingIdTracker.init(render_opts.heading_ids),
         };
     }
 
     pub fn deinit(self: *HtmlRenderer) void {
         self.out.list.deinit(self.allocator);
         self.heading_buf.deinit(self.allocator);
-        self.heading_text_buf.deinit(self.allocator);
-        var it = self.slug_counts.iterator();
-        while (it.next()) |entry| {
-            self.allocator.free(@constCast(entry.key_ptr.*));
-        }
-        self.slug_counts.deinit(self.allocator);
+        self.heading_tracker.deinit(self.allocator);
     }
 
     pub fn toOwnedSlice(self: *HtmlRenderer) error{OutOfMemory}![]u8 {
@@ -128,13 +120,13 @@ pub const HtmlRenderer = struct {
                 }
             },
             .li => {
-                const task_mark: u8 = @truncate(data);
+                const task_mark = types.taskMarkFromData(data);
                 if (task_mark != 0) {
                     self.write("<li class=\"task-list-item\">");
-                    if (task_mark == ' ') {
-                        self.write("<input type=\"checkbox\" class=\"task-list-item-checkbox\" disabled>");
-                    } else {
+                    if (types.isTaskChecked(task_mark)) {
                         self.write("<input type=\"checkbox\" class=\"task-list-item-checkbox\" disabled checked>");
+                    } else {
+                        self.write("<input type=\"checkbox\" class=\"task-list-item-checkbox\" disabled>");
                     }
                 } else {
                     self.write("<li>");
@@ -145,11 +137,10 @@ pub const HtmlRenderer = struct {
                 self.write("<hr />\n");
             },
             .h => {
-                if (self.heading_ids) {
-                    self.ensureNewline();
-                    self.in_heading = true;
+                self.ensureNewline();
+                if (self.heading_tracker.enabled) {
+                    self.heading_tracker.enterHeading();
                 } else {
-                    self.ensureNewline();
                     const level = data;
                     const tag = switch (level) {
                         1 => "<h1>",
@@ -197,13 +188,11 @@ pub const HtmlRenderer = struct {
             .th, .td => {
                 const tag = if (block_type == .th) "<th" else "<td";
                 self.write(tag);
-                // alignment from data
-                const alignment: Align = @enumFromInt(@as(u2, @truncate(data)));
-                switch (alignment) {
-                    .left => self.write(" align=\"left\""),
-                    .center => self.write(" align=\"center\""),
-                    .right => self.write(" align=\"right\""),
-                    .default => {},
+                const alignment = types.alignmentFromData(data);
+                if (types.alignmentName(alignment)) |name| {
+                    self.write(" align=\"");
+                    self.write(name);
+                    self.write("\"");
                 }
                 self.write(">");
             },
@@ -219,9 +208,7 @@ pub const HtmlRenderer = struct {
             .li => self.write("</li>\n"),
             .hr => {},
             .h => {
-                if (self.heading_ids) {
-                    self.in_heading = false;
-                    const slug = helpers.generateSlug(&self.heading_text_buf, &self.slug_counts, self.allocator);
+                if (self.heading_tracker.leaveHeading(self.allocator)) |slug| {
                     // Write opening tag with id
                     self.out.write(switch (data) {
                         1 => "<h1",
@@ -253,7 +240,7 @@ pub const HtmlRenderer = struct {
                         else => "</h6>\n",
                     });
                     self.heading_buf.clearRetainingCapacity();
-                    self.heading_text_buf.clearRetainingCapacity();
+                    self.heading_tracker.clearAfterHeading();
                 } else {
                     const tag = switch (data) {
                         1 => "</h1>\n",
@@ -377,15 +364,7 @@ pub const HtmlRenderer = struct {
         const in_image = self.image_nesting_level > 0;
 
         // Track plain text for slug generation when inside a heading
-        if (self.in_heading) {
-            switch (text_type) {
-                .null_char => self.appendHeadingText("\xEF\xBF\xBD"),
-                .br, .softbr => self.appendHeadingText(" "),
-                .html => {}, // skip HTML tags in slug
-                .entity => self.appendEntityToHeadingText(content),
-                else => self.appendHeadingText(content),
-            }
-        }
+        self.heading_tracker.trackText(text_type, content, self.allocator);
 
         switch (text_type) {
             .null_char => self.write("\xEF\xBF\xBD"),
@@ -433,7 +412,7 @@ pub const HtmlRenderer = struct {
     // ========================================
 
     pub fn write(self: *HtmlRenderer, data: []const u8) void {
-        if (self.in_heading) {
+        if (self.heading_tracker.in_heading) {
             self.heading_buf.appendSlice(self.allocator, data) catch {
                 self.out.oom = true;
             };
@@ -443,7 +422,7 @@ pub const HtmlRenderer = struct {
     }
 
     fn writeByte(self: *HtmlRenderer, b: u8) void {
-        if (self.in_heading) {
+        if (self.heading_tracker.in_heading) {
             self.heading_buf.append(self.allocator, b) catch {
                 self.out.oom = true;
             };
@@ -491,7 +470,7 @@ pub const HtmlRenderer = struct {
     }
 
     fn ensureNewline(self: *HtmlRenderer) void {
-        if (self.in_heading) {
+        if (self.heading_tracker.in_heading) {
             const items = self.heading_buf.items;
             if (items.len > 0 and items[items.len - 1] != '\n') {
                 self.heading_buf.append(self.allocator, '\n') catch {
@@ -666,22 +645,6 @@ pub const HtmlRenderer = struct {
             v /= 10;
         }
         self.write(buf[i..]);
-    }
-
-    // ========================================
-    // Heading ID / slug generation
-    // ========================================
-
-    fn appendHeadingText(self: *HtmlRenderer, content: []const u8) void {
-        self.heading_text_buf.appendSlice(self.allocator, content) catch {
-            self.out.oom = true;
-        };
-    }
-
-    /// Decode an entity and append the raw character(s) to heading_text_buf for slug generation.
-    fn appendEntityToHeadingText(self: *HtmlRenderer, entity_text: []const u8) void {
-        var buf: [8]u8 = undefined;
-        self.appendHeadingText(helpers.decodeEntityToUtf8(entity_text, &buf) orelse entity_text);
     }
 
     // ========================================

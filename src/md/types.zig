@@ -355,4 +355,33 @@ pub const RefDef = struct {
     title_needs_free: bool = false,
 };
 
+// ========================================
+// Metadata extraction helpers
+// ========================================
+
+/// Extract table cell alignment from block data.
+pub fn alignmentFromData(data: u32) Align {
+    return @enumFromInt(@as(u2, @truncate(data)));
+}
+
+/// Get string name for alignment, or null for default.
+pub fn alignmentName(alignment: Align) ?[]const u8 {
+    return switch (alignment) {
+        .left => "left",
+        .center => "center",
+        .right => "right",
+        .default => null,
+    };
+}
+
+/// Extract task list item mark from block data. Returns 0 for non-task items.
+pub fn taskMarkFromData(data: u32) u8 {
+    return @truncate(data);
+}
+
+/// Check if a task mark indicates a checked box.
+pub fn isTaskChecked(task_mark: u8) bool {
+    return task_mark != 0 and task_mark != ' ';
+}
+
 const bun = @import("bun");

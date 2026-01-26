@@ -66,6 +66,12 @@ pub fn processInlineContent(self: *Parser, content: []const u8, base_off: OFF) b
     while (i < content.len) {
         const c = content[i];
 
+        // Fast path: character has no special meaning, skip it
+        if (!self.mark_char_map.isSet(c)) {
+            i += 1;
+            continue;
+        }
+
         // Newline from merged lines — check for hard break
         if (c == '\n') {
             var emit_end = i;

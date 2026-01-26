@@ -216,10 +216,7 @@ const ParseRenderer = struct {
     #stack: std.ArrayListUnmanaged(StackEntry) = .{},
     #stack_check: bun.StackCheck,
     #src_text: []const u8,
-    #heading_ids: bool = false,
-    #in_heading_block: bool = false,
-    #heading_text_buf: std.ArrayListUnmanaged(u8) = .{},
-    #slug_counts: bun.StringHashMapUnmanaged(u32) = .{},
+    #heading_tracker: md.helpers.HeadingIdTracker = md.helpers.HeadingIdTracker.init(false),
     #components: Components = .{},
     #react_version: ?u8 = null,
 
@@ -284,7 +281,7 @@ const ParseRenderer = struct {
             .#globalObject = globalObject,
             .#marked_args = marked_args,
             .#src_text = src_text,
-            .#heading_ids = heading_ids,
+            .#heading_tracker = md.helpers.HeadingIdTracker.init(heading_ids),
             .#stack_check = bun.StackCheck.init(),
             .#react_version = react_version,
         };
@@ -297,12 +294,7 @@ const ParseRenderer = struct {
 
     fn deinit(self: *ParseRenderer) void {
         self.#stack.deinit(bun.default_allocator);
-        self.#heading_text_buf.deinit(bun.default_allocator);
-        var it = self.#slug_counts.iterator();
-        while (it.next()) |entry| {
-            bun.default_allocator.free(@constCast(entry.key_ptr.*));
-        }
-        self.#slug_counts.deinit(bun.default_allocator);
+        self.#heading_tracker.deinit(bun.default_allocator);
     }
 
     /// Extract component overrides from options. Any non-boolean truthy value
@@ -405,8 +397,8 @@ const ParseRenderer = struct {
         if (!self.#stack_check.isSafeToRecurse()) return self.#globalObject.throwStackOverflow();
         if (block_type == .doc) return;
 
-        if (block_type == .h and self.#heading_ids) {
-            self.#in_heading_block = true;
+        if (block_type == .h) {
+            self.#heading_tracker.enterHeading();
         }
 
         const array = try JSValue.createEmptyArray(self.#globalObject, 0);
@@ -428,22 +420,21 @@ const ParseRenderer = struct {
         const entry = self.#stack.pop().?;
         const g = self.#globalObject;
 
-        if (block_type == .h) {
-            self.#in_heading_block = false;
-        }
-
         // Determine HTML tag name
         const type_str: []const u8 = blockTypeName(block_type, entry.data);
+
+        // For headings, compute slug before counting props
+        const slug: ?[]const u8 = if (block_type == .h) self.#heading_tracker.leaveHeading(bun.default_allocator) else null;
 
         // Count props fields
         var props_count: usize = if (block_type == .hr) 0 else 1; // children
         switch (block_type) {
-            .h => if (self.#heading_ids) {
+            .h => if (slug != null) {
                 props_count += 1;
             },
             .ol => props_count += 1, // start
             .li => {
-                const task_mark: u8 = @truncate(entry.data);
+                const task_mark = md.types.taskMarkFromData(entry.data);
                 if (task_mark != 0) props_count += 1;
             },
             .code => {
@@ -453,7 +444,7 @@ const ParseRenderer = struct {
                 }
             },
             .th, .td => {
-                const alignment: md.Align = @enumFromInt(@as(u2, @truncate(entry.data)));
+                const alignment = md.types.alignmentFromData(entry.data);
                 if (alignment != .default) props_count += 1;
             },
             else => {},
@@ -469,18 +460,17 @@ const ParseRenderer = struct {
         // Set metadata props
         switch (block_type) {
             .h => {
-                if (self.#heading_ids) {
-                    const slug = md.helpers.generateSlug(&self.#heading_text_buf, &self.#slug_counts, bun.default_allocator);
-                    props.put(g, ZigString.static("id"), try bun.String.createUTF8ForJS(g, slug));
+                if (slug) |s| {
+                    props.put(g, ZigString.static("id"), try bun.String.createUTF8ForJS(g, s));
                 }
             },
             .ol => {
                 props.put(g, ZigString.static("start"), JSValue.jsNumber(entry.data));
             },
             .li => {
-                const task_mark: u8 = @truncate(entry.data);
+                const task_mark = md.types.taskMarkFromData(entry.data);
                 if (task_mark != 0) {
-                    props.put(g, ZigString.static("checked"), JSValue.jsBoolean(task_mark != ' '));
+                    props.put(g, ZigString.static("checked"), JSValue.jsBoolean(md.types.isTaskChecked(task_mark)));
                 }
             },
             .code => {
@@ -492,14 +482,8 @@ const ParseRenderer = struct {
                 }
             },
             .th, .td => {
-                const alignment: md.Align = @enumFromInt(@as(u2, @truncate(entry.data)));
-                if (alignment != .default) {
-                    const align_str: []const u8 = switch (alignment) {
-                        .left => "left",
-                        .center => "center",
-                        .right => "right",
-                        .default => unreachable,
-                    };
+                const alignment = md.types.alignmentFromData(entry.data);
+                if (md.types.alignmentName(alignment)) |align_str| {
                     props.put(g, ZigString.static("align"), try bun.String.createUTF8ForJS(g, align_str));
                 }
             },
@@ -519,7 +503,7 @@ const ParseRenderer = struct {
         }
 
         if (block_type == .h) {
-            self.#heading_text_buf.clearRetainingCapacity();
+            self.#heading_tracker.clearAfterHeading();
         }
     }
 
@@ -639,19 +623,7 @@ const ParseRenderer = struct {
         const g = self.#globalObject;
 
         // Track plain text for slug generation when inside a heading
-        if (self.#in_heading_block) {
-            switch (text_type) {
-                .null_char => self.#heading_text_buf.appendSlice(bun.default_allocator, "\xEF\xBF\xBD") catch {},
-                .br, .softbr => self.#heading_text_buf.appendSlice(bun.default_allocator, " ") catch {},
-                .html => {},
-                .entity => {
-                    var buf: [8]u8 = undefined;
-                    const decoded = md.helpers.decodeEntityToUtf8(content, &buf) orelse content;
-                    self.#heading_text_buf.appendSlice(bun.default_allocator, decoded) catch {};
-                },
-                else => self.#heading_text_buf.appendSlice(bun.default_allocator, content) catch {},
-            }
-        }
+        self.#heading_tracker.trackText(text_type, content, bun.default_allocator);
 
         if (self.#stack.items.len == 0) return;
         const parent = &self.#stack.items[self.#stack.items.len - 1];
@@ -749,10 +721,7 @@ const JsCallbackRenderer = struct {
     #src_text: []const u8,
     #stack: std.ArrayListUnmanaged(StackEntry) = .{},
     #callbacks: Callbacks = .{},
-    #heading_ids: bool = false,
-    #in_heading_block: bool = false,
-    #heading_text_buf: std.ArrayListUnmanaged(u8) = .{},
-    #slug_counts: bun.StringHashMapUnmanaged(u32) = .{},
+    #heading_tracker: md.helpers.HeadingIdTracker = md.helpers.HeadingIdTracker.init(false),
     #stack_check: bun.StackCheck,
 
     fn init(globalObject: *jsc.JSGlobalObject, src_text: []const u8, heading_ids: bool) error{OutOfMemory}!JsCallbackRenderer {
@@ -760,7 +729,7 @@ const JsCallbackRenderer = struct {
             .#globalObject = globalObject,
             .#allocator = bun.default_allocator,
             .#src_text = src_text,
-            .#heading_ids = heading_ids,
+            .#heading_tracker = md.helpers.HeadingIdTracker.init(heading_ids),
             .#stack_check = bun.StackCheck.init(),
         };
         try self.#stack.append(bun.default_allocator, .{});
@@ -814,12 +783,7 @@ const JsCallbackRenderer = struct {
             entry.buffer.deinit(self.#allocator);
         }
         self.#stack.deinit(self.#allocator);
-        self.#heading_text_buf.deinit(self.#allocator);
-        var it = self.#slug_counts.iterator();
-        while (it.next()) |entry| {
-            self.#allocator.free(@constCast(entry.key_ptr.*));
-        }
-        self.#slug_counts.deinit(self.#allocator);
+        self.#heading_tracker.deinit(self.#allocator);
     }
 
     fn renderer(self: *JsCallbackRenderer) md.Renderer {
@@ -889,8 +853,8 @@ const JsCallbackRenderer = struct {
         const self: *JsCallbackRenderer = @ptrCast(@alignCast(ptr));
         if (!self.#stack_check.isSafeToRecurse()) return self.#globalObject.throwStackOverflow();
         if (block_type == .doc) return;
-        if (block_type == .h and self.#heading_ids) {
-            self.#in_heading_block = true;
+        if (block_type == .h) {
+            self.#heading_tracker.enterHeading();
         }
         try self.#stack.append(self.#allocator, .{ .data = data, .flags = flags });
     }
@@ -899,10 +863,6 @@ const JsCallbackRenderer = struct {
         const self: *JsCallbackRenderer = @ptrCast(@alignCast(ptr));
         if (!self.#stack_check.isSafeToRecurse()) return self.#globalObject.throwStackOverflow();
         if (block_type == .doc) return;
-
-        if (block_type == .h) {
-            self.#in_heading_block = false;
-        }
 
         const callback = self.getBlockCallback(block_type);
         const saved = if (self.#stack.items.len > 1)
@@ -913,7 +873,7 @@ const JsCallbackRenderer = struct {
         try self.popAndCallback(callback, meta);
 
         if (block_type == .h) {
-            self.#heading_text_buf.clearRetainingCapacity();
+            self.#heading_tracker.clearAfterHeading();
         }
     }
 
@@ -941,19 +901,7 @@ const JsCallbackRenderer = struct {
         if (!self.#stack_check.isSafeToRecurse()) return self.#globalObject.throwStackOverflow();
 
         // Track plain text for slug generation when inside a heading
-        if (self.#in_heading_block) {
-            switch (text_type) {
-                .null_char => self.#heading_text_buf.appendSlice(self.#allocator, "\xEF\xBF\xBD") catch {},
-                .br, .softbr => self.#heading_text_buf.appendSlice(self.#allocator, " ") catch {},
-                .html => {},
-                .entity => {
-                    var buf: [8]u8 = undefined;
-                    const decoded = md.helpers.decodeEntityToUtf8(content, &buf) orelse content;
-                    self.#heading_text_buf.appendSlice(self.#allocator, decoded) catch {};
-                },
-                else => self.#heading_text_buf.appendSlice(self.#allocator, content) catch {},
-            }
-        }
+        self.#heading_tracker.trackText(text_type, content, self.#allocator);
 
         switch (text_type) {
             .null_char => try self.appendToTop("\xEF\xBF\xBD"),
@@ -1002,19 +950,6 @@ const JsCallbackRenderer = struct {
     }
 
     // ========================================
-    // Heading ID / slug generation
-    // ========================================
-
-    fn appendHeadingText(self: *JsCallbackRenderer, content: []const u8) error{OutOfMemory}!void {
-        try self.#heading_text_buf.appendSlice(self.#allocator, content);
-    }
-
-    fn appendEntityToHeadingText(self: *JsCallbackRenderer, entity_text: []const u8) error{OutOfMemory}!void {
-        var buf: [8]u8 = undefined;
-        try self.appendHeadingText(md.helpers.decodeEntityToUtf8(entity_text, &buf) orelse entity_text);
-    }
-
-    // ========================================
     // Callback lookup
     // ========================================
 
@@ -1058,12 +993,12 @@ const JsCallbackRenderer = struct {
         const g = self.#globalObject;
         switch (block_type) {
             .h => {
-                const field_count: usize = if (self.#heading_ids) 2 else 1;
+                const slug = self.#heading_tracker.leaveHeading(self.#allocator);
+                const field_count: usize = if (slug != null) 2 else 1;
                 const obj = JSValue.createEmptyObject(g, field_count);
                 obj.put(g, ZigString.static("level"), JSValue.jsNumber(data));
-                if (self.#heading_ids) {
-                    const slug = md.helpers.generateSlug(&self.#heading_text_buf, &self.#slug_counts, self.#allocator);
-                    obj.put(g, ZigString.static("id"), try bun.String.createUTF8ForJS(g, slug));
+                if (slug) |s| {
+                    obj.put(g, ZigString.static("id"), try bun.String.createUTF8ForJS(g, s));
                 }
                 return obj;
             },
@@ -1090,25 +1025,19 @@ const JsCallbackRenderer = struct {
                 return null;
             },
             .th, .td => {
-                const alignment: md.Align = @enumFromInt(@as(u2, @truncate(data)));
-                if (alignment != .default) {
+                const alignment = md.types.alignmentFromData(data);
+                if (md.types.alignmentName(alignment)) |align_str| {
                     const obj = JSValue.createEmptyObject(g, 1);
-                    const align_str: []const u8 = switch (alignment) {
-                        .left => "left",
-                        .center => "center",
-                        .right => "right",
-                        .default => unreachable,
-                    };
                     obj.put(g, ZigString.static("align"), try bun.String.createUTF8ForJS(g, align_str));
                     return obj;
                 }
                 return null;
             },
             .li => {
-                const task_mark: u8 = @truncate(data);
+                const task_mark = md.types.taskMarkFromData(data);
                 if (task_mark != 0) {
                     const obj = JSValue.createEmptyObject(g, 1);
-                    obj.put(g, ZigString.static("checked"), JSValue.jsBoolean(task_mark != ' '));
+                    obj.put(g, ZigString.static("checked"), JSValue.jsBoolean(md.types.isTaskChecked(task_mark)));
                     return obj;
                 }
                 return null;

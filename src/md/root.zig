@@ -100,5 +100,5 @@ const bun = @import("bun");
 const parser = @import("./parser.zig");
 const std = @import("std");
 
-const types = @import("./types.zig");
+pub const types = @import("./types.zig");
 const Flags = types.Flags;

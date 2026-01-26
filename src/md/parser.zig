@@ -16,8 +16,8 @@ pub const Parser = struct {
     code_indent_offset: u32,
     doc_ends_with_newline: bool,
 
-    // Mark character map
-    mark_char_map: [256]bool = [_]bool{false} ** 256,
+    // Mark character map — bitset of characters that need special handling
+    mark_char_map: bun.bit_set.StaticBitSet(256) = bun.bit_set.StaticBitSet(256).initEmpty(),
 
     // Dynamic arrays
     marks: std.ArrayListUnmanaged(Mark) = .{},
@@ -104,31 +104,31 @@ pub const Parser = struct {
     }
 
     fn buildMarkCharMap(self: *Parser) void {
-        self.mark_char_map['\\'] = true;
-        self.mark_char_map['*'] = true;
-        self.mark_char_map['_'] = true;
-        self.mark_char_map['`'] = true;
-        self.mark_char_map['&'] = true;
-        self.mark_char_map[';'] = true;
-        self.mark_char_map['['] = true;
-        self.mark_char_map['!'] = true;
-        self.mark_char_map[']'] = true;
-        self.mark_char_map[0] = true;
+        self.mark_char_map.set('\\');
+        self.mark_char_map.set('*');
+        self.mark_char_map.set('_');
+        self.mark_char_map.set('`');
+        self.mark_char_map.set('&');
+        self.mark_char_map.set(';');
+        self.mark_char_map.set('[');
+        self.mark_char_map.set('!');
+        self.mark_char_map.set(']');
+        self.mark_char_map.set(0);
+        self.mark_char_map.set('\n'); // newlines always need handling (hard/soft breaks)
         if (!self.flags.no_html_spans) {
-            self.mark_char_map['<'] = true;
-            self.mark_char_map['>'] = true;
+            self.mark_char_map.set('<');
+            self.mark_char_map.set('>');
         }
-        if (self.flags.strikethrough) self.mark_char_map['~'] = true;
-        if (self.flags.latex_math) self.mark_char_map['$'] = true;
+        if (self.flags.strikethrough) self.mark_char_map.set('~');
+        if (self.flags.latex_math) self.mark_char_map.set('$');
         if (self.flags.permissive_email_autolinks or self.flags.permissive_url_autolinks)
-            self.mark_char_map[':'] = true;
-        if (self.flags.permissive_email_autolinks) self.mark_char_map['@'] = true;
-        if (self.flags.permissive_www_autolinks) self.mark_char_map['.'] = true;
+            self.mark_char_map.set(':');
+        if (self.flags.permissive_email_autolinks) self.mark_char_map.set('@');
+        if (self.flags.permissive_www_autolinks) self.mark_char_map.set('.');
         if (self.flags.collapse_whitespace) {
-            self.mark_char_map[' '] = true;
-            self.mark_char_map['\t'] = true;
-            self.mark_char_map['\n'] = true;
-            self.mark_char_map['\r'] = true;
+            self.mark_char_map.set(' ');
+            self.mark_char_map.set('\t');
+            self.mark_char_map.set('\r');
         }
     }
 

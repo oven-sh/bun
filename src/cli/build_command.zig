@@ -196,7 +196,10 @@ pub const BuildCommand = struct {
         this_transpiler.options.env.behavior = ctx.bundler_options.env_behavior;
         this_transpiler.options.env.prefix = ctx.bundler_options.env_prefix;
 
-        if (ctx.bundler_options.production) {
+        // Default to production mode for --compile builds to enable dead code elimination
+        // for conditional requires like React's process.env.NODE_ENV checks.
+        // Users can override this with --define 'process.env.NODE_ENV="development"'
+        if (ctx.bundler_options.production or ctx.bundler_options.compile) {
             try this_transpiler.env.map.put("NODE_ENV", "production");
         }
 
@@ -210,8 +213,8 @@ pub const BuildCommand = struct {
         this_transpiler.resolver.opts = this_transpiler.options;
         this_transpiler.resolver.env_loader = this_transpiler.env;
 
-        // Allow tsconfig.json overriding, but always set it to false if --production is passed.
-        if (ctx.bundler_options.production) {
+        // Allow tsconfig.json overriding, but always set it to false if --production or --compile is passed.
+        if (ctx.bundler_options.production or ctx.bundler_options.compile) {
             this_transpiler.options.jsx.development = false;
             this_transpiler.resolver.opts.jsx.development = false;
         }

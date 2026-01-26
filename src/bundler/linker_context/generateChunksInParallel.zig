@@ -310,13 +310,19 @@ pub fn generateChunksInParallel(
     // those placeholders with the resolved paths and serialize.
     if (c.options.generate_bytecode_cache and c.options.output_format == .esm and c.resolver.opts.compile) {
         // Build map from unique_key -> final resolved path
+        const b = @as(*bun.bundle_v2.BundleV2, @fieldParentPtr("linker", c));
         var unique_key_to_path = std.StringHashMap([]const u8).init(c.allocator());
         defer unique_key_to_path.deinit();
         for (chunks) |*ch| {
             if (ch.unique_key.len > 0 and ch.final_rel_path.len > 0) {
-                // Use cheapPrefixNormalizer to match the path normalization done by
-                // IntermediateOutput.code() (e.g. stripping "./" from relative paths)
-                const normalizer = bun.bundle_v2.cheapPrefixNormalizer(c.options.public_path, ch.final_rel_path);
+                // Use the per-chunk public_path to match what IntermediateOutput.code()
+                // uses during emission (browser chunks from server builds use the
+                // browser transpiler's public_path).
+                const public_path = if (ch.flags.is_browser_chunk_from_server_build)
+                    b.transpilerForTarget(.browser).options.public_path
+                else
+                    c.options.public_path;
+                const normalizer = bun.bundle_v2.cheapPrefixNormalizer(public_path, ch.final_rel_path);
                 const resolved = std.fmt.allocPrint(c.allocator(), "{s}{s}", .{ normalizer[0], normalizer[1] }) catch |err| bun.handleOom(err);
                 unique_key_to_path.put(ch.unique_key, resolved) catch |err| bun.handleOom(err);
             }

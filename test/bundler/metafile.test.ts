@@ -651,7 +651,6 @@ describe("bun build --metafile-md", () => {
     // Verify summary table
     expect(content).toContain("| Input modules |");
     expect(content).toContain("| Entry points |");
-    expect(content).toContain("| Total input size |");
     expect(content).toContain("| Total output size |");
     expect(content).toContain("| ESM modules |");
   });
@@ -874,18 +873,13 @@ describe("bun build --metafile-md", () => {
     const content = await Bun.file(`${dir}/meta.md`).text();
 
     // Verify bloat analysis section
-    expect(content).toContain("## Largest Input Files");
-    expect(content).toContain("Potential Bloat");
+    expect(content).toContain("## Largest Modules by Output Contribution");
+    expect(content).toContain("bytes contributed to the output bundle");
     expect(content).toContain("% of Total");
-
-    // large.js should appear before small.js in the sorted list
-    const largeIndex = content.indexOf("large.js");
-    const smallIndex = content.indexOf("small.js");
-    expect(largeIndex).toBeLessThan(smallIndex);
   });
 
-  test("markdown shows output/input ratio", async () => {
-    using dir = tempDir("metafile-md-ratio", {
+  test("markdown shows output contribution", async () => {
+    using dir = tempDir("metafile-md-contrib", {
       "entry.js": `export const x = 1;`,
     });
 
@@ -903,9 +897,9 @@ describe("bun build --metafile-md", () => {
 
     const content = await Bun.file(`${dir}/meta.md`).text();
 
-    // Should show output/input ratio
-    expect(content).toContain("Output/Input ratio");
-    expect(content).toMatch(/\d+\.\d+%/); // Should have percentage
+    // Should show output contribution in Full Module Graph
+    expect(content).toContain("**Output contribution**:");
+    expect(content).toMatch(/\d+\.\d+%/); // Should have percentage in Largest Modules section
   });
 
   test("markdown includes grep-friendly raw data section", async () => {
@@ -938,7 +932,7 @@ describe("bun build --metafile-md", () => {
 
     // Should have grep-friendly markers
     expect(content).toContain("[MODULE:");
-    expect(content).toContain("[SIZE:");
+    expect(content).toContain("[OUTPUT_BYTES:");
     expect(content).toContain("[IMPORT:");
     expect(content).toContain("[IMPORTED_BY:");
 

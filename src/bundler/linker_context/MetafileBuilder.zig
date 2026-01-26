@@ -374,7 +374,7 @@ pub fn generateMarkdown(allocator: std.mem.Allocator, metafile_json: []const u8)
     // Table of Contents for easy navigation
     try writer.writeAll("## Table of Contents\n\n");
     try writer.writeAll("- [Quick Summary](#quick-summary)\n");
-    try writer.writeAll("- [Largest Input Files](#largest-input-files-potential-bloat)\n");
+    try writer.writeAll("- [Largest Modules by Output Contribution](#largest-modules-by-output-contribution)\n");
     try writer.writeAll("- [Entry Point Analysis](#entry-point-analysis)\n");
     try writer.writeAll("- [Dependency Chains](#dependency-chains)\n");
     try writer.writeAll("- [Full Module Graph](#full-module-graph)\n");
@@ -384,7 +384,6 @@ pub fn generateMarkdown(allocator: std.mem.Allocator, metafile_json: []const u8)
     // ==================== SUMMARY ====================
     try writer.writeAll("## Quick Summary\n\n");
 
-    var total_input_bytes: u64 = 0;
     var total_output_bytes: u64 = 0;
     var esm_count: u32 = 0;
     var cjs_count: u32 = 0;
@@ -393,11 +392,46 @@ pub fn generateMarkdown(allocator: std.mem.Allocator, metafile_json: []const u8)
     var node_modules_count: u32 = 0;
     var node_modules_bytes: u64 = 0;
 
+    // Build a map of module path -> bytesInOutput (bytes contributed to output)
+    // This aggregates from all outputs since a module may appear in multiple chunks
+    var bytes_in_output = bun.StringHashMap(u64).init(allocator);
+    defer bytes_in_output.deinit();
+
+    // First pass through outputs to collect bytesInOutput for each module
+    var output_iter_first = outputs.object.iterator();
+    while (output_iter_first.next()) |out_entry| {
+        const output = out_entry.value_ptr.*;
+        if (output != .object) continue;
+
+        if (output.object.get("inputs")) |output_inputs| {
+            if (output_inputs == .object) {
+                var oi_iter = output_inputs.object.iterator();
+                while (oi_iter.next()) |oi_entry| {
+                    const module_path = oi_entry.key_ptr.*;
+                    const module_info = oi_entry.value_ptr.*;
+                    if (module_info == .object) {
+                        if (module_info.object.get("bytesInOutput")) |bio| {
+                            if (bio == .integer) {
+                                const bytes_val: u64 = @intCast(bio.integer);
+                                const gop = try bytes_in_output.getOrPut(module_path);
+                                if (gop.found_existing) {
+                                    gop.value_ptr.* += bytes_val;
+                                } else {
+                                    gop.value_ptr.* = bytes_val;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // Build reverse dependency map: who imports each file?
     // Also collect input file data for sorting
     const InputFileInfo = struct {
         path: []const u8,
-        bytes: u64,
+        bytes_in_output: u64,
         import_count: u32,
         is_node_modules: bool,
         format: []const u8,
@@ -415,30 +449,27 @@ pub fn generateMarkdown(allocator: std.mem.Allocator, metafile_json: []const u8)
         imported_by.deinit();
     }
 
-    // First pass: collect all input file info and build reverse dependency map
+    // Second pass: collect all input file info and build reverse dependency map
     var input_iter = inputs.object.iterator();
     while (input_iter.next()) |entry| {
         const path = entry.key_ptr.*;
         const input = entry.value_ptr.*;
         if (input != .object) continue;
 
+        const is_node_modules = std.mem.indexOf(u8, path, "node_modules") != null;
+        const module_bytes = bytes_in_output.get(path) orelse 0;
+
         var info = InputFileInfo{
             .path = path,
-            .bytes = 0,
+            .bytes_in_output = module_bytes,
             .import_count = 0,
-            .is_node_modules = std.mem.indexOf(u8, path, "node_modules") != null,
+            .is_node_modules = is_node_modules,
             .format = "",
         };
 
-        if (input.object.get("bytes")) |bytes| {
-            if (bytes == .integer) {
-                info.bytes = @intCast(bytes.integer);
-                total_input_bytes += info.bytes;
-                if (info.is_node_modules) {
-                    node_modules_bytes += info.bytes;
-                    node_modules_count += 1;
-                }
-            }
+        if (is_node_modules) {
+            node_modules_bytes += module_bytes;
+            node_modules_count += 1;
         }
 
         if (input.object.get("format")) |format| {
@@ -549,7 +580,6 @@ pub fn generateMarkdown(allocator: std.mem.Allocator, metafile_json: []const u8)
     // Summary table
     try writer.writeAll("| Metric | Value |\n");
     try writer.writeAll("|--------|-------|\n");
-    try writer.print("| Total input size | {f} |\n", .{bun.fmt.size(total_input_bytes, .{})});
     try writer.print("| Total output size | {f} |\n", .{bun.fmt.size(total_output_bytes, .{})});
     try writer.print("| Input modules | {d} |\n", .{inputs.object.count()});
     if (entry_point_count > 0) {
@@ -559,50 +589,52 @@ pub fn generateMarkdown(allocator: std.mem.Allocator, metafile_json: []const u8)
         try writer.print("| Code-split chunks | {d} |\n", .{chunk_count});
     }
     if (node_modules_count > 0) {
-        try writer.print("| node_modules files | {d} ({f}) |\n", .{ node_modules_count, bun.fmt.size(node_modules_bytes, .{}) });
+        try writer.print("| node_modules contribution | {d} files ({f}) |\n", .{ node_modules_count, bun.fmt.size(node_modules_bytes, .{}) });
     }
     if (esm_count > 0) try writer.print("| ESM modules | {d} |\n", .{esm_count});
     if (cjs_count > 0) try writer.print("| CommonJS modules | {d} |\n", .{cjs_count});
     if (json_count > 0) try writer.print("| JSON files | {d} |\n", .{json_count});
     if (external_count > 0) try writer.print("| External imports | {d} |\n", .{external_count});
 
-    // Compression ratio
-    if (total_input_bytes > 0) {
-        const ratio = @as(f64, @floatFromInt(total_output_bytes)) / @as(f64, @floatFromInt(total_input_bytes)) * 100.0;
-        try writer.print("| Output/Input ratio | {d:.1}% |\n", .{ratio});
-    }
+    // ==================== LARGEST MODULES (BLOAT ANALYSIS) ====================
+    try writer.writeAll("\n## Largest Modules by Output Contribution\n\n");
+    try writer.writeAll("Modules sorted by bytes contributed to the output bundle. Large modules may indicate bloat.\n\n");
 
-    // ==================== LARGEST FILES (BLOAT ANALYSIS) ====================
-    try writer.writeAll("\n## Largest Input Files (Potential Bloat)\n\n");
-    try writer.writeAll("Files sorted by source size. Large files may indicate bloat or vendored code.\n\n");
-
-    // Sort by bytes descending
+    // Sort by bytes_in_output descending
     std.mem.sort(InputFileInfo, input_files.items, {}, struct {
         fn lessThan(_: void, a: InputFileInfo, b: InputFileInfo) bool {
-            return a.bytes > b.bytes;
+            return a.bytes_in_output > b.bytes_in_output;
         }
     }.lessThan);
 
-    try writer.writeAll("| Size | % of Total | Module | Format |\n");
-    try writer.writeAll("|------|------------|--------|--------|\n");
+    try writer.writeAll("| Output Bytes | % of Total | Module | Format |\n");
+    try writer.writeAll("|--------------|------------|--------|--------|\n");
 
     const max_to_show: usize = 20;
     for (input_files.items, 0..) |info, i| {
         if (i >= max_to_show) break;
-        const pct = if (total_input_bytes > 0)
-            @as(f64, @floatFromInt(info.bytes)) / @as(f64, @floatFromInt(total_input_bytes)) * 100.0
+        if (info.bytes_in_output == 0) break; // Skip modules with no output contribution
+        const pct = if (total_output_bytes > 0)
+            @as(f64, @floatFromInt(info.bytes_in_output)) / @as(f64, @floatFromInt(total_output_bytes)) * 100.0
         else
             0.0;
         try writer.print("| {f} | {d:.1}% | `{s}` | {s} |\n", .{
-            bun.fmt.size(info.bytes, .{}),
+            bun.fmt.size(info.bytes_in_output, .{}),
             pct,
             info.path,
             if (info.format.len > 0) info.format else "-",
         });
     }
 
+    // Count remaining modules with non-zero contribution
+    var remaining_count: usize = 0;
     if (input_files.items.len > max_to_show) {
-        try writer.print("\n*...and {d} more files*\n", .{input_files.items.len - max_to_show});
+        for (input_files.items[max_to_show..]) |info| {
+            if (info.bytes_in_output > 0) remaining_count += 1;
+        }
+    }
+    if (remaining_count > 0) {
+        try writer.print("\n*...and {d} more modules with output contribution*\n", .{remaining_count});
     }
 
     // ==================== ENTRY POINT ANALYSIS ====================
@@ -810,10 +842,10 @@ pub fn generateMarkdown(allocator: std.mem.Allocator, metafile_json: []const u8)
 
         try writer.print("### `{s}`\n\n", .{input_path});
 
-        // Input metadata
-        if (input.object.get("bytes")) |bytes| {
-            if (bytes == .integer) {
-                try writer.print("- **Size**: {f}\n", .{bun.fmt.size(@as(u64, @intCast(bytes.integer)), .{})});
+        // Show bytes contributed to output
+        if (bytes_in_output.get(input_path)) |contrib| {
+            if (contrib > 0) {
+                try writer.print("- **Output contribution**: {f}\n", .{bun.fmt.size(contrib, .{})});
             }
         }
 
@@ -866,19 +898,8 @@ pub fn generateMarkdown(allocator: std.mem.Allocator, metafile_json: []const u8)
                             break :blk null;
                         };
 
-                        // Get size of imported file if available
-                        var imported_size: ?u64 = null;
-                        if (!is_external) {
-                            if (inputs.object.get(path.string)) |imported_input| {
-                                if (imported_input == .object) {
-                                    if (imported_input.object.get("bytes")) |bytes| {
-                                        if (bytes == .integer) {
-                                            imported_size = @intCast(bytes.integer);
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                        // Get output contribution of imported file if available
+                        const imported_contrib: ?u64 = if (!is_external) bytes_in_output.get(path.string) else null;
 
                         if (is_external) {
                             if (original) |orig| {
@@ -886,11 +907,19 @@ pub fn generateMarkdown(allocator: std.mem.Allocator, metafile_json: []const u8)
                             } else {
                                 try writer.print("  - `{s}` ({s}, **external**)\n", .{ path.string, kind.string });
                             }
-                        } else if (imported_size) |size| {
-                            if (original) |orig| {
-                                try writer.print("  - `{s}` ({s}, {f}, specifier: `{s}`)\n", .{ path.string, kind.string, bun.fmt.size(size, .{}), orig });
+                        } else if (imported_contrib) |contrib| {
+                            if (contrib > 0) {
+                                if (original) |orig| {
+                                    try writer.print("  - `{s}` ({s}, contributes {f}, specifier: `{s}`)\n", .{ path.string, kind.string, bun.fmt.size(contrib, .{}), orig });
+                                } else {
+                                    try writer.print("  - `{s}` ({s}, contributes {f})\n", .{ path.string, kind.string, bun.fmt.size(contrib, .{}) });
+                                }
                             } else {
-                                try writer.print("  - `{s}` ({s}, {f})\n", .{ path.string, kind.string, bun.fmt.size(size, .{}) });
+                                if (original) |orig| {
+                                    try writer.print("  - `{s}` ({s}, specifier: `{s}`)\n", .{ path.string, kind.string, orig });
+                                } else {
+                                    try writer.print("  - `{s}` ({s})\n", .{ path.string, kind.string });
+                                }
                             }
                         } else {
                             if (original) |orig| {
@@ -922,19 +951,21 @@ pub fn generateMarkdown(allocator: std.mem.Allocator, metafile_json: []const u8)
     try writer.writeAll("## Raw Data for Searching\n\n");
     try writer.writeAll("This section contains raw, grep-friendly data. Use these patterns:\n");
     try writer.writeAll("- `[MODULE:` - Find all modules\n");
-    try writer.writeAll("- `[SIZE:` - Find all file sizes\n");
+    try writer.writeAll("- `[OUTPUT_BYTES:` - Find output contribution for each module\n");
     try writer.writeAll("- `[IMPORT:` - Find all import relationships\n");
     try writer.writeAll("- `[IMPORTED_BY:` - Find reverse dependencies\n");
     try writer.writeAll("- `[ENTRY:` - Find entry points\n");
     try writer.writeAll("- `[EXTERNAL:` - Find external imports\n");
     try writer.writeAll("- `[NODE_MODULES:` - Find node_modules files\n\n");
 
-    // All modules with sizes
+    // All modules with output contribution
     try writer.writeAll("### All Modules\n\n");
     try writer.writeAll("```\n");
     for (input_files.items) |info| {
         try writer.print("[MODULE: {s}]\n", .{info.path});
-        try writer.print("[SIZE: {s} = {d} bytes]\n", .{ info.path, info.bytes });
+        if (info.bytes_in_output > 0) {
+            try writer.print("[OUTPUT_BYTES: {s} = {d} bytes]\n", .{ info.path, info.bytes_in_output });
+        }
         if (info.format.len > 0) {
             try writer.print("[FORMAT: {s} = {s}]\n", .{ info.path, info.format });
         }
@@ -1020,8 +1051,8 @@ pub fn generateMarkdown(allocator: std.mem.Allocator, metafile_json: []const u8)
         try writer.writeAll("### node_modules Summary\n\n");
         try writer.writeAll("```\n");
         for (input_files.items) |info| {
-            if (info.is_node_modules) {
-                try writer.print("[NODE_MODULES: {s} ({d} bytes)]\n", .{ info.path, info.bytes });
+            if (info.is_node_modules and info.bytes_in_output > 0) {
+                try writer.print("[NODE_MODULES: {s} (contributes {d} bytes)]\n", .{ info.path, info.bytes_in_output });
             }
         }
         try writer.writeAll("```\n");

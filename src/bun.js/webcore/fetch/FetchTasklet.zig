@@ -621,7 +621,21 @@ pub const FetchTasklet = struct {
                     };
                     var hostname: bun.String = bun.String.cloneUTF8(certificate_info.hostname);
                     defer hostname.deref();
-                    const js_hostname = hostname.toJS(globalObject);
+                    const js_hostname = hostname.toJS(globalObject) catch |err| {
+                        switch (err) {
+                            error.JSError => {},
+                            error.OutOfMemory => globalObject.throwOutOfMemory() catch {},
+                            error.JSTerminated => {},
+                        }
+                        const hostname_err_result = globalObject.tryTakeException().?;
+                        this.is_waiting_abort = this.result.has_more;
+                        this.abort_reason.set(globalObject, hostname_err_result);
+                        this.signal_store.aborted.store(true, .monotonic);
+                        this.tracker.didCancel(this.global_this);
+                        if (this.http) |http_| http.http_thread.scheduleShutdown(http_);
+                        this.result.fail = error.ERR_TLS_CERT_ALTNAME_INVALID;
+                        return false;
+                    };
                     js_hostname.ensureStillAlive();
                     js_cert.ensureStillAlive();
                     const check_result = check_server_identity.call(globalObject, .js_undefined, &.{ js_hostname, js_cert }) catch |err| globalObject.takeException(err);

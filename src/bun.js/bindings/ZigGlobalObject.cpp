@@ -7,7 +7,7 @@
 #include "wtf/text/Base64.h"
 #include "JavaScriptCore/BuiltinNames.h"
 #include "JavaScriptCore/CallData.h"
-#include "JavaScriptCore/CatchScope.h"
+#include "JavaScriptCore/TopExceptionScope.h"
 #include "JavaScriptCore/ClassInfo.h"
 #include "JavaScriptCore/CodeBlock.h"
 #include "JavaScriptCore/Completion.h"
@@ -286,20 +286,18 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         }
 #endif
 
-        JSC::initialize();
-        {
-
-            JSC::Options::AllowUnfinalizedAccessScope scope;
-
+        // Use JSC::initialize with a callback to set Options during initialization.
+        // The callback runs BEFORE IPInt::initialize() so we can configure WASM options early.
+        JSC::initialize([&] {
+            JSC::Options::useWasm() = true;
+            JSC::Options::useJIT() = true;
+            JSC::Options::useBBQJIT() = true;
             JSC::Options::useConcurrentJIT() = true;
             // JSC::Options::useSigillCrashAnalyzer() = true;
-            JSC::Options::useWasm() = true;
             JSC::Options::useSourceProviderCache() = true;
             // JSC::Options::useUnlinkedCodeBlockJettisoning() = false;
             JSC::Options::exposeInternalModuleLoader() = true;
             JSC::Options::useSharedArrayBuffer() = true;
-            JSC::Options::useJIT() = true;
-            JSC::Options::useBBQJIT() = true;
             JSC::Options::useJITCage() = false;
             JSC::Options::useShadowRealm() = true;
             JSC::Options::useV8DateParser() = true;
@@ -331,7 +329,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
                 }
             }
             JSC::Options::assertOptionsAreCoherent();
-        }
+        }); // end JSC::initialize lambda
     }); // end std::call_once lambda
 
     // NOLINTEND
@@ -1451,7 +1449,7 @@ JSC_DEFINE_HOST_FUNCTION(makeGetterTypeErrorForBuiltins, (JSGlobalObject * globa
     ASSERT(callFrame->argumentCount() == 2);
     VM& vm = globalObject->vm();
     DeferTermination deferScope(vm);
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     auto interfaceName = callFrame->uncheckedArgument(0).getString(globalObject);
     scope.assertNoException();
@@ -1470,7 +1468,7 @@ JSC_DEFINE_HOST_FUNCTION(makeDOMExceptionForBuiltins, (JSGlobalObject * globalOb
 
     auto& vm = JSC::getVM(globalObject);
     DeferTermination deferScope(vm);
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     auto codeValue = callFrame->uncheckedArgument(0).getString(globalObject);
     scope.assertNoException();
@@ -1559,7 +1557,7 @@ extern "C" napi_env ZigGlobalObject__makeNapiEnvForFFI(Zig::GlobalObject* global
 JSC_DEFINE_HOST_FUNCTION(jsFunctionPerformMicrotask, (JSGlobalObject * globalObject, CallFrame* callframe))
 {
     auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     auto job = callframe->argument(0);
     if (!job || job.isUndefinedOrNull()) [[unlikely]] {
@@ -1616,7 +1614,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPerformMicrotask, (JSGlobalObject * globalObj
 JSC_DEFINE_HOST_FUNCTION(jsFunctionPerformMicrotaskVariadic, (JSGlobalObject * globalObject, CallFrame* callframe))
 {
     auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     auto job = callframe->argument(0);
     if (!job || job.isUndefinedOrNull()) {
@@ -1920,7 +1918,7 @@ void GlobalObject::finishCreation(VM& vm)
 
     m_JSBufferSubclassStructure.initLater(
         [](const Initializer<Structure>& init) {
-            auto scope = DECLARE_CATCH_SCOPE(init.vm);
+            auto scope = DECLARE_TOP_EXCEPTION_SCOPE(init.vm);
             auto* globalObject = static_cast<Zig::GlobalObject*>(init.owner);
             auto* baseStructure = globalObject->typedArrayStructureWithTypedArrayType<JSC::TypeUint8>();
             JSC::Structure* subclassStructure = JSC::InternalFunction::createSubclassStructure(globalObject, globalObject->JSBufferConstructor(), baseStructure);
@@ -1929,7 +1927,7 @@ void GlobalObject::finishCreation(VM& vm)
         });
     m_JSResizableOrGrowableSharedBufferSubclassStructure.initLater(
         [](const Initializer<Structure>& init) {
-            auto scope = DECLARE_CATCH_SCOPE(init.vm);
+            auto scope = DECLARE_TOP_EXCEPTION_SCOPE(init.vm);
             auto* globalObject = static_cast<Zig::GlobalObject*>(init.owner);
             auto* baseStructure = globalObject->resizableOrGrowableSharedTypedArrayStructureWithTypedArrayType<JSC::TypeUint8>();
             JSC::Structure* subclassStructure = JSC::InternalFunction::createSubclassStructure(globalObject, globalObject->JSBufferConstructor(), baseStructure);
@@ -2045,6 +2043,22 @@ void GlobalObject::finishCreation(VM& vm)
 
             obj->putDirect(init.vm, hardwareConcurrencyIdentifier, JSC::jsNumber(cpuCount));
             init.set(obj);
+        });
+
+    this->m_jsonlParseResultStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            // { values, read, done, error } — 4 properties at fixed offsets for fast allocation
+            Structure* structure = init.owner->structureCache().emptyObjectStructureForPrototype(init.owner, init.owner->objectPrototype(), 4);
+            PropertyOffset offset;
+            structure = Structure::addPropertyTransition(init.vm, structure, Identifier::fromString(init.vm, "values"_s), 0, offset);
+            RELEASE_ASSERT(offset == 0);
+            structure = Structure::addPropertyTransition(init.vm, structure, Identifier::fromString(init.vm, "read"_s), 0, offset);
+            RELEASE_ASSERT(offset == 1);
+            structure = Structure::addPropertyTransition(init.vm, structure, Identifier::fromString(init.vm, "done"_s), 0, offset);
+            RELEASE_ASSERT(offset == 2);
+            structure = Structure::addPropertyTransition(init.vm, structure, Identifier::fromString(init.vm, "error"_s), 0, offset);
+            RELEASE_ASSERT(offset == 3);
+            init.set(structure);
         });
 
     this->m_pendingVirtualModuleResultStructure.initLater(
@@ -2671,7 +2685,7 @@ JSValue GlobalObject_getGlobalThis(VM& vm, JSObject* globalObject)
 
 void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 {
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     m_builtinInternalFunctions.initialize(*this);
 
     auto clientData = WebCore::clientData(vm);
@@ -2821,7 +2835,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void JSC__JSGlobalObject__addGc(JSC::JSGlobal
 uint8_t GlobalObject::drainMicrotasks()
 {
     auto& vm = this->vm();
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     if (auto* exception = scope.exception()) [[unlikely]] {
         if (vm.isTerminationException(exception)) [[unlikely]] {
@@ -2955,7 +2969,7 @@ extern "C" void JSGlobalObject__clearTerminationException(JSC::JSGlobalObject* g
     // Clear the request for the termination exception to be thrown
     vm.clearHasTerminationRequest();
     // In case it actually has been thrown, clear the exception itself as well
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     if (scope.exception() && vm.isTerminationException(scope.exception())) {
         (void)scope.tryClearException();
     }
@@ -2995,7 +3009,7 @@ extern "C" void Bun__handleRejectedPromise(Zig::GlobalObject* JSGlobalObject, JS
 void GlobalObject::handleRejectedPromises()
 {
     JSC::VM& virtual_machine = vm();
-    auto scope = DECLARE_CATCH_SCOPE(virtual_machine);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(virtual_machine);
     while (auto* promise = m_aboutToBeNotifiedRejectedPromises.takeFirst(this)) {
         if (promise->isHandled())
             continue;

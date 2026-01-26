@@ -147,7 +147,7 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
 
     VM& vm = scriptExecutionContext.vm();
     JSLockHolder lock(vm);
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     // See https://dom.spec.whatwg.org/#dispatching-events spec on calling handleEvent.
     // "If this throws an exception, report the exception." It should not propagate the

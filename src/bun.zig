@@ -1924,8 +1924,11 @@ pub const StatFS = switch (Environment.os) {
 };
 
 pub var argv: [][:0]const u8 = &[_][:0]const u8{};
+/// Number of arguments injected by BUN_OPTIONS environment variable.
+/// Used by standalone executables to include these in the parsed options window.
+pub var bun_options_argc: usize = 0;
 
-pub fn appendOptionsEnv(env: []const u8, args: *std.array_list.Managed([:0]const u8), allocator: std.mem.Allocator) !void {
+pub fn appendOptionsEnv(env: []const u8, comptime ArgType: type, args: *std.array_list.Managed(ArgType)) !void {
     var i: usize = 0;
     var offset_in_args: usize = 1;
     while (i < env.len) {
@@ -1971,8 +1974,17 @@ pub fn appendOptionsEnv(env: []const u8, args: *std.array_list.Managed([:0]const
 
             // Copy the entire argument including quotes
             const arg_len = j - start;
-            const arg = try allocator.allocSentinel(u8, arg_len, 0);
-            @memcpy(arg, env[start..j]);
+
+            const arg = switch (ArgType) {
+                bun.String => bun.String.cloneUTF8(env[start..j]),
+                [:0]const u8 => arg: {
+                    const arg = try bun.default_allocator.allocSentinel(u8, arg_len, 0);
+                    @memcpy(arg, env[start..j]);
+                    break :arg arg;
+                },
+                else => @compileError("unexpected arg type"),
+            };
+
             try args.insert(offset_in_args, arg);
             offset_in_args += 1;
 
@@ -1981,7 +1993,7 @@ pub fn appendOptionsEnv(env: []const u8, args: *std.array_list.Managed([:0]const
         }
 
         // Non-option arguments or standalone values
-        var buf = std.array_list.Managed(u8).init(allocator);
+        var buf = std.array_list.Managed(u8).init(bun.default_allocator);
 
         var in_single = false;
         var in_double = false;
@@ -2028,16 +2040,26 @@ pub fn appendOptionsEnv(env: []const u8, args: *std.array_list.Managed([:0]const
             }
         }
 
-        try buf.append(0);
-        const owned = try buf.toOwnedSlice();
-        try args.insert(offset_in_args, owned[0 .. owned.len - 1 :0]);
+        switch (ArgType) {
+            bun.String => {
+                defer buf.deinit();
+                try args.insert(offset_in_args, bun.String.cloneUTF8(buf.items));
+            },
+            [:0]const u8 => {
+                try buf.append(0);
+                const owned = try buf.toOwnedSlice();
+                try args.insert(offset_in_args, owned[0 .. owned.len - 1 :0]);
+            },
+            else => @compileError("unexpected arg type"),
+        }
+
         offset_in_args += 1;
     }
 }
 
-pub fn initArgv(allocator: std.mem.Allocator) !void {
+pub fn initArgv() !void {
     if (comptime Environment.isPosix) {
-        argv = try allocator.alloc([:0]const u8, std.os.argv.len);
+        argv = try bun.default_allocator.alloc([:0]const u8, std.os.argv.len);
         for (0..argv.len) |i| {
             argv[i] = std.mem.sliceTo(std.os.argv[i], 0);
         }
@@ -2072,7 +2094,7 @@ pub fn initArgv(allocator: std.mem.Allocator) !void {
         };
 
         const argvu16 = argvu16_ptr[0..@intCast(length)];
-        const out_argv = try allocator.alloc([:0]const u8, @intCast(length));
+        const out_argv = try bun.default_allocator.alloc([:0]const u8, @intCast(length));
         var string_builder = StringBuilder{};
 
         for (argvu16) |argraw| {
@@ -2080,7 +2102,7 @@ pub fn initArgv(allocator: std.mem.Allocator) !void {
             string_builder.count16Z(arg);
         }
 
-        try string_builder.allocate(allocator);
+        try string_builder.allocate(bun.default_allocator);
 
         for (argvu16, out_argv) |argraw, *out| {
             const arg = std.mem.span(argraw);
@@ -2092,13 +2114,15 @@ pub fn initArgv(allocator: std.mem.Allocator) !void {
 
         argv = out_argv;
     } else {
-        argv = try std.process.argsAlloc(allocator);
+        argv = try std.process.argsAlloc(bun.default_allocator);
     }
 
     if (bun.env_var.BUN_OPTIONS.get()) |opts| {
-        var argv_list = std.array_list.Managed([:0]const u8).fromOwnedSlice(allocator, argv);
-        try appendOptionsEnv(opts, &argv_list, allocator);
+        const original_len = argv.len;
+        var argv_list = std.array_list.Managed([:0]const u8).fromOwnedSlice(bun.default_allocator, argv);
+        try appendOptionsEnv(opts, [:0]const u8, &argv_list);
         argv = argv_list.items;
+        bun_options_argc = argv.len - original_len;
     }
 }
 

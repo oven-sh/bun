@@ -294,7 +294,7 @@ public:
 
     void copyNameAndLength(JSC::VM& vm, JSGlobalObject* global, JSC::JSValue value)
     {
-        auto catcher = DECLARE_CATCH_SCOPE(vm);
+        auto catcher = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         WTF::String nameToUse;
         if (auto* fn = jsDynamicCast<JSFunction*>(value)) {
             nameToUse = fn->name(vm);
@@ -931,15 +931,15 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionCall, (JSGlobalObject * lexicalGlobalObje
 
             setReturnValue(createMockResult(vm, globalObject, "incomplete"_s, jsUndefined()));
 
-            auto catchScope = DECLARE_CATCH_SCOPE(vm);
+            auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
             JSValue returnValue = Bun::call(globalObject, result, callData, thisValue, args);
 
-            if (auto* exc = catchScope.exception()) {
+            if (auto* exc = topExceptionScope.exception()) {
                 if (auto* returnValuesArray = fn->returnValues.get()) {
                     returnValuesArray->putDirectIndex(globalObject, returnValueIndex, createMockResult(vm, globalObject, "throw"_s, exc->value()));
                     fn->returnValues.set(vm, fn, returnValuesArray);
-                    (void)catchScope.tryClearException();
+                    (void)topExceptionScope.tryClearException();
                     JSC::throwException(globalObject, scope, exc);
                     return {};
                 }

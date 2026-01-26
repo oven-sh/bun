@@ -29,7 +29,7 @@
 #include <JavaScriptCore/ThrowScope.h>
 
 namespace JSC {
-class CatchScope;
+class TopExceptionScope;
 }
 
 namespace WebCore {
@@ -63,8 +63,8 @@ WEBCORE_EXPORT JSC::EncodedJSValue rejectPromiseWithGetterTypeError(JSC::JSGloba
 WEBCORE_EXPORT JSC::EncodedJSValue rejectPromiseWithThisTypeError(DeferredPromise&, ASCIILiteral interfaceName, ASCIILiteral operationName);
 WEBCORE_EXPORT JSC::EncodedJSValue rejectPromiseWithThisTypeError(JSC::JSGlobalObject&, ASCIILiteral interfaceName, ASCIILiteral operationName);
 
-String retrieveErrorMessageWithoutName(JSC::JSGlobalObject&, JSC::VM&, JSC::JSValue exception, JSC::CatchScope&);
-String retrieveErrorMessage(JSC::JSGlobalObject&, JSC::VM&, JSC::JSValue exception, JSC::CatchScope&);
+String retrieveErrorMessageWithoutName(JSC::JSGlobalObject&, JSC::VM&, JSC::JSValue exception, JSC::TopExceptionScope&);
+String retrieveErrorMessage(JSC::JSGlobalObject&, JSC::VM&, JSC::JSValue exception, JSC::TopExceptionScope&);
 WEBCORE_EXPORT void reportException(JSC::JSGlobalObject*, JSC::JSValue exception, CachedScript* = nullptr, bool = false);
 WEBCORE_EXPORT void reportException(JSC::JSGlobalObject*, JSC::Exception*, CachedScript* = nullptr, bool = false, ExceptionDetails* = nullptr);
 WEBCORE_EXPORT void reportExceptionIfJSDOMWindow(JSC::JSGlobalObject*, JSC::JSValue exception);

@@ -182,7 +182,7 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
         .pending => unreachable,
         .fulfilled => |resolved| config: {
             bun.assert(resolved.isUndefined());
-            const default = BakeGetDefaultExportFromModule(vm.global, config_entry_point_string.toJS(vm.global));
+            const default = BakeGetDefaultExportFromModule(vm.global, try config_entry_point_string.toJS(vm.global));
 
             if (!default.isObject()) {
                 return global.throwInvalidArguments(
@@ -485,7 +485,7 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
 
     for (router.types, 0..) |router_type, i| {
         if (router_type.client_file.unwrap()) |client_file| {
-            const str = (try bun.String.createFormat("{s}{s}", .{
+            const str = try (try bun.String.createFormat("{s}{s}", .{
                 public_path,
                 pt.outputFile(client_file).dest_path,
             })).toJS(global);
@@ -542,7 +542,7 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
         bun.assert(output_file.dest_path[0] != '.');
         // CSS chunks must be in contiguous order!!
         bun.assert(output_file.loader.isCSS());
-        str.* = (try bun.String.createFormat("{s}{s}", .{ public_path, output_file.dest_path })).toJS(global);
+        str.* = try (try bun.String.createFormat("{s}{s}", .{ public_path, output_file.dest_path })).toJS(global);
     }
 
     // Route URL patterns with parameter placeholders.
@@ -659,10 +659,10 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
         // Init the items
         var pattern_string = bun.String.cloneUTF8(pattern.slice());
         defer pattern_string.deref();
-        try route_patterns.putIndex(global, @intCast(nav_index), pattern_string.toJS(global));
+        try route_patterns.putIndex(global, @intCast(nav_index), try pattern_string.toJS(global));
 
         var src_path = bun.String.cloneUTF8(bun.path.relative(cwd, pt.inputFile(main_file_route_index).absPath()));
-        try route_source_files.putIndex(global, @intCast(nav_index), src_path.transferToJS(global));
+        try route_source_files.putIndex(global, @intCast(nav_index), try src_path.transferToJS(global));
 
         try route_nested_files.putIndex(global, @intCast(nav_index), file_list);
         try route_type_and_flags.putIndex(global, @intCast(nav_index), JSValue.jsNumberFromInt32(@bitCast(TypeAndFlags{
@@ -993,7 +993,7 @@ pub const PerThread = struct {
         return try loadModule(
             pt.vm,
             pt.vm.global,
-            pt.module_keys[id.get()].toJS(pt.vm.global),
+            try pt.module_keys[id.get()].toJS(pt.vm.global),
         );
     }
 
@@ -1010,7 +1010,7 @@ pub const PerThread = struct {
             try pt.all_server_files.putIndex(
                 pt.vm.global,
                 @intCast(id.get()),
-                pt.module_keys[id.get()].toJS(pt.vm.global),
+                try pt.module_keys[id.get()].toJS(pt.vm.global),
             );
         }
 

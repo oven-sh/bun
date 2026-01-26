@@ -964,6 +964,7 @@ fn NewPrinter(
             }
 
             if (import.default_name) |default| {
+                p.printSemicolonIfNeeded();
                 p.print("var ");
                 p.printSymbol(default.ref.?);
                 if (comptime Statement == void) {
@@ -984,6 +985,7 @@ fn NewPrinter(
             }
 
             if (import.items.len > 0) {
+                p.printSemicolonIfNeeded();
                 p.printWhitespacer(ws("var {"));
 
                 if (!import.is_single_line) {

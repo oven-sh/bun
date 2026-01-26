@@ -1308,7 +1308,7 @@ extern "C" napi_status napi_is_exception_pending(napi_env env, bool* result)
         if (globalObject) {
             auto& vm = JSC::getVM(globalObject);
             // Use a catch scope instead of throw scope for safety during cleanup
-            auto scope = DECLARE_CATCH_SCOPE(vm);
+            auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
             *result = scope.exception() != nullptr;
         }
     }
@@ -1327,7 +1327,7 @@ extern "C" napi_status napi_get_and_clear_last_exception(napi_env env,
     }
 
     auto globalObject = toJS(env);
-    auto scope = DECLARE_CATCH_SCOPE(JSC::getVM(globalObject));
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(globalObject));
     if (scope.exception()) [[unlikely]] {
         *result = toNapi(JSValue(scope.exception()->value()), globalObject);
     } else if (std::optional<JSValue> pending = env->pendingException()) {

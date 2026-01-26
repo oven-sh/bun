@@ -265,8 +265,16 @@ class BunWebSocket extends EventEmitter {
       emitWarning(event, "ws.WebSocket '" + event + "' event is not implemented in bun");
     }
     const mask = 1 << eventIds[event];
-    if (mask && (this.#eventId & mask) !== mask) {
-      this.#eventId |= mask;
+    const hasPersistentListener = mask && (this.#eventId & mask) === mask;
+    // Add a native listener if:
+    // 1. For `on()`: no native listener exists yet (will be persistent)
+    // 2. For `once()`: no persistent `on()` listener exists (otherwise the persistent one forwards events)
+    //    If only `once()` listeners exist, each needs its own native listener since they auto-remove
+    if (mask && !hasPersistentListener) {
+      // Only set the eventId bit for persistent `on` listeners, not for `once`
+      if (!once) {
+        this.#eventId |= mask;
+      }
       if (event === "open") {
         this.#ws.addEventListener(
           "open",

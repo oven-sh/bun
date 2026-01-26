@@ -364,12 +364,14 @@ pub fn installWithManager(
                         for (manager.lockfile.buffers.dependencies.items, 0..) |*dependency, dependency_i| {
                             if (std.mem.indexOfScalar(PackageNameHash, all_name_hashes, dependency.name_hash)) |_| {
                                 manager.lockfile.buffers.resolutions.items[dependency_i] = invalid_package_id;
-                                try manager.enqueueDependencyWithMain(
+                                manager.enqueueDependencyWithMain(
                                     @truncate(dependency_i),
                                     dependency,
                                     invalid_package_id,
                                     false,
-                                );
+                                ) catch |err| {
+                                    addDependencyError(manager, dependency, err);
+                                };
                             }
                         }
                     }
@@ -380,12 +382,14 @@ pub fn installWithManager(
                             if (dep.version.tag != .catalog) continue;
 
                             manager.lockfile.buffers.resolutions.items[dep_id] = invalid_package_id;
-                            try manager.enqueueDependencyWithMain(
+                            manager.enqueueDependencyWithMain(
                                 dep_id,
                                 dep,
                                 invalid_package_id,
                                 false,
-                            );
+                            ) catch |err| {
+                                addDependencyError(manager, dep, err);
+                            };
                         }
                     }
 
@@ -401,12 +405,14 @@ pub fn installWithManager(
                             if (mapping[counter_i] == invalid_package_id) {
                                 const dependency_i = counter_i + off;
                                 const dependency = manager.lockfile.buffers.dependencies.items[dependency_i];
-                                try manager.enqueueDependencyWithMain(
+                                manager.enqueueDependencyWithMain(
                                     dependency_i,
                                     &dependency,
                                     manager.lockfile.buffers.resolutions.items[dependency_i],
                                     false,
-                                );
+                                ) catch |err| {
+                                    addDependencyError(manager, &dependency, err);
+                                };
                             }
                         }
                     }
@@ -1099,6 +1105,28 @@ pub fn getWorkspaceFilters(manager: *PackageManager, original_cwd: []const u8) !
     }
 
     return .{ workspace_filters.items, install_root_dependencies };
+}
+
+/// Adds a contextual error for a dependency resolution failure.
+/// This provides better error messages than just propagating the raw error.
+/// The error is logged to manager.log, and the install will fail later when
+/// manager.log.hasErrors() is checked.
+fn addDependencyError(manager: *PackageManager, dependency: *const Dependency, err: anyerror) void {
+    const lockfile = manager.lockfile;
+    const note = .{
+        .fmt = "error occurred while resolving {f}",
+        .args = .{bun.fmt.fmtPath(u8, lockfile.str(&dependency.realname()), .{
+            .path_sep = switch (dependency.version.tag) {
+                .folder => .auto,
+                else => .any,
+            },
+        })},
+    };
+
+    if (dependency.behavior.isOptional() or dependency.behavior.isPeer())
+        manager.log.addWarningWithNote(null, .{}, manager.allocator, @errorName(err), note.fmt, note.args) catch unreachable
+    else
+        manager.log.addZigErrorWithNote(manager.allocator, err, note.fmt, note.args) catch unreachable;
 }
 
 const security_scanner = @import("./security_scanner.zig");

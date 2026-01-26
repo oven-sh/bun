@@ -46,7 +46,7 @@ struct node_module;
 
 #include "root.h"
 #include "headers-handwritten.h"
-#include <JavaScriptCore/CatchScope.h>
+#include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/JSTypeInfo.h>
 #include <JavaScriptCore/Structure.h>
@@ -563,6 +563,7 @@ public:
     V(public, LazyClassStructure, m_JSConnectionsListClassStructure)                                         \
     V(public, LazyClassStructure, m_JSHTTPParserClassStructure)                                              \
                                                                                                              \
+    V(private, LazyPropertyOfGlobalObject<Structure>, m_jsonlParseResultStructure)                           \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_pendingVirtualModuleResultStructure)                 \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_performMicrotaskFunction)                           \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_nativeMicrotaskTrampoline)                          \
@@ -696,6 +697,7 @@ public:
 
     void reload();
 
+    JSC::Structure* jsonlParseResultStructure() { return m_jsonlParseResultStructure.get(this); }
     JSC::Structure* pendingVirtualModuleResultStructure() { return m_pendingVirtualModuleResultStructure.get(this); }
 
     // We need to know if the napi module registered itself or we registered it.

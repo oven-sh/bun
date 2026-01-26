@@ -108,14 +108,15 @@ const Stringifier = struct {
         str: bun.String,
 
         pub fn init(global: *jsc.JSGlobalObject, space_value: JSValue) bun.JSError!Space {
-            if (space_value.isNumber()) {
-                var num = space_value.toInt32();
+            const space = try space_value.unwrapBoxedPrimitive(global);
+            if (space.isNumber()) {
+                var num = space.toInt32();
                 num = @max(0, @min(num, 10));
                 if (num == 0) return .minified;
                 return .{ .number = @intCast(num) };
             }
-            if (space_value.isString()) {
-                const str = try space_value.toBunString(global);
+            if (space.isString()) {
+                const str = try space.toBunString(global);
                 if (str.length() == 0) {
                     str.deref();
                     return .minified;
@@ -298,10 +299,12 @@ const Stringifier = struct {
                     this.builder.append(.latin1, ": ");
                     try this.stringifyValue(global, iter.value);
                 }
-                // Trailing comma
-                this.builder.append(.lchar, ',');
                 this.indent -= 1;
-                this.newline();
+                if (!first) {
+                    // Trailing comma
+                    this.builder.append(.lchar, ',');
+                    this.newline();
+                }
             },
         }
 
@@ -339,6 +342,8 @@ const Stringifier = struct {
                 0x0d => this.builder.append(.latin1, "\\r"),
                 0x27 => this.builder.append(.latin1, "\\'"), // single quote
                 0x5c => this.builder.append(.latin1, "\\\\"), // backslash
+                0x2028 => this.builder.append(.latin1, "\\u2028"),
+                0x2029 => this.builder.append(.latin1, "\\u2029"),
                 0x01...0x07, 0x0e...0x1f, 0x7f => {
                     // Other control chars → \xHH
                     this.builder.append(.latin1, "\\x");

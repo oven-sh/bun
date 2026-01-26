@@ -763,6 +763,29 @@ describe("stringify", () => {
     expect(JSON5.stringify([1, 2, 3], null, 2)).toEqual("[\n  1,\n  2,\n  3,\n]");
   });
 
+  test("escapes U+2028 and U+2029 line separators", () => {
+    expect(JSON5.stringify("hello\u2028world")).toEqual("'hello\\u2028world'");
+    expect(JSON5.stringify("hello\u2029world")).toEqual("'hello\\u2029world'");
+  });
+
+  test("space parameter with boxed Number", () => {
+    expect(JSON5.stringify({ a: 1 }, null, new Number(4) as any)).toEqual(JSON5.stringify({ a: 1 }, null, 4));
+    expect(JSON5.stringify({ a: 1 }, null, new Number(0) as any)).toEqual(JSON5.stringify({ a: 1 }, null, 0));
+    expect(JSON5.stringify({ a: 1 }, null, new Number(-1) as any)).toEqual(JSON5.stringify({ a: 1 }, null, -1));
+    expect(JSON5.stringify({ a: 1 }, null, new Number(Infinity) as any)).toEqual(JSON5.stringify({ a: 1 }, null, 10));
+    expect(JSON5.stringify({ a: 1 }, null, new Number(NaN) as any)).toEqual(JSON5.stringify({ a: 1 }, null, 0));
+  });
+
+  test("space parameter with boxed String", () => {
+    expect(JSON5.stringify({ a: 1 }, null, new String("\t") as any)).toEqual(JSON5.stringify({ a: 1 }, null, "\t"));
+    expect(JSON5.stringify({ a: 1 }, null, new String("") as any)).toEqual(JSON5.stringify({ a: 1 }, null, ""));
+  });
+
+  test("space parameter with all-undefined properties produces empty object", () => {
+    expect(JSON5.stringify({ a: undefined, b: undefined }, null, 2)).toEqual("{}");
+    expect(JSON5.stringify({ a: () => {}, b: () => {} }, null, 2)).toEqual("{}");
+  });
+
   test("undefined returns undefined", () => {
     expect(JSON5.stringify(undefined)).toBeUndefined();
   });

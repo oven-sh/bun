@@ -75,8 +75,9 @@ const Stringifier = struct {
         str: String,
 
         pub fn init(global: *JSGlobalObject, space_value: JSValue) JSError!Space {
-            if (space_value.isNumber()) {
-                var num = space_value.toInt32();
+            const space = try space_value.unwrapBoxedPrimitive(global);
+            if (space.isNumber()) {
+                var num = space.toInt32();
                 num = @max(0, @min(num, 10));
                 if (num == 0) {
                     return .minified;
@@ -84,8 +85,8 @@ const Stringifier = struct {
                 return .{ .number = @intCast(num) };
             }
 
-            if (space_value.isString()) {
-                const str = try space_value.toBunString(global);
+            if (space.isString()) {
+                const str = try space.toBunString(global);
                 if (str.length() == 0) {
                     str.deref();
                     return .minified;
@@ -489,6 +490,9 @@ const Stringifier = struct {
 
                     try this.stringify(global, iter.value);
                     this.indent -= 1;
+                }
+                if (first) {
+                    this.builder.append(.latin1, "{}");
                 }
             },
         }

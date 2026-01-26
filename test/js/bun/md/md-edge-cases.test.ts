@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { renderToString } from "react-dom/server";
 
-const Markdown = Bun.markdown;
+const Markdown = Bun.unstable_markdown;
 
 // ============================================================================
 // Fuzzer-like tests: edge cases, pathological inputs, invariant checks
@@ -13,7 +13,7 @@ describe("fuzzer-like edge cases", () => {
   test("empty string produces empty output across all APIs", () => {
     expect(Markdown.html("")).toBe("");
     expect(Markdown.render("", {})).toBe("");
-    const el = Markdown.react("", { reactVersion: 18 });
+    const el = Markdown.react("", undefined, { reactVersion: 18 });
     expect(renderToString(el)).toBe("");
   });
 
@@ -21,7 +21,7 @@ describe("fuzzer-like edge cases", () => {
     for (const ws of [" ", "\t", "\n", "\r\n", "   \n\t  \n\n"]) {
       expect(typeof Markdown.html(ws)).toBe("string");
       expect(typeof Markdown.render(ws, {})).toBe("string");
-      Markdown.react(ws, { reactVersion: 18 }); // should not throw
+      Markdown.react(ws, undefined, { reactVersion: 18 }); // should not throw
     }
   });
 
@@ -36,7 +36,7 @@ describe("fuzzer-like edge cases", () => {
     const input = Buffer.alloc(200, "\0").toString();
     expect(typeof Markdown.html(input)).toBe("string");
     expect(typeof Markdown.render(input, {})).toBe("string");
-    Markdown.react(input, { reactVersion: 18 });
+    Markdown.react(input, undefined, { reactVersion: 18 });
   });
 
   test("control characters in input", () => {
@@ -116,7 +116,7 @@ describe("fuzzer-like edge cases", () => {
   test("long heading text for slug generation", () => {
     const longTitle = Buffer.alloc(10_000, "x").toString();
     const input = "# " + longTitle + "\n";
-    const result = Markdown.html(input, { headingIds: true });
+    const result = Markdown.html(input, { headings: { ids: true } });
     expect(result).toContain("id=");
   });
 
@@ -188,10 +188,7 @@ describe("fuzzer-like edge cases", () => {
     strikethrough: true,
     tasklists: true,
     tagFilter: true,
-    permissiveAutolinks: true,
-    permissiveUrlAutolinks: true,
-    permissiveWwwAutolinks: true,
-    permissiveEmailAutolinks: true,
+    autolinks: true,
     hardSoftBreaks: true,
     wikiLinks: true,
     underline: true,
@@ -201,8 +198,7 @@ describe("fuzzer-like edge cases", () => {
     noIndentedCodeBlocks: true,
     noHtmlBlocks: true,
     noHtmlSpans: true,
-    headingIds: true,
-    autolinkHeadings: true,
+    headings: true,
   };
 
   test("all options enabled simultaneously", () => {
@@ -242,18 +238,21 @@ code
 
   test("all options work with render()", () => {
     const input = "# Hello **world**\n";
-    const result = Markdown.render(input, {
-      heading: (c: string, m: any) => `[H${m.level}:${c}]`,
-      strong: (c: string) => `[B:${c}]`,
-      ...allOptions,
-    });
+    const result = Markdown.render(
+      input,
+      {
+        heading: (c: string, m: any) => `[H${m.level}:${c}]`,
+        strong: (c: string) => `[B:${c}]`,
+      },
+      allOptions,
+    );
     expect(result).toContain("[H1:");
     expect(result).toContain("[B:world]");
   });
 
   test("all options work with react()", () => {
     const input = "# Hello **world**\n";
-    const el = Markdown.react(input, { reactVersion: 18, ...allOptions });
+    const el = Markdown.react(input, undefined, { ...allOptions, reactVersion: 18 });
     const html = renderToString(el);
     expect(html).toContain("<h1");
     expect(html).toContain("<strong>");
@@ -333,12 +332,15 @@ code
     // renderToString, not during Markdown.react() itself.
     expect(() => {
       renderToString(
-        Markdown.react("# Hello\n", {
-          reactVersion: 18,
-          h1: () => {
-            throw new Error("component error");
+        Markdown.react(
+          "# Hello\n",
+          {
+            h1: () => {
+              throw new Error("component error");
+            },
           },
-        }),
+          { reactVersion: 18 },
+        ),
       );
     }).toThrow("component error");
   });
@@ -422,7 +424,7 @@ code
       expect(rendered).toContain("[H:");
       expect(rendered).toContain("[B:world]");
 
-      const el = Markdown.react(input, { reactVersion: 18 });
+      const el = Markdown.react(input, undefined, { reactVersion: 18 });
       const reactHtml = renderToString(el);
       expect(reactHtml).toContain("<h1>");
     }
@@ -483,7 +485,7 @@ code
       "https://example.com/path(with)parens\n",
     ];
     for (const input of inputs) {
-      const result = Markdown.html(input, { permissiveAutolinks: true });
+      const result = Markdown.html(input, { autolinks: true });
       expect(typeof result).toBe("string");
     }
   });
@@ -492,7 +494,7 @@ code
 
   test("duplicate heading IDs get deduplicated", () => {
     const input = "# Hello\n\n# Hello\n\n# Hello\n";
-    const result = Markdown.html(input, { headingIds: true });
+    const result = Markdown.html(input, { headings: { ids: true } });
     expect(result).toContain('id="hello"');
     expect(result).toContain('id="hello-1"');
     expect(result).toContain('id="hello-2"');
@@ -500,13 +502,16 @@ code
 
   test("heading ID deduplication with render()", () => {
     const ids: string[] = [];
-    Markdown.render("# A\n\n# A\n\n# A\n", {
-      heading: (_c: string, m: any) => {
-        ids.push(m.id);
-        return "";
+    Markdown.render(
+      "# A\n\n# A\n\n# A\n",
+      {
+        heading: (_c: string, m: any) => {
+          ids.push(m.id);
+          return "";
+        },
       },
-      headingIds: true,
-    });
+      { headings: { ids: true } },
+    );
     expect(ids).toEqual(["a", "a-1", "a-2"]);
   });
 });

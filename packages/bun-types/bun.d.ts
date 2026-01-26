@@ -919,11 +919,11 @@ declare module "bun" {
    * @example
    * ```tsx
    * // Render markdown to HTML
-   * const html = Bun.markdown.html("# Hello **world**");
+   * const html = Bun.unstable_markdown.html("# Hello **world**");
    * // "<h1>Hello <strong>world</strong></h1>\n"
    *
    * // Render with custom callbacks
-   * const ansi = Bun.markdown.render("# Hello **world**", {
+   * const ansi = Bun.unstable_markdown.render("# Hello **world**", {
    *   heading: (children, { level }) => `\x1b[1m${children}\x1b[0m\n`,
    *   strong: (children) => `\x1b[1m${children}\x1b[22m`,
    *   paragraph: (children) => children + "\n",
@@ -931,14 +931,14 @@ declare module "bun" {
    *
    * // Render as a React component
    * function Markdown({ text }: { text: string }) {
-   *   return Bun.markdown.react(text);
+   *   return Bun.unstable_markdown.react(text);
    * }
    *
    * // With component overrides
-   * const element = Bun.markdown.react("# Hello", { h1: MyHeadingComponent });
+   * const element = Bun.unstable_markdown.react("# Hello", { h1: MyHeadingComponent });
    * ```
    */
-  namespace markdown {
+  namespace unstable_markdown {
     /**
      * Options for configuring the markdown parser.
      *
@@ -951,14 +951,6 @@ declare module "bun" {
       strikethrough?: boolean;
       /** Enable GFM task lists (`- [x] item`). Default: `true`. */
       tasklists?: boolean;
-      /** Enable all permissive autolink types (URL, WWW, email). Default: `false`. */
-      permissiveAutolinks?: boolean;
-      /** Enable permissive URL autolinks (e.g. `https://example.com`). Default: `false`. */
-      permissiveUrlAutolinks?: boolean;
-      /** Enable permissive WWW autolinks (e.g. `www.example.com`). Default: `false`. */
-      permissiveWwwAutolinks?: boolean;
-      /** Enable permissive email autolinks (e.g. `user@example.com`). Default: `false`. */
-      permissiveEmailAutolinks?: boolean;
       /** Treat soft line breaks as hard line breaks. Default: `false`. */
       hardSoftBreaks?: boolean;
       /** Enable wiki-style links (`[[target]]` or `[[target|label]]`). Default: `false`. */
@@ -983,16 +975,31 @@ declare module "bun" {
        */
       tagFilter?: boolean;
       /**
-       * Generate `id` attributes on heading tags from their text content.
-       * Uses GitHub-compatible slug generation (lowercase, strip non-alphanumeric,
-       * deduplicate with `-1`, `-2` suffixes). Default: `false`.
+       * Enable autolinks. Pass `true` to enable all autolink types (URL, WWW, email),
+       * or an object to enable individually.
+       *
+       * @example
+       * ```ts
+       * // Enable all autolinks
+       * { autolinks: true }
+       * // Enable only URL and email autolinks
+       * { autolinks: { url: true, email: true } }
+       * ```
        */
-      headingIds?: boolean;
+      autolinks?: boolean | { url?: boolean; www?: boolean; email?: boolean };
       /**
-       * Wrap heading content in `<a href="#slug">` anchor tags. Requires `headingIds`
-       * to be enabled to have an effect. Default: `false`.
+       * Configure heading IDs and autolink headings. Pass `true` to enable both
+       * heading IDs and autolink headings, or an object to configure individually.
+       *
+       * @example
+       * ```ts
+       * // Enable both heading IDs and autolink headings
+       * { headings: true }
+       * // Enable only heading IDs
+       * { headings: { ids: true } }
+       * ```
        */
-      autolinkHeadings?: boolean;
+      headings?: boolean | { ids?: boolean; autolink?: boolean };
     }
 
     /** A component that accepts props `P`: a function, class, or HTML tag name. */
@@ -1002,7 +1009,7 @@ declare module "bun" {
       children: JSX.Element[];
     }
     interface HeadingProps extends ChildrenProps {
-      /** Heading ID slug. Set when `headingIds` is enabled. */
+      /** Heading ID slug. Set when `headings: { ids: true }` is enabled. */
       id?: string;
     }
     interface OrderedListProps extends ChildrenProps {
@@ -1047,7 +1054,7 @@ declare module "bun" {
      * function Code({ language, children }: { language?: string; children: React.ReactNode }) {
      *   return <pre data-language={language}><code>{children}</code></pre>;
      * }
-     * Bun.markdown.react(text, { pre: Code });
+     * Bun.unstable_markdown.react(text, { pre: Code });
      * ```
      */
     interface ComponentOverrides {
@@ -1093,7 +1100,7 @@ declare module "bun" {
     interface HeadingMeta {
       /** Heading level (1–6). */
       level: number;
-      /** Heading ID slug. Set when `headingIds` is enabled. */
+      /** Heading ID slug. Set when `headings: { ids: true }` is enabled. */
       id?: string;
     }
 
@@ -1139,8 +1146,8 @@ declare module "bun" {
       title?: string;
     }
 
-    interface RenderCallbacks extends Options {
-      /** Heading (level 1–6). `id` is set when `headingIds` is enabled. */
+    interface RenderCallbacks {
+      /** Heading (level 1–6). `id` is set when `headings: { ids: true }` is enabled. */
       heading?: (children: string, meta: HeadingMeta) => string | null | undefined;
       /** Paragraph. */
       paragraph?: (children: string) => string | null | undefined;
@@ -1184,8 +1191,8 @@ declare module "bun" {
       text?: (text: string) => string | null | undefined;
     }
 
-    /** Options for `react()` — parser options, component overrides, and element symbol configuration. */
-    interface ReactOptions extends Options, ComponentOverrides {
+    /** Options for `react()` — parser options and element symbol configuration. */
+    interface ReactOptions extends Options {
       /**
        * Which `$$typeof` symbol to use on the generated elements.
        * - `19` (default): `Symbol.for('react.transitional.element')`
@@ -1203,11 +1210,11 @@ declare module "bun" {
      *
      * @example
      * ```ts
-     * const html = Bun.markdown.html("# Hello **world**");
+     * const html = Bun.unstable_markdown.html("# Hello **world**");
      * // "<h1>Hello <strong>world</strong></h1>\n"
      *
      * // With options
-     * const html = Bun.markdown.html("## Hello", { headingIds: true });
+     * const html = Bun.unstable_markdown.html("## Hello", { headings: { ids: true } });
      * // '<h2 id="hello">Hello</h2>\n'
      * ```
      */
@@ -1223,39 +1230,40 @@ declare module "bun" {
      * metadata, and returns a string. Return `null` or `undefined` to omit
      * an element. If no callback is registered, children pass through unchanged.
      *
-     * Parser options (e.g., `tables`, `headingIds`) can be included alongside callbacks.
+     * Parser options are passed as a separate third argument.
      *
      * @param input The markdown string to render
-     * @param callbacks Callbacks for each element type, plus optional parser options
+     * @param callbacks Callbacks for each element type
+     * @param options Parser options
      * @returns The accumulated string output
      *
      * @example
      * ```ts
      * // Custom HTML with classes
-     * const html = Bun.markdown.render("# Title\n\nHello **world**", {
+     * const html = Bun.unstable_markdown.render("# Title\n\nHello **world**", {
      *   heading: (children, { level }) => `<h${level} class="title">${children}</h${level}>`,
      *   paragraph: (children) => `<p>${children}</p>`,
      *   strong: (children) => `<b>${children}</b>`,
      * });
      *
      * // ANSI terminal output
-     * const ansi = Bun.markdown.render("# Hello\n\n**bold**", {
+     * const ansi = Bun.unstable_markdown.render("# Hello\n\n**bold**", {
      *   heading: (children) => `\x1b[1;4m${children}\x1b[0m\n`,
      *   paragraph: (children) => children + "\n",
      *   strong: (children) => `\x1b[1m${children}\x1b[22m`,
      * });
      *
-     * // Strip formatting to plain text
-     * const text = Bun.markdown.render("# Hello **world**", {
-     *   heading: (children) => children,
+     * // With parser options as third argument
+     * const text = Bun.unstable_markdown.render("Visit www.example.com", {
+     *   link: (children, { href }) => `[${children}](${href})`,
      *   paragraph: (children) => children,
-     *   strong: (children) => children,
-     * });
+     * }, { autolinks: true });
      * ```
      */
     export function render(
       input: string | NodeJS.TypedArray | DataView<ArrayBuffer> | ArrayBufferLike,
       callbacks?: RenderCallbacks,
+      options?: Options,
     ): string;
 
     /**
@@ -1264,27 +1272,29 @@ declare module "bun" {
      * Returns a React Fragment containing the parsed markdown as children.
      * Can be returned directly from a component or passed to `renderToString()`.
      *
-     * Override any HTML element with a custom component by passing it as an option
-     * keyed by tag name. Custom components receive the same props the default
-     * elements would (e.g. `href` for links, `language` for code blocks).
+     * Override any HTML element with a custom component by passing it in the
+     * second argument, keyed by tag name. Custom components receive the same props
+     * the default elements would (e.g. `href` for links, `language` for code blocks).
      *
+     * Parser options (including `reactVersion`) are passed as a separate third argument.
      * Uses `Symbol.for('react.transitional.element')` by default (React 19).
      * Pass `reactVersion: 18` for React 18 and older.
      *
      * @param input The markdown string or buffer to parse
-     * @param options Parser options, component overrides, and element symbol configuration
+     * @param components Component overrides keyed by HTML tag name
+     * @param options Parser options and element symbol configuration
      * @returns A React Fragment element containing the parsed markdown
      *
      * @example
      * ```tsx
      * // Use directly as a component return value
      * function Markdown({ text }: { text: string }) {
-     *   return Bun.markdown.react(text);
+     *   return Bun.unstable_markdown.react(text);
      * }
      *
      * // Server-side rendering
      * import { renderToString } from "react-dom/server";
-     * const html = renderToString(Bun.markdown.react("# Hello **world**"));
+     * const html = renderToString(Bun.unstable_markdown.react("# Hello **world**"));
      *
      * // Custom components receive element props
      * function Code({ language, children }: { language?: string; children: React.ReactNode }) {
@@ -1293,14 +1303,15 @@ declare module "bun" {
      * function Link({ href, children }: { href: string; children: React.ReactNode }) {
      *   return <a href={href} target="_blank">{children}</a>;
      * }
-     * const el = Bun.markdown.react(text, { pre: Code, a: Link });
+     * const el = Bun.unstable_markdown.react(text, { pre: Code, a: Link });
      *
      * // For React 18 and older
-     * const el18 = Bun.markdown.react(text, { reactVersion: 18 });
+     * const el18 = Bun.unstable_markdown.react(text, undefined, { reactVersion: 18 });
      * ```
      */
     export function react(
       input: string | NodeJS.TypedArray | DataView<ArrayBuffer> | ArrayBufferLike,
+      components?: ComponentOverrides,
       options?: ReactOptions,
     ): JSX.Element;
   }

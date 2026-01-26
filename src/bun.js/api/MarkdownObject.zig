@@ -8,12 +8,12 @@ pub fn create(globalThis: *jsc.JSGlobalObject) jsc.JSValue {
     object.put(
         globalThis,
         ZigString.static("render"),
-        jsc.JSFunction.create(globalThis, "render", render, 2, .{}),
+        jsc.JSFunction.create(globalThis, "render", render, 3, .{}),
     );
     object.put(
         globalThis,
         ZigString.static("react"),
-        jsc.JSFunction.create(globalThis, "react", renderReact, 2, .{}),
+        jsc.JSFunction.create(globalThis, "react", renderReact, 3, .{}),
     );
     return object;
 }
@@ -48,14 +48,47 @@ pub fn renderToHTML(
 fn parseOptions(globalThis: *jsc.JSGlobalObject, opts_value: JSValue) bun.JSError!md.Options {
     var options: md.Options = .{};
     if (opts_value.isObject()) {
+        // Handle compound autolinks: true | { url, www, email }
+        if (try opts_value.get(globalThis, "autolinks")) |autolinks_val| {
+            if (autolinks_val.isBoolean()) {
+                if (autolinks_val.toBoolean()) {
+                    options.permissive_autolinks = true;
+                }
+            } else if (autolinks_val.isObject()) {
+                if (try autolinks_val.getBooleanLoose(globalThis, "url")) |v| options.permissive_url_autolinks = v;
+                if (try autolinks_val.getBooleanLoose(globalThis, "www")) |v| options.permissive_www_autolinks = v;
+                if (try autolinks_val.getBooleanLoose(globalThis, "email")) |v| options.permissive_email_autolinks = v;
+            }
+        }
+
+        // Handle compound headings: true | { ids, autolink }
+        if (try opts_value.get(globalThis, "headings")) |headings_val| {
+            if (headings_val.isBoolean()) {
+                if (headings_val.toBoolean()) {
+                    options.heading_ids = true;
+                    options.autolink_headings = true;
+                }
+            } else if (headings_val.isObject()) {
+                if (try headings_val.getBooleanLoose(globalThis, "ids")) |v| options.heading_ids = v;
+                if (try headings_val.getBooleanLoose(globalThis, "autolink")) |v| options.autolink_headings = v;
+            }
+        }
+
+        // Handle remaining boolean options (autolinks/headings are only settable via compound options above)
         inline for (@typeInfo(md.Options).@"struct".fields) |field| {
-            if (field.type == bool) {
-                if (try opts_value.getBooleanLoose(globalThis, comptime camelCaseOf(field.name))) |val| {
+            comptime if (field.type != bool or
+                std.mem.eql(u8, field.name, "permissive_autolinks") or
+                std.mem.eql(u8, field.name, "permissive_url_autolinks") or
+                std.mem.eql(u8, field.name, "permissive_www_autolinks") or
+                std.mem.eql(u8, field.name, "permissive_email_autolinks") or
+                std.mem.eql(u8, field.name, "heading_ids") or
+                std.mem.eql(u8, field.name, "autolink_headings")) continue;
+
+            if (try opts_value.getBooleanLoose(globalThis, comptime camelCaseOf(field.name))) |val| {
+                @field(options, field.name) = val;
+            } else if (comptime !std.mem.eql(u8, camelCaseOf(field.name), field.name)) {
+                if (try opts_value.getBooleanLoose(globalThis, field.name)) |val| {
                     @field(options, field.name) = val;
-                } else if (comptime !std.mem.eql(u8, camelCaseOf(field.name), field.name)) {
-                    if (try opts_value.getBooleanLoose(globalThis, field.name)) |val| {
-                        @field(options, field.name) = val;
-                    }
                 }
             }
         }
@@ -88,7 +121,7 @@ fn camelCaseOf(comptime snake: []const u8) []const u8 {
     };
 }
 
-/// `Bun.markdown.render(text, callbacks?)` — render markdown with custom callbacks.
+/// `Bun.unstable_markdown.render(text, callbacks, options?)` — render markdown with custom callbacks.
 ///
 /// Each callback receives the accumulated children as a string plus an optional
 /// metadata object, and returns a string. The final result is the concatenation
@@ -97,7 +130,7 @@ pub fn render(
     globalThis: *jsc.JSGlobalObject,
     callframe: *jsc.CallFrame,
 ) bun.JSError!jsc.JSValue {
-    const input_value, const opts_value = callframe.argumentsAsArray(2);
+    const input_value, const callbacks_value, const opts_value = callframe.argumentsAsArray(3);
 
     if (input_value.isEmptyOrUndefinedOrNull()) {
         return globalThis.throwInvalidArguments("Expected a string or buffer to render", .{});
@@ -110,10 +143,7 @@ pub fn render(
 
     const input = buffer.slice();
 
-    // Get callbacks object (second argument)
-    const opts = if (opts_value.isObject()) opts_value else .js_undefined;
-
-    // Parse parser options (tables, strikethrough, etc.)
+    // Parse parser options from 3rd argument
     const options = try parseOptions(globalThis, opts_value);
 
     // Create JS callback renderer
@@ -122,7 +152,8 @@ pub fn render(
     };
     defer js_renderer.deinit();
 
-    try js_renderer.extractCallbacks(opts);
+    // Extract callbacks from 2nd argument
+    try js_renderer.extractCallbacks(if (callbacks_value.isObject()) callbacks_value else .js_undefined);
 
     // Run parser with the JS callback renderer
     try md.renderWithRenderer(input, bun.default_allocator, options, js_renderer.renderer());
@@ -132,7 +163,7 @@ pub fn render(
     return bun.String.createUTF8ForJS(globalThis, result);
 }
 
-/// `Bun.markdown.react(text, options?)` — returns a React Fragment element
+/// `Bun.unstable_markdown.react(text, components?, options?)` — returns a React Fragment element
 /// containing the parsed markdown as children.
 pub const renderReact = jsc.MarkedArgumentBuffer.wrap(renderReactImpl);
 
@@ -147,8 +178,8 @@ fn renderReactImpl(
     callframe: *jsc.CallFrame,
     marked_args: *jsc.MarkedArgumentBuffer,
 ) bun.JSError!jsc.JSValue {
-    const args = callframe.argumentsAsArray(2);
-    const opts_value = args[1];
+    const args = callframe.argumentsAsArray(3);
+    const opts_value = args[2]; // options are the 3rd argument
 
     var react_version: u8 = 1; // default: react.transitional.element (React 19+)
     if (opts_value.isObject()) {
@@ -172,7 +203,7 @@ fn renderAST(
     marked_args: *jsc.MarkedArgumentBuffer,
     react_version: ?u8,
 ) bun.JSError!jsc.JSValue {
-    const input_value, const opts_value = callframe.argumentsAsArray(2);
+    const input_value, const components_value, const opts_value = callframe.argumentsAsArray(3);
 
     if (input_value.isEmptyOrUndefinedOrNull()) {
         return globalThis.throwInvalidArguments("Expected a string or buffer to render", .{});
@@ -184,6 +215,8 @@ fn renderAST(
     defer buffer.deinit();
 
     const input = buffer.slice();
+
+    // Parse parser options from 3rd argument
     const options = try parseOptions(globalThis, opts_value);
 
     var renderer = ParseRenderer.init(globalThis, input, marked_args, options.heading_ids, react_version) catch {
@@ -191,8 +224,8 @@ fn renderAST(
     };
     defer renderer.deinit();
 
-    // Extract component overrides from opts (functions keyed by HTML tag name)
-    try renderer.extractComponents(if (opts_value.isObject()) opts_value else .js_undefined);
+    // Extract component overrides from 2nd argument
+    try renderer.extractComponents(if (components_value.isObject()) components_value else .js_undefined);
 
     try md.renderWithRenderer(input, bun.default_allocator, options, renderer.renderer());
 

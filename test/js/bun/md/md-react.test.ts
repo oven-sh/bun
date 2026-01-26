@@ -2,26 +2,26 @@ import { describe, expect, test } from "bun:test";
 import React from "react";
 import { renderToString } from "react-dom/server";
 
-const Markdown = Bun.markdown;
+const Markdown = Bun.unstable_markdown;
 
 /** renderToString the Fragment returned by Markdown.react.
  *  Uses reactVersion: 18 since the project has react-dom@18 installed. */
-function reactRender(md: string, opts?: any): string {
-  return renderToString(Markdown.react(md, { reactVersion: 18, ...opts }));
+function reactRender(md: string, components?: any, opts?: any): string {
+  return renderToString(Markdown.react(md, components, { reactVersion: 18, ...opts }));
 }
 
 // ============================================================================
-// Bun.markdown.react() — React element AST
+// Bun.unstable_markdown.react() — React element AST
 // ============================================================================
 
-describe("Bun.markdown.react", () => {
+describe("Bun.unstable_markdown.react", () => {
   const REACT_ELEMENT_SYMBOL = Symbol.for("react.element");
   const REACT_FRAGMENT_SYMBOL = Symbol.for("react.fragment");
   const REACT_TRANSITIONAL_SYMBOL = Symbol.for("react.transitional.element");
 
   /** Helper: get the children array from the Fragment returned by react() */
-  function children(md: string, opts?: any): any[] {
-    return Markdown.react(md, opts).props.children;
+  function children(md: string, components?: any, opts?: any): any[] {
+    return Markdown.react(md, components, opts).props.children;
   }
 
   test("returns a Fragment element", () => {
@@ -130,7 +130,7 @@ describe("Bun.markdown.react", () => {
   });
 
   test("headingIds adds id to props", () => {
-    const el = children("## Hello World\n", { headingIds: true })[0];
+    const el = children("## Hello World\n", undefined, { headings: { ids: true } })[0];
     expect(el.type).toBe("h2");
     expect(el.props.id).toBe("hello-world");
     expect(el.props.children).toEqual(["Hello World"]);
@@ -143,7 +143,7 @@ describe("Bun.markdown.react", () => {
   });
 
   test("reactVersion 18 uses react.element symbol on all elements", () => {
-    const result = Markdown.react("Hello **world**\n", { reactVersion: 18 });
+    const result = Markdown.react("Hello **world**\n", undefined, { reactVersion: 18 });
     expect(result.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
     const p = result.props.children[0];
     expect(p.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
@@ -259,10 +259,10 @@ This is **bold** and *italic*.
 });
 
 // ============================================================================
-// Bun.markdown.react() + React renderToString integration
+// Bun.unstable_markdown.react() + React renderToString integration
 // ============================================================================
 
-describe("Bun.markdown.react renderToString", () => {
+describe("Bun.unstable_markdown.react renderToString", () => {
   test("heading", () => {
     expect(reactRender("# Hello\n")).toBe("<h1>Hello</h1>");
   });
@@ -372,7 +372,7 @@ Hello **world**, this is *important*.
   });
 
   test("headingIds produce id attribute", () => {
-    const html = reactRender("## Hello World\n", { headingIds: true });
+    const html = reactRender("## Hello World\n", undefined, { headings: { ids: true } });
     expect(html).toBe('<h2 id="hello-world">Hello World</h2>');
   });
 
@@ -398,7 +398,7 @@ Hello **world**, this is *important*.
   });
 
   test("reactVersion 18 produces correct structure", () => {
-    const result = Markdown.react("# Hello\n", { reactVersion: 18 });
+    const result = Markdown.react("# Hello\n", undefined, { reactVersion: 18 });
     const els = result.props.children;
     expect(els[0].type).toBe("h1");
     expect(els[0].props.children).toEqual(["Hello"]);
@@ -411,13 +411,13 @@ Hello **world**, this is *important*.
 
 // (render() is callback-based, component overrides are only for react())
 
-describe("Bun.markdown.react component overrides", () => {
+describe("Bun.unstable_markdown.react component overrides", () => {
   const REACT_TRANSITIONAL_SYMBOL = Symbol.for("react.transitional.element");
   const REACT_ELEMENT_SYMBOL = Symbol.for("react.element");
 
   /** Helper: get fragment children */
-  function children(md: string, opts?: any): any[] {
-    return Markdown.react(md, opts).props.children;
+  function children(md: string, components?: any, opts?: any): any[] {
+    return Markdown.react(md, components, opts).props.children;
   }
 
   test("function component override replaces type", () => {
@@ -455,7 +455,7 @@ describe("Bun.markdown.react component overrides", () => {
   });
 
   test("override with reactVersion 18", () => {
-    const el = children("# Hello\n", { h1: "custom-h1", reactVersion: 18 })[0];
+    const el = children("# Hello\n", { h1: "custom-h1" }, { reactVersion: 18 })[0];
     expect(el.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
     expect(el.type).toBe("custom-h1");
   });
@@ -487,7 +487,7 @@ describe("Bun.markdown.react component overrides", () => {
   });
 });
 
-describe("Bun.markdown.react renderToString with component overrides", () => {
+describe("Bun.unstable_markdown.react renderToString with component overrides", () => {
   test("function component renders custom HTML", () => {
     function Heading({ children }: any) {
       return React.createElement("div", { className: "title" }, ...children);

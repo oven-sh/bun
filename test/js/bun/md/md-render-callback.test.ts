@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
 
-const Markdown = Bun.markdown;
+const Markdown = Bun.unstable_markdown;
 
 // ============================================================================
-// Bun.markdown.render() — callback-based string renderer
+// Bun.unstable_markdown.render() — callback-based string renderer
 // ============================================================================
 
-describe("Bun.markdown.render", () => {
+describe("Bun.unstable_markdown.render", () => {
   test("returns a string", () => {
     const result = Markdown.render("# Hello\n", {
       heading: (children: string) => `<h1>${children}</h1>`,
@@ -213,19 +213,25 @@ describe("Bun.markdown.render", () => {
   });
 
   test("parser options work alongside callbacks", () => {
-    const result = Markdown.render("Visit www.example.com\n", {
-      link: (children: string, { href }: any) => `[${children}](${href})`,
-      paragraph: (children: string) => children,
-      permissiveAutolinks: true,
-    });
+    const result = Markdown.render(
+      "Visit www.example.com\n",
+      {
+        link: (children: string, { href }: any) => `[${children}](${href})`,
+        paragraph: (children: string) => children,
+      },
+      { autolinks: true },
+    );
     expect(result).toContain("[www.example.com]");
   });
 
-  test("headingIds option provides id in heading meta", () => {
-    const result = Markdown.render("## Hello World\n", {
-      heading: (children: string, { level, id }: any) => `<h${level} id="${id}">${children}</h${level}>`,
-      headingIds: true,
-    });
+  test("headings option provides id in heading meta", () => {
+    const result = Markdown.render(
+      "## Hello World\n",
+      {
+        heading: (children: string, { level, id }: any) => `<h${level} id="${id}">${children}</h${level}>`,
+      },
+      { headings: { ids: true } },
+    );
     expect(result).toBe('<h2 id="hello-world">Hello World</h2>');
   });
 

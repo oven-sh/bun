@@ -68,15 +68,29 @@ function parseSpecFile(path: string): SpecExample[] {
   return examples;
 }
 
-const markdown = Bun.markdown;
+const markdown = Bun.unstable_markdown;
 
 function renderMarkdown(md: string, flags?: string[]): string {
-  const options: Record<string, boolean> = {};
+  const options: Record<string, any> = {};
   if (flags && flags.length > 0) {
     for (const flag of flags) {
       // Strip --f prefix, replace - with _
       const name = flag.slice(3).replace(/-/g, "_");
-      options[name] = true;
+      // Map autolink flags to compound option
+      if (name === "permissive_autolinks") {
+        options.autolinks = true;
+      } else if (name === "permissive_url_autolinks") {
+        if (typeof options.autolinks !== "object") options.autolinks = {};
+        options.autolinks.url = true;
+      } else if (name === "permissive_www_autolinks") {
+        if (typeof options.autolinks !== "object") options.autolinks = {};
+        options.autolinks.www = true;
+      } else if (name === "permissive_email_autolinks") {
+        if (typeof options.autolinks !== "object") options.autolinks = {};
+        options.autolinks.email = true;
+      } else {
+        options[name] = true;
+      }
     }
   }
   return markdown.html(md + "\n", options);

@@ -17,12 +17,8 @@ pub fn renderToHTML(
     globalThis: *jsc.JSGlobalObject,
     callframe: *jsc.CallFrame,
 ) bun.JSError!jsc.JSValue {
-    const arguments = callframe.arguments_old(2).slice();
-    if (arguments.len == 0) {
-        return globalThis.throwInvalidArguments("Expected a string or buffer to render", .{});
-    }
+    const input_value, const opts_value = callframe.argumentsAsArray(2);
 
-    const input_value = arguments[0];
     if (input_value.isEmptyOrUndefinedOrNull()) {
         return globalThis.throwInvalidArguments("Expected a string or buffer to render", .{});
     }
@@ -34,7 +30,7 @@ pub fn renderToHTML(
 
     const input = buffer.slice();
 
-    const options = try parseOptions(globalThis, arguments);
+    const options = try parseOptions(globalThis, opts_value);
 
     const result = md.renderToHtmlWithOptions(input, bun.default_allocator, options) catch {
         return globalThis.throwOutOfMemory();
@@ -48,12 +44,8 @@ pub fn render(
     globalThis: *jsc.JSGlobalObject,
     callframe: *jsc.CallFrame,
 ) bun.JSError!jsc.JSValue {
-    const arguments = callframe.arguments_old(2).slice();
-    if (arguments.len == 0) {
-        return globalThis.throwInvalidArguments("Expected a string to render", .{});
-    }
+    const input_value, const opts_value = callframe.argumentsAsArray(2);
 
-    const input_value = arguments[0];
     if (input_value.isEmptyOrUndefinedOrNull()) {
         return globalThis.throwInvalidArguments("Expected a string to render", .{});
     }
@@ -66,10 +58,10 @@ pub fn render(
     const input = buffer.slice();
 
     // Get callbacks object (second argument)
-    const opts = if (arguments.len > 1 and arguments[1].isObject()) arguments[1] else .js_undefined;
+    const opts = if (opts_value.isObject()) opts_value else .js_undefined;
 
     // Parse parser options (tables, strikethrough, etc.)
-    const options = try parseOptions(globalThis, arguments);
+    const options = try parseOptions(globalThis, opts_value);
 
     // Create JS callback renderer
     var js_renderer = JsCallbackRenderer{
@@ -98,13 +90,12 @@ pub fn render(
     return bun.String.createUTF8ForJS(globalThis, result);
 }
 
-fn parseOptions(globalThis: *jsc.JSGlobalObject, arguments: []const JSValue) bun.JSError!md.Options {
+fn parseOptions(globalThis: *jsc.JSGlobalObject, opts_value: JSValue) bun.JSError!md.Options {
     var options: md.Options = .{};
-    if (arguments.len > 1 and arguments[1].isObject()) {
-        const opts = arguments[1];
+    if (opts_value.isObject()) {
         inline for (@typeInfo(md.Options).@"struct".fields) |field| {
             if (field.type == bool) {
-                if (try opts.getBooleanLoose(globalThis, field.name)) |val| {
+                if (try opts_value.getBooleanLoose(globalThis, field.name)) |val| {
                     @field(options, field.name) = val;
                 }
             }
@@ -354,19 +345,19 @@ const JsCallbackRenderer = struct {
             if (cp == 0 or cp > 0x10FFFF or (cp >= 0xD800 and cp <= 0xDFFF)) {
                 cp = 0xFFFD;
             }
-            const len = std.unicode.utf8Encode(@intCast(cp), &buf) catch {
+            const len = encodeUtf8(@intCast(cp), &buf) orelse {
                 self.appendTextOrRaw("\xEF\xBF\xBD");
                 return;
             };
             self.appendTextOrRaw(buf[0..len]);
         } else if (md.entity.lookup(entity_text)) |codepoints| {
-            const len1 = std.unicode.utf8Encode(codepoints[0], &buf) catch {
+            const len1 = encodeUtf8(codepoints[0], &buf) orelse {
                 self.appendTextOrRaw("\xEF\xBF\xBD");
                 return;
             };
             if (codepoints[1] != 0) {
                 var buf2: [4]u8 = undefined;
-                const len2 = std.unicode.utf8Encode(codepoints[1], &buf2) catch {
+                const len2 = encodeUtf8(codepoints[1], &buf2) orelse {
                     self.appendTextOrRaw(buf[0..len1]);
                     return;
                 };
@@ -443,13 +434,13 @@ const JsCallbackRenderer = struct {
             },
             .ol => {
                 const obj = JSValue.createEmptyObject(g, 2);
-                obj.put(g, ZigString.static("ordered"), JSValue.jsBoolean(true));
+                obj.put(g, ZigString.static("ordered"), .true);
                 obj.put(g, ZigString.static("start"), JSValue.jsNumber(data));
                 return obj;
             },
             .ul => {
                 const obj = JSValue.createEmptyObject(g, 1);
-                obj.put(g, ZigString.static("ordered"), JSValue.jsBoolean(false));
+                obj.put(g, ZigString.static("ordered"), .false);
                 return obj;
             },
             .code => {
@@ -525,6 +516,32 @@ const JsCallbackRenderer = struct {
         return "";
     }
 };
+
+/// Encode a Unicode codepoint as UTF-8 into `buf`, returning the number of bytes written.
+/// Returns null for invalid codepoints (surrogates, out of range).
+fn encodeUtf8(cp: u21, buf: *[4]u8) ?u3 {
+    if (cp < 0x80) {
+        buf[0] = @intCast(cp);
+        return 1;
+    } else if (cp < 0x800) {
+        buf[0] = @intCast(0xC0 | (cp >> 6));
+        buf[1] = @intCast(0x80 | (cp & 0x3F));
+        return 2;
+    } else if (cp < 0x10000) {
+        if (cp >= 0xD800 and cp <= 0xDFFF) return null;
+        buf[0] = @intCast(0xE0 | (cp >> 12));
+        buf[1] = @intCast(0x80 | ((cp >> 6) & 0x3F));
+        buf[2] = @intCast(0x80 | (cp & 0x3F));
+        return 3;
+    } else if (cp <= 0x10FFFF) {
+        buf[0] = @intCast(0xF0 | (cp >> 18));
+        buf[1] = @intCast(0x80 | ((cp >> 12) & 0x3F));
+        buf[2] = @intCast(0x80 | ((cp >> 6) & 0x3F));
+        buf[3] = @intCast(0x80 | (cp & 0x3F));
+        return 4;
+    }
+    return null;
+}
 
 const std = @import("std");
 

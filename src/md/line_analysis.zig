@@ -373,6 +373,43 @@ pub fn isTableUnderline(self: *Parser, off: OFF) struct { is_underline: bool, co
     return .{ .is_underline = true, .col_count = col_count };
 }
 
+/// Count the number of pipe-delimited columns in a table row.
+/// Used to validate that header and delimiter row column counts match (GFM requirement).
+pub fn countTableRowColumns(self: *const Parser, beg: OFF, end: OFF) u32 {
+    const row = self.text[beg..end];
+    var col_count: u32 = 0;
+    var pos: usize = 0;
+
+    // Skip leading whitespace
+    while (pos < row.len and helpers.isBlank(row[pos])) pos += 1;
+
+    // Skip leading pipe
+    if (pos < row.len and row[pos] == '|') {
+        pos += 1;
+    }
+
+    // Count cells between pipes
+    var in_cell = false;
+    while (pos < row.len) {
+        if (row[pos] == '|') {
+            col_count += 1;
+            in_cell = false;
+            pos += 1;
+        } else if (row[pos] == '\\' and pos + 1 < row.len) {
+            in_cell = true;
+            pos += 2;
+        } else if (helpers.isNewline(row[pos])) {
+            break;
+        } else {
+            in_cell = true;
+            pos += 1;
+        }
+    }
+    // If there's content after the last pipe (no trailing pipe), count it as a column
+    if (in_cell) col_count += 1;
+    return col_count;
+}
+
 pub fn isContainerMark(self: *const Parser, indent: u32, off: OFF) struct {
     is_container: bool,
     container: Container,

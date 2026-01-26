@@ -68,8 +68,6 @@ pub fn scanUrlComponent(
 ) struct { end: usize, ok: bool } {
     var pos = start;
     var n_components: u32 = 0;
-    var n_open_brackets: i32 = 0;
-
     // Check start character
     if (start_char != 0) {
         if (pos >= content.len or content[pos] != start_char)
@@ -85,18 +83,11 @@ pub fn scanUrlComponent(
                 n_components = 1;
             pos += 1;
         } else if (isInSet(content[pos], allowed_nonalnum) and
-            ((pos > 0 and (helpers.isAlphaNum(content[pos - 1]) or content[pos - 1] == ')')) or content[pos] == '(') and
-            ((pos + 1 < content.len and (helpers.isAlphaNum(content[pos + 1]) or content[pos + 1] == '(')) or content[pos] == ')'))
+            ((pos > 0 and (helpers.isAlphaNum(content[pos - 1]) or content[pos - 1] == ')' or isInSet(content[pos - 1], allowed_nonalnum))) or content[pos] == '(') and
+            ((pos + 1 < content.len and (helpers.isAlphaNum(content[pos + 1]) or content[pos + 1] == '(' or isInSet(content[pos + 1], allowed_nonalnum))) or content[pos] == ')'))
         {
             if (content[pos] == delim_char)
                 n_components += 1;
-            if (content[pos] == '(') {
-                n_open_brackets += 1;
-            } else if (content[pos] == ')') {
-                if (n_open_brackets <= 0)
-                    break;
-                n_open_brackets -= 1;
-            }
             pos += 1;
         } else {
             break;
@@ -106,7 +97,7 @@ pub fn scanUrlComponent(
     if (pos < content.len and optional_end_char != 0 and content[pos] == optional_end_char)
         pos += 1;
 
-    if (n_components < min_components or n_open_brackets != 0)
+    if (n_components < min_components)
         return .{ .end = pos, .ok = false };
 
     return .{ .end = pos, .ok = true };
@@ -136,8 +127,8 @@ pub fn checkRightBoundary(content: []const u8, pos: usize, allow_emph: bool) boo
     if (pos >= content.len) return true;
     const next = content[pos];
     if (helpers.isWhitespace(next) or next == '\n' or next == '\r') return true;
-    if (next == ')' or next == '}' or next == ']') return true;
-    if (next == '.' or next == '!' or next == '?' or next == ',' or next == ';') return true;
+    if (next == ')' or next == '}' or next == ']' or next == '<') return true;
+    if (next == '.' or next == '!' or next == '?' or next == ',' or next == ';' or next == '&') return true;
     if (allow_emph and (next == '*' or next == '_' or next == '~')) return true;
     return false;
 }
@@ -172,14 +163,16 @@ pub fn findPermissiveAutolink(content: []const u8, pos: usize, allow_emph: bool)
                     if (!host.ok) continue;
                     end = host.end;
 
-                    const path = scanUrlComponent(content, end, '/', '/', "/.-_", 0, '/');
+                    const path = scanUrlComponent(content, end, '/', '/', "/.-_~*+%", 0, '/');
                     end = path.end;
 
-                    const query = scanUrlComponent(content, end, '?', '&', "&.-+_=()", 1, 0);
+                    const query = scanUrlComponent(content, end, '?', '&', "&.-+_=()~*%", 1, 0);
                     end = query.end;
 
-                    const frag = scanUrlComponent(content, end, '#', 0, ".-+_", 1, 0);
+                    const frag = scanUrlComponent(content, end, '#', 0, ".-+_~*%", 1, 0);
                     end = frag.end;
+
+                    end = postProcessAutolinkEnd(content, beg, end);
 
                     if (!checkRightBoundary(content, end, allow_emph)) continue;
 
@@ -233,14 +226,16 @@ pub fn findPermissiveAutolink(content: []const u8, pos: usize, allow_emph: bool)
         if (!host.ok) return .{ .found = false, .beg = 0, .end = 0 };
         end = host.end;
 
-        const path = scanUrlComponent(content, end, '/', '/', "/.-_", 0, '/');
+        const path = scanUrlComponent(content, end, '/', '/', "/.-_~*+%", 0, '/');
         end = path.end;
 
-        const query = scanUrlComponent(content, end, '?', '&', "&.-+_=()", 1, 0);
+        const query = scanUrlComponent(content, end, '?', '&', "&.-+_=()~*%", 1, 0);
         end = query.end;
 
-        const frag = scanUrlComponent(content, end, '#', 0, ".-+_", 1, 0);
+        const frag = scanUrlComponent(content, end, '#', 0, ".-+_~*%", 1, 0);
         end = frag.end;
+
+        end = postProcessAutolinkEnd(content, beg, end);
 
         if (!checkRightBoundary(content, end, allow_emph)) return .{ .found = false, .beg = 0, .end = 0 };
 
@@ -248,6 +243,51 @@ pub fn findPermissiveAutolink(content: []const u8, pos: usize, allow_emph: bool)
     }
 
     return .{ .found = false, .beg = 0, .end = 0 };
+}
+
+/// GFM post-processing: trim trailing unbalanced `)` and entity-like suffixes from autolink URLs.
+fn postProcessAutolinkEnd(content: []const u8, beg: usize, end_in: usize) usize {
+    var end = end_in;
+
+    // Trim trailing entity-like suffixes.
+    // GFM spec: "If an autolink ends in a semicolon (;), we check to see if it
+    // appears to resemble an entity reference; if the preceding text is &
+    // followed by one or more alphanumeric characters."
+    // Case 1: URL itself ends with `;` (e.g., `&hl;` was fully scanned)
+    if (end > beg and content[end - 1] == ';') {
+        var j = end - 2;
+        while (j > beg and helpers.isAlphaNum(content[j])) j -= 1;
+        if (j >= beg and content[j] == '&') {
+            end = j;
+        }
+    }
+    // Case 2: `;` is the next char after URL end (scanner stopped before `;`)
+    // e.g., URL = `commonmark&hl`, next char is `;` → trim `&hl`
+    if (end < content.len and content[end] == ';' and end > beg) {
+        var j = end - 1;
+        while (j > beg and helpers.isAlphaNum(content[j])) j -= 1;
+        if (j >= beg and content[j] == '&') {
+            end = j;
+        }
+    }
+
+    // Trim trailing unbalanced `)`: count all ( and ) in the URL.
+    // If closing > opening, remove trailing ) until balanced.
+    while (end > beg and content[end - 1] == ')') {
+        var open: i32 = 0;
+        var close: i32 = 0;
+        for (content[beg..end]) |ch| {
+            if (ch == '(') open += 1;
+            if (ch == ')') close += 1;
+        }
+        if (close > open) {
+            end -= 1;
+        } else {
+            break;
+        }
+    }
+
+    return end;
 }
 
 const helpers = @import("./helpers.zig");

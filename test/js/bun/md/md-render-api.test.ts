@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-const Markdown = (Bun as any).markdown;
+const Markdown = Bun.markdown;
 
 describe("Bun.markdown.render", () => {
   test("heading callback receives children and level", () => {

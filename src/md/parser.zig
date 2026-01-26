@@ -204,6 +204,7 @@ pub const Parser = struct {
     pub const isBlockLevelHtmlTag = line_analysis_mod.isBlockLevelHtmlTag;
     pub const isCompleteHtmlTag = line_analysis_mod.isCompleteHtmlTag;
     pub const isTableUnderline = line_analysis_mod.isTableUnderline;
+    pub const countTableRowColumns = line_analysis_mod.countTableRowColumns;
     pub const isContainerMark = line_analysis_mod.isContainerMark;
 
     // ref_defs.zig

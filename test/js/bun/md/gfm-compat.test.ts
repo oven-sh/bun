@@ -10,7 +10,7 @@ import { describe, expect, test } from "bun:test";
  * Each section corresponds to a known incompatibility between md4c and GFM.
  */
 
-const md = (Bun as any).markdown;
+const md = Bun.markdown;
 
 function render(input: string, options?: Record<string, boolean>): string {
   return md.html(input + "\n", options ?? {});
@@ -22,6 +22,7 @@ function renderGFM(md: string): string {
     strikethrough: true,
     tasklists: true,
     permissive_autolinks: true,
+    tag_filter: true,
   });
 }
 

@@ -79,29 +79,6 @@ pub fn processTableRow(self: *Parser, vline: VerbatimLine, is_header: bool, col_
         while (end < row_text.len and row_text[end] != '|') {
             if (row_text[end] == '\\' and end + 1 < row_text.len) {
                 end += 2;
-            } else if (row_text[end] == '`') {
-                // Count opening backticks
-                var bt_count: usize = 0;
-                while (end + bt_count < row_text.len and row_text[end + bt_count] == '`') bt_count += 1;
-                end += bt_count;
-                // Find matching closing backticks
-                var found_close = false;
-                while (end < row_text.len) {
-                    if (row_text[end] == '`') {
-                        var close_count: usize = 0;
-                        while (end + close_count < row_text.len and row_text[end + close_count] == '`') close_count += 1;
-                        end += close_count;
-                        if (close_count == bt_count) {
-                            found_close = true;
-                            break;
-                        }
-                    } else {
-                        end += 1;
-                    }
-                }
-                if (!found_close) {
-                    // No matching close, treat backticks as literal
-                }
             } else {
                 end += 1;
             }
@@ -120,7 +97,28 @@ pub fn processTableRow(self: *Parser, vline: VerbatimLine, is_header: bool, col_
         const align_data: u32 = if (cell_index < 64) @intFromEnum(self.table_alignments[cell_index]) else 0;
         self.enterBlock(cell_type, align_data, 0);
         if (cell_beg < cell_end) {
-            self.processInlineContent(row_text[cell_beg..cell_end], vline.beg + @as(OFF, @intCast(cell_beg)));
+            const cell_content = row_text[cell_beg..cell_end];
+            // GFM: \| in table cells should be consumed at the table level,
+            // replacing \| with | before inline processing. This matters for
+            // code spans where backslash escapes don't apply.
+            if (std.mem.indexOf(u8, cell_content, "\\|") != null) {
+                var buf: std.ArrayListUnmanaged(u8) = .{};
+                defer buf.deinit(self.allocator);
+                buf.ensureTotalCapacity(self.allocator, cell_content.len) catch return;
+                var ci: usize = 0;
+                while (ci < cell_content.len) {
+                    if (cell_content[ci] == '\\' and ci + 1 < cell_content.len and cell_content[ci + 1] == '|') {
+                        buf.appendAssumeCapacity('|');
+                        ci += 2;
+                    } else {
+                        buf.appendAssumeCapacity(cell_content[ci]);
+                        ci += 1;
+                    }
+                }
+                self.processInlineContent(buf.items, vline.beg + @as(OFF, @intCast(cell_beg)));
+            } else {
+                self.processInlineContent(cell_content, vline.beg + @as(OFF, @intCast(cell_beg)));
+            }
         }
         self.leaveBlock(cell_type, 0);
         cell_index += 1;
@@ -142,6 +140,7 @@ pub fn processTableRow(self: *Parser, vline: VerbatimLine, is_header: bool, col_
     }
 }
 
+const std = @import("std");
 const helpers = @import("./helpers.zig");
 
 const parser_mod = @import("./parser.zig");

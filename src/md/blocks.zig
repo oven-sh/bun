@@ -449,11 +449,16 @@ pub fn analyzeLine(self: *Parser, off_start: OFF, p_end: *OFF, pivot_line: *cons
         {
             const tbl_result = self.isTableUnderline(off);
             if (tbl_result.is_underline and self.current_block != null and
-                self.current_block_lines.items.len <= 1)
+                self.current_block_lines.items.len >= 1)
             {
-                line.data = tbl_result.col_count;
-                line.type = .tableunderline;
-                break;
+                // GFM: validate that header row column count matches delimiter row column count.
+                const header_line = self.current_block_lines.items[self.current_block_lines.items.len - 1];
+                const header_cols = self.countTableRowColumns(header_line.beg, header_line.end);
+                if (header_cols == tbl_result.col_count) {
+                    line.data = tbl_result.col_count;
+                    line.type = .tableunderline;
+                    break;
+                }
             }
         }
 
@@ -623,9 +628,32 @@ pub fn processLine(self: *Parser, pivot_line: *Line, line: *Line, line_buf: *[2]
     // Table underline
     if (line.type == .tableunderline) {
         if (self.current_block) |cb_off| {
-            var blk = self.getBlockAt(cb_off);
-            blk.block_type = .table;
-            blk.data = line.data;
+            if (self.current_block_lines.items.len > 1) {
+                // GFM: table interrupts paragraph. Split: lines 0..N-2 stay as paragraph,
+                // last line becomes table header.
+                const last_line = self.current_block_lines.items[self.current_block_lines.items.len - 1];
+                // Remove the last line from current paragraph block
+                _ = self.current_block_lines.pop();
+                var hdr = self.getBlockHeaderAt(cb_off);
+                hdr.n_lines -= 1;
+                // End the paragraph
+                try self.endCurrentBlock();
+                // Start a new table block with the saved header line
+                var header_as_line = Line{
+                    .type = .table,
+                    .beg = last_line.beg,
+                    .end = last_line.end,
+                    .indent = last_line.indent,
+                    .data = line.data,
+                };
+                try self.startNewBlock(&header_as_line);
+                try self.addLineToCurrentBlock(&header_as_line);
+            } else {
+                // Single line paragraph: convert directly to table
+                var blk = self.getBlockAt(cb_off);
+                blk.block_type = .table;
+                blk.data = line.data;
+            }
         }
         // Change pivot to table
         pivot_line.type = .table;

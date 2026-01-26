@@ -136,7 +136,7 @@ quux|quuz
 --ftables
 ````````````````````````````````
 
-The table cannot interrupt a paragraph.
+A table can interrupt a paragraph (GFM behavior).
 
 ```````````````````````````````` example
 Lorem ipsum dolor sit amet.
@@ -146,12 +146,17 @@ Lorem ipsum dolor sit amet.
 | baz      | qux
 | quux     | quuz
 .
-<p>Lorem ipsum dolor sit amet.
-| Column 1 | Column 2
-| ---------|---------
-| foo      | bar
-| baz      | qux
-| quux     | quuz</p>
+<p>Lorem ipsum dolor sit amet.</p>
+<table>
+<thead>
+<tr><th>Column 1</th><th>Column 2</th></tr>
+</thead>
+<tbody>
+<tr><td>foo</td><td>bar</td></tr>
+<tr><td>baz</td><td>qux</td></tr>
+<tr><td>quux</td><td>quuz</td></tr>
+</tbody>
+</table>
 ````````````````````````````````
 
 Similarly, paragraph cannot interrupt a table:
@@ -249,8 +254,7 @@ quux     | [quuz](/url2)
 --ftables
 ````````````````````````````````
 
-However pipes which are inside a code span are not recognized as cell
-boundaries.
+Pipes inside code spans are recognized as cell boundaries (GFM behavior).
 
 ```````````````````````````````` example
 Column 1 | Column 2
@@ -264,7 +268,7 @@ quux     | quuz
 <tr><th>Column 1</th><th>Column 2</th></tr>
 </thead>
 <tbody>
-<tr><td><code>foo     | bar</code></td><td></td></tr>
+<tr><td>`foo</td><td>bar`</td></tr>
 <tr><td>baz</td><td>qux</td></tr>
 <tr><td>quux</td><td>quuz</td></tr>
 </tbody>

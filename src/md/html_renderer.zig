@@ -5,6 +5,7 @@ pub const HtmlRenderer = struct {
     image_nesting_level: u32 = 0,
     saved_img_title: []const u8 = "",
     tag_filter: bool = false,
+    tag_filter_raw_depth: u32 = 0,
 
     pub const OutputBuffer = struct {
         list: std.ArrayListUnmanaged(u8),
@@ -327,6 +328,8 @@ pub const HtmlRenderer = struct {
             },
             .html => {
                 if (self.tag_filter) {
+                    // Track entry/exit of disallowed tag raw zones
+                    self.updateTagFilterRawDepth(content);
                     self.writeHtmlWithTagFilter(content);
                 } else {
                     self.write(content);
@@ -345,7 +348,14 @@ pub const HtmlRenderer = struct {
                 }
                 if (start < content.len) self.writeHtmlEscaped(content[start..]);
             },
-            else => self.writeHtmlEscaped(content),
+            else => {
+                // When inside a tag-filtered disallowed tag, emit text as raw
+                if (self.tag_filter and self.tag_filter_raw_depth > 0) {
+                    self.write(content);
+                } else {
+                    self.writeHtmlEscaped(content);
+                }
+            },
         }
     }
 
@@ -359,6 +369,27 @@ pub const HtmlRenderer = struct {
 
     fn writeByte(self: *HtmlRenderer, b: u8) void {
         self.out.writeByte(b);
+    }
+
+    /// Track whether we're inside a disallowed tag's raw zone.
+    /// When an opening disallowed tag is seen, increment depth.
+    /// When a closing disallowed tag is seen, decrement depth.
+    fn updateTagFilterRawDepth(self: *HtmlRenderer, content: []const u8) void {
+        if (content.len < 2 or content[0] != '<') return;
+        if (content[1] == '/') {
+            // Closing tag
+            if (isDisallowedTag(content) and self.tag_filter_raw_depth > 0) {
+                self.tag_filter_raw_depth -= 1;
+            }
+        } else {
+            // Opening tag (not self-closing)
+            if (isDisallowedTag(content)) {
+                // Check if NOT self-closing (doesn't end with "/>")
+                if (content.len < 2 or content[content.len - 2] != '/' or content[content.len - 1] != '>') {
+                    self.tag_filter_raw_depth += 1;
+                }
+            }
+        }
     }
 
     /// Write HTML content with GFM tag filter applied. Scans for disallowed

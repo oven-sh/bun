@@ -78,7 +78,7 @@ pub const ExecutionSequence = struct {
     test_entry: ?*ExecutionEntry,
     remaining_repeat_count: u32,
     remaining_retry_count: u32,
-    flaky_attempt_count: u32 = 0,
+    flaky_attempt_count: usize = 0,
     flaky_attempts_buf: [MAX_FLAKY_ATTEMPTS]FlakyAttempt = undefined,
     result: Result = .pending,
     executing: bool = false,
@@ -116,8 +116,10 @@ pub const ExecutionSequence = struct {
 
         pub fn failureType(this: FlakyAttempt) []const u8 {
             return switch (this.result) {
-                .fail_because_timeout, .fail_because_timeout_with_done_callback,
-                .fail_because_hook_timeout, .fail_because_hook_timeout_with_done_callback,
+                .fail_because_timeout,
+                .fail_because_timeout_with_done_callback,
+                .fail_because_hook_timeout,
+                .fail_because_hook_timeout_with_done_callback,
                 => "TimeoutError",
                 else => "AssertionError",
             };

@@ -387,11 +387,11 @@ pub const prompt = struct {
     }
 };
 
+extern fn Bun__ttySetMode(fd: c_int, mode: c_int) c_int;
+
 const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
 const c = bun.c;
 const jsc = bun.jsc;
-
-extern fn Bun__ttySetMode(fd: c_int, mode: c_int) c_int;

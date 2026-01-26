@@ -702,7 +702,6 @@ const root = @import("./root.zig");
 const RenderOptions = root.RenderOptions;
 
 const types = @import("./types.zig");
-const Align = types.Align;
 const BlockType = types.BlockType;
 const Renderer = types.Renderer;
 const SpanDetail = types.SpanDetail;

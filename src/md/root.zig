@@ -96,9 +96,9 @@ pub fn renderWithRenderer(text: []const u8, allocator: std.mem.Allocator, option
     return parser.renderWithRenderer(text, allocator, options.toFlags(), renderer);
 }
 
+pub const types = @import("./types.zig");
+const Flags = types.Flags;
+
 const bun = @import("bun");
 const parser = @import("./parser.zig");
 const std = @import("std");
-
-pub const types = @import("./types.zig");
-const Flags = types.Flags;

@@ -542,6 +542,8 @@ pub const JSBundler = struct {
                 this.bytecode = bytecode;
 
                 if (bytecode) {
+                    // Default to CJS for bytecode, since esm doesn't really work yet.
+                    this.format = .cjs;
                     if (did_set_target and this.target != .bun and this.bytecode) {
                         return globalThis.throwInvalidArguments("target must be 'bun' when bytecode is true", .{});
                     }
@@ -668,13 +670,13 @@ pub const JSBundler = struct {
             if (try config.getOptionalEnum(globalThis, "format", options.Format)) |format| {
                 this.format = format;
 
-                if (this.bytecode and format != .cjs and format != .esm) {
-                    return globalThis.throwInvalidArguments("format must be 'cjs' or 'esm' when bytecode is true.", .{});
+                if (this.bytecode and format != .cjs) {
+                    return globalThis.throwInvalidArguments("format must be 'cjs' when bytecode is true. Eventually we'll add esm support as well.", .{});
                 }
             }
 
-            if (try config.getBooleanLoose(globalThis, "splitting")) |splitting| {
-                this.code_splitting = splitting;
+            if (try config.getBooleanLoose(globalThis, "splitting")) |hot| {
+                this.code_splitting = hot;
             }
 
             if (try config.getTruthy(globalThis, "minify")) |minify| {
@@ -1079,6 +1081,28 @@ pub const JSBundler = struct {
             return globalThis.throwInvalidArguments("Expected a config object to be passed to Bun.build", .{});
         }
 
+        const vm = globalThis.bunVM();
+
+        // Detect and prevent calling Bun.build from within a macro during bundling.
+        // This would cause a deadlock because:
+        // 1. The bundler thread (singleton) is processing the outer Bun.build
+        // 2. During parsing, it encounters a macro and evaluates it
+        // 3. The macro calls Bun.build, which tries to enqueue to the same singleton thread
+        // 4. The singleton thread is blocked waiting for the macro to complete -> deadlock
+        if (vm.macro_mode) {
+            return globalThis.throw(
+                \\Bun.build cannot be called from within a macro during bundling.
+                \\
+                \\This would cause a deadlock because the bundler is waiting for the macro to complete,
+                \\but the macro's Bun.build call is waiting for the bundler.
+                \\
+                \\To bundle code at compile time in a macro, use Bun.spawnSync to invoke the CLI:
+                \\  const result = Bun.spawnSync(["bun", "build", entrypoint, "--format=esm"]);
+            ,
+                .{},
+            );
+        }
+
         var plugins: ?*Plugin = null;
         const config = try Config.fromJS(globalThis, arguments[0], &plugins, bun.default_allocator);
 
@@ -1086,7 +1110,7 @@ pub const JSBundler = struct {
             config,
             plugins,
             globalThis,
-            globalThis.bunVM().eventLoop(),
+            vm.eventLoop(),
             bun.default_allocator,
         );
     }
@@ -1437,7 +1461,7 @@ pub const JSBundler = struct {
                 error.JSTerminated => return error.JSTerminated,
             };
 
-            var scope: jsc.CatchScope = undefined;
+            var scope: jsc.TopExceptionScope = undefined;
             scope.init(globalThis, @src());
             defer scope.deinit();
 
@@ -1664,10 +1688,9 @@ pub const BuildArtifact = struct {
         @"entry-point",
         sourcemap,
         bytecode,
-        module_info,
 
         pub fn isFileInStandaloneMode(this: OutputKind) bool {
-            return this != .sourcemap and this != .bytecode and this != .module_info;
+            return this != .sourcemap and this != .bytecode;
         }
     };
 

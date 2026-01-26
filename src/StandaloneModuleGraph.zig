@@ -92,7 +92,6 @@ pub const StandaloneModuleGraph = struct {
         contents: Schema.StringPointer = .{},
         sourcemap: Schema.StringPointer = .{},
         bytecode: Schema.StringPointer = .{},
-        module_info: Schema.StringPointer = .{},
         encoding: Encoding = .latin1,
         loader: bun.options.Loader = .file,
         module_format: ModuleFormat = .none,
@@ -160,7 +159,6 @@ pub const StandaloneModuleGraph = struct {
         encoding: Encoding = .binary,
         wtf_string: bun.String = bun.String.empty,
         bytecode: []u8 = "",
-        module_info: []u8 = "",
         module_format: ModuleFormat = .none,
         side: FileSide = .server,
 
@@ -335,7 +333,6 @@ pub const StandaloneModuleGraph = struct {
                     else
                         .none,
                     .bytecode = if (module.bytecode.length > 0) @constCast(sliceTo(raw_bytes, module.bytecode)) else &.{},
-                    .module_info = if (module.module_info.length > 0) @constCast(sliceTo(raw_bytes, module.module_info)) else &.{},
                     .module_format = module.module_format,
                     .side = module.side,
                 },
@@ -482,20 +479,6 @@ pub const StandaloneModuleGraph = struct {
                 }
             };
 
-            // Embed module_info for ESM bytecode (alignment is handled in serialization format)
-            const module_info: StringPointer = brk: {
-                if (output_file.module_info_index != std.math.maxInt(u32)) {
-                    const mi_bytes = output_files[output_file.module_info_index].value.buffer.bytes;
-                    const offset = string_builder.len;
-                    const writable = string_builder.writable();
-                    @memcpy(writable[0..mi_bytes.len], mi_bytes[0..mi_bytes.len]);
-                    string_builder.len += mi_bytes.len;
-                    break :brk StringPointer{ .offset = @truncate(offset), .length = @truncate(mi_bytes.len) };
-                } else {
-                    break :brk .{};
-                }
-            };
-
             if (comptime bun.Environment.is_canary or bun.Environment.isDebug) {
                 if (bun.env_var.BUN_FEATURE_FLAG_DUMP_CODE.get()) |dump_code_dir| {
                     const buf = bun.path_buffer_pool.get();
@@ -534,7 +517,6 @@ pub const StandaloneModuleGraph = struct {
                     else => .none,
                 } else .none,
                 .bytecode = bytecode,
-                .module_info = module_info,
                 .side = switch (output_file.side orelse .server) {
                     .server => .server,
                     .client => .client,

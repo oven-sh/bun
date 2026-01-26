@@ -178,7 +178,6 @@ pub fn transpileSourceCode(
             var cache = jsc.RuntimeTranspilerCache{
                 .output_code_allocator = allocator,
                 .sourcemap_allocator = bun.default_allocator,
-                .esm_record_allocator = bun.default_allocator,
             };
 
             const old = jsc_vm.transpiler.log;
@@ -517,7 +516,6 @@ pub fn transpileSourceCode(
                     &printer,
                     .esm_ascii,
                     mapper.get(),
-                    null,
                 );
             };
 

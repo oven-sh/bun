@@ -110,15 +110,11 @@ const Stringifier = struct {
         pub fn init(global: *jsc.JSGlobalObject, space_value: JSValue) bun.JSError!Space {
             const space = try space_value.unwrapBoxedPrimitive(global);
             if (space.isNumber()) {
-                // toInt32 converts Infinity to 0, but the spec says
-                // min(10, ToInteger(Infinity)) = 10.
-                var num: i32 = if (space.asNumber() == std.math.inf(f64))
-                    10
-                else
-                    space.toInt32();
-                num = @max(0, @min(num, 10));
-                if (num == 0) return .minified;
-                return .{ .number = @intCast(num) };
+                // Clamp on the float to match the spec's min(10, ToIntegerOrInfinity(space)).
+                // toInt32() wraps large values and Infinity to 0, which is wrong.
+                const num_f = space.asNumber();
+                if (!(num_f >= 1)) return .minified; // handles NaN, -Infinity, 0, negatives
+                return .{ .number = if (num_f > 10) 10 else @intFromFloat(num_f) };
             }
             if (space.isString()) {
                 const str = try space.toBunString(global);

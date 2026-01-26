@@ -768,10 +768,13 @@ describe("stringify", () => {
     expect(JSON5.stringify("hello\u2029world")).toEqual("'hello\\u2029world'");
   });
 
-  test("space parameter with Infinity/NaN", () => {
+  test("space parameter with Infinity/NaN/large numbers", () => {
     expect(JSON5.stringify({ a: 1 }, null, Infinity)).toEqual(JSON5.stringify({ a: 1 }, null, 10));
     expect(JSON5.stringify({ a: 1 }, null, -Infinity)).toEqual(JSON5.stringify({ a: 1 }));
     expect(JSON5.stringify({ a: 1 }, null, NaN)).toEqual(JSON5.stringify({ a: 1 }));
+    expect(JSON5.stringify({ a: 1 }, null, 100)).toEqual(JSON5.stringify({ a: 1 }, null, 10));
+    expect(JSON5.stringify({ a: 1 }, null, 2147483648)).toEqual(JSON5.stringify({ a: 1 }, null, 10));
+    expect(JSON5.stringify({ a: 1 }, null, 3e9)).toEqual(JSON5.stringify({ a: 1 }, null, 10));
   });
 
   test("space parameter with boxed Number", () => {

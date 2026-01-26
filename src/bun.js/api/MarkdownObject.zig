@@ -47,11 +47,11 @@ pub fn render(
     const input_value, const opts_value = callframe.argumentsAsArray(2);
 
     if (input_value.isEmptyOrUndefinedOrNull()) {
-        return globalThis.throwInvalidArguments("Expected a string to render", .{});
+        return globalThis.throwInvalidArguments("Expected a string or buffer to render", .{});
     }
 
     const buffer = try jsc.Node.StringOrBuffer.fromJS(globalThis, bun.default_allocator, input_value) orelse {
-        return globalThis.throwInvalidArguments("Expected a string to render", .{});
+        return globalThis.throwInvalidArguments("Expected a string or buffer to render", .{});
     };
     defer buffer.deinit();
 

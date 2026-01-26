@@ -990,7 +990,7 @@ declare module "bun" {
      * `null`/`undefined` to omit the element from the output.
      */
     interface Callbacks {
-      /** Called for heading blocks (`# ... ######`). When `heading_ids` is enabled, `meta.id` contains the generated slug. */
+      /** Called for heading blocks (`# ... ######`). When `headingIds` is enabled, `meta.id` contains the generated slug. */
       heading?: (children: string, meta: { level: number; id?: string }) => string | null | undefined | void;
       /** Called for paragraph blocks. */
       paragraph?: (children: string) => string | null | undefined | void;
@@ -1084,7 +1084,7 @@ declare module "bun" {
      */
     export function render(
       input: string | NodeJS.TypedArray | DataView<ArrayBuffer> | ArrayBufferLike,
-      callbacks?: Callbacks & Options,
+      callbacks?: Callbacks & Omit<Options, keyof Callbacks>,
     ): string;
   }
 

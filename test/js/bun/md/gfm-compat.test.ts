@@ -351,8 +351,7 @@ Next paragraph.`;
 // noframes, noembed
 // ============================================================================
 describe("disallowed raw HTML (tagfilter)", () => {
-  // NOTE: Bun's markdown parser would need a new tagfilter option to support
-  // this. These tests document the expected GFM behavior.
+  // These tests verify the GFM tagfilter behavior (enabled via tagFilter option).
 
   test("script tag is filtered", () => {
     const md = `<script>alert("xss")</script>`;

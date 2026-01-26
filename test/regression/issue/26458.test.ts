@@ -12,7 +12,7 @@ import { bunEnv, bunExe } from "harness";
 
 describe("stdin large input handling", () => {
   // Generate test data larger than the canonical mode buffer limit (~1024 bytes)
-  const largeInput = "x".repeat(2048);
+  const largeInput = Buffer.alloc(2048, "x").toString();
 
   test("prompt() handles large input without hanging", async () => {
     await using proc = Bun.spawn({
@@ -75,7 +75,7 @@ describe("stdin large input handling", () => {
   });
 
   test("prompt() handles very large input (10KB)", async () => {
-    const veryLargeInput = "y".repeat(10240);
+    const veryLargeInput = Buffer.alloc(10240, "y").toString();
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", "console.log(prompt('Enter:').length)"],

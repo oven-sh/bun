@@ -1,4 +1,4 @@
-pub fn processLink(self: *Parser, content: []const u8, start: usize, base_off: OFF, is_image: bool) struct { found: bool, end_pos: usize } {
+pub fn processLink(self: *Parser, content: []const u8, start: usize, base_off: OFF, is_image: bool) ?usize {
     _ = base_off;
     // start points at '['
     // Find matching ']', skipping code spans and HTML tags (which take precedence)
@@ -12,21 +12,19 @@ pub fn processLink(self: *Parser, content: []const u8, start: usize, base_off: O
         }
         // Skip code spans — they take precedence over brackets (CommonMark §6.3)
         if (content[pos] == '`') {
-            const cs = self.findCodeSpanEnd(content, pos);
-            if (cs.found) {
-                pos = cs.end_pos + cs.backtick_count;
+            const count = inlines_mod.countBackticks(content, pos);
+            if (self.findCodeSpanEnd(content, pos + count, count)) |end_pos| {
+                pos = end_pos + count;
                 continue;
             }
         }
         // Skip HTML tags and autolinks — they take precedence over brackets
         if (content[pos] == '<' and !self.flags.no_html_spans) {
-            const tag = self.findHtmlTag(content, pos);
-            if (tag.found) {
-                pos = tag.end_pos;
+            if (self.findHtmlTag(content, pos)) |tag_end| {
+                pos = tag_end;
                 continue;
             }
-            const autolink = self.findAutolink(content, pos);
-            if (autolink.found) {
+            if (self.findAutolink(content, pos)) |autolink| {
                 pos = autolink.end_pos;
                 continue;
             }
@@ -39,7 +37,7 @@ pub fn processLink(self: *Parser, content: []const u8, start: usize, base_off: O
         if (bracket_depth > 0) pos += 1;
     }
 
-    if (bracket_depth != 0) return .{ .found = false, .end_pos = 0 };
+    if (bracket_depth != 0) return null;
 
     const label_end = pos;
     const label = content[start + 1 .. label_end];
@@ -71,7 +69,7 @@ pub fn processLink(self: *Parser, content: []const u8, start: usize, base_off: O
                     pos += 1;
                 }
             }
-            if (!angle_valid) return .{ .found = false, .end_pos = 0 };
+            if (!angle_valid) return null;
             dest_end = pos;
             if (pos < content.len) pos += 1; // skip >
         } else {
@@ -123,7 +121,7 @@ pub fn processLink(self: *Parser, content: []const u8, start: usize, base_off: O
 
             // Link nesting prohibition: links cannot contain other links (CommonMark §6.7)
             if (!is_image and has_inner_bracket and self.labelContainsLink(label)) {
-                return .{ .found = false, .end_pos = 0 };
+                return null;
             }
 
             if (self.image_nesting_level > 0) {
@@ -143,7 +141,7 @@ pub fn processLink(self: *Parser, content: []const u8, start: usize, base_off: O
                 self.renderer.leaveSpan(.a);
             }
 
-            return .{ .found = true, .end_pos = pos };
+            return pos;
         }
     }
 
@@ -166,10 +164,10 @@ pub fn processLink(self: *Parser, content: []const u8, start: usize, base_off: O
             if (self.lookupRefDef(ref_label)) |ref_def| {
                 // Link nesting prohibition
                 if (!is_image and has_inner_bracket and self.labelContainsLink(label)) {
-                    return .{ .found = false, .end_pos = 0 };
+                    return null;
                 }
                 self.renderRefLink(label, ref_def, is_image);
-                return .{ .found = true, .end_pos = pos };
+                return pos;
             }
         } else {
             // Reset pos if we didn't find a valid ]
@@ -185,14 +183,14 @@ pub fn processLink(self: *Parser, content: []const u8, start: usize, base_off: O
         if (self.lookupRefDef(label)) |ref_def| {
             // Link nesting prohibition
             if (!is_image and has_inner_bracket and self.labelContainsLink(label)) {
-                return .{ .found = false, .end_pos = 0 };
+                return null;
             }
             self.renderRefLink(label, ref_def, is_image);
-            return .{ .found = true, .end_pos = label_end + 1 };
+            return label_end + 1;
         }
     }
 
-    return .{ .found = false, .end_pos = 0 };
+    return null;
 }
 
 /// Try to match a bracket pair starting at `start` and check if it forms a link.
@@ -206,20 +204,18 @@ pub fn tryMatchBracketLink(self: *Parser, content: []const u8, start: usize) str
             continue;
         }
         if (content[pos] == '`') {
-            const cs = self.findCodeSpanEnd(content, pos);
-            if (cs.found) {
-                pos = cs.end_pos + cs.backtick_count;
+            const count = inlines_mod.countBackticks(content, pos);
+            if (self.findCodeSpanEnd(content, pos + count, count)) |end_pos| {
+                pos = end_pos + count;
                 continue;
             }
         }
         if (content[pos] == '<' and !self.flags.no_html_spans) {
-            const tag = self.findHtmlTag(content, pos);
-            if (tag.found) {
-                pos = tag.end_pos;
+            if (self.findHtmlTag(content, pos)) |tag_end| {
+                pos = tag_end;
                 continue;
             }
-            const al = self.findAutolink(content, pos);
-            if (al.found) {
+            if (self.findAutolink(content, pos)) |al| {
                 pos = al.end_pos;
                 continue;
             }
@@ -329,21 +325,19 @@ pub fn labelContainsLink(self: *Parser, label: []const u8) bool {
         }
         // Skip code spans
         if (label[pos] == '`') {
-            const cs = self.findCodeSpanEnd(label, pos);
-            if (cs.found) {
-                pos = cs.end_pos + cs.backtick_count;
+            const count = inlines_mod.countBackticks(label, pos);
+            if (self.findCodeSpanEnd(label, pos + count, count)) |end_pos| {
+                pos = end_pos + count;
                 continue;
             }
         }
         // Skip HTML tags and autolinks
         if (label[pos] == '<' and !self.flags.no_html_spans) {
-            const tag = self.findHtmlTag(label, pos);
-            if (tag.found) {
-                pos = tag.end_pos;
+            if (self.findHtmlTag(label, pos)) |tag_end| {
+                pos = tag_end;
                 continue;
             }
-            const al = self.findAutolink(label, pos);
-            if (al.found) {
+            if (self.findAutolink(label, pos)) |al| {
                 pos = al.end_pos;
                 continue;
             }
@@ -366,7 +360,7 @@ pub fn labelContainsLink(self: *Parser, label: []const u8) bool {
 }
 
 /// Process wiki link: [[destination]] or [[destination|label]]
-pub fn processWikiLink(self: *Parser, content: []const u8, start: usize) struct { found: bool, end_pos: usize } {
+pub fn processWikiLink(self: *Parser, content: []const u8, start: usize) ?usize {
     // start points at first '[', next char is also '['
     var pos = start + 2;
 
@@ -377,7 +371,7 @@ pub fn processWikiLink(self: *Parser, content: []const u8, start: usize) struct 
 
     while (pos < content.len) {
         if (content[pos] == '\n' or content[pos] == '\r') {
-            return .{ .found = false, .end_pos = 0 };
+            return null;
         }
         if (content[pos] == '[') {
             bracket_depth += 1;
@@ -388,7 +382,7 @@ pub fn processWikiLink(self: *Parser, content: []const u8, start: usize) struct 
                 break;
             } else {
                 // Single ] without matching [, not a valid close
-                return .{ .found = false, .end_pos = 0 };
+                return null;
             }
         } else if (content[pos] == '|' and pipe_pos == null and bracket_depth == 0) {
             pipe_pos = pos;
@@ -398,7 +392,7 @@ pub fn processWikiLink(self: *Parser, content: []const u8, start: usize) struct 
 
     // Must end with ]]
     if (pos >= content.len or content[pos] != ']') {
-        return .{ .found = false, .end_pos = 0 };
+        return null;
     }
 
     const inner_end = pos;
@@ -409,7 +403,7 @@ pub fn processWikiLink(self: *Parser, content: []const u8, start: usize) struct 
 
     // Target must not exceed 100 characters
     if (target.len > 100) {
-        return .{ .found = false, .end_pos = 0 };
+        return null;
     }
 
     // Render the wikilink
@@ -417,7 +411,7 @@ pub fn processWikiLink(self: *Parser, content: []const u8, start: usize) struct 
     self.processInlineContent(label, 0);
     self.renderer.leaveSpan(.wikilink);
 
-    return .{ .found = true, .end_pos = pos + 2 }; // skip both ']'
+    return pos + 2; // skip both ']'
 }
 
 /// Render a reference link/image given the resolved ref def.
@@ -440,9 +434,9 @@ pub fn renderRefLink(self: *Parser, label_content: []const u8, ref: RefDef, is_i
     }
 }
 
-pub fn findAutolink(self: *const Parser, content: []const u8, start: usize) struct { found: bool, end_pos: usize, is_email: bool } {
+pub fn findAutolink(self: *const Parser, content: []const u8, start: usize) ?struct { end_pos: usize, is_email: bool } {
     _ = self;
-    if (start + 1 >= content.len) return .{ .found = false, .end_pos = 0, .is_email = false };
+    if (start + 1 >= content.len) return null;
 
     const pos = start + 1;
 
@@ -462,7 +456,7 @@ pub fn findAutolink(self: *const Parser, content: []const u8, start: usize) stru
                 uri_end += 1;
             }
             if (uri_end < content.len and content[uri_end] == '>') {
-                return .{ .found = true, .end_pos = uri_end + 1, .is_email = false };
+                return .{ .end_pos = uri_end + 1, .is_email = false };
             }
         }
 
@@ -505,12 +499,12 @@ pub fn findAutolink(self: *const Parser, content: []const u8, start: usize) stru
                 email_pos > domain_start and label_len > 0 and dot_count > 0 and
                 helpers.isAlphaNum(content[email_pos - 1]))
             {
-                return .{ .found = true, .end_pos = email_pos + 1, .is_email = true };
+                return .{ .end_pos = email_pos + 1, .is_email = true };
             }
         }
     }
 
-    return .{ .found = false, .end_pos = 0, .is_email = false };
+    return null;
 }
 
 pub fn renderAutolink(self: *Parser, url: []const u8, is_email: bool) void {
@@ -520,6 +514,7 @@ pub fn renderAutolink(self: *Parser, url: []const u8, is_email: bool) void {
 }
 
 const helpers = @import("./helpers.zig");
+const inlines_mod = @import("./inlines.zig");
 
 const parser_mod = @import("./parser.zig");
 const Parser = parser_mod.Parser;

@@ -103,17 +103,17 @@ pub fn processInlineContent(self: *Parser, content: []const u8, base_off: OFF) v
         // Code span
         if (c == '`') {
             if (i > text_start) self.emitText(.normal, content[text_start..i]);
-            const result = self.findCodeSpanEnd(content, i);
-            if (result.found) {
+            const count = countBackticks(content, i);
+            if (self.findCodeSpanEnd(content, i + count, count)) |end_pos| {
                 self.enterSpan(.code);
-                const code_content = self.normalizeCodeSpanContent(content[i + result.backtick_count .. result.end_pos]);
+                const code_content = self.normalizeCodeSpanContent(content[i + count .. end_pos]);
                 self.emitText(.code, code_content);
                 self.leaveSpan(.code);
-                i = result.end_pos + result.backtick_count;
+                i = end_pos + count;
             } else {
                 // No matching closer found — emit the entire backtick run as literal text
-                self.emitText(.normal, content[i .. i + result.backtick_count]);
-                i += result.backtick_count;
+                self.emitText(.normal, content[i .. i + count]);
+                i += count;
             }
             text_start = i;
             continue;
@@ -162,11 +162,10 @@ pub fn processInlineContent(self: *Parser, content: []const u8, base_off: OFF) v
 
         // HTML entity
         if (c == '&') {
-            const entity_result = self.findEntity(content, i);
-            if (entity_result.found) {
+            if (self.findEntity(content, i)) |end_pos| {
                 if (i > text_start) self.emitText(.normal, content[text_start..i]);
-                self.emitText(.entity, content[i..entity_result.end_pos]);
-                i = entity_result.end_pos;
+                self.emitText(.entity, content[i..end_pos]);
+                i = end_pos;
                 text_start = i;
                 continue;
             }
@@ -174,19 +173,17 @@ pub fn processInlineContent(self: *Parser, content: []const u8, base_off: OFF) v
 
         // HTML tag
         if (c == '<' and !self.flags.no_html_spans) {
-            const tag_result = self.findHtmlTag(content, i);
-            if (tag_result.found) {
+            if (self.findHtmlTag(content, i)) |tag_end| {
                 if (i > text_start) self.emitText(.normal, content[text_start..i]);
-                self.emitText(.html, content[i..tag_result.end_pos]);
-                i = tag_result.end_pos;
+                self.emitText(.html, content[i..tag_end]);
+                i = tag_end;
                 text_start = i;
                 continue;
             }
-            const autolink_result = self.findAutolink(content, i);
-            if (autolink_result.found) {
+            if (self.findAutolink(content, i)) |autolink| {
                 if (i > text_start) self.emitText(.normal, content[text_start..i]);
-                self.renderAutolink(content[i + 1 .. autolink_result.end_pos - 1], autolink_result.is_email);
-                i = autolink_result.end_pos;
+                self.renderAutolink(content[i + 1 .. autolink.end_pos - 1], autolink.is_email);
+                i = autolink.end_pos;
                 text_start = i;
                 continue;
             }
@@ -194,10 +191,9 @@ pub fn processInlineContent(self: *Parser, content: []const u8, base_off: OFF) v
 
         // Wiki links: [[destination]] or [[destination|label]]
         if (c == '[' and self.flags.wiki_links and i + 1 < content.len and content[i + 1] == '[') {
-            const wl = self.processWikiLink(content, i);
-            if (wl.found) {
+            if (self.processWikiLink(content, i)) |end_pos| {
                 if (i > text_start) self.emitText(.normal, content[text_start..i]);
-                i = wl.end_pos;
+                i = end_pos;
                 text_start = i;
                 continue;
             }
@@ -206,9 +202,8 @@ pub fn processInlineContent(self: *Parser, content: []const u8, base_off: OFF) v
         // Links: [text](url) or [text][ref]
         if (c == '[') {
             if (i > text_start) self.emitText(.normal, content[text_start..i]);
-            const link_result = self.processLink(content, i, base_off, false);
-            if (link_result.found) {
-                i = link_result.end_pos;
+            if (self.processLink(content, i, base_off, false)) |end_pos| {
+                i = end_pos;
             } else {
                 self.emitText(.normal, "[");
                 i += 1;
@@ -220,9 +215,8 @@ pub fn processInlineContent(self: *Parser, content: []const u8, base_off: OFF) v
         // Images: ![text](url)
         if (c == '!' and i + 1 < content.len and content[i + 1] == '[') {
             if (i > text_start) self.emitText(.normal, content[text_start..i]);
-            const link_result = self.processLink(content, i + 1, base_off, true);
-            if (link_result.found) {
-                i = link_result.end_pos;
+            if (self.processLink(content, i + 1, base_off, true)) |end_pos| {
+                i = end_pos;
             } else {
                 self.emitText(.normal, "!");
                 i += 1;
@@ -242,16 +236,18 @@ pub fn processInlineContent(self: *Parser, content: []const u8, base_off: OFF) v
         {
             // First try with strict boundaries, then with relaxed (emphasis-aware)
             var al = findPermissiveAutolink(content, i, false);
-            if (!al.found) {
+            if (al == null) {
                 al = findPermissiveAutolink(content, i, true);
-                if (al.found and !isEmphBoundaryResolved(content, al, resolved))
-                    al.found = false;
+                if (al) |a| {
+                    if (!isEmphBoundaryResolved(content, a, resolved))
+                        al = null;
+                }
             }
-            if (al.found) {
-                if (al.beg > text_start) self.emitText(.normal, content[text_start..al.beg]);
+            if (al) |a| {
+                if (a.beg > text_start) self.emitText(.normal, content[text_start..a.beg]);
 
                 // Determine URL prefix and render through the renderer
-                const link_text = content[al.beg..al.end];
+                const link_text = content[a.beg..a.end];
                 if (c == '@') {
                     self.renderer.enterSpan(.a, .{ .href = link_text, .permissive_autolink = true, .autolink_email = true });
                     self.emitText(.normal, link_text);
@@ -265,7 +261,7 @@ pub fn processInlineContent(self: *Parser, content: []const u8, base_off: OFF) v
                     self.emitText(.normal, link_text);
                     self.renderer.leaveSpan(.a);
                 }
-                i = al.end;
+                i = a.end;
                 text_start = i;
                 continue;
             }
@@ -305,9 +301,8 @@ pub fn emitText(self: *Parser, text_type: TextType, content: []const u8) void {
 /// Emit emphasis opening tags (outermost to innermost).
 pub fn emitEmphOpenTags(self: *Parser, sizes: []const u2) void {
     // First match = innermost, so emit in reverse (outermost first in HTML)
-    var j = sizes.len;
-    while (j > 0) {
-        j -= 1;
+    for (0..sizes.len) |idx| {
+        const j = sizes.len - 1 - idx;
         if (sizes[j] == 2) self.enterSpan(.strong) else self.enterSpan(.em);
     }
 }
@@ -320,34 +315,30 @@ pub fn emitEmphCloseTags(self: *Parser, sizes: []const u2) void {
     }
 }
 
-pub fn findCodeSpanEnd(self: *const Parser, content: []const u8, start: usize) struct { found: bool, backtick_count: usize, end_pos: usize } {
-    _ = self;
-    // Count opening backticks
-    var count: usize = 0;
+/// Count consecutive backticks starting at `start`.
+pub fn countBackticks(content: []const u8, start: usize) usize {
     var pos = start;
-    while (pos < content.len and content[pos] == '`') {
-        count += 1;
-        pos += 1;
-    }
+    while (pos < content.len and content[pos] == '`') pos += 1;
+    return pos - start;
+}
 
-    // Find matching closing backticks
+/// Find the matching closing backtick run. Returns end position of content (before closing ticks),
+/// or null if no matching closer found.
+pub fn findCodeSpanEnd(self: *const Parser, content: []const u8, start: usize, count: usize) ?usize {
+    _ = self;
+    var pos = start;
     while (pos < content.len) {
         if (content[pos] == '`') {
-            var close_count: usize = 0;
             const close_start = pos;
-            while (pos < content.len and content[pos] == '`') {
-                close_count += 1;
-                pos += 1;
-            }
-            if (close_count == count) {
-                return .{ .found = true, .backtick_count = count, .end_pos = close_start };
+            while (pos < content.len and content[pos] == '`') pos += 1;
+            if (pos - close_start == count) {
+                return close_start;
             }
         } else {
             pos += 1;
         }
     }
-
-    return .{ .found = false, .backtick_count = count, .end_pos = 0 };
+    return null;
 }
 
 pub fn normalizeCodeSpanContent(self: *const Parser, content: []const u8) []const u8 {
@@ -358,14 +349,7 @@ pub fn normalizeCodeSpanContent(self: *const Parser, content: []const u8) []cons
         const first_is_space = content[0] == ' ' or content[0] == '\n';
         const last_is_space = content[content.len - 1] == ' ' or content[content.len - 1] == '\n';
         if (first_is_space and last_is_space) {
-            var all_spaces = true;
-            for (content) |byte| {
-                if (byte != ' ' and byte != '\n') {
-                    all_spaces = false;
-                    break;
-                }
-            }
-            if (!all_spaces) return content[1 .. content.len - 1];
+            if (std.mem.indexOfNone(u8, content, " \n") != null) return content[1 .. content.len - 1];
         }
     }
     return content;
@@ -432,24 +416,22 @@ pub fn collectEmphasisDelimiters(self: *Parser, content: []const u8) void {
         }
         // Skip code spans
         if (c == '`') {
-            const result = self.findCodeSpanEnd(content, i);
-            if (result.found) {
-                i = result.end_pos + result.backtick_count;
+            const count = countBackticks(content, i);
+            if (self.findCodeSpanEnd(content, i + count, count)) |end_pos| {
+                i = end_pos + count;
             } else {
-                i += 1;
+                i += count;
             }
             continue;
         }
         // Skip HTML tags and autolinks
         if (c == '<') {
             if (!self.flags.no_html_spans) {
-                const tag = self.findHtmlTag(content, i);
-                if (tag.found) {
-                    i = tag.end_pos;
+                if (self.findHtmlTag(content, i)) |tag_end| {
+                    i = tag_end;
                     continue;
                 }
-                const auto = self.findAutolink(content, i);
-                if (auto.found) {
+                if (self.findAutolink(content, i)) |auto| {
                     i = auto.end_pos;
                     continue;
                 }
@@ -589,7 +571,7 @@ pub fn resolveEmphasisDelimiters(self: *Parser) void {
     }
 }
 
-pub fn processStrikethrough(self: *Parser, content: []const u8, start: usize) struct { found: bool, end_pos: usize } {
+pub fn processStrikethrough(self: *Parser, content: []const u8, start: usize) ?usize {
     // Count opening tildes
     var count: usize = 0;
     var pos = start;
@@ -597,13 +579,9 @@ pub fn processStrikethrough(self: *Parser, content: []const u8, start: usize) st
         count += 1;
         pos += 1;
     }
-    if (count != 1 and count != 2) {
-        return .{ .found = false, .end_pos = start + count };
-    }
+    if (count != 1 and count != 2) return null;
     // Check opening flanking (not preceded by letter/digit, and not followed by whitespace)
-    if (!isLeftFlanking(content, start, pos)) {
-        return .{ .found = false, .end_pos = pos };
-    }
+    if (!isLeftFlanking(content, start, pos)) return null;
 
     // Find closing tildes
     var search = pos;
@@ -619,64 +597,24 @@ pub fn processStrikethrough(self: *Parser, content: []const u8, start: usize) st
                 self.enterSpan(.del);
                 self.processInlineContent(content[pos..close_start], 0);
                 self.leaveSpan(.del);
-                return .{ .found = true, .end_pos = search };
+                return search;
             }
         } else {
             search += 1;
         }
     }
 
-    return .{ .found = false, .end_pos = start + count };
+    return null;
 }
 
-pub fn findEntity(self: *const Parser, content: []const u8, start: usize) struct { found: bool, end_pos: usize } {
+pub fn findEntity(self: *const Parser, content: []const u8, start: usize) ?usize {
     _ = self;
-    if (start + 2 >= content.len) return .{ .found = false, .end_pos = 0 };
-
-    // Numeric entity
-    if (content[start + 1] == '#') {
-        var pos = start + 2;
-        if (pos < content.len and (content[pos] == 'x' or content[pos] == 'X')) {
-            // Hex
-            pos += 1;
-            const digit_start = pos;
-            while (pos < content.len and helpers.isHexDigit(content[pos]) and pos - digit_start < 6)
-                pos += 1;
-            if (pos > digit_start and pos < content.len and content[pos] == ';') {
-                return .{ .found = true, .end_pos = pos + 1 };
-            }
-        } else {
-            // Decimal
-            const digit_start = pos;
-            while (pos < content.len and helpers.isDigit(content[pos]) and pos - digit_start < 7)
-                pos += 1;
-            if (pos > digit_start and pos < content.len and content[pos] == ';') {
-                return .{ .found = true, .end_pos = pos + 1 };
-            }
-        }
-        return .{ .found = false, .end_pos = 0 };
-    }
-
-    // Named entity
-    var pos = start + 1;
-    if (pos < content.len and helpers.isAlpha(content[pos])) {
-        pos += 1;
-        while (pos < content.len and helpers.isAlphaNum(content[pos]) and pos - start < 48)
-            pos += 1;
-        if (pos < content.len and content[pos] == ';') {
-            // Verify it's a known entity
-            if (entity_mod.lookup(content[start .. pos + 1]) != null) {
-                return .{ .found = true, .end_pos = pos + 1 };
-            }
-        }
-    }
-
-    return .{ .found = false, .end_pos = 0 };
+    return helpers.findEntity(content, start);
 }
 
-pub fn findHtmlTag(self: *const Parser, content: []const u8, start: usize) struct { found: bool, end_pos: usize } {
+pub fn findHtmlTag(self: *const Parser, content: []const u8, start: usize) ?usize {
     _ = self;
-    if (start + 1 >= content.len) return .{ .found = false, .end_pos = 0 };
+    if (start + 1 >= content.len) return null;
 
     var pos = start + 1;
     const c = content[pos];
@@ -685,15 +623,15 @@ pub fn findHtmlTag(self: *const Parser, content: []const u8, start: usize) struc
     if (c == '/') {
         pos += 1;
         if (pos >= content.len or !helpers.isAlpha(content[pos]))
-            return .{ .found = false, .end_pos = 0 };
+            return null;
         while (pos < content.len and (helpers.isAlphaNum(content[pos]) or content[pos] == '-'))
             pos += 1;
         // Skip whitespace (including newlines)
         while (pos < content.len and helpers.isWhitespace(content[pos]))
             pos += 1;
         if (pos < content.len and content[pos] == '>')
-            return .{ .found = true, .end_pos = pos + 1 };
-        return .{ .found = false, .end_pos = 0 };
+            return pos + 1;
+        return null;
     }
 
     // Comment: <!-- ... -->
@@ -703,23 +641,23 @@ pub fn findHtmlTag(self: *const Parser, content: []const u8, start: usize) struc
     {
         pos += 3;
         // Minimal comments: <!--> and <!--->
-        if (pos < content.len and content[pos] == '>') return .{ .found = true, .end_pos = pos + 1 };
-        if (pos + 1 < content.len and content[pos] == '-' and content[pos + 1] == '>') return .{ .found = true, .end_pos = pos + 2 };
+        if (pos < content.len and content[pos] == '>') return pos + 1;
+        if (pos + 1 < content.len and content[pos] == '-' and content[pos + 1] == '>') return pos + 2;
         while (pos + 2 < content.len) {
             if (content[pos] == '-' and content[pos + 1] == '-' and content[pos + 2] == '>') {
-                return .{ .found = true, .end_pos = pos + 3 };
+                return pos + 3;
             }
             pos += 1;
         }
-        return .{ .found = false, .end_pos = 0 };
+        return null;
     }
 
     // HTML declaration: <! followed by uppercase letter, ended by >
     if (c == '!' and pos + 1 < content.len and content[pos + 1] >= 'A' and content[pos + 1] <= 'Z') {
         pos += 2;
         while (pos < content.len and content[pos] != '>') pos += 1;
-        if (pos < content.len) return .{ .found = true, .end_pos = pos + 1 };
-        return .{ .found = false, .end_pos = 0 };
+        if (pos < content.len) return pos + 1;
+        return null;
     }
 
     // CDATA section: <![CDATA[ ... ]]>
@@ -730,11 +668,11 @@ pub fn findHtmlTag(self: *const Parser, content: []const u8, start: usize) struc
         pos += 8;
         while (pos + 2 < content.len) {
             if (content[pos] == ']' and content[pos + 1] == ']' and content[pos + 2] == '>') {
-                return .{ .found = true, .end_pos = pos + 3 };
+                return pos + 3;
             }
             pos += 1;
         }
-        return .{ .found = false, .end_pos = 0 };
+        return null;
     }
 
     // Processing instruction: <? ... ?>
@@ -742,11 +680,11 @@ pub fn findHtmlTag(self: *const Parser, content: []const u8, start: usize) struc
         pos += 1;
         while (pos + 1 < content.len) {
             if (content[pos] == '?' and content[pos + 1] == '>') {
-                return .{ .found = true, .end_pos = pos + 2 };
+                return pos + 2;
             }
             pos += 1;
         }
-        return .{ .found = false, .end_pos = 0 };
+        return null;
     }
 
     // Opening tag: <tagname ...>
@@ -764,15 +702,15 @@ pub fn findHtmlTag(self: *const Parser, content: []const u8, start: usize) struc
             }
 
             if (pos >= content.len) break;
-            if (content[pos] == '>') return .{ .found = true, .end_pos = pos + 1 };
+            if (content[pos] == '>') return pos + 1;
             if (content[pos] == '/' and pos + 1 < content.len and content[pos + 1] == '>')
-                return .{ .found = true, .end_pos = pos + 2 };
+                return pos + 2;
 
-            if (!had_ws) return .{ .found = false, .end_pos = 0 };
+            if (!had_ws) return null;
 
             // Attribute name
             if (!helpers.isAlpha(content[pos]) and content[pos] != '_' and content[pos] != ':')
-                return .{ .found = false, .end_pos = 0 };
+                return null;
             while (pos < content.len and (helpers.isAlphaNum(content[pos]) or
                 content[pos] == '_' or content[pos] == ':' or content[pos] == '.' or content[pos] == '-'))
                 pos += 1;
@@ -786,17 +724,17 @@ pub fn findHtmlTag(self: *const Parser, content: []const u8, start: usize) struc
                 pos += 1;
                 while (pos < content.len and helpers.isWhitespace(content[pos]))
                     pos += 1;
-                if (pos >= content.len) return .{ .found = false, .end_pos = 0 };
+                if (pos >= content.len) return null;
 
                 if (content[pos] == '"') {
                     pos += 1;
                     while (pos < content.len and content[pos] != '"') pos += 1;
-                    if (pos >= content.len) return .{ .found = false, .end_pos = 0 };
+                    if (pos >= content.len) return null;
                     pos += 1;
                 } else if (content[pos] == '\'') {
                     pos += 1;
                     while (pos < content.len and content[pos] != '\'') pos += 1;
-                    if (pos >= content.len) return .{ .found = false, .end_pos = 0 };
+                    if (pos >= content.len) return null;
                     pos += 1;
                 } else {
                     // Unquoted value: no whitespace, quotes, =, <, >, or backtick
@@ -814,10 +752,10 @@ pub fn findHtmlTag(self: *const Parser, content: []const u8, start: usize) struc
         }
     }
 
-    return .{ .found = false, .end_pos = 0 };
+    return null;
 }
 
-const entity_mod = @import("./entity.zig");
+const std = @import("std");
 const helpers = @import("./helpers.zig");
 
 const autolinks_mod = @import("./autolinks.zig");

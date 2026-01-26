@@ -22,8 +22,7 @@ pub fn processCodeBlock(self: *Parser, block_lines: []const VerbatimLine, data: 
 
     for (block_lines[0..count]) |vline| {
         // Output indented content
-        var i: u32 = 0;
-        while (i < vline.indent) : (i += 1) {
+        for (0..vline.indent) |_| {
             self.emitText(.normal, " ");
         }
         const content = self.text[vline.beg..vline.end];
@@ -35,8 +34,7 @@ pub fn processCodeBlock(self: *Parser, block_lines: []const VerbatimLine, data: 
 pub fn processHtmlBlock(self: *Parser, block_lines: []const VerbatimLine) void {
     for (block_lines, 0..) |vline, i| {
         if (i > 0) self.emitText(.html, "\n");
-        var indent = vline.indent;
-        while (indent > 0) : (indent -= 1) {
+        for (0..vline.indent) |_| {
             self.emitText(.html, " ");
         }
         self.emitText(.html, self.text[vline.beg..vline.end]);

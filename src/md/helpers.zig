@@ -253,14 +253,56 @@ pub fn skipUtf8Bom(text: []const u8) []const u8 {
 
 /// Case-insensitive ASCII comparison.
 pub fn asciiCaseEql(a: []const u8, b: []const u8) bool {
-    if (a.len != b.len) return false;
-    for (a, b) |ca, cb| {
-        if (std.ascii.toLower(ca) != std.ascii.toLower(cb)) return false;
+    return bun.strings.eqlCaseInsensitiveASCIIICheckLength(a, b);
+}
+
+/// Find an HTML entity starting at `start` (which must point to '&').
+/// Returns the end position (one past the ';') or null if no valid entity found.
+pub fn findEntity(content: []const u8, start: usize) ?usize {
+    if (start + 2 >= content.len) return null;
+
+    // Numeric entity
+    if (content[start + 1] == '#') {
+        var pos = start + 2;
+        if (pos < content.len and (content[pos] == 'x' or content[pos] == 'X')) {
+            // Hex
+            pos += 1;
+            const digit_start = pos;
+            while (pos < content.len and isHexDigit(content[pos]) and pos - digit_start < 6)
+                pos += 1;
+            if (pos > digit_start and pos < content.len and content[pos] == ';') {
+                return pos + 1;
+            }
+        } else {
+            // Decimal
+            const digit_start = pos;
+            while (pos < content.len and isDigit(content[pos]) and pos - digit_start < 7)
+                pos += 1;
+            if (pos > digit_start and pos < content.len and content[pos] == ';') {
+                return pos + 1;
+            }
+        }
+        return null;
     }
-    return true;
+
+    // Named entity
+    var pos = start + 1;
+    if (pos < content.len and isAlpha(content[pos])) {
+        pos += 1;
+        while (pos < content.len and isAlphaNum(content[pos]) and pos - start < 48)
+            pos += 1;
+        if (pos < content.len and content[pos] == ';') {
+            if (entity_mod.lookup(content[start .. pos + 1]) != null) {
+                return pos + 1;
+            }
+        }
+    }
+
+    return null;
 }
 
 const bun = @import("bun");
+const entity_mod = @import("./entity.zig");
 const std = @import("std");
 
 const types = @import("./types.zig");

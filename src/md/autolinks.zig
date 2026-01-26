@@ -6,15 +6,14 @@ pub fn isListItemMark(c: u8) bool {
     return c == '-' or c == '+' or c == '*' or c == '.' or c == ')';
 }
 
-pub const AutolinkResult = struct {
-    found: bool,
+pub const AutolinkResult = ?struct {
     beg: usize,
     end: usize,
 };
 
 /// Check that emphasis chars at autolink boundaries are actually resolved delimiters.
 /// Called when the relaxed (allow_emph) pass found an autolink but the strict pass didn't.
-pub fn isEmphBoundaryResolved(content: []const u8, al: AutolinkResult, resolved: []const Parser.EmphDelim) bool {
+pub fn isEmphBoundaryResolved(content: []const u8, al: std.meta.Child(AutolinkResult), resolved: []const Parser.EmphDelim) bool {
     // Check left boundary: if it's an emphasis char, it must be a resolved delimiter
     if (al.beg > 0) {
         const prev = content[al.beg - 1];
@@ -114,23 +113,25 @@ pub fn isInSet(c: u8, set: []const u8) bool {
 /// When `allow_emph` is true, emphasis delimiters (*_~) are also valid boundaries.
 pub fn checkLeftBoundary(content: []const u8, pos: usize, allow_emph: bool) bool {
     if (pos == 0) return true;
-    const prev = content[pos - 1];
-    if (helpers.isWhitespace(prev) or prev == '\n' or prev == '\r') return true;
-    if (prev == '(' or prev == '{' or prev == '[') return true;
-    if (allow_emph and (prev == '*' or prev == '_' or prev == '~')) return true;
-    return false;
+    return switch (content[pos - 1]) {
+        ' ', '\t', '\n', '\r', 0x0B, 0x0C => true,
+        '(', '{', '[' => true,
+        '*', '_', '~' => allow_emph,
+        else => false,
+    };
 }
 
 /// Check right boundary for permissive autolinks.
 /// When `allow_emph` is true, emphasis delimiters (*_~) are also valid boundaries.
 pub fn checkRightBoundary(content: []const u8, pos: usize, allow_emph: bool) bool {
     if (pos >= content.len) return true;
-    const next = content[pos];
-    if (helpers.isWhitespace(next) or next == '\n' or next == '\r') return true;
-    if (next == ')' or next == '}' or next == ']' or next == '<') return true;
-    if (next == '.' or next == '!' or next == '?' or next == ',' or next == ';' or next == '&') return true;
-    if (allow_emph and (next == '*' or next == '_' or next == '~')) return true;
-    return false;
+    return switch (content[pos]) {
+        ' ', '\t', '\n', '\r', 0x0B, 0x0C => true,
+        ')', '}', ']', '<' => true,
+        '.', '!', '?', ',', ';', '&' => true,
+        '*', '_', '~' => allow_emph,
+        else => false,
+    };
 }
 
 /// Detect permissive autolinks at the given position in content.
@@ -176,15 +177,15 @@ pub fn findPermissiveAutolink(content: []const u8, pos: usize, allow_emph: bool)
 
                     if (!checkRightBoundary(content, end, allow_emph)) continue;
 
-                    return .{ .found = true, .beg = beg, .end = end };
+                    return .{ .beg = beg, .end = end };
                 }
             }
         }
     } else if (c == '@') {
         // Email autolink: scan backward for username, forward for domain
-        if (pos == 0 or pos + 3 >= content.len) return .{ .found = false, .beg = 0, .end = 0 };
+        if (pos == 0 or pos + 3 >= content.len) return null;
         if (!helpers.isAlphaNum(content[pos - 1]) or !helpers.isAlphaNum(content[pos + 1]))
-            return .{ .found = false, .beg = 0, .end = 0 };
+            return null;
 
         // Scan backward for username
         var beg = pos;
@@ -199,31 +200,31 @@ pub fn findPermissiveAutolink(content: []const u8, pos: usize, allow_emph: bool)
                 break;
             }
         }
-        if (beg == pos) return .{ .found = false, .beg = 0, .end = 0 }; // empty username
+        if (beg == pos) return null; // empty username
 
-        if (!checkLeftBoundary(content, beg, allow_emph)) return .{ .found = false, .beg = 0, .end = 0 };
+        if (!checkLeftBoundary(content, beg, allow_emph)) return null;
 
         // Scan forward for domain (host component only for email)
         const host = scanUrlComponent(content, pos + 1, 0, '.', ".-_", 2, 0);
-        if (!host.ok) return .{ .found = false, .beg = 0, .end = 0 };
+        if (!host.ok) return null;
         const end = host.end;
 
-        if (!checkRightBoundary(content, end, allow_emph)) return .{ .found = false, .beg = 0, .end = 0 };
+        if (!checkRightBoundary(content, end, allow_emph)) return null;
 
-        return .{ .found = true, .beg = beg, .end = end };
+        return .{ .beg = beg, .end = end };
     } else if (c == '.') {
         // WWW autolink: check for "www." prefix
-        if (pos < 3) return .{ .found = false, .beg = 0, .end = 0 };
+        if (pos < 3) return null;
         if (!helpers.asciiCaseEql(content[pos - 3 .. pos], "www"))
-            return .{ .found = false, .beg = 0, .end = 0 };
+            return null;
 
         const beg = pos - 3;
-        if (!checkLeftBoundary(content, beg, allow_emph)) return .{ .found = false, .beg = 0, .end = 0 };
+        if (!checkLeftBoundary(content, beg, allow_emph)) return null;
 
         // Scan URL components starting from after the '.'
         var end = pos + 1;
         const host = scanUrlComponent(content, end, 0, '.', ".-_", 1, 0);
-        if (!host.ok) return .{ .found = false, .beg = 0, .end = 0 };
+        if (!host.ok) return null;
         end = host.end;
 
         const path = scanUrlComponent(content, end, '/', '/', "/.-_~*+%", 0, '/');
@@ -237,12 +238,12 @@ pub fn findPermissiveAutolink(content: []const u8, pos: usize, allow_emph: bool)
 
         end = postProcessAutolinkEnd(content, beg, end);
 
-        if (!checkRightBoundary(content, end, allow_emph)) return .{ .found = false, .beg = 0, .end = 0 };
+        if (!checkRightBoundary(content, end, allow_emph)) return null;
 
-        return .{ .found = true, .beg = beg, .end = end };
+        return .{ .beg = beg, .end = end };
     }
 
-    return .{ .found = false, .beg = 0, .end = 0 };
+    return null;
 }
 
 /// GFM post-processing: trim trailing unbalanced `)` and entity-like suffixes from autolink URLs.

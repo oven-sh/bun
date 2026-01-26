@@ -13,31 +13,35 @@ pub fn normalizeLabel(self: *Parser, raw: []const u8) []const u8 {
     var i: usize = 0;
     while (i < raw.len) {
         const c = raw[i];
-        if (c == ' ' or c == '\t' or c == '\n' or c == '\r') {
-            if (!in_ws and result.items.len > 0) {
-                result.append(self.allocator, ' ') catch return raw;
-                in_ws = true;
-            }
-            i += 1;
-        } else if (c < 0x80) {
-            // ASCII: simple toLower
-            result.append(self.allocator, std.ascii.toLower(c)) catch return raw;
-            in_ws = false;
-            i += 1;
-        } else {
-            // Multi-byte UTF-8: decode, case fold, re-encode
-            const decoded = helpers.decodeUtf8(raw, i);
-            const fold = unicode.caseFold(decoded.codepoint);
-            var j: u2 = 0;
-            while (j < fold.n_codepoints) : (j += 1) {
-                var buf: [4]u8 = undefined;
-                const len = helpers.encodeUtf8(fold.codepoints[j], &buf);
-                if (len > 0) {
-                    result.appendSlice(self.allocator, buf[0..len]) catch return raw;
+        switch (c) {
+            ' ', '\t', '\n', '\r' => {
+                if (!in_ws and result.items.len > 0) {
+                    result.append(self.allocator, ' ') catch return raw;
+                    in_ws = true;
                 }
-            }
-            in_ws = false;
-            i += @as(usize, decoded.len);
+                i += 1;
+            },
+            0x80...0xFF => {
+                // Multi-byte UTF-8: decode, case fold, re-encode
+                const decoded = helpers.decodeUtf8(raw, i);
+                const fold = unicode.caseFold(decoded.codepoint);
+                var j: u2 = 0;
+                while (j < fold.n_codepoints) : (j += 1) {
+                    var buf: [4]u8 = undefined;
+                    const len = helpers.encodeUtf8(fold.codepoints[j], &buf);
+                    if (len > 0) {
+                        result.appendSlice(self.allocator, buf[0..len]) catch return raw;
+                    }
+                }
+                in_ws = false;
+                i += @as(usize, decoded.len);
+            },
+            else => {
+                // ASCII: simple toLower
+                result.append(self.allocator, std.ascii.toLower(c)) catch return raw;
+                in_ws = false;
+                i += 1;
+            },
         }
     }
     // Strip trailing space
@@ -211,8 +215,11 @@ pub fn parseRefDefTitle(self: *const Parser, text: []const u8, start: usize) ?st
     if (p >= text.len) return null;
 
     const open_char = text[p];
-    const close_char: u8 = if (open_char == '(') ')' else open_char;
-    if (open_char != '"' and open_char != '\'' and open_char != '(') return null;
+    const close_char: u8 = switch (open_char) {
+        '"', '\'' => open_char,
+        '(' => ')',
+        else => return null,
+    };
     p += 1;
     const title_start = p;
 

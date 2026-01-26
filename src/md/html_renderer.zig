@@ -486,10 +486,9 @@ pub const HtmlRenderer = struct {
                 self.writeUrlByte(txt[i + 1]);
                 i += 2;
             } else if (txt[i] == '&') {
-                const ent_result = findEntityInText(txt, i);
-                if (ent_result.found) {
-                    self.writeEntityToUrl(txt[i..ent_result.end_pos]);
-                    i = ent_result.end_pos;
+                if (findEntityInText(txt, i)) |end_pos| {
+                    self.writeEntityToUrl(txt[i..end_pos]);
+                    i = end_pos;
                 } else {
                     self.write("&amp;");
                     i += 1;
@@ -509,10 +508,9 @@ pub const HtmlRenderer = struct {
                 self.writeHtmlEscaped(txt[i + 1 .. i + 2]);
                 i += 2;
             } else if (txt[i] == '&') {
-                const ent_result = findEntityInText(txt, i);
-                if (ent_result.found) {
-                    self.writeEntity(txt[i..ent_result.end_pos]);
-                    i = ent_result.end_pos;
+                if (findEntityInText(txt, i)) |end_pos| {
+                    self.writeEntity(txt[i..end_pos]);
+                    i = end_pos;
                 } else {
                     self.write("&amp;");
                     i += 1;
@@ -530,10 +528,9 @@ pub const HtmlRenderer = struct {
         var i: usize = 0;
         while (i < txt.len) {
             if (txt[i] == '&') {
-                const result = findEntityInText(txt, i);
-                if (result.found) {
-                    self.writeEntity(txt[i..result.end_pos]);
-                    i = result.end_pos;
+                if (findEntityInText(txt, i)) |end_pos| {
+                    self.writeEntity(txt[i..end_pos]);
+                    i = end_pos;
                     continue;
                 }
             } else if (txt[i] == '\\' and i + 1 < txt.len and helpers.isAsciiPunctuation(txt[i + 1])) {
@@ -547,31 +544,9 @@ pub const HtmlRenderer = struct {
     }
 
     fn writeEntity(self: *HtmlRenderer, entity_text: []const u8) void {
-        // Numeric character reference: &#DDD; or &#xHHH;
-        if (entity_text.len >= 4 and entity_text[0] == '&' and entity_text[1] == '#') {
-            var cp: u32 = 0;
-            if (entity_text[2] == 'x' or entity_text[2] == 'X') {
-                for (entity_text[3..]) |ec| {
-                    if (ec == ';') break;
-                    cp = cp *% 16 +% switch (ec) {
-                        '0'...'9' => ec - '0',
-                        'a'...'f' => ec - 'a' + 10,
-                        'A'...'F' => ec - 'A' + 10,
-                        else => 0,
-                    };
-                }
-            } else {
-                for (entity_text[2..]) |ec| {
-                    if (ec == ';') break;
-                    cp = cp *% 10 +% (ec - '0');
-                }
-            }
-            // Invalid or null codepoint -> U+FFFD
-            if (cp == 0 or cp > 0x10FFFF or (cp >= 0xD800 and cp <= 0xDFFF)) {
-                cp = 0xFFFD;
-            }
+        if (parseEntityCodepoint(entity_text)) |cp| {
             var buf: [4]u8 = undefined;
-            const len = helpers.encodeUtf8(@intCast(cp), &buf);
+            const len = helpers.encodeUtf8(cp, &buf);
             self.writeHtmlEscaped(buf[0..len]);
             return;
         }
@@ -591,29 +566,9 @@ pub const HtmlRenderer = struct {
 
     /// Decode an entity and write its UTF-8 bytes as percent-encoded URL bytes.
     fn writeEntityToUrl(self: *HtmlRenderer, entity_text: []const u8) void {
-        if (entity_text.len >= 4 and entity_text[0] == '&' and entity_text[1] == '#') {
-            var cp: u32 = 0;
-            if (entity_text[2] == 'x' or entity_text[2] == 'X') {
-                for (entity_text[3..]) |ec| {
-                    if (ec == ';') break;
-                    cp = cp *% 16 +% switch (ec) {
-                        '0'...'9' => ec - '0',
-                        'a'...'f' => ec - 'a' + 10,
-                        'A'...'F' => ec - 'A' + 10,
-                        else => 0,
-                    };
-                }
-            } else {
-                for (entity_text[2..]) |ec| {
-                    if (ec == ';') break;
-                    cp = cp *% 10 +% (ec - '0');
-                }
-            }
-            if (cp == 0 or cp > 0x10FFFF or (cp >= 0xD800 and cp <= 0xDFFF)) {
-                cp = 0xFFFD;
-            }
+        if (parseEntityCodepoint(entity_text)) |cp| {
             var buf: [4]u8 = undefined;
-            const len = helpers.encodeUtf8(@intCast(cp), &buf);
+            const len = helpers.encodeUtf8(cp, &buf);
             for (buf[0..len]) |b| self.writeUrlByte(b);
         } else if (entity_mod.lookup(entity_text)) |codepoints| {
             var buf: [4]u8 = undefined;
@@ -626,6 +581,30 @@ pub const HtmlRenderer = struct {
         } else {
             self.writeUrlEscaped(entity_text);
         }
+    }
+
+    /// Parse a numeric character reference (&#DDD; or &#xHHH;) and return the codepoint.
+    fn parseEntityCodepoint(entity_text: []const u8) ?u21 {
+        if (entity_text.len < 4 or entity_text[0] != '&' or entity_text[1] != '#') return null;
+        var cp: u32 = 0;
+        if (entity_text[2] == 'x' or entity_text[2] == 'X') {
+            for (entity_text[3..]) |ec| {
+                if (ec == ';') break;
+                cp = cp *% 16 +% switch (ec) {
+                    '0'...'9' => ec - '0',
+                    'a'...'f' => ec - 'a' + 10,
+                    'A'...'F' => ec - 'A' + 10,
+                    else => 0,
+                };
+            }
+        } else {
+            for (entity_text[2..]) |ec| {
+                if (ec == ';') break;
+                cp = cp *% 10 +% (ec - '0');
+            }
+        }
+        if (cp == 0 or cp > 0x10FFFF or (cp >= 0xD800 and cp <= 0xDFFF)) cp = 0xFFFD;
+        return @intCast(cp);
     }
 
     fn writeDecimal(self: *HtmlRenderer, value: u32) void {
@@ -674,63 +653,23 @@ pub const HtmlRenderer = struct {
     /// After the name, the next char must be '>', '/', whitespace, or end of string.
     fn matchTagNameCI(content: []const u8, pos: usize, tag: []const u8) bool {
         if (pos + tag.len > content.len) return false;
-        for (tag, 0..) |tc, i| {
-            const cc = content[pos + i] | 0x20; // lowercase
-            if (cc != tc) return false;
-        }
+        if (!bun.strings.eqlCaseInsensitiveASCIIIgnoreLength(content[pos..][0..tag.len], tag)) return false;
         // Check delimiter after tag name
         const end = pos + tag.len;
         if (end >= content.len) return true;
-        const next = content[end];
-        return next == '>' or next == ' ' or next == '\t' or next == '\n' or next == '/';
+        return switch (content[end]) {
+            '>', ' ', '\t', '\n', '/' => true,
+            else => false,
+        };
     }
 
-    /// Find an entity in text starting at `start`. This is a pure function
-    /// that does not require parser state.
-    fn findEntityInText(content: []const u8, start: usize) struct { found: bool, end_pos: usize } {
-        if (start + 2 >= content.len) return .{ .found = false, .end_pos = 0 };
-
-        // Numeric entity
-        if (content[start + 1] == '#') {
-            var pos = start + 2;
-            if (pos < content.len and (content[pos] == 'x' or content[pos] == 'X')) {
-                // Hex
-                pos += 1;
-                const digit_start = pos;
-                while (pos < content.len and helpers.isHexDigit(content[pos]) and pos - digit_start < 6)
-                    pos += 1;
-                if (pos > digit_start and pos < content.len and content[pos] == ';') {
-                    return .{ .found = true, .end_pos = pos + 1 };
-                }
-            } else {
-                // Decimal
-                const digit_start = pos;
-                while (pos < content.len and helpers.isDigit(content[pos]) and pos - digit_start < 7)
-                    pos += 1;
-                if (pos > digit_start and pos < content.len and content[pos] == ';') {
-                    return .{ .found = true, .end_pos = pos + 1 };
-                }
-            }
-            return .{ .found = false, .end_pos = 0 };
-        }
-
-        // Named entity
-        var pos = start + 1;
-        if (pos < content.len and helpers.isAlpha(content[pos])) {
-            pos += 1;
-            while (pos < content.len and helpers.isAlphaNum(content[pos]) and pos - start < 48)
-                pos += 1;
-            if (pos < content.len and content[pos] == ';') {
-                if (entity_mod.lookup(content[start .. pos + 1]) != null) {
-                    return .{ .found = true, .end_pos = pos + 1 };
-                }
-            }
-        }
-
-        return .{ .found = false, .end_pos = 0 };
+    /// Find an entity in text starting at `start`. Delegates to helpers.findEntity.
+    fn findEntityInText(content: []const u8, start: usize) ?usize {
+        return helpers.findEntity(content, start);
     }
 };
 
+const bun = @import("bun");
 const entity_mod = @import("./entity.zig");
 const helpers = @import("./helpers.zig");
 const std = @import("std");

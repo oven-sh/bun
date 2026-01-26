@@ -76,27 +76,27 @@ pub const HtmlRenderer = struct {
     // VTable implementation functions
     // ========================================
 
-    fn enterBlockImpl(ptr: *anyopaque, block_type: BlockType, data: u32, flags: u32) void {
+    fn enterBlockImpl(ptr: *anyopaque, block_type: BlockType, data: u32, flags: u32) bun.JSError!void {
         const self: *HtmlRenderer = @ptrCast(@alignCast(ptr));
         self.enterBlock(block_type, data, flags);
     }
 
-    fn leaveBlockImpl(ptr: *anyopaque, block_type: BlockType, data: u32) void {
+    fn leaveBlockImpl(ptr: *anyopaque, block_type: BlockType, data: u32) bun.JSError!void {
         const self: *HtmlRenderer = @ptrCast(@alignCast(ptr));
         self.leaveBlock(block_type, data);
     }
 
-    fn enterSpanImpl(ptr: *anyopaque, span_type: SpanType, detail: SpanDetail) void {
+    fn enterSpanImpl(ptr: *anyopaque, span_type: SpanType, detail: SpanDetail) bun.JSError!void {
         const self: *HtmlRenderer = @ptrCast(@alignCast(ptr));
         self.enterSpan(span_type, detail);
     }
 
-    fn leaveSpanImpl(ptr: *anyopaque, span_type: SpanType) void {
+    fn leaveSpanImpl(ptr: *anyopaque, span_type: SpanType) bun.JSError!void {
         const self: *HtmlRenderer = @ptrCast(@alignCast(ptr));
         self.leaveSpan(span_type);
     }
 
-    fn textImpl(ptr: *anyopaque, text_type: TextType, content: []const u8) void {
+    fn textImpl(ptr: *anyopaque, text_type: TextType, content: []const u8) bun.JSError!void {
         const self: *HtmlRenderer = @ptrCast(@alignCast(ptr));
         self.text(text_type, content);
     }

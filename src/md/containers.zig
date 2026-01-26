@@ -97,7 +97,7 @@ pub fn isContainerCompatible(self: *const Parser, existing: *const Container, ne
     return false;
 }
 
-pub fn processAllBlocks(self: *Parser) error{OutOfMemory}!void {
+pub fn processAllBlocks(self: *Parser) bun.JSError!void {
     var off: usize = 0;
     const bytes = self.block_bytes.items;
 
@@ -128,7 +128,7 @@ pub fn processAllBlocks(self: *Parser) error{OutOfMemory}!void {
 
         // Handle container openers/closers
         if (flags & types.BLOCK_CONTAINER_OPENER != 0) {
-            self.enterBlock(block_type, data, flags);
+            try self.enterBlock(block_type, data, flags);
             // Track tight/loose state per container level (md4c approach)
             if (block_type == .ul or block_type == .ol) {
                 if (self.n_containers < self.containers.items.len) {
@@ -149,7 +149,7 @@ pub fn processAllBlocks(self: *Parser) error{OutOfMemory}!void {
             if (block_type == .ul or block_type == .ol or block_type == .quote) {
                 if (self.n_containers > 0) self.n_containers -= 1;
             }
-            self.leaveBlock(block_type, data);
+            try self.leaveBlock(block_type, data);
             continue;
         }
 
@@ -162,21 +162,22 @@ pub fn processAllBlocks(self: *Parser) error{OutOfMemory}!void {
 
         // Process leaf blocks — skip <p> enter/leave in tight lists
         if (!is_in_tight_list or block_type != .p)
-            self.enterBlock(block_type, data, flags);
+            try self.enterBlock(block_type, data, flags);
         switch (block_type) {
             .hr => {},
-            .code => self.processCodeBlock(block_lines, data, flags),
-            .html => self.processHtmlBlock(block_lines),
-            .table => self.processTableBlock(block_lines, data),
-            .p => self.processLeafBlock(block_lines, true),
-            .h => self.processLeafBlock(block_lines, true),
-            else => self.processLeafBlock(block_lines, false),
+            .code => try self.processCodeBlock(block_lines, data, flags),
+            .html => try self.processHtmlBlock(block_lines),
+            .table => try self.processTableBlock(block_lines, data),
+            .p => try self.processLeafBlock(block_lines, true),
+            .h => try self.processLeafBlock(block_lines, true),
+            else => try self.processLeafBlock(block_lines, false),
         }
         if (!is_in_tight_list or block_type != .p)
-            self.leaveBlock(block_type, data);
+            try self.leaveBlock(block_type, data);
     }
 }
 
+const bun = @import("bun");
 const parser_mod = @import("./parser.zig");
 
 const autolinks_mod = @import("./autolinks.zig");

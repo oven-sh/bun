@@ -179,7 +179,6 @@ pub const Parser = struct {
     pub const canCloseEmphasis = inlines_mod.canCloseEmphasis;
     pub const collectEmphasisDelimiters = inlines_mod.collectEmphasisDelimiters;
     pub const resolveEmphasisDelimiters = inlines_mod.resolveEmphasisDelimiters;
-    pub const processStrikethrough = inlines_mod.processStrikethrough;
     pub const findEntity = inlines_mod.findEntity;
     pub const findHtmlTag = inlines_mod.findHtmlTag;
 
@@ -231,14 +230,18 @@ pub fn renderToHtml(text: []const u8, allocator: Allocator, flags: Flags, render
     var parser = Parser.init(allocator, input, flags, html_renderer.renderer());
     defer parser.deinit();
 
-    try parser.processDoc();
+    // HtmlRenderer never returns JSError/JSTerminated, so OutOfMemory is the only possible error.
+    parser.processDoc() catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.JSError, error.JSTerminated => unreachable,
+    };
 
     return html_renderer.toOwnedSlice();
 }
 
 /// Parse and render using a custom renderer. The caller provides its own
 /// Renderer implementation (e.g. for JS callback-based rendering).
-pub fn renderWithRenderer(text: []const u8, allocator: Allocator, flags: Flags, rend: Renderer) error{OutOfMemory}!void {
+pub fn renderWithRenderer(text: []const u8, allocator: Allocator, flags: Flags, rend: Renderer) bun.JSError!void {
     const input = helpers.skipUtf8Bom(text);
 
     var p = Parser.init(allocator, input, flags, rend);
@@ -247,6 +250,7 @@ pub fn renderWithRenderer(text: []const u8, allocator: Allocator, flags: Flags, 
     try p.processDoc();
 }
 
+const bun = @import("bun");
 const blocks_mod = @import("./blocks.zig");
 const containers_mod = @import("./containers.zig");
 const helpers = @import("./helpers.zig");

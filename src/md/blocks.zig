@@ -1,11 +1,11 @@
-pub fn processDoc(self: *Parser) error{OutOfMemory}!void {
+pub fn processDoc(self: *Parser) bun.JSError!void {
     const dummy_blank = Line{ .type = .blank };
     var pivot_line = dummy_blank;
     var line_buf: [2]Line = .{ .{}, .{} };
     var line_idx: u1 = 0;
     var off: OFF = 0;
 
-    self.enterBlock(.doc, 0, 0);
+    try self.enterBlock(.doc, 0, 0);
 
     while (off < self.size) {
         const line = &line_buf[line_idx];
@@ -23,7 +23,7 @@ pub fn processDoc(self: *Parser) error{OutOfMemory}!void {
     try self.leaveChildContainers(0);
     try self.processAllBlocks();
 
-    self.leaveBlock(.doc, 0);
+    try self.leaveBlock(.doc, 0);
 }
 
 pub fn analyzeLine(self: *Parser, off_start: OFF, p_end: *OFF, pivot_line: *const Line, line: *Line) error{OutOfMemory}!void {
@@ -846,6 +846,7 @@ pub fn getBlockAt(self: *Parser, off: usize) *BlockHeader {
     return self.getBlockHeaderAt(off);
 }
 
+const bun = @import("bun");
 const helpers = @import("./helpers.zig");
 const parser_mod = @import("./parser.zig");
 const std = @import("std");

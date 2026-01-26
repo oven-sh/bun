@@ -1,14 +1,14 @@
-pub fn enterBlock(self: *Parser, block_type: BlockType, data: u32, flags: u32) void {
+pub fn enterBlock(self: *Parser, block_type: BlockType, data: u32, flags: u32) bun.JSError!void {
     if (self.image_nesting_level > 0) return;
-    self.renderer.enterBlock(block_type, data, flags);
+    try self.renderer.enterBlock(block_type, data, flags);
 }
 
-pub fn leaveBlock(self: *Parser, block_type: BlockType, data: u32) void {
+pub fn leaveBlock(self: *Parser, block_type: BlockType, data: u32) bun.JSError!void {
     if (self.image_nesting_level > 0) return;
-    self.renderer.leaveBlock(block_type, data);
+    try self.renderer.leaveBlock(block_type, data);
 }
 
-pub fn processCodeBlock(self: *Parser, block_lines: []const VerbatimLine, data: u32, flags: u32) void {
+pub fn processCodeBlock(self: *Parser, block_lines: []const VerbatimLine, data: u32, flags: u32) bun.JSError!void {
     _ = data;
 
     var count = block_lines.len;
@@ -23,47 +23,47 @@ pub fn processCodeBlock(self: *Parser, block_lines: []const VerbatimLine, data: 
     for (block_lines[0..count]) |vline| {
         // Output indented content
         for (0..vline.indent) |_| {
-            self.emitText(.normal, " ");
+            try self.emitText(.normal, " ");
         }
         const content = self.text[vline.beg..vline.end];
-        self.emitText(.normal, content);
-        self.emitText(.normal, "\n");
+        try self.emitText(.normal, content);
+        try self.emitText(.normal, "\n");
     }
 }
 
-pub fn processHtmlBlock(self: *Parser, block_lines: []const VerbatimLine) void {
+pub fn processHtmlBlock(self: *Parser, block_lines: []const VerbatimLine) bun.JSError!void {
     for (block_lines, 0..) |vline, i| {
-        if (i > 0) self.emitText(.html, "\n");
+        if (i > 0) try self.emitText(.html, "\n");
         for (0..vline.indent) |_| {
-            self.emitText(.html, " ");
+            try self.emitText(.html, " ");
         }
-        self.emitText(.html, self.text[vline.beg..vline.end]);
+        try self.emitText(.html, self.text[vline.beg..vline.end]);
     }
-    self.emitText(.html, "\n");
+    try self.emitText(.html, "\n");
 }
 
-pub fn processTableBlock(self: *Parser, block_lines: []const VerbatimLine, col_count: u32) void {
+pub fn processTableBlock(self: *Parser, block_lines: []const VerbatimLine, col_count: u32) bun.JSError!void {
     if (block_lines.len < 2) return;
 
     // First line is header, second is underline, rest are body
-    self.enterBlock(.thead, 0, 0);
-    self.enterBlock(.tr, 0, 0);
-    self.processTableRow(block_lines[0], true, col_count);
-    self.leaveBlock(.tr, 0);
-    self.leaveBlock(.thead, 0);
+    try self.enterBlock(.thead, 0, 0);
+    try self.enterBlock(.tr, 0, 0);
+    try self.processTableRow(block_lines[0], true, col_count);
+    try self.leaveBlock(.tr, 0);
+    try self.leaveBlock(.thead, 0);
 
     if (block_lines.len > 2) {
-        self.enterBlock(.tbody, 0, 0);
+        try self.enterBlock(.tbody, 0, 0);
         for (block_lines[2..]) |vline| {
-            self.enterBlock(.tr, 0, 0);
-            self.processTableRow(vline, false, col_count);
-            self.leaveBlock(.tr, 0);
+            try self.enterBlock(.tr, 0, 0);
+            try self.processTableRow(vline, false, col_count);
+            try self.leaveBlock(.tr, 0);
         }
-        self.leaveBlock(.tbody, 0);
+        try self.leaveBlock(.tbody, 0);
     }
 }
 
-pub fn processTableRow(self: *Parser, vline: VerbatimLine, is_header: bool, col_count: u32) void {
+pub fn processTableRow(self: *Parser, vline: VerbatimLine, is_header: bool, col_count: u32) bun.JSError!void {
     const row_text = self.text[vline.beg..vline.end];
     var start: usize = 0;
     var cell_index: u32 = 0;
@@ -93,7 +93,7 @@ pub fn processTableRow(self: *Parser, vline: VerbatimLine, is_header: bool, col_
 
         const cell_type: BlockType = if (is_header) .th else .td;
         const align_data: u32 = if (cell_index < types.TABLE_MAXCOLCOUNT) @intFromEnum(self.table_alignments[cell_index]) else 0;
-        self.enterBlock(cell_type, align_data, 0);
+        try self.enterBlock(cell_type, align_data, 0);
         if (cell_beg < cell_end) {
             const cell_content = row_text[cell_beg..cell_end];
             // GFM: \| in table cells should be consumed at the table level,
@@ -115,12 +115,12 @@ pub fn processTableRow(self: *Parser, vline: VerbatimLine, is_header: bool, col_
                     }
                     break :blk buf.items;
                 } else |_| cell_content;
-                self.processInlineContent(unescaped, vline.beg + @as(OFF, @intCast(cell_beg)));
+                try self.processInlineContent(unescaped, vline.beg + @as(OFF, @intCast(cell_beg)));
             } else {
-                self.processInlineContent(cell_content, vline.beg + @as(OFF, @intCast(cell_beg)));
+                try self.processInlineContent(cell_content, vline.beg + @as(OFF, @intCast(cell_beg)));
             }
         }
-        self.leaveBlock(cell_type, 0);
+        try self.leaveBlock(cell_type, 0);
         cell_index += 1;
 
         if (end < row_text.len) {
@@ -134,12 +134,13 @@ pub fn processTableRow(self: *Parser, vline: VerbatimLine, is_header: bool, col_
     const cell_type: BlockType = if (is_header) .th else .td;
     while (cell_index < col_count) {
         const align_data: u32 = if (cell_index < types.TABLE_MAXCOLCOUNT) @intFromEnum(self.table_alignments[cell_index]) else 0;
-        self.enterBlock(cell_type, align_data, 0);
-        self.leaveBlock(cell_type, 0);
+        try self.enterBlock(cell_type, align_data, 0);
+        try self.leaveBlock(cell_type, 0);
         cell_index += 1;
     }
 }
 
+const bun = @import("bun");
 const helpers = @import("./helpers.zig");
 const std = @import("std");
 

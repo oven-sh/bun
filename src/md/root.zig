@@ -92,10 +92,11 @@ pub fn renderToHtmlWithOptions(text: []const u8, allocator: std.mem.Allocator, o
 }
 
 /// Parse and render using a custom renderer implementation.
-pub fn renderWithRenderer(text: []const u8, allocator: std.mem.Allocator, options: Options, renderer: Renderer) error{OutOfMemory}!void {
+pub fn renderWithRenderer(text: []const u8, allocator: std.mem.Allocator, options: Options, renderer: Renderer) bun.JSError!void {
     return parser.renderWithRenderer(text, allocator, options.toFlags(), renderer);
 }
 
+const bun = @import("bun");
 const parser = @import("./parser.zig");
 const std = @import("std");
 

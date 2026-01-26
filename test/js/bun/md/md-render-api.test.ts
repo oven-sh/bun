@@ -12,7 +12,7 @@ describe("Bun.markdown.render", () => {
 
   test("heading levels 1-6", () => {
     for (let i = 1; i <= 6; i++) {
-      const md = "#".repeat(i) + " Level " + i + "\n";
+      const md = Buffer.alloc(i, "#").toString() + " Level " + i + "\n";
       const result = Markdown.render(md, {
         heading: (children: string, meta: { level: number }) => `<h${meta.level}>${children}</h${meta.level}>`,
       });
@@ -375,7 +375,7 @@ const ansiRenderer = {
       ANSI.bold,
       ANSI.bold,
     ];
-    const prefix = "#".repeat(level) + " ";
+    const prefix = Buffer.alloc(level, "#").toString() + " ";
     return `${colors[level - 1]}${prefix}${children}${ANSI.reset}\n\n`;
   },
   paragraph: (children: string) => `${children}\n\n`,
@@ -505,7 +505,7 @@ describe("headingIds option", () => {
 
   test("heading levels 1-6 all get ids", () => {
     for (let i = 1; i <= 6; i++) {
-      const md = "#".repeat(i) + " Test\n";
+      const md = Buffer.alloc(i, "#").toString() + " Test\n";
       const result = Markdown.html(md, { headingIds: true });
       expect(result).toBe(`<h${i} id="test">Test</h${i}>\n`);
     }

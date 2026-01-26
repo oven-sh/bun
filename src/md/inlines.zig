@@ -21,7 +21,7 @@ pub const EmphDelim = struct {
 /// Merge all lines into buffer with \n between them (unmodified),
 /// then process inlines on the merged text. Hard/soft breaks are detected
 /// during inline processing when \n is encountered.
-pub fn processLeafBlock(self: *Parser, block_lines: []const VerbatimLine, trim_trailing: bool) void {
+pub fn processLeafBlock(self: *Parser, block_lines: []const VerbatimLine, trim_trailing: bool) bun.JSError!void {
     if (block_lines.len == 0) return;
 
     self.buffer.clearRetainingCapacity();
@@ -42,10 +42,10 @@ pub fn processLeafBlock(self: *Parser, block_lines: []const VerbatimLine, trim_t
             merged[merged.len - 1] == '\t'))
             merged = merged[0 .. merged.len - 1];
     }
-    self.processInlineContent(merged, block_lines[0].beg);
+    try self.processInlineContent(merged, block_lines[0].beg);
 }
 
-pub fn processInlineContent(self: *Parser, content: []const u8, base_off: OFF) void {
+pub fn processInlineContent(self: *Parser, content: []const u8, base_off: OFF) bun.JSError!void {
     // Phase 1: Collect and resolve emphasis delimiters
     self.collectEmphasisDelimiters(content);
     self.resolveEmphasisDelimiters();
@@ -53,7 +53,7 @@ pub fn processInlineContent(self: *Parser, content: []const u8, base_off: OFF) v
     // Copy resolved delimiters locally (recursive calls may modify emph_delims)
     const resolved = self.allocator.dupe(EmphDelim, self.emph_delims.items) catch {
         // Fallback: emit content as plain text
-        self.emitText(.normal, content);
+        try self.emitText(.normal, content);
         return;
     };
     defer self.allocator.free(resolved);
@@ -83,8 +83,8 @@ pub fn processInlineContent(self: *Parser, content: []const u8, base_off: OFF) v
                     is_hard = true;
                 }
             }
-            if (emit_end > text_start) self.emitText(.normal, content[text_start..emit_end]);
-            if (is_hard) self.emitText(.br, "") else self.emitText(.softbr, "");
+            if (emit_end > text_start) try self.emitText(.normal, content[text_start..emit_end]);
+            if (is_hard) try self.emitText(.br, "") else try self.emitText(.softbr, "");
             i += 1;
             text_start = i;
             continue;
@@ -92,9 +92,9 @@ pub fn processInlineContent(self: *Parser, content: []const u8, base_off: OFF) v
 
         // Check for backslash escape
         if (c == '\\' and i + 1 < content.len and helpers.isAsciiPunctuation(content[i + 1])) {
-            if (i > text_start) self.emitText(.normal, content[text_start..i]);
+            if (i > text_start) try self.emitText(.normal, content[text_start..i]);
             i += 1;
-            self.emitText(.normal, content[i .. i + 1]);
+            try self.emitText(.normal, content[i .. i + 1]);
             i += 1;
             text_start = i;
             continue;
@@ -102,17 +102,17 @@ pub fn processInlineContent(self: *Parser, content: []const u8, base_off: OFF) v
 
         // Code span
         if (c == '`') {
-            if (i > text_start) self.emitText(.normal, content[text_start..i]);
+            if (i > text_start) try self.emitText(.normal, content[text_start..i]);
             const count = countBackticks(content, i);
             if (self.findCodeSpanEnd(content, i + count, count)) |end_pos| {
-                self.enterSpan(.code);
+                try self.enterSpan(.code);
                 const code_content = self.normalizeCodeSpanContent(content[i + count .. end_pos]);
-                self.emitText(.code, code_content);
-                self.leaveSpan(.code);
+                try self.emitText(.code, code_content);
+                try self.leaveSpan(.code);
                 i = end_pos + count;
             } else {
                 // No matching closer found — emit the entire backtick run as literal text
-                self.emitText(.normal, content[i .. i + count]);
+                try self.emitText(.normal, content[i .. i + count]);
                 i += count;
             }
             text_start = i;
@@ -125,29 +125,29 @@ pub fn processInlineContent(self: *Parser, content: []const u8, base_off: OFF) v
             while (delim_cursor < resolved.len and resolved[delim_cursor].pos < i) delim_cursor += 1;
 
             if (delim_cursor < resolved.len and resolved[delim_cursor].pos == i) {
-                if (i > text_start) self.emitText(.normal, content[text_start..i]);
+                if (i > text_start) try self.emitText(.normal, content[text_start..i]);
 
                 const d = &resolved[delim_cursor];
                 const run_end = d.pos + d.count;
 
                 // Emit closing tags first (innermost to outermost)
                 if (d.emph_char == '~') {
-                    if (d.close_count > 0) self.leaveSpan(.del);
+                    if (d.close_count > 0) try self.leaveSpan(.del);
                 } else {
-                    self.emitEmphCloseTags(d.close_sizes[0..d.close_num]);
+                    try self.emitEmphCloseTags(d.close_sizes[0..d.close_num]);
                 }
 
                 // Emit remaining delimiter chars as text
                 const text_chars = d.count -| (d.open_count + d.close_count);
                 if (text_chars > 0) {
-                    self.emitText(.normal, content[i .. i + text_chars]);
+                    try self.emitText(.normal, content[i .. i + text_chars]);
                 }
 
                 // Emit opening tags (outermost to innermost)
                 if (d.emph_char == '~') {
-                    if (d.open_count > 0) self.enterSpan(.del);
+                    if (d.open_count > 0) try self.enterSpan(.del);
                 } else {
-                    self.emitEmphOpenTags(d.open_sizes[0..d.open_num]);
+                    try self.emitEmphOpenTags(d.open_sizes[0..d.open_num]);
                 }
 
                 delim_cursor += 1;
@@ -163,8 +163,8 @@ pub fn processInlineContent(self: *Parser, content: []const u8, base_off: OFF) v
         // HTML entity
         if (c == '&') {
             if (self.findEntity(content, i)) |end_pos| {
-                if (i > text_start) self.emitText(.normal, content[text_start..i]);
-                self.emitText(.entity, content[i..end_pos]);
+                if (i > text_start) try self.emitText(.normal, content[text_start..i]);
+                try self.emitText(.entity, content[i..end_pos]);
                 i = end_pos;
                 text_start = i;
                 continue;
@@ -174,15 +174,15 @@ pub fn processInlineContent(self: *Parser, content: []const u8, base_off: OFF) v
         // HTML tag
         if (c == '<' and !self.flags.no_html_spans) {
             if (self.findHtmlTag(content, i)) |tag_end| {
-                if (i > text_start) self.emitText(.normal, content[text_start..i]);
-                self.emitText(.html, content[i..tag_end]);
+                if (i > text_start) try self.emitText(.normal, content[text_start..i]);
+                try self.emitText(.html, content[i..tag_end]);
                 i = tag_end;
                 text_start = i;
                 continue;
             }
             if (self.findAutolink(content, i)) |autolink| {
-                if (i > text_start) self.emitText(.normal, content[text_start..i]);
-                self.renderAutolink(content[i + 1 .. autolink.end_pos - 1], autolink.is_email);
+                if (i > text_start) try self.emitText(.normal, content[text_start..i]);
+                try self.renderAutolink(content[i + 1 .. autolink.end_pos - 1], autolink.is_email);
                 i = autolink.end_pos;
                 text_start = i;
                 continue;
@@ -191,8 +191,8 @@ pub fn processInlineContent(self: *Parser, content: []const u8, base_off: OFF) v
 
         // Wiki links: [[destination]] or [[destination|label]]
         if (c == '[' and self.flags.wiki_links and i + 1 < content.len and content[i + 1] == '[') {
-            if (self.processWikiLink(content, i)) |end_pos| {
-                if (i > text_start) self.emitText(.normal, content[text_start..i]);
+            if (try self.processWikiLink(content, i)) |end_pos| {
+                if (i > text_start) try self.emitText(.normal, content[text_start..i]);
                 i = end_pos;
                 text_start = i;
                 continue;
@@ -201,11 +201,11 @@ pub fn processInlineContent(self: *Parser, content: []const u8, base_off: OFF) v
 
         // Links: [text](url) or [text][ref]
         if (c == '[') {
-            if (i > text_start) self.emitText(.normal, content[text_start..i]);
-            if (self.processLink(content, i, base_off, false)) |end_pos| {
+            if (i > text_start) try self.emitText(.normal, content[text_start..i]);
+            if (try self.processLink(content, i, base_off, false)) |end_pos| {
                 i = end_pos;
             } else {
-                self.emitText(.normal, "[");
+                try self.emitText(.normal, "[");
                 i += 1;
             }
             text_start = i;
@@ -214,11 +214,11 @@ pub fn processInlineContent(self: *Parser, content: []const u8, base_off: OFF) v
 
         // Images: ![text](url)
         if (c == '!' and i + 1 < content.len and content[i + 1] == '[') {
-            if (i > text_start) self.emitText(.normal, content[text_start..i]);
-            if (self.processLink(content, i + 1, base_off, true)) |end_pos| {
+            if (i > text_start) try self.emitText(.normal, content[text_start..i]);
+            if (try self.processLink(content, i + 1, base_off, true)) |end_pos| {
                 i = end_pos;
             } else {
-                self.emitText(.normal, "!");
+                try self.emitText(.normal, "!");
                 i += 1;
             }
             text_start = i;
@@ -244,22 +244,22 @@ pub fn processInlineContent(self: *Parser, content: []const u8, base_off: OFF) v
                 }
             }
             if (al) |a| {
-                if (a.beg > text_start) self.emitText(.normal, content[text_start..a.beg]);
+                if (a.beg > text_start) try self.emitText(.normal, content[text_start..a.beg]);
 
                 // Determine URL prefix and render through the renderer
                 const link_text = content[a.beg..a.end];
                 if (c == '@') {
-                    self.renderer.enterSpan(.a, .{ .href = link_text, .permissive_autolink = true, .autolink_email = true });
-                    self.emitText(.normal, link_text);
-                    self.renderer.leaveSpan(.a);
+                    try self.renderer.enterSpan(.a, .{ .href = link_text, .permissive_autolink = true, .autolink_email = true });
+                    try self.emitText(.normal, link_text);
+                    try self.renderer.leaveSpan(.a);
                 } else if (c == '.') {
-                    self.renderer.enterSpan(.a, .{ .href = link_text, .permissive_autolink = true, .autolink_www = true });
-                    self.emitText(.normal, link_text);
-                    self.renderer.leaveSpan(.a);
+                    try self.renderer.enterSpan(.a, .{ .href = link_text, .permissive_autolink = true, .autolink_www = true });
+                    try self.emitText(.normal, link_text);
+                    try self.renderer.leaveSpan(.a);
                 } else {
-                    self.renderer.enterSpan(.a, .{ .href = link_text, .permissive_autolink = true });
-                    self.emitText(.normal, link_text);
-                    self.renderer.leaveSpan(.a);
+                    try self.renderer.enterSpan(.a, .{ .href = link_text, .permissive_autolink = true });
+                    try self.emitText(.normal, link_text);
+                    try self.renderer.leaveSpan(.a);
                 }
                 i = a.end;
                 text_start = i;
@@ -269,8 +269,8 @@ pub fn processInlineContent(self: *Parser, content: []const u8, base_off: OFF) v
 
         // Null character
         if (c == 0) {
-            if (i > text_start) self.emitText(.normal, content[text_start..i]);
-            self.emitText(.null_char, "");
+            if (i > text_start) try self.emitText(.normal, content[text_start..i]);
+            try self.emitText(.null_char, "");
             i += 1;
             text_start = i;
             continue;
@@ -280,38 +280,38 @@ pub fn processInlineContent(self: *Parser, content: []const u8, base_off: OFF) v
     }
 
     if (text_start < content.len) {
-        self.emitText(.normal, content[text_start..]);
+        try self.emitText(.normal, content[text_start..]);
     }
 }
 
-pub fn enterSpan(self: *Parser, span_type: SpanType) void {
+pub fn enterSpan(self: *Parser, span_type: SpanType) bun.JSError!void {
     if (self.image_nesting_level > 0) return;
-    self.renderer.enterSpan(span_type, .{});
+    try self.renderer.enterSpan(span_type, .{});
 }
 
-pub fn leaveSpan(self: *Parser, span_type: SpanType) void {
+pub fn leaveSpan(self: *Parser, span_type: SpanType) bun.JSError!void {
     if (self.image_nesting_level > 0) return;
-    self.renderer.leaveSpan(span_type);
+    try self.renderer.leaveSpan(span_type);
 }
 
-pub fn emitText(self: *Parser, text_type: TextType, content: []const u8) void {
-    self.renderer.text(text_type, content);
+pub fn emitText(self: *Parser, text_type: TextType, content: []const u8) bun.JSError!void {
+    try self.renderer.text(text_type, content);
 }
 
 /// Emit emphasis opening tags (outermost to innermost).
-pub fn emitEmphOpenTags(self: *Parser, sizes: []const u2) void {
+pub fn emitEmphOpenTags(self: *Parser, sizes: []const u2) bun.JSError!void {
     // First match = innermost, so emit in reverse (outermost first in HTML)
     for (0..sizes.len) |idx| {
         const j = sizes.len - 1 - idx;
-        if (sizes[j] == 2) self.enterSpan(.strong) else self.enterSpan(.em);
+        if (sizes[j] == 2) try self.enterSpan(.strong) else try self.enterSpan(.em);
     }
 }
 
 /// Emit emphasis closing tags (innermost to outermost).
 /// First entry in sizes was matched first (innermost), emit in forward order.
-pub fn emitEmphCloseTags(self: *Parser, sizes: []const u2) void {
+pub fn emitEmphCloseTags(self: *Parser, sizes: []const u2) bun.JSError!void {
     for (sizes) |size| {
-        if (size == 2) self.leaveSpan(.strong) else self.leaveSpan(.em);
+        if (size == 2) try self.leaveSpan(.strong) else try self.leaveSpan(.em);
     }
 }
 
@@ -567,42 +567,6 @@ pub fn resolveEmphasisDelimiters(self: *Parser) void {
             delims[closer_idx].active = false;
         }
     }
-}
-
-pub fn processStrikethrough(self: *Parser, content: []const u8, start: usize) ?usize {
-    // Count opening tildes
-    var count: usize = 0;
-    var pos = start;
-    while (pos < content.len and content[pos] == '~') {
-        count += 1;
-        pos += 1;
-    }
-    if (count != 1 and count != 2) return null;
-    // Check opening flanking (not preceded by letter/digit, and not followed by whitespace)
-    if (!isLeftFlanking(content, start, pos)) return null;
-
-    // Find closing tildes
-    var search = pos;
-    while (search < content.len) {
-        if (content[search] == '~') {
-            var close_count: usize = 0;
-            const close_start = search;
-            while (search < content.len and content[search] == '~') {
-                close_count += 1;
-                search += 1;
-            }
-            if (close_count == count and isRightFlanking(content, close_start, search)) {
-                self.enterSpan(.del);
-                self.processInlineContent(content[pos..close_start], 0);
-                self.leaveSpan(.del);
-                return search;
-            }
-        } else {
-            search += 1;
-        }
-    }
-
-    return null;
 }
 
 pub fn findEntity(self: *const Parser, content: []const u8, start: usize) ?usize {

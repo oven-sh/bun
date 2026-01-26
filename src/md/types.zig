@@ -116,27 +116,27 @@ pub const Renderer = struct {
     vtable: *const VTable,
 
     pub const VTable = struct {
-        enterBlock: *const fn (ptr: *anyopaque, block_type: BlockType, data: u32, flags: u32) void,
-        leaveBlock: *const fn (ptr: *anyopaque, block_type: BlockType, data: u32) void,
-        enterSpan: *const fn (ptr: *anyopaque, span_type: SpanType, detail: SpanDetail) void,
-        leaveSpan: *const fn (ptr: *anyopaque, span_type: SpanType) void,
-        text: *const fn (ptr: *anyopaque, text_type: TextType, content: []const u8) void,
+        enterBlock: *const fn (ptr: *anyopaque, block_type: BlockType, data: u32, flags: u32) bun.JSError!void,
+        leaveBlock: *const fn (ptr: *anyopaque, block_type: BlockType, data: u32) bun.JSError!void,
+        enterSpan: *const fn (ptr: *anyopaque, span_type: SpanType, detail: SpanDetail) bun.JSError!void,
+        leaveSpan: *const fn (ptr: *anyopaque, span_type: SpanType) bun.JSError!void,
+        text: *const fn (ptr: *anyopaque, text_type: TextType, content: []const u8) bun.JSError!void,
     };
 
-    pub inline fn enterBlock(self: Renderer, block_type: BlockType, data: u32, flags: u32) void {
-        self.vtable.enterBlock(self.ptr, block_type, data, flags);
+    pub inline fn enterBlock(self: Renderer, block_type: BlockType, data: u32, flags: u32) bun.JSError!void {
+        return self.vtable.enterBlock(self.ptr, block_type, data, flags);
     }
-    pub inline fn leaveBlock(self: Renderer, block_type: BlockType, data: u32) void {
-        self.vtable.leaveBlock(self.ptr, block_type, data);
+    pub inline fn leaveBlock(self: Renderer, block_type: BlockType, data: u32) bun.JSError!void {
+        return self.vtable.leaveBlock(self.ptr, block_type, data);
     }
-    pub inline fn enterSpan(self: Renderer, span_type: SpanType, detail: SpanDetail) void {
-        self.vtable.enterSpan(self.ptr, span_type, detail);
+    pub inline fn enterSpan(self: Renderer, span_type: SpanType, detail: SpanDetail) bun.JSError!void {
+        return self.vtable.enterSpan(self.ptr, span_type, detail);
     }
-    pub inline fn leaveSpan(self: Renderer, span_type: SpanType) void {
-        self.vtable.leaveSpan(self.ptr, span_type);
+    pub inline fn leaveSpan(self: Renderer, span_type: SpanType) bun.JSError!void {
+        return self.vtable.leaveSpan(self.ptr, span_type);
     }
-    pub inline fn text(self: Renderer, text_type: TextType, content: []const u8) void {
-        self.vtable.text(self.ptr, text_type, content);
+    pub inline fn text(self: Renderer, text_type: TextType, content: []const u8) bun.JSError!void {
+        return self.vtable.text(self.ptr, text_type, content);
     }
 };
 
@@ -354,3 +354,5 @@ pub const RefDef = struct {
     label_needs_free: bool = false,
     title_needs_free: bool = false,
 };
+
+const bun = @import("bun");

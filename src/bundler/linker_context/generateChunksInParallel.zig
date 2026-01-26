@@ -317,8 +317,8 @@ pub fn generateChunksInParallel(
                 // Use cheapPrefixNormalizer to match the path normalization done by
                 // IntermediateOutput.code() (e.g. stripping "./" from relative paths)
                 const normalizer = bun.bundle_v2.cheapPrefixNormalizer(c.options.public_path, ch.final_rel_path);
-                const resolved = std.fmt.allocPrint(c.allocator(), "{s}{s}", .{ normalizer[0], normalizer[1] }) catch continue;
-                unique_key_to_path.put(ch.unique_key, resolved) catch continue;
+                const resolved = std.fmt.allocPrint(c.allocator(), "{s}{s}", .{ normalizer[0], normalizer[1] }) catch |err| bun.handleOom(err);
+                unique_key_to_path.put(ch.unique_key, resolved) catch |err| bun.handleOom(err);
             }
         }
 
@@ -340,13 +340,13 @@ pub fn generateChunksInParallel(
                     replacements.append(c.allocator(), .{
                         .old_id = @enumFromInt(@as(u32, @intCast(string_index))),
                         .resolved_path = resolved_path,
-                    }) catch {};
+                    }) catch |err| bun.handleOom(err);
                 }
                 offset += len;
             }
 
             for (replacements.items) |rep| {
-                const new_id = mi.str(rep.resolved_path) catch continue;
+                const new_id = mi.str(rep.resolved_path) catch |err| bun.handleOom(err);
                 mi.replaceStringID(rep.old_id, new_id);
             }
 

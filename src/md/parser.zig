@@ -255,8 +255,8 @@ const line_analysis_mod = @import("./line_analysis.zig");
 const links_mod = @import("./links.zig");
 const ref_defs_mod = @import("./ref_defs.zig");
 const render_blocks_mod = @import("./render_blocks.zig");
-const std = @import("std");
 const root = @import("./root.zig");
+const std = @import("std");
 const HtmlRenderer = @import("./html_renderer.zig").HtmlRenderer;
 const Allocator = std.mem.Allocator;
 

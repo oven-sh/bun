@@ -865,9 +865,10 @@ pub const HtmlRenderer = struct {
 const bun = @import("bun");
 const entity_mod = @import("./entity.zig");
 const helpers = @import("./helpers.zig");
-const root = @import("./root.zig");
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+
+const root = @import("./root.zig");
 const RenderOptions = root.RenderOptions;
 
 const types = @import("./types.zig");

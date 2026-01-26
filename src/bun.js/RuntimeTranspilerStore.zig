@@ -550,6 +550,7 @@ pub const RuntimeTranspilerStore = struct {
                     &printer,
                     .esm_ascii,
                     mapper.get(),
+                    null,
                 ) catch |err| {
                     this.parse_error = err;
                     return;

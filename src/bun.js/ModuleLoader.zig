@@ -516,6 +516,7 @@ pub fn transpileSourceCode(
                     &printer,
                     .esm_ascii,
                     mapper.get(),
+                    null,
                 );
             };
 

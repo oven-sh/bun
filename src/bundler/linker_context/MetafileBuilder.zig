@@ -515,9 +515,9 @@ pub fn generateMarkdown(allocator: std.mem.Allocator, metafile_json: []const u8)
                                         const input_key = key_entry.key_ptr.*;
                                         // Check if target ends with the input key
                                         if (std.mem.endsWith(u8, target, input_key)) {
-                                            // Make sure it's a path boundary (preceded by / or start)
+                                            // Make sure it's a path boundary (preceded by / or \ or start)
                                             if (target.len == input_key.len or
-                                                (target.len > input_key.len and target[target.len - input_key.len - 1] == '/'))
+                                                (target.len > input_key.len and (target[target.len - input_key.len - 1] == '/' or target[target.len - input_key.len - 1] == '\\')))
                                             {
                                                 matched_key = input_key;
                                                 break;

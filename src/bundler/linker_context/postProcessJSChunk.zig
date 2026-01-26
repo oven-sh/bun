@@ -136,9 +136,6 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
                             const record = &source_import_records[s.import_record_index];
                             if (record.path.is_disabled) continue;
                             if (record.tag == .bun) continue;
-                            // Skip type-only/unused imports (e.g. TypeScript type imports).
-                            // These are not resolved and should not be recorded.
-                            if (record.flags.is_unused) continue;
                             // Skip bundled imports — these are converted to cross-chunk
                             // imports by the linker. The printer already recorded them
                             // when printing cross_chunk_prefix_stmts.

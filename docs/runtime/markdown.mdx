@@ -37,35 +37,35 @@ Pass an options object as the second argument to configure the parser:
 
 ```ts
 const html = Bun.markdown.html("some markdown", {
-  tables: true,            // GFM tables (default: true)
-  strikethrough: true,     // GFM strikethrough (default: true)
-  tasklists: true,         // GFM task lists (default: true)
-  tag_filter: true,        // GFM tag filter for disallowed HTML tags
+  tables: true, // GFM tables (default: true)
+  strikethrough: true, // GFM strikethrough (default: true)
+  tasklists: true, // GFM task lists (default: true)
+  tag_filter: true, // GFM tag filter for disallowed HTML tags
   permissive_autolinks: true, // Autolink URLs, emails, and www. links
 });
 ```
 
 All available options:
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `tables` | `true` | GFM tables |
-| `strikethrough` | `true` | GFM strikethrough (`~~text~~`) |
-| `tasklists` | `true` | GFM task lists (`- [x] item`) |
-| `permissive_autolinks` | `false` | Enable all autolink types (URL, WWW, email) |
-| `permissive_url_autolinks` | `false` | Autolink URLs like `https://example.com` |
-| `permissive_www_autolinks` | `false` | Autolink `www.example.com` |
-| `permissive_email_autolinks` | `false` | Autolink `user@example.com` |
-| `hard_soft_breaks` | `false` | Treat soft line breaks as hard breaks |
-| `wiki_links` | `false` | Enable `[[wiki links]]` |
-| `underline` | `false` | `__text__` renders as `<u>` instead of `<strong>` |
-| `latex_math` | `false` | Enable `$inline$` and `$$display$$` math |
-| `collapse_whitespace` | `false` | Collapse whitespace in text |
-| `permissive_atx_headers` | `false` | ATX headers without space after `#` |
-| `no_indented_code_blocks` | `false` | Disable indented code blocks |
-| `no_html_blocks` | `false` | Disable HTML blocks |
-| `no_html_spans` | `false` | Disable inline HTML |
-| `tag_filter` | `false` | GFM tag filter for disallowed HTML tags |
+| Option                       | Default | Description                                       |
+| ---------------------------- | ------- | ------------------------------------------------- |
+| `tables`                     | `true`  | GFM tables                                        |
+| `strikethrough`              | `true`  | GFM strikethrough (`~~text~~`)                    |
+| `tasklists`                  | `true`  | GFM task lists (`- [x] item`)                     |
+| `permissive_autolinks`       | `false` | Enable all autolink types (URL, WWW, email)       |
+| `permissive_url_autolinks`   | `false` | Autolink URLs like `https://example.com`          |
+| `permissive_www_autolinks`   | `false` | Autolink `www.example.com`                        |
+| `permissive_email_autolinks` | `false` | Autolink `user@example.com`                       |
+| `hard_soft_breaks`           | `false` | Treat soft line breaks as hard breaks             |
+| `wiki_links`                 | `false` | Enable `[[wiki links]]`                           |
+| `underline`                  | `false` | `__text__` renders as `<u>` instead of `<strong>` |
+| `latex_math`                 | `false` | Enable `$inline$` and `$$display$$` math          |
+| `collapse_whitespace`        | `false` | Collapse whitespace in text                       |
+| `permissive_atx_headers`     | `false` | ATX headers without space after `#`               |
+| `no_indented_code_blocks`    | `false` | Disable indented code blocks                      |
+| `no_html_blocks`             | `false` | Disable HTML blocks                               |
+| `no_html_spans`              | `false` | Disable inline HTML                               |
+| `tag_filter`                 | `false` | GFM tag filter for disallowed HTML tags           |
 
 ---
 
@@ -76,8 +76,8 @@ Parse Markdown and render it using custom JavaScript callbacks. This gives you f
 ```ts
 const result = Bun.markdown.render("# Hello **world**", {
   heading: (children, { level }) => `<h${level} class="title">${children}</h${level}>`,
-  strong: (children) => `<b>${children}</b>`,
-  paragraph: (children) => `<p>${children}</p>`,
+  strong: children => `<b>${children}</b>`,
+  paragraph: children => `<p>${children}</p>`,
 });
 // '<h1 class="title">Hello <b>world</b></h1>'
 ```
@@ -93,34 +93,34 @@ Return a string to replace the element's rendering. Return `null` or `undefined`
 
 ### Block callbacks
 
-| Callback | Meta | Description |
-|----------|------|-------------|
-| `heading` | `{ level: number }` | Heading level 1–6 |
-| `paragraph` | — | Paragraph block |
-| `blockquote` | — | Blockquote block |
-| `code` | `{ language: string }` | Fenced or indented code block. `language` is set when a language is specified on the fence |
-| `list` | `{ ordered: boolean, start?: number }` | Ordered or unordered list. `start` is the start number for ordered lists |
-| `listItem` | `{ checked: boolean }` | List item. `checked` is present for task list items |
-| `hr` | — | Horizontal rule |
-| `table` | — | Table block |
-| `thead` | — | Table head |
-| `tbody` | — | Table body |
-| `tr` | — | Table row |
-| `th` | `{ align: "left" \| "center" \| "right" }` | Table header cell. `align` is set when alignment is specified |
-| `td` | `{ align: "left" \| "center" \| "right" }` | Table data cell. `align` is set when alignment is specified |
-| `html` | — | Raw HTML content |
+| Callback     | Meta                                       | Description                                                                                |
+| ------------ | ------------------------------------------ | ------------------------------------------------------------------------------------------ |
+| `heading`    | `{ level: number }`                        | Heading level 1–6                                                                          |
+| `paragraph`  | —                                          | Paragraph block                                                                            |
+| `blockquote` | —                                          | Blockquote block                                                                           |
+| `code`       | `{ language: string }`                     | Fenced or indented code block. `language` is set when a language is specified on the fence |
+| `list`       | `{ ordered: boolean, start?: number }`     | Ordered or unordered list. `start` is the start number for ordered lists                   |
+| `listItem`   | `{ checked: boolean }`                     | List item. `checked` is present for task list items                                        |
+| `hr`         | —                                          | Horizontal rule                                                                            |
+| `table`      | —                                          | Table block                                                                                |
+| `thead`      | —                                          | Table head                                                                                 |
+| `tbody`      | —                                          | Table body                                                                                 |
+| `tr`         | —                                          | Table row                                                                                  |
+| `th`         | `{ align: "left" \| "center" \| "right" }` | Table header cell. `align` is set when alignment is specified                              |
+| `td`         | `{ align: "left" \| "center" \| "right" }` | Table data cell. `align` is set when alignment is specified                                |
+| `html`       | —                                          | Raw HTML content                                                                           |
 
 ### Inline callbacks
 
-| Callback | Meta | Description |
-|----------|------|-------------|
-| `strong` | — | Strong emphasis (`**text**`) |
-| `emphasis` | — | Emphasis (`*text*`) |
-| `link` | `{ href: string, title?: string }` | Link |
-| `image` | `{ src: string, title?: string }` | Image |
-| `codespan` | — | Inline code (`` `code` ``) |
-| `strikethrough` | — | Strikethrough (`~~text~~`) |
-| `text` | — | Plain text content |
+| Callback        | Meta                               | Description                  |
+| --------------- | ---------------------------------- | ---------------------------- |
+| `strong`        | —                                  | Strong emphasis (`**text**`) |
+| `emphasis`      | —                                  | Emphasis (`*text*`)          |
+| `link`          | `{ href: string, title?: string }` | Link                         |
+| `image`         | `{ src: string, title?: string }`  | Image                        |
+| `codespan`      | —                                  | Inline code (`` `code` ``)   |
+| `strikethrough` | —                                  | Strikethrough (`~~text~~`)   |
+| `text`          | —                                  | Plain text content           |
 
 ### Examples
 
@@ -128,10 +128,9 @@ Return a string to replace the element's rendering. Return `null` or `undefined`
 
 ```ts
 const html = Bun.markdown.render("# Title\n\nHello **world**", {
-  heading: (children, { level }) =>
-    `<h${level} class="heading heading-${level}">${children}</h${level}>`,
-  paragraph: (children) => `<p class="body">${children}</p>`,
-  strong: (children) => `<strong class="bold">${children}</strong>`,
+  heading: (children, { level }) => `<h${level} class="heading heading-${level}">${children}</h${level}>`,
+  paragraph: children => `<p class="body">${children}</p>`,
+  strong: children => `<strong class="bold">${children}</strong>`,
 });
 ```
 
@@ -139,14 +138,14 @@ const html = Bun.markdown.render("# Title\n\nHello **world**", {
 
 ```ts
 const plaintext = Bun.markdown.render("# Hello **world**", {
-  heading: (children) => children,
-  paragraph: (children) => children,
-  strong: (children) => children,
-  emphasis: (children) => children,
-  link: (children) => children,
+  heading: children => children,
+  paragraph: children => children,
+  strong: children => children,
+  emphasis: children => children,
+  link: children => children,
   image: () => "",
-  code: (children) => children,
-  codespan: (children) => children,
+  code: children => children,
+  codespan: children => children,
 });
 // "Hello world"
 ```
@@ -158,8 +157,8 @@ Return `null` or `undefined` to remove an element from the output:
 ```ts
 const result = Bun.markdown.render("# Title\n\n![logo](img.png)\n\nHello", {
   image: () => null, // Remove all images
-  heading: (children) => children,
-  paragraph: (children) => children + "\n",
+  heading: children => children,
+  paragraph: children => children + "\n",
 });
 // "Title\nHello\n"
 ```
@@ -169,22 +168,22 @@ const result = Bun.markdown.render("# Title\n\n![logo](img.png)\n\nHello", {
 ```ts
 const ansi = Bun.markdown.render("# Hello\n\nThis is **bold** and *italic*", {
   heading: (children, { level }) => `\x1b[1;4m${children}\x1b[0m\n`,
-  paragraph: (children) => children + "\n",
-  strong: (children) => `\x1b[1m${children}\x1b[22m`,
-  emphasis: (children) => `\x1b[3m${children}\x1b[23m`,
+  paragraph: children => children + "\n",
+  strong: children => `\x1b[1m${children}\x1b[22m`,
+  emphasis: children => `\x1b[3m${children}\x1b[23m`,
 });
 ```
 
 #### Code block syntax highlighting
 
-```ts
+````ts
 const result = Bun.markdown.render("```js\nconsole.log('hi')\n```", {
   code: (children, meta) => {
     const lang = meta?.language ?? "";
     return `<pre><code class="language-${lang}">${children}</code></pre>`;
   },
 });
-```
+````
 
 ### Combining callbacks with parser options
 
@@ -194,8 +193,8 @@ Parser options can be included in the same object as callbacks:
 const result = Bun.markdown.render("Visit www.example.com and ~~old link~~", {
   // Callbacks
   link: (children, { href }) => `[${children}](${href})`,
-  strikethrough: (children) => `--${children}--`,
-  paragraph: (children) => children,
+  strikethrough: children => `--${children}--`,
+  paragraph: children => children,
 
   // Parser options
   permissive_autolinks: true,

@@ -140,8 +140,8 @@ pub fn processTableRow(self: *Parser, vline: VerbatimLine, is_header: bool, col_
     }
 }
 
-const std = @import("std");
 const helpers = @import("./helpers.zig");
+const std = @import("std");
 
 const parser_mod = @import("./parser.zig");
 const Parser = parser_mod.Parser;

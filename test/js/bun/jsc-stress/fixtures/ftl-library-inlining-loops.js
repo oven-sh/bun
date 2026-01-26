@@ -1,3 +1,4 @@
+// @bun
 function foo(){
     var count = 100;
     var d = new DataView(new ArrayBuffer(count));

@@ -1,3 +1,4 @@
+// @bun
 function foo(s) {
     return /foo/.test(s);
 }

@@ -1,3 +1,4 @@
+// @bun
 function F () { this.inner = 42; };
 
 for (var i = 0; i < testLoopCount; ++i) {

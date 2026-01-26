@@ -1,3 +1,4 @@
+// @bun
 function foo(){
     return arguments.length;
 }

@@ -1,7 +1,9 @@
-const path = require("path");
-const fs = require("fs");
+// @bun
+//@ runDefaultWasm("--jitPolicyScale=0", "--useConcurrentJIT=0")
+import fs from "fs";
+import path from "path";
 async function instantiate(filename, importObject) {
-  const bytes = fs.readFileSync(path.join(__dirname, filename));
+  const bytes = fs.readFileSync(path.join(import.meta.dirname, filename));
   return WebAssembly.instantiate(bytes, importObject);
 }
 const log = function () {};

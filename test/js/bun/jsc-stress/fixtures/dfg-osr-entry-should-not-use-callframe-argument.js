@@ -1,3 +1,5 @@
+// @bun
+//@ runDefault("--useConcurrentJIT=0", "--jitPolicyScale=0.001")
 
 function shouldBe(actual, expected) {
     if (String(actual) !== expected)

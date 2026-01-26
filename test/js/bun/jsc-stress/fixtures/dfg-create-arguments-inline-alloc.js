@@ -1,3 +1,4 @@
+// @bun
 var foo = function(o) {
     var a = Array.prototype.slice.call(arguments);
     var sum = 0;

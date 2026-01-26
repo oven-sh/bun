@@ -1,3 +1,4 @@
+// @bun
 function assert(b) {
     if (!b)
         throw new Error("bad value")

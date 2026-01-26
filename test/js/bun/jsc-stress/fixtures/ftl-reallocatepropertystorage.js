@@ -1,3 +1,4 @@
+// @bun
 function foo(x){
     x.a0 = 0;
     x.a1 = 1;

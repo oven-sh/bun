@@ -1,3 +1,4 @@
+// @bun
 function foo(x){
     var t = "s" in x; 
     return t;

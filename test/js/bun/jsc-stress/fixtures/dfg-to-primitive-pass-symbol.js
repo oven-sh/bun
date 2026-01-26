@@ -1,3 +1,4 @@
+// @bun
 var shouldThrow = false;
 
 // str concat generates op_to_primitive.

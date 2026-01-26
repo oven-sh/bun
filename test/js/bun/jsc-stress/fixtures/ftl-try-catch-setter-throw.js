@@ -1,3 +1,4 @@
+// @bun
 function foo(o, a) {
     let x = o.g;
     let y = o.y;

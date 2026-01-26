@@ -1,3 +1,4 @@
+// @bun
 var i,c=0;
 function foo()
 {

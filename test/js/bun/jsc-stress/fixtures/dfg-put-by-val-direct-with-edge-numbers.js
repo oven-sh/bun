@@ -1,3 +1,4 @@
+// @bun
 // Test that a object accepts DFG PutByValueDirect operation with edge numbers.
 
 function lookupWithKey(key) {

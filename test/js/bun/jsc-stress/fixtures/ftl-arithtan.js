@@ -1,3 +1,4 @@
+// @bun
 function foo(x) {
     return Math.tan(x);
 }

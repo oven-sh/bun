@@ -1,3 +1,4 @@
+// @bun
 /*
 (module
     (tag $nonzero (param))

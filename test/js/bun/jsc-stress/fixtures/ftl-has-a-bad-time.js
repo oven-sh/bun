@@ -1,3 +1,4 @@
+// @bun
 function foo(p) {
     return p ? [42] : null;
 }

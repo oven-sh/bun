@@ -1,3 +1,4 @@
+// @bun
 function foo(i) {
     return arguments[i];
 }

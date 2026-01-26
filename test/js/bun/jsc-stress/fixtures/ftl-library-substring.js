@@ -1,3 +1,4 @@
+// @bun
 function foo(i, x){
     return x.substring( 2 , 5);
 }

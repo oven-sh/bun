@@ -1,3 +1,4 @@
+// @bun
 function foo(p, o) {
     var q = o.q;
     if (p)

@@ -1,3 +1,6 @@
+// @bun
+//@ $skipModes << "wasm-no-jit".to_sym
+//@ $skipModes << "wasm-no-wasm-jit".to_sym
 // Too slow without JIT
 
 function instantiate(moduleBase64, importObject) {

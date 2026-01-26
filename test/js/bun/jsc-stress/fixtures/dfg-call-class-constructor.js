@@ -1,3 +1,4 @@
+// @bun
 class Foo extends Promise { }
 
 noInline(Foo);

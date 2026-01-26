@@ -1,3 +1,4 @@
+// @bun
 function foo(num) {
     num |= 0;
     let x1 = num % -2147483648;

@@ -1,3 +1,4 @@
+// @bun
 function makeString(char) {
     var result = "";
     for (var i = 0; i < 10; ++i)

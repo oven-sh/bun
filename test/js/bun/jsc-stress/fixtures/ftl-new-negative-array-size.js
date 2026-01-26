@@ -1,3 +1,4 @@
+// @bun
 function foo(arg) {
     try {
         return new Array(arg);

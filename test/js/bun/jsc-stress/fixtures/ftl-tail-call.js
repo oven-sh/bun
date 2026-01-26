@@ -1,3 +1,4 @@
+// @bun
 "use strict";
 
 function foo(a, b, c) {

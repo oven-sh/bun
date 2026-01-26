@@ -1,3 +1,4 @@
+// @bun
 function foo(o, a) {
     let resetFlag = false;
     if (flag) {

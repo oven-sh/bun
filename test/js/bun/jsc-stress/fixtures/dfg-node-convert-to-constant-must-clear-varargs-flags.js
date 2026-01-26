@@ -1,3 +1,4 @@
+// @bun
 function doIndexOf(a) {
     a.indexOf(a);
 }

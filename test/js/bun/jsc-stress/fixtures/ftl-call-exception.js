@@ -1,3 +1,4 @@
+// @bun
 function foo(f, p, args) {
     var x = 100;
     var result = 101;

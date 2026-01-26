@@ -1,3 +1,4 @@
+// @bun
 'use strict';
 
 const object = {};

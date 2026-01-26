@@ -1,3 +1,4 @@
+// @bun
 function foo(o) {
     return "foo" in o;
 }

@@ -585,6 +585,21 @@ extern "C" napi_status napi_has_own_property(napi_env env, napi_value object,
     NAPI_RETURN_SUCCESS(env);
 }
 
+// For ASCII input (the common case), avoids UTF-8 decoding overhead by going
+// directly through Identifier::fromString(VM&, span<Latin1>), which uses the
+// span for a hash lookup in the atom string table without creating an
+// intermediate WTF::String. If the atom already exists, no copy occurs at all.
+// If the atom does not exist and gets inserted into the table, the characters
+// are cloned because we cannot guarantee the lifetime of the input span.
+JSC::Identifier identifierFromUtf8(JSC::VM& vm, const char* utf8Name)
+{
+    size_t utf8Len = strlen(utf8Name);
+    std::span<const Latin1Character> utf8Span { reinterpret_cast<const Latin1Character*>(utf8Name), utf8Len };
+    return WTF::charactersAreAllASCII(utf8Span)
+        ? JSC::Identifier::fromString(vm, utf8Span)
+        : JSC::Identifier::fromString(vm, WTF::String::fromUTF8(utf8Span));
+}
+
 extern "C" napi_status napi_set_named_property(napi_env env, napi_value object,
     const char* utf8name,
     napi_value value)
@@ -605,8 +620,7 @@ extern "C" napi_status napi_set_named_property(napi_env env, napi_value object,
     JSC::EnsureStillAliveScope ensureAlive(jsValue);
     JSC::EnsureStillAliveScope ensureAlive2(target);
 
-    auto nameStr = WTF::String::fromUTF8({ utf8name, strlen(utf8name) });
-    auto name = JSC::PropertyName(JSC::Identifier::fromString(vm, WTF::move(nameStr)));
+    auto name = identifierFromUtf8(vm, utf8name);
     PutPropertySlot slot(target, false);
 
     target->putInline(globalObject, name, jsValue, slot);
@@ -666,21 +680,6 @@ extern "C" napi_status napi_is_typedarray(napi_env env, napi_value value, bool* 
     NAPI_RETURN_SUCCESS(env);
 }
 
-// For ASCII input (the common case), avoids UTF-8 decoding overhead by going
-// directly through Identifier::fromString(VM&, span<Latin1>), which uses the
-// span for a hash lookup in the atom string table without creating an
-// intermediate WTF::String. If the atom already exists, no copy occurs at all.
-// If the atom does not exist and gets inserted into the table, the characters
-// are cloned because we cannot guarantee the lifetime of the input span.
-JSC::Identifier identifierFromUtf8ForGetOperationsOnly(JSC::VM& vm, const char* utf8Name)
-{
-    size_t utf8Len = strlen(utf8Name);
-    std::span<const Latin1Character> utf8Span { reinterpret_cast<const Latin1Character*>(utf8Name), utf8Len };
-    return WTF::charactersAreAllASCII(utf8Span)
-        ? JSC::Identifier::fromString(vm, utf8Span)
-        : JSC::Identifier::fromString(vm, WTF::String::fromUTF8(utf8Span));
-}
-
 extern "C" napi_status napi_has_named_property(napi_env env, napi_value object,
     const char* utf8Name,
     bool* result)
@@ -696,7 +695,7 @@ extern "C" napi_status napi_has_named_property(napi_env env, napi_value object,
     JSObject* target = toJS(object).toObject(globalObject);
     NAPI_RETURN_IF_EXCEPTION(env);
 
-    JSC::Identifier propertyName = identifierFromUtf8ForGetOperationsOnly(vm, utf8Name);
+    JSC::Identifier propertyName = identifierFromUtf8(vm, utf8Name);
 
     PropertySlot slot(target, PropertySlot::InternalMethodType::HasProperty);
     *result = target->getPropertySlot(globalObject, propertyName, slot);
@@ -717,7 +716,7 @@ extern "C" napi_status napi_get_named_property(napi_env env, napi_value object,
     JSObject* target = toJS(object).toObject(globalObject);
     NAPI_RETURN_IF_EXCEPTION(env);
 
-    JSC::Identifier propertyName = identifierFromUtf8ForGetOperationsOnly(vm, utf8Name);
+    JSC::Identifier propertyName = identifierFromUtf8(vm, utf8Name);
 
     *result = toNapi(target->get(globalObject, propertyName), globalObject);
     NAPI_RETURN_SUCCESS_UNLESS_EXCEPTION(env);

@@ -96,22 +96,22 @@ Return a string to replace the element's rendering. Return `null` or `undefined`
 
 ### Block callbacks
 
-| Callback     | Meta                                       | Description                                                                                |
-| ------------ | ------------------------------------------ | ------------------------------------------------------------------------------------------ |
-| `heading`    | `{ level: number, id?: string }`           | Heading level 1–6. `id` is set when `headingIds` is enabled                                |
-| `paragraph`  | —                                          | Paragraph block                                                                            |
-| `blockquote` | —                                          | Blockquote block                                                                           |
-| `code`       | `{ language?: string }`                    | Fenced or indented code block. `language` is the info-string when specified on the fence   |
-| `list`       | `{ ordered: boolean, start?: number }`     | Ordered or unordered list. `start` is the start number for ordered lists                   |
-| `listItem`   | `{ checked?: boolean }`                    | List item. `checked` is set for task list items (`- [x]` / `- [ ]`)                       |
-| `hr`         | —                                          | Horizontal rule                                                                            |
-| `table`      | —                                          | Table block                                                                                |
-| `thead`      | —                                          | Table head                                                                                 |
-| `tbody`      | —                                          | Table body                                                                                 |
-| `tr`         | —                                          | Table row                                                                                  |
-| `th`         | `{ align?: "left" \| "center" \| "right" }` | Table header cell. `align` is set when alignment is specified                             |
-| `td`         | `{ align?: "left" \| "center" \| "right" }` | Table data cell. `align` is set when alignment is specified                               |
-| `html`       | —                                          | Raw HTML content                                                                           |
+| Callback     | Meta                                        | Description                                                                              |
+| ------------ | ------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `heading`    | `{ level: number, id?: string }`            | Heading level 1–6. `id` is set when `headingIds` is enabled                              |
+| `paragraph`  | —                                           | Paragraph block                                                                          |
+| `blockquote` | —                                           | Blockquote block                                                                         |
+| `code`       | `{ language?: string }`                     | Fenced or indented code block. `language` is the info-string when specified on the fence |
+| `list`       | `{ ordered: boolean, start?: number }`      | Ordered or unordered list. `start` is the start number for ordered lists                 |
+| `listItem`   | `{ checked?: boolean }`                     | List item. `checked` is set for task list items (`- [x]` / `- [ ]`)                      |
+| `hr`         | —                                           | Horizontal rule                                                                          |
+| `table`      | —                                           | Table block                                                                              |
+| `thead`      | —                                           | Table head                                                                               |
+| `tbody`      | —                                           | Table body                                                                               |
+| `tr`         | —                                           | Table row                                                                                |
+| `th`         | `{ align?: "left" \| "center" \| "right" }` | Table header cell. `align` is set when alignment is specified                            |
+| `td`         | `{ align?: "left" \| "center" \| "right" }` | Table data cell. `align` is set when alignment is specified                              |
+| `html`       | —                                           | Raw HTML content                                                                         |
 
 ### Inline callbacks
 
@@ -257,11 +257,7 @@ function Heading({ id, children }) {
   );
 }
 
-<Markdown
-  text={content}
-  components={{ pre: Code, a: Link, h2: Heading }}
-  headingIds
-/>;
+<Markdown text={content} components={{ pre: Code, a: Link, h2: Heading }} headingIds />;
 ```
 
 Where `Markdown` is:
@@ -276,29 +272,29 @@ function Markdown({ text, components, ...options }) {
 
 Every HTML tag produced by the parser can be overridden:
 
-| Option | Props | Description |
-| ------ | ----- | ----------- |
-| `h1`–`h6` | `{ id?, children }` | Headings. `id` is set when `headingIds` is enabled |
-| `p` | `{ children }` | Paragraph |
-| `blockquote` | `{ children }` | Blockquote |
-| `pre` | `{ language?, children }` | Code block. `language` is the info string (e.g. `"js"`) |
-| `hr` | `{}` | Horizontal rule (no children) |
-| `ul` | `{ children }` | Unordered list |
-| `ol` | `{ start, children }` | Ordered list. `start` is the first item number |
-| `li` | `{ checked?, children }` | List item. `checked` is set for task list items |
-| `table` | `{ children }` | Table |
-| `thead` | `{ children }` | Table head |
-| `tbody` | `{ children }` | Table body |
-| `tr` | `{ children }` | Table row |
-| `th` | `{ align?, children }` | Table header cell |
-| `td` | `{ align?, children }` | Table data cell |
-| `em` | `{ children }` | Emphasis (`*text*`) |
-| `strong` | `{ children }` | Strong (`**text**`) |
-| `a` | `{ href, title?, children }` | Link |
-| `img` | `{ src, alt?, title? }` | Image (no children) |
-| `code` | `{ children }` | Inline code |
-| `del` | `{ children }` | Strikethrough (`~~text~~`) |
-| `br` | `{}` | Hard line break (no children) |
+| Option       | Props                        | Description                                             |
+| ------------ | ---------------------------- | ------------------------------------------------------- |
+| `h1`–`h6`    | `{ id?, children }`          | Headings. `id` is set when `headingIds` is enabled      |
+| `p`          | `{ children }`               | Paragraph                                               |
+| `blockquote` | `{ children }`               | Blockquote                                              |
+| `pre`        | `{ language?, children }`    | Code block. `language` is the info string (e.g. `"js"`) |
+| `hr`         | `{}`                         | Horizontal rule (no children)                           |
+| `ul`         | `{ children }`               | Unordered list                                          |
+| `ol`         | `{ start, children }`        | Ordered list. `start` is the first item number          |
+| `li`         | `{ checked?, children }`     | List item. `checked` is set for task list items         |
+| `table`      | `{ children }`               | Table                                                   |
+| `thead`      | `{ children }`               | Table head                                              |
+| `tbody`      | `{ children }`               | Table body                                              |
+| `tr`         | `{ children }`               | Table row                                               |
+| `th`         | `{ align?, children }`       | Table header cell                                       |
+| `td`         | `{ align?, children }`       | Table data cell                                         |
+| `em`         | `{ children }`               | Emphasis (`*text*`)                                     |
+| `strong`     | `{ children }`               | Strong (`**text**`)                                     |
+| `a`          | `{ href, title?, children }` | Link                                                    |
+| `img`        | `{ src, alt?, title? }`      | Image (no children)                                     |
+| `code`       | `{ children }`               | Inline code                                             |
+| `del`        | `{ children }`               | Strikethrough (`~~text~~`)                              |
+| `br`         | `{}`                         | Hard line break (no children)                           |
 
 ### React 18 and older
 

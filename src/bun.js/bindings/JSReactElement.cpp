@@ -70,6 +70,13 @@ Structure* createStructure(VM& vm, JSGlobalObject* globalObject)
 } // namespace JSReactElement
 } // namespace Bun
 
+static JSC::Symbol* createTypeofSymbol(VM& vm, uint8_t reactVersion)
+{
+    if (reactVersion == 0)
+        return JSC::Symbol::create(vm, vm.symbolRegistry().symbolForKey("react.element"_s));
+    return JSC::Symbol::create(vm, vm.symbolRegistry().symbolForKey("react.transitional.element"_s));
+}
+
 extern "C" JSC::EncodedJSValue JSReactElement__create(
     JSGlobalObject* globalObject,
     uint8_t reactVersion,
@@ -79,22 +86,36 @@ extern "C" JSC::EncodedJSValue JSReactElement__create(
     auto* global = jsCast<Zig::GlobalObject*>(globalObject);
     VM& vm = global->vm();
 
-    // Pick the $$typeof symbol based on React version
-    JSC::Symbol* typeofSymbol;
-    if (reactVersion == 0) {
-        // React 18: Symbol.for('react.element')
-        typeofSymbol = JSC::Symbol::create(vm, vm.symbolRegistry().symbolForKey("react.element"_s));
-    } else {
-        // React 19: Symbol.for('react.transitional.element')
-        typeofSymbol = JSC::Symbol::create(vm, vm.symbolRegistry().symbolForKey("react.transitional.element"_s));
-    }
-
     JSObject* element = constructEmptyObject(vm, global->JSReactElementStructure());
-    element->putDirectOffset(vm, Bun::JSReactElement::typeofOffset, typeofSymbol);
+    element->putDirectOffset(vm, Bun::JSReactElement::typeofOffset, createTypeofSymbol(vm, reactVersion));
     element->putDirectOffset(vm, Bun::JSReactElement::typeOffset, JSValue::decode(type));
     element->putDirectOffset(vm, Bun::JSReactElement::keyOffset, jsNull());
     element->putDirectOffset(vm, Bun::JSReactElement::refOffset, jsNull());
     element->putDirectOffset(vm, Bun::JSReactElement::propsOffset, JSValue::decode(props));
+
+    return JSValue::encode(element);
+}
+
+extern "C" JSC::EncodedJSValue JSReactElement__createFragment(
+    JSGlobalObject* globalObject,
+    uint8_t reactVersion,
+    EncodedJSValue children)
+{
+    auto* global = jsCast<Zig::GlobalObject*>(globalObject);
+    VM& vm = global->vm();
+
+    JSC::Symbol* fragmentSymbol = JSC::Symbol::create(vm,
+        vm.symbolRegistry().symbolForKey("react.fragment"_s));
+
+    JSObject* props = constructEmptyObject(globalObject, globalObject->objectPrototype(), 1);
+    props->putDirect(vm, JSC::Identifier::fromString(vm, "children"_s), JSValue::decode(children));
+
+    JSObject* element = constructEmptyObject(vm, global->JSReactElementStructure());
+    element->putDirectOffset(vm, Bun::JSReactElement::typeofOffset, createTypeofSymbol(vm, reactVersion));
+    element->putDirectOffset(vm, Bun::JSReactElement::typeOffset, fragmentSymbol);
+    element->putDirectOffset(vm, Bun::JSReactElement::keyOffset, jsNull());
+    element->putDirectOffset(vm, Bun::JSReactElement::refOffset, jsNull());
+    element->putDirectOffset(vm, Bun::JSReactElement::propsOffset, props);
 
     return JSValue::encode(element);
 }

@@ -4,10 +4,9 @@ import { renderToString } from "react-dom/server";
 
 const Markdown = Bun.markdown;
 
-/** Wrap an array of React elements in a Fragment and renderToString */
+/** renderToString the Fragment returned by Markdown.react */
 function reactRender(md: string, opts?: any): string {
-  const elements = Markdown.react(md, opts);
-  return renderToString(React.createElement(React.Fragment, null, ...elements));
+  return renderToString(Markdown.react(md, opts));
 }
 
 // ============================================================================
@@ -363,22 +362,31 @@ This is **bold** and *italic*.
 
 describe("Bun.markdown.react", () => {
   const REACT_ELEMENT_SYMBOL = Symbol.for("react.element");
+  const REACT_FRAGMENT_SYMBOL = Symbol.for("react.fragment");
   const REACT_TRANSITIONAL_SYMBOL = Symbol.for("react.transitional.element");
 
-  test("returns array of React elements", () => {
+  /** Helper: get the children array from the Fragment returned by react() */
+  function children(md: string, opts?: any): any[] {
+    return Markdown.react(md, opts).props.children;
+  }
+
+  test("returns a Fragment element", () => {
     const result = Markdown.react("# Hello\n");
-    expect(result).toBeArray();
-    expect(result).toHaveLength(1);
+    expect(result.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
+    expect(result.type).toBe(REACT_FRAGMENT_SYMBOL);
+    expect(result.key).toBeNull();
+    expect(result.ref).toBeNull();
+    expect(result.props.children).toBeArray();
   });
 
-  test("each element has $$typeof symbol", () => {
-    const result = Markdown.react("# Hello\n");
-    expect(result[0].$$typeof).toBe(REACT_ELEMENT_SYMBOL);
+  test("fragment children are React elements", () => {
+    const els = children("# Hello\n");
+    expect(els).toHaveLength(1);
+    expect(els[0].$$typeof).toBe(REACT_ELEMENT_SYMBOL);
   });
 
   test("element has type, key, ref, props", () => {
-    const result = Markdown.react("# Hello\n");
-    const el = result[0];
+    const el = children("# Hello\n")[0];
     expect(el.type).toBe("h1");
     expect(el.key).toBeNull();
     expect(el.ref).toBeNull();
@@ -388,21 +396,19 @@ describe("Bun.markdown.react", () => {
   test("heading levels 1-6", () => {
     for (let i = 1; i <= 6; i++) {
       const md = Buffer.alloc(i, "#").toString() + " Level\n";
-      const result = Markdown.react(md);
-      expect(result[0].$$typeof).toBe(REACT_ELEMENT_SYMBOL);
-      expect(result[0].type).toBe(`h${i}`);
-      expect(result[0].props.children).toEqual(["Level"]);
+      const el = children(md)[0];
+      expect(el.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
+      expect(el.type).toBe(`h${i}`);
+      expect(el.props.children).toEqual(["Level"]);
     }
   });
 
   test("text is plain strings in children", () => {
-    const result = Markdown.react("Hello world\n");
-    expect(result[0].props.children).toEqual(["Hello world"]);
+    expect(children("Hello world\n")[0].props.children).toEqual(["Hello world"]);
   });
 
   test("nested inline elements are React elements", () => {
-    const result = Markdown.react("Hello **world**\n");
-    const p = result[0];
+    const p = children("Hello **world**\n")[0];
     expect(p.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
     expect(p.props.children[0]).toBe("Hello ");
     const strong = p.props.children[1];
@@ -412,8 +418,7 @@ describe("Bun.markdown.react", () => {
   });
 
   test("link has href in props", () => {
-    const result = Markdown.react("[click](https://example.com)\n");
-    const link = result[0].props.children[0];
+    const link = children("[click](https://example.com)\n")[0].props.children[0];
     expect(link.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
     expect(link.type).toBe("a");
     expect(link.props.href).toBe("https://example.com");
@@ -421,8 +426,7 @@ describe("Bun.markdown.react", () => {
   });
 
   test("image has src and alt in props", () => {
-    const result = Markdown.react("![alt](img.png)\n");
-    const img = result[0].props.children[0];
+    const img = children("![alt](img.png)\n")[0].props.children[0];
     expect(img.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
     expect(img.type).toBe("img");
     expect(img.props.src).toBe("img.png");
@@ -431,16 +435,14 @@ describe("Bun.markdown.react", () => {
   });
 
   test("code block with language", () => {
-    const result = Markdown.react("```ts\nconst x = 1;\n```\n");
-    const pre = result[0];
+    const pre = children("```ts\nconst x = 1;\n```\n")[0];
     expect(pre.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
     expect(pre.type).toBe("pre");
     expect(pre.props.language).toBe("ts");
   });
 
   test("hr is void element", () => {
-    const result = Markdown.react("---\n");
-    const hr = result[0];
+    const hr = children("---\n")[0];
     expect(hr.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
     expect(hr.type).toBe("hr");
     expect(hr.key).toBeNull();
@@ -449,17 +451,15 @@ describe("Bun.markdown.react", () => {
   });
 
   test("br produces React element", () => {
-    const result = Markdown.react("line1  \nline2\n");
-    const children = result[0].props.children;
-    const br = children.find((c: any) => typeof c === "object" && c?.type === "br");
+    const pChildren = children("line1  \nline2\n")[0].props.children;
+    const br = pChildren.find((c: any) => typeof c === "object" && c?.type === "br");
     expect(br).toBeDefined();
     expect(br.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
     expect(br.props).toEqual({});
   });
 
   test("ordered list with start", () => {
-    const result = Markdown.react("3. first\n4. second\n");
-    const ol = result[0];
+    const ol = children("3. first\n4. second\n")[0];
     expect(ol.type).toBe("ol");
     expect(ol.props.start).toBe(3);
     expect(ol.props.children).toHaveLength(2);
@@ -467,8 +467,7 @@ describe("Bun.markdown.react", () => {
   });
 
   test("table structure", () => {
-    const result = Markdown.react("| A | B |\n|---|---|\n| 1 | 2 |\n");
-    const table = result[0];
+    const table = children("| A | B |\n|---|---|\n| 1 | 2 |\n")[0];
     expect(table.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
     expect(table.type).toBe("table");
     const thead = table.props.children.find((c: any) => c.type === "thead");
@@ -477,41 +476,38 @@ describe("Bun.markdown.react", () => {
   });
 
   test("headingIds adds id to props", () => {
-    const result = Markdown.react("## Hello World\n", { headingIds: true });
-    expect(result[0].type).toBe("h2");
-    expect(result[0].props.id).toBe("hello-world");
-    expect(result[0].props.children).toEqual(["Hello World"]);
+    const el = children("## Hello World\n", { headingIds: true })[0];
+    expect(el.type).toBe("h2");
+    expect(el.props.id).toBe("hello-world");
+    expect(el.props.children).toEqual(["Hello World"]);
   });
 
-  test("reactVersion 18 uses react.element symbol (default)", () => {
+  test("default $$typeof is react.element", () => {
     const result = Markdown.react("# Hi\n");
-    expect(result[0].$$typeof).toBe(REACT_ELEMENT_SYMBOL);
+    expect(result.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
+    expect(result.props.children[0].$$typeof).toBe(REACT_ELEMENT_SYMBOL);
   });
 
-  test("reactVersion 19 uses react.transitional.element symbol", () => {
-    const result = Markdown.react("# Hi\n", { reactVersion: 19 });
-    expect(result[0].$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);
-  });
-
-  test("reactVersion 19 nested elements all use transitional symbol", () => {
+  test("reactVersion 19 uses transitional symbol on all elements", () => {
     const result = Markdown.react("Hello **world**\n", { reactVersion: 19 });
-    const p = result[0];
+    expect(result.$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);
+    const p = result.props.children[0];
     expect(p.$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);
     const strong = p.props.children[1];
     expect(strong.$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);
   });
 
   test("multiple blocks", () => {
-    const result = Markdown.react("# Title\n\nParagraph\n");
-    expect(result).toHaveLength(2);
-    expect(result[0].$$typeof).toBe(REACT_ELEMENT_SYMBOL);
-    expect(result[0].type).toBe("h1");
-    expect(result[1].$$typeof).toBe(REACT_ELEMENT_SYMBOL);
-    expect(result[1].type).toBe("p");
+    const els = children("# Title\n\nParagraph\n");
+    expect(els).toHaveLength(2);
+    expect(els[0].$$typeof).toBe(REACT_ELEMENT_SYMBOL);
+    expect(els[0].type).toBe("h1");
+    expect(els[1].$$typeof).toBe(REACT_ELEMENT_SYMBOL);
+    expect(els[1].type).toBe("p");
   });
 
   test("complete document", () => {
-    const result = Markdown.react(`# Hello
+    const els = children(`# Hello
 
 This is **bold** and *italic*.
 
@@ -520,19 +516,17 @@ This is **bold** and *italic*.
 
 ---
 `);
-    expect(result[0].type).toBe("h1");
-    expect(result[1].type).toBe("p");
-    expect(result[2].type).toBe("ul");
-    expect(result[3].type).toBe("hr");
-    // All are React elements
-    for (const el of result) {
+    expect(els[0].type).toBe("h1");
+    expect(els[1].type).toBe("p");
+    expect(els[2].type).toBe("ul");
+    expect(els[3].type).toBe("hr");
+    for (const el of els) {
       expect(el.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
     }
   });
 
   test("blockquote contains nested React elements", () => {
-    const result = Markdown.react("> quoted text\n");
-    const bq = result[0];
+    const bq = children("> quoted text\n")[0];
     expect(bq.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
     expect(bq.type).toBe("blockquote");
     const p = bq.props.children[0];
@@ -542,8 +536,7 @@ This is **bold** and *italic*.
   });
 
   test("deeply nested elements are all React elements", () => {
-    const result = Markdown.react("> **bold *and italic***\n");
-    const bq = result[0];
+    const bq = children("> **bold *and italic***\n")[0];
     expect(bq.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
     const p = bq.props.children[0];
     expect(p.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
@@ -557,8 +550,7 @@ This is **bold** and *italic*.
   });
 
   test("link with title in React element", () => {
-    const result = Markdown.react('[text](https://example.com "My Title")\n');
-    const link = result[0].props.children[0];
+    const link = children('[text](https://example.com "My Title")\n')[0].props.children[0];
     expect(link.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
     expect(link.type).toBe("a");
     expect(link.props.href).toBe("https://example.com");
@@ -567,8 +559,7 @@ This is **bold** and *italic*.
   });
 
   test("image with title in React element", () => {
-    const result = Markdown.react('![alt](pic.jpg "Photo")\n');
-    const img = result[0].props.children[0];
+    const img = children('![alt](pic.jpg "Photo")\n')[0].props.children[0];
     expect(img.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
     expect(img.type).toBe("img");
     expect(img.props.src).toBe("pic.jpg");
@@ -578,24 +569,21 @@ This is **bold** and *italic*.
   });
 
   test("inline code is a React element", () => {
-    const result = Markdown.react("`code`\n");
-    const code = result[0].props.children[0];
+    const code = children("`code`\n")[0].props.children[0];
     expect(code.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
     expect(code.type).toBe("code");
     expect(code.props.children).toEqual(["code"]);
   });
 
   test("strikethrough is a React element", () => {
-    const result = Markdown.react("~~deleted~~\n");
-    const del = result[0].props.children[0];
+    const del = children("~~deleted~~\n")[0].props.children[0];
     expect(del.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
     expect(del.type).toBe("del");
     expect(del.props.children).toEqual(["deleted"]);
   });
 
   test("unordered list children are React elements", () => {
-    const result = Markdown.react("- a\n- b\n");
-    const ul = result[0];
+    const ul = children("- a\n- b\n")[0];
     expect(ul.type).toBe("ul");
     for (const li of ul.props.children) {
       expect(li.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
@@ -604,17 +592,15 @@ This is **bold** and *italic*.
   });
 
   test("entities are decoded in React output", () => {
-    const result = Markdown.react("&amp; &lt; &gt;\n");
-    const text = result[0].props.children.join("");
+    const text = children("&amp; &lt; &gt;\n")[0].props.children.join("");
     expect(text).toContain("&");
     expect(text).toContain("<");
     expect(text).toContain(">");
   });
 
   test("softbr becomes newline string", () => {
-    const result = Markdown.react("line1\nline2\n");
-    const children = result[0].props.children;
-    expect(children).toContain("\n");
+    const pChildren = children("line1\nline2\n")[0].props.children;
+    expect(pChildren).toContain("\n");
   });
 });
 
@@ -757,14 +743,11 @@ Hello **world**, this is *important*.
     expect(html).toBe("<p>First paragraph.</p><p>Second paragraph.</p>");
   });
 
-  test("react 19 elements also renderToString correctly", () => {
-    // React 18 accepts both Symbol.for('react.element') and
-    // Symbol.for('react.transitional.element') for rendering
-    const elements = Markdown.react("# Hello\n", { reactVersion: 19 });
-    // React 18 won't recognize the transitional symbol, so wrap manually
-    // Just verify the structure is correct
-    expect(elements[0].type).toBe("h1");
-    expect(elements[0].props.children).toEqual(["Hello"]);
+  test("reactVersion 19 produces correct structure", () => {
+    const result = Markdown.react("# Hello\n", { reactVersion: 19 });
+    const els = result.props.children;
+    expect(els[0].type).toBe("h1");
+    expect(els[0].props.children).toEqual(["Hello"]);
   });
 });
 
@@ -934,21 +917,26 @@ describe("Bun.markdown.render component overrides", () => {
 describe("Bun.markdown.react component overrides", () => {
   const REACT_ELEMENT_SYMBOL = Symbol.for("react.element");
 
+  /** Helper: get fragment children */
+  function children(md: string, opts?: any): any[] {
+    return Markdown.react(md, opts).props.children;
+  }
+
   test("function component override replaces type", () => {
     function MyHeading({ children }: any) {
       return React.createElement("div", { className: "heading" }, ...children);
     }
-    const result = Markdown.react("# Hello\n", { h1: MyHeading });
-    expect(result[0].$$typeof).toBe(REACT_ELEMENT_SYMBOL);
-    expect(result[0].type).toBe(MyHeading);
-    expect(result[0].props.children).toEqual(["Hello"]);
+    const el = children("# Hello\n", { h1: MyHeading })[0];
+    expect(el.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
+    expect(el.type).toBe(MyHeading);
+    expect(el.props.children).toEqual(["Hello"]);
   });
 
   test("string override in react mode", () => {
-    const result = Markdown.react("# Hello\n", { h1: "section" });
-    expect(result[0].$$typeof).toBe(REACT_ELEMENT_SYMBOL);
-    expect(result[0].type).toBe("section");
-    expect(result[0].props.children).toEqual(["Hello"]);
+    const el = children("# Hello\n", { h1: "section" })[0];
+    expect(el.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
+    expect(el.type).toBe("section");
+    expect(el.props.children).toEqual(["Hello"]);
   });
 
   test("multiple component overrides", () => {
@@ -958,30 +946,28 @@ describe("Bun.markdown.react component overrides", () => {
     function Strong({ children }: any) {
       return React.createElement("b", null, ...children);
     }
-    const result = Markdown.react("Hello **world**\n", { p: P, strong: Strong });
-    expect(result[0].type).toBe(P);
-    const strong = result[0].props.children[1];
+    const els = children("Hello **world**\n", { p: P, strong: Strong });
+    expect(els[0].type).toBe(P);
+    const strong = els[0].props.children[1];
     expect(strong.type).toBe(Strong);
   });
 
   test("boolean override is ignored in react mode", () => {
-    const result = Markdown.react("# Hello\n", { h1: true });
-    expect(result[0].type).toBe("h1");
+    expect(children("# Hello\n", { h1: true })[0].type).toBe("h1");
   });
 
   test("override with reactVersion 19", () => {
     const TRANSITIONAL = Symbol.for("react.transitional.element");
-    const result = Markdown.react("# Hello\n", { h1: "custom-h1", reactVersion: 19 });
-    expect(result[0].$$typeof).toBe(TRANSITIONAL);
-    expect(result[0].type).toBe("custom-h1");
+    const el = children("# Hello\n", { h1: "custom-h1", reactVersion: 19 })[0];
+    expect(el.$$typeof).toBe(TRANSITIONAL);
+    expect(el.type).toBe("custom-h1");
   });
 
   test("link override preserves href prop", () => {
     function Link({ href, children }: any) {
       return React.createElement("a", { href, className: "custom" }, ...children);
     }
-    const result = Markdown.react("[click](https://example.com)\n", { a: Link });
-    const link = result[0].props.children[0];
+    const link = children("[click](https://example.com)\n", { a: Link })[0].props.children[0];
     expect(link.type).toBe(Link);
     expect(link.props.href).toBe("https://example.com");
   });
@@ -990,18 +976,17 @@ describe("Bun.markdown.react component overrides", () => {
     function Img(props: any) {
       return React.createElement("img", props);
     }
-    const result = Markdown.react("![photo](pic.jpg)\n", { img: Img });
-    const img = result[0].props.children[0];
+    const img = children("![photo](pic.jpg)\n", { img: Img })[0].props.children[0];
     expect(img.type).toBe(Img);
     expect(img.props.src).toBe("pic.jpg");
     expect(img.props.alt).toBe("photo");
   });
 
   test("hr override in react mode", () => {
-    const result = Markdown.react("---\n", { hr: "custom-hr" });
-    expect(result[0].$$typeof).toBe(REACT_ELEMENT_SYMBOL);
-    expect(result[0].type).toBe("custom-hr");
-    expect(result[0].props).toEqual({});
+    const el = children("---\n", { hr: "custom-hr" })[0];
+    expect(el.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
+    expect(el.type).toBe("custom-hr");
+    expect(el.props).toEqual({});
   });
 });
 

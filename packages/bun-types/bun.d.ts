@@ -917,7 +917,7 @@ declare module "bun" {
    * component overrides to replace default HTML tags with custom components.
    *
    * @example
-   * ```ts
+   * ```tsx
    * // Render markdown to HTML
    * const html = Bun.markdown.html("# Hello **world**");
    * // "<h1>Hello <strong>world</strong></h1>\n"
@@ -926,11 +926,13 @@ declare module "bun" {
    * const nodes = Bun.markdown.render("# Hello **world**");
    * // [{ type: "h1", props: { children: ["Hello ", { type: "strong", props: { children: ["world"] } }] } }]
    *
-   * // Parse to React elements (works with React.renderToString)
-   * const elements = Bun.markdown.react("# Hello **world**");
+   * // Render as a React component
+   * function Markdown({ text }: { text: string }) {
+   *   return Bun.markdown.react(text);
+   * }
    *
    * // With component overrides
-   * const elements = Bun.markdown.react("# Hello", { h1: MyHeadingComponent });
+   * const element = Bun.markdown.react("# Hello", { h1: MyHeadingComponent });
    * ```
    */
   namespace markdown {
@@ -1071,12 +1073,12 @@ declare module "bun" {
     /** Options for `render()` — parser options plus optional component overrides. */
     type RenderOptions = Options & ComponentOverrides;
 
-    /** Options for `react()` — render options plus React version configuration. */
+    /** Options for `react()` — render options plus element symbol configuration. */
     interface ReactOptions extends RenderOptions {
       /**
-       * React version to use for the `$$typeof` symbol on elements.
-       * - `18` (default): uses `Symbol.for('react.element')`
-       * - `19`: uses `Symbol.for('react.transitional.element')`
+       * Which `$$typeof` symbol to use on the generated elements.
+       * - `18` (default): `Symbol.for('react.element')`
+       * - `19`: `Symbol.for('react.transitional.element')`
        */
       reactVersion?: 18 | 19;
     }
@@ -1174,38 +1176,34 @@ declare module "bun" {
      * Parse markdown to React-compatible JSX elements.
      *
      * Each node is a valid React element with `$$typeof`, `type`, `key`, `ref`, and `props`.
-     * The output can be passed directly to `React.renderToString()` or returned from
+     * The output can be passed directly to `renderToString()` or returned from
      * a React component.
      *
      * Component overrides can be passed as options to replace default HTML tag names
      * with custom React components.
      *
      * @param input The markdown string or buffer to parse
-     * @param options Parser options, component overrides, and React version configuration
-     * @returns An array of React elements
+     * @param options Parser options, component overrides, and element symbol configuration
+     * @returns A React Fragment element containing the parsed markdown
      *
      * @example
-     * ```ts
-     * import { renderToString } from "react-dom/server";
-     *
-     * const elements = Bun.markdown.react("# Hello **world**");
-     * const html = renderToString(React.createElement(React.Fragment, null, ...elements));
-     * // "<h1>Hello <strong>world</strong></h1>"
+     * ```tsx
+     * // Render markdown as a React component
+     * function Markdown({ text }: { text: string }) {
+     *   return Bun.markdown.react(text);
+     * }
      *
      * // With custom components
-     * function Heading({ children }) {
+     * function Heading({ children }: { children: React.ReactNode }) {
      *   return <h1 className="title">{children}</h1>;
      * }
-     * const elements = Bun.markdown.react("# Hello", { h1: Heading });
-     *
-     * // React 19 transitional element symbol
-     * const elements = Bun.markdown.react("# Hello", { reactVersion: 19 });
+     * const element = Bun.markdown.react("# Hello", { h1: Heading });
      * ```
      */
     export function react(
       input: string | NodeJS.TypedArray | DataView<ArrayBuffer> | ArrayBufferLike,
       options?: ReactOptions,
-    ): any[];
+    ): JSX.Element;
   }
 
   /**

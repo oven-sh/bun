@@ -102,12 +102,15 @@ fn renderObjectsImpl(
     return renderAST(globalThis, callframe, marked_args, null);
 }
 
-/// `Bun.markdown.react(text, options?)` — returns React element AST.
-///
-/// Each node is a valid React element:
-/// `{ $$typeof: Symbol.for('react.element'), type: "tagName", key: null, ref: null, props: { ...attrs, children: [...] } }`
-/// The react version can be set via `{ reactVersion: 18 }` (default) or `{ reactVersion: 19 }` in options.
+/// `Bun.markdown.react(text, options?)` — returns a React Fragment element
+/// containing the parsed markdown as children.
 pub const renderReact = jsc.MarkedArgumentBuffer.wrap(renderReactImpl);
+
+extern fn JSReactElement__createFragment(
+    globalObject: *jsc.JSGlobalObject,
+    react_version: u8,
+    children: JSValue,
+) JSValue;
 
 fn renderReactImpl(
     globalThis: *jsc.JSGlobalObject,
@@ -117,7 +120,6 @@ fn renderReactImpl(
     const args = callframe.argumentsAsArray(2);
     const opts_value = args[1];
 
-    // Parse reactVersion from options (default: 18 → react_version 0)
     var react_version: u8 = 0;
     if (opts_value.isObject()) {
         if (try opts_value.get(globalThis, "reactVersion")) |rv| {
@@ -128,7 +130,10 @@ fn renderReactImpl(
         }
     }
 
-    return renderAST(globalThis, callframe, marked_args, react_version);
+    const children = try renderAST(globalThis, callframe, marked_args, react_version);
+    const fragment = JSReactElement__createFragment(globalThis, react_version, children);
+    marked_args.append(fragment);
+    return fragment;
 }
 
 fn renderAST(

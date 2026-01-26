@@ -19,3 +19,8 @@ extern "C" JSC::EncodedJSValue JSReactElement__create(
     uint8_t reactVersion,
     EncodedJSValue type,
     EncodedJSValue props);
+
+extern "C" JSC::EncodedJSValue JSReactElement__createFragment(
+    JSGlobalObject* globalObject,
+    uint8_t reactVersion,
+    EncodedJSValue children);

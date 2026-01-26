@@ -406,7 +406,7 @@ pub fn generateMarkdown(allocator: std.mem.Allocator, metafile_json: []const u8)
     var input_files: std.ArrayListUnmanaged(InputFileInfo) = .{};
     defer input_files.deinit(allocator);
 
-    var imported_by = std.StringHashMap(std.ArrayListUnmanaged([]const u8)).init(allocator);
+    var imported_by = bun.StringHashMap(std.ArrayListUnmanaged([]const u8)).init(allocator);
     defer {
         var it = imported_by.valueIterator();
         while (it.next()) |list| {

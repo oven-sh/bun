@@ -7,6 +7,7 @@ pub const SpanDetail = types.SpanDetail;
 pub const Align = types.Align;
 pub const BLOCK_FENCED_CODE = types.BLOCK_FENCED_CODE;
 pub const entity = @import("./entity.zig");
+pub const helpers = @import("./helpers.zig");
 
 pub const RenderOptions = struct {
     tag_filter: bool = false,

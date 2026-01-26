@@ -301,9 +301,120 @@ const unicode_punctuation_ranges = &[_][2]u21{
 };
 // zig fmt: on
 
+/// Parse a numeric character reference (&#DDD; or &#xHHH;) and return the codepoint.
+pub fn parseEntityCodepoint(entity_text: []const u8) ?u21 {
+    if (entity_text.len < 4 or entity_text[0] != '&' or entity_text[1] != '#') return null;
+    var cp: u32 = 0;
+    if (entity_text[2] == 'x' or entity_text[2] == 'X') {
+        for (entity_text[3..]) |ec| {
+            if (ec == ';') break;
+            cp = cp *% 16 +% switch (ec) {
+                '0'...'9' => ec - '0',
+                'a'...'f' => ec - 'a' + 10,
+                'A'...'F' => ec - 'A' + 10,
+                else => 0,
+            };
+        }
+    } else {
+        for (entity_text[2..]) |ec| {
+            if (ec == ';') break;
+            cp = cp *% 10 +% (ec - '0');
+        }
+    }
+    if (cp == 0 or cp > 0x10FFFF or (cp >= 0xD800 and cp <= 0xDFFF)) cp = 0xFFFD;
+    return @intCast(cp);
+}
+
+/// Decode an HTML entity to raw UTF-8 bytes.
+/// Returns decoded bytes as a slice of `out`, or null for unknown entities.
+pub fn decodeEntityToUtf8(entity_text: []const u8, out: *[8]u8) ?[]const u8 {
+    if (parseEntityCodepoint(entity_text)) |cp| {
+        const len = encodeUtf8(cp, out[0..4]);
+        return out[0..len];
+    }
+    if (entity_mod.lookup(entity_text)) |codepoints| {
+        const len1 = encodeUtf8(codepoints[0], out[0..4]);
+        if (codepoints[1] != 0) {
+            var tmp: [4]u8 = undefined;
+            const len2 = encodeUtf8(codepoints[1], &tmp);
+            @memcpy(out[len1..][0..len2], tmp[0..len2]);
+            return out[0 .. len1 + len2];
+        }
+        return out[0..len1];
+    }
+    return null;
+}
+
+/// Generate a GitHub-compatible slug from text content.
+/// Modifies text_buf in-place. Uses slug_counts for -N deduplication.
+pub fn generateSlug(
+    text_buf: *std.ArrayListUnmanaged(u8),
+    slug_counts: *bun.StringHashMapUnmanaged(u32),
+    allocator: Allocator,
+) []const u8 {
+    const text_items = text_buf.items;
+    var out_len: usize = 0;
+    var prev_hyphen: bool = true; // true to trim leading hyphens
+
+    for (text_items) |c| {
+        if (c >= 'A' and c <= 'Z') {
+            text_buf.items[out_len] = c + 32;
+            out_len += 1;
+            prev_hyphen = false;
+        } else if ((c >= 'a' and c <= 'z') or (c >= '0' and c <= '9')) {
+            text_buf.items[out_len] = c;
+            out_len += 1;
+            prev_hyphen = false;
+        } else if (c == '-' or c == ' ') {
+            if (!prev_hyphen) {
+                text_buf.items[out_len] = '-';
+                out_len += 1;
+                prev_hyphen = true;
+            }
+        }
+        // else: skip non-alphanumeric characters
+    }
+
+    // Trim trailing hyphens
+    while (out_len > 0 and text_buf.items[out_len - 1] == '-') {
+        out_len -= 1;
+    }
+
+    const base_slug = text_buf.items[0..out_len];
+
+    // Deduplicate via slug_counts
+    const gop = slug_counts.getOrPut(allocator, base_slug) catch return base_slug;
+
+    if (!gop.found_existing) {
+        // First occurrence — store a duped key
+        gop.key_ptr.* = allocator.dupe(u8, base_slug) catch return base_slug;
+        gop.value_ptr.* = 0;
+        return base_slug;
+    }
+
+    // Already seen — append -N suffix
+    const count = gop.value_ptr.* + 1;
+    gop.value_ptr.* = count;
+    text_buf.shrinkRetainingCapacity(out_len);
+    text_buf.append(allocator, '-') catch return base_slug;
+
+    // Inline decimal formatting (count is always >= 1)
+    var dec_buf: [10]u8 = undefined;
+    var v = count;
+    var i: usize = dec_buf.len;
+    while (v > 0) {
+        i -= 1;
+        dec_buf[i] = @intCast('0' + v % 10);
+        v /= 10;
+    }
+    text_buf.appendSlice(allocator, dec_buf[i..]) catch return base_slug;
+    return text_buf.items;
+}
+
 const bun = @import("bun");
 const entity_mod = @import("./entity.zig");
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 
 const types = @import("./types.zig");
 const OFF = types.OFF;

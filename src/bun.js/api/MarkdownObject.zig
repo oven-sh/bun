@@ -387,58 +387,8 @@ const JsCallbackRenderer = struct {
     }
 
     fn decodeAndAppendEntity(self: *JsCallbackRenderer, entity_text: []const u8) void {
-        var buf: [4]u8 = undefined;
-
-        if (entity_text.len >= 4 and entity_text[0] == '&' and entity_text[1] == '#') {
-            // Numeric character reference
-            var cp: u32 = 0;
-            if (entity_text[2] == 'x' or entity_text[2] == 'X') {
-                for (entity_text[3..]) |ec| {
-                    if (ec == ';') break;
-                    cp = cp *% 16 +% switch (ec) {
-                        '0'...'9' => ec - '0',
-                        'a'...'f' => ec - 'a' + 10,
-                        'A'...'F' => ec - 'A' + 10,
-                        else => 0,
-                    };
-                }
-            } else {
-                for (entity_text[2..]) |ec| {
-                    if (ec == ';') break;
-                    cp = cp *% 10 +% (ec - '0');
-                }
-            }
-            if (cp == 0 or cp > 0x10FFFF or (cp >= 0xD800 and cp <= 0xDFFF)) {
-                cp = 0xFFFD;
-            }
-            const len = encodeUtf8(@intCast(cp), &buf) orelse {
-                self.appendTextOrRaw("\xEF\xBF\xBD");
-                return;
-            };
-            self.appendTextOrRaw(buf[0..len]);
-        } else if (md.entity.lookup(entity_text)) |codepoints| {
-            const len1 = encodeUtf8(codepoints[0], &buf) orelse {
-                self.appendTextOrRaw("\xEF\xBF\xBD");
-                return;
-            };
-            if (codepoints[1] != 0) {
-                var buf2: [4]u8 = undefined;
-                const len2 = encodeUtf8(codepoints[1], &buf2) orelse {
-                    self.appendTextOrRaw(buf[0..len1]);
-                    return;
-                };
-                // Combine both codepoints into a single text callback
-                var combined: [8]u8 = undefined;
-                @memcpy(combined[0..len1], buf[0..len1]);
-                @memcpy(combined[len1 .. len1 + len2], buf2[0..len2]);
-                self.appendTextOrRaw(combined[0 .. len1 + len2]);
-            } else {
-                self.appendTextOrRaw(buf[0..len1]);
-            }
-        } else {
-            // Unknown entity - pass through raw
-            self.appendTextOrRaw(entity_text);
-        }
+        var buf: [8]u8 = undefined;
+        self.appendTextOrRaw(md.helpers.decodeEntityToUtf8(entity_text, &buf) orelse entity_text);
     }
 
     /// Append text through the text callback if one is set, otherwise raw append.
@@ -461,116 +411,8 @@ const JsCallbackRenderer = struct {
     }
 
     fn appendEntityToHeadingText(self: *JsCallbackRenderer, entity_text: []const u8) void {
-        var buf: [4]u8 = undefined;
-        if (entity_text.len >= 4 and entity_text[0] == '&' and entity_text[1] == '#') {
-            var cp: u32 = 0;
-            if (entity_text[2] == 'x' or entity_text[2] == 'X') {
-                for (entity_text[3..]) |ec| {
-                    if (ec == ';') break;
-                    cp = cp *% 16 +% switch (ec) {
-                        '0'...'9' => ec - '0',
-                        'a'...'f' => ec - 'a' + 10,
-                        'A'...'F' => ec - 'A' + 10,
-                        else => 0,
-                    };
-                }
-            } else {
-                for (entity_text[2..]) |ec| {
-                    if (ec == ';') break;
-                    cp = cp *% 10 +% (ec - '0');
-                }
-            }
-            if (cp == 0 or cp > 0x10FFFF or (cp >= 0xD800 and cp <= 0xDFFF)) cp = 0xFFFD;
-            const len = encodeUtf8(@intCast(cp), &buf) orelse {
-                self.appendHeadingText("\xEF\xBF\xBD");
-                return;
-            };
-            self.appendHeadingText(buf[0..len]);
-        } else if (md.entity.lookup(entity_text)) |codepoints| {
-            const len1 = encodeUtf8(codepoints[0], &buf) orelse return;
-            self.appendHeadingText(buf[0..len1]);
-            if (codepoints[1] != 0) {
-                const len2 = encodeUtf8(codepoints[1], &buf) orelse return;
-                self.appendHeadingText(buf[0..len2]);
-            }
-        } else {
-            self.appendHeadingText(entity_text);
-        }
-    }
-
-    fn generateSlug(self: *JsCallbackRenderer) []const u8 {
-        const text_items = self.heading_text_buf.items;
-        var out_len: usize = 0;
-        var prev_hyphen: bool = true; // true to trim leading hyphens
-
-        for (text_items) |c| {
-            if (c >= 'A' and c <= 'Z') {
-                self.heading_text_buf.items[out_len] = c + 32;
-                out_len += 1;
-                prev_hyphen = false;
-            } else if ((c >= 'a' and c <= 'z') or (c >= '0' and c <= '9')) {
-                self.heading_text_buf.items[out_len] = c;
-                out_len += 1;
-                prev_hyphen = false;
-            } else if (c == '-' or c == ' ') {
-                if (!prev_hyphen) {
-                    self.heading_text_buf.items[out_len] = '-';
-                    out_len += 1;
-                    prev_hyphen = true;
-                }
-            }
-        }
-
-        // Trim trailing hyphens
-        while (out_len > 0 and self.heading_text_buf.items[out_len - 1] == '-') {
-            out_len -= 1;
-        }
-
-        const base_slug = self.heading_text_buf.items[0..out_len];
-
-        const gop = self.slug_counts.getOrPut(self.allocator, base_slug) catch {
-            self.has_js_error = true;
-            return base_slug;
-        };
-
-        if (!gop.found_existing) {
-            gop.key_ptr.* = self.allocator.dupe(u8, base_slug) catch {
-                self.has_js_error = true;
-                return base_slug;
-            };
-            gop.value_ptr.* = 0;
-            return base_slug;
-        }
-
-        const count = gop.value_ptr.* + 1;
-        gop.value_ptr.* = count;
-        self.heading_text_buf.shrinkRetainingCapacity(out_len);
-        self.heading_text_buf.append(self.allocator, '-') catch {
-            self.has_js_error = true;
-            return base_slug;
-        };
-        self.appendDecimalToTextBuf(count);
-        return self.heading_text_buf.items;
-    }
-
-    fn appendDecimalToTextBuf(self: *JsCallbackRenderer, value: u32) void {
-        var buf: [10]u8 = undefined;
-        var v = value;
-        var i: usize = buf.len;
-        if (v == 0) {
-            self.heading_text_buf.append(self.allocator, '0') catch {
-                self.has_js_error = true;
-            };
-            return;
-        }
-        while (v > 0) {
-            i -= 1;
-            buf[i] = @intCast('0' + v % 10);
-            v /= 10;
-        }
-        self.heading_text_buf.appendSlice(self.allocator, buf[i..]) catch {
-            self.has_js_error = true;
-        };
+        var buf: [8]u8 = undefined;
+        self.appendHeadingText(md.helpers.decodeEntityToUtf8(entity_text, &buf) orelse entity_text);
     }
 
     // ========================================
@@ -621,7 +463,7 @@ const JsCallbackRenderer = struct {
                 const obj = JSValue.createEmptyObject(g, field_count);
                 obj.put(g, ZigString.static("level"), JSValue.jsNumber(data));
                 if (self.heading_ids) {
-                    const slug = self.generateSlug();
+                    const slug = md.helpers.generateSlug(&self.heading_text_buf, &self.slug_counts, self.allocator);
                     obj.put(g, ZigString.static("id"), bun.String.createUTF8ForJS(g, slug) catch return null);
                 }
                 return obj;
@@ -710,32 +552,6 @@ const JsCallbackRenderer = struct {
         return "";
     }
 };
-
-/// Encode a Unicode codepoint as UTF-8 into `buf`, returning the number of bytes written.
-/// Returns null for invalid codepoints (surrogates, out of range).
-fn encodeUtf8(cp: u21, buf: *[4]u8) ?u3 {
-    if (cp < 0x80) {
-        buf[0] = @intCast(cp);
-        return 1;
-    } else if (cp < 0x800) {
-        buf[0] = @intCast(0xC0 | (cp >> 6));
-        buf[1] = @intCast(0x80 | (cp & 0x3F));
-        return 2;
-    } else if (cp < 0x10000) {
-        if (cp >= 0xD800 and cp <= 0xDFFF) return null;
-        buf[0] = @intCast(0xE0 | (cp >> 12));
-        buf[1] = @intCast(0x80 | ((cp >> 6) & 0x3F));
-        buf[2] = @intCast(0x80 | (cp & 0x3F));
-        return 3;
-    } else if (cp <= 0x10FFFF) {
-        buf[0] = @intCast(0xF0 | (cp >> 18));
-        buf[1] = @intCast(0x80 | ((cp >> 12) & 0x3F));
-        buf[2] = @intCast(0x80 | ((cp >> 6) & 0x3F));
-        buf[3] = @intCast(0x80 | (cp & 0x3F));
-        return 4;
-    }
-    return null;
-}
 
 const std = @import("std");
 

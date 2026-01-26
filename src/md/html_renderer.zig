@@ -221,7 +221,7 @@ pub const HtmlRenderer = struct {
             .h => {
                 if (self.heading_ids) {
                     self.in_heading = false;
-                    const slug = self.generateSlug();
+                    const slug = helpers.generateSlug(&self.heading_text_buf, &self.slug_counts, self.allocator);
                     // Write opening tag with id
                     self.out.write(switch (data) {
                         1 => "<h1",
@@ -625,21 +625,9 @@ pub const HtmlRenderer = struct {
     }
 
     fn writeEntity(self: *HtmlRenderer, entity_text: []const u8) void {
-        if (parseEntityCodepoint(entity_text)) |cp| {
-            var buf: [4]u8 = undefined;
-            const len = helpers.encodeUtf8(cp, &buf);
-            self.writeHtmlEscaped(buf[0..len]);
-            return;
-        }
-        // Named entity
-        if (entity_mod.lookup(entity_text)) |codepoints| {
-            var buf: [4]u8 = undefined;
-            var len = helpers.encodeUtf8(codepoints[0], &buf);
-            self.writeHtmlEscaped(buf[0..len]);
-            if (codepoints[1] != 0) {
-                len = helpers.encodeUtf8(codepoints[1], &buf);
-                self.writeHtmlEscaped(buf[0..len]);
-            }
+        var buf: [8]u8 = undefined;
+        if (helpers.decodeEntityToUtf8(entity_text, &buf)) |decoded| {
+            self.writeHtmlEscaped(decoded);
         } else {
             self.write(entity_text);
         }
@@ -647,45 +635,12 @@ pub const HtmlRenderer = struct {
 
     /// Decode an entity and write its UTF-8 bytes as percent-encoded URL bytes.
     fn writeEntityToUrl(self: *HtmlRenderer, entity_text: []const u8) void {
-        if (parseEntityCodepoint(entity_text)) |cp| {
-            var buf: [4]u8 = undefined;
-            const len = helpers.encodeUtf8(cp, &buf);
-            for (buf[0..len]) |b| self.writeUrlByte(b);
-        } else if (entity_mod.lookup(entity_text)) |codepoints| {
-            var buf: [4]u8 = undefined;
-            var len = helpers.encodeUtf8(codepoints[0], &buf);
-            for (buf[0..len]) |b| self.writeUrlByte(b);
-            if (codepoints[1] != 0) {
-                len = helpers.encodeUtf8(codepoints[1], &buf);
-                for (buf[0..len]) |b| self.writeUrlByte(b);
-            }
+        var buf: [8]u8 = undefined;
+        if (helpers.decodeEntityToUtf8(entity_text, &buf)) |decoded| {
+            for (decoded) |b| self.writeUrlByte(b);
         } else {
             self.writeUrlEscaped(entity_text);
         }
-    }
-
-    /// Parse a numeric character reference (&#DDD; or &#xHHH;) and return the codepoint.
-    fn parseEntityCodepoint(entity_text: []const u8) ?u21 {
-        if (entity_text.len < 4 or entity_text[0] != '&' or entity_text[1] != '#') return null;
-        var cp: u32 = 0;
-        if (entity_text[2] == 'x' or entity_text[2] == 'X') {
-            for (entity_text[3..]) |ec| {
-                if (ec == ';') break;
-                cp = cp *% 16 +% switch (ec) {
-                    '0'...'9' => ec - '0',
-                    'a'...'f' => ec - 'a' + 10,
-                    'A'...'F' => ec - 'A' + 10,
-                    else => 0,
-                };
-            }
-        } else {
-            for (entity_text[2..]) |ec| {
-                if (ec == ';') break;
-                cp = cp *% 10 +% (ec - '0');
-            }
-        }
-        if (cp == 0 or cp > 0x10FFFF or (cp >= 0xD800 and cp <= 0xDFFF)) cp = 0xFFFD;
-        return @intCast(cp);
     }
 
     fn writeDecimal(self: *HtmlRenderer, value: u32) void {
@@ -716,104 +671,8 @@ pub const HtmlRenderer = struct {
 
     /// Decode an entity and append the raw character(s) to heading_text_buf for slug generation.
     fn appendEntityToHeadingText(self: *HtmlRenderer, entity_text: []const u8) void {
-        if (parseEntityCodepoint(entity_text)) |cp| {
-            var buf: [4]u8 = undefined;
-            const len = helpers.encodeUtf8(cp, &buf);
-            self.appendHeadingText(buf[0..len]);
-            return;
-        }
-        if (entity_mod.lookup(entity_text)) |codepoints| {
-            var buf: [4]u8 = undefined;
-            var len = helpers.encodeUtf8(codepoints[0], &buf);
-            self.appendHeadingText(buf[0..len]);
-            if (codepoints[1] != 0) {
-                len = helpers.encodeUtf8(codepoints[1], &buf);
-                self.appendHeadingText(buf[0..len]);
-            }
-        } else {
-            self.appendHeadingText(entity_text);
-        }
-    }
-
-    /// Generate a GitHub-compatible slug from heading_text_buf contents.
-    /// The slug is built in-place in heading_text_buf and deduplicated via slug_counts.
-    fn generateSlug(self: *HtmlRenderer) []const u8 {
-        const text_items = self.heading_text_buf.items;
-        var out_len: usize = 0;
-        var prev_hyphen: bool = true; // true to trim leading hyphens
-
-        for (text_items) |c| {
-            if (c >= 'A' and c <= 'Z') {
-                self.heading_text_buf.items[out_len] = c + 32;
-                out_len += 1;
-                prev_hyphen = false;
-            } else if ((c >= 'a' and c <= 'z') or (c >= '0' and c <= '9')) {
-                self.heading_text_buf.items[out_len] = c;
-                out_len += 1;
-                prev_hyphen = false;
-            } else if (c == '-' or c == ' ') {
-                if (!prev_hyphen) {
-                    self.heading_text_buf.items[out_len] = '-';
-                    out_len += 1;
-                    prev_hyphen = true;
-                }
-            }
-            // else: skip non-alphanumeric characters
-        }
-
-        // Trim trailing hyphens
-        while (out_len > 0 and self.heading_text_buf.items[out_len - 1] == '-') {
-            out_len -= 1;
-        }
-
-        const base_slug = self.heading_text_buf.items[0..out_len];
-
-        // Deduplicate via slug_counts
-        const gop = self.slug_counts.getOrPut(self.allocator, base_slug) catch {
-            self.out.oom = true;
-            return base_slug;
-        };
-
-        if (!gop.found_existing) {
-            // First occurrence — store a duped key
-            gop.key_ptr.* = self.allocator.dupe(u8, base_slug) catch {
-                self.out.oom = true;
-                return base_slug;
-            };
-            gop.value_ptr.* = 0;
-            return base_slug;
-        }
-
-        // Already seen — append -N suffix
-        const count = gop.value_ptr.* + 1;
-        gop.value_ptr.* = count;
-        self.heading_text_buf.shrinkRetainingCapacity(out_len);
-        self.heading_text_buf.append(self.allocator, '-') catch {
-            self.out.oom = true;
-            return base_slug;
-        };
-        self.appendDecimalToTextBuf(count);
-        return self.heading_text_buf.items;
-    }
-
-    fn appendDecimalToTextBuf(self: *HtmlRenderer, value: u32) void {
-        var buf: [10]u8 = undefined;
-        var v = value;
-        var i: usize = buf.len;
-        if (v == 0) {
-            self.heading_text_buf.append(self.allocator, '0') catch {
-                self.out.oom = true;
-            };
-            return;
-        }
-        while (v > 0) {
-            i -= 1;
-            buf[i] = @intCast('0' + v % 10);
-            v /= 10;
-        }
-        self.heading_text_buf.appendSlice(self.allocator, buf[i..]) catch {
-            self.out.oom = true;
-        };
+        var buf: [8]u8 = undefined;
+        self.appendHeadingText(helpers.decodeEntityToUtf8(entity_text, &buf) orelse entity_text);
     }
 
     // ========================================
@@ -863,7 +722,6 @@ pub const HtmlRenderer = struct {
 };
 
 const bun = @import("bun");
-const entity_mod = @import("./entity.zig");
 const helpers = @import("./helpers.zig");
 const std = @import("std");
 const Allocator = std.mem.Allocator;

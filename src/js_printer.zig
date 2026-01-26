@@ -6018,8 +6018,7 @@ pub fn printAst(
         if (opts.source_map_handler) |handler| {
             var source_maps_chunk = printer.source_map_builder.generateChunk(printer.writer.ctx.getWritten());
             if (opts.runtime_transpiler_cache) |cache| {
-                const esm_record = serializeModuleInfo(opts.module_info);
-                cache.put(printer.writer.ctx.getWritten(), source_maps_chunk.buffer.list.items, esm_record);
+                cache.put(printer.writer.ctx.getWritten(), source_maps_chunk.buffer.list.items);
             }
 
             defer source_maps_chunk.deinit();
@@ -6027,8 +6026,7 @@ pub fn printAst(
             try handler.onSourceMapChunk(source_maps_chunk, source);
         } else {
             if (opts.runtime_transpiler_cache) |cache| {
-                const esm_record = serializeModuleInfo(opts.module_info);
-                cache.put(printer.writer.ctx.getWritten(), "", esm_record);
+                cache.put(printer.writer.ctx.getWritten(), "");
             }
         }
     } else if (comptime generate_source_map) {

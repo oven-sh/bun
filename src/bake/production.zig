@@ -433,6 +433,7 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
                     .asset => {},
                     .bytecode => {},
                     .sourcemap => {},
+                    .module_info => {},
                 }
             },
         }

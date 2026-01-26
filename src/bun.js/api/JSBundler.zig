@@ -1688,9 +1688,10 @@ pub const BuildArtifact = struct {
         @"entry-point",
         sourcemap,
         bytecode,
+        module_info,
 
         pub fn isFileInStandaloneMode(this: OutputKind) bool {
-            return this != .sourcemap and this != .bytecode;
+            return this != .sourcemap and this != .bytecode and this != .module_info;
         }
     };
 

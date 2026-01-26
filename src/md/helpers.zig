@@ -212,13 +212,6 @@ pub fn findEntity(content: []const u8, start: usize) ?usize {
     return null;
 }
 
-const bun = @import("bun");
-const entity_mod = @import("./entity.zig");
-const std = @import("std");
-
-const types = @import("./types.zig");
-const OFF = types.OFF;
-
 // zig fmt: off
 const unicode_punctuation_ranges = &[_][2]u21{
     .{ 0x00A1, 0x00A9 }, .{ 0x00AB, 0x00AC }, .{ 0x00AE, 0x00B1 }, .{ 0x00B4, 0x00B4 },
@@ -307,3 +300,10 @@ const unicode_punctuation_ranges = &[_][2]u21{
     .{ 0x1FAE0, 0x1FAE8 }, .{ 0x1FAF0, 0x1FAF8 }, .{ 0x1FB00, 0x1FB92 }, .{ 0x1FB94, 0x1FBCA },
 };
 // zig fmt: on
+
+const bun = @import("bun");
+const entity_mod = @import("./entity.zig");
+const std = @import("std");
+
+const types = @import("./types.zig");
+const OFF = types.OFF;

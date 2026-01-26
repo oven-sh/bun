@@ -752,8 +752,8 @@ pub fn findHtmlTag(self: *const Parser, content: []const u8, start: usize) ?usiz
 }
 
 const bun = @import("bun");
-const std = @import("std");
 const helpers = @import("./helpers.zig");
+const std = @import("std");
 
 const autolinks_mod = @import("./autolinks.zig");
 const findPermissiveAutolink = autolinks_mod.findPermissiveAutolink;

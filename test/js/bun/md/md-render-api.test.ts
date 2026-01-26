@@ -4,9 +4,10 @@ import { renderToString } from "react-dom/server";
 
 const Markdown = Bun.markdown;
 
-/** renderToString the Fragment returned by Markdown.react */
+/** renderToString the Fragment returned by Markdown.react.
+ *  Uses reactVersion: 18 since the project has react-dom@18 installed. */
 function reactRender(md: string, opts?: any): string {
-  return renderToString(Markdown.react(md, opts));
+  return renderToString(Markdown.react(md, { reactVersion: 18, ...opts }));
 }
 
 // ============================================================================
@@ -112,247 +113,251 @@ describe("autolinkHeadings option", () => {
 });
 
 // ============================================================================
-// Bun.markdown.render() — plain object AST
+// Bun.markdown.render() — callback-based string renderer
 // ============================================================================
 
 describe("Bun.markdown.render", () => {
-  test("returns array of element nodes", () => {
-    const result = Markdown.render("# Hello\n");
-    expect(result).toBeArray();
-    expect(result).toHaveLength(1);
-    expect(result[0]).toEqual({
-      type: "h1",
-      props: { children: ["Hello"] },
+  test("returns a string", () => {
+    const result = Markdown.render("# Hello\n", {
+      heading: (children: string) => `<h1>${children}</h1>`,
     });
+    expect(typeof result).toBe("string");
   });
 
-  test("paragraph node", () => {
+  test("without callbacks, children pass through unchanged", () => {
     const result = Markdown.render("Hello world\n");
-    expect(result[0]).toEqual({
-      type: "p",
-      props: { children: ["Hello world"] },
-    });
+    expect(result).toBe("Hello world");
   });
 
-  test("heading levels 1-6 use HTML tag names", () => {
+  test("heading callback with level metadata", () => {
+    const result = Markdown.render("# Hello\n", {
+      heading: (children: string, { level }: any) => `<h${level}>${children}</h${level}>`,
+      paragraph: (children: string) => children,
+    });
+    expect(result).toBe("<h1>Hello</h1>");
+  });
+
+  test("heading levels 1-6", () => {
     for (let i = 1; i <= 6; i++) {
       const md = Buffer.alloc(i, "#").toString() + " Level\n";
-      const result = Markdown.render(md);
-      expect(result[0].type).toBe(`h${i}`);
-      expect(result[0].props.children).toEqual(["Level"]);
+      const result = Markdown.render(md, {
+        heading: (children: string, { level }: any) => `[h${level}:${children}]`,
+      });
+      expect(result).toBe(`[h${i}:Level]`);
     }
   });
 
-  test("text is plain strings in children arrays", () => {
-    const result = Markdown.render("Hello world\n");
-    expect(result[0].props.children).toEqual(["Hello world"]);
-  });
-
-  test("mixed text and inline elements", () => {
-    const result = Markdown.render("Hello **world**!\n");
-    const children = result[0].props.children;
-    expect(children[0]).toBe("Hello ");
-    expect(children[1]).toEqual({ type: "strong", props: { children: ["world"] } });
-    expect(children[2]).toBe("!");
-  });
-
-  test("nested inline elements", () => {
-    const result = Markdown.render("**bold *and italic***\n");
-    const strong = result[0].props.children[0];
-    expect(strong.type).toBe("strong");
-    expect(strong.props.children[0]).toBe("bold ");
-    expect(strong.props.children[1]).toEqual({
-      type: "em",
-      props: { children: ["and italic"] },
+  test("paragraph callback", () => {
+    const result = Markdown.render("Hello world\n", {
+      paragraph: (children: string) => `<p>${children}</p>`,
     });
+    expect(result).toBe("<p>Hello world</p>");
   });
 
-  test("strong", () => {
-    const result = Markdown.render("**bold**\n");
-    const strong = result[0].props.children[0];
-    expect(strong).toEqual({ type: "strong", props: { children: ["bold"] } });
-  });
-
-  test("emphasis", () => {
-    const result = Markdown.render("*italic*\n");
-    const em = result[0].props.children[0];
-    expect(em).toEqual({ type: "em", props: { children: ["italic"] } });
-  });
-
-  test("strikethrough", () => {
-    const result = Markdown.render("~~deleted~~\n");
-    const del = result[0].props.children[0];
-    expect(del).toEqual({ type: "del", props: { children: ["deleted"] } });
-  });
-
-  test("link has href in props", () => {
-    const result = Markdown.render("[text](https://example.com)\n");
-    const link = result[0].props.children[0];
-    expect(link).toEqual({
-      type: "a",
-      props: { href: "https://example.com", children: ["text"] },
+  test("strong callback", () => {
+    const result = Markdown.render("**bold**\n", {
+      strong: (children: string) => `<b>${children}</b>`,
+      paragraph: (children: string) => children,
     });
+    expect(result).toBe("<b>bold</b>");
   });
 
-  test("link with title", () => {
-    const result = Markdown.render('[text](https://example.com "My Title")\n');
-    const link = result[0].props.children[0];
-    expect(link.type).toBe("a");
-    expect(link.props.href).toBe("https://example.com");
-    expect(link.props.title).toBe("My Title");
-    expect(link.props.children).toEqual(["text"]);
-  });
-
-  test("image has src and alt in props", () => {
-    const result = Markdown.render("![alt text](image.png)\n");
-    const img = result[0].props.children[0];
-    expect(img).toEqual({
-      type: "img",
-      props: { src: "image.png", alt: "alt text" },
+  test("emphasis callback", () => {
+    const result = Markdown.render("*italic*\n", {
+      emphasis: (children: string) => `<i>${children}</i>`,
+      paragraph: (children: string) => children,
     });
+    expect(result).toBe("<i>italic</i>");
   });
 
-  test("image with title", () => {
-    const result = Markdown.render('![alt](pic.jpg "Photo")\n');
-    const img = result[0].props.children[0];
-    expect(img.props.src).toBe("pic.jpg");
-    expect(img.props.title).toBe("Photo");
-    expect(img.props.alt).toBe("alt");
+  test("link callback with href metadata", () => {
+    const result = Markdown.render("[click](https://example.com)\n", {
+      link: (children: string, { href }: any) => `<a href="${href}">${children}</a>`,
+      paragraph: (children: string) => children,
+    });
+    expect(result).toBe('<a href="https://example.com">click</a>');
   });
 
-  test("code block with language", () => {
-    const result = Markdown.render("```js\nconsole.log('hi');\n```\n");
-    expect(result[0].type).toBe("pre");
-    expect(result[0].props.language).toBe("js");
-    expect(result[0].props.children).toBeArray();
+  test("link callback with title metadata", () => {
+    const result = Markdown.render('[click](https://example.com "My Title")\n', {
+      link: (children: string, { href, title }: any) => `<a href="${href}" title="${title}">${children}</a>`,
+      paragraph: (children: string) => children,
+    });
+    expect(result).toBe('<a href="https://example.com" title="My Title">click</a>');
+  });
+
+  test("image callback with src metadata", () => {
+    const result = Markdown.render("![alt text](image.png)\n", {
+      image: (children: string, { src }: any) => `<img src="${src}" alt="${children}" />`,
+      paragraph: (children: string) => children,
+    });
+    expect(result).toBe('<img src="image.png" alt="alt text" />');
+  });
+
+  test("code block callback with language metadata", () => {
+    const result = Markdown.render("```js\nconsole.log('hi');\n```\n", {
+      code: (children: string, meta: any) => `<pre lang="${meta?.language}">${children}</pre>`,
+    });
+    expect(result).toBe("<pre lang=\"js\">console.log('hi');\n</pre>");
   });
 
   test("code block without language", () => {
-    const result = Markdown.render("```\nplain code\n```\n");
-    expect(result[0].type).toBe("pre");
-    expect(result[0].props.language).toBeUndefined();
-  });
-
-  test("inline code", () => {
-    const result = Markdown.render("`code`\n");
-    const code = result[0].props.children[0];
-    expect(code).toEqual({ type: "code", props: { children: ["code"] } });
-  });
-
-  test("hr is void element with empty props", () => {
-    const result = Markdown.render("---\n");
-    expect(result[0]).toEqual({ type: "hr", props: {} });
-  });
-
-  test("br produces object node", () => {
-    const result = Markdown.render("line1  \nline2\n");
-    const children = result[0].props.children;
-    const br = children.find((c: any) => typeof c === "object" && c?.type === "br");
-    expect(br).toEqual({ type: "br", props: {} });
-  });
-
-  test("blockquote", () => {
-    const result = Markdown.render("> quoted text\n");
-    expect(result[0].type).toBe("blockquote");
-    expect(result[0].props.children[0].type).toBe("p");
-  });
-
-  test("ordered list with start", () => {
-    const result = Markdown.render("3. first\n4. second\n");
-    const ol = result[0];
-    expect(ol.type).toBe("ol");
-    expect(ol.props.start).toBe(3);
-    expect(ol.props.children).toHaveLength(2);
-    expect(ol.props.children[0].type).toBe("li");
-    expect(ol.props.children[1].type).toBe("li");
-  });
-
-  test("unordered list", () => {
-    const result = Markdown.render("- a\n- b\n");
-    const ul = result[0];
-    expect(ul.type).toBe("ul");
-    expect(ul.props.children).toHaveLength(2);
-    expect(ul.props.children[0].type).toBe("li");
-  });
-
-  test("headingIds option adds id to heading props", () => {
-    const result = Markdown.render("## Hello World\n", { headingIds: true });
-    expect(result[0]).toEqual({
-      type: "h2",
-      props: { id: "hello-world", children: ["Hello World"] },
+    const result = Markdown.render("```\nplain code\n```\n", {
+      code: (children: string, meta: any) => `<pre lang="${meta?.language ?? "none"}">${children}</pre>`,
     });
+    expect(result).toBe('<pre lang="none">plain code\n</pre>');
   });
 
-  test("headingIds deduplication", () => {
-    const result = Markdown.render("## Foo\n\n## Foo\n\n## Foo\n", { headingIds: true });
-    expect(result[0].props.id).toBe("foo");
-    expect(result[1].props.id).toBe("foo-1");
-    expect(result[2].props.id).toBe("foo-2");
+  test("codespan callback", () => {
+    const result = Markdown.render("`code`\n", {
+      codespan: (children: string) => `<code>${children}</code>`,
+      paragraph: (children: string) => children,
+    });
+    expect(result).toBe("<code>code</code>");
   });
 
-  test("table structure", () => {
-    const result = Markdown.render("| A | B |\n|---|---|\n| 1 | 2 |\n");
-    const table = result[0];
-    expect(table.type).toBe("table");
-    const thead = table.props.children.find((c: any) => c.type === "thead");
-    const tbody = table.props.children.find((c: any) => c.type === "tbody");
-    expect(thead).toBeDefined();
-    expect(tbody).toBeDefined();
-    const headerRow = thead.props.children[0];
-    expect(headerRow.type).toBe("tr");
-    expect(headerRow.props.children[0].type).toBe("th");
-    expect(headerRow.props.children[0].props.children).toEqual(["A"]);
+  test("hr callback", () => {
+    const result = Markdown.render("---\n", {
+      hr: () => "<hr />",
+    });
+    expect(result).toBe("<hr />");
   });
 
-  test("entities are decoded to text", () => {
-    const result = Markdown.render("&amp;\n");
-    const text = result[0].props.children.join("");
-    expect(text).toContain("&");
+  test("blockquote callback", () => {
+    const result = Markdown.render("> quoted text\n", {
+      blockquote: (children: string) => `<blockquote>${children}</blockquote>`,
+      paragraph: (children: string) => `<p>${children}</p>`,
+    });
+    expect(result).toBe("<blockquote><p>quoted text</p></blockquote>");
   });
 
-  test("multiple blocks", () => {
-    const result = Markdown.render("# Title\n\nParagraph\n");
-    expect(result).toHaveLength(2);
-    expect(result[0].type).toBe("h1");
-    expect(result[1].type).toBe("p");
+  test("list callbacks (ordered)", () => {
+    const result = Markdown.render("1. first\n2. second\n", {
+      list: (children: string, { ordered, start }: any) =>
+        ordered ? `<ol start="${start}">${children}</ol>` : `<ul>${children}</ul>`,
+      listItem: (children: string) => `<li>${children}</li>`,
+    });
+    expect(result).toBe('<ol start="1"><li>first</li><li>second</li></ol>');
   });
 
-  test("complete document produces correct structure", () => {
-    const result = Markdown.render(`# Hello
-
-This is **bold** and *italic*.
-
-- item one
-- item two
-
----
-`);
-    expect(result[0].type).toBe("h1");
-    expect(result[1].type).toBe("p");
-    expect(result[2].type).toBe("ul");
-    expect(result[3].type).toBe("hr");
+  test("list callbacks (unordered)", () => {
+    const result = Markdown.render("- a\n- b\n", {
+      list: (children: string, { ordered }: any) => (ordered ? `<ol>${children}</ol>` : `<ul>${children}</ul>`),
+      listItem: (children: string) => `<li>${children}</li>`,
+    });
+    expect(result).toBe("<ul><li>a</li><li>b</li></ul>");
   });
 
-  test("can be used to build custom rendering", () => {
-    function renderToString(nodes: any[]): string {
-      return nodes
-        .map((node: any) => {
-          if (typeof node === "string") return node;
-          const { type, props } = node;
-          const { children, ...attrs } = props;
-          const attrStr = Object.entries(attrs)
-            .map(([k, v]) => ` ${k}="${v}"`)
-            .join("");
-          if (!children) return `<${type}${attrStr} />`;
-          const inner = renderToString(children);
-          return `<${type}${attrStr}>${inner}</${type}>`;
-        })
-        .join("");
-    }
+  test("ordered list with start number", () => {
+    const result = Markdown.render("3. first\n4. second\n", {
+      list: (children: string, { start }: any) => `<ol start="${start}">${children}</ol>`,
+      listItem: (children: string) => `<li>${children}</li>`,
+    });
+    expect(result).toBe('<ol start="3"><li>first</li><li>second</li></ol>');
+  });
 
-    const ast = Markdown.render("# Hello **world**\n");
-    const html = renderToString(ast);
-    expect(html).toBe("<h1>Hello <strong>world</strong></h1>");
+  test("strikethrough callback", () => {
+    const result = Markdown.render("~~deleted~~\n", {
+      strikethrough: (children: string) => `<del>${children}</del>`,
+      paragraph: (children: string) => children,
+    });
+    expect(result).toBe("<del>deleted</del>");
+  });
+
+  test("text callback", () => {
+    const result = Markdown.render("Hello world\n", {
+      text: (text: string) => text.toUpperCase(),
+      paragraph: (children: string) => children,
+    });
+    expect(result).toBe("HELLO WORLD");
+  });
+
+  test("returning null omits element", () => {
+    const result = Markdown.render("# Title\n\n![logo](img.png)\n\nHello\n", {
+      image: () => null,
+      heading: (children: string) => children,
+      paragraph: (children: string) => children + "\n",
+    });
+    expect(result).toBe("Title\nHello\n");
+  });
+
+  test("returning undefined omits element", () => {
+    const result = Markdown.render("# Title\n\nHello\n", {
+      heading: () => undefined,
+      paragraph: (children: string) => children,
+    });
+    expect(result).toBe("Hello");
+  });
+
+  test("multiple callbacks combined", () => {
+    const result = Markdown.render("# Title\n\nHello **world**\n", {
+      heading: (children: string, { level }: any) => `<h${level} class="heading">${children}</h${level}>`,
+      paragraph: (children: string) => `<p class="body">${children}</p>`,
+      strong: (children: string) => `<strong class="bold">${children}</strong>`,
+    });
+    expect(result).toBe('<h1 class="heading">Title</h1><p class="body">Hello <strong class="bold">world</strong></p>');
+  });
+
+  test("stripping all formatting", () => {
+    const result = Markdown.render("# Hello **world**\n", {
+      heading: (children: string) => children,
+      paragraph: (children: string) => children,
+      strong: (children: string) => children,
+      emphasis: (children: string) => children,
+      link: (children: string) => children,
+      image: () => "",
+      code: (children: string) => children,
+      codespan: (children: string) => children,
+    });
+    expect(result).toBe("Hello world");
+  });
+
+  test("ANSI terminal output", () => {
+    const result = Markdown.render("# Hello\n\nThis is **bold** and *italic*\n", {
+      heading: (children: string) => `\x1b[1;4m${children}\x1b[0m\n`,
+      paragraph: (children: string) => children + "\n",
+      strong: (children: string) => `\x1b[1m${children}\x1b[22m`,
+      emphasis: (children: string) => `\x1b[3m${children}\x1b[23m`,
+    });
+    expect(result).toBe("\x1b[1;4mHello\x1b[0m\nThis is \x1b[1mbold\x1b[22m and \x1b[3mitalic\x1b[23m\n");
+  });
+
+  test("parser options work alongside callbacks", () => {
+    const result = Markdown.render("Visit www.example.com\n", {
+      link: (children: string, { href }: any) => `[${children}](${href})`,
+      paragraph: (children: string) => children,
+      permissiveAutolinks: true,
+    });
+    expect(result).toContain("[www.example.com]");
+  });
+
+  test("headingIds option provides id in heading meta", () => {
+    const result = Markdown.render("## Hello World\n", {
+      heading: (children: string, { level, id }: any) => `<h${level} id="${id}">${children}</h${level}>`,
+      headingIds: true,
+    });
+    expect(result).toBe('<h2 id="hello-world">Hello World</h2>');
+  });
+
+  test("table callbacks", () => {
+    const result = Markdown.render("| A | B |\n|---|---|\n| 1 | 2 |\n", {
+      table: (children: string) => `<table>${children}</table>`,
+      thead: (children: string) => `<thead>${children}</thead>`,
+      tbody: (children: string) => `<tbody>${children}</tbody>`,
+      tr: (children: string) => `<tr>${children}</tr>`,
+      th: (children: string) => `<th>${children}</th>`,
+      td: (children: string) => `<td>${children}</td>`,
+    });
+    expect(result).toContain("<table>");
+    expect(result).toContain("<th>A</th>");
+    expect(result).toContain("<td>1</td>");
+  });
+
+  test("entities are decoded", () => {
+    const result = Markdown.render("&amp;\n", {
+      paragraph: (children: string) => children,
+    });
+    expect(result).toBe("&");
   });
 });
 
@@ -372,7 +377,7 @@ describe("Bun.markdown.react", () => {
 
   test("returns a Fragment element", () => {
     const result = Markdown.react("# Hello\n");
-    expect(result.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
+    expect(result.$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);
     expect(result.type).toBe(REACT_FRAGMENT_SYMBOL);
     expect(result.key).toBeNull();
     expect(result.ref).toBeNull();
@@ -382,7 +387,7 @@ describe("Bun.markdown.react", () => {
   test("fragment children are React elements", () => {
     const els = children("# Hello\n");
     expect(els).toHaveLength(1);
-    expect(els[0].$$typeof).toBe(REACT_ELEMENT_SYMBOL);
+    expect(els[0].$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);
   });
 
   test("element has type, key, ref, props", () => {
@@ -397,7 +402,7 @@ describe("Bun.markdown.react", () => {
     for (let i = 1; i <= 6; i++) {
       const md = Buffer.alloc(i, "#").toString() + " Level\n";
       const el = children(md)[0];
-      expect(el.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
+      expect(el.$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);
       expect(el.type).toBe(`h${i}`);
       expect(el.props.children).toEqual(["Level"]);
     }
@@ -409,17 +414,17 @@ describe("Bun.markdown.react", () => {
 
   test("nested inline elements are React elements", () => {
     const p = children("Hello **world**\n")[0];
-    expect(p.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
+    expect(p.$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);
     expect(p.props.children[0]).toBe("Hello ");
     const strong = p.props.children[1];
-    expect(strong.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
+    expect(strong.$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);
     expect(strong.type).toBe("strong");
     expect(strong.props.children).toEqual(["world"]);
   });
 
   test("link has href in props", () => {
     const link = children("[click](https://example.com)\n")[0].props.children[0];
-    expect(link.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
+    expect(link.$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);
     expect(link.type).toBe("a");
     expect(link.props.href).toBe("https://example.com");
     expect(link.props.children).toEqual(["click"]);
@@ -427,7 +432,7 @@ describe("Bun.markdown.react", () => {
 
   test("image has src and alt in props", () => {
     const img = children("![alt](img.png)\n")[0].props.children[0];
-    expect(img.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
+    expect(img.$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);
     expect(img.type).toBe("img");
     expect(img.props.src).toBe("img.png");
     expect(img.props.alt).toBe("alt");
@@ -436,14 +441,14 @@ describe("Bun.markdown.react", () => {
 
   test("code block with language", () => {
     const pre = children("```ts\nconst x = 1;\n```\n")[0];
-    expect(pre.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
+    expect(pre.$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);
     expect(pre.type).toBe("pre");
     expect(pre.props.language).toBe("ts");
   });
 
   test("hr is void element", () => {
     const hr = children("---\n")[0];
-    expect(hr.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
+    expect(hr.$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);
     expect(hr.type).toBe("hr");
     expect(hr.key).toBeNull();
     expect(hr.ref).toBeNull();
@@ -454,7 +459,7 @@ describe("Bun.markdown.react", () => {
     const pChildren = children("line1  \nline2\n")[0].props.children;
     const br = pChildren.find((c: any) => typeof c === "object" && c?.type === "br");
     expect(br).toBeDefined();
-    expect(br.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
+    expect(br.$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);
     expect(br.props).toEqual({});
   });
 
@@ -468,11 +473,11 @@ describe("Bun.markdown.react", () => {
 
   test("table structure", () => {
     const table = children("| A | B |\n|---|---|\n| 1 | 2 |\n")[0];
-    expect(table.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
+    expect(table.$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);
     expect(table.type).toBe("table");
     const thead = table.props.children.find((c: any) => c.type === "thead");
     expect(thead).toBeDefined();
-    expect(thead.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
+    expect(thead.$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);
   });
 
   test("headingIds adds id to props", () => {
@@ -482,27 +487,27 @@ describe("Bun.markdown.react", () => {
     expect(el.props.children).toEqual(["Hello World"]);
   });
 
-  test("default $$typeof is react.element", () => {
+  test("default $$typeof is react.transitional.element", () => {
     const result = Markdown.react("# Hi\n");
-    expect(result.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
-    expect(result.props.children[0].$$typeof).toBe(REACT_ELEMENT_SYMBOL);
+    expect(result.$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);
+    expect(result.props.children[0].$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);
   });
 
-  test("reactVersion 19 uses transitional symbol on all elements", () => {
-    const result = Markdown.react("Hello **world**\n", { reactVersion: 19 });
-    expect(result.$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);
+  test("reactVersion 18 uses react.element symbol on all elements", () => {
+    const result = Markdown.react("Hello **world**\n", { reactVersion: 18 });
+    expect(result.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
     const p = result.props.children[0];
-    expect(p.$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);
+    expect(p.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
     const strong = p.props.children[1];
-    expect(strong.$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);
+    expect(strong.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
   });
 
   test("multiple blocks", () => {
     const els = children("# Title\n\nParagraph\n");
     expect(els).toHaveLength(2);
-    expect(els[0].$$typeof).toBe(REACT_ELEMENT_SYMBOL);
+    expect(els[0].$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);
     expect(els[0].type).toBe("h1");
-    expect(els[1].$$typeof).toBe(REACT_ELEMENT_SYMBOL);
+    expect(els[1].$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);
     expect(els[1].type).toBe("p");
   });
 
@@ -521,37 +526,37 @@ This is **bold** and *italic*.
     expect(els[2].type).toBe("ul");
     expect(els[3].type).toBe("hr");
     for (const el of els) {
-      expect(el.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
+      expect(el.$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);
     }
   });
 
   test("blockquote contains nested React elements", () => {
     const bq = children("> quoted text\n")[0];
-    expect(bq.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
+    expect(bq.$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);
     expect(bq.type).toBe("blockquote");
     const p = bq.props.children[0];
-    expect(p.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
+    expect(p.$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);
     expect(p.type).toBe("p");
     expect(p.props.children).toEqual(["quoted text"]);
   });
 
   test("deeply nested elements are all React elements", () => {
     const bq = children("> **bold *and italic***\n")[0];
-    expect(bq.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
+    expect(bq.$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);
     const p = bq.props.children[0];
-    expect(p.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
+    expect(p.$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);
     const strong = p.props.children[0];
-    expect(strong.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
+    expect(strong.$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);
     expect(strong.type).toBe("strong");
     const em = strong.props.children[1];
-    expect(em.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
+    expect(em.$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);
     expect(em.type).toBe("em");
     expect(em.props.children).toEqual(["and italic"]);
   });
 
   test("link with title in React element", () => {
     const link = children('[text](https://example.com "My Title")\n')[0].props.children[0];
-    expect(link.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
+    expect(link.$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);
     expect(link.type).toBe("a");
     expect(link.props.href).toBe("https://example.com");
     expect(link.props.title).toBe("My Title");
@@ -560,7 +565,7 @@ This is **bold** and *italic*.
 
   test("image with title in React element", () => {
     const img = children('![alt](pic.jpg "Photo")\n')[0].props.children[0];
-    expect(img.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
+    expect(img.$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);
     expect(img.type).toBe("img");
     expect(img.props.src).toBe("pic.jpg");
     expect(img.props.title).toBe("Photo");
@@ -570,14 +575,14 @@ This is **bold** and *italic*.
 
   test("inline code is a React element", () => {
     const code = children("`code`\n")[0].props.children[0];
-    expect(code.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
+    expect(code.$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);
     expect(code.type).toBe("code");
     expect(code.props.children).toEqual(["code"]);
   });
 
   test("strikethrough is a React element", () => {
     const del = children("~~deleted~~\n")[0].props.children[0];
-    expect(del.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
+    expect(del.$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);
     expect(del.type).toBe("del");
     expect(del.props.children).toEqual(["deleted"]);
   });
@@ -586,7 +591,7 @@ This is **bold** and *italic*.
     const ul = children("- a\n- b\n")[0];
     expect(ul.type).toBe("ul");
     for (const li of ul.props.children) {
-      expect(li.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
+      expect(li.$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);
       expect(li.type).toBe("li");
     }
   });
@@ -743,8 +748,8 @@ Hello **world**, this is *important*.
     expect(html).toBe("<p>First paragraph.</p><p>Second paragraph.</p>");
   });
 
-  test("reactVersion 19 produces correct structure", () => {
-    const result = Markdown.react("# Hello\n", { reactVersion: 19 });
+  test("reactVersion 18 produces correct structure", () => {
+    const result = Markdown.react("# Hello\n", { reactVersion: 18 });
     const els = result.props.children;
     expect(els[0].type).toBe("h1");
     expect(els[0].props.children).toEqual(["Hello"]);
@@ -755,166 +760,10 @@ Hello **world**, this is *important*.
 // Component overrides (render + react)
 // ============================================================================
 
-describe("Bun.markdown.render component overrides", () => {
-  test("string override replaces type field", () => {
-    const result = Markdown.render("# Hello\n", { h1: "MyHeading" });
-    expect(result[0]).toEqual({
-      type: "MyHeading",
-      props: { children: ["Hello"] },
-    });
-  });
-
-  test("override all heading levels", () => {
-    for (let i = 1; i <= 6; i++) {
-      const md = Buffer.alloc(i, "#").toString() + " Level\n";
-      const opts: any = { [`h${i}`]: `custom-h${i}` };
-      const result = Markdown.render(md, opts);
-      expect(result[0].type).toBe(`custom-h${i}`);
-      expect(result[0].props.children).toEqual(["Level"]);
-    }
-  });
-
-  test("paragraph override", () => {
-    const result = Markdown.render("Hello\n", { p: "CustomP" });
-    expect(result[0].type).toBe("CustomP");
-    expect(result[0].props.children).toEqual(["Hello"]);
-  });
-
-  test("blockquote override", () => {
-    const result = Markdown.render("> quoted\n", { blockquote: "Quote" });
-    expect(result[0].type).toBe("Quote");
-    expect(result[0].props.children[0].type).toBe("p");
-  });
-
-  test("list overrides (ul, ol, li)", () => {
-    const result = Markdown.render("- a\n- b\n", { ul: "MyList", li: "MyItem" });
-    expect(result[0].type).toBe("MyList");
-    expect(result[0].props.children[0].type).toBe("MyItem");
-    expect(result[0].props.children[1].type).toBe("MyItem");
-  });
-
-  test("ordered list override", () => {
-    const result = Markdown.render("1. a\n", { ol: "OL", li: "LI" });
-    expect(result[0].type).toBe("OL");
-    expect(result[0].props.start).toBe(1);
-    expect(result[0].props.children[0].type).toBe("LI");
-  });
-
-  test("hr override", () => {
-    const result = Markdown.render("---\n", { hr: "Divider" });
-    expect(result[0]).toEqual({ type: "Divider", props: {} });
-  });
-
-  test("pre (code block) override", () => {
-    const result = Markdown.render("```js\ncode\n```\n", { pre: "CodeBlock" });
-    expect(result[0].type).toBe("CodeBlock");
-    expect(result[0].props.language).toBe("js");
-  });
-
-  test("table element overrides", () => {
-    const result = Markdown.render("| A |\n|---|\n| 1 |\n", {
-      table: "T",
-      thead: "THead",
-      tbody: "TBody",
-      tr: "TR",
-      th: "TH",
-      td: "TD",
-    });
-    expect(result[0].type).toBe("T");
-    const thead = result[0].props.children.find((c: any) => c.type === "THead");
-    const tbody = result[0].props.children.find((c: any) => c.type === "TBody");
-    expect(thead).toBeDefined();
-    expect(tbody).toBeDefined();
-    const headerRow = thead.props.children[0];
-    expect(headerRow.type).toBe("TR");
-    expect(headerRow.props.children[0].type).toBe("TH");
-    const bodyRow = tbody.props.children[0];
-    expect(bodyRow.type).toBe("TR");
-    expect(bodyRow.props.children[0].type).toBe("TD");
-  });
-
-  test("inline element overrides (em, strong, del, code)", () => {
-    const result = Markdown.render("**bold** *italic* ~~del~~ `code`\n", {
-      strong: "B",
-      em: "I",
-      del: "S",
-      code: "Code",
-    });
-    const children = result[0].props.children;
-    expect(children.find((c: any) => c.type === "B")).toBeDefined();
-    expect(children.find((c: any) => c.type === "I")).toBeDefined();
-    expect(children.find((c: any) => c.type === "S")).toBeDefined();
-    expect(children.find((c: any) => c.type === "Code")).toBeDefined();
-  });
-
-  test("link override", () => {
-    const result = Markdown.render("[click](https://example.com)\n", { a: "Link" });
-    const link = result[0].props.children[0];
-    expect(link.type).toBe("Link");
-    expect(link.props.href).toBe("https://example.com");
-    expect(link.props.children).toEqual(["click"]);
-  });
-
-  test("image override", () => {
-    const result = Markdown.render("![alt](img.png)\n", { img: "Image" });
-    const img = result[0].props.children[0];
-    expect(img.type).toBe("Image");
-    expect(img.props.src).toBe("img.png");
-    expect(img.props.alt).toBe("alt");
-  });
-
-  test("br override", () => {
-    const result = Markdown.render("line1  \nline2\n", { br: "Break" });
-    const children = result[0].props.children;
-    const br = children.find((c: any) => typeof c === "object" && c?.type === "Break");
-    expect(br).toBeDefined();
-    expect(br.props).toEqual({});
-  });
-
-  test("boolean values are NOT treated as overrides", () => {
-    const result = Markdown.render("# Hello\n", { h1: true });
-    expect(result[0].type).toBe("h1");
-  });
-
-  test("false is NOT treated as override", () => {
-    const result = Markdown.render("# Hello\n", { h1: false });
-    expect(result[0].type).toBe("h1");
-  });
-
-  test("multiple overrides simultaneously", () => {
-    const result = Markdown.render("# Title\n\nParagraph\n\n---\n", {
-      h1: "Title",
-      p: "Text",
-      hr: "Line",
-    });
-    expect(result[0].type).toBe("Title");
-    expect(result[1].type).toBe("Text");
-    expect(result[2].type).toBe("Line");
-  });
-
-  test("override does not affect children element types", () => {
-    const result = Markdown.render("> **bold**\n", { blockquote: "Q" });
-    expect(result[0].type).toBe("Q");
-    // Inner p and strong should NOT be overridden
-    const p = result[0].props.children[0];
-    expect(p.type).toBe("p");
-    const strong = p.props.children[0];
-    expect(strong.type).toBe("strong");
-  });
-
-  test("override with number value", () => {
-    const result = Markdown.render("# Hello\n", { h1: 42 });
-    expect(result[0].type).toBe(42);
-  });
-
-  test("headingIds still works with component override", () => {
-    const result = Markdown.render("## Hello World\n", { h2: "H", headingIds: true });
-    expect(result[0].type).toBe("H");
-    expect(result[0].props.id).toBe("hello-world");
-  });
-});
+// (render() is callback-based, component overrides are only for react())
 
 describe("Bun.markdown.react component overrides", () => {
+  const REACT_TRANSITIONAL_SYMBOL = Symbol.for("react.transitional.element");
   const REACT_ELEMENT_SYMBOL = Symbol.for("react.element");
 
   /** Helper: get fragment children */
@@ -927,14 +776,14 @@ describe("Bun.markdown.react component overrides", () => {
       return React.createElement("div", { className: "heading" }, ...children);
     }
     const el = children("# Hello\n", { h1: MyHeading })[0];
-    expect(el.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
+    expect(el.$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);
     expect(el.type).toBe(MyHeading);
     expect(el.props.children).toEqual(["Hello"]);
   });
 
   test("string override in react mode", () => {
     const el = children("# Hello\n", { h1: "section" })[0];
-    expect(el.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
+    expect(el.$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);
     expect(el.type).toBe("section");
     expect(el.props.children).toEqual(["Hello"]);
   });
@@ -956,10 +805,9 @@ describe("Bun.markdown.react component overrides", () => {
     expect(children("# Hello\n", { h1: true })[0].type).toBe("h1");
   });
 
-  test("override with reactVersion 19", () => {
-    const TRANSITIONAL = Symbol.for("react.transitional.element");
-    const el = children("# Hello\n", { h1: "custom-h1", reactVersion: 19 })[0];
-    expect(el.$$typeof).toBe(TRANSITIONAL);
+  test("override with reactVersion 18", () => {
+    const el = children("# Hello\n", { h1: "custom-h1", reactVersion: 18 })[0];
+    expect(el.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
     expect(el.type).toBe("custom-h1");
   });
 
@@ -984,7 +832,7 @@ describe("Bun.markdown.react component overrides", () => {
 
   test("hr override in react mode", () => {
     const el = children("---\n", { hr: "custom-hr" })[0];
-    expect(el.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
+    expect(el.$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);
     expect(el.type).toBe("custom-hr");
     expect(el.props).toEqual({});
   });

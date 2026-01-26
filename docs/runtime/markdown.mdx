@@ -3,10 +3,11 @@ title: Markdown
 description: Parse and render Markdown with Bun's built-in Markdown API, supporting GFM extensions and custom rendering callbacks
 ---
 
-Bun includes a fast, built-in Markdown parser written in Zig. It supports GitHub Flavored Markdown (GFM) extensions and provides two APIs:
+Bun includes a fast, built-in Markdown parser written in Zig. It supports GitHub Flavored Markdown (GFM) extensions and provides three APIs:
 
 - `Bun.markdown.html()` — render Markdown to an HTML string
 - `Bun.markdown.render()` — render Markdown with custom callbacks for each element
+- `Bun.markdown.react()` — render Markdown to React JSX elements
 
 ---
 
@@ -198,6 +199,68 @@ const result = Bun.markdown.render("Visit www.example.com", {
   paragraph: children => children,
 
   // Parser options
+  permissiveAutolinks: true,
+});
+```
+
+---
+
+## `Bun.markdown.react()`
+
+Render Markdown directly to React JSX elements. The output can be returned from a React component or passed to `renderToString()`.
+
+```tsx
+function Markdown({ text }: { text: string }) {
+  return Bun.markdown.react(text);
+}
+```
+
+The returned value is a React Fragment containing the parsed elements as children.
+
+### Component overrides
+
+Pass tag names as keys in the options object to replace default HTML elements with custom React components:
+
+```tsx
+function Heading({ children }: { children: React.ReactNode }) {
+  return <h1 className="title">{children}</h1>;
+}
+
+function Link({ href, children }: { href: string; children: React.ReactNode }) {
+  return (
+    <a href={href} target="_blank">
+      {children}
+    </a>
+  );
+}
+
+function Markdown({ text }: { text: string }) {
+  return Bun.markdown.react(text, { h1: Heading, a: Link });
+}
+```
+
+Any non-boolean truthy value can be used as an override — functions, classes, or strings:
+
+```tsx
+// Use a different HTML tag
+const el = Bun.markdown.react("# Hello", { h1: "section" });
+```
+
+### React 18 and older
+
+By default, `react()` uses `Symbol.for('react.transitional.element')` as the `$$typeof` symbol on generated elements, which is what React 19 expects. For React 18 and older, set `reactVersion: 18` to use `Symbol.for('react.element')` instead:
+
+```tsx
+const el = Bun.markdown.react("# Hello", { reactVersion: 18 });
+```
+
+### Parser options
+
+All parser options from `html()` are also available:
+
+```tsx
+const el = Bun.markdown.react("## Hello World", {
+  headingIds: true, // Generate id attributes on headings
   permissiveAutolinks: true,
 });
 ```

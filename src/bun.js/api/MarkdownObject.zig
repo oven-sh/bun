@@ -8,7 +8,7 @@ pub fn create(globalThis: *jsc.JSGlobalObject) jsc.JSValue {
     object.put(
         globalThis,
         ZigString.static("render"),
-        jsc.JSFunction.create(globalThis, "render", renderObjects, 2, .{}),
+        jsc.JSFunction.create(globalThis, "render", render, 2, .{}),
     );
     object.put(
         globalThis,
@@ -88,18 +88,48 @@ fn camelCaseOf(comptime snake: []const u8) []const u8 {
     };
 }
 
-/// `Bun.markdown.render(text, options?)` — returns a plain object AST.
+/// `Bun.markdown.render(text, callbacks?)` — render markdown with custom callbacks.
 ///
-/// Each node is `{ type: "tagName", props: { ...attrs, children: [...] } }`.
-/// Text content is represented as plain strings in children arrays.
-pub const renderObjects = jsc.MarkedArgumentBuffer.wrap(renderObjectsImpl);
-
-fn renderObjectsImpl(
+/// Each callback receives the accumulated children as a string plus an optional
+/// metadata object, and returns a string. The final result is the concatenation
+/// of all callback outputs.
+pub fn render(
     globalThis: *jsc.JSGlobalObject,
     callframe: *jsc.CallFrame,
-    marked_args: *jsc.MarkedArgumentBuffer,
 ) bun.JSError!jsc.JSValue {
-    return renderAST(globalThis, callframe, marked_args, null);
+    const input_value, const opts_value = callframe.argumentsAsArray(2);
+
+    if (input_value.isEmptyOrUndefinedOrNull()) {
+        return globalThis.throwInvalidArguments("Expected a string or buffer to render", .{});
+    }
+
+    const buffer = try jsc.Node.StringOrBuffer.fromJS(globalThis, bun.default_allocator, input_value) orelse {
+        return globalThis.throwInvalidArguments("Expected a string or buffer to render", .{});
+    };
+    defer buffer.deinit();
+
+    const input = buffer.slice();
+
+    // Get callbacks object (second argument)
+    const opts = if (opts_value.isObject()) opts_value else .js_undefined;
+
+    // Parse parser options (tables, strikethrough, etc.)
+    const options = try parseOptions(globalThis, opts_value);
+
+    // Create JS callback renderer
+    var js_renderer = JsCallbackRenderer.init(globalThis, input, options.heading_ids) catch {
+        return globalThis.throwOutOfMemory();
+    };
+    defer js_renderer.deinit();
+
+    try js_renderer.extractCallbacks(opts);
+
+    // Run parser with the JS callback renderer
+    try md.renderWithRenderer(input, bun.default_allocator, options, js_renderer.renderer());
+
+    // Return accumulated result
+    const result = js_renderer.getResult();
+    return bun.String.createUTF8ForJS(globalThis, result);
 }
 
 /// `Bun.markdown.react(text, options?)` — returns a React Fragment element
@@ -120,12 +150,12 @@ fn renderReactImpl(
     const args = callframe.argumentsAsArray(2);
     const opts_value = args[1];
 
-    var react_version: u8 = 0;
+    var react_version: u8 = 1; // default: react.transitional.element (React 19+)
     if (opts_value.isObject()) {
         if (try opts_value.get(globalThis, "reactVersion")) |rv| {
             if (rv.isNumber()) {
                 const num = rv.toInt32();
-                if (num >= 19) react_version = 1;
+                if (num <= 18) react_version = 0; // react.element (React 18 and older)
             }
         }
     }
@@ -705,6 +735,409 @@ const ParseRenderer = struct {
             .wikilink => "a",
             .u => "u",
         };
+    }
+};
+
+/// Renderer that calls JavaScript callbacks for each markdown element.
+/// Uses a content-stack pattern: each enter pushes a new buffer, text
+/// appends to the top buffer, and each leave pops the buffer, calls
+/// the JS callback with the accumulated children, and appends the
+/// callback's return value to the parent buffer.
+const JsCallbackRenderer = struct {
+    #globalObject: *jsc.JSGlobalObject,
+    #allocator: std.mem.Allocator,
+    #src_text: []const u8,
+    #stack: std.ArrayListUnmanaged(StackEntry) = .{},
+    #callbacks: Callbacks = .{},
+    #heading_ids: bool = false,
+    #in_heading_block: bool = false,
+    #heading_text_buf: std.ArrayListUnmanaged(u8) = .{},
+    #slug_counts: bun.StringHashMapUnmanaged(u32) = .{},
+    #stack_check: bun.StackCheck,
+
+    fn init(globalObject: *jsc.JSGlobalObject, src_text: []const u8, heading_ids: bool) error{OutOfMemory}!JsCallbackRenderer {
+        var self = JsCallbackRenderer{
+            .#globalObject = globalObject,
+            .#allocator = bun.default_allocator,
+            .#src_text = src_text,
+            .#heading_ids = heading_ids,
+            .#stack_check = bun.StackCheck.init(),
+        };
+        try self.#stack.append(bun.default_allocator, .{});
+        return self;
+    }
+
+    const Callbacks = struct {
+        heading: JSValue = .zero,
+        paragraph: JSValue = .zero,
+        blockquote: JSValue = .zero,
+        code: JSValue = .zero,
+        list: JSValue = .zero,
+        listItem: JSValue = .zero,
+        hr: JSValue = .zero,
+        table: JSValue = .zero,
+        thead: JSValue = .zero,
+        tbody: JSValue = .zero,
+        tr: JSValue = .zero,
+        th: JSValue = .zero,
+        td: JSValue = .zero,
+        html: JSValue = .zero,
+        strong: JSValue = .zero,
+        emphasis: JSValue = .zero,
+        link: JSValue = .zero,
+        image: JSValue = .zero,
+        codespan: JSValue = .zero,
+        strikethrough: JSValue = .zero,
+        text: JSValue = .zero,
+    };
+
+    const StackEntry = struct {
+        buffer: std.ArrayListUnmanaged(u8) = .{},
+        data: u32 = 0,
+        flags: u32 = 0,
+        detail: md.SpanDetail = .{},
+    };
+
+    fn extractCallbacks(self: *JsCallbackRenderer, opts: JSValue) bun.JSError!void {
+        if (opts.isUndefinedOrNull() or !opts.isObject()) return;
+        inline for (@typeInfo(Callbacks).@"struct".fields) |field| {
+            if (try opts.getTruthy(self.#globalObject, field.name)) |val| {
+                if (val.isCallable()) {
+                    @field(self.#callbacks, field.name) = val;
+                }
+            }
+        }
+    }
+
+    fn deinit(self: *JsCallbackRenderer) void {
+        for (self.#stack.items) |*entry| {
+            entry.buffer.deinit(self.#allocator);
+        }
+        self.#stack.deinit(self.#allocator);
+        self.#heading_text_buf.deinit(self.#allocator);
+        var it = self.#slug_counts.iterator();
+        while (it.next()) |entry| {
+            self.#allocator.free(@constCast(entry.key_ptr.*));
+        }
+        self.#slug_counts.deinit(self.#allocator);
+    }
+
+    fn renderer(self: *JsCallbackRenderer) md.Renderer {
+        return .{ .ptr = self, .vtable = &vtable };
+    }
+
+    const vtable: md.Renderer.VTable = .{
+        .enterBlock = enterBlockImpl,
+        .leaveBlock = leaveBlockImpl,
+        .enterSpan = enterSpanImpl,
+        .leaveSpan = leaveSpanImpl,
+        .text = textImpl,
+    };
+
+    // ========================================
+    // Content stack operations
+    // ========================================
+
+    fn appendToTop(self: *JsCallbackRenderer, data: []const u8) error{OutOfMemory}!void {
+        if (self.#stack.items.len == 0) return;
+        const top = &self.#stack.items[self.#stack.items.len - 1];
+        try top.buffer.appendSlice(self.#allocator, data);
+    }
+
+    fn popAndCallback(self: *JsCallbackRenderer, callback: JSValue, meta: ?JSValue) bun.JSError!void {
+        if (self.#stack.items.len <= 1) return; // don't pop root
+        var entry = self.#stack.pop() orelse return;
+        defer entry.buffer.deinit(self.#allocator);
+
+        const children = entry.buffer.items;
+
+        if (callback == .zero) {
+            // No callback registered - pass children through to parent
+            try self.appendToTop(children);
+            return;
+        }
+
+        if (!self.#stack_check.isSafeToRecurse()) {
+            return self.#globalObject.throwStackOverflow();
+        }
+
+        // Convert children to JS string
+        const children_js = try bun.String.createUTF8ForJS(self.#globalObject, children);
+
+        // Call the JS callback
+        const result = if (meta) |m|
+            try callback.call(self.#globalObject, .js_undefined, &[_]JSValue{ children_js, m })
+        else
+            try callback.call(self.#globalObject, .js_undefined, &[_]JSValue{children_js});
+
+        if (result.isUndefinedOrNull()) return; // callback returned null/undefined → omit element
+        const slice = try result.toSlice(self.#globalObject, self.#allocator);
+        defer slice.deinit();
+        try self.appendToTop(slice.slice());
+    }
+
+    fn getResult(self: *JsCallbackRenderer) []const u8 {
+        if (self.#stack.items.len == 0) return "";
+        return self.#stack.items[0].buffer.items;
+    }
+
+    // ========================================
+    // VTable implementation
+    // ========================================
+
+    fn enterBlockImpl(ptr: *anyopaque, block_type: md.BlockType, data: u32, flags: u32) bun.JSError!void {
+        const self: *JsCallbackRenderer = @ptrCast(@alignCast(ptr));
+        if (!self.#stack_check.isSafeToRecurse()) return self.#globalObject.throwStackOverflow();
+        if (block_type == .doc) return;
+        if (block_type == .h and self.#heading_ids) {
+            self.#in_heading_block = true;
+        }
+        try self.#stack.append(self.#allocator, .{ .data = data, .flags = flags });
+    }
+
+    fn leaveBlockImpl(ptr: *anyopaque, block_type: md.BlockType, _: u32) bun.JSError!void {
+        const self: *JsCallbackRenderer = @ptrCast(@alignCast(ptr));
+        if (!self.#stack_check.isSafeToRecurse()) return self.#globalObject.throwStackOverflow();
+        if (block_type == .doc) return;
+
+        if (block_type == .h) {
+            self.#in_heading_block = false;
+        }
+
+        const callback = self.getBlockCallback(block_type);
+        const saved = if (self.#stack.items.len > 1)
+            self.#stack.items[self.#stack.items.len - 1]
+        else
+            StackEntry{};
+        const meta = try self.createBlockMeta(block_type, saved.data, saved.flags);
+        try self.popAndCallback(callback, meta);
+
+        if (block_type == .h) {
+            self.#heading_text_buf.clearRetainingCapacity();
+        }
+    }
+
+    fn enterSpanImpl(ptr: *anyopaque, _: md.SpanType, detail: md.SpanDetail) bun.JSError!void {
+        const self: *JsCallbackRenderer = @ptrCast(@alignCast(ptr));
+        if (!self.#stack_check.isSafeToRecurse()) return self.#globalObject.throwStackOverflow();
+        try self.#stack.append(self.#allocator, .{ .detail = detail });
+    }
+
+    fn leaveSpanImpl(ptr: *anyopaque, span_type: md.SpanType) bun.JSError!void {
+        const self: *JsCallbackRenderer = @ptrCast(@alignCast(ptr));
+        if (!self.#stack_check.isSafeToRecurse()) return self.#globalObject.throwStackOverflow();
+
+        const callback = self.getSpanCallback(span_type);
+        const detail = if (self.#stack.items.len > 1)
+            self.#stack.items[self.#stack.items.len - 1].detail
+        else
+            md.SpanDetail{};
+        const meta = try self.createSpanMeta(span_type, detail);
+        try self.popAndCallback(callback, meta);
+    }
+
+    fn textImpl(ptr: *anyopaque, text_type: md.TextType, content: []const u8) bun.JSError!void {
+        const self: *JsCallbackRenderer = @ptrCast(@alignCast(ptr));
+        if (!self.#stack_check.isSafeToRecurse()) return self.#globalObject.throwStackOverflow();
+
+        // Track plain text for slug generation when inside a heading
+        if (self.#in_heading_block) {
+            switch (text_type) {
+                .null_char => self.#heading_text_buf.appendSlice(self.#allocator, "\xEF\xBF\xBD") catch {},
+                .br, .softbr => self.#heading_text_buf.appendSlice(self.#allocator, " ") catch {},
+                .html => {},
+                .entity => {
+                    var buf: [8]u8 = undefined;
+                    const decoded = md.helpers.decodeEntityToUtf8(content, &buf) orelse content;
+                    self.#heading_text_buf.appendSlice(self.#allocator, decoded) catch {};
+                },
+                else => self.#heading_text_buf.appendSlice(self.#allocator, content) catch {},
+            }
+        }
+
+        switch (text_type) {
+            .null_char => try self.appendToTop("\xEF\xBF\xBD"),
+            .br => try self.appendToTop("\n"),
+            .softbr => try self.appendToTop("\n"),
+            .entity => try self.decodeAndAppendEntity(content),
+            else => {
+                if (self.#callbacks.text != .zero) {
+                    try self.callTextCallback(content);
+                } else {
+                    try self.appendToTop(content);
+                }
+            },
+        }
+    }
+
+    // ========================================
+    // Text helpers
+    // ========================================
+
+    fn callTextCallback(self: *JsCallbackRenderer, content: []const u8) bun.JSError!void {
+        if (!self.#stack_check.isSafeToRecurse()) {
+            return self.#globalObject.throwStackOverflow();
+        }
+        const text_js = try bun.String.createUTF8ForJS(self.#globalObject, content);
+        const result = try self.#callbacks.text.call(self.#globalObject, .js_undefined, &[_]JSValue{text_js});
+        if (!result.isUndefinedOrNull()) {
+            const slice = try result.toSlice(self.#globalObject, self.#allocator);
+            defer slice.deinit();
+            try self.appendToTop(slice.slice());
+        }
+    }
+
+    fn decodeAndAppendEntity(self: *JsCallbackRenderer, entity_text: []const u8) bun.JSError!void {
+        var buf: [8]u8 = undefined;
+        try self.appendTextOrRaw(md.helpers.decodeEntityToUtf8(entity_text, &buf) orelse entity_text);
+    }
+
+    /// Append text through the text callback if one is set, otherwise raw append.
+    fn appendTextOrRaw(self: *JsCallbackRenderer, content: []const u8) bun.JSError!void {
+        if (self.#callbacks.text != .zero) {
+            try self.callTextCallback(content);
+        } else {
+            try self.appendToTop(content);
+        }
+    }
+
+    // ========================================
+    // Heading ID / slug generation
+    // ========================================
+
+    fn appendHeadingText(self: *JsCallbackRenderer, content: []const u8) error{OutOfMemory}!void {
+        try self.#heading_text_buf.appendSlice(self.#allocator, content);
+    }
+
+    fn appendEntityToHeadingText(self: *JsCallbackRenderer, entity_text: []const u8) error{OutOfMemory}!void {
+        var buf: [8]u8 = undefined;
+        try self.appendHeadingText(md.helpers.decodeEntityToUtf8(entity_text, &buf) orelse entity_text);
+    }
+
+    // ========================================
+    // Callback lookup
+    // ========================================
+
+    fn getBlockCallback(self: *JsCallbackRenderer, block_type: md.BlockType) JSValue {
+        return switch (block_type) {
+            .h => self.#callbacks.heading,
+            .p => self.#callbacks.paragraph,
+            .quote => self.#callbacks.blockquote,
+            .code => self.#callbacks.code,
+            .ul, .ol => self.#callbacks.list,
+            .li => self.#callbacks.listItem,
+            .hr => self.#callbacks.hr,
+            .table => self.#callbacks.table,
+            .thead => self.#callbacks.thead,
+            .tbody => self.#callbacks.tbody,
+            .tr => self.#callbacks.tr,
+            .th => self.#callbacks.th,
+            .td => self.#callbacks.td,
+            .html => self.#callbacks.html,
+            .doc => .zero,
+        };
+    }
+
+    fn getSpanCallback(self: *JsCallbackRenderer, span_type: md.SpanType) JSValue {
+        return switch (span_type) {
+            .em => self.#callbacks.emphasis,
+            .strong => self.#callbacks.strong,
+            .a => self.#callbacks.link,
+            .img => self.#callbacks.image,
+            .code => self.#callbacks.codespan,
+            .del => self.#callbacks.strikethrough,
+            else => .zero,
+        };
+    }
+
+    // ========================================
+    // Metadata object creation
+    // ========================================
+
+    fn createBlockMeta(self: *JsCallbackRenderer, block_type: md.BlockType, data: u32, flags: u32) bun.JSError!?JSValue {
+        const g = self.#globalObject;
+        switch (block_type) {
+            .h => {
+                const field_count: usize = if (self.#heading_ids) 2 else 1;
+                const obj = JSValue.createEmptyObject(g, field_count);
+                obj.put(g, ZigString.static("level"), JSValue.jsNumber(data));
+                if (self.#heading_ids) {
+                    const slug = md.helpers.generateSlug(&self.#heading_text_buf, &self.#slug_counts, self.#allocator);
+                    obj.put(g, ZigString.static("id"), try bun.String.createUTF8ForJS(g, slug));
+                }
+                return obj;
+            },
+            .ol => {
+                const obj = JSValue.createEmptyObject(g, 2);
+                obj.put(g, ZigString.static("ordered"), .true);
+                obj.put(g, ZigString.static("start"), JSValue.jsNumber(data));
+                return obj;
+            },
+            .ul => {
+                const obj = JSValue.createEmptyObject(g, 1);
+                obj.put(g, ZigString.static("ordered"), .false);
+                return obj;
+            },
+            .code => {
+                if (flags & md.BLOCK_FENCED_CODE != 0) {
+                    const lang = extractLanguage(self.#src_text, data);
+                    if (lang.len > 0) {
+                        const obj = JSValue.createEmptyObject(g, 1);
+                        obj.put(g, ZigString.static("language"), try bun.String.createUTF8ForJS(g, lang));
+                        return obj;
+                    }
+                }
+                return null;
+            },
+            .th, .td => {
+                const alignment: md.Align = @enumFromInt(@as(u2, @truncate(data)));
+                if (alignment != .default) {
+                    const obj = JSValue.createEmptyObject(g, 1);
+                    const align_str: []const u8 = switch (alignment) {
+                        .left => "left",
+                        .center => "center",
+                        .right => "right",
+                        .default => unreachable,
+                    };
+                    obj.put(g, ZigString.static("align"), try bun.String.createUTF8ForJS(g, align_str));
+                    return obj;
+                }
+                return null;
+            },
+            .li => {
+                const task_mark: u8 = @truncate(data);
+                if (task_mark != 0) {
+                    const obj = JSValue.createEmptyObject(g, 1);
+                    obj.put(g, ZigString.static("checked"), JSValue.jsBoolean(task_mark != ' '));
+                    return obj;
+                }
+                return null;
+            },
+            else => return null,
+        }
+    }
+
+    fn createSpanMeta(self: *JsCallbackRenderer, span_type: md.SpanType, detail: md.SpanDetail) bun.JSError!?JSValue {
+        const g = self.#globalObject;
+        switch (span_type) {
+            .a => {
+                const obj = JSValue.createEmptyObject(g, 2);
+                obj.put(g, ZigString.static("href"), try bun.String.createUTF8ForJS(g, detail.href));
+                if (detail.title.len > 0) {
+                    obj.put(g, ZigString.static("title"), try bun.String.createUTF8ForJS(g, detail.title));
+                }
+                return obj;
+            },
+            .img => {
+                const obj = JSValue.createEmptyObject(g, 2);
+                obj.put(g, ZigString.static("src"), try bun.String.createUTF8ForJS(g, detail.href));
+                if (detail.title.len > 0) {
+                    obj.put(g, ZigString.static("title"), try bun.String.createUTF8ForJS(g, detail.title));
+                }
+                return obj;
+            },
+            else => return null,
+        }
     }
 };
 

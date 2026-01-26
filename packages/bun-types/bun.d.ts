@@ -910,8 +910,8 @@ declare module "bun" {
    *
    * Provides fast markdown parsing and rendering with three output modes:
    * - `html()` — render to an HTML string
-   * - `render()` — parse to a plain object AST (`{ type, props }`)
-   * - `react()` — parse to React-compatible JSX elements (`{ $$typeof, type, key, ref, props }`)
+   * - `render()` — render with custom callbacks for each element
+   * - `react()` — parse to React-compatible JSX elements
    *
    * Supports GFM extensions (tables, strikethrough, task lists, autolinks) and
    * component overrides to replace default HTML tags with custom components.
@@ -922,9 +922,12 @@ declare module "bun" {
    * const html = Bun.markdown.html("# Hello **world**");
    * // "<h1>Hello <strong>world</strong></h1>\n"
    *
-   * // Parse to object AST
-   * const nodes = Bun.markdown.render("# Hello **world**");
-   * // [{ type: "h1", props: { children: ["Hello ", { type: "strong", props: { children: ["world"] } }] } }]
+   * // Render with custom callbacks
+   * const ansi = Bun.markdown.render("# Hello **world**", {
+   *   heading: (children, { level }) => `\x1b[1m${children}\x1b[0m\n`,
+   *   strong: (children) => `\x1b[1m${children}\x1b[22m`,
+   *   paragraph: (children) => children + "\n",
+   * });
    *
    * // Render as a React component
    * function Markdown({ text }: { text: string }) {
@@ -996,14 +999,10 @@ declare module "bun" {
      * Component overrides to replace default HTML tags with custom values.
      *
      * Any non-boolean truthy value (string, function, class, etc.) replaces the
-     * default HTML tag name in the `type` field of the output node.
+     * default HTML tag name in the `type` field of the output element.
      *
      * @example
-     * ```ts
-     * // String replacement
-     * Bun.markdown.render("# Hello", { h1: "MyHeading" });
-     * // [{ type: "MyHeading", props: { children: ["Hello"] } }]
-     *
+     * ```tsx
      * // React component replacement
      * function Title({ children }) { return <div className="title">{children}</div>; }
      * Bun.markdown.react("# Hello", { h1: Title });
@@ -1070,51 +1069,66 @@ declare module "bun" {
       br?: unknown;
     }
 
-    /** Options for `render()` — parser options plus optional component overrides. */
-    type RenderOptions = Options & ComponentOverrides;
-
-    /** Options for `react()` — render options plus element symbol configuration. */
-    interface ReactOptions extends RenderOptions {
-      /**
-       * Which `$$typeof` symbol to use on the generated elements.
-       * - `18` (default): `Symbol.for('react.element')`
-       * - `19`: `Symbol.for('react.transitional.element')`
-       */
-      reactVersion?: 18 | 19;
+    /**
+     * Callbacks for `render()`. Each callback receives the accumulated children
+     * as a string and optional metadata, and returns a string.
+     *
+     * Return `null` or `undefined` to omit the element from the output.
+     * If no callback is registered for an element, its children pass through unchanged.
+     */
+    interface RenderCallbacks extends Options {
+      /** Heading. Meta: `{ level: number, id?: string }`. */
+      heading?: (children: string, meta: { level: number; id?: string }) => string | null | undefined;
+      /** Paragraph. */
+      paragraph?: (children: string) => string | null | undefined;
+      /** Blockquote. */
+      blockquote?: (children: string) => string | null | undefined;
+      /** Code block. Meta: `{ language?: string }`. */
+      code?: (children: string, meta?: { language?: string }) => string | null | undefined;
+      /** List. Meta: `{ ordered: boolean, start?: number }`. */
+      list?: (children: string, meta: { ordered: boolean; start?: number }) => string | null | undefined;
+      /** List item. Meta: `{ checked?: boolean }`. */
+      listItem?: (children: string, meta?: { checked?: boolean }) => string | null | undefined;
+      /** Horizontal rule. */
+      hr?: (children: string) => string | null | undefined;
+      /** Table. */
+      table?: (children: string) => string | null | undefined;
+      /** Table head. */
+      thead?: (children: string) => string | null | undefined;
+      /** Table body. */
+      tbody?: (children: string) => string | null | undefined;
+      /** Table row. */
+      tr?: (children: string) => string | null | undefined;
+      /** Table header cell. Meta: `{ align?: "left" | "center" | "right" }`. */
+      th?: (children: string, meta?: { align?: "left" | "center" | "right" }) => string | null | undefined;
+      /** Table data cell. Meta: `{ align?: "left" | "center" | "right" }`. */
+      td?: (children: string, meta?: { align?: "left" | "center" | "right" }) => string | null | undefined;
+      /** Raw HTML content. */
+      html?: (children: string) => string | null | undefined;
+      /** Strong emphasis. */
+      strong?: (children: string) => string | null | undefined;
+      /** Emphasis. */
+      emphasis?: (children: string) => string | null | undefined;
+      /** Link. Meta: `{ href: string, title?: string }`. */
+      link?: (children: string, meta: { href: string; title?: string }) => string | null | undefined;
+      /** Image. Meta: `{ src: string, title?: string }`. */
+      image?: (children: string, meta: { src: string; title?: string }) => string | null | undefined;
+      /** Inline code. */
+      codespan?: (children: string) => string | null | undefined;
+      /** Strikethrough. */
+      strikethrough?: (children: string) => string | null | undefined;
+      /** Plain text content. */
+      text?: (text: string) => string | null | undefined;
     }
 
-    /**
-     * A markdown AST node returned by `render()`.
-     *
-     * Text content is represented as plain strings in `children` arrays.
-     * Container elements are objects with a `type` and `props`.
-     */
-    interface MarkdownNode {
-      /** The HTML tag name (e.g., `"h1"`, `"p"`, `"strong"`) or a component override value. */
-      type: string | unknown;
-      /** Props including children and element-specific metadata. */
-      props: {
-        /** Child nodes — a mix of strings (text) and nested nodes. */
-        children?: (string | MarkdownNode)[];
-        /** Heading ID slug (when `headingIds` is enabled). Present on `h1`–`h6`. */
-        id?: string;
-        /** Link URL. Present on `a` elements. */
-        href?: string;
-        /** Link or image title attribute. */
-        title?: string;
-        /** Image source URL. Present on `img` elements. */
-        src?: string;
-        /** Image alt text. Present on `img` elements. */
-        alt?: string;
-        /** Code block language. Present on `pre` elements with a language fence. */
-        language?: string;
-        /** Ordered list start number. Present on `ol` elements. */
-        start?: number;
-        /** Task list item checked state. Present on `li` elements inside task lists. */
-        checked?: boolean;
-        /** Table cell alignment. Present on `th` and `td` elements. */
-        align?: "left" | "center" | "right";
-      };
+    /** Options for `react()` — parser options, component overrides, and element symbol configuration. */
+    interface ReactOptions extends Options, ComponentOverrides {
+      /**
+       * Which `$$typeof` symbol to use on the generated elements.
+       * - `19` (default): `Symbol.for('react.transitional.element')`
+       * - `18`: `Symbol.for('react.element')` — use this for React 18 and older
+       */
+      reactVersion?: 18 | 19;
     }
 
     /**
@@ -1140,37 +1154,46 @@ declare module "bun" {
     ): string;
 
     /**
-     * Parse markdown to a plain object AST.
+     * Render markdown with custom JavaScript callbacks for each element.
      *
-     * Each node is `{ type: "tagName", props: { children: [...], ...metadata } }`.
-     * Text content is plain strings in children arrays.
+     * Each callback receives the accumulated children as a string and optional
+     * metadata, and returns a string. Return `null` or `undefined` to omit
+     * an element. If no callback is registered, children pass through unchanged.
      *
-     * Component overrides can be passed as options to replace default HTML tag names
-     * in the `type` field.
+     * Parser options (e.g., `tables`, `headingIds`) can be included alongside callbacks.
      *
-     * @param input The markdown string or buffer to parse
-     * @param options Parser options and optional component overrides
-     * @returns An array of top-level AST nodes
+     * @param input The markdown string to render
+     * @param callbacks Callbacks for each element type, plus optional parser options
+     * @returns The accumulated string output
      *
      * @example
      * ```ts
-     * const nodes = Bun.markdown.render("# Hello **world**");
-     * // [{
-     * //   type: "h1",
-     * //   props: {
-     * //     children: ["Hello ", { type: "strong", props: { children: ["world"] } }]
-     * //   }
-     * // }]
+     * // Custom HTML with classes
+     * const html = Bun.markdown.render("# Title\n\nHello **world**", {
+     *   heading: (children, { level }) => `<h${level} class="title">${children}</h${level}>`,
+     *   paragraph: (children) => `<p>${children}</p>`,
+     *   strong: (children) => `<b>${children}</b>`,
+     * });
      *
-     * // With component overrides
-     * const nodes = Bun.markdown.render("# Hello", { h1: "MyHeading" });
-     * // [{ type: "MyHeading", props: { children: ["Hello"] } }]
+     * // ANSI terminal output
+     * const ansi = Bun.markdown.render("# Hello\n\n**bold**", {
+     *   heading: (children) => `\x1b[1;4m${children}\x1b[0m\n`,
+     *   paragraph: (children) => children + "\n",
+     *   strong: (children) => `\x1b[1m${children}\x1b[22m`,
+     * });
+     *
+     * // Strip formatting to plain text
+     * const text = Bun.markdown.render("# Hello **world**", {
+     *   heading: (children) => children,
+     *   paragraph: (children) => children,
+     *   strong: (children) => children,
+     * });
      * ```
      */
     export function render(
       input: string | NodeJS.TypedArray | DataView<ArrayBuffer> | ArrayBufferLike,
-      options?: RenderOptions,
-    ): MarkdownNode[];
+      callbacks?: RenderCallbacks,
+    ): string;
 
     /**
      * Parse markdown to React-compatible JSX elements.

@@ -149,7 +149,7 @@ const JsCallbackRenderer = struct {
     heading_ids: bool = false,
     in_heading_block: bool = false,
     heading_text_buf: std.ArrayListUnmanaged(u8) = .{},
-    slug_counts: std.StringHashMapUnmanaged(u32) = .{},
+    slug_counts: bun.StringHashMapUnmanaged(u32) = .{},
 
     const Callbacks = struct {
         heading: JSValue = .zero,

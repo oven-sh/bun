@@ -11,7 +11,7 @@ pub const HtmlRenderer = struct {
     in_heading: bool = false,
     heading_buf: std.ArrayListUnmanaged(u8) = .{},
     heading_text_buf: std.ArrayListUnmanaged(u8) = .{},
-    slug_counts: std.StringHashMapUnmanaged(u32) = .{},
+    slug_counts: bun.StringHashMapUnmanaged(u32) = .{},
 
     pub const OutputBuffer = struct {
         list: std.ArrayListUnmanaged(u8),

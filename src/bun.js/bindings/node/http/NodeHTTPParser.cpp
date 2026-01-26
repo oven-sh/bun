@@ -315,7 +315,7 @@ int HTTPParser::onMessageBegin()
 {
     JSGlobalObject* globalObject = m_globalObject;
     auto& vm = globalObject->vm();
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     JSHTTPParser* thisParser = m_thisParser;
 
@@ -379,7 +379,7 @@ int HTTPParser::onHeaderField(const char* at, size_t length)
 {
     JSGlobalObject* globalObject = m_globalObject;
     auto& vm = globalObject->vm();
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     int rv = trackHeader(length);
     if (rv != 0) {
@@ -452,7 +452,7 @@ int HTTPParser::onHeadersComplete()
 {
     JSGlobalObject* globalObject = m_globalObject;
     auto& vm = globalObject->vm();
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSHTTPParser* thisParser = m_thisParser;
 
     m_headersCompleted = true;
@@ -540,7 +540,7 @@ int HTTPParser::onBody(const char* at, size_t length)
     JSGlobalObject* lexicalGlobalObject = m_globalObject;
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto& vm = lexicalGlobalObject->vm();
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     JSValue onBodyCallback = m_thisParser->get(lexicalGlobalObject, Identifier::from(vm, kOnBody));
     RETURN_IF_EXCEPTION(scope, 0);
@@ -571,7 +571,7 @@ int HTTPParser::onMessageComplete()
 {
     JSGlobalObject* globalObject = m_globalObject;
     auto& vm = globalObject->vm();
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSHTTPParser* thisParser = m_thisParser;
 
     if (JSConnectionsList* connections = m_connectionsList.get()) {

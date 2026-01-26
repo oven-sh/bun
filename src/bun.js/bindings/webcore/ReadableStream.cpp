@@ -117,7 +117,7 @@ static inline std::optional<JSC::JSValue> invokeReadableStreamFunction(JSC::JSGl
     auto function = lexicalGlobalObject.get(&lexicalGlobalObject, identifier);
     ASSERT(function.isCallable());
 
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto callData = JSC::getCallData(function);
     auto result = call(&lexicalGlobalObject, function, callData, thisValue, arguments);
     EXCEPTION_ASSERT(!scope.exception() || vm.hasPendingTerminationException());
@@ -174,7 +174,7 @@ void ReadableStream::cancel(const Exception& exception)
 
     auto& vm = lexicalGlobalObject.vm();
     JSC::JSLockHolder lock(vm);
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto value = createDOMException(&lexicalGlobalObject, exception.code(), exception.message());
     if (scope.exception()) [[unlikely]] {
         ASSERT(vm.hasPendingTerminationException());
@@ -195,7 +195,7 @@ void ReadableStream::cancel(WebCore::JSDOMGlobalObject& globalObject, JSReadable
 
     auto& vm = globalObject.vm();
     JSC::JSLockHolder lock(vm);
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto value = createDOMException(&globalObject, exception.code(), exception.message());
     if (scope.exception()) [[unlikely]] {
         ASSERT(vm.hasPendingTerminationException());
@@ -219,7 +219,7 @@ static inline bool checkReadableStream(JSDOMGlobalObject& globalObject, JSReadab
     ASSERT(!arguments.hasOverflowed());
 
     auto& vm = lexicalGlobalObject.vm();
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto callData = JSC::getCallData(function);
     ASSERT(callData.type != JSC::CallData::Type::None);
 

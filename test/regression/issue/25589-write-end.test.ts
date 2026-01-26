@@ -1,7 +1,6 @@
 import { expect, test } from "bun:test";
 import http2 from "node:http2";
 
-
 test("http2 write() + end() pattern should only send two DATA frames (local server)", async () => {
   // Create a test server that tracks received DATA frames
   const receivedDataFrames: Array<{ length: number; flags: number }> = [];

@@ -496,6 +496,6 @@ export fn zig_log(msg: [*:0]const u8) void {
     bun.Output.errorWriter().print("{s}\n", .{std.mem.span(msg)}) catch {};
 }
 
-const DiffFormatter = @import("./bun.js/test/diff_format.zig").DiffFormatter;
-const std = @import("std");
 const bun = @import("bun");
+const std = @import("std");
+const DiffFormatter = @import("./bun.js/test/diff_format.zig").DiffFormatter;

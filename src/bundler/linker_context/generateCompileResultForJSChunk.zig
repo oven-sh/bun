@@ -87,6 +87,8 @@ fn generateCompileResultForJSChunkImpl(worker: *ThreadPool.Worker, c: *LinkerCon
 pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
 pub const ParseTask = bun.bundle_v2.ParseTask;
 
+const DeclCollector = @import("./generateCodeForFileInChunkJS.zig").DeclCollector;
+
 const bun = @import("bun");
 const Environment = bun.Environment;
 const ThreadPoolLib = bun.ThreadPool;
@@ -104,6 +106,5 @@ const Index = bun.bundle_v2.Index;
 const PartRange = bundler.PartRange;
 const ThreadPool = bun.bundle_v2.ThreadPool;
 
-const DeclCollector = @import("generateCodeForFileInChunkJS.zig").DeclCollector;
 const LinkerContext = bun.bundle_v2.LinkerContext;
 const PendingPartRange = LinkerContext.PendingPartRange;

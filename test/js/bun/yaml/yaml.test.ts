@@ -1024,6 +1024,12 @@ config:
       expect(YAML.stringify([])).toBe("[]");
     });
 
+    test("space parameter with Infinity/NaN", () => {
+      expect(YAML.stringify({ a: 1 }, null, Infinity)).toEqual(YAML.stringify({ a: 1 }, null, 10));
+      expect(YAML.stringify({ a: 1 }, null, -Infinity)).toEqual(YAML.stringify({ a: 1 }));
+      expect(YAML.stringify({ a: 1 }, null, NaN)).toEqual(YAML.stringify({ a: 1 }));
+    });
+
     test("space parameter with boxed Number", () => {
       expect(YAML.stringify({ a: 1 }, null, new Number(2) as any)).toEqual(YAML.stringify({ a: 1 }, null, 2));
       expect(YAML.stringify({ a: 1 }, null, new Number(0) as any)).toEqual(YAML.stringify({ a: 1 }, null, 0));

@@ -294,7 +294,7 @@ pub fn downloadToPath(this: *const CompileTarget, env: *bun.DotEnv.Loader, alloc
 
 pub fn isSupported(this: *const CompileTarget) bool {
     return switch (this.os) {
-        .windows => this.arch == .x64,
+        .windows => this.arch == .x64 or this.arch == .arm64,
 
         .mac => true,
         .linux => true,

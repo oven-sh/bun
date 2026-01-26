@@ -1330,7 +1330,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             return jsc.JSValue.jsNumber(@as(i32, @intCast(@as(u31, @truncate(this.activeSocketsCount())))));
         }
 
-        pub fn getAddress(this: *ThisServer, globalThis: *JSGlobalObject) jsc.JSValue {
+        pub fn getAddress(this: *ThisServer, globalThis: *JSGlobalObject) bun.JSError!jsc.JSValue {
             switch (this.config.address) {
                 .unix => |unix| {
                     var value = bun.String.cloneUTF8(unix);
@@ -1429,7 +1429,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             @panic("unreachable");
         }
 
-        pub fn getProtocol(this: *ThisServer, globalThis: *JSGlobalObject) jsc.JSValue {
+        pub fn getProtocol(this: *ThisServer, globalThis: *JSGlobalObject) bun.JSError!jsc.JSValue {
             _ = this;
             return bun.String.static(if (ssl_enabled) "https" else "http").toJS(globalThis);
         }
@@ -1784,7 +1784,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                             else => |e| {
                                 var sys_err = bun.sys.Error.fromCode(e, .listen);
                                 sys_err.path = unix;
-                                error_instance = sys_err.toJS(globalThis);
+                                error_instance = sys_err.toJS(globalThis) catch return;
                             },
                         }
                     },

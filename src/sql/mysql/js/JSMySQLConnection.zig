@@ -241,7 +241,7 @@ fn SocketHandler(comptime ssl: bool) type {
         ) void {
             const handshakeWasSuccessful = this.#connection.doHandshake(success, ssl_error) catch |err| return this.failFmt(err, "Failed to send handshake response", .{});
             if (!handshakeWasSuccessful) {
-                this.failWithJSValue(ssl_error.toJS(this.#globalObject));
+                this.failWithJSValue(ssl_error.toJS(this.#globalObject) catch return);
             }
         }
 

@@ -776,4 +776,25 @@ describe("stringWidth extended", () => {
       expect(Bun.stringWidth(input)).toBeGreaterThan(0);
     });
   });
+
+  describe("Devanagari conjuncts (GB9c)", () => {
+    test("Ka + Virama + Ssa forms single grapheme cluster", () => {
+      // क्ष = Ka (U+0915) + Virama (U+094D) + Ssa (U+0937)
+      expect(Bun.stringWidth("क्ष")).toBe(2); // 1+0+1 = 2 within single cluster
+    });
+
+    test("Ka + Virama + ZWJ + Ssa forms single grapheme cluster", () => {
+      // Ka + Virama + ZWJ + Ssa
+      expect(Bun.stringWidth("क्\u200Dष")).toBe(2);
+    });
+
+    test("Multiple conjuncts separated by space", () => {
+      expect(Bun.stringWidth("क्ष क्ष")).toBe(5); // 2 + 1(space) + 2
+    });
+
+    test("Three consonants joined", () => {
+      // Ka + Virama + Ka + Virama + Ka
+      expect(Bun.stringWidth("क्क्क")).toBe(3); // 1+0+1+0+1
+    });
+  });
 });

@@ -29,7 +29,7 @@
 // #include "DOMWindow.h"
 // #include "JSDOMWindow.h"
 #include <JavaScriptCore/BuiltinNames.h>
-#include <JavaScriptCore/CatchScope.h>
+#include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/Exception.h>
 #include <JavaScriptCore/JSNativeStdFunction.h>
 #include <JavaScriptCore/JSPromiseConstructor.h>

@@ -404,6 +404,35 @@ pub const FFI = struct {
                         debug("TinyCC failed to add library path", .{});
                     };
                 }
+
+                // Check standard C compiler environment variables for include paths.
+                // These are used by systems like NixOS where standard FHS paths don't exist.
+                if (bun.env_var.C_INCLUDE_PATH.get()) |c_include_path| {
+                    var include_iter = std.mem.splitScalar(u8, c_include_path, ':');
+                    while (include_iter.next()) |path| {
+                        if (path.len > 0) {
+                            const path_z = bun.default_allocator.dupeZ(u8, path) catch continue;
+                            defer bun.default_allocator.free(path_z);
+                            state.addSysIncludePath(path_z) catch {
+                                debug("TinyCC failed to add C_INCLUDE_PATH: {s}", .{path});
+                            };
+                        }
+                    }
+                }
+
+                // Check standard C compiler environment variable for library paths.
+                if (bun.env_var.LIBRARY_PATH.get()) |library_path| {
+                    var library_iter = std.mem.splitScalar(u8, library_path, ':');
+                    while (library_iter.next()) |path| {
+                        if (path.len > 0) {
+                            const path_z = bun.default_allocator.dupeZ(u8, path) catch continue;
+                            defer bun.default_allocator.free(path_z);
+                            state.addLibraryPath(path_z) catch {
+                                debug("TinyCC failed to add LIBRARY_PATH: {s}", .{path});
+                            };
+                        }
+                    }
+                }
             }
 
             try this.errorCheck();
@@ -577,6 +606,9 @@ pub const FFI = struct {
     };
 
     pub fn Bun__FFI__cc(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        if (comptime !Environment.enable_tinycc) {
+            return globalThis.throw("bun:ffi cc() is not available in this build (TinyCC is disabled)", .{});
+        }
         const arguments = callframe.arguments_old(1).slice();
         if (arguments.len == 0 or !arguments[0].isObject()) {
             return globalThis.throwInvalidArguments("Expected object", .{});
@@ -805,6 +837,9 @@ pub const FFI = struct {
     }
 
     pub fn callback(globalThis: *JSGlobalObject, interface: jsc.JSValue, js_callback: jsc.JSValue) bun.JSError!JSValue {
+        if (comptime !Environment.enable_tinycc) {
+            return globalThis.throw("bun:ffi callback() is not available in this build (TinyCC is disabled)", .{});
+        }
         jsc.markBinding(@src());
         if (!interface.isObject()) {
             return globalThis.toInvalidArguments("Expected object", .{});
@@ -974,6 +1009,10 @@ pub const FFI = struct {
     }
 
     pub fn open(global: *JSGlobalObject, name_str: ZigString, object_value: jsc.JSValue) jsc.JSValue {
+        if (comptime !Environment.enable_tinycc) {
+            global.throw("bun:ffi dlopen() is not available in this build (TinyCC is disabled)", .{}) catch {};
+            return .zero;
+        }
         jsc.markBinding(@src());
         const vm = VirtualMachine.get();
         var name_slice = name_str.toSlice(bun.default_allocator);
@@ -984,21 +1023,10 @@ pub const FFI = struct {
 
         var filepath_buf = bun.path_buffer_pool.get();
         defer bun.path_buffer_pool.put(filepath_buf);
-        var linux_memfd_to_close: i32 = -1;
-        defer {
-            if (Environment.isLinux) {
-                if (linux_memfd_to_close != -1) {
-                    _ = bun.FD.fromSystem(linux_memfd_to_close).close();
-                }
-            } else {
-                bun.debugAssert(linux_memfd_to_close == -1);
-            }
-        }
         const name = brk: {
             if (jsc.ModuleLoader.resolveEmbeddedFile(
                 vm,
                 filepath_buf,
-                &linux_memfd_to_close,
                 name_slice.slice(),
                 switch (Environment.os) {
                     .linux => "so",
@@ -1151,6 +1179,10 @@ pub const FFI = struct {
     }
 
     pub fn linkSymbols(global: *JSGlobalObject, object_value: jsc.JSValue) jsc.JSValue {
+        if (comptime !Environment.enable_tinycc) {
+            global.throw("bun:ffi linkSymbols() is not available in this build (TinyCC is disabled)", .{}) catch {};
+            return .zero;
+        }
         jsc.markBinding(@src());
         const allocator = VirtualMachine.get().allocator;
 
@@ -2399,8 +2431,13 @@ fn makeNapiEnvIfNeeded(functions: []const FFI.Function, globalThis: *JSGlobalObj
 
 const string = []const u8;
 
+const TCC = if (Environment.enable_tinycc) @import("../../deps/tcc.zig") else struct {
+    pub const State = struct {
+        pub fn deinit(_: *State) void {}
+    };
+};
+
 const Fs = @import("../../fs.zig");
-const TCC = @import("../../deps/tcc.zig");
 const napi = @import("../../napi/napi.zig");
 const options = @import("../../options.zig");
 const std = @import("std");

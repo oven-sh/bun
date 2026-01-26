@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <array>
 #include <cinttypes>
+#include <cstdlib>
+#include <cstring>
 #include <iostream>
 #include <string>
 
@@ -1855,6 +1857,147 @@ static napi_value napi_get_typeof(const Napi::CallbackInfo &info) {
   return result;
 }
 
+// Regression test: napi_create_external_buffer must tie the finalize callback
+// to the ArrayBuffer's destructor, not addFinalizer on the JSUint8Array.
+// With addFinalizer, extracting .buffer (the ArrayBuffer) and then letting the
+// Buffer get GC'd would call finalize_cb and free the data while the ArrayBuffer
+// still references it.
+static napi_value test_external_buffer_data_lifetime(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+
+  // Allocate data with a known pattern.
+  const size_t data_size = 4;
+  uint8_t* ext_data = (uint8_t*)malloc(data_size);
+  ext_data[0] = 0xDE; ext_data[1] = 0xAD; ext_data[2] = 0xBE; ext_data[3] = 0xEF;
+
+  napi_ref ab_ref = nullptr;
+
+  // Create the buffer inside a handle scope we'll close before GC,
+  // so the JSUint8Array handle becomes eligible for collection.
+  napi_handle_scope *hs = new napi_handle_scope;
+  NODE_API_CALL(env, napi_open_handle_scope(env, hs));
+
+  // Allocate on the heap so conservative stack scanning can't find it.
+  napi_value *buffer = new napi_value;
+  NODE_API_CALL(env, napi_create_external_buffer(env, data_size, ext_data,
+    +[](napi_env, void* data, void*) {
+      // Poison the data then free — detectable as use-after-free if
+      // the ArrayBuffer still tries to read through this pointer.
+      memset(data, 0x00, 4);
+      free(data);
+    }, nullptr, buffer));
+
+  // Extract the underlying ArrayBuffer and prevent it from being GC'd.
+  napi_value *arraybuffer = new napi_value;
+  NODE_API_CALL(env, napi_get_typedarray_info(env, *buffer, nullptr, nullptr,
+                                               nullptr, arraybuffer, nullptr));
+  NODE_API_CALL(env, napi_create_reference(env, *arraybuffer, 1, &ab_ref));
+
+  // Drop heap pointers before closing the scope so the stack scanner
+  // can't keep the Buffer alive.
+  delete arraybuffer;
+  delete buffer;
+
+  NODE_API_CALL(env, napi_close_handle_scope(env, *hs));
+  delete hs;
+
+  // GC: with the old bug (addFinalizer), collecting the JSUint8Array would
+  // call finalize_cb and poison the data even though the ArrayBuffer is alive.
+  run_gc(info);
+  run_gc(info);
+
+  // Read data through the ArrayBuffer — should still be 0xDEADBEEF.
+  napi_value ab_value;
+  NODE_API_CALL(env, napi_get_reference_value(env, ab_ref, &ab_value));
+
+  void* ab_data;
+  size_t ab_len;
+  NODE_API_CALL(env, napi_get_arraybuffer_info(env, ab_value, &ab_data, &ab_len));
+
+  uint8_t* bytes = (uint8_t*)ab_data;
+  if (ab_len >= data_size &&
+      bytes[0] == 0xDE && bytes[1] == 0xAD &&
+      bytes[2] == 0xBE && bytes[3] == 0xEF) {
+    printf("PASS: external buffer data intact through ArrayBuffer after GC\n");
+  } else {
+    printf("FAIL: external buffer data was corrupted (finalize_cb ran too early)\n");
+  }
+
+  NODE_API_CALL(env, napi_delete_reference(env, ab_ref));
+  return ok(env);
+}
+
+// Regression test: PROPERTY_NAME_FROM_UTF8 must copy string data.
+// Previously it used StringImpl::createWithoutCopying for ASCII strings,
+// which could leave dangling pointers in JSC's atom string table.
+//
+// This replicates the pattern from napi-rs / impit that caused a crash:
+// napi-rs creates a CString (heap-allocated) for each property name,
+// passes it to napi_get_named_property, then frees the CString.
+// With createWithoutCopying, the atom table retains a reference to the
+// freed CString memory. On the next lookup of the same property name,
+// Identifier::fromString compares against the stale atom -> use-after-free.
+static napi_value test_napi_get_named_property_copied_string(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+
+  napi_value global;
+  NODE_API_CALL(env, napi_get_global(env, &global));
+
+  // Simulate what impit does: look up properties on JS objects using
+  // heap-allocated keys (like napi-rs CString), then free them.
+  // The property names here match what impit uses in its response handling.
+  const char *property_names[] = {
+    "ReadableStream", "Response", "arrayBuffer", "then", "eval",
+    "enqueue", "bind", "close",
+  };
+  const int num_names = sizeof(property_names) / sizeof(property_names[0]);
+
+  // First round: each strdup'd key goes through PROPERTY_NAME_FROM_UTF8 then
+  // is freed. With createWithoutCopying, the atom table entries now have
+  // dangling data pointers.
+  for (int i = 0; i < num_names; i++) {
+    char *key = strdup(property_names[i]);
+    napi_value result;
+    NODE_API_CALL(env, napi_get_named_property(env, global, key, &result));
+    free(key);
+  }
+
+  // Trigger GC - this is critical. In the impit crash, GC occurs between
+  // the first and second lookups due to many object allocations (ReadableStream
+  // chunks, Response objects, promises). GC may cause the atom table to
+  // drop or recreate atoms, exposing the dangling pointers.
+  run_gc(info);
+
+  // Churn through more strdup/free cycles to increase the chance that
+  // malloc reuses memory from the freed keys above.
+  for (int round = 0; round < 30; round++) {
+    for (int i = 0; i < num_names; i++) {
+      char *key = strdup(property_names[i]);
+      napi_value result;
+      NODE_API_CALL(env, napi_get_named_property(env, global, key, &result));
+      free(key);
+    }
+    if (round % 10 == 0) {
+      run_gc(info);
+    }
+  }
+
+  run_gc(info);
+
+  // Second round: look up the same property names again.
+  // With the bug, Identifier::fromString finds stale atoms in the table
+  // and reads their freed backing memory -> ASAN heap-use-after-free.
+  for (int i = 0; i < num_names; i++) {
+    char *key = strdup(property_names[i]);
+    napi_value result;
+    NODE_API_CALL(env, napi_get_named_property(env, global, key, &result));
+    free(key);
+  }
+
+  printf("PASS\n");
+  return ok(env);
+}
+
 void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_issue_7685);
   REGISTER_FUNCTION(env, exports, test_issue_11949);
@@ -1888,6 +2031,8 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_napi_create_external_buffer_empty);
   REGISTER_FUNCTION(env, exports, test_napi_empty_buffer_info);
   REGISTER_FUNCTION(env, exports, napi_get_typeof);
+  REGISTER_FUNCTION(env, exports, test_external_buffer_data_lifetime);
+  REGISTER_FUNCTION(env, exports, test_napi_get_named_property_copied_string);
 }
 
 } // namespace napitests

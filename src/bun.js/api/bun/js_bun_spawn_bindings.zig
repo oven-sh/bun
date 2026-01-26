@@ -622,7 +622,7 @@ pub fn spawnMaybeSync(
                 else => {},
             }
 
-            return globalThis.throwValue(err.toJS(globalThis));
+            return globalThis.throwValue(try err.toJS(globalThis));
         },
         .result => |result| result,
     };
@@ -767,7 +767,7 @@ pub fn spawnMaybeSync(
                 subprocess.stdio_pipes.items[@intCast(ipc_channel)].buffer,
             ).asErr()) |err| {
                 subprocess.deref();
-                return globalThis.throwValue(err.toJS(globalThis));
+                return globalThis.throwValue(try err.toJS(globalThis));
             }
             subprocess.stdio_pipes.items[@intCast(ipc_channel)] = .unavailable;
         }
@@ -845,7 +845,7 @@ pub fn spawnMaybeSync(
     if (subprocess.stdin == .buffer) {
         if (subprocess.stdin.buffer.start().asErr()) |err| {
             _ = subprocess.tryKill(subprocess.killSignal);
-            _ = globalThis.throwValue(err.toJS(globalThis)) catch {};
+            _ = globalThis.throwValue(err.toJS(globalThis) catch return error.JSError) catch {};
             return error.JSError;
         }
     }
@@ -853,7 +853,7 @@ pub fn spawnMaybeSync(
     if (subprocess.stdout == .pipe) {
         if (subprocess.stdout.pipe.start(subprocess, event_loop).asErr()) |err| {
             _ = subprocess.tryKill(subprocess.killSignal);
-            _ = globalThis.throwValue(err.toJS(globalThis)) catch {};
+            _ = globalThis.throwValue(err.toJS(globalThis) catch return error.JSError) catch {};
             return error.JSError;
         }
         if ((is_sync or !lazy) and subprocess.stdout == .pipe) {
@@ -864,7 +864,7 @@ pub fn spawnMaybeSync(
     if (subprocess.stderr == .pipe) {
         if (subprocess.stderr.pipe.start(subprocess, event_loop).asErr()) |err| {
             _ = subprocess.tryKill(subprocess.killSignal);
-            _ = globalThis.throwValue(err.toJS(globalThis)) catch {};
+            _ = globalThis.throwValue(err.toJS(globalThis) catch return error.JSError) catch {};
             return error.JSError;
         }
 

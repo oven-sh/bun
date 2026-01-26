@@ -32,13 +32,13 @@ test("setTimeout.clock is set after useFakeTimers", () => {
   }
 });
 
-test("setTimeout.clock is set to false after useRealTimers", () => {
+test("setTimeout.clock is deleted after useRealTimers", () => {
   jest.useFakeTimers();
   jest.useRealTimers();
-  // Note: The clock property remains on setTimeout but is set to false.
-  // This differs from Jest/Sinon which removes the property entirely.
-  // The value being false is sufficient for most use cases.
-  expect((globalThis.setTimeout as any).clock).toBe(false);
+  // The clock property should be deleted when disabling fake timers.
+  // This matches Jest/Sinon behavior and ensures hasOwnProperty returns false.
+  expect(Object.prototype.hasOwnProperty.call(globalThis.setTimeout, "clock")).toBe(false);
+  expect((globalThis.setTimeout as any).clock).toBe(undefined);
 });
 
 test("advanceTimersByTime(0) fires setTimeout(fn, 0) timers", async () => {

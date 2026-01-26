@@ -283,9 +283,23 @@ pub const Run = struct {
             vm.cpu_profiler_config = CPUProfiler.CPUProfilerConfig{
                 .name = cpu_prof_opts.name,
                 .dir = cpu_prof_opts.dir,
+                .md_format = cpu_prof_opts.md_format,
+                .json_format = cpu_prof_opts.json_format,
             };
             CPUProfiler.startCPUProfiler(vm.jsc_vm);
             bun.analytics.Features.cpu_profile += 1;
+        }
+
+        // Set up heap profiler config if enabled (actual profiling happens on exit)
+        if (this.ctx.runtime_options.heap_prof.enabled) {
+            const heap_prof_opts = this.ctx.runtime_options.heap_prof;
+
+            vm.heap_profiler_config = HeapProfiler.HeapProfilerConfig{
+                .name = heap_prof_opts.name,
+                .dir = heap_prof_opts.dir,
+                .text_format = heap_prof_opts.text_format,
+            };
+            bun.analytics.Features.heap_snapshot += 1;
         }
 
         this.addConditionalGlobals();
@@ -549,6 +563,7 @@ const VirtualMachine = jsc.VirtualMachine;
 const string = []const u8;
 
 const CPUProfiler = @import("./bun.js/bindings/BunCPUProfiler.zig");
+const HeapProfiler = @import("./bun.js/bindings/BunHeapProfiler.zig");
 const options = @import("./options.zig");
 const std = @import("std");
 const Command = @import("./cli.zig").Command;

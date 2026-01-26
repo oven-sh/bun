@@ -1601,7 +1601,7 @@ pub const BundleV2 = struct {
 
         const output_files = try this.linker.generateChunksInParallel(chunks, false);
 
-        // Generate metafile if requested
+        // Generate metafile if requested (CLI writes files in build_command.zig)
         const metafile: ?[]const u8 = if (this.linker.options.metafile)
             LinkerContext.MetafileBuilder.generate(bun.default_allocator, &this.linker, chunks) catch |err| blk: {
                 bun.Output.warn("Failed to generate metafile: {s}", .{@errorName(err)});
@@ -1610,39 +1610,11 @@ pub const BundleV2 = struct {
         else
             null;
 
-        // Generate markdown if path is specified and metafile was generated
-        const metafile_markdown: ?[]const u8 = if (this.linker.options.metafile_markdown_path.len > 0 and metafile != null)
-            LinkerContext.MetafileBuilder.generateMarkdown(bun.default_allocator, metafile.?) catch |err| blk: {
-                bun.Output.warn("Failed to generate metafile markdown: {s}", .{@errorName(err)});
-                break :blk null;
-            }
-        else
-            null;
-
-        // Write metafile JSON to disk if path specified
-        if (this.linker.options.metafile_json_path.len > 0) {
-            if (metafile) |mf| {
-                const json_path = this.linker.options.metafile_json_path;
-                std.fs.cwd().writeFile(.{ .sub_path = json_path, .data = mf }) catch |err| {
-                    bun.Output.warn("Failed to write metafile JSON to '{s}': {s}", .{ json_path, @errorName(err) });
-                };
-            }
-        }
-
-        // Write markdown to disk if path specified
-        if (this.linker.options.metafile_markdown_path.len > 0) {
-            if (metafile_markdown) |md| {
-                const md_path = this.linker.options.metafile_markdown_path;
-                std.fs.cwd().writeFile(.{ .sub_path = md_path, .data = md }) catch |err| {
-                    bun.Output.warn("Failed to write metafile markdown to '{s}': {s}", .{ md_path, @errorName(err) });
-                };
-            }
-        }
-
+        // Markdown is generated later in build_command.zig for CLI
         return .{
             .output_files = output_files,
             .metafile = metafile,
-            .metafile_markdown = metafile_markdown,
+            .metafile_markdown = null,
         };
     }
 
@@ -2786,7 +2758,7 @@ pub const BundleV2 = struct {
             return error.BuildFailed;
         }
 
-        const output_files = try this.linker.generateChunksInParallel(chunks, false);
+        var output_files = try this.linker.generateChunksInParallel(chunks, false);
 
         // Generate metafile if requested
         const metafile: ?[]const u8 = if (this.linker.options.metafile)
@@ -2797,7 +2769,7 @@ pub const BundleV2 = struct {
         else
             null;
 
-        // Generate markdown if path is specified and metafile was generated
+        // Generate markdown if metafile was generated and path specified
         const metafile_markdown: ?[]const u8 = if (this.linker.options.metafile_markdown_path.len > 0 and metafile != null)
             LinkerContext.MetafileBuilder.generateMarkdown(bun.default_allocator, metafile.?) catch |err| blk: {
                 bun.Output.warn("Failed to generate metafile markdown: {s}", .{@errorName(err)});
@@ -2806,23 +2778,95 @@ pub const BundleV2 = struct {
         else
             null;
 
-        // Write metafile JSON to disk if path specified
+        // Add metafile JSON as OutputFile if path specified
         if (this.linker.options.metafile_json_path.len > 0) {
             if (metafile) |mf| {
                 const json_path = this.linker.options.metafile_json_path;
-                std.fs.cwd().writeFile(.{ .sub_path = json_path, .data = mf }) catch |err| {
-                    bun.Output.warn("Failed to write metafile JSON to '{s}': {s}", .{ json_path, @errorName(err) });
-                };
+                // Write to disk (metafile path is relative to CWD, not outdir)
+                const root_path = this.linker.resolver.opts.output_dir;
+                if (root_path.len > 0) {
+                    // Create parent directories if needed
+                    if (std.fs.path.dirname(json_path)) |parent| {
+                        bun.FD.cwd().makePath(u8, parent) catch {};
+                    }
+                    // Write directly to disk
+                    var path_buf: bun.PathBuffer = undefined;
+                    _ = jsc.Node.fs.NodeFS.writeFileWithPathBuffer(&path_buf, .{
+                        .data = .{ .buffer = .{
+                            .buffer = .{
+                                .ptr = @constCast(mf.ptr),
+                                .len = @as(u32, @truncate(mf.len)),
+                                .byte_len = @as(u32, @truncate(mf.len)),
+                            },
+                        } },
+                        .encoding = .buffer,
+                        .mode = 0o644,
+                        .dirfd = bun.FD.cwd(),
+                        .file = .{ .path = .{
+                            .string = bun.PathString.init(json_path),
+                        } },
+                    }).unwrap() catch |err| {
+                        bun.Output.warn("Failed to write metafile JSON to '{s}': {s}", .{ json_path, @errorName(err) });
+                    };
+                }
+                // Add as OutputFile so it appears in result.outputs
+                try output_files.append(options.OutputFile.init(.{
+                    .loader = .json,
+                    .input_loader = .json,
+                    .input_path = bun.handleOom(bun.default_allocator.dupe(u8, "metafile.json")),
+                    .output_path = bun.handleOom(bun.default_allocator.dupe(u8, json_path)),
+                    .data = .{ .saved = mf.len },
+                    .output_kind = .@"metafile-json",
+                    .is_executable = false,
+                    .side = null,
+                    .entry_point_index = null,
+                }));
             }
         }
 
-        // Write markdown to disk if path specified
+        // Add metafile markdown as OutputFile if path specified
         if (this.linker.options.metafile_markdown_path.len > 0) {
             if (metafile_markdown) |md| {
                 const md_path = this.linker.options.metafile_markdown_path;
-                std.fs.cwd().writeFile(.{ .sub_path = md_path, .data = md }) catch |err| {
-                    bun.Output.warn("Failed to write metafile markdown to '{s}': {s}", .{ md_path, @errorName(err) });
-                };
+                // Write to disk (metafile path is relative to CWD, not outdir)
+                const root_path = this.linker.resolver.opts.output_dir;
+                if (root_path.len > 0) {
+                    // Create parent directories if needed
+                    if (std.fs.path.dirname(md_path)) |parent| {
+                        bun.FD.cwd().makePath(u8, parent) catch {};
+                    }
+                    // Write directly to disk
+                    var path_buf: bun.PathBuffer = undefined;
+                    _ = jsc.Node.fs.NodeFS.writeFileWithPathBuffer(&path_buf, .{
+                        .data = .{ .buffer = .{
+                            .buffer = .{
+                                .ptr = @constCast(md.ptr),
+                                .len = @as(u32, @truncate(md.len)),
+                                .byte_len = @as(u32, @truncate(md.len)),
+                            },
+                        } },
+                        .encoding = .buffer,
+                        .mode = 0o644,
+                        .dirfd = bun.FD.cwd(),
+                        .file = .{ .path = .{
+                            .string = bun.PathString.init(md_path),
+                        } },
+                    }).unwrap() catch |err| {
+                        bun.Output.warn("Failed to write metafile markdown to '{s}': {s}", .{ md_path, @errorName(err) });
+                    };
+                }
+                // Add as OutputFile so it appears in result.outputs
+                try output_files.append(options.OutputFile.init(.{
+                    .loader = .file,
+                    .input_loader = .file,
+                    .input_path = bun.handleOom(bun.default_allocator.dupe(u8, "metafile.md")),
+                    .output_path = bun.handleOom(bun.default_allocator.dupe(u8, md_path)),
+                    .data = .{ .saved = md.len },
+                    .output_kind = .@"metafile-markdown",
+                    .is_executable = false,
+                    .side = null,
+                    .entry_point_index = null,
+                }));
             }
         }
 

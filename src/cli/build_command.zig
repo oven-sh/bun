@@ -583,6 +583,7 @@ pub const BuildCommand = struct {
                     .asset => Output.prettyFmt("<magenta>", true),
                     .sourcemap => Output.prettyFmt("<d>", true),
                     .bytecode => Output.prettyFmt("<d>", true),
+                    .@"metafile-json", .@"metafile-markdown" => Output.prettyFmt("<green>", true),
                 });
 
                 try writer.writeAll(rel_path);
@@ -613,6 +614,8 @@ pub const BuildCommand = struct {
                     .asset => "asset",
                     .sourcemap => "source map",
                     .bytecode => "bytecode",
+                    .@"metafile-json" => "metafile json",
+                    .@"metafile-markdown" => "metafile markdown",
                 }});
                 if (Output.enable_ansi_colors_stdout)
                     try writer.writeAll("\x1b[0m");

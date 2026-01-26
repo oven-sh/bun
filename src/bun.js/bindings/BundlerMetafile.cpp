@@ -1,6 +1,9 @@
 /**
- * Lazy getter for BuildOutput.metafile that returns { json: <parsed>, markdown?: string }
+ * Lazy getter for BuildOutput.metafile that returns the parsed JSON directly.
  * Uses CustomValue so the parsed result replaces the getter.
+ *
+ * For backward compatibility, result.metafile returns the parsed JSON object directly
+ * (with inputs/outputs properties), not wrapped in { json: ... }.
  */
 
 #include "root.h"
@@ -15,8 +18,8 @@ namespace Bun {
 
 using namespace JSC;
 
-// Lazy getter for metafile.json property
-JSC_DEFINE_CUSTOM_GETTER(bundlerMetafileJsonLazyGetter, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName property))
+// Lazy getter for metafile property - returns parsed JSON directly for backward compatibility
+JSC_DEFINE_CUSTOM_GETTER(bundlerMetafileLazyGetter, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName property))
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -52,7 +55,7 @@ JSC_DEFINE_CUSTOM_GETTER(bundlerMetafileJsonLazyGetter, (JSGlobalObject * global
 }
 
 // Helper to set up the lazy metafile on a BuildOutput object
-// metafile: { json: <lazy parsed>, markdown?: string }
+// For backward compatibility, metafile is the parsed JSON directly (not wrapped in { json: ... })
 extern "C" SYSV_ABI void Bun__setupLazyMetafile(
     JSC::JSGlobalObject* globalObject,
     JSC::EncodedJSValue buildOutputEncoded,
@@ -64,26 +67,18 @@ extern "C" SYSV_ABI void Bun__setupLazyMetafile(
     ASSERT(buildOutput);
 
     JSValue metafileJsonString = JSValue::decode(metafileJsonStringEncoded);
-    JSValue metafileMarkdownString = JSValue::decode(metafileMarkdownStringEncoded);
+    // metafileMarkdownString is currently unused for backward compatibility
+    // (we only set the JSON on result.metafile directly)
+    (void)metafileMarkdownStringEncoded;
 
-    // Create the metafile object with json and optionally markdown properties
-    JSObject* metafileObject = constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
-
-    // Store raw JSON string in private property and set up lazy getter for "json"
-    metafileObject->putDirect(vm, WebCore::builtinNames(vm).metafileJsonPrivateName(), metafileJsonString, 0);
-    metafileObject->putDirectCustomAccessor(
+    // Store raw JSON string in private property on buildOutput and set up lazy getter for "metafile"
+    // This returns the parsed JSON directly for backward compatibility with esbuild API
+    buildOutput->putDirect(vm, WebCore::builtinNames(vm).metafileJsonPrivateName(), metafileJsonString, 0);
+    buildOutput->putDirectCustomAccessor(
         vm,
-        Identifier::fromString(vm, "json"_s),
-        CustomGetterSetter::create(vm, bundlerMetafileJsonLazyGetter, nullptr),
+        Identifier::fromString(vm, "metafile"_s),
+        CustomGetterSetter::create(vm, bundlerMetafileLazyGetter, nullptr),
         PropertyAttribute::CustomValue | 0);
-
-    // Add markdown property directly if provided (not lazy since it's already a string)
-    if (metafileMarkdownString && metafileMarkdownString.isString()) {
-        metafileObject->putDirect(vm, Identifier::fromString(vm, "markdown"_s), metafileMarkdownString, 0);
-    }
-
-    // Set the metafile object on buildOutput
-    buildOutput->putDirect(vm, Identifier::fromString(vm, "metafile"_s), metafileObject, 0);
 }
 
 } // namespace Bun

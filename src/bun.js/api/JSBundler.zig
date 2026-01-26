@@ -242,6 +242,10 @@ pub const JSBundler = struct {
         bytecode: bool = false,
         banner: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         footer: OwnedString = OwnedString.initEmpty(bun.default_allocator),
+        /// Path to write JSON metafile (if specified via metafile object) - TEST: moved here
+        metafile_json_path: OwnedString = OwnedString.initEmpty(bun.default_allocator),
+        /// Path to write markdown metafile (if specified via metafile object) - TEST: moved here
+        metafile_markdown_path: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         css_chunking: bool = false,
         drop: bun.StringSet = bun.StringSet.init(bun.default_allocator),
         features: bun.StringSet = bun.StringSet.init(bun.default_allocator),
@@ -256,10 +260,6 @@ pub const JSBundler = struct {
         files: FileMap = .{},
         /// Generate metafile (JSON module graph)
         metafile: bool = false,
-        /// Path to write JSON metafile (if specified via metafile object)
-        metafile_json_path: OwnedString = OwnedString.initEmpty(bun.default_allocator),
-        /// Path to write markdown metafile (if specified via metafile object)
-        metafile_markdown_path: OwnedString = OwnedString.initEmpty(bun.default_allocator),
 
         pub const CompileOptions = struct {
             compile_target: CompileTarget = .{},
@@ -950,17 +950,17 @@ pub const JSBundler = struct {
                     this.metafile = true;
                     const slice = try metafile_value.toSlice(globalThis, bun.default_allocator);
                     defer slice.deinit();
-                    try this.metafile_json_path.appendSlice(slice.slice());
+                    try this.metafile_json_path.appendSliceExact(slice.slice());
                 } else if (metafile_value.isObject()) {
                     // metafile: { json?: string, markdown?: string }
                     this.metafile = true;
                     if (try metafile_value.getOptional(globalThis, "json", ZigString.Slice)) |slice| {
                         defer slice.deinit();
-                        try this.metafile_json_path.appendSlice(slice.slice());
+                        try this.metafile_json_path.appendSliceExact(slice.slice());
                     }
                     if (try metafile_value.getOptional(globalThis, "markdown", ZigString.Slice)) |slice| {
                         defer slice.deinit();
-                        try this.metafile_markdown_path.appendSlice(slice.slice());
+                        try this.metafile_markdown_path.appendSliceExact(slice.slice());
                     }
                 } else if (!metafile_value.isUndefinedOrNull()) {
                     return globalThis.throwInvalidArguments("Expected metafile to be a boolean, string, or object with json/markdown paths", .{});
@@ -1695,9 +1695,11 @@ pub const BuildArtifact = struct {
         @"entry-point",
         sourcemap,
         bytecode,
+        @"metafile-json",
+        @"metafile-markdown",
 
         pub fn isFileInStandaloneMode(this: OutputKind) bool {
-            return this != .sourcemap and this != .bytecode;
+            return this != .sourcemap and this != .bytecode and this != .@"metafile-json" and this != .@"metafile-markdown";
         }
     };
 

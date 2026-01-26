@@ -343,7 +343,8 @@ pub const api = struct {
         sqlite_embedded = 17,
         html = 18,
         yaml = 19,
-        md = 20,
+        json5 = 20,
+        md = 21,
         _,
 
         pub fn jsonStringify(self: @This(), writer: anytype) !void {

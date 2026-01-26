@@ -9,6 +9,7 @@
     macro(FFI) \
     macro(FileSystemRouter) \
     macro(Glob) \
+    macro(JSON5) \
     macro(JSONC) \
     macro(MD4) \
     macro(markdown) \

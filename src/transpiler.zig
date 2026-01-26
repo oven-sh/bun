@@ -1592,6 +1592,7 @@ const Fs = @import("./fs.zig");
 const MimeType = @import("./http/MimeType.zig");
 const NodeFallbackModules = @import("./node_fallbacks.zig");
 const Router = @import("./router.zig");
+const analyze_transpiled_module = @import("./analyze_transpiled_module.zig");
 const runtime = @import("./runtime.zig");
 const std = @import("std");
 const DataURL = @import("./resolver/data_url.zig").DataURL;
@@ -1626,6 +1627,5 @@ const TOML = bun.interchange.toml.TOML;
 const YAML = bun.interchange.yaml.YAML;
 const default_macro_js_value = jsc.JSValue.zero;
 
-const analyze_transpiled_module = @import("./analyze_transpiled_module.zig");
 const js_ast = bun.ast;
 const Ref = bun.ast.Ref;

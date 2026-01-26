@@ -490,7 +490,7 @@ pub const Run = struct {
         }
 
         vm.onUnhandledRejection = &onUnhandledRejectionBeforeClose;
-        vm.global.handleRejectedPromises();
+        vm.global.handleRejectedPromises() catch {};
         vm.onExit();
 
         if (this.any_unhandled and !printed_sourcemap_warning_and_version) {

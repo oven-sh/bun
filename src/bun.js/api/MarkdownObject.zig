@@ -96,13 +96,42 @@ fn parseOptions(globalThis: *jsc.JSGlobalObject, opts_value: JSValue) bun.JSErro
     if (opts_value.isObject()) {
         inline for (@typeInfo(md.Options).@"struct".fields) |field| {
             if (field.type == bool) {
-                if (try opts_value.getBooleanLoose(globalThis, field.name)) |val| {
+                if (try opts_value.getBooleanLoose(globalThis, comptime camelCaseOf(field.name))) |val| {
                     @field(options, field.name) = val;
+                } else if (comptime !std.mem.eql(u8, camelCaseOf(field.name), field.name)) {
+                    if (try opts_value.getBooleanLoose(globalThis, field.name)) |val| {
+                        @field(options, field.name) = val;
+                    }
                 }
             }
         }
     }
     return options;
+}
+
+fn camelCaseOf(comptime snake: []const u8) []const u8 {
+    return comptime brk: {
+        var count: usize = 0;
+        for (snake) |c| {
+            if (c != '_') count += 1;
+        }
+        if (count == snake.len) break :brk snake; // no underscores
+
+        var buf: [count]u8 = undefined;
+        var i: usize = 0;
+        var cap_next = false;
+        for (snake) |c| {
+            if (c == '_') {
+                cap_next = true;
+            } else {
+                buf[i] = if (cap_next and c >= 'a' and c <= 'z') c - 32 else c;
+                i += 1;
+                cap_next = false;
+            }
+        }
+        const final = buf;
+        break :brk &final;
+    };
 }
 
 /// Renderer that calls JavaScript callbacks for each markdown element.

@@ -21,8 +21,8 @@ function renderGFM(md: string): string {
     tables: true,
     strikethrough: true,
     tasklists: true,
-    permissive_autolinks: true,
-    tag_filter: true,
+    permissiveAutolinks: true,
+    tagFilter: true,
   });
 }
 
@@ -457,44 +457,44 @@ describe("autolinks with special characters", () => {
   test("tilde in URL path", () => {
     const md = `https://example.com/~user/file`;
     const expected = `<p><a href="https://example.com/~user/file">https://example.com/~user/file</a></p>`;
-    expect(normalize(render(md, { permissive_autolinks: true }))).toBe(normalize(expected));
+    expect(normalize(render(md, { permissiveAutolinks: true }))).toBe(normalize(expected));
   });
 
   test("asterisk in URL path", () => {
     const md = `https://example.com/path*file`;
     const expected = `<p><a href="https://example.com/path*file">https://example.com/path*file</a></p>`;
-    expect(normalize(render(md, { permissive_autolinks: true }))).toBe(normalize(expected));
+    expect(normalize(render(md, { permissiveAutolinks: true }))).toBe(normalize(expected));
   });
 
   test("double asterisk in URL path", () => {
     const md = `https://example.com/**path`;
     const expected = `<p><a href="https://example.com/**path">https://example.com/**path</a></p>`;
-    expect(normalize(render(md, { permissive_autolinks: true }))).toBe(normalize(expected));
+    expect(normalize(render(md, { permissiveAutolinks: true }))).toBe(normalize(expected));
   });
 
   test("tilde in URL followed by text", () => {
     const md = `Visit https://example.com/~user then go home`;
     const expected = `<p>Visit <a href="https://example.com/~user">https://example.com/~user</a> then go home</p>`;
-    expect(normalize(render(md, { permissive_autolinks: true }))).toBe(normalize(expected));
+    expect(normalize(render(md, { permissiveAutolinks: true }))).toBe(normalize(expected));
   });
 
   test("multiple tildes in URL path", () => {
     const md = `https://example.com/~user1/~user2/file`;
     const expected = `<p><a href="https://example.com/~user1/~user2/file">https://example.com/~user1/~user2/file</a></p>`;
-    expect(normalize(render(md, { permissive_autolinks: true }))).toBe(normalize(expected));
+    expect(normalize(render(md, { permissiveAutolinks: true }))).toBe(normalize(expected));
   });
 
   test("plus sign in URL path", () => {
     const md = `https://codereview.qt-project.org/c/qt/qtwayland/+/545836`;
     const expected = `<p><a href="https://codereview.qt-project.org/c/qt/qtwayland/+/545836">https://codereview.qt-project.org/c/qt/qtwayland/+/545836</a></p>`;
-    expect(normalize(render(md, { permissive_autolinks: true }))).toBe(normalize(expected));
+    expect(normalize(render(md, { permissiveAutolinks: true }))).toBe(normalize(expected));
   });
 
   test("URL autolink not preceded by alphanumeric", () => {
     const md = `texthttp://example.com`;
     // cmark-gfm: does NOT autolink because preceded by alpha
     const expected = `<p>texthttp://example.com</p>`;
-    expect(normalize(render(md, { permissive_autolinks: true }))).toBe(normalize(expected));
+    expect(normalize(render(md, { permissiveAutolinks: true }))).toBe(normalize(expected));
   });
 });
 
@@ -510,55 +510,55 @@ describe("autolink parentheses and trailing punctuation", () => {
   test("balanced parentheses in URL are preserved", () => {
     const md = `www.google.com/search?q=Markup+(business)`;
     const expected = `<p><a href="http://www.google.com/search?q=Markup+(business)">www.google.com/search?q=Markup+(business)</a></p>`;
-    expect(normalize(render(md, { permissive_autolinks: true }))).toBe(normalize(expected));
+    expect(normalize(render(md, { permissiveAutolinks: true }))).toBe(normalize(expected));
   });
 
   test("unbalanced closing paren with trailing text", () => {
     const md = `www.google.com/search?q=(business))+ok`;
     const expected = `<p><a href="http://www.google.com/search?q=(business))+ok">www.google.com/search?q=(business))+ok</a></p>`;
-    expect(normalize(render(md, { permissive_autolinks: true }))).toBe(normalize(expected));
+    expect(normalize(render(md, { permissiveAutolinks: true }))).toBe(normalize(expected));
   });
 
   test("URL ending in paren wrapped in parens strips outer paren", () => {
     const md = `(www.google.com/search?q=Markup+(business))`;
     const expected = `<p>(<a href="http://www.google.com/search?q=Markup+(business)">www.google.com/search?q=Markup+(business)</a>)</p>`;
-    expect(normalize(render(md, { permissive_autolinks: true }))).toBe(normalize(expected));
+    expect(normalize(render(md, { permissiveAutolinks: true }))).toBe(normalize(expected));
   });
 
   test("entity-like suffix excluded from URL", () => {
     const md = `www.google.com/search?q=commonmark&hl;`;
     const expected = `<p><a href="http://www.google.com/search?q=commonmark">www.google.com/search?q=commonmark</a>&amp;hl;</p>`;
-    expect(normalize(render(md, { permissive_autolinks: true }))).toBe(normalize(expected));
+    expect(normalize(render(md, { permissiveAutolinks: true }))).toBe(normalize(expected));
   });
 
   test("less-than terminates autolink", () => {
     const md = `www.example.com<more`;
     const expected = `<p><a href="http://www.example.com">www.example.com</a>&lt;more</p>`;
-    expect(normalize(render(md, { permissive_autolinks: true }))).toBe(normalize(expected));
+    expect(normalize(render(md, { permissiveAutolinks: true }))).toBe(normalize(expected));
   });
 
   test("trailing period stripped from URL", () => {
     const md = `Visit www.commonmark.org.`;
     const expected = `<p>Visit <a href="http://www.commonmark.org">www.commonmark.org</a>.</p>`;
-    expect(normalize(render(md, { permissive_autolinks: true }))).toBe(normalize(expected));
+    expect(normalize(render(md, { permissiveAutolinks: true }))).toBe(normalize(expected));
   });
 
   test("email autolink with trailing period excluded", () => {
     const md = `Email foo@bar.baz.`;
     const expected = `<p>Email <a href="mailto:foo@bar.baz">foo@bar.baz</a>.</p>`;
-    expect(normalize(render(md, { permissive_autolinks: true }))).toBe(normalize(expected));
+    expect(normalize(render(md, { permissiveAutolinks: true }))).toBe(normalize(expected));
   });
 
   test("www autolink at start of line", () => {
     const md = `www.example.com/path`;
     const expected = `<p><a href="http://www.example.com/path">www.example.com/path</a></p>`;
-    expect(normalize(render(md, { permissive_autolinks: true }))).toBe(normalize(expected));
+    expect(normalize(render(md, { permissiveAutolinks: true }))).toBe(normalize(expected));
   });
 
   test("email autolink in sentence", () => {
     const md = `Contact foo@bar.baz for info`;
     const expected = `<p>Contact <a href="mailto:foo@bar.baz">foo@bar.baz</a> for info</p>`;
-    expect(normalize(render(md, { permissive_autolinks: true }))).toBe(normalize(expected));
+    expect(normalize(render(md, { permissiveAutolinks: true }))).toBe(normalize(expected));
   });
 });
 

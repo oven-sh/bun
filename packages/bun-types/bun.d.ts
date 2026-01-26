@@ -938,47 +938,47 @@ declare module "bun" {
       /** Enable GFM task lists (`- [x] item`). Default: `true`. */
       tasklists?: boolean;
       /** Enable all permissive autolink types (URL, WWW, email). Default: `false`. */
-      permissive_autolinks?: boolean;
+      permissiveAutolinks?: boolean;
       /** Enable permissive URL autolinks (e.g. `https://example.com`). Default: `false`. */
-      permissive_url_autolinks?: boolean;
+      permissiveUrlAutolinks?: boolean;
       /** Enable permissive WWW autolinks (e.g. `www.example.com`). Default: `false`. */
-      permissive_www_autolinks?: boolean;
+      permissiveWwwAutolinks?: boolean;
       /** Enable permissive email autolinks (e.g. `user@example.com`). Default: `false`. */
-      permissive_email_autolinks?: boolean;
+      permissiveEmailAutolinks?: boolean;
       /** Treat soft line breaks as hard line breaks. Default: `false`. */
-      hard_soft_breaks?: boolean;
+      hardSoftBreaks?: boolean;
       /** Enable wiki-style links (`[[target]]` or `[[target|label]]`). Default: `false`. */
-      wiki_links?: boolean;
+      wikiLinks?: boolean;
       /** Enable underline syntax (`__text__` renders as `<u>` instead of `<strong>`). Default: `false`. */
       underline?: boolean;
       /** Enable LaTeX math (`$inline$` and `$$display$$`). Default: `false`. */
-      latex_math?: boolean;
+      latexMath?: boolean;
       /** Collapse whitespace in text content. Default: `false`. */
-      collapse_whitespace?: boolean;
+      collapseWhitespace?: boolean;
       /** Allow ATX headers without a space after `#`. Default: `false`. */
-      permissive_atx_headers?: boolean;
+      permissiveAtxHeaders?: boolean;
       /** Disable indented code blocks. Default: `false`. */
-      no_indented_code_blocks?: boolean;
+      noIndentedCodeBlocks?: boolean;
       /** Disable HTML blocks. Default: `false`. */
-      no_html_blocks?: boolean;
+      noHtmlBlocks?: boolean;
       /** Disable inline HTML spans. Default: `false`. */
-      no_html_spans?: boolean;
+      noHtmlSpans?: boolean;
       /**
        * Enable the GFM tag filter, which replaces `<` with `&lt;` for disallowed
        * HTML tags (e.g. `<script>`, `<style>`, `<iframe>`). Default: `false`.
        */
-      tag_filter?: boolean;
+      tagFilter?: boolean;
       /**
        * Generate `id` attributes on heading tags from their text content.
        * Uses GitHub-compatible slug generation (lowercase, strip non-alphanumeric,
        * deduplicate with `-1`, `-2` suffixes). Default: `false`.
        */
-      heading_ids?: boolean;
+      headingIds?: boolean;
       /**
-       * Wrap heading content in `<a href="#slug">` anchor tags. Requires `heading_ids`
+       * Wrap heading content in `<a href="#slug">` anchor tags. Requires `headingIds`
        * to be enabled to have an effect. Default: `false`.
        */
-      autolink_headings?: boolean;
+      autolinkHeadings?: boolean;
     }
 
     /**

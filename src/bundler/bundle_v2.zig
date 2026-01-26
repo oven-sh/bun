@@ -972,6 +972,8 @@ pub const BundleV2 = struct {
         this.linker.options.output_format = transpiler.options.output_format;
         this.linker.options.generate_bytecode_cache = transpiler.options.bytecode;
         this.linker.options.metafile = transpiler.options.metafile;
+        this.linker.options.metafile_json_path = transpiler.options.metafile_json_path;
+        this.linker.options.metafile_markdown_path = transpiler.options.metafile_markdown_path;
 
         this.linker.dev_server = transpiler.options.dev_server;
 
@@ -1593,6 +1595,7 @@ pub const BundleV2 = struct {
             return .{
                 .output_files = std.array_list.Managed(options.OutputFile).init(alloc),
                 .metafile = null,
+                .metafile_markdown = null,
             };
         }
 
@@ -1607,9 +1610,39 @@ pub const BundleV2 = struct {
         else
             null;
 
+        // Generate markdown if path is specified and metafile was generated
+        const metafile_markdown: ?[]const u8 = if (this.linker.options.metafile_markdown_path.len > 0 and metafile != null)
+            LinkerContext.MetafileBuilder.generateMarkdown(bun.default_allocator, metafile.?) catch |err| blk: {
+                bun.Output.warn("Failed to generate metafile markdown: {s}", .{@errorName(err)});
+                break :blk null;
+            }
+        else
+            null;
+
+        // Write metafile JSON to disk if path specified
+        if (this.linker.options.metafile_json_path.len > 0) {
+            if (metafile) |mf| {
+                const json_path = this.linker.options.metafile_json_path;
+                std.fs.cwd().writeFile(.{ .sub_path = json_path, .data = mf }) catch |err| {
+                    bun.Output.warn("Failed to write metafile JSON to '{s}': {s}", .{ json_path, @errorName(err) });
+                };
+            }
+        }
+
+        // Write markdown to disk if path specified
+        if (this.linker.options.metafile_markdown_path.len > 0) {
+            if (metafile_markdown) |md| {
+                const md_path = this.linker.options.metafile_markdown_path;
+                std.fs.cwd().writeFile(.{ .sub_path = md_path, .data = md }) catch |err| {
+                    bun.Output.warn("Failed to write metafile markdown to '{s}': {s}", .{ md_path, @errorName(err) });
+                };
+            }
+        }
+
         return .{
             .output_files = output_files,
             .metafile = metafile,
+            .metafile_markdown = metafile_markdown,
         };
     }
 
@@ -1823,6 +1856,7 @@ pub const BundleV2 = struct {
     pub const BuildResult = struct {
         output_files: std.array_list.Managed(options.OutputFile),
         metafile: ?[]const u8 = null,
+        metafile_markdown: ?[]const u8 = null,
 
         pub fn deinit(this: *BuildResult) void {
             for (this.output_files.items) |*output_file| {
@@ -1834,6 +1868,11 @@ pub const BundleV2 = struct {
             if (this.metafile) |mf| {
                 bun.default_allocator.free(mf);
                 this.metafile = null;
+            }
+
+            if (this.metafile_markdown) |md| {
+                bun.default_allocator.free(md);
+                this.metafile_markdown = null;
             }
         }
     };
@@ -1984,6 +2023,8 @@ pub const BundleV2 = struct {
             transpiler.options.footer = config.footer.slice();
             transpiler.options.react_fast_refresh = config.react_fast_refresh;
             transpiler.options.metafile = config.metafile;
+            transpiler.options.metafile_json_path = config.metafile_json_path.slice();
+            transpiler.options.metafile_markdown_path = config.metafile_markdown_path.slice();
 
             if (transpiler.options.compile) {
                 // Emitting DCE annotations is nonsensical in --compile.
@@ -2295,13 +2336,20 @@ pub const BundleV2 = struct {
                         },
                     );
 
-                    // Add metafile if it was generated (lazy parsing via getter)
+                    // Add metafile if it was generated
+                    // metafile: { json: <lazy parsed>, markdown?: string }
                     if (build.metafile) |metafile| {
                         const metafile_js_str = bun.String.createUTF8ForJS(globalThis, metafile) catch |err| {
                             return promise.reject(globalThis, err);
                         };
-                        // Set up lazy getter that parses JSON on first access and memoizes
-                        Bun__setupLazyMetafile(globalThis, build_output, metafile_js_str);
+                        const metafile_md_str: jsc.JSValue = if (build.metafile_markdown) |md|
+                            (bun.String.createUTF8ForJS(globalThis, md) catch |err| {
+                                return promise.reject(globalThis, err);
+                            })
+                        else
+                            .js_undefined;
+                        // Set up metafile object with json (lazy) and markdown (if present)
+                        Bun__setupLazyMetafile(globalThis, build_output, metafile_js_str, metafile_md_str);
                     }
 
                     const didHandleCallbacks = if (this.plugins) |plugin| runOnEndCallbacks(globalThis, plugin, promise, build_output, .js_undefined) catch |err| {
@@ -2749,9 +2797,39 @@ pub const BundleV2 = struct {
         else
             null;
 
+        // Generate markdown if path is specified and metafile was generated
+        const metafile_markdown: ?[]const u8 = if (this.linker.options.metafile_markdown_path.len > 0 and metafile != null)
+            LinkerContext.MetafileBuilder.generateMarkdown(bun.default_allocator, metafile.?) catch |err| blk: {
+                bun.Output.warn("Failed to generate metafile markdown: {s}", .{@errorName(err)});
+                break :blk null;
+            }
+        else
+            null;
+
+        // Write metafile JSON to disk if path specified
+        if (this.linker.options.metafile_json_path.len > 0) {
+            if (metafile) |mf| {
+                const json_path = this.linker.options.metafile_json_path;
+                std.fs.cwd().writeFile(.{ .sub_path = json_path, .data = mf }) catch |err| {
+                    bun.Output.warn("Failed to write metafile JSON to '{s}': {s}", .{ json_path, @errorName(err) });
+                };
+            }
+        }
+
+        // Write markdown to disk if path specified
+        if (this.linker.options.metafile_markdown_path.len > 0) {
+            if (metafile_markdown) |md| {
+                const md_path = this.linker.options.metafile_markdown_path;
+                std.fs.cwd().writeFile(.{ .sub_path = md_path, .data = md }) catch |err| {
+                    bun.Output.warn("Failed to write metafile markdown to '{s}': {s}", .{ md_path, @errorName(err) });
+                };
+            }
+        }
+
         return .{
             .output_files = output_files,
             .metafile = metafile,
+            .metafile_markdown = metafile_markdown,
         };
     }
 
@@ -4721,7 +4799,8 @@ const string = []const u8;
 
 // C++ binding for lazy metafile getter (defined in BundlerMetafile.cpp)
 // Uses jsc.conv (SYSV_ABI on Windows x64) for proper calling convention
-extern "C" fn Bun__setupLazyMetafile(globalThis: *jsc.JSGlobalObject, buildOutput: jsc.JSValue, metafileString: jsc.JSValue) callconv(jsc.conv) void;
+// Sets up metafile object with { json: <lazy parsed>, markdown?: string }
+extern "C" fn Bun__setupLazyMetafile(globalThis: *jsc.JSGlobalObject, buildOutput: jsc.JSValue, metafileJsonString: jsc.JSValue, metafileMarkdownString: jsc.JSValue) callconv(jsc.conv) void;
 
 const options = @import("../options.zig");
 

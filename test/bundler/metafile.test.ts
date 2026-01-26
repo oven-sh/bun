@@ -46,13 +46,17 @@ describe("bundler metafile", () => {
     expect(result.metafile).toBeDefined();
     expect(typeof result.metafile).toBe("object");
 
+    // Check metafile structure
+    expect(result.metafile!.json).toBeDefined();
+    expect(typeof result.metafile!.json).toBe("object");
+
     // Check inputs structure
-    expect(result.metafile.inputs).toBeDefined();
-    expect(typeof result.metafile.inputs).toBe("object");
+    expect(result.metafile!.json.inputs).toBeDefined();
+    expect(typeof result.metafile!.json.inputs).toBe("object");
 
     // Check outputs structure
-    expect(result.metafile.outputs).toBeDefined();
-    expect(typeof result.metafile.outputs).toBe("object");
+    expect(result.metafile!.json.outputs).toBeDefined();
+    expect(typeof result.metafile!.json.outputs).toBe("object");
   });
 
   test("metafile inputs contain file metadata", async () => {
@@ -69,7 +73,7 @@ describe("bundler metafile", () => {
     expect(result.success).toBe(true);
     expect(result.metafile).toBeDefined();
 
-    const inputs = result.metafile.inputs as Record<string, MetafileInput>;
+    const inputs = result.metafile!.json.inputs as Record<string, MetafileInput>;
     const inputKeys = Object.keys(inputs);
 
     // Should have at least 2 input files
@@ -97,7 +101,7 @@ describe("bundler metafile", () => {
     expect(result.success).toBe(true);
     expect(result.metafile).toBeDefined();
 
-    const outputs = result.metafile.outputs as Record<string, MetafileOutput>;
+    const outputs = result.metafile!.json.outputs as Record<string, MetafileOutput>;
     const outputKeys = Object.keys(outputs);
 
     // Should have at least 1 output
@@ -129,7 +133,7 @@ describe("bundler metafile", () => {
     expect(result.metafile).toBeDefined();
 
     // Find the entry file in inputs
-    const inputs = result.metafile.inputs as Record<string, MetafileInput>;
+    const inputs = result.metafile!.json.inputs as Record<string, MetafileInput>;
     let entryInput: MetafileInput | null = null;
     for (const [path, input] of Object.entries(inputs)) {
       if (path.includes("index.js")) {
@@ -158,7 +162,7 @@ describe("bundler metafile", () => {
     expect(result.metafile).toBeDefined();
 
     // Find the entry file in inputs
-    const inputs = result.metafile.inputs as Record<string, MetafileInput>;
+    const inputs = result.metafile!.json.inputs as Record<string, MetafileInput>;
     let entryImports: MetafileImport[] | null = null;
     for (const [path, input] of Object.entries(inputs)) {
       if (path.includes("entry.js")) {
@@ -205,7 +209,7 @@ describe("bundler metafile", () => {
     expect(result.success).toBe(true);
     expect(result.metafile).toBeDefined();
 
-    const outputs = result.metafile.outputs as Record<string, MetafileOutput>;
+    const outputs = result.metafile!.json.outputs as Record<string, MetafileOutput>;
     const outputKeys = Object.keys(outputs);
     expect(outputKeys.length).toBeGreaterThanOrEqual(1);
 
@@ -228,7 +232,7 @@ describe("bundler metafile", () => {
     expect(result.success).toBe(true);
     expect(result.metafile).toBeDefined();
 
-    const outputs = result.metafile.outputs as Record<string, MetafileOutput>;
+    const outputs = result.metafile!.json.outputs as Record<string, MetafileOutput>;
     const outputKeys = Object.keys(outputs);
 
     // At least one output should have entryPoint
@@ -256,7 +260,7 @@ describe("bundler metafile", () => {
     expect(result.success).toBe(true);
     expect(result.metafile).toBeDefined();
 
-    const inputs = result.metafile.inputs as Record<string, MetafileInput>;
+    const inputs = result.metafile!.json.inputs as Record<string, MetafileInput>;
     // At least one input should have format
     let hasFormat = false;
     for (const key of Object.keys(inputs)) {
@@ -283,7 +287,7 @@ describe("bundler metafile", () => {
     expect(result.success).toBe(true);
     expect(result.metafile).toBeDefined();
 
-    const inputs = result.metafile.inputs as Record<string, MetafileInput>;
+    const inputs = result.metafile!.json.inputs as Record<string, MetafileInput>;
     // Find the foo.js file which uses CommonJS exports
     let fooInput: MetafileInput | null = null;
     for (const [path, input] of Object.entries(inputs)) {
@@ -311,7 +315,7 @@ describe("bundler metafile", () => {
     expect(result.success).toBe(true);
     expect(result.metafile).toBeDefined();
 
-    const inputs = result.metafile.inputs as Record<string, MetafileInput>;
+    const inputs = result.metafile!.json.inputs as Record<string, MetafileInput>;
     let foundExternal = false;
 
     for (const key of Object.keys(inputs)) {
@@ -343,7 +347,7 @@ describe("bundler metafile", () => {
     expect(result.success).toBe(true);
     expect(result.metafile).toBeDefined();
 
-    const outputs = result.metafile.outputs as Record<string, MetafileOutput>;
+    const outputs = result.metafile!.json.outputs as Record<string, MetafileOutput>;
     const outputKeys = Object.keys(outputs);
 
     // With splitting, we should have more outputs (shared chunk)
@@ -365,7 +369,7 @@ describe("bundler metafile", () => {
     expect(result.metafile).toBeDefined();
 
     // Find the entry file in inputs
-    const inputs = result.metafile.inputs as Record<string, MetafileInput>;
+    const inputs = result.metafile!.json.inputs as Record<string, MetafileInput>;
     let jsonImport: MetafileImport | null = null;
     for (const [path, input] of Object.entries(inputs)) {
       if (path.includes("entry.js")) {
@@ -399,7 +403,7 @@ describe("bundler metafile", () => {
     expect(result.metafile).toBeDefined();
 
     // Find the entry file in inputs
-    const inputs = result.metafile.inputs as Record<string, MetafileInput>;
+    const inputs = result.metafile!.json.inputs as Record<string, MetafileInput>;
     let requireImport: MetafileImport | null = null;
     for (const [path, input] of Object.entries(inputs)) {
       if (path.includes("entry.js")) {
@@ -433,7 +437,7 @@ describe("bundler metafile", () => {
     expect(result.metafile).toBeDefined();
 
     // Find the entry file in inputs
-    const inputs = result.metafile.inputs as Record<string, MetafileInput>;
+    const inputs = result.metafile!.json.inputs as Record<string, MetafileInput>;
     let dynamicImport: MetafileImport | null = null;
     for (const [path, input] of Object.entries(inputs)) {
       if (path.includes("entry.js")) {
@@ -454,7 +458,7 @@ describe("bundler metafile", () => {
     expect(dynamicImport!.path).toMatch(/^\.\/chunk-[a-z0-9]+\.js$/);
 
     // Verify the path corresponds to an actual output chunk
-    const outputs = result.metafile.outputs as Record<string, MetafileOutput>;
+    const outputs = result.metafile!.json.outputs as Record<string, MetafileOutput>;
     const outputPaths = Object.keys(outputs);
     expect(outputPaths).toContain(dynamicImport!.path);
   });
@@ -473,7 +477,7 @@ describe("bundler metafile", () => {
     expect(result.success).toBe(true);
     expect(result.metafile).toBeDefined();
 
-    const outputs = result.metafile.outputs as Record<string, MetafileOutput>;
+    const outputs = result.metafile!.json.outputs as Record<string, MetafileOutput>;
 
     // Find the JS output that should reference the CSS bundle
     let foundCssBundle = false;
@@ -503,7 +507,7 @@ describe("bundler metafile", () => {
     expect(result.success).toBe(true);
     expect(result.metafile).toBeDefined();
 
-    const inputs = result.metafile.inputs as Record<string, MetafileInput>;
+    const inputs = result.metafile!.json.inputs as Record<string, MetafileInput>;
     const inputKeys = Object.keys(inputs);
 
     // Should have both files
@@ -523,6 +527,186 @@ describe("bundler metafile", () => {
 
     expect(aImportsB).toBe(true);
     expect(bImportsA).toBe(true);
+  });
+});
+
+describe("Bun.build metafile option variants", () => {
+  test("metafile: string writes JSON to file path", async () => {
+    using dir = tempDir("metafile-string-path", {
+      "entry.js": `import { foo } from "./foo.js"; console.log(foo);`,
+      "foo.js": `export const foo = "hello";`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/entry.js`],
+      outdir: `${dir}/dist`,
+      metafile: `${dir}/output-meta.json`,
+    });
+
+    expect(result.success).toBe(true);
+
+    // Check JSON file was written
+    const jsonFile = Bun.file(`${dir}/output-meta.json`);
+    expect(await jsonFile.exists()).toBe(true);
+
+    // Verify JSON content
+    const content = await jsonFile.text();
+    const parsed = JSON.parse(content);
+    expect(parsed.inputs).toBeDefined();
+    expect(parsed.outputs).toBeDefined();
+
+    // Also check result.metafile.json is available
+    expect(result.metafile).toBeDefined();
+    expect(result.metafile!.json).toBeDefined();
+    expect(typeof result.metafile!.json).toBe("object");
+    expect(result.metafile!.json.inputs).toBeDefined();
+  });
+
+  test("metafile: { json: path } writes JSON to specified path", async () => {
+    using dir = tempDir("metafile-object-json", {
+      "main.js": `export const value = 42;`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/main.js`],
+      outdir: `${dir}/dist`,
+      metafile: { json: `${dir}/custom-meta.json` },
+    });
+
+    expect(result.success).toBe(true);
+
+    // Check JSON file was written
+    const jsonFile = Bun.file(`${dir}/custom-meta.json`);
+    expect(await jsonFile.exists()).toBe(true);
+
+    // Verify content
+    const parsed = JSON.parse(await jsonFile.text());
+    expect(parsed.inputs).toBeDefined();
+    expect(parsed.outputs).toBeDefined();
+  });
+
+  test("metafile: { markdown: path } writes markdown to specified path", async () => {
+    using dir = tempDir("metafile-object-md", {
+      "app.js": `import "./util.js"; console.log("app");`,
+      "util.js": `console.log("util");`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/app.js`],
+      outdir: `${dir}/dist`,
+      metafile: { markdown: `${dir}/analysis.md` },
+    });
+
+    expect(result.success).toBe(true);
+
+    // Check markdown file was written
+    const mdFile = Bun.file(`${dir}/analysis.md`);
+    expect(await mdFile.exists()).toBe(true);
+
+    // Verify markdown content
+    const content = await mdFile.text();
+    expect(content).toContain("# Bundle Analysis Report");
+    expect(content).toContain("app.js");
+
+    // Also check result.metafile.markdown is available
+    expect(result.metafile).toBeDefined();
+    expect(result.metafile!.markdown).toBeDefined();
+    expect(typeof result.metafile!.markdown).toBe("string");
+    expect(result.metafile!.markdown).toContain("# Bundle Analysis Report");
+  });
+
+  test("metafile: { json: path, markdown: path } writes both files", async () => {
+    using dir = tempDir("metafile-object-both", {
+      "index.js": `import { helper } from "./helper.js"; helper();`,
+      "helper.js": `export function helper() { return "help"; }`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/index.js`],
+      outdir: `${dir}/dist`,
+      metafile: {
+        json: `${dir}/meta.json`,
+        markdown: `${dir}/meta.md`,
+      },
+    });
+
+    expect(result.success).toBe(true);
+
+    // Check both files exist
+    const jsonFile = Bun.file(`${dir}/meta.json`);
+    const mdFile = Bun.file(`${dir}/meta.md`);
+    expect(await jsonFile.exists()).toBe(true);
+    expect(await mdFile.exists()).toBe(true);
+
+    // Verify JSON
+    const parsedJson = JSON.parse(await jsonFile.text());
+    expect(parsedJson.inputs).toBeDefined();
+
+    // Verify markdown
+    const mdContent = await mdFile.text();
+    expect(mdContent).toContain("# Bundle Analysis Report");
+
+    // Both should be in result.metafile
+    expect(result.metafile!.json).toBeDefined();
+    expect(result.metafile!.markdown).toBeDefined();
+  });
+
+  test("metafile.json is lazily parsed", async () => {
+    using dir = tempDir("metafile-lazy-json", {
+      "entry.js": `export const x = 1;`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/entry.js`],
+      metafile: true,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.metafile).toBeDefined();
+
+    // First access should parse the JSON
+    const json1 = result.metafile!.json;
+    expect(json1).toBeDefined();
+    expect(typeof json1).toBe("object");
+    expect(json1.inputs).toBeDefined();
+
+    // Second access should return the same cached object
+    const json2 = result.metafile!.json;
+    expect(json1).toBe(json2); // Same reference (memoized)
+  });
+
+  test("metafile: true provides json and no markdown", async () => {
+    using dir = tempDir("metafile-true", {
+      "test.js": `console.log("test");`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/test.js`],
+      metafile: true,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.metafile).toBeDefined();
+    expect(result.metafile!.json).toBeDefined();
+    expect(result.metafile!.markdown).toBeUndefined();
+  });
+
+  test("metafile: { markdown: path } provides both json and markdown", async () => {
+    using dir = tempDir("metafile-md-has-json", {
+      "test.js": `export const a = 1;`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/test.js`],
+      outdir: `${dir}/dist`,
+      metafile: { markdown: `${dir}/meta.md` },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.metafile).toBeDefined();
+    // Should have both json and markdown
+    expect(result.metafile!.json).toBeDefined();
+    expect(result.metafile!.markdown).toBeDefined();
   });
 });
 

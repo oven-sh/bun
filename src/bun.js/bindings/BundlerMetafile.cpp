@@ -1,10 +1,10 @@
 /**
- * Lazy getter for BuildOutput.metafile that parses JSON on first access.
+ * Lazy getter for BuildOutput.metafile that returns { json: <parsed>, markdown?: string }
  * Uses CustomValue so the parsed result replaces the getter.
  */
 
 #include "root.h"
-#include "BunBuiltinNames.h"
+#include "BunClientData.h"
 #include "ZigGlobalObject.h"
 
 #include <JavaScriptCore/CustomGetterSetter.h>
@@ -15,7 +15,8 @@ namespace Bun {
 
 using namespace JSC;
 
-JSC_DEFINE_CUSTOM_GETTER(bundlerMetafileLazyGetter, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName property))
+// Lazy getter for metafile.json property
+JSC_DEFINE_CUSTOM_GETTER(bundlerMetafileJsonLazyGetter, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName property))
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -26,9 +27,11 @@ JSC_DEFINE_CUSTOM_GETTER(bundlerMetafileLazyGetter, (JSGlobalObject * globalObje
     }
 
     // Get the raw JSON string from private property
-    const auto& privateName = Bun::builtinNames(vm).dataPrivateName();
+    const auto& privateName = WebCore::builtinNames(vm).metafileJsonPrivateName();
     JSValue metafileStringValue = thisObject->getDirect(vm, privateName);
-    ASSERT(metafileStringValue.isString());
+    if (!metafileStringValue || !metafileStringValue.isString()) {
+        return JSValue::encode(jsUndefined());
+    }
 
     auto str = metafileStringValue.toString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
@@ -49,22 +52,38 @@ JSC_DEFINE_CUSTOM_GETTER(bundlerMetafileLazyGetter, (JSGlobalObject * globalObje
 }
 
 // Helper to set up the lazy metafile on a BuildOutput object
-extern "C" SYSV_ABI void Bun__setupLazyMetafile(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue buildOutputEncoded, JSC::EncodedJSValue metafileStringEncoded)
+// metafile: { json: <lazy parsed>, markdown?: string }
+extern "C" SYSV_ABI void Bun__setupLazyMetafile(
+    JSC::JSGlobalObject* globalObject,
+    JSC::EncodedJSValue buildOutputEncoded,
+    JSC::EncodedJSValue metafileJsonStringEncoded,
+    JSC::EncodedJSValue metafileMarkdownStringEncoded)
 {
     auto& vm = JSC::getVM(globalObject);
     JSObject* buildOutput = JSValue::decode(buildOutputEncoded).getObject();
     ASSERT(buildOutput);
 
-    // Store the raw JSON string in a private property
-    const auto& privateName = Bun::builtinNames(vm).dataPrivateName();
-    buildOutput->putDirect(vm, privateName, JSValue::decode(metafileStringEncoded), 0);
+    JSValue metafileJsonString = JSValue::decode(metafileJsonStringEncoded);
+    JSValue metafileMarkdownString = JSValue::decode(metafileMarkdownStringEncoded);
 
-    // Set up the lazy getter
-    buildOutput->putDirectCustomAccessor(
+    // Create the metafile object with json and optionally markdown properties
+    JSObject* metafileObject = constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
+
+    // Store raw JSON string in private property and set up lazy getter for "json"
+    metafileObject->putDirect(vm, WebCore::builtinNames(vm).metafileJsonPrivateName(), metafileJsonString, 0);
+    metafileObject->putDirectCustomAccessor(
         vm,
-        Identifier::fromString(vm, "metafile"_s),
-        CustomGetterSetter::create(vm, bundlerMetafileLazyGetter, nullptr),
+        Identifier::fromString(vm, "json"_s),
+        CustomGetterSetter::create(vm, bundlerMetafileJsonLazyGetter, nullptr),
         PropertyAttribute::CustomValue | 0);
+
+    // Add markdown property directly if provided (not lazy since it's already a string)
+    if (metafileMarkdownString && metafileMarkdownString.isString()) {
+        metafileObject->putDirect(vm, Identifier::fromString(vm, "markdown"_s), metafileMarkdownString, 0);
+    }
+
+    // Set the metafile object on buildOutput
+    buildOutput->putDirect(vm, Identifier::fromString(vm, "metafile"_s), metafileObject, 0);
 }
 
 } // namespace Bun

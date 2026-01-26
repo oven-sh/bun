@@ -101,16 +101,16 @@ Return a string to replace the element's rendering. Return `null` or `undefined`
 | `heading`    | `{ level: number, id?: string }`           | Heading level 1–6. `id` is set when `headingIds` is enabled                                |
 | `paragraph`  | —                                          | Paragraph block                                                                            |
 | `blockquote` | —                                          | Blockquote block                                                                           |
-| `code`       | `{ language: string }`                     | Fenced or indented code block. `language` is set when a language is specified on the fence |
+| `code`       | `{ language?: string }`                    | Fenced or indented code block. `language` is the info-string when specified on the fence   |
 | `list`       | `{ ordered: boolean, start?: number }`     | Ordered or unordered list. `start` is the start number for ordered lists                   |
-| `listItem`   | `{ checked: boolean }`                     | List item. `checked` is present for task list items                                        |
+| `listItem`   | `{ checked?: boolean }`                    | List item. `checked` is set for task list items (`- [x]` / `- [ ]`)                       |
 | `hr`         | —                                          | Horizontal rule                                                                            |
 | `table`      | —                                          | Table block                                                                                |
 | `thead`      | —                                          | Table head                                                                                 |
 | `tbody`      | —                                          | Table body                                                                                 |
 | `tr`         | —                                          | Table row                                                                                  |
-| `th`         | `{ align: "left" \| "center" \| "right" }` | Table header cell. `align` is set when alignment is specified                              |
-| `td`         | `{ align: "left" \| "center" \| "right" }` | Table data cell. `align` is set when alignment is specified                                |
+| `th`         | `{ align?: "left" \| "center" \| "right" }` | Table header cell. `align` is set when alignment is specified                             |
+| `td`         | `{ align?: "left" \| "center" \| "right" }` | Table data cell. `align` is set when alignment is specified                               |
 | `html`       | —                                          | Raw HTML content                                                                           |
 
 ### Inline callbacks
@@ -207,7 +207,7 @@ const result = Bun.markdown.render("Visit www.example.com", {
 
 ## `Bun.markdown.react()`
 
-Render Markdown directly to React JSX elements. The output can be returned from a React component or passed to `renderToString()`.
+Render Markdown directly to React elements. Returns a `<Fragment>` that you can use as a component return value.
 
 ```tsx
 function Markdown({ text }: { text: string }) {
@@ -215,52 +215,108 @@ function Markdown({ text }: { text: string }) {
 }
 ```
 
-The returned value is a React Fragment containing the parsed elements as children.
+### Server-side rendering
+
+Works with `renderToString()` and React Server Components:
+
+```tsx
+import { renderToString } from "react-dom/server";
+
+const html = renderToString(Bun.markdown.react("# Hello **world**"));
+// "<h1>Hello <strong>world</strong></h1>"
+```
 
 ### Component overrides
 
-Pass tag names as keys in the options object to replace default HTML elements with custom React components:
+Replace any HTML element with a custom React component by passing it as an option keyed by tag name:
 
 ```tsx
-function Heading({ children }: { children: React.ReactNode }) {
-  return <h1 className="title">{children}</h1>;
+import { Markdown } from "./Markdown";
+
+function Code({ language, children }) {
+  return (
+    <pre data-language={language}>
+      <code>{children}</code>
+    </pre>
+  );
 }
 
-function Link({ href, children }: { href: string; children: React.ReactNode }) {
+function Link({ href, title, children }) {
   return (
-    <a href={href} target="_blank">
+    <a href={href} title={title} target="_blank" rel="noopener noreferrer">
       {children}
     </a>
   );
 }
 
-function Markdown({ text }: { text: string }) {
-  return Bun.markdown.react(text, { h1: Heading, a: Link });
+function Heading({ id, children }) {
+  return (
+    <h2 id={id}>
+      <a href={`#${id}`}>{children}</a>
+    </h2>
+  );
+}
+
+<Markdown
+  text={content}
+  components={{ pre: Code, a: Link, h2: Heading }}
+  headingIds
+/>;
+```
+
+Where `Markdown` is:
+
+```tsx
+function Markdown({ text, components, ...options }) {
+  return Bun.markdown.react(text, { ...components, ...options });
 }
 ```
 
-Any non-boolean truthy value can be used as an override — functions, classes, or strings:
+#### Available overrides
 
-```tsx
-// Use a different HTML tag
-const el = Bun.markdown.react("# Hello", { h1: "section" });
-```
+Every HTML tag produced by the parser can be overridden:
+
+| Option | Props | Description |
+| ------ | ----- | ----------- |
+| `h1`–`h6` | `{ id?, children }` | Headings. `id` is set when `headingIds` is enabled |
+| `p` | `{ children }` | Paragraph |
+| `blockquote` | `{ children }` | Blockquote |
+| `pre` | `{ language?, children }` | Code block. `language` is the info string (e.g. `"js"`) |
+| `hr` | `{}` | Horizontal rule (no children) |
+| `ul` | `{ children }` | Unordered list |
+| `ol` | `{ start, children }` | Ordered list. `start` is the first item number |
+| `li` | `{ checked?, children }` | List item. `checked` is set for task list items |
+| `table` | `{ children }` | Table |
+| `thead` | `{ children }` | Table head |
+| `tbody` | `{ children }` | Table body |
+| `tr` | `{ children }` | Table row |
+| `th` | `{ align?, children }` | Table header cell |
+| `td` | `{ align?, children }` | Table data cell |
+| `em` | `{ children }` | Emphasis (`*text*`) |
+| `strong` | `{ children }` | Strong (`**text**`) |
+| `a` | `{ href, title?, children }` | Link |
+| `img` | `{ src, alt?, title? }` | Image (no children) |
+| `code` | `{ children }` | Inline code |
+| `del` | `{ children }` | Strikethrough (`~~text~~`) |
+| `br` | `{}` | Hard line break (no children) |
 
 ### React 18 and older
 
-By default, `react()` uses `Symbol.for('react.transitional.element')` as the `$$typeof` symbol on generated elements, which is what React 19 expects. For React 18 and older, set `reactVersion: 18` to use `Symbol.for('react.element')` instead:
+By default, elements use `Symbol.for('react.transitional.element')` as the `$$typeof` symbol. For React 18 and older, set `reactVersion: 18`:
 
 ```tsx
-const el = Bun.markdown.react("# Hello", { reactVersion: 18 });
+function Markdown({ text }: { text: string }) {
+  return Bun.markdown.react(text, { reactVersion: 18 });
+}
 ```
 
 ### Parser options
 
-All parser options from `html()` are also available:
+All [parser options](#options) work with `react()`:
 
 ```tsx
 const el = Bun.markdown.react("## Hello World", {
-  headingIds: true, // Generate id attributes on headings
+  headingIds: true,
   permissiveAutolinks: true,
 });
 ```

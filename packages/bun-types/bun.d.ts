@@ -995,78 +995,91 @@ declare module "bun" {
       autolinkHeadings?: boolean;
     }
 
+    /** A component that accepts props `P`: a function, class, or HTML tag name. */
+    type Component<P = {}> = string | ((props: P) => any) | (new (props: P) => any);
+
+    interface ChildrenProps {
+      children: JSX.Element[];
+    }
+    interface HeadingProps extends ChildrenProps {
+      /** Heading ID slug. Set when `headingIds` is enabled. */
+      id?: string;
+    }
+    interface OrderedListProps extends ChildrenProps {
+      /** The start number. */
+      start: number;
+    }
+    interface ListItemProps extends ChildrenProps {
+      /** Task list checked state. Set for `- [x]` / `- [ ]` items. */
+      checked?: boolean;
+    }
+    interface CodeBlockProps extends ChildrenProps {
+      /** The info-string language (e.g. `"js"`). */
+      language?: string;
+    }
+    interface CellProps extends ChildrenProps {
+      /** Column alignment. */
+      align?: "left" | "center" | "right";
+    }
+    interface LinkProps extends ChildrenProps {
+      /** Link URL. */
+      href: string;
+      /** Link title attribute. */
+      title?: string;
+    }
+    interface ImageProps {
+      /** Image URL. */
+      src: string;
+      /** Alt text. */
+      alt?: string;
+      /** Image title attribute. */
+      title?: string;
+    }
+
     /**
-     * Component overrides to replace default HTML tags with custom values.
+     * Component overrides for `react()`.
      *
-     * Any non-boolean truthy value (string, function, class, etc.) replaces the
-     * default HTML tag name in the `type` field of the output element.
+     * Replace default HTML tags with custom React components. Each override
+     * receives the same props the default element would get.
      *
      * @example
      * ```tsx
-     * // React component replacement
-     * function Title({ children }) { return <div className="title">{children}</div>; }
-     * Bun.markdown.react("# Hello", { h1: Title });
+     * function Code({ language, children }: { language?: string; children: React.ReactNode }) {
+     *   return <pre data-language={language}><code>{children}</code></pre>;
+     * }
+     * Bun.markdown.react(text, { pre: Code });
      * ```
      */
     interface ComponentOverrides {
-      /** Override `<h1>` elements. */
-      h1?: unknown;
-      /** Override `<h2>` elements. */
-      h2?: unknown;
-      /** Override `<h3>` elements. */
-      h3?: unknown;
-      /** Override `<h4>` elements. */
-      h4?: unknown;
-      /** Override `<h5>` elements. */
-      h5?: unknown;
-      /** Override `<h6>` elements. */
-      h6?: unknown;
-      /** Override `<p>` elements. */
-      p?: unknown;
-      /** Override `<blockquote>` elements. */
-      blockquote?: unknown;
-      /** Override `<ul>` elements. */
-      ul?: unknown;
-      /** Override `<ol>` elements. */
-      ol?: unknown;
-      /** Override `<li>` elements. */
-      li?: unknown;
-      /** Override `<pre>` (code block) elements. */
-      pre?: unknown;
-      /** Override `<hr>` elements. */
-      hr?: unknown;
-      /** Override raw HTML elements. */
-      html?: unknown;
-      /** Override `<table>` elements. */
-      table?: unknown;
-      /** Override `<thead>` elements. */
-      thead?: unknown;
-      /** Override `<tbody>` elements. */
-      tbody?: unknown;
-      /** Override `<tr>` elements. */
-      tr?: unknown;
-      /** Override `<th>` elements. */
-      th?: unknown;
-      /** Override `<td>` elements. */
-      td?: unknown;
-      /** Override `<em>` elements. */
-      em?: unknown;
-      /** Override `<strong>` elements. */
-      strong?: unknown;
-      /** Override `<a>` (link) elements. */
-      a?: unknown;
-      /** Override `<img>` elements. */
-      img?: unknown;
-      /** Override `<code>` (inline code) elements. */
-      code?: unknown;
-      /** Override `<del>` (strikethrough) elements. */
-      del?: unknown;
-      /** Override `<math>` (LaTeX math) elements. */
-      math?: unknown;
-      /** Override `<u>` (underline) elements. */
-      u?: unknown;
-      /** Override `<br>` elements. */
-      br?: unknown;
+      h1?: Component<HeadingProps>;
+      h2?: Component<HeadingProps>;
+      h3?: Component<HeadingProps>;
+      h4?: Component<HeadingProps>;
+      h5?: Component<HeadingProps>;
+      h6?: Component<HeadingProps>;
+      p?: Component<ChildrenProps>;
+      blockquote?: Component<ChildrenProps>;
+      ul?: Component<ChildrenProps>;
+      ol?: Component<OrderedListProps>;
+      li?: Component<ListItemProps>;
+      pre?: Component<CodeBlockProps>;
+      hr?: Component<{}>;
+      html?: Component<ChildrenProps>;
+      table?: Component<ChildrenProps>;
+      thead?: Component<ChildrenProps>;
+      tbody?: Component<ChildrenProps>;
+      tr?: Component<ChildrenProps>;
+      th?: Component<CellProps>;
+      td?: Component<CellProps>;
+      em?: Component<ChildrenProps>;
+      strong?: Component<ChildrenProps>;
+      a?: Component<LinkProps>;
+      img?: Component<ImageProps>;
+      code?: Component<ChildrenProps>;
+      del?: Component<ChildrenProps>;
+      math?: Component<ChildrenProps>;
+      u?: Component<ChildrenProps>;
+      br?: Component<{}>;
     }
 
     /**
@@ -1076,19 +1089,69 @@ declare module "bun" {
      * Return `null` or `undefined` to omit the element from the output.
      * If no callback is registered for an element, its children pass through unchanged.
      */
+    /** Meta passed to the `heading` callback. */
+    interface HeadingMeta {
+      /** Heading level (1–6). */
+      level: number;
+      /** Heading ID slug. Set when `headingIds` is enabled. */
+      id?: string;
+    }
+
+    /** Meta passed to the `code` callback. */
+    interface CodeBlockMeta {
+      /** The info-string language (e.g. `"js"`). */
+      language?: string;
+    }
+
+    /** Meta passed to the `list` callback. */
+    interface ListMeta {
+      /** Whether this is an ordered list. */
+      ordered: boolean;
+      /** The start number for ordered lists. */
+      start?: number;
+    }
+
+    /** Meta passed to the `listItem` callback. */
+    interface ListItemMeta {
+      /** Task list checked state. Set for `- [x]` / `- [ ]` items. */
+      checked?: boolean;
+    }
+
+    /** Meta passed to `th` and `td` callbacks. */
+    interface CellMeta {
+      /** Column alignment. */
+      align?: "left" | "center" | "right";
+    }
+
+    /** Meta passed to the `link` callback. */
+    interface LinkMeta {
+      /** Link URL. */
+      href: string;
+      /** Link title attribute. */
+      title?: string;
+    }
+
+    /** Meta passed to the `image` callback. */
+    interface ImageMeta {
+      /** Image URL. */
+      src: string;
+      /** Image title attribute. */
+      title?: string;
+    }
+
     interface RenderCallbacks extends Options {
-      /** Heading. Meta: `{ level: number, id?: string }`. */
-      heading?: (children: string, meta: { level: number; id?: string }) => string | null | undefined;
+      /** Heading (level 1–6). `id` is set when `headingIds` is enabled. */
+      heading?: (children: string, meta: HeadingMeta) => string | null | undefined;
       /** Paragraph. */
       paragraph?: (children: string) => string | null | undefined;
       /** Blockquote. */
       blockquote?: (children: string) => string | null | undefined;
-      /** Code block. Meta: `{ language?: string }`. */
-      code?: (children: string, meta?: { language?: string }) => string | null | undefined;
-      /** List. Meta: `{ ordered: boolean, start?: number }`. */
-      list?: (children: string, meta: { ordered: boolean; start?: number }) => string | null | undefined;
-      /** List item. Meta: `{ checked?: boolean }`. */
-      listItem?: (children: string, meta?: { checked?: boolean }) => string | null | undefined;
+      /** Code block. `meta.language` is the info-string (e.g. `"js"`). Only passed for fenced code blocks with a language. */
+      code?: (children: string, meta?: CodeBlockMeta) => string | null | undefined;
+      /** Ordered or unordered list. `start` is the first item number for ordered lists. */
+      list?: (children: string, meta: ListMeta) => string | null | undefined;
+      /** List item. `meta.checked` is set for task list items (`- [x]` / `- [ ]`). Only passed for task list items. */
+      listItem?: (children: string, meta?: ListItemMeta) => string | null | undefined;
       /** Horizontal rule. */
       hr?: (children: string) => string | null | undefined;
       /** Table. */
@@ -1099,23 +1162,23 @@ declare module "bun" {
       tbody?: (children: string) => string | null | undefined;
       /** Table row. */
       tr?: (children: string) => string | null | undefined;
-      /** Table header cell. Meta: `{ align?: "left" | "center" | "right" }`. */
-      th?: (children: string, meta?: { align?: "left" | "center" | "right" }) => string | null | undefined;
-      /** Table data cell. Meta: `{ align?: "left" | "center" | "right" }`. */
-      td?: (children: string, meta?: { align?: "left" | "center" | "right" }) => string | null | undefined;
+      /** Table header cell. `meta.align` is set when column alignment is specified. */
+      th?: (children: string, meta?: CellMeta) => string | null | undefined;
+      /** Table data cell. `meta.align` is set when column alignment is specified. */
+      td?: (children: string, meta?: CellMeta) => string | null | undefined;
       /** Raw HTML content. */
       html?: (children: string) => string | null | undefined;
-      /** Strong emphasis. */
+      /** Strong emphasis (`**text**`). */
       strong?: (children: string) => string | null | undefined;
-      /** Emphasis. */
+      /** Emphasis (`*text*`). */
       emphasis?: (children: string) => string | null | undefined;
-      /** Link. Meta: `{ href: string, title?: string }`. */
-      link?: (children: string, meta: { href: string; title?: string }) => string | null | undefined;
-      /** Image. Meta: `{ src: string, title?: string }`. */
-      image?: (children: string, meta: { src: string; title?: string }) => string | null | undefined;
-      /** Inline code. */
+      /** Link. `href` is the URL, `title` is the optional title attribute. */
+      link?: (children: string, meta: LinkMeta) => string | null | undefined;
+      /** Image. `src` is the URL, `title` is the optional title attribute. */
+      image?: (children: string, meta: ImageMeta) => string | null | undefined;
+      /** Inline code (`` `code` ``). */
       codespan?: (children: string) => string | null | undefined;
-      /** Strikethrough. */
+      /** Strikethrough (`~~text~~`). */
       strikethrough?: (children: string) => string | null | undefined;
       /** Plain text content. */
       text?: (text: string) => string | null | undefined;
@@ -1196,14 +1259,17 @@ declare module "bun" {
     ): string;
 
     /**
-     * Parse markdown to React-compatible JSX elements.
+     * Render markdown to React JSX elements.
      *
-     * Each node is a valid React element with `$$typeof`, `type`, `key`, `ref`, and `props`.
-     * The output can be passed directly to `renderToString()` or returned from
-     * a React component.
+     * Returns a React Fragment containing the parsed markdown as children.
+     * Can be returned directly from a component or passed to `renderToString()`.
      *
-     * Component overrides can be passed as options to replace default HTML tag names
-     * with custom React components.
+     * Override any HTML element with a custom component by passing it as an option
+     * keyed by tag name. Custom components receive the same props the default
+     * elements would (e.g. `href` for links, `language` for code blocks).
+     *
+     * Uses `Symbol.for('react.transitional.element')` by default (React 19).
+     * Pass `reactVersion: 18` for React 18 and older.
      *
      * @param input The markdown string or buffer to parse
      * @param options Parser options, component overrides, and element symbol configuration
@@ -1211,16 +1277,26 @@ declare module "bun" {
      *
      * @example
      * ```tsx
-     * // Render markdown as a React component
+     * // Use directly as a component return value
      * function Markdown({ text }: { text: string }) {
      *   return Bun.markdown.react(text);
      * }
      *
-     * // With custom components
-     * function Heading({ children }: { children: React.ReactNode }) {
-     *   return <h1 className="title">{children}</h1>;
+     * // Server-side rendering
+     * import { renderToString } from "react-dom/server";
+     * const html = renderToString(Bun.markdown.react("# Hello **world**"));
+     *
+     * // Custom components receive element props
+     * function Code({ language, children }: { language?: string; children: React.ReactNode }) {
+     *   return <pre data-language={language}><code>{children}</code></pre>;
      * }
-     * const element = Bun.markdown.react("# Hello", { h1: Heading });
+     * function Link({ href, children }: { href: string; children: React.ReactNode }) {
+     *   return <a href={href} target="_blank">{children}</a>;
+     * }
+     * const el = Bun.markdown.react(text, { pre: Code, a: Link });
+     *
+     * // For React 18 and older
+     * const el18 = Bun.markdown.react(text, { reactVersion: 18 });
      * ```
      */
     export function react(

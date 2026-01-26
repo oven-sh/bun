@@ -150,6 +150,7 @@
               "/runtime/secrets",
               "/runtime/console",
               "/runtime/yaml",
+              "/runtime/markdown",
               "/runtime/jsonl",
               "/runtime/html-rewriter",
               "/runtime/hashing",

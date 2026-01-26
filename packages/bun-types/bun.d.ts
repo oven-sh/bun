@@ -906,6 +906,178 @@ declare module "bun" {
   }
 
   /**
+   * Markdown related APIs.
+   *
+   * Provides fast markdown parsing and rendering with support for GFM extensions
+   * (tables, strikethrough, task lists, autolinks) and customizable rendering via callbacks.
+   *
+   * @example
+   * ```ts
+   * // Render markdown to HTML
+   * const html = Bun.markdown.html("# Hello **world**");
+   * // "<h1>Hello <strong>world</strong></h1>\n"
+   *
+   * // Custom rendering with callbacks
+   * const result = Bun.markdown.render("# Hello **world**", {
+   *   heading: (children, { level }) => `<h${level} class="custom">${children}</h${level}>`,
+   *   strong: (children) => `<b>${children}</b>`,
+   * });
+   * ```
+   */
+  namespace markdown {
+    /**
+     * Options for configuring the markdown parser.
+     *
+     * By default, GFM extensions (tables, strikethrough, task lists) are enabled.
+     */
+    interface Options {
+      /** Enable GFM tables. Default: `true`. */
+      tables?: boolean;
+      /** Enable GFM strikethrough (`~~text~~`). Default: `true`. */
+      strikethrough?: boolean;
+      /** Enable GFM task lists (`- [x] item`). Default: `true`. */
+      tasklists?: boolean;
+      /** Enable all permissive autolink types (URL, WWW, email). Default: `false`. */
+      permissive_autolinks?: boolean;
+      /** Enable permissive URL autolinks (e.g. `https://example.com`). Default: `false`. */
+      permissive_url_autolinks?: boolean;
+      /** Enable permissive WWW autolinks (e.g. `www.example.com`). Default: `false`. */
+      permissive_www_autolinks?: boolean;
+      /** Enable permissive email autolinks (e.g. `user@example.com`). Default: `false`. */
+      permissive_email_autolinks?: boolean;
+      /** Treat soft line breaks as hard line breaks. Default: `false`. */
+      hard_soft_breaks?: boolean;
+      /** Enable wiki-style links (`[[target]]` or `[[target|label]]`). Default: `false`. */
+      wiki_links?: boolean;
+      /** Enable underline syntax (`__text__` renders as `<u>` instead of `<strong>`). Default: `false`. */
+      underline?: boolean;
+      /** Enable LaTeX math (`$inline$` and `$$display$$`). Default: `false`. */
+      latex_math?: boolean;
+      /** Collapse whitespace in text content. Default: `false`. */
+      collapse_whitespace?: boolean;
+      /** Allow ATX headers without a space after `#`. Default: `false`. */
+      permissive_atx_headers?: boolean;
+      /** Disable indented code blocks. Default: `false`. */
+      no_indented_code_blocks?: boolean;
+      /** Disable HTML blocks. Default: `false`. */
+      no_html_blocks?: boolean;
+      /** Disable inline HTML spans. Default: `false`. */
+      no_html_spans?: boolean;
+      /**
+       * Enable the GFM tag filter, which replaces `<` with `&lt;` for disallowed
+       * HTML tags (e.g. `<script>`, `<style>`, `<iframe>`). Default: `false`.
+       */
+      tag_filter?: boolean;
+    }
+
+    /**
+     * Callbacks for custom rendering of markdown elements.
+     *
+     * Each callback receives the accumulated children content as its first argument
+     * and an optional metadata object as its second argument with element-specific
+     * properties. Return a string to replace the default rendering, or return
+     * `null`/`undefined` to omit the element from the output.
+     */
+    interface Callbacks {
+      /** Called for heading blocks (`# ... ######`). */
+      heading?: (children: string, meta: { level: number }) => string | null | undefined | void;
+      /** Called for paragraph blocks. */
+      paragraph?: (children: string) => string | null | undefined | void;
+      /** Called for blockquote blocks. */
+      blockquote?: (children: string) => string | null | undefined | void;
+      /** Called for fenced or indented code blocks. `meta.language` is set when a language is specified on the fence. */
+      code?: (children: string, meta?: { language: string }) => string | null | undefined | void;
+      /** Called for ordered and unordered lists. `meta.ordered` indicates the list type. `meta.start` is the start number for ordered lists. */
+      list?: (children: string, meta: { ordered: boolean; start?: number }) => string | null | undefined | void;
+      /** Called for list items. `meta.checked` is present for task list items. */
+      listItem?: (children: string, meta?: { checked: boolean }) => string | null | undefined | void;
+      /** Called for horizontal rules (`---`, `***`, `___`). */
+      hr?: (children: string) => string | null | undefined | void;
+      /** Called for table blocks. */
+      table?: (children: string) => string | null | undefined | void;
+      /** Called for table head sections. */
+      thead?: (children: string) => string | null | undefined | void;
+      /** Called for table body sections. */
+      tbody?: (children: string) => string | null | undefined | void;
+      /** Called for table rows. */
+      tr?: (children: string) => string | null | undefined | void;
+      /** Called for table header cells. `meta.align` is set when column alignment is specified. */
+      th?: (children: string, meta?: { align: "left" | "center" | "right" }) => string | null | undefined | void;
+      /** Called for table data cells. `meta.align` is set when column alignment is specified. */
+      td?: (children: string, meta?: { align: "left" | "center" | "right" }) => string | null | undefined | void;
+      /** Called for raw HTML content. */
+      html?: (children: string) => string | null | undefined | void;
+      /** Called for strong emphasis (`**text**` or `__text__`). */
+      strong?: (children: string) => string | null | undefined | void;
+      /** Called for emphasis (`*text*` or `_text_`). */
+      emphasis?: (children: string) => string | null | undefined | void;
+      /** Called for links. */
+      link?: (children: string, meta: { href: string; title?: string }) => string | null | undefined | void;
+      /** Called for images. */
+      image?: (children: string, meta: { src: string; title?: string }) => string | null | undefined | void;
+      /** Called for inline code spans (`` `code` ``). */
+      codespan?: (children: string) => string | null | undefined | void;
+      /** Called for strikethrough text (`~~text~~`). */
+      strikethrough?: (children: string) => string | null | undefined | void;
+      /** Called for text content. */
+      text?: (content: string) => string | null | undefined | void;
+    }
+
+    /**
+     * Render markdown to an HTML string.
+     *
+     * @category Utilities
+     *
+     * @param input The markdown string or buffer to render
+     * @param options Parser options
+     * @returns An HTML string
+     *
+     * @example
+     * ```ts
+     * const html = Bun.markdown.html("# Hello **world**");
+     * // "<h1>Hello <strong>world</strong></h1>\n"
+     *
+     * // With GFM options
+     * const html = Bun.markdown.html("~~deleted~~", { strikethrough: true });
+     * // "<p><del>deleted</del></p>\n"
+     * ```
+     */
+    export function html(
+      input: string | NodeJS.TypedArray | DataView<ArrayBuffer> | ArrayBufferLike,
+      options?: Options,
+    ): string;
+
+    /**
+     * Parse markdown and render it using custom callbacks.
+     *
+     * Each callback receives the accumulated children content as the first argument
+     * and an optional metadata object as the second. Return a string to replace
+     * the element's rendering. Return `null` or `undefined` to omit the element
+     * from the output entirely. If no callback is registered for an element, the
+     * children content passes through unchanged.
+     *
+     * @category Utilities
+     *
+     * @param input The markdown string or buffer to parse
+     * @param callbacks Callbacks for custom rendering, optionally combined with parser options
+     * @returns The rendered string
+     *
+     * @example
+     * ```ts
+     * const result = Bun.markdown.render("# Hello **world**", {
+     *   heading: (children, { level }) => `<h${level} class="title">${children}</h${level}>`,
+     *   strong: (children) => `<b>${children}</b>`,
+     *   paragraph: (children) => `<p>${children}</p>`,
+     * });
+     * ```
+     */
+    export function render(
+      input: string | NodeJS.TypedArray | DataView<ArrayBuffer> | ArrayBufferLike,
+      callbacks?: Callbacks & Options,
+    ): string;
+  }
+
+  /**
    * Synchronously resolve a `moduleId` as though it were imported from `parent`
    *
    * On failure, throws a `ResolveMessage`

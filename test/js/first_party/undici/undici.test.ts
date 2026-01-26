@@ -171,16 +171,20 @@ describe("undici", () => {
       expect(result).toBe(null);
     });
 
-    it("Pool should have close() and destroy() methods", () => {
+    it("Pool should have close() and destroy() methods", async () => {
       const pool = new Pool();
       expect(typeof pool.close).toBe("function");
       expect(typeof pool.destroy).toBe("function");
+      expect(await pool.close()).toBe(null);
+      expect(await pool.destroy()).toBe(null);
     });
 
-    it("Client should have close() and destroy() methods", () => {
+    it("Client should have close() and destroy() methods", async () => {
       const client = new Client();
       expect(typeof client.close).toBe("function");
       expect(typeof client.destroy).toBe("function");
+      expect(await client.close()).toBe(null);
+      expect(await client.destroy()).toBe(null);
     });
   });
 });

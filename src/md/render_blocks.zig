@@ -92,7 +92,7 @@ pub fn processTableRow(self: *Parser, vline: VerbatimLine, is_header: bool, col_
         while (cell_end > cell_beg and helpers.isBlank(row_text[cell_end - 1])) cell_end -= 1;
 
         const cell_type: BlockType = if (is_header) .th else .td;
-        const align_data: u32 = if (cell_index < 64) @intFromEnum(self.table_alignments[cell_index]) else 0;
+        const align_data: u32 = if (cell_index < types.TABLE_MAXCOLCOUNT) @intFromEnum(self.table_alignments[cell_index]) else 0;
         self.enterBlock(cell_type, align_data, 0);
         if (cell_beg < cell_end) {
             const cell_content = row_text[cell_beg..cell_end];
@@ -102,18 +102,20 @@ pub fn processTableRow(self: *Parser, vline: VerbatimLine, is_header: bool, col_
             if (std.mem.indexOf(u8, cell_content, "\\|") != null) {
                 var buf: std.ArrayListUnmanaged(u8) = .{};
                 defer buf.deinit(self.allocator);
-                buf.ensureTotalCapacity(self.allocator, cell_content.len) catch return;
-                var ci: usize = 0;
-                while (ci < cell_content.len) {
-                    if (cell_content[ci] == '\\' and ci + 1 < cell_content.len and cell_content[ci + 1] == '|') {
-                        buf.appendAssumeCapacity('|');
-                        ci += 2;
-                    } else {
-                        buf.appendAssumeCapacity(cell_content[ci]);
-                        ci += 1;
+                const unescaped = if (buf.ensureTotalCapacity(self.allocator, cell_content.len)) |_| blk: {
+                    var ci: usize = 0;
+                    while (ci < cell_content.len) {
+                        if (cell_content[ci] == '\\' and ci + 1 < cell_content.len and cell_content[ci + 1] == '|') {
+                            buf.appendAssumeCapacity('|');
+                            ci += 2;
+                        } else {
+                            buf.appendAssumeCapacity(cell_content[ci]);
+                            ci += 1;
+                        }
                     }
-                }
-                self.processInlineContent(buf.items, vline.beg + @as(OFF, @intCast(cell_beg)));
+                    break :blk buf.items;
+                } else |_| cell_content;
+                self.processInlineContent(unescaped, vline.beg + @as(OFF, @intCast(cell_beg)));
             } else {
                 self.processInlineContent(cell_content, vline.beg + @as(OFF, @intCast(cell_beg)));
             }
@@ -131,7 +133,7 @@ pub fn processTableRow(self: *Parser, vline: VerbatimLine, is_header: bool, col_
     // Pad short rows with empty cells
     const cell_type: BlockType = if (is_header) .th else .td;
     while (cell_index < col_count) {
-        const align_data: u32 = if (cell_index < 64) @intFromEnum(self.table_alignments[cell_index]) else 0;
+        const align_data: u32 = if (cell_index < types.TABLE_MAXCOLCOUNT) @intFromEnum(self.table_alignments[cell_index]) else 0;
         self.enterBlock(cell_type, align_data, 0);
         self.leaveBlock(cell_type, 0);
         cell_index += 1;

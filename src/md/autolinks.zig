@@ -137,6 +137,7 @@ pub fn checkRightBoundary(content: []const u8, pos: usize, allow_emph: bool) boo
 /// Detect permissive autolinks at the given position in content.
 /// `pos` is the position of the trigger character ('@', ':', or '.').
 pub fn findPermissiveAutolink(content: []const u8, pos: usize, allow_emph: bool) AutolinkResult {
+    if (pos >= content.len) return null;
     const c = content[pos];
 
     if (c == ':') {

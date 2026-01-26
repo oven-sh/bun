@@ -57,6 +57,7 @@ pub fn isAtxHeaderLine(self: *const Parser, off: OFF) struct { is_atx: bool, lev
 }
 
 pub fn isOpeningCodeFence(self: *const Parser, off: OFF) struct { is_fence: bool, fence_data: u32 } {
+    if (off >= self.size) return .{ .is_fence = false, .fence_data = 0 };
     const fence_char = self.text[off];
     var pos = off;
     var count: u32 = 0;
@@ -337,7 +338,7 @@ pub fn isTableUnderline(self: *Parser, off: OFF) struct { is_underline: bool, co
         if (has_right_colon) pos += 1;
 
         // Determine alignment
-        if (col_count < 64) {
+        if (col_count < types.TABLE_MAXCOLCOUNT) {
             self.table_alignments[col_count] = if (has_left_colon and has_right_colon)
                 .center
             else if (has_left_colon)

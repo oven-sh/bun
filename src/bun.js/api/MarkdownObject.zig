@@ -117,8 +117,6 @@ const JsCallbackRenderer = struct {
     callbacks: Callbacks = .{},
     has_js_error: bool = false,
 
-    const BLOCK_FENCED_CODE: u32 = 0x10;
-
     const Callbacks = struct {
         heading: JSValue = .zero,
         paragraph: JSValue = .zero,
@@ -187,7 +185,9 @@ const JsCallbackRenderer = struct {
     fn appendToTop(self: *JsCallbackRenderer, data: []const u8) void {
         if (self.stack.items.len == 0) return;
         const top = &self.stack.items[self.stack.items.len - 1];
-        top.buffer.appendSlice(self.allocator, data) catch {};
+        top.buffer.appendSlice(self.allocator, data) catch {
+            self.has_js_error = true;
+        };
     }
 
     fn popAndCallback(self: *JsCallbackRenderer, callback: JSValue, meta: ?JSValue) void {
@@ -242,7 +242,9 @@ const JsCallbackRenderer = struct {
         const self: *JsCallbackRenderer = @ptrCast(@alignCast(ptr));
         if (self.has_js_error) return;
         if (block_type == .doc) return;
-        self.stack.append(self.allocator, .{ .data = data, .flags = flags }) catch {};
+        self.stack.append(self.allocator, .{ .data = data, .flags = flags }) catch {
+            self.has_js_error = true;
+        };
     }
 
     fn leaveBlockImpl(ptr: *anyopaque, block_type: md.BlockType, _: u32) void {
@@ -262,7 +264,9 @@ const JsCallbackRenderer = struct {
     fn enterSpanImpl(ptr: *anyopaque, _: md.SpanType, detail: md.SpanDetail) void {
         const self: *JsCallbackRenderer = @ptrCast(@alignCast(ptr));
         if (self.has_js_error) return;
-        self.stack.append(self.allocator, .{ .detail = detail }) catch {};
+        self.stack.append(self.allocator, .{ .detail = detail }) catch {
+            self.has_js_error = true;
+        };
     }
 
     fn leaveSpanImpl(ptr: *anyopaque, span_type: md.SpanType) void {
@@ -444,7 +448,7 @@ const JsCallbackRenderer = struct {
                 return obj;
             },
             .code => {
-                if (flags & BLOCK_FENCED_CODE != 0) {
+                if (flags & md.BLOCK_FENCED_CODE != 0) {
                     const lang = self.extractLanguage(data);
                     if (lang.len > 0) {
                         const obj = JSValue.createEmptyObject(g, 1);

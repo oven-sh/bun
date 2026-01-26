@@ -304,7 +304,7 @@ pub fn analyzeLine(self: *Parser, off_start: OFF, p_end: *OFF, pivot_line: *cons
 
                 // List mark can't interrupt paragraph unless it's > or ordered starting at 1
                 if (effective_pivot_type == .text and n_parents == self.n_containers) {
-                    if ((off >= self.size or helpers.isNewline(self.ch(cont_result.off))) and container.ch != '>') {
+                    if ((cont_result.off >= self.size or helpers.isNewline(self.ch(cont_result.off))) and container.ch != '>') {
                         // Blank after list mark can't interrupt paragraph
                     } else if ((container.ch == '.' or container.ch == ')') and container.start != 1) {
                         // Ordered list with start != 1 can't interrupt paragraph
@@ -762,7 +762,7 @@ pub fn endCurrentBlock(self: *Parser) error{OutOfMemory}!void {
 
         // Write accumulated lines to block_bytes
         const line_bytes = std.mem.sliceAsBytes(self.current_block_lines.items);
-        self.block_bytes.appendSlice(self.allocator, line_bytes) catch {};
+        try self.block_bytes.appendSlice(self.allocator, line_bytes);
         self.current_block = null;
     }
 }

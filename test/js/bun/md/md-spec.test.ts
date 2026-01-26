@@ -13,7 +13,7 @@ interface SpecExample {
 }
 
 function parseSpecFile(path: string): SpecExample[] {
-  const content = readFileSync(path, "utf8");
+  const content = readFileSync(path, "utf8").replace(/\r\n?/g, "\n");
   const lines = content.split("\n");
   const examples: SpecExample[] = [];
   const fence = "`".repeat(32);

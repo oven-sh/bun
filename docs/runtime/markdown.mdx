@@ -193,7 +193,6 @@ Parser options can be included in the same object as callbacks:
 const result = Bun.markdown.render("Visit www.example.com and ~~old link~~", {
   // Callbacks
   link: (children, { href }) => `[${children}](${href})`,
-  strikethrough: children => `--${children}--`,
   paragraph: children => children,
 
   // Parser options

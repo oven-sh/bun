@@ -327,15 +327,11 @@ pub fn countBackticks(content: []const u8, start: usize) usize {
 pub fn findCodeSpanEnd(self: *const Parser, content: []const u8, start: usize, count: usize) ?usize {
     _ = self;
     var pos = start;
-    while (pos < content.len) {
-        if (content[pos] == '`') {
-            const close_start = pos;
-            while (pos < content.len and content[pos] == '`') pos += 1;
-            if (pos - close_start == count) {
-                return close_start;
-            }
-        } else {
-            pos += 1;
+    while (bun.strings.indexOfCharPos(content, '`', pos)) |backtick_pos| {
+        pos = backtick_pos + 1;
+        while (pos < content.len and content[pos] == '`') pos += 1;
+        if (pos - backtick_pos == count) {
+            return backtick_pos;
         }
     }
     return null;
@@ -755,6 +751,7 @@ pub fn findHtmlTag(self: *const Parser, content: []const u8, start: usize) ?usiz
     return null;
 }
 
+const bun = @import("bun");
 const std = @import("std");
 const helpers = @import("./helpers.zig");
 

@@ -5,6 +5,7 @@ pub const SpanType = types.SpanType;
 pub const TextType = types.TextType;
 pub const SpanDetail = types.SpanDetail;
 pub const Align = types.Align;
+pub const BLOCK_FENCED_CODE = types.BLOCK_FENCED_CODE;
 pub const entity = @import("./entity.zig");
 
 pub const Options = struct {

@@ -50,7 +50,7 @@ pub const Parser = struct {
 
     // Table column alignments
     table_col_count: u32 = 0,
-    table_alignments: [64]Align = [_]Align{.default} ** 64,
+    table_alignments: [types.TABLE_MAXCOLCOUNT]Align = [_]Align{.default} ** types.TABLE_MAXCOLCOUNT,
 
     // Ref defs
     ref_defs: std.ArrayListUnmanaged(RefDef) = .{},
@@ -226,6 +226,7 @@ pub fn renderToHtml(text: []const u8, allocator: Allocator, flags: Flags, tag_fi
     const input = helpers.skipUtf8Bom(text);
 
     var html_renderer = HtmlRenderer.init(allocator, input, tag_filter);
+    errdefer html_renderer.deinit();
 
     var parser = Parser.init(allocator, input, flags, html_renderer.renderer());
     defer parser.deinit();

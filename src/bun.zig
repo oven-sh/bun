@@ -1948,6 +1948,7 @@ pub fn appendOptionsEnv(env: []const u8, comptime ArgType: type, args: *std.arra
             // Find the end of the option flag (--flag)
             while (j < env.len and !std.ascii.isWhitespace(env[j]) and env[j] != '=') : (j += 1) {}
 
+            const end_of_flag = j;
             var found_equals = false;
 
             // Check for equals sign
@@ -1971,6 +1972,10 @@ pub fn appendOptionsEnv(env: []const u8, comptime ArgType: type, args: *std.arra
             } else if (found_equals) {
                 // If we had --flag=value (no quotes), find next whitespace
                 while (j < env.len and !std.ascii.isWhitespace(env[j])) : (j += 1) {}
+            } else {
+                // No value found after flag (e.g., `--flag1 --flag2`).
+                // Reset j to end of flag name so we don't include trailing whitespace.
+                j = end_of_flag;
             }
 
             // Copy the entire argument including quotes

@@ -243,7 +243,7 @@ describe("s3 - Storage class", () => {
       const writer = s3.file("file_from_writer").writer({
         storageClass,
         queueSize: 10,
-        partSize: 5 * 1024,
+        partSize: 5 * 1024 * 1024, // 5MB minimum
       });
 
       const bigFile = Buffer.alloc(10 * 1024 * 1024);

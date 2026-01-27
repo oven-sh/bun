@@ -114,6 +114,8 @@ const buildPlatforms = [
   { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.22" },
   { os: "windows", arch: "x64", release: "2019" },
   { os: "windows", arch: "x64", baseline: true, release: "2019" },
+  // TODO: Enable when Windows ARM64 CI runners are ready
+  // { os: "windows", arch: "aarch64", release: "2019" },
 ];
 
 /**
@@ -136,6 +138,8 @@ const testPlatforms = [
   { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.22", tier: "latest" },
   { os: "windows", arch: "x64", release: "2019", tier: "oldest" },
   { os: "windows", arch: "x64", release: "2019", baseline: true, tier: "oldest" },
+  // TODO: Enable when Windows ARM64 CI runners are ready
+  // { os: "windows", arch: "aarch64", release: "2019", tier: "oldest" },
 ];
 
 /**
@@ -588,7 +592,7 @@ function getTestBunStep(platform, options, testOptions = {}) {
     agents: getTestAgent(platform, options),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
-    parallelism: os === "darwin" ? 2 : 10,
+    parallelism: os === "darwin" ? 2 : 20,
     timeout_in_minutes: profile === "asan" || os === "windows" ? 45 : 30,
     env: {
       ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",

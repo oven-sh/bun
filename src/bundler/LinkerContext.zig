@@ -4,6 +4,7 @@ pub const LinkerContext = struct {
 
     pub const OutputFileListBuilder = @import("./linker_context/OutputFileListBuilder.zig");
     pub const StaticRouteVisitor = @import("./linker_context/StaticRouteVisitor.zig");
+    pub const MetafileBuilder = @import("./linker_context/MetafileBuilder.zig");
 
     parse_graph: *Graph = undefined,
     graph: LinkerGraph = undefined,
@@ -69,6 +70,7 @@ pub const LinkerContext = struct {
         css_chunking: bool = false,
         source_maps: options.SourceMapOption = .none,
         target: options.Target = .browser,
+        metafile: bool = false,
 
         mode: Mode = .bundle,
 
@@ -503,7 +505,7 @@ pub const LinkerContext = struct {
                     const loader = loaders[record.source_index.get()];
 
                     switch (loader) {
-                        .jsx, .js, .ts, .tsx, .napi, .sqlite, .json, .jsonc, .yaml, .html, .sqlite_embedded => {
+                        .jsx, .js, .ts, .tsx, .napi, .sqlite, .json, .jsonc, .json5, .yaml, .html, .sqlite_embedded => {
                             log.addErrorFmt(
                                 source,
                                 record.range.loc,

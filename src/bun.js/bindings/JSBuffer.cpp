@@ -77,8 +77,14 @@
 
 // #include <JavaScriptCore/JSTypedArrayViewPrototype.h>
 #include <JavaScriptCore/JSArrayBufferViewInlines.h>
+#include <JavaScriptCore/JSArray.h>
+#include <JavaScriptCore/JSGenericTypedArrayViewInlines.h>
 
 extern "C" bool Bun__Node__ZeroFillBuffers;
+
+// SIMD-optimized search functions from highway_strings.cpp
+extern "C" void* highway_memmem(const uint8_t* haystack, size_t haystack_len, const uint8_t* needle, size_t needle_len);
+extern "C" size_t highway_index_of_char(const uint8_t* haystack, size_t haystack_len, uint8_t needle);
 
 // export fn Bun__inspect_singleline(globalThis: *JSGlobalObject, value: JSValue) bun.String
 extern "C" BunString Bun__inspect_singleline(JSC::JSGlobalObject* globalObject, JSC::JSValue value);
@@ -344,7 +350,7 @@ JSC::EncodedJSValue JSBuffer__bufferFromPointerAndLengthAndDeinit(JSC::JSGlobalO
 
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto* subclassStructure = globalObject->JSBufferSubclassStructure();
-    auto scope = DECLARE_CATCH_SCOPE(lexicalGlobalObject->vm());
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(lexicalGlobalObject->vm());
 
     if (length > 0) [[likely]] {
         ASSERT(bytesDeallocator);
@@ -1377,11 +1383,20 @@ static ssize_t indexOfOffset(size_t length, ssize_t offset_i64, ssize_t needle_l
 
 static int64_t indexOf(const uint8_t* thisPtr, int64_t thisLength, const uint8_t* valuePtr, int64_t valueLength, int64_t byteOffset)
 {
-    auto haystack = std::span<const uint8_t>(thisPtr, thisLength).subspan(byteOffset);
-    auto needle = std::span<const uint8_t>(valuePtr, valueLength);
-    auto it = std::search(haystack.begin(), haystack.end(), needle.begin(), needle.end());
-    if (it == haystack.end()) return -1;
-    return byteOffset + std::distance(haystack.begin(), it);
+    const size_t haystackLen = static_cast<size_t>(thisLength - byteOffset);
+    const uint8_t* haystackPtr = thisPtr + byteOffset;
+
+    if (valueLength == 1) {
+        // Use SIMD-optimized single-byte search
+        size_t result = highway_index_of_char(haystackPtr, haystackLen, valuePtr[0]);
+        if (result == haystackLen) return -1;
+        return byteOffset + static_cast<int64_t>(result);
+    }
+
+    // Use SIMD-optimized multi-byte search
+    void* result = highway_memmem(haystackPtr, haystackLen, valuePtr, static_cast<size_t>(valueLength));
+    if (result == nullptr) return -1;
+    return byteOffset + static_cast<int64_t>(static_cast<const uint8_t*>(result) - haystackPtr);
 }
 
 static int64_t indexOf16(const uint8_t* thisPtr, int64_t thisLength, const uint8_t* valuePtr, int64_t valueLength, int64_t byteOffset)
@@ -1634,8 +1649,8 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_swap16Body(JSC::JSGlobalObj
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    constexpr int elemSize = 2;
-    int64_t length = static_cast<int64_t>(castedThis->byteLength());
+    constexpr size_t elemSize = 2;
+    size_t length = castedThis->byteLength();
     if (length % elemSize != 0) {
         throwNodeRangeError(lexicalGlobalObject, scope, "Buffer size must be a multiple of 16-bits"_s);
         return {};
@@ -1646,14 +1661,14 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_swap16Body(JSC::JSGlobalObj
         return {};
     }
 
-    uint8_t* typedVector = castedThis->typedVector();
+    uint8_t* data = castedThis->typedVector();
+    size_t count = length / elemSize;
 
-    for (size_t elem = 0; elem < length; elem += elemSize) {
-        const size_t right = elem + 1;
-
-        uint8_t temp = typedVector[elem];
-        typedVector[elem] = typedVector[right];
-        typedVector[right] = temp;
+    for (size_t i = 0; i < count; i++) {
+        uint16_t val;
+        memcpy(&val, data + i * elemSize, sizeof(val));
+        val = __builtin_bswap16(val);
+        memcpy(data + i * elemSize, &val, sizeof(val));
     }
 
     return JSC::JSValue::encode(castedThis);
@@ -1700,7 +1715,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_swap64Body(JSC::JSGlobalObj
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     constexpr size_t elemSize = 8;
-    int64_t length = static_cast<int64_t>(castedThis->byteLength());
+    size_t length = castedThis->byteLength();
     if (length % elemSize != 0) {
         throwNodeRangeError(lexicalGlobalObject, scope, "Buffer size must be a multiple of 64-bits"_s);
         return {};
@@ -1711,19 +1726,14 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_swap64Body(JSC::JSGlobalObj
         return {};
     }
 
-    uint8_t* typedVector = castedThis->typedVector();
+    uint8_t* data = castedThis->typedVector();
+    size_t count = length / elemSize;
 
-    constexpr size_t swaps = elemSize / 2;
-    for (size_t elem = 0; elem < length; elem += elemSize) {
-        const size_t right = elem + elemSize - 1;
-        for (size_t k = 0; k < swaps; k++) {
-            const size_t i = right - k;
-            const size_t j = elem + k;
-
-            uint8_t temp = typedVector[i];
-            typedVector[i] = typedVector[j];
-            typedVector[j] = temp;
-        }
+    for (size_t i = 0; i < count; i++) {
+        uint64_t val;
+        memcpy(&val, data + i * elemSize, sizeof(val));
+        val = __builtin_bswap64(val);
+        memcpy(data + i * elemSize, &val, sizeof(val));
     }
 
     return JSC::JSValue::encode(castedThis);
@@ -2846,11 +2856,38 @@ EncodedJSValue constructBufferFromArray(JSC::ThrowScope& throwScope, JSGlobalObj
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
+    // FIXME: Further optimization possible by calling copyFromInt32ShapeArray/copyFromDoubleShapeArray.
+    if (JSArray* array = jsDynamicCast<JSArray*>(arrayValue)) {
+        if (isJSArray(array)) {
+            size_t length = array->length();
+
+            // Empty array case
+            if (length == 0)
+                RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(createEmptyBuffer(lexicalGlobalObject)));
+
+            // Allocate uninitialized buffer
+            auto* uint8Array = createUninitializedBuffer(lexicalGlobalObject, length);
+            RETURN_IF_EXCEPTION(throwScope, {});
+            if (!uint8Array) [[unlikely]] {
+                throwOutOfMemoryError(lexicalGlobalObject, throwScope);
+                return {};
+            }
+
+            // setFromArrayLike internally detects Int32Shape/DoubleShape and uses
+            // copyFromInt32ShapeArray/copyFromDoubleShapeArray for bulk copy
+            bool success = uint8Array->setFromArrayLike(lexicalGlobalObject, 0, array, 0, length);
+            RETURN_IF_EXCEPTION(throwScope, {});
+            if (!success)
+                return {};
+            RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(uint8Array));
+        }
+    }
+
+    // Slow path: array-like objects, iterables
     auto* constructor = lexicalGlobalObject->m_typedArrayUint8.constructor(lexicalGlobalObject);
     MarkedArgumentBuffer argsBuffer;
     argsBuffer.append(arrayValue);
     JSValue target = globalObject->JSBufferConstructor();
-    // TODO: I wish we could avoid this - it adds ~30ns of overhead just using JSC::construct.
     auto* object = JSC::construct(lexicalGlobalObject, constructor, target, argsBuffer, "Buffer failed to construct"_s);
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(object));

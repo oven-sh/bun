@@ -96,13 +96,12 @@ template<> JSString* convertEnumerationToJS(JSGlobalObject& lexicalGlobalObject,
 template<> std::optional<SubtleCrypto::KeyFormat> parseEnumeration<SubtleCrypto::KeyFormat>(JSGlobalObject& lexicalGlobalObject, JSValue value)
 {
     auto stringValue = value.toWTFString(&lexicalGlobalObject);
-    static constexpr std::array<std::pair<ComparableASCIILiteral, SubtleCrypto::KeyFormat>, 4> mappings { {
+    static constexpr SortedArrayMap enumerationMapping { std::to_array<std::pair<ComparableASCIILiteral, SubtleCrypto::KeyFormat>>({
         { "jwk"_s, SubtleCrypto::KeyFormat::Jwk },
         { "pkcs8"_s, SubtleCrypto::KeyFormat::Pkcs8 },
         { "raw"_s, SubtleCrypto::KeyFormat::Raw },
         { "spki"_s, SubtleCrypto::KeyFormat::Spki },
-    } };
-    static constexpr SortedArrayMap enumerationMapping { mappings };
+    }) };
     if (auto* enumerationValue = enumerationMapping.tryGet(stringValue); enumerationValue) [[likely]]
         return *enumerationValue;
     return std::nullopt;
@@ -380,7 +379,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_digestBody(JSC
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
     auto data = convert<IDLUnion<IDLArrayBufferView, IDLArrayBuffer>>(*lexicalGlobalObject, argument1.value());
     if (throwScope.exception()) [[unlikely]] {
-        throwScope.clearException();
+        (void)throwScope.tryClearException();
         return Bun::ERR::INVALID_ARG_TYPE(throwScope, lexicalGlobalObject, "data"_s, "ArrayBuffer, Buffer, TypedArray, or DataView"_s, argument1.value());
     }
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLAny>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) { return impl.digest(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), WTF::move(algorithm), WTF::move(data), WTF::move(promise)); })));

@@ -344,14 +344,14 @@ static ZigString toZigString(JSC::JSValue val, JSC::JSGlobalObject* global)
     auto* str = val.toString(global);
 
     if (scope.exception()) [[unlikely]] {
-        scope.clearException();
+        (void)scope.tryClearException();
         scope.release();
         return ZigStringEmpty;
     }
 
     auto view = str->view(global);
     if (scope.exception()) [[unlikely]] {
-        scope.clearException();
+        (void)scope.tryClearException();
         scope.release();
         return ZigStringEmpty;
     }

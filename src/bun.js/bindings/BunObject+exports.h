@@ -3,11 +3,14 @@
 
 // --- Getters ---
 #define FOR_EACH_GETTER(macro) \
+    macro(Archive) \
     macro(CSRF) \
     macro(CryptoHasher) \
     macro(FFI) \
     macro(FileSystemRouter) \
     macro(Glob) \
+    macro(JSON5) \
+    macro(JSONC) \
     macro(MD4) \
     macro(MD5) \
     macro(S3Client) \
@@ -69,7 +72,6 @@
     macro(spawn) \
     macro(spawnSync) \
     macro(stringWidth) \
-    macro(traceShellScript) \
     macro(udpSocket) \
     macro(which) \
     macro(write) \

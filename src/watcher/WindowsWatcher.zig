@@ -59,24 +59,31 @@ const EventIterator = struct {
     hasNext: bool = true,
 
     pub fn next(this: *EventIterator) ?FileEvent {
-        if (!this.hasNext) return null;
-        const info_size = @sizeOf(w.FILE_NOTIFY_INFORMATION);
-        const info: *w.FILE_NOTIFY_INFORMATION = @ptrCast(@alignCast(this.watcher.buf[this.offset..].ptr));
-        const name_ptr: [*]u16 = @ptrCast(@alignCast(this.watcher.buf[this.offset + info_size ..]));
-        const filename: []u16 = name_ptr[0 .. info.FileNameLength / @sizeOf(u16)];
+        while (this.hasNext) {
+            const info_size = @sizeOf(w.FILE_NOTIFY_INFORMATION);
+            const info: *w.FILE_NOTIFY_INFORMATION = @ptrCast(@alignCast(this.watcher.buf[this.offset..].ptr));
+            const name_ptr: [*]u16 = @ptrCast(@alignCast(this.watcher.buf[this.offset + info_size ..]));
+            const filename: []u16 = name_ptr[0 .. info.FileNameLength / @sizeOf(u16)];
 
-        const action: Action = @enumFromInt(info.Action);
+            if (info.NextEntryOffset == 0) {
+                this.hasNext = false;
+            } else {
+                this.offset += @as(usize, info.NextEntryOffset);
+            }
 
-        if (info.NextEntryOffset == 0) {
-            this.hasNext = false;
-        } else {
-            this.offset += @as(usize, info.NextEntryOffset);
+            // Use intToEnum to safely convert the action value, skipping unknown action types.
+            // The Windows API may return undocumented action codes in some edge cases.
+            const action: Action = std.meta.intToEnum(Action, info.Action) catch {
+                log("skipping unknown file action: {d}", .{info.Action});
+                continue;
+            };
+
+            return FileEvent{
+                .action = action,
+                .filename = filename,
+            };
         }
-
-        return FileEvent{
-            .action = action,
-            .filename = filename,
-        };
+        return null;
     }
 };
 

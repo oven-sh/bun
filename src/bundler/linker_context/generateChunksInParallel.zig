@@ -311,7 +311,7 @@ pub fn generateChunksInParallel(
     if (c.options.generate_bytecode_cache and c.options.output_format == .esm and c.options.compile) {
         // Build map from unique_key -> final resolved path
         const b = @as(*bun.bundle_v2.BundleV2, @fieldParentPtr("linker", c));
-        var unique_key_to_path = std.StringHashMap([]const u8).init(c.allocator());
+        var unique_key_to_path = bun.StringHashMap([]const u8).init(c.allocator());
         defer unique_key_to_path.deinit();
         for (chunks) |*ch| {
             if (ch.unique_key.len > 0 and ch.final_rel_path.len > 0) {

@@ -8,6 +8,47 @@ const FormData: typeof globalThis.FormData = bindings[4];
 const File: typeof globalThis.File = bindings[5];
 const nativeFetch = Bun.fetch;
 
+/**
+ * Extracts TLS options from an agent object (https.Agent or similar).
+ * @param {Object} agent The agent object to extract options from
+ * @returns {Object|null} TLS options object or null if none found
+ */
+function extractTlsFromAgent(agent: any): object | null {
+  const connectOpts = agent?.connectOpts || agent?.options;
+
+  if (connectOpts && typeof connectOpts === "object") {
+    const tlsOptions: Record<string, any> = {};
+    let hasTlsOptions = false;
+
+    if (connectOpts.rejectUnauthorized !== undefined) {
+      tlsOptions.rejectUnauthorized = connectOpts.rejectUnauthorized;
+      hasTlsOptions = true;
+    }
+    if (connectOpts.ca) {
+      tlsOptions.ca = connectOpts.ca;
+      hasTlsOptions = true;
+    }
+    if (connectOpts.cert) {
+      tlsOptions.cert = connectOpts.cert;
+      hasTlsOptions = true;
+    }
+    if (connectOpts.key) {
+      tlsOptions.key = connectOpts.key;
+      hasTlsOptions = true;
+    }
+    if (connectOpts.passphrase) {
+      tlsOptions.passphrase = connectOpts.passphrase;
+      hasTlsOptions = true;
+    }
+
+    if (hasTlsOptions) {
+      return tlsOptions;
+    }
+  }
+
+  return null;
+}
+
 // node-fetch extends from URLSearchParams in their implementation...
 // https://github.com/node-fetch/node-fetch/blob/8b3320d2a7c07bce4afc6b2bf6c3bbddda85b01f/src/headers.js#L44
 class Headers extends WebHeaders {
@@ -150,7 +191,7 @@ async function fetch(
   url: any,
 
   // eslint-disable-next-line no-unused-vars
-  init?: RequestInit & { body?: any },
+  init?: RequestInit & { body?: any; agent?: any; tls?: any },
 ) {
   // Convert Node.js streams to Web ReadableStream if they don't have Symbol.asyncIterator.
   // This is needed for libraries like `form-data` that use CombinedStream which extends
@@ -169,6 +210,15 @@ async function fetch(
       init = { ...init, body: Readable.toWeb(readable) };
     }
   }
+
+  // Extract TLS options from agent if provided (node-fetch compatibility)
+  if (init?.agent && typeof init.agent === "object" && !init.tls) {
+    const tlsOptions = extractTlsFromAgent(init.agent);
+    if (tlsOptions) {
+      init = { ...init, tls: tlsOptions };
+    }
+  }
+
   const response = await nativeFetch.$call(undefined, url, init);
   Object.setPrototypeOf(response, ResponsePrototype);
   return response;

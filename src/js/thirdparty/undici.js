@@ -6,7 +6,64 @@ const { _ReadableFromWeb: ReadableFromWeb } = require("internal/webstreams_adapt
 const ObjectCreate = Object.create;
 const kEmptyObject = ObjectCreate(null);
 
-var fetch = Bun.fetch;
+const nativeFetch = Bun.fetch;
+
+/**
+ * Extracts TLS options from a dispatcher/agent object.
+ * @param {Object} dispatcher The dispatcher object to extract options from
+ * @returns {Object|null} TLS options object or null if none found
+ */
+function extractTlsFromDispatcher(dispatcher) {
+  // Check for connect options on the dispatcher (undici Agent/Pool/Client style)
+  const connectOpts = dispatcher?.connectOpts || dispatcher?.options || dispatcher?.connect;
+
+  if (connectOpts && typeof connectOpts === "object") {
+    const tlsOptions = {};
+    let hasTlsOptions = false;
+
+    if (connectOpts.rejectUnauthorized !== undefined) {
+      tlsOptions.rejectUnauthorized = connectOpts.rejectUnauthorized;
+      hasTlsOptions = true;
+    }
+    if (connectOpts.ca) {
+      tlsOptions.ca = connectOpts.ca;
+      hasTlsOptions = true;
+    }
+    if (connectOpts.cert) {
+      tlsOptions.cert = connectOpts.cert;
+      hasTlsOptions = true;
+    }
+    if (connectOpts.key) {
+      tlsOptions.key = connectOpts.key;
+      hasTlsOptions = true;
+    }
+    if (connectOpts.passphrase) {
+      tlsOptions.passphrase = connectOpts.passphrase;
+      hasTlsOptions = true;
+    }
+
+    if (hasTlsOptions) {
+      return tlsOptions;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Wrapper around Bun.fetch that handles undici's dispatcher option.
+ */
+async function fetch(url, init) {
+  // Extract TLS options from dispatcher if provided (undici compatibility)
+  if (init?.dispatcher && typeof init.dispatcher === "object" && !init.tls) {
+    const tlsOptions = extractTlsFromDispatcher(init.dispatcher);
+    if (tlsOptions) {
+      init = { ...init, tls: tlsOptions };
+    }
+  }
+
+  return nativeFetch(url, init);
+}
 const bindings = $cpp("Undici.cpp", "createUndiciInternalBinding");
 const Response = bindings[0];
 const Request = bindings[1];

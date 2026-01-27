@@ -535,13 +535,13 @@ describe("Bun.build metafile option variants", () => {
     const result = await Bun.build({
       entrypoints: [`${dir}/entry.js`],
       outdir: `${dir}/dist`,
-      metafile: `${dir}/output-meta.json`,
+      metafile: "output-meta.json",
     });
 
     expect(result.success).toBe(true);
 
-    // Check JSON file was written
-    const jsonFile = Bun.file(`${dir}/output-meta.json`);
+    // Check JSON file was written (relative to outdir)
+    const jsonFile = Bun.file(`${dir}/dist/output-meta.json`);
     expect(await jsonFile.exists()).toBe(true);
 
     // Verify JSON content
@@ -566,13 +566,13 @@ describe("Bun.build metafile option variants", () => {
     const result = await Bun.build({
       entrypoints: [`${dir}/main.js`],
       outdir: `${dir}/dist`,
-      metafile: { json: `${dir}/custom-meta.json` },
+      metafile: { json: "custom-meta.json" },
     });
 
     expect(result.success).toBe(true);
 
-    // Check JSON file was written
-    const jsonFile = Bun.file(`${dir}/custom-meta.json`);
+    // Check JSON file was written (relative to outdir)
+    const jsonFile = Bun.file(`${dir}/dist/custom-meta.json`);
     expect(await jsonFile.exists()).toBe(true);
 
     // Verify content
@@ -590,13 +590,13 @@ describe("Bun.build metafile option variants", () => {
     const result = await Bun.build({
       entrypoints: [`${dir}/app.js`],
       outdir: `${dir}/dist`,
-      metafile: { markdown: `${dir}/analysis.md` },
+      metafile: { markdown: "analysis.md" },
     });
 
     expect(result.success).toBe(true);
 
-    // Check markdown file was written
-    const mdFile = Bun.file(`${dir}/analysis.md`);
+    // Check markdown file was written (relative to outdir)
+    const mdFile = Bun.file(`${dir}/dist/analysis.md`);
     expect(await mdFile.exists()).toBe(true);
 
     // Verify markdown content
@@ -620,16 +620,16 @@ describe("Bun.build metafile option variants", () => {
       entrypoints: [`${dir}/index.js`],
       outdir: `${dir}/dist`,
       metafile: {
-        json: `${dir}/meta.json`,
-        markdown: `${dir}/meta.md`,
+        json: "meta.json",
+        markdown: "meta.md",
       },
     });
 
     expect(result.success).toBe(true);
 
-    // Check both files exist
-    const jsonFile = Bun.file(`${dir}/meta.json`);
-    const mdFile = Bun.file(`${dir}/meta.md`);
+    // Check both files exist (relative to outdir)
+    const jsonFile = Bun.file(`${dir}/dist/meta.json`);
+    const mdFile = Bun.file(`${dir}/dist/meta.md`);
     expect(await jsonFile.exists()).toBe(true);
     expect(await mdFile.exists()).toBe(true);
 
@@ -698,7 +698,7 @@ describe("Bun.build metafile option variants", () => {
     const result = await Bun.build({
       entrypoints: [`${dir}/test.js`],
       outdir: `${dir}/dist`,
-      metafile: { markdown: `${dir}/meta.md` },
+      metafile: { markdown: "meta.md" },
     });
 
     expect(result.success).toBe(true);

@@ -363,20 +363,28 @@ pub const Runner = struct {
 
                     const _entry = this.visited.getOrPut(this.allocator, value) catch unreachable;
                     if (_entry.found_existing) {
+                        // Check if we're in the middle of processing this value (circular reference)
+                        if (_entry.value_ptr.isMissing()) {
+                            this.log.addErrorFmt(
+                                this.source,
+                                this.caller.loc,
+                                this.allocator,
+                                "macro returned an object with a circular reference, which cannot be converted to JavaScript",
+                                .{},
+                            ) catch unreachable;
+                            return error.MacroFailed;
+                        }
                         return _entry.value_ptr.*;
                     }
+
+                    // Use sentinel to detect circular references during processing
+                    _entry.value_ptr.* = Expr.empty;
 
                     var iter = try jsc.JSArrayIterator.init(value, this.global);
 
                     // Process all array items
                     var array = this.allocator.alloc(Expr, iter.len) catch unreachable;
                     errdefer this.allocator.free(array);
-                    const expr = Expr.init(
-                        E.Array,
-                        E.Array{ .items = ExprNodeList.empty, .was_originally_macro = true },
-                        this.caller.loc,
-                    );
-                    _entry.value_ptr.* = expr;
                     var i: usize = 0;
                     while (try iter.next()) |item| {
                         array[i] = try this.run(item);
@@ -385,8 +393,15 @@ pub const Runner = struct {
                         i += 1;
                     }
 
-                    expr.data.e_array.items = ExprNodeList.fromOwnedSlice(array);
-                    expr.data.e_array.items.len = @truncate(i);
+                    // Create and store the expression only after all items are processed
+                    var items = ExprNodeList.fromOwnedSlice(array);
+                    items.len = @truncate(i);
+                    const expr = Expr.init(
+                        E.Array,
+                        E.Array{ .items = items, .was_originally_macro = true },
+                        this.caller.loc,
+                    );
+                    _entry.value_ptr.* = expr;
                     return expr;
                 },
                 // TODO: optimize this
@@ -394,16 +409,22 @@ pub const Runner = struct {
                     this.is_top_level = false;
                     const _entry = this.visited.getOrPut(this.allocator, value) catch unreachable;
                     if (_entry.found_existing) {
+                        // Check if we're in the middle of processing this value (circular reference)
+                        if (_entry.value_ptr.isMissing()) {
+                            this.log.addErrorFmt(
+                                this.source,
+                                this.caller.loc,
+                                this.allocator,
+                                "macro returned an object with a circular reference, which cannot be converted to JavaScript",
+                                .{},
+                            ) catch unreachable;
+                            return error.MacroFailed;
+                        }
                         return _entry.value_ptr.*;
                     }
 
-                    // Reserve a placeholder to break cycles.
-                    const expr = Expr.init(
-                        E.Object,
-                        E.Object{ .properties = G.Property.List{}, .was_originally_macro = true },
-                        this.caller.loc,
-                    );
-                    _entry.value_ptr.* = expr;
+                    // Use sentinel to detect circular references during processing
+                    _entry.value_ptr.* = Expr.empty;
 
                     // SAFETY: tag ensures `value` is an object.
                     const obj = value.getObject() orelse unreachable;
@@ -432,7 +453,13 @@ pub const Runner = struct {
                         }) catch |err| bun.handleOom(err);
                     }
 
-                    expr.data.e_object.properties = properties;
+                    // Create and store the expression only after all properties are processed
+                    const expr = Expr.init(
+                        E.Object,
+                        E.Object{ .properties = properties, .was_originally_macro = true },
+                        this.caller.loc,
+                    );
+                    _entry.value_ptr.* = expr;
 
                     return expr;
                 },

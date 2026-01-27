@@ -871,7 +871,7 @@ Socket.prototype.connect = function connect(...args) {
     let connection = this[ksocket];
     let upgradeDuplex = false;
     let { port, host, path, socket, rejectUnauthorized, checkServerIdentity, session, fd, pauseOnConnect } = options;
-    this.servername = options.servername;
+    this.servername = options.servername ?? options.host;
     if (socket) {
       connection = socket;
     }
@@ -924,7 +924,7 @@ Socket.prototype.connect = function connect(...args) {
         }
         tls.requestCert = true;
         tls.session = session || tls.session;
-        this.servername = tls.servername;
+        this.servername = tls.serverName;
         tls.checkServerIdentity = checkServerIdentity || tls.checkServerIdentity;
         this[bunTLSConnectOptions] = tls;
         if (!connection && tls.socket) {
@@ -1727,7 +1727,7 @@ function internalConnect(self, options, address, port, addressType, localAddress
       }
       tls.requestCert = true;
       tls.session = session || tls.session;
-      self.servername = tls.servername;
+      self.servername = tls.serverName;
       tls.checkServerIdentity = checkServerIdentity || tls.checkServerIdentity;
       self[bunTLSConnectOptions] = tls;
       if (!connection && tls.socket) {
@@ -1864,7 +1864,7 @@ function internalConnectMultiple(context, canceled?) {
       }
       tls.requestCert = true;
       tls.session = session || tls.session;
-      self.servername = tls.servername;
+      self.servername = tls.serverName;
       tls.checkServerIdentity = checkServerIdentity || tls.checkServerIdentity;
       self[bunTLSConnectOptions] = tls;
       if (!connection && tls.socket) {

@@ -798,6 +798,30 @@ describe("cleanup hooks", () => {
       expect(output).toContain("napi_typeof");
     });
 
+    it("should return napi_function for AsyncContextFrame in threadsafe callback", async () => {
+      // Test for https://github.com/oven-sh/bun/issues/25933
+      // When a threadsafe function is created inside AsyncLocalStorage.run(),
+      // the callback gets wrapped in AsyncContextFrame. napi_typeof must
+      // report it as napi_function, not napi_object.
+      const output = await checkSameOutput("test_napi_typeof_async_context_frame", []);
+      expect(output).toContain("PASS: napi_typeof returned napi_function");
+    });
+
+    it("should handle AsyncContextFrame in napi_make_callback", async () => {
+      // When a threadsafe function's call_js_cb receives an AsyncContextFrame
+      // as js_callback and passes it to napi_make_callback, it should succeed.
+      const output = await checkSameOutput("test_make_callback_with_async_context", []);
+      expect(output).toContain("PASS: napi_make_callback succeeded");
+    });
+
+    it("should accept AsyncContextFrame in napi_create_threadsafe_function with null call_js_cb", async () => {
+      // When a threadsafe function's call_js_cb receives an AsyncContextFrame
+      // and passes it to a second napi_create_threadsafe_function with
+      // call_js_cb=NULL, it should not reject with function_expected.
+      const output = await checkSameOutput("test_create_tsfn_with_async_context", []);
+      expect(output).toContain("PASS: napi_create_threadsafe_function accepted AsyncContextFrame");
+    });
+
     it("should return napi_object for boxed primitives (String, Number, Boolean)", async () => {
       // Regression test for https://github.com/oven-sh/bun/issues/25351
       // napi_typeof was incorrectly returning napi_string for String objects (new String("hello"))

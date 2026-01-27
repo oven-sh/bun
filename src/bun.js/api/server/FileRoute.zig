@@ -185,7 +185,10 @@ pub fn on(this: *FileRoute, req: *uws.Request, resp: AnyResponse, method: bun.ht
     }
 
     const fd = fd_result.result;
+    this.onOpenedFile(req, resp, method, path, fd);
+}
 
+pub fn onOpenedFile(this: *FileRoute, req: *uws.Request, resp: AnyResponse, method: bun.http.Method, path: []const u8, fd: bun.FileDescriptor) void {
     const input_if_modified_since_date: ?u64 = req.dateForHeader("if-modified-since") catch return; // TODO: properly propagate exception upwards
 
     const can_serve_file: bool, const size: u64, const file_type: bun.io.FileType, const pollable: bool = brk: {

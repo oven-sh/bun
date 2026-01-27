@@ -51,6 +51,7 @@ const {
   reqSymbol,
   callCloseCallback,
   emitCloseNTAndComplete,
+  headersSymbol,
 } = require("internal/http");
 
 const { globalAgent } = require("node:_http_agent");
@@ -312,7 +313,8 @@ function ClientRequest(input, options, cb) {
 
       const fetchOptions: any = {
         method,
-        headers: this.getHeaders(),
+        // Use Headers object directly to preserve original header case (not getHeaders() which lowercases keys)
+        headers: this[headersSymbol],
         redirect: "manual",
         signal: this[kAbortController]?.signal,
         // Timeouts are handled via this.setTimeout.

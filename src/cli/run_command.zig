@@ -216,6 +216,23 @@ pub const RunCommand = struct {
         silent: bool,
         use_system_shell: bool,
     ) !void {
+        // Add node_modules/.bin directories to PATH (walking up from cwd)
+        const original_path = env.get("PATH") orelse "";
+        var PATH: bun.EnvPath(.{}) = try .initCapacity(allocator, original_path.len + 1 + "node_modules/.bin".len + cwd.len + 1);
+        defer PATH.deinit();
+
+        var parent: ?string = cwd;
+        while (parent) |dir| {
+            var builder = PATH.pathComponentBuilder();
+            builder.append(dir);
+            builder.append("node_modules/.bin");
+            try builder.apply();
+            parent = std.fs.path.dirname(dir);
+        }
+
+        try PATH.append(original_path);
+        try env.map.put("PATH", PATH.slice());
+
         const shell_bin = findShell(env.get("PATH") orelse "", cwd) orelse return error.MissingShell;
         env.map.put("npm_lifecycle_event", name) catch unreachable;
         env.map.put("npm_lifecycle_script", original_script) catch unreachable;

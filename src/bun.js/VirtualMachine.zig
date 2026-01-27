@@ -10,7 +10,10 @@ pub export var isBunTest: bool = false;
 
 // TODO: evaluate if this has any measurable performance impact.
 pub var synthetic_allocation_limit: usize = std.math.maxInt(u32);
-pub var string_allocation_limit: usize = std.math.maxInt(u32);
+/// Max WTFStringImpl/JSString length, matches `WTF::String::MaxLength` / `JSString::MaxLength`.
+/// This ensures readFileSync and other APIs that return strings will throw early
+/// instead of allowing WebKit to silently truncate strings larger than ~2GB.
+pub var string_allocation_limit: usize = std.math.maxInt(i32);
 
 comptime {
     _ = Bun__remapStackFramePositions;

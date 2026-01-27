@@ -4870,9 +4870,10 @@ pub const NodeFS = struct {
     }
 
     fn shouldThrowOutOfMemoryEarlyForJavaScript(encoding: Encoding, size: usize, syscall: Syscall.Tag) ?Syscall.Error {
-        // Strings & typed arrays max out at 4.7 GB.
-        // But, it's **string length**
-        // So you can load an 8 GB hex string, for example, it should be fine.
+        // String length limits depend on the encoding:
+        // - For buffer encoding, we're limited by typed array size (~4.7 GB)
+        // - For string encodings, we're limited by WebKit's String::MaxLength (~2.15 GB)
+        // The adjusted_size accounts for encoding expansion/contraction.
         const adjusted_size = switch (encoding) {
             .utf16le, .ucs2, .utf8 => size / 4 -| 1,
             .hex => size / 2 -| 1,
@@ -4880,9 +4881,15 @@ pub const NodeFS = struct {
             .ascii, .latin1, .buffer => size,
         };
 
-        if (
-        // Typed arrays in JavaScript are limited to 4.7 GB.
-        adjusted_size > jsc.VirtualMachine.synthetic_allocation_limit or
+        // Use the appropriate limit based on encoding type:
+        // - buffer returns a typed array (synthetic_allocation_limit ~4.7GB)
+        // - all other encodings return a string (string_allocation_limit ~2.15GB)
+        const allocation_limit = switch (encoding) {
+            .buffer => jsc.VirtualMachine.synthetic_allocation_limit,
+            else => jsc.VirtualMachine.string_allocation_limit,
+        };
+
+        if (adjusted_size > allocation_limit or
             // If they do not have enough memory to open the file and they're on Linux, let's throw an error instead of dealing with the OOM killer.
             (Environment.isLinux and size >= bun.getTotalMemorySize()))
         {

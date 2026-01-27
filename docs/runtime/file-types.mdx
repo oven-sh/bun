@@ -5,7 +5,7 @@ description: "File types and loaders supported by Bun's bundler and runtime"
 
 The Bun bundler implements a set of default loaders out of the box. As a rule of thumb, the bundler and the runtime both support the same set of file types out of the box.
 
-`.js` `.cjs` `.mjs` `.mts` `.cts` `.ts` `.tsx` `.jsx` `.css` `.json` `.jsonc` `.toml` `.yaml` `.yml` `.txt` `.wasm` `.node` `.html` `.sh`
+`.js` `.cjs` `.mjs` `.mts` `.cts` `.ts` `.tsx` `.jsx` `.css` `.json` `.jsonc` `.json5` `.toml` `.yaml` `.yml` `.txt` `.wasm` `.node` `.html` `.sh`
 
 Bun uses the file extension to determine which built-in _loader_ should be used to parse the file. Every loader has a name, such as `js`, `tsx`, or `json`. These names are used when building [plugins](/bundler/plugins) that extend Bun with custom loaders.
 
@@ -185,6 +185,53 @@ If a `.yaml` or `.yml` file is passed as an entrypoint, it will be converted to 
 name: John Doe
 age: 35
 email: johndoe@example.com
+```
+
+```ts Output
+export default {
+  name: "John Doe",
+  age: 35,
+  email: "johndoe@example.com",
+};
+```
+
+</CodeGroup>
+
+### `json5`
+
+**JSON5 loader**. Default for `.json5`.
+
+JSON5 files can be directly imported. Bun will parse them with its fast native JSON5 parser. JSON5 is a superset of JSON that supports comments, trailing commas, unquoted keys, single-quoted strings, and more.
+
+```ts
+import config from "./config.json5";
+console.log(config);
+
+// via import attribute:
+import data from "./data.txt" with { type: "json5" };
+```
+
+During bundling, the parsed JSON5 is inlined into the bundle as a JavaScript object.
+
+```ts
+var config = {
+  name: "my-app",
+  version: "1.0.0",
+  // ...other fields
+};
+```
+
+If a `.json5` file is passed as an entrypoint, it will be converted to a `.js` module that `export default`s the parsed object.
+
+<CodeGroup>
+
+```json5 Input
+{
+  // Configuration
+  name: "John Doe",
+  age: 35,
+  email: "johndoe@example.com",
+}
 ```
 
 ```ts Output

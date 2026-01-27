@@ -1574,6 +1574,7 @@ export function isReadableStreamLocked(stream) {
 
 export function readableStreamDefaultControllerGetDesiredSize(controller) {
   const stream = $getByIdDirectPrivate(controller, "controlledReadableStream");
+  if (!stream) return null;
   const state = $getByIdDirectPrivate(stream, "state");
 
   if (state === $streamErrored) return null;

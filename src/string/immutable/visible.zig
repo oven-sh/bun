@@ -927,7 +927,7 @@ pub const visible = struct {
         var input = input_;
         var len: usize = 0;
         var prev: ?u32 = null;
-        var break_state = grapheme.BreakState{};
+        var break_state: grapheme.BreakState = .default;
         var grapheme_state = GraphemeState{};
         var saw_1b = false;
         var saw_csi = false; // CSI: ESC [
@@ -964,7 +964,7 @@ pub const visible = struct {
                         const last_cp: u32 = input[bulk_end - 1];
                         grapheme_state.reset(last_cp, ambiguousAsWide);
                         prev = last_cp;
-                        break_state = grapheme.BreakState{};
+                        break_state = .default;
 
                         // If we consumed everything, advance and continue
                         if (bulk_end == idx) {
@@ -1145,6 +1145,32 @@ pub const visible = struct {
 
 // extern "C" bool icu_hasBinaryProperty(UChar32 cp, unsigned int prop)
 extern fn icu_hasBinaryProperty(c: u32, which: c_uint) bool;
+
+// C exports for wrapAnsi.cpp
+
+/// Calculate visible width of UTF-8 string excluding ANSI escape codes
+export fn Bun__visibleWidthExcludeANSI_utf8(ptr: [*]const u8, len: usize, ambiguous_as_wide: bool) usize {
+    _ = ambiguous_as_wide; // UTF-8 version doesn't use this parameter
+    const input = ptr[0..len];
+    return visible.width.exclude_ansi_colors.utf8(input);
+}
+
+/// Calculate visible width of UTF-16 string excluding ANSI escape codes
+export fn Bun__visibleWidthExcludeANSI_utf16(ptr: [*]const u16, len: usize, ambiguous_as_wide: bool) usize {
+    const input = ptr[0..len];
+    return visible.width.exclude_ansi_colors.utf16(input, ambiguous_as_wide);
+}
+
+/// Calculate visible width of Latin-1 string excluding ANSI escape codes
+export fn Bun__visibleWidthExcludeANSI_latin1(ptr: [*]const u8, len: usize) usize {
+    const input = ptr[0..len];
+    return visible.width.exclude_ansi_colors.latin1(input);
+}
+
+/// Calculate visible width of a single codepoint
+export fn Bun__codepointWidth(cp: u32, ambiguous_as_wide: bool) u8 {
+    return @intCast(visibleCodepointWidth(cp, ambiguous_as_wide));
+}
 
 const bun = @import("bun");
 const std = @import("std");

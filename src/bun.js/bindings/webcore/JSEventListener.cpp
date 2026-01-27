@@ -147,7 +147,7 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
 
     VM& vm = scriptExecutionContext.vm();
     JSLockHolder lock(vm);
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     // See https://dom.spec.whatwg.org/#dispatching-events spec on calling handleEvent.
     // "If this throws an exception, report the exception." It should not propagate the
@@ -205,7 +205,7 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
         handleEventFunction = jsFunction->get(lexicalGlobalObject, Identifier::fromString(vm, "handleEvent"_s));
         if (scope.exception()) [[unlikely]] {
             auto* exception = scope.exception();
-            scope.clearException();
+            (void)scope.tryClearException();
             event.target()->uncaughtExceptionInEventHandler();
             reportException(lexicalGlobalObject, exception);
             return;
@@ -257,7 +257,7 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
         auto then = retval.get(lexicalGlobalObject, vm.propertyNames->then);
         if (scope.exception()) [[unlikely]] {
             auto* exception = scope.exception();
-            scope.clearException();
+            (void)scope.tryClearException();
             event.target()->uncaughtExceptionInEventHandler();
             reportException(lexicalGlobalObject, exception);
             return;
@@ -269,7 +269,7 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
             JSC::call(lexicalGlobalObject, then, retval, arglist, "Promise.then is not callable"_s);
             if (scope.exception()) [[unlikely]] {
                 auto* exception = scope.exception();
-                scope.clearException();
+                (void)scope.tryClearException();
                 event.target()->uncaughtExceptionInEventHandler();
                 reportException(lexicalGlobalObject, exception);
                 return;

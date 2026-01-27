@@ -580,7 +580,7 @@ extern "C" void Bun__startJSDebuggerThread(Zig::GlobalObject* debuggerGlobalObje
         debuggerScriptExecutionContext = debuggerGlobalObject->scriptExecutionContext();
 
     JSC::VM& vm = debuggerGlobalObject->vm();
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSValue defaultValue = debuggerGlobalObject->internalModuleRegistry()->requireId(debuggerGlobalObject, vm, InternalModuleRegistry::Field::InternalDebugger);
     scope.assertNoException();
     JSFunction* debuggerDefaultFn = jsCast<JSFunction*>(defaultValue.asCell());
@@ -588,7 +588,11 @@ extern "C" void Bun__startJSDebuggerThread(Zig::GlobalObject* debuggerGlobalObje
     MarkedArgumentBuffer arguments;
 
     arguments.append(jsNumber(static_cast<unsigned int>(scriptId)));
-    arguments.append(Bun::toJS(debuggerGlobalObject, *portOrPathString));
+    auto* portOrPathJS = Bun::toJS(debuggerGlobalObject, *portOrPathString);
+    if (!portOrPathJS) [[unlikely]] {
+        return;
+    }
+    arguments.append(portOrPathJS);
     arguments.append(JSFunction::create(vm, debuggerGlobalObject, 3, String(), jsFunctionCreateConnection, ImplementationVisibility::Public));
     arguments.append(JSFunction::create(vm, debuggerGlobalObject, 1, String("send"_s), jsFunctionSend, ImplementationVisibility::Public));
     arguments.append(JSFunction::create(vm, debuggerGlobalObject, 0, String("disconnect"_s), jsFunctionDisconnect, ImplementationVisibility::Public));

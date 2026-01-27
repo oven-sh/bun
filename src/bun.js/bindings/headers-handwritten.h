@@ -477,19 +477,19 @@ ALWAYS_INLINE void BunString::deref()
     }
 }
 
-#define CLEAR_IF_EXCEPTION(scope__) scope__.clearException();
+#define CLEAR_IF_EXCEPTION(scope__) (void)scope__.tryClearException();
 
 #endif // __cplusplus
 #endif // HEADERS_HANDWRITTEN
 
 #if ASSERT_ENABLED
-#define ASSERT_NO_PENDING_EXCEPTION(globalObject) DECLARE_CATCH_SCOPE(globalObject->vm()).assertNoExceptionExceptTermination()
+#define ASSERT_NO_PENDING_EXCEPTION(globalObject) DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm()).assertNoExceptionExceptTermination()
 #else
 #define ASSERT_NO_PENDING_EXCEPTION(globalObject) void()
 #endif
 
 #if ASSERT_ENABLED
-#define ASSERT_PENDING_EXCEPTION(globalObject) EXCEPTION_ASSERT(!!DECLARE_CATCH_SCOPE(globalObject->vm()).exception());
+#define ASSERT_PENDING_EXCEPTION(globalObject) EXCEPTION_ASSERT(!!DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm()).exception());
 #else
 #define ASSERT_PENDING_EXCEPTION(globalObject) void()
 #endif

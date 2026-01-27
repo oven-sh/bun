@@ -119,7 +119,7 @@ const JSPropertyIteratorImpl = opaque {
     pub const deinit = Bun__JSPropertyIterator__deinit;
 
     pub fn getNameAndValue(iter: *JSPropertyIteratorImpl, globalObject: *jsc.JSGlobalObject, object: *jsc.JSObject, propertyName: *bun.String, i: usize) bun.JSError!jsc.JSValue {
-        var scope: bun.jsc.CatchScope = undefined;
+        var scope: bun.jsc.TopExceptionScope = undefined;
         scope.init(globalObject, @src());
         defer scope.deinit();
         const value = Bun__JSPropertyIterator__getNameAndValue(iter, globalObject, object, propertyName, i);
@@ -128,7 +128,7 @@ const JSPropertyIteratorImpl = opaque {
     }
 
     pub fn getNameAndValueNonObservable(iter: *JSPropertyIteratorImpl, globalObject: *jsc.JSGlobalObject, object: *jsc.JSObject, propertyName: *bun.String, i: usize) bun.JSError!jsc.JSValue {
-        var scope: bun.jsc.CatchScope = undefined;
+        var scope: bun.jsc.TopExceptionScope = undefined;
         scope.init(globalObject, @src());
         defer scope.deinit();
         const value = Bun__JSPropertyIterator__getNameAndValueNonObservable(iter, globalObject, object, propertyName, i);

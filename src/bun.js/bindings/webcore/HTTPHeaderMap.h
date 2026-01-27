@@ -39,9 +39,10 @@ public:
     struct CommonHeader {
         HTTPHeaderName key;
         String value;
+        String originalName; // Original header name with preserved casing (may be empty)
 
-        CommonHeader isolatedCopy() const & { return { key, value.isolatedCopy() }; }
-        CommonHeader isolatedCopy() && { return { key, WTF::move(value).isolatedCopy() }; }
+        CommonHeader isolatedCopy() const & { return { key, value.isolatedCopy(), originalName.isolatedCopy() }; }
+        CommonHeader isolatedCopy() && { return { key, WTF::move(value).isolatedCopy(), WTF::move(originalName).isolatedCopy() }; }
         template<class Encoder> void encode(Encoder &) const;
         template<class Decoder> static std::optional<CommonHeader> decode(Decoder &);
 
@@ -184,6 +185,7 @@ public:
 
     WEBCORE_EXPORT String get(const StringView name) const;
     WEBCORE_EXPORT void set(const String &name, const String &value);
+    WEBCORE_EXPORT void setPreservingOriginalName(const String &name, const String &value);
     WEBCORE_EXPORT void add(const String &name, const String &value);
     WEBCORE_EXPORT void append(const String &name, const String &value);
     WEBCORE_EXPORT bool contains(const StringView) const;
@@ -278,6 +280,7 @@ void HTTPHeaderMap::CommonHeader::encode(Encoder &encoder) const
 {
     encoder << key;
     encoder << value;
+    encoder << originalName;
 }
 
 template<class Decoder>
@@ -289,8 +292,11 @@ auto HTTPHeaderMap::CommonHeader::decode(Decoder &decoder) -> std::optional<Comm
     String value;
     if (!decoder.decode(value))
         return std::nullopt;
+    String originalName;
+    if (!decoder.decode(originalName))
+        return std::nullopt;
 
-    return CommonHeader { name, WTF::move(value) };
+    return CommonHeader { name, WTF::move(value), WTF::move(originalName) };
 }
 
 template<class Encoder>

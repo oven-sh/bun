@@ -538,7 +538,8 @@ static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::
 
     for (const auto& header : internalHeaders.commonHeaders()) {
 
-        const auto& name = WebCore::httpHeaderNameString(header.key);
+        // Use the original name if it was preserved, otherwise use the default header name string
+        const auto& name = header.originalName.isEmpty() ? WebCore::httpHeaderNameString(header.key) : StringView(header.originalName);
         const auto& value = header.value;
 
         // We have to tell uWS not to automatically insert a TransferEncoding or Date header.
@@ -930,7 +931,8 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetHeader, (JSGlobalObject * globalObject, CallFr
                     RETURN_IF_EXCEPTION(scope, {});
                     auto value = item.toWTFString(globalObject);
                     RETURN_IF_EXCEPTION(scope, {});
-                    impl->set(name, value);
+                    // Use setPreservingOriginalName to preserve the original header name casing
+                    impl->setPreservingOriginalName(name, value);
                     RETURN_IF_EXCEPTION(scope, {});
                 }
                 for (unsigned i = 1; i < length; ++i) {
@@ -947,7 +949,8 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetHeader, (JSGlobalObject * globalObject, CallFr
 
             auto value = valueValue.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
-            impl->set(name, value);
+            // Use setPreservingOriginalName to preserve the original header name casing
+            impl->setPreservingOriginalName(name, value);
             RETURN_IF_EXCEPTION(scope, {});
             return JSValue::encode(jsUndefined());
         }

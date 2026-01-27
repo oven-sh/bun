@@ -287,6 +287,24 @@ ExceptionOr<void> FetchHeaders::set(const String& name, const String& value)
     return {};
 }
 
+ExceptionOr<void> FetchHeaders::setPreservingOriginalName(const String& name, const String& value)
+{
+    String normalizedValue = value.trim(isHTTPSpace);
+    auto canWriteResult = canWriteHeader(name, normalizedValue, normalizedValue, m_guard);
+    if (canWriteResult.hasException())
+        return canWriteResult.releaseException();
+    if (!canWriteResult.releaseReturnValue())
+        return {};
+
+    ++m_updateCounter;
+    m_headers.setPreservingOriginalName(name, normalizedValue);
+
+    if (m_guard == FetchHeaders::Guard::RequestNoCors)
+        removePrivilegedNoCORSRequestHeaders(m_headers);
+
+    return {};
+}
+
 void FetchHeaders::filterAndFill(const HTTPHeaderMap& headers, Guard guard)
 {
     for (auto& header : headers) {

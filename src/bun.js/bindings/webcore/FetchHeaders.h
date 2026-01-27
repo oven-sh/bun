@@ -64,6 +64,7 @@ public:
     ExceptionOr<bool> has(const StringView) const;
     ExceptionOr<void> set(const String& name, const String& value);
     ExceptionOr<void> set(const HTTPHeaderName name, const String& value);
+    ExceptionOr<void> setPreservingOriginalName(const String& name, const String& value);
 
     ExceptionOr<void> fill(const Init&);
     ExceptionOr<void> fill(const FetchHeaders&);

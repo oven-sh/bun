@@ -128,6 +128,31 @@ void HTTPHeaderMap::set(const String& name, const String& value)
     setUncommonHeader(name, value);
 }
 
+void HTTPHeaderMap::setPreservingOriginalName(const String& name, const String& value)
+{
+    HTTPHeaderName headerName;
+    if (findHTTPHeaderName(name, headerName)) {
+        if (headerName == HTTPHeaderName::SetCookie) {
+            m_setCookieHeaders.clear();
+            m_setCookieHeaders.append(value);
+            return;
+        }
+
+        auto index = m_commonHeaders.findIf([&](auto& header) {
+            return header.key == headerName;
+        });
+        if (index == notFound)
+            m_commonHeaders.append(CommonHeader { headerName, value, name });
+        else {
+            m_commonHeaders[index].value = value;
+            m_commonHeaders[index].originalName = name;
+        }
+        return;
+    }
+
+    setUncommonHeader(name, value);
+}
+
 void HTTPHeaderMap::setUncommonHeader(const String& name, const String& value)
 {
     auto index = m_uncommonHeaders.findIf([&](auto& header) {
@@ -178,7 +203,7 @@ void HTTPHeaderMap::append(const String& name, const String& value)
         if (headerName == HTTPHeaderName::SetCookie)
             m_setCookieHeaders.append(value);
         else
-            m_commonHeaders.append(CommonHeader { headerName, value });
+            m_commonHeaders.append(CommonHeader { headerName, value, String() });
     } else {
         m_uncommonHeaders.append(UncommonHeader { name, value });
     }
@@ -189,7 +214,7 @@ bool HTTPHeaderMap::addIfNotPresent(HTTPHeaderName headerName, const String& val
     if (contains(headerName))
         return false;
 
-    m_commonHeaders.append(CommonHeader { headerName, value });
+    m_commonHeaders.append(CommonHeader { headerName, value, String() });
     return true;
 }
 
@@ -290,7 +315,7 @@ void HTTPHeaderMap::set(HTTPHeaderName name, const String& value)
         return header.key == name;
     });
     if (index == notFound)
-        m_commonHeaders.append(CommonHeader { name, value });
+        m_commonHeaders.append(CommonHeader { name, value, String() });
     else
         m_commonHeaders[index].value = value;
 }
@@ -344,7 +369,7 @@ void HTTPHeaderMap::add(HTTPHeaderName name, const String& value)
     if (index != notFound)
         m_commonHeaders[index].value = makeString(m_commonHeaders[index].value, name == HTTPHeaderName::Cookie ? "; "_s : ", "_s, value);
     else
-        m_commonHeaders.append(CommonHeader { name, value });
+        m_commonHeaders.append(CommonHeader { name, value, String() });
 }
 
 } // namespace WebCore

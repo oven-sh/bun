@@ -133,7 +133,11 @@ private:
                             return;
                         }
                     }
-                    httpResponseData->isAuthorized = success;
+                    // isAuthorized should be true only when both:
+                    // 1. The handshake succeeded
+                    // 2. The peer certificate was verified successfully (verify_error.error == 0)
+                    // When requestCert is false, verify_error.error will be non-zero (no peer cert)
+                    httpResponseData->isAuthorized = success && (verify_error.error == 0);
 
                     /* Any connected socket should timeout until it has a request */
                     ((HttpResponse<SSL> *) s)->resetTimeout();

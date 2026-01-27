@@ -819,6 +819,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   server: Server;
   _httpMessage;
   _secureEstablished = false;
+  authorizationError: string | undefined;
   #pendingCallback = null;
   constructor(server: Server, handle, encrypted) {
     super();
@@ -840,6 +841,11 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   }
   set bytesWritten(value) {
     this[kBytesWritten] = value;
+  }
+
+  get authorized(): boolean {
+    const handle = this[kHandle];
+    return handle?.authorized ?? false;
   }
 
   [kEnableStreaming](enable: boolean) {

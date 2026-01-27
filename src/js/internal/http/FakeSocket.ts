@@ -1,5 +1,5 @@
 const { kInternalSocketData, serverSymbol } = require("internal/http");
-const { kAutoDestroyed } = require("internal/shared");
+const { kAutoDestroyed, kHandle } = require("internal/shared");
 const { Duplex } = require("internal/stream");
 
 type FakeSocket = InstanceType<typeof FakeSocket>;
@@ -10,6 +10,7 @@ var FakeSocket = class Socket extends Duplex {
   connecting = false;
   timeout = 0;
   isServer = false;
+  authorizationError: string | undefined;
 
   #address;
   _httpMessage: any;
@@ -57,6 +58,12 @@ var FakeSocket = class Socket extends Duplex {
 
   get pending() {
     return this.connecting;
+  }
+
+  get authorized(): boolean {
+    // Try to get authorized from the underlying native handle
+    const handle = this._httpMessage?.[kHandle];
+    return handle?.authorized ?? false;
   }
 
   _read(_size) {}

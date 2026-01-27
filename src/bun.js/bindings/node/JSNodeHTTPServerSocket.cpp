@@ -19,6 +19,7 @@ extern "C" uint64_t uws_res_get_local_address_info(void* res, const char** dest,
 extern "C" EncodedJSValue us_socket_buffered_js_write(void* socket, bool is_ssl, bool ended, us_socket_stream_buffer_t* streamBuffer, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue data, JSC::EncodedJSValue encoding);
 extern "C" int us_socket_is_ssl_handshake_finished(int ssl, struct us_socket_t* s);
 extern "C" int us_socket_ssl_handshake_callback_has_fired(int ssl, struct us_socket_t* s);
+extern "C" struct us_bun_verify_error_t us_socket_verify_error(int ssl, struct us_socket_t* s);
 
 namespace Bun {
 
@@ -75,28 +76,16 @@ bool JSNodeHTTPServerSocket::isAuthorized() const
     if (!is_ssl || !socket)
         return false;
 
-    // Check if the handshake callback has fired. If so, use the isAuthorized flag
-    // which reflects the actual certificate verification result.
-    if (us_socket_ssl_handshake_callback_has_fired(is_ssl, socket)) {
-        auto* httpResponseData = reinterpret_cast<uWS::HttpResponseData<true>*>(us_socket_ext(is_ssl, socket));
-        if (!httpResponseData)
-            return false;
-        return httpResponseData->isAuthorized;
-    }
+    // Check if the TLS handshake has completed
+    if (!us_socket_is_ssl_handshake_finished(is_ssl, socket))
+        return false;
 
-    // The handshake callback hasn't fired yet, but we're in an HTTP handler,
-    // which means we received HTTP data. Check if the TLS handshake has actually
-    // completed using OpenSSL's state (SSL_is_init_finished).
-    //
-    // If the handshake is complete but the callback hasn't fired, we're in a race
-    // condition. The callback will fire shortly and either:
-    // 1. Set isAuthorized = true (success)
-    // 2. Close the socket (if rejectUnauthorized and verification failed)
-    //
-    // Since we're in an HTTP handler and the socket isn't closed, we can safely
-    // assume the handshake will succeed. If it fails, the socket will be closed
-    // and subsequent operations will fail appropriately.
-    return us_socket_is_ssl_handshake_finished(is_ssl, socket);
+    // Query the verification status directly from OpenSSL.
+    // authorized is true only when the peer certificate was verified successfully.
+    // When requestCert is false, there's no peer certificate, so verify_error.error
+    // will be non-zero (X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT = 2).
+    struct us_bun_verify_error_t verify_error = us_socket_verify_error(is_ssl, socket);
+    return verify_error.error == 0;
 }
 
 JSNodeHTTPServerSocket::~JSNodeHTTPServerSocket()

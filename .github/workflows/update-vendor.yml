@@ -68,7 +68,7 @@ jobs:
           commit-message: "deps: update ${{ matrix.package }} to ${{ steps.check-version.outputs.latest }} (${{ steps.check-version.outputs.latest }})"
           title: "deps: update ${{ matrix.package }} to ${{ steps.check-version.outputs.latest }}"
           delete-branch: true
-          branch: deps/update-${{ matrix.package }}-${{ github.run_number }}
+          branch: deps/update-${{ matrix.package }}
           body: |
             ## What does this PR do?
 

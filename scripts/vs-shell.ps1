@@ -3,6 +3,10 @@
 
 $ErrorActionPreference = "Stop"
 
+# Detect system architecture
+$script:IsARM64 = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq [System.Runtime.InteropServices.Architecture]::Arm64
+$script:VsArch = if ($script:IsARM64) { "arm64" } else { "amd64" }
+
 if($env:VSINSTALLDIR -eq $null) {
   Write-Host "Loading Visual Studio environment, this may take a second..."
 
@@ -23,14 +27,14 @@ if($env:VSINSTALLDIR -eq $null) {
   Push-Location $vsDir
   try {
     $vsShell = (Join-Path -Path $vsDir -ChildPath "Common7\Tools\Launch-VsDevShell.ps1")
-    . $vsShell -Arch amd64 -HostArch amd64
+    . $vsShell -Arch $script:VsArch -HostArch $script:VsArch
   } finally {
     Pop-Location
   }
 }
 
 if($env:VSCMD_ARG_TGT_ARCH -eq "x86") {
-  throw "Visual Studio environment is targeting 32 bit, but only 64 bit is supported."
+  throw "Visual Studio environment is targeting 32 bit x86, but only 64-bit architectures (x64/arm64) are supported."
 }
 
 if ($args.Count -gt 0) {

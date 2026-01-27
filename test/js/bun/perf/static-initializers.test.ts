@@ -3,7 +3,7 @@ import { bunEnv, bunExe, isMacOSVersionAtLeast } from "harness";
 
 /**
  * This test prevents startup performance regressions by ensuring that Bun has
- * exactly one static initializer from its own executable.
+ * only the expected number of static initializers from its own executable.
  *
  * Static initializers are functions that run automatically when a program starts, before main() is called.
  * They're used to initialize global variables and static class members, but come with performance costs:
@@ -15,14 +15,14 @@ import { bunEnv, bunExe, isMacOSVersionAtLeast } from "harness";
  * 5. They can introduce complex initialization order dependencies
  *
  * On macOS, we can use DYLD_PRINT_INITIALIZERS to detect static initializers.
- * This test verifies that Bun has exactly one static initializer from its own executable.
+ * This test verifies that Bun has only the expected number of static initializers.
  *
  * Adding more static initializers would degrade Bun's startup performance.
  */
 describe("static initializers", () => {
   // Only macOS has DYLD_PRINT_INITIALIZERS
   // macOS 13 has a bug in dyld that crashes if you use DYLD_PRINT_INITIALIZERS
-  it.skipIf(!isMacOSVersionAtLeast(14.0))("should only have one static initializer from bun itself", () => {
+  it.skipIf(!isMacOSVersionAtLeast(14.0))("should have the expected number of static initializers", () => {
     const env = {
       ...bunEnv,
       DYLD_PRINT_INITIALIZERS: "1",
@@ -60,10 +60,14 @@ describe("static initializers", () => {
       .filter(line => line.includes("running initializer") && line.includes(bunExe()));
 
     // On both architectures, we have one initializer "__GLOBAL__sub_I_static.c".
-    // On x86_64, we also have one from ___cpu_indicator_init due to our CPU feature detection.
+    // On arm64, mimalloc v3 adds one more static initializer (total: 2).
+    // On x86_64, we also have:
+    // - one from ___cpu_indicator_init due to our CPU feature detection
+    // - one from mimalloc v3
+    // (total: 3)
     expect(
       bunInitializers.length,
       `Do not add static initializers to Bun. Static initializers are called when Bun starts up, regardless of whether you use the variables or not. This makes Bun slower.`,
-    ).toBe(process.arch === "arm64" ? 1 : 2);
+    ).toBe(process.arch === "arm64" ? 2 : 3);
   });
 });

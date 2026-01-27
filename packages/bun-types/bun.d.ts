@@ -744,6 +744,101 @@ declare module "bun" {
   }
 
   /**
+   * JSONL (JSON Lines) related APIs.
+   *
+   * Each line in the input is expected to be a valid JSON value separated by newlines.
+   */
+  namespace JSONL {
+    /**
+     * The result of `Bun.JSONL.parseChunk`.
+     */
+    interface ParseChunkResult {
+      /** The successfully parsed JSON values. */
+      values: unknown[];
+      /** How far into the input was consumed. When the input is a string, this is a character offset. When the input is a `TypedArray`, this is a byte offset. Use `input.slice(read)` or `input.subarray(read)` to get the unconsumed remainder. */
+      read: number;
+      /** `true` if all input was consumed successfully. `false` if the input ends with an incomplete value or a parse error occurred. */
+      done: boolean;
+      /** A `SyntaxError` if a parse error occurred, otherwise `null`. Values parsed before the error are still available in `values`. */
+      error: SyntaxError | null;
+    }
+
+    /**
+     * Parse a JSONL (JSON Lines) string into an array of JavaScript values.
+     *
+     * If a parse error occurs and no values were successfully parsed, throws
+     * a `SyntaxError`. If values were parsed before the error, returns the
+     * successfully parsed values without throwing.
+     *
+     * Incomplete trailing values (e.g. from a partial chunk) are silently
+     * ignored and not included in the result.
+     *
+     * When a `TypedArray` is passed, the bytes are parsed directly without
+     * copying if the content is ASCII.
+     *
+     * @param input The JSONL string or typed array to parse
+     * @returns An array of parsed values
+     * @throws {SyntaxError} If the input starts with invalid JSON and no values could be parsed
+     *
+     * @example
+     * ```js
+     * const items = Bun.JSONL.parse('{"a":1}\n{"b":2}\n');
+     * // [{ a: 1 }, { b: 2 }]
+     *
+     * // From a Uint8Array (zero-copy for ASCII):
+     * const buf = new TextEncoder().encode('{"a":1}\n{"b":2}\n');
+     * const items = Bun.JSONL.parse(buf);
+     * // [{ a: 1 }, { b: 2 }]
+     *
+     * // Partial results on error after valid values:
+     * const partial = Bun.JSONL.parse('{"a":1}\n{bad}\n');
+     * // [{ a: 1 }]
+     *
+     * // Throws when no valid values precede the error:
+     * Bun.JSONL.parse('{bad}\n'); // throws SyntaxError
+     * ```
+     */
+    export function parse(input: string | NodeJS.TypedArray | DataView<ArrayBuffer> | ArrayBufferLike): unknown[];
+
+    /**
+     * Parse a JSONL chunk, designed for streaming use.
+     *
+     * Never throws on parse errors. Instead, returns whatever values were
+     * successfully parsed along with an `error` property containing the
+     * `SyntaxError` (or `null` on success). Use `read` to determine how
+     * much input was consumed and `done` to check if all input was parsed.
+     *
+     * When a `TypedArray` is passed, the bytes are parsed directly without
+     * copying if the content is ASCII. Optional `start` and `end` parameters
+     * allow slicing without copying, and `read` will be a byte offset into
+     * the original typed array.
+     *
+     * @param input The JSONL string or typed array to parse
+     * @param start Byte offset to start parsing from (typed array only, default: 0)
+     * @param end Byte offset to stop parsing at (typed array only, default: input.byteLength)
+     * @returns An object with `values`, `read`, `done`, and `error` properties
+     *
+     * @example
+     * ```js
+     * let buffer = new Uint8Array(0);
+     * for await (const chunk of stream) {
+     *   buffer = Buffer.concat([buffer, chunk]);
+     *   const { values, read, error } = Bun.JSONL.parseChunk(buffer);
+     *   if (error) throw error;
+     *   for (const value of values) handle(value);
+     *   buffer = buffer.subarray(read);
+     * }
+     * ```
+     */
+    export function parseChunk(input: string): ParseChunkResult;
+    export function parseChunk(
+      input: NodeJS.TypedArray | DataView<ArrayBuffer> | ArrayBufferLike,
+      start?: number,
+      end?: number,
+    ): ParseChunkResult;
+  }
+
+  /**
    * YAML related APIs
    */
   namespace YAML {
@@ -808,6 +903,69 @@ declare module "bun" {
      * // obj: *1
      */
     export function stringify(input: unknown, replacer?: undefined | null, space?: string | number): string;
+  }
+
+  /**
+   * JSON5 related APIs
+   */
+  namespace JSON5 {
+    /**
+     * Parse a JSON5 string into a JavaScript value.
+     *
+     * JSON5 is a superset of JSON based on ECMAScript 5.1 that supports
+     * comments, trailing commas, unquoted keys, single-quoted strings,
+     * hex numbers, Infinity, NaN, and more.
+     *
+     * @category Utilities
+     *
+     * @param input The JSON5 string to parse
+     * @returns A JavaScript value
+     *
+     * @example
+     * ```ts
+     * import { JSON5 } from "bun";
+     *
+     * const result = JSON5.parse(`{
+     *   // This is a comment
+     *   name: 'my-app',
+     *   version: '1.0.0', // trailing comma is allowed
+     *   hex: 0xDEADbeef,
+     *   half: .5,
+     *   infinity: Infinity,
+     * }`);
+     * ```
+     */
+    export function parse(input: string): unknown;
+
+    /**
+     * Convert a JavaScript value into a JSON5 string. Object keys that are
+     * valid identifiers are unquoted, strings use double quotes, `Infinity`
+     * and `NaN` are represented as literals, and indented output includes
+     * trailing commas.
+     *
+     * @category Utilities
+     *
+     * @param input The JavaScript value to stringify.
+     * @param replacer Currently not supported.
+     * @param space A number for how many spaces each level of indentation gets, or a string used as indentation.
+     *              The number is clamped between 0 and 10, and the first 10 characters of the string are used.
+     * @returns A JSON5 string, or `undefined` if the input is `undefined`, a function, or a symbol.
+     *
+     * @example
+     * ```ts
+     * import { JSON5 } from "bun";
+     *
+     * console.log(JSON5.stringify({ a: 1, b: "two" }));
+     * // {a:1,b:"two"}
+     *
+     * console.log(JSON5.stringify({ a: 1, b: 2 }, null, 2));
+     * // {
+     * //   a: 1,
+     * //   b: 2,
+     * // }
+     * ```
+     */
+    export function stringify(input: unknown, replacer?: undefined | null, space?: string | number): string | undefined;
   }
 
   /**
@@ -1745,6 +1903,17 @@ declare module "bun" {
      * @default "warn"
      */
     logLevel?: "verbose" | "debug" | "info" | "warn" | "error";
+
+    /**
+     * Enable REPL mode transforms:
+     * - Wraps top-level inputs that appear to be object literals (inputs starting with '{' without trailing ';') in parentheses
+     * - Hoists all declarations as var for REPL persistence across vm.runInContext calls
+     * - Wraps last expression in { __proto__: null, value: expr } for result capture
+     * - Wraps code in sync/async IIFE to avoid parentheses around object literals
+     *
+     * @default false
+     */
+    replMode?: boolean;
   }
 
   /**
@@ -1851,7 +2020,7 @@ declare module "bun" {
     type Architecture = "x64" | "arm64";
     type Libc = "glibc" | "musl";
     type SIMD = "baseline" | "modern";
-    type Target =
+    type CompileTarget =
       | `bun-darwin-${Architecture}`
       | `bun-darwin-x64-${SIMD}`
       | `bun-linux-${Architecture}`
@@ -2193,7 +2362,7 @@ declare module "bun" {
   }
 
   interface CompileBuildOptions {
-    target?: Bun.Build.Target;
+    target?: Bun.Build.CompileTarget;
     execArgv?: string[];
     executablePath?: string;
     outfile?: string;
@@ -2275,7 +2444,7 @@ declare module "bun" {
      * });
      * ```
      */
-    compile: boolean | Bun.Build.Target | CompileBuildOptions;
+    compile: boolean | Bun.Build.CompileTarget | CompileBuildOptions;
 
     /**
      * Splitting is not currently supported with `.compile`

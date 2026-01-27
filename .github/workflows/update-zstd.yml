@@ -88,7 +88,7 @@ jobs:
           commit-message: "deps: update zstd to ${{ steps.check-version.outputs.tag }} (${{ steps.check-version.outputs.latest }})"
           title: "deps: update zstd to ${{ steps.check-version.outputs.tag }}"
           delete-branch: true
-          branch: deps/update-zstd-${{ github.run_number }}
+          branch: deps/update-zstd
           body: |
             ## What does this PR do?
 

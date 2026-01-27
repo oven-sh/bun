@@ -266,8 +266,15 @@ pub const PluginRunner = struct {
         // Our super slow way of cloning the string into memory owned by jsc
         const combined_string = std.fmt.allocPrint(this.allocator, "{f}:{f}", .{ user_namespace, file_path }) catch unreachable;
         var out_ = bun.String.init(combined_string);
-        const jsval = out_.toJS(this.global_object);
-        const out = jsval.toBunString(this.global_object) catch @panic("unreachable");
+        defer out_.deref();
+        const jsval = out_.toJS(this.global_object) catch |err| {
+            this.allocator.free(combined_string);
+            return jsc.ErrorableString.err(err, this.global_object.tryTakeException() orelse .js_undefined);
+        };
+        const out = jsval.toBunString(this.global_object) catch |err| {
+            this.allocator.free(combined_string);
+            return jsc.ErrorableString.err(err, this.global_object.tryTakeException() orelse .js_undefined);
+        };
         this.allocator.free(combined_string);
         return jsc.ErrorableString.ok(out);
     }
@@ -619,7 +626,7 @@ pub const Transpiler = struct {
         };
 
         switch (loader) {
-            .jsx, .tsx, .js, .ts, .json, .jsonc, .toml, .yaml, .text => {
+            .jsx, .tsx, .js, .ts, .json, .jsonc, .toml, .yaml, .json5, .text => {
                 var result = transpiler.parse(
                     ParseOptions{
                         .allocator = transpiler.allocator,
@@ -1115,6 +1122,8 @@ pub const Transpiler = struct {
                 opts.features.dead_code_elimination = transpiler.options.dead_code_elimination;
                 opts.features.remove_cjs_module_wrapper = this_parse.remove_cjs_module_wrapper;
                 opts.features.bundler_feature_flags = transpiler.options.bundler_feature_flags;
+                opts.features.repl_mode = transpiler.options.repl_mode;
+                opts.repl_mode = transpiler.options.repl_mode;
 
                 if (transpiler.macro_context == null) {
                     transpiler.macro_context = js_ast.Macro.MacroContext.init(transpiler);
@@ -1180,7 +1189,7 @@ pub const Transpiler = struct {
                 };
             },
             // TODO: use lazy export AST
-            inline .toml, .yaml, .json, .jsonc => |kind| {
+            inline .toml, .yaml, .json, .jsonc, .json5 => |kind| {
                 var expr = if (kind == .jsonc)
                     // We allow importing tsconfig.*.json or jsconfig.*.json with comments
                     // These files implicitly become JSONC files, which aligns with the behavior of text editors.
@@ -1191,6 +1200,8 @@ pub const Transpiler = struct {
                     TOML.parse(source, transpiler.log, allocator, false) catch return null
                 else if (kind == .yaml)
                     YAML.parse(source, transpiler.log, allocator) catch return null
+                else if (kind == .json5)
+                    JSON5.parse(source, transpiler.log, allocator) catch return null
                 else
                     @compileError("unreachable");
 
@@ -1607,6 +1618,7 @@ const jsc = bun.jsc;
 const logger = bun.logger;
 const strings = bun.strings;
 const api = bun.schema.api;
+const JSON5 = bun.interchange.json5.JSON5Parser;
 const TOML = bun.interchange.toml.TOML;
 const YAML = bun.interchange.yaml.YAML;
 const default_macro_js_value = jsc.JSValue.zero;

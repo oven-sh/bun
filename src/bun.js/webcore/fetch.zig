@@ -941,7 +941,39 @@ fn fetchImpl(
                 }
             }
 
-            break :extract_headers Headers.from(headers_, allocator, .{ .body = body.getAnyBlob() }) catch |err| bun.handleOom(err);
+            // If the body is FormData and has a multipart Content-Type with boundary,
+            // but the user set Content-Type to "multipart/form-data" without a boundary,
+            // we need to remove the user's incomplete header so that the body's correct
+            // Content-Type (with boundary) is used instead. See issue #15306.
+            const headers_to_use = brk: {
+                if (body.getAnyBlob()) |any_blob| {
+                    const body_content_type = any_blob.contentType();
+                    // Check if body's content type is multipart/form-data with boundary
+                    if (bun.strings.startsWithCaseInsensitiveAscii(body_content_type, "multipart/form-data") and
+                        bun.strings.indexOf(body_content_type, "boundary=") != null)
+                    {
+                        // Check if user set Content-Type without boundary
+                        if (headers_.fastGet(.ContentType)) |user_content_type| {
+                            const user_ct_slice = user_content_type.toSlice(bun.default_allocator);
+                            defer user_ct_slice.deinit();
+                            const user_ct = user_ct_slice.slice();
+                            // If user's Content-Type is multipart/form-data but lacks boundary
+                            if (bun.strings.startsWithCaseInsensitiveAscii(user_ct, "multipart/form-data") and
+                                bun.strings.indexOf(user_ct, "boundary=") == null)
+                            {
+                                // Clone headers and remove the incomplete Content-Type
+                                if (try headers_.cloneThis(globalThis)) |cloned| {
+                                    cloned.fastRemove(.ContentType);
+                                    break :brk cloned;
+                                }
+                            }
+                        }
+                    }
+                }
+                break :brk headers_;
+            };
+
+            break :extract_headers Headers.from(headers_to_use, allocator, .{ .body = body.getAnyBlob() }) catch |err| bun.handleOom(err);
         }
 
         break :extract_headers headers;

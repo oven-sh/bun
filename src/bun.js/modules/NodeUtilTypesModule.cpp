@@ -1,7 +1,7 @@
 #include "BunClientData.h"
 #include "JSDOMWrapper.h"
 #include "JSEventTarget.h"
-#include "JavaScriptCore/CatchScope.h"
+#include "JavaScriptCore/TopExceptionScope.h"
 #include "_NativeModule.h"
 
 #include "napi_external.h"

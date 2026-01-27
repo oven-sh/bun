@@ -360,6 +360,17 @@ fn getAST(
             const root = try YAML.parse(source, &temp_log, allocator);
             return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, &temp_log, root, source, "")).?);
         },
+        .json5 => {
+            const trace = bun.perf.trace("Bundler.ParseJSON5");
+            defer trace.end();
+            var temp_log = bun.logger.Log.init(allocator);
+            defer {
+                bun.handleOom(temp_log.cloneToWithRecycled(log, true));
+                temp_log.msgs.clearAndFree();
+            }
+            const root = try JSON5.parse(source, &temp_log, allocator);
+            return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, &temp_log, root, source, "")).?);
+        },
         .text => {
             const root = Expr.init(E.String, E.String{
                 .data = source.contents,
@@ -1219,6 +1230,7 @@ fn runWithSourceCode(
     }
 
     opts.tree_shaking = if (source.index.isRuntime()) true else transpiler.options.tree_shaking;
+    opts.code_splitting = transpiler.options.code_splitting;
     opts.module_type = task.module_type;
 
     task.jsx.parse = loader.isJSX();
@@ -1427,6 +1439,7 @@ const default_allocator = bun.default_allocator;
 const js_parser = bun.js_parser;
 const strings = bun.strings;
 const BabyList = bun.collections.BabyList;
+const JSON5 = bun.interchange.json5.JSON5Parser;
 const TOML = bun.interchange.toml.TOML;
 const YAML = bun.interchange.yaml.YAML;
 

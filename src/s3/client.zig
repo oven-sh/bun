@@ -514,13 +514,18 @@ pub fn uploadStream(
     callback_context: *anyopaque,
 ) bun.JSError!jsc.JSValue {
     this.ref(); // ref the credentials
+    var owned_metadata = metadata;
     const proxy_url = (proxy orelse "");
     if (readable_stream.isDisturbed(globalThis)) {
+        if (owned_metadata) |*m| m.deinit(bun.default_allocator);
+        this.deref();
         return jsc.JSPromise.rejectedPromise(globalThis, bun.String.static("ReadableStream is already disturbed").toErrorInstance(globalThis)).toJS();
     }
 
     switch (readable_stream.ptr) {
         .Invalid => {
+            if (owned_metadata) |*m| m.deinit(bun.default_allocator);
+            this.deref();
             return jsc.JSPromise.rejectedPromise(globalThis, bun.String.static("ReadableStream is invalid").toErrorInstance(globalThis)).toJS();
         },
         inline .File, .Bytes => |stream| {
@@ -533,6 +538,8 @@ pub fn uploadStream(
                     js_err.unprotect();
                 }
                 js_err.ensureStillAlive();
+                if (owned_metadata) |*m| m.deinit(bun.default_allocator);
+                this.deref();
                 return jsc.JSPromise.rejectedPromise(globalThis, js_err).toJS();
             }
         },
@@ -555,7 +562,7 @@ pub fn uploadStream(
         .acl = acl,
         .storage_class = storage_class,
         .request_payer = request_payer,
-        .metadata = metadata,
+        .metadata = owned_metadata,
         .vm = jsc.VirtualMachine.get(),
     });
 

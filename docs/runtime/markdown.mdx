@@ -52,23 +52,23 @@ const html = Bun.unstable_markdown.html("some markdown", {
 
 All available options:
 
-| Option                 | Default | Description                                       |
-| ---------------------- | ------- | ------------------------------------------------- |
-| `tables`               | `false` | GFM tables                                        |
-| `strikethrough`        | `false` | GFM strikethrough (`~~text~~`)                    |
-| `tasklists`            | `false` | GFM task lists (`- [x] item`)                     |
-| `autolinks`            | `false` | Enable autolinks — see [Autolinks](#autolinks)    |
+| Option                 | Default | Description                                                 |
+| ---------------------- | ------- | ----------------------------------------------------------- |
+| `tables`               | `false` | GFM tables                                                  |
+| `strikethrough`        | `false` | GFM strikethrough (`~~text~~`)                              |
+| `tasklists`            | `false` | GFM task lists (`- [x] item`)                               |
+| `autolinks`            | `false` | Enable autolinks — see [Autolinks](#autolinks)              |
 | `headings`             | `false` | Heading IDs and autolinks — see [Heading IDs](#heading-ids) |
-| `hardSoftBreaks`       | `false` | Treat soft line breaks as hard breaks             |
-| `wikiLinks`            | `false` | Enable `[[wiki links]]`                           |
-| `underline`            | `false` | `__text__` renders as `<u>` instead of `<strong>` |
-| `latexMath`            | `false` | Enable `$inline$` and `$$display$$` math          |
-| `collapseWhitespace`   | `false` | Collapse whitespace in text                       |
-| `permissiveAtxHeaders` | `false` | ATX headers without space after `#`               |
-| `noIndentedCodeBlocks` | `false` | Disable indented code blocks                      |
-| `noHtmlBlocks`         | `false` | Disable HTML blocks                               |
-| `noHtmlSpans`          | `false` | Disable inline HTML                               |
-| `tagFilter`            | `false` | GFM tag filter for disallowed HTML tags           |
+| `hardSoftBreaks`       | `false` | Treat soft line breaks as hard breaks                       |
+| `wikiLinks`            | `false` | Enable `[[wiki links]]`                                     |
+| `underline`            | `false` | `__text__` renders as `<u>` instead of `<strong>`           |
+| `latexMath`            | `false` | Enable `$inline$` and `$$display$$` math                    |
+| `collapseWhitespace`   | `false` | Collapse whitespace in text                                 |
+| `permissiveAtxHeaders` | `false` | ATX headers without space after `#`                         |
+| `noIndentedCodeBlocks` | `false` | Disable indented code blocks                                |
+| `noHtmlBlocks`         | `false` | Disable HTML blocks                                         |
+| `noHtmlSpans`          | `false` | Disable inline HTML                                         |
+| `tagFilter`            | `false` | GFM tag filter for disallowed HTML tags                     |
 
 #### Autolinks
 
@@ -126,7 +126,7 @@ Return a string to replace the element's rendering. Return `null` or `undefined`
 
 | Callback     | Meta                                        | Description                                                                              |
 | ------------ | ------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `heading`    | `{ level: number, id?: string }`            | Heading level 1–6. `id` is set when `headings: { ids: true }` is enabled                |
+| `heading`    | `{ level: number, id?: string }`            | Heading level 1–6. `id` is set when `headings: { ids: true }` is enabled                 |
 | `paragraph`  | —                                           | Paragraph block                                                                          |
 | `blockquote` | —                                           | Blockquote block                                                                         |
 | `code`       | `{ language?: string }`                     | Fenced or indented code block. `language` is the info-string when specified on the fence |
@@ -221,10 +221,14 @@ const result = Bun.unstable_markdown.render("```js\nconsole.log('hi')\n```", {
 Parser options are passed as a separate third argument:
 
 ```ts
-const result = Bun.unstable_markdown.render("Visit www.example.com", {
-  link: (children, { href }) => `[${children}](${href})`,
-  paragraph: children => children,
-}, { autolinks: true });
+const result = Bun.unstable_markdown.render(
+  "Visit www.example.com",
+  {
+    link: (children, { href }) => `[${children}](${href})`,
+    paragraph: children => children,
+  },
+  { autolinks: true },
+);
 ```
 
 ---
@@ -279,40 +283,44 @@ function Heading({ id, children }) {
   );
 }
 
-const el = Bun.unstable_markdown.react(content, {
-  pre: Code,
-  a: Link,
-  h2: Heading,
-}, { headings: { ids: true } });
+const el = Bun.unstable_markdown.react(
+  content,
+  {
+    pre: Code,
+    a: Link,
+    h2: Heading,
+  },
+  { headings: { ids: true } },
+);
 ```
 
 #### Available overrides
 
 Every HTML tag produced by the parser can be overridden:
 
-| Option       | Props                        | Description                                             |
-| ------------ | ---------------------------- | ------------------------------------------------------- |
+| Option       | Props                        | Description                                                     |
+| ------------ | ---------------------------- | --------------------------------------------------------------- |
 | `h1`–`h6`    | `{ id?, children }`          | Headings. `id` is set when `headings: { ids: true }` is enabled |
-| `p`          | `{ children }`               | Paragraph                                               |
-| `blockquote` | `{ children }`               | Blockquote                                              |
-| `pre`        | `{ language?, children }`    | Code block. `language` is the info string (e.g. `"js"`) |
-| `hr`         | `{}`                         | Horizontal rule (no children)                           |
-| `ul`         | `{ children }`               | Unordered list                                          |
-| `ol`         | `{ start, children }`        | Ordered list. `start` is the first item number          |
-| `li`         | `{ checked?, children }`     | List item. `checked` is set for task list items         |
-| `table`      | `{ children }`               | Table                                                   |
-| `thead`      | `{ children }`               | Table head                                              |
-| `tbody`      | `{ children }`               | Table body                                              |
-| `tr`         | `{ children }`               | Table row                                               |
-| `th`         | `{ align?, children }`       | Table header cell                                       |
-| `td`         | `{ align?, children }`       | Table data cell                                         |
-| `em`         | `{ children }`               | Emphasis (`*text*`)                                     |
-| `strong`     | `{ children }`               | Strong (`**text**`)                                     |
-| `a`          | `{ href, title?, children }` | Link                                                    |
-| `img`        | `{ src, alt?, title? }`      | Image (no children)                                     |
-| `code`       | `{ children }`               | Inline code                                             |
-| `del`        | `{ children }`               | Strikethrough (`~~text~~`)                              |
-| `br`         | `{}`                         | Hard line break (no children)                           |
+| `p`          | `{ children }`               | Paragraph                                                       |
+| `blockquote` | `{ children }`               | Blockquote                                                      |
+| `pre`        | `{ language?, children }`    | Code block. `language` is the info string (e.g. `"js"`)         |
+| `hr`         | `{}`                         | Horizontal rule (no children)                                   |
+| `ul`         | `{ children }`               | Unordered list                                                  |
+| `ol`         | `{ start, children }`        | Ordered list. `start` is the first item number                  |
+| `li`         | `{ checked?, children }`     | List item. `checked` is set for task list items                 |
+| `table`      | `{ children }`               | Table                                                           |
+| `thead`      | `{ children }`               | Table head                                                      |
+| `tbody`      | `{ children }`               | Table body                                                      |
+| `tr`         | `{ children }`               | Table row                                                       |
+| `th`         | `{ align?, children }`       | Table header cell                                               |
+| `td`         | `{ align?, children }`       | Table data cell                                                 |
+| `em`         | `{ children }`               | Emphasis (`*text*`)                                             |
+| `strong`     | `{ children }`               | Strong (`**text**`)                                             |
+| `a`          | `{ href, title?, children }` | Link                                                            |
+| `img`        | `{ src, alt?, title? }`      | Image (no children)                                             |
+| `code`       | `{ children }`               | Inline code                                                     |
+| `del`        | `{ children }`               | Strikethrough (`~~text~~`)                                      |
+| `br`         | `{}`                         | Hard line break (no children)                                   |
 
 ### React 18 and older
 

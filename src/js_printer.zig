@@ -1067,6 +1067,25 @@ fn NewPrinter(
 
                 p.printSemicolonAfterStatement();
             }
+
+            // Record var declarations for module_info. printGlobalBunImportStatement
+            // bypasses printDeclStmt/printBinding, so we must record vars explicitly.
+            if (may_have_module_info) {
+                if (p.moduleInfo()) |mi| {
+                    if (import.star_name_loc != null) {
+                        const name = p.renamer.nameForSymbol(import.namespace_ref);
+                        bun.handleOom(mi.addVar(bun.handleOom(mi.str(name)), .declared));
+                    }
+                    if (import.default_name) |default| {
+                        const name = p.renamer.nameForSymbol(default.ref.?);
+                        bun.handleOom(mi.addVar(bun.handleOom(mi.str(name)), .declared));
+                    }
+                    for (import.items) |item| {
+                        const name = p.renamer.nameForSymbol(item.name.ref.?);
+                        bun.handleOom(mi.addVar(bun.handleOom(mi.str(name)), .declared));
+                    }
+                }
+            }
         }
 
         pub inline fn printSpaceBeforeIdentifier(
@@ -2045,6 +2064,7 @@ fn NewPrinter(
                         p.print(".importMeta");
                     } else if (!p.options.import_meta_ref.isValid()) {
                         // Most of the time, leave it in there
+                        if (p.moduleInfo()) |mi| mi.flags.contains_import_meta = true;
                         p.print("import.meta");
                     } else {
                         // Note: The bundler will not hit this code path. The bundler will replace
@@ -2070,6 +2090,7 @@ fn NewPrinter(
                             p.printSpaceBeforeIdentifier();
                             p.addSourceMapping(expr.loc);
                         }
+                        if (p.moduleInfo()) |mi| mi.flags.contains_import_meta = true;
                         p.print("import.meta.main");
                     } else {
                         bun.debugAssert(p.options.module_type != .internal_bake_dev);
@@ -6002,6 +6023,7 @@ pub fn printAst(
 
         if (PrinterType.may_have_module_info) {
             if (printer.moduleInfo()) |mi| {
+                mi.flags.contains_import_meta = true;
                 bun.handleOom(mi.addVar(bun.handleOom(mi.str("require")), .declared));
             }
         }
@@ -6017,27 +6039,25 @@ pub fn printAst(
         }
     }
 
-    if (comptime FeatureFlags.runtime_transpiler_cache and generate_source_map) {
-        if (opts.source_map_handler) |handler| {
-            var source_maps_chunk = printer.source_map_builder.generateChunk(printer.writer.ctx.getWritten());
-            if (opts.runtime_transpiler_cache) |cache| {
-                cache.put(printer.writer.ctx.getWritten(), source_maps_chunk.buffer.list.items);
-            }
+    const have_module_info = PrinterType.may_have_module_info and opts.module_info != null;
+    if (have_module_info) {
+        try opts.module_info.?.finalize();
+    }
 
-            defer source_maps_chunk.deinit();
+    var sourcemap: []const u8 = "";
+    if (comptime generate_source_map) {
+        if (opts.source_map_handler) |handler| {
+            const source_maps_chunk = printer.source_map_builder.generateChunk(printer.writer.ctx.getWritten());
+            sourcemap = source_maps_chunk.buffer.list.items;
 
             try handler.onSourceMapChunk(source_maps_chunk, source);
-        } else {
-            if (opts.runtime_transpiler_cache) |cache| {
-                cache.put(printer.writer.ctx.getWritten(), "");
-            }
         }
-    } else if (comptime generate_source_map) {
-        if (opts.source_map_handler) |handler| {
-            var chunk = printer.source_map_builder.generateChunk(printer.writer.ctx.getWritten());
-            defer chunk.deinit();
-            try handler.onSourceMapChunk(chunk, source);
-        }
+    }
+    if (opts.runtime_transpiler_cache) |cache| {
+        var srlz_res = std.array_list.Managed(u8).init(bun.default_allocator);
+        defer srlz_res.deinit();
+        if (have_module_info) try opts.module_info.?.asDeserialized().serialize(srlz_res.writer());
+        cache.put(printer.writer.ctx.getWritten(), sourcemap, srlz_res.items);
     }
 
     try printer.writer.done();

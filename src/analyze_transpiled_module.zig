@@ -34,6 +34,12 @@ pub const RecordKind = enum(u8) {
     }
 };
 
+pub const Flags = packed struct(u8) {
+    contains_import_meta: bool = false,
+    is_typescript: bool = false,
+    _padding: u6 = 0,
+};
+
 pub const ModuleInfoDeserialized = struct {
     strings_buf: []const u8,
     strings_lens: []align(1) const u32,
@@ -41,7 +47,7 @@ pub const ModuleInfoDeserialized = struct {
     requested_modules_values: []align(1) const ModuleInfo.FetchParameters,
     buffer: []align(1) const StringID,
     record_kinds: []align(1) const RecordKind,
-    is_typescript: bool,
+    flags: Flags,
     owner: union(enum) {
         module_info,
         allocated_slice: struct {
@@ -92,7 +98,7 @@ pub const ModuleInfoDeserialized = struct {
         const requested_modules_keys = std.mem.bytesAsSlice(StringID, try eat(&rem, requested_modules_len * @sizeOf(StringID)));
         const requested_modules_values = std.mem.bytesAsSlice(ModuleInfo.FetchParameters, try eat(&rem, requested_modules_len * @sizeOf(ModuleInfo.FetchParameters)));
 
-        const is_typescript = (try eatC(&rem, 1))[0] != 0;
+        const flags: Flags = @bitCast((try eatC(&rem, 1))[0]);
         _ = try eat(&rem, 3); // alignment padding
 
         const strings_len = std.mem.readInt(u32, try eatC(&rem, 4), .little);
@@ -106,7 +112,7 @@ pub const ModuleInfoDeserialized = struct {
             .requested_modules_values = requested_modules_values,
             .buffer = buffer,
             .record_kinds = record_kinds,
-            .is_typescript = is_typescript,
+            .flags = flags,
             .owner = .{ .allocated_slice = .{
                 .slice = duped,
                 .allocator = gpa,
@@ -126,7 +132,7 @@ pub const ModuleInfoDeserialized = struct {
         try writer.writeAll(std.mem.sliceAsBytes(self.requested_modules_keys));
         try writer.writeAll(std.mem.sliceAsBytes(self.requested_modules_values));
 
-        try writer.writeByte(@intFromBool(self.is_typescript));
+        try writer.writeByte(@bitCast(self.flags));
         try writer.writeByteNTimes(0, 3); // alignment padding
 
         try writer.writeInt(u32, @truncate(self.strings_lens.len), .little);
@@ -159,7 +165,7 @@ pub const ModuleInfo = struct {
     requested_modules: std.AutoArrayHashMap(StringID, FetchParameters),
     buffer: std.ArrayList(StringID),
     record_kinds: std.ArrayList(RecordKind),
-    is_typescript: bool,
+    flags: Flags,
     exported_names: std.AutoArrayHashMapUnmanaged(StringID, void),
     finalized: bool = false,
 
@@ -244,7 +250,7 @@ pub const ModuleInfo = struct {
             .requested_modules = std.AutoArrayHashMap(StringID, FetchParameters).init(allocator),
             .buffer = .empty,
             .record_kinds = .empty,
-            .is_typescript = is_typescript,
+            .flags = .{ .contains_import_meta = false, .is_typescript = is_typescript },
             ._deserialized = undefined,
         };
     }
@@ -324,7 +330,7 @@ pub const ModuleInfo = struct {
                         // In TypeScript, the re-exported import may target a type-only
                         // export that was elided. Convert the import to SingleTypeScript
                         // so JSC tolerates it being NotFound during linking.
-                        if (self.is_typescript) {
+                        if (self.flags.is_typescript) {
                             self.record_kinds.items[ip.record_kinds_idx] = .import_info_single_type_script;
                         }
                     }
@@ -340,7 +346,7 @@ pub const ModuleInfo = struct {
             .requested_modules_values = self.requested_modules.values(),
             .buffer = self.buffer.items,
             .record_kinds = self.record_kinds.items,
-            .is_typescript = self.is_typescript,
+            .flags = self.flags,
             .owner = .module_info,
         };
 
@@ -397,8 +403,7 @@ export fn zig__ModuleInfoDeserialized__toJSModuleRecord(
         }
     }
 
-    // ModuleInfo is only created for ESM modules, which can always use import.meta.
-    const module_record = JSModuleRecord.create(globalObject, vm, module_key, source_code, declared_variables, lexical_variables, true, res.is_typescript);
+    const module_record = JSModuleRecord.create(globalObject, vm, module_key, source_code, declared_variables, lexical_variables, res.flags.contains_import_meta, res.flags.is_typescript);
 
     for (res.requested_modules_keys, res.requested_modules_values) |reqk, reqv| {
         switch (reqv) {

@@ -41,14 +41,14 @@ describeWithContainer(
       try {
         // Phase 1 - First transaction with multiple INSERTs
         await sql.begin(async tx => {
-          await tx`INSERT INTO ${sql(random_name)} (name, code) VALUES (${"Name 11"}, ${`CODE_${Math.random().toString().slice(2)}`})`;
-          await tx`INSERT INTO ${sql(random_name)} (name, code) VALUES (${"Name 12"}, ${`CODE_${Math.random().toString().slice(2)}`})`;
+          await tx`INSERT INTO ${sql(random_name)} (name, code) VALUES (${"Name 11"}, ${"CODE_11"})`;
+          await tx`INSERT INTO ${sql(random_name)} (name, code) VALUES (${"Name 12"}, ${"CODE_12"})`;
         });
 
         // Phase 2 - Second sequential transaction (this would hang before the fix)
         await sql.begin(async tx => {
-          await tx`INSERT INTO ${sql(random_name)} (name, code) VALUES (${"Name 21"}, ${`CODE_${Math.random().toString().slice(2)}`})`;
-          await tx`INSERT INTO ${sql(random_name)} (name, code) VALUES (${"Name 22"}, ${`CODE_${Math.random().toString().slice(2)}`})`;
+          await tx`INSERT INTO ${sql(random_name)} (name, code) VALUES (${"Name 21"}, ${"CODE_21"})`;
+          await tx`INSERT INTO ${sql(random_name)} (name, code) VALUES (${"Name 22"}, ${"CODE_22"})`;
         });
 
         // Verify all 4 rows were inserted
@@ -73,7 +73,7 @@ describeWithContainer(
         // Run multiple sequential transactions in a loop
         for (let i = 0; i < 5; i++) {
           await sql.begin(async tx => {
-            await tx`INSERT INTO ${sql(random_name)} (name, code) VALUES (${`Name ${i}`}, ${`CODE_${i}_${Math.random().toString().slice(2)}`})`;
+            await tx`INSERT INTO ${sql(random_name)} (name, code) VALUES (${`Name ${i}`}, ${`CODE_${i}`})`;
           });
         }
 
@@ -99,26 +99,14 @@ describeWithContainer(
       try {
         // Phase 1 - Using unsafe() as shown in the original issue
         await sql.begin(async tx => {
-          await tx.unsafe("INSERT INTO " + random_name + " (name, code) VALUES (?, ?)", [
-            "Name 11",
-            "CODE_" + Math.random().toString().slice(2),
-          ]);
-          await tx.unsafe("INSERT INTO " + random_name + " (name, code) VALUES (?, ?)", [
-            "Name 12",
-            "CODE_" + Math.random().toString().slice(2),
-          ]);
+          await tx.unsafe("INSERT INTO " + random_name + " (name, code) VALUES (?, ?)", ["Name 11", "CODE_11"]);
+          await tx.unsafe("INSERT INTO " + random_name + " (name, code) VALUES (?, ?)", ["Name 12", "CODE_12"]);
         });
 
         // Phase 2 - This would hang before the fix
         await sql.begin(async tx => {
-          await tx.unsafe("INSERT INTO " + random_name + " (name, code) VALUES (?, ?)", [
-            "Name 21",
-            "CODE_" + Math.random().toString().slice(2),
-          ]);
-          await tx.unsafe("INSERT INTO " + random_name + " (name, code) VALUES (?, ?)", [
-            "Name 22",
-            "CODE_" + Math.random().toString().slice(2),
-          ]);
+          await tx.unsafe("INSERT INTO " + random_name + " (name, code) VALUES (?, ?)", ["Name 21", "CODE_21"]);
+          await tx.unsafe("INSERT INTO " + random_name + " (name, code) VALUES (?, ?)", ["Name 22", "CODE_22"]);
         });
 
         // Verify all 4 rows were inserted

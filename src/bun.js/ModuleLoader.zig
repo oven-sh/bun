@@ -423,16 +423,15 @@ pub fn transpileSourceCode(
                     dumpSourceString(jsc_vm, specifier, entry.output_code.byteSlice());
                 }
 
-                var module_info: ?*analyze_transpiled_module.ModuleInfoDeserialized = null;
-                if (entry.esm_record.len > 0) {
-                    if (entry.metadata.module_type == .cjs) {
-                        @panic("TranspilerCache contained cjs module with module info");
+                const module_info: ?*analyze_transpiled_module.ModuleInfoDeserialized = blk: {
+                    if (entry.esm_record.len > 0) {
+                        if (entry.metadata.module_type == .cjs) {
+                            @panic("TranspilerCache contained cjs module with module info");
+                        }
+                        break :blk analyze_transpiled_module.ModuleInfoDeserialized.createFromCachedRecord(entry.esm_record, bun.default_allocator);
                     }
-                    module_info = analyze_transpiled_module.ModuleInfoDeserialized.create(entry.esm_record, bun.default_allocator) catch |e| switch (e) {
-                        error.OutOfMemory => bun.outOfMemory(),
-                        error.BadModuleInfo => @panic("TranspilerCache contained invalid module info"),
-                    };
-                }
+                    break :blk null;
+                };
 
                 return ResolvedSource{
                     .allocator = null,
@@ -1220,12 +1219,7 @@ pub fn fetchBuiltinModule(jsc_vm: *VirtualMachine, specifier: bun.String) !?Reso
                 .bytecode_cache = if (file.bytecode.len > 0) file.bytecode.ptr else null,
                 .bytecode_cache_size = file.bytecode.len,
                 .module_info = if (file.module_info.len > 0)
-                    analyze_transpiled_module.ModuleInfoDeserialized.create(file.module_info, bun.default_allocator) catch |err| blk: {
-                        if (comptime bun.Environment.isDebug) {
-                            bun.Output.debugWarn("Failed to deserialize module_info: {s}\n", .{@errorName(err)});
-                        }
-                        break :blk null;
-                    }
+                    analyze_transpiled_module.ModuleInfoDeserialized.createFromCachedRecord(file.module_info, bun.default_allocator)
                 else
                     null,
                 .is_commonjs_module = file.module_format == .cjs,

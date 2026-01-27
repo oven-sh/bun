@@ -472,16 +472,15 @@ pub const RuntimeTranspilerStore = struct {
                     dumpSourceString(vm, specifier, entry.output_code.byteSlice());
                 }
 
-                var module_info: ?*analyze_transpiled_module.ModuleInfoDeserialized = null;
-                if (entry.esm_record.len > 0) {
-                    if (entry.metadata.module_type == .cjs) {
-                        @panic("TranspilerCache contained cjs module with module info");
+                const module_info: ?*analyze_transpiled_module.ModuleInfoDeserialized = blk: {
+                    if (entry.esm_record.len > 0) {
+                        if (entry.metadata.module_type == .cjs) {
+                            @panic("TranspilerCache contained cjs module with module info");
+                        }
+                        break :blk analyze_transpiled_module.ModuleInfoDeserialized.createFromCachedRecord(entry.esm_record, bun.default_allocator);
                     }
-                    module_info = analyze_transpiled_module.ModuleInfoDeserialized.create(entry.esm_record, bun.default_allocator) catch |e| switch (e) {
-                        error.OutOfMemory => bun.outOfMemory(),
-                        error.BadModuleInfo => @panic("TranspilerCache contained invalid module info"),
-                    };
-                }
+                    break :blk null;
+                };
 
                 this.resolved_source = ResolvedSource{
                     .allocator = null,

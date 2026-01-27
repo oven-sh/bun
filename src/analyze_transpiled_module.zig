@@ -120,6 +120,16 @@ pub const ModuleInfoDeserialized = struct {
         };
         return res;
     }
+
+    /// Wrapper around `create` for use when loading from a cache (transpiler cache or standalone module graph).
+    /// Returns `null` instead of panicking on corrupt/truncated data.
+    pub fn createFromCachedRecord(source: []const u8, gpa: std.mem.Allocator) ?*ModuleInfoDeserialized {
+        return create(source, gpa) catch |e| switch (e) {
+            error.OutOfMemory => bun.outOfMemory(),
+            error.BadModuleInfo => null,
+        };
+    }
+
     pub fn serialize(self: *const ModuleInfoDeserialized, writer: anytype) !void {
         try writer.writeInt(u32, @truncate(self.record_kinds.len), .little);
         try writer.writeAll(std.mem.sliceAsBytes(self.record_kinds));

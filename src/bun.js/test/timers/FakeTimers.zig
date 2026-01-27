@@ -8,13 +8,13 @@ timers: TimerHeap = .{ .context = {} },
 /// Auto-advance timer that runs in real time and periodically advances fake time.
 /// When advanceTimers option is enabled, this timer fires every N milliseconds of real time
 /// and advances the fake clock by the same amount.
-auto_advance_timer: bun.api.Timer.EventLoopTimer = .{
+#auto_advance_timer: bun.api.Timer.EventLoopTimer = .{
     .tag = .FakeTimersAutoAdvance,
     .next = .epoch,
 },
 /// The interval in milliseconds for auto-advancing timers.
 /// 0 means auto-advance is disabled.
-auto_advance_interval_ms: u32 = 0,
+#auto_advance_interval_ms: u32 = 0,
 
 pub var current_time: struct {
     const min_timespec = bun.timespec{ .sec = std.math.minInt(i64), .nsec = std.math.minInt(i64) };
@@ -79,7 +79,7 @@ fn activate(this: *FakeTimers, js_now: f64, globalObject: *jsc.JSGlobalObject, a
     defer this.assertValid(.locked);
 
     this.#active = true;
-    this.auto_advance_interval_ms = auto_advance_ms;
+    this.#auto_advance_interval_ms = auto_advance_ms;
     current_time.set(globalObject, .{ .offset = &.epoch, .js = js_now });
 }
 fn deactivate(this: *FakeTimers, globalObject: *jsc.JSGlobalObject) void {
@@ -182,7 +182,7 @@ pub fn onAutoAdvanceTimer(this: *FakeTimers, vm: *jsc.VirtualMachine) void {
     this.assertValid(.unlocked);
     defer this.assertValid(.unlocked);
 
-    const interval_ms = this.auto_advance_interval_ms;
+    const interval_ms = this.#auto_advance_interval_ms;
     if (interval_ms == 0) return;
 
     const globalObject = vm.global;
@@ -220,31 +220,31 @@ pub fn onAutoAdvanceTimer(this: *FakeTimers, vm: *jsc.VirtualMachine) void {
 
 /// Schedule the auto-advance timer to fire after the configured interval (in real time).
 fn scheduleAutoAdvanceTimer(this: *FakeTimers, vm: *jsc.VirtualMachine) void {
-    const interval_ms = this.auto_advance_interval_ms;
+    const interval_ms = this.#auto_advance_interval_ms;
     if (interval_ms == 0) return;
 
     const now = bun.timespec.now(.force_real_time);
-    this.auto_advance_timer.next = now.addMs(interval_ms);
-    this.auto_advance_timer.state = .PENDING;
+    this.#auto_advance_timer.next = now.addMs(interval_ms);
+    this.#auto_advance_timer.state = .PENDING;
 
     // Insert into the regular timer heap (not the fake heap) using real time.
     // The FakeTimersAutoAdvance tag has allowFakeTimers() == false so it goes
     // into the regular heap.
-    vm.timer.insert(&this.auto_advance_timer);
+    vm.timer.insert(&this.#auto_advance_timer);
 }
 
 /// Stop the auto-advance timer. Must be called with timers.lock held.
 fn stopAutoAdvanceTimer(this: *FakeTimers, globalObject: *jsc.JSGlobalObject) void {
     const vm = globalObject.bunVM();
-    this.auto_advance_interval_ms = 0;
+    this.#auto_advance_interval_ms = 0;
     // Remove the timer from its heap based on where it's stored
-    switch (this.auto_advance_timer.in_heap) {
-        .regular => vm.timer.timers.remove(&this.auto_advance_timer),
-        .fake => this.timers.remove(&this.auto_advance_timer),
+    switch (this.#auto_advance_timer.in_heap) {
+        .regular => vm.timer.timers.remove(&this.#auto_advance_timer),
+        .fake => this.timers.remove(&this.#auto_advance_timer),
         .none => {}, // Timer is not in any heap (already fired or not yet started)
     }
-    this.auto_advance_timer.in_heap = .none;
-    this.auto_advance_timer.state = .CANCELLED;
+    this.#auto_advance_timer.in_heap = .none;
+    this.#auto_advance_timer.state = .CANCELLED;
 }
 
 // ===
@@ -320,6 +320,9 @@ fn useFakeTimers(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
                 }
             } else if (config.advanceTimers.isNumber()) {
                 const advance_num = config.advanceTimers.asNumber();
+                if (!std.math.isFinite(advance_num)) {
+                    return globalObject.throwInvalidArguments("'advanceTimers' must be a finite number", .{});
+                }
                 if (advance_num < 1 or advance_num > std.math.maxInt(u32)) {
                     return globalObject.throwInvalidArguments("'advanceTimers' must be a positive number", .{});
                 }

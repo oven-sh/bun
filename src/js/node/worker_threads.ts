@@ -121,7 +121,7 @@ let workerData = _workerData;
 let threadId = _threadId;
 function receiveMessageOnPort(port: MessagePort) {
   let res = _receiveMessageOnPort(port);
-  if (!res) return undefined;
+  if (res === undefined) return undefined;
   return {
     message: res,
   };

@@ -2,6 +2,14 @@ const pid_t = if (Environment.isPosix) std.posix.pid_t else uv.uv_pid_t;
 const fd_t = if (Environment.isPosix) std.posix.fd_t else i32;
 const log = bun.Output.scoped(.PROCESS, .visible);
 
+// Tracing helper for subprocess operations
+inline fn traceSubprocess(args: anytype) void {
+    if (Output.trace_enabled) {
+        const tracer = Output.tracer("subprocess");
+        tracer.trace(args);
+    }
+}
+
 const win_rusage = struct {
     utime: struct {
         sec: i64 = 0,
@@ -210,6 +218,36 @@ pub const Process = struct {
     pub fn onExit(this: *Process, status: Status, rusage: *const Rusage) void {
         const exit_handler = this.exit_handler;
         this.status = status;
+
+        // Trace subprocess exit
+        if (Output.trace_enabled) {
+            switch (status) {
+                .exited => |exited| {
+                    traceSubprocess(.{
+                        .call = "exit",
+                        .pid = this.pid,
+                        .exit_code = exited.code,
+                        .signal = if (exited.signal != @as(bun.SignalCode, @enumFromInt(0))) @intFromEnum(exited.signal) else null,
+                    });
+                },
+                .signaled => |sig| {
+                    traceSubprocess(.{
+                        .call = "exit",
+                        .pid = this.pid,
+                        .exit_code = null,
+                        .signal = @intFromEnum(sig),
+                    });
+                },
+                .err => |err| {
+                    traceSubprocess(.{
+                        .call = "exit",
+                        .pid = this.pid,
+                        .errno = err.errno,
+                    });
+                },
+                .running => {}, // Don't trace if still running
+            }
+        }
 
         if (this.hasExited()) {
             this.detach();
@@ -1501,6 +1539,25 @@ pub fn spawnProcessPosix(
             spawned.extra_pipes = extra_fds;
             extra_fds = std.array_list.Managed(bun.FileDescriptor).init(bun.default_allocator);
 
+            // Trace subprocess spawn
+            if (Output.trace_enabled) {
+                const cmd = bun.span(argv[0] orelse "");
+                // Count argv and envp
+                var args_count: usize = 0;
+                while (argv[args_count]) |_| : (args_count += 1) {}
+                var env_count: usize = 0;
+                while (envp[env_count]) |_| : (env_count += 1) {}
+
+                traceSubprocess(.{
+                    .call = "spawn",
+                    .cmd = cmd,
+                    .args_count = args_count,
+                    .cwd = options.cwd,
+                    .env_count = env_count,
+                    .pid = pid,
+                });
+            }
+
             if (comptime Environment.isLinux) {
                 // If it's spawnSync and we want to block the entire thread
                 // don't even bother with pidfd. It's not necessary.
@@ -1756,6 +1813,25 @@ pub fn spawnProcessWindows(
 
     process.pid = process.poller.uv.pid;
     bun.assert(process.poller.uv.exit_cb == &Process.onExitUV);
+
+    // Trace subprocess spawn
+    if (Output.trace_enabled) {
+        const cmd = bun.span(argv[0] orelse "");
+        // Count argv and envp
+        var args_count: usize = 0;
+        while (argv[args_count]) |_| : (args_count += 1) {}
+        var env_count: usize = 0;
+        while (envp[env_count]) |_| : (env_count += 1) {}
+
+        traceSubprocess(.{
+            .call = "spawn",
+            .cmd = cmd,
+            .args_count = args_count,
+            .cwd = options.cwd,
+            .env_count = env_count,
+            .pid = process.pid,
+        });
+    }
 
     var result = WindowsSpawnResult{
         .process_ = process,

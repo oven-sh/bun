@@ -205,14 +205,20 @@ pub fn onAutoAdvanceTimer(this: *FakeTimers, vm: *jsc.VirtualMachine) void {
     this.executeUntil(globalObject, target);
 
     // Re-check if fake timers are still active after executing timers.
-    // JavaScript code in timer callbacks may have called useRealTimers().
+    // JavaScript code in timer callbacks may have called useRealTimers(),
+    // or may have manually advanced time past our target via advanceTimersByTime().
     {
         timers.lock.lock();
         defer timers.lock.unlock();
         if (!this.isActive()) return;
-    }
 
-    current_time.set(globalObject, .{ .offset = &target });
+        // Only advance time to target if it's greater than current time.
+        // Callbacks during executeUntil may have advanced time past target.
+        const current_offset = current_time.getTimespecNow() orelse return;
+        if (target.greater(&current_offset)) {
+            current_time.set(globalObject, .{ .offset = &target });
+        }
+    }
 
     // Reschedule ourselves using real time
     this.scheduleAutoAdvanceTimer(vm);

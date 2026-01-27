@@ -6052,33 +6052,25 @@ pub fn printAst(
         try opts.module_info.?.finalize();
     }
 
+    var source_maps_chunk: ?SourceMap.Chunk = if (comptime generate_source_map)
+        if (opts.source_map_handler != null)
+            printer.source_map_builder.generateChunk(printer.writer.ctx.getWritten())
+        else
+            null
+    else
+        null;
+    defer if (source_maps_chunk) |*chunk| chunk.deinit();
+
+    if (opts.runtime_transpiler_cache) |cache| {
+        var srlz_res = std.array_list.Managed(u8).init(bun.default_allocator);
+        defer srlz_res.deinit();
+        if (have_module_info) try opts.module_info.?.asDeserialized().serialize(srlz_res.writer());
+        cache.put(printer.writer.ctx.getWritten(), if (source_maps_chunk) |chunk| chunk.buffer.list.items else "", srlz_res.items);
+    }
+
     if (comptime generate_source_map) {
         if (opts.source_map_handler) |handler| {
-            var source_maps_chunk = printer.source_map_builder.generateChunk(printer.writer.ctx.getWritten());
-            defer source_maps_chunk.deinit();
-
-            if (opts.runtime_transpiler_cache) |cache| {
-                var srlz_res = std.array_list.Managed(u8).init(bun.default_allocator);
-                defer srlz_res.deinit();
-                if (have_module_info) try opts.module_info.?.asDeserialized().serialize(srlz_res.writer());
-                cache.put(printer.writer.ctx.getWritten(), source_maps_chunk.buffer.list.items, srlz_res.items);
-            }
-
-            try handler.onSourceMapChunk(source_maps_chunk, source);
-        } else {
-            if (opts.runtime_transpiler_cache) |cache| {
-                var srlz_res = std.array_list.Managed(u8).init(bun.default_allocator);
-                defer srlz_res.deinit();
-                if (have_module_info) try opts.module_info.?.asDeserialized().serialize(srlz_res.writer());
-                cache.put(printer.writer.ctx.getWritten(), "", srlz_res.items);
-            }
-        }
-    } else {
-        if (opts.runtime_transpiler_cache) |cache| {
-            var srlz_res = std.array_list.Managed(u8).init(bun.default_allocator);
-            defer srlz_res.deinit();
-            if (have_module_info) try opts.module_info.?.asDeserialized().serialize(srlz_res.writer());
-            cache.put(printer.writer.ctx.getWritten(), "", srlz_res.items);
+            try handler.onSourceMapChunk(source_maps_chunk.?, source);
         }
     }
 

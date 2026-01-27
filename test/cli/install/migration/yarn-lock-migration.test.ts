@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
 describe("yarn.lock migration basic", () => {
   test("simple yarn.lock migration produces correct bun.lock", async () => {
-    const tempDir = tempDirWithFiles("yarn-migration-simple", {
+    using dir = tempDir("yarn-migration-simple", {
       "package.json": JSON.stringify(
         {
           name: "simple-test",
@@ -31,7 +31,7 @@ is-number@^7.0.0:
     // Run bun pm migrate
     const migrateResult = await Bun.spawn({
       cmd: [bunExe(), "pm", "migrate", "-f"],
-      cwd: tempDir,
+      cwd: String(dir),
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -45,14 +45,14 @@ is-number@^7.0.0:
     ]);
 
     expect(exitCode).toBe(0);
-    expect(fs.existsSync(join(tempDir, "bun.lock"))).toBe(true);
+    expect(fs.existsSync(join(String(dir), "bun.lock"))).toBe(true);
 
-    const bunLockContent = fs.readFileSync(join(tempDir, "bun.lock"), "utf8");
+    const bunLockContent = fs.readFileSync(join(String(dir), "bun.lock"), "utf8");
     expect(bunLockContent).toMatchSnapshot("simple-yarn-migration");
   });
 
   test("yarn.lock with packages containing long build tags", async () => {
-    const tempDir = tempDirWithFiles("yarn-migration-build-tags", {
+    using dir = tempDir("yarn-migration-build-tags", {
       "package.json": JSON.stringify(
         {
           name: "build-tags-test",
@@ -128,7 +128,7 @@ to-fast-properties@^2.0.0:
     // Run bun pm migrate
     const migrateResult = await Bun.spawn({
       cmd: [bunExe(), "pm", "migrate", "-f"],
-      cwd: tempDir,
+      cwd: String(dir),
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -142,9 +142,9 @@ to-fast-properties@^2.0.0:
     ]);
 
     expect(exitCode).toBe(0);
-    expect(fs.existsSync(join(tempDir, "bun.lock"))).toBe(true);
+    expect(fs.existsSync(join(String(dir), "bun.lock"))).toBe(true);
 
-    const bunLockContent = fs.readFileSync(join(tempDir, "bun.lock"), "utf8");
+    const bunLockContent = fs.readFileSync(join(String(dir), "bun.lock"), "utf8");
 
     // Verify that long build tags are preserved correctly
     expect(bunLockContent).toContain("4.16.1-1.4bc8b6e1b66cb932731fb1bdbbc550d1e010de81");
@@ -159,7 +159,7 @@ to-fast-properties@^2.0.0:
     // Install should work after migration
     const installResult = await Bun.spawn({
       cmd: [bunExe(), "install"],
-      cwd: tempDir,
+      cwd: String(dir),
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -171,7 +171,7 @@ to-fast-properties@^2.0.0:
   });
 
   test("yarn.lock with extremely long build tags (regression test)", async () => {
-    const tempDir = tempDirWithFiles("yarn-migration-extreme-build-tags", {
+    using dir = tempDir("yarn-migration-extreme-build-tags", {
       "package.json": JSON.stringify(
         {
           name: "extreme-build-tags-test",
@@ -198,7 +198,7 @@ test-package@1.0.0-alpha.beta.gamma.delta.epsilon.zeta.eta.theta.iota.kappa.lamb
     // Run bun pm migrate
     const migrateResult = await Bun.spawn({
       cmd: [bunExe(), "pm", "migrate", "-f"],
-      cwd: tempDir,
+      cwd: String(dir),
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -208,7 +208,7 @@ test-package@1.0.0-alpha.beta.gamma.delta.epsilon.zeta.eta.theta.iota.kappa.lamb
     const exitCode = await migrateResult.exited;
     expect(exitCode).toBe(0);
 
-    const bunLockPath = join(tempDir, "bun.lock");
+    const bunLockPath = join(String(dir), "bun.lock");
     expect(fs.existsSync(bunLockPath)).toBe(true);
 
     const bunLockContent = fs.readFileSync(bunLockPath, "utf8");
@@ -226,7 +226,7 @@ test-package@1.0.0-alpha.beta.gamma.delta.epsilon.zeta.eta.theta.iota.kappa.lamb
   });
 
   test("complex yarn.lock with multiple dependencies and versions", async () => {
-    const tempDir = tempDirWithFiles("yarn-migration-complex", {
+    using dir = tempDir("yarn-migration-complex", {
       "package.json": JSON.stringify(
         {
           name: "complex-test",
@@ -714,7 +714,7 @@ vary@~1.1.2:
     // Run bun pm migrate
     const migrateResult = await Bun.spawn({
       cmd: [bunExe(), "pm", "migrate", "-f"],
-      cwd: tempDir,
+      cwd: String(dir),
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -728,14 +728,14 @@ vary@~1.1.2:
     ]);
 
     expect(exitCode).toBe(0);
-    expect(fs.existsSync(join(tempDir, "bun.lock"))).toBe(true);
+    expect(fs.existsSync(join(String(dir), "bun.lock"))).toBe(true);
 
-    const bunLockContent = fs.readFileSync(join(tempDir, "bun.lock"), "utf8");
+    const bunLockContent = fs.readFileSync(join(String(dir), "bun.lock"), "utf8");
     expect(bunLockContent).toMatchSnapshot("complex-yarn-migration");
   });
 
   test("yarn.lock with npm aliases", async () => {
-    const tempDir = tempDirWithFiles("yarn-migration-aliases", {
+    using dir = tempDir("yarn-migration-aliases", {
       "package.json": JSON.stringify(
         {
           name: "alias-test",
@@ -786,7 +786,7 @@ undici-types@~5.26.4:
     // Run bun pm migrate
     const migrateResult = await Bun.spawn({
       cmd: [bunExe(), "pm", "migrate", "-f"],
-      cwd: tempDir,
+      cwd: String(dir),
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -800,9 +800,9 @@ undici-types@~5.26.4:
     ]);
 
     expect(exitCode).toBe(0);
-    expect(fs.existsSync(join(tempDir, "bun.lock"))).toBe(true);
+    expect(fs.existsSync(join(String(dir), "bun.lock"))).toBe(true);
 
-    const bunLockContent = fs.readFileSync(join(tempDir, "bun.lock"), "utf8");
+    const bunLockContent = fs.readFileSync(join(String(dir), "bun.lock"), "utf8");
     expect(bunLockContent).toMatchSnapshot("aliases-yarn-migration");
 
     // Verify that npm aliases are handled correctly
@@ -811,7 +811,7 @@ undici-types@~5.26.4:
   });
 
   test("yarn.lock with resolutions", async () => {
-    const tempDir = tempDirWithFiles("yarn-migration-resolutions", {
+    using dir = tempDir("yarn-migration-resolutions", {
       "package.json": JSON.stringify(
         {
           name: "resolutions-test",
@@ -876,7 +876,7 @@ webpack@^5.89.0:
     // Run bun pm migrate
     const migrateResult = await Bun.spawn({
       cmd: [bunExe(), "pm", "migrate", "-f"],
-      cwd: tempDir,
+      cwd: String(dir),
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -890,9 +890,9 @@ webpack@^5.89.0:
     ]);
 
     expect(exitCode).toBe(0);
-    expect(fs.existsSync(join(tempDir, "bun.lock"))).toBe(true);
+    expect(fs.existsSync(join(String(dir), "bun.lock"))).toBe(true);
 
-    const bunLockContent = fs.readFileSync(join(tempDir, "bun.lock"), "utf8");
+    const bunLockContent = fs.readFileSync(join(String(dir), "bun.lock"), "utf8");
     expect(bunLockContent).toMatchSnapshot("resolutions-yarn-migration");
 
     // Verify resolutions are handled
@@ -900,7 +900,7 @@ webpack@^5.89.0:
   });
 
   test("yarn.lock with workspace dependencies", async () => {
-    const tempDir = tempDirWithFiles("yarn-migration-workspace", {
+    using dir = tempDir("yarn-migration-workspace", {
       "package.json": JSON.stringify(
         {
           name: "workspace-root",
@@ -974,7 +974,7 @@ lodash@^4.17.21:
     // Run bun pm migrate
     const migrateResult = await Bun.spawn({
       cmd: [bunExe(), "pm", "migrate", "-f"],
-      cwd: tempDir,
+      cwd: String(dir),
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -988,9 +988,9 @@ lodash@^4.17.21:
     ]);
 
     expect(exitCode).toBe(0);
-    expect(fs.existsSync(join(tempDir, "bun.lock"))).toBe(true);
+    expect(fs.existsSync(join(String(dir), "bun.lock"))).toBe(true);
 
-    const bunLockContent = fs.readFileSync(join(tempDir, "bun.lock"), "utf8");
+    const bunLockContent = fs.readFileSync(join(String(dir), "bun.lock"), "utf8");
     expect(bunLockContent).toMatchSnapshot("workspace-yarn-migration");
 
     // TODO: Workspace dependencies are not yet supported in yarn migration
@@ -998,7 +998,7 @@ lodash@^4.17.21:
   });
 
   test("yarn.lock with scoped packages and parent/child relationships", async () => {
-    const tempDir = tempDirWithFiles("yarn-migration-scoped", {
+    using dir = tempDir("yarn-migration-scoped", {
       "package.json": JSON.stringify(
         {
           name: "scoped-test",
@@ -1089,7 +1089,7 @@ babel-loader/chalk@^2.4.2:
     // Run bun pm migrate
     const migrateResult = await Bun.spawn({
       cmd: [bunExe(), "pm", "migrate", "-f"],
-      cwd: tempDir,
+      cwd: String(dir),
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -1103,9 +1103,9 @@ babel-loader/chalk@^2.4.2:
     ]);
 
     expect(exitCode).toBe(0);
-    expect(fs.existsSync(join(tempDir, "bun.lock"))).toBe(true);
+    expect(fs.existsSync(join(String(dir), "bun.lock"))).toBe(true);
 
-    const bunLockContent = fs.readFileSync(join(tempDir, "bun.lock"), "utf8");
+    const bunLockContent = fs.readFileSync(join(String(dir), "bun.lock"), "utf8");
     expect(bunLockContent).toMatchSnapshot("scoped-yarn-migration");
 
     // Verify scoped packages are at the bottom
@@ -1124,7 +1124,7 @@ babel-loader/chalk@^2.4.2:
 
   test("migration with realistic complex yarn.lock", async () => {
     // Create a realistic yarn.lock with various edge cases
-    const tempDir = tempDirWithFiles("yarn-migration-complex-realistic", {
+    using dir = tempDir("yarn-migration-complex-realistic", {
       "package.json": JSON.stringify(
         {
           name: "complex-app",
@@ -1314,7 +1314,7 @@ webpack@^5.75.0:
     // Run bun pm migrate
     const migrateResult = await Bun.spawn({
       cmd: [bunExe(), "pm", "migrate", "-f"],
-      cwd: tempDir,
+      cwd: String(dir),
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -1323,9 +1323,9 @@ webpack@^5.75.0:
 
     const exitCode = await migrateResult.exited;
     expect(exitCode).toBe(0);
-    expect(fs.existsSync(join(tempDir, "bun.lock"))).toBe(true);
+    expect(fs.existsSync(join(String(dir), "bun.lock"))).toBe(true);
 
-    const bunLockContent = fs.readFileSync(join(tempDir, "bun.lock"), "utf8");
+    const bunLockContent = fs.readFileSync(join(String(dir), "bun.lock"), "utf8");
     expect(bunLockContent).toMatchSnapshot("complex-realistic-yarn-migration");
 
     // Verify key features are migrated
@@ -1352,14 +1352,14 @@ describe("bun pm migrate for existing yarn.lock", () => {
     const packageJsonContent = await Bun.file(join(import.meta.dir, "yarn", folder, "package.json")).text();
     const yarnLockContent = await Bun.file(join(import.meta.dir, "yarn", folder, "yarn.lock")).text();
 
-    const tempDir = tempDirWithFiles("yarn-lock-migration-", {
+    using dir = tempDir("yarn-lock-migration-", {
       "package.json": packageJsonContent,
       "yarn.lock": yarnLockContent,
     });
 
     const migrateResult = Bun.spawn({
       cmd: [bunExe(), "pm", "migrate", "-f"],
-      cwd: tempDir,
+      cwd: String(dir),
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -1367,14 +1367,14 @@ describe("bun pm migrate for existing yarn.lock", () => {
     });
 
     expect(migrateResult.exited).resolves.toBe(0);
-    expect(Bun.file(join(tempDir, "bun.lock")).exists()).resolves.toBe(true);
+    expect(Bun.file(join(String(dir), "bun.lock")).exists()).resolves.toBe(true);
 
-    const bunLockContent = await Bun.file(join(tempDir, "bun.lock")).text();
+    const bunLockContent = await Bun.file(join(String(dir), "bun.lock")).text();
     expect(bunLockContent).toMatchSnapshot(folder);
   });
 
   test("yarn.lock with packages that have os/cpu requirements", async () => {
-    const tempDir = tempDirWithFiles("yarn-migration-os-cpu", {
+    using dir = tempDir("yarn-migration-os-cpu", {
       "package.json": JSON.stringify(
         {
           name: "os-cpu-test",
@@ -1454,7 +1454,7 @@ fsevents@^2.3.2:
     // Run bun pm migrate
     const migrateResult = await Bun.spawn({
       cmd: [bunExe(), "pm", "migrate", "-f"],
-      cwd: tempDir,
+      cwd: String(dir),
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -1468,9 +1468,9 @@ fsevents@^2.3.2:
     ]);
 
     expect(exitCode).toBe(0);
-    expect(fs.existsSync(join(tempDir, "bun.lock"))).toBe(true);
+    expect(fs.existsSync(join(String(dir), "bun.lock"))).toBe(true);
 
-    const bunLockContent = fs.readFileSync(join(tempDir, "bun.lock"), "utf8");
+    const bunLockContent = fs.readFileSync(join(String(dir), "bun.lock"), "utf8");
     expect(bunLockContent).toMatchSnapshot("os-cpu-yarn-migration");
 
     // Verify that the lockfile contains the expected os/cpu metadata by checking the snapshot
@@ -1478,5 +1478,329 @@ fsevents@^2.3.2:
     expect(bunLockContent).toContain("fsevents");
     expect(bunLockContent).toContain("@esbuild/linux-arm64");
     expect(bunLockContent).toContain("@esbuild/darwin-arm64");
+  });
+
+  test("yarn.lock with custom registry tarball URLs", async () => {
+    using dir = tempDir("yarn-migration-custom-registry", {
+      "package.json": JSON.stringify(
+        {
+          name: "custom-registry-test",
+          version: "1.0.0",
+          dependencies: {
+            "my-package": "https://my-custom-registry.com/my-package/-/my-package-1.0.0.tgz",
+            "another-pkg": "https://packages.example.com/tarballs/another-pkg-2.1.0.tgz",
+          },
+        },
+        null,
+        2,
+      ),
+      "yarn.lock": `# THIS IS AN AUTOGENERATED FILE. DO NOT EDIT THIS FILE DIRECTLY.
+# yarn lockfile v1
+
+
+"another-pkg@https://packages.example.com/tarballs/another-pkg-2.1.0.tgz":
+  version "2.1.0"
+  resolved "https://packages.example.com/tarballs/another-pkg-2.1.0.tgz#abc123def456"
+  integrity sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+
+"my-package@https://my-custom-registry.com/my-package/-/my-package-1.0.0.tgz":
+  version "1.0.0"
+  resolved "https://my-custom-registry.com/my-package/-/my-package-1.0.0.tgz#deadbeef"
+  integrity sha512-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=
+`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "pm", "migrate", "-f"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("error");
+    expect(exitCode).toBe(0);
+
+    const bunLockContent = await Bun.file(join(String(dir), "bun.lock")).text();
+    expect(bunLockContent).toMatchSnapshot("custom-registry-yarn-migration");
+
+    // Verify custom registry URLs are preserved as tarball resolutions
+    expect(bunLockContent).toContain("my-package");
+    expect(bunLockContent).toContain("another-pkg");
+    expect(bunLockContent).toContain("my-custom-registry.com");
+    expect(bunLockContent).toContain("packages.example.com");
+  });
+
+  test("all yarn v1 quirks in one test", async () => {
+    using dir = tempDir("yarn-comprehensive", {
+      "package.json": JSON.stringify(
+        {
+          name: "yarn-quirks-test",
+          version: "1.0.0",
+          private: true,
+          workspaces: ["packages/*"],
+          dependencies: {
+            // Multi-spec consolidation: multiple ranges -> same version
+            "is-number": "^7.0.0",
+            // npm alias
+            "my-lodash": "npm:lodash@4.17.21",
+            // Scoped package
+            "@babel/core": "^7.20.0",
+            // Long build tag
+            "@prisma/engines": "4.16.1-1.4bc8b6e1b66cb932731fb1bdbbc550d1e010de81",
+          },
+          devDependencies: {
+            // Multiple versions of same package
+            lodash: "^3.10.0",
+          },
+          optionalDependencies: {
+            // Platform-specific (but yarn doesn't store os/cpu)
+            fsevents: "^2.3.2",
+          },
+        },
+        null,
+        2,
+      ),
+      "packages/app/package.json": JSON.stringify(
+        {
+          name: "@workspace/app",
+          version: "1.0.0",
+          dependencies: {
+            // Workspace dependency
+            "@workspace/lib": "workspace:*",
+            // Creates multi-spec entry with root
+            "is-number": "~7.0.0",
+            // Different version than root
+            lodash: "^4.17.0",
+          },
+        },
+        null,
+        2,
+      ),
+      "packages/lib/package.json": JSON.stringify(
+        {
+          name: "@workspace/lib",
+          version: "1.0.0",
+          dependencies: {
+            // External dep
+            "is-odd": "^3.0.0",
+          },
+        },
+        null,
+        2,
+      ),
+      "yarn.lock": `# THIS IS AN AUTOGENERATED FILE. DO NOT EDIT THIS FILE DIRECTLY.
+# yarn lockfile v1
+
+
+"@babel/core@^7.20.0":
+  version "7.20.12"
+  resolved "https://registry.yarnpkg.com/@babel/core/-/core-7.20.12.tgz#7f12f7fe01cfcc5c4f37fa6e09a6e7ac0736b5e9"
+  integrity sha512-XsMfHovsUYHFMdrIHkZphTN/2Hzzi78R08NuHfDBehym2VsPDL6Zn/JAD/JQdnRvbSsbQc4mVaU1m6JgtTEElg==
+  dependencies:
+    "@babel/types" "^7.20.7"
+
+"@babel/types@^7.20.7":
+  version "7.20.7"
+  resolved "https://registry.yarnpkg.com/@babel/types/-/types-7.20.7.tgz#54ec75e252318423fc07fb644dc6a58a64c09b7f"
+  integrity sha512-69OnhBxSSgK0OzTJai4kyPDiKTIe3j+ctaHdIGVbRahTLAT7L3R9oeXHC2aVSuGYt3cVnoAMDmOCgJ2yaiLMvg==
+
+"@prisma/engines@4.16.1-1.4bc8b6e1b66cb932731fb1bdbbc550d1e010de81":
+  version "4.16.1-1.4bc8b6e1b66cb932731fb1bdbbc550d1e010de81"
+  resolved "https://registry.yarnpkg.com/@prisma/engines/-/engines-4.16.1-1.4bc8b6e1b66cb932731fb1bdbbc550d1e010de81.tgz#5512069ca14c44af7f38e7c39d9a169480e63a33"
+  integrity sha512-q617EUWfRIDTriWADZ4YiWRZXCa/WuhNgLTVd+HqWLffjMSPzyM5uOWoauX91wvQClSKZU4pzI4JJLQ9Kl62Qg==
+
+"@workspace/lib@workspace:*, @workspace/lib@workspace:packages/lib":
+  version "0.0.0-use.local"
+  resolved "file:packages/lib"
+  dependencies:
+    is-odd "^3.0.0"
+
+fsevents@^2.3.2:
+  version "2.3.2"
+  resolved "https://registry.yarnpkg.com/fsevents/-/fsevents-2.3.2.tgz#8a526f78b8fdf4623b709e0b975c52c24c02fd1a"
+  integrity sha512-xiqMQR4xAeHTuB9uWm+fFRcIOgKBMiOBP+eXiyT7jsgVCq1bkVygt00oASowB7EdtpOHaaPgKt812P9ab+DDKA==
+
+"is-number@^6.0.0":
+  version "6.0.0"
+  resolved "https://registry.yarnpkg.com/is-number/-/is-number-6.0.0.tgz#e6d15ad31fc262887d1846d1c6c84c9b3b0b5982"
+  integrity sha512-Wu1VHeILBK8KAWJUAiSZQX94GmOE45Rg6/538fKwiloUu21KncEkYGPqob2oSZ5mUT73vLGrHQjKw3KMPwfDzg==
+
+"is-number@^7.0.0, is-number@~7.0.0":
+  version "7.0.0"
+  resolved "https://registry.yarnpkg.com/is-number/-/is-number-7.0.0.tgz#7535345b896734d5f80c4d06c50955527a14f12b"
+  integrity sha512-41Cifkg6e8TylSpdtTpeLVMqvSBEVzTttHvERD741+pnZ8ANv0004MRL43QKPDlK9cGvNp6NZWZUBlbGXYxxng==
+
+is-odd@^3.0.0:
+  version "3.0.1"
+  resolved "https://registry.yarnpkg.com/is-odd/-/is-odd-3.0.1.tgz#65101baf63c59f7b5c3a429d0a4e3d8ca7914559"
+  integrity sha512-CQpnWPrDwmP1+SMHXZhtLtJv90yiyVfluGsX5iNCVkrhQtU3TQHsUWPG9wkdk9Lgd5yNpAg9jQEo90CBaXgWMA==
+  dependencies:
+    is-number "^6.0.0"
+
+lodash@^3.10.0:
+  version "3.10.1"
+  resolved "https://registry.yarnpkg.com/lodash/-/lodash-3.10.1.tgz#5bf45e8e49ba4189e17d482789dfd15bd140b7b6"
+  integrity sha512-9mDDwqVIma6OZX79ZlDACZl8sBm0TEnkf99zV3iMA4GzkSTbUYwRa7cmPR8CKkkl+OuU/fGTM48FNhQ5GnLsXw==
+
+"lodash@^4.17.0, lodash@4.17.21":
+  version "4.17.21"
+  resolved "https://registry.yarnpkg.com/lodash/-/lodash-4.17.21.tgz#679591c564c3bffaae8454cf0b3df370c3d6911c"
+  integrity sha512-v2kDEe57lecTulaDIuNTPy3Ry4gLGJ6Z1O3vE1krgXZNrsQ+LFTGHVxVjcXPs17LhbZVGedAJv8XZ1tvj5FvSg==
+
+my-lodash@npm:lodash@4.17.21:
+  version "4.17.21"
+  resolved "https://registry.yarnpkg.com/lodash/-/lodash-4.17.21.tgz#679591c564c3bffaae8454cf0b3df370c3d6911c"
+  integrity sha512-v2kDEe57lecTulaDIuNTPy3Ry4gLGJ6Z1O3vE1krgXZNrsQ+LFTGHVxVjcXPs17LhbZVGedAJv8XZ1tvj5FvSg==
+`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "pm", "migrate", "-f"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("error");
+    expect(exitCode).toBe(0);
+
+    const bunLockContent = await Bun.file(join(String(dir), "bun.lock")).text();
+    expect(bunLockContent).toMatchSnapshot("yarn-comprehensive");
+
+    // Multi-spec consolidation: both specs resolve to same package
+    expect(bunLockContent).toContain("is-number@7.0.0");
+
+    // npm alias: should create entry for alias pointing to real package
+    expect(bunLockContent).toContain("my-lodash");
+    expect(bunLockContent).toContain("lodash@4.17.21");
+
+    // Multiple versions: both lodash 3 and 4 should exist
+    expect(bunLockContent).toContain("lodash@3.10.1");
+
+    // Long build tag preserved
+    expect(bunLockContent).toContain("4.16.1-1.4bc8b6e1b66cb932731fb1bdbbc550d1e010de81");
+
+    // Scoped packages
+    expect(bunLockContent).toContain("@babel/core");
+    expect(bunLockContent).toContain("@babel/types");
+
+    // Workspace dependencies
+    expect(bunLockContent).toContain("@workspace/app");
+    expect(bunLockContent).toContain("@workspace/lib");
+
+    // Integrity hashes preserved
+    expect(bunLockContent).toMatch(/sha512-/);
+  });
+
+  test("parser handles indentation correctly", async () => {
+    // Test that the parser correctly handles the YAML-like indentation
+    using dir = tempDir("yarn-indentation", {
+      "package.json": JSON.stringify(
+        {
+          name: "indent-test",
+          version: "1.0.0",
+          dependencies: {
+            "test-pkg": "^1.0.0",
+          },
+        },
+        null,
+        2,
+      ),
+      "yarn.lock": `# yarn lockfile v1
+
+test-pkg@^1.0.0:
+  version "1.0.0"
+  resolved "https://registry.yarnpkg.com/test-pkg/-/test-pkg-1.0.0.tgz#abc123"
+  integrity sha512-test123==
+  dependencies:
+    dep-a "^1.0.0"
+    dep-b "^2.0.0"
+
+dep-a@^1.0.0:
+  version "1.0.0"
+  resolved "https://registry.yarnpkg.com/dep-a/-/dep-a-1.0.0.tgz#def456"
+  integrity sha512-testa==
+
+dep-b@^2.0.0:
+  version "2.0.0"
+  resolved "https://registry.yarnpkg.com/dep-b/-/dep-b-2.0.0.tgz#ghi789"
+  integrity sha512-testb==
+`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "pm", "migrate", "-f"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("error");
+    expect(exitCode).toBe(0);
+
+    const bunLockContent = await Bun.file(join(String(dir), "bun.lock")).text();
+    expect(bunLockContent).toMatchSnapshot("yarn-indentation");
+    expect(bunLockContent).toContain("test-pkg");
+    expect(bunLockContent).toContain("dep-a");
+    expect(bunLockContent).toContain("dep-b");
+  });
+
+  test("handles optionalDependencies correctly", async () => {
+    using dir = tempDir("yarn-optional", {
+      "package.json": JSON.stringify(
+        {
+          name: "optional-test",
+          version: "1.0.0",
+          dependencies: {
+            "pkg-a": "^1.0.0",
+          },
+        },
+        null,
+        2,
+      ),
+      "yarn.lock": `# yarn lockfile v1
+
+pkg-a@^1.0.0:
+  version "1.0.0"
+  resolved "https://registry.yarnpkg.com/pkg-a/-/pkg-a-1.0.0.tgz#abc"
+  integrity sha512-testoptional==
+  optionalDependencies:
+    optional-dep "^1.0.0"
+
+optional-dep@^1.0.0:
+  version "1.0.0"
+  resolved "https://registry.yarnpkg.com/optional-dep/-/optional-dep-1.0.0.tgz#def"
+  integrity sha512-testopt2==
+`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "pm", "migrate", "-f"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("error");
+    expect(exitCode).toBe(0);
+
+    const bunLockContent = await Bun.file(join(String(dir), "bun.lock")).text();
+    expect(bunLockContent).toMatchSnapshot("yarn-optional-deps");
+    expect(bunLockContent).toContain("pkg-a");
+    expect(bunLockContent).toContain("optional-dep");
+    // Should have optionalDependencies field in metadata
+    expect(bunLockContent).toMatch(/optionalDependencies/);
   });
 });

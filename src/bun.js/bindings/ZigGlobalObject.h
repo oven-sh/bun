@@ -46,7 +46,7 @@ struct node_module;
 
 #include "root.h"
 #include "headers-handwritten.h"
-#include <JavaScriptCore/CatchScope.h>
+#include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/JSTypeInfo.h>
 #include <JavaScriptCore/Structure.h>

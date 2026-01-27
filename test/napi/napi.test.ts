@@ -275,6 +275,12 @@ describe.concurrent("napi", () => {
       expect(result).not.toContain("FAIL");
     });
 
+    it("finalize_cb is tied to the ArrayBuffer lifetime, not the Buffer view", async () => {
+      const result = await checkSameOutput("test_external_buffer_data_lifetime", []);
+      expect(result).toContain("PASS: external buffer data intact through ArrayBuffer after GC");
+      expect(result).not.toContain("FAIL");
+    });
+
     it("empty buffer returns null pointer and 0 length from napi_get_buffer_info and napi_get_typedarray_info", async () => {
       const result = await checkSameOutput("test_napi_empty_buffer_info", []);
       expect(result).toContain("PASS: napi_get_buffer_info returns null pointer and 0 length for empty buffer");
@@ -551,6 +557,34 @@ describe.concurrent("napi", () => {
 
   it("behaves as expected when performing operations with numeric string keys", async () => {
     await checkSameOutput("test_napi_numeric_string_keys", []);
+  });
+
+  it("napi_get_named_property copies utf8 string data", async () => {
+    // Must spawn bun directly (not via checkSameOutput/main.js) because the
+    // bug only reproduces when global property names like "Response" haven't
+    // been pre-atomized. Loading through main.js → module.js pre-initializes
+    // globals, masking the use-after-free in the atom string table.
+    const addonPath = join(__dirname, "napi-app", "build", "Debug", "napitests.node");
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const addon = require(${JSON.stringify(addonPath)}); addon.test_napi_get_named_property_copied_string(() => { Bun.gc(true); });`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toInclude("PASS");
+    expect(exitCode).toBe(0);
   });
 
   it("behaves as expected when performing operations with default values", async () => {

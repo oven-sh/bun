@@ -1181,22 +1181,27 @@ class ChildProcess extends EventEmitter {
             const value = handle?.[fdToStdioName(i as 1 | 2)!];
             // This can happen if the process was already killed.
             if (!value) {
-              const Readable = require("internal/streams/readable");
-              const stream = new Readable({ read() {} });
+              // Return a destroyed Socket to match Node.js behavior
+              if (!NetModule) NetModule = require("node:net");
+              const stream = new NetModule.Socket({ readable: true, writable: false });
               // Mark as destroyed to indicate it's not usable
               stream.destroy();
               return stream;
             }
 
-            const pipe = require("internal/streams/native-readable").constructNativeReadable(value, { encoding });
+            // Use constructNativeSocket to return a Socket instance for stdout/stderr
+            // This matches Node.js behavior where child process stdio streams are Sockets
+            // See: https://github.com/oven-sh/bun/issues/26505
+            const pipe = require("internal/streams/native-readable").constructNativeSocket(value, { encoding });
             this.#closesNeeded++;
             pipe.once("close", () => this.#maybeClose());
             if (autoResume) pipe.resume();
             return pipe;
           }
           case "destroyed": {
-            const Readable = require("internal/streams/readable");
-            const stream = new Readable({ read() {} });
+            // Return a destroyed Socket to match Node.js behavior
+            if (!NetModule) NetModule = require("node:net");
+            const stream = new NetModule.Socket({ readable: true, writable: false });
             // Mark as destroyed to indicate it's not usable
             stream.destroy();
             return stream;

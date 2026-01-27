@@ -213,10 +213,14 @@ Per-test `{ retry: N }` overrides the global `--retry` value:
 
 ```ts
 // Uses the global --retry value
-test("uses global retry", () => { /* ... */ });
+test("uses global retry", () => {
+  /* ... */
+});
 
 // Overrides --retry with its own value
-test("custom retry", { retry: 1 }, () => { /* ... */ });
+test("custom retry", { retry: 1 }, () => {
+  /* ... */
+});
 ```
 
 You can also set this in `bunfig.toml`:

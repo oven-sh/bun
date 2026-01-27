@@ -100,6 +100,11 @@ pub const URL = struct {
         return strings.eqlComptime(this.protocol, "http");
     }
 
+    pub inline fn isSOCKS5(this: *const URL) bool {
+        return strings.eqlComptime(this.protocol, "socks5") or
+            strings.eqlComptime(this.protocol, "socks5h");
+    }
+
     pub fn displayHostname(this: *const URL) string {
         if (this.hostname.len > 0) {
             return this.hostname;

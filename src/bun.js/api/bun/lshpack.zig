@@ -53,6 +53,11 @@ pub const HPACK = extern struct {
     pub fn deinit(self: *HPACK) void {
         lshpack_wrapper_deinit(self);
     }
+
+    /// Update the encoder's max capacity (used when remote SETTINGS_HEADER_TABLE_SIZE changes)
+    pub fn setEncMaxCapacity(self: *HPACK, max_capacity: u32) void {
+        lshpack_wrapper_set_enc_max_capacity(self, max_capacity);
+    }
 };
 
 const lshpack_wrapper_alloc = ?*const fn (size: usize) callconv(.c) ?*anyopaque;
@@ -61,6 +66,7 @@ extern fn lshpack_wrapper_init(alloc: lshpack_wrapper_alloc, free: lshpack_wrapp
 extern fn lshpack_wrapper_deinit(self: *HPACK) void;
 extern fn lshpack_wrapper_decode(self: *HPACK, src: [*]const u8, src_len: usize, output: *lshpack_header) usize;
 extern fn lshpack_wrapper_encode(self: *HPACK, name: [*]const u8, name_len: usize, value: [*]const u8, value_len: usize, never_index: c_int, buffer: [*]u8, buffer_len: usize, buffer_offset: usize) usize;
+extern fn lshpack_wrapper_set_enc_max_capacity(self: *HPACK, max_capacity: c_uint) void;
 
 const bun = @import("bun");
 const mimalloc = bun.mimalloc;

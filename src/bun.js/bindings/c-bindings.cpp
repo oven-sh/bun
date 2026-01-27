@@ -337,6 +337,11 @@ void lshpack_wrapper_deinit(lshpack_wrapper* self)
     lshpack_enc_cleanup(&self->enc);
     self->free(self);
 }
+
+void lshpack_wrapper_set_enc_max_capacity(lshpack_wrapper* self, unsigned max_capacity)
+{
+    lshpack_enc_set_max_capacity(&self->enc, max_capacity);
+}
 }
 
 #if OS(LINUX)

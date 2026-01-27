@@ -2493,6 +2493,11 @@ pub const H2FrameParser = struct {
             }
             this.readBuffer.reset();
             this.remoteSettings = remoteSettings;
+            // Update HPACK encoder max capacity per RFC 7540 Section 6.5.2:
+            // The encoder must respect the peer's SETTINGS_HEADER_TABLE_SIZE
+            if (this.hpack) |hpack| {
+                hpack.setEncMaxCapacity(remoteSettings.headerTableSize);
+            }
             log("remoteSettings.initialWindowSize: {} {} {}", .{ remoteSettings.initialWindowSize, this.remoteUsedWindowSize, this.remoteWindowSize });
             if (remoteSettings.initialWindowSize >= this.remoteWindowSize) {
                 var it = this.streams.valueIterator();

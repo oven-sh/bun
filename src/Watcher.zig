@@ -122,7 +122,7 @@ pub fn deinit(this: *Watcher, close_descriptors: bool) void {
         if (close_descriptors and this.running) {
             const fds = this.watchlist.items(.fd);
             for (fds) |fd| {
-                fd.close();
+                if (fd.isValid()) fd.close();
             }
         }
         this.watchlist.deinit(this.allocator);
@@ -245,7 +245,7 @@ fn threadMain(this: *Watcher) !void {
     if (this.close_descriptors) {
         const fds = this.watchlist.items(.fd);
         for (fds) |fd| {
-            fd.close();
+            if (fd.isValid()) fd.close();
         }
     }
     this.watchlist.deinit(this.allocator);
@@ -424,6 +424,11 @@ fn appendDirectoryAssumeCapacity(
 
     const fd = brk: {
         if (stored_fd.isValid()) break :brk stored_fd;
+        // On Linux with inotify, we don't need an open fd to watch directories.
+        // inotify watches by path/inode. Keeping an fd open would prevent
+        // IN_DELETE_SELF events when the directory is deleted because the
+        // inode stays alive due to the open fd reference.
+        if (comptime Environment.isLinux) break :brk bun.FD.invalid;
         break :brk switch (bun.sys.openA(file_path, 0, 0)) {
             .err => |err| return .{ .err = err },
             .result => |fd| fd,

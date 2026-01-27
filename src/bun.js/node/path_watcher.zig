@@ -68,13 +68,17 @@ pub const PathWatcherManager = struct {
         }) {
             .err => |e| {
                 if (e.errno == @intFromEnum(bun.sys.E.NOTDIR)) {
-                    const file = switch (bun.sys.open(path, 0, 0)) {
+                    // It's a file, not a directory
+                    // On Linux, we don't need to keep FDs open for inotify
+                    const file_fd = if (comptime Environment.isLinux)
+                        bun.FD.invalid
+                    else switch (bun.sys.open(path, 0, 0)) {
                         .err => |file_err| return .{ .err = file_err.withPath(path) },
                         .result => |r| r,
                     };
                     const cloned_path = bun.handleOom(bun.default_allocator.dupeZ(u8, path));
                     const result = PathInfo{
-                        .fd = file,
+                        .fd = file_fd,
                         .is_file = true,
                         .path = cloned_path,
                         // if is really a file we need to get the dirname
@@ -88,9 +92,14 @@ pub const PathWatcherManager = struct {
                 return .{ .err = e.withPath(path) };
             },
             .result => |iterable_dir| {
+                // On Linux, we don't need to keep directory FDs open for inotify.
+                // Close immediately and store invalid to prevent double-close.
+                if (comptime Environment.isLinux) {
+                    iterable_dir.close();
+                }
                 const cloned_path = bun.handleOom(bun.default_allocator.dupeZ(u8, path));
                 const result = PathInfo{
-                    .fd = iterable_dir,
+                    .fd = if (comptime Environment.isLinux) bun.FD.invalid else iterable_dir,
                     .is_file = false,
                     .path = cloned_path,
                     .dirname = cloned_path,
@@ -229,7 +238,59 @@ pub const PathWatcherManager = struct {
                     }
                 },
                 .directory => {
+                    // Handle files/directories changed WITHIN the watched directory
                     const affected = event.names(changed_files);
+
+                    // Handle the watched directory itself being deleted (IN_DELETE_SELF)
+                    // IN_DELETE_SELF has no filename (affected.len == 0), while IN_DELETE (file inside dir) has a filename
+                    if (event.op.delete and affected.len == 0) {
+                        log("[watch] directory self-delete event: {s}", .{file_path});
+                        const hash = Watcher.getHash(file_path);
+
+                        // Emit a rename event for the deleted directory to watchers watching it
+                        // Do this BEFORE removing from watchlist so the path is still valid
+                        for (watchers) |w| {
+                            if (w) |watcher| {
+                                if (comptime Environment.isMac) {
+                                    if (watcher.fsevents_watcher != null) continue;
+                                }
+
+                                // Check if this watcher is watching the deleted directory
+                                if (watcher.path.hash == hash) {
+                                    // For a watcher watching the directory itself, emit rename with basename
+                                    const basename = std.fs.path.basename(file_path);
+                                    if (basename.len > 0) {
+                                        watcher.emit(PathWatcher.EventType.rename.toEvent(basename), hash, timestamp, false);
+                                    }
+                                }
+                            }
+                        }
+
+                        // Remove the directory from the watchlist since it no longer exists
+                        ctx.removeAtIndex(
+                            event.index,
+                            hash,
+                            &.{},
+                            .directory,
+                        );
+
+                        // Clean up the file_paths entry for this deleted directory
+                        // This allows a recreated directory at the same path to get a fresh watch
+                        // NOTE: We must NOT free the path string here because it's shared with the watchlist
+                        // The watchlist will free it when flushEvictions is called
+                        if (this.file_paths.getEntry(file_path)) |entry| {
+                            const path_info = entry.value_ptr;
+                            // Close the now-invalid FD
+                            if (path_info.fd.isValid()) {
+                                path_info.fd.close();
+                            }
+                            // Remove from HashMap but DON'T free the string - watchlist owns it
+                            _ = this.file_paths.remove(file_path);
+                        }
+
+                        // Don't process this as a file-inside-directory event
+                        continue;
+                    }
 
                     for (affected) |changed_name_| {
                         const changed_name: []const u8 = bun.asByteSlice(changed_name_.?);
@@ -413,8 +474,30 @@ pub const PathWatcherManager = struct {
 
             const manager = this.manager;
             const path = this.path;
-            const fd = path.fd;
-            var iter = fd.stdDir().iterate();
+
+            // On Linux, we close the directory FD early to allow IN_DELETE_SELF events,
+            // so we need to open it here for iteration. On macOS, we can use the stored FD.
+            var opened_dir: ?std.fs.Dir = null;
+            defer if (opened_dir) |*d| d.close();
+
+            const dir = if (comptime Environment.isLinux) brk: {
+                opened_dir = std.fs.openDirAbsoluteZ(path.path, .{ .iterate = true }) catch |err| {
+                    return .{
+                        .err = .{
+                            .errno = @truncate(@intFromEnum(switch (err) {
+                                error.AccessDenied => bun.sys.E.ACCES,
+                                error.FileNotFound => bun.sys.E.NOENT,
+                                error.NotDir => bun.sys.E.NOTDIR,
+                                else => bun.sys.E.INVAL,
+                            })),
+                            .syscall = .watch,
+                        },
+                    };
+                };
+                break :brk opened_dir.?;
+            } else path.fd.stdDir();
+
+            var iter = dir.iterate();
 
             // now we iterate over all files and directories
             while (iter.next() catch |err| {
@@ -517,7 +600,22 @@ pub const PathWatcherManager = struct {
 
     // this should only be called if thread pool is not null
     fn _addDirectory(this: *PathWatcherManager, watcher: *PathWatcher, path: PathInfo) bun.sys.Maybe(void) {
-        const fd = path.fd;
+        // On Linux, close the directory fd BEFORE setting up the inotify watch and pass invalid.
+        // inotify watches by path (inode), so we don't need to keep the fd open.
+        // Keeping it open prevents IN_DELETE_SELF events when the directory is deleted
+        // because the inode stays alive due to the open fd reference.
+        // On macOS/BSD, we need to keep the fd open for kqueue which watches by fd.
+        const fd = if (comptime Environment.isLinux) fd_blk: {
+            if (path.fd.isValid()) {
+                path.fd.close();
+            }
+            // Also mark the fd in file_paths as invalid
+            if (this.file_paths.getEntry(path.path)) |entry| {
+                entry.value_ptr.fd = .invalid;
+            }
+            break :fd_blk bun.FD.invalid;
+        } else path.fd;
+
         switch (this.main_watcher.addDirectory(fd, path.path, path.hash, false)) {
             .err => |err| return .{ .err = err.withPath(path.path) },
             .result => {},
@@ -590,8 +688,13 @@ pub const PathWatcherManager = struct {
                 path.refs -= 1;
                 if (path.refs == 0) {
                     const path_ = path.path;
+                    const fd = path.fd;
                     this.main_watcher.remove(path.hash);
                     _ = this.file_paths.remove(path_);
+                    // Close the file descriptor to prevent FD leak
+                    if (fd.isValid()) {
+                        fd.close();
+                    }
                     bun.default_allocator.free(path_);
                 }
             }
@@ -684,7 +787,7 @@ pub const PathWatcherManager = struct {
         var it = this.file_paths.iterator();
         while (it.next()) |*entry| {
             const path = entry.value_ptr.*;
-            path.fd.close();
+            if (path.fd.isValid()) path.fd.close();
             bun.default_allocator.free(path.path);
         }
 
@@ -824,11 +927,18 @@ pub const PathWatcher = struct {
     }
 
     pub fn unrefPendingDirectory(this: *PathWatcher) void {
-        this.mutex.lock();
-        defer this.mutex.unlock();
-        this.pending_directories -= 1;
-        if (this.isClosed() and this.pending_directories == 0) {
-            this.has_pending_directories.store(false, .release);
+        var should_deinit = false;
+        {
+            this.mutex.lock();
+            defer this.mutex.unlock();
+            this.pending_directories -= 1;
+            if (this.isClosed() and this.pending_directories == 0) {
+                this.has_pending_directories.store(false, .release);
+                should_deinit = true;
+            }
+        }
+        // Call deinit outside the lock to avoid deadlock (deinit calls setClosed which locks)
+        if (should_deinit) {
             this.deinit();
         }
     }

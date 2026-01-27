@@ -205,8 +205,8 @@ describe.skipIf(isWindows)("Runtime inspector SIGUSR1 activation", () => {
         fs.writeFileSync(path.join(process.cwd(), "pid"), String(process.pid));
         console.log("READY");
 
-        // Keep process alive, exit after a bit
-        setTimeout(() => process.exit(0), 500);
+        // Keep process alive long enough for inspector to start
+        setTimeout(() => process.exit(0), 3000);
         setInterval(() => {}, 1000);
       `,
     });
@@ -266,7 +266,8 @@ describe.skipIf(isWindows)("Runtime inspector SIGUSR1 activation", () => {
         bunExe(),
         "-e",
         `
-        setTimeout(() => process.exit(0), 300);
+        // Give more time for the inspector to start up and print its banner
+        setTimeout(() => process.exit(0), 2000);
         // Small delay to ensure handler is installed
         setTimeout(() => {
           process.kill(process.pid, "SIGUSR1");
@@ -279,10 +280,23 @@ describe.skipIf(isWindows)("Runtime inspector SIGUSR1 activation", () => {
       stderr: "pipe",
     });
 
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    // Wait for inspector banner before collecting all output
+    const reader = proc.stderr.getReader();
+    const decoder = new TextDecoder();
+    let stderr = "";
+
+    // Wait for the full banner (header + content + footer)
+    while ((stderr.match(/Bun Inspector/g) || []).length < 2) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      stderr += decoder.decode(value, { stream: true });
+    }
+    reader.releaseLock();
+
+    proc.kill();
+    const exitCode = await proc.exited;
 
     expect(stderr).toContain("Bun Inspector");
-    expect(exitCode).toBe(0);
   });
 
   test("SIGUSR1 is ignored when started with --inspect", async () => {

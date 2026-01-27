@@ -4675,6 +4675,7 @@ fn NewPrinter(
                                 .bunsh => analyze_transpiled_module.ModuleInfo.FetchParameters.hostDefined(bun.handleOom(mi.str("sh"))),
                                 .sqlite, .sqlite_embedded => analyze_transpiled_module.ModuleInfo.FetchParameters.hostDefined(bun.handleOom(mi.str("sqlite"))),
                                 .html => analyze_transpiled_module.ModuleInfo.FetchParameters.hostDefined(bun.handleOom(mi.str("html"))),
+                                .json5 => analyze_transpiled_module.ModuleInfo.FetchParameters.hostDefined(bun.handleOom(mi.str("json5"))),
                             } else .none) else .none;
                             bun.handleOom(mi.requestModule(irp_id, fetch_parameters));
 
@@ -6051,20 +6052,34 @@ pub fn printAst(
         try opts.module_info.?.finalize();
     }
 
-    var sourcemap: []const u8 = "";
     if (comptime generate_source_map) {
         if (opts.source_map_handler) |handler| {
-            const source_maps_chunk = printer.source_map_builder.generateChunk(printer.writer.ctx.getWritten());
-            sourcemap = source_maps_chunk.buffer.list.items;
+            var source_maps_chunk = printer.source_map_builder.generateChunk(printer.writer.ctx.getWritten());
+            defer source_maps_chunk.deinit();
+
+            if (opts.runtime_transpiler_cache) |cache| {
+                var srlz_res = std.array_list.Managed(u8).init(bun.default_allocator);
+                defer srlz_res.deinit();
+                if (have_module_info) try opts.module_info.?.asDeserialized().serialize(srlz_res.writer());
+                cache.put(printer.writer.ctx.getWritten(), source_maps_chunk.buffer.list.items, srlz_res.items);
+            }
 
             try handler.onSourceMapChunk(source_maps_chunk, source);
+        } else {
+            if (opts.runtime_transpiler_cache) |cache| {
+                var srlz_res = std.array_list.Managed(u8).init(bun.default_allocator);
+                defer srlz_res.deinit();
+                if (have_module_info) try opts.module_info.?.asDeserialized().serialize(srlz_res.writer());
+                cache.put(printer.writer.ctx.getWritten(), "", srlz_res.items);
+            }
         }
-    }
-    if (opts.runtime_transpiler_cache) |cache| {
-        var srlz_res = std.array_list.Managed(u8).init(bun.default_allocator);
-        defer srlz_res.deinit();
-        if (have_module_info) try opts.module_info.?.asDeserialized().serialize(srlz_res.writer());
-        cache.put(printer.writer.ctx.getWritten(), sourcemap, srlz_res.items);
+    } else {
+        if (opts.runtime_transpiler_cache) |cache| {
+            var srlz_res = std.array_list.Managed(u8).init(bun.default_allocator);
+            defer srlz_res.deinit();
+            if (have_module_info) try opts.module_info.?.asDeserialized().serialize(srlz_res.writer());
+            cache.put(printer.writer.ctx.getWritten(), "", srlz_res.items);
+        }
     }
 
     try printer.writer.done();

@@ -162,6 +162,9 @@ extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObj
     }
 
     auto moduleRecord = zig__ModuleInfoDeserialized__toJSModuleRecord(globalObject, vm, moduleKey, sourceCode, declaredVariables, lexicalVariables, static_cast<bun_ModuleInfoDeserialized*>(provider->m_resolvedSource.module_info));
+    // zig__ModuleInfoDeserialized__toJSModuleRecord consumes and frees the module_info.
+    // Null it out to prevent use-after-free via the dangling pointer.
+    provider->m_resolvedSource.module_info = nullptr;
     if (moduleRecord == nullptr) {
         RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(createError(globalObject, WTF::String::fromLatin1("parseFromSourceCode failed")))));
     }

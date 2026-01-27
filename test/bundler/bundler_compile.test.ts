@@ -90,54 +90,110 @@ describe("bundler", () => {
       },
     },
   });
-  // ESM bytecode: basic smoke test — does --compile --bytecode --format=esm work at all?
-  itBundled("compile/HelloWorldBytecodeESM", {
-    compile: true,
-    bytecode: true,
-    format: "esm",
-    files: {
-      "/entry.ts": /* js */ `
-        console.log("Hello, world!");
-      `,
-    },
-    run: {
+  // ESM bytecode test matrix: each scenario × {default, minified} = 2 tests per scenario.
+  // With --compile, static imports are inlined into one chunk, but dynamic imports
+  // create separate modules in the standalone graph — each with its own bytecode + ModuleInfo.
+  const esmBytecodeScenarios: Array<{
+    name: string;
+    files: Record<string, string>;
+    stdout: string;
+  }> = [
+    {
+      name: "HelloWorld",
+      files: {
+        "/entry.ts": `console.log("Hello, world!");`,
+      },
       stdout: "Hello, world!",
     },
-  });
-  // ESM bytecode: top-level await is ESM-only. If ModuleInfo or bytecode
-  // generation mishandles async modules, this breaks.
-  itBundled("compile/ESMBytecodeTopLevelAwait", {
-    compile: true,
-    bytecode: true,
-    format: "esm",
-    files: {
-      "/entry.ts": /* js */ `
-        const result = await Promise.resolve("async works");
-        console.log(result);
-      `,
+    {
+      // top-level await is ESM-only; if ModuleInfo or bytecode generation
+      // mishandles async modules, this breaks.
+      name: "TopLevelAwait",
+      files: {
+        "/entry.ts": `
+          const result = await Promise.resolve("tla works");
+          console.log(result);
+        `,
+      },
+      stdout: "tla works",
     },
-    run: {
-      stdout: "async works",
-    },
-  });
-  // ESM bytecode: import.meta is ESM-only. Verify it works with bytecode.
-  itBundled("compile/ESMBytecodeImportMeta", {
-    compile: true,
-    bytecode: true,
-    format: "esm",
-    files: {
-      "/entry.ts": /* js */ `
-        console.log(typeof import.meta.url === "string" ? "ok" : "fail");
-        console.log(typeof import.meta.dir === "string" ? "ok" : "fail");
-      `,
-    },
-    run: {
+    {
+      // import.meta is ESM-only.
+      name: "ImportMeta",
+      files: {
+        "/entry.ts": `
+          console.log(typeof import.meta.url === "string" ? "ok" : "fail");
+          console.log(typeof import.meta.dir === "string" ? "ok" : "fail");
+        `,
+      },
       stdout: "ok\nok",
     },
-  });
-  // ESM bytecode: multi-entry with Worker. Each entry becomes a separate
-  // module in the standalone graph with its own bytecode + ModuleInfo.
-  // This exercises per-module ESM bytecode in a way single-entry tests can't.
+    {
+      // Dynamic import creates a separate module in the standalone graph,
+      // exercising per-module bytecode + ModuleInfo.
+      name: "DynamicImport",
+      files: {
+        "/entry.ts": `
+          const { value } = await import("./lazy.ts");
+          console.log("lazy:", value);
+        `,
+        "/lazy.ts": `export const value = 42;`,
+      },
+      stdout: "lazy: 42",
+    },
+    {
+      // Dynamic import of a module that itself uses top-level await.
+      // The dynamically imported module is a separate chunk with async
+      // evaluation — stresses both ModuleInfo and async bytecode loading.
+      name: "DynamicImportTLA",
+      files: {
+        "/entry.ts": `
+          const mod = await import("./async-mod.ts");
+          console.log("value:", mod.value);
+        `,
+        "/async-mod.ts": `export const value = await Promise.resolve(99);`,
+      },
+      stdout: "value: 99",
+    },
+    {
+      // Multiple dynamic imports: several separate modules in the graph,
+      // each with its own bytecode + ModuleInfo.
+      name: "MultipleDynamicImports",
+      files: {
+        "/entry.ts": `
+          const [a, b] = await Promise.all([
+            import("./mod-a.ts"),
+            import("./mod-b.ts"),
+          ]);
+          console.log(a.value, b.value);
+        `,
+        "/mod-a.ts": `export const value = "a";`,
+        "/mod-b.ts": `export const value = "b";`,
+      },
+      stdout: "a b",
+    },
+  ];
+
+  for (const scenario of esmBytecodeScenarios) {
+    for (const minify of [false, true]) {
+      itBundled(`compile/ESMBytecode+${scenario.name}${minify ? "+minify" : ""}`, {
+        compile: true,
+        bytecode: true,
+        format: "esm",
+        ...(minify && {
+          minifySyntax: true,
+          minifyIdentifiers: true,
+          minifyWhitespace: true,
+        }),
+        files: scenario.files,
+        run: { stdout: scenario.stdout },
+      });
+    }
+  }
+
+  // Multi-entry ESM bytecode with Worker (can't be in the matrix — needs
+  // entryPointsRaw, outfile, setCwd). Each entry becomes a separate module
+  // in the standalone graph with its own bytecode + ModuleInfo.
   itBundled("compile/WorkerBytecodeESM", {
     backend: "cli",
     compile: true,
@@ -161,24 +217,6 @@ describe("bundler", () => {
       stdout: "Hello, world!\nWorker loaded!\n",
       file: "dist/out",
       setCwd: true,
-    },
-  });
-  // ESM bytecode: minification + bytecode together
-  itBundled("compile/ESMBytecodeWithMinify", {
-    compile: true,
-    bytecode: true,
-    format: "esm",
-    minifySyntax: true,
-    minifyIdentifiers: true,
-    minifyWhitespace: true,
-    files: {
-      "/entry.ts": /* js */ `
-        function add(a: number, b: number) { return a + b; }
-        console.log("result:", add(10, 20));
-      `,
-    },
-    run: {
-      stdout: "result: 30",
     },
   });
   // https://github.com/oven-sh/bun/issues/8697

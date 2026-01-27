@@ -3816,7 +3816,9 @@ fn NewPrinter(
                     if (may_have_module_info) {
                         if (p.moduleInfo()) |mi| {
                             const name_id = bun.handleOom(mi.str(local_name));
-                            if (tlmtlo.isTopLevel()) bun.handleOom(mi.addVar(name_id, .lexical));
+                            // function declarations are lexical (block-scoped in modules);
+                            // only record at true top-level, not inside blocks.
+                            if (tlmtlo.is_top_level == .yes) bun.handleOom(mi.addVar(name_id, .lexical));
                             if (s.func.flags.contains(.is_export)) bun.handleOom(mi.addExportInfoLocal(name_id, name_id));
                         }
                     }
@@ -3854,7 +3856,9 @@ fn NewPrinter(
                     if (may_have_module_info) {
                         if (p.moduleInfo()) |mi| {
                             const name_id = bun.handleOom(mi.str(nameStr));
-                            if (tlmtlo.isTopLevel()) bun.handleOom(mi.addVar(name_id, .lexical));
+                            // class declarations are lexical (block-scoped in modules);
+                            // only record at true top-level, not inside blocks.
+                            if (tlmtlo.is_top_level == .yes) bun.handleOom(mi.addVar(name_id, .lexical));
                             if (s.is_export) bun.handleOom(mi.addExportInfoLocal(name_id, name_id));
                         }
                     }
@@ -5156,10 +5160,12 @@ fn NewPrinter(
             }
             const tlm: TopLevelAndIsExport = if (may_have_module_info) .{
                 .is_export = is_export,
-                .is_top_level = if (tlmtlo.isTopLevel())
-                    (if (comptime strings.eqlComptime(keyword, "var")) .declared else .lexical)
+                .is_top_level = if (comptime strings.eqlComptime(keyword, "var"))
+                    (if (tlmtlo.isTopLevel()) .declared else null)
                 else
-                    null,
+                    // let/const are block-scoped: only record at true top-level,
+                    // not inside blocks where subVar() downgrades to .var_only.
+                    (if (tlmtlo.is_top_level == .yes) .lexical else null),
             } else .{};
             p.printDecls(keyword, decls, ExprFlag.None(), tlm);
             p.printSemicolonAfterStatement();

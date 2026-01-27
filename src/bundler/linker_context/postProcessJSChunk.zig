@@ -115,6 +115,21 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
             }
         }
 
+        // 1b. Check if any source in this chunk uses import.meta. The per-part
+        // parallel printer does not have module_info, so the printer cannot set
+        // this flag during per-part printing. We derive it from the AST instead.
+        // Note: the runtime source (index 0) also uses import.meta (e.g.
+        // `import.meta.require`), so we must not skip it.
+        {
+            const all_ast_flags = c.graph.ast.items(.flags);
+            for (chunk.content.javascript.parts_in_chunk_in_order) |part_range| {
+                if (all_ast_flags[part_range.source_index.get()].has_import_meta) {
+                    mi.flags.contains_import_meta = true;
+                    break;
+                }
+            }
+        }
+
         // 2. Collect truly-external imports from the original AST. Bundled imports
         // (where source_index is valid) are removed by convertStmtsForChunk and
         // re-created as cross-chunk imports — those are already captured by the

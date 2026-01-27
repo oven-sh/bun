@@ -241,6 +241,9 @@ fn scheduleAutoAdvanceTimer(this: *FakeTimers, vm: *jsc.VirtualMachine) void {
 
 /// Stop the auto-advance timer. Must be called with timers.lock held.
 fn stopAutoAdvanceTimer(this: *FakeTimers, globalObject: *jsc.JSGlobalObject) void {
+    this.assertValid(.locked);
+    defer this.assertValid(.locked);
+
     const vm = globalObject.bunVM();
     this.#auto_advance_interval_ms = 0;
     // Remove the timer from its heap based on where it's stored

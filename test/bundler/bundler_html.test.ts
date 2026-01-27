@@ -843,4 +843,61 @@ body {
       api.expectFile("out/" + jsFile).toContain("sourceMappingURL");
     },
   });
+
+  // Test HTML bundler referencing correct JS chunk with code splitting
+  itBundled("html/code-splitting-dynamic-imports-wrong-chunk", {
+    files: {
+      "/index.html": `
+  <!DOCTYPE html>
+  <html>
+    <head>
+      <script src="./index.js"></script>
+    </head>
+    <body>
+      <h1>Dynamic Import Test</h1>
+    </body>
+  </html>`,
+      "/index.js": `
+  // 9 lazy imports, with the last two sharing a common module
+  import('./lazy1.js');
+  import('./lazy2.js');
+  import('./lazy3.js');
+  import('./lazy4.js');
+  import('./lazy5.js');
+  import('./lazy6.js');
+  import('./lazy7.js');
+  import('./lazy8.js');
+  import('./lazy9.js');
+  console.log('index.js loaded');
+  `,
+      "/lazy1.js": `console.log('lazy1');`,
+      "/lazy2.js": `console.log('lazy2');`,
+      "/lazy3.js": `console.log('lazy3');`,
+      "/lazy4.js": `console.log('lazy4');`,
+      "/lazy5.js": `console.log('lazy5');`,
+      "/lazy6.js": `console.log('lazy6');`,
+      "/lazy7.js": `console.log('lazy7');`,
+      "/lazy8.js": `
+  import { shared } from './shared.js';
+  console.log('lazy8 with shared:', shared);
+  `,
+      "/lazy9.js": `
+  import { shared } from './shared.js';
+  console.log('lazy9 with shared:', shared);
+  `,
+      "/shared.js": `
+  export const shared = 'shared-value';
+  `,
+    },
+    entryPoints: ["/index.html"],
+    splitting: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      const htmlContent = api.readFile("out/index.html");
+      const jsMatch = htmlContent.match(/src="(.*\.js)"/);
+      const jsBundle = api.readFile("out/" + jsMatch![1]);
+      expect(jsBundle).toContain("index.js loaded");
+      expect(jsBundle).not.toContain("shared-value");
+    },
+  });
 });

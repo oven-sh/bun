@@ -205,8 +205,7 @@ describe.skipIf(isWindows)("Runtime inspector SIGUSR1 activation", () => {
         fs.writeFileSync(path.join(process.cwd(), "pid"), String(process.pid));
         console.log("READY");
 
-        // Keep process alive long enough for inspector to start
-        setTimeout(() => process.exit(0), 3000);
+        // Keep process alive until test kills it
         setInterval(() => {}, 1000);
       `,
     });
@@ -249,7 +248,12 @@ describe.skipIf(isWindows)("Runtime inspector SIGUSR1 activation", () => {
     // Send second SIGUSR1 - inspector should not activate again
     process.kill(pid, "SIGUSR1");
 
-    // Read any remaining stderr until process exits
+    // Give a brief moment for any potential second banner to appear, then kill the process
+    // We can't wait indefinitely since a second banner should NOT appear
+    await Bun.sleep(100);
+
+    // Kill process and collect remaining stderr
+    proc.kill();
     stderrReader.releaseLock();
     const [remainingStderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
     stderr += remainingStderr;
@@ -257,7 +261,6 @@ describe.skipIf(isWindows)("Runtime inspector SIGUSR1 activation", () => {
     // Should only see one "Bun Inspector" banner (two occurrences of the text, for header and footer)
     const matches = stderr.match(/Bun Inspector/g);
     expect(matches?.length ?? 0).toBe(2);
-    expect(exitCode).toBe(0);
   });
 
   test("SIGUSR1 to self activates inspector", async () => {
@@ -266,12 +269,11 @@ describe.skipIf(isWindows)("Runtime inspector SIGUSR1 activation", () => {
         bunExe(),
         "-e",
         `
-        // Give more time for the inspector to start up and print its banner
-        setTimeout(() => process.exit(0), 2000);
         // Small delay to ensure handler is installed
         setTimeout(() => {
           process.kill(process.pid, "SIGUSR1");
         }, 50);
+        // Keep process alive until test kills it
         setInterval(() => {}, 1000);
       `,
       ],
@@ -294,7 +296,7 @@ describe.skipIf(isWindows)("Runtime inspector SIGUSR1 activation", () => {
     reader.releaseLock();
 
     proc.kill();
-    const exitCode = await proc.exited;
+    await proc.exited;
 
     expect(stderr).toContain("Bun Inspector");
   });

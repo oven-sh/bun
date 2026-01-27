@@ -1420,6 +1420,12 @@ inline fn handleShortRead(
         }
     }
 
+    // Check if buffered headers already exceed max allowed size
+    if (this.state.response_message_buffer.list.items.len > max_http_header_size) {
+        this.closeAndFail(error.HeadersOverflow, is_ssl, socket);
+        return;
+    }
+
     this.setTimeout(socket, 5);
 }
 
@@ -1469,6 +1475,12 @@ pub fn handleOnDataHeaders(
             }
             return;
         };
+
+        // Check if headers exceed max allowed size (matches --max-http-header-size CLI flag)
+        if (@as(usize, @intCast(response.bytes_read)) > max_http_header_size) {
+            this.closeAndFail(error.HeadersOverflow, is_ssl, socket);
+            return;
+        }
 
         // we save the successful parsed response
         this.state.pending_response = response;

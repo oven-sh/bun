@@ -505,6 +505,12 @@ pub fn getPresignUrlFrom(this: *Blob, globalThis: *jsc.JSGlobalObject, extra_opt
         .request_payer = credentialsWithOptions.request_payer,
         .content_disposition = credentialsWithOptions.content_disposition,
         .content_type = credentialsWithOptions.content_type,
+        .response_cache_control = credentialsWithOptions.response_cache_control,
+        .response_content_disposition = credentialsWithOptions.response_content_disposition,
+        .response_content_encoding = credentialsWithOptions.response_content_encoding,
+        .response_content_language = credentialsWithOptions.response_content_language,
+        .response_content_type = credentialsWithOptions.response_content_type,
+        .response_expires = credentialsWithOptions.response_expires,
     }, false, .{ .expires = expires }) catch |sign_err| {
         return S3.throwSignError(sign_err, globalThis);
     };

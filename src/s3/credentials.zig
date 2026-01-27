@@ -262,6 +262,97 @@ pub const S3Credentials = struct {
                 if (try opts.getBooleanStrict(globalObject, "requestPayer")) |request_payer| {
                     new_credentials.request_payer = request_payer;
                 }
+
+                // Response override options for presigned URLs
+                if (try opts.getTruthyComptime(globalObject, "responseCacheControl")) |js_value| {
+                    if (!js_value.isEmptyOrUndefinedOrNull()) {
+                        if (js_value.isString()) {
+                            const str = try bun.String.fromJS(js_value, globalObject);
+                            defer str.deref();
+                            if (str.tag != .Empty and str.tag != .Dead) {
+                                new_credentials._responseCacheControlSlice = str.toUTF8(bun.default_allocator);
+                                new_credentials.response_cache_control = new_credentials._responseCacheControlSlice.?.slice();
+                            }
+                        } else {
+                            return globalObject.throwInvalidArgumentTypeValue("responseCacheControl", "string", js_value);
+                        }
+                    }
+                }
+
+                if (try opts.getTruthyComptime(globalObject, "responseContentDisposition")) |js_value| {
+                    if (!js_value.isEmptyOrUndefinedOrNull()) {
+                        if (js_value.isString()) {
+                            const str = try bun.String.fromJS(js_value, globalObject);
+                            defer str.deref();
+                            if (str.tag != .Empty and str.tag != .Dead) {
+                                new_credentials._responseContentDispositionSlice = str.toUTF8(bun.default_allocator);
+                                new_credentials.response_content_disposition = new_credentials._responseContentDispositionSlice.?.slice();
+                            }
+                        } else {
+                            return globalObject.throwInvalidArgumentTypeValue("responseContentDisposition", "string", js_value);
+                        }
+                    }
+                }
+
+                if (try opts.getTruthyComptime(globalObject, "responseContentEncoding")) |js_value| {
+                    if (!js_value.isEmptyOrUndefinedOrNull()) {
+                        if (js_value.isString()) {
+                            const str = try bun.String.fromJS(js_value, globalObject);
+                            defer str.deref();
+                            if (str.tag != .Empty and str.tag != .Dead) {
+                                new_credentials._responseContentEncodingSlice = str.toUTF8(bun.default_allocator);
+                                new_credentials.response_content_encoding = new_credentials._responseContentEncodingSlice.?.slice();
+                            }
+                        } else {
+                            return globalObject.throwInvalidArgumentTypeValue("responseContentEncoding", "string", js_value);
+                        }
+                    }
+                }
+
+                if (try opts.getTruthyComptime(globalObject, "responseContentLanguage")) |js_value| {
+                    if (!js_value.isEmptyOrUndefinedOrNull()) {
+                        if (js_value.isString()) {
+                            const str = try bun.String.fromJS(js_value, globalObject);
+                            defer str.deref();
+                            if (str.tag != .Empty and str.tag != .Dead) {
+                                new_credentials._responseContentLanguageSlice = str.toUTF8(bun.default_allocator);
+                                new_credentials.response_content_language = new_credentials._responseContentLanguageSlice.?.slice();
+                            }
+                        } else {
+                            return globalObject.throwInvalidArgumentTypeValue("responseContentLanguage", "string", js_value);
+                        }
+                    }
+                }
+
+                if (try opts.getTruthyComptime(globalObject, "responseContentType")) |js_value| {
+                    if (!js_value.isEmptyOrUndefinedOrNull()) {
+                        if (js_value.isString()) {
+                            const str = try bun.String.fromJS(js_value, globalObject);
+                            defer str.deref();
+                            if (str.tag != .Empty and str.tag != .Dead) {
+                                new_credentials._responseContentTypeSlice = str.toUTF8(bun.default_allocator);
+                                new_credentials.response_content_type = new_credentials._responseContentTypeSlice.?.slice();
+                            }
+                        } else {
+                            return globalObject.throwInvalidArgumentTypeValue("responseContentType", "string", js_value);
+                        }
+                    }
+                }
+
+                if (try opts.getTruthyComptime(globalObject, "responseExpires")) |js_value| {
+                    if (!js_value.isEmptyOrUndefinedOrNull()) {
+                        if (js_value.isString()) {
+                            const str = try bun.String.fromJS(js_value, globalObject);
+                            defer str.deref();
+                            if (str.tag != .Empty and str.tag != .Dead) {
+                                new_credentials._responseExpiresSlice = str.toUTF8(bun.default_allocator);
+                                new_credentials.response_expires = new_credentials._responseExpiresSlice.?.slice();
+                            }
+                        } else {
+                            return globalObject.throwInvalidArgumentTypeValue("responseExpires", "string", js_value);
+                        }
+                    }
+                }
             }
         }
         return new_credentials;
@@ -465,6 +556,13 @@ pub const S3Credentials = struct {
         acl: ?ACL = null,
         storage_class: ?StorageClass = null,
         request_payer: bool = false,
+        // Response override options for presigned URLs
+        response_cache_control: ?[]const u8 = null,
+        response_content_disposition: ?[]const u8 = null,
+        response_content_encoding: ?[]const u8 = null,
+        response_content_language: ?[]const u8 = null,
+        response_content_type: ?[]const u8 = null,
+        response_expires: ?[]const u8 = null,
     };
     /// This is not used for signing but for console.log output, is just nice to have
     pub fn guessBucket(endpoint: []const u8) ?[]const u8 {
@@ -750,13 +848,50 @@ pub const S3Credentials = struct {
                     encoded_content_type = encodeURIComponent(ct, &content_type_encoded_buffer, true) catch return error.FailedToGenerateSignature;
                 }
 
+                // Additional response override parameters
+                var response_cache_control_encoded_buffer: [256]u8 = undefined;
+                var encoded_response_cache_control: ?[]const u8 = null;
+                if (signOptions.response_cache_control) |rcc| {
+                    encoded_response_cache_control = encodeURIComponent(rcc, &response_cache_control_encoded_buffer, true) catch return error.FailedToGenerateSignature;
+                }
+
+                var response_content_disposition_encoded_buffer: [512]u8 = undefined;
+                var encoded_response_content_disposition: ?[]const u8 = null;
+                if (signOptions.response_content_disposition) |rcd| {
+                    encoded_response_content_disposition = encodeURIComponent(rcd, &response_content_disposition_encoded_buffer, true) catch return error.FailedToGenerateSignature;
+                }
+
+                var response_content_encoding_encoded_buffer: [256]u8 = undefined;
+                var encoded_response_content_encoding: ?[]const u8 = null;
+                if (signOptions.response_content_encoding) |rce| {
+                    encoded_response_content_encoding = encodeURIComponent(rce, &response_content_encoding_encoded_buffer, true) catch return error.FailedToGenerateSignature;
+                }
+
+                var response_content_language_encoded_buffer: [256]u8 = undefined;
+                var encoded_response_content_language: ?[]const u8 = null;
+                if (signOptions.response_content_language) |rcl| {
+                    encoded_response_content_language = encodeURIComponent(rcl, &response_content_language_encoded_buffer, true) catch return error.FailedToGenerateSignature;
+                }
+
+                var response_content_type_encoded_buffer: [256]u8 = undefined;
+                var encoded_response_content_type: ?[]const u8 = null;
+                if (signOptions.response_content_type) |rct| {
+                    encoded_response_content_type = encodeURIComponent(rct, &response_content_type_encoded_buffer, true) catch return error.FailedToGenerateSignature;
+                }
+
+                var response_expires_encoded_buffer: [256]u8 = undefined;
+                var encoded_response_expires: ?[]const u8 = null;
+                if (signOptions.response_expires) |re| {
+                    encoded_response_expires = encodeURIComponent(re, &response_expires_encoded_buffer, true) catch return error.FailedToGenerateSignature;
+                }
+
                 // Build query parameters in alphabetical order for AWS Signature V4 canonical request
                 const canonical = brk_canonical: {
                     var stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
                     const allocator = stack_fallback.get();
-                    var query_parts: bun.BoundedArray([]const u8, 13) = .{};
+                    var query_parts: bun.BoundedArray([]const u8, 19) = .{};
 
-                    // Add parameters in alphabetical order: Content-MD5, X-Amz-Acl, X-Amz-Algorithm, X-Amz-Credential, X-Amz-Date, X-Amz-Expires, X-Amz-Security-Token, X-Amz-SignedHeaders, response-content-disposition, response-content-type, x-amz-request-payer, x-amz-storage-class
+                    // Add parameters in alphabetical order for AWS Signature V4 canonical request
 
                     if (encoded_content_md5) |encoded_content_md5_value| {
                         try query_parts.append(try std.fmt.allocPrint(allocator, "Content-MD5={s}", .{encoded_content_md5_value}));
@@ -780,12 +915,35 @@ pub const S3Credentials = struct {
 
                     try query_parts.append(try std.fmt.allocPrint(allocator, "X-Amz-SignedHeaders=host", .{}));
 
-                    if (encoded_content_disposition) |cd| {
+                    // Response override parameters (in alphabetical order)
+                    if (encoded_response_cache_control) |rcc| {
+                        try query_parts.append(try std.fmt.allocPrint(allocator, "response-cache-control={s}", .{rcc}));
+                    }
+
+                    if (encoded_response_content_disposition) |rcd| {
+                        try query_parts.append(try std.fmt.allocPrint(allocator, "response-content-disposition={s}", .{rcd}));
+                    } else if (encoded_content_disposition) |cd| {
+                        // Fall back to content_disposition for backwards compatibility
                         try query_parts.append(try std.fmt.allocPrint(allocator, "response-content-disposition={s}", .{cd}));
                     }
 
-                    if (encoded_content_type) |ct| {
+                    if (encoded_response_content_encoding) |rce| {
+                        try query_parts.append(try std.fmt.allocPrint(allocator, "response-content-encoding={s}", .{rce}));
+                    }
+
+                    if (encoded_response_content_language) |rcl| {
+                        try query_parts.append(try std.fmt.allocPrint(allocator, "response-content-language={s}", .{rcl}));
+                    }
+
+                    if (encoded_response_content_type) |rct| {
+                        try query_parts.append(try std.fmt.allocPrint(allocator, "response-content-type={s}", .{rct}));
+                    } else if (encoded_content_type) |ct| {
+                        // Fall back to content_type for backwards compatibility
                         try query_parts.append(try std.fmt.allocPrint(allocator, "response-content-type={s}", .{ct}));
+                    }
+
+                    if (encoded_response_expires) |re| {
+                        try query_parts.append(try std.fmt.allocPrint(allocator, "response-expires={s}", .{re}));
                     }
 
                     if (request_payer) {
@@ -817,9 +975,9 @@ pub const S3Credentials = struct {
                 // Build final URL with query parameters in alphabetical order to match canonical request
                 var url_stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
                 const url_allocator = url_stack_fallback.get();
-                var url_query_parts: bun.BoundedArray([]const u8, 14) = .{};
+                var url_query_parts: bun.BoundedArray([]const u8, 20) = .{};
 
-                // Add parameters in alphabetical order: Content-MD5, X-Amz-Acl, X-Amz-Algorithm, X-Amz-Credential, X-Amz-Date, X-Amz-Expires, X-Amz-Security-Token, X-Amz-Signature, X-Amz-SignedHeaders, response-content-disposition, response-content-type, x-amz-request-payer, x-amz-storage-class
+                // Add parameters in alphabetical order for AWS Signature V4
 
                 if (encoded_content_md5) |encoded_content_md5_value| {
                     try url_query_parts.append(try std.fmt.allocPrint(url_allocator, "Content-MD5={s}", .{encoded_content_md5_value}));
@@ -845,12 +1003,35 @@ pub const S3Credentials = struct {
 
                 try url_query_parts.append(try std.fmt.allocPrint(url_allocator, "X-Amz-SignedHeaders=host", .{}));
 
-                if (encoded_content_disposition) |cd| {
+                // Response override parameters (in alphabetical order)
+                if (encoded_response_cache_control) |rcc| {
+                    try url_query_parts.append(try std.fmt.allocPrint(url_allocator, "response-cache-control={s}", .{rcc}));
+                }
+
+                if (encoded_response_content_disposition) |rcd| {
+                    try url_query_parts.append(try std.fmt.allocPrint(url_allocator, "response-content-disposition={s}", .{rcd}));
+                } else if (encoded_content_disposition) |cd| {
+                    // Fall back to content_disposition for backwards compatibility
                     try url_query_parts.append(try std.fmt.allocPrint(url_allocator, "response-content-disposition={s}", .{cd}));
                 }
 
-                if (encoded_content_type) |ct| {
+                if (encoded_response_content_encoding) |rce| {
+                    try url_query_parts.append(try std.fmt.allocPrint(url_allocator, "response-content-encoding={s}", .{rce}));
+                }
+
+                if (encoded_response_content_language) |rcl| {
+                    try url_query_parts.append(try std.fmt.allocPrint(url_allocator, "response-content-language={s}", .{rcl}));
+                }
+
+                if (encoded_response_content_type) |rct| {
+                    try url_query_parts.append(try std.fmt.allocPrint(url_allocator, "response-content-type={s}", .{rct}));
+                } else if (encoded_content_type) |ct| {
+                    // Fall back to content_type for backwards compatibility
                     try url_query_parts.append(try std.fmt.allocPrint(url_allocator, "response-content-type={s}", .{ct}));
+                }
+
+                if (encoded_response_expires) |re| {
+                    try url_query_parts.append(try std.fmt.allocPrint(url_allocator, "response-expires={s}", .{re}));
                 }
 
                 if (request_payer) {
@@ -1003,6 +1184,14 @@ pub const S3CredentialsWithOptions = struct {
     changed_credentials: bool = false,
     /// indicates if the virtual hosted style is used
     virtual_hosted_style: bool = false,
+    // Response override options for presigned URLs (S3 GetObject response headers)
+    response_cache_control: ?[]const u8 = null,
+    response_content_disposition: ?[]const u8 = null,
+    response_content_encoding: ?[]const u8 = null,
+    response_content_language: ?[]const u8 = null,
+    response_content_type: ?[]const u8 = null,
+    response_expires: ?[]const u8 = null,
+
     _accessKeyIdSlice: ?jsc.ZigString.Slice = null,
     _secretAccessKeySlice: ?jsc.ZigString.Slice = null,
     _regionSlice: ?jsc.ZigString.Slice = null,
@@ -1012,6 +1201,12 @@ pub const S3CredentialsWithOptions = struct {
     _contentDispositionSlice: ?jsc.ZigString.Slice = null,
     _contentTypeSlice: ?jsc.ZigString.Slice = null,
     _contentEncodingSlice: ?jsc.ZigString.Slice = null,
+    _responseCacheControlSlice: ?jsc.ZigString.Slice = null,
+    _responseContentDispositionSlice: ?jsc.ZigString.Slice = null,
+    _responseContentEncodingSlice: ?jsc.ZigString.Slice = null,
+    _responseContentLanguageSlice: ?jsc.ZigString.Slice = null,
+    _responseContentTypeSlice: ?jsc.ZigString.Slice = null,
+    _responseExpiresSlice: ?jsc.ZigString.Slice = null,
 
     pub fn deinit(this: *@This()) void {
         if (this._accessKeyIdSlice) |slice| slice.deinit();
@@ -1023,6 +1218,12 @@ pub const S3CredentialsWithOptions = struct {
         if (this._contentDispositionSlice) |slice| slice.deinit();
         if (this._contentTypeSlice) |slice| slice.deinit();
         if (this._contentEncodingSlice) |slice| slice.deinit();
+        if (this._responseCacheControlSlice) |slice| slice.deinit();
+        if (this._responseContentDispositionSlice) |slice| slice.deinit();
+        if (this._responseContentEncodingSlice) |slice| slice.deinit();
+        if (this._responseContentLanguageSlice) |slice| slice.deinit();
+        if (this._responseContentTypeSlice) |slice| slice.deinit();
+        if (this._responseExpiresSlice) |slice| slice.deinit();
     }
 };
 

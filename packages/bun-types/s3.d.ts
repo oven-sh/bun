@@ -393,6 +393,72 @@ declare module "bun" {
      *     });
      */
     method?: "GET" | "POST" | "PUT" | "DELETE" | "HEAD";
+
+    /**
+     * Sets the Cache-Control header of the response when the presigned URL is accessed.
+     *
+     * @example
+     *     const url = file.presign({
+     *       expiresIn: 3600,
+     *       responseCacheControl: "max-age=3600, public"
+     *     });
+     */
+    responseCacheControl?: string;
+
+    /**
+     * Sets the Content-Disposition header of the response when the presigned URL is accessed.
+     *
+     * @example
+     *     const url = file.presign({
+     *       expiresIn: 3600,
+     *       responseContentDisposition: "attachment; filename=\"report.pdf\""
+     *     });
+     */
+    responseContentDisposition?: string;
+
+    /**
+     * Sets the Content-Encoding header of the response when the presigned URL is accessed.
+     *
+     * @example
+     *     const url = file.presign({
+     *       expiresIn: 3600,
+     *       responseContentEncoding: "gzip"
+     *     });
+     */
+    responseContentEncoding?: string;
+
+    /**
+     * Sets the Content-Language header of the response when the presigned URL is accessed.
+     *
+     * @example
+     *     const url = file.presign({
+     *       expiresIn: 3600,
+     *       responseContentLanguage: "en-US"
+     *     });
+     */
+    responseContentLanguage?: string;
+
+    /**
+     * Sets the Content-Type header of the response when the presigned URL is accessed.
+     *
+     * @example
+     *     const url = file.presign({
+     *       expiresIn: 3600,
+     *       responseContentType: "application/pdf"
+     *     });
+     */
+    responseContentType?: string;
+
+    /**
+     * Sets the Expires header of the response when the presigned URL is accessed.
+     *
+     * @example
+     *     const url = file.presign({
+     *       expiresIn: 3600,
+     *       responseExpires: "Wed, 21 Oct 2025 07:28:00 GMT"
+     *     });
+     */
+    responseExpires?: string;
   }
 
   interface S3Stats {

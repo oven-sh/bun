@@ -617,8 +617,8 @@ pub const RuntimeTranspilerStore = struct {
     };
 };
 
-const analyze_transpiled_module = @import("../analyze_transpiled_module.zig");
 const Fs = @import("../fs.zig");
+const analyze_transpiled_module = @import("../analyze_transpiled_module.zig");
 const node_fallbacks = @import("../node_fallbacks.zig");
 const std = @import("std");
 const AsyncModule = @import("./AsyncModule.zig").AsyncModule;

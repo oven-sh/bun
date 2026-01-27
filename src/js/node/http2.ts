@@ -1995,10 +1995,9 @@ class Http2Stream extends Duplex {
       typeof callback == "function" && callback();
       return;
     }
-    if (!chunk) {
-      chunk = Buffer.alloc(0);
-    }
     this[bunHTTP2StreamStatus] = status | StreamState.EndedCalled;
+    // Don't create an empty buffer when chunk is not provided - this avoids
+    // sending an unnecessary empty DATA frame before _final() is called.
     return super.end(chunk, encoding, callback);
   }
 

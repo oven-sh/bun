@@ -3456,7 +3456,18 @@ pub const H2FrameParser = struct {
         };
 
         stream.waitForTrailers = false;
-        this.sendData(stream, "", true, .js_undefined);
+
+        // RFC 7540 Section 8.1: Send an empty HEADERS frame with END_STREAM and END_HEADERS flags
+        // to properly close the stream without trailers. This avoids sending an empty DATA frame
+        // which can cause issues with proxies that limit consecutive empty frames (e.g., Envoy).
+        const writer = this.toWriter();
+        var frame: FrameHeader = .{
+            .type = @intFromEnum(FrameType.HTTP_FRAME_HEADERS),
+            .flags = @intFromEnum(HeadersFrameFlags.END_STREAM) | @intFromEnum(HeadersFrameFlags.END_HEADERS),
+            .streamIdentifier = stream.id,
+            .length = 0,
+        };
+        _ = frame.write(@TypeOf(writer), writer);
 
         const identifier = stream.getIdentifier();
         identifier.ensureStillAlive();

@@ -2427,6 +2427,11 @@ extern "C" napi_status napi_typeof(napi_env env, napi_value val,
                 return napi_clear_last_error(env);
             }
 
+            if (JSC::jsDynamicCast<AsyncContextFrame*>(value)) {
+                *result = napi_function;
+                return napi_clear_last_error(env);
+            }
+
             *result = napi_object;
             return napi_clear_last_error(env);
 

@@ -229,6 +229,9 @@ fn scheduleAutoAdvanceTimer(this: *FakeTimers, vm: *jsc.VirtualMachine) void {
     const interval_ms = this.#auto_advance_interval_ms;
     if (interval_ms == 0) return;
 
+    // Prevent double-insertion if timer is already scheduled
+    if (this.#auto_advance_timer.in_heap != .none) return;
+
     const now = bun.timespec.now(.force_real_time);
     this.#auto_advance_timer.next = now.addMs(interval_ms);
     this.#auto_advance_timer.state = .PENDING;

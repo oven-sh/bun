@@ -644,6 +644,16 @@ pub const DeclCollector = struct {
 
     const CompileResult = bun.bundle_v2.CompileResult;
 
+    /// Collect top-level declarations from **converted** statements (after
+    /// `convertStmtsForChunk`). At that point, export statements have already
+    /// been transformed:
+    /// - `s_export_default` → `s_local` / `s_function` / `s_class`
+    /// - `s_export_clause` → removed entirely
+    /// - `s_export_from` / `s_export_star` → removed or converted to `s_import`
+    ///
+    /// Remaining `s_import` statements (external, non-bundled) don't need
+    /// handling here; their bindings are recorded separately in
+    /// `postProcessJSChunk` by scanning the original AST import records.
     pub fn collectFromStmts(self: *DeclCollector, stmts: []const Stmt, r: renamer.Renamer, c: *LinkerContext) void {
         for (stmts) |stmt| {
             switch (stmt.data) {

@@ -571,6 +571,37 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
     }
 }
 
+/// Recursively walk a binding and add all declared names to `ModuleInfo`.
+/// Handles `b_identifier`, `b_array`, `b_object`, and `b_missing`.
+fn addBindingVarsToModuleInfo(
+    mi: *analyze_transpiled_module.ModuleInfo,
+    binding: Binding,
+    var_kind: analyze_transpiled_module.ModuleInfo.VarKind,
+    r: renamer.Renamer,
+    symbols: *const js_ast.Symbol.Map,
+) void {
+    switch (binding.data) {
+        .b_identifier => |b| {
+            const name = r.nameForSymbol(symbols.follow(b.ref));
+            if (name.len > 0) {
+                const str_id = mi.str(name) catch return;
+                mi.addVar(str_id, var_kind) catch {};
+            }
+        },
+        .b_array => |b| {
+            for (b.items) |item| {
+                addBindingVarsToModuleInfo(mi, item.binding, var_kind, r, symbols);
+            }
+        },
+        .b_object => |b| {
+            for (b.properties) |prop| {
+                addBindingVarsToModuleInfo(mi, prop.value, var_kind, r, symbols);
+            }
+        },
+        .b_missing => {},
+    }
+}
+
 pub fn generateEntryPointTailJS(
     c: *LinkerContext,
     toCommonJSRef: Ref,
@@ -970,16 +1001,7 @@ pub fn generateEntryPointTailJS(
                 .s_local => |s| {
                     const var_kind: analyze_transpiled_module.ModuleInfo.VarKind = if (s.kind == .k_var) .declared else .lexical;
                     for (s.decls.slice()) |decl| {
-                        switch (decl.binding.data) {
-                            .b_identifier => |b| {
-                                const name = r.nameForSymbol(c.graph.symbols.follow(b.ref));
-                                if (name.len > 0) {
-                                    const str_id = mi.str(name) catch continue;
-                                    mi.addVar(str_id, var_kind) catch {};
-                                }
-                            },
-                            else => {},
-                        }
+                        addBindingVarsToModuleInfo(mi, decl.binding, var_kind, r, &c.graph.symbols);
                     }
                 },
                 else => {},

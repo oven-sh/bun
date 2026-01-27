@@ -1109,17 +1109,17 @@ fn NewPrinter(
             }
         }
 
-        pub fn printBody(p: *Printer, stmt: Stmt) void {
+        pub fn printBody(p: *Printer, stmt: Stmt, tlmtlo: TopLevel) void {
             switch (stmt.data) {
                 .s_block => |block| {
                     p.printSpace();
-                    p.printBlock(stmt.loc, block.stmts, block.close_brace_loc, TopLevel.init(.no));
+                    p.printBlock(stmt.loc, block.stmts, block.close_brace_loc, tlmtlo);
                     p.printNewline();
                 },
                 else => {
                     p.printNewline();
                     p.indent();
-                    p.printStmt(stmt, TopLevel.init(.no)) catch unreachable;
+                    p.printStmt(stmt, tlmtlo) catch unreachable;
                     p.unindent();
                 },
             }
@@ -4231,23 +4231,24 @@ fn NewPrinter(
                 },
                 .s_if => |s| {
                     p.printIndent();
-                    p.printIf(s, stmt.loc);
+                    p.printIf(s, stmt.loc, tlmtlo.subVar());
                 },
                 .s_do_while => |s| {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(stmt.loc);
                     p.print("do");
+                    const sub_var = tlmtlo.subVar();
                     switch (s.body.data) {
                         .s_block => {
                             p.printSpace();
-                            p.printBlock(s.body.loc, s.body.data.s_block.stmts, s.body.data.s_block.close_brace_loc, TopLevel.init(.no));
+                            p.printBlock(s.body.loc, s.body.data.s_block.stmts, s.body.data.s_block.close_brace_loc, sub_var);
                             p.printSpace();
                         },
                         else => {
                             p.printNewline();
                             p.indent();
-                            p.printStmt(s.body, TopLevel.init(.no)) catch unreachable;
+                            p.printStmt(s.body, sub_var) catch unreachable;
                             p.printSemicolonIfNeeded();
                             p.unindent();
                             p.printIndent();
@@ -4275,7 +4276,7 @@ fn NewPrinter(
                     p.printSpace();
                     p.printExpr(s.value, .lowest, ExprFlag.None());
                     p.print(")");
-                    p.printBody(s.body);
+                    p.printBody(s.body, tlmtlo.subVar());
                 },
                 .s_for_of => |s| {
                     p.printIndent();
@@ -4295,7 +4296,7 @@ fn NewPrinter(
                     p.printSpace();
                     p.printExpr(s.value, .comma, ExprFlag.None());
                     p.print(")");
-                    p.printBody(s.body);
+                    p.printBody(s.body, tlmtlo.subVar());
                 },
                 .s_while => |s| {
                     p.printIndent();
@@ -4306,7 +4307,7 @@ fn NewPrinter(
                     p.print("(");
                     p.printExpr(s.test_, .lowest, ExprFlag.None());
                     p.print(")");
-                    p.printBody(s.body);
+                    p.printBody(s.body, tlmtlo.subVar());
                 },
                 .s_with => |s| {
                     p.printIndent();
@@ -4317,7 +4318,7 @@ fn NewPrinter(
                     p.print("(");
                     p.printExpr(s.value, .lowest, ExprFlag.None());
                     p.print(")");
-                    p.printBody(s.body);
+                    p.printBody(s.body, tlmtlo.subVar());
                 },
                 .s_label => |s| {
                     if (!p.options.minify_whitespace and p.options.indent.count > 0) {
@@ -4327,7 +4328,7 @@ fn NewPrinter(
                     p.addSourceMapping(stmt.loc);
                     p.printSymbol(s.name.ref orelse Output.panic("Internal error: expected label to have a name", .{}));
                     p.print(":");
-                    p.printBody(s.stmt);
+                    p.printBody(s.stmt, tlmtlo.subVar());
                 },
                 .s_try => |s| {
                     p.printIndent();
@@ -4335,7 +4336,8 @@ fn NewPrinter(
                     p.addSourceMapping(stmt.loc);
                     p.print("try");
                     p.printSpace();
-                    p.printBlock(s.body_loc, s.body, null, TopLevel.init(.no));
+                    const sub_var_try = tlmtlo.subVar();
+                    p.printBlock(s.body_loc, s.body, null, sub_var_try);
 
                     if (s.catch_) |catch_| {
                         p.printSpace();
@@ -4348,14 +4350,14 @@ fn NewPrinter(
                             p.print(")");
                         }
                         p.printSpace();
-                        p.printBlock(catch_.body_loc, catch_.body, null, TopLevel.init(.no));
+                        p.printBlock(catch_.body_loc, catch_.body, null, sub_var_try);
                     }
 
                     if (s.finally) |finally| {
                         p.printSpace();
                         p.print("finally");
                         p.printSpace();
-                        p.printBlock(finally.loc, finally.stmts, null, TopLevel.init(.no));
+                        p.printBlock(finally.loc, finally.stmts, null, sub_var_try);
                     }
 
                     p.printNewline();
@@ -4386,7 +4388,7 @@ fn NewPrinter(
                     }
 
                     p.print(")");
-                    p.printBody(s.body);
+                    p.printBody(s.body, tlmtlo.subVar());
                 },
                 .s_switch => |s| {
                     p.printIndent();
@@ -4418,11 +4420,12 @@ fn NewPrinter(
 
                         p.print(":");
 
+                        const sub_var_case = tlmtlo.subVar();
                         if (c.body.len == 1) {
                             switch (c.body[0].data) {
                                 .s_block => {
                                     p.printSpace();
-                                    p.printBlock(c.body[0].loc, c.body[0].data.s_block.stmts, c.body[0].data.s_block.close_brace_loc, TopLevel.init(.no));
+                                    p.printBlock(c.body[0].loc, c.body[0].data.s_block.stmts, c.body[0].data.s_block.close_brace_loc, sub_var_case);
                                     p.printNewline();
                                     continue;
                                 },
@@ -4434,7 +4437,7 @@ fn NewPrinter(
                         p.indent();
                         for (c.body) |st| {
                             p.printSemicolonIfNeeded();
-                            p.printStmt(st, TopLevel.init(.no)) catch unreachable;
+                            p.printStmt(st, sub_var_case) catch unreachable;
                         }
                         p.unindent();
                     }
@@ -4676,7 +4679,7 @@ fn NewPrinter(
                 },
                 .s_block => |s| {
                     p.printIndent();
-                    p.printBlock(stmt.loc, s.stmts, s.close_brace_loc, TopLevel.init(.no));
+                    p.printBlock(stmt.loc, s.stmts, s.close_brace_loc, tlmtlo.subVar());
                     p.printNewline();
                 },
                 .s_debugger => {
@@ -4975,7 +4978,7 @@ fn NewPrinter(
                 },
             }
         }
-        pub fn printIf(p: *Printer, s: *const S.If, loc: logger.Loc) void {
+        pub fn printIf(p: *Printer, s: *const S.If, loc: logger.Loc, tlmtlo: TopLevel) void {
             p.printSpaceBeforeIdentifier();
             p.addSourceMapping(loc);
             p.print("if");
@@ -4987,7 +4990,7 @@ fn NewPrinter(
             switch (s.yes.data) {
                 .s_block => |block| {
                     p.printSpace();
-                    p.printBlock(s.yes.loc, block.stmts, block.close_brace_loc, TopLevel.init(.no));
+                    p.printBlock(s.yes.loc, block.stmts, block.close_brace_loc, tlmtlo);
 
                     if (s.no != null) {
                         p.printSpace();
@@ -5002,7 +5005,7 @@ fn NewPrinter(
                         p.printNewline();
 
                         p.indent();
-                        p.printStmt(s.yes, TopLevel.init(.no)) catch unreachable;
+                        p.printStmt(s.yes, tlmtlo) catch unreachable;
                         p.unindent();
                         p.needs_semicolon = false;
 
@@ -5017,7 +5020,7 @@ fn NewPrinter(
                     } else {
                         p.printNewline();
                         p.indent();
-                        p.printStmt(s.yes, TopLevel.init(.no)) catch unreachable;
+                        p.printStmt(s.yes, tlmtlo) catch unreachable;
                         p.unindent();
 
                         if (s.no != null) {
@@ -5036,16 +5039,16 @@ fn NewPrinter(
                 switch (no_block.data) {
                     .s_block => {
                         p.printSpace();
-                        p.printBlock(no_block.loc, no_block.data.s_block.stmts, null, TopLevel.init(.no));
+                        p.printBlock(no_block.loc, no_block.data.s_block.stmts, null, tlmtlo);
                         p.printNewline();
                     },
                     .s_if => {
-                        p.printIf(no_block.data.s_if, no_block.loc);
+                        p.printIf(no_block.data.s_if, no_block.loc, tlmtlo);
                     },
                     else => {
                         p.printNewline();
                         p.indent();
-                        p.printStmt(no_block, TopLevel.init(.no)) catch unreachable;
+                        p.printStmt(no_block, tlmtlo) catch unreachable;
                         p.unindent();
                     },
                 }

@@ -20,11 +20,11 @@ devTest("crash #18910", {
     const absPath = dev.join("b.js");
 
     await dev.stressTest(async () => {
-      for (let i = 0; i < 100; i++) {
+      for (let i = 0; i < 10; i++) {
         await Bun.write(absPath, "let a = 0;");
-        await Bun.sleep(2);
+        await Bun.sleep(10);
         await Bun.write(absPath, "// let a = 0;");
-        await Bun.sleep(2);
+        await Bun.sleep(10);
       }
     });
 

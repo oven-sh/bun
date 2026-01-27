@@ -128,6 +128,26 @@ int us_socket_is_closed(int ssl, struct us_socket_t *s) {
     return s->flags.is_closed;
 }
 
+int us_socket_is_ssl_handshake_finished(int ssl, struct us_socket_t *s) {
+#ifndef LIBUS_NO_SSL
+    if(ssl) {
+        return us_internal_ssl_socket_is_handshake_finished((struct us_internal_ssl_socket_t *) s);
+    }
+#endif
+    // Non-SSL sockets are always "handshake finished"
+    return 1;
+}
+
+int us_socket_ssl_handshake_callback_has_fired(int ssl, struct us_socket_t *s) {
+#ifndef LIBUS_NO_SSL
+    if(ssl) {
+        return us_internal_ssl_socket_handshake_callback_has_fired((struct us_internal_ssl_socket_t *) s);
+    }
+#endif
+    // Non-SSL sockets are always "callback fired"
+    return 1;
+}
+
 int us_connecting_socket_is_closed(int ssl, struct us_connecting_socket_t *c) {
     return c->closed;
 }
@@ -370,7 +390,7 @@ int us_socket_write(int ssl, struct us_socket_t *s, const char *data, int length
 
     int written = bsd_send(us_poll_fd(&s->p), data, length);
     if (written != length) {
-        s->context->loop->data.last_write_failed = 1;
+        s->flags.last_write_failed = 1;
         us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
     }
 
@@ -407,7 +427,7 @@ int us_socket_ipc_write_fd(struct us_socket_t *s, const char* data, int length, 
     int sent = bsd_sendmsg(us_poll_fd(&s->p), &msg, 0);
 
     if (sent != length) {
-        s->context->loop->data.last_write_failed = 1;
+        s->flags.last_write_failed = 1;
         us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
     }
 

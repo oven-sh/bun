@@ -510,14 +510,14 @@ pub const RuntimeTranspilerStore = struct {
                 if (HardcodedModule.Alias.get(import_record.path.text, transpiler.options.target, .{ .rewrite_jest_for_tests = transpiler.options.rewrite_jest_for_tests })) |replacement| {
                     import_record.path.text = replacement.path;
                     import_record.tag = replacement.tag;
-                    import_record.is_external_without_side_effects = true;
+                    import_record.flags.is_external_without_side_effects = true;
                     continue;
                 }
 
                 if (strings.hasPrefixComptime(import_record.path.text, "bun:")) {
                     import_record.path = Fs.Path.init(import_record.path.text["bun:".len..]);
                     import_record.path.namespace = "bun";
-                    import_record.is_external_without_side_effects = true;
+                    import_record.flags.is_external_without_side_effects = true;
                 }
             }
 

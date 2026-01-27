@@ -597,12 +597,6 @@ pub const NumberRenamer = struct {
             r.number_scope_pool.put(s);
         };
 
-        // Ignore function argument scopes
-        if (scope.kind == .function_args and scope.children.len == 1) {
-            scope = scope.children.ptr[0];
-            bun.assert(scope.kind == .function_body);
-        }
-
         while (true) {
             if (scope.members.count() > 0 or scope.generated.len > 0) {
                 const new_child_scope = r.number_scope_pool.get();
@@ -617,10 +611,6 @@ pub const NumberRenamer = struct {
 
             if (scope.children.len == 1) {
                 scope = scope.children.ptr[0];
-                if (scope.kind == .function_args and scope.children.len == 1) {
-                    scope = scope.children.ptr[0];
-                    bun.assert(scope.kind == .function_body);
-                }
             } else {
                 break;
             }

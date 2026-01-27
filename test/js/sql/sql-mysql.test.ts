@@ -480,6 +480,25 @@ if (isDockerEnabled()) {
           expect(b).toEqual({ b: 2 });
         });
 
+        test("Binary", async () => {
+          const random_name = ("t_" + Bun.randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
+          await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (a binary(1), b varbinary(1), c blob)`;
+          const values = [
+            { a: Buffer.from([1]), b: Buffer.from([2]), c: Buffer.from([3]) },
+          ];
+          await sql`INSERT INTO ${sql(random_name)} ${sql(values)}`;
+          const results = await sql`select * from ${sql(random_name)}`;
+          // return buffers
+          expect(results[0].a).toEqual(Buffer.from([1]));
+          expect(results[0].b).toEqual(Buffer.from([2]));
+          expect(results[0].c).toEqual(Buffer.from([3]));
+          // text protocol should behave the same
+          const results2 = await sql`select * from ${sql(random_name)}`.simple();
+          expect(results2[0].a).toEqual(Buffer.from([1]));
+          expect(results2[0].b).toEqual(Buffer.from([2]));
+          expect(results2[0].c).toEqual(Buffer.from([3]));
+        })
+
         test("bulk insert nested sql()", async () => {
           await using sql = new SQL({ ...getOptions(), max: 1 });
           await sql`create temporary table test_users (name text, age int)`;

@@ -70,7 +70,7 @@ ExceptionOr<Vector<uint8_t>> CryptoAlgorithmAES_KW::platformWrapKey(const Crypto
     auto output = cryptWrapKey(key.key(), data);
     if (!output)
         return Exception { OperationError };
-    return WTFMove(*output);
+    return WTF::move(*output);
 }
 
 ExceptionOr<Vector<uint8_t>> CryptoAlgorithmAES_KW::platformUnwrapKey(const CryptoKeyAES& key, const Vector<uint8_t>& data)
@@ -78,7 +78,7 @@ ExceptionOr<Vector<uint8_t>> CryptoAlgorithmAES_KW::platformUnwrapKey(const Cryp
     auto output = cryptUnwrapKey(key.key(), data);
     if (!output)
         return Exception { OperationError };
-    return WTFMove(*output);
+    return WTF::move(*output);
 }
 
 } // namespace WebCore

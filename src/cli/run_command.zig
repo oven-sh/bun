@@ -1514,6 +1514,7 @@ pub const RunCommand = struct {
                     .entry_point_run,
                 );
         };
+        var resolved_to_unrunnable_file: ?struct { path: []const u8, loader: bun.options.Loader } = null;
         if (resolution) |resolved| {
             var resolved_mutable = resolved;
             const path = resolved_mutable.path().?;
@@ -1523,6 +1524,7 @@ pub const RunCommand = struct {
                 return _bootAndHandleError(ctx, path.text, loader);
             } else {
                 log("Resolved file `{s}` but ignoring because loader is {s}", .{ path.text, @tagName(loader) });
+                resolved_to_unrunnable_file = .{ .path = path.text, .loader = loader };
             }
         } else |_| {
             // Support globs for HTML entry points.
@@ -1602,14 +1604,19 @@ pub const RunCommand = struct {
         }
 
         if (log_errors) {
-            const ext = std.fs.path.extension(target_name);
-            const default_loader = options.defaultLoaders.get(ext);
-            if (default_loader != null and default_loader.?.isJavaScriptLikeOrJSON() or target_name.len > 0 and (target_name[0] == '.' or target_name[0] == '/' or std.fs.path.isAbsolute(target_name))) {
-                Output.prettyError("<r><red>error<r><d>:<r> <b>Module not found \"<b>{s}<r>\"\n", .{target_name});
-            } else if (ext.len > 0) {
-                Output.prettyError("<r><red>error<r><d>:<r> <b>File not found \"<b>{s}<r>\"\n", .{target_name});
+            if (resolved_to_unrunnable_file) |info| {
+                Output.prettyError("<r><red>error<r><d>:<r> <b>Cannot run \"{s}\"<r>\n", .{info.path});
+                Output.prettyError("<r><d>note<r><d>:<r> Bun cannot run {s} files directly\n", .{@tagName(info.loader)});
             } else {
-                Output.prettyError("<r><red>error<r><d>:<r> <b>Script not found \"<b>{s}<r>\"\n", .{target_name});
+                const ext = std.fs.path.extension(target_name);
+                const default_loader = options.defaultLoaders.get(ext);
+                if (default_loader != null and default_loader.?.isJavaScriptLikeOrJSON() or target_name.len > 0 and (target_name[0] == '.' or target_name[0] == '/' or std.fs.path.isAbsolute(target_name))) {
+                    Output.prettyError("<r><red>error<r><d>:<r> <b>Module not found \"<b>{s}<r>\"\n", .{target_name});
+                } else if (ext.len > 0) {
+                    Output.prettyError("<r><red>error<r><d>:<r> <b>File not found \"<b>{s}<r>\"\n", .{target_name});
+                } else {
+                    Output.prettyError("<r><red>error<r><d>:<r> <b>Script not found \"<b>{s}<r>\"\n", .{target_name});
+                }
             }
 
             Global.exit(1);

@@ -47,15 +47,15 @@ void reportException(JSGlobalObject* lexicalGlobalObject, JSC::Exception* except
     if (vm.isTerminationException(exception))
         return;
 
-    // We can declare a CatchScope here because we will clear the exception below if it's
+    // We can declare a TopExceptionScope here because we will clear the exception below if it's
     // not a TerminationException. If it's a TerminationException, it'll remain sticky in
     // the VM, but we have the check above to ensure that we do not re-enter this scope.
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     ErrorHandlingScope errorScope(lexicalGlobalObject->vm());
 
     // auto callStack = Inspector::createScriptCallStackFromException(lexicalGlobalObject, exception);
-    scope.clearException();
+    (void)scope.tryClearException();
     vm.clearLastException();
 
     auto* globalObject = jsCast<JSDOMGlobalObject*>(lexicalGlobalObject);
@@ -92,13 +92,13 @@ void reportException(JSGlobalObject* lexicalGlobalObject, JSValue exceptionValue
     if (!exception) {
         exception = vm.lastException();
         if (!exception)
-            exception = JSC::Exception::create(lexicalGlobalObject->vm(), exceptionValue, JSC::Exception::DoNotCaptureStack);
+            exception = JSC::Exception::create(lexicalGlobalObject->vm(), exceptionValue, JSC::Exception::StackCaptureAction::DoNotCaptureStack);
     }
 
     reportException(lexicalGlobalObject, exception, cachedScript, fromModule);
 }
 
-String retrieveErrorMessageWithoutName(JSGlobalObject& lexicalGlobalObject, VM& vm, JSValue exception, CatchScope& catchScope)
+String retrieveErrorMessageWithoutName(JSGlobalObject& lexicalGlobalObject, VM& vm, JSValue exception, TopExceptionScope& topExceptionScope)
 {
     // FIXME: <http://webkit.org/b/115087> Web Inspector: WebCore::reportException should not evaluate JavaScript handling exceptions
     // If this is a custom exception object, call toString on it to try and get a nice string representation for the exception.
@@ -112,12 +112,12 @@ String retrieveErrorMessageWithoutName(JSGlobalObject& lexicalGlobalObject, VM& 
 
     // We need to clear any new exception that may be thrown in the toString() call above.
     // reportException() is not supposed to be making new exceptions.
-    catchScope.clearException();
+    (void)topExceptionScope.tryClearException();
     vm.clearLastException();
     return errorMessage;
 }
 
-String retrieveErrorMessage(JSGlobalObject& lexicalGlobalObject, VM& vm, JSValue exception, CatchScope& catchScope)
+String retrieveErrorMessage(JSGlobalObject& lexicalGlobalObject, VM& vm, JSValue exception, TopExceptionScope& topExceptionScope)
 {
     // FIXME: <http://webkit.org/b/115087> Web Inspector: WebCore::reportException should not evaluate JavaScript handling exceptions
     // If this is a custom exception object, call toString on it to try and get a nice string representation for the exception.
@@ -129,7 +129,7 @@ String retrieveErrorMessage(JSGlobalObject& lexicalGlobalObject, VM& vm, JSValue
 
     // We need to clear any new exception that may be thrown in the toString() call above.
     // reportException() is not supposed to be making new exceptions.
-    catchScope.clearException();
+    (void)topExceptionScope.tryClearException();
     vm.clearLastException();
     return errorMessage;
 }
@@ -137,9 +137,9 @@ String retrieveErrorMessage(JSGlobalObject& lexicalGlobalObject, VM& vm, JSValue
 void reportCurrentException(JSGlobalObject* lexicalGlobalObject)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* exception = scope.exception();
-    scope.clearException();
+    (void)scope.tryClearException();
     reportException(lexicalGlobalObject, exception);
 }
 
@@ -212,7 +212,7 @@ JSValue createDOMException(JSGlobalObject& lexicalGlobalObject, Exception&& exce
 void propagateExceptionSlowPath(JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& throwScope, Exception&& exception)
 {
     throwScope.assertNoExceptionExceptTermination();
-    auto jsException = createDOMException(lexicalGlobalObject, WTFMove(exception));
+    auto jsException = createDOMException(lexicalGlobalObject, WTF::move(exception));
     RETURN_IF_EXCEPTION(throwScope, );
     throwException(&lexicalGlobalObject, throwScope, jsException);
 }

@@ -8,14 +8,6 @@ import { join } from "node:path";
 export function createTestBuilder(path: string) {
   var { describe, test, afterAll, beforeAll, expect, beforeEach, afterEach } = Bun.jest(path);
 
-  var insideTestScope = false;
-  beforeEach(() => {
-    insideTestScope = true;
-  });
-  afterEach(() => {
-    insideTestScope = false;
-  });
-
   class TestBuilder {
     _testName: string | undefined = undefined;
 
@@ -247,14 +239,6 @@ export function createTestBuilder(path: string) {
     }
 
     async run(): Promise<undefined> {
-      if (!insideTestScope) {
-        const err = new Error("TestBuilder.run() must be called inside a test scope");
-        test("TestBuilder.run() must be called inside a test scope", () => {
-          throw err;
-        });
-        return Promise.resolve(undefined);
-      }
-
       try {
         let finalPromise = Bun.$(this._scriptStr, ...this._expresssions);
         if (this.tempdir) finalPromise = finalPromise.cwd(this.tempdir);

@@ -57,12 +57,16 @@ set(BUN_DEPENDENCIES
   LolHtml
   Lshpack
   Mimalloc
-  TinyCC
   Zlib
   LibArchive # must be loaded after zlib
   HdrHistogram # must be loaded after zlib
   Zstd
 )
+
+# TinyCC is optional - disabled on Windows ARM64 where it's not supported
+if(ENABLE_TINYCC)
+  list(APPEND BUN_DEPENDENCIES TinyCC)
+endif()
 
 include(CloneZstd)
 
@@ -185,7 +189,7 @@ register_command(
   CWD
     ${BUN_NODE_FALLBACKS_SOURCE}
   COMMAND
-    ${BUN_EXECUTABLE} run build-fallbacks
+    ${BUN_EXECUTABLE} ${BUN_FLAGS} run build-fallbacks
       ${BUN_NODE_FALLBACKS_OUTPUT}
       ${BUN_NODE_FALLBACKS_SOURCES}
   SOURCES
@@ -206,7 +210,7 @@ register_command(
   CWD
     ${BUN_NODE_FALLBACKS_SOURCE}
   COMMAND
-    ${BUN_EXECUTABLE} build
+    ${BUN_EXECUTABLE} ${BUN_FLAGS} build
       ${BUN_NODE_FALLBACKS_SOURCE}/node_modules/react-refresh/cjs/react-refresh-runtime.development.js
       --outfile=${BUN_REACT_REFRESH_OUTPUT}
       --target=browser
@@ -243,6 +247,7 @@ register_command(
     "Generating ErrorCode.{zig,h}"
   COMMAND
     ${BUN_EXECUTABLE}
+      ${BUN_FLAGS}
       run
       ${BUN_ERROR_CODE_SCRIPT}
       ${CODEGEN_PATH}
@@ -278,6 +283,7 @@ register_command(
     "Generating ZigGeneratedClasses.{zig,cpp,h}"
   COMMAND
     ${BUN_EXECUTABLE}
+      ${BUN_FLAGS}
       run
       ${BUN_ZIG_GENERATED_CLASSES_SCRIPT}
       ${BUN_ZIG_GENERATED_CLASSES_SOURCES}
@@ -328,6 +334,7 @@ register_command(
     "Generating C++ --> Zig bindings"
   COMMAND
     ${BUN_EXECUTABLE}
+      ${BUN_FLAGS}
       ${CWD}/src/codegen/cppbind.ts
       ${CWD}/src
       ${CODEGEN_PATH}
@@ -345,6 +352,7 @@ register_command(
     "Generating CI info"
   COMMAND
     ${BUN_EXECUTABLE}
+      ${BUN_FLAGS}
       ${CWD}/src/codegen/ci_info.ts
       ${CODEGEN_PATH}/ci_info.zig
   SOURCES
@@ -353,24 +361,35 @@ register_command(
     ${BUN_CI_INFO_OUTPUTS}
 )
 
-register_command(
-  TARGET
-    bun-js-modules
-  COMMENT
-    "Generating JavaScript modules"
-  COMMAND
-    ${BUN_EXECUTABLE}
-      run
+if(SKIP_CODEGEN)
+  # Skip JavaScript codegen - useful for Windows ARM64 debug builds where bun crashes
+  message(STATUS "SKIP_CODEGEN is ON - skipping bun-js-modules codegen")
+  foreach(output ${BUN_JAVASCRIPT_OUTPUTS})
+    if(NOT EXISTS ${output})
+      message(FATAL_ERROR "SKIP_CODEGEN is ON but ${output} does not exist. Run codegen manually first.")
+    endif()
+  endforeach()
+else()
+  register_command(
+    TARGET
+      bun-js-modules
+    COMMENT
+      "Generating JavaScript modules"
+    COMMAND
+      ${BUN_EXECUTABLE}
+        ${BUN_FLAGS}
+        run
+        ${BUN_JAVASCRIPT_CODEGEN_SCRIPT}
+          --debug=${DEBUG}
+          ${BUILD_PATH}
+    SOURCES
+      ${BUN_JAVASCRIPT_SOURCES}
+      ${BUN_JAVASCRIPT_CODEGEN_SOURCES}
       ${BUN_JAVASCRIPT_CODEGEN_SCRIPT}
-        --debug=${DEBUG}
-        ${BUILD_PATH}
-  SOURCES
-    ${BUN_JAVASCRIPT_SOURCES}
-    ${BUN_JAVASCRIPT_CODEGEN_SOURCES}
-    ${BUN_JAVASCRIPT_CODEGEN_SCRIPT}
-  OUTPUTS
-    ${BUN_JAVASCRIPT_OUTPUTS}
-)
+    OUTPUTS
+      ${BUN_JAVASCRIPT_OUTPUTS}
+  )
+endif()
 
 set(BUN_BAKE_RUNTIME_CODEGEN_SCRIPT ${CWD}/src/codegen/bake-codegen.ts)
 
@@ -392,6 +411,7 @@ register_command(
     "Bundling Bake Runtime"
   COMMAND
     ${BUN_EXECUTABLE}
+      ${BUN_FLAGS}
       run
       ${BUN_BAKE_RUNTIME_CODEGEN_SCRIPT}
         --debug=${DEBUG}
@@ -415,16 +435,13 @@ string(REPLACE ";" "," BUN_BINDGENV2_SOURCES_COMMA_SEPARATED
   "${BUN_BINDGENV2_SOURCES}")
 
 execute_process(
-  COMMAND ${BUN_EXECUTABLE} run ${BUN_BINDGENV2_SCRIPT}
+  COMMAND ${BUN_EXECUTABLE} ${BUN_FLAGS} run ${BUN_BINDGENV2_SCRIPT}
     --command=list-outputs
     --sources=${BUN_BINDGENV2_SOURCES_COMMA_SEPARATED}
     --codegen-path=${CODEGEN_PATH}
-  RESULT_VARIABLE bindgen_result
   OUTPUT_VARIABLE bindgen_outputs
+  COMMAND_ERROR_IS_FATAL ANY
 )
-if(${bindgen_result})
-  message(FATAL_ERROR "bindgenv2/script.ts exited with non-zero status")
-endif()
 foreach(output IN LISTS bindgen_outputs)
   if(output MATCHES "\.cpp$")
     list(APPEND BUN_BINDGENV2_CPP_OUTPUTS ${output})
@@ -441,7 +458,7 @@ register_command(
   COMMENT
     "Generating bindings (v2)"
   COMMAND
-    ${BUN_EXECUTABLE} run ${BUN_BINDGENV2_SCRIPT}
+    ${BUN_EXECUTABLE} ${BUN_FLAGS} run ${BUN_BINDGENV2_SCRIPT}
       --command=generate
       --codegen-path=${CODEGEN_PATH}
       --sources=${BUN_BINDGENV2_SOURCES_COMMA_SEPARATED}
@@ -472,6 +489,7 @@ register_command(
     "Processing \".bind.ts\" files"
   COMMAND
     ${BUN_EXECUTABLE}
+      ${BUN_FLAGS}
       run
       ${BUN_BINDGEN_SCRIPT}
         --debug=${DEBUG}
@@ -504,6 +522,7 @@ register_command(
     "Generating JSSink.{cpp,h}"
   COMMAND
     ${BUN_EXECUTABLE}
+      ${BUN_FLAGS}
       run
       ${BUN_JS_SINK_SCRIPT}
       ${CODEGEN_PATH}
@@ -576,6 +595,7 @@ foreach(i RANGE 0 ${BUN_OBJECT_LUT_SOURCES_MAX_INDEX})
       ${BUN_OBJECT_LUT_SOURCE}
     COMMAND
       ${BUN_EXECUTABLE}
+        ${BUN_FLAGS}
         run
         ${BUN_OBJECT_LUT_SCRIPT}
         ${BUN_OBJECT_LUT_SOURCE}
@@ -659,6 +679,10 @@ endif()
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm|ARM|arm64|ARM64|aarch64|AARCH64")
   if(APPLE)
     set(ZIG_CPU "apple_m1")
+  elseif(WIN32)
+    # Windows ARM64: use a specific CPU with NEON support
+    # Zig running under x64 emulation would detect wrong CPU with "native"
+    set(ZIG_CPU "cortex_a76")
   else()
     set(ZIG_CPU "native")
   endif()
@@ -697,6 +721,7 @@ register_command(
       -Denable_asan=$<IF:$<BOOL:${ENABLE_ZIG_ASAN}>,true,false>
       -Denable_fuzzilli=$<IF:$<BOOL:${ENABLE_FUZZILLI}>,true,false>
       -Denable_valgrind=$<IF:$<BOOL:${ENABLE_VALGRIND}>,true,false>
+      -Denable_tinycc=$<IF:$<BOOL:${ENABLE_TINYCC}>,true,false>
       -Duse_mimalloc=$<IF:$<BOOL:${USE_MIMALLOC_AS_DEFAULT_ALLOCATOR}>,true,false>
       -Dllvm_codegen_threads=${LLVM_ZIG_CODEGEN_THREADS}
       -Dversion=${VERSION}
@@ -872,6 +897,7 @@ target_include_directories(${bun} PRIVATE
   ${CODEGEN_PATH}
   ${VENDOR_PATH}
   ${VENDOR_PATH}/picohttpparser
+  ${VENDOR_PATH}/zlib
   ${NODEJS_HEADERS_PATH}/include
   ${NODEJS_HEADERS_PATH}/include/node
 )
@@ -913,7 +939,7 @@ if(WIN32)
 endif()
 
 if(USE_MIMALLOC_AS_DEFAULT_ALLOCATOR)
-  target_compile_definitions(${bun} PRIVATE USE_MIMALLOC=1)
+  target_compile_definitions(${bun} PRIVATE USE_BUN_MIMALLOC=1)
 endif()
 
 target_compile_definitions(${bun} PRIVATE
@@ -1199,11 +1225,35 @@ set_target_properties(${bun} PROPERTIES LINK_DEPENDS ${BUN_SYMBOLS_PATH})
 
 include(SetupWebKit)
 
+if(BUN_LINK_ONLY)
+  register_command(
+    TARGET
+      ${bun}
+    TARGET_PHASE
+      POST_BUILD
+    COMMENT
+      "Uploading link metadata"
+    COMMAND
+      ${CMAKE_COMMAND} -E env
+        BUN_VERSION=${VERSION}
+        WEBKIT_DOWNLOAD_URL=${WEBKIT_DOWNLOAD_URL}
+        WEBKIT_VERSION=${WEBKIT_VERSION}
+        ZIG_COMMIT=${ZIG_COMMIT}
+        ${BUN_EXECUTABLE} ${BUN_FLAGS} ${CWD}/scripts/create-link-metadata.mjs ${BUILD_PATH} ${bun}
+    SOURCES
+      ${BUN_ZIG_OUTPUT}
+      ${BUN_CPP_OUTPUT}
+    ARTIFACTS
+      ${BUILD_PATH}/link-metadata.json
+  )
+endif()
+
 if(WIN32)
   if(DEBUG)
     target_link_libraries(${bun} PRIVATE
       ${WEBKIT_LIB_PATH}/WTF.lib
       ${WEBKIT_LIB_PATH}/JavaScriptCore.lib
+      ${WEBKIT_LIB_PATH}/bmalloc.lib
       ${WEBKIT_LIB_PATH}/sicudtd.lib
       ${WEBKIT_LIB_PATH}/sicuind.lib
       ${WEBKIT_LIB_PATH}/sicuucd.lib
@@ -1212,6 +1262,7 @@ if(WIN32)
     target_link_libraries(${bun} PRIVATE
       ${WEBKIT_LIB_PATH}/WTF.lib
       ${WEBKIT_LIB_PATH}/JavaScriptCore.lib
+      ${WEBKIT_LIB_PATH}/bmalloc.lib
       ${WEBKIT_LIB_PATH}/sicudt.lib
       ${WEBKIT_LIB_PATH}/sicuin.lib
       ${WEBKIT_LIB_PATH}/sicuuc.lib
@@ -1289,6 +1340,9 @@ if(WIN32)
     wsock32 # ws2_32 required by TransmitFile aka sendfile on windows
     delayimp.lib
   )
+  # Required for static ICU linkage - without this, ICU headers expect DLL linkage
+  # which causes ABI mismatch and crashes (STATUS_STACK_BUFFER_OVERRUN)
+  target_compile_definitions(${bun} PRIVATE U_STATIC_IMPLEMENTATION)
 endif()
 
 # --- Packaging ---

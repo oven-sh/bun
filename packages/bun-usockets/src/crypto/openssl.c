@@ -315,6 +315,15 @@ int us_internal_ssl_socket_is_closed(struct us_internal_ssl_socket_t *s) {
   return us_socket_is_closed(0, &s->s);
 }
 
+int us_internal_ssl_socket_is_handshake_finished(struct us_internal_ssl_socket_t *s) {
+  if (!s || !s->ssl) return 0;
+  return SSL_is_init_finished(s->ssl);
+}
+
+int us_internal_ssl_socket_handshake_callback_has_fired(struct us_internal_ssl_socket_t *s) {
+  if (!s) return 0;
+  return s->handshake_state == HANDSHAKE_COMPLETED;
+}
 
 void us_internal_trigger_handshake_callback_econnreset(struct us_internal_ssl_socket_t *s) {
   struct us_internal_ssl_socket_context_t *context =
@@ -417,8 +426,7 @@ void us_internal_update_handshake(struct us_internal_ssl_socket_t *s) {
     }
     s->handshake_state = HANDSHAKE_PENDING;
     s->ssl_write_wants_read = 1;
-    s->s.context->loop->data.last_write_failed = 1;
-
+    s->s.flags.last_write_failed = 1;
     return;
   }
   // success

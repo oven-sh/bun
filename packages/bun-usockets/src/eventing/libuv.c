@@ -71,7 +71,7 @@ void us_poll_init(struct us_poll_t *p, LIBUS_SOCKET_DESCRIPTOR fd,
 }
 
 void us_poll_free(struct us_poll_t *p, struct us_loop_t *loop) {
-  // poll was adopted and dont own uv_poll_t anymore
+  // poll was resized and dont own uv_poll_t anymore
   if(!p->uv_p) {
     free(p);
     return;

@@ -46,7 +46,7 @@ pub fn main() void {
     }
 
     _bun.start_time = std.time.nanoTimestamp();
-    _bun.initArgv(_bun.default_allocator) catch |err| {
+    _bun.initArgv() catch |err| {
         Output.panic("Failed to initialize argv: {s}\n", .{@errorName(err)});
     };
 

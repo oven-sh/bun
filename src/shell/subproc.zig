@@ -1121,7 +1121,7 @@ pub const PipeReader = struct {
         log("PipeReader(0x{x}, {s}) create()", .{ @intFromPtr(this), @tagName(this.out_type) });
 
         if (capture) |cap| {
-            this.captured_writer.writer = cap.refSelf();
+            this.captured_writer.writer = cap.dupeRef();
             this.captured_writer.dead = false;
         }
 

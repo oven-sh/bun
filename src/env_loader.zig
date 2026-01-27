@@ -156,14 +156,17 @@ pub const Loader = struct {
     }
 
     pub fn getHttpProxyFor(this: *Loader, url: URL) ?URL {
-        return this.getHttpProxy(url.isHTTP(), url.hostname);
+        return this.getHttpProxy(url.isHTTP(), url.hostname, url.host);
     }
 
     pub fn hasHTTPProxy(this: *const Loader) bool {
         return this.has("http_proxy") or this.has("HTTP_PROXY") or this.has("https_proxy") or this.has("HTTPS_PROXY");
     }
 
-    pub fn getHttpProxy(this: *Loader, is_http: bool, hostname: ?[]const u8) ?URL {
+    /// Get proxy URL for HTTP/HTTPS requests, respecting NO_PROXY.
+    /// `hostname` is the host without port (e.g., "localhost")
+    /// `host` is the host with port if present (e.g., "localhost:3000")
+    pub fn getHttpProxy(this: *Loader, is_http: bool, hostname: ?[]const u8, host: ?[]const u8) ?URL {
         // TODO: When Web Worker support is added, make sure to intern these strings
         var http_proxy: ?URL = null;
 
@@ -189,22 +192,57 @@ pub const Loader = struct {
                     return http_proxy;
                 }
 
-                var no_proxy_list = std.mem.splitScalar(u8, no_proxy_text, ',');
-                var next = no_proxy_list.next();
-                while (next != null) {
-                    var host = strings.trim(next.?, &strings.whitespace_chars);
-                    if (strings.eql(host, "*")) {
+                var no_proxy_iter = std.mem.splitScalar(u8, no_proxy_text, ',');
+                while (no_proxy_iter.next()) |no_proxy_item| {
+                    var no_proxy_entry = strings.trim(no_proxy_item, &strings.whitespace_chars);
+                    if (no_proxy_entry.len == 0) {
+                        continue;
+                    }
+                    if (strings.eql(no_proxy_entry, "*")) {
                         return null;
                     }
                     //strips .
-                    if (host[0] == '.') {
-                        host = host[1..];
+                    if (strings.startsWithChar(no_proxy_entry, '.')) {
+                        no_proxy_entry = no_proxy_entry[1..];
+                        if (no_proxy_entry.len == 0) {
+                            continue;
+                        }
                     }
-                    //hostname ends with suffix
-                    if (strings.endsWith(hostname.?, host)) {
-                        return null;
+
+                    // Determine if entry contains a port or is an IPv6 address
+                    // IPv6 addresses contain multiple colons (e.g., "::1", "2001:db8::1")
+                    // Bracketed IPv6 with port: "[::1]:8080"
+                    // Host with port: "localhost:8080" (single colon)
+                    const colon_count = std.mem.count(u8, no_proxy_entry, ":");
+                    const is_bracketed_ipv6 = strings.startsWithChar(no_proxy_entry, '[');
+                    const has_port = blk: {
+                        if (is_bracketed_ipv6) {
+                            // Bracketed IPv6: check for "]:port" pattern
+                            if (std.mem.indexOf(u8, no_proxy_entry, "]:")) |_| {
+                                break :blk true;
+                            }
+                            break :blk false;
+                        } else if (colon_count == 1) {
+                            // Single colon means host:port (not IPv6)
+                            break :blk true;
+                        }
+                        // Multiple colons without brackets = bare IPv6 literal (no port)
+                        break :blk false;
+                    };
+
+                    if (has_port) {
+                        // Entry has a port, do exact match against host:port
+                        if (host) |h| {
+                            if (strings.eqlCaseInsensitiveASCII(h, no_proxy_entry, true)) {
+                                return null;
+                            }
+                        }
+                    } else {
+                        // Entry is hostname/IPv6 only, match against hostname (suffix match)
+                        if (strings.endsWith(hostname.?, no_proxy_entry)) {
+                            return null;
+                        }
                     }
-                    next = no_proxy_list.next();
                 }
             }
         }

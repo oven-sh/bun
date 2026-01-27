@@ -14,6 +14,7 @@
 #include <JavaScriptCore/LazyProperty.h>
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <JavaScriptCore/JSInternalPromise.h>
+#include <JavaScriptCore/JSPromiseConstructor.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include <JavaScriptCore/Weak.h>
@@ -293,7 +294,7 @@ public:
 
     void copyNameAndLength(JSC::VM& vm, JSGlobalObject* global, JSC::JSValue value)
     {
-        auto catcher = DECLARE_CATCH_SCOPE(vm);
+        auto catcher = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         WTF::String nameToUse;
         if (auto* fn = jsDynamicCast<JSFunction*>(value)) {
             nameToUse = fn->name(vm);
@@ -314,7 +315,7 @@ public:
         this->setName(nameToUse);
 
         if (catcher.exception()) {
-            catcher.clearException();
+            (void)catcher.tryClearException();
         }
     }
 
@@ -930,15 +931,15 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionCall, (JSGlobalObject * lexicalGlobalObje
 
             setReturnValue(createMockResult(vm, globalObject, "incomplete"_s, jsUndefined()));
 
-            auto catchScope = DECLARE_CATCH_SCOPE(vm);
+            auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
             JSValue returnValue = Bun::call(globalObject, result, callData, thisValue, args);
 
-            if (auto* exc = catchScope.exception()) {
+            if (auto* exc = topExceptionScope.exception()) {
                 if (auto* returnValuesArray = fn->returnValues.get()) {
                     returnValuesArray->putDirectIndex(globalObject, returnValueIndex, createMockResult(vm, globalObject, "throw"_s, exc->value()));
                     fn->returnValues.set(vm, fn, returnValuesArray);
-                    catchScope.clearException();
+                    (void)topExceptionScope.tryClearException();
                     JSC::throwException(globalObject, scope, exc);
                     return {};
                 }
@@ -966,6 +967,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionCall, (JSGlobalObject * lexicalGlobalObje
         }
         case JSMockImplementation::Kind::RejectedValue: {
             JSValue rejectedPromise = JSC::JSPromise::rejectedPromise(globalObject, impl->underlyingValue.get());
+            RETURN_IF_EXCEPTION(scope, {});
             setReturnValue(createMockResult(vm, globalObject, "return"_s, rejectedPromise));
             return JSValue::encode(rejectedPromise);
         }

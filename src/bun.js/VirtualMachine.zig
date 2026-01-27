@@ -49,6 +49,7 @@ standalone_module_graph: ?*bun.StandaloneModuleGraph = null,
 smol: bool = false,
 dns_result_order: DNSResolver.Order = .verbatim,
 cpu_profiler_config: ?CPUProfilerConfig = null,
+heap_profiler_config: ?HeapProfilerConfig = null,
 counters: Counters = .{},
 
 hot_reload: bun.cli.Command.HotReload = .none,
@@ -542,7 +543,7 @@ fn wrapUnhandledRejectionErrorForUncaughtException(globalObject: *JSGlobalObject
         break :blk false;
     }) return reason;
     const reasonStr = blk: {
-        var scope: jsc.CatchScope = undefined;
+        var scope: jsc.TopExceptionScope = undefined;
         scope.init(globalObject, @src());
         defer scope.deinit();
         defer if (scope.exception()) |_| scope.clearException();
@@ -683,8 +684,8 @@ pub fn reportExceptionInHotReloadedModuleIfNeeded(this: *jsc.VirtualMachine) voi
     defer this.addMainToWatcherIfNeeded();
     var promise = this.pending_internal_promise orelse return;
 
-    if (promise.status(this.global.vm()) == .rejected and !promise.isHandled(this.global.vm())) {
-        this.unhandledRejection(this.global, promise.result(this.global.vm()), promise.asValue());
+    if (promise.status() == .rejected and !promise.isHandled()) {
+        this.unhandledRejection(this.global, promise.result(), promise.asValue());
         promise.setHandled(this.global.vm());
     }
 }
@@ -840,6 +841,15 @@ pub fn onExit(this: *VirtualMachine) void {
         this.cpu_profiler_config = null;
         CPUProfiler.stopAndWriteProfile(this.jsc_vm, config) catch |err| {
             Output.err(err, "Failed to write CPU profile", .{});
+        };
+    }
+
+    // Write heap profile if profiling was enabled - do this after CPU profile but before shutdown
+    // Grab the config and null it out to make this idempotent
+    if (this.heap_profiler_config) |config| {
+        this.heap_profiler_config = null;
+        HeapProfiler.generateAndWriteProfile(this.jsc_vm, config) catch |err| {
+            Output.err(err, "Failed to write heap profile", .{});
         };
     }
 
@@ -1056,7 +1066,9 @@ pub fn initWithModuleGraph(
     vm.transpiler.macro_context = js_ast.Macro.MacroContext.init(&vm.transpiler);
     if (opts.is_main_thread) {
         VMHolder.main_thread_vm = vm;
+        vm.is_main_thread = true;
     }
+    is_smol_mode = opts.smol;
     vm.global = JSGlobalObject.create(
         vm,
         vm.console,
@@ -2081,12 +2093,12 @@ fn loadPreloads(this: *VirtualMachine) !?*JSInternalPromise {
         // pending_internal_promise can change if hot module reloading is enabled
         if (this.isWatcherEnabled()) {
             this.eventLoop().performGC();
-            switch (this.pending_internal_promise.?.status(this.global.vm())) {
+            switch (this.pending_internal_promise.?.status()) {
                 .pending => {
-                    while (this.pending_internal_promise.?.status(this.global.vm()) == .pending) {
+                    while (this.pending_internal_promise.?.status() == .pending) {
                         this.eventLoop().tick();
 
-                        if (this.pending_internal_promise.?.status(this.global.vm()) == .pending) {
+                        if (this.pending_internal_promise.?.status() == .pending) {
                             this.eventLoop().autoTick();
                         }
                     }
@@ -2100,7 +2112,7 @@ fn loadPreloads(this: *VirtualMachine) !?*JSInternalPromise {
             });
         }
 
-        if (promise.status(this.global.vm()) == .rejected)
+        if (promise.status() == .rejected)
             return promise;
     }
 
@@ -2243,12 +2255,12 @@ pub fn loadEntryPointForTestRunner(this: *VirtualMachine, entry_path: string) an
     // pending_internal_promise can change if hot module reloading is enabled
     if (this.isWatcherEnabled()) {
         this.eventLoop().performGC();
-        switch (this.pending_internal_promise.?.status(this.global.vm())) {
+        switch (this.pending_internal_promise.?.status()) {
             .pending => {
-                while (this.pending_internal_promise.?.status(this.global.vm()) == .pending) {
+                while (this.pending_internal_promise.?.status() == .pending) {
                     this.eventLoop().tick();
 
-                    if (this.pending_internal_promise.?.status(this.global.vm()) == .pending) {
+                    if (this.pending_internal_promise.?.status() == .pending) {
                         this.eventLoop().autoTick();
                     }
                 }
@@ -2256,7 +2268,7 @@ pub fn loadEntryPointForTestRunner(this: *VirtualMachine, entry_path: string) an
             else => {},
         }
     } else {
-        if (promise.status(this.global.vm()) == .rejected) {
+        if (promise.status() == .rejected) {
             return promise;
         }
 
@@ -2275,12 +2287,12 @@ pub fn loadEntryPoint(this: *VirtualMachine, entry_path: string) anyerror!*JSInt
     // pending_internal_promise can change if hot module reloading is enabled
     if (this.isWatcherEnabled()) {
         this.eventLoop().performGC();
-        switch (this.pending_internal_promise.?.status(this.global.vm())) {
+        switch (this.pending_internal_promise.?.status()) {
             .pending => {
-                while (this.pending_internal_promise.?.status(this.global.vm()) == .pending) {
+                while (this.pending_internal_promise.?.status() == .pending) {
                     this.eventLoop().tick();
 
-                    if (this.pending_internal_promise.?.status(this.global.vm()) == .pending) {
+                    if (this.pending_internal_promise.?.status() == .pending) {
                         this.eventLoop().autoTick();
                     }
                 }
@@ -2288,7 +2300,7 @@ pub fn loadEntryPoint(this: *VirtualMachine, entry_path: string) anyerror!*JSInt
             else => {},
         }
     } else {
-        if (promise.status(this.global.vm()) == .rejected) {
+        if (promise.status() == .rejected) {
             return promise;
         }
 
@@ -3712,6 +3724,9 @@ const Allocator = std.mem.Allocator;
 
 const CPUProfiler = @import("./bindings/BunCPUProfiler.zig");
 const CPUProfilerConfig = CPUProfiler.CPUProfilerConfig;
+
+const HeapProfiler = @import("./bindings/BunHeapProfiler.zig");
+const HeapProfilerConfig = HeapProfiler.HeapProfilerConfig;
 
 const bun = @import("bun");
 const Async = bun.Async;

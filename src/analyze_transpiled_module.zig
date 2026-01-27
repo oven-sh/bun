@@ -49,8 +49,6 @@ pub const ModuleInfoDeserialized = struct {
             allocator: std.mem.Allocator,
         },
     },
-    dead: bool = false,
-
     pub fn deinit(self: *ModuleInfoDeserialized) void {
         switch (self.owner) {
             .module_info => {
@@ -373,7 +371,6 @@ export fn zig__ModuleInfoDeserialized__toJSModuleRecord(
     lexical_variables: *VariableEnvironment,
     res: *ModuleInfoDeserialized,
 ) ?*JSModuleRecord {
-    if (res.dead) @panic("ModuleInfoDeserialized already deinit()ed");
     defer res.deinit();
 
     var identifiers = IdentifierArray.create(res.strings_lens.len);

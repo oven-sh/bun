@@ -3,7 +3,7 @@
 //!    chunk indexing remains the same:
 //!
 //!      1. chunks
-//!      2. sourcemaps and bytecode
+//!      2. sourcemaps, bytecode, and module_info
 //!      3. additional output files
 //!
 //!    We can calculate the space ahead of time and avoid having to do something
@@ -41,7 +41,7 @@ pub fn init(
     chunks: []const bun.bundle_v2.Chunk,
     _: usize,
 ) !@This() {
-    const length, const source_map_and_bytecode_count = OutputFileList.calculateOutputFileListCapacity(c, chunks);
+    const length, const supplementary_file_count = OutputFileList.calculateOutputFileListCapacity(c, chunks);
     var output_files = try std.array_list.Managed(options.OutputFile).initCapacity(
         allocator,
         length,
@@ -51,8 +51,8 @@ pub fn init(
     return .{
         .output_files = output_files,
         .index_for_chunk = 0,
-        .index_for_sourcemaps_and_bytecode = if (source_map_and_bytecode_count == 0) null else @as(u32, @truncate(chunks.len)),
-        .additional_output_files_start = @as(u32, @intCast(chunks.len)) + source_map_and_bytecode_count,
+        .index_for_sourcemaps_and_bytecode = if (supplementary_file_count == 0) null else @as(u32, @truncate(chunks.len)),
+        .additional_output_files_start = @as(u32, @intCast(chunks.len)) + supplementary_file_count,
         .total_insertions = 0,
     };
 }

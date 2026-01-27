@@ -3,14 +3,12 @@
 #include "JavaScriptCore/JSInternalPromise.h"
 #include "JavaScriptCore/JSModuleRecord.h"
 #include "JavaScriptCore/GlobalObjectMethodTable.h"
-#include "JavaScriptCore/JSModuleRecord.h"
 #include "JavaScriptCore/Nodes.h"
 #include "JavaScriptCore/Parser.h"
 #include "JavaScriptCore/ParserError.h"
 #include "JavaScriptCore/SyntheticModuleRecord.h"
 #include <wtf/text/MakeString.h>
 #include "JavaScriptCore/JSGlobalObject.h"
-#include "JavaScriptCore/JSModuleRecord.h"
 #include "JavaScriptCore/ExceptionScope.h"
 #include "ZigSourceProvider.h"
 #include "BunAnalyzeTranspiledModule.h"
@@ -22,7 +20,6 @@
 
 #include "JavaScriptCore/ModuleAnalyzer.h"
 #include "JavaScriptCore/ErrorType.h"
-#include "JavaScriptCore/Nodes.h"
 
 namespace JSC {
 
@@ -193,10 +190,10 @@ static EncodedJSValue fallbackParse(JSGlobalObject* globalObject, const Identifi
         RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(error.toErrorObject(globalObject, sourceCode))));
     ASSERT(moduleProgramNode);
 
-    ModuleAnalyzer ModuleAnalyzer(globalObject, moduleKey, sourceCode, moduleProgramNode->varDeclarations(), moduleProgramNode->lexicalVariables(), moduleProgramNode->features());
+    ModuleAnalyzer moduleAnalyzer(globalObject, moduleKey, sourceCode, moduleProgramNode->varDeclarations(), moduleProgramNode->lexicalVariables(), moduleProgramNode->features());
     RETURN_IF_EXCEPTION(scope, JSValue::encode(promise->rejectWithCaughtException(globalObject, scope)));
 
-    auto result = ModuleAnalyzer.analyze(*moduleProgramNode);
+    auto result = moduleAnalyzer.analyze(*moduleProgramNode);
     if (!result) {
         auto [errorType, message] = std::move(result.error());
         RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(createError(globalObject, errorType, message))));
@@ -310,13 +307,24 @@ String dumpRecordInfo(JSModuleRecord* moduleRecord)
         sortedEntries.append(line.toString());
     }
     std::sort(sortedEntries.begin(), sortedEntries.end(), [](const String& a, const String& b) {
-        return a.utf8().toStdString() < b.utf8().toStdString();
+        return codePointCompare(a, b) < 0;
     });
     for (const auto& entry : sortedEntries)
         stream.print(entry);
 
-    for (const auto& moduleName : moduleRecord->starExportEntries())
-        stream.print("      [Star] module(", moduleName.get(), ")\n");
+    {
+        Vector<String> sortedStarExports;
+        for (const auto& moduleName : moduleRecord->starExportEntries()) {
+            WTF::StringPrintStream line;
+            line.print("      [Star] module(", moduleName.get(), ")\n");
+            sortedStarExports.append(line.toString());
+        }
+        std::sort(sortedStarExports.begin(), sortedStarExports.end(), [](const String& a, const String& b) {
+            return codePointCompare(a, b) < 0;
+        });
+        for (const auto& entry : sortedStarExports)
+            stream.print(entry);
+    }
 
     stream.print("  -> done\n");
 

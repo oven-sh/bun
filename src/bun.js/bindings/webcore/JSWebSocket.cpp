@@ -267,6 +267,16 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
             RETURN_IF_EXCEPTION(throwScope, {});
         }
 
+        // Check for rejectUnauthorized at top level for Node.js ws library compatibility
+        // Only check if it wasn't already set from the tls object
+        if (rejectUnauthorized == -1) {
+            auto rejectUnauthorizedValue = Bun::getOwnPropertyIfExists(globalObject, options, PropertyName(Identifier::fromString(vm, "rejectUnauthorized"_s)));
+            RETURN_IF_EXCEPTION(throwScope, {});
+            if (rejectUnauthorizedValue && !rejectUnauthorizedValue.isUndefinedOrNull() && rejectUnauthorizedValue.isBoolean()) {
+                rejectUnauthorized = rejectUnauthorizedValue.asBoolean() ? 1 : 0;
+            }
+        }
+
         // Parse proxy option - can be string or { url, headers }
         auto proxyValue = Bun::getOwnPropertyIfExists(globalObject, options, PropertyName(Identifier::fromString(vm, "proxy"_s)));
         RETURN_IF_EXCEPTION(throwScope, {});

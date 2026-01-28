@@ -840,10 +840,10 @@ const RenameJob = struct {
             .err => |*err| {
                 defer err.deinit();
                 const error_instance = globalThis.createErrorInstance("rename failed: errno {d}", .{err.errno});
-                promise.reject(globalThis, error_instance);
+                promise.reject(globalThis, error_instance) catch {};
             },
             .result => {
-                promise.resolve(globalThis, jsc.JSValue.js_undefined);
+                promise.resolve(globalThis, jsc.JSValue.js_undefined) catch {};
             },
         }
 

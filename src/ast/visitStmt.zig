@@ -587,6 +587,14 @@ pub fn VisitStmt(
 
                 _ = p.visitClass(stmt.loc, &data.class, Ref.None);
 
+                // Emit var declarations for auto-accessor computed key temps
+                for (p.auto_accessor_computed_key_refs.items) |temp| {
+                    const decls = p.allocator.alloc(Decl, 1) catch unreachable;
+                    decls[0] = .{ .binding = Binding.alloc(p.allocator, B.Identifier{ .ref = temp.ref.? }, temp.loc) };
+                    stmts.append(p.s(S.Local{ .decls = Decl.List.fromOwnedSlice(decls) }, temp.loc)) catch unreachable;
+                }
+                p.auto_accessor_computed_key_refs.clearRetainingCapacity();
+
                 // Remove the export flag inside a namespace
                 const was_export_inside_namespace = data.is_export and p.enclosing_namespace_arg_ref != null;
                 if (was_export_inside_namespace) {

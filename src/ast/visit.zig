@@ -713,6 +713,20 @@ pub fn Visit(
                         }
                     }
                 }
+
+                // Lower auto-accessors into backing field + getter + setter
+                {
+                    var has_auto_accessors = false;
+                    for (class.properties) |prop| {
+                        if (prop.kind == .auto_accessor) {
+                            has_auto_accessors = true;
+                            break;
+                        }
+                    }
+                    if (has_auto_accessors) {
+                        class.properties = p.lowerAutoAccessors(class.properties);
+                    }
+                }
             }
 
             if (p.symbols.items[shadow_ref.innerIndex()].use_count_estimate == 0) {
@@ -830,6 +844,17 @@ pub fn Visit(
                         break :list_getter &visited;
                     };
                     try p.visitAndAppendStmt(list, stmt);
+
+                    // Emit var declarations for auto-accessor computed key temps
+                    // that were generated from class expressions during this statement.
+                    // (Class statement temps are handled in visitAndAppendStmt directly.)
+                    // var is hoisted so placement within the statement list is fine.
+                    for (p.auto_accessor_computed_key_refs.items) |temp| {
+                        const decls = p.allocator.alloc(G.Decl, 1) catch unreachable;
+                        decls[0] = .{ .binding = p.b(B.Identifier{ .ref = temp.ref.? }, temp.loc) };
+                        try list.append(p.s(S.Local{ .decls = G.Decl.List.fromOwnedSlice(decls) }, temp.loc));
+                    }
+                    p.auto_accessor_computed_key_refs.clearRetainingCapacity();
                 }
 
                 // Transform block-level function declarations into variable declarations

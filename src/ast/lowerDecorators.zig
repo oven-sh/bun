@@ -235,6 +235,7 @@ pub fn LowerDecorators(
                 },
                 .e_template => |e| {
                     if (e.tag) |*t| rewriteExpr(p, t, kind);
+                    for (e.parts) |*part| rewriteExpr(p, &part.value, kind);
                 },
                 .e_arrow => |e| rewriteStmts(p, e.body.stmts, kind),
                 .e_function => |e| {
@@ -1112,10 +1113,31 @@ pub fn LowerDecorators(
                     switch (elem.kind) {
                         .block => {
                             const sb = extracted_static_blocks.items[elem.index];
-                            rewriteStmts(p, sb.stmts.slice(), .{ .replace_this = .{ .ref = class_name_ref, .loc = class_name_loc } });
-                            for (sb.stmts.slice()) |sb_stmt| {
-                                if (sb_stmt.data == .s_expr)
+                            const stmts_slice = sb.stmts.slice();
+                            rewriteStmts(p, stmts_slice, .{ .replace_this = .{ .ref = class_name_ref, .loc = class_name_loc } });
+
+                            // Check if all statements are simple expressions
+                            const all_exprs = blk: {
+                                for (stmts_slice) |sb_stmt| {
+                                    if (sb_stmt.data != .s_expr) break :blk false;
+                                }
+                                break :blk true;
+                            };
+
+                            if (all_exprs) {
+                                for (stmts_slice) |sb_stmt| {
                                     suffix_exprs.append(sb_stmt.data.s_expr.value) catch unreachable;
+                                }
+                            } else {
+                                // Wrap in IIFE to preserve non-expression statements
+                                const iife_body = p.newExpr(E.Arrow{
+                                    .body = .{ .loc = loc, .stmts = stmts_slice },
+                                    .is_async = false,
+                                }, loc);
+                                suffix_exprs.append(p.newExpr(E.Call{
+                                    .target = iife_body,
+                                    .args = ExprNodeList.empty,
+                                }, loc)) catch unreachable;
                             }
                         },
                         .field_or_accessor => {

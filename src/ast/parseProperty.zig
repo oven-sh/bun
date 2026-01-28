@@ -528,6 +528,12 @@ pub fn ParseProperty(
                     };
                 }
 
+                // Auto-accessor fields cannot be methods
+                if (kind == .auto_accessor and p.lexer.token == .t_open_paren) {
+                    p.log.addRangeError(p.source, key_range, "auto-accessor properties cannot have a method body") catch unreachable;
+                    return error.SyntaxError;
+                }
+
                 // Parse a method expression
                 if (p.lexer.token == .t_open_paren or kind != .normal or opts.is_class or opts.is_async or opts.is_generator) {
                     return parseMethodExpression(p, kind, opts, is_computed, &key, key_range);

@@ -314,6 +314,66 @@ describe("junit reporter", () => {
     expect(xmlContent1).toContain("line=");
     expect(xmlContent2).toContain("line=");
   });
+
+  it("should emit flakyFailure for tests that pass after retry", async () => {
+    const tmpDir = tempDirWithFiles("junit-flaky", {
+      "package.json": "{}",
+      "flaky.test.js": `
+        import { test, expect } from "bun:test";
+        let attempt = 0;
+        test("flaky test", { retry: 3 }, () => {
+          attempt++;
+          if (attempt < 3) {
+            throw new Error("flaky failure attempt " + attempt);
+          }
+          expect(true).toBe(true);
+        });
+
+        test("stable test", () => {
+          expect(1 + 1).toBe(2);
+        });
+      `,
+    });
+
+    const junitPath = `${tmpDir}/junit.xml`;
+    const proc = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile", junitPath], {
+      cwd: tmpDir,
+      env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    await proc.exited;
+
+    expect(proc.exitCode).toBe(0);
+    const xmlContent = await file(junitPath).text();
+
+    // The flaky test should have flakyFailure elements (2 failures before passing on attempt 3)
+    expect(xmlContent).toContain("<flakyFailure");
+    const flakyFailureCount = (xmlContent.match(/<flakyFailure/g) || []).length;
+    expect(flakyFailureCount).toBe(2);
+
+    // Each flakyFailure should have type and time attributes
+    const flakyElements = [...xmlContent.matchAll(/<flakyFailure\s+([^/]*)\//g)];
+    expect(flakyElements).toHaveLength(2);
+    for (const el of flakyElements) {
+      expect(el[1]).toContain('type="AssertionError"');
+      expect(el[1]).toMatch(/time="[\d.]+"/);
+    }
+
+    // The stable test should be self-closing (no flakyFailure)
+    expect(xmlContent).toContain('name="stable test"');
+
+    // Both tests passed, so failures should be 0
+    const result = await new Promise((resolve, reject) => {
+      xml2js.parseString(xmlContent, (err, result) => {
+        if (err) reject(err);
+        else resolve(result);
+      });
+    });
+
+    expect(result.testsuites.$.failures).toBe("0");
+    expect(result.testsuites.$.tests).toBe("2");
+  });
 });
 
 function filterJunitXmlOutput(xmlContent) {

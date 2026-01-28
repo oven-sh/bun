@@ -588,6 +588,20 @@ Valid values are:
 | `"hoisted"`  | Link dependencies in a shared `node_modules` directory. |
 | `"isolated"` | Link dependencies inside each package installation.     |
 
+### `install.minimumReleaseAge`
+
+Configure a minimum age for npm package versions. Package versions published more recently than this threshold will be filtered out during installation. Default is `null` (disabled).
+
+```toml title="bunfig.toml" icon="settings"
+[install]
+# Only install package versions published at least 3 days ago
+minimumReleaseAge = "3d"
+# These packages will bypass the 3-day minimum age requirement
+minimumReleaseAgeExcludes = ["@types/bun", "typescript"]
+```
+
+For more details see [Minimum release age](/cli/install#minimum-release-age) in the install documentation.
+
 ```toml title="bunfig.toml" icon="settings"
 [debug]
 # When navigating to a blob: or src: link, open the file in your editor

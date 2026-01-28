@@ -255,11 +255,11 @@ The default is controlled by a `configVersion` field in your lockfile. For a det
 
 ## Minimum release age
 
-To protect against supply chain attacks where malicious packages are quickly published, you can configure a minimum age requirement for npm packages. Package versions published more recently than the specified threshold (in seconds) will be filtered out during installation.
+To protect against supply chain attacks where malicious packages are quickly published, you can configure a minimum age requirement for npm packages. Package versions published more recently than the specified threshold will be filtered out during installation.
 
 ```bash terminal icon="terminal"
 # Only install package versions published at least 3 days ago
-bun add @types/bun --minimum-release-age 259200 # seconds
+bun add @types/bun --minimum-release-age 3d
 ```
 
 You can also configure this in `bunfig.toml`:
@@ -267,7 +267,7 @@ You can also configure this in `bunfig.toml`:
 ```toml bunfig.toml icon="settings"
 [install]
 # Only install package versions published at least 3 days ago
-minimumReleaseAge = 259200 # seconds
+minimumReleaseAge = "3d"
 
 # Exclude trusted packages from the age gate
 minimumReleaseAgeExcludes = ["@types/node", "typescript"]
@@ -335,7 +335,7 @@ linker = "hoisted"
 
 
 # minimum age config
-minimumReleaseAge = 259200 # seconds
+minimumReleaseAge = "3d"
 minimumReleaseAgeExcludes = ["@types/node", "typescript"]
 ```
 

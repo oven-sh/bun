@@ -59,6 +59,7 @@
     macro(jest) \
     macro(listen) \
     macro(mmap) \
+    macro(ms) \
     macro(nanoseconds) \
     macro(openInEditor) \
     macro(registerMacro) \

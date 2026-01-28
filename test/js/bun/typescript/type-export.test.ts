@@ -205,7 +205,7 @@ test("js file with through export", () => {
     stdio: ["inherit", "pipe", "pipe"],
   });
 
-  expect(result.stderr?.toString().trim()).toInclude("SyntaxError: export 'type_only' not found in './ts.ts'\n");
+  expect(result.stderr?.toString().trim()).toInclude("SyntaxError: export 'type_only' not found in './ts.ts'");
   expect(result.exitCode).toBe(1);
 });
 
@@ -222,7 +222,7 @@ test("js file with through export 2", () => {
     stdio: ["inherit", "pipe", "pipe"],
   });
 
-  expect(result.stderr?.toString().trim()).toInclude("SyntaxError: export 'type_only' not found in './ts.ts'\n");
+  expect(result.stderr?.toString().trim()).toInclude("SyntaxError: export 'type_only' not found in './ts.ts'");
   expect(result.exitCode).toBe(1);
 });
 
@@ -268,7 +268,6 @@ describe("through export merge", () => {
   }
 });
 
-// TODO:
 test("check ownkeys from a star import", () => {
   const dir = tempDirWithFiles("ownkeys-star-import", {
     ["main.ts"]: `

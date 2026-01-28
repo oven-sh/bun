@@ -450,6 +450,7 @@ pub const Loader = struct {
                                     .can_be_removed_if_unused = true,
                                     .call_can_be_unwrapped_if_unused = .if_unused,
                                     .value = expr_data,
+                                    .replace_even_if_shadowed = true,
                                 }),
                             );
                             e_strings = e_strings[1..];
@@ -474,6 +475,7 @@ pub const Loader = struct {
                                         .can_be_removed_if_unused = true,
                                         .call_can_be_unwrapped_if_unused = .if_unused,
                                         .value = expr_data,
+                                        .replace_even_if_shadowed = true,
                                     }),
                                 );
                                 e_strings = e_strings[1..];
@@ -505,6 +507,7 @@ pub const Loader = struct {
                                 .can_be_removed_if_unused = true,
                                 .call_can_be_unwrapped_if_unused = .if_unused,
                                 .value = expr_data,
+                                .replace_even_if_shadowed = true,
                             }),
                         );
                         e_strings = e_strings[1..];

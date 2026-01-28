@@ -20,7 +20,7 @@ pub const StandaloneModuleGraph = struct {
         // Special case for windows because of file URLs being invalid
         // if they do not have a drive letter. B drive because 'bun' but
         // also because it's more unlikely to collide with a real path.
-        .windows => "B:\\~BUN\\",
+        .windows => "B:\\BUN\\",
     };
 
     pub const base_public_path = targetBasePublicPath(Environment.os, "");
@@ -40,7 +40,7 @@ pub const StandaloneModuleGraph = struct {
 
     pub fn targetBasePublicPath(target: Environment.OperatingSystem, comptime suffix: [:0]const u8) [:0]const u8 {
         return switch (target) {
-            .windows => "B:/~BUN/" ++ suffix,
+            .windows => "B:/BUN/" ++ suffix,
             else => "/$bunfs/" ++ suffix,
         };
     }

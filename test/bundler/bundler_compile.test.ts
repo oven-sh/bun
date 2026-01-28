@@ -396,7 +396,7 @@ describe("bundler", () => {
       stdout:
         process.platform !== "win32"
           ? `file:///$bunfs/root/out /$bunfs/root/out`
-          : `file:///B:/~BUN/root/out B:\\~BUN\\root\\out`,
+          : `file:///B:/BUN/root/out B:\\BUN\\root\\out`,
       setCwd: true,
     },
   });

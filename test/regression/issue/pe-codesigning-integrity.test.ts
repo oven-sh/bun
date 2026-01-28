@@ -234,11 +234,11 @@ console.log("Test data:", JSON.stringify(data));
 
     // Validate embedded data contains our test content
     // The embedded data is in StandaloneModuleGraph format, which includes:
-    // - Virtual path (B:/~BUN/root/filename)
+    // - Virtual path (B:/BUN/root/filename)
     // - JavaScript source code
     // - Binary metadata and trailer
     const embeddedText = new TextDecoder().decode(validation.bunSection!.embeddedData);
-    expect(embeddedText).toContain("B:/~BUN/root/"); // Windows virtual path
+    expect(embeddedText).toContain("B:/BUN/root/"); // Windows virtual path
     expect(embeddedText).toContain("Hello from PE codesigning test!");
     expect(embeddedText).toContain("PE integrity test");
     expect(embeddedText).toContain("---- Bun! ----"); // Trailer signature
@@ -289,7 +289,7 @@ console.log("Large data length:", JSON.stringify(largeData).length);
     expect(validation.bunSection!.dataSize).toBeGreaterThan(1000); // Should be substantial
 
     const embeddedText = new TextDecoder().decode(validation.bunSection!.embeddedData);
-    expect(embeddedText).toContain("B:/~BUN/root/"); // Virtual path
+    expect(embeddedText).toContain("B:/BUN/root/"); // Virtual path
     expect(embeddedText).toContain("Large PE test");
     expect(embeddedText).toContain("Large data test");
     expect(embeddedText).toContain("---- Bun! ----"); // Trailer

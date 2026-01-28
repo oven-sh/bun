@@ -271,6 +271,52 @@ pub fn LowerDecorators(
                     .s_return => |ret| {
                         if (ret.value) |*v| rewriteExpr(p, v, kind);
                     },
+                    .s_throw => |data| rewriteExpr(p, &data.value, kind),
+                    .s_if => |data| {
+                        rewriteExpr(p, &data.test_, kind);
+                        rewriteStmts(p, (&data.yes)[0..1], kind);
+                        if (data.no) |*no| rewriteStmts(p, no[0..1], kind);
+                    },
+                    .s_block => |data| rewriteStmts(p, data.stmts, kind),
+                    .s_for => |data| {
+                        if (data.init) |*fi| rewriteStmts(p, fi[0..1], kind);
+                        if (data.test_) |*t| rewriteExpr(p, t, kind);
+                        if (data.update) |*u| rewriteExpr(p, u, kind);
+                        rewriteStmts(p, (&data.body)[0..1], kind);
+                    },
+                    .s_for_in => |data| {
+                        rewriteExpr(p, &data.value, kind);
+                        rewriteStmts(p, (&data.body)[0..1], kind);
+                    },
+                    .s_for_of => |data| {
+                        rewriteExpr(p, &data.value, kind);
+                        rewriteStmts(p, (&data.body)[0..1], kind);
+                    },
+                    .s_while => |data| {
+                        rewriteExpr(p, &data.test_, kind);
+                        rewriteStmts(p, (&data.body)[0..1], kind);
+                    },
+                    .s_do_while => |data| {
+                        rewriteExpr(p, &data.test_, kind);
+                        rewriteStmts(p, (&data.body)[0..1], kind);
+                    },
+                    .s_switch => |data| {
+                        rewriteExpr(p, &data.test_, kind);
+                        for (data.cases) |*case| {
+                            if (case.value) |*v| rewriteExpr(p, v, kind);
+                            rewriteStmts(p, case.body, kind);
+                        }
+                    },
+                    .s_try => |data| {
+                        rewriteStmts(p, data.body, kind);
+                        if (data.catch_) |c| rewriteStmts(p, c.body, kind);
+                        if (data.finally) |f| rewriteStmts(p, f.stmts, kind);
+                    },
+                    .s_label => |data| rewriteStmts(p, (&data.stmt)[0..1], kind),
+                    .s_with => |data| {
+                        rewriteExpr(p, &data.value, kind);
+                        rewriteStmts(p, (&data.body)[0..1], kind);
+                    },
                     else => {},
                 }
             }
@@ -623,7 +669,7 @@ pub fn LowerDecorators(
             // For named class expressions: swap to expr_class_ref for suffix ops
             var original_class_name_for_decorator: ?[]const u8 = null;
             if (is_expr and !expr_class_is_anonymous and expr_class_ref != null) {
-                original_class_name_for_decorator = p.symbols.items[class_name_ref.inner_index].original_name;
+                original_class_name_for_decorator = p.symbols.items[class_name_ref.innerIndex()].original_name;
                 class_name_ref = expr_class_ref.?;
                 class_name_loc = loc;
             }
@@ -706,7 +752,7 @@ pub fn LowerDecorators(
                         prop.kind != .auto_accessor)
                     {
                         const nk_expr = prop.key.?;
-                        const npriv_orig = p.symbols.items[nk_expr.data.e_private_identifier.ref.inner_index].original_name;
+                        const npriv_orig = p.symbols.items[nk_expr.data.e_private_identifier.ref.innerIndex()].original_name;
                         const npriv_inner = nk_expr.data.e_private_identifier.ref.innerIndex();
 
                         if (prop.flags.contains(.is_method)) {
@@ -881,7 +927,7 @@ pub fn LowerDecorators(
                 var private_method_fn_ref: ?Ref = null;
 
                 if (is_private) {
-                    const private_orig = p.symbols.items[key_expr.data.e_private_identifier.ref.inner_index].original_name;
+                    const private_orig = p.symbols.items[key_expr.data.e_private_identifier.ref.innerIndex()].original_name;
                     const priv_inner = key_expr.data.e_private_identifier.ref.innerIndex();
 
                     if (k >= 1 and k <= 3) {
@@ -943,7 +989,7 @@ pub fn LowerDecorators(
                 dec_args[0] = p.newExpr(E.Identifier{ .ref = init_ref }, loc);
                 dec_args[1] = p.newExpr(E.Number{ .value = flags }, loc);
                 dec_args[2] = if (is_private)
-                    p.newExpr(E.String{ .data = p.symbols.items[key_expr.data.e_private_identifier.ref.inner_index].original_name }, loc)
+                    p.newExpr(E.String{ .data = p.symbols.items[key_expr.data.e_private_identifier.ref.innerIndex()].original_name }, loc)
                 else
                     key_expr;
                 dec_args[3] = decorator_array;
@@ -1081,7 +1127,7 @@ pub fn LowerDecorators(
                 else if (is_expr and expr_class_is_anonymous)
                     (name_from_context orelse "")
                 else
-                    p.symbols.items[class_name_ref.inner_index].original_name;
+                    p.symbols.items[class_name_ref.innerIndex()].original_name;
 
                 const cls_dec_args = bun.handleOom(p.allocator.alloc(Expr, 5));
                 cls_dec_args[0] = p.newExpr(E.Identifier{ .ref = init_ref }, loc);

@@ -805,6 +805,7 @@ pub fn installIsolatedPackages(
         const pkg_names = pkgs.items(.name);
         const pkg_name_hashes = pkgs.items(.name_hash);
         const pkg_resolutions = pkgs.items(.resolution);
+        const pkg_metas = pkgs.items(.meta);
 
         var seen_entry_ids: std.AutoHashMapUnmanaged(Store.Entry.Id, void) = .empty;
         defer seen_entry_ids.deinit(lockfile.allocator);
@@ -1085,6 +1086,7 @@ pub fn installIsolatedPackages(
                                 dep.name.slice(string_buf),
                                 &pkg_res,
                                 ctx,
+                                &pkg_metas[pkg_id].integrity,
                             );
                         },
                         .remote_tarball => {

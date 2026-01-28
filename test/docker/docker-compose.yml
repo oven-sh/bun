@@ -21,20 +21,17 @@ services:
       start_period: 5s
 
   postgres_tls:
-    image: postgres:15
-    environment:
-      POSTGRES_HOST_AUTH_METHOD: trust
-      POSTGRES_USER: postgres
-    volumes:
-      - ./init-scripts/postgres:/docker-entrypoint-initdb.d:ro
-      - ../js/sql/docker-tls/server.crt:/etc/postgresql/ssl/server.crt:ro
-      - ../js/sql/docker-tls/server.key:/etc/postgresql/ssl/server.key:ro
+    build:
+      context: ../js/sql/docker-tls
+      dockerfile: Dockerfile
+    image: bun-postgres-tls:local
     ports:
       - target: 5432
         published: 0
         protocol: tcp
     command: >
       postgres
+      -c hba_file=/etc/postgresql/pg_hba.conf
       -c ssl=on
       -c ssl_cert_file=/etc/postgresql/ssl/server.crt
       -c ssl_key_file=/etc/postgresql/ssl/server.key
@@ -47,7 +44,8 @@ services:
       interval: 1h # Effectively disable after startup
       timeout: 5s
       retries: 30
-      start_period: 5s
+      start_period: 60s
+      start_interval: 1s
 
   postgres_auth:
     image: postgres:15

@@ -6,7 +6,8 @@ endif()
 
 optionx(BUILDKITE_ORGANIZATION_SLUG STRING "The organization slug to use on Buildkite" DEFAULT "bun")
 optionx(BUILDKITE_PIPELINE_SLUG STRING "The pipeline slug to use on Buildkite" DEFAULT "bun")
-optionx(BUILDKITE_BUILD_ID STRING "The build ID to use on Buildkite")
+optionx(BUILDKITE_BUILD_ID STRING "The build ID (UUID) to use on Buildkite")
+optionx(BUILDKITE_BUILD_NUMBER STRING "The build number to use on Buildkite")
 optionx(BUILDKITE_GROUP_ID STRING "The group ID to use on Buildkite")
 
 if(ENABLE_BASELINE)
@@ -32,7 +33,13 @@ if(NOT BUILDKITE_BUILD_ID)
   return()
 endif()
 
-setx(BUILDKITE_BUILD_URL https://buildkite.com/${BUILDKITE_ORGANIZATION_SLUG}/${BUILDKITE_PIPELINE_SLUG}/builds/${BUILDKITE_BUILD_ID})
+# Use BUILDKITE_BUILD_NUMBER for the URL if available, as the UUID format causes a 302 redirect
+# that CMake's file(DOWNLOAD) doesn't follow, resulting in empty response.
+if(BUILDKITE_BUILD_NUMBER)
+  setx(BUILDKITE_BUILD_URL https://buildkite.com/${BUILDKITE_ORGANIZATION_SLUG}/${BUILDKITE_PIPELINE_SLUG}/builds/${BUILDKITE_BUILD_NUMBER})
+else()
+  setx(BUILDKITE_BUILD_URL https://buildkite.com/${BUILDKITE_ORGANIZATION_SLUG}/${BUILDKITE_PIPELINE_SLUG}/builds/${BUILDKITE_BUILD_ID})
+endif()
 setx(BUILDKITE_BUILD_PATH ${BUILDKITE_BUILDS_PATH}/builds/${BUILDKITE_BUILD_ID})
 
 file(

@@ -906,6 +906,69 @@ declare module "bun" {
   }
 
   /**
+   * JSON5 related APIs
+   */
+  namespace JSON5 {
+    /**
+     * Parse a JSON5 string into a JavaScript value.
+     *
+     * JSON5 is a superset of JSON based on ECMAScript 5.1 that supports
+     * comments, trailing commas, unquoted keys, single-quoted strings,
+     * hex numbers, Infinity, NaN, and more.
+     *
+     * @category Utilities
+     *
+     * @param input The JSON5 string to parse
+     * @returns A JavaScript value
+     *
+     * @example
+     * ```ts
+     * import { JSON5 } from "bun";
+     *
+     * const result = JSON5.parse(`{
+     *   // This is a comment
+     *   name: 'my-app',
+     *   version: '1.0.0', // trailing comma is allowed
+     *   hex: 0xDEADbeef,
+     *   half: .5,
+     *   infinity: Infinity,
+     * }`);
+     * ```
+     */
+    export function parse(input: string): unknown;
+
+    /**
+     * Convert a JavaScript value into a JSON5 string. Object keys that are
+     * valid identifiers are unquoted, strings use double quotes, `Infinity`
+     * and `NaN` are represented as literals, and indented output includes
+     * trailing commas.
+     *
+     * @category Utilities
+     *
+     * @param input The JavaScript value to stringify.
+     * @param replacer Currently not supported.
+     * @param space A number for how many spaces each level of indentation gets, or a string used as indentation.
+     *              The number is clamped between 0 and 10, and the first 10 characters of the string are used.
+     * @returns A JSON5 string, or `undefined` if the input is `undefined`, a function, or a symbol.
+     *
+     * @example
+     * ```ts
+     * import { JSON5 } from "bun";
+     *
+     * console.log(JSON5.stringify({ a: 1, b: "two" }));
+     * // {a:1,b:"two"}
+     *
+     * console.log(JSON5.stringify({ a: 1, b: 2 }, null, 2));
+     * // {
+     * //   a: 1,
+     * //   b: 2,
+     * // }
+     * ```
+     */
+    export function stringify(input: unknown, replacer?: undefined | null, space?: string | number): string | undefined;
+  }
+
+  /**
    * Synchronously resolve a `moduleId` as though it were imported from `parent`
    *
    * On failure, throws a `ResolveMessage`

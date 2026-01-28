@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test" with { todo: "true" };
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
 const a_file = `

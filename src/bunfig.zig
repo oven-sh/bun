@@ -185,6 +185,220 @@ pub const Bunfig = struct {
             }
         }
 
+        /// Parse test configuration options from a test section object.
+        /// This is called once for the base [test] section and optionally
+        /// again for a conditional section like [test.ci].
+        fn parseTestOptions(this: *Parser, test_: js_ast.Expr, allocator: std.mem.Allocator) !void {
+            if (test_.get("root")) |root| {
+                this.ctx.debug.test_directory = root.asString(this.allocator) orelse "";
+            }
+
+            if (test_.get("preload")) |expr| {
+                try this.loadPreload(allocator, expr);
+            }
+
+            if (test_.get("smol")) |expr| {
+                try this.expect(expr, .e_boolean);
+                this.ctx.runtime_options.smol = expr.data.e_boolean.value;
+            }
+
+            if (test_.get("coverage")) |expr| {
+                try this.expect(expr, .e_boolean);
+                this.ctx.test_options.coverage.enabled = expr.data.e_boolean.value;
+            }
+
+            if (test_.get("onlyFailures")) |expr| {
+                try this.expect(expr, .e_boolean);
+                this.ctx.test_options.reporters.only_failures = expr.data.e_boolean.value;
+            }
+
+            if (test_.get("reporter")) |expr| {
+                try this.expect(expr, .e_object);
+                if (expr.get("junit")) |junit_expr| {
+                    try this.expectString(junit_expr);
+                    if (junit_expr.data.e_string.len() > 0) {
+                        this.ctx.test_options.reporters.junit = true;
+                        this.ctx.test_options.reporter_outfile = try junit_expr.data.e_string.string(allocator);
+                    }
+                }
+                if (expr.get("dots") orelse expr.get("dot")) |dots_expr| {
+                    try this.expect(dots_expr, .e_boolean);
+                    this.ctx.test_options.reporters.dots = dots_expr.data.e_boolean.value;
+                }
+            }
+
+            if (test_.get("coverageReporter")) |expr| brk: {
+                this.ctx.test_options.coverage.reporters = .{ .text = false, .lcov = false };
+                if (expr.data == .e_string) {
+                    const item_str = expr.asString(bun.default_allocator) orelse "";
+                    if (bun.strings.eqlComptime(item_str, "text")) {
+                        this.ctx.test_options.coverage.reporters.text = true;
+                    } else if (bun.strings.eqlComptime(item_str, "lcov")) {
+                        this.ctx.test_options.coverage.reporters.lcov = true;
+                    } else {
+                        try this.addErrorFormat(expr.loc, allocator, "Invalid coverage reporter \"{s}\"", .{item_str});
+                    }
+
+                    break :brk;
+                }
+
+                try this.expect(expr, .e_array);
+                const items = expr.data.e_array.items.slice();
+                for (items) |item| {
+                    try this.expectString(item);
+                    const item_str = item.asString(bun.default_allocator) orelse "";
+                    if (bun.strings.eqlComptime(item_str, "text")) {
+                        this.ctx.test_options.coverage.reporters.text = true;
+                    } else if (bun.strings.eqlComptime(item_str, "lcov")) {
+                        this.ctx.test_options.coverage.reporters.lcov = true;
+                    } else {
+                        try this.addErrorFormat(item.loc, allocator, "Invalid coverage reporter \"{s}\"", .{item_str});
+                    }
+                }
+            }
+
+            if (test_.get("coverageDir")) |expr| {
+                try this.expectString(expr);
+                this.ctx.test_options.coverage.reports_directory = try expr.data.e_string.string(allocator);
+            }
+
+            if (test_.get("coverageThreshold")) |expr| outer: {
+                if (expr.data == .e_number) {
+                    this.ctx.test_options.coverage.fractions.functions = expr.data.e_number.value;
+                    this.ctx.test_options.coverage.fractions.lines = expr.data.e_number.value;
+                    this.ctx.test_options.coverage.fractions.stmts = expr.data.e_number.value;
+                    this.ctx.test_options.coverage.fail_on_low_coverage = true;
+                    break :outer;
+                }
+
+                try this.expect(expr, .e_object);
+                if (expr.get("functions")) |functions| {
+                    try this.expect(functions, .e_number);
+                    this.ctx.test_options.coverage.fractions.functions = functions.data.e_number.value;
+                    this.ctx.test_options.coverage.fail_on_low_coverage = true;
+                }
+
+                if (expr.get("lines")) |lines| {
+                    try this.expect(lines, .e_number);
+                    this.ctx.test_options.coverage.fractions.lines = lines.data.e_number.value;
+                    this.ctx.test_options.coverage.fail_on_low_coverage = true;
+                }
+
+                if (expr.get("statements")) |stmts| {
+                    try this.expect(stmts, .e_number);
+                    this.ctx.test_options.coverage.fractions.stmts = stmts.data.e_number.value;
+                    this.ctx.test_options.coverage.fail_on_low_coverage = true;
+                }
+            }
+
+            // This mostly exists for debugging.
+            if (test_.get("coverageIgnoreSourcemaps")) |expr| {
+                try this.expect(expr, .e_boolean);
+                this.ctx.test_options.coverage.ignore_sourcemap = expr.data.e_boolean.value;
+            }
+
+            if (test_.get("coverageSkipTestFiles")) |expr| {
+                try this.expect(expr, .e_boolean);
+                this.ctx.test_options.coverage.skip_test_files = expr.data.e_boolean.value;
+            }
+
+            if (test_.get("randomize")) |expr| {
+                try this.expect(expr, .e_boolean);
+                this.ctx.test_options.randomize = expr.data.e_boolean.value;
+            }
+
+            if (test_.get("seed")) |expr| {
+                try this.expect(expr, .e_number);
+                const seed_value = expr.data.e_number.toU32();
+
+                // Validate that randomize is true when seed is specified
+                if (!this.ctx.test_options.randomize) {
+                    try this.addError(expr.loc, "\"seed\" can only be used when \"randomize\" is true");
+                }
+
+                this.ctx.test_options.seed = seed_value;
+            }
+
+            if (test_.get("rerunEach")) |expr| {
+                try this.expect(expr, .e_number);
+                this.ctx.test_options.repeat_count = expr.data.e_number.toU32();
+            }
+
+            if (test_.get("timeout")) |expr| {
+                try this.expect(expr, .e_number);
+                this.ctx.test_options.default_timeout_ms = expr.data.e_number.toU32();
+            }
+
+            if (test_.get("concurrentTestGlob")) |expr| {
+                switch (expr.data) {
+                    .e_string => |str| {
+                        // Reject empty strings
+                        if (str.len() == 0) {
+                            try this.addError(expr.loc, "concurrentTestGlob cannot be an empty string");
+                            return;
+                        }
+                        const pattern = try str.string(allocator);
+                        const patterns = try allocator.alloc(string, 1);
+                        patterns[0] = pattern;
+                        this.ctx.test_options.concurrent_test_glob = patterns;
+                    },
+                    .e_array => |arr| {
+                        if (arr.items.len == 0) {
+                            try this.addError(expr.loc, "concurrentTestGlob array cannot be empty");
+                            return;
+                        }
+
+                        const patterns = try allocator.alloc(string, arr.items.len);
+                        for (arr.items.slice(), 0..) |item, i| {
+                            if (item.data != .e_string) {
+                                try this.addError(item.loc, "concurrentTestGlob array must contain only strings");
+                                return;
+                            }
+                            // Reject empty strings in array
+                            if (item.data.e_string.len() == 0) {
+                                try this.addError(item.loc, "concurrentTestGlob patterns cannot be empty strings");
+                                return;
+                            }
+                            patterns[i] = try item.data.e_string.string(allocator);
+                        }
+                        this.ctx.test_options.concurrent_test_glob = patterns;
+                    },
+                    else => {
+                        try this.addError(expr.loc, "concurrentTestGlob must be a string or array of strings");
+                        return;
+                    },
+                }
+            }
+
+            if (test_.get("coveragePathIgnorePatterns")) |expr| brk: {
+                switch (expr.data) {
+                    .e_string => |str| {
+                        const pattern = try str.string(allocator);
+                        const patterns = try allocator.alloc(string, 1);
+                        patterns[0] = pattern;
+                        this.ctx.test_options.coverage.ignore_patterns = patterns;
+                    },
+                    .e_array => |arr| {
+                        if (arr.items.len == 0) break :brk;
+
+                        const patterns = try allocator.alloc(string, arr.items.len);
+                        for (arr.items.slice(), 0..) |item, i| {
+                            if (item.data != .e_string) {
+                                try this.addError(item.loc, "coveragePathIgnorePatterns array must contain only strings");
+                                return;
+                            }
+                            patterns[i] = try item.data.e_string.string(allocator);
+                        }
+                        this.ctx.test_options.coverage.ignore_patterns = patterns;
+                    },
+                    else => {
+                        try this.addError(expr.loc, "coveragePathIgnorePatterns must be a string or array of strings");
+                        return;
+                    },
+                }
+            }
+        }
+
         pub fn parse(this: *Parser, comptime cmd: Command.Tag) !void {
             bun.analytics.Features.bunfig += 1;
 
@@ -261,213 +475,15 @@ pub const Bunfig = struct {
             }
 
             if (comptime cmd == .TestCommand) {
+                // First, parse the base [test] section if present
                 if (json.get("test")) |test_| {
-                    if (test_.get("root")) |root| {
-                        this.ctx.debug.test_directory = root.asString(this.allocator) orelse "";
-                    }
+                    try this.parseTestOptions(test_, allocator);
 
-                    if (test_.get("preload")) |expr| {
-                        try this.loadPreload(allocator, expr);
-                    }
-
-                    if (test_.get("smol")) |expr| {
-                        try this.expect(expr, .e_boolean);
-                        this.ctx.runtime_options.smol = expr.data.e_boolean.value;
-                    }
-
-                    if (test_.get("coverage")) |expr| {
-                        try this.expect(expr, .e_boolean);
-                        this.ctx.test_options.coverage.enabled = expr.data.e_boolean.value;
-                    }
-
-                    if (test_.get("onlyFailures")) |expr| {
-                        try this.expect(expr, .e_boolean);
-                        this.ctx.test_options.reporters.only_failures = expr.data.e_boolean.value;
-                    }
-
-                    if (test_.get("reporter")) |expr| {
-                        try this.expect(expr, .e_object);
-                        if (expr.get("junit")) |junit_expr| {
-                            try this.expectString(junit_expr);
-                            if (junit_expr.data.e_string.len() > 0) {
-                                this.ctx.test_options.reporters.junit = true;
-                                this.ctx.test_options.reporter_outfile = try junit_expr.data.e_string.string(allocator);
-                            }
-                        }
-                        if (expr.get("dots") orelse expr.get("dot")) |dots_expr| {
-                            try this.expect(dots_expr, .e_boolean);
-                            this.ctx.test_options.reporters.dots = dots_expr.data.e_boolean.value;
-                        }
-                    }
-
-                    if (test_.get("coverageReporter")) |expr| brk: {
-                        this.ctx.test_options.coverage.reporters = .{ .text = false, .lcov = false };
-                        if (expr.data == .e_string) {
-                            const item_str = expr.asString(bun.default_allocator) orelse "";
-                            if (bun.strings.eqlComptime(item_str, "text")) {
-                                this.ctx.test_options.coverage.reporters.text = true;
-                            } else if (bun.strings.eqlComptime(item_str, "lcov")) {
-                                this.ctx.test_options.coverage.reporters.lcov = true;
-                            } else {
-                                try this.addErrorFormat(expr.loc, allocator, "Invalid coverage reporter \"{s}\"", .{item_str});
-                            }
-
-                            break :brk;
-                        }
-
-                        try this.expect(expr, .e_array);
-                        const items = expr.data.e_array.items.slice();
-                        for (items) |item| {
-                            try this.expectString(item);
-                            const item_str = item.asString(bun.default_allocator) orelse "";
-                            if (bun.strings.eqlComptime(item_str, "text")) {
-                                this.ctx.test_options.coverage.reporters.text = true;
-                            } else if (bun.strings.eqlComptime(item_str, "lcov")) {
-                                this.ctx.test_options.coverage.reporters.lcov = true;
-                            } else {
-                                try this.addErrorFormat(item.loc, allocator, "Invalid coverage reporter \"{s}\"", .{item_str});
-                            }
-                        }
-                    }
-
-                    if (test_.get("coverageDir")) |expr| {
-                        try this.expectString(expr);
-                        this.ctx.test_options.coverage.reports_directory = try expr.data.e_string.string(allocator);
-                    }
-
-                    if (test_.get("coverageThreshold")) |expr| outer: {
-                        if (expr.data == .e_number) {
-                            this.ctx.test_options.coverage.fractions.functions = expr.data.e_number.value;
-                            this.ctx.test_options.coverage.fractions.lines = expr.data.e_number.value;
-                            this.ctx.test_options.coverage.fractions.stmts = expr.data.e_number.value;
-                            this.ctx.test_options.coverage.fail_on_low_coverage = true;
-                            break :outer;
-                        }
-
-                        try this.expect(expr, .e_object);
-                        if (expr.get("functions")) |functions| {
-                            try this.expect(functions, .e_number);
-                            this.ctx.test_options.coverage.fractions.functions = functions.data.e_number.value;
-                            this.ctx.test_options.coverage.fail_on_low_coverage = true;
-                        }
-
-                        if (expr.get("lines")) |lines| {
-                            try this.expect(lines, .e_number);
-                            this.ctx.test_options.coverage.fractions.lines = lines.data.e_number.value;
-                            this.ctx.test_options.coverage.fail_on_low_coverage = true;
-                        }
-
-                        if (expr.get("statements")) |stmts| {
-                            try this.expect(stmts, .e_number);
-                            this.ctx.test_options.coverage.fractions.stmts = stmts.data.e_number.value;
-                            this.ctx.test_options.coverage.fail_on_low_coverage = true;
-                        }
-                    }
-
-                    // This mostly exists for debugging.
-                    if (test_.get("coverageIgnoreSourcemaps")) |expr| {
-                        try this.expect(expr, .e_boolean);
-                        this.ctx.test_options.coverage.ignore_sourcemap = expr.data.e_boolean.value;
-                    }
-
-                    if (test_.get("coverageSkipTestFiles")) |expr| {
-                        try this.expect(expr, .e_boolean);
-                        this.ctx.test_options.coverage.skip_test_files = expr.data.e_boolean.value;
-                    }
-
-                    var randomize_from_config: ?bool = null;
-
-                    if (test_.get("randomize")) |expr| {
-                        try this.expect(expr, .e_boolean);
-                        randomize_from_config = expr.data.e_boolean.value;
-                        this.ctx.test_options.randomize = expr.data.e_boolean.value;
-                    }
-
-                    if (test_.get("seed")) |expr| {
-                        try this.expect(expr, .e_number);
-                        const seed_value = expr.data.e_number.toU32();
-
-                        // Validate that randomize is true when seed is specified
-                        // Either randomize must be set to true in this config, or already enabled
-                        const has_randomize_true = (randomize_from_config orelse this.ctx.test_options.randomize);
-                        if (!has_randomize_true) {
-                            try this.addError(expr.loc, "\"seed\" can only be used when \"randomize\" is true");
-                        }
-
-                        this.ctx.test_options.seed = seed_value;
-                    }
-
-                    if (test_.get("rerunEach")) |expr| {
-                        try this.expect(expr, .e_number);
-                        this.ctx.test_options.repeat_count = expr.data.e_number.toU32();
-                    }
-
-                    if (test_.get("concurrentTestGlob")) |expr| {
-                        switch (expr.data) {
-                            .e_string => |str| {
-                                // Reject empty strings
-                                if (str.len() == 0) {
-                                    try this.addError(expr.loc, "concurrentTestGlob cannot be an empty string");
-                                    return;
-                                }
-                                const pattern = try str.string(allocator);
-                                const patterns = try allocator.alloc(string, 1);
-                                patterns[0] = pattern;
-                                this.ctx.test_options.concurrent_test_glob = patterns;
-                            },
-                            .e_array => |arr| {
-                                if (arr.items.len == 0) {
-                                    try this.addError(expr.loc, "concurrentTestGlob array cannot be empty");
-                                    return;
-                                }
-
-                                const patterns = try allocator.alloc(string, arr.items.len);
-                                for (arr.items.slice(), 0..) |item, i| {
-                                    if (item.data != .e_string) {
-                                        try this.addError(item.loc, "concurrentTestGlob array must contain only strings");
-                                        return;
-                                    }
-                                    // Reject empty strings in array
-                                    if (item.data.e_string.len() == 0) {
-                                        try this.addError(item.loc, "concurrentTestGlob patterns cannot be empty strings");
-                                        return;
-                                    }
-                                    patterns[i] = try item.data.e_string.string(allocator);
-                                }
-                                this.ctx.test_options.concurrent_test_glob = patterns;
-                            },
-                            else => {
-                                try this.addError(expr.loc, "concurrentTestGlob must be a string or array of strings");
-                                return;
-                            },
-                        }
-                    }
-
-                    if (test_.get("coveragePathIgnorePatterns")) |expr| brk: {
-                        switch (expr.data) {
-                            .e_string => |str| {
-                                const pattern = try str.string(allocator);
-                                const patterns = try allocator.alloc(string, 1);
-                                patterns[0] = pattern;
-                                this.ctx.test_options.coverage.ignore_patterns = patterns;
-                            },
-                            .e_array => |arr| {
-                                if (arr.items.len == 0) break :brk;
-
-                                const patterns = try allocator.alloc(string, arr.items.len);
-                                for (arr.items.slice(), 0..) |item, i| {
-                                    if (item.data != .e_string) {
-                                        try this.addError(item.loc, "coveragePathIgnorePatterns array must contain only strings");
-                                        return;
-                                    }
-                                    patterns[i] = try item.data.e_string.string(allocator);
-                                }
-                                this.ctx.test_options.coverage.ignore_patterns = patterns;
-                            },
-                            else => {
-                                try this.addError(expr.loc, "coveragePathIgnorePatterns must be a string or array of strings");
-                                return;
-                            },
+                    // If a conditional config section was specified (e.g., --config=ci),
+                    // look for and apply [test.<section_name>] to override settings
+                    if (this.ctx.test_options.config_section_name) |section_name| {
+                        if (test_.get(section_name)) |conditional_section| {
+                            try this.parseTestOptions(conditional_section, allocator);
                         }
                     }
                 }

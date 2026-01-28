@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { spawnSync } from "child_process";
-import { existsSync, mkdirSync } from "fs";
+import { copyFileSync, existsSync, mkdirSync, unlinkSync } from "fs";
 import { arch, platform } from "os";
 import { join, resolve } from "path";
 
@@ -146,7 +146,6 @@ const getCommonFlags = (config: BuildConfig) => {
     flags.push(
       "-DENABLE_REMOTE_INSPECTOR=ON",
       "-DUSE_VISIBILITY_ATTRIBUTE=1",
-      "-DUSE_SYSTEM_MALLOC=ON",
       `-DCMAKE_LINKER=${lldLink}`,
       `-DICU_ROOT=${VCPKG_ROOT}`,
       `-DICU_LIBRARY=${icuPaths.ICU_LIBRARY}`,
@@ -279,6 +278,43 @@ function buildJSC() {
     cwd: buildDir,
     env,
   });
+
+  // Remove duplicate InspectorProtocolObjects.h that causes redefinition errors
+  // The file exists in both DerivedSources and PrivateHeaders, causing conflicts
+  const duplicateHeader = join(buildDir, "JavaScriptCore/DerivedSources/inspector/InspectorProtocolObjects.h");
+  if (existsSync(duplicateHeader)) {
+    console.log("\n🧹 Removing duplicate InspectorProtocolObjects.h...");
+    unlinkSync(duplicateHeader);
+    console.log(`  Deleted: ${duplicateHeader}`);
+  }
+
+  // On Windows, copy ICU libraries to the build output directory
+  // This is required for Bun's build:local to find them
+  if (IS_WINDOWS) {
+    console.log("\n📋 Copying ICU libraries to build output...");
+    const icuPaths = getICULibraryPaths(buildConfig);
+    const outputLibDir = join(buildDir, "lib");
+
+    mkdirSync(outputLibDir, { recursive: true });
+
+    const isDebug = buildConfig === "debug";
+    const suffix = isDebug ? "d" : "";
+
+    const icuLibsToCopy = [
+      { src: icuPaths.ICU_DATA_LIBRARY, dest: join(outputLibDir, `sicudt${suffix}.lib`) },
+      { src: icuPaths.ICU_I18N_LIBRARY, dest: join(outputLibDir, `sicuin${suffix}.lib`) },
+      { src: icuPaths.ICU_UC_LIBRARY, dest: join(outputLibDir, `sicuuc${suffix}.lib`) },
+    ];
+
+    for (const { src, dest } of icuLibsToCopy) {
+      if (existsSync(src)) {
+        copyFileSync(src, dest);
+        console.log(`  Copied: ${src} -> ${dest}`);
+      } else {
+        console.warn(`  Warning: ICU library not found: ${src}`);
+      }
+    }
+  }
 
   console.log(`\n✅ JSC build completed successfully!`);
   console.log(`Build output: ${buildDir}`);

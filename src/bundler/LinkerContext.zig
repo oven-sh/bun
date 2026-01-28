@@ -70,6 +70,7 @@ pub const LinkerContext = struct {
         css_chunking: bool = false,
         source_maps: options.SourceMapOption = .none,
         target: options.Target = .browser,
+        compile: bool = false,
         metafile: bool = false,
 
         mode: Mode = .bundle,

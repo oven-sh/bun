@@ -539,6 +539,14 @@ pub const FetchTasklet = struct {
                 const err = value.toJS(globalThis);
                 if (this.sink) |sink| {
                     sink.cancel(err);
+                } else if (this.request_body == .ReadableStream) {
+                    // If there's no sink yet (connection failed before streaming started),
+                    // we need to error the stream directly so that:
+                    // 1. controller.desiredSize returns null
+                    // 2. The underlying source's cancel callback is invoked
+                    if (this.request_body.ReadableStream.get(globalThis)) |stream| {
+                        stream.errorWithReason(globalThis, err);
+                    }
                 }
                 break :brk value.JSValue;
             },

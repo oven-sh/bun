@@ -421,28 +421,40 @@ pub fn onHandshake(this: *PostgresSQLConnection, success: i32, ssl_error: uws.us
     debug("onHandshake: {d} {d}", .{ success, ssl_error.error_no });
     const handshake_success = if (success == 1) true else false;
     if (handshake_success) {
-        if (this.tls_config.reject_unauthorized != 0) {
-            // only reject the connection if reject_unauthorized == true
-            switch (this.ssl_mode) {
-                // https://github.com/porsager/postgres/blob/6ec85a432b17661ccacbdf7f765c651e88969d36/src/connection.js#L272-L279
+        switch (this.ssl_mode) {
+            // https://github.com/porsager/postgres/blob/6ec85a432b17661ccacbdf7f765c651e88969d36/src/connection.js#L272-L279
 
-                .verify_ca, .verify_full => {
+            .verify_ca => {
+                if (ssl_error.error_no != 0) {
+                    this.failWithJSValue(ssl_error.toJS(this.globalObject) catch return);
+                    return;
+                }
+            },
+            .verify_full => {
+                if (ssl_error.error_no != 0) {
+                    this.failWithJSValue(ssl_error.toJS(this.globalObject) catch return);
+                    return;
+                }
+
+                const ssl_ptr: *BoringSSL.c.SSL = @ptrCast(this.socket.getNativeHandle());
+                if (BoringSSL.c.SSL_get_servername(ssl_ptr, 0)) |servername| {
+                    const hostname = servername[0..bun.len(servername)];
+                    if (!BoringSSL.checkServerIdentity(ssl_ptr, hostname)) {
+                        this.failWithJSValue(ssl_error.toJS(this.globalObject) catch return);
+                        return;
+                    }
+                }
+            },
+            // require is the same as prefer in terms of "if handshake succeeded, we are good"
+            // unless reject_unauthorized is strictly set in tls config
+            .require, .prefer, .disable => {
+                if (this.tls_config.reject_unauthorized != 0) {
                     if (ssl_error.error_no != 0) {
                         this.failWithJSValue(ssl_error.toJS(this.globalObject) catch return);
                         return;
                     }
-
-                    const ssl_ptr: *BoringSSL.c.SSL = @ptrCast(this.socket.getNativeHandle());
-                    if (BoringSSL.c.SSL_get_servername(ssl_ptr, 0)) |servername| {
-                        const hostname = servername[0..bun.len(servername)];
-                        if (!BoringSSL.checkServerIdentity(ssl_ptr, hostname)) {
-                            this.failWithJSValue(ssl_error.toJS(this.globalObject) catch return);
-                        }
-                    }
-                },
-                // require is the same as prefer
-                .require, .prefer, .disable => {},
-            }
+                }
+            },
         }
     } else {
         // if we are here is because server rejected us, and the error_no is the cause of this

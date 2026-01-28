@@ -235,10 +235,45 @@ fn SocketHandler(comptime ssl: bool) type {
 
         fn onHandshake_(
             this: *JSMySQLConnection,
-            _: anytype,
+            s: SocketType,
             success: i32,
             ssl_error: uws.us_bun_verify_error_t,
         ) void {
+            const handshake_success = success == 1;
+            if (handshake_success) {
+                switch (this.#connection.ssl_mode) {
+                    .verify_ca => {
+                        if (ssl_error.error_no != 0) {
+                            this.failWithJSValue(ssl_error.toJS(this.#globalObject) catch return);
+                            return;
+                        }
+                    },
+                    .verify_full => {
+                        if (ssl_error.error_no != 0) {
+                            this.failWithJSValue(ssl_error.toJS(this.#globalObject) catch return);
+                            return;
+                        }
+
+                        const ssl_ptr: *bun.BoringSSL.c.SSL = @ptrCast(s.getNativeHandle());
+                        if (bun.BoringSSL.c.SSL_get_servername(ssl_ptr, 0)) |servername| {
+                            const hostname = servername[0..bun.len(servername)];
+                            if (!bun.BoringSSL.checkServerIdentity(ssl_ptr, hostname)) {
+                                this.failWithJSValue(ssl_error.toJS(this.#globalObject) catch return);
+                                return;
+                            }
+                        }
+                    },
+                    .require, .prefer, .disable => {
+                        if (this.#connection.tls_config.reject_unauthorized != 0) {
+                            if (ssl_error.error_no != 0) {
+                                this.failWithJSValue(ssl_error.toJS(this.#globalObject) catch return);
+                                return;
+                            }
+                        }
+                    },
+                }
+            }
+
             const handshakeWasSuccessful = this.#connection.doHandshake(success, ssl_error) catch |err| return this.failFmt(err, "Failed to send handshake response", .{});
             if (!handshakeWasSuccessful) {
                 this.failWithJSValue(ssl_error.toJS(this.#globalObject) catch return);

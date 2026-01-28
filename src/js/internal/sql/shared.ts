@@ -584,7 +584,8 @@ function parseOptions(
 
   // The rest of this function is logic specific to postgres/mysql/mariadb (they have the same options object)
 
-  let sslMode: SSLMode = sslModeFromConnectionDetails || SSLMode.disable;
+  // Default to prefer, as standard Postgres clients usually do
+  let sslMode: SSLMode = sslModeFromConnectionDetails || SSLMode.prefer;
 
   let url = _url;
 
@@ -634,6 +635,47 @@ function parseOptions(
       }
     }
     query = query.trim();
+  }
+
+  // Handle explicit options.ssl overrides
+  if (options.ssl) {
+    if (typeof options.ssl === "string") {
+      sslMode = normalizeSSLMode(options.ssl);
+    } else if (typeof options.ssl === "boolean") {
+      sslMode = options.ssl ? SSLMode.prefer : SSLMode.disable;
+    }
+  }
+
+  tls = options.tls;
+
+  // Support legacy behavior where ssl option is the tls config object
+  if (!tls && typeof options.ssl === "object" && options.ssl !== null) {
+    tls = options.ssl as Bun.TLSOptions;
+    // If passing a config object, imply SSL preference if currently disabled
+    if (sslMode === SSLMode.disable) {
+      sslMode = SSLMode.prefer;
+    }
+  }
+
+  // If user explicitly set tls: false, and didn't set a specific SSL mode (it remains prefer),
+  // fallback to disable.
+  if (options.tls === false && !options.ssl && sslMode === SSLMode.prefer) {
+    sslMode = SSLMode.disable;
+  }
+
+  // If SSL is enabled but no TLS config is provided, default to system defaults (true)
+  if (sslMode !== SSLMode.disable && !tls) {
+    tls = true;
+  }
+
+  // Enforce rejectUnauthorized = true for verify modes.
+  // This ensures the SSL handshake actually performs verification so we can check the result in PostgresSQLConnection.zig.
+  // We do not strictly require tls.ca here, allowing usage of system CAs.
+  if (sslMode === SSLMode.verify_ca || sslMode === SSLMode.verify_full) {
+    if (typeof tls === "object" && tls !== null) {
+      (tls as Bun.TLSOptions).rejectUnauthorized = true;
+    }
+    // If tls is boolean (true), it defaults to rejectUnauthorized: true in the engine.
   }
 
   switch (adapter) {
@@ -759,7 +801,6 @@ function parseOptions(
     }
   }
 
-  tls ||= options.tls || options.ssl;
   max = options.max;
 
   idleTimeout ??= options.idleTimeout;
@@ -838,16 +879,15 @@ function parseOptions(
     }
   }
 
+  // Inject serverName for SNI and Hostname verification if not already present
   if (sslMode !== SSLMode.disable && !tls?.serverName) {
     if (hostname) {
-      tls = { ...tls, serverName: hostname };
-    } else if (tls) {
-      tls = true;
+      if (typeof tls === "boolean") {
+        tls = { serverName: hostname };
+      } else if (tls) {
+        tls = { ...tls, serverName: hostname };
+      }
     }
-  }
-
-  if (tls && sslMode === SSLMode.disable) {
-    sslMode = SSLMode.prefer;
   }
 
   port = Number(port);

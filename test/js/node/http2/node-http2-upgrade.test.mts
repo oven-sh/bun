@@ -407,3 +407,16 @@ describe("HTTP/2 upgrade — independent upgrade per connection", () => {
     srv.netServer.close();
   });
 });
+if (typeof Bun !== "undefined") {
+  describe("Node.js compatibility", () => {
+    test("tests should run on node.js", async () => {
+      const process = Bun.spawn({
+        cmd: [Bun.which("node") || "node", "--test", import.meta.filename],
+        stdout: "inherit",
+        stderr: "inherit",
+        stdin: "ignore",
+      });
+      expect(await process.exited).toBe(0);
+    });
+  });
+}

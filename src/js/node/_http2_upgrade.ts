@@ -1,42 +1,63 @@
 const { Duplex } = require("node:stream");
 const upgradeDuplexToTLS = $newZigFunction("socket.zig", "jsUpgradeDuplexToTLS", 2);
 
-/**
- * @typedef {Object} UpgradeContextType
- * @property {Function} connectionListener - H2 session factory
- * @property {Object} server - Http2SecureServer instance
- * @property {Object} rawSocket - Raw TCP socket being upgraded
- * @property {Object|null} nativeHandle - TLS socket handle from upgradeDuplexToTLS
- * @property {Array|null} events - [onData, onEnd, onDrain, onClose] event handlers
- */
+interface NativeHandle {
+  resume(): void;
+  close(): void;
+  end(): void;
+  $write(chunk: Buffer, encoding: string): boolean;
+  alpnProtocol?: string;
+}
 
-/**
- * @typedef {import("node:stream").Duplex & {
- *   _ctx: UpgradeContextType,
- *   _writeCallback?: Function,
- *   alpnProtocol: string|null,
- *   authorized: boolean,
- *   encrypted: boolean,
- *   server: Object,
- *   _requestCert: boolean,
- *   _rejectUnauthorized: boolean,
- *   _securePending: boolean,
- *   secureConnecting: boolean,
- *   _secureEstablished: boolean,
- *   authorizationError?: string,
- * }} TLSProxySocket
- */
+interface UpgradeContextType {
+  connectionListener: (...args: any[]) => any;
+  server: Http2SecureServer;
+  rawSocket: import("node:net").Socket;
+  nativeHandle: NativeHandle | null;
+  events: [(...args: any[]) => void, ...Function[]] | null;
+}
+
+interface Http2SecureServer {
+  key?: Buffer;
+  cert?: Buffer;
+  ca?: Buffer;
+  passphrase?: string;
+  ALPNProtocols?: Buffer;
+  _requestCert?: boolean;
+  _rejectUnauthorized?: boolean;
+  emit(event: string, ...args: any[]): boolean;
+}
+
+interface TLSProxySocket {
+  _ctx: UpgradeContextType;
+  _writeCallback?: () => void;
+  alpnProtocol: string | null;
+  authorized: boolean;
+  encrypted: boolean;
+  server: Http2SecureServer;
+  _requestCert: boolean;
+  _rejectUnauthorized: boolean;
+  _securePending: boolean;
+  secureConnecting: boolean;
+  _secureEstablished: boolean;
+  authorizationError?: string;
+  push(chunk: Buffer | null): boolean;
+  destroy(err?: Error): this;
+  emit(event: string, ...args: any[]): boolean;
+  resume(): void;
+  readonly destroyed: boolean;
+}
 
 /**
  * Context object holding upgrade-time state for the TLS proxy socket.
  * Attached as `tlsSocket._ctx` so named functions can reach it via `this._ctx`
  * (Duplex methods) or via a bound `this` (socket callbacks).
- *
- * @param {Function} connectionListener - H2 session factory
- * @param {Object} server - Http2SecureServer instance
- * @param {Object} rawSocket - Raw TCP socket being upgraded
  */
-function UpgradeContext(connectionListener, server, rawSocket) {
+function UpgradeContext(
+  connectionListener: (...args: any[]) => any,
+  server: Http2SecureServer,
+  rawSocket: import("node:net").Socket,
+) {
   this.connectionListener = connectionListener;
   this.server = server;
   this.rawSocket = rawSocket;
@@ -48,31 +69,20 @@ function UpgradeContext(connectionListener, server, rawSocket) {
 // Duplex stream methods — called with `this` = tlsSocket (standard stream API)
 // ---------------------------------------------------------------------------
 
-/**
- * _read: called by stream machinery when the H2 session wants data.
- * Resume the native TLS handle so it feeds decrypted data via the data callback.
- * Mirrors net.ts Socket.prototype._read which calls socket.resume().
- *
- * @this {TLSProxySocket}
- */
-function tlsSocketRead() {
+// _read: called by stream machinery when the H2 session wants data.
+// Resume the native TLS handle so it feeds decrypted data via the data callback.
+// Mirrors net.ts Socket.prototype._read which calls socket.resume().
+function tlsSocketRead(this: TLSProxySocket) {
   const h = this._ctx.nativeHandle;
   if (h) {
     h.resume();
   }
 }
 
-/**
- * _write: called when the H2 session writes outbound frames.
- * Forward to the native TLS handle for encryption, then back to rawSocket.
- * Mirrors net.ts Socket.prototype._write which calls socket.$write().
- *
- * @this {TLSProxySocket}
- * @param {Buffer} chunk - Data to encrypt and send
- * @param {string} encoding - Encoding (unused for Buffer chunks)
- * @param {Function} callback - Stream callback; invoke when write completes or on error
- */
-function tlsSocketWrite(chunk, encoding, callback) {
+// _write: called when the H2 session writes outbound frames.
+// Forward to the native TLS handle for encryption, then back to rawSocket.
+// Mirrors net.ts Socket.prototype._write which calls socket.$write().
+function tlsSocketWrite(this: TLSProxySocket, chunk: Buffer, encoding: string, callback: (err?: Error) => void) {
   const h = this._ctx.nativeHandle;
   if (!h) {
     callback(new Error("Socket is closed"));
@@ -87,16 +97,10 @@ function tlsSocketWrite(chunk, encoding, callback) {
   }
 }
 
-/**
- * _destroy: called when the stream is destroyed (e.g. tlsSocket.destroy(err)).
- * Cleans up the native TLS handle.
- * Mirrors net.ts Socket.prototype._destroy.
- *
- * @this {TLSProxySocket}
- * @param {Error|null} err - Error that caused destruction, or null
- * @param {Function} callback - Stream callback; invoke when cleanup is done
- */
-function tlsSocketDestroy(err, callback) {
+// _destroy: called when the stream is destroyed (e.g. tlsSocket.destroy(err)).
+// Cleans up the native TLS handle.
+// Mirrors net.ts Socket.prototype._destroy.
+function tlsSocketDestroy(this: TLSProxySocket, err: Error | null, callback: (err?: Error | null) => void) {
   const h = this._ctx.nativeHandle;
   if (h) {
     h.close();
@@ -105,15 +109,10 @@ function tlsSocketDestroy(err, callback) {
   callback(err);
 }
 
-/**
- * _final: called when the writable side is ending (all data flushed).
- * Shuts down the TLS write side gracefully.
- * Mirrors net.ts Socket.prototype._final.
- *
- * @this {TLSProxySocket}
- * @param {Function} callback - Stream callback; invoke when shutdown is done
- */
-function tlsSocketFinal(callback) {
+// _final: called when the writable side is ending (all data flushed).
+// Shuts down the TLS write side gracefully.
+// Mirrors net.ts Socket.prototype._final.
+function tlsSocketFinal(this: TLSProxySocket, callback: () => void) {
   const h = this._ctx.nativeHandle;
   if (!h) return callback();
   // Signal end-of-stream to the TLS layer
@@ -126,40 +125,24 @@ function tlsSocketFinal(callback) {
 // All are bound to tlsSocket so `this` inside each = tlsSocket.
 // ---------------------------------------------------------------------------
 
-/**
- * open: called when the TLS layer is initialized (before handshake).
- * No action needed; we wait for the handshake callback.
- */
+// open: called when the TLS layer is initialized (before handshake).
+// No action needed; we wait for the handshake callback.
 function socketOpen() {}
 
-/**
- * data: called with decrypted plaintext after the TLS layer decrypts incoming data.
- * Push into tlsSocket so the H2 session's _read() receives these frames.
- *
- * @this {TLSProxySocket}
- * @param {Object} _socket - Native socket handle (unused; we use bound this)
- * @param {Buffer} chunk - Decrypted data buffer
- */
-function socketData(_socket, chunk) {
+// data: called with decrypted plaintext after the TLS layer decrypts incoming data.
+// Push into tlsSocket so the H2 session's _read() receives these frames.
+function socketData(this: TLSProxySocket, _socket: NativeHandle, chunk: Buffer) {
   this.push(chunk);
 }
 
-/**
- * end: TLS peer signaled end-of-stream; signal EOF to the H2 session.
- *
- * @this {TLSProxySocket}
- */
-function socketEnd() {
+// end: TLS peer signaled end-of-stream; signal EOF to the H2 session.
+function socketEnd(this: TLSProxySocket) {
   this.push(null);
 }
 
-/**
- * drain: raw socket is writable again after being full; propagate backpressure signal.
- * If _write stored a callback waiting for drain, invoke it now.
- *
- * @this {TLSProxySocket}
- */
-function socketDrain() {
+// drain: raw socket is writable again after being full; propagate backpressure signal.
+// If _write stored a callback waiting for drain, invoke it now.
+function socketDrain(this: TLSProxySocket) {
   const cb = this._writeCallback;
   if (cb) {
     this._writeCallback = null;
@@ -167,27 +150,17 @@ function socketDrain() {
   }
 }
 
-/**
- * close: TLS connection closed; tear down the tlsSocket Duplex.
- *
- * @this {TLSProxySocket}
- */
-function socketClose() {
+// close: TLS connection closed; tear down the tlsSocket Duplex.
+function socketClose(this: TLSProxySocket) {
   if (!this.destroyed) {
     this.destroy();
   }
 }
 
-/**
- * error: TLS-level error (e.g. certificate verification failure).
- * In server mode without _requestCert, the server doesn't request a client cert,
- * so issuer verification errors on the server's own cert are non-fatal.
- *
- * @this {TLSProxySocket}
- * @param {Object} _socket - Native socket handle (unused; we use bound this)
- * @param {Error} err - TLS error
- */
-function socketError(_socket, err) {
+// error: TLS-level error (e.g. certificate verification failure).
+// In server mode without _requestCert, the server doesn't request a client cert,
+// so issuer verification errors on the server's own cert are non-fatal.
+function socketError(this: TLSProxySocket, _socket: NativeHandle, err: NodeJS.ErrnoException) {
   const ctx = this._ctx;
   if (!ctx.server._requestCert && err?.code === "UNABLE_TO_GET_ISSUER_CERT") {
     return;
@@ -195,31 +168,25 @@ function socketError(_socket, err) {
   this.destroy(err);
 }
 
-/**
- * timeout: socket idle timeout; forward to the Duplex so H2 session can handle it.
- *
- * @this {TLSProxySocket}
- */
-function socketTimeout() {
+// timeout: socket idle timeout; forward to the Duplex so H2 session can handle it.
+function socketTimeout(this: TLSProxySocket) {
   this.emit("timeout");
 }
 
-/**
- * handshake: TLS handshake completed. This is the critical callback that triggers
- * H2 session creation.
- *
- * Mirrors the handshake logic in net.ts ServerHandlers.handshake:
- *   - Set secure-connection state flags on tlsSocket
- *   - Read alpnProtocol from the native handle (set by ALPN negotiation)
- *   - Handle _requestCert / _rejectUnauthorized for mutual TLS
- *   - Call connectionListener to create the ServerHttp2Session
- *
- * @this {TLSProxySocket}
- * @param {Object} nativeHandle - The TLS socket handle with .alpnProtocol
- * @param {boolean} success - Whether the handshake succeeded
- * @param {Error|null} verifyError - Certificate verification error or null
- */
-function socketHandshake(nativeHandle, success, verifyError) {
+// handshake: TLS handshake completed. This is the critical callback that triggers
+// H2 session creation.
+//
+// Mirrors the handshake logic in net.ts ServerHandlers.handshake:
+//   - Set secure-connection state flags on tlsSocket
+//   - Read alpnProtocol from the native handle (set by ALPN negotiation)
+//   - Handle _requestCert / _rejectUnauthorized for mutual TLS
+//   - Call connectionListener to create the ServerHttp2Session
+function socketHandshake(
+  this: TLSProxySocket,
+  nativeHandle: NativeHandle,
+  success: boolean,
+  verifyError: NodeJS.ErrnoException | null,
+) {
   const tlsSocket = this; // bound
   const ctx = tlsSocket._ctx;
 
@@ -237,7 +204,7 @@ function socketHandshake(nativeHandle, success, verifyError) {
 
   // Copy the negotiated ALPN protocol (e.g. "h2") from the native TLS handle.
   // The H2 session checks this to confirm HTTP/2 was negotiated.
-  tlsSocket.alpnProtocol = nativeHandle?.alpnProtocol;
+  tlsSocket.alpnProtocol = nativeHandle?.alpnProtocol ?? null;
 
   // Handle mutual TLS: if the server requested a client cert, check for errors
   if (tlsSocket._requestCert || tlsSocket._rejectUnauthorized) {
@@ -271,14 +238,10 @@ function socketHandshake(nativeHandle, success, verifyError) {
 // Close-cleanup handler
 // ---------------------------------------------------------------------------
 
-/**
- * onTlsClose: when the TLS socket closes (e.g. H2 session destroyed), clean up
- * the raw socket listeners to prevent memory leaks and stale callback references.
- * EventEmitter calls 'close' handlers with `this` = emitter (tlsSocket).
- *
- * @this {TLSProxySocket}
- */
-function onTlsClose() {
+// onTlsClose: when the TLS socket closes (e.g. H2 session destroyed), clean up
+// the raw socket listeners to prevent memory leaks and stale callback references.
+// EventEmitter calls 'close' handlers with `this` = emitter (tlsSocket).
+function onTlsClose(this: TLSProxySocket) {
   const ctx = this._ctx;
   const raw = ctx.rawSocket;
   const ev = ctx.events;
@@ -292,47 +255,42 @@ function onTlsClose() {
 // Module-scope noop (replaces anonymous () => {} for the error suppression)
 // ---------------------------------------------------------------------------
 
-/**
- * noop: no-op handler used to suppress unhandled error events until
- * the H2 session attaches its own error handler.
- */
+// no-op handler used to suppress unhandled error events until
+// the H2 session attaches its own error handler.
 function noop() {}
 
 // ---------------------------------------------------------------------------
 // Main upgrade function
 // ---------------------------------------------------------------------------
 
-/**
- * Upgrades a raw TCP socket to TLS and initiates an H2 session on it.
- *
- * When a net.Server forwards an accepted TCP connection to an Http2SecureServer
- * via `h2Server.emit('connection', socket)`, the socket has not been TLS-upgraded.
- * Node.js Http2SecureServer expects to receive this and perform the upgrade itself.
- *
- * This mirrors the TLS server handshake pattern from net.ts ServerHandlers, but
- * targets the H2 connectionListener instead of a generic secureConnection event.
- *
- * Data flow after upgrade:
- *   rawSocket (TCP) → upgradeDuplexToTLS (Zig TLS layer) → socket callbacks
- *     → tlsSocket.push() → H2 session reads
- *   H2 session writes → tlsSocket._write() → handle.$write() → Zig TLS layer → rawSocket
- *
- * CRITICAL: We do NOT set tlsSocket._handle to the native TLS handle.
- * If we did, the H2FrameParser constructor would detect it as a JSTLSSocket
- * and call attachNativeCallback(), which intercepts all decrypted data at the
- * Zig level, completely bypassing our JS data callback and Duplex.push() path.
- * Instead, we store the handle in _ctx.nativeHandle so _read/_write/_destroy
- * can use it, while the H2 session sees _handle as null and uses the JS-level
- * socket.on("data") → Duplex → parser.read() path for incoming frames.
- *
- * @param {Function} connectionListener - The H2 session factory (module-scope in http2.ts)
- * @param {Object} server - The Http2SecureServer instance
- * @param {Object} rawSocket - The raw TCP socket to upgrade
- * @returns {boolean} Always returns true
- */
-function upgradeRawSocketToH2(connectionListener, server, rawSocket) {
+// Upgrades a raw TCP socket to TLS and initiates an H2 session on it.
+//
+// When a net.Server forwards an accepted TCP connection to an Http2SecureServer
+// via `h2Server.emit('connection', socket)`, the socket has not been TLS-upgraded.
+// Node.js Http2SecureServer expects to receive this and perform the upgrade itself.
+//
+// This mirrors the TLS server handshake pattern from net.ts ServerHandlers, but
+// targets the H2 connectionListener instead of a generic secureConnection event.
+//
+// Data flow after upgrade:
+//   rawSocket (TCP) → upgradeDuplexToTLS (Zig TLS layer) → socket callbacks
+//     → tlsSocket.push() → H2 session reads
+//   H2 session writes → tlsSocket._write() → handle.$write() → Zig TLS layer → rawSocket
+//
+// CRITICAL: We do NOT set tlsSocket._handle to the native TLS handle.
+// If we did, the H2FrameParser constructor would detect it as a JSTLSSocket
+// and call attachNativeCallback(), which intercepts all decrypted data at the
+// Zig level, completely bypassing our JS data callback and Duplex.push() path.
+// Instead, we store the handle in _ctx.nativeHandle so _read/_write/_destroy
+// can use it, while the H2 session sees _handle as null and uses the JS-level
+// socket.on("data") → Duplex → parser.read() path for incoming frames.
+function upgradeRawSocketToH2(
+  connectionListener: (...args: any[]) => any,
+  server: Http2SecureServer,
+  rawSocket: import("node:net").Socket,
+): boolean {
   // Create a Duplex stream that acts as the TLS "socket" from the H2 session's perspective.
-  const tlsSocket = new Duplex();
+  const tlsSocket = new Duplex() as unknown as TLSProxySocket;
   tlsSocket._ctx = new UpgradeContext(connectionListener, server, rawSocket);
 
   // Duplex stream methods — `this` is tlsSocket, no bind needed
@@ -361,7 +319,7 @@ function upgradeRawSocketToH2(connectionListener, server, rawSocket) {
   tlsSocket._rejectUnauthorized = server._requestCert ? server._rejectUnauthorized : false;
 
   // socket: callbacks — bind to tlsSocket since Zig calls them with native handle as `this`
-  let handle, events;
+  let handle: NativeHandle, events: UpgradeContextType["events"];
   try {
     // upgradeDuplexToTLS wraps rawSocket with a TLS layer in server mode (isServer: true).
     // The Zig side will:
@@ -398,7 +356,7 @@ function upgradeRawSocketToH2(connectionListener, server, rawSocket) {
       data: {},
     });
   } catch (e) {
-    tlsSocket.destroy(e);
+    tlsSocket.destroy(e as Error);
     return true;
   }
 

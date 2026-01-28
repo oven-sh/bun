@@ -234,30 +234,43 @@ pub fn doHandshake(this: *MySQLConnection, success: i32, ssl_error: uws.us_bun_v
     this.#sequence_id = this.#sequence_id +% 1;
     if (handshake_success) {
         this.#tls_status = .ssl_ok;
-        if (this.#tls_config.reject_unauthorized != 0) {
-            // follow the same rules as postgres
-            // https://github.com/porsager/postgres/blob/6ec85a432b17661ccacbdf7f765c651e88969d36/src/connection.js#L272-L279
-            // only reject the connection if reject_unauthorized == true
-            switch (this.#ssl_mode) {
-                .verify_ca, .verify_full => {
+        // https://github.com/porsager/postgres/blob/6ec85a432b17661ccacbdf7f765c651e88969d36/src/connection.js#L272-L279
+        switch (this.#ssl_mode) {
+            .verify_ca => {
+                if (ssl_error.error_no != 0) {
+                    this.#tls_status = .ssl_failed;
+                    return false;
+                }
+            },
+            .verify_full => {
+                if (ssl_error.error_no != 0) {
+                    this.#tls_status = .ssl_failed;
+                    return false;
+                }
+
+                const ssl_ptr: *BoringSSL.c.SSL = @ptrCast(this.#socket.getNativeHandle());
+                if (BoringSSL.c.SSL_get_servername(ssl_ptr, 0)) |servername| {
+                    const hostname = servername[0..bun.len(servername)];
+                    if (!BoringSSL.checkServerIdentity(ssl_ptr, hostname)) {
+                        this.#tls_status = .ssl_failed;
+                        return false;
+                    }
+                } else {
+                    this.#tls_status = .ssl_failed;
+                    return false;
+                }
+            },
+            // require is the same as prefer unless reject_unauthorized is set
+            .require, .prefer, .disable => {
+                if (this.#tls_config.reject_unauthorized != 0) {
                     if (ssl_error.error_no != 0) {
                         this.#tls_status = .ssl_failed;
                         return false;
                     }
-
-                    const ssl_ptr: *BoringSSL.c.SSL = @ptrCast(this.#socket.getNativeHandle());
-                    if (BoringSSL.c.SSL_get_servername(ssl_ptr, 0)) |servername| {
-                        const hostname = servername[0..bun.len(servername)];
-                        if (!BoringSSL.checkServerIdentity(ssl_ptr, hostname)) {
-                            this.#tls_status = .ssl_failed;
-                            return false;
-                        }
-                    }
-                },
-                // require is the same as prefer
-                .require, .prefer, .disable => {},
-            }
+                }
+            },
         }
+
         try this.sendHandshakeResponse();
         return true;
     }

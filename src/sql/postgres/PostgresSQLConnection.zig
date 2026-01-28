@@ -440,9 +440,12 @@ pub fn onHandshake(this: *PostgresSQLConnection, success: i32, ssl_error: uws.us
                 if (BoringSSL.c.SSL_get_servername(ssl_ptr, 0)) |servername| {
                     const hostname = servername[0..bun.len(servername)];
                     if (!BoringSSL.checkServerIdentity(ssl_ptr, hostname)) {
-                        this.failWithJSValue(ssl_error.toJS(this.globalObject) catch return);
+                        this.failFmt("ERR_TLS_CERT_ALTNAME_INVALID", "Hostname/IP does not match certificate's altnames: Host: {s} is not in the cert's list.", .{hostname});
                         return;
                     }
+                } else {
+                    this.fail("Unable to verify server identity: server name missing", error.TLSVerificationFailed);
+                    return;
                 }
             },
             // require is the same as prefer in terms of "if handshake succeeded, we are good"

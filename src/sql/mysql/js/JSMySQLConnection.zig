@@ -258,9 +258,12 @@ fn SocketHandler(comptime ssl: bool) type {
                         if (bun.BoringSSL.c.SSL_get_servername(ssl_ptr, 0)) |servername| {
                             const hostname = servername[0..bun.len(servername)];
                             if (!bun.BoringSSL.checkServerIdentity(ssl_ptr, hostname)) {
-                                this.failWithJSValue(ssl_error.toJS(this.#globalObject) catch return);
+                                this.failFmt(error.SslConnectionError, "Hostname/IP does not match certificate's altnames: Host: {s} is not in the cert's list.", .{hostname});
                                 return;
                             }
+                        } else {
+                            this.fail("Unable to verify server identity: server name missing", error.SslConnectionError);
+                            return;
                         }
                     },
                     .require, .prefer, .disable => {

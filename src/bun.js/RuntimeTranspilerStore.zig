@@ -570,6 +570,7 @@ pub const RuntimeTranspilerStore = struct {
                     mapper.get(),
                     module_info,
                 ) catch |err| {
+                    if (module_info) |mi| mi.destroy();
                     this.parse_error = err;
                     return;
                 };

@@ -29,7 +29,6 @@ if (!isDockerEnabled()) {
             const [{ one, two }] = await sql`SELECT 1 as one, '2' as two`;
             expect(one).toBe(1);
             expect(two).toBe("2");
-            await sql.close();
           });
 
           test("Throws on illegal transactions", async () => {
@@ -108,7 +107,7 @@ if (!isDockerEnabled()) {
                     throw new Error("fail");
                   });
                 })
-                .catch(() => "fail"),
+                .catch(e => e.message),
             ).toBe("fail");
           });
 

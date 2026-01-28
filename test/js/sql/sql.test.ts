@@ -3907,6 +3907,36 @@ CREATE TABLE ${table_name} (
       expect(result.stdout.toString().split("\n")).toEqual(["1", "2", ""]);
     });
 
+    test("idle connection allows process to exit #3548", async () => {
+      // This test verifies that idle PostgreSQL connections don't keep the process alive.
+      // Before the fix, the process would hang indefinitely after queries completed.
+      const file = path.posix.join(__dirname, "sql-fixture-unref.ts");
+
+      // Use Bun.spawn with a timeout to detect if the process hangs
+      await using proc = Bun.spawn([bunExe(), file], {
+        env: { ...bunEnv, DATABASE_URL: process.env.DATABASE_URL },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      // Wait for exit with a 10 second timeout - process should exit much faster
+      const exitPromise = proc.exited;
+      const timeoutPromise = new Promise<"timeout">(resolve => setTimeout(() => resolve("timeout"), 10000));
+
+      const result = await Promise.race([exitPromise, timeoutPromise]);
+
+      if (result === "timeout") {
+        proc.kill();
+        throw new Error("Process hung - idle connection prevented exit (issue #3548)");
+      }
+
+      const stdout = await new Response(proc.stdout).text();
+      const stderr = await new Response(proc.stderr).text();
+
+      expect(stdout.trim()).toBe("query_done");
+      expect(result).toBe(0);
+    });
+
     describe("Boolean Array Type", () => {
       test("should handle empty boolean array", async () => {
         await using sql = postgres({ ...options, max: 1 });

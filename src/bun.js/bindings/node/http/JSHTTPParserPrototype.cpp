@@ -102,7 +102,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_remove, (JSGlobalObject * globalObject, Ca
         return JSValue::encode(jsUndefined());
     }
 
-    return JSValue::encode(parser->impl()->remove(globalObject, parser));
+    RELEASE_AND_RETURN(scope, JSValue::encode(parser->impl()->remove(globalObject, parser)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_execute, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -218,7 +218,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_initialize, (JSGlobalObject * globalObject
         return JSValue::encode(jsUndefined());
     }
 
-    return JSValue::encode(parser->impl()->initialize(globalObject, parser, type, maxHttpHeaderSize, lenientFlags, connections));
+    RELEASE_AND_RETURN(scope, JSValue::encode(parser->impl()->initialize(globalObject, parser, type, maxHttpHeaderSize, lenientFlags, connections)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_pause, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -312,7 +312,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_getCurrentBuffer, (JSGlobalObject * lexica
         return JSValue::encode(jsUndefined());
     }
 
-    return JSValue::encode(parser->impl()->getCurrentBuffer(lexicalGlobalObject));
+    RELEASE_AND_RETURN(scope, JSValue::encode(parser->impl()->getCurrentBuffer(lexicalGlobalObject)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_duration, (JSGlobalObject * globalObject, CallFrame* callFrame))

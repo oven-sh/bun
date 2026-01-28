@@ -9,8 +9,9 @@ const has_trusted_dependencies_tag: u64 = @bitCast(@as([8]u8, "tRuStEDd".*));
 const has_empty_trusted_dependencies_tag: u64 = @bitCast(@as([8]u8, "eMpTrUsT".*));
 const has_overrides_tag: u64 = @bitCast(@as([8]u8, "oVeRriDs".*));
 const has_catalogs_tag: u64 = @bitCast(@as([8]u8, "cAtAlOgS".*));
+const has_config_version_tag: u64 = @bitCast(@as([8]u8, "cNfGvRsN".*));
 
-pub fn save(this: *Lockfile, verbose_log: bool, bytes: *std.ArrayList(u8), total_size: *usize, end_pos: *usize) !void {
+pub fn save(this: *Lockfile, options: *const PackageManager.Options, bytes: *std.array_list.Managed(u8), total_size: *usize, end_pos: *usize) !void {
 
     // we clone packages with the z_allocator to make sure bytes are zeroed.
     // TODO: investigate if we still need this now that we have `padding_checker.zig`
@@ -28,7 +29,7 @@ pub fn save(this: *Lockfile, verbose_log: bool, bytes: *std.ArrayList(u8), total
     try writer.writeInt(u64, 0, .little);
 
     const StreamType = struct {
-        bytes: *std.ArrayList(u8),
+        bytes: *std.array_list.Managed(u8),
         pub inline fn getPos(s: @This()) anyerror!usize {
             return s.bytes.items.len;
         }
@@ -65,7 +66,7 @@ pub fn save(this: *Lockfile, verbose_log: bool, bytes: *std.ArrayList(u8), total
     }
 
     try Lockfile.Package.Serializer.save(this.packages, StreamType, stream, @TypeOf(writer), writer);
-    try Lockfile.Buffers.save(this, verbose_log, z_allocator, StreamType, stream, @TypeOf(writer), writer);
+    try Lockfile.Buffers.save(this, options, z_allocator, StreamType, stream, @TypeOf(writer), writer);
     try writer.writeInt(u64, 0, .little);
 
     // < Bun v1.0.4 stopped right here when reading the lockfile
@@ -246,6 +247,10 @@ pub fn save(this: *Lockfile, verbose_log: bool, bytes: *std.ArrayList(u8), total
         }
     }
 
+    try writer.writeAll(std.mem.asBytes(&has_config_version_tag));
+    const config_version: bun.ConfigVersion = options.config_version orelse .current;
+    try writer.writeInt(u64, @intFromEnum(config_version), .little);
+
     total_size.* = try stream.getPos();
 
     try writer.writeAll(&alignment_bytes_to_repeat_buffer);
@@ -253,6 +258,7 @@ pub fn save(this: *Lockfile, verbose_log: bool, bytes: *std.ArrayList(u8), total
 
 pub const SerializerLoadResult = struct {
     packages_need_update: bool = false,
+    migrated_from_lockb_v2: bool = false,
 };
 
 pub fn load(
@@ -271,9 +277,20 @@ pub fn load(
         return error.InvalidLockfile;
     }
 
+    var migrate_from_v2 = false;
     const format = try reader.readInt(u32, .little);
-    if (format != @intFromEnum(Lockfile.FormatVersion.current)) {
-        return error.@"Outdated lockfile version";
+    if (format > @intFromEnum(Lockfile.FormatVersion.current)) {
+        return error.@"Unexpected lockfile version";
+    }
+
+    if (format < @intFromEnum(Lockfile.FormatVersion.current)) {
+
+        // we only allow migrating from v2 to v3 or above
+        if (format != @intFromEnum(Lockfile.FormatVersion.v2)) {
+            return error.@"Outdated lockfile version";
+        }
+
+        migrate_from_v2 = true;
     }
 
     lockfile.format = Lockfile.FormatVersion.current;
@@ -290,10 +307,13 @@ pub fn load(
         stream,
         total_buffer_size,
         allocator,
+        migrate_from_v2,
     );
 
     lockfile.packages = packages_load_result.list;
+
     res.packages_need_update = packages_load_result.needs_update;
+    res.migrated_from_lockb_v2 = migrate_from_v2;
 
     lockfile.buffers = try Lockfile.Buffers.load(
         stream,
@@ -322,11 +342,30 @@ pub fn load(
                     );
                     defer workspace_package_name_hashes.deinit(allocator);
 
-                    var workspace_versions_list = try Lockfile.Buffers.readArray(
-                        stream,
-                        allocator,
-                        std.ArrayListUnmanaged(Semver.Version),
-                    );
+                    var workspace_versions_list = workspace_versions_list: {
+                        if (!migrate_from_v2) {
+                            break :workspace_versions_list try Lockfile.Buffers.readArray(
+                                stream,
+                                allocator,
+                                std.ArrayListUnmanaged(Semver.Version),
+                            );
+                        }
+
+                        var old_versions_list = try Lockfile.Buffers.readArray(
+                            stream,
+                            allocator,
+                            std.ArrayListUnmanaged(Semver.VersionType(u32)),
+                        );
+                        defer old_versions_list.deinit(allocator);
+
+                        var versions_list: std.ArrayListUnmanaged(Semver.Version) = try .initCapacity(allocator, old_versions_list.items.len);
+                        for (old_versions_list.items) |old_version| {
+                            versions_list.appendAssumeCapacity(old_version.migrate());
+                        }
+
+                        break :workspace_versions_list versions_list;
+                    };
+
                     comptime {
                         if (PackageNameHash != @TypeOf((VersionHashMap.KV{ .key = undefined, .value = undefined }).key)) {
                             @compileError("VersionHashMap must be in sync with serialization");
@@ -518,6 +557,20 @@ pub fn load(
                 }
             } else {
                 stream.pos -= 8;
+            }
+        }
+    }
+
+    {
+        const remaining_in_buffer = total_buffer_size -| stream.pos;
+
+        if (remaining_in_buffer > 8 and total_buffer_size <= stream.buffer.len) {
+            const next_num = try reader.readInt(u64, .little);
+            if (next_num == has_config_version_tag) {
+                const config_version = bun.ConfigVersion.fromInt(try reader.readInt(u64, .little)) orelse {
+                    return error.InvalidLockfile;
+                };
+                lockfile.saved_config_version = config_version;
             }
         }
     }

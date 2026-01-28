@@ -76,7 +76,7 @@ function getHeapStatistics() {
 
     // -- Copied from Node:
     does_zap_garbage: 0,
-    number_of_native_contexts: 1,
+    number_of_native_contexts: stats.globalObjectCount,
     number_of_detached_contexts: 0,
     total_global_handles_size: 8192,
     used_global_handles_size: 2208,

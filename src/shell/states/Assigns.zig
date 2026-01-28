@@ -9,7 +9,7 @@ state: union(enum) {
     idle,
     expanding: struct {
         idx: u32 = 0,
-        current_expansion_result: std.ArrayList([:0]const u8),
+        current_expansion_result: std.array_list.Managed([:0]const u8),
         expansion: Expansion,
     },
     err: bun.shell.ShellErr,
@@ -89,7 +89,7 @@ pub fn next(this: *Assigns) Yield {
         switch (this.state) {
             .idle => {
                 this.state = .{ .expanding = .{
-                    .current_expansion_result = std.ArrayList([:0]const u8).init(this.base.allocator()),
+                    .current_expansion_result = std.array_list.Managed([:0]const u8).init(this.base.allocator()),
                     .expansion = undefined,
                 } };
                 continue;
@@ -169,7 +169,7 @@ pub fn childDone(this: *Assigns, child: ChildPtr, exit_code: ExitCode) Yield {
 
             const value: []const u8 = brk: {
                 if (size == 0) break :brk "";
-                var merged = this.base.allocator().alloc(u8, size) catch bun.outOfMemory();
+                var merged = bun.handleOom(this.base.allocator().alloc(u8, size));
                 var i: usize = 0;
                 const last = expanding.current_expansion_result.items.len -| 1;
                 for (expanding.current_expansion_result.items, 0..) |slice, j| {

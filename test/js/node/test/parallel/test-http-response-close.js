@@ -43,7 +43,7 @@ const assert = require('assert');
           assert.strictEqual(res.destroyed, false);
           res.on('close', common.mustCall(() => {
             assert.strictEqual(res.destroyed, true);
-            server.closeAllConnections();
+            server.close();
           }));
         })
       );

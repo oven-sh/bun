@@ -28,7 +28,7 @@ fn jsonStringifyDependency(this: *const Lockfile, w: anytype, dep_id: Dependency
             try w.write(info.name.slice(sb));
 
             try w.objectField("version");
-            try w.print("\"{}\"", .{info.version.fmt(sb)});
+            try w.print("\"{f}\"", .{info.version.fmt(sb)});
         },
         .dist_tag => {
             try w.beginObject();
@@ -108,7 +108,7 @@ fn jsonStringifyDependency(this: *const Lockfile, w: anytype, dep_id: Dependency
             try w.write(dep.name.slice(sb));
 
             try w.objectField("version");
-            try w.print("catalog:{s}", .{info.fmtJson(sb, .{ .quote = false })});
+            try w.print("\"catalog:{f}\"", .{info.fmtJson(sb, .{ .quote = false })});
         },
     }
 
@@ -199,7 +199,7 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
             );
 
             try w.objectField("path");
-            try w.print("\"{}\"", .{bun.fmt.fmtPath(u8, relative_path, .{ .path_sep = .posix })});
+            try w.print("\"{f}\"", .{bun.fmt.fmtPath(u8, relative_path, .{ .path_sep = .posix })});
 
             try w.objectField("depth");
             try w.write(depth);
@@ -273,10 +273,10 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
                 try w.write(@tagName(res.tag));
 
                 try w.objectField("value");
-                try w.print("\"{s}\"", .{res.fmt(sb, .posix)});
+                try w.print("\"{f}\"", .{res.fmt(sb, .posix)});
 
                 try w.objectField("resolved");
-                try w.print("\"{}\"", .{res.fmtURL(sb)});
+                try w.print("\"{f}\"", .{res.fmtURL(sb)});
             }
 
             try w.objectField("dependencies");
@@ -315,7 +315,7 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
 
             try w.objectField("integrity");
             if (pkg.meta.integrity.tag != .unknown) {
-                try w.print("\"{}\"", .{pkg.meta.integrity});
+                try w.print("\"{f}\"", .{pkg.meta.integrity});
             } else {
                 try w.write(null);
             }
@@ -387,7 +387,8 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
         defer w.endObject() catch {};
 
         for (this.workspace_paths.keys(), this.workspace_paths.values()) |k, v| {
-            try w.objectField(std.fmt.bufPrintIntToSlice(&buf, k, 10, .lower, .{}));
+            const len = std.fmt.printInt(&buf, k, 10, .lower, .{});
+            try w.objectField(buf[0..len]);
             try w.write(v.slice(sb));
         }
     }
@@ -397,8 +398,9 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
         defer w.endObject() catch {};
 
         for (this.workspace_versions.keys(), this.workspace_versions.values()) |k, v| {
-            try w.objectField(std.fmt.bufPrintIntToSlice(&buf, k, 10, .lower, .{}));
-            try w.print("\"{}\"", .{v.fmt(sb)});
+            const len = std.fmt.printInt(&buf, k, 10, .lower, .{});
+            try w.objectField(buf[0..len]);
+            try w.print("\"{f}\"", .{v.fmt(sb)});
         }
     }
 }

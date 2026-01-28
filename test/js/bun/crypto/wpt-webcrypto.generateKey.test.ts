@@ -7,6 +7,7 @@
 //  or wpt test runner is fully adopted.
 // FYI: https://github.com/oven-sh/bun/issues/19673
 
+import { isCI } from "harness";
 import {
   allAlgorithmSpecifiersFor,
   allNameVariants,
@@ -434,7 +435,16 @@ function run_test_success(algorithmNames, slowTest?) {
     // algorithm, extractable, and usages are the generateKey parameters
     // resultType is the expected result, either the CryptoKey object or "CryptoKeyPair"
     // testTag is a string to prepend to the test name.
-    test(testTag + ": generateKey" + parameterString(algorithm, extractable, usages), async function () {
+
+    // This generates about 1.3 MB of test logs.
+
+    let testLabel = testTag + ": generateKey" + parameterString(algorithm, extractable, usages);
+
+    if (isCI) {
+      testLabel = testLabel.slice(testLabel.length - 50);
+    }
+
+    test(testLabel, async function () {
       try {
         const result = await subtle.generateKey(algorithm, extractable, usages);
 

@@ -11,11 +11,11 @@ pub fn toHaveBeenCalled(this: *Expect, globalThis: *JSGlobalObject, callframe: *
     const value: JSValue = try this.getValue(globalThis, thisValue, "toHaveBeenCalled", "");
 
     const calls = try bun.cpp.JSMockFunction__getCalls(globalThis, value);
-    incrementExpectCallCounter();
+    this.incrementExpectCallCounter();
     if (!calls.jsType().isArray()) {
         var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
         defer formatter.deinit();
-        return globalThis.throw("Expected value must be a mock function: {any}", .{value.toFmt(&formatter)});
+        return globalThis.throw("Expected value must be a mock function: {f}", .{value.toFmt(&formatter)});
     }
 
     const calls_length = try calls.getLength(globalThis);
@@ -28,11 +28,11 @@ pub fn toHaveBeenCalled(this: *Expect, globalThis: *JSGlobalObject, callframe: *
     // handle failure
     if (not) {
         const signature = comptime getSignature("toHaveBeenCalled", "", true);
-        return this.throw(globalThis, signature, "\n\n" ++ "Expected number of calls: <green>0<r>\n" ++ "Received number of calls: <red>{any}<r>\n", .{calls_length});
+        return this.throw(globalThis, signature, "\n\n" ++ "Expected number of calls: <green>0<r>\n" ++ "Received number of calls: <red>{d}<r>\n", .{calls_length});
     }
 
     const signature = comptime getSignature("toHaveBeenCalled", "", false);
-    return this.throw(globalThis, signature, "\n\n" ++ "Expected number of calls: \\>= <green>1<r>\n" ++ "Received number of calls: <red>{any}<r>\n", .{calls_length});
+    return this.throw(globalThis, signature, "\n\n" ++ "Expected number of calls: \\>= <green>1<r>\n" ++ "Received number of calls: <red>{d}<r>\n", .{calls_length});
 }
 
 const bun = @import("bun");
@@ -41,7 +41,6 @@ const jsc = bun.jsc;
 const CallFrame = bun.jsc.CallFrame;
 const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
-const incrementExpectCallCounter = bun.jsc.Expect.incrementExpectCallCounter;
 
 const Expect = bun.jsc.Expect.Expect;
 const getSignature = Expect.getSignature;

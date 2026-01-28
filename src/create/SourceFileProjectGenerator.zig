@@ -3,7 +3,7 @@ const SourceFileProjectGenerator = @This();
 // Generate project files based on the entry point and dependencies
 pub fn generate(_: Command.Context, _: Example.Tag, entry_point: string, result: *BundleV2.DependenciesScanner.Result) !void {
     const react_component_export = findReactComponentExport(result.bundle_v2) orelse {
-        Output.errGeneric("No component export found in <b>{s}<r>", .{bun.fmt.quote(entry_point)});
+        Output.errGeneric("No component export found in <b>{f}<r>", .{bun.fmt.quote(entry_point)});
         Output.flush();
         const writer = Output.errorWriterBuffered();
         try writer.writeAll(
@@ -125,7 +125,7 @@ fn countReplaceAllOccurrences(input: []const u8, needle: []const u8, replacement
 
 // Replace all occurrences of needle with replacement
 fn replaceAllOccurrencesOfString(allocator: std.mem.Allocator, input: []const u8, needle: []const u8, replacement: []const u8) ![]u8 {
-    var result = try std.ArrayList(u8).initCapacity(allocator, countReplaceAllOccurrences(input, needle, replacement));
+    var result = try std.array_list.Managed(u8).initCapacity(allocator, countReplaceAllOccurrences(input, needle, replacement));
     var remaining = input;
     while (remaining.len > 0) {
         if (std.mem.indexOf(u8, remaining, needle)) |index| {
@@ -222,7 +222,7 @@ pub fn generateFiles(allocator: std.mem.Allocator, entry_point: string, dependen
 
     if (dependencies.len > 0) {
         // Install dependencies
-        var argv = std.ArrayList([]const u8).init(default_allocator);
+        var argv = std.array_list.Managed([]const u8).init(default_allocator);
         try argv.append("bun");
         try argv.append("--only-missing");
         try argv.append("install");
@@ -248,7 +248,7 @@ pub fn generateFiles(allocator: std.mem.Allocator, entry_point: string, dependen
             .stdin = .inherit,
 
             .windows = if (Environment.isWindows) .{
-                .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(null)),
+                .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(null, null)),
             },
         }) catch |err| {
             Output.err(err, "failed to install dependencies", .{});
@@ -284,7 +284,7 @@ pub fn generateFiles(allocator: std.mem.Allocator, entry_point: string, dependen
         .ReactShadcnSpa => |*shadcn| {
             if (shadcn.components.keys().len > 0) {
                 // Add shadcn components
-                var shadcn_argv = try std.ArrayList([]const u8).initCapacity(default_allocator, 10);
+                var shadcn_argv = try std.array_list.Managed([]const u8).initCapacity(default_allocator, 10);
                 try shadcn_argv.append("bun");
                 try shadcn_argv.append("x");
                 try shadcn_argv.append("shadcn@canary");
@@ -361,7 +361,7 @@ pub fn generateFiles(allocator: std.mem.Allocator, entry_point: string, dependen
         .stdin = .inherit,
 
         .windows = if (Environment.isWindows) .{
-            .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(null)),
+            .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(null, null)),
         },
     }) catch |err| {
         Output.err(err, "failed to start app", .{});
@@ -531,7 +531,7 @@ fn findReactComponentExport(bundler: *BundleV2) ?[]const u8 {
             }
 
             if (filename[0] >= 'a' and filename[0] <= 'z') {
-                const duped = default_allocator.dupe(u8, filename) catch bun.outOfMemory();
+                const duped = bun.handleOom(default_allocator.dupe(u8, filename));
                 duped[0] = duped[0] - 32;
                 if (bun.js_lexer.isIdentifier(duped)) {
                     if (exports.contains(duped)) {

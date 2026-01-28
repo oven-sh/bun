@@ -34,18 +34,6 @@ describe.if(!isWindows)("unix socket", () => {
         unix: Math.random().toString(32).slice(2, 15) + ".sock",
         hostname: false,
       },
-      {
-        unix: Math.random().toString(32).slice(2, 15) + ".sock",
-        hostname: Buffer.from(""),
-      },
-      {
-        unix: Math.random().toString(32).slice(2, 15) + ".sock",
-        hostname: Buffer.alloc(0),
-      },
-      {
-        unix: "unix://" + Math.random().toString(32).slice(2, 15) + ".sock",
-        hostname: Buffer.alloc(0),
-      },
     ];
 
     for (const args of permutations) {

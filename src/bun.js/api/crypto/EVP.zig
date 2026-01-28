@@ -21,6 +21,7 @@ pub const Algorithm = enum {
     // @"ecdsa-with-SHA1",
     blake2b256,
     blake2b512,
+    blake2s256,
     md4,
     md5,
     ripemd160,
@@ -69,6 +70,7 @@ pub const Algorithm = enum {
     pub const map = bun.ComptimeStringMap(Algorithm, .{
         .{ "blake2b256", .blake2b256 },
         .{ "blake2b512", .blake2b512 },
+        .{ "blake2s256", .blake2s256 },
         .{ "ripemd160", .ripemd160 },
         .{ "rmd160", .ripemd160 },
         .{ "md4", .md4 },

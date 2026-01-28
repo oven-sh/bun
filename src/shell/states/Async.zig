@@ -26,7 +26,7 @@ pub const ChildPtr = StatePtrUnion(.{
     CondExpr,
 });
 
-pub fn format(this: *const Async, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+pub fn format(this: *const Async, writer: *std.Io.Writer) !void {
     try writer.print("Async(0x{x}, child={s})", .{ @intFromPtr(this), @tagName(this.node.*) });
 }
 
@@ -40,7 +40,7 @@ pub fn init(
     interpreter.async_commands_executing += 1;
     const async_cmd = parent.create(Async);
     async_cmd.* = .{
-        .base = State.initWithNewAllocScope(.@"async", interpreter, shell_state),
+        .base = State.initWithNewAllocScope(.async, interpreter, shell_state),
         .node = node,
         .parent = parent,
         .io = io,
@@ -51,13 +51,13 @@ pub fn init(
 }
 
 pub fn start(this: *Async) Yield {
-    log("{} start", .{this});
+    log("{f} start", .{this});
     this.enqueueSelf();
     return this.parent.childDone(this, 0);
 }
 
 pub fn next(this: *Async) Yield {
-    log("{} next {s}", .{ this, @tagName(this.state) });
+    log("{f} next {s}", .{ this, @tagName(this.state) });
     switch (this.state) {
         .idle => {
             this.state = .{ .exec = .{} };
@@ -124,7 +124,7 @@ pub fn enqueueSelf(this: *Async) void {
 }
 
 pub fn childDone(this: *Async, child_ptr: ChildPtr, exit_code: ExitCode) Yield {
-    log("{} childDone", .{this});
+    log("{f} childDone", .{this});
     child_ptr.deinit();
     this.state = .{ .done = exit_code };
     this.enqueueSelf();

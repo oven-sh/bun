@@ -105,7 +105,7 @@ pub const Decompressor = union(enum) {
 
     pub fn readAll(this: *Decompressor, is_done: bool) !void {
         switch (this.*) {
-            .zlib => |zlib| try zlib.readAll(),
+            .zlib => |zlib| try zlib.readAll(is_done),
             .brotli => |brotli| try brotli.readAll(is_done),
             .zstd => |reader| try reader.readAll(is_done),
             .none => {},

@@ -1,0 +1,167 @@
+game: &AHiT "A Hat in Time"
+
+name: "niyrme-AHiT{NUMBER}"
+
+requires:
+  version: 0.6.2
+
+*AHiT :
+  # game
+  progression_balancing: "random-range-middle-40-50"
+  accessibility:
+    "full": 1
+    "minimal": 0
+  death_link: false
+
+  # general
+  &EndGoal EndGoal:
+    &EndGoal_Finale finale: 1
+    &EndGoal_Rush rush_hour: 0
+    &EndGoal_Seal seal_the_deal: 0
+  ShuffleStorybookPages: true
+  ShuffleAlpineZiplines: true
+  ShuffleSubconPaintings: true
+  ShuffleActContracts: true
+  MinPonCost: 20
+  MaxPonCost: 80
+  BadgeSellerMinItems: 5
+  BadgeSellerMaxItems: 8
+  # https://docs.google.com/document/d/1x9VLSQ5davfx1KGamR9T0mD5h69_lDXJ6H7Gq7knJRI
+  LogicDifficulty: "moderate"
+  NoPaintingSkips: true
+  CTRLogic:
+    "time_stop_only": 0
+    "scooter": 1
+    "sprint": 0
+    "nothing": 0
+
+  # acts
+  ActRandomizer: "insanity"
+  StartingChapter:
+    1: 1
+    2: 1
+    3: 1
+  LowestChapterCost: 5
+  HighestChapterCost: 25
+  ChapterCostIncrement: 5
+  ChapterCostMinDifference: 5
+  &GoalMinCost FinalChapterMinCost: 30
+  &GoalMaxCost FinalChapterMaxCost: 35
+  FinaleShuffle: false
+
+  # items
+  StartWithCompassBadge: true
+  CompassBadgeMode: "closest"
+  RandomizeHatOrder: "time_stop_last"
+  YarnAvailable: "random-range-middle-40-50"
+  YarnCostMin: 5
+  YarnCostMax: 8
+  MinExtraYarn: "random-range-middle-5-15"
+  HatItems: true
+  UmbrellaLogic: true
+  MaxExtraTimePieces: "random-range-high-5-8"
+  YarnBalancePercent: 25
+  TimePieceBalancePercent: "random-range-low-20-35"
+
+  # DLC: Seal the Deal
+  EnableDLC1: false
+  Tasksanity: false
+  TasksanityTaskStep: 1
+  TasksanityCheckCount: 18
+  ShipShapeCustomTaskGoal: 0
+  ExcludeTour: false
+
+  # DLC: Nyakuza Metro
+  &DLCNyakuza EnableDLC2: true
+  MetroMinPonCost: 10
+  MetroMaxPonCost: 50
+  NyakuzaThugMinShopItems: 1
+  NyakuzaThugMaxShopItems: 4
+  BaseballBat: true
+  NoTicketSkips: "rush_hour"
+
+  # Death Wish
+  EnableDeathWish: false
+  DWTimePieceRequirement: 15
+  DWShuffle: false
+  DWShuffleCountMin: 18
+  DWShuffleCountMax: 25
+  DWEnableBonus: false
+  DWAutoCompleteBonuses: true
+  DWExcludeAnnoyingContracts: true
+  DWExcludeAnnoyingBonuses: true
+  DWExcludeCandles: true
+  DeathWishOnly: false
+
+  # traps
+  TrapChance: 0
+  BabyTrapWeight: 0
+  LaserTrapWeight: 0
+  ParadeTrapWeight: 0
+
+  # plando, item & location options
+  non_local_items:
+    - "Hookshot Badge"
+    - "Umbrella"
+    - "Dweller Mask"
+  start_inventory_from_pool:
+    "Sprint Hat": 1
+  exclude_locations:
+    - "Queen Vanessa's Manor - Bedroom Chest"
+    - "Queen Vanessa's Manor - Hall Chest"
+    - "Act Completion (The Big Parade)"
+  priority_locations:
+    - "Act Completion (Award Ceremony)"
+    - "Badge Seller - Item 1"
+    - "Badge Seller - Item 2"
+    - "Mafia Boss Shop Item"
+    # Nyakuza DLC
+    - "Bluefin Tunnel Thug - Item 1"
+    - "Green Clean Station Thug A - Item 1"
+    - "Green Clean Station Thug B - Item 1"
+    - "Main Station Thug A - Item 1"
+    - "Main Station Thug B - Item 1"
+    - "Main Station Thug C - Item 1"
+    - "Pink Paw Station Thug - Item 1"
+    - "Yellow Overpass Thug A - Item 1"
+    - "Yellow Overpass Thug B - Item 1"
+    - "Yellow Overpass Thug C - Item 1"
+
+  ActPlando:
+    "Dead Bird Studio Basement": "The Big Parade"
+
+x-options-sync:
+  *AHiT :
+    +start_inventory_from_pool:
+      "Badge Pin": 1
+    +triggers:
+      - option_category: *AHiT
+        option_name: *EndGoal
+        option_result: *EndGoal_Finale
+        options:
+          *AHiT :
+            MinPonCost: 30
+            MaxPonCost: 100
+            *GoalMinCost : 25
+            *GoalMaxCost : 35
+            *DLCNyakuza : false
+
+x-options-async:
+  *AHiT :
+    progression_balancing: "random-range-low-10-30"
+    death_link: false
+    LowestChapterCost: 10
+    HighestChapterCost: 40
+    ChapterCostIncrement: 7
+    ChapterCostMinDifference: 7
+    *EndGoal :
+      *EndGoal_Finale : 9
+      *EndGoal_Rush : 1
+      *EndGoal_Seal : 0
+    NoPaintingSkips: false
+    *GoalMinCost : 40
+    *GoalMaxCost : 50
+    +non_local_items:
+      - "Brewing Hat"
+      - "Ice Hat"
+    priority_locations: []

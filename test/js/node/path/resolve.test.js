@@ -1,4 +1,4 @@
-import { describe, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { isWindows } from "harness";
 import assert from "node:assert";
 // import child from "node:child_process";
@@ -92,5 +92,39 @@ describe("path.resolve", () => {
     //     process.cwd = cwd;
     //   }
     // }
+  });
+
+  test("undefined argument are ignored if absolute path comes first (reverse loop through args)", () => {
+    expect(() => {
+      return path.posix.resolve(undefined, "hi");
+    }).toThrow('The "paths[0]" property must be of type string, got undefined');
+    expect(() => {
+      return path.posix.resolve(undefined, "/hi");
+    }).not.toThrow();
+  });
+
+  test("very long paths", () => {
+    // Regression test: buffer overflow with very long paths
+    // This used to panic because the buffer didn't account for the null terminator
+    for (const len of [4096, 10000, 50000, 98340, 100000]) {
+      // Use platform-specific absolute path prefix
+      const prefix = isWindows ? "C:\\" : "/";
+      const longPath = prefix + "a".repeat(len);
+      const result = path.resolve(longPath);
+      // Should return an absolute path with the repeated 'a' characters
+      assert.ok(result.includes("a"));
+      assert.ok(path.isAbsolute(result));
+      // Length should be prefix length + repeated characters
+      assert.strictEqual(result.length, prefix.length + len);
+    }
+
+    // Test with multiple paths that concatenate to a very long path
+    const longSegment = "b".repeat(50000);
+    const pathPrefix = isWindows ? "C:\\" : "/";
+    const result = path.resolve(pathPrefix, longSegment, "c");
+    assert.ok(result.includes("b"));
+    // On Windows, paths use backslash; on POSIX, forward slash
+    const expectedEnding = isWindows ? "\\c" : "/c";
+    assert.ok(result.endsWith(expectedEnding));
   });
 });

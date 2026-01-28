@@ -61,7 +61,7 @@ pub const ExternalModules = struct {
     };
 
     pub fn isNodeBuiltin(str: string) bool {
-        return bun.jsc.ModuleLoader.HardcodedModule.Alias.has(str, .node);
+        return bun.jsc.ModuleLoader.HardcodedModule.Alias.has(str, .node, .{});
     }
 
     const default_wildcard_patterns = &[_]WildcardPattern{
@@ -116,7 +116,7 @@ pub const ExternalModules = struct {
             return result;
         }
 
-        var patterns = std.ArrayList(WildcardPattern).initCapacity(allocator, default_wildcard_patterns.len) catch unreachable;
+        var patterns = std.array_list.Managed(WildcardPattern).initCapacity(allocator, default_wildcard_patterns.len) catch unreachable;
         patterns.appendSliceAssumeCapacity(default_wildcard_patterns[0..]);
 
         for (externals) |external| {
@@ -142,7 +142,7 @@ pub const ExternalModules = struct {
             }
         }
 
-        result.patterns = patterns.toOwnedSlice() catch bun.outOfMemory();
+        result.patterns = bun.handleOom(patterns.toOwnedSlice());
 
         return result;
     }
@@ -600,31 +600,55 @@ pub const Format = enum {
     }
 };
 
+pub const WindowsOptions = struct {
+    hide_console: bool = false,
+    icon: ?[]const u8 = null,
+    title: ?[]const u8 = null,
+    publisher: ?[]const u8 = null,
+    version: ?[]const u8 = null,
+    description: ?[]const u8 = null,
+    copyright: ?[]const u8 = null,
+};
+
+// The max integer value in this enum can only be appended to.
+// It has dependencies in several places:
+// - bun-native-bundler-plugin-api/bundler_plugin.h
+// - src/bun.js/bindings/headers-handwritten.h
 pub const Loader = enum(u8) {
-    jsx,
-    js,
-    ts,
-    tsx,
-    css,
-    file,
-    json,
-    jsonc,
-    toml,
-    wasm,
-    napi,
-    base64,
-    dataurl,
-    text,
-    bunsh,
-    sqlite,
-    sqlite_embedded,
-    html,
+    jsx = 0,
+    js = 1,
+    ts = 2,
+    tsx = 3,
+    css = 4,
+    file = 5,
+    json = 6,
+    jsonc = 7,
+    toml = 8,
+    wasm = 9,
+    napi = 10,
+    base64 = 11,
+    dataurl = 12,
+    text = 13,
+    bunsh = 14,
+    sqlite = 15,
+    sqlite_embedded = 16,
+    html = 17,
+    yaml = 18,
+    json5 = 19,
 
     pub const Optional = enum(u8) {
         none = 254,
         _,
         pub fn unwrap(opt: Optional) ?Loader {
             return if (opt == .none) null else @enumFromInt(@intFromEnum(opt));
+        }
+
+        pub fn fromAPI(loader: bun.schema.api.Loader) Optional {
+            if (loader == ._none) {
+                return .none;
+            }
+            const l: Loader = .fromAPI(loader);
+            return @enumFromInt(@intFromEnum(l));
         }
     };
 
@@ -679,7 +703,7 @@ pub const Loader = enum(u8) {
         return switch (this) {
             .jsx, .js, .ts, .tsx => bun.http.MimeType.javascript,
             .css => bun.http.MimeType.css,
-            .toml, .json, .jsonc => bun.http.MimeType.json,
+            .toml, .yaml, .json, .jsonc, .json5 => bun.http.MimeType.json,
             .wasm => bun.http.MimeType.wasm,
             .html => bun.http.MimeType.html,
             else => {
@@ -727,6 +751,8 @@ pub const Loader = enum(u8) {
         map.set(.file, "input");
         map.set(.json, "input.json");
         map.set(.toml, "input.toml");
+        map.set(.yaml, "input.yaml");
+        map.set(.json5, "input.json5");
         map.set(.wasm, "input.wasm");
         map.set(.napi, "input.node");
         map.set(.text, "input.txt");
@@ -751,7 +777,7 @@ pub const Loader = enum(u8) {
         if (zig_str.len == 0) return null;
 
         return fromString(zig_str.slice()) orelse {
-            return global.throwInvalidArguments("invalid loader - must be js, jsx, tsx, ts, css, file, toml, wasm, bunsh, or json", .{});
+            return global.throwInvalidArguments("invalid loader - must be js, jsx, tsx, ts, css, file, toml, yaml, wasm, bunsh, or json", .{});
         };
     }
 
@@ -769,6 +795,8 @@ pub const Loader = enum(u8) {
         .{ "json", .json },
         .{ "jsonc", .jsonc },
         .{ "toml", .toml },
+        .{ "yaml", .yaml },
+        .{ "json5", .json5 },
         .{ "wasm", .wasm },
         .{ "napi", .napi },
         .{ "node", .napi },
@@ -796,6 +824,8 @@ pub const Loader = enum(u8) {
         .{ "json", .json },
         .{ "jsonc", .json },
         .{ "toml", .toml },
+        .{ "yaml", .yaml },
+        .{ "json5", .json5 },
         .{ "wasm", .wasm },
         .{ "node", .napi },
         .{ "dataurl", .dataurl },
@@ -835,6 +865,8 @@ pub const Loader = enum(u8) {
             .json => .json,
             .jsonc => .json,
             .toml => .toml,
+            .yaml => .yaml,
+            .json5 => .json5,
             .wasm => .wasm,
             .napi => .napi,
             .base64 => .base64,
@@ -854,14 +886,19 @@ pub const Loader = enum(u8) {
             .css => .css,
             .file => .file,
             .json => .json,
+            .jsonc => .jsonc,
             .toml => .toml,
+            .yaml => .yaml,
+            .json5 => .json5,
             .wasm => .wasm,
             .napi => .napi,
             .base64 => .base64,
             .dataurl => .dataurl,
             .text => .text,
+            .bunsh => .bunsh,
             .html => .html,
             .sqlite => .sqlite,
+            .sqlite_embedded => .sqlite_embedded,
             _ => .file,
         };
     }
@@ -885,8 +922,8 @@ pub const Loader = enum(u8) {
         return switch (loader) {
             .jsx, .js, .ts, .tsx, .json, .jsonc => true,
 
-            // toml is included because we can serialize to the same AST as JSON
-            .toml => true,
+            // toml, yaml, and json5 are included because we can serialize to the same AST as JSON
+            .toml, .yaml, .json5 => true,
 
             else => false,
         };
@@ -901,7 +938,7 @@ pub const Loader = enum(u8) {
 
     pub fn sideEffects(this: Loader) bun.resolver.SideEffects {
         return switch (this) {
-            .text, .json, .jsonc, .toml, .file => bun.resolver.SideEffects.no_side_effects__pure_data,
+            .text, .json, .jsonc, .toml, .yaml, .json5, .file => bun.resolver.SideEffects.no_side_effects__pure_data,
             else => bun.resolver.SideEffects.has_side_effects,
         };
     }
@@ -916,7 +953,7 @@ pub const Loader = enum(u8) {
         } else if (strings.hasPrefixComptime(mime_type.value, "application/typescript")) {
             return .ts;
         } else if (strings.hasPrefixComptime(mime_type.value, "application/json5")) {
-            return .jsonc;
+            return .json5;
         } else if (strings.hasPrefixComptime(mime_type.value, "application/jsonc")) {
             return .jsonc;
         } else if (strings.hasPrefixComptime(mime_type.value, "application/json")) {
@@ -1072,12 +1109,15 @@ const default_loaders_posix = .{
     .{ ".cts", .ts },
 
     .{ ".toml", .toml },
+    .{ ".yaml", .yaml },
+    .{ ".yml", .yaml },
     .{ ".wasm", .wasm },
     .{ ".node", .napi },
     .{ ".txt", .text },
     .{ ".text", .text },
     .{ ".html", .html },
     .{ ".jsonc", .jsonc },
+    .{ ".json5", .json5 },
 };
 const default_loaders_win32 = default_loaders_posix ++ .{
     .{ ".sh", .bunsh },
@@ -1195,7 +1235,6 @@ pub const JSX = struct {
         .{ "react", RuntimeDevelopmentPair{ .runtime = .classic, .development = null } },
         .{ "react-jsx", RuntimeDevelopmentPair{ .runtime = .automatic, .development = true } },
         .{ "react-jsxdev", RuntimeDevelopmentPair{ .runtime = .automatic, .development = true } },
-        .{ "solid", RuntimeDevelopmentPair{ .runtime = .solid, .development = null } },
     });
 
     pub const Pragma = struct {
@@ -1217,6 +1256,7 @@ pub const JSX = struct {
         /// - tsconfig.json's `compilerOptions.jsx` (`react-jsx` or `react-jsxdev`)
         development: bool = true,
         parse: bool = true,
+        side_effects: bool = false,
 
         pub const ImportSource = struct {
             development: string = "react/jsx-dev-runtime",
@@ -1355,6 +1395,7 @@ pub const JSX = struct {
             }
 
             pragma.runtime = jsx.runtime;
+            pragma.side_effects = jsx.side_effects;
 
             if (jsx.import_source.len > 0) {
                 pragma.package_name = jsx.import_source;
@@ -1510,10 +1551,11 @@ const default_loader_ext = [_]string{
     ".ts",    ".tsx",
     ".mts",   ".cts",
 
-    ".toml",  ".wasm",
+    ".toml",  ".yaml",
+    ".yml",   ".wasm",
     ".txt",   ".text",
 
-    ".jsonc",
+    ".jsonc", ".json5",
 };
 
 // Only set it for browsers by default.
@@ -1529,9 +1571,12 @@ const node_modules_default_loader_ext = [_]string{
     ".ts",
     ".mts",
     ".toml",
+    ".yaml",
+    ".yml",
     ".txt",
     ".json",
     ".jsonc",
+    ".json5",
     ".css",
     ".tsx",
     ".cts",
@@ -1680,6 +1725,9 @@ pub const BundleOptions = struct {
     banner: string = "",
     define: *defines.Define,
     drop: []const []const u8 = &.{},
+    /// Set of enabled feature flags for dead-code elimination via `import { feature } from "bun:bundle"`.
+    /// Initialized once from the CLI --feature flags.
+    bundler_feature_flags: *const bun.StringSet = &Runtime.Features.empty_bundler_feature_flags,
     loaders: Loader.HashTable,
     resolve_dir: string = "/",
     jsx: JSX.Pragma = JSX.Pragma{},
@@ -1735,6 +1783,7 @@ pub const BundleOptions = struct {
     polyfill_node_globals: bool = false,
     transform_only: bool = false,
     load_tsconfig_json: bool = true,
+    load_package_json: bool = true,
 
     rewrite_jest_for_tests: bool = false,
 
@@ -1759,7 +1808,12 @@ pub const BundleOptions = struct {
     minify_whitespace: bool = false,
     minify_syntax: bool = false,
     minify_identifiers: bool = false,
+    keep_names: bool = false,
     dead_code_elimination: bool = true,
+    /// REPL mode: transforms code for interactive evaluation with vm.runInContext.
+    /// Hoists declarations as var for persistence, wraps code in IIFE, and
+    /// captures the last expression in { value: expr } for result extraction.
+    repl_mode: bool = false,
     css_chunking: bool,
 
     ignore_dce_annotations: bool = false,
@@ -1770,6 +1824,7 @@ pub const BundleOptions = struct {
     debugger: bool = false,
 
     compile: bool = false,
+    metafile: bool = false,
 
     /// Set when bake.DevServer is bundling.
     dev_server: ?*bun.bake.DevServer = null,
@@ -1866,6 +1921,15 @@ pub const BundleOptions = struct {
             this.dead_code_elimination and this.minify_syntax,
         );
         this.defines_loaded = true;
+    }
+
+    pub fn deinit(this: *BundleOptions, allocator: std.mem.Allocator) void {
+        this.define.deinit();
+        // Free bundler_feature_flags if it was allocated (not the static empty set)
+        if (this.bundler_feature_flags != &Runtime.Features.empty_bundler_feature_flags) {
+            @constCast(this.bundler_feature_flags).deinit();
+            allocator.destroy(@constCast(this.bundler_feature_flags));
+        }
     }
 
     pub fn loader(this: *const BundleOptions, ext: string) Loader {
@@ -1966,6 +2030,7 @@ pub const BundleOptions = struct {
             .transform_options = transform,
             .css_chunking = false,
             .drop = transform.drop,
+            .bundler_feature_flags = Runtime.Features.initBundlerFeatureFlags(allocator, transform.feature_flags),
         };
 
         analytics.Features.define += @as(usize, @intFromBool(transform.define != null));
@@ -1977,6 +2042,8 @@ pub const BundleOptions = struct {
         if (transform.env_files.len > 0) {
             opts.env.files = transform.env_files;
         }
+
+        opts.env.disable_default_env_files = transform.disable_default_env_files;
 
         if (transform.origin) |origin| {
             opts.origin = URL.parse(origin);
@@ -2145,8 +2212,8 @@ pub const TransformResult = struct {
         log: *logger.Log,
         allocator: std.mem.Allocator,
     ) !TransformResult {
-        var errors = try std.ArrayList(logger.Msg).initCapacity(allocator, log.errors);
-        var warnings = try std.ArrayList(logger.Msg).initCapacity(allocator, log.warnings);
+        var errors = try std.array_list.Managed(logger.Msg).initCapacity(allocator, log.errors);
+        var warnings = try std.array_list.Managed(logger.Msg).initCapacity(allocator, log.warnings);
         for (log.msgs.items) |msg| {
             switch (msg.kind) {
                 logger.Kind.err => {
@@ -2182,6 +2249,9 @@ pub const Env = struct {
 
     /// List of explicit env files to load (e..g specified by --env-file args)
     files: []const []const u8 = &[_][]u8{},
+
+    /// If true, disable loading of default .env files (from --no-env-file flag or bunfig)
+    disable_default_env_files: bool = false,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -2493,7 +2563,7 @@ pub const PathTemplate = struct {
         }
     }
 
-    pub fn format(self: PathTemplate, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(self: PathTemplate, writer: *std.Io.Writer) !void {
         var remain = self.data;
         while (strings.indexOfChar(remain, '[')) |j| {
             try writeReplacingSlashesOnWindows(writer, remain[0..j]);
@@ -2534,7 +2604,7 @@ pub const PathTemplate = struct {
                 .ext => try writeReplacingSlashesOnWindows(writer, self.placeholder.ext),
                 .hash => {
                     if (self.placeholder.hash) |hash| {
-                        try writer.print("{any}", .{bun.fmt.truncatedHash32(hash)});
+                        try writer.print("{f}", .{bun.fmt.truncatedHash32(hash)});
                     }
                 },
                 .target => try writeReplacingSlashesOnWindows(writer, self.placeholder.target),

@@ -117,7 +117,7 @@ async function countReactions(issueNumbers: number[], verbose = false): Promise<
     }
 
     // Small delay to avoid rate limiting
-    await Bun.sleep(50);
+    await Bun.sleep(1);
   }
 
   return totalReactions;

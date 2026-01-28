@@ -2,7 +2,7 @@ import { spawn } from "bun";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
-describe("bun info", () => {
+describe.concurrent("bun info", () => {
   let i = 0;
   function setupTest() {
     const testDir = tempDirWithFiles("view-" + i++, {

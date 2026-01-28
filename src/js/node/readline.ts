@@ -28,6 +28,7 @@
 const EventEmitter = require("node:events");
 const { StringDecoder } = require("node:string_decoder");
 const { promisify } = require("internal/promisify");
+const { SafeStringIterator } = require("internal/primordials");
 
 const {
   validateFunction,
@@ -42,7 +43,7 @@ const {
 
 const internalGetStringWidth = $newZigFunction("string.zig", "String.jsGetStringWidth", 1);
 
-const PromiseReject = Promise.reject;
+const PromiseReject = Promise.$reject;
 
 var isWritable;
 
@@ -54,7 +55,6 @@ var debug = process.env.BUN_JS_DEBUG ? console.log : () => {};
 // ----------------------------------------------------------------------------
 
 const SymbolAsyncIterator = Symbol.asyncIterator;
-const SymbolIterator = Symbol.iterator;
 const SymbolFor = Symbol.for;
 const ArrayFrom = Array.from;
 const ArrayPrototypeFilter = Array.prototype.filter;
@@ -79,41 +79,15 @@ const StringPrototypeEndsWith = String.prototype.endsWith;
 const StringPrototypeRepeat = String.prototype.repeat;
 const StringPrototypeStartsWith = String.prototype.startsWith;
 const StringPrototypeTrim = String.prototype.trim;
-const StringPrototypeNormalize = String.prototype.normalize;
 const NumberIsNaN = Number.isNaN;
 const NumberIsFinite = Number.isFinite;
 const MathCeil = Math.ceil;
 const MathFloor = Math.floor;
 const MathMax = Math.max;
 const DateNow = Date.now;
-const StringPrototype = String.prototype;
-const StringPrototypeSymbolIterator = StringPrototype[SymbolIterator];
-const StringIteratorPrototypeNext = StringPrototypeSymbolIterator.$call("").next;
-const ObjectSetPrototypeOf = Object.setPrototypeOf;
 const ObjectDefineProperties = Object.defineProperties;
 const ObjectFreeze = Object.freeze;
 const ObjectCreate = Object.create;
-
-var createSafeIterator = (factory, next) => {
-  class SafeIterator {
-    #iterator;
-    constructor(iterable) {
-      this.#iterator = factory.$call(iterable);
-    }
-    next() {
-      return next.$call(this.#iterator);
-    }
-    [SymbolIterator]() {
-      return this;
-    }
-  }
-  ObjectSetPrototypeOf(SafeIterator.prototype, null);
-  ObjectFreeze(SafeIterator.prototype);
-  ObjectFreeze(SafeIterator);
-  return SafeIterator;
-};
-
-var SafeStringIterator = createSafeIterator(StringPrototypeSymbolIterator, StringIteratorPrototypeNext);
 
 // ----------------------------------------------------------------------------
 // Section: "Internal" modules
@@ -123,9 +97,7 @@ var SafeStringIterator = createSafeIterator(StringPrototypeSymbolIterator, Strin
  * Returns the number of columns required to display the given string.
  */
 var getStringWidth = function getStringWidth(str, removeControlChars = true) {
-  if (removeControlChars) str = stripVTControlCharacters(str);
-  str = StringPrototypeNormalize.$call(str, "NFC");
-  return internalGetStringWidth(str);
+  return internalGetStringWidth(str, removeControlChars);
 };
 
 const stripANSI = Bun.stripANSI;
@@ -1226,10 +1198,7 @@ function InterfaceConstructor(input, output, completer, terminal) {
 
   input.resume();
 }
-InterfaceConstructor.prototype = {};
-
-ObjectSetPrototypeOf(InterfaceConstructor.prototype, EventEmitter.prototype);
-// ObjectSetPrototypeOf(InterfaceConstructor, EventEmitter);
+$toClass(InterfaceConstructor, "InterfaceConstructor", EventEmitter);
 
 var _Interface = class Interface extends InterfaceConstructor {
   // eslint-disable-next-line no-useless-constructor
@@ -1564,7 +1533,7 @@ var _Interface = class Interface extends InterfaceConstructor {
         prefix +
         StringPrototypeSlice.$call(this.line, this.cursor, this.line.length);
       this.cursor = this.cursor - completeOn.length + prefix.length;
-      this._refreshLine();
+      this[kRefreshLine]();
       return;
     }
 
@@ -2213,10 +2182,7 @@ function Interface(input, output, completer, terminal) {
     this._ttyWrite = _ttyWriteDumb.bind(this);
   }
 }
-Interface.prototype = {};
-
-ObjectSetPrototypeOf(Interface.prototype, _Interface.prototype);
-ObjectSetPrototypeOf(Interface, _Interface);
+$toClass(Interface, "Interface", _Interface);
 
 /**
  * Displays `query` by writing it to the `output`.

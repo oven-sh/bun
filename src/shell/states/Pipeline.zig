@@ -95,9 +95,9 @@ fn setupCommands(this: *Pipeline) ?Yield {
         break :brk i;
     };
 
-    this.cmds = if (cmd_count >= 1) this.base.allocator().alloc(CmdOrResult, this.node.items.len) catch bun.outOfMemory() else null;
+    this.cmds = if (cmd_count >= 1) bun.handleOom(this.base.allocator().alloc(CmdOrResult, cmd_count)) else null;
     if (this.cmds == null) return null;
-    var pipes = this.base.allocator().alloc(Pipe, if (cmd_count > 1) cmd_count - 1 else 1) catch bun.outOfMemory();
+    var pipes = bun.handleOom(this.base.allocator().alloc(Pipe, if (cmd_count > 1) cmd_count - 1 else 1));
 
     if (cmd_count > 1) {
         var pipes_set: u32 = 0;
@@ -107,7 +107,7 @@ fn setupCommands(this: *Pipeline) ?Yield {
                 closefd(pipe[1]);
             }
             const system_err = err.toShellSystemError();
-            return this.writeFailingError("bun: {s}\n", .{system_err.message});
+            return this.writeFailingError("bun: {f}\n", .{system_err.message});
         }
     }
 
@@ -126,7 +126,7 @@ fn setupCommands(this: *Pipeline) ?Yield {
                     .result => |s| s,
                     .err => |err| {
                         const system_err = err.toShellSystemError();
-                        return this.writeFailingError("bun: {s}\n", .{system_err.message});
+                        return this.writeFailingError("bun: {f}\n", .{system_err.message});
                     },
                 };
                 this.cmds.?[i] = .{

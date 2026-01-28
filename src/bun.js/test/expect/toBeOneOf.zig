@@ -12,7 +12,7 @@ pub fn toBeOneOf(
         return globalThis.throwInvalidArguments("toBeOneOf() takes 1 argument", .{});
     }
 
-    incrementExpectCallCounter();
+    this.incrementExpectCallCounter();
 
     const expected = try this.getValue(globalThis, thisValue, "toBeOneOf", "<green>expected<r>");
     const list_value: JSValue = arguments[0];
@@ -47,7 +47,7 @@ pub fn toBeOneOf(
                 _: *JSGlobalObject,
                 entry_: ?*anyopaque,
                 item: JSValue,
-            ) callconv(.C) void {
+            ) callconv(.c) void {
                 const entry = bun.cast(*ExpectedEntry, entry_.?);
                 // Confusingly, jest-extended uses `deepEqual`, instead of `toBe`
                 if (item.jestDeepEquals(entry.expected, entry.globalThis) catch return) {
@@ -70,13 +70,13 @@ pub fn toBeOneOf(
     const expected_fmt = expected.toFmt(&formatter);
     if (not) {
         const received_fmt = list_value.toFmt(&formatter);
-        const expected_line = "Expected to not be one of: <green>{any}<r>\nReceived: <red>{any}<r>\n";
+        const expected_line = "Expected to not be one of: <green>{f}<r>\nReceived: <red>{f}<r>\n";
         const signature = comptime getSignature("toBeOneOf", "<green>expected<r>", true);
         return this.throw(globalThis, signature, "\n\n" ++ expected_line, .{ received_fmt, expected_fmt });
     }
 
-    const expected_line = "Expected to be one of: <green>{any}<r>\n";
-    const received_line = "Received: <red>{any}<r>\n";
+    const expected_line = "Expected to be one of: <green>{f}<r>\n";
+    const received_line = "Received: <red>{f}<r>\n";
     const signature = comptime getSignature("toBeOneOf", "<green>expected<r>", false);
     return this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ value_fmt, expected_fmt });
 }
@@ -87,7 +87,6 @@ const jsc = bun.jsc;
 const CallFrame = bun.jsc.CallFrame;
 const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
-const incrementExpectCallCounter = bun.jsc.Expect.incrementExpectCallCounter;
 
 const Expect = bun.jsc.Expect.Expect;
 const getSignature = Expect.getSignature;

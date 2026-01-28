@@ -104,7 +104,7 @@ pub const ShellIterator = struct {
         // Whenever possible, this iterator will return slices into `str` instead of
         // allocating. Sometimes this is not possible, for example, escaped characters
         // have be be unescape, so we need to allocate in this case.
-        var list = std.ArrayList(u8).init(&iter.arena.allocator);
+        var list = std.array_list.Managed(u8).init(&iter.arena.allocator);
         var start: usize = 0;
         var state: enum {
             skip_whitespace,
@@ -251,7 +251,7 @@ pub const ShellIterator = struct {
         }
     }
 
-    fn result(iter: *ShellIterator, start: usize, end: usize, list: *std.ArrayList(u8)) Error!?[]const u8 {
+    fn result(iter: *ShellIterator, start: usize, end: usize, list: *std.array_list.Managed(u8)) Error!?[]const u8 {
         const res = iter.str[start..end];
 
         // If we already have something in `list` that means that we could not

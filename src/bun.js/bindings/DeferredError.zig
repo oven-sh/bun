@@ -11,7 +11,7 @@ pub const DeferredError = struct {
         return .{
             .kind = kind,
             .code = code,
-            .msg = bun.String.createFormat(fmt, args) catch bun.outOfMemory(),
+            .msg = bun.handleOom(bun.String.createFormat(fmt, args)),
         };
     }
 

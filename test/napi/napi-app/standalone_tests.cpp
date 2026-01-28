@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <array>
 #include <cinttypes>
+#include <cstdlib>
+#include <cstring>
 #include <iostream>
 #include <string>
 
@@ -554,6 +556,386 @@ static napi_value test_is_typedarray(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+static napi_value test_napi_get_default_values(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+
+#ifndef _WIN32
+  BlockingStdoutScope stdout_scope;
+#endif
+
+  napi_value obj;
+  NODE_API_CALL(env, napi_create_object(env, &obj));
+
+  // Test 1: Get property that doesn't exist (should return undefined)
+  napi_value unknown_key;
+  NODE_API_CALL(env, napi_create_string_utf8(env, "nonexistent",
+                                             NAPI_AUTO_LENGTH, &unknown_key));
+
+  napi_value result;
+  napi_status get_status = napi_get_property(env, obj, unknown_key, &result);
+
+  if (get_status == napi_ok) {
+    napi_valuetype result_type;
+    napi_status type_status = napi_typeof(env, result, &result_type);
+
+    if (type_status == napi_ok && result_type == napi_undefined) {
+      printf("PASS: napi_get_property for unknown key returned undefined\n");
+    } else {
+      printf("FAIL: napi_get_property for unknown key returned type %d "
+             "(expected napi_undefined)\n",
+             result_type);
+    }
+  } else {
+    printf("FAIL: napi_get_property for unknown key failed with status %d\n",
+           get_status);
+  }
+
+  // Test 2: Get element at index that doesn't exist on array
+  napi_value array;
+  NODE_API_CALL(env, napi_create_array_with_length(env, 2, &array));
+
+  napi_value element_result;
+  napi_status element_status = napi_get_element(env, array, 5, &element_result);
+
+  if (element_status == napi_ok) {
+    napi_valuetype element_type;
+    napi_status element_type_status =
+        napi_typeof(env, element_result, &element_type);
+
+    if (element_type_status == napi_ok && element_type == napi_undefined) {
+      printf("PASS: napi_get_element for out-of-bounds index returned "
+             "undefined\n");
+    } else {
+      printf("FAIL: napi_get_element for out-of-bounds index returned type %d "
+             "(expected napi_undefined)\n",
+             element_type);
+    }
+  } else {
+    printf("FAIL: napi_get_element for out-of-bounds index failed with status "
+           "%d\n",
+           element_status);
+  }
+
+  // Test 3: Get named property that doesn't exist
+  napi_value named_result;
+  napi_status named_status =
+      napi_get_named_property(env, obj, "missing_prop", &named_result);
+
+  if (named_status == napi_ok) {
+    napi_valuetype named_type;
+    napi_status named_type_status = napi_typeof(env, named_result, &named_type);
+
+    if (named_type_status == napi_ok && named_type == napi_undefined) {
+      printf("PASS: napi_get_named_property for unknown property returned "
+             "undefined\n");
+    } else {
+      printf("FAIL: napi_get_named_property for unknown property returned type "
+             "%d (expected napi_undefined)\n",
+             named_type);
+    }
+  } else {
+    printf("FAIL: napi_get_named_property for unknown property failed with "
+           "status %d\n",
+           named_status);
+  }
+
+  // Test 4: Set a property and verify we can get it back
+  napi_value test_key;
+  napi_value test_value;
+  NODE_API_CALL(env, napi_create_string_utf8(env, "test_key", NAPI_AUTO_LENGTH,
+                                             &test_key));
+  NODE_API_CALL(env, napi_create_int32(env, 42, &test_value));
+
+  NODE_API_CALL(env, napi_set_property(env, obj, test_key, test_value));
+
+  napi_value retrieved_value;
+  NODE_API_CALL(env, napi_get_property(env, obj, test_key, &retrieved_value));
+
+  int32_t retrieved_int;
+  napi_status int_status =
+      napi_get_value_int32(env, retrieved_value, &retrieved_int);
+
+  if (int_status == napi_ok && retrieved_int == 42) {
+    printf("PASS: napi_get_property correctly retrieved set value: %d\n",
+           retrieved_int);
+  } else {
+    printf("FAIL: napi_get_property did not retrieve correct value (got %d, "
+           "expected 42)\n",
+           retrieved_int);
+  }
+
+  // Test 5: Use integer as property key (should be converted to string)
+  napi_value int_key;
+  napi_value int_key_value;
+  NODE_API_CALL(env, napi_create_int32(env, 123, &int_key));
+  NODE_API_CALL(env, napi_create_string_utf8(env, "integer_key_value",
+                                             NAPI_AUTO_LENGTH, &int_key_value));
+
+  // Set property using integer key
+  napi_status int_key_set_status =
+      napi_set_property(env, obj, int_key, int_key_value);
+
+  if (int_key_set_status == napi_ok) {
+    printf("PASS: napi_set_property with integer key succeeded\n");
+
+    // Try to get it back using the same integer key
+    napi_value int_key_result;
+    napi_status int_key_get_status =
+        napi_get_property(env, obj, int_key, &int_key_result);
+
+    if (int_key_get_status == napi_ok) {
+      // Check if we got back a string
+      napi_valuetype int_key_result_type;
+      napi_status int_key_type_status =
+          napi_typeof(env, int_key_result, &int_key_result_type);
+
+      if (int_key_type_status == napi_ok &&
+          int_key_result_type == napi_string) {
+        char buffer[256];
+        size_t copied;
+        napi_status str_status = napi_get_value_string_utf8(
+            env, int_key_result, buffer, sizeof(buffer), &copied);
+
+        if (str_status == napi_ok && strcmp(buffer, "integer_key_value") == 0) {
+          printf("PASS: napi_get_property with integer key retrieved correct "
+                 "value: %s\n",
+                 buffer);
+        } else {
+          printf("FAIL: napi_get_property with integer key retrieved wrong "
+                 "value: %s\n",
+                 buffer);
+        }
+      } else {
+        printf("FAIL: napi_get_property with integer key returned type %d "
+               "(expected string)\n",
+               int_key_result_type);
+      }
+    } else {
+      printf("FAIL: napi_get_property with integer key failed with status %d\n",
+             int_key_get_status);
+    }
+
+    // Also try to get it using string "123"
+    napi_value string_123_key;
+    NODE_API_CALL(env, napi_create_string_utf8(env, "123", NAPI_AUTO_LENGTH,
+                                               &string_123_key));
+
+    napi_value string_key_result;
+    napi_status string_key_get_status =
+        napi_get_property(env, obj, string_123_key, &string_key_result);
+
+    if (string_key_get_status == napi_ok) {
+      napi_valuetype string_key_result_type;
+      napi_status string_key_type_status =
+          napi_typeof(env, string_key_result, &string_key_result_type);
+
+      if (string_key_type_status == napi_ok &&
+          string_key_result_type == napi_string) {
+        char buffer2[256];
+        size_t copied2;
+        napi_status str_status2 = napi_get_value_string_utf8(
+            env, string_key_result, buffer2, sizeof(buffer2), &copied2);
+
+        if (str_status2 == napi_ok &&
+            strcmp(buffer2, "integer_key_value") == 0) {
+          printf("PASS: napi_get_property with string '123' key also retrieved "
+                 "correct value: %s\n",
+                 buffer2);
+        } else {
+          printf("FAIL: napi_get_property with string '123' key retrieved "
+                 "wrong value: %s\n",
+                 buffer2);
+        }
+      } else {
+        printf("FAIL: napi_get_property with string '123' key returned type %d "
+               "(expected string)\n",
+               string_key_result_type);
+      }
+    } else {
+      printf("FAIL: napi_get_property with string '123' key failed with status "
+             "%d\n",
+             string_key_get_status);
+    }
+  } else {
+    printf("FAIL: napi_set_property with integer key failed with status %d\n",
+           int_key_set_status);
+  }
+
+  return ok(env);
+}
+
+static napi_value
+test_napi_numeric_string_keys(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+
+#ifndef _WIN32
+  BlockingStdoutScope stdout_scope;
+#endif
+
+  napi_value obj;
+  NODE_API_CALL(env, napi_create_object(env, &obj));
+
+  // Test setting property with numeric string key "0"
+  napi_value value_123;
+  NODE_API_CALL(env, napi_create_int32(env, 123, &value_123));
+
+  napi_status set_status = napi_set_named_property(env, obj, "0", value_123);
+  if (set_status == napi_ok) {
+    printf("PASS: napi_set_named_property with key '0' succeeded\n");
+  } else {
+    printf("FAIL: napi_set_named_property with key '0' failed: %d\n",
+           set_status);
+  }
+
+  // Test has property with numeric string key "0"
+  bool has_prop;
+  napi_status has_status = napi_has_named_property(env, obj, "0", &has_prop);
+  if (has_status == napi_ok && has_prop) {
+    printf("PASS: napi_has_named_property with key '0' returned true\n");
+  } else {
+    printf("FAIL: napi_has_named_property with key '0' failed or returned "
+           "false: status=%d, has=%s\n",
+           has_status, has_prop ? "true" : "false");
+  }
+
+  // Test getting property with numeric string key "0"
+  napi_value retrieved_value;
+  napi_status get_status =
+      napi_get_named_property(env, obj, "0", &retrieved_value);
+  if (get_status == napi_ok) {
+    int32_t retrieved_int;
+    napi_status int_status =
+        napi_get_value_int32(env, retrieved_value, &retrieved_int);
+    if (int_status == napi_ok && retrieved_int == 123) {
+      printf("PASS: napi_get_named_property with key '0' returned correct "
+             "value: %d\n",
+             retrieved_int);
+    } else {
+      printf("FAIL: napi_get_named_property with key '0' returned wrong value: "
+             "status=%d, value=%d\n",
+             int_status, retrieved_int);
+    }
+  } else {
+    printf("FAIL: napi_get_named_property with key '0' failed: %d\n",
+           get_status);
+  }
+
+  // Test with another numeric string key "1"
+  napi_value value_456;
+  NODE_API_CALL(env, napi_create_int32(env, 456, &value_456));
+
+  set_status = napi_set_named_property(env, obj, "1", value_456);
+  if (set_status == napi_ok) {
+    printf("PASS: napi_set_named_property with key '1' succeeded\n");
+  } else {
+    printf("FAIL: napi_set_named_property with key '1' failed: %d\n",
+           set_status);
+  }
+
+  has_status = napi_has_named_property(env, obj, "1", &has_prop);
+  if (has_status == napi_ok && has_prop) {
+    printf("PASS: napi_has_named_property with key '1' returned true\n");
+  } else {
+    printf("FAIL: napi_has_named_property with key '1' failed or returned "
+           "false: status=%d, has=%s\n",
+           has_status, has_prop ? "true" : "false");
+  }
+
+  get_status = napi_get_named_property(env, obj, "1", &retrieved_value);
+  if (get_status == napi_ok) {
+    int32_t retrieved_int;
+    napi_status int_status =
+        napi_get_value_int32(env, retrieved_value, &retrieved_int);
+    if (int_status == napi_ok && retrieved_int == 456) {
+      printf("PASS: napi_get_named_property with key '1' returned correct "
+             "value: %d\n",
+             retrieved_int);
+    } else {
+      printf("FAIL: napi_get_named_property with key '1' returned wrong value: "
+             "status=%d, value=%d\n",
+             int_status, retrieved_int);
+    }
+  } else {
+    printf("FAIL: napi_get_named_property with key '1' failed: %d\n",
+           get_status);
+  }
+
+  // Test with napi_get_property using numeric string keys
+  napi_value key_0, key_1;
+  NODE_API_CALL(env,
+                napi_create_string_utf8(env, "0", NAPI_AUTO_LENGTH, &key_0));
+  NODE_API_CALL(env,
+                napi_create_string_utf8(env, "1", NAPI_AUTO_LENGTH, &key_1));
+
+  napi_value prop_value;
+  napi_status prop_status = napi_get_property(env, obj, key_0, &prop_value);
+  if (prop_status == napi_ok) {
+    int32_t prop_int;
+    napi_status int_status = napi_get_value_int32(env, prop_value, &prop_int);
+    if (int_status == napi_ok && prop_int == 123) {
+      printf(
+          "PASS: napi_get_property with key '0' returned correct value: %d\n",
+          prop_int);
+    } else {
+      printf("FAIL: napi_get_property with key '0' returned wrong value: "
+             "status=%d, value=%d\n",
+             int_status, prop_int);
+    }
+  } else {
+    printf("FAIL: napi_get_property with key '0' failed: %d\n", prop_status);
+  }
+
+  // Test napi_has_property
+  bool has_property;
+  napi_status has_prop_status =
+      napi_has_property(env, obj, key_1, &has_property);
+  if (has_prop_status == napi_ok && has_property) {
+    printf("PASS: napi_has_property with key '1' returned true\n");
+  } else {
+    printf("FAIL: napi_has_property with key '1' failed or returned false: "
+           "status=%d, has=%s\n",
+           has_prop_status, has_property ? "true" : "false");
+  }
+
+  // Test napi_has_own_property
+  bool has_own_property;
+  napi_status has_own_status =
+      napi_has_own_property(env, obj, key_0, &has_own_property);
+  if (has_own_status == napi_ok && has_own_property) {
+    printf("PASS: napi_has_own_property with key '0' returned true\n");
+  } else {
+    printf("FAIL: napi_has_own_property with key '0' failed or returned false: "
+           "status=%d, has=%s\n",
+           has_own_status, has_own_property ? "true" : "false");
+  }
+
+  // Test napi_delete_property
+  bool delete_result;
+  napi_status delete_status =
+      napi_delete_property(env, obj, key_1, &delete_result);
+  if (delete_status == napi_ok) {
+    printf("PASS: napi_delete_property with key '1' succeeded, result=%s\n",
+           delete_result ? "true" : "false");
+
+    // Verify the property was actually deleted
+    bool still_has_property;
+    napi_status verify_status =
+        napi_has_property(env, obj, key_1, &still_has_property);
+    if (verify_status == napi_ok && !still_has_property) {
+      printf("PASS: Property '1' was successfully deleted\n");
+    } else {
+      printf(
+          "FAIL: Property '1' still exists after deletion: status=%d, has=%s\n",
+          verify_status, still_has_property ? "true" : "false");
+    }
+  } else {
+    printf("FAIL: napi_delete_property with key '1' failed: %d\n",
+           delete_status);
+  }
+
+  return ok(env);
+}
+
 static napi_value test_deferred_exceptions(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
 
@@ -807,6 +1189,936 @@ static napi_value test_deferred_exceptions(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+// Test for napi_create_array_with_length boundary handling
+// Bun converts out-of-bounds lengths to 0, Node may handle differently
+static napi_value
+test_napi_create_array_boundary(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+
+  // Test with negative length
+  napi_value array_neg;
+  napi_status status = napi_create_array_with_length(env, -1, &array_neg);
+
+  if (status == napi_ok) {
+    uint32_t length;
+    NODE_API_CALL(env, napi_get_array_length(env, array_neg, &length));
+    printf("PASS: napi_create_array_with_length(-1) created array with length "
+           "%u\n",
+           length);
+  } else {
+    printf("FAIL: napi_create_array_with_length(-1) failed with status %d\n",
+           status);
+  }
+
+  // Test with very large length (larger than max u32)
+  napi_value array_large;
+  size_t huge_length = (size_t)0xFFFFFFFF + 100;
+  status = napi_create_array_with_length(env, huge_length, &array_large);
+
+  if (status == napi_ok) {
+    uint32_t length;
+    NODE_API_CALL(env, napi_get_array_length(env, array_large, &length));
+    printf("PASS: napi_create_array_with_length(0x%zx) created array with "
+           "length %u\n",
+           huge_length, length);
+  } else if (status == napi_invalid_arg || status == napi_generic_failure) {
+    printf(
+        "PASS: napi_create_array_with_length(0x%zx) rejected with status %d\n",
+        huge_length, status);
+  } else {
+    printf("FAIL: napi_create_array_with_length(0x%zx) returned unexpected "
+           "status %d\n",
+           huge_length, status);
+  }
+
+  // Test with value that becomes negative when cast to i32 (should become 0)
+  napi_value array_negative;
+  size_t negative_when_signed = 0x80000000; // 2^31 - becomes negative in i32
+  status =
+      napi_create_array_with_length(env, negative_when_signed, &array_negative);
+
+  if (status == napi_ok) {
+    uint32_t length;
+    NODE_API_CALL(env, napi_get_array_length(env, array_negative, &length));
+    if (length == 0) {
+      printf("PASS: napi_create_array_with_length(0x%zx) created array with "
+             "length 0 (clamped negative)\n",
+             negative_when_signed);
+    } else {
+      printf("FAIL: napi_create_array_with_length(0x%zx) created array with "
+             "length %u (expected 0)\n",
+             negative_when_signed, length);
+    }
+  } else {
+    printf("FAIL: napi_create_array_with_length(0x%zx) failed with status %d\n",
+           negative_when_signed, status);
+  }
+
+  // Test with normal length to ensure it still works
+  napi_value array_normal;
+  status = napi_create_array_with_length(env, 10, &array_normal);
+
+  if (status == napi_ok) {
+    uint32_t length;
+    NODE_API_CALL(env, napi_get_array_length(env, array_normal, &length));
+    if (length == 10) {
+      printf("PASS: napi_create_array_with_length(10) created array with "
+             "correct length\n");
+    } else {
+      printf("FAIL: napi_create_array_with_length(10) created array with "
+             "length %u\n",
+             length);
+    }
+  } else {
+    printf("FAIL: napi_create_array_with_length(10) failed with status %d\n",
+           status);
+  }
+
+  return ok(env);
+}
+
+// Test for napi_call_function recv parameter validation
+// Node validates recv parameter, Bun might not
+static napi_value
+test_napi_call_function_recv_null(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+
+  // Create a simple function
+  napi_value global, function_val;
+  NODE_API_CALL(env, napi_get_global(env, &global));
+
+  // Get Array constructor as our test function
+  napi_value array_constructor;
+  NODE_API_CALL(
+      env, napi_get_named_property(env, global, "Array", &array_constructor));
+
+  // Try to call with null recv (this) parameter
+  napi_value result;
+  napi_status status =
+      napi_call_function(env, nullptr, array_constructor, 0, nullptr, &result);
+
+  if (status == napi_ok) {
+    printf("PASS: napi_call_function with null recv succeeded\n");
+  } else if (status == napi_invalid_arg) {
+    printf(
+        "PASS: napi_call_function with null recv returned napi_invalid_arg\n");
+  } else {
+    printf("FAIL: napi_call_function with null recv returned unexpected "
+           "status: %d\n",
+           status);
+  }
+
+  // Also test with a valid recv to ensure normal operation works
+  status =
+      napi_call_function(env, global, array_constructor, 0, nullptr, &result);
+  if (status == napi_ok) {
+    printf("PASS: napi_call_function with valid recv succeeded\n");
+  } else {
+    printf("FAIL: napi_call_function with valid recv failed with status: %d\n",
+           status);
+  }
+
+  return ok(env);
+}
+
+// Test for napi_strict_equals - should match JavaScript === operator behavior
+// This tests that NaN !== NaN and -0 === 0
+static napi_value test_napi_strict_equals(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+
+  // Test NaN !== NaN
+  napi_value nan1, nan2;
+  NODE_API_CALL(env, napi_create_double(
+                         env, std::numeric_limits<double>::quiet_NaN(), &nan1));
+  NODE_API_CALL(env, napi_create_double(
+                         env, std::numeric_limits<double>::quiet_NaN(), &nan2));
+
+  bool nan_equals;
+  NODE_API_CALL(env, napi_strict_equals(env, nan1, nan2, &nan_equals));
+
+  if (nan_equals) {
+    printf("FAIL: NaN === NaN returned true, expected false\n");
+  } else {
+    printf("PASS: NaN !== NaN\n");
+  }
+
+  // Test -0 === 0
+  napi_value neg_zero, pos_zero;
+  NODE_API_CALL(env, napi_create_double(env, -0.0, &neg_zero));
+  NODE_API_CALL(env, napi_create_double(env, 0.0, &pos_zero));
+
+  bool zero_equals;
+  NODE_API_CALL(env, napi_strict_equals(env, neg_zero, pos_zero, &zero_equals));
+
+  if (!zero_equals) {
+    printf("FAIL: -0 === 0 returned false, expected true\n");
+  } else {
+    printf("PASS: -0 === 0\n");
+  }
+
+  // Test normal values work correctly
+  napi_value val1, val2, val3;
+  NODE_API_CALL(env, napi_create_double(env, 42.0, &val1));
+  NODE_API_CALL(env, napi_create_double(env, 42.0, &val2));
+  NODE_API_CALL(env, napi_create_double(env, 43.0, &val3));
+
+  bool same_equals, diff_equals;
+  NODE_API_CALL(env, napi_strict_equals(env, val1, val2, &same_equals));
+  NODE_API_CALL(env, napi_strict_equals(env, val1, val3, &diff_equals));
+
+  if (!same_equals) {
+    printf("FAIL: 42 === 42 returned false, expected true\n");
+  } else {
+    printf("PASS: 42 === 42\n");
+  }
+
+  if (diff_equals) {
+    printf("FAIL: 42 === 43 returned true, expected false\n");
+  } else {
+    printf("PASS: 42 !== 43\n");
+  }
+
+  return ok(env);
+}
+
+// Test for dataview bounds checking and error messages
+static napi_value
+test_napi_dataview_bounds_errors(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+
+  // Create an ArrayBuffer
+  napi_value arraybuffer;
+  void *data = nullptr;
+  NODE_API_CALL(env, napi_create_arraybuffer(env, 100, &data, &arraybuffer));
+
+  // Test 1: DataView exceeding buffer bounds
+  napi_value dataview;
+  napi_status status = napi_create_dataview(env, 50, arraybuffer, 60,
+                                            &dataview); // 60 + 50 = 110 > 100
+
+  if (status == napi_ok) {
+    printf("FAIL: napi_create_dataview allowed DataView exceeding buffer "
+           "bounds\n");
+  } else {
+    printf("PASS: napi_create_dataview rejected DataView exceeding buffer "
+           "bounds\n");
+
+    // Check if an exception was thrown with the expected error
+    bool is_exception_pending = false;
+    NODE_API_CALL(env, napi_is_exception_pending(env, &is_exception_pending));
+
+    if (is_exception_pending) {
+      napi_value exception;
+      NODE_API_CALL(env, napi_get_and_clear_last_exception(env, &exception));
+
+      // Try to get error message
+      napi_value message_val;
+      napi_status msg_status =
+          napi_get_named_property(env, exception, "message", &message_val);
+
+      if (msg_status == napi_ok) {
+        char message[256];
+        size_t message_len;
+        napi_get_value_string_utf8(env, message_val, message, sizeof(message),
+                                   &message_len);
+        printf("  Error message: %s\n", message);
+      }
+    }
+  }
+
+  // Test 2: DataView at exact boundary (should work)
+  napi_value boundary_dataview;
+  status = napi_create_dataview(env, 40, arraybuffer, 60,
+                                &boundary_dataview); // 60 + 40 = 100 exactly
+
+  if (status != napi_ok) {
+    printf("FAIL: napi_create_dataview rejected valid DataView at exact "
+           "boundary\n");
+  } else {
+    printf("PASS: napi_create_dataview accepted valid DataView at exact "
+           "boundary\n");
+  }
+
+  // Test 3: DataView with offset beyond buffer
+  napi_value beyond_dataview;
+  status = napi_create_dataview(env, 1, arraybuffer, 101,
+                                &beyond_dataview); // offset 101 > 100
+
+  if (status == napi_ok) {
+    printf("FAIL: napi_create_dataview allowed DataView with offset beyond "
+           "buffer\n");
+  } else {
+    printf("PASS: napi_create_dataview rejected DataView with offset beyond "
+           "buffer\n");
+  }
+
+  return ok(env);
+}
+
+// Test for napi_typeof with potentially empty/invalid values
+static napi_value test_napi_typeof_empty_value(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+
+  // Test 1: Create an uninitialized napi_value (simulating empty JSValue)
+  // This is technically undefined behavior but can reveal differences
+  napi_value uninit_value;
+  memset(&uninit_value, 0, sizeof(uninit_value));
+
+  napi_valuetype type;
+  napi_status status = napi_typeof(env, uninit_value, &type);
+
+  if (status == napi_ok) {
+    if (type == napi_undefined) {
+      printf("PASS: napi_typeof(zero-initialized value) returned "
+             "napi_undefined (Bun behavior)\n");
+    } else {
+      printf("FAIL: napi_typeof(zero-initialized value) returned %d\n", type);
+    }
+  } else {
+    printf("PASS: napi_typeof(zero-initialized value) returned error status %d "
+           "(Node behavior)\n",
+           status);
+  }
+
+  // Test 2: Try accessing deleted reference (undefined behavior per spec)
+  // This is actually undefined behavior according to N-API documentation
+  // Both Node.js and Bun may crash or behave unpredictably
+  printf("INFO: Accessing deleted reference is undefined behavior - test "
+         "skipped\n");
+  // After napi_delete_reference, the ref is invalid and should not be used
+
+  // Test 3: Check with reinterpret_cast of nullptr
+  // This is the most likely way to get an empty JSValue
+  napi_value *null_ptr = nullptr;
+  napi_value null_value = reinterpret_cast<napi_value>(null_ptr);
+
+  status = napi_typeof(env, null_value, &type);
+  if (status == napi_ok) {
+    if (type == napi_undefined) {
+      printf("WARN: napi_typeof(nullptr) returned napi_undefined - Bun's "
+             "isEmpty() check\n");
+    } else {
+      printf("INFO: napi_typeof(nullptr) returned type %d\n", type);
+    }
+  } else {
+    printf("INFO: napi_typeof(nullptr) returned error %d (safer behavior)\n",
+           status);
+  }
+
+  return ok(env);
+}
+
+// Test for Object.freeze and Object.seal with indexed properties
+static napi_value
+test_napi_freeze_seal_indexed(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+
+  // Test 1: Freeze array (has indexed properties)
+  napi_value array;
+  NODE_API_CALL(env, napi_create_array_with_length(env, 3, &array));
+
+  // Set some values
+  napi_value val;
+  NODE_API_CALL(env, napi_create_int32(env, 42, &val));
+  NODE_API_CALL(env, napi_set_element(env, array, 0, val));
+
+  // Try to freeze the array
+  napi_status freeze_status = napi_object_freeze(env, array);
+
+  if (freeze_status == napi_ok) {
+    // Try to modify after freeze
+    napi_value new_val;
+    NODE_API_CALL(env, napi_create_int32(env, 99, &new_val));
+    napi_status set_status = napi_set_element(env, array, 1, new_val);
+
+    if (set_status != napi_ok) {
+      printf("PASS: Array was frozen - cannot modify elements\n");
+    } else {
+      // Check if it actually changed
+      napi_value get_val;
+      NODE_API_CALL(env, napi_get_element(env, array, 1, &get_val));
+      int32_t num;
+      NODE_API_CALL(env, napi_get_value_int32(env, get_val, &num));
+
+      if (num == 99) {
+        printf("FAIL: Array with indexed properties was NOT actually frozen "
+               "(Bun behavior?)\n");
+      } else {
+        printf("INFO: Array freeze had partial effect\n");
+      }
+    }
+  } else {
+    printf("INFO: napi_object_freeze failed on array with status %d\n",
+           freeze_status);
+  }
+
+  // Test 2: Seal array (has indexed properties)
+  napi_value array2;
+  NODE_API_CALL(env, napi_create_array_with_length(env, 3, &array2));
+  NODE_API_CALL(env, napi_set_element(env, array2, 0, val));
+
+  // Try to seal the array
+  napi_status seal_status = napi_object_seal(env, array2);
+
+  if (seal_status == napi_ok) {
+    // Try to add new property after seal
+    napi_value prop_val;
+    NODE_API_CALL(
+        env, napi_create_string_utf8(env, "test", NAPI_AUTO_LENGTH, &prop_val));
+    napi_status set_status =
+        napi_set_named_property(env, array2, "newProp", prop_val);
+
+    if (set_status != napi_ok) {
+      printf("PASS: Array was sealed - cannot add new properties\n");
+    } else {
+      // Check if it actually was added
+      napi_value get_prop;
+      napi_status get_status =
+          napi_get_named_property(env, array2, "newProp", &get_prop);
+
+      if (get_status == napi_ok) {
+        printf("FAIL: Array with indexed properties was NOT actually sealed "
+               "(Bun behavior?)\n");
+      } else {
+        printf("INFO: Array seal had partial effect\n");
+      }
+    }
+  } else {
+    printf("INFO: napi_object_seal failed on array with status %d\n",
+           seal_status);
+  }
+
+  // Test 3: Freeze regular object (no indexed properties)
+  napi_value obj;
+  NODE_API_CALL(env, napi_create_object(env, &obj));
+  NODE_API_CALL(env, napi_set_named_property(env, obj, "prop", val));
+
+  napi_status obj_freeze_status = napi_object_freeze(env, obj);
+
+  if (obj_freeze_status == napi_ok) {
+    // Try to modify after freeze
+    napi_value new_val;
+    NODE_API_CALL(env, napi_create_int32(env, 999, &new_val));
+    napi_status set_status = napi_set_named_property(env, obj, "prop", new_val);
+
+    if (set_status != napi_ok) {
+      printf("PASS: Regular object was frozen correctly\n");
+    } else {
+      // Check if it actually changed
+      napi_value get_val;
+      NODE_API_CALL(env, napi_get_named_property(env, obj, "prop", &get_val));
+      int32_t num;
+      NODE_API_CALL(env, napi_get_value_int32(env, get_val, &num));
+
+      if (num == 999) {
+        printf("FAIL: Regular object was not frozen\n");
+      } else {
+        printf("PASS: Regular object freeze prevented modification\n");
+      }
+    }
+  }
+
+  return ok(env);
+}
+
+// Test for napi_create_external_buffer with empty/null data
+static void empty_buffer_finalizer(napi_env env, void *data, void *hint) {
+  // No-op finalizer for empty buffers
+}
+
+static napi_value
+test_napi_create_external_buffer_empty(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+
+  // Test 1: nullptr data with zero length
+  {
+    napi_value buffer;
+    napi_status status = napi_create_external_buffer(
+        env, 0, nullptr, empty_buffer_finalizer, nullptr, &buffer);
+
+    if (status != napi_ok) {
+      printf("FAIL: napi_create_external_buffer with nullptr and zero length "
+             "failed with status %d\n",
+             status);
+      return env.Undefined();
+    }
+
+    // Verify it's a buffer
+    bool is_buffer;
+    NODE_API_CALL(env, napi_is_buffer(env, buffer, &is_buffer));
+    if (!is_buffer) {
+      printf("FAIL: Created value is not a buffer\n");
+      return env.Undefined();
+    }
+
+    // Verify length is 0
+    size_t length;
+    void *data;
+    NODE_API_CALL(env, napi_get_buffer_info(env, buffer, &data, &length));
+    if (length != 0) {
+      printf("FAIL: Buffer length is %zu instead of 0\n", length);
+      return env.Undefined();
+    }
+
+    printf("PASS: napi_create_external_buffer with nullptr and zero length\n");
+  }
+
+  // Test 2: non-null data with zero length
+  {
+    char dummy = 0;
+    napi_value buffer;
+    napi_status status = napi_create_external_buffer(
+        env, 0, &dummy, empty_buffer_finalizer, nullptr, &buffer);
+
+    if (status != napi_ok) {
+      printf("FAIL: napi_create_external_buffer with non-null data and zero "
+             "length failed with status %d\n",
+             status);
+      return env.Undefined();
+    }
+
+    // Verify it's a buffer
+    bool is_buffer;
+    NODE_API_CALL(env, napi_is_buffer(env, buffer, &is_buffer));
+    if (!is_buffer) {
+      printf("FAIL: Created value is not a buffer\n");
+      return env.Undefined();
+    }
+
+    // Verify length is 0
+    size_t length;
+    void *data;
+    NODE_API_CALL(env, napi_get_buffer_info(env, buffer, &data, &length));
+    if (length != 0) {
+      printf("FAIL: Buffer length is %zu instead of 0\n", length);
+      return env.Undefined();
+    }
+
+    printf("PASS: napi_create_external_buffer with non-null data and zero "
+           "length\n");
+  }
+
+  // Test 3: nullptr finalizer
+  {
+    char dummy = 0;
+    napi_value buffer;
+    napi_status status =
+        napi_create_external_buffer(env, 0, &dummy, nullptr, nullptr, &buffer);
+
+    if (status != napi_ok) {
+      printf("FAIL: napi_create_external_buffer with nullptr finalizer failed "
+             "with status %d\n",
+             status);
+      return env.Undefined();
+    }
+
+    printf("PASS: napi_create_external_buffer with nullptr finalizer\n");
+  }
+
+  return ok(env);
+}
+
+static napi_value test_napi_empty_buffer_info(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+
+  // Test: Create an empty external buffer and verify napi_get_buffer_info and
+  // napi_get_typedarray_info
+  {
+    napi_value buffer;
+    napi_status status =
+        napi_create_external_buffer(env, 0, nullptr, nullptr, nullptr, &buffer);
+
+    if (status != napi_ok) {
+      printf("FAIL: napi_create_external_buffer with nullptr and zero length "
+             "failed with status %d\n",
+             status);
+      return env.Undefined();
+    }
+
+    // Test napi_get_buffer_info
+    void *buffer_data = reinterpret_cast<void *>(
+        0xDEADBEEF); // Initialize to non-null to ensure it's set to null
+    size_t buffer_length =
+        999; // Initialize to non-zero to ensure it's set to 0
+
+    status = napi_get_buffer_info(env, buffer, &buffer_data, &buffer_length);
+    if (status != napi_ok) {
+      printf("FAIL: napi_get_buffer_info failed with status %d\n", status);
+      return env.Undefined();
+    }
+
+    if (buffer_data != nullptr) {
+      printf("FAIL: napi_get_buffer_info returned non-null data pointer: %p\n",
+             buffer_data);
+      return env.Undefined();
+    }
+
+    if (buffer_length != 0) {
+      printf("FAIL: napi_get_buffer_info returned non-zero length: %zu\n",
+             buffer_length);
+      return env.Undefined();
+    }
+
+    printf("PASS: napi_get_buffer_info returns null pointer and 0 length for "
+           "empty buffer\n");
+
+    // Test napi_get_typedarray_info
+    napi_typedarray_type type;
+    size_t typedarray_length = 999; // Initialize to non-zero
+    void *typedarray_data =
+        reinterpret_cast<void *>(0xDEADBEEF); // Initialize to non-null
+    napi_value arraybuffer;
+    size_t byte_offset;
+
+    status =
+        napi_get_typedarray_info(env, buffer, &type, &typedarray_length,
+                                 &typedarray_data, &arraybuffer, &byte_offset);
+    if (status != napi_ok) {
+      printf("FAIL: napi_get_typedarray_info failed with status %d\n", status);
+      return env.Undefined();
+    }
+
+    if (typedarray_data != nullptr) {
+      printf(
+          "FAIL: napi_get_typedarray_info returned non-null data pointer: %p\n",
+          typedarray_data);
+      return env.Undefined();
+    }
+
+    if (typedarray_length != 0) {
+      printf("FAIL: napi_get_typedarray_info returned non-zero length: %zu\n",
+             typedarray_length);
+      return env.Undefined();
+    }
+
+    printf("PASS: napi_get_typedarray_info returns null pointer and 0 length "
+           "for empty buffer\n");
+
+    // Test napi_is_detached_arraybuffer
+    // First get the underlying arraybuffer from the buffer
+    napi_value arraybuffer_from_buffer;
+    status = napi_get_typedarray_info(env, buffer, nullptr, nullptr, nullptr,
+                                      &arraybuffer_from_buffer, nullptr);
+    if (status != napi_ok) {
+      printf("FAIL: Could not get arraybuffer from buffer, status %d\n",
+             status);
+      return env.Undefined();
+    }
+
+    bool is_detached = false;
+    status = napi_is_detached_arraybuffer(env, arraybuffer_from_buffer,
+                                          &is_detached);
+    if (status != napi_ok) {
+      printf("FAIL: napi_is_detached_arraybuffer failed with status %d\n",
+             status);
+      return env.Undefined();
+    }
+
+    if (!is_detached) {
+      printf("FAIL: napi_is_detached_arraybuffer returned false for empty "
+             "buffer's arraybuffer, expected true\n");
+      return env.Undefined();
+    }
+
+    printf("PASS: napi_is_detached_arraybuffer returns true for empty buffer's "
+           "arraybuffer\n");
+  }
+
+  return ok(env);
+}
+
+// Test for napi_typeof with boxed primitive objects (String, Number, Boolean)
+// See: https://github.com/oven-sh/bun/issues/25351
+static napi_value napi_get_typeof(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+
+  if (info.Length() < 1) {
+    printf("FAIL: Expected 1 argument\n");
+    return env.Undefined();
+  }
+
+  napi_value value = info[0];
+  napi_valuetype type;
+  napi_status status = napi_typeof(env, value, &type);
+
+  if (status != napi_ok) {
+    printf("FAIL: napi_typeof failed with status %d\n", status);
+    return env.Undefined();
+  }
+
+  napi_value result;
+  status = napi_create_int32(env, static_cast<int32_t>(type), &result);
+
+  if (status != napi_ok) {
+    printf("FAIL: napi_create_int32 failed\n");
+    return env.Undefined();
+  }
+
+  return result;
+}
+
+// Regression test: napi_create_external_buffer must tie the finalize callback
+// to the ArrayBuffer's destructor, not addFinalizer on the JSUint8Array.
+// With addFinalizer, extracting .buffer (the ArrayBuffer) and then letting the
+// Buffer get GC'd would call finalize_cb and free the data while the ArrayBuffer
+// still references it.
+static napi_value test_external_buffer_data_lifetime(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+
+  // Allocate data with a known pattern.
+  const size_t data_size = 4;
+  uint8_t* ext_data = (uint8_t*)malloc(data_size);
+  ext_data[0] = 0xDE; ext_data[1] = 0xAD; ext_data[2] = 0xBE; ext_data[3] = 0xEF;
+
+  napi_ref ab_ref = nullptr;
+
+  // Create the buffer inside a handle scope we'll close before GC,
+  // so the JSUint8Array handle becomes eligible for collection.
+  napi_handle_scope *hs = new napi_handle_scope;
+  NODE_API_CALL(env, napi_open_handle_scope(env, hs));
+
+  // Allocate on the heap so conservative stack scanning can't find it.
+  napi_value *buffer = new napi_value;
+  NODE_API_CALL(env, napi_create_external_buffer(env, data_size, ext_data,
+    +[](napi_env, void* data, void*) {
+      // Poison the data then free — detectable as use-after-free if
+      // the ArrayBuffer still tries to read through this pointer.
+      memset(data, 0x00, 4);
+      free(data);
+    }, nullptr, buffer));
+
+  // Extract the underlying ArrayBuffer and prevent it from being GC'd.
+  napi_value *arraybuffer = new napi_value;
+  NODE_API_CALL(env, napi_get_typedarray_info(env, *buffer, nullptr, nullptr,
+                                               nullptr, arraybuffer, nullptr));
+  NODE_API_CALL(env, napi_create_reference(env, *arraybuffer, 1, &ab_ref));
+
+  // Drop heap pointers before closing the scope so the stack scanner
+  // can't keep the Buffer alive.
+  delete arraybuffer;
+  delete buffer;
+
+  NODE_API_CALL(env, napi_close_handle_scope(env, *hs));
+  delete hs;
+
+  // GC: with the old bug (addFinalizer), collecting the JSUint8Array would
+  // call finalize_cb and poison the data even though the ArrayBuffer is alive.
+  run_gc(info);
+  run_gc(info);
+
+  // Read data through the ArrayBuffer — should still be 0xDEADBEEF.
+  napi_value ab_value;
+  NODE_API_CALL(env, napi_get_reference_value(env, ab_ref, &ab_value));
+
+  void* ab_data;
+  size_t ab_len;
+  NODE_API_CALL(env, napi_get_arraybuffer_info(env, ab_value, &ab_data, &ab_len));
+
+  uint8_t* bytes = (uint8_t*)ab_data;
+  if (ab_len >= data_size &&
+      bytes[0] == 0xDE && bytes[1] == 0xAD &&
+      bytes[2] == 0xBE && bytes[3] == 0xEF) {
+    printf("PASS: external buffer data intact through ArrayBuffer after GC\n");
+  } else {
+    printf("FAIL: external buffer data was corrupted (finalize_cb ran too early)\n");
+  }
+
+  NODE_API_CALL(env, napi_delete_reference(env, ab_ref));
+  return ok(env);
+}
+
+// Regression test: PROPERTY_NAME_FROM_UTF8 must copy string data.
+// Previously it used StringImpl::createWithoutCopying for ASCII strings,
+// which could leave dangling pointers in JSC's atom string table.
+//
+// This replicates the pattern from napi-rs / impit that caused a crash:
+// napi-rs creates a CString (heap-allocated) for each property name,
+// passes it to napi_get_named_property, then frees the CString.
+// With createWithoutCopying, the atom table retains a reference to the
+// freed CString memory. On the next lookup of the same property name,
+// Identifier::fromString compares against the stale atom -> use-after-free.
+static napi_value test_napi_get_named_property_copied_string(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+
+  napi_value global;
+  NODE_API_CALL(env, napi_get_global(env, &global));
+
+  // Simulate what impit does: look up properties on JS objects using
+  // heap-allocated keys (like napi-rs CString), then free them.
+  // The property names here match what impit uses in its response handling.
+  const char *property_names[] = {
+    "ReadableStream", "Response", "arrayBuffer", "then", "eval",
+    "enqueue", "bind", "close",
+  };
+  const int num_names = sizeof(property_names) / sizeof(property_names[0]);
+
+  // First round: each strdup'd key goes through PROPERTY_NAME_FROM_UTF8 then
+  // is freed. With createWithoutCopying, the atom table entries now have
+  // dangling data pointers.
+  for (int i = 0; i < num_names; i++) {
+    char *key = strdup(property_names[i]);
+    napi_value result;
+    NODE_API_CALL(env, napi_get_named_property(env, global, key, &result));
+    free(key);
+  }
+
+  // Trigger GC - this is critical. In the impit crash, GC occurs between
+  // the first and second lookups due to many object allocations (ReadableStream
+  // chunks, Response objects, promises). GC may cause the atom table to
+  // drop or recreate atoms, exposing the dangling pointers.
+  run_gc(info);
+
+  // Churn through more strdup/free cycles to increase the chance that
+  // malloc reuses memory from the freed keys above.
+  for (int round = 0; round < 30; round++) {
+    for (int i = 0; i < num_names; i++) {
+      char *key = strdup(property_names[i]);
+      napi_value result;
+      NODE_API_CALL(env, napi_get_named_property(env, global, key, &result));
+      free(key);
+    }
+    if (round % 10 == 0) {
+      run_gc(info);
+    }
+  }
+
+  run_gc(info);
+
+  // Second round: look up the same property names again.
+  // With the bug, Identifier::fromString finds stale atoms in the table
+  // and reads their freed backing memory -> ASAN heap-use-after-free.
+  for (int i = 0; i < num_names; i++) {
+    char *key = strdup(property_names[i]);
+    napi_value result;
+    NODE_API_CALL(env, napi_get_named_property(env, global, key, &result));
+    free(key);
+  }
+
+  printf("PASS\n");
+  return ok(env);
+}
+
+// https://github.com/oven-sh/bun/issues/25933
+// When a threadsafe function is created inside AsyncLocalStorage.run(),
+// the js_callback gets wrapped in AsyncContextFrame. napi_typeof must
+// still report it as napi_function, not napi_object.
+static napi_threadsafe_function tsfn_25933 = nullptr;
+
+static void test_issue_25933_callback(napi_env env, napi_value js_callback,
+                                      void *context, void *data) {
+  napi_valuetype type;
+  napi_status status = napi_typeof(env, js_callback, &type);
+  if (status != napi_ok) {
+    printf("FAIL: napi_typeof returned error status %d\n", status);
+  } else if (type == napi_function) {
+    printf("PASS: napi_typeof returned napi_function\n");
+  } else {
+    printf("FAIL: napi_typeof returned %d, expected napi_function (%d)\n",
+           type, napi_function);
+  }
+  napi_release_threadsafe_function(tsfn_25933, napi_tsfn_release);
+  tsfn_25933 = nullptr;
+}
+
+static napi_value test_issue_25933(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  Napi::HandleScope scope(env);
+
+  // The first argument is the JS callback function.
+  // When called inside AsyncLocalStorage.run(), Bun wraps this in
+  // AsyncContextFrame via withAsyncContextIfNeeded.
+  napi_value js_cb = info[0];
+  napi_value name = Napi::String::New(env, "tsfn_typeof_test");
+
+  NODE_API_CALL(env,
+                napi_create_threadsafe_function(
+                    env, js_cb, nullptr, name, 0, 1, nullptr, nullptr,
+                    nullptr, &test_issue_25933_callback, &tsfn_25933));
+  NODE_API_CALL(env, napi_call_threadsafe_function(tsfn_25933, nullptr,
+                                                   napi_tsfn_nonblocking));
+  return env.Undefined();
+}
+
+// When a threadsafe function's call_js_cb receives a js_callback that is an
+// AsyncContextFrame, calling napi_make_callback on it should work (not fail
+// with function_expected).
+static napi_threadsafe_function tsfn_make_callback = nullptr;
+
+static void test_make_callback_tsfn_cb(napi_env env, napi_value js_callback,
+                                       void *context, void *data) {
+  napi_value recv;
+  napi_get_global(env, &recv);
+
+  napi_value result;
+  napi_status status = napi_make_callback(env, nullptr, recv, js_callback, 0, nullptr, &result);
+  if (status == napi_ok) {
+    printf("PASS: napi_make_callback succeeded\n");
+  } else {
+    printf("FAIL: napi_make_callback returned status %d\n", status);
+  }
+  napi_release_threadsafe_function(tsfn_make_callback, napi_tsfn_release);
+  tsfn_make_callback = nullptr;
+}
+
+static napi_value test_napi_make_callback_async_context_frame(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  Napi::HandleScope scope(env);
+
+  napi_value js_cb = info[0];
+  napi_value name = Napi::String::New(env, "tsfn_make_callback_test");
+
+  NODE_API_CALL(env,
+                napi_create_threadsafe_function(
+                    env, js_cb, nullptr, name, 0, 1, nullptr, nullptr,
+                    nullptr, &test_make_callback_tsfn_cb, &tsfn_make_callback));
+  NODE_API_CALL(env, napi_call_threadsafe_function(tsfn_make_callback, nullptr,
+                                                   napi_tsfn_nonblocking));
+  return env.Undefined();
+}
+
+// When a threadsafe function's call_js_cb receives a js_callback that is an
+// AsyncContextFrame, passing it to a second napi_create_threadsafe_function
+// with call_js_cb=NULL should succeed (not fail with function_expected).
+static napi_threadsafe_function tsfn_create_outer = nullptr;
+
+static void test_create_tsfn_outer_cb(napi_env env, napi_value js_callback,
+                                      void *context, void *data) {
+  // js_callback here is an AsyncContextFrame in Bun.
+  // Try to create a new threadsafe function with it and call_js_cb=NULL.
+  napi_value name;
+  napi_create_string_utf8(env, "inner_tsfn", NAPI_AUTO_LENGTH, &name);
+
+  napi_threadsafe_function inner_tsfn = nullptr;
+  napi_status status = napi_create_threadsafe_function(
+      env, js_callback, nullptr, name, 0, 1, nullptr, nullptr,
+      nullptr, /* call_js_cb */ nullptr, &inner_tsfn);
+  if (status != napi_ok) {
+    printf("FAIL: napi_create_threadsafe_function returned status %d\n", status);
+  } else {
+    printf("PASS: napi_create_threadsafe_function accepted AsyncContextFrame\n");
+    // Release immediately — we only needed to verify creation succeeds.
+    napi_release_threadsafe_function(inner_tsfn, napi_tsfn_release);
+  }
+  napi_release_threadsafe_function(tsfn_create_outer, napi_tsfn_release);
+  tsfn_create_outer = nullptr;
+}
+
+static napi_value test_napi_create_tsfn_async_context_frame(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  Napi::HandleScope scope(env);
+
+  napi_value js_cb = info[0];
+  napi_value name = Napi::String::New(env, "tsfn_create_test");
+
+  NODE_API_CALL(env,
+                napi_create_threadsafe_function(
+                    env, js_cb, nullptr, name, 0, 1, nullptr, nullptr,
+                    nullptr, &test_create_tsfn_outer_cb, &tsfn_create_outer));
+  NODE_API_CALL(env, napi_call_threadsafe_function(tsfn_create_outer, nullptr,
+                                                   napi_tsfn_nonblocking));
+  return env.Undefined();
+}
+
 void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_issue_7685);
   REGISTER_FUNCTION(env, exports, test_issue_11949);
@@ -828,7 +2140,23 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, bigint_to_64_null);
   REGISTER_FUNCTION(env, exports, test_is_buffer);
   REGISTER_FUNCTION(env, exports, test_is_typedarray);
+  REGISTER_FUNCTION(env, exports, test_napi_get_default_values);
+  REGISTER_FUNCTION(env, exports, test_napi_numeric_string_keys);
   REGISTER_FUNCTION(env, exports, test_deferred_exceptions);
+  REGISTER_FUNCTION(env, exports, test_napi_strict_equals);
+  REGISTER_FUNCTION(env, exports, test_napi_call_function_recv_null);
+  REGISTER_FUNCTION(env, exports, test_napi_create_array_boundary);
+  REGISTER_FUNCTION(env, exports, test_napi_dataview_bounds_errors);
+  REGISTER_FUNCTION(env, exports, test_napi_typeof_empty_value);
+  REGISTER_FUNCTION(env, exports, test_napi_freeze_seal_indexed);
+  REGISTER_FUNCTION(env, exports, test_napi_create_external_buffer_empty);
+  REGISTER_FUNCTION(env, exports, test_napi_empty_buffer_info);
+  REGISTER_FUNCTION(env, exports, napi_get_typeof);
+  REGISTER_FUNCTION(env, exports, test_external_buffer_data_lifetime);
+  REGISTER_FUNCTION(env, exports, test_napi_get_named_property_copied_string);
+  REGISTER_FUNCTION(env, exports, test_issue_25933);
+  REGISTER_FUNCTION(env, exports, test_napi_make_callback_async_context_frame);
+  REGISTER_FUNCTION(env, exports, test_napi_create_tsfn_async_context_frame);
 }
 
 } // namespace napitests

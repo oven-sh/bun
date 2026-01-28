@@ -27,18 +27,22 @@
   "git.ignoreLimitWarning": true,
 
   // Zig
-  "zig.initialSetupDone": true,
-  "zig.buildOption": "build",
+  // "zig.initialSetupDone": true,
+  // "zig.buildOption": "build",
   "zig.zls.zigLibPath": "${workspaceFolder}/vendor/zig/lib",
-  "zig.buildArgs": ["-Dgenerated-code=./build/debug/codegen", "--watch", "-fincremental"],
-  "zig.zls.buildOnSaveStep": "check",
+  "zig.buildOnSaveArgs": [
+    "-Dgenerated-code=./build/debug/codegen",
+    "--watch",
+    "-fincremental"
+  ],
+  // "zig.zls.buildOnSaveStep": "check",
   // "zig.zls.enableBuildOnSave": true,
   // "zig.buildOnSave": true,
-  "zig.buildFilePath": "${workspaceFolder}/build.zig",
+  // "zig.buildFilePath": "${workspaceFolder}/build.zig",
   "zig.path": "${workspaceFolder}/vendor/zig/zig.exe",
   "zig.zls.path": "${workspaceFolder}/vendor/zig/zls.exe",
   "zig.formattingProvider": "zls",
-  "zig.zls.enableInlayHints": false,
+  // "zig.zls.enableInlayHints": false,
   "[zig]": {
     "editor.tabSize": 4,
     "editor.useTabStops": false,

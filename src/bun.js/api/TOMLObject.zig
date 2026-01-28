@@ -3,11 +3,12 @@ pub fn create(globalThis: *jsc.JSGlobalObject) jsc.JSValue {
     object.put(
         globalThis,
         ZigString.static("parse"),
-        jsc.createCallback(
+        jsc.JSFunction.create(
             globalThis,
-            ZigString.static("parse"),
-            1,
+            "parse",
             parse,
+            1,
+            .{},
         ),
     );
 
@@ -21,6 +22,11 @@ pub fn parse(
     var arena = bun.ArenaAllocator.init(globalThis.allocator());
     const allocator = arena.allocator();
     defer arena.deinit();
+
+    var ast_memory_allocator = bun.handleOom(allocator.create(ast.ASTMemoryAllocator));
+    var ast_scope = ast_memory_allocator.enter(allocator);
+    defer ast_scope.exit();
+
     var log = logger.Log.init(default_allocator);
     const arguments = callframe.arguments_old(1).slice();
     if (arguments.len == 0 or arguments[0].isEmptyOrUndefinedOrNull()) {
@@ -30,7 +36,10 @@ pub fn parse(
     var input_slice = try arguments[0].toSlice(globalThis, bun.default_allocator);
     defer input_slice.deinit();
     const source = &logger.Source.initPathString("input.toml", input_slice.slice());
-    const parse_result = TOML.parse(source, &log, allocator, false) catch {
+    const parse_result = TOML.parse(source, &log, allocator, false) catch |err| {
+        if (err == error.StackOverflow) {
+            return globalThis.throwStackOverflow();
+        }
         return globalThis.throwValue(try log.toJS(globalThis, default_allocator, "Failed to parse toml"));
     };
 
@@ -57,6 +66,7 @@ pub fn parse(
 }
 
 const bun = @import("bun");
+const ast = bun.ast;
 const default_allocator = bun.default_allocator;
 const js_printer = bun.js_printer;
 const logger = bun.logger;

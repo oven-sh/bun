@@ -1,5 +1,16 @@
 import { describe, expect, it, spyOn } from "bun:test";
-import { bunEnv, bunExe, gc, getMaxFD, isBroken, isIntelMacOS, isWindows, tempDirWithFiles, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  gc,
+  getMaxFD,
+  isBroken,
+  isIntelMacOS,
+  isPosix,
+  isWindows,
+  tempDirWithFiles,
+  tmpdirSync,
+} from "harness";
 import { isAscii } from "node:buffer";
 import fs, {
   closeSync,
@@ -13,6 +24,7 @@ import fs, {
   fdatasync,
   fdatasyncSync,
   fstatSync,
+  ftruncateSync,
   lstatSync,
   mkdirSync,
   mkdtemp,
@@ -50,6 +62,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { spawnSync } from "bun";
+import { mkfifo } from "mkfifo";
 import { ReadStream as ReadStream_, WriteStream as WriteStream_ } from "./export-from.js";
 import { ReadStream as ReadStreamStar_, WriteStream as WriteStreamStar_ } from "./export-star-from.js";
 
@@ -1539,6 +1552,13 @@ it("symlink", () => {
   expect(realpathSync(actual)).toBe(realpathSync(import.meta.path));
 });
 
+it.if(isPosix)("realpathSync doesn't block on FIFO", () => {
+  const path = join(tmpdirSync(), "test-fs-fifo-block.fifo");
+  mkfifo(path, 0o666);
+  realpathSync(path);
+  unlinkSync(path);
+});
+
 it("readlink", () => {
   const actual = join(tmpdirSync(), "fs-readlink.txt");
   try {
@@ -2714,14 +2734,15 @@ it("fstat on a large file", () => {
   try {
     dest = `${tmpdir()}/fs.test.ts/${Math.trunc(Math.random() * 10000000000).toString(32)}.stat.txt`;
     mkdirSync(dirname(dest), { recursive: true });
-    const bigBuffer = new Uint8Array(1024 * 1024 * 1024);
     fd = openSync(dest, "w");
-    let offset = 0;
-    while (offset < 5 * 1024 * 1024 * 1024) {
-      offset += writeSync(fd, bigBuffer, 0, bigBuffer.length, offset);
-    }
+
+    // Instead of writing the actual bytes, we can use ftruncate to make a
+    // hole-y file and extend it to the desired size This should generally avoid
+    // the ENOSPC issue and avoid timeouts.
+    ftruncateSync(fd, 5 * 1024 * 1024 * 1024);
     fdatasyncSync(fd);
-    expect(fstatSync(fd).size).toEqual(offset);
+    const stats = fstatSync(fd);
+    expect(stats.size).toEqual(5 * 1024 * 1024 * 1024);
   } catch (error) {
     // TODO: Once `fs.statfsSync` is implemented, make sure that the buffer size
     // is small enough not to cause: ENOSPC: No space left on device.

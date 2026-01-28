@@ -1,7 +1,4 @@
-import * as nodeCrypto from "crypto";
 import { expectType } from "./utilities";
-
-nodeCrypto.webcrypto.CryptoKey;
 
 crypto.getRandomValues(new Uint8Array(1));
 

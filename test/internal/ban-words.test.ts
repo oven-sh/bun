@@ -1,6 +1,7 @@
 import { file, Glob } from "bun";
 import { readdirSync } from "fs";
 import path from "path";
+import "../../scripts/glob-sources.mjs";
 
 // prettier-ignore
 const words: Record<string, { reason: string; regex?: boolean }> = {
@@ -42,6 +43,7 @@ const words: Record<string, { reason: string; regex?: boolean }> = {
   "std.fs.Dir": { reason: "Prefer bun.sys + bun.FD instead of std.fs" },
   "std.fs.cwd": { reason: "Prefer bun.FD.cwd()" },
   "std.fs.File": { reason: "Prefer bun.sys + bun.FD instead of std.fs" },
+  "std.fs.openFileAbsolute": { reason: "Prefer bun.sys + bun.FD instead of std.fs" },
   ".stdFile()": { reason: "Prefer bun.sys + bun.FD instead of std.fs.File. Zig hides 'errno' when Bun wants to match libuv" },
   ".stdDir()": { reason: "Prefer bun.sys + bun.FD instead of std.fs.File. Zig hides 'errno' when Bun wants to match libuv" },
   ".arguments_old(": { reason: "Please migrate to .argumentsAsArray() or another argument API" },
@@ -51,6 +53,8 @@ const words: Record<string, { reason: string; regex?: boolean }> = {
   "globalObject.hasException": { reason: "Incompatible with strict exception checks. Use a CatchScope instead." },
   "globalThis.hasException": { reason: "Incompatible with strict exception checks. Use a CatchScope instead." },
   "EXCEPTION_ASSERT(!scope.exception())": { reason: "Use scope.assertNoException() instead" },
+  " catch bun.outOfMemory()": { reason: "Use bun.handleOom to avoid catching unrelated errors" },
+  "TODO: properly propagate exception upwards": { reason: "This entry is here for tracking" },
 };
 const words_keys = [...Object.keys(words)];
 
@@ -72,6 +76,7 @@ for (const source of sources) {
       if (!source.endsWith(".zig")) continue;
       if (source.startsWith("src" + path.sep + "deps")) continue;
       if (source.startsWith("src" + path.sep + "codegen")) continue;
+      if (source.startsWith("src" + path.sep + "unicode" + path.sep + "uucode")) continue;
       const content = await file(source).text();
       for (const word of words_keys) {
         let regex = words[word].regex ? new RegExp(word, "gm") : undefined;

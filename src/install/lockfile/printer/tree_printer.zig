@@ -140,6 +140,8 @@ fn shouldPrintPackageInstall(
         dep_id,
         this.options.local_package_features,
         &pkg_metas[package_id],
+        this.options.cpu,
+        this.options.os,
     )) {
         return .no;
     }
@@ -178,9 +180,9 @@ fn printUpdatedPackage(
 
     const fmt = comptime brk: {
         if (enable_ansi_colors) {
-            break :brk Output.prettyFmt("<r><cyan>↑<r> <b>{s}<r><d> <b>{} →<r> <b><cyan>{}<r>\n", enable_ansi_colors);
+            break :brk Output.prettyFmt("<r><cyan>↑<r> <b>{s}<r><d> <b>{f} →<r> <b><cyan>{f}<r>\n", enable_ansi_colors);
         }
-        break :brk Output.prettyFmt("<r>^ <b>{s}<r><d> <b>{} -\\><r> <b>{}<r>\n", enable_ansi_colors);
+        break :brk Output.prettyFmt("<r>^ <b>{s}<r><d> <b>{f} -\\><r> <b>{f}<r>\n", enable_ansi_colors);
     };
 
     try writer.print(
@@ -211,9 +213,9 @@ fn printInstalledPackage(
     if (manager.formatLaterVersionInCache(package_name, dependency.name_hash, resolution)) |later_version_fmt| {
         const fmt = comptime brk: {
             if (enable_ansi_colors) {
-                break :brk Output.prettyFmt("<r><green>+<r> <b>{s}<r><d>@{}<r> <d>(<blue>v{} available<r><d>)<r>\n", enable_ansi_colors);
+                break :brk Output.prettyFmt("<r><green>+<r> <b>{s}<r><d>@{f}<r> <d>(<blue>v{f} available<r><d>)<r>\n", enable_ansi_colors);
             } else {
-                break :brk Output.prettyFmt("<r>+ {s}<r><d>@{}<r> <d>(v{} available)<r>\n", enable_ansi_colors);
+                break :brk Output.prettyFmt("<r>+ {s}<r><d>@{f}<r> <d>(v{f} available)<r>\n", enable_ansi_colors);
             }
         };
         try writer.print(
@@ -230,9 +232,9 @@ fn printInstalledPackage(
 
     const fmt = comptime brk: {
         if (enable_ansi_colors) {
-            break :brk Output.prettyFmt("<r><green>+<r> <b>{s}<r><d>@{}<r>\n", enable_ansi_colors);
+            break :brk Output.prettyFmt("<r><green>+<r> <b>{s}<r><d>@{f}<r>\n", enable_ansi_colors);
         } else {
-            break :brk Output.prettyFmt("<r>+ {s}<r><d>@{}<r>\n", enable_ansi_colors);
+            break :brk Output.prettyFmt("<r>+ {s}<r><d>@{f}<r>\n", enable_ansi_colors);
         }
     };
 
@@ -282,7 +284,7 @@ pub fn print(
             for (resolutions_list[0].begin()..resolutions_list[0].end()) |dep_id| {
                 const dep = dependencies_buffer[dep_id];
                 if (dep.behavior.isWorkspace()) {
-                    workspaces_to_print.append(allocator, @intCast(dep_id)) catch bun.outOfMemory();
+                    bun.handleOom(workspaces_to_print.append(allocator, @intCast(dep_id)));
                 }
             }
 
@@ -370,7 +372,7 @@ pub fn print(
             }
 
             try writer.print(
-                comptime Output.prettyFmt(" <r><b>{s}<r><d>@<b>{}<r>\n", enable_ansi_colors),
+                comptime Output.prettyFmt(" <r><b>{s}<r><d>@<b>{f}<r>\n", enable_ansi_colors),
                 .{
                     package_name,
                     resolved[package_id].fmt(string_buf, .auto),
@@ -400,7 +402,7 @@ pub fn print(
             .none, .dir => {
                 printed_installed_update_request = true;
 
-                const fmt = comptime Output.prettyFmt("<r><green>installed<r> <b>{s}<r><d>@{}<r>\n", enable_ansi_colors);
+                const fmt = comptime Output.prettyFmt("<r><green>installed<r> <b>{s}<r><d>@{f}<r>\n", enable_ansi_colors);
 
                 try writer.print(
                     fmt,
@@ -421,7 +423,7 @@ pub fn print(
                 };
 
                 {
-                    const fmt = comptime Output.prettyFmt("<r><green>installed<r> {s}<r><d>@{}<r> with binaries:\n", enable_ansi_colors);
+                    const fmt = comptime Output.prettyFmt("<r><green>installed<r> {s}<r><d>@{f}<r> with binaries:\n", enable_ansi_colors);
 
                     try writer.print(
                         fmt,
@@ -438,7 +440,7 @@ pub fn print(
                     if (manager.track_installed_bin == .pending) {
                         if (iterator.next() catch null) |bin_name| {
                             manager.track_installed_bin = .{
-                                .basename = bun.default_allocator.dupe(u8, bin_name) catch bun.outOfMemory(),
+                                .basename = bun.handleOom(bun.default_allocator.dupe(u8, bin_name)),
                             };
 
                             try writer.print(fmt, .{bin_name});

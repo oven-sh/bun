@@ -13,7 +13,10 @@
   },
   {
     "output": "JavaScriptSources.txt",
-    "paths": ["src/js/**/*.{js,ts}"]
+    "paths": [
+      "src/js/**/*.{js,ts}",
+      "src/install/PackageManager/scanner-entry.ts"
+    ]
   },
   {
     "output": "JavaScriptCodegenSources.txt",
@@ -27,6 +30,14 @@
   {
     "output": "BindgenSources.txt",
     "paths": ["src/**/*.bind.ts"]
+  },
+  {
+    "output": "BindgenV2Sources.txt",
+    "paths": ["src/**/*.bindv2.ts"]
+  },
+  {
+    "output": "BindgenV2InternalSources.txt",
+    "paths": ["src/codegen/bindgenv2/**/*.ts"]
   },
   {
     "output": "ZigSources.txt",

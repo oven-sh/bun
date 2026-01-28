@@ -12,7 +12,7 @@ struct DhKeyPairJobCtx : KeyPairJobCtx {
 public:
     DhKeyPairJobCtx(ncrypto::DHPointer&& group, const KeyEncodingConfig& config)
         : KeyPairJobCtx(config.publicKeyEncoding, config.privateKeyEncoding)
-        , m_prime(WTFMove(group))
+        , m_prime(WTF::move(group))
     {
     }
 
@@ -25,7 +25,7 @@ public:
 
     DhKeyPairJobCtx(ncrypto::BignumPointer&& prime, const KeyEncodingConfig& config)
         : KeyPairJobCtx(config.publicKeyEncoding, config.privateKeyEncoding)
-        , m_prime(WTFMove(prime))
+        , m_prime(WTF::move(prime))
     {
     }
 
@@ -33,7 +33,7 @@ public:
     ncrypto::EVPKeyCtxPointer setup();
     static std::optional<DhKeyPairJobCtx> fromJS(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, const JSC::GCOwnedDataScope<WTF::StringView>& typeView, JSC::JSValue optionsValue, const KeyEncodingConfig& config);
 
-    std::variant<ncrypto::BignumPointer, int> m_prime;
+    WTF::Variant<ncrypto::BignumPointer, int> m_prime;
     uint32_t m_generator;
 };
 

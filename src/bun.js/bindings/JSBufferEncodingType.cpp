@@ -104,9 +104,7 @@ template<> std::optional<BufferEncodingType> parseEnumerationFromView<BufferEnco
 {
     // caller must check if value is a string
     switch (encoding.length()) {
-    case 0: {
-        return BufferEncodingType::utf8;
-    }
+    case 0:
     case 1:
     case 2: {
         return std::nullopt;

@@ -642,7 +642,7 @@ pub const QueryStringMap = struct {
 
         // this over-allocates
         // TODO: refactor this to support multiple slices instead of copying the whole thing
-        var buf = try std.ArrayList(u8).initCapacity(allocator, estimated_str_len);
+        var buf = try std.array_list.Managed(u8).initCapacity(allocator, estimated_str_len);
         var writer = buf.writer();
         var buf_writer_pos: u32 = 0;
 
@@ -757,7 +757,7 @@ pub const QueryStringMap = struct {
             };
         }
 
-        var buf = try std.ArrayList(u8).initCapacity(allocator, estimated_str_len);
+        var buf = try std.array_list.Managed(u8).initCapacity(allocator, estimated_str_len);
         const writer = buf.writer();
         var buf_writer_pos: u32 = 0;
 
@@ -813,6 +813,20 @@ pub const QueryStringMap = struct {
 pub const PercentEncoding = struct {
     pub fn decode(comptime Writer: type, writer: Writer, input: string) !u32 {
         return @call(bun.callmod_inline, decodeFaultTolerant, .{ Writer, writer, input, null, false });
+    }
+
+    /// Decode percent-encoded input into allocated memory.
+    /// Caller owns the returned slice and must free it with the same allocator.
+    pub fn decodeAlloc(allocator: std.mem.Allocator, input: string) ![]u8 {
+        // Allocate enough space - decoded will be at most input.len bytes
+        const buf = try allocator.alloc(u8, input.len);
+        errdefer allocator.free(buf);
+
+        var stream = std.io.fixedBufferStream(buf);
+        const writer = stream.writer();
+        const len = try decode(@TypeOf(writer), writer, input);
+
+        return buf[0..len];
     }
 
     pub fn decodeFaultTolerant(
@@ -925,10 +939,10 @@ pub const FormData = struct {
             this.allocator.destroy(this);
         }
 
-        pub fn toJS(this: *AsyncFormData, global: *jsc.JSGlobalObject, data: []const u8, promise: jsc.AnyPromise) void {
+        pub fn toJS(this: *AsyncFormData, global: *jsc.JSGlobalObject, data: []const u8, promise: jsc.AnyPromise) bun.JSTerminated!void {
             if (this.encoding == .Multipart and this.encoding.Multipart.len == 0) {
                 log("AsnycFormData.toJS -> promise.reject missing boundary", .{});
-                promise.reject(global, jsc.ZigString.init("FormData missing boundary").toErrorInstance(global));
+                try promise.reject(global, jsc.ZigString.init("FormData missing boundary").toErrorInstance(global));
                 return;
             }
 
@@ -938,10 +952,10 @@ pub const FormData = struct {
                 this.encoding,
             ) catch |err| {
                 log("AsnycFormData.toJS -> failed ", .{});
-                promise.reject(global, global.createErrorInstance("FormData {s}", .{@errorName(err)}));
+                try promise.reject(global, global.createErrorInstance("FormData {s}", .{@errorName(err)}));
                 return;
             };
-            promise.resolve(global, js_value);
+            try promise.resolve(global, js_value);
         }
     };
 
@@ -984,7 +998,12 @@ pub const FormData = struct {
         switch (encoding) {
             .URLEncoded => {
                 var str = jsc.ZigString.fromUTF8(strings.withoutUTF8BOM(input));
-                return jsc.DOMFormData.createFromURLQuery(globalThis, &str);
+                const result = jsc.DOMFormData.createFromURLQuery(globalThis, &str);
+                // Check if an exception was thrown (e.g., string too long)
+                if (result == .zero) {
+                    return error.JSError;
+                }
+                return result;
             },
             .Multipart => |boundary| return toJSFromMultipartData(globalThis, input, boundary),
         }
@@ -1041,7 +1060,11 @@ pub const FormData = struct {
             return globalThis.throwInvalidArguments("input must be a string or ArrayBufferView", .{});
         }
 
-        return FormData.toJS(globalThis, input, encoding) catch |err| return globalThis.throwError(err, "while parsing FormData");
+        return FormData.toJS(globalThis, input, encoding) catch |err| {
+            if (err == error.JSError) return error.JSError;
+            if (err == error.JSTerminated) return error.JSTerminated;
+            return globalThis.throwError(err, "while parsing FormData");
+        };
     }
 
     comptime {

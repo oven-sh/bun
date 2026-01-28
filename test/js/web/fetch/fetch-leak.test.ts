@@ -17,7 +17,7 @@ describe("fetch doesn't leak", () => {
       },
     });
 
-    const proc = Bun.spawn({
+    await using proc = Bun.spawn({
       env: {
         ...bunEnv,
         SERVER: server.url.href,
@@ -76,7 +76,7 @@ describe("fetch doesn't leak", () => {
       env.COUNT = "1000";
     }
 
-    const proc = Bun.spawn({
+    await using proc = Bun.spawn({
       env,
       stderr: "inherit",
       stdout: "inherit",
@@ -114,7 +114,7 @@ describe.each(["FormData", "Blob", "Buffer", "String", "URLSearchParams", "strea
 
       const rss = [];
 
-      const process = Bun.spawn({
+      await using process = Bun.spawn({
         cmd: [
           bunExe(),
           "--smol",
@@ -183,4 +183,25 @@ test("do not leak", async () => {
       prev = next;
     }
   }, 1e3);
+});
+
+test("should not leak using readable stream", async () => {
+  const buffer = Buffer.alloc(1024 * 128, "b");
+  using server = Bun.serve({
+    port: 0,
+    routes: { "/*": new Response(buffer) },
+  });
+
+  await using proc = Bun.spawn([bunExe(), join(import.meta.dir, "fetch-leak-test-fixture-6.js")], {
+    env: {
+      ...bunEnv,
+      SERVER_URL: server.url.href,
+      MAX_MEMORY_INCREASE: "5", // in MB
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [exited, stdout, stderr] = await Promise.all([proc.exited, proc.stdout.text(), proc.stderr.text()]);
+  expect(stdout + stderr).toContain("done");
+  expect(exited).toBe(0);
 });

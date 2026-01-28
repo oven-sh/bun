@@ -2,9 +2,10 @@
   "private": true,
   "name": "example",
   "dependencies": {
-    "axios": "^1.7.7",
+    "axios": "^1.13.2",
+    "body-parser": "^2.2.0",
     "elysia": "^0.6.3",
-    "express": "^4.18.2",
+    "express": "^4.21.2",
     "mime": "^3.0.0",
     "mime-db": "^1.52.0",
     "react": "^0.0.0-experimental-380f5d67-20241113",

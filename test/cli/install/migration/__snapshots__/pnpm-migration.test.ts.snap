@@ -1,0 +1,35 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`basic: bun.lock 1`] = `
+"{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "worky3",
+      "dependencies": {
+        "no-deps": "~1.0.0",
+      },
+      "devDependencies": {
+        "a-dep-b": "1.0.0",
+      },
+      "optionalDependencies": {
+        "b-dep-a": "1.0.0",
+      },
+      "peerDependencies": {
+        "a-dep": "1.0.1",
+      },
+    },
+  },
+  "packages": {
+    "a-dep": ["a-dep@1.0.1", "http://localhost:1234/a-dep/-/a-dep-1.0.1.tgz", {}, "sha512-6nmTaPgO2U/uOODqOhbjbnaB4xHuZ+UB7AjKUA3g2dT4WRWeNxgp0dC8Db4swXSnO5/uLLUdFmUJKINNBO/3wg=="],
+
+    "a-dep-b": ["a-dep-b@1.0.0", "http://localhost:1234/a-dep-b/-/a-dep-b-1.0.0.tgz", { "dependencies": { "b-dep-a": "1.0.0" } }, "sha512-PW1l4ruYaxcIw4rMkOVzb9zcR2srZhTPv2H2aH7QFc7vVxkD7EEMGHg1GPT8ycLFb8vriydUXEPwOy1FcbodaQ=="],
+
+    "b-dep-a": ["b-dep-a@1.0.0", "http://localhost:1234/b-dep-a/-/b-dep-a-1.0.0.tgz", { "dependencies": { "a-dep-b": "1.0.0" } }, "sha512-1owp4Wy5QE893BGgjDQGZm9Oayk38MA++fXmPTQA1WY/NFQv7CcCVpK2Ht/4mU4KejDeHOxaAj7qbzv1dSQA2w=="],
+
+    "no-deps": ["no-deps@1.0.1", "http://localhost:1234/no-deps/-/no-deps-1.0.1.tgz", {}, "sha512-3X6cn4+UJdXJuLPu11v8i/fGLe2PdI6v1yKTELam04lY5esCAFdG/qQts6N6rLrL6g1YRq+MKBAwxbmUQk355A=="],
+  }
+}
+"
+`;

@@ -1,7 +1,8 @@
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { cn } from "@/lib/utils";
+import { Textarea } from "@/components/ui/textarea";
 import { useRef, type FormEvent } from "react";
 
 export function APITester() {
@@ -26,48 +27,37 @@ export function APITester() {
   };
 
   return (
-    <div className="mt-8 mx-auto w-full max-w-2xl text-left flex flex-col gap-4">
-      <form
-        onSubmit={testEndpoint}
-        className="flex items-center gap-2 bg-card p-3 rounded-xl font-mono border border-input w-full"
-      >
+    <div className="flex flex-col gap-6">
+      <form onSubmit={testEndpoint} className="flex items-center gap-2">
+        <Label htmlFor="method" className="sr-only">
+          Method
+        </Label>
         <Select name="method" defaultValue="GET">
-          <SelectTrigger className="w-[100px]">
+          <SelectTrigger className="w-[100px]" id="method">
             <SelectValue placeholder="Method" />
           </SelectTrigger>
-          <SelectContent>
+          <SelectContent align="start">
             <SelectItem value="GET">GET</SelectItem>
             <SelectItem value="PUT">PUT</SelectItem>
           </SelectContent>
         </Select>
-
-        <Input
-          type="text"
-          name="endpoint"
-          defaultValue="/api/hello"
-          className={cn(
-            "flex-1 font-mono",
-            "bg-transparent border-0 shadow-none",
-            "focus-visible:ring-0 focus-visible:ring-offset-0",
-          )}
-          placeholder="/api/hello"
-        />
-
+        <Label htmlFor="endpoint" className="sr-only">
+          Endpoint
+        </Label>
+        <Input id="endpoint" type="text" name="endpoint" defaultValue="/api/hello" placeholder="/api/hello" />
         <Button type="submit" variant="secondary">
           Send
         </Button>
       </form>
-
-      <textarea
+      <Label htmlFor="response" className="sr-only">
+        Response
+      </Label>
+      <Textarea
         ref={responseInputRef}
+        id="response"
         readOnly
         placeholder="Response will appear here..."
-        className={cn(
-          "w-full min-h-[140px] bg-card",
-          "border border-input rounded-xl p-3",
-          "font-mono resize-y",
-          "placeholder:text-muted-foreground",
-        )}
+        className="min-h-[140px] font-mono resize-y"
       />
     </div>
   );

@@ -1,10 +1,20 @@
-const { isIP, isIPv6 } = require("node:net");
+const { isIP, isIPv6 } = require("internal/net/isIP");
 
-const { checkIsHttpToken, validateFunction, validateInteger, validateBoolean } = require("internal/validators");
+const {
+  checkIsHttpToken,
+  validateFunction,
+  validateInteger,
+  validateBoolean,
+  validateString,
+} = require("internal/validators");
+
+// Internal fetch that allows body on GET/HEAD/OPTIONS for Node.js compatibility
+const nodeHttpClient = $newZigFunction("fetch.zig", "nodeHttpClient", 2);
 const { urlToHttpOptions } = require("internal/url");
-const { isValidTLSArray } = require("internal/tls");
+const { throwOnInvalidTLSArray } = require("internal/tls");
 const { validateHeaderName } = require("node:_http_common");
 const { getTimerDuration } = require("internal/timers");
+const { ConnResetException } = require("internal/shared");
 const {
   kBodyChunks,
   abortedSymbol,
@@ -41,17 +51,15 @@ const {
   reqSymbol,
   callCloseCallback,
   emitCloseNTAndComplete,
-  ConnResetException,
 } = require("internal/http");
 
-const { Agent, NODE_HTTP_WARNING } = require("node:_http_agent");
+const { globalAgent } = require("node:_http_agent");
 const { IncomingMessage } = require("node:_http_incoming");
 const { OutgoingMessage } = require("node:_http_outgoing");
 
 const globalReportError = globalThis.reportError;
 const setTimeout = globalThis.setTimeout;
 const INVALID_PATH_REGEX = /[^\u0021-\u00ff]/;
-const fetch = Bun.fetch;
 
 const { URL } = globalThis;
 
@@ -250,7 +258,7 @@ function ClientRequest(input, options, cb) {
   const onAbort = (_err?: Error) => {
     this[kClearTimeout]?.();
     socketCloseListener();
-    if (!this[abortedSymbol]) {
+    if (!this[abortedSymbol] && !this?.res?.complete) {
       process.nextTick(emitAbortNextTick, this);
       this[abortedSymbol] = true;
     }
@@ -268,7 +276,7 @@ function ClientRequest(input, options, cb) {
     const method = this[kMethod];
 
     let keepalive = true;
-    const agentKeepalive = this[kAgent]?.keepalive;
+    const agentKeepalive = this[kAgent]?.keepAlive;
     if (agentKeepalive !== undefined) {
       keepalive = agentKeepalive;
     }
@@ -322,40 +330,46 @@ function ClientRequest(input, options, cb) {
         keepOpen = true;
       }
 
-      if (method !== "GET" && method !== "HEAD" && method !== "OPTIONS") {
+      // Allow body for all methods when explicitly provided via req.write()/req.end()
+      // This is needed for Node.js compatibility - Node allows GET requests with bodies
+      if (customBody !== undefined) {
+        fetchOptions.body = customBody;
+      } else if (
+        isDuplex &&
+        // Normal case: non-GET/HEAD/OPTIONS can use streaming
+        ((method !== "GET" && method !== "HEAD" && method !== "OPTIONS") ||
+          // Special case: GET/HEAD/OPTIONS with already-queued chunks should also stream
+          this[kBodyChunks]?.length > 0)
+      ) {
         const self = this;
-        if (customBody !== undefined) {
-          fetchOptions.body = customBody;
-        } else if (isDuplex) {
-          fetchOptions.body = async function* () {
-            while (self[kBodyChunks]?.length > 0) {
-              yield self[kBodyChunks].shift();
-            }
+        fetchOptions.body = async function* () {
+          while (self[kBodyChunks]?.length > 0) {
+            yield self[kBodyChunks].shift();
+          }
+
+          if (self[kBodyChunks]?.length === 0) {
+            self.emit("drain");
+          }
+
+          while (!self.finished) {
+            yield await new Promise(resolve => {
+              resolveNextChunk = end => {
+                resolveNextChunk = undefined;
+                if (end) {
+                  resolve(undefined);
+                } else {
+                  resolve(self[kBodyChunks].shift());
+                }
+              };
+            });
 
             if (self[kBodyChunks]?.length === 0) {
               self.emit("drain");
             }
+          }
 
-            while (!self.finished) {
-              yield await new Promise(resolve => {
-                resolveNextChunk = end => {
-                  resolveNextChunk = undefined;
-                  if (end) {
-                    resolve(undefined);
-                  } else {
-                    resolve(self[kBodyChunks].shift());
-                  }
-                };
-              });
-
-              if (self[kBodyChunks]?.length === 0) {
-                self.emit("drain");
-              }
-            }
-
-            handleResponse?.();
-          };
-        }
+          handleResponse?.();
+        };
       }
 
       if (tls) {
@@ -377,7 +391,7 @@ function ClientRequest(input, options, cb) {
       }
 
       //@ts-ignore
-      this[kFetchRequest] = fetch(url, fetchOptions).then(response => {
+      this[kFetchRequest] = nodeHttpClient(url, fetchOptions).then(response => {
         if (this.aborted) {
           maybeEmitClose();
           return;
@@ -639,7 +653,7 @@ function ClientRequest(input, options, cb) {
   this[kAbortController] = null;
 
   let agent = options.agent;
-  const defaultAgent = options._defaultAgent || Agent.globalAgent;
+  const defaultAgent = options._defaultAgent || globalAgent;
   if (agent === false) {
     agent = new defaultAgent.constructor();
   } else if (agent == null) {
@@ -728,53 +742,48 @@ function ClientRequest(input, options, cb) {
     throw new Error("pfx is not supported");
   }
 
-  if (options.rejectUnauthorized !== undefined) this._ensureTls().rejectUnauthorized = options.rejectUnauthorized;
-  else {
-    let agentRejectUnauthorized = agent?.options?.rejectUnauthorized;
-    if (agentRejectUnauthorized !== undefined) this._ensureTls().rejectUnauthorized = agentRejectUnauthorized;
-    else {
-      // popular https-proxy-agent uses connectOpts
-      agentRejectUnauthorized = agent?.connectOpts?.rejectUnauthorized;
-      if (agentRejectUnauthorized !== undefined) this._ensureTls().rejectUnauthorized = agentRejectUnauthorized;
-    }
-  }
-  if (options.ca) {
-    if (!isValidTLSArray(options.ca))
-      throw new TypeError(
-        "ca argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
-      );
-    this._ensureTls().ca = options.ca;
-  }
-  if (options.cert) {
-    if (!isValidTLSArray(options.cert))
-      throw new TypeError(
-        "cert argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
-      );
-    this._ensureTls().cert = options.cert;
-  }
-  if (options.key) {
-    if (!isValidTLSArray(options.key))
-      throw new TypeError(
-        "key argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
-      );
-    this._ensureTls().key = options.key;
-  }
-  if (options.passphrase) {
-    if (typeof options.passphrase !== "string") throw new TypeError("passphrase argument must be a string");
-    this._ensureTls().passphrase = options.passphrase;
-  }
-  if (options.ciphers) {
-    if (typeof options.ciphers !== "string") throw new TypeError("ciphers argument must be a string");
-    this._ensureTls().ciphers = options.ciphers;
-  }
-  if (options.servername) {
-    if (typeof options.servername !== "string") throw new TypeError("servername argument must be a string");
-    this._ensureTls().servername = options.servername;
-  }
+  // Merge TLS options using spread operator, matching Node.js behavior in createSocket:
+  //   options = { __proto__: null, ...options, ...this.options };
+  // https://github.com/nodejs/node/blob/v23.6.0/lib/_http_agent.js#L242
+  // With spread, the last one wins, so agent.options overwrites request options.
+  //
+  // agent.options: Stored by Node.js Agent constructor
+  // https://github.com/nodejs/node/blob/v23.6.0/lib/_http_agent.js#L96
+  //
+  // agent.connectOpts: Used by https-proxy-agent for TLS connection options (lowest priority)
+  // https://github.com/TooTallNate/proxy-agents/blob/main/packages/https-proxy-agent/src/index.ts#L110-L117
+  const mergedTlsOptions = { __proto__: null, ...agent?.connectOpts, ...options, ...agent?.options };
 
-  if (options.secureOptions) {
-    if (typeof options.secureOptions !== "number") throw new TypeError("secureOptions argument must be a string");
-    this._ensureTls().secureOptions = options.secureOptions;
+  if (mergedTlsOptions.rejectUnauthorized !== undefined) {
+    this._ensureTls().rejectUnauthorized = mergedTlsOptions.rejectUnauthorized;
+  }
+  if (mergedTlsOptions.ca) {
+    throwOnInvalidTLSArray("options.ca", mergedTlsOptions.ca);
+    this._ensureTls().ca = mergedTlsOptions.ca;
+  }
+  if (mergedTlsOptions.cert) {
+    throwOnInvalidTLSArray("options.cert", mergedTlsOptions.cert);
+    this._ensureTls().cert = mergedTlsOptions.cert;
+  }
+  if (mergedTlsOptions.key) {
+    throwOnInvalidTLSArray("options.key", mergedTlsOptions.key);
+    this._ensureTls().key = mergedTlsOptions.key;
+  }
+  if (mergedTlsOptions.passphrase) {
+    validateString(mergedTlsOptions.passphrase, "options.passphrase");
+    this._ensureTls().passphrase = mergedTlsOptions.passphrase;
+  }
+  if (mergedTlsOptions.ciphers) {
+    validateString(mergedTlsOptions.ciphers, "options.ciphers");
+    this._ensureTls().ciphers = mergedTlsOptions.ciphers;
+  }
+  if (mergedTlsOptions.servername) {
+    validateString(mergedTlsOptions.servername, "options.servername");
+    this._ensureTls().servername = mergedTlsOptions.servername;
+  }
+  if (mergedTlsOptions.secureOptions) {
+    validateInteger(mergedTlsOptions.secureOptions, "options.secureOptions");
+    this._ensureTls().secureOptions = mergedTlsOptions.secureOptions;
   }
   this[kPath] = options.path || "/";
   if (cb) {
@@ -909,13 +918,9 @@ function ClientRequest(input, options, cb) {
 
   this[kEmitState] = 0;
 
-  this.setSocketKeepAlive = (_enable = true, _initialDelay = 0) => {
-    $debug(`${NODE_HTTP_WARNING}\n`, "WARN: ClientRequest.setSocketKeepAlive is a no-op");
-  };
+  this.setSocketKeepAlive = (_enable = true, _initialDelay = 0) => {};
 
-  this.setNoDelay = (_noDelay = true) => {
-    $debug(`${NODE_HTTP_WARNING}\n`, "WARN: ClientRequest.setNoDelay is a no-op");
-  };
+  this.setNoDelay = (_noDelay = true) => {};
 
   this[kClearTimeout] = () => {
     const timeoutTimer = this[kTimeoutTimer];

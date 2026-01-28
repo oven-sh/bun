@@ -1,14 +1,14 @@
 pub const AbortSignal = opaque {
     extern fn WebCore__AbortSignal__aborted(arg0: *AbortSignal) bool;
     extern fn WebCore__AbortSignal__abortReason(arg0: *AbortSignal) JSValue;
-    extern fn WebCore__AbortSignal__addListener(arg0: *AbortSignal, arg1: ?*anyopaque, ArgFn2: ?*const fn (?*anyopaque, JSValue) callconv(.C) void) *AbortSignal;
+    extern fn WebCore__AbortSignal__addListener(arg0: *AbortSignal, arg1: ?*anyopaque, ArgFn2: ?*const fn (?*anyopaque, JSValue) callconv(.c) void) *AbortSignal;
     extern fn WebCore__AbortSignal__cleanNativeBindings(arg0: *AbortSignal, arg1: ?*anyopaque) void;
     extern fn WebCore__AbortSignal__create(arg0: *JSGlobalObject) JSValue;
     extern fn WebCore__AbortSignal__fromJS(JSValue0: JSValue) ?*AbortSignal;
     extern fn WebCore__AbortSignal__ref(arg0: *AbortSignal) *AbortSignal;
     extern fn WebCore__AbortSignal__toJS(arg0: *AbortSignal, arg1: *JSGlobalObject) JSValue;
     extern fn WebCore__AbortSignal__unref(arg0: *AbortSignal) void;
-
+    extern fn WebCore__AbortSignal__getTimeout(arg0: *AbortSignal) ?*Timeout;
     pub fn listen(
         this: *AbortSignal,
         comptime Context: type,
@@ -20,7 +20,7 @@ pub const AbortSignal = opaque {
             pub fn callback(
                 ptr: ?*anyopaque,
                 reason: JSValue,
-            ) callconv(.C) void {
+            ) callconv(.c) void {
                 const val = bun.cast(*Context, ptr.?);
                 call(val, reason);
             }
@@ -32,7 +32,7 @@ pub const AbortSignal = opaque {
     pub fn addListener(
         this: *AbortSignal,
         ctx: ?*anyopaque,
-        callback: *const fn (?*anyopaque, JSValue) callconv(.C) void,
+        callback: *const fn (?*anyopaque, JSValue) callconv(.c) void,
     ) *AbortSignal {
         return WebCore__AbortSignal__addListener(this, ctx, callback);
     }
@@ -138,6 +138,19 @@ pub const AbortSignal = opaque {
         return WebCore__AbortSignal__new(global);
     }
 
+    /// Returns a borrowed handle to the internal Timeout, or null.
+    ///
+    /// Lifetime: owned by AbortSignal; may become invalid if the timer fires/cancels.
+    ///
+    /// Thread-safety: not thread-safe; call only on the owning thread/loop.
+    ///
+    /// Usage: if you need to operate on the Timeout (run/cancel/deinit), hold a ref
+    /// to `this` for the duration (e.g., `this.ref(); defer this.unref();`) and avoid
+    /// caching the pointer across turns.
+    pub fn getTimeout(this: *AbortSignal) ?*Timeout {
+        return WebCore__AbortSignal__getTimeout(this);
+    }
+
     pub const Timeout = struct {
         event_loop_timer: jsc.API.Timer.EventLoopTimer,
 
@@ -154,7 +167,7 @@ pub const AbortSignal = opaque {
             const this: *Timeout = .new(.{
                 .signal = signal_,
                 .event_loop_timer = .{
-                    .next = bun.timespec.now().addMs(@intCast(milliseconds)),
+                    .next = bun.timespec.now(.allow_mocked_time).addMs(@intCast(milliseconds)),
                     .tag = .AbortSignalTimeout,
                     .state = .CANCELLED,
                 },

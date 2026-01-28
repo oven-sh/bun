@@ -9,7 +9,7 @@ pub fn toStrictEqual(this: *Expect, globalThis: *JSGlobalObject, callFrame: *Cal
         return globalThis.throwInvalidArguments("toStrictEqual() requires 1 argument", .{});
     }
 
-    incrementExpectCallCounter();
+    this.incrementExpectCallCounter();
 
     const expected = arguments[0];
     const value: JSValue = try this.getValue(globalThis, thisValue, "toStrictEqual", "<green>expected<r>");
@@ -25,11 +25,11 @@ pub fn toStrictEqual(this: *Expect, globalThis: *JSGlobalObject, callFrame: *Cal
 
     if (not) {
         const signature = comptime getSignature("toStrictEqual", "<green>expected<r>", true);
-        return this.throw(globalThis, signature, "\n\n{any}\n", .{diff_formatter});
+        return this.throw(globalThis, signature, "\n\n{f}\n", .{diff_formatter});
     }
 
     const signature = comptime getSignature("toStrictEqual", "<green>expected<r>", false);
-    return this.throw(globalThis, signature, "\n\n{any}\n", .{diff_formatter});
+    return this.throw(globalThis, signature, "\n\n{f}\n", .{diff_formatter});
 }
 
 const bun = @import("bun");
@@ -39,7 +39,6 @@ const jsc = bun.jsc;
 const CallFrame = bun.jsc.CallFrame;
 const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
-const incrementExpectCallCounter = bun.jsc.Expect.incrementExpectCallCounter;
 
 const Expect = bun.jsc.Expect.Expect;
 const getSignature = Expect.getSignature;

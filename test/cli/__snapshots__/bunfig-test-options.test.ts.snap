@@ -1,0 +1,11 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`bunfig.toml test options randomize with seed produces consistent order 1`] = `
+[
+  "echo",
+  "alpha",
+  "bravo",
+  "charlie",
+  "delta",
+]
+`;

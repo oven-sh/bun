@@ -111,7 +111,7 @@ pub fn asyncID(this: *const TimerObjectInternals) u64 {
     return ID.asyncID(.{ .id = this.id, .kind = this.flags.kind.big() });
 }
 
-pub fn fire(this: *TimerObjectInternals, _: *const timespec, vm: *jsc.VirtualMachine) EventLoopTimer.Arm {
+pub fn fire(this: *TimerObjectInternals, _: *const timespec, vm: *jsc.VirtualMachine) void {
     const id = this.id;
     const kind = this.flags.kind.big();
     const async_id: ID = .{ .id = id, .kind = kind };
@@ -146,7 +146,7 @@ pub fn fire(this: *TimerObjectInternals, _: *const timespec, vm: *jsc.VirtualMac
         this.strong_this.deinit();
         this.deref();
 
-        return .disarm;
+        return;
     }
 
     var time_before_call: timespec = undefined;
@@ -154,7 +154,7 @@ pub fn fire(this: *TimerObjectInternals, _: *const timespec, vm: *jsc.VirtualMac
     if (kind != .setInterval) {
         this.strong_this.clearWithoutDeallocation();
     } else {
-        time_before_call = timespec.msFromNow(this.interval);
+        time_before_call = timespec.msFromNow(.allow_mocked_time, this.interval);
     }
     this_object.ensureStillAlive();
 
@@ -228,8 +228,6 @@ pub fn fire(this: *TimerObjectInternals, _: *const timespec, vm: *jsc.VirtualMac
         }
     }
     vm.eventLoop().exit();
-
-    return .disarm;
 }
 
 fn convertToInterval(this: *TimerObjectInternals, global: *JSGlobalObject, timer: JSValue, repeat: JSValue) void {
@@ -244,7 +242,7 @@ fn convertToInterval(this: *TimerObjectInternals, global: *JSGlobalObject, timer
     this.strong_this.set(global, timer);
     this.flags.kind = .setInterval;
     this.interval = new_interval;
-    this.reschedule(timer, vm);
+    this.reschedule(timer, vm, global);
 }
 
 pub fn run(this: *TimerObjectInternals, globalThis: *jsc.JSGlobalObject, timer: JSValue, callback: JSValue, arguments: JSValue, async_id: u64, vm: *jsc.VirtualMachine) bool {
@@ -295,8 +293,8 @@ pub fn init(
         TimeoutObject.js.idleTimeoutSetCached(timer, global, .jsNumber(interval));
         TimeoutObject.js.repeatSetCached(timer, global, if (kind == .setInterval) .jsNumber(interval) else .null);
 
-        // this increments the refcount
-        this.reschedule(timer, vm);
+        // this increments the refcount and sets _idleStart
+        this.reschedule(timer, vm, global);
     }
 
     this.strong_this.set(global, timer);
@@ -330,7 +328,7 @@ pub fn doRefresh(this: *TimerObjectInternals, globalObject: *jsc.JSGlobalObject,
     }
 
     this.strong_this.set(globalObject, this_value);
-    this.reschedule(this_value, VirtualMachine.get());
+    this.reschedule(this_value, VirtualMachine.get(), globalObject);
 
     return this_value;
 }
@@ -373,7 +371,7 @@ fn shouldRescheduleTimer(this: *TimerObjectInternals, repeat: JSValue, idle_time
     return true;
 }
 
-pub fn reschedule(this: *TimerObjectInternals, timer: JSValue, vm: *VirtualMachine) void {
+pub fn reschedule(this: *TimerObjectInternals, timer: JSValue, vm: *VirtualMachine, globalThis: *JSGlobalObject) void {
     if (this.flags.kind == .setImmediate) return;
 
     const idle_timeout = TimeoutObject.js.idleTimeoutGetCached(timer).?;
@@ -382,7 +380,8 @@ pub fn reschedule(this: *TimerObjectInternals, timer: JSValue, vm: *VirtualMachi
     // https://github.com/nodejs/node/blob/a7cbb904745591c9a9d047a364c2c188e5470047/lib/internal/timers.js#L612
     if (!this.shouldRescheduleTimer(repeat, idle_timeout)) return;
 
-    const now = timespec.msFromNow(this.interval);
+    const now = timespec.now(.allow_mocked_time);
+    const scheduled_time = now.addMs(this.interval);
     const was_active = this.eventLoopTimer().state == .ACTIVE;
     if (was_active) {
         vm.timer.remove(this.eventLoopTimer());
@@ -390,8 +389,12 @@ pub fn reschedule(this: *TimerObjectInternals, timer: JSValue, vm: *VirtualMachi
         this.ref();
     }
 
-    vm.timer.update(this.eventLoopTimer(), &now);
+    vm.timer.update(this.eventLoopTimer(), &scheduled_time);
     this.flags.has_cleared_timer = false;
+
+    // Set _idleStart to the current monotonic timestamp in milliseconds
+    // This mimics Node.js's behavior where _idleStart is the libuv timestamp when the timer was scheduled
+    TimeoutObject.js.idleStartSetCached(timer, globalThis, .jsNumber(now.msUnsigned()));
 
     if (this.flags.has_js_ref) {
         this.setEnableKeepingEventLoopAlive(vm, true);

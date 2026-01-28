@@ -19,7 +19,7 @@ pub fn fromCallbackAutoDeinit(ptr: anytype, comptime fieldName: [:0]const u8) *A
             @field(Ptr, fieldName)(ctx, extra);
         }
     };
-    const task = bun.default_allocator.create(Wrapper) catch bun.outOfMemory();
+    const task = bun.handleOom(bun.default_allocator.create(Wrapper));
     task.* = Wrapper{
         .any_task = AnyTaskWithExtraContext{
             .callback = &Wrapper.function,
@@ -54,7 +54,7 @@ pub fn New(comptime Type: type, comptime ContextType: type, comptime Callback: a
 
         pub fn wrap(this: ?*anyopaque, extra: ?*anyopaque) void {
             @call(
-                .always_inline,
+                bun.callmod_inline,
                 Callback,
                 .{
                     @as(*Type, @ptrCast(@alignCast(this.?))),

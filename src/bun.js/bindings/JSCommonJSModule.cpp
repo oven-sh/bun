@@ -112,7 +112,7 @@ extern "C" void Bun__VM__setEntryPointEvalResultCJS(void*, EncodedJSValue);
 static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObject, JSCommonJSModule* moduleObject, JSString* dirname, JSValue filename)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    SourceCode code = std::move(moduleObject->sourceCode);
+    SourceCode code = WTF::move(moduleObject->sourceCode);
 
     // If an exception occurred somewhere else, we might have cleared the source code.
     if (code.isNull()) [[unlikely]] {
@@ -230,7 +230,7 @@ bool JSCommonJSModule::load(JSC::VM& vm, Zig::GlobalObject* globalObject)
         this->m_filename.get());
 
     if (auto exception = scope.exception()) {
-        scope.clearException();
+        (void)scope.tryClearException();
 
         // On error, remove the module from the require map/
         // so that it can be re-evaluated on the next require.
@@ -715,7 +715,7 @@ JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * glo
     }
 
     moduleObject->sourceCode = makeSource(
-        WTFMove(wrappedString),
+        WTF::move(wrappedString),
         SourceOrigin(URL::fileURLWithFileSystemPath(filenameString)),
         JSC::SourceTaintedOrigin::Untainted,
         filenameString,
@@ -817,13 +817,10 @@ public:
 
 const JSC::ClassInfo JSCommonJSModulePrototype::s_info = { "Module"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCommonJSModulePrototype) };
 
-void JSCommonJSModule::finishCreation(JSC::VM& vm, JSC::JSString* id, JSValue filename, JSC::JSString* dirname, const JSC::SourceCode& sourceCode)
+void JSCommonJSModule::finishCreation(JSC::VM& vm, const JSC::SourceCode& sourceCode)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-    m_id.set(vm, this, id);
-    m_filename.set(vm, this, filename);
-    m_dirname.set(vm, this, dirname);
     this->sourceCode = sourceCode;
 }
 
@@ -847,8 +844,8 @@ JSCommonJSModule* JSCommonJSModule::create(
     JSC::JSString* dirname,
     const JSC::SourceCode& sourceCode)
 {
-    JSCommonJSModule* cell = new (NotNull, JSC::allocateCell<JSCommonJSModule>(vm)) JSCommonJSModule(vm, structure);
-    cell->finishCreation(vm, id, filename, dirname, sourceCode);
+    JSCommonJSModule* cell = new (NotNull, JSC::allocateCell<JSCommonJSModule>(vm)) JSCommonJSModule(vm, structure, id, filename, dirname);
+    cell->finishCreation(vm, sourceCode);
     return cell;
 }
 
@@ -1023,10 +1020,10 @@ void populateESMExports(
                     return true;
                 });
             } else {
-                JSC::PropertyNameArray properties(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
+                JSC::PropertyNameArrayBuilder properties(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
                 exports->methodTable()->getOwnPropertyNames(exports, globalObject, properties, DontEnumPropertiesMode::Exclude);
                 if (scope.exception()) [[unlikely]] {
-                    if (!vm.hasPendingTerminationException()) scope.clearException();
+                    if (!vm.hasPendingTerminationException()) (void)scope.tryClearException();
                     return;
                 }
 
@@ -1058,7 +1055,7 @@ void populateESMExports(
                     // If it throws, we keep them in the exports list, but mark it as undefined
                     // This is consistent with what Node.js does.
                     if (scope.exception()) [[unlikely]] {
-                        scope.clearException();
+                        (void)scope.tryClearException();
                         getterResult = jsUndefined();
                     }
 
@@ -1081,10 +1078,10 @@ void populateESMExports(
                 return true;
             });
         } else {
-            JSC::PropertyNameArray properties(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
+            JSC::PropertyNameArrayBuilder properties(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
             exports->methodTable()->getOwnPropertyNames(exports, globalObject, properties, DontEnumPropertiesMode::Include);
             if (scope.exception()) [[unlikely]] {
-                if (!vm.hasPendingTerminationException()) scope.clearException();
+                if (!vm.hasPendingTerminationException()) (void)scope.tryClearException();
                 return;
             }
 
@@ -1116,7 +1113,7 @@ void populateESMExports(
                 // If it throws, we keep them in the exports list, but mark it as undefined
                 // This is consistent with what Node.js does.
                 if (scope.exception()) [[unlikely]] {
-                    scope.clearException();
+                    (void)scope.tryClearException();
                     getterResult = jsUndefined();
                 }
 
@@ -1224,7 +1221,7 @@ ALWAYS_INLINE EncodedJSValue finishRequireWithError(Zig::GlobalObject* globalObj
 {
     JSC::JSValue exception = throwScope.exception();
     ASSERT(exception);
-    throwScope.clearException();
+    (void)throwScope.tryClearException();
 
     // On error, remove the module from the require map/
     // so that it can be re-evaluated on the next require.
@@ -1368,7 +1365,7 @@ void JSCommonJSModule::evaluate(
     if (this->hasEvaluated)
         return;
 
-    this->sourceCode = JSC::SourceCode(WTFMove(sourceProvider));
+    this->sourceCode = JSC::SourceCode(WTF::move(sourceProvider));
 
     evaluateCommonJSModuleOnce(vm, globalObject, this, this->m_dirname.get(), this->m_filename.get());
 }
@@ -1469,7 +1466,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
         moduleObject = JSCommonJSModule::create(
             vm,
             globalObject->CommonJSModuleObjectStructure(),
-            requireMapKey, filename, dirname, WTFMove(JSC::SourceCode(WTFMove(sourceProvider))));
+            requireMapKey, filename, dirname, JSC::SourceCode(WTF::move(sourceProvider)));
 
         moduleObject->putDirect(vm,
             WebCore::clientData(vm)->builtinNames().exportsPublicName(),
@@ -1507,7 +1504,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
                                 moduleObject->m_dirname.get(),
                                 moduleObject->m_filename.get());
                             if (auto exception = scope.exception()) {
-                                scope.clearException();
+                                (void)scope.tryClearException();
 
                                 // On error, remove the module from the require map
                                 // so that it can be re-evaluated on the next require.

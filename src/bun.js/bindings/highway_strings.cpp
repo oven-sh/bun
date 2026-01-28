@@ -444,7 +444,7 @@ static size_t IndexOfNeedsEscapeForJavaScriptStringImpl(const uint8_t* HWY_RESTR
     // Set up SIMD constants
     const auto vec_backslash = hn::Set(d, uint8_t { '\\' });
     const auto vec_min_ascii = hn::Set(d, uint8_t { 0x20 });
-    const auto vec_max_ascii = hn::Set(d, uint8_t { 127 });
+    const auto vec_max_ascii = hn::Set(d, uint8_t { 0x7E });
     const auto vec_quote = hn::Set(d, quote_char);
 
     const auto vec_dollar = hn::Set(d, uint8_t { '$' });
@@ -482,7 +482,7 @@ static size_t IndexOfNeedsEscapeForJavaScriptStringImpl(const uint8_t* HWY_RESTR
     // Scalar check for the remainder
     for (; i < text_len; ++i) {
         const uint8_t char_ = text[i];
-        if (char_ >= 127 || (char_ < 0x20 && char_ != 0x09) || char_ == '\\' || char_ == quote_char || (is_backtick && char_ == '$')) {
+        if (char_ >= 127 || char_ < 0x20 || char_ == '\\' || char_ == quote_char || (is_backtick && char_ == '$')) {
             return i;
         }
     }
@@ -657,15 +657,15 @@ HWY_EXPORT(IndexOfNewlineOrNonASCIIOrHashOrAtImpl);
 HWY_EXPORT(IndexOfSpaceOrNewlineOrNonASCIIImpl);
 HWY_EXPORT(MemMemImpl);
 HWY_EXPORT(ScanCharFrequencyImpl);
-} // namespace bun
-
 // Define the C-callable wrappers that use HWY_DYNAMIC_DISPATCH.
-// These need to be defined *after* the HWY_EXPORT block.
+// These need to be defined *after* the HWY_EXPORT block and INSIDE namespace bun
+// so that HWY_DYNAMIC_DISPATCH(FuncImpl) correctly resolves to bun::N_*::FuncImpl.
+// The extern "C" only affects linkage (for C callers), not namespace resolution.
 extern "C" {
 
 void* highway_memmem(const uint8_t* haystack, size_t haystack_len, const uint8_t* needle, size_t needle_len)
 {
-    return HWY_DYNAMIC_DISPATCH(bun::MemMemImpl)(haystack, haystack_len, needle, needle_len);
+    return HWY_DYNAMIC_DISPATCH(MemMemImpl)(haystack, haystack_len, needle, needle_len);
 }
 
 static void highway_copy_u16_to_u8_impl(
@@ -673,7 +673,7 @@ static void highway_copy_u16_to_u8_impl(
     size_t count,
     uint8_t* output)
 {
-    return HWY_DYNAMIC_DISPATCH(bun::CopyU16ToU8Impl)(input, count, output);
+    return HWY_DYNAMIC_DISPATCH(CopyU16ToU8Impl)(input, count, output);
 }
 
 void highway_copy_u16_to_u8(
@@ -707,53 +707,53 @@ void highway_copy_u16_to_u8(
 }
 size_t highway_index_of_any_char(const uint8_t* HWY_RESTRICT text, size_t text_len, const uint8_t* HWY_RESTRICT chars, size_t chars_len)
 {
-    return HWY_DYNAMIC_DISPATCH(bun::IndexOfAnyCharImpl)(text, text_len, chars, chars_len);
+    return HWY_DYNAMIC_DISPATCH(IndexOfAnyCharImpl)(text, text_len, chars, chars_len);
 }
 
 void highway_char_frequency(const uint8_t* HWY_RESTRICT text, size_t text_len,
     int32_t* freqs, int32_t delta)
 {
-    HWY_DYNAMIC_DISPATCH(bun::ScanCharFrequencyImpl)(text, text_len, freqs, delta);
+    HWY_DYNAMIC_DISPATCH(ScanCharFrequencyImpl)(text, text_len, freqs, delta);
 }
 
 size_t highway_index_of_char(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len,
     uint8_t needle)
 {
-    return HWY_DYNAMIC_DISPATCH(bun::IndexOfCharImpl)(haystack, haystack_len, needle);
+    return HWY_DYNAMIC_DISPATCH(IndexOfCharImpl)(haystack, haystack_len, needle);
 }
 
 size_t highway_index_of_interesting_character_in_string_literal(const uint8_t* HWY_RESTRICT text, size_t text_len, uint8_t quote)
 {
-    return HWY_DYNAMIC_DISPATCH(bun::IndexOfInterestingCharacterInStringLiteralImpl)(text, text_len, quote);
+    return HWY_DYNAMIC_DISPATCH(IndexOfInterestingCharacterInStringLiteralImpl)(text, text_len, quote);
 }
 
 size_t highway_index_of_newline_or_non_ascii(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len)
 {
-    return HWY_DYNAMIC_DISPATCH(bun::IndexOfNewlineOrNonASCIIImpl)(haystack, haystack_len);
+    return HWY_DYNAMIC_DISPATCH(IndexOfNewlineOrNonASCIIImpl)(haystack, haystack_len);
 }
 
 size_t highway_index_of_newline_or_non_ascii_or_hash_or_at(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len)
 {
-    return HWY_DYNAMIC_DISPATCH(bun::IndexOfNewlineOrNonASCIIOrHashOrAtImpl)(haystack, haystack_len);
+    return HWY_DYNAMIC_DISPATCH(IndexOfNewlineOrNonASCIIOrHashOrAtImpl)(haystack, haystack_len);
 }
 
 bool highway_contains_newline_or_non_ascii_or_quote(const uint8_t* HWY_RESTRICT text, size_t text_len)
 {
-    return HWY_DYNAMIC_DISPATCH(bun::ContainsNewlineOrNonASCIIOrQuoteImpl)(text, text_len);
+    return HWY_DYNAMIC_DISPATCH(ContainsNewlineOrNonASCIIOrQuoteImpl)(text, text_len);
 }
 
 size_t highway_index_of_needs_escape_for_javascript_string(const uint8_t* HWY_RESTRICT text, size_t text_len, uint8_t quote_char)
 {
     if (quote_char == '`') {
-        return HWY_DYNAMIC_DISPATCH(bun::IndexOfNeedsEscapeForJavaScriptStringImplBacktick)(text, text_len, quote_char);
+        return HWY_DYNAMIC_DISPATCH(IndexOfNeedsEscapeForJavaScriptStringImplBacktick)(text, text_len, quote_char);
     } else {
-        return HWY_DYNAMIC_DISPATCH(bun::IndexOfNeedsEscapeForJavaScriptStringImplQuote)(text, text_len, quote_char);
+        return HWY_DYNAMIC_DISPATCH(IndexOfNeedsEscapeForJavaScriptStringImplQuote)(text, text_len, quote_char);
     }
 }
 
 size_t highway_index_of_space_or_newline_or_non_ascii(const uint8_t* HWY_RESTRICT text, size_t text_len)
 {
-    return HWY_DYNAMIC_DISPATCH(bun::IndexOfSpaceOrNewlineOrNonASCIIImpl)(text, text_len);
+    return HWY_DYNAMIC_DISPATCH(IndexOfSpaceOrNewlineOrNonASCIIImpl)(text, text_len);
 }
 
 void highway_fill_with_skip_mask(
@@ -764,10 +764,12 @@ void highway_fill_with_skip_mask(
     size_t length, // Length of input/output
     bool skip_mask) // Whether to skip masking
 {
-    HWY_DYNAMIC_DISPATCH(bun::FillWithSkipMaskImpl)(mask, mask_len, output, input, length, skip_mask);
+    HWY_DYNAMIC_DISPATCH(FillWithSkipMaskImpl)(mask, mask_len, output, input, length, skip_mask);
 }
 
 } // extern "C"
+
+} // namespace bun
 
 #if OS(DARWIN)
 // On macOS, override the libc memmem with our implementation

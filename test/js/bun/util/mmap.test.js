@@ -68,4 +68,32 @@ describe.skipIf(isWindows)("Bun.mmap", async () => {
     expect(map[0]).toBe(old);
     await gcTick();
   });
+
+  it("mmap rejects negative offset", () => {
+    expect(() => Bun.mmap(path, { offset: -1 })).toThrow("offset must be a non-negative integer");
+  });
+
+  it("mmap rejects negative size", () => {
+    expect(() => Bun.mmap(path, { size: -1 })).toThrow("size must be a non-negative integer");
+  });
+
+  it("mmap handles non-number offset/size without crashing", () => {
+    // These should not crash - non-number values coerce to 0 per JavaScript semantics
+    // Previously these caused assertion failures (issue ENG-22413)
+
+    // null coerces to 0, which is valid for offset
+    expect(() => {
+      Bun.mmap(path, { offset: null });
+    }).not.toThrow();
+
+    // size: null coerces to 0, which is invalid (EINVAL), but shouldn't crash
+    expect(() => {
+      Bun.mmap(path, { size: null });
+    }).toThrow("EINVAL");
+
+    // undefined is ignored (property not set)
+    expect(() => {
+      Bun.mmap(path, { offset: undefined });
+    }).not.toThrow();
+  });
 });

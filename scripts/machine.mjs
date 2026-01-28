@@ -5,8 +5,6 @@ import { basename, extname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { inspect, parseArgs } from "node:util";
 import { docker } from "./docker.mjs";
-import { google } from "./google.mjs";
-import { orbstack } from "./orbstack.mjs";
 import { tart } from "./tart.mjs";
 import {
   $,
@@ -400,6 +398,7 @@ const aws = {
       "owner-alias": owner,
       "name": name,
     });
+    // console.table(baseImages.map(v => v.Name));
 
     if (!baseImages.length) {
       throw new Error(`No base image found: ${inspect(options)}`);
@@ -425,6 +424,8 @@ const aws = {
     }
 
     const { ImageId, Name, RootDeviceName, BlockDeviceMappings } = image;
+    // console.table({ os, arch, instanceType, Name, ImageId });
+
     const blockDeviceMappings = BlockDeviceMappings.map(device => {
       const { DeviceName } = device;
       if (DeviceName === RootDeviceName) {
@@ -479,6 +480,12 @@ const aws = {
       });
     }
 
+    // Attach IAM instance profile for CI builds to enable S3 build cache access
+    let iamInstanceProfile;
+    if (options.ci) {
+      iamInstanceProfile = JSON.stringify({ Name: "buildkite-build-agent" });
+    }
+
     const [instance] = await aws.runInstances({
       ["image-id"]: ImageId,
       ["instance-type"]: instanceType || (arch === "aarch64" ? "t4g.large" : "t3.large"),
@@ -493,6 +500,7 @@ const aws = {
       ["tag-specifications"]: JSON.stringify(tagSpecification),
       ["key-name"]: keyName,
       ["instance-market-options"]: marketOptions,
+      ["iam-instance-profile"]: iamInstanceProfile,
     });
 
     const machine = aws.toMachine(instance, { ...options, username, keyPath });
@@ -620,6 +628,7 @@ const aws = {
  * @property {SshKey[]} [sshKeys]
  * @property {string} [username]
  * @property {string} [password]
+ * @property {Os} [os]
  */
 
 /**
@@ -648,6 +657,7 @@ function getCloudInit(cloudInit) {
   const authorizedKeys = cloudInit["sshKeys"]?.map(({ publicKey }) => publicKey) || [];
 
   let sftpPath = "/usr/lib/openssh/sftp-server";
+  let shell = "/bin/bash";
   switch (cloudInit["distro"]) {
     case "alpine":
       sftpPath = "/usr/lib/ssh/sftp-server";
@@ -657,6 +667,14 @@ function getCloudInit(cloudInit) {
     case "centos":
       sftpPath = "/usr/libexec/openssh/sftp-server";
       break;
+  }
+  switch (cloudInit["os"]) {
+    case "linux":
+    case "windows":
+      // handled above
+      break;
+    default:
+      throw new Error(`Unsupported os: ${cloudInit["os"]}`);
   }
 
   let users;
@@ -671,7 +689,7 @@ function getCloudInit(cloudInit) {
 users:
   - name: ${username}
     sudo: ALL=(ALL) NOPASSWD:ALL
-    shell: /bin/bash
+    shell: ${shell}
     ssh_authorized_keys:
 ${authorizedKeys.map(key => `      - ${key}`).join("\n")}
 
@@ -687,7 +705,7 @@ write_files:
       HostKey /etc/ssh/ssh_host_ed25519_key
       SyslogFacility AUTHPRIV
       PermitRootLogin yes
-      AuthorizedKeysFile .ssh/authorized_keys
+      AuthorizedKeysFile %h/.ssh/authorized_keys
       PasswordAuthentication no
       ChallengeResponseAuthentication no
       GSSAPIAuthentication yes
@@ -858,8 +876,7 @@ function getSshKeys() {
     const sshFiles = readdirSync(sshPath, { withFileTypes: true, encoding: "utf-8" });
     const publicPaths = sshFiles
       .filter(entry => entry.isFile() && entry.name.endsWith(".pub"))
-      .map(({ name }) => join(sshPath, name))
-      .filter(path => !readFile(path, { cache: true }).startsWith("ssh-ed25519"));
+      .map(({ name }) => join(sshPath, name));
 
     sshKeys.push(
       ...publicPaths.map(publicPath => ({
@@ -935,10 +952,11 @@ async function getGithubOrgSshKeys(organization) {
  * @returns {Promise<void>}
  */
 async function spawnScp(options) {
-  const { hostname, port, username, identityPaths, password, source, destination, retries = 10 } = options;
+  const { hostname, port, username, identityPaths, password, source, destination, retries = 3 } = options;
   await waitForPort({ hostname, port: port || 22 });
 
   const command = ["scp", "-o", "StrictHostKeyChecking=no"];
+  command.push("-O"); // use SCP instead of SFTP
   if (!password) {
     command.push("-o", "BatchMode=yes");
   }
@@ -1037,14 +1055,10 @@ function getCloud(name) {
   switch (name) {
     case "docker":
       return docker;
-    case "orbstack":
-      return orbstack;
-    case "tart":
-      return tart;
     case "aws":
       return aws;
-    case "google":
-      return google;
+    case "tart":
+      return tart;
   }
   throw new Error(`Unsupported cloud: ${name}`);
 }
@@ -1171,6 +1185,9 @@ async function main() {
   const tags = {
     "robobun": "true",
     "robobun2": "true",
+    // This tag controls the IAM role required to be able to write to the shared S3 build cache.
+    // Don't want accidental polution from non-CI runs.
+    "Service": args["ci"] ? "buildkite-agent" : undefined,
     "buildkite:token": args["buildkite-token"],
     "tailscale:authkey": args["tailscale-authkey"],
     ...Object.fromEntries(args["tag"]?.map(tag => tag.split("=")) ?? []),

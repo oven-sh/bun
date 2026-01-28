@@ -153,7 +153,7 @@ static String removeBackslashes(const StringView& view)
     if (view.is8Bit()) {
         auto span = view.span8();
         for (size_t i = 0; i < span.size(); ++i) {
-            LChar c = span[i];
+            Latin1Character c = span[i];
             if (c == '\\' && i + 1 < span.size()) {
                 builder.append(span[++i]);
             } else {
@@ -183,7 +183,7 @@ static String escapeQuoteOrBackslash(const StringView& view)
     StringBuilder builder;
     if (view.is8Bit()) {
         auto span = view.span8();
-        for (LChar c : span) {
+        for (Latin1Character c : span) {
             if (c == '"' || c == '\\') {
                 builder.append('\\');
             }
@@ -272,7 +272,7 @@ static std::tuple<String, String, size_t> parseTypeAndSubtype(JSGlobalObject* gl
     String subtype = subtypeView.convertToASCIILowercase();
 
     // Return type, subtype, and the index where parameters start
-    return std::make_tuple(WTFMove(type), WTFMove(subtype), paramsStartIndex);
+    return std::make_tuple(WTF::move(type), WTF::move(subtype), paramsStartIndex);
 }
 
 //-- JSMIMEType (Instance) Implementation --
@@ -282,7 +282,7 @@ const ClassInfo JSMIMEType::s_info = { "MIMEType"_s, &Base::s_info, nullptr, nul
 JSMIMEType* JSMIMEType::create(VM& vm, Structure* structure, String type, String subtype, JSMIMEParams* params)
 {
     JSMIMEType* instance = new (NotNull, allocateCell<JSMIMEType>(vm)) JSMIMEType(vm, structure);
-    instance->finishCreation(vm, WTFMove(type), WTFMove(subtype), params);
+    instance->finishCreation(vm, WTF::move(type), WTF::move(subtype), params);
     return instance;
 }
 
@@ -300,8 +300,8 @@ void JSMIMEType::finishCreation(VM& vm, String type, String subtype, JSMIMEParam
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-    m_type = WTFMove(type);
-    m_subtype = WTFMove(subtype);
+    m_type = WTF::move(type);
+    m_subtype = WTF::move(subtype);
     m_parameters.set(vm, this, params);
 }
 
@@ -581,7 +581,7 @@ JSC_DEFINE_HOST_FUNCTION(constructMIMEType, (JSGlobalObject * globalObject, Call
     JSMIMEParams* paramsInstance = JSMIMEParams::create(vm, paramsStructure, paramsMap);
 
     // 4. Create the JSMIMEType instance
-    JSMIMEType* instance = JSMIMEType::create(vm, structure, WTFMove(type), WTFMove(subtype), paramsInstance);
+    JSMIMEType* instance = JSMIMEType::create(vm, structure, WTF::move(type), WTF::move(subtype), paramsInstance);
 
     return JSC::JSValue::encode(instance);
 }

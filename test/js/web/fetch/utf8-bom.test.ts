@@ -138,7 +138,7 @@ describe("UTF-8 BOM should be ignored", () => {
           controller.close();
         },
       });
-      expect(await stream.json()).toEqual({ "hello": "World" } as any);
+      expect(await stream.json()).toEqual({ "hello": "World" });
     });
 
     it("in Bun.readableStreamToFormData()", async () => {

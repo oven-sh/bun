@@ -25,7 +25,7 @@ pub const Timer = opaque {
         return c.us_create_timer(loop, 1, @sizeOf(Type)) orelse bun.Output.panic("us_create_timer: returned null: {d}", .{std.c._errno().*});
     }
 
-    pub fn set(this: *Timer, ptr: anytype, cb: ?*const fn (*Timer) callconv(.C) void, ms: i32, repeat_ms: i32) void {
+    pub fn set(this: *Timer, ptr: anytype, cb: ?*const fn (*Timer) callconv(.c) void, ms: i32, repeat_ms: i32) void {
         c.us_timer_set(this, cb, ms, repeat_ms);
         const value_ptr = c.us_timer_ext(this);
         @setRuntimeSafety(false);
@@ -51,7 +51,7 @@ const c = struct {
     pub extern fn us_create_timer(loop: ?*Loop, fallthrough: i32, ext_size: c_uint) ?*Timer;
     pub extern fn us_timer_ext(timer: ?*Timer) *?*anyopaque;
     pub extern fn us_timer_close(timer: ?*Timer, fallthrough: i32) void;
-    pub extern fn us_timer_set(timer: ?*Timer, cb: ?*const fn (*Timer) callconv(.C) void, ms: i32, repeat_ms: i32) void;
+    pub extern fn us_timer_set(timer: ?*Timer, cb: ?*const fn (*Timer) callconv(.c) void, ms: i32, repeat_ms: i32) void;
     pub extern fn us_timer_loop(t: ?*Timer) ?*Loop;
 };
 

@@ -59,7 +59,7 @@ it("importing empty json file throws JSON Parse error", async () => {
 });
 
 it("importing empty jsonc/toml file returns module with empty object as default export", async () => {
-  const types = ["jsonc", "toml"];
+  const types = ["jsonc", "yaml", "toml"];
 
   for (const type of types) {
     delete require.cache[require.resolve(`./empty-file`)];

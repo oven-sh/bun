@@ -41,8 +41,8 @@ pub fn replacePath(
 ) !EntryIndex {
     assert(assets.owner().magic == .valid);
     defer assert(assets.files.count() == assets.refs.items.len);
-    const alloc = assets.owner().allocator;
-    debug.log("replacePath {} {} - {s}/{s} ({s})", .{
+    const alloc = assets.owner().allocator();
+    debug.log("replacePath {f} {} - {s}/{s} ({s})", .{
         bun.fmt.quote(abs_path),
         content_hash,
         DevServer.asset_prefix,
@@ -100,9 +100,9 @@ pub fn replacePath(
 /// means there is already data here.
 pub fn putOrIncrementRefCount(assets: *Assets, content_hash: u64, ref_count: u32) !?**StaticRoute {
     defer assert(assets.files.count() == assets.refs.items.len);
-    const file_index_gop = try assets.files.getOrPut(assets.owner().allocator, content_hash);
+    const file_index_gop = try assets.files.getOrPut(assets.owner().allocator(), content_hash);
     if (!file_index_gop.found_existing) {
-        try assets.refs.append(assets.owner().allocator, ref_count);
+        try assets.refs.append(assets.owner().allocator(), ref_count);
         return file_index_gop.value_ptr;
     } else {
         assets.refs.items[file_index_gop.index] += ref_count;
@@ -112,7 +112,7 @@ pub fn putOrIncrementRefCount(assets: *Assets, content_hash: u64, ref_count: u32
 
 pub fn unrefByHash(assets: *Assets, content_hash: u64, dec_count: u32) void {
     const index = assets.files.getIndex(content_hash) orelse
-        Output.panic("Asset double unref: {s}", .{std.fmt.fmtSliceHexLower(std.mem.asBytes(&content_hash))});
+        Output.panic("Asset double unref: {x}", .{std.mem.asBytes(&content_hash)});
     assets.unrefByIndex(.init(@intCast(index)), dec_count);
 }
 

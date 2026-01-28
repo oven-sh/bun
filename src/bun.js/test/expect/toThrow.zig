@@ -4,16 +4,16 @@ pub fn toThrow(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame
     const thisValue = callFrame.this();
     const arguments = callFrame.argumentsAsArray(1);
 
-    incrementExpectCallCounter();
+    this.incrementExpectCallCounter();
 
     const expected_value: JSValue = brk: {
-        if (callFrame.argumentsCount() == 0) {
+        const value = arguments[0];
+        if (value.isUndefined()) {
             break :brk .zero;
         }
-        const value = arguments[0];
         if (value.isUndefinedOrNull() or !value.isObject() and !value.isString()) {
             var fmt = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-            return globalThis.throw("Expected value must be string or Error: {any}", .{value.toFmt(&fmt)});
+            return globalThis.throw("Expected value must be string or Error: {f}", .{value.toFmt(&fmt)});
         }
         if (value.isObject()) {
             if (ExpectAny.fromJSDirect(value)) |_| {
@@ -23,7 +23,7 @@ pub fn toThrow(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame
             }
         } else if (value.isString()) {
             // `.toThrow("") behaves the same as `.toThrow()`
-            const s = value.toString(globalThis);
+            const s = try value.toJSString(globalThis);
             if (s.length() == 0) break :brk .zero;
         }
         break :brk value;
@@ -50,7 +50,7 @@ pub fn toThrow(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame
             if (result.toError()) |err| {
                 const name: JSValue = try err.getTruthyComptime(globalThis, "name") orelse .js_undefined;
                 const message: JSValue = try err.getTruthyComptime(globalThis, "message") orelse .js_undefined;
-                const fmt = signature_no_args ++ "\n\nError name: <red>{any}<r>\nError message: <red>{any}<r>\n";
+                const fmt = signature_no_args ++ "\n\nError name: <red>{f}<r>\nError message: <red>{f}<r>\n";
                 return globalThis.throwPretty(fmt, .{
                     name.toFmt(&formatter),
                     message.toFmt(&formatter),
@@ -58,7 +58,7 @@ pub fn toThrow(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame
             }
 
             // non error thrown
-            const fmt = signature_no_args ++ "\n\nThrown value: <red>{any}<r>\n";
+            const fmt = signature_no_args ++ "\n\nThrown value: <red>{f}<r>\n";
             return globalThis.throwPretty(fmt, .{result.toFmt(&formatter)});
         }
 
@@ -79,7 +79,7 @@ pub fn toThrow(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame
                 if (!strings.contains(received_slice.slice(), expected_slice.slice())) return .js_undefined;
             }
 
-            return this.throw(globalThis, signature, "\n\nExpected substring: not <green>{any}<r>\nReceived message: <red>{any}<r>\n", .{
+            return this.throw(globalThis, signature, "\n\nExpected substring: not <green>{f}<r>\nReceived message: <red>{f}<r>\n", .{
                 expected_value.toFmt(&formatter),
                 received_message.toFmt(&formatter),
             });
@@ -98,7 +98,7 @@ pub fn toThrow(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame
                 if (!matches.toBoolean()) return .js_undefined;
             }
 
-            return this.throw(globalThis, signature, "\n\nExpected pattern: not <green>{any}<r>\nReceived message: <red>{any}<r>\n", .{
+            return this.throw(globalThis, signature, "\n\nExpected pattern: not <green>{f}<r>\nReceived message: <red>{f}<r>\n", .{
                 expected_value.toFmt(&formatter),
                 received_message.toFmt(&formatter),
             });
@@ -114,7 +114,7 @@ pub fn toThrow(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame
             // no partial match for this case
             if (!try expected_message.isSameValue(received_message, globalThis)) return .js_undefined;
 
-            return this.throw(globalThis, signature, "\n\nExpected message: not <green>{any}<r>\n", .{expected_message.toFmt(&formatter)});
+            return this.throw(globalThis, signature, "\n\nExpected message: not <green>{f}<r>\n", .{expected_message.toFmt(&formatter)});
         }
 
         if (!result.isInstanceOf(globalThis, expected_value)) return .js_undefined;
@@ -122,7 +122,7 @@ pub fn toThrow(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame
         var expected_class = ZigString.Empty;
         try expected_value.getClassName(globalThis, &expected_class);
         const received_message: JSValue = (try result.fastGet(globalThis, .message)) orelse .js_undefined;
-        return this.throw(globalThis, signature, "\n\nExpected constructor: not <green>{s}<r>\n\nReceived message: <red>{any}<r>\n", .{ expected_class, received_message.toFmt(&formatter) });
+        return this.throw(globalThis, signature, "\n\nExpected constructor: not <green>{f}<r>\n\nReceived message: <red>{f}<r>\n", .{ expected_class, received_message.toFmt(&formatter) });
     }
 
     if (did_throw) {
@@ -158,12 +158,12 @@ pub fn toThrow(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame
             if (_received_message) |received_message| {
                 const expected_value_fmt = expected_value.toFmt(&formatter);
                 const received_message_fmt = received_message.toFmt(&formatter);
-                return this.throw(globalThis, signature, "\n\n" ++ "Expected substring: <green>{any}<r>\nReceived message: <red>{any}<r>\n", .{ expected_value_fmt, received_message_fmt });
+                return this.throw(globalThis, signature, "\n\n" ++ "Expected substring: <green>{f}<r>\nReceived message: <red>{f}<r>\n", .{ expected_value_fmt, received_message_fmt });
             }
 
             const expected_fmt = expected_value.toFmt(&formatter);
             const received_fmt = result.toFmt(&formatter);
-            return this.throw(globalThis, signature, "\n\n" ++ "Expected substring: <green>{any}<r>\nReceived value: <red>{any}<r>", .{ expected_fmt, received_fmt });
+            return this.throw(globalThis, signature, "\n\n" ++ "Expected substring: <green>{f}<r>\nReceived value: <red>{f}<r>", .{ expected_fmt, received_fmt });
         }
 
         if (expected_value.isRegExp()) {
@@ -184,13 +184,13 @@ pub fn toThrow(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame
                 const received_message_fmt = received_message.toFmt(&formatter);
                 const signature = comptime getSignature("toThrow", "<green>expected<r>", false);
 
-                return this.throw(globalThis, signature, "\n\n" ++ "Expected pattern: <green>{any}<r>\nReceived message: <red>{any}<r>\n", .{ expected_value_fmt, received_message_fmt });
+                return this.throw(globalThis, signature, "\n\n" ++ "Expected pattern: <green>{f}<r>\nReceived message: <red>{f}<r>\n", .{ expected_value_fmt, received_message_fmt });
             }
 
             const expected_fmt = expected_value.toFmt(&formatter);
             const received_fmt = result.toFmt(&formatter);
             const signature = comptime getSignature("toThrow", "<green>expected<r>", false);
-            return this.throw(globalThis, signature, "\n\n" ++ "Expected pattern: <green>{any}<r>\nReceived value: <red>{any}<r>", .{ expected_fmt, received_fmt });
+            return this.throw(globalThis, signature, "\n\n" ++ "Expected pattern: <green>{f}<r>\nReceived value: <red>{f}<r>", .{ expected_fmt, received_fmt });
         }
 
         if (Expect.isAsymmetricMatcher(expected_value)) {
@@ -209,7 +209,7 @@ pub fn toThrow(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame
             defer formatter.deinit();
             const received_fmt = result.toFmt(&formatter);
             const expected_fmt = expected_value.toFmt(&formatter);
-            return this.throw(globalThis, signature, "\n\nExpected value: <green>{any}<r>\nReceived value: <red>{any}<r>\n", .{ expected_fmt, received_fmt });
+            return this.throw(globalThis, signature, "\n\nExpected value: <green>{f}<r>\nReceived value: <red>{f}<r>\n", .{ expected_fmt, received_fmt });
         }
 
         // If it's not an object, we are going to crash here.
@@ -229,12 +229,12 @@ pub fn toThrow(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame
             if (_received_message) |received_message| {
                 const expected_fmt = expected_message.toFmt(&formatter);
                 const received_fmt = received_message.toFmt(&formatter);
-                return this.throw(globalThis, signature, "\n\nExpected message: <green>{any}<r>\nReceived message: <red>{any}<r>\n", .{ expected_fmt, received_fmt });
+                return this.throw(globalThis, signature, "\n\nExpected message: <green>{f}<r>\nReceived message: <red>{f}<r>\n", .{ expected_fmt, received_fmt });
             }
 
             const expected_fmt = expected_message.toFmt(&formatter);
             const received_fmt = result.toFmt(&formatter);
-            return this.throw(globalThis, signature, "\n\nExpected message: <green>{any}<r>\nReceived value: <red>{any}<r>\n", .{ expected_fmt, received_fmt });
+            return this.throw(globalThis, signature, "\n\nExpected message: <green>{f}<r>\nReceived value: <red>{f}<r>\n", .{ expected_fmt, received_fmt });
         }
 
         if (result.isInstanceOf(globalThis, expected_value)) return .js_undefined;
@@ -247,10 +247,10 @@ pub fn toThrow(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame
         try expected_value.getClassName(globalThis, &expected_class);
         try result.getClassName(globalThis, &received_class);
         const signature = comptime getSignature("toThrow", "<green>expected<r>", false);
-        const fmt = signature ++ "\n\nExpected constructor: <green>{s}<r>\nReceived constructor: <red>{s}<r>\n\n";
+        const fmt = signature ++ "\n\nExpected constructor: <green>{f}<r>\nReceived constructor: <red>{f}<r>\n\n";
 
         if (_received_message) |received_message| {
-            const message_fmt = fmt ++ "Received message: <red>{any}<r>\n";
+            const message_fmt = fmt ++ "Received message: <red>{f}<r>\n";
             const received_message_fmt = received_message.toFmt(&formatter);
 
             return globalThis.throwPretty(message_fmt, .{
@@ -261,7 +261,7 @@ pub fn toThrow(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame
         }
 
         const received_fmt = result.toFmt(&formatter);
-        const value_fmt = fmt ++ "Received value: <red>{any}<r>\n";
+        const value_fmt = fmt ++ "Received value: <red>{f}<r>\n";
 
         return globalThis.throwPretty(value_fmt, .{
             expected_class,
@@ -274,7 +274,7 @@ pub fn toThrow(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame
     const result = return_value_from_function;
     var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
     defer formatter.deinit();
-    const received_line = "Received function did not throw\nReceived value: <red>{any}<r>\n";
+    const received_line = "Received function did not throw\nReceived value: <red>{f}<r>\n";
 
     if (expected_value == .zero or expected_value.isUndefined()) {
         const signature = comptime getSignature("toThrow", "", false);
@@ -284,21 +284,21 @@ pub fn toThrow(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame
     const signature = comptime getSignature("toThrow", "<green>expected<r>", false);
 
     if (expected_value.isString()) {
-        const expected_fmt = "\n\nExpected substring: <green>{any}<r>\n\n" ++ received_line;
+        const expected_fmt = "\n\nExpected substring: <green>{f}<r>\n\n" ++ received_line;
         return this.throw(globalThis, signature, expected_fmt, .{ expected_value.toFmt(&formatter), result.toFmt(&formatter) });
     }
 
     if (expected_value.isRegExp()) {
-        const expected_fmt = "\n\nExpected pattern: <green>{any}<r>\n\n" ++ received_line;
+        const expected_fmt = "\n\nExpected pattern: <green>{f}<r>\n\n" ++ received_line;
         return this.throw(globalThis, signature, expected_fmt, .{ expected_value.toFmt(&formatter), result.toFmt(&formatter) });
     }
 
     if (try expected_value.fastGet(globalThis, .message)) |expected_message| {
-        const expected_fmt = "\n\nExpected message: <green>{any}<r>\n\n" ++ received_line;
+        const expected_fmt = "\n\nExpected message: <green>{f}<r>\n\n" ++ received_line;
         return this.throw(globalThis, signature, expected_fmt, .{ expected_message.toFmt(&formatter), result.toFmt(&formatter) });
     }
 
-    const expected_fmt = "\n\nExpected constructor: <green>{s}<r>\n\n" ++ received_line;
+    const expected_fmt = "\n\nExpected constructor: <green>{f}<r>\n\n" ++ received_line;
     var expected_class = ZigString.Empty;
     try expected_value.getClassName(globalThis, &expected_class);
     return this.throw(globalThis, signature, expected_fmt, .{ expected_class, result.toFmt(&formatter) });
@@ -313,9 +313,7 @@ const jsc = bun.jsc;
 const CallFrame = bun.jsc.CallFrame;
 const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
-
 const ExpectAny = bun.jsc.Expect.ExpectAny;
-const incrementExpectCallCounter = bun.jsc.Expect.incrementExpectCallCounter;
 
 const Expect = bun.jsc.Expect.Expect;
 const getSignature = Expect.getSignature;

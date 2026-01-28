@@ -1,10 +1,10 @@
-pub fn computeCrossChunkDependencies(c: *LinkerContext, chunks: []Chunk) !void {
+pub fn computeCrossChunkDependencies(c: *LinkerContext, chunks: []Chunk) bun.OOM!void {
     if (!c.graph.code_splitting) {
         // No need to compute cross-chunk dependencies if there can't be any
         return;
     }
 
-    const chunk_metas = try c.allocator.alloc(ChunkMeta, chunks.len);
+    const chunk_metas = try c.allocator().alloc(ChunkMeta, chunks.len);
     for (chunk_metas) |*meta| {
         // these must be global allocator
         meta.* = .{
@@ -19,12 +19,12 @@ pub fn computeCrossChunkDependencies(c: *LinkerContext, chunks: []Chunk) !void {
             meta.exports.deinit();
             meta.dynamic_imports.deinit();
         }
-        c.allocator.free(chunk_metas);
+        c.allocator().free(chunk_metas);
     }
 
     {
-        const cross_chunk_dependencies = c.allocator.create(CrossChunkDependencies) catch unreachable;
-        defer c.allocator.destroy(cross_chunk_dependencies);
+        const cross_chunk_dependencies = c.allocator().create(CrossChunkDependencies) catch unreachable;
+        defer c.allocator().destroy(cross_chunk_dependencies);
 
         cross_chunk_dependencies.* = .{
             .chunks = chunks,
@@ -35,6 +35,7 @@ pub fn computeCrossChunkDependencies(c: *LinkerContext, chunks: []Chunk) !void {
             .entry_point_chunk_indices = c.graph.files.items(.entry_point_chunk_index),
             .imports_to_bind = c.graph.meta.items(.imports_to_bind),
             .wrapper_refs = c.graph.ast.items(.wrapper_ref),
+            .exports_refs = c.graph.ast.items(.exports_ref),
             .sorted_and_filtered_export_aliases = c.graph.meta.items(.sorted_and_filtered_export_aliases),
             .resolved_exports = c.graph.meta.items(.resolved_exports),
             .ctx = c,
@@ -42,7 +43,7 @@ pub fn computeCrossChunkDependencies(c: *LinkerContext, chunks: []Chunk) !void {
         };
 
         c.parse_graph.pool.worker_pool.eachPtr(
-            c.allocator,
+            c.allocator(),
             cross_chunk_dependencies,
             CrossChunkDependencies.walk,
             chunks,
@@ -61,6 +62,7 @@ const CrossChunkDependencies = struct {
     entry_point_chunk_indices: []Index.Int,
     imports_to_bind: []RefImportData,
     wrapper_refs: []const Ref,
+    exports_refs: []const Ref,
     sorted_and_filtered_export_aliases: []const []const string,
     resolved_exports: []const ResolvedExports,
     ctx: *LinkerContext,
@@ -155,7 +157,7 @@ const CrossChunkDependencies = struct {
                     };
 
                     if (comptime Environment.allow_assert)
-                        debug("Cross-chunk import: {s} {}", .{ deps.symbols.get(ref_to_use).?.original_name, ref_to_use });
+                        debug("Cross-chunk import: {s} {f}", .{ deps.symbols.get(ref_to_use).?.original_name, ref_to_use });
 
                     // We must record this relationship even for symbols that are not
                     // imports. Due to code splitting, the definition of a symbol may
@@ -190,6 +192,7 @@ const CrossChunkDependencies = struct {
                         if (deps.symbols.getConst(target_ref).?.namespace_alias) |namespace_alias| {
                             target_ref = namespace_alias.namespace_ref;
                         }
+
                         if (comptime Environment.allow_assert)
                             debug("Cross-chunk export: {s}", .{deps.symbols.get(target_ref).?.original_name});
 
@@ -198,11 +201,13 @@ const CrossChunkDependencies = struct {
                 }
 
                 // Ensure "exports" is included if the current output format needs it
+                // https://github.com/evanw/esbuild/blob/v0.27.2/internal/linker/linker.go#L1049-L1051
                 if (flags.force_include_exports_for_entry_point) {
-                    imports.put(deps.wrapper_refs[chunk.entry_point.source_index], {}) catch unreachable;
+                    imports.put(deps.exports_refs[chunk.entry_point.source_index], {}) catch unreachable;
                 }
 
                 // Include the wrapper if present
+                // https://github.com/evanw/esbuild/blob/v0.27.2/internal/linker/linker.go#L1053-L1056
                 if (flags.wrap != .none) {
                     imports.put(deps.wrapper_refs[chunk.entry_point.source_index], {}) catch unreachable;
                 }
@@ -236,8 +241,8 @@ fn computeCrossChunkDependenciesWithChunkMetas(c: *LinkerContext, chunks: []Chun
                     {
                         var entry = try js
                             .imports_from_other_chunks
-                            .getOrPutValue(c.allocator, other_chunk_index, .{});
-                        try entry.value_ptr.push(c.allocator, .{
+                            .getOrPutValue(c.allocator(), other_chunk_index, .{});
+                        try entry.value_ptr.append(c.allocator(), .{
                             .ref = import_ref,
                         });
                     }
@@ -257,7 +262,7 @@ fn computeCrossChunkDependenciesWithChunkMetas(c: *LinkerContext, chunks: []Chun
 
                 if (other_chunk.entry_bits.isSet(chunk.entry_point.entry_point_id)) {
                     _ = js.imports_from_other_chunks.getOrPutValue(
-                        c.allocator,
+                        c.allocator(),
                         @as(u32, @truncate(other_chunk_index)),
                         CrossChunkImport.Item.List{},
                     ) catch unreachable;
@@ -272,12 +277,10 @@ fn computeCrossChunkDependenciesWithChunkMetas(c: *LinkerContext, chunks: []Chun
             const dynamic_chunk_indices = chunk_meta.dynamic_imports.keys();
             std.sort.pdq(Index.Int, dynamic_chunk_indices, {}, std.sort.asc(Index.Int));
 
-            var imports = chunk.cross_chunk_imports.listManaged(c.allocator);
-            defer chunk.cross_chunk_imports.update(imports);
-            imports.ensureUnusedCapacity(dynamic_chunk_indices.len) catch unreachable;
-            const prev_len = imports.items.len;
-            imports.items.len += dynamic_chunk_indices.len;
-            for (dynamic_chunk_indices, imports.items[prev_len..]) |dynamic_chunk_index, *item| {
+            const new_imports = bun.handleOom(
+                chunk.cross_chunk_imports.writableSlice(c.allocator(), dynamic_chunk_indices.len),
+            );
+            for (dynamic_chunk_indices, new_imports) |dynamic_chunk_index, *item| {
                 item.* = .{
                     .import_kind = .dynamic,
                     .chunk_index = dynamic_chunk_index,
@@ -291,11 +294,11 @@ fn computeCrossChunkDependenciesWithChunkMetas(c: *LinkerContext, chunks: []Chun
     // aliases simultaneously to avoid collisions.
     {
         bun.assert(chunk_metas.len == chunks.len);
-        var r = renamer.ExportRenamer.init(c.allocator);
+        var r = renamer.ExportRenamer.init(c.allocator());
         defer r.deinit();
         debug("Generating cross-chunk exports", .{});
 
-        var stable_ref_list = std.ArrayList(StableRef).init(c.allocator);
+        var stable_ref_list = std.array_list.Managed(StableRef).init(c.allocator());
         defer stable_ref_list.deinit();
 
         for (chunks, chunk_metas) |*chunk, *chunk_meta| {
@@ -309,14 +312,14 @@ fn computeCrossChunkDependenciesWithChunkMetas(c: *LinkerContext, chunks: []Chun
                         chunk_meta.exports,
                         &stable_ref_list,
                     );
-                    var clause_items = BabyList(js_ast.ClauseItem).initCapacity(c.allocator, stable_ref_list.items.len) catch unreachable;
+                    var clause_items = BabyList(js_ast.ClauseItem).initCapacity(c.allocator(), stable_ref_list.items.len) catch unreachable;
                     clause_items.len = @as(u32, @truncate(stable_ref_list.items.len));
-                    repr.exports_to_other_chunks.ensureUnusedCapacity(c.allocator, stable_ref_list.items.len) catch unreachable;
+                    repr.exports_to_other_chunks.ensureUnusedCapacity(c.allocator(), stable_ref_list.items.len) catch unreachable;
                     r.clearRetainingCapacity();
 
                     for (stable_ref_list.items, clause_items.slice()) |stable_ref, *clause_item| {
                         const ref = stable_ref.ref;
-                        const alias = if (c.options.minify_identifiers) try r.nextMinifiedName(c.allocator) else r.nextRenamedName(c.graph.symbols.get(ref).?.original_name);
+                        const alias = if (c.options.minify_identifiers) try r.nextMinifiedName(c.allocator()) else r.nextRenamedName(c.graph.symbols.get(ref).?.original_name);
 
                         clause_item.* = .{
                             .name = .{
@@ -335,8 +338,8 @@ fn computeCrossChunkDependenciesWithChunkMetas(c: *LinkerContext, chunks: []Chun
                     }
 
                     if (clause_items.len > 0) {
-                        var stmts = BabyList(js_ast.Stmt).initCapacity(c.allocator, 1) catch unreachable;
-                        const export_clause = c.allocator.create(js_ast.S.ExportClause) catch unreachable;
+                        var stmts = BabyList(js_ast.Stmt).initCapacity(c.allocator(), 1) catch unreachable;
+                        const export_clause = c.allocator().create(js_ast.S.ExportClause) catch unreachable;
                         export_clause.* = .{
                             .items = clause_items.slice(),
                             .is_single_line = true,
@@ -360,7 +363,7 @@ fn computeCrossChunkDependenciesWithChunkMetas(c: *LinkerContext, chunks: []Chun
     // be embedded in the generated import statements.
     {
         debug("Generating cross-chunk imports", .{});
-        var list = CrossChunkImport.List.init(c.allocator);
+        var list = CrossChunkImport.List.init(c.allocator());
         defer list.deinit();
         for (chunks) |*chunk| {
             if (chunk.content != .javascript) continue;
@@ -375,7 +378,7 @@ fn computeCrossChunkDependenciesWithChunkMetas(c: *LinkerContext, chunks: []Chun
                     .esm => {
                         const import_record_index = @as(u32, @intCast(cross_chunk_imports.len));
 
-                        var clauses = std.ArrayList(js_ast.ClauseItem).initCapacity(c.allocator, cross_chunk_import.sorted_import_items.len) catch unreachable;
+                        var clauses = std.array_list.Managed(js_ast.ClauseItem).initCapacity(c.allocator(), cross_chunk_import.sorted_import_items.len) catch unreachable;
                         for (cross_chunk_import.sorted_import_items.slice()) |item| {
                             clauses.appendAssumeCapacity(.{
                                 .name = .{
@@ -387,18 +390,18 @@ fn computeCrossChunkDependenciesWithChunkMetas(c: *LinkerContext, chunks: []Chun
                             });
                         }
 
-                        cross_chunk_imports.push(c.allocator, .{
+                        cross_chunk_imports.append(c.allocator(), .{
                             .import_kind = .stmt,
                             .chunk_index = cross_chunk_import.chunk_index,
                         }) catch unreachable;
-                        const import = c.allocator.create(js_ast.S.Import) catch unreachable;
+                        const import = c.allocator().create(js_ast.S.Import) catch unreachable;
                         import.* = .{
                             .items = clauses.items,
                             .import_record_index = import_record_index,
                             .namespace_ref = Ref.None,
                         };
-                        cross_chunk_prefix_stmts.push(
-                            c.allocator,
+                        cross_chunk_prefix_stmts.append(
+                            c.allocator(),
                             .{
                                 .data = .{
                                     .s_import = import,

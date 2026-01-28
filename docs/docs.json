@@ -1,0 +1,633 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "aspen",
+  "name": "Bun",
+  "seo": {
+    "metatags": {
+      "canonical": "https://bun.com/docs"
+    }
+  },
+  "colors": {
+    "light": "#ff73a8",
+    "primary": "#ff73a8",
+    "dark": "#ff73a8"
+  },
+  "background": {
+    "decoration": "gradient"
+  },
+  "favicon": "/logo/bun.png",
+  "icons": {
+    "library": "lucide"
+  },
+  "fonts": {
+    "heading": {
+      "family": "Inter Display Bold",
+      "source": "https://mintlify-assets.b-cdn.net/fonts/InterDisplay-Bold.woff2",
+      "format": "woff2"
+    }
+  },
+  "appearance": {
+    "default": "system"
+  },
+  "logo": {
+    "light": "/logo/logo-with-wordmark-dark.svg",
+    "dark": "/logo/logo-with-wordmark-light.svg"
+  },
+  "navbar": {
+    "links": [
+      {
+        "label": "Install Bun",
+        "href": "https://www.bun.com/docs/installation",
+        "icon": "download",
+        "primary": true
+      }
+    ]
+  },
+  "contextual": {
+    "options": ["copy", "view", "chatgpt", "claude", "perplexity", "mcp", "cursor", "vscode"]
+  },
+  "styling": {
+    "codeblocks": {
+      "theme": {
+        "light": "github-light",
+        "dark": "dracula"
+      }
+    }
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Runtime",
+        "icon": "cog",
+        "groups": [
+          {
+            "group": "Get Started",
+            "icon": "terminal",
+            "pages": [
+              "/index",
+              "/installation",
+              "/quickstart",
+              "/typescript",
+              "/runtime/templating/init",
+              "/runtime/templating/create"
+            ]
+          },
+          {
+            "group": "Core Runtime",
+            "icon": "cog",
+            "pages": ["/runtime/index", "/runtime/watch-mode", "/runtime/debugger", "/runtime/bunfig"]
+          },
+          {
+            "group": "File & Module System",
+            "icon": "file",
+            "pages": [
+              "/runtime/file-types",
+              "/runtime/module-resolution",
+              "/runtime/jsx",
+              "/runtime/auto-install",
+              "/runtime/plugins",
+              "/runtime/file-system-router"
+            ]
+          },
+          {
+            "group": "HTTP server",
+            "icon": "server",
+            "pages": [
+              "/runtime/http/server",
+              "/runtime/http/routing",
+              "/runtime/http/cookies",
+              "/runtime/http/tls",
+              "/runtime/http/error-handling",
+              "/runtime/http/metrics"
+            ]
+          },
+          {
+            "group": "Networking",
+            "icon": "globe",
+            "expanded": true,
+            "pages": [
+              "/runtime/networking/fetch",
+              "/runtime/http/websockets",
+              "/runtime/networking/tcp",
+              "/runtime/networking/udp",
+              "/runtime/networking/dns"
+            ]
+          },
+          {
+            "group": "Data & Storage",
+            "icon": "database",
+            "pages": [
+              "/runtime/cookies",
+              "/runtime/file-io",
+              "/runtime/streams",
+              "/runtime/binary-data",
+              "/runtime/archive",
+              "/runtime/sql",
+              "/runtime/sqlite",
+              "/runtime/s3",
+              "/runtime/redis"
+            ]
+          },
+          {
+            "group": "Concurrency",
+            "icon": "split",
+            "pages": ["/runtime/workers"]
+          },
+          {
+            "group": "Process & System",
+            "icon": "computer",
+            "pages": ["/runtime/environment-variables", "/runtime/shell", "/runtime/child-process"]
+          },
+          {
+            "group": "Interop & Tooling",
+            "icon": "puzzle",
+            "pages": ["/runtime/node-api", "/runtime/ffi", "/runtime/c-compiler", "/runtime/transpiler"]
+          },
+          {
+            "group": "Utilities",
+            "icon": "wrench",
+            "pages": [
+              "/runtime/secrets",
+              "/runtime/console",
+              "/runtime/yaml",
+              "/runtime/json5",
+              "/runtime/jsonl",
+              "/runtime/html-rewriter",
+              "/runtime/hashing",
+              "/runtime/glob",
+              "/runtime/semver",
+              "/runtime/color",
+              "/runtime/utils"
+            ]
+          },
+          {
+            "group": "Standards & Compatibility",
+            "icon": "badge-check",
+            "pages": ["/runtime/globals", "/runtime/bun-apis", "/runtime/web-apis", "/runtime/nodejs-compat"]
+          },
+          {
+            "group": "Contributing",
+            "icon": "heart",
+            "pages": [
+              "/project/roadmap",
+              "/project/benchmarking",
+              "/project/contributing",
+              "/project/building-windows",
+              "/project/bindgen",
+              "/project/license"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Package Manager",
+        "icon": "box",
+        "groups": [
+          {
+            "group": "Core Commands",
+            "icon": "terminal",
+            "pages": ["/pm/cli/install", "/pm/cli/add", "/pm/cli/remove", "/pm/cli/update", "/pm/bunx"]
+          },
+          {
+            "group": "Publishing & Analysis",
+            "icon": "upload",
+            "pages": ["/pm/cli/publish", "/pm/cli/outdated", "/pm/cli/why", "/pm/cli/audit", "/pm/cli/info"]
+          },
+          {
+            "group": "Workspace Management",
+            "icon": "folders",
+            "pages": ["/pm/workspaces", "/pm/catalogs", "/pm/cli/link", "/pm/cli/pm"]
+          },
+          {
+            "group": "Advanced Configuration",
+            "icon": "settings",
+            "pages": [
+              "/pm/cli/patch",
+              "/pm/filter",
+              "/pm/global-cache",
+              "/pm/isolated-installs",
+              "/pm/lockfile",
+              "/pm/lifecycle",
+              "/pm/scopes-registries",
+              "/pm/overrides",
+              "/pm/security-scanner-api",
+              "/pm/npmrc"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Bundler",
+        "icon": "combine",
+        "groups": [
+          {
+            "group": "Core",
+            "icon": "package",
+            "pages": ["/bundler/index"]
+          },
+          {
+            "group": "Development Server",
+            "icon": "monitor",
+            "pages": ["/bundler/fullstack", "/bundler/hot-reloading"]
+          },
+          {
+            "group": "Asset Processing",
+            "icon": "image",
+            "pages": ["/bundler/html-static", "/bundler/css", "/bundler/loaders"]
+          },
+          {
+            "group": "Single File Executable",
+            "icon": "binary",
+            "pages": ["/bundler/executables"]
+          },
+          {
+            "group": "Extensions",
+            "icon": "plug",
+            "pages": ["/bundler/plugins", "/bundler/macros"]
+          },
+          {
+            "group": "Optimization",
+            "icon": "zap",
+            "pages": ["/bundler/bytecode", "/bundler/minifier"]
+          },
+          {
+            "group": "Migration",
+            "icon": "arrow-right",
+            "pages": ["/bundler/esbuild"]
+          }
+        ]
+      },
+      {
+        "tab": "Test Runner",
+        "icon": "flask-conical",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "icon": "circle-play",
+            "pages": ["/test/index", "/test/writing-tests", "/test/configuration"]
+          },
+          {
+            "group": "Test Execution",
+            "icon": "zap",
+            "pages": ["/test/runtime-behavior", "/test/discovery"]
+          },
+          {
+            "group": "Test Features",
+            "icon": "sparkles",
+            "pages": ["/test/lifecycle", "/test/mocks", "/test/snapshots", "/test/dates-times"]
+          },
+          {
+            "group": "Specialized Testing",
+            "icon": "microscope",
+            "pages": ["/test/dom"]
+          },
+          {
+            "group": "Reporting",
+            "icon": "file-text",
+            "pages": ["/test/code-coverage", "/test/reporters"]
+          }
+        ]
+      },
+
+      {
+        "tab": "Guides",
+        "icon": "map",
+        "groups": [
+          {
+            "group": "Overview",
+            "icon": "globe",
+            "pages": ["/guides/index"]
+          },
+          {
+            "group": "Deployment",
+            "icon": "rocket",
+            "pages": [
+              "/guides/deployment/vercel",
+              "/guides/deployment/railway",
+              "/guides/deployment/render",
+              "/guides/deployment/aws-lambda",
+              "/guides/deployment/digital-ocean",
+              "/guides/deployment/google-cloud-run"
+            ]
+          },
+          {
+            "group": "Runtime & Debugging",
+            "icon": "bug",
+            "pages": [
+              "/guides/runtime/typescript",
+              "/guides/runtime/tsconfig-paths",
+              "/guides/runtime/vscode-debugger",
+              "/guides/runtime/web-debugger",
+              "/guides/runtime/heap-snapshot",
+              "/guides/runtime/build-time-constants",
+              "/guides/runtime/define-constant",
+              "/guides/runtime/cicd",
+              "/guides/runtime/codesign-macos-executable"
+            ]
+          },
+          {
+            "group": "Utilities",
+            "icon": "wrench",
+            "pages": [
+              "/guides/util/upgrade",
+              "/guides/util/detect-bun",
+              "/guides/util/version",
+              "/guides/util/hash-a-password",
+              "/guides/util/javascript-uuid",
+              "/guides/util/base64",
+              "/guides/util/gzip",
+              "/guides/util/deflate",
+              "/guides/util/escape-html",
+              "/guides/util/deep-equals",
+              "/guides/util/sleep",
+              "/guides/util/file-url-to-path",
+              "/guides/util/path-to-file-url",
+              "/guides/util/which-path-to-executable-bin",
+              "/guides/util/import-meta-dir",
+              "/guides/util/import-meta-file",
+              "/guides/util/import-meta-path",
+              "/guides/util/entrypoint",
+              "/guides/util/main"
+            ]
+          },
+          {
+            "group": "Ecosystem & Frameworks",
+            "icon": "puzzle",
+            "pages": [
+              "/guides/ecosystem/astro",
+              "/guides/ecosystem/discordjs",
+              "/guides/ecosystem/docker",
+              "/guides/ecosystem/drizzle",
+              "/guides/ecosystem/gel",
+              "/guides/ecosystem/elysia",
+              "/guides/ecosystem/express",
+              "/guides/ecosystem/hono",
+              "/guides/ecosystem/mongoose",
+              "/guides/ecosystem/neon-drizzle",
+              "/guides/ecosystem/neon-serverless-postgres",
+              "/guides/ecosystem/nextjs",
+              "/guides/ecosystem/nuxt",
+              "/guides/ecosystem/pm2",
+              "/guides/ecosystem/prisma",
+              "/guides/ecosystem/prisma-postgres",
+              "/guides/ecosystem/qwik",
+              "/guides/ecosystem/react",
+              "/guides/ecosystem/remix",
+              "/guides/ecosystem/tanstack-start",
+              "/guides/ecosystem/sentry",
+              "/guides/ecosystem/solidstart",
+              "/guides/ecosystem/ssr-react",
+              "/guides/ecosystem/stric",
+              "/guides/ecosystem/sveltekit",
+              "/guides/ecosystem/systemd",
+              "/guides/ecosystem/vite",
+              "/guides/ecosystem/upstash"
+            ]
+          },
+          {
+            "group": "HTTP & Networking",
+            "icon": "globe",
+            "pages": [
+              "/guides/http/server",
+              "/guides/http/simple",
+              "/guides/http/fetch",
+              "/guides/http/hot",
+              "/guides/http/cluster",
+              "/guides/http/tls",
+              "/guides/http/proxy",
+              "/guides/http/stream-file",
+              "/guides/http/file-uploads",
+              "/guides/http/fetch-unix",
+              "/guides/http/stream-iterator",
+              "/guides/http/stream-node-streams-in-bun"
+            ]
+          },
+          {
+            "group": "WebSocket",
+            "icon": "radio",
+            "pages": [
+              "/guides/websocket/simple",
+              "/guides/websocket/pubsub",
+              "/guides/websocket/context",
+              "/guides/websocket/compression"
+            ]
+          },
+          {
+            "group": "Processes & System",
+            "icon": "cpu",
+            "pages": [
+              "/guides/process/spawn",
+              "/guides/process/spawn-stdout",
+              "/guides/process/spawn-stderr",
+              "/guides/process/argv",
+              "/guides/process/stdin",
+              "/guides/process/ipc",
+              "/guides/process/ctrl-c",
+              "/guides/process/os-signals",
+              "/guides/process/nanoseconds",
+              "/guides/runtime/shell",
+              "/guides/runtime/timezone",
+              "/guides/runtime/set-env",
+              "/guides/runtime/read-env"
+            ]
+          },
+          {
+            "group": "Package Manager",
+            "icon": "package",
+            "pages": [
+              "/guides/install/add",
+              "/guides/install/add-dev",
+              "/guides/install/add-optional",
+              "/guides/install/add-peer",
+              "/guides/install/add-git",
+              "/guides/install/add-tarball",
+              "/guides/install/npm-alias",
+              "/guides/install/workspaces",
+              "/guides/install/custom-registry",
+              "/guides/install/registry-scope",
+              "/guides/install/azure-artifacts",
+              "/guides/install/jfrog-artifactory",
+              "/guides/install/trusted",
+              "/guides/install/yarnlock",
+              "/guides/install/from-npm-install-to-bun-install",
+              "/guides/install/git-diff-bun-lockfile",
+              "/guides/install/cicd"
+            ]
+          },
+          {
+            "group": "Test Runner",
+            "icon": "flask-conical",
+            "pages": [
+              "/guides/test/run-tests",
+              "/guides/test/watch-mode",
+              "/guides/test/migrate-from-jest",
+              "/guides/test/mock-functions",
+              "/guides/test/spy-on",
+              "/guides/test/mock-clock",
+              "/guides/test/snapshot",
+              "/guides/test/update-snapshots",
+              "/guides/test/coverage",
+              "/guides/test/coverage-threshold",
+              "/guides/test/concurrent-test-glob",
+              "/guides/test/skip-tests",
+              "/guides/test/todo-tests",
+              "/guides/test/timeout",
+              "/guides/test/bail",
+              "/guides/test/rerun-each",
+              "/guides/test/testing-library",
+              "/guides/test/happy-dom",
+              "/guides/test/svelte-test"
+            ]
+          },
+          {
+            "group": "Runtime & Debugging",
+            "icon": "bug",
+            "pages": [
+              "/guides/runtime/vscode-debugger",
+              "/guides/runtime/web-debugger",
+              "/guides/runtime/heap-snapshot",
+              "/guides/runtime/build-time-constants",
+              "/guides/runtime/define-constant",
+              "/guides/runtime/cicd",
+              "/guides/runtime/codesign-macos-executable"
+            ]
+          },
+          {
+            "group": "Module System",
+            "icon": "box",
+            "pages": [
+              "/guides/runtime/import-json",
+              "/guides/runtime/import-toml",
+              "/guides/runtime/import-yaml",
+              "/guides/runtime/import-json5",
+              "/guides/runtime/import-html",
+              "/guides/util/import-meta-dir",
+              "/guides/util/import-meta-file",
+              "/guides/util/import-meta-path",
+              "/guides/util/entrypoint",
+              "/guides/util/main"
+            ]
+          },
+          {
+            "group": "File System",
+            "icon": "folder",
+            "pages": [
+              "/guides/read-file/string",
+              "/guides/read-file/buffer",
+              "/guides/read-file/uint8array",
+              "/guides/read-file/arraybuffer",
+              "/guides/read-file/json",
+              "/guides/read-file/mime",
+              "/guides/read-file/exists",
+              "/guides/read-file/watch",
+              "/guides/read-file/stream",
+              "/guides/write-file/basic",
+              "/guides/write-file/blob",
+              "/guides/write-file/response",
+              "/guides/write-file/append",
+              "/guides/write-file/filesink",
+              "/guides/write-file/stream",
+              "/guides/write-file/stdout",
+              "/guides/write-file/cat",
+              "/guides/write-file/file-cp",
+              "/guides/write-file/unlink",
+              "/guides/runtime/delete-file",
+              "/guides/runtime/delete-directory"
+            ]
+          },
+          {
+            "group": "Utilities",
+            "icon": "wrench",
+            "pages": [
+              "/guides/util/hash-a-password",
+              "/guides/util/javascript-uuid",
+              "/guides/util/base64",
+              "/guides/util/gzip",
+              "/guides/util/deflate",
+              "/guides/util/escape-html",
+              "/guides/util/deep-equals",
+              "/guides/util/sleep",
+              "/guides/util/file-url-to-path",
+              "/guides/util/path-to-file-url",
+              "/guides/util/which-path-to-executable-bin"
+            ]
+          },
+          {
+            "group": "HTML Processing",
+            "icon": "file-code",
+            "pages": ["/guides/html-rewriter/extract-links", "/guides/html-rewriter/extract-social-meta"]
+          },
+          {
+            "group": "Binary Data",
+            "icon": "binary",
+            "pages": [
+              "/guides/binary/arraybuffer-to-string",
+              "/guides/binary/arraybuffer-to-buffer",
+              "/guides/binary/arraybuffer-to-blob",
+              "/guides/binary/arraybuffer-to-array",
+              "/guides/binary/arraybuffer-to-typedarray",
+              "/guides/binary/buffer-to-string",
+              "/guides/binary/buffer-to-arraybuffer",
+              "/guides/binary/buffer-to-blob",
+              "/guides/binary/buffer-to-typedarray",
+              "/guides/binary/buffer-to-readablestream",
+              "/guides/binary/blob-to-string",
+              "/guides/binary/blob-to-arraybuffer",
+              "/guides/binary/blob-to-typedarray",
+              "/guides/binary/blob-to-dataview",
+              "/guides/binary/blob-to-stream",
+              "/guides/binary/typedarray-to-string",
+              "/guides/binary/typedarray-to-arraybuffer",
+              "/guides/binary/typedarray-to-buffer",
+              "/guides/binary/typedarray-to-blob",
+              "/guides/binary/typedarray-to-dataview",
+              "/guides/binary/typedarray-to-readablestream",
+              "/guides/binary/dataview-to-string"
+            ]
+          },
+          {
+            "group": "Streams",
+            "icon": "waves",
+            "pages": [
+              "/guides/streams/to-string",
+              "/guides/streams/to-json",
+              "/guides/streams/to-blob",
+              "/guides/streams/to-buffer",
+              "/guides/streams/to-arraybuffer",
+              "/guides/streams/to-typedarray",
+              "/guides/streams/to-array",
+              "/guides/streams/node-readable-to-string",
+              "/guides/streams/node-readable-to-json",
+              "/guides/streams/node-readable-to-blob",
+              "/guides/streams/node-readable-to-uint8array",
+              "/guides/streams/node-readable-to-arraybuffer"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Reference",
+        "icon": "book",
+        "href": "https://bun.com/reference"
+      },
+      {
+        "tab": "Blog",
+        "icon": "newspaper",
+        "href": "https://bun.com/blog"
+      },
+      {
+        "tab": "Feedback",
+        "icon": "lightbulb",
+        "pages": ["/feedback"]
+      }
+    ]
+  },
+  "footer": {
+    "socials": {
+      "x": "https://x.com/bunjavascript",
+      "github": "https://github.com/oven-sh/bun",
+      "discord": "https://bun.com/discord",
+      "youtube": "https://www.youtube.com/@bunjs"
+    }
+  }
+}

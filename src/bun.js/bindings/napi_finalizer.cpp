@@ -5,14 +5,14 @@
 
 namespace Bun {
 
-void NapiFinalizer::call(napi_env env, void* data, bool immediate)
+void NapiFinalizer::call(WTF::RefPtr<NapiEnv> env, void* data, bool immediate)
 {
     if (m_callback) {
         NAPI_LOG_CURRENT_FUNCTION;
         if (immediate) {
-            m_callback(env, data, m_hint);
+            m_callback(env.get(), data, m_hint);
         } else {
-            napi_internal_enqueue_finalizer(env, m_callback, data, m_hint);
+            napi_internal_enqueue_finalizer(env.get(), m_callback, data, m_hint);
         }
     }
 }

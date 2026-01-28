@@ -336,7 +336,7 @@ pub const Map = struct {
             Output.prettyln("\n\n-- Source ID: {d} ({d} symbols) --\n\n", .{ i, symbols.len });
             for (symbols.slice(), 0..) |symbol, inner_index| {
                 Output.prettyln(
-                    " name: {s}\n  tag: {s}\n       {any}\n",
+                    " name: {s}\n  tag: {s}\n       {f}\n",
                     .{
                         symbol.original_name, @tagName(symbol.kind),
                         if (symbol.hasLink()) symbol.link else Ref{
@@ -412,7 +412,7 @@ pub const Map = struct {
     }
 
     pub fn initWithOneList(list: List) Map {
-        const baby_list = BabyList(List).init((&list)[0..1]);
+        const baby_list = BabyList(List).fromBorrowedSliceDangerous((&list)[0..1]);
         return initList(baby_list);
     }
 

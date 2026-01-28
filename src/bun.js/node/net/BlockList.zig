@@ -8,7 +8,7 @@ pub const toJS = js.toJS;
 
 ref_count: RefCount = .init(),
 globalThis: *jsc.JSGlobalObject,
-da_rules: std.ArrayList(Rule),
+da_rules: std.array_list.Managed(Rule),
 mutex: bun.Mutex = .{},
 
 /// We cannot lock/unlock a mutex
@@ -46,7 +46,7 @@ pub fn isBlockList(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
 pub fn addAddress(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const arguments = callframe.argumentsAsArray(2);
     const address_js, var family_js = arguments;
-    if (family_js.isUndefined()) family_js = bun.String.static("ipv4").toJS(globalThis);
+    if (family_js.isUndefined()) family_js = try bun.String.static("ipv4").toJS(globalThis);
     const address = if (address_js.as(SocketAddress)) |sa| sa._addr else blk: {
         try validators.validateString(globalThis, address_js, "address", .{});
         try validators.validateString(globalThis, family_js, "family", .{});
@@ -63,7 +63,7 @@ pub fn addAddress(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *j
 pub fn addRange(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const arguments = callframe.argumentsAsArray(3);
     const start_js, const end_js, var family_js = arguments;
-    if (family_js.isUndefined()) family_js = bun.String.static("ipv4").toJS(globalThis);
+    if (family_js.isUndefined()) family_js = try bun.String.static("ipv4").toJS(globalThis);
     const start = if (start_js.as(SocketAddress)) |sa| sa._addr else blk: {
         try validators.validateString(globalThis, start_js, "start", .{});
         try validators.validateString(globalThis, family_js, "family", .{});
@@ -89,7 +89,7 @@ pub fn addRange(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc
 pub fn addSubnet(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const arguments = callframe.argumentsAsArray(3);
     const network_js, const prefix_js, var family_js = arguments;
-    if (family_js.isUndefined()) family_js = bun.String.static("ipv4").toJS(globalThis);
+    if (family_js.isUndefined()) family_js = try bun.String.static("ipv4").toJS(globalThis);
     const network = if (network_js.as(SocketAddress)) |sa| sa._addr else blk: {
         try validators.validateString(globalThis, network_js, "network", .{});
         try validators.validateString(globalThis, family_js, "family", .{});
@@ -111,7 +111,7 @@ pub fn addSubnet(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *js
 pub fn check(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const arguments = callframe.argumentsAsArray(2);
     const address_js, var family_js = arguments;
-    if (family_js.isUndefined()) family_js = bun.String.static("ipv4").toJS(globalThis);
+    if (family_js.isUndefined()) family_js = try bun.String.static("ipv4").toJS(globalThis);
     const address = &(if (address_js.as(SocketAddress)) |sa| sa._addr else blk: {
         try validators.validateString(globalThis, address_js, "address", .{});
         try validators.validateString(globalThis, family_js, "family", .{});
@@ -199,7 +199,7 @@ const StructuredCloneWriter = struct {
     ctx: *anyopaque,
     impl: *const fn (*anyopaque, ptr: [*]const u8, len: u32) callconv(jsc.conv) void,
 
-    pub const Writer = std.io.Writer(@This(), Error, write);
+    pub const Writer = std.Io.GenericWriter(@This(), Error, write);
     pub const Error = error{};
 
     fn write(this: StructuredCloneWriter, bytes: []const u8) Error!usize {
@@ -208,12 +208,16 @@ const StructuredCloneWriter = struct {
     }
 };
 
-pub fn onStructuredCloneDeserialize(globalThis: *jsc.JSGlobalObject, ptr: [*]u8, end: [*]u8) bun.JSError!jsc.JSValue {
-    const total_length: usize = @intFromPtr(end) - @intFromPtr(ptr);
-    var buffer_stream = std.io.fixedBufferStream(ptr[0..total_length]);
+pub fn onStructuredCloneDeserialize(globalThis: *jsc.JSGlobalObject, ptr: *[*]u8, end: [*]u8) bun.JSError!jsc.JSValue {
+    const total_length: usize = @intFromPtr(end) - @intFromPtr(ptr.*);
+    var buffer_stream = std.io.fixedBufferStream(ptr.*[0..total_length]);
     const reader = buffer_stream.reader();
 
     const int = reader.readInt(usize, .little) catch return globalThis.throw("BlockList.onStructuredCloneDeserialize failed", .{});
+
+    // Advance the pointer by the number of bytes consumed
+    ptr.* = ptr.* + buffer_stream.pos;
+
     const this: *@This() = @ptrFromInt(int);
     return this.toJS(globalThis);
 }

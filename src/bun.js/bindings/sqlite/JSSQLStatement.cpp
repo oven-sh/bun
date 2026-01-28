@@ -147,20 +147,19 @@ static WTF::String sqliteString(const char* str)
     return res;
 }
 
-static void sqlite_free_typed_array(void* ctx, void* buf)
+static void sqlite_free_typed_array(void* buf, void* ctx)
 {
     sqlite3_free((void*)buf);
 }
 
-static constexpr int DEFAULT_SQLITE_FLAGS
-    = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE;
+static constexpr int DEFAULT_SQLITE_FLAGS = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE;
 static constexpr unsigned int DEFAULT_SQLITE_PREPARE_FLAGS = SQLITE_PREPARE_PERSISTENT;
 static constexpr int MAX_SQLITE_PREPARE_FLAG = SQLITE_PREPARE_PERSISTENT | SQLITE_PREPARE_NORMALIZE | SQLITE_PREPARE_NO_VTAB;
 
 static inline JSC::JSValue jsNumberFromSQLite(sqlite3_stmt* stmt, unsigned int i)
 {
     int64_t num = sqlite3_column_int64(stmt, i);
-    return num > INT_MAX || num < INT_MIN ? JSC::jsDoubleNumber(static_cast<double>(num)) : JSC::jsNumber(static_cast<int>(num));
+    return JSC::jsNumber(num);
 }
 
 static inline JSC::JSValue jsBigIntFromSQLite(JSC::JSGlobalObject* globalObject, sqlite3_stmt* stmt, unsigned int i)
@@ -377,7 +376,7 @@ public:
             if (name == nullptr) {
                 indexedCount++;
                 if (hasLoadedBindingNames) {
-                    bindingNames[i] = Identifier(Identifier::EmptyIdentifier);
+                    bindingNames[i] = Identifier(Identifier::EmptyIdentifierFlag::EmptyIdentifier);
                 }
                 continue;
             }
@@ -468,7 +467,7 @@ public:
     // Tracks which columns are valid in the current result set. Used to handle duplicate column names.
     // The bit at index i is set if the column at index i is valid.
     WTF::BitVector validColumns;
-    std::unique_ptr<PropertyNameArray> columnNames;
+    std::unique_ptr<PropertyNameArrayBuilder> columnNames;
     mutable JSC::WriteBarrier<JSC::JSObject> _prototype;
     mutable JSC::WriteBarrier<JSC::Structure> _structure;
     mutable JSC::WriteBarrier<JSC::JSObject> userPrototype;
@@ -482,7 +481,7 @@ protected:
         : Base(globalObject.vm(), structure)
         , stmt(stmt)
         , version_db(version_db)
-        , columnNames(new PropertyNameArray(globalObject.vm(), PropertyNameMode::Strings, PrivateSymbolMode::Exclude))
+        , columnNames(new PropertyNameArrayBuilder(globalObject.vm(), PropertyNameMode::Strings, PrivateSymbolMode::Exclude))
         , extraMemorySize(memorySizeChange > 0 ? memorySizeChange : 0)
     {
     }
@@ -561,7 +560,7 @@ static JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, sqlite3_stmt
         }
     }
     case SQLITE_FLOAT: {
-        return jsDoubleNumber(sqlite3_column_double(stmt, i));
+        return jsNumber(sqlite3_column_double(stmt, i));
     }
     // > Note that the SQLITE_TEXT constant was also used in SQLite version
     // > 2 for a completely different meaning. Software that links against
@@ -674,7 +673,7 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
         castedThis->hasExecuted = true;
     } else {
         // reinitialize column
-        castedThis->columnNames.reset(new PropertyNameArray(
+        castedThis->columnNames.reset(new PropertyNameArrayBuilder(
             castedThis->columnNames->vm(),
             castedThis->columnNames->propertyNameMode(),
             castedThis->columnNames->privateSymbolMode()));
@@ -750,7 +749,7 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
         } else {
             // If for any reason we do not have column names, disable the fast path.
             columnNames->releaseData();
-            castedThis->columnNames.reset(new PropertyNameArray(
+            castedThis->columnNames.reset(new PropertyNameArrayBuilder(
                 castedThis->columnNames->vm(),
                 castedThis->columnNames->propertyNameMode(),
                 castedThis->columnNames->privateSymbolMode()));
@@ -956,7 +955,7 @@ static JSC::JSValue rebindObject(JSC::JSGlobalObject* globalObject, SQLiteBindin
             JSValue value = getValue(name, i);
             if (!value && !scope.exception()) {
                 if (throwOnMissing) {
-                    throwException(globalObject, scope, createError(globalObject, makeString("Missing parameter \""_s, reinterpret_cast<const unsigned char*>(name), "\""_s)));
+                    throwException(globalObject, scope, createError(globalObject, makeString("Missing parameter \""_s, WTF::String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const unsigned char*>(name), strlen(name) }), "\""_s)));
                 } else {
                     continue;
                 }
@@ -1128,8 +1127,11 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSetCustomSQLite, (JSC::JSGlobalObject * l
         return {};
     }
 
-    sqlite3_lib_path = sqliteStrValue.toWTFString(lexicalGlobalObject).utf8().data();
+    // Use a static CString to keep the string alive for the lifetime of the process
+    static CString sqlite3_lib_path_storage;
+    sqlite3_lib_path_storage = sqliteStrValue.toWTFString(lexicalGlobalObject).utf8();
     RETURN_IF_EXCEPTION(scope, {});
+    sqlite3_lib_path = sqlite3_lib_path_storage.data();
 
     if (lazyLoadSQLite() == -1) {
         sqlite3_handle = nullptr;
@@ -1280,7 +1282,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSerialize, (JSC::JSGlobalObject * lexical
         return {};
     }
 
-    RELEASE_AND_RETURN(scope, JSBuffer__bufferFromPointerAndLengthAndDeinit(lexicalGlobalObject, reinterpret_cast<char*>(data), static_cast<unsigned int>(length), data, sqlite_free_typed_array));
+    RELEASE_AND_RETURN(scope, JSBuffer__bufferFromPointerAndLengthAndDeinit(lexicalGlobalObject, reinterpret_cast<char*>(data), static_cast<unsigned int>(length), NULL, sqlite_free_typed_array));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsSQLStatementLoadExtensionFunction, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -1323,9 +1325,11 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementLoadExtensionFunction, (JSC::JSGlobalObje
 
     auto entryPointStr = callFrame->argumentCount() > 2 && callFrame->argument(2).isString() ? callFrame->argument(2).toWTFString(lexicalGlobalObject) : String();
     RETURN_IF_EXCEPTION(scope, {});
-    const char* entryPoint = entryPointStr.length() == 0 ? NULL : entryPointStr.utf8().data();
+    auto entryPointUtf8 = entryPointStr.utf8();
+    const char* entryPoint = entryPointStr.length() == 0 ? NULL : entryPointUtf8.data();
+    auto extensionStringUtf8 = extensionString.utf8();
     char* error;
-    int rc = sqlite3_load_extension(db, extensionString.utf8().data(), entryPoint, &error);
+    int rc = sqlite3_load_extension(db, extensionStringUtf8.data(), entryPoint, &error);
 
     // TODO: can we disable loading extensions after this?
     if (rc != SQLITE_OK) {
@@ -1599,7 +1603,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction, (JSC::JSGlobalO
     int64_t memoryChange = sqlite_malloc_amount - currentMemoryUsage;
 
     JSSQLStatement* sqlStatement = JSSQLStatement::create(
-        reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject), statement, databases()[handle], memoryChange);
+        static_cast<Zig::GlobalObject*>(lexicalGlobalObject), statement, databases()[handle], memoryChange);
 
     if (internalFlagsValue.isInt32()) {
         const int32_t internalFlags = internalFlagsValue.asInt32();
@@ -1655,10 +1659,10 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementOpenStatementFunction, (JSC::JSGlobalObje
 #endif
     initializeSQLite();
 
-    auto catchScope = DECLARE_CATCH_SCOPE(vm);
+    auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     String path = pathValue.toWTFString(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(catchScope, JSValue::encode(jsUndefined()));
-    catchScope.clearException();
+    RETURN_IF_EXCEPTION(topExceptionScope, JSValue::encode(jsUndefined()));
+    (void)topExceptionScope.tryClearException();
     int openFlags = DEFAULT_SQLITE_FLAGS;
     if (callFrame->argumentCount() > 1) {
         JSValue flags = callFrame->argument(1);
@@ -1860,7 +1864,7 @@ void JSSQLStatementConstructor::finishCreation(VM& vm)
     Base::finishCreation(vm);
 
     // TODO: use LazyClassStructure?
-    auto* instanceObject = JSSQLStatement::create(reinterpret_cast<Zig::GlobalObject*>(globalObject()), nullptr, nullptr);
+    auto* instanceObject = JSSQLStatement::create(static_cast<Zig::GlobalObject*>(globalObject()), nullptr, nullptr);
     JSValue proto = instanceObject->getPrototype(globalObject());
 
     this->putDirect(vm, vm.propertyNames->prototype, proto, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);

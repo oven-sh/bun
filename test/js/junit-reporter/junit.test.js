@@ -156,6 +156,27 @@ describe("junit reporter", () => {
         import { test, expect, describe } from "bun:test";
 
         describe("comprehensive test suite", () => {
+          describe.each([
+            [10, 5],
+            [20, 10]
+          ])("division suite %i / %i", (dividend, divisor) => {
+            test("should divide correctly", () => {
+              expect(dividend / divisor).toBe(dividend / divisor);
+            });
+          });
+
+          describe.if(true)("conditional describe that runs", () => {
+            test("nested test in conditional describe", () => {
+              expect(2 + 2).toBe(4);
+            });
+          });
+
+          describe.if(false)("conditional describe that skips", () => {
+            test("nested test that gets skipped", () => {
+              expect(2 + 2).toBe(4);
+            });
+          });
+
           test("basic passing test", () => {
             expect(1 + 1).toBe(2);
           });
@@ -218,30 +239,10 @@ describe("junit reporter", () => {
           test("should not be matched by filter", () => {
             expect(3 + 3).toBe(6);
           });
-
-          describe.each([
-            [10, 5],
-            [20, 10]
-          ])("division suite %i / %i", (dividend, divisor) => {
-            test("should divide correctly", () => {
-              expect(dividend / divisor).toBe(dividend / divisor);
-            });
-          });
-
-          describe.if(true)("conditional describe that runs", () => {
-            test("nested test in conditional describe", () => {
-              expect(2 + 2).toBe(4);
-            });
-          });
-
-          describe.if(false)("conditional describe that skips", () => {
-            test("nested test that gets skipped", () => {
-              expect(2 + 2).toBe(4);
-            });
-          });
         });
       `,
     });
+    console.log(tmpDir);
 
     const junitPath1 = `${tmpDir}/junit-all.xml`;
     const proc1 = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile", junitPath1], {
@@ -253,6 +254,7 @@ describe("junit reporter", () => {
     await proc1.exited;
 
     const xmlContent1 = await file(junitPath1).text();
+    expect(filterJunitXmlOutput(xmlContent1)).toMatchSnapshot();
     const result1 = await new Promise((resolve, reject) => {
       xml2js.parseString(xmlContent1, (err, result) => {
         if (err) reject(err);
@@ -280,6 +282,7 @@ describe("junit reporter", () => {
     await proc2.exited;
 
     const xmlContent2 = await file(junitPath2).text();
+    expect(filterJunitXmlOutput(xmlContent2)).toMatchSnapshot();
     const result2 = await new Promise((resolve, reject) => {
       xml2js.parseString(xmlContent2, (err, result) => {
         if (err) reject(err);
@@ -312,3 +315,7 @@ describe("junit reporter", () => {
     expect(xmlContent2).toContain("line=");
   });
 });
+
+function filterJunitXmlOutput(xmlContent) {
+  return xmlContent.replaceAll(/ (time|hostname)=".*?"/g, "");
+}

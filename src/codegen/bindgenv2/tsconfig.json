@@ -1,0 +1,14 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "noUnusedLocals": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "noImplicitAny": true,
+    "noImplicitThis": true,
+    "exactOptionalPropertyTypes": true,
+    "paths": {
+      "bindgenv2": ["./lib.ts"]
+    }
+  },
+  "include": ["**/*.ts", "../helpers.ts", "../../**/*.bindv2.ts"]
+}

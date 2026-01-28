@@ -52,7 +52,6 @@ struct WebSocketContextData {
 private:
 
 public:
-
     /* This one points to the App's shared topicTree */
     TopicTree<TopicTreeMessage, TopicTreeBigMessage> *topicTree;
 

@@ -134,7 +134,7 @@ pub const DataURL = struct {
                 break :use_base64;
             }
 
-            var buf = std.ArrayList(u8).init(allocator);
+            var buf = std.array_list.Managed(u8).init(allocator);
             errdefer buf.deinit();
             const success2 = encodeStringAsPercentEscapedDataURL(&buf, mime_type, text) catch unreachable;
             if (!success2) {
@@ -143,7 +143,7 @@ pub const DataURL = struct {
             return buf.items;
         }
 
-        const base64buf = allocator.alloc(u8, total_base64_encode_len) catch bun.outOfMemory();
+        const base64buf = bun.handleOom(allocator.alloc(u8, total_base64_encode_len));
         return std.fmt.bufPrint(base64buf, "data:{s};base64,{s}", .{ mime_type, text }) catch unreachable;
     }
 

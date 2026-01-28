@@ -4,7 +4,7 @@ const LEXER_DEBUGGER_WORKAROUND = false;
 
 const HashMapPool = struct {
     const HashMap = std.HashMap(u64, void, IdentityContext, 80);
-    const LinkedList = std.SinglyLinkedList(HashMap);
+    const LinkedList = bun.deprecated.SinglyLinkedList(HashMap);
     threadlocal var list: LinkedList = undefined;
     threadlocal var loaded: bool = false;
 
@@ -103,6 +103,7 @@ fn JSONLikeParser_(
         log: *logger.Log,
         allocator: std.mem.Allocator,
         list_allocator: std.mem.Allocator,
+        stack_check: bun.StackCheck,
 
         pub fn init(allocator: std.mem.Allocator, source_: *const logger.Source, log: *logger.Log) !Parser {
             return initWithListAllocator(allocator, allocator, source_, log);
@@ -117,6 +118,7 @@ fn JSONLikeParser_(
                 .allocator = allocator,
                 .log = log,
                 .list_allocator = list_allocator,
+                .stack_check = bun.StackCheck.init(),
             };
         }
 
@@ -127,6 +129,10 @@ fn JSONLikeParser_(
         const Parser = @This();
 
         pub fn parseExpr(p: *Parser, comptime maybe_auto_quote: bool, comptime force_utf8: bool) anyerror!Expr {
+            if (!p.stack_check.isSafeToRecurse()) {
+                try bun.throwStackOverflow();
+            }
+
             const loc = p.lexer.loc();
 
             switch (p.lexer.token) {
@@ -169,7 +175,8 @@ fn JSONLikeParser_(
                 .t_open_bracket => {
                     try p.lexer.next();
                     var is_single_line = !p.lexer.has_newline_before;
-                    var exprs = std.ArrayList(Expr).init(p.list_allocator);
+                    var exprs = std.array_list.Managed(Expr).init(p.list_allocator);
+                    errdefer exprs.deinit();
 
                     while (p.lexer.token != .t_close_bracket) {
                         if (exprs.items.len > 0) {
@@ -194,7 +201,7 @@ fn JSONLikeParser_(
                     }
                     try p.lexer.expect(.t_close_bracket);
                     return newExpr(E.Array{
-                        .items = ExprNodeList.fromList(exprs),
+                        .items = ExprNodeList.moveFromList(&exprs),
                         .is_single_line = is_single_line,
                         .was_originally_macro = comptime opts.was_originally_macro,
                     }, loc);
@@ -202,7 +209,8 @@ fn JSONLikeParser_(
                 .t_open_brace => {
                     try p.lexer.next();
                     var is_single_line = !p.lexer.has_newline_before;
-                    var properties = std.ArrayList(G.Property).init(p.list_allocator);
+                    var properties = std.array_list.Managed(G.Property).init(p.list_allocator);
+                    errdefer properties.deinit();
 
                     const DuplicateNodeType = comptime if (opts.json_warn_duplicate_keys) *HashMapPool.LinkedList.Node else void;
                     const HashMapType = comptime if (opts.json_warn_duplicate_keys) HashMapPool.HashMap else void;
@@ -266,7 +274,7 @@ fn JSONLikeParser_(
                     }
                     try p.lexer.expect(.t_close_brace);
                     return newExpr(E.Object{
-                        .properties = G.Property.List.fromList(properties),
+                        .properties = G.Property.List.moveFromList(&properties),
                         .is_single_line = is_single_line,
                         .was_originally_macro = comptime opts.was_originally_macro,
                     }, loc);
@@ -316,6 +324,7 @@ pub const PackageJSONVersionChecker = struct {
     log: *logger.Log,
     allocator: std.mem.Allocator,
     depth: usize = 0,
+    stack_check: bun.StackCheck,
 
     found_version_buf: [1024]u8 = undefined,
     found_name_buf: [1024]u8 = undefined,
@@ -341,12 +350,17 @@ pub const PackageJSONVersionChecker = struct {
             .allocator = allocator,
             .log = log,
             .source = source,
+            .stack_check = bun.StackCheck.init(),
         };
     }
 
     const Parser = @This();
 
     pub fn parseExpr(p: *Parser) anyerror!Expr {
+        if (!p.stack_check.isSafeToRecurse()) {
+            try bun.throwStackOverflow();
+        }
+
         const loc = p.lexer.loc();
 
         if (p.has_found_name and p.has_found_version) return newExpr(E.Missing{}, loc);
@@ -552,21 +566,20 @@ pub fn toAST(
         },
         .@"struct" => |Struct| {
             const fields: []const std.builtin.Type.StructField = Struct.fields;
-            var properties = try allocator.alloc(js_ast.G.Property, fields.len);
-            var property_i: usize = 0;
+            var properties = try BabyList(js_ast.G.Property).initCapacity(allocator, fields.len);
+
             inline for (fields) |field| {
-                properties[property_i] = G.Property{
+                properties.appendAssumeCapacity(G.Property{
                     .key = Expr.init(E.String, E.String{ .data = field.name }, logger.Loc.Empty),
                     .value = try toAST(allocator, field.type, @field(value, field.name)),
-                };
-                property_i += 1;
+                });
             }
 
             return Expr.init(
                 js_ast.E.Object,
                 js_ast.E.Object{
-                    .properties = BabyList(G.Property).init(properties[0..property_i]),
-                    .is_single_line = property_i <= 1,
+                    .properties = properties,
+                    .is_single_line = properties.len <= 1,
                 },
                 logger.Loc.Empty,
             );

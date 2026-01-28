@@ -273,3 +273,7 @@ expectType<Bun.SQL.AwaitPromisesArray<[]>>;
 expectType<Bun.SQL.SQLiteOptions>;
 expectType<Bun.SQL.PostgresOrMySQLOptions>;
 expectType<Bun.SQL.ContextCallbackResult<unknown>>;
+
+declare const aSqlInstance: Bun.SQL;
+expectType(aSqlInstance.options.host).is<string | undefined>(); // property exists in postgres/mysql/mariadb options
+expectType(aSqlInstance.options.safeIntegers).is<boolean | undefined>(); // property exits in sqlite options

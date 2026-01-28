@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { realpathSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDirWithFiles, toTOMLString } from "harness";
+import { join as pathJoin } from "node:path";
 
 describe.each(["bun run", "bun"])(`%s`, cmd => {
   const runCmd = cmd === "bun" ? ["-c=bunfig.toml", "run"] : ["-c=bunfig.toml"];
@@ -130,5 +131,120 @@ describe.each(["bun run", "bun"])(`%s`, cmd => {
       expect(err).toContain("this-should-start-with-bun-in-the-error-message");
       expect(result.success).toBeFalse();
     });
+  });
+
+  test("autoload local bunfig.toml (same cwd)", async () => {
+    const runCmd = cmd === "bun" ? ["run"] : [];
+
+    const bunfig = toTOMLString({
+      run: {
+        bun: true,
+      },
+    });
+
+    const cwd = tempDirWithFiles("run.where.node", {
+      "bunfig.toml": bunfig,
+      "package.json": JSON.stringify(
+        {
+          scripts: {
+            "where-node": `which node`,
+          },
+        },
+        null,
+        2,
+      ),
+    });
+
+    const result = Bun.spawnSync({
+      cmd: [bunExe(), "--silent", ...runCmd, "where-node"],
+      env: bunEnv,
+      stderr: "inherit",
+      stdout: "pipe",
+      stdin: "ignore",
+      cwd,
+    });
+    const nodeBin = result.stdout.toString().trim();
+
+    if (isWindows) {
+      expect(realpathSync(nodeBin)).toContain("\\bun-node-");
+    } else {
+      expect(realpathSync(nodeBin)).toBe(realpathSync(execPath));
+    }
+  });
+
+  test("NOT autoload local bunfig.toml (sub cwd)", async () => {
+    const runCmd = cmd === "bun" ? ["run"] : [];
+
+    const bunfig = toTOMLString({
+      run: {
+        bun: true,
+      },
+    });
+
+    const cwd = tempDirWithFiles("run.where.node", {
+      "bunfig.toml": bunfig,
+      "package.json": JSON.stringify(
+        {
+          scripts: {
+            "where-node": `which node`,
+          },
+        },
+        null,
+        2,
+      ),
+      "subdir/a.txt": "a",
+    });
+
+    const result = Bun.spawnSync({
+      cmd: [bunExe(), "--silent", ...runCmd, "where-node"],
+      env: bunEnv,
+      stderr: "inherit",
+      stdout: "pipe",
+      stdin: "ignore",
+      cwd: pathJoin(cwd, "./subdir"),
+    });
+    const nodeBin = result.stdout.toString().trim();
+
+    expect(realpathSync(nodeBin)).toBe(realpathSync(node));
+    expect(result.success).toBeTrue();
+  });
+
+  test("NOT autoload home bunfig.toml", async () => {
+    const runCmd = cmd === "bun" ? ["run"] : [];
+
+    const bunfig = toTOMLString({
+      run: {
+        bun: true,
+      },
+    });
+
+    const cwd = tempDirWithFiles("run.where.node", {
+      "my-home/.bunfig.toml": bunfig,
+      "package.json": JSON.stringify(
+        {
+          scripts: {
+            "where-node": `which node`,
+          },
+        },
+        null,
+        2,
+      ),
+    });
+
+    const result = Bun.spawnSync({
+      cmd: [bunExe(), "--silent", ...runCmd, "where-node"],
+      env: {
+        ...bunEnv,
+        HOME: pathJoin(cwd, "./my-home"),
+      },
+      stderr: "inherit",
+      stdout: "pipe",
+      stdin: "ignore",
+      cwd,
+    });
+    const nodeBin = result.stdout.toString().trim();
+
+    expect(realpathSync(nodeBin)).toBe(realpathSync(node));
+    expect(result.success).toBeTrue();
   });
 });

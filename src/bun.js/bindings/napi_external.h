@@ -22,8 +22,9 @@ class NapiExternal : public JSC::JSDestructibleObject {
     using Base = JSC::JSDestructibleObject;
 
 public:
-    NapiExternal(JSC::VM& vm, JSC::Structure* structure)
+    NapiExternal(JSC::VM& vm, JSC::Structure* structure, WTF::RefPtr<NapiEnv> env)
         : Base(vm, structure)
+        , m_env(env)
     {
     }
 
@@ -53,11 +54,11 @@ public:
             JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
-    static NapiExternal* create(JSC::VM& vm, JSC::Structure* structure, void* value, void* finalizer_hint, napi_env env, napi_finalize callback)
+    static NapiExternal* create(JSC::VM& vm, JSC::Structure* structure, void* value, void* finalizer_hint, napi_finalize callback, WTF::RefPtr<NapiEnv> env = nullptr)
     {
-        NapiExternal* accessor = new (NotNull, JSC::allocateCell<NapiExternal>(vm)) NapiExternal(vm, structure);
+        NapiExternal* accessor = new (NotNull, JSC::allocateCell<NapiExternal>(vm)) NapiExternal(vm, structure, env);
 
-        accessor->finishCreation(vm, value, finalizer_hint, env, callback);
+        accessor->finishCreation(vm, value, finalizer_hint, callback);
 
 #if ASSERT_ENABLED
         if (auto* callFrame = vm.topCallFrame) {
@@ -81,11 +82,10 @@ public:
         return accessor;
     }
 
-    void finishCreation(JSC::VM& vm, void* value, void* finalizer_hint, napi_env env, napi_finalize callback)
+    void finishCreation(JSC::VM& vm, void* value, void* finalizer_hint, napi_finalize callback)
     {
         Base::finishCreation(vm);
         m_value = value;
-        m_env = env;
         m_finalizer = NapiFinalizer { callback, finalizer_hint };
     }
 
@@ -95,7 +95,7 @@ public:
 
     void* m_value;
     NapiFinalizer m_finalizer;
-    napi_env m_env;
+    WTF::RefPtr<NapiEnv> m_env;
 
 #if ASSERT_ENABLED
     String sourceOriginURL = String();

@@ -4,9 +4,9 @@ pub const bun_install_js_bindings = struct {
     const JSGlobalObject = jsc.JSGlobalObject;
 
     pub fn generate(global: *JSGlobalObject) JSValue {
-        const obj = JSValue.createEmptyObject(global, 2);
+        const obj = JSValue.createEmptyObject(global, 1);
         const parseLockfile = ZigString.static("parseLockfile");
-        obj.put(global, parseLockfile, jsc.createCallback(global, parseLockfile, 1, jsParseLockfile));
+        obj.put(global, parseLockfile, jsc.JSFunction.create(global, "parseLockfile", jsParseLockfile, 1, .{}));
         return obj;
     }
 
@@ -47,28 +47,14 @@ pub const bun_install_js_bindings = struct {
             .ok => {},
         }
 
-        var buffer = bun.MutableString.initEmpty(allocator);
-        defer buffer.deinit();
+        const stringified = bun.handleOom(std.fmt.allocPrint(allocator, "{f}", .{std.json.fmt(lockfile, .{
+            .whitespace = .indent_2,
+            .emit_null_optional_fields = true,
+            .emit_nonportable_numbers_as_strings = true,
+        })}));
+        defer allocator.free(stringified);
 
-        var buffered_writer = buffer.bufferedWriter();
-
-        std.json.stringify(
-            lockfile,
-            .{
-                .whitespace = .indent_2,
-                .emit_null_optional_fields = true,
-                .emit_nonportable_numbers_as_strings = true,
-            },
-            buffered_writer.writer(),
-        ) catch |err| {
-            return globalObject.throw("failed to print lockfile as JSON: {s}", .{@errorName(err)});
-        };
-
-        buffered_writer.flush() catch |err| {
-            return globalObject.throw("failed to print lockfile as JSON: {s}", .{@errorName(err)});
-        };
-
-        var str = bun.String.cloneUTF8(buffer.list.items);
+        var str = bun.String.cloneUTF8(stringified);
         defer str.deref();
 
         return str.toJSByParseJSON(globalObject);

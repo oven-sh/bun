@@ -495,7 +495,7 @@ test("fetching with Request object - issue #1527", async () => {
       body,
     });
 
-    expect(fetch(request)).resolves.pass();
+    expect(await fetch(request)).resolves.pass();
   } finally {
     server.closeAllConnections();
   }

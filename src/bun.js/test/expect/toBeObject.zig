@@ -4,7 +4,7 @@ pub fn toBeObject(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFr
     const thisValue = callFrame.this();
     const value: JSValue = try this.getValue(globalThis, thisValue, "toBeObject", "");
 
-    incrementExpectCallCounter();
+    this.incrementExpectCallCounter();
 
     const not = this.flags.not;
     const pass = value.isObject() != not;
@@ -17,11 +17,11 @@ pub fn toBeObject(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFr
 
     if (not) {
         const signature = comptime getSignature("toBeObject", "", true);
-        return this.throw(globalThis, signature, "\n\nExpected value <b>not<r> to be an object" ++ "\n\nReceived: <red>{any}<r>\n", .{received});
+        return this.throw(globalThis, signature, "\n\nExpected value <b>not<r> to be an object" ++ "\n\nReceived: <red>{f}<r>\n", .{received});
     }
 
     const signature = comptime getSignature("toBeObject", "", false);
-    return this.throw(globalThis, signature, "\n\nExpected value to be an object" ++ "\n\nReceived: <red>{any}<r>\n", .{received});
+    return this.throw(globalThis, signature, "\n\nExpected value to be an object" ++ "\n\nReceived: <red>{f}<r>\n", .{received});
 }
 
 const bun = @import("bun");
@@ -30,7 +30,6 @@ const jsc = bun.jsc;
 const CallFrame = bun.jsc.CallFrame;
 const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
-const incrementExpectCallCounter = bun.jsc.Expect.incrementExpectCallCounter;
 
 const Expect = bun.jsc.Expect.Expect;
 const getSignature = Expect.getSignature;

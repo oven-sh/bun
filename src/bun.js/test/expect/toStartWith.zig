@@ -18,7 +18,7 @@ pub fn toStartWith(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallF
 
     const value: JSValue = try this.getValue(globalThis, thisValue, "toStartWith", "<green>expected<r>");
 
-    incrementExpectCallCounter();
+    this.incrementExpectCallCounter();
 
     var pass = value.isString();
     if (pass) {
@@ -40,14 +40,14 @@ pub fn toStartWith(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallF
     const expected_fmt = expected.toFmt(&formatter);
 
     if (not) {
-        const expected_line = "Expected to not start with: <green>{any}<r>\n";
-        const received_line = "Received: <red>{any}<r>\n";
+        const expected_line = "Expected to not start with: <green>{f}<r>\n";
+        const received_line = "Received: <red>{f}<r>\n";
         const signature = comptime getSignature("toStartWith", "<green>expected<r>", true);
         return this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_fmt, value_fmt });
     }
 
-    const expected_line = "Expected to start with: <green>{any}<r>\n";
-    const received_line = "Received: <red>{any}<r>\n";
+    const expected_line = "Expected to start with: <green>{f}<r>\n";
+    const received_line = "Received: <red>{f}<r>\n";
     const signature = comptime getSignature("toStartWith", "<green>expected<r>", false);
     return this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_fmt, value_fmt });
 }
@@ -59,7 +59,6 @@ const jsc = bun.jsc;
 const CallFrame = bun.jsc.CallFrame;
 const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
-const incrementExpectCallCounter = bun.jsc.Expect.incrementExpectCallCounter;
 
 const Expect = bun.jsc.Expect.Expect;
 const getSignature = Expect.getSignature;

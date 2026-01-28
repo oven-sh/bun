@@ -21,6 +21,10 @@ endforeach()
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm|ARM|arm64|ARM64|aarch64|AARCH64")
   if(APPLE)
     register_compiler_flags(-mcpu=apple-m1)
+  elseif(WIN32)
+    # Windows ARM64: use /clang: prefix for clang-cl, skip for MSVC cl.exe subprojects
+    # These flags are only understood by clang-cl, not MSVC cl.exe
+    register_compiler_flags(/clang:-march=armv8-a+crc /clang:-mtune=ampere1)
   else()
     register_compiler_flags(-march=armv8-a+crc -mtune=ampere1)
   endif()
@@ -48,6 +52,23 @@ if(ENABLE_ASAN)
   register_compiler_flags(
     DESCRIPTION "Enable AddressSanitizer"
     -fsanitize=address
+  )
+endif()
+
+if(ENABLE_FUZZILLI)
+  register_compiler_flags(
+    DESCRIPTION "Enable coverage instrumentation for fuzzing"
+    -fsanitize-coverage=trace-pc-guard
+  )
+
+  register_linker_flags(
+    DESCRIPTION "Link coverage instrumentation"
+    -fsanitize-coverage=trace-pc-guard
+  )
+
+  register_compiler_flags(
+    DESCRIPTION "Enable fuzzilli-specific code"
+    -DFUZZILLI_ENABLED
   )
 endif()
 
@@ -86,11 +107,20 @@ elseif(APPLE)
 endif()
 
 if(UNIX)
-  register_compiler_flags(
-    DESCRIPTION "Enable debug symbols"
-    -g3 -gz=zstd ${DEBUG}
-    -g1 ${RELEASE}
-  )
+  # Nix LLVM doesn't support zstd compression, use zlib instead
+  if(DEFINED ENV{NIX_CC})
+    register_compiler_flags(
+      DESCRIPTION "Enable debug symbols (zlib-compressed for Nix)"
+      -g3 -gz=zlib ${DEBUG}
+      -g1 ${RELEASE}
+    )
+  else()
+    register_compiler_flags(
+      DESCRIPTION "Enable debug symbols (zstd-compressed)"
+      -g3 -gz=zstd ${DEBUG}
+      -g1 ${RELEASE}
+    )
+  endif()
 
   register_compiler_flags(
     DESCRIPTION "Optimize debug symbols for LLDB"
@@ -206,43 +236,6 @@ if(ENABLE_ASSERTIONS)
     DESCRIPTION "Do not eliminate null-pointer checks"
     -fno-delete-null-pointer-checks
   )
-
-  register_compiler_definitions(
-    DESCRIPTION "Enable libc++ assertions"
-    _LIBCPP_ENABLE_ASSERTIONS=1
-    _LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE ${RELEASE}
-    _LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_DEBUG ${DEBUG}
-  )
-
-  register_compiler_definitions(
-    DESCRIPTION "Enable fortified sources"
-    _FORTIFY_SOURCE=3
-  )
-
-  if(LINUX)
-    register_compiler_definitions(
-      DESCRIPTION "Enable glibc++ assertions"
-      _GLIBCXX_ASSERTIONS=1
-    )
-  endif()
-else()
-  register_compiler_definitions(
-    DESCRIPTION "Disable debug assertions"
-    NDEBUG=1
-  )
-
-  register_compiler_definitions(
-    DESCRIPTION "Disable libc++ assertions"
-    _LIBCPP_ENABLE_ASSERTIONS=0
-    _LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_NONE
-  )
-
-  if(LINUX)
-    register_compiler_definitions(
-      DESCRIPTION "Disable glibc++ assertions"
-      _GLIBCXX_ASSERTIONS=0
-    )
-  endif()
 endif()
 
 # --- Diagnostics ---
@@ -253,10 +246,17 @@ if(UNIX)
   )
 endif()
 
-register_compiler_flags(
-  DESCRIPTION "Set C/C++ error limit"
-  -ferror-limit=${ERROR_LIMIT}
-)
+if(WIN32)
+  register_compiler_flags(
+    DESCRIPTION "Set C/C++ error limit"
+    /clang:-ferror-limit=${ERROR_LIMIT}
+  )
+else()
+  register_compiler_flags(
+    DESCRIPTION "Set C/C++ error limit"
+    -ferror-limit=${ERROR_LIMIT}
+  )
+endif()
 
 # --- LTO ---
 if(ENABLE_LTO)
@@ -291,14 +291,6 @@ if(UNIX AND CI)
     -ffile-prefix-map=${VENDOR_PATH}=vendor
     -ffile-prefix-map=${CACHE_PATH}=cache
   )
-endif()
-
-# --- Features ---
-
-# Valgrind cannot handle SSE4.2 instructions
-# This is needed for picohttpparser
-if(ENABLE_VALGRIND AND ARCH STREQUAL "x64")
-  register_compiler_definitions(__SSE4_2__=0)
 endif()
 
 # --- Other ---

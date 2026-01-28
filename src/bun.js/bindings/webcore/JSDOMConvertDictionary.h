@@ -31,10 +31,20 @@
 namespace WebCore {
 
 // Specialized by generated code for IDL dictionary conversion.
-template<typename T> T convertDictionary(JSC::JSGlobalObject&, JSC::JSValue);
+template<typename T> T convertDictionary(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value);
 
 template<typename T> struct Converter<IDLDictionary<T>> : DefaultConverter<IDLDictionary<T>> {
     using ReturnType = T;
+
+    static std::optional<ReturnType> tryConvert(
+        JSC::JSGlobalObject& lexicalGlobalObject,
+        JSC::JSValue value)
+    {
+        if (value.isObject()) {
+            return convert(lexicalGlobalObject, value);
+        }
+        return std::nullopt;
+    }
 
     static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
     {

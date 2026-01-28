@@ -54,8 +54,8 @@ pub const Writable = union(enum) {
     pub fn onClose(this: *Writable, _: ?bun.sys.Error) void {
         const process: *Subprocess = @fieldParentPtr("stdin", this);
 
-        if (process.this_jsvalue != .zero) {
-            if (js.stdinGetCached(process.this_jsvalue)) |existing_value| {
+        if (process.this_value.tryGet()) |this_jsvalue| {
+            if (js.stdinGetCached(this_jsvalue)) |existing_value| {
                 jsc.WebCore.FileSink.JSSink.setDestroyCallback(existing_value, 0);
             }
         }
@@ -270,8 +270,8 @@ pub const Writable = union(enum) {
 
     pub fn finalize(this: *Writable) void {
         const subprocess: *Subprocess = @fieldParentPtr("stdin", this);
-        if (subprocess.this_jsvalue != .zero) {
-            if (jsc.Codegen.JSSubprocess.stdinGetCached(subprocess.this_jsvalue)) |existing_value| {
+        if (subprocess.this_value.tryGet()) |this_jsvalue| {
+            if (jsc.Codegen.JSSubprocess.stdinGetCached(this_jsvalue)) |existing_value| {
                 jsc.WebCore.FileSink.JSSink.setDestroyCallback(existing_value, 0);
             }
         }

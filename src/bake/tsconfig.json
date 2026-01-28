@@ -2,6 +2,7 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "lib": ["ESNext", "DOM", "DOM.Iterable", "DOM.AsyncIterable"],
+    "baseUrl": ".",
     "paths": {
       "bun-framework-react/*": ["./bun-framework-react/*"],
       "bindgen": ["../codegen/bindgen-lib"]

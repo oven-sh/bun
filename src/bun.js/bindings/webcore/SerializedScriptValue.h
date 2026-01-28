@@ -33,6 +33,8 @@
 #include <JavaScriptCore/ArrayBuffer.h>
 #include <JavaScriptCore/JSCJSValue.h>
 #include <JavaScriptCore/Strong.h>
+#include <variant>
+#include <wtf/FixedVector.h>
 #include <wtf/Forward.h>
 #include <wtf/Function.h>
 #include <wtf/Gigacage.h>
@@ -57,6 +59,26 @@ class MemoryHandle;
 #endif
 
 namespace WebCore {
+
+class SimpleInMemoryPropertyTableEntry {
+public:
+    // Only:
+    // - String
+    // - Number
+    // - Boolean
+    // - Null
+    // - Undefined
+    using Value = std::variant<JSC::JSValue, WTF::String>;
+
+    WTF::String propertyName;
+    Value value;
+};
+
+enum class FastPath : uint8_t {
+    None,
+    String,
+    SimpleObject,
+};
 
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
 class DetachedOffscreenCanvas;
@@ -104,6 +126,9 @@ public:
     // Fast path for postMessage with pure strings
     static Ref<SerializedScriptValue> createStringFastPath(const String& string);
 
+    // Fast path for postMessage with simple objects
+    static Ref<SerializedScriptValue> createObjectFastPath(WTF::FixedVector<SimpleInMemoryPropertyTableEntry>&& object);
+
     static Ref<SerializedScriptValue> nullValue();
 
     WEBCORE_EXPORT JSC::JSValue deserialize(JSC::JSGlobalObject&, JSC::JSGlobalObject*, SerializationErrorMode = SerializationErrorMode::Throwing, bool* didFail = nullptr);
@@ -131,7 +156,7 @@ public:
     // IDBValue writeBlobsToDiskForIndexedDBSynchronously();
     static Ref<SerializedScriptValue> createFromWireBytes(Vector<uint8_t>&& data)
     {
-        return adoptRef(*new SerializedScriptValue(WTFMove(data)));
+        return adoptRef(*new SerializedScriptValue(WTF::move(data)));
     }
     const Vector<uint8_t>& wireBytes() const { return m_data; }
 
@@ -205,6 +230,7 @@ private:
 
     // Constructor for string fast path
     explicit SerializedScriptValue(const String& fastPathString);
+    explicit SerializedScriptValue(WTF::FixedVector<SimpleInMemoryPropertyTableEntry>&& object);
 
     size_t computeMemoryCost() const;
 
@@ -230,9 +256,10 @@ private:
 
     // Fast path for postMessage with pure strings - avoids serialization overhead
     String m_fastPathString;
-    bool m_isStringFastPath { false };
-
+    FastPath m_fastPath { FastPath::None };
     size_t m_memoryCost { 0 };
+
+    FixedVector<SimpleInMemoryPropertyTableEntry> m_simpleInMemoryPropertyTable {};
 };
 
 template<class Encoder>
@@ -295,7 +322,7 @@ RefPtr<SerializedScriptValue> SerializedScriptValue::decode(Decoder& decoder)
             static_assert(sizeof(std::span<const uint8_t>::element_type) == 1);
             memcpy(buffer, data.data(), data.size_bytes());
             JSC::ArrayBufferDestructorFunction destructor = ArrayBuffer::primitiveGigacageDestructor();
-            arrayBufferContentsArray->append({ buffer, data.size_bytes(), std::nullopt, WTFMove(destructor) });
+            arrayBufferContentsArray->append({ buffer, data.size_bytes(), std::nullopt, WTF::move(destructor) });
         }
     }
 
@@ -310,7 +337,7 @@ RefPtr<SerializedScriptValue> SerializedScriptValue::decode(Decoder& decoder)
         decoder >> detachedRTCDataChannel;
         if (!detachedRTCDataChannel)
             return nullptr;
-        detachedRTCDataChannels.append(makeUnique<DetachedRTCDataChannel>(WTFMove(*detachedRTCDataChannel)));
+        detachedRTCDataChannels.append(makeUnique<DetachedRTCDataChannel>(WTF::move(*detachedRTCDataChannel)));
     }
 #endif
 #if ENABLE(WEB_CODECS)
@@ -324,24 +351,24 @@ RefPtr<SerializedScriptValue> SerializedScriptValue::decode(Decoder& decoder)
         decoder >> videoChunkData;
         if (!videoChunkData)
             return nullptr;
-        serializedVideoChunks.append(WebCodecsEncodedVideoChunkStorage::create(WTFMove(*videoChunkData)));
+        serializedVideoChunks.append(WebCodecsEncodedVideoChunkStorage::create(WTF::move(*videoChunkData)));
     }
     // FIXME: decode video frames
     Vector<WebCodecsVideoFrameData> serializedVideoFrames;
 #endif
 
-    return adoptRef(*new SerializedScriptValue(WTFMove(data), WTFMove(arrayBufferContentsArray)
+    return adoptRef(*new SerializedScriptValue(WTF::move(data), WTF::move(arrayBufferContentsArray)
 #if ENABLE(WEB_RTC)
-                                                                  ,
-        WTFMove(detachedRTCDataChannels)
+                                                                    ,
+        WTF::move(detachedRTCDataChannels)
 #endif
 #if ENABLE(WEB_CODECS)
             ,
-        WTFMove(serializedVideoChunks)
+        WTF::move(serializedVideoChunks)
 #endif
 #if ENABLE(WEB_CODECS)
             ,
-        WTFMove(serializedVideoFrames)
+        WTF::move(serializedVideoFrames)
 #endif
             ));
 }

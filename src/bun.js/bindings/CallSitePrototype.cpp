@@ -220,12 +220,12 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncIsConstructor, (JSGlobalObject * globa
     return JSC::JSValue::encode(JSC::jsBoolean(isConstructor));
 }
 
-// TODO:
 JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncIsAsync, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     ENTER_PROTO_FUNC();
 
-    return JSC::JSValue::encode(JSC::jsBoolean(false));
+    bool isAsync = callSite->isAsync();
+    return JSC::JSValue::encode(JSC::jsBoolean(isAsync));
 }
 
 // TODO:

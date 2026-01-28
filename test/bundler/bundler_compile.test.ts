@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { rmSync } from "fs";
-import { isWindows } from "harness";
+import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
 import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
@@ -106,6 +106,7 @@ describe("bundler", () => {
     run: { stdout: "Hello, world!" },
   });
   itBundled("compile/WorkerRelativePathNoExtension", {
+    backend: "cli",
     compile: true,
     files: {
       "/entry.ts": /* js */ `
@@ -125,6 +126,7 @@ describe("bundler", () => {
     run: { stdout: "Hello, world!\nWorker loaded!\n", file: "dist/out", setCwd: true },
   });
   itBundled("compile/WorkerRelativePathTSExtension", {
+    backend: "cli",
     compile: true,
     files: {
       "/entry.ts": /* js */ `
@@ -143,6 +145,7 @@ describe("bundler", () => {
     run: { stdout: "Hello, world!\nWorker loaded!\n", file: "dist/out", setCwd: true },
   });
   itBundled("compile/WorkerRelativePathTSExtensionBytecode", {
+    backend: "cli",
     compile: true,
     bytecode: true,
     files: {
@@ -558,6 +561,7 @@ describe("bundler", () => {
   });
   itBundled("compile/ImportMetaMain", {
     compile: true,
+    backend: "cli",
     files: {
       "/entry.ts": /* js */ `
         // test toString on function to observe what the inlined value was
@@ -664,5 +668,91 @@ error: Hello World`,
         },
       },
     ],
+  });
+
+  test("does not crash", async () => {
+    const dir = tempDirWithFiles("bundler-compile-shadcn", {
+      "frontend.tsx": `console.log("Hello, world!");`,
+      "index.html": `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bun + React</title>
+    <script type="module" src="./frontend.tsx" async></script>
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>
+        `,
+      "index.tsx": `import { serve } from "bun";
+import index from "./index.html";
+
+const server = serve({
+  routes: {
+    // Serve index.html for all unmatched routes.
+    "/*": index,
+
+    "/api/hello": {
+      async GET(req) {
+        return Response.json({
+          message: "Hello, world!",
+          method: "GET",
+        });
+      },
+      async PUT(req) {
+        return Response.json({
+          message: "Hello, world!",
+          method: "PUT",
+        });
+      },
+    },
+
+    "/api/hello/:name": async req => {
+      const name = req.params.name;
+      return Response.json({
+        message: "LOL",
+      });
+    },
+  },
+
+  development: process.env.NODE_ENV !== "production" && {
+    // Enable browser hot reloading in development
+    hmr: true,
+
+    // Echo console logs from the browser to the server
+    console: true,
+  },
+});
+
+`,
+    });
+
+    // Step 2: Run bun build with compile, minify, sourcemap, and bytecode
+    await Bun.$`${bunExe()} build ./index.tsx --compile --minify --sourcemap --bytecode`
+      .cwd(dir)
+      .env(bunEnv)
+      .throws(true);
+  });
+
+  // When compiling with 8+ entry points, the main entry point should still run correctly.
+  test("compile with 8+ entry points runs main entry correctly", async () => {
+    const dir = tempDirWithFiles("compile-many-entries", {
+      "app.js": `console.log("IT WORKS");`,
+      "assets/file-1": "",
+      "assets/file-2": "",
+      "assets/file-3": "",
+      "assets/file-4": "",
+      "assets/file-5": "",
+      "assets/file-6": "",
+      "assets/file-7": "",
+      "assets/file-8": "",
+    });
+
+    await Bun.$`${bunExe()} build --compile app.js assets/* --outfile app`.cwd(dir).env(bunEnv).throws(true);
+
+    const result = await Bun.$`./app`.cwd(dir).env(bunEnv).nothrow();
+    expect(result.stdout.toString().trim()).toBe("IT WORKS");
   });
 });

@@ -1900,23 +1900,18 @@ export function getUsernameForDistro(distro) {
   if (/windows/i.test(distro)) {
     return "administrator";
   }
-
   if (/alpine|centos/i.test(distro)) {
     return "root";
   }
-
   if (/debian/i.test(distro)) {
     return "admin";
   }
-
   if (/ubuntu/i.test(distro)) {
     return "ubuntu";
   }
-
   if (/amazon|amzn|al\d+|rhel/i.test(distro)) {
     return "ec2-user";
   }
-
   throw new Error(`Unsupported distro: ${distro}`);
 }
 
@@ -2492,7 +2487,7 @@ export function formatAnnotationToHtml(annotation, options = {}) {
  * @param {AnnotationOptions} [options]
  * @returns {AnnotationResult}
  */
-export function parseAnnotations(content, options = {}) {
+export function parseAnnotations(content) {
   /** @type {Annotation[]} */
   const annotations = [];
 
@@ -2808,6 +2803,8 @@ export function endGroup() {
   } else {
     console.groupEnd();
   }
+  // when a file exits with an ASAN error, there is no trailing newline so we add one here to make sure `console.group()` detection doesn't get broken in CI.
+  console.log();
 }
 
 export function printEnvironment() {
@@ -2838,7 +2835,7 @@ export function printEnvironment() {
 
   if (isCI) {
     startGroup("Environment", () => {
-      for (const [key, value] of Object.entries(process.env)) {
+      for (const [key, value] of Object.entries(process.env).toSorted()) {
         console.log(`${key}:`, value);
       }
     });
@@ -2862,6 +2859,12 @@ export function printEnvironment() {
         const shell = which(["sh", "bash"]);
         if (shell) {
           spawnSync([shell, "-c", "free -m -w"], { stdio: "inherit" });
+        }
+      });
+      startGroup("Docker", () => {
+        const shell = which(["sh", "bash"]);
+        if (shell) {
+          spawnSync([shell, "-c", "docker ps"], { stdio: "inherit" });
         }
       });
     }
@@ -2976,6 +2979,8 @@ const emojiMap = {
   gear: ["⚙️", "gear"],
   clipboard: ["📋", "clipboard"],
   rocket: ["🚀", "rocket"],
+  openbsd: ["🐡", "openbsd"],
+  netbsd: ["🚩", "netbsd"],
 };
 
 /**

@@ -59,8 +59,9 @@ public:
     }
 
 private:
-    JSWrappingFunction(JSC::VM& vm, JSC::NativeExecutable* native, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+    JSWrappingFunction(JSC::VM& vm, JSC::NativeExecutable* native, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSC::JSObject* wrappedFn)
         : Base(vm, native, globalObject, structure)
+        , m_wrappedFn(wrappedFn, JSC::WriteBarrierEarlyInit)
     {
     }
 
@@ -68,7 +69,7 @@ private:
 
     DECLARE_VISIT_CHILDREN;
 
-    JSC::WriteBarrier<JSC::JSFunction> m_wrappedFn;
+    JSC::WriteBarrier<JSC::JSObject> m_wrappedFn;
 };
 
 }

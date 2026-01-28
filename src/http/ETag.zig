@@ -32,7 +32,7 @@ pub fn appendToHeaders(bytes: []const u8, headers: *bun.http.Headers) !void {
     const hash = std.hash.XxHash64.hash(0, bytes);
 
     var etag_buf: [40]u8 = undefined;
-    const etag_str = std.fmt.bufPrint(&etag_buf, "\"{}\"", .{bun.fmt.hexIntLower(hash)}) catch unreachable;
+    const etag_str = std.fmt.bufPrint(&etag_buf, "\"{f}\"", .{bun.fmt.hexIntLower(hash)}) catch unreachable;
     try headers.append("etag", etag_str);
 }
 

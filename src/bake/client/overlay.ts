@@ -23,7 +23,7 @@ type FailureOwner = number;
 
 /**
  * Build errors come from SerializedFailure objects on the server, with the key
- * being the the SerializedFailure.Owner bitcast to an i32.
+ * being the SerializedFailure.Owner bitcast to an i32.
  */
 const buildErrors = new Map<FailureOwner, DeserializedFailure>();
 /** Runtime errors are stored in a list and are cleared before any hot update. */
@@ -251,8 +251,8 @@ export async function onRuntimeError(err: any, fatal = false, async = false) {
     writer.stringWithLength(browserUrl);
     writer.u32(parsed.length);
     for (const frame of parsed) {
-      writer.u32(frame.line ?? 0);
-      writer.u32(frame.col ?? 0);
+      writer.i32(frame.line ?? 0);
+      writer.i32(frame.col ?? 0);
       writer.stringWithLength(frame.fn ?? "");
       const fileName = frame.file;
       if (fileName) {

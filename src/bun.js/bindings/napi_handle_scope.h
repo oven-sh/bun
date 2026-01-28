@@ -3,7 +3,7 @@
 #include "BunClientData.h"
 #include "root.h"
 
-typedef struct napi_env__* napi_env;
+typedef struct NapiEnv* napi_env;
 
 namespace Bun {
 

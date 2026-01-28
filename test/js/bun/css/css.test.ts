@@ -4440,6 +4440,24 @@ describe("css tests", () => {
       ".foo { background: linear-gradient(0.5turn, yellow, blue); }",
       ".foo{background:linear-gradient(#ff0,#00f)}",
     );
+    // Test case for the crash fix with 0.25turn
+    minify_test(
+      ".foo { background: linear-gradient(0.25turn, rgb(2, 0, 36) 0%, rgb(1, 53, 164) 100%); }",
+      ".foo{background:linear-gradient(.25turn,#020024 0%,#0135a4 100%)}",
+    );
+    // Additional angle unit tests to ensure the fix works for various cases
+    minify_test(
+      ".foo { background: linear-gradient(0.25turn, yellow, blue); }",
+      ".foo{background:linear-gradient(.25turn,#ff0,#00f)}",
+    );
+    minify_test(
+      ".foo { background: linear-gradient(0.75turn, yellow, blue); }",
+      ".foo{background:linear-gradient(.75turn,#ff0,#00f)}",
+    );
+    minify_test(
+      ".foo { background: linear-gradient(1turn, yellow, blue); }",
+      ".foo{background:linear-gradient(1turn,#ff0,#00f)}",
+    );
     minify_test(
       ".foo { background: linear-gradient(yellow 10%, blue 20%) }",
       ".foo{background:linear-gradient(#ff0 10%,#00f 20%)}",
@@ -5557,6 +5575,9 @@ describe("css tests", () => {
       minify_test(`:root::${name}(*) {position: fixed}`, `:root::${name}(*){position:fixed}`);
       minify_test(`:root::${name}(foo) {position: fixed}`, `:root::${name}(foo){position:fixed}`);
       minify_test(`:root::${name}(foo):only-child {position: fixed}`, `:root::${name}(foo):only-child{position:fixed}`);
+      // Test class selector syntax (.class-name)
+      minify_test(`:root::${name}(.slide-out) {position: fixed}`, `:root::${name}(.slide-out){position:fixed}`);
+      minify_test(`:root::${name}(.fade-in) {animation-name: fade}`, `:root::${name}(.fade-in){animation-name:fade}`);
       error_test(
         `:root::${name}(foo):first-child {position: fixed}`,
         "ParserError::SelectorError(SelectorError::InvalidPseudoClassAfterPseudoElement)",
@@ -7283,6 +7304,68 @@ describe("css tests", () => {
       ".foo { color: color-mix(in srgb, light-dark(yellow, red), light-dark(red, pink)); }",
       `.foo {
           color: var(--buncss-light, #ff8000) var(--buncss-dark, #ff6066);
+        }
+        `,
+      { chrome: Some(90 << 16) },
+    );
+
+    // Test color-scheme inside @layer blocks (issue #20689)
+    prefix_test(
+      `@layer colors {
+        .foo { color-scheme: dark; }
+      }`,
+      `@layer colors {
+          .foo {
+            --buncss-light: ;
+            --buncss-dark: initial;
+            color-scheme: dark;
+          }
+        }
+        `,
+      { chrome: Some(90 << 16) },
+    );
+    prefix_test(
+      `@layer shm.colors {
+        body.theme-dark {
+          color-scheme: dark;
+        }
+        body.theme-light {
+          color-scheme: light;
+        }
+      }`,
+      `@layer shm.colors {
+          body.theme-dark {
+            --buncss-light: ;
+            --buncss-dark: initial;
+            color-scheme: dark;
+          }
+
+          body.theme-light {
+            --buncss-light: initial;
+            --buncss-dark: ;
+            color-scheme: light;
+          }
+        }
+        `,
+      { chrome: Some(90 << 16) },
+    );
+    prefix_test(
+      `@layer {
+        .foo { color-scheme: light dark; }
+      }`,
+      `@layer {
+          .foo {
+            --buncss-light: initial;
+            --buncss-dark: ;
+            color-scheme: light dark;
+          }
+
+          @media (prefers-color-scheme: dark) {
+            .foo {
+              --buncss-light: ;
+              --buncss-dark: initial;
+            }
+          }
         }
         `,
       { chrome: Some(90 << 16) },

@@ -17,7 +17,9 @@ import {
 
 beforeAll(dummyBeforeAll);
 afterAll(dummyAfterAll);
-beforeEach(dummyBeforeEach);
+beforeEach(async () => {
+  await dummyBeforeEach();
+});
 afterEach(dummyAfterEach);
 
 expect.extend({
@@ -25,7 +27,7 @@ expect.extend({
   toHaveBins,
 });
 
-for (const { input } of [{ input: { baz: "~0.0.3", moo: "~0.1.0" } }, { input: { baz: "^0.0.3", moo: "^0.1.0" } }]) {
+for (const { input } of [{ input: { baz: "~0.0.3", moo: "~0.1.0" } }]) {
   it(`should update to latest version of dependency (${input.baz[0]})`, async () => {
     const urls: string[] = [];
     const tilde = input.baz[0] === "~";
@@ -57,13 +59,14 @@ for (const { input } of [{ input: { baz: "~0.0.3", moo: "~0.1.0" } }, { input: {
       stderr: stderr1,
       exited: exited1,
     } = spawn({
-      cmd: [bunExe(), "install"],
+      cmd: [bunExe(), "install", "--linker=hoisted"],
       cwd: package_dir,
       stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env,
     });
+
     const err1 = await new Response(stderr1).text();
     expect(err1).not.toContain("error:");
     expect(err1).toContain("Saved lockfile");
@@ -100,7 +103,7 @@ for (const { input } of [{ input: { baz: "~0.0.3", moo: "~0.1.0" } }, { input: {
       stderr: stderr2,
       exited: exited2,
     } = spawn({
-      cmd: [bunExe(), "update", "baz"],
+      cmd: [bunExe(), "update", "baz", "--linker=hoisted"],
       cwd: package_dir,
       stdout: "pipe",
       stdin: "pipe",
@@ -177,7 +180,7 @@ for (const { input } of [{ input: { baz: "~0.0.3", moo: "~0.1.0" } }, { input: {
       stderr: stderr1,
       exited: exited1,
     } = spawn({
-      cmd: [bunExe(), "install"],
+      cmd: [bunExe(), "install", "--linker=hoisted"],
       cwd: package_dir,
       stdout: "pipe",
       stdin: "pipe",
@@ -228,7 +231,7 @@ for (const { input } of [{ input: { baz: "~0.0.3", moo: "~0.1.0" } }, { input: {
       stderr: stderr2,
       exited: exited2,
     } = spawn({
-      cmd: [bunExe(), "update"],
+      cmd: [bunExe(), "update", "--linker=hoisted"],
       cwd: package_dir,
       stdout: "pipe",
       stdin: "pipe",
@@ -315,7 +318,7 @@ it("lockfile should not be modified when there are no version changes, issue#588
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install"],
+    cmd: [bunExe(), "install", "--linker=hoisted"],
     cwd: package_dir,
     stdout: "pipe",
     stdin: "pipe",

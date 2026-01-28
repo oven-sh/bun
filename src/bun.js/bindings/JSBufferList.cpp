@@ -161,7 +161,7 @@ JSC::JSValue JSBufferList::_getString(JSC::VM& vm, JSC::JSGlobalObject* lexicalG
 JSC::JSValue JSBufferList::_getBuffer(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, size_t total)
 {
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* subclassStructure = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject)->JSBufferSubclassStructure();
+    auto* subclassStructure = static_cast<Zig::GlobalObject*>(lexicalGlobalObject)->JSBufferSubclassStructure();
 
     if (total <= 0 || length() == 0) {
         // Buffer.alloc(0)
@@ -442,7 +442,7 @@ JSC::EncodedJSValue JSBufferListConstructor::construct(JSC::JSGlobalObject* lexi
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     JSBufferList* bufferList = JSBufferList::create(
-        vm, lexicalGlobalObject, reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject)->JSBufferListStructure());
+        vm, lexicalGlobalObject, static_cast<Zig::GlobalObject*>(lexicalGlobalObject)->JSBufferListStructure());
     return JSC::JSValue::encode(bufferList);
 }
 
@@ -454,7 +454,7 @@ const ClassInfo JSBufferListConstructor::s_info = { "BufferList"_s, &Base::s_inf
 
 JSValue getBufferList(Zig::GlobalObject* globalObject)
 {
-    return reinterpret_cast<Zig::GlobalObject*>(globalObject)->JSBufferList();
+    return static_cast<Zig::GlobalObject*>(globalObject)->JSBufferList();
 }
 
 } // namespace Zig

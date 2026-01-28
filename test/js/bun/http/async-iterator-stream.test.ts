@@ -2,7 +2,7 @@ import { spawn } from "bun";
 import { describe, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
-describe("Streaming body via", () => {
+describe.concurrent("Streaming body via", () => {
   test("async generator function", async () => {
     using server = Bun.serve({
       port: 0,

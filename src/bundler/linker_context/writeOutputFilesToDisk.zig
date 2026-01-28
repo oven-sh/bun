@@ -8,12 +8,12 @@ pub fn writeOutputFilesToDisk(
     defer trace.end();
     var root_dir = std.fs.cwd().makeOpenPath(root_path, .{}) catch |err| {
         if (err == error.NotDir) {
-            c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Failed to create output directory {} is a file. Please choose a different outdir or delete {}", .{
+            c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Failed to create output directory {f} is a file. Please choose a different outdir or delete {f}", .{
                 bun.fmt.quote(root_path),
                 bun.fmt.quote(root_path),
             }) catch unreachable;
         } else {
-            c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Failed to create output directory {s} {}", .{
+            c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Failed to create output directory {s} {f}", .{
                 @errorName(err),
                 bun.fmt.quote(root_path),
             }) catch unreachable;
@@ -50,7 +50,7 @@ pub fn writeOutputFilesToDisk(
         if (std.fs.path.dirnamePosix(rel_path)) |rel_parent| {
             if (rel_parent.len > 0) {
                 root_dir.makePath(rel_parent) catch |err| {
-                    c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{s} creating outdir {} while saving chunk {}", .{
+                    c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{s} creating outdir {f} while saving chunk {f}", .{
                         @errorName(err),
                         bun.fmt.quote(rel_parent),
                         bun.fmt.quote(chunk.final_rel_path),
@@ -60,7 +60,7 @@ pub fn writeOutputFilesToDisk(
             }
         }
         var display_size: usize = 0;
-        const public_path = if (chunk.is_browser_chunk_from_server_build)
+        const public_path = if (chunk.flags.is_browser_chunk_from_server_build)
             bv2.transpilerForTarget(.browser).options.public_path
         else
             c.resolver.opts.public_path;
@@ -73,6 +73,7 @@ pub fn writeOutputFilesToDisk(
             chunk,
             chunks,
             &display_size,
+            c.resolver.opts.compile and !chunk.flags.is_browser_chunk_from_server_build,
             chunk.content.sourcemap(c.options.source_maps) != .none,
         ) catch |err| bun.Output.panic("Failed to create output chunk: {s}", .{@errorName(err)});
 
@@ -102,7 +103,7 @@ pub fn writeOutputFilesToDisk(
 
                     const source_map_start = "//# sourceMappingURL=";
                     const total_len = code_result.buffer.len + source_map_start.len + a.len + b.len + "\n".len;
-                    var buf = std.ArrayList(u8).initCapacity(Chunk.IntermediateOutput.allocatorForSize(total_len), total_len) catch @panic("Failed to allocate memory for output file with inline source map");
+                    var buf = std.array_list.Managed(u8).initCapacity(Chunk.IntermediateOutput.allocatorForSize(total_len), total_len) catch @panic("Failed to allocate memory for output file with inline source map");
                     buf.appendSliceAssumeCapacity(code_result.buffer);
                     buf.appendSliceAssumeCapacity(source_map_start);
                     buf.appendSliceAssumeCapacity(a);
@@ -134,7 +135,7 @@ pub fn writeOutputFilesToDisk(
                     },
                 )) {
                     .err => |err| {
-                        try c.log.addSysError(bun.default_allocator, err, "writing sourcemap for chunk {}", .{
+                        try c.log.addSysError(bun.default_allocator, err, "writing sourcemap for chunk {f}", .{
                             bun.fmt.quote(chunk.final_rel_path),
                         });
                         return error.WriteFailed;
@@ -163,7 +164,7 @@ pub fn writeOutputFilesToDisk(
 
                 const source_map_start = "//# sourceMappingURL=data:application/json;base64,";
                 const total_len = code_result.buffer.len + source_map_start.len + encode_len + 1;
-                var buf = std.ArrayList(u8).initCapacity(code_with_inline_source_map_allocator, total_len) catch @panic("Failed to allocate memory for output file with inline source map");
+                var buf = std.array_list.Managed(u8).initCapacity(code_with_inline_source_map_allocator, total_len) catch @panic("Failed to allocate memory for output file with inline source map");
 
                 buf.appendSliceAssumeCapacity(code_result.buffer);
                 buf.appendSliceAssumeCapacity(source_map_start);
@@ -198,7 +199,7 @@ pub fn writeOutputFilesToDisk(
                         const source_provider_url_str = source_provider_url.toSlice(bun.default_allocator);
                         defer source_provider_url_str.deinit();
                         const bytecode, const cached_bytecode = result;
-                        debug("Bytecode cache generated {s}: {}", .{ source_provider_url_str.slice(), bun.fmt.size(bytecode.len, .{ .space_between_number_and_unit = true }) });
+                        debug("Bytecode cache generated {s}: {f}", .{ source_provider_url_str.slice(), bun.fmt.size(bytecode.len, .{ .space_between_number_and_unit = true }) });
                         @memcpy(fdpath[0..chunk.final_rel_path.len], chunk.final_rel_path);
                         fdpath[chunk.final_rel_path.len..][0..bun.bytecode_extension.len].* = bun.bytecode_extension.*;
                         defer cached_bytecode.deref();
@@ -215,7 +216,7 @@ pub fn writeOutputFilesToDisk(
                                     },
                                 },
                                 .encoding = .buffer,
-                                .mode = if (chunk.is_executable) 0o755 else 0o644,
+                                .mode = if (chunk.flags.is_executable) 0o755 else 0o644,
 
                                 .dirfd = .fromStdDir(root_dir),
                                 .file = .{
@@ -227,7 +228,7 @@ pub fn writeOutputFilesToDisk(
                         )) {
                             .result => {},
                             .err => |err| {
-                                c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{} writing bytecode for chunk {}", .{
+                                c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{f} writing bytecode for chunk {f}", .{
                                     err,
                                     bun.fmt.quote(chunk.final_rel_path),
                                 }) catch unreachable;
@@ -272,7 +273,7 @@ pub fn writeOutputFilesToDisk(
                     },
                 },
                 .encoding = .buffer,
-                .mode = if (chunk.is_executable) 0o755 else 0o644,
+                .mode = if (chunk.flags.is_executable) 0o755 else 0o644,
 
                 .dirfd = .fromStdDir(root_dir),
                 .file = .{
@@ -283,7 +284,7 @@ pub fn writeOutputFilesToDisk(
             },
         )) {
             .err => |err| {
-                try c.log.addSysError(bun.default_allocator, err, "writing chunk {}", .{
+                try c.log.addSysError(bun.default_allocator, err, "writing chunk {f}", .{
                     bun.fmt.quote(chunk.final_rel_path),
                 });
                 return error.WriteFailed;
@@ -322,7 +323,7 @@ pub fn writeOutputFilesToDisk(
             .bytecode_index = bytecode_index,
             .size = @as(u32, @truncate(code_result.buffer.len)),
             .display_size = @as(u32, @truncate(display_size)),
-            .is_executable = chunk.is_executable,
+            .is_executable = chunk.flags.is_executable,
             .data = .{
                 .saved = 0,
             },
@@ -361,7 +362,7 @@ pub fn writeOutputFilesToDisk(
             if (std.fs.path.dirname(src.dest_path)) |rel_parent| {
                 if (rel_parent.len > 0) {
                     root_dir.makePath(rel_parent) catch |err| {
-                        c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{s} creating outdir {} while saving file {}", .{
+                        c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{s} creating outdir {f} while saving file {f}", .{
                             @errorName(err),
                             bun.fmt.quote(rel_parent),
                             bun.fmt.quote(src.dest_path),
@@ -393,7 +394,7 @@ pub fn writeOutputFilesToDisk(
                 },
             )) {
                 .err => |err| {
-                    c.log.addSysError(bun.default_allocator, err, "writing file {}", .{
+                    c.log.addSysError(bun.default_allocator, err, "writing file {f}", .{
                         bun.fmt.quote(src.src_path.text),
                     }) catch unreachable;
                     return error.WriteFailed;
@@ -425,7 +426,6 @@ const base64 = bun.base64;
 const default_allocator = bun.default_allocator;
 const jsc = bun.jsc;
 const options = bun.options;
-const sourcemap = bun.sourcemap;
 const strings = bun.strings;
 
 const bundler = bun.bundle_v2;

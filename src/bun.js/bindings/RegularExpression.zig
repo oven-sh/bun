@@ -19,11 +19,11 @@ pub const RegularExpression = opaque {
     extern fn Yarr__RegularExpression__searchRev(this: *RegularExpression) i32;
     extern fn Yarr__RegularExpression__matches(this: *RegularExpression, string: bun.String) i32;
 
-    pub inline fn init(pattern: bun.String, flags: Flags) !*RegularExpression {
+    pub inline fn init(pattern: bun.String, flags: Flags) error{InvalidRegExp}!*RegularExpression {
         var regex = Yarr__RegularExpression__init(pattern, @intFromEnum(flags));
         if (!regex.isValid()) {
             regex.deinit();
-            return error.InvalidRegex;
+            return error.InvalidRegExp;
         }
         return regex;
     }

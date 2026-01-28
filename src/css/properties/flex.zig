@@ -123,10 +123,10 @@ pub const FlexFlow = struct {
         };
     }
 
-    pub fn toCss(this: *const FlexFlow, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+    pub fn toCss(this: *const FlexFlow, dest: *css.Printer) css.PrintErr!void {
         var needs_space = false;
         if (!this.direction.eql(&FlexDirection.default()) or this.wrap.eql(&FlexWrap.default())) {
-            try this.direction.toCss(W, dest);
+            try this.direction.toCss(dest);
             needs_space = true;
         }
 
@@ -134,7 +134,7 @@ pub const FlexFlow = struct {
             if (needs_space) {
                 try dest.writeStr(" ");
             }
-            try this.wrap.toCss(W, dest);
+            try this.wrap.toCss(dest);
         }
 
         return;
@@ -216,7 +216,7 @@ pub const Flex = struct {
         };
     }
 
-    pub fn toCss(this: *const Flex, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+    pub fn toCss(this: *const Flex, dest: *css.Printer) css.PrintErr!void {
         if (this.grow == 0.0 and this.shrink == 0.0 and this.basis == .auto) {
             try dest.writeStr("none");
             return;
@@ -240,10 +240,10 @@ pub const Flex = struct {
         };
 
         if (this.grow != 1.0 or this.shrink != 1.0 or basis_kind != .NonZero) {
-            try CSSNumberFns.toCss(&this.grow, W, dest);
+            try CSSNumberFns.toCss(&this.grow, dest);
             if (this.shrink != 1.0 or basis_kind == .Length) {
                 try dest.writeStr(" ");
-                try CSSNumberFns.toCss(&this.shrink, W, dest);
+                try CSSNumberFns.toCss(&this.shrink, dest);
             }
         }
 
@@ -251,7 +251,7 @@ pub const Flex = struct {
             if (this.grow != 1.0 or this.shrink != 1.0 or basis_kind == .Length) {
                 try dest.writeStr(" ");
             }
-            try this.basis.toCss(W, dest);
+            try this.basis.toCss(dest);
         }
     }
 
@@ -751,8 +751,8 @@ pub const FlexHandler = struct {
                 }
                 if (!prefixes_2009.isEmpty()) {
                     const orient, const newdir = dir.to2009();
-                    dest.append(context.allocator, Property{ .@"box-orient" = .{ orient, prefixes_2009 } }) catch bun.outOfMemory();
-                    dest.append(context.allocator, Property{ .@"box-direction" = .{ newdir, prefixes_2009 } }) catch bun.outOfMemory();
+                    bun.handleOom(dest.append(context.allocator, Property{ .@"box-orient" = .{ orient, prefixes_2009 } }));
+                    bun.handleOom(dest.append(context.allocator, Property{ .@"box-direction" = .{ newdir, prefixes_2009 } }));
                 }
             }
         }
@@ -774,7 +774,7 @@ pub const FlexHandler = struct {
                         .wrap = wrapinner.*,
                     },
                     prefix,
-                } }) catch bun.outOfMemory();
+                } }) catch |err| bun.handleOom(err);
                 bun.bits.remove(css.VendorPrefix, dir_prefix, intersection);
                 bun.bits.remove(css.VendorPrefix, wrap_prefix, intersection);
             }
@@ -795,7 +795,7 @@ pub const FlexHandler = struct {
                     prefixes_2009.moz = true;
                 }
                 if (!prefixes_2009.isEmpty()) {
-                    dest.append(context.allocator, Property{ .@"box-flex" = .{ g, prefixes_2009 } }) catch bun.outOfMemory();
+                    bun.handleOom(dest.append(context.allocator, Property{ .@"box-flex" = .{ g, prefixes_2009 } }));
                 }
             }
         }
@@ -820,7 +820,7 @@ pub const FlexHandler = struct {
                         .basis = b,
                     },
                     prefix,
-                } }) catch bun.outOfMemory();
+                } }) catch |err| bun.handleOom(err);
                 bun.bits.remove(css.VendorPrefix, g_prefix, intersection);
                 bun.bits.remove(css.VendorPrefix, s_prefix, intersection);
                 bun.bits.remove(css.VendorPrefix, b_prefix, intersection);
@@ -870,7 +870,7 @@ pub const FlexHandler = struct {
                                     dest.append(ctx.allocator, @unionInit(Property, p2009[1], .{
                                         v,
                                         prefixes_2009,
-                                    })) catch bun.outOfMemory();
+                                    })) catch |err| bun.handleOom(err);
                                 }
                             }
                         }
@@ -883,7 +883,7 @@ pub const FlexHandler = struct {
                         dest.append(ctx.allocator, @unionInit(Property, p2012, .{
                             val,
                             css.VendorPrefix.MS,
-                        })) catch bun.outOfMemory();
+                        })) catch |err| bun.handleOom(err);
                         ms = false;
                     }
 
@@ -897,7 +897,7 @@ pub const FlexHandler = struct {
                 dest.append(ctx.allocator, @unionInit(Property, prop, .{
                     val,
                     prefix,
-                })) catch bun.outOfMemory();
+                })) catch |err| bun.handleOom(err);
             }
         }
     }
@@ -911,7 +911,7 @@ pub const FlexHandler = struct {
                 dest.append(ctx.allocator, @unionInit(Property, field_name, .{
                     val,
                     prefix,
-                })) catch bun.outOfMemory();
+                })) catch |err| bun.handleOom(err);
             } else {
                 // css.generic.eql(comptime T: type, lhs: *const T, rhs: *const T)
                 // css.generic.deinit(@TypeOf(val), &val, ctx.allocator);

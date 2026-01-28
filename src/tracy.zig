@@ -270,39 +270,39 @@ inline fn freeNamed(ptr: [*]u8, comptime name: [:0]const u8) void {
 }
 
 const Tracy = struct {
-    pub const emit_frame_mark_start = *const fn (name: [*:0]const u8) callconv(.C) void;
-    pub const emit_frame_mark_end = *const fn (name: [*:0]const u8) callconv(.C) void;
+    pub const emit_frame_mark_start = *const fn (name: [*:0]const u8) callconv(.c) void;
+    pub const emit_frame_mark_end = *const fn (name: [*:0]const u8) callconv(.c) void;
     pub const emit_zone_begin = *const fn (
         srcloc: *const ___tracy_source_location_data,
         active: c_int,
-    ) callconv(.C) ___tracy_c_zone_context;
+    ) callconv(.c) ___tracy_c_zone_context;
     pub const emit_zone_begin_callstack = *const fn (
         srcloc: *const ___tracy_source_location_data,
         depth: c_int,
         active: c_int,
-    ) callconv(.C) ___tracy_c_zone_context;
-    pub const emit_zone_text = *const fn (ctx: ___tracy_c_zone_context, txt: [*]const u8, size: usize) callconv(.C) void;
-    pub const emit_zone_name = *const fn (ctx: ___tracy_c_zone_context, txt: [*]const u8, size: usize) callconv(.C) void;
-    pub const emit_zone_color = *const fn (ctx: ___tracy_c_zone_context, color: u32) callconv(.C) void;
-    pub const emit_zone_value = *const fn (ctx: ___tracy_c_zone_context, value: u64) callconv(.C) void;
-    pub const emit_zone_end = *const fn (ctx: ___tracy_c_zone_context) callconv(.C) void;
-    pub const emit_memory_alloc = *const fn (ptr: *const anyopaque, size: usize, secure: c_int) callconv(.C) void;
-    pub const emit_memory_alloc_callstack = *const fn (ptr: *const anyopaque, size: usize, depth: c_int, secure: c_int) callconv(.C) void;
-    pub const emit_memory_free = *const fn (ptr: *const anyopaque, secure: c_int) callconv(.C) void;
-    pub const emit_memory_free_callstack = *const fn (ptr: *const anyopaque, depth: c_int, secure: c_int) callconv(.C) void;
-    pub const emit_memory_alloc_named = *const fn (ptr: *const anyopaque, size: usize, secure: c_int, name: [*:0]const u8) callconv(.C) void;
-    pub const emit_memory_alloc_callstack_named = *const fn (ptr: *const anyopaque, size: usize, depth: c_int, secure: c_int, name: [*:0]const u8) callconv(.C) void;
-    pub const emit_memory_free_named = *const fn (ptr: *const anyopaque, secure: c_int, name: [*:0]const u8) callconv(.C) void;
-    pub const emit_memory_free_callstack_named = *const fn (ptr: *const anyopaque, depth: c_int, secure: c_int, name: [*:0]const u8) callconv(.C) void;
-    pub const emit_message = *const fn (txt: [*]const u8, size: usize, callstack: c_int) callconv(.C) void;
-    pub const emit_messageL = *const fn (txt: [*:0]const u8, callstack: c_int) callconv(.C) void;
-    pub const emit_messageC = *const fn (txt: [*]const u8, size: usize, color: u32, callstack: c_int) callconv(.C) void;
-    pub const emit_messageLC = *const fn (txt: [*:0]const u8, color: u32, callstack: c_int) callconv(.C) void;
-    pub const emit_frame_mark = *const fn (name: ?[*:0]const u8) callconv(.C) void;
-    pub const connected = *const fn () callconv(.C) c_int;
-    pub const set_thread_name = *const fn (name: [*:0]const u8) callconv(.C) void;
-    pub const startup_profiler = *const fn () callconv(.C) void;
-    pub const shutdown_profiler = *const fn () callconv(.C) void;
+    ) callconv(.c) ___tracy_c_zone_context;
+    pub const emit_zone_text = *const fn (ctx: ___tracy_c_zone_context, txt: [*]const u8, size: usize) callconv(.c) void;
+    pub const emit_zone_name = *const fn (ctx: ___tracy_c_zone_context, txt: [*]const u8, size: usize) callconv(.c) void;
+    pub const emit_zone_color = *const fn (ctx: ___tracy_c_zone_context, color: u32) callconv(.c) void;
+    pub const emit_zone_value = *const fn (ctx: ___tracy_c_zone_context, value: u64) callconv(.c) void;
+    pub const emit_zone_end = *const fn (ctx: ___tracy_c_zone_context) callconv(.c) void;
+    pub const emit_memory_alloc = *const fn (ptr: *const anyopaque, size: usize, secure: c_int) callconv(.c) void;
+    pub const emit_memory_alloc_callstack = *const fn (ptr: *const anyopaque, size: usize, depth: c_int, secure: c_int) callconv(.c) void;
+    pub const emit_memory_free = *const fn (ptr: *const anyopaque, secure: c_int) callconv(.c) void;
+    pub const emit_memory_free_callstack = *const fn (ptr: *const anyopaque, depth: c_int, secure: c_int) callconv(.c) void;
+    pub const emit_memory_alloc_named = *const fn (ptr: *const anyopaque, size: usize, secure: c_int, name: [*:0]const u8) callconv(.c) void;
+    pub const emit_memory_alloc_callstack_named = *const fn (ptr: *const anyopaque, size: usize, depth: c_int, secure: c_int, name: [*:0]const u8) callconv(.c) void;
+    pub const emit_memory_free_named = *const fn (ptr: *const anyopaque, secure: c_int, name: [*:0]const u8) callconv(.c) void;
+    pub const emit_memory_free_callstack_named = *const fn (ptr: *const anyopaque, depth: c_int, secure: c_int, name: [*:0]const u8) callconv(.c) void;
+    pub const emit_message = *const fn (txt: [*]const u8, size: usize, callstack: c_int) callconv(.c) void;
+    pub const emit_messageL = *const fn (txt: [*:0]const u8, callstack: c_int) callconv(.c) void;
+    pub const emit_messageC = *const fn (txt: [*]const u8, size: usize, color: u32, callstack: c_int) callconv(.c) void;
+    pub const emit_messageLC = *const fn (txt: [*:0]const u8, color: u32, callstack: c_int) callconv(.c) void;
+    pub const emit_frame_mark = *const fn (name: ?[*:0]const u8) callconv(.c) void;
+    pub const connected = *const fn () callconv(.c) c_int;
+    pub const set_thread_name = *const fn (name: [*:0]const u8) callconv(.c) void;
+    pub const startup_profiler = *const fn () callconv(.c) void;
+    pub const shutdown_profiler = *const fn () callconv(.c) void;
 };
 
 fn ___tracy_startup_profiler() void {
@@ -528,7 +528,7 @@ fn dlsym(comptime Type: type, comptime symbol: [:0]const u8) ?Type {
 
             const RLTD: std.c.RTLD = if (bun.Environment.isMac) @bitCast(@as(i32, -2)) else if (bun.Environment.isLinux) .{} else {};
 
-            if (bun.getenvZ("BUN_TRACY_PATH")) |path| {
+            if (bun.env_var.BUN_TRACY_PATH.get()) |path| {
                 const handle = bun.sys.dlopen(&(std.posix.toPosixPath(path) catch unreachable), RLTD);
                 if (handle != null) {
                     Handle.handle = handle;

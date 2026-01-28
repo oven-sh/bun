@@ -1,4 +1,5 @@
 pub const Classes = struct {
+    pub const Archive = api.Archive;
     pub const Blob = webcore.Blob;
     pub const HTMLRewriter = api.HTMLRewriter.HTMLRewriter;
     pub const Element = api.HTMLRewriter.Element;
@@ -22,6 +23,8 @@ pub const Classes = struct {
     pub const ExpectStringMatching = jsc.Expect.ExpectStringMatching;
     pub const ExpectArrayContaining = jsc.Expect.ExpectArrayContaining;
     pub const ExpectTypeOf = jsc.Expect.ExpectTypeOf;
+    pub const ScopeFunctions = jsc.Jest.bun_test.ScopeFunctions;
+    pub const DoneCallback = jsc.Jest.bun_test.DoneCallback;
     pub const FileSystemRouter = api.FileSystemRouter;
     pub const Glob = api.Glob;
     pub const ShellInterpreter = api.Shell.Interpreter;
@@ -46,6 +49,7 @@ pub const Classes = struct {
     pub const ServerWebSocket = api.ServerWebSocket;
     pub const Subprocess = api.Subprocess;
     pub const ResourceUsage = api.Subprocess.ResourceUsage;
+    pub const Terminal = api.Terminal;
     pub const TCPSocket = api.TCPSocket;
     pub const TLSSocket = api.TLSSocket;
     pub const UDPSocket = api.UDPSocket;
@@ -86,7 +90,7 @@ pub const Classes = struct {
     pub const RedisClient = api.Valkey;
     pub const BlockList = api.BlockList;
     pub const NativeZstd = api.NativeZstd;
-    pub const SourceMap = bun.sourcemap.JSSourceMap;
+    pub const SourceMap = bun.SourceMap.JSSourceMap;
 };
 
 const bun = @import("bun");

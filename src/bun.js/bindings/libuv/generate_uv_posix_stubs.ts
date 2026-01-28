@@ -215,10 +215,32 @@ async function generate(symbol_name: string): Promise<[stub: string, symbol_name
     assert(decl.includes("UV_EXTERN"), "Must include UV_EXTERN: \n" + decl);
 
     const types = extractParameterTypes(decl);
-    types.decls = types.decls.map(d => d + ";");
+
+    // For stub generation, we need semicolons but no initialization
+    const stub_types = { ...types };
+    stub_types.decls = stub_types.decls.map(d => d + ";");
+    if (stub_types.args.length === 1 && stub_types.args[0] === "void") {
+      stub_types.decls = [];
+      stub_types.args = [];
+    }
+
+    // For test plugin generation, we need initialization
     if (types.args.length === 1 && types.args[0] === "void") {
       types.decls = [];
       types.args = [];
+    } else {
+      types.decls = types.decls.map(d => {
+        if (d.includes("argv") || d.includes("argc")) {
+          return d.trim() + ";";
+        }
+
+        // Initialize function pointers and multi-pointers to NULL, everything else to {0}
+        if (d.includes("**") || d.includes("(*") || d.includes("_cb ")) {
+          return d + " = NULL;";
+        }
+
+        return d + " = {0};";
+      });
     }
 
     const decl_without_semicolon = decl.replaceAll(";", "").trim();
@@ -362,7 +384,7 @@ napi_value Init(napi_env env, napi_value exports) {
 NAPI_MODULE(NODE_GYP_MODULE_NAME, Init)
 `;
 
-const plugin_path_ = join(import.meta.dir, "../", "../", "test", "napi", "uv-stub-stuff", "plugin.c");
+const plugin_path_ = join(import.meta.dir, "../", "../", "../", "../", "test", "napi", "uv-stub-stuff", "plugin.c");
 await Bun.write(plugin_path_, test_plugin_contents);
 
 if (Bun.which("clang-format")) {

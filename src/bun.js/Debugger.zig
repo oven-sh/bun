@@ -26,10 +26,11 @@ pub const log = Output.scoped(.debugger, .visible);
 extern "c" fn Bun__createJSDebugger(*JSGlobalObject) u32;
 extern "c" fn Bun__ensureDebugger(u32, bool) void;
 extern "c" fn Bun__startJSDebuggerThread(*JSGlobalObject, u32, *bun.String, c_int, bool) void;
-var futex_atomic: std.atomic.Value(u32) = undefined;
+var futex_atomic: std.atomic.Value(u32) = .init(0);
 
 pub fn waitForDebuggerIfNecessary(this: *VirtualMachine) void {
     const debugger = &(this.debugger orelse return);
+    bun.analytics.Features.debugger += 1;
     if (!debugger.must_block_until_connected) {
         return;
     }
@@ -40,7 +41,7 @@ pub fn waitForDebuggerIfNecessary(this: *VirtualMachine) void {
         bun.Futex.waitForever(&futex_atomic, 1);
     }
     if (comptime Environment.enable_logs)
-        Debugger.log("waitForDebugger: {}", .{Output.ElapsedFormatter{
+        Debugger.log("waitForDebugger: {f}", .{Output.ElapsedFormatter{
             .colors = Output.enable_ansi_colors_stderr,
             .duration_ns = @truncate(@as(u128, @intCast(std.time.nanoTimestamp() - bun.cli.start_time))),
         }});
@@ -50,24 +51,24 @@ pub fn waitForDebuggerIfNecessary(this: *VirtualMachine) void {
     // Sleep up to 30ms for automatic inspection.
     const wait_for_connection_delay_ms = 30;
 
-    var deadline: bun.timespec = if (debugger.wait_for_connection == .shortly) bun.timespec.now().addMs(wait_for_connection_delay_ms) else undefined;
+    var deadline: bun.timespec = if (debugger.wait_for_connection == .shortly) bun.timespec.now(.force_real_time).addMs(wait_for_connection_delay_ms) else undefined;
 
     if (comptime Environment.isWindows) {
         // TODO: remove this when tickWithTimeout actually works properly on Windows.
         if (debugger.wait_for_connection == .shortly) {
             uv.uv_update_time(this.uvLoop());
-            var timer = bun.default_allocator.create(uv.Timer) catch bun.outOfMemory();
+            var timer = bun.handleOom(bun.default_allocator.create(uv.Timer));
             timer.* = std.mem.zeroes(uv.Timer);
             timer.init(this.uvLoop());
             const onDebuggerTimer = struct {
-                fn call(handle: *uv.Timer) callconv(.C) void {
+                fn call(handle: *uv.Timer) callconv(.c) void {
                     const vm = VirtualMachine.get();
                     vm.debugger.?.poll_ref.unref(vm);
                     uv.uv_close(@ptrCast(handle), deinitTimer);
                 }
 
-                fn deinitTimer(handle: *anyopaque) callconv(.C) void {
-                    bun.default_allocator.destroy(@as(*uv.Timer, @alignCast(@ptrCast(handle))));
+                fn deinitTimer(handle: *anyopaque) callconv(.c) void {
+                    bun.default_allocator.destroy(@as(*uv.Timer, @ptrCast(@alignCast(handle))));
                 }
             }.call;
             timer.start(wait_for_connection_delay_ms, 0, &onDebuggerTimer);
@@ -82,7 +83,7 @@ pub fn waitForDebuggerIfNecessary(this: *VirtualMachine) void {
                 this.eventLoop().autoTickActive();
 
                 if (comptime Environment.enable_logs)
-                    log("waited: {}", .{std.fmt.fmtDuration(@intCast(@as(i64, @truncate(std.time.nanoTimestamp() - bun.cli.start_time))))});
+                    log("waited: {D}", .{@as(i64, @truncate(std.time.nanoTimestamp() - bun.cli.start_time))});
             },
             .shortly => {
                 // Handle .incrementRefConcurrently
@@ -97,9 +98,9 @@ pub fn waitForDebuggerIfNecessary(this: *VirtualMachine) void {
                 this.uwsLoop().tickWithTimeout(&deadline);
 
                 if (comptime Environment.enable_logs)
-                    log("waited: {}", .{std.fmt.fmtDuration(@intCast(@as(i64, @truncate(std.time.nanoTimestamp() - bun.cli.start_time))))});
+                    log("waited: {D}", .{@as(i64, @truncate(std.time.nanoTimestamp() - bun.cli.start_time))});
 
-                const elapsed = bun.timespec.now();
+                const elapsed = bun.timespec.now(.force_real_time);
                 if (elapsed.order(&deadline) != .lt) {
                     debugger.poll_ref.unref(this);
                     log("Timed out waiting for the debugger", .{});
@@ -127,7 +128,6 @@ pub fn create(this: *VirtualMachine, globalObject: *JSGlobalObject) !void {
         debugger.script_execution_context_id = Bun__createJSDebugger(globalObject);
         if (!this.has_started_debugger) {
             this.has_started_debugger = true;
-            futex_atomic = std.atomic.Value(u32).init(0);
             var thread = try std.Thread.spawn(.{}, startJSDebuggerThread, .{this});
             thread.detach();
         }
@@ -146,10 +146,18 @@ pub fn startJSDebuggerThread(other_vm: *VirtualMachine) void {
     log("startJSDebuggerThread", .{});
     jsc.markBinding(@src());
 
+    // Create a thread-local env_loader to avoid allocator threading violations
+    const thread_allocator = arena.allocator();
+    const env_map = thread_allocator.create(DotEnv.Map) catch @panic("Failed to create debugger env map");
+    env_map.* = DotEnv.Map.init(thread_allocator);
+    const env_loader = thread_allocator.create(DotEnv.Loader) catch @panic("Failed to create debugger env loader");
+    env_loader.* = DotEnv.Loader.init(env_map, thread_allocator);
+
     var vm = VirtualMachine.init(.{
-        .allocator = arena.allocator(),
+        .allocator = thread_allocator,
         .args = std.mem.zeroes(bun.schema.api.TransformOptions),
         .store_fd = false,
+        .env_loader = env_loader,
     }) catch @panic("Failed to create Debugger VM");
     vm.allocator = arena.allocator();
     vm.arena = &arena;
@@ -291,6 +299,7 @@ pub const TestReporterAgent = struct {
     handle: ?*Handle = null,
     const debug = Output.scoped(.TestReporterAgent, .visible);
 
+    /// this enum is kept in sync with c++ InspectorTestReporterAgent.cpp `enum class BunTestStatus`
     pub const TestStatus = enum(u8) {
         pass,
         fail,
@@ -307,11 +316,16 @@ pub const TestReporterAgent = struct {
 
     pub const Handle = opaque {
         extern "c" fn Bun__TestReporterAgentReportTestFound(agent: *Handle, callFrame: *jsc.CallFrame, testId: c_int, name: *bun.String, item_type: TestType, parentId: c_int) void;
+        extern "c" fn Bun__TestReporterAgentReportTestFoundWithLocation(agent: *Handle, testId: c_int, name: *bun.String, item_type: TestType, parentId: c_int, sourceURL: *bun.String, line: c_int) void;
         extern "c" fn Bun__TestReporterAgentReportTestStart(agent: *Handle, testId: c_int) void;
         extern "c" fn Bun__TestReporterAgentReportTestEnd(agent: *Handle, testId: c_int, bunTestStatus: TestStatus, elapsed: f64) void;
 
         pub fn reportTestFound(this: *Handle, callFrame: *jsc.CallFrame, testId: i32, name: *bun.String, item_type: TestType, parentId: i32) void {
             Bun__TestReporterAgentReportTestFound(this, callFrame, testId, name, item_type, parentId);
+        }
+
+        pub fn reportTestFoundWithLocation(this: *Handle, testId: i32, name: *bun.String, item_type: TestType, parentId: i32, sourceURL: *bun.String, line: i32) void {
+            Bun__TestReporterAgentReportTestFoundWithLocation(this, testId, name, item_type, parentId, sourceURL, line);
         }
 
         pub fn reportTestStart(this: *Handle, testId: c_int) void {
@@ -326,8 +340,88 @@ pub const TestReporterAgent = struct {
         if (VirtualMachine.get().debugger) |*debugger| {
             debug("enable", .{});
             debugger.test_reporter_agent.handle = agent;
+
+            // Retroactively report any tests that were already discovered before the debugger connected
+            retroactivelyReportDiscoveredTests(agent);
         }
     }
+
+    /// When TestReporter.enable is called after test collection has started/finished,
+    /// we need to retroactively assign test IDs and report discovered tests.
+    fn retroactivelyReportDiscoveredTests(agent: *Handle) void {
+        const Jest = jsc.Jest.Jest;
+        const runner = Jest.runner orelse return;
+        const active_file = runner.bun_test_root.active_file.get() orelse return;
+
+        // Only report if we're in collection or execution phase (tests have been discovered)
+        switch (active_file.phase) {
+            .collection, .execution => {},
+            .done => return,
+        }
+
+        // Get the file path for source location info
+        const file_path = runner.files.get(active_file.file_id).source.path.text;
+        var source_url = bun.String.init(file_path);
+
+        // Track the maximum ID we assign
+        var max_id: i32 = 0;
+
+        // Recursively report all discovered tests starting from root scope
+        const root_scope = active_file.collection.root_scope;
+        retroactivelyReportScope(agent, root_scope, -1, &max_id, &source_url);
+
+        debug("retroactively reported {} tests", .{max_id});
+    }
+
+    fn retroactivelyReportScope(agent: *Handle, scope: *bun_test.DescribeScope, parent_id: i32, max_id: *i32, source_url: *bun.String) void {
+        for (scope.entries.items) |*entry| {
+            switch (entry.*) {
+                .describe => |describe| {
+                    // Only report and assign ID if not already assigned
+                    if (describe.base.test_id_for_debugger == 0) {
+                        max_id.* += 1;
+                        const test_id = max_id.*;
+                        // Assign the ID so start/end events will fire during execution
+                        describe.base.test_id_for_debugger = test_id;
+                        var name = bun.String.init(describe.base.name orelse "(unnamed)");
+                        agent.reportTestFoundWithLocation(
+                            test_id,
+                            &name,
+                            .describe,
+                            parent_id,
+                            source_url,
+                            @intCast(describe.base.line_no),
+                        );
+                        // Recursively report children with this describe as parent
+                        retroactivelyReportScope(agent, describe, test_id, max_id, source_url);
+                    } else {
+                        // Already has ID, just recurse with existing ID as parent
+                        retroactivelyReportScope(agent, describe, describe.base.test_id_for_debugger, max_id, source_url);
+                    }
+                },
+                .test_callback => |test_entry| {
+                    // Only report and assign ID if not already assigned
+                    if (test_entry.base.test_id_for_debugger == 0) {
+                        max_id.* += 1;
+                        const test_id = max_id.*;
+                        // Assign the ID so start/end events will fire during execution
+                        test_entry.base.test_id_for_debugger = test_id;
+                        var name = bun.String.init(test_entry.base.name orelse "(unnamed)");
+                        agent.reportTestFoundWithLocation(
+                            test_id,
+                            &name,
+                            .@"test",
+                            parent_id,
+                            source_url,
+                            @intCast(test_entry.base.line_no),
+                        );
+                    }
+                },
+            }
+        }
+    }
+
+    const bun_test = jsc.Jest.bun_test;
     pub export fn Bun__TestReporterAgentDisable(_: *Handle) void {
         if (VirtualMachine.get().debugger) |*debugger| {
             debug("disable", .{});
@@ -426,6 +520,7 @@ pub const DebuggerId = bun.GenericIndex(i32, Debugger);
 pub const BunFrontendDevServerAgent = @import("./api/server/InspectorBunFrontendDevServerAgent.zig").BunFrontendDevServerAgent;
 pub const HTTPServerAgent = @import("./bindings/HTTPServerAgent.zig");
 
+const DotEnv = @import("../env_loader.zig");
 const std = @import("std");
 
 const bun = @import("bun");

@@ -1,5 +1,3 @@
-import type * as s from "stream";
-
 // Users may override the global fetch implementation, so we need to ensure these are the originals.
 const bindings = $cpp("NodeFetch.cpp", "createNodeFetchInternalBinding");
 const WebResponse: typeof globalThis.Response = bindings[0];
@@ -71,25 +69,25 @@ class Response extends WebResponse {
 
   async arrayBuffer() {
     // load the getter
-    this.body;
+    void this.body;
     return await super.arrayBuffer();
   }
 
   async blob() {
     // load the getter
-    this.body;
+    void this.body;
     return await super.blob();
   }
 
   async formData() {
     // load the getter
-    this.body;
+    void this.body;
     return await super.formData();
   }
 
   async json() {
     // load the getter
-    this.body;
+    void this.body;
     return await super.json();
   }
 
@@ -97,13 +95,13 @@ class Response extends WebResponse {
   // but is still used by some libraries and frameworks (like Astro)
   async buffer() {
     // load the getter
-    this.body;
+    void this.body;
     return new $Buffer(await super.arrayBuffer());
   }
 
   async text() {
     // load the getter
-    this.body;
+    void this.body;
     return await super.text();
   }
 
@@ -147,22 +145,31 @@ class Request extends WebRequest {
  * like `.json()` or `.text()`, which is faster in Bun's native fetch, vs `node-fetch` going
  * through `node:http`, a node stream, then processing the data.
  */
-async function fetch(url: any, init?: RequestInit & { body?: any }) {
-  // input node stream -> web stream
-  let body: s.Readable | undefined = init?.body;
-  if (body) {
-    const chunks: any = [];
-    const { Readable } = require("node:stream");
-    if (body instanceof Readable) {
-      // TODO: Bun fetch() doesn't support ReadableStream at all.
-      for await (const chunk of body) {
-        chunks.push(chunk);
+async function fetch(
+  // eslint-disable-next-line no-unused-vars
+  url: any,
+
+  // eslint-disable-next-line no-unused-vars
+  init?: RequestInit & { body?: any },
+) {
+  // Convert Node.js streams to Web ReadableStream if they don't have Symbol.asyncIterator.
+  // This is needed for libraries like `form-data` that use CombinedStream which extends
+  // Node.js Stream but doesn't implement Symbol.asyncIterator.
+  if (init?.body && typeof init.body === "object" && !init.body[Symbol.asyncIterator]) {
+    const { Readable, Stream, PassThrough } = require("node:stream");
+    if (init.body instanceof Stream || init.body instanceof Readable) {
+      // For old-style streams that don't have asyncIterator (like CombinedStream used by form-data),
+      // pipe through a PassThrough stream to convert to a Readable that can be converted to a web stream.
+      let readable = init.body;
+      if (!(readable instanceof Readable)) {
+        const passthrough = new PassThrough();
+        readable.pipe(passthrough);
+        readable = passthrough;
       }
-      init = { ...init, body: new Blob(chunks) };
+      init = { ...init, body: Readable.toWeb(readable) };
     }
   }
-
-  const response = await nativeFetch(url, init);
+  const response = await nativeFetch.$call(undefined, url, init);
   Object.setPrototypeOf(response, ResponsePrototype);
   return response;
 }
@@ -190,7 +197,7 @@ class FetchError extends FetchBaseError {
 }
 
 function blobFrom(path, options) {
-  return Promise.resolve(Bun.file(path, options));
+  return Promise.$resolve(Bun.file(path, options));
 }
 
 function blobFromSync(path, options) {

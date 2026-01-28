@@ -1,5 +1,12 @@
 import { describe } from "bun:test";
+import { bunEnv } from "harness";
 import { itBundled } from "./expectBundled";
+
+const env = {
+  ...bunEnv,
+  // Deflake these tests that check import evaluation order is consistent.
+  BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: "1",
+};
 
 describe("bundler", () => {
   itBundled("splitting/DynamicImportCSSFile", {
@@ -19,6 +26,7 @@ describe("bundler", () => {
     format: "esm",
     run: {
       file: "/out/client.js",
+      env,
       stdout: "test.ts loaded",
     },
   });
@@ -48,7 +56,8 @@ describe("bundler", () => {
     format: "esm",
     run: {
       file: "/out/entry.js",
-      stdout: "module1.js executed\nmodule1 loaded\nmodule2.js executed\nmodule2 loaded",
+      env,
+      stdout: "module1.js executed\nmodule2.js executed\nmodule1 loaded\nmodule2 loaded",
     },
   });
 
@@ -73,6 +82,7 @@ describe("bundler", () => {
     format: "esm",
     run: {
       file: "/out/entry.js",
+      env,
       stdout: "dynamic.js executed\ndynamic module loaded",
     },
   });
@@ -102,6 +112,7 @@ describe("bundler", () => {
     format: "esm",
     run: {
       file: "/out/entry.js",
+      env,
       stdout: "level1.js executed\nlevel1 loaded\nlevel2.js executed\nlevel2 loaded from level1",
     },
   });
@@ -134,7 +145,8 @@ describe("bundler", () => {
     format: "esm",
     run: {
       file: "/out/entry.js",
-      stdout: "moduleA.js executed\nmoduleA loaded\nmoduleB.js executed\nmoduleB loaded",
+      env,
+      stdout: "moduleA.js executed\nmoduleB.js executed\nmoduleA loaded\nmoduleB loaded",
     },
   });
 
@@ -179,6 +191,7 @@ describe("bundler", () => {
     format: "esm",
     run: {
       file: "/out/entry.js",
+      env,
       stdout: "chain1.js executed\nchain1 loaded\nchain2.js executed\nchain2 loaded\nchain3.js executed\nchain3 loaded",
     },
   });
@@ -212,6 +225,7 @@ describe("bundler", () => {
     format: "esm",
     run: {
       file: "/out/entry.js",
+      env,
       stdout: "moduleTrue.js executed\ntrue branch loaded",
     },
   });
@@ -241,10 +255,12 @@ describe("bundler", () => {
     run: [
       {
         file: "/out/entry1.js",
+        env,
         stdout: "entry1.js executed",
       },
       {
         file: "/out/entry2.js",
+        env,
         stdout: "entry2.js executed",
       },
     ],
@@ -265,6 +281,7 @@ describe("bundler", () => {
     format: "esm",
     run: {
       file: "/out/entry.js",
+      env,
       stdout: "CSS import succeeded",
     },
   });
@@ -302,6 +319,7 @@ describe("bundler", () => {
     format: "esm",
     run: {
       file: "/out/entry.js",
+      env,
       stdout: "a.js executed\na loaded from entry\nb.js executed\nb.js imports a {}\nb loaded from entry, value: B",
     },
   });

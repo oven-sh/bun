@@ -22,7 +22,7 @@ WTF::String decodeURIComponentSIMD(std::span<const uint8_t> input)
 {
     ASSERT_WITH_MESSAGE(simdutf::validate_ascii(reinterpret_cast<const char*>(input.data()), input.size()), "Input is not ASCII");
 
-    const std::span<const LChar> lchar = { reinterpret_cast<const LChar*>(input.data()), input.size() };
+    const std::span<const Latin1Character> lchar = { reinterpret_cast<const Latin1Character*>(input.data()), input.size() };
 
     // Fast path - check if there are any % characters at all
     const uint8_t* cursor = reinterpret_cast<const uint8_t*>(input.data());
@@ -53,7 +53,7 @@ WTF::String decodeURIComponentSIMD(std::span<const uint8_t> input)
 slow_path:
     StringBuilder result;
     result.reserveCapacity(input.size());
-    result.append(std::span<const LChar>(reinterpret_cast<const LChar*>(input.data()), cursor - input.data()));
+    result.append(std::span<const Latin1Character>(reinterpret_cast<const Latin1Character*>(input.data()), cursor - input.data()));
 
     while (cursor < end) {
         if (*cursor == '%') {
@@ -254,7 +254,7 @@ slow_path:
             }
 
             // Append everything up to lookAhead
-            result.append(std::span<const LChar>(reinterpret_cast<const LChar*>(cursor), lookAhead - cursor));
+            result.append(std::span<const Latin1Character>(reinterpret_cast<const Latin1Character*>(cursor), lookAhead - cursor));
             cursor = lookAhead;
 
             // Handle remaining bytes until next % or end
@@ -262,7 +262,7 @@ slow_path:
                 cursor++;
             }
             if (cursor > lookAhead) {
-                result.append(std::span<const LChar>(reinterpret_cast<const LChar*>(lookAhead), cursor - lookAhead));
+                result.append(std::span<const Latin1Character>(reinterpret_cast<const Latin1Character*>(lookAhead), cursor - lookAhead));
             }
         }
     }
@@ -283,7 +283,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDecodeURIComponentSIMD, (JSC::JSGlobalObject 
         if (!string.is8Bit()) {
             const auto span = string.span16();
             size_t expected_length = simdutf::latin1_length_from_utf16(span.size());
-            std::span<LChar> ptr;
+            std::span<Latin1Character> ptr;
             WTF::String convertedString = WTF::String::tryCreateUninitialized(expected_length, ptr);
             if (convertedString.isNull()) [[unlikely]] {
                 throwVMError(globalObject, scope, createOutOfMemoryError(globalObject));

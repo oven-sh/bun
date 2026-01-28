@@ -51,7 +51,7 @@ pub const MacroContext = struct {
         bun.assert(!isMacroPath(import_record_path_without_macro_prefix));
 
         const input_specifier = brk: {
-            if (jsc.ModuleLoader.HardcodedModule.Alias.get(import_record_path, .bun)) |replacement| {
+            if (jsc.ModuleLoader.HardcodedModule.Alias.get(import_record_path, .bun, .{})) |replacement| {
                 break :brk replacement.path;
             }
 
@@ -320,12 +320,11 @@ pub const Runner = struct {
                 .Null => return Expr.init(E.Null, E.Null{}, this.caller.loc),
                 .Private => {
                     this.is_top_level = false;
-                    const _entry = this.visited.getOrPut(this.allocator, value) catch unreachable;
-                    if (_entry.found_existing) {
-                        return _entry.value_ptr.*;
+                    if (this.visited.get(value)) |cached| {
+                        return cached;
                     }
 
-                    var blob_: ?jsc.WebCore.Blob = null;
+                    var blob_: ?*const jsc.WebCore.Blob = null;
                     const mime_type: ?MimeType = null;
 
                     if (value.jsType() == .DOMWrapper) {
@@ -334,30 +333,23 @@ pub const Runner = struct {
                         } else if (value.as(jsc.WebCore.Request)) |resp| {
                             return this.run(try resp.getBlobWithoutCallFrame(this.global));
                         } else if (value.as(jsc.WebCore.Blob)) |resp| {
-                            blob_ = resp.*;
-                            blob_.?.allocator = null;
+                            blob_ = resp;
                         } else if (value.as(bun.api.ResolveMessage) != null or value.as(bun.api.BuildMessage) != null) {
                             _ = this.macro.vm.uncaughtException(this.global, value, false);
                             return error.MacroFailed;
                         }
                     }
 
-                    if (blob_) |*blob| {
-                        const out_expr = Expr.fromBlob(
+                    if (blob_) |blob| {
+                        return Expr.fromBlob(
                             blob,
                             this.allocator,
                             mime_type,
                             this.log,
                             this.caller.loc,
                         ) catch {
-                            blob.deinit();
                             return error.MacroFailed;
                         };
-                        if (out_expr.data == .e_string) {
-                            blob.deinit();
-                        }
-
-                        return out_expr;
                     }
 
                     return Expr.init(E.String, E.String.empty, this.caller.loc);
@@ -371,41 +363,20 @@ pub const Runner = struct {
 
                     const _entry = this.visited.getOrPut(this.allocator, value) catch unreachable;
                     if (_entry.found_existing) {
-                        switch (_entry.value_ptr.*.data) {
-                            .e_object, .e_array => {
-                                this.log.addErrorFmt(this.source, this.caller.loc, this.allocator, "converting circular structure to Bun AST is not implemented yet", .{}) catch unreachable;
-                                return error.MacroFailed;
-                            },
-                            else => {},
-                        }
                         return _entry.value_ptr.*;
                     }
 
                     var iter = try jsc.JSArrayIterator.init(value, this.global);
-                    if (iter.len == 0) {
-                        const result = Expr.init(
-                            E.Array,
-                            E.Array{
-                                .items = ExprNodeList.init(&[_]Expr{}),
-                                .was_originally_macro = true,
-                            },
-                            this.caller.loc,
-                        );
-                        _entry.value_ptr.* = result;
-                        return result;
-                    }
+
+                    // Process all array items
                     var array = this.allocator.alloc(Expr, iter.len) catch unreachable;
-                    var out = Expr.init(
+                    errdefer this.allocator.free(array);
+                    const expr = Expr.init(
                         E.Array,
-                        E.Array{
-                            .items = ExprNodeList.init(array[0..0]),
-                            .was_originally_macro = true,
-                        },
+                        E.Array{ .items = ExprNodeList.empty, .was_originally_macro = true },
                         this.caller.loc,
                     );
-                    _entry.value_ptr.* = out;
-
-                    errdefer this.allocator.free(array);
+                    _entry.value_ptr.* = expr;
                     var i: usize = 0;
                     while (try iter.next()) |item| {
                         array[i] = try this.run(item);
@@ -413,24 +384,27 @@ pub const Runner = struct {
                             continue;
                         i += 1;
                     }
-                    out.data.e_array.items = ExprNodeList.init(array);
-                    _entry.value_ptr.* = out;
-                    return out;
+
+                    expr.data.e_array.items = ExprNodeList.fromOwnedSlice(array);
+                    expr.data.e_array.items.len = @truncate(i);
+                    return expr;
                 },
                 // TODO: optimize this
                 jsc.ConsoleObject.Formatter.Tag.Object => {
                     this.is_top_level = false;
                     const _entry = this.visited.getOrPut(this.allocator, value) catch unreachable;
                     if (_entry.found_existing) {
-                        switch (_entry.value_ptr.*.data) {
-                            .e_object, .e_array => {
-                                this.log.addErrorFmt(this.source, this.caller.loc, this.allocator, "converting circular structure to Bun AST is not implemented yet", .{}) catch unreachable;
-                                return error.MacroFailed;
-                            },
-                            else => {},
-                        }
                         return _entry.value_ptr.*;
                     }
+
+                    // Reserve a placeholder to break cycles.
+                    const expr = Expr.init(
+                        E.Object,
+                        E.Object{ .properties = G.Property.List{}, .was_originally_macro = true },
+                        this.caller.loc,
+                    );
+                    _entry.value_ptr.* = expr;
+
                     // SAFETY: tag ensures `value` is an object.
                     const obj = value.getObject() orelse unreachable;
                     var object_iter = try jsc.JSPropertyIterator(.{
@@ -438,27 +412,29 @@ pub const Runner = struct {
                         .include_value = true,
                     }).init(this.global, obj);
                     defer object_iter.deinit();
-                    var properties = this.allocator.alloc(G.Property, object_iter.len) catch unreachable;
-                    errdefer this.allocator.free(properties);
-                    var out = Expr.init(
-                        E.Object,
-                        E.Object{
-                            .properties = BabyList(G.Property).init(properties),
-                            .was_originally_macro = true,
-                        },
-                        this.caller.loc,
+
+                    // Build properties list
+                    var properties = bun.handleOom(
+                        G.Property.List.initCapacity(this.allocator, object_iter.len),
                     );
-                    _entry.value_ptr.* = out;
+                    errdefer properties.clearAndFree(this.allocator);
 
                     while (try object_iter.next()) |prop| {
-                        properties[object_iter.i] = G.Property{
-                            .key = Expr.init(E.String, E.String.init(prop.toOwnedSlice(this.allocator) catch unreachable), this.caller.loc),
-                            .value = try this.run(object_iter.value),
-                        };
+                        const object_value = try this.run(object_iter.value);
+
+                        properties.append(this.allocator, G.Property{
+                            .key = Expr.init(
+                                E.String,
+                                E.String.init(prop.toOwnedSlice(this.allocator) catch unreachable),
+                                this.caller.loc,
+                            ),
+                            .value = object_value,
+                        }) catch |err| bun.handleOom(err);
                     }
-                    out.data.e_object.properties = BabyList(G.Property).init(properties[0..object_iter.i]);
-                    _entry.value_ptr.* = out;
-                    return out;
+
+                    expr.data.e_object.properties = properties;
+
+                    return expr;
                 },
 
                 .JSON => {
@@ -493,9 +469,8 @@ pub const Runner = struct {
                     return Expr.init(E.String, E.String.init(out_slice), this.caller.loc);
                 },
                 .Promise => {
-                    const _entry = this.visited.getOrPut(this.allocator, value) catch unreachable;
-                    if (_entry.found_existing) {
-                        return _entry.value_ptr.*;
+                    if (this.visited.get(value)) |cached| {
+                        return cached;
                     }
 
                     const promise = value.asAnyPromise() orelse @panic("Unexpected promise type");
@@ -503,7 +478,7 @@ pub const Runner = struct {
                     this.macro.vm.waitForPromise(promise);
 
                     const promise_result = promise.result(this.macro.vm.jsc_vm);
-                    const rejected = promise.status(this.macro.vm.jsc_vm) == .rejected;
+                    const rejected = promise.status() == .rejected;
 
                     if (promise_result.isUndefined() and this.is_top_level) {
                         this.is_top_level = false;
@@ -517,7 +492,7 @@ pub const Runner = struct {
                     this.is_top_level = false;
                     const result = try this.run(promise_result);
 
-                    _entry.value_ptr.* = result;
+                    this.visited.put(this.allocator, value, result) catch unreachable;
                     return result;
                 },
                 else => {},
@@ -607,16 +582,14 @@ pub const Runner = struct {
                 return result;
             }
 
-            pub fn call() callconv(.C) void {
+            pub fn call() callconv(.c) void {
                 const call_args_copy = call_args;
                 const local_result = @call(.auto, Run.runAsync, call_args_copy);
                 result = local_result;
             }
         };
 
-        // TODO: can change back to `return CallData.callWrapper(.{`
-        // when https://github.com/ziglang/zig/issues/16242 is fixed
-        return CallData.callWrapper(CallArgs{
+        return CallData.callWrapper(.{
             macro,
             log,
             allocator,
@@ -644,7 +617,6 @@ const Resolver = @import("../resolver/resolver.zig").Resolver;
 const isPackagePath = @import("../resolver/resolver.zig").isPackagePath;
 
 const bun = @import("bun");
-const BabyList = bun.BabyList;
 const Environment = bun.Environment;
 const Output = bun.Output;
 const Transpiler = bun.Transpiler;

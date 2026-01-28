@@ -16,11 +16,22 @@ pub const dom_call = DOMCall("FFI", @This(), "ptr", DOMEffect.forRead(.TypedArra
 pub fn toJS(globalObject: *jsc.JSGlobalObject) jsc.JSValue {
     const object = jsc.JSValue.createEmptyObject(globalObject, comptime std.meta.fieldNames(@TypeOf(fields)).len + 2);
     inline for (comptime std.meta.fieldNames(@TypeOf(fields))) |field| {
-        object.put(
-            globalObject,
-            comptime ZigString.static(field),
-            jsc.createCallback(globalObject, comptime ZigString.static(field), 1, comptime @field(fields, field)),
-        );
+        if (comptime bun.strings.eqlComptime(field, "CString")) {
+            // CString needs to be callable as a constructor for backward compatibility.
+            // Pass the same function as the constructor so `new CString(ptr)` works.
+            const func = jsc.toJSHostFn(@field(fields, field));
+            object.put(
+                globalObject,
+                comptime ZigString.static(field),
+                jsc.JSFunction.create(globalObject, field, func, 1, .{ .constructor = func }),
+            );
+        } else {
+            object.put(
+                globalObject,
+                comptime ZigString.static(field),
+                jsc.JSFunction.create(globalObject, field, @field(fields, field), 1, .{}),
+            );
+        }
     }
 
     dom_call.put(globalObject, object);
@@ -415,7 +426,7 @@ const ValueOrError = union(enum) {
 };
 
 pub fn getPtrSlice(globalThis: *JSGlobalObject, value: JSValue, byteOffset: ?JSValue, byteLength: ?JSValue) ValueOrError {
-    if (!value.isNumber() or value.asNumber() < 0 or value.asNumber() > std.math.maxInt(usize)) {
+    if (!value.isNumber() or value.asNumber() < 0 or value.asNumber() > @as(f64, @as(comptime_float, std.math.maxInt(usize)))) {
         return .{ .err = globalThis.toInvalidArguments("ptr must be a number.", .{}) };
     }
 
@@ -582,7 +593,7 @@ pub fn toBuffer(
                 return jsc.JSValue.createBufferWithCtx(globalThis, slice, ctx, callback);
             }
 
-            return jsc.JSValue.createBuffer(globalThis, slice, null);
+            return jsc.JSValue.createBuffer(globalThis, slice);
         },
     }
 }

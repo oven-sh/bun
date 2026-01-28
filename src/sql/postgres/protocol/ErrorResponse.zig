@@ -2,9 +2,9 @@ const ErrorResponse = @This();
 
 messages: std.ArrayListUnmanaged(FieldMessage) = .{},
 
-pub fn format(formatter: ErrorResponse, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+pub fn format(formatter: ErrorResponse, writer: *std.Io.Writer) !void {
     for (formatter.messages.items) |message| {
-        try std.fmt.format(writer, "{}\n", .{message});
+        try writer.print("{f}\n", .{message});
     }
 }
 
@@ -132,7 +132,9 @@ pub fn toJS(this: ErrorResponse, globalObject: *jsc.JSGlobalObject) JSValue {
     const line_slice = if (line.isEmpty()) null else line.byteSlice();
     const routine_slice = if (routine.isEmpty()) null else routine.byteSlice();
 
-    return createPostgresError(globalObject, b.allocatedSlice()[0..b.len], .{
+    const error_message = if (b.len > 0) b.allocatedSlice()[0..b.len] else "";
+
+    return createPostgresError(globalObject, error_message, .{
         .code = error_code,
         .errno = errno,
         .detail = detail_slice,

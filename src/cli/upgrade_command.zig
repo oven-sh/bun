@@ -19,7 +19,7 @@ pub const Version = struct {
 
                 return std.fmt.allocPrint(
                     bun.default_allocator,
-                    "bun-canary-timestamp-{any}",
+                    "bun-canary-timestamp-{f}",
                     .{
                         bun.fmt.hexIntLower(
                             bun.hash(
@@ -27,7 +27,7 @@ pub const Version = struct {
                             ),
                         ),
                     },
-                ) catch bun.outOfMemory();
+                ) catch |err| bun.handleOom(err);
             }
             return this.tag;
         }
@@ -39,7 +39,7 @@ pub const Version = struct {
         .mac => "darwin",
         .linux => "linux",
         .windows => "windows",
-        else => @compileError("Unsupported OS for Bun Upgrade"),
+        .wasm => @compileError("Unsupported OS for Bun Upgrade"),
     };
 
     pub const arch_label = if (Environment.isAarch64) "aarch64" else "x64";
@@ -311,7 +311,7 @@ pub const UpgradeCommand = struct {
 
     const manual_upgrade_command = switch (Environment.os) {
         .linux, .mac => "curl -fsSL https://bun.com/install | bash",
-        .windows => "powershell -c 'irm bun.com/install.ps1|iex'",
+        .windows => "powershell -c 'irm bun.sh/install.ps1|iex'",
         else => "(TODO: Install script for " ++ Environment.os.displayString() ++ ")",
     };
 
@@ -422,6 +422,7 @@ pub const UpgradeCommand = struct {
         {
             var refresher = Progress{};
             var progress = refresher.start("Downloading", version.size);
+            progress.unit = .bytes;
             refresher.refresh();
             var async_http = try ctx.allocator.create(HTTP.AsyncHTTP);
             var zip_file_buffer = try ctx.allocator.create(MutableString);
@@ -557,11 +558,11 @@ pub const UpgradeCommand = struct {
                         save_dir.deleteFileZ(tmpname) catch {};
                         Global.exit(1);
                     }
-                } else if (Environment.isWindows) {
+                } else if (comptime Environment.isWindows) {
                     // Run a powershell script to unzip the file
                     const unzip_script = try std.fmt.allocPrint(
                         ctx.allocator,
-                        "$global:ProgressPreference='SilentlyContinue';Expand-Archive -Path \"{}\" \"{}\" -Force",
+                        "$global:ProgressPreference='SilentlyContinue';Expand-Archive -Path \"{f}\" \"{f}\" -Force",
                         .{
                             bun.fmt.escapePowershell(tmpname),
                             bun.fmt.escapePowershell(tmpdir_path),
@@ -570,9 +571,9 @@ pub const UpgradeCommand = struct {
 
                     var buf: bun.PathBuffer = undefined;
                     const powershell_path =
-                        bun.which(&buf, bun.getenvZ("PATH") orelse "", "", "powershell") orelse
+                        bun.which(&buf, bun.env_var.PATH.get() orelse "", "", "powershell") orelse
                         hardcoded_system_powershell: {
-                            const system_root = bun.getenvZ("SystemRoot") orelse "C:\\Windows";
+                            const system_root = bun.env_var.SYSTEMROOT.get() orelse "C:\\Windows";
                             const hardcoded_system_powershell = bun.path.joinAbsStringBuf(system_root, &buf, &.{ system_root, "System32\\WindowsPowerShell\\v1.0\\powershell.exe" }, .windows);
                             if (bun.sys.exists(hardcoded_system_powershell)) {
                                 break :hardcoded_system_powershell hardcoded_system_powershell;
@@ -601,7 +602,7 @@ pub const UpgradeCommand = struct {
                         .stdin = .inherit,
 
                         .windows = if (Environment.isWindows) .{
-                            .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(null)),
+                            .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(null, null)),
                         },
                     }) catch |err| {
                         Output.prettyErrorln("<r><red>error:<r> Failed to spawn Expand-Archive on {s} due to error {s}", .{ tmpname, @errorName(err) });
@@ -757,10 +758,10 @@ pub const UpgradeCommand = struct {
                     // we rename the old executable to a temporary name, and then move the new executable to the old name.
                     // This is because Windows locks the executable while it's running.
                     current_executable_buf[target_dir_.len] = '\\';
-                    outdated_filename = try std.fmt.allocPrintZ(ctx.allocator, "{s}\\{s}.outdated", .{
+                    outdated_filename = try std.fmt.allocPrintSentinel(ctx.allocator, "{s}\\{s}.outdated", .{
                         target_dirname,
                         target_filename,
-                    });
+                    }, 0);
                     std.posix.rename(destination_executable, outdated_filename.?) catch |err| {
                         save_dir_.deleteTree(version_name) catch {};
                         Output.prettyErrorln("<r><red>error:<r> Failed to rename current executable {s}", .{@errorName(err)});
@@ -820,7 +821,7 @@ pub const UpgradeCommand = struct {
                     "completions",
                 };
 
-                env_loader.map.put("IS_BUN_AUTO_UPDATE", "true") catch bun.outOfMemory();
+                bun.handleOom(env_loader.map.put("IS_BUN_AUTO_UPDATE", "true"));
                 var std_map = try env_loader.map.stdEnvMap(ctx.allocator);
                 defer std_map.deinit();
                 _ = std.process.Child.run(.{
@@ -900,11 +901,11 @@ pub const upgrade_js_bindings = struct {
     var tempdir_fd: ?bun.FileDescriptor = null;
 
     pub fn generate(global: *jsc.JSGlobalObject) jsc.JSValue {
-        const obj = JSValue.createEmptyObject(global, 3);
+        const obj = JSValue.createEmptyObject(global, 2);
         const open = ZigString.static("openTempDirWithoutSharingDelete");
-        obj.put(global, open, jsc.createCallback(global, open, 1, jsOpenTempDirWithoutSharingDelete));
+        obj.put(global, open, jsc.JSFunction.create(global, "openTempDirWithoutSharingDelete", jsOpenTempDirWithoutSharingDelete, 1, .{}));
         const close = ZigString.static("closeTempDirHandle");
-        obj.put(global, close, jsc.createCallback(global, close, 1, jsCloseTempDirHandle));
+        obj.put(global, close, jsc.JSFunction.create(global, "closeTempDirHandle", jsCloseTempDirHandle, 1, .{}));
         return obj;
     }
 

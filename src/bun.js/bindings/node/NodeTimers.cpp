@@ -32,7 +32,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSetTimeout,
 
     default: {
         ArgList argumentsList = ArgList(callFrame, 2);
-        auto* args = JSC::JSImmutableButterfly::tryCreateFromArgList(vm, argumentsList);
+        auto* args = JSC::JSCellButterfly::tryCreateFromArgList(vm, argumentsList);
 
         if (!args) [[unlikely]] {
             JSC::throwOutOfMemoryError(globalObject, scope);
@@ -52,7 +52,8 @@ JSC_DEFINE_HOST_FUNCTION(functionSetTimeout,
     /** View the file name of the JS file that called this function
      * from a debugger */
     SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
-    const char* fileName = sourceOrigin.string().utf8().data();
+    auto fileNameUTF8 = sourceOrigin.string().utf8();
+    const char* fileName = fileNameUTF8.data();
     static const char* lastFileName = nullptr;
     if (lastFileName != fileName) {
         lastFileName = fileName;
@@ -88,7 +89,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSetInterval,
 
     default: {
         ArgList argumentsList = ArgList(callFrame, 2);
-        auto* args = JSC::JSImmutableButterfly::tryCreateFromArgList(vm, argumentsList);
+        auto* args = JSC::JSCellButterfly::tryCreateFromArgList(vm, argumentsList);
 
         if (!args) [[unlikely]] {
             JSC::throwOutOfMemoryError(globalObject, scope);
@@ -108,7 +109,8 @@ JSC_DEFINE_HOST_FUNCTION(functionSetInterval,
     /** View the file name of the JS file that called this function
      * from a debugger */
     SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
-    const char* fileName = sourceOrigin.string().utf8().data();
+    auto fileNameUTF8 = sourceOrigin.string().utf8();
+    const char* fileName = fileNameUTF8.data();
     static const char* lastFileName = nullptr;
     if (lastFileName != fileName) {
         lastFileName = fileName;
@@ -150,7 +152,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSetImmediate,
     }
     default: {
         ArgList argumentsList = ArgList(callFrame, 1);
-        auto* args = JSC::JSImmutableButterfly::tryCreateFromArgList(vm, argumentsList);
+        auto* args = JSC::JSCellButterfly::tryCreateFromArgList(vm, argumentsList);
 
         if (!args) [[unlikely]] {
             JSC::throwOutOfMemoryError(globalObject, scope);
@@ -175,7 +177,8 @@ JSC_DEFINE_HOST_FUNCTION(functionClearImmediate,
     /** View the file name of the JS file that called this function
      * from a debugger */
     SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
-    const char* fileName = sourceOrigin.string().utf8().data();
+    auto fileNameUTF8 = sourceOrigin.string().utf8();
+    const char* fileName = fileNameUTF8.data();
     static const char* lastFileName = nullptr;
     if (lastFileName != fileName) {
         lastFileName = fileName;
@@ -196,7 +199,8 @@ JSC_DEFINE_HOST_FUNCTION(functionClearInterval,
     /** View the file name of the JS file that called this function
      * from a debugger */
     SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
-    const char* fileName = sourceOrigin.string().utf8().data();
+    auto fileNameUTF8 = sourceOrigin.string().utf8();
+    const char* fileName = fileNameUTF8.data();
     static const char* lastFileName = nullptr;
     if (lastFileName != fileName) {
         lastFileName = fileName;
@@ -217,7 +221,8 @@ JSC_DEFINE_HOST_FUNCTION(functionClearTimeout,
     /** View the file name of the JS file that called this function
      * from a debugger */
     SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
-    const char* fileName = sourceOrigin.string().utf8().data();
+    auto fileNameUTF8 = sourceOrigin.string().utf8();
+    const char* fileName = fileNameUTF8.data();
     static const char* lastFileName = nullptr;
     if (lastFileName != fileName) {
         lastFileName = fileName;

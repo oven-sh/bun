@@ -31,7 +31,7 @@ pub fn toBeTypeOf(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFr
 
     const expected_type = try expected.toBunString(globalThis);
     defer expected_type.deref();
-    incrementExpectCallCounter();
+    this.incrementExpectCallCounter();
 
     const typeof = expected_type.inMap(JSTypeOfMap) orelse {
         return globalThis.throwInvalidArguments("toBeTypeOf() requires a valid type string argument ('function', 'object', 'bigint', 'boolean', 'number', 'string', 'symbol', 'undefined')", .{});
@@ -74,11 +74,11 @@ pub fn toBeTypeOf(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFr
 
     if (not) {
         const signature = comptime getSignature("toBeTypeOf", "", true);
-        return this.throw(globalThis, signature, "\n\n" ++ "Expected type: not <green>{any}<r>\n" ++ "Received type: <red>\"{s}\"<r>\nReceived value: <red>{any}<r>\n", .{ expected_str, whatIsTheType, received });
+        return this.throw(globalThis, signature, "\n\n" ++ "Expected type: not <green>{f}<r>\n" ++ "Received type: <red>\"{s}\"<r>\nReceived value: <red>{f}<r>\n", .{ expected_str, whatIsTheType, received });
     }
 
     const signature = comptime getSignature("toBeTypeOf", "", false);
-    return this.throw(globalThis, signature, "\n\n" ++ "Expected type: <green>{any}<r>\n" ++ "Received type: <red>\"{s}\"<r>\nReceived value: <red>{any}<r>\n", .{ expected_str, whatIsTheType, received });
+    return this.throw(globalThis, signature, "\n\n" ++ "Expected type: <green>{f}<r>\n" ++ "Received type: <red>\"{s}\"<r>\nReceived value: <red>{f}<r>\n", .{ expected_str, whatIsTheType, received });
 }
 
 const bun = @import("bun");
@@ -88,7 +88,6 @@ const jsc = bun.jsc;
 const CallFrame = bun.jsc.CallFrame;
 const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
-const incrementExpectCallCounter = bun.jsc.Expect.incrementExpectCallCounter;
 
 const Expect = bun.jsc.Expect.Expect;
 const getSignature = Expect.getSignature;

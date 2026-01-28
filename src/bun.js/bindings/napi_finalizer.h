@@ -17,7 +17,7 @@ public:
 
     NapiFinalizer() = default;
 
-    void call(napi_env env, void* data, bool immediate = false);
+    void call(WTF::RefPtr<NapiEnv> env, void* data, bool immediate = false);
     void clear();
 
     inline napi_finalize callback() const { return m_callback; }

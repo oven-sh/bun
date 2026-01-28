@@ -339,7 +339,7 @@ const codes = {}; // exported from errors.js
     ErrorCaptureStackTrace(err);
     Error.stackTraceLimit = userStackTraceLimit; // Reset the limit
     err.name = `${TypeError.name} [${sym}]`; // Add the error code to the name to include it in the stack trace.
-    err.stack; // Access the stack to generate the error message including the error code from the name.
+    void err.stack; // Access the stack to generate the error message including the error code from the name.
     delete err.name; // Reset the name to the actual name.
     error.code = sym;
     return error;
@@ -987,7 +987,7 @@ function initializeWellKnownPrototypes() {
 function getConstructorName(obj, ctx, recurseTimes, protoProps) {
   let firstProto;
   const tmp = obj;
-  wellKnownPrototypes ?? initializeWellKnownPrototypes();
+  if (!wellKnownPrototypes) initializeWellKnownPrototypes();
   while (obj || isUndetectableObject(obj)) {
     const wellKnownPrototypeNameAndConstructor = wellKnownPrototypes.get(obj);
     if (wellKnownPrototypeNameAndConstructor != null) {

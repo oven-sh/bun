@@ -20,7 +20,7 @@ pub const CFRunLoopSourceRef = ?*anyopaque;
 pub const CFStringRef = ?*anyopaque;
 pub const CFTypeRef = ?*anyopaque;
 pub const FSEventStreamRef = ?*anyopaque;
-pub const FSEventStreamCallback = *const fn (FSEventStreamRef, ?*anyopaque, usize, ?*anyopaque, *FSEventStreamEventFlags, *FSEventStreamEventId) callconv(.C) void;
+pub const FSEventStreamCallback = *const fn (FSEventStreamRef, ?*anyopaque, usize, ?*anyopaque, *FSEventStreamEventFlags, *FSEventStreamEventId) callconv(.c) void;
 
 // we only care about info and perform
 pub const CFRunLoopSourceContext = extern struct {
@@ -33,7 +33,7 @@ pub const CFRunLoopSourceContext = extern struct {
     hash: ?*anyopaque = null,
     schedule: ?*anyopaque = null,
     cancel: ?*anyopaque = null,
-    perform: *const fn (?*anyopaque) callconv(.C) void,
+    perform: *const fn (?*anyopaque) callconv(.c) void,
 };
 
 pub const FSEventStreamContext = extern struct {
@@ -99,18 +99,18 @@ fn dlsym(handle: ?*anyopaque, comptime Type: type, comptime symbol: [:0]const u8
 
 pub const CoreFoundation = struct {
     handle: ?*anyopaque,
-    ArrayCreate: *fn (CFAllocatorRef, [*]?*anyopaque, CFIndex, ?*CFArrayCallBacks) callconv(.C) CFArrayRef,
-    Release: *fn (CFTypeRef) callconv(.C) void,
+    ArrayCreate: *fn (CFAllocatorRef, [*]?*anyopaque, CFIndex, ?*CFArrayCallBacks) callconv(.c) CFArrayRef,
+    Release: *fn (CFTypeRef) callconv(.c) void,
 
-    RunLoopAddSource: *fn (CFRunLoopRef, CFRunLoopSourceRef, CFStringRef) callconv(.C) void,
-    RunLoopGetCurrent: *fn () callconv(.C) CFRunLoopRef,
-    RunLoopRemoveSource: *fn (CFRunLoopRef, CFRunLoopSourceRef, CFStringRef) callconv(.C) void,
-    RunLoopRun: *fn () callconv(.C) void,
-    RunLoopSourceCreate: *fn (CFAllocatorRef, CFIndex, *CFRunLoopSourceContext) callconv(.C) CFRunLoopSourceRef,
-    RunLoopSourceSignal: *fn (CFRunLoopSourceRef) callconv(.C) void,
-    RunLoopStop: *fn (CFRunLoopRef) callconv(.C) void,
-    RunLoopWakeUp: *fn (CFRunLoopRef) callconv(.C) void,
-    StringCreateWithFileSystemRepresentation: *fn (CFAllocatorRef, [*]const u8) callconv(.C) CFStringRef,
+    RunLoopAddSource: *fn (CFRunLoopRef, CFRunLoopSourceRef, CFStringRef) callconv(.c) void,
+    RunLoopGetCurrent: *fn () callconv(.c) CFRunLoopRef,
+    RunLoopRemoveSource: *fn (CFRunLoopRef, CFRunLoopSourceRef, CFStringRef) callconv(.c) void,
+    RunLoopRun: *fn () callconv(.c) void,
+    RunLoopSourceCreate: *fn (CFAllocatorRef, CFIndex, *CFRunLoopSourceContext) callconv(.c) CFRunLoopSourceRef,
+    RunLoopSourceSignal: *fn (CFRunLoopSourceRef) callconv(.c) void,
+    RunLoopStop: *fn (CFRunLoopRef) callconv(.c) void,
+    RunLoopWakeUp: *fn (CFRunLoopRef) callconv(.c) void,
+    StringCreateWithFileSystemRepresentation: *fn (CFAllocatorRef, [*]const u8) callconv(.c) CFStringRef,
     RunLoopDefaultMode: *CFStringRef,
 
     pub fn get() CoreFoundation {
@@ -136,12 +136,12 @@ pub const CoreFoundation = struct {
 
 pub const CoreServices = struct {
     handle: ?*anyopaque,
-    FSEventStreamCreate: *fn (CFAllocatorRef, FSEventStreamCallback, *FSEventStreamContext, CFArrayRef, FSEventStreamEventId, CFTimeInterval, FSEventStreamCreateFlags) callconv(.C) FSEventStreamRef,
-    FSEventStreamInvalidate: *fn (FSEventStreamRef) callconv(.C) void,
-    FSEventStreamRelease: *fn (FSEventStreamRef) callconv(.C) void,
-    FSEventStreamScheduleWithRunLoop: *fn (FSEventStreamRef, CFRunLoopRef, CFStringRef) callconv(.C) void,
-    FSEventStreamStart: *fn (FSEventStreamRef) callconv(.C) c_int,
-    FSEventStreamStop: *fn (FSEventStreamRef) callconv(.C) void,
+    FSEventStreamCreate: *fn (CFAllocatorRef, FSEventStreamCallback, *FSEventStreamContext, CFArrayRef, FSEventStreamEventId, CFTimeInterval, FSEventStreamCreateFlags) callconv(.c) FSEventStreamRef,
+    FSEventStreamInvalidate: *fn (FSEventStreamRef) callconv(.c) void,
+    FSEventStreamRelease: *fn (FSEventStreamRef) callconv(.c) void,
+    FSEventStreamScheduleWithRunLoop: *fn (FSEventStreamRef, CFRunLoopRef, CFStringRef) callconv(.c) void,
+    FSEventStreamStart: *fn (FSEventStreamRef) callconv(.c) c_int,
+    FSEventStreamStop: *fn (FSEventStreamRef) callconv(.c) void,
     // libuv set it to -1 so the actual value is this
     kFSEventStreamEventIdSinceNow: FSEventStreamEventId = 18446744073709551615,
 
@@ -175,17 +175,17 @@ fn InitLibrary() void {
 
     fsevents_cf = CoreFoundation{
         .handle = fsevents_cf_handle,
-        .ArrayCreate = dlsym(fsevents_cf_handle, *fn (CFAllocatorRef, [*]?*anyopaque, CFIndex, ?*CFArrayCallBacks) callconv(.C) CFArrayRef, "CFArrayCreate") orelse @panic("Cannot Load CoreFoundation"),
-        .Release = dlsym(fsevents_cf_handle, *fn (CFTypeRef) callconv(.C) void, "CFRelease") orelse @panic("Cannot Load CoreFoundation"),
-        .RunLoopAddSource = dlsym(fsevents_cf_handle, *fn (CFRunLoopRef, CFRunLoopSourceRef, CFStringRef) callconv(.C) void, "CFRunLoopAddSource") orelse @panic("Cannot Load CoreFoundation"),
-        .RunLoopGetCurrent = dlsym(fsevents_cf_handle, *fn () callconv(.C) CFRunLoopRef, "CFRunLoopGetCurrent") orelse @panic("Cannot Load CoreFoundation"),
-        .RunLoopRemoveSource = dlsym(fsevents_cf_handle, *fn (CFRunLoopRef, CFRunLoopSourceRef, CFStringRef) callconv(.C) void, "CFRunLoopRemoveSource") orelse @panic("Cannot Load CoreFoundation"),
-        .RunLoopRun = dlsym(fsevents_cf_handle, *fn () callconv(.C) void, "CFRunLoopRun") orelse @panic("Cannot Load CoreFoundation"),
-        .RunLoopSourceCreate = dlsym(fsevents_cf_handle, *fn (CFAllocatorRef, CFIndex, *CFRunLoopSourceContext) callconv(.C) CFRunLoopSourceRef, "CFRunLoopSourceCreate") orelse @panic("Cannot Load CoreFoundation"),
-        .RunLoopSourceSignal = dlsym(fsevents_cf_handle, *fn (CFRunLoopSourceRef) callconv(.C) void, "CFRunLoopSourceSignal") orelse @panic("Cannot Load CoreFoundation"),
-        .RunLoopStop = dlsym(fsevents_cf_handle, *fn (CFRunLoopRef) callconv(.C) void, "CFRunLoopStop") orelse @panic("Cannot Load CoreFoundation"),
-        .RunLoopWakeUp = dlsym(fsevents_cf_handle, *fn (CFRunLoopRef) callconv(.C) void, "CFRunLoopWakeUp") orelse @panic("Cannot Load CoreFoundation"),
-        .StringCreateWithFileSystemRepresentation = dlsym(fsevents_cf_handle, *fn (CFAllocatorRef, [*]const u8) callconv(.C) CFStringRef, "CFStringCreateWithFileSystemRepresentation") orelse @panic("Cannot Load CoreFoundation"),
+        .ArrayCreate = dlsym(fsevents_cf_handle, *fn (CFAllocatorRef, [*]?*anyopaque, CFIndex, ?*CFArrayCallBacks) callconv(.c) CFArrayRef, "CFArrayCreate") orelse @panic("Cannot Load CoreFoundation"),
+        .Release = dlsym(fsevents_cf_handle, *fn (CFTypeRef) callconv(.c) void, "CFRelease") orelse @panic("Cannot Load CoreFoundation"),
+        .RunLoopAddSource = dlsym(fsevents_cf_handle, *fn (CFRunLoopRef, CFRunLoopSourceRef, CFStringRef) callconv(.c) void, "CFRunLoopAddSource") orelse @panic("Cannot Load CoreFoundation"),
+        .RunLoopGetCurrent = dlsym(fsevents_cf_handle, *fn () callconv(.c) CFRunLoopRef, "CFRunLoopGetCurrent") orelse @panic("Cannot Load CoreFoundation"),
+        .RunLoopRemoveSource = dlsym(fsevents_cf_handle, *fn (CFRunLoopRef, CFRunLoopSourceRef, CFStringRef) callconv(.c) void, "CFRunLoopRemoveSource") orelse @panic("Cannot Load CoreFoundation"),
+        .RunLoopRun = dlsym(fsevents_cf_handle, *fn () callconv(.c) void, "CFRunLoopRun") orelse @panic("Cannot Load CoreFoundation"),
+        .RunLoopSourceCreate = dlsym(fsevents_cf_handle, *fn (CFAllocatorRef, CFIndex, *CFRunLoopSourceContext) callconv(.c) CFRunLoopSourceRef, "CFRunLoopSourceCreate") orelse @panic("Cannot Load CoreFoundation"),
+        .RunLoopSourceSignal = dlsym(fsevents_cf_handle, *fn (CFRunLoopSourceRef) callconv(.c) void, "CFRunLoopSourceSignal") orelse @panic("Cannot Load CoreFoundation"),
+        .RunLoopStop = dlsym(fsevents_cf_handle, *fn (CFRunLoopRef) callconv(.c) void, "CFRunLoopStop") orelse @panic("Cannot Load CoreFoundation"),
+        .RunLoopWakeUp = dlsym(fsevents_cf_handle, *fn (CFRunLoopRef) callconv(.c) void, "CFRunLoopWakeUp") orelse @panic("Cannot Load CoreFoundation"),
+        .StringCreateWithFileSystemRepresentation = dlsym(fsevents_cf_handle, *fn (CFAllocatorRef, [*]const u8) callconv(.c) CFStringRef, "CFStringCreateWithFileSystemRepresentation") orelse @panic("Cannot Load CoreFoundation"),
         .RunLoopDefaultMode = dlsym(fsevents_cf_handle, *CFStringRef, "kCFRunLoopDefaultMode") orelse @panic("Cannot Load CoreFoundation"),
     };
 
@@ -194,12 +194,12 @@ fn InitLibrary() void {
 
     fsevents_cs = CoreServices{
         .handle = fsevents_cs_handle,
-        .FSEventStreamCreate = dlsym(fsevents_cs_handle, *fn (CFAllocatorRef, FSEventStreamCallback, *FSEventStreamContext, CFArrayRef, FSEventStreamEventId, CFTimeInterval, FSEventStreamCreateFlags) callconv(.C) FSEventStreamRef, "FSEventStreamCreate") orelse @panic("Cannot Load CoreServices"),
-        .FSEventStreamInvalidate = dlsym(fsevents_cs_handle, *fn (FSEventStreamRef) callconv(.C) void, "FSEventStreamInvalidate") orelse @panic("Cannot Load CoreServices"),
-        .FSEventStreamRelease = dlsym(fsevents_cs_handle, *fn (FSEventStreamRef) callconv(.C) void, "FSEventStreamRelease") orelse @panic("Cannot Load CoreServices"),
-        .FSEventStreamScheduleWithRunLoop = dlsym(fsevents_cs_handle, *fn (FSEventStreamRef, CFRunLoopRef, CFStringRef) callconv(.C) void, "FSEventStreamScheduleWithRunLoop") orelse @panic("Cannot Load CoreServices"),
-        .FSEventStreamStart = dlsym(fsevents_cs_handle, *fn (FSEventStreamRef) callconv(.C) c_int, "FSEventStreamStart") orelse @panic("Cannot Load CoreServices"),
-        .FSEventStreamStop = dlsym(fsevents_cs_handle, *fn (FSEventStreamRef) callconv(.C) void, "FSEventStreamStop") orelse @panic("Cannot Load CoreServices"),
+        .FSEventStreamCreate = dlsym(fsevents_cs_handle, *fn (CFAllocatorRef, FSEventStreamCallback, *FSEventStreamContext, CFArrayRef, FSEventStreamEventId, CFTimeInterval, FSEventStreamCreateFlags) callconv(.c) FSEventStreamRef, "FSEventStreamCreate") orelse @panic("Cannot Load CoreServices"),
+        .FSEventStreamInvalidate = dlsym(fsevents_cs_handle, *fn (FSEventStreamRef) callconv(.c) void, "FSEventStreamInvalidate") orelse @panic("Cannot Load CoreServices"),
+        .FSEventStreamRelease = dlsym(fsevents_cs_handle, *fn (FSEventStreamRef) callconv(.c) void, "FSEventStreamRelease") orelse @panic("Cannot Load CoreServices"),
+        .FSEventStreamScheduleWithRunLoop = dlsym(fsevents_cs_handle, *fn (FSEventStreamRef, CFRunLoopRef, CFStringRef) callconv(.c) void, "FSEventStreamScheduleWithRunLoop") orelse @panic("Cannot Load CoreServices"),
+        .FSEventStreamStart = dlsym(fsevents_cs_handle, *fn (FSEventStreamRef) callconv(.c) c_int, "FSEventStreamStart") orelse @panic("Cannot Load CoreServices"),
+        .FSEventStreamStop = dlsym(fsevents_cs_handle, *fn (FSEventStreamRef) callconv(.c) void, "FSEventStreamStop") orelse @panic("Cannot Load CoreServices"),
     };
 }
 
@@ -278,7 +278,7 @@ pub const FSEventsLoop = struct {
     }
 
     // Runs in CF thread, executed after `enqueueTaskConcurrent()`
-    fn CFLoopCallback(arg: ?*anyopaque) callconv(.C) void {
+    fn CFLoopCallback(arg: ?*anyopaque) callconv(.c) void {
         if (arg) |self| {
             const this = bun.cast(*FSEventsLoop, self);
 
@@ -329,7 +329,7 @@ pub const FSEventsLoop = struct {
     }
 
     // Runs in CF thread, when there're events in FSEventStream
-    fn _events_cb(_: FSEventStreamRef, info: ?*anyopaque, numEvents: usize, eventPaths: ?*anyopaque, eventFlags: *FSEventStreamEventFlags, _: *FSEventStreamEventId) callconv(.C) void {
+    fn _events_cb(_: FSEventStreamRef, info: ?*anyopaque, numEvents: usize, eventPaths: ?*anyopaque, eventFlags: *FSEventStreamEventFlags, _: *FSEventStreamEventId) callconv(.c) void {
         const paths_ptr = bun.cast([*][*:0]const u8, eventPaths);
         const paths = paths_ptr[0..numEvents];
         var loop = bun.cast(*FSEventsLoop, info);
@@ -484,7 +484,7 @@ pub const FSEventsLoop = struct {
         defer this.mutex.unlock();
         if (this.watcher_count == this.watchers.len) {
             this.watcher_count += 1;
-            this.watchers.push(bun.default_allocator, watcher) catch unreachable;
+            bun.handleOom(this.watchers.append(bun.default_allocator, watcher));
         } else {
             var watchers = this.watchers.slice();
             for (watchers, 0..) |w, i| {
@@ -544,8 +544,7 @@ pub const FSEventsLoop = struct {
             }
         }
 
-        this.watchers.deinitWithAllocator(bun.default_allocator);
-
+        this.watchers.deinit(bun.default_allocator);
         bun.default_allocator.destroy(this);
     }
 };

@@ -14,11 +14,11 @@ pub extern fn mi_reallocn(p: ?*anyopaque, count: usize, size: usize) ?*anyopaque
 pub extern fn mi_reallocf(p: ?*anyopaque, newsize: usize) ?*anyopaque;
 pub extern fn mi_usable_size(p: ?*const anyopaque) usize;
 pub extern fn mi_good_size(size: usize) usize;
-pub const mi_deferred_free_fun = *const fn (bool, c_ulonglong, ?*anyopaque) callconv(.C) void;
+pub const mi_deferred_free_fun = *const fn (bool, c_ulonglong, ?*anyopaque) callconv(.c) void;
 pub extern fn mi_register_deferred_free(deferred_free: ?mi_deferred_free_fun, arg: ?*anyopaque) void;
-pub const mi_output_fun = *const fn ([*:0]const u8, ?*anyopaque) callconv(.C) void;
+pub const mi_output_fun = *const fn ([*:0]const u8, ?*anyopaque) callconv(.c) void;
 pub extern fn mi_register_output(out: ?mi_output_fun, arg: ?*anyopaque) void;
-pub const mi_error_fun = *const fn (c_int, ?*anyopaque) callconv(.C) void;
+pub const mi_error_fun = *const fn (c_int, ?*anyopaque) callconv(.c) void;
 pub extern fn mi_register_error(fun: ?mi_error_fun, arg: ?*anyopaque) void;
 pub extern fn mi_collect(force: bool) void;
 pub extern fn mi_version() c_int;
@@ -60,17 +60,29 @@ pub const Heap = opaque {
         return mi_heap_realloc(self, p, newsize);
     }
 
-    pub fn isOwned(self: *Heap, p: ?*anyopaque) bool {
-        return mi_heap_check_owned(self, p);
+    pub fn isOwned(self: *Heap, p: ?*const anyopaque) bool {
+        return mi_heap_contains(self, p);
     }
 };
 pub extern fn mi_heap_new() ?*Heap;
 pub extern fn mi_heap_delete(heap: *Heap) void;
 pub extern fn mi_heap_destroy(heap: *Heap) void;
-pub extern fn mi_heap_set_default(heap: *Heap) *Heap;
-pub extern fn mi_heap_get_default() *Heap;
-pub extern fn mi_heap_get_backing() *Heap;
 pub extern fn mi_heap_collect(heap: *Heap, force: bool) void;
+pub extern fn mi_heap_main() *Heap;
+
+// Thread-local heap (theap) API - new in mimalloc v3
+pub const THeap = opaque {};
+pub extern fn mi_theap_get_default() *THeap;
+pub extern fn mi_theap_set_default(theap: *THeap) *THeap;
+pub extern fn mi_theap_collect(theap: *THeap, force: bool) void;
+pub extern fn mi_theap_malloc(theap: *THeap, size: usize) ?*anyopaque;
+pub extern fn mi_theap_zalloc(theap: *THeap, size: usize) ?*anyopaque;
+pub extern fn mi_theap_calloc(theap: *THeap, count: usize, size: usize) ?*anyopaque;
+pub extern fn mi_theap_malloc_small(theap: *THeap, size: usize) ?*anyopaque;
+pub extern fn mi_theap_malloc_aligned(theap: *THeap, size: usize, alignment: usize) ?*anyopaque;
+pub extern fn mi_theap_realloc(theap: *THeap, p: ?*anyopaque, newsize: usize) ?*anyopaque;
+pub extern fn mi_theap_destroy(theap: *THeap) void;
+pub extern fn mi_heap_theap(heap: *Heap) *THeap;
 pub extern fn mi_heap_malloc(heap: *Heap, size: usize) ?*anyopaque;
 pub extern fn mi_heap_zalloc(heap: *Heap, size: usize) ?*anyopaque;
 pub extern fn mi_heap_calloc(heap: *Heap, count: usize, size: usize) ?*anyopaque;
@@ -102,8 +114,7 @@ pub extern fn mi_heap_rezalloc_aligned(heap: *Heap, p: ?*anyopaque, newsize: usi
 pub extern fn mi_heap_rezalloc_aligned_at(heap: *Heap, p: ?*anyopaque, newsize: usize, alignment: usize, offset: usize) ?*anyopaque;
 pub extern fn mi_heap_recalloc_aligned(heap: *Heap, p: ?*anyopaque, newcount: usize, size: usize, alignment: usize) ?*anyopaque;
 pub extern fn mi_heap_recalloc_aligned_at(heap: *Heap, p: ?*anyopaque, newcount: usize, size: usize, alignment: usize, offset: usize) ?*anyopaque;
-pub extern fn mi_heap_contains_block(heap: *Heap, p: *const anyopaque) bool;
-pub extern fn mi_heap_check_owned(heap: *Heap, p: *const anyopaque) bool;
+pub extern fn mi_heap_contains(heap: *const Heap, p: ?*const anyopaque) bool;
 pub extern fn mi_check_owned(p: ?*const anyopaque) bool;
 pub const struct_mi_heap_area_s = extern struct {
     blocks: ?*anyopaque,
@@ -114,7 +125,7 @@ pub const struct_mi_heap_area_s = extern struct {
     full_block_size: usize,
 };
 pub const mi_heap_area_t = struct_mi_heap_area_s;
-pub const mi_block_visit_fun = *const fn (?*const Heap, [*c]const mi_heap_area_t, ?*anyopaque, usize, ?*anyopaque) callconv(.C) bool;
+pub const mi_block_visit_fun = *const fn (?*const Heap, [*c]const mi_heap_area_t, ?*anyopaque, usize, ?*anyopaque) callconv(.c) bool;
 pub extern fn mi_heap_visit_blocks(heap: ?*const Heap, visit_all_blocks: bool, visitor: ?mi_block_visit_fun, arg: ?*anyopaque) bool;
 pub extern fn mi_is_in_heap_region(p: ?*const anyopaque) bool;
 pub extern fn mi_is_redirected() bool;
@@ -216,8 +227,7 @@ pub extern fn mi_new_reallocn(p: ?*anyopaque, newcount: usize, size: usize) ?*an
 pub const MI_SMALL_WSIZE_MAX = @as(c_int, 128);
 pub const MI_SMALL_SIZE_MAX = MI_SMALL_WSIZE_MAX * @import("std").zig.c_translation.sizeof(?*anyopaque);
 pub const MI_ALIGNMENT_MAX = (@as(c_int, 16) * @as(c_int, 1024)) * @as(c_ulong, 1024);
-
-const MI_MAX_ALIGN_SIZE = 16;
+pub const MI_MAX_ALIGN_SIZE = 16;
 
 pub fn mustUseAlignedAlloc(alignment: std.mem.Alignment) bool {
     return alignment.toByteUnits() > MI_MAX_ALIGN_SIZE;

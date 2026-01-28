@@ -3,17 +3,229 @@ const debug = bun.Output.scoped(.Transpiler, .visible);
 pub const JSBundler = struct {
     const OwnedString = bun.MutableString;
 
+    /// A map of file paths to their in-memory contents.
+    /// This allows bundling with virtual files that may not exist on disk.
+    pub const FileMap = struct {
+        map: bun.StringHashMapUnmanaged(jsc.Node.BlobOrStringOrBuffer) = .empty,
+
+        pub fn deinitAndUnprotect(self: *FileMap) void {
+            var iter = self.map.iterator();
+            while (iter.next()) |entry| {
+                entry.value_ptr.deinitAndUnprotect();
+                bun.default_allocator.free(entry.key_ptr.*);
+            }
+            self.map.deinit(bun.default_allocator);
+        }
+
+        /// Resolve a specifier against the file map.
+        /// Returns the contents if the specifier exactly matches a key in the map,
+        /// or if the specifier is a relative path that, when joined with a source
+        /// directory, matches a key in the map.
+        pub fn get(self: *const FileMap, specifier: []const u8) ?[]const u8 {
+            if (self.map.count() == 0) return null;
+
+            if (comptime !bun.Environment.isWindows) {
+                const entry = self.map.get(specifier) orelse return null;
+                return entry.slice();
+            }
+
+            // Normalize backslashes to forward slashes for consistent lookup
+            // Map keys are stored with forward slashes (normalized in fromJS)
+            const buf = bun.path_buffer_pool.get();
+            defer bun.path_buffer_pool.put(buf);
+            const normalized = bun.path.pathToPosixBuf(u8, specifier, buf);
+            const entry = self.map.get(normalized) orelse return null;
+            return entry.slice();
+        }
+
+        /// Check if the file map contains a given specifier.
+        pub fn contains(self: *const FileMap, specifier: []const u8) bool {
+            if (self.map.count() == 0) return false;
+
+            if (comptime !bun.Environment.isWindows) {
+                return self.map.contains(specifier);
+            }
+
+            // Normalize backslashes to forward slashes for consistent lookup
+            const buf = bun.path_buffer_pool.get();
+            defer bun.path_buffer_pool.put(buf);
+            const normalized = bun.path.pathToPosixBuf(u8, specifier, buf);
+            return self.map.contains(normalized);
+        }
+
+        /// Returns a resolver Result for a file in the map, or null if not found.
+        /// This creates a minimal Result that can be used by the bundler.
+        ///
+        /// source_file: The path of the importing file (may be relative or absolute)
+        /// specifier: The import specifier (e.g., "./utils.js" or "/lib.js")
+        pub fn resolve(self: *const FileMap, source_file: []const u8, specifier: []const u8) ?_resolver.Result {
+            // Fast path: if the map is empty, return immediately
+            if (self.map.count() == 0) return null;
+
+            // Check if the specifier is directly in the map
+            // Must use getKey to return the map's owned key, not the parameter
+            if (comptime !bun.Environment.isWindows) {
+                if (self.map.getKey(specifier)) |key| {
+                    return _resolver.Result{
+                        .path_pair = .{
+                            .primary = Fs.Path.initWithNamespace(key, "file"),
+                        },
+                        .module_type = .unknown,
+                    };
+                }
+            } else {
+                const buf = bun.path_buffer_pool.get();
+                defer bun.path_buffer_pool.put(buf);
+                const normalized_specifier = bun.path.pathToPosixBuf(u8, specifier, buf);
+
+                if (self.map.getKey(normalized_specifier)) |key| {
+                    return _resolver.Result{
+                        .path_pair = .{
+                            .primary = Fs.Path.initWithNamespace(key, "file"),
+                        },
+                        .module_type = .unknown,
+                    };
+                }
+            }
+
+            // Also try with source directory joined for relative specifiers
+            // Check for relative specifiers (not starting with / and not Windows absolute like C:/)
+            if (specifier.len > 0 and specifier[0] != '/' and
+                !(specifier.len >= 3 and specifier[1] == ':' and (specifier[2] == '/' or specifier[2] == '\\')))
+            {
+                // First, ensure source_file is absolute. It may be relative (e.g., "../../Windows/Temp/...")
+                // on Windows when the bundler stores paths relative to cwd.
+                const abs_source_buf = bun.path_buffer_pool.get();
+                defer bun.path_buffer_pool.put(abs_source_buf);
+                const abs_source_file = if (isAbsolutePath(source_file))
+                    source_file
+                else
+                    Fs.FileSystem.instance.absBuf(&.{source_file}, abs_source_buf);
+
+                // Normalize source_file to use forward slashes (for Windows compatibility)
+                // On Windows, source_file may have backslashes from the real filesystem
+                // Use pathToPosixBuf which always converts \ to / regardless of platform
+                const source_file_buf = bun.path_buffer_pool.get();
+                defer bun.path_buffer_pool.put(source_file_buf);
+                const normalized_source_file = bun.path.pathToPosixBuf(u8, abs_source_file, source_file_buf);
+
+                // Extract directory from source_file using posix path handling
+                // For "/entry.js", we want "/"; for "/src/index.js", we want "/src/"
+                // For "C:/foo/bar.js", we want "C:/foo"
+                const buf = bun.path_buffer_pool.get();
+                defer bun.path_buffer_pool.put(buf);
+                const source_dir = bun.path.dirname(normalized_source_file, .posix);
+                // If dirname returns empty but path starts with drive letter, extract the drive + root
+                const effective_source_dir = if (source_dir.len == 0)
+                    (if (normalized_source_file.len >= 3 and normalized_source_file[1] == ':' and normalized_source_file[2] == '/')
+                        normalized_source_file[0..3] // "C:/"
+                    else if (normalized_source_file.len > 0 and normalized_source_file[0] == '/')
+                        "/"
+                    else
+                        Fs.FileSystem.instance.top_level_dir)
+                else
+                    source_dir;
+                // Use .loose to preserve Windows drive letters, then normalize in-place on Windows
+                const joined_len = bun.path.joinAbsStringBuf(effective_source_dir, buf, &.{specifier}, .loose).len;
+                if (bun.Environment.isWindows) {
+                    bun.path.platformToPosixInPlace(u8, buf[0..joined_len]);
+                }
+                const joined = buf[0..joined_len];
+                // Must use getKey to return the map's owned key, not the temporary buffer
+                if (self.map.getKey(joined)) |key| {
+                    return _resolver.Result{
+                        .path_pair = .{
+                            .primary = Fs.Path.initWithNamespace(key, "file"),
+                        },
+                        .module_type = .unknown,
+                    };
+                }
+            }
+
+            return null;
+        }
+
+        /// Check if a path is absolute (works for both posix and Windows paths)
+        fn isAbsolutePath(path: []const u8) bool {
+            if (path.len == 0) return false;
+            // Posix absolute path
+            if (path[0] == '/') return true;
+            // Windows absolute path with drive letter (e.g., "C:\..." or "C:/...")
+            if (path.len >= 3 and path[1] == ':' and (path[2] == '/' or path[2] == '\\')) {
+                return switch (path[0]) {
+                    'a'...'z', 'A'...'Z' => true,
+                    else => false,
+                };
+            }
+            // Windows UNC path (e.g., "\\server\share")
+            if (path.len >= 2 and path[0] == '\\' and path[1] == '\\') return true;
+            return false;
+        }
+
+        /// Parse the files option from JavaScript.
+        /// Expected format: Record<string, string | Blob | File | TypedArray | ArrayBuffer>
+        /// Uses async parsing for cross-thread safety since bundler runs on a separate thread.
+        pub fn fromJS(globalThis: *jsc.JSGlobalObject, files_value: jsc.JSValue) JSError!FileMap {
+            var self = FileMap{
+                .map = .empty,
+            };
+            errdefer self.deinitAndUnprotect();
+
+            const files_obj = files_value.getObject() orelse {
+                return globalThis.throwInvalidArguments("Expected files to be an object", .{});
+            };
+
+            var files_iter = try jsc.JSPropertyIterator(.{
+                .skip_empty_name = true,
+                .include_value = true,
+            }).init(globalThis, files_obj);
+            defer files_iter.deinit();
+
+            try self.map.ensureTotalCapacity(bun.default_allocator, @intCast(files_iter.len));
+
+            while (try files_iter.next()) |prop| {
+                const property_value = files_iter.value;
+
+                // Parse the value as BlobOrStringOrBuffer using async mode for thread safety
+                var blob_or_string = try jsc.Node.BlobOrStringOrBuffer.fromJSAsync(globalThis, bun.default_allocator, property_value) orelse {
+                    return globalThis.throwInvalidArguments("Expected file content to be a string, Blob, File, TypedArray, or ArrayBuffer", .{});
+                };
+                errdefer blob_or_string.deinitAndUnprotect();
+
+                // Clone the key since we need to own it
+                const key = try prop.toOwnedSlice(bun.default_allocator);
+
+                // Normalize backslashes to forward slashes for cross-platform consistency
+                // This ensures Windows paths like "C:\foo\bar.js" become "C:/foo/bar.js"
+                // Use dangerouslyConvertPathToPosixInPlace which always converts \ to /
+                // (uses sep_windows constant, not sep which varies by target)
+                bun.path.dangerouslyConvertPathToPosixInPlace(u8, key);
+
+                self.map.putAssumeCapacity(key, blob_or_string);
+            }
+
+            return self;
+        }
+    };
+
     pub const Config = struct {
         target: Target = Target.browser,
         entry_points: bun.StringSet = bun.StringSet.init(bun.default_allocator),
         hot: bool = false,
+        react_fast_refresh: bool = false,
         define: bun.StringMap = bun.StringMap.init(bun.default_allocator, false),
         loaders: ?api.LoaderMap = null,
         dir: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         outdir: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         rootdir: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         serve: Serve = .{},
-        jsx: options.JSX.Pragma = .{},
+        jsx: api.Jsx = .{
+            .factory = "",
+            .fragment = "",
+            .runtime = .automatic,
+            .import_source = "",
+            .development = true, // Default to development mode like old Pragma
+        },
         force_node_env: options.BundleOptions.ForceNodeEnv = .unspecified,
         code_splitting: bool = false,
         minify: Minify = .{},
@@ -32,12 +244,17 @@ pub const JSBundler = struct {
         footer: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         css_chunking: bool = false,
         drop: bun.StringSet = bun.StringSet.init(bun.default_allocator),
+        features: bun.StringSet = bun.StringSet.init(bun.default_allocator),
         has_any_on_before_parse: bool = false,
         throw_on_error: bool = true,
         env_behavior: api.DotEnvBehavior = .disable,
         env_prefix: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         tsconfig_override: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         compile: ?CompileOptions = null,
+        /// In-memory files that can be used as entrypoints or imported.
+        /// These files do not need to exist on disk.
+        files: FileMap = .{},
+        metafile: bool = false,
 
         pub const CompileOptions = struct {
             compile_target: CompileTarget = .{},
@@ -46,7 +263,15 @@ pub const JSBundler = struct {
             windows_hide_console: bool = false,
             windows_icon_path: OwnedString = OwnedString.initEmpty(bun.default_allocator),
             windows_title: OwnedString = OwnedString.initEmpty(bun.default_allocator),
+            windows_publisher: OwnedString = OwnedString.initEmpty(bun.default_allocator),
+            windows_version: OwnedString = OwnedString.initEmpty(bun.default_allocator),
+            windows_description: OwnedString = OwnedString.initEmpty(bun.default_allocator),
+            windows_copyright: OwnedString = OwnedString.initEmpty(bun.default_allocator),
             outfile: OwnedString = OwnedString.initEmpty(bun.default_allocator),
+            autoload_dotenv: bool = true,
+            autoload_bunfig: bool = true,
+            autoload_tsconfig: bool = false,
+            autoload_package_json: bool = false,
 
             pub fn fromJS(globalThis: *jsc.JSGlobalObject, config: jsc.JSValue, allocator: std.mem.Allocator, compile_target: ?CompileTarget) JSError!?CompileOptions {
                 var this = CompileOptions{
@@ -54,6 +279,10 @@ pub const JSBundler = struct {
                     .executable_path = OwnedString.initEmpty(allocator),
                     .windows_icon_path = OwnedString.initEmpty(allocator),
                     .windows_title = OwnedString.initEmpty(allocator),
+                    .windows_publisher = OwnedString.initEmpty(allocator),
+                    .windows_version = OwnedString.initEmpty(allocator),
+                    .windows_description = OwnedString.initEmpty(allocator),
+                    .windows_copyright = OwnedString.initEmpty(allocator),
                     .outfile = OwnedString.initEmpty(allocator),
                     .compile_target = compile_target orelse .{},
                 };
@@ -131,12 +360,52 @@ pub const JSBundler = struct {
                         defer slice.deinit();
                         try this.windows_title.appendSliceExact(slice.slice());
                     }
+
+                    if (try windows.getOwn(globalThis, "publisher")) |windows_publisher| {
+                        var slice = try windows_publisher.toSlice(globalThis, bun.default_allocator);
+                        defer slice.deinit();
+                        try this.windows_publisher.appendSliceExact(slice.slice());
+                    }
+
+                    if (try windows.getOwn(globalThis, "version")) |windows_version| {
+                        var slice = try windows_version.toSlice(globalThis, bun.default_allocator);
+                        defer slice.deinit();
+                        try this.windows_version.appendSliceExact(slice.slice());
+                    }
+
+                    if (try windows.getOwn(globalThis, "description")) |windows_description| {
+                        var slice = try windows_description.toSlice(globalThis, bun.default_allocator);
+                        defer slice.deinit();
+                        try this.windows_description.appendSliceExact(slice.slice());
+                    }
+
+                    if (try windows.getOwn(globalThis, "copyright")) |windows_copyright| {
+                        var slice = try windows_copyright.toSlice(globalThis, bun.default_allocator);
+                        defer slice.deinit();
+                        try this.windows_copyright.appendSliceExact(slice.slice());
+                    }
                 }
 
                 if (try object.getOwn(globalThis, "outfile")) |outfile| {
                     var slice = try outfile.toSlice(globalThis, bun.default_allocator);
                     defer slice.deinit();
                     try this.outfile.appendSliceExact(slice.slice());
+                }
+
+                if (try object.getBooleanLoose(globalThis, "autoloadDotenv")) |autoload_dotenv| {
+                    this.autoload_dotenv = autoload_dotenv;
+                }
+
+                if (try object.getBooleanLoose(globalThis, "autoloadBunfig")) |autoload_bunfig| {
+                    this.autoload_bunfig = autoload_bunfig;
+                }
+
+                if (try object.getBooleanLoose(globalThis, "autoloadTsconfig")) |autoload_tsconfig| {
+                    this.autoload_tsconfig = autoload_tsconfig;
+                }
+
+                if (try object.getBooleanLoose(globalThis, "autoloadPackageJson")) |autoload_package_json| {
+                    this.autoload_package_json = autoload_package_json;
                 }
 
                 return this;
@@ -147,6 +416,10 @@ pub const JSBundler = struct {
                 this.executable_path.deinit();
                 this.windows_icon_path.deinit();
                 this.windows_title.deinit();
+                this.windows_publisher.deinit();
+                this.windows_version.deinit();
+                this.windows_description.deinit();
+                this.windows_copyright.deinit();
                 this.outfile.deinit();
             }
         };
@@ -176,6 +449,15 @@ pub const JSBundler = struct {
                 if (strings.hasPrefixComptime(slice.slice(), "bun-")) {
                     this.compile = .{
                         .compile_target = try CompileTarget.fromSlice(globalThis, slice.slice()),
+                        .exec_argv = OwnedString.initEmpty(allocator),
+                        .executable_path = OwnedString.initEmpty(allocator),
+                        .windows_icon_path = OwnedString.initEmpty(allocator),
+                        .windows_title = OwnedString.initEmpty(allocator),
+                        .windows_publisher = OwnedString.initEmpty(allocator),
+                        .windows_version = OwnedString.initEmpty(allocator),
+                        .windows_description = OwnedString.initEmpty(allocator),
+                        .windows_copyright = OwnedString.initEmpty(allocator),
+                        .outfile = OwnedString.initEmpty(allocator),
                     };
                     this.target = .bun;
                     did_set_target = true;
@@ -269,6 +551,10 @@ pub const JSBundler = struct {
                 }
             }
 
+            if (try config.getBooleanLoose(globalThis, "reactFastRefresh")) |react_fast_refresh| {
+                this.react_fast_refresh = react_fast_refresh;
+            }
+
             var has_out_dir = false;
             if (try config.getOptional(globalThis, "outdir", ZigString.Slice)) |slice| {
                 defer slice.deinit();
@@ -336,6 +622,51 @@ pub const JSBundler = struct {
                 this.packages = packages;
             }
 
+            // Parse JSX configuration
+            if (try config.getTruthy(globalThis, "jsx")) |jsx_value| {
+                if (!jsx_value.isObject()) {
+                    return globalThis.throwInvalidArguments("jsx must be an object", .{});
+                }
+
+                if (try jsx_value.getOptional(globalThis, "runtime", ZigString.Slice)) |slice| {
+                    defer slice.deinit();
+                    var str_lower: [128]u8 = undefined;
+                    const len = @min(slice.len, str_lower.len);
+                    _ = strings.copyLowercase(slice.slice()[0..len], str_lower[0..len]);
+                    if (options.JSX.RuntimeMap.get(str_lower[0..len])) |runtime| {
+                        this.jsx.runtime = runtime.runtime;
+                        if (runtime.development) |dev| {
+                            this.jsx.development = dev;
+                        }
+                    } else {
+                        return globalThis.throwInvalidArguments("Invalid jsx.runtime: '{s}'. Must be one of: 'classic', 'automatic', 'react', 'react-jsx', or 'react-jsxdev'", .{slice.slice()});
+                    }
+                }
+
+                if (try jsx_value.getOptional(globalThis, "factory", ZigString.Slice)) |slice| {
+                    defer slice.deinit();
+                    this.jsx.factory = try allocator.dupe(u8, slice.slice());
+                }
+
+                if (try jsx_value.getOptional(globalThis, "fragment", ZigString.Slice)) |slice| {
+                    defer slice.deinit();
+                    this.jsx.fragment = try allocator.dupe(u8, slice.slice());
+                }
+
+                if (try jsx_value.getOptional(globalThis, "importSource", ZigString.Slice)) |slice| {
+                    defer slice.deinit();
+                    this.jsx.import_source = try allocator.dupe(u8, slice.slice());
+                }
+
+                if (try jsx_value.getBooleanLoose(globalThis, "development")) |dev| {
+                    this.jsx.development = dev;
+                }
+
+                if (try jsx_value.getBooleanLoose(globalThis, "sideEffects")) |val| {
+                    this.jsx.side_effects = val;
+                }
+            }
+
             if (try config.getOptionalEnum(globalThis, "format", options.Format)) |format| {
                 this.format = format;
 
@@ -364,6 +695,9 @@ pub const JSBundler = struct {
                     if (try minify.getBooleanLoose(globalThis, "identifiers")) |syntax| {
                         this.minify.identifiers = syntax;
                     }
+                    if (try minify.getBooleanLoose(globalThis, "keepNames")) |keep_names| {
+                        this.minify.keep_names = keep_names;
+                    }
                 } else {
                     return globalThis.throwInvalidArguments("Expected minify to be a boolean or an object", .{});
                 }
@@ -378,6 +712,11 @@ pub const JSBundler = struct {
                 }
             } else {
                 return globalThis.throwInvalidArguments("Expected entrypoints to be an array of strings", .{});
+            }
+
+            // Parse the files option for in-memory files
+            if (try config.getOwnObject(globalThis, "files")) |files_obj| {
+                this.files = try FileMap.fromJS(globalThis, files_obj.toJS());
             }
 
             if (try config.getBooleanLoose(globalThis, "emitDCEAnnotations")) |flag| {
@@ -412,6 +751,20 @@ pub const JSBundler = struct {
                     }
 
                     const entry_points = this.entry_points.keys();
+
+                    // Check if all entry points are in the FileMap - if so, use cwd
+                    if (this.files.map.count() > 0) {
+                        var all_in_filemap = true;
+                        for (entry_points) |ep| {
+                            if (!this.files.contains(ep)) {
+                                all_in_filemap = false;
+                                break;
+                            }
+                        }
+                        if (all_in_filemap) {
+                            break :brk ZigString.Slice.fromUTF8NeverFree(".");
+                        }
+                    }
 
                     if (entry_points.len == 1) {
                         break :brk ZigString.Slice.fromUTF8NeverFree(std.fs.path.dirname(entry_points[0]) orelse ".");
@@ -449,6 +802,15 @@ pub const JSBundler = struct {
                     var slice = try entry.toSliceOrNull(globalThis);
                     defer slice.deinit();
                     try this.drop.insert(slice.slice());
+                }
+            }
+
+            if (try config.getOwnArray(globalThis, "features")) |features| {
+                var iter = try features.arrayIterator(globalThis);
+                while (try iter.next()) |entry| {
+                    var slice = try entry.toSliceOrNull(globalThis);
+                    defer slice.deinit();
+                    try this.features.insert(slice.slice());
                 }
             }
 
@@ -518,7 +880,7 @@ pub const JSBundler = struct {
                     const value_type = property_value.jsType();
 
                     if (!value_type.isStringLike()) {
-                        return globalThis.throwInvalidArguments("define \"{s}\" must be a JSON string", .{prop});
+                        return globalThis.throwInvalidArguments("define \"{f}\" must be a JSON string", .{prop});
                     }
 
                     var val = jsc.ZigString.init("");
@@ -574,6 +936,10 @@ pub const JSBundler = struct {
                 this.throw_on_error = flag;
             }
 
+            if (try config.getBooleanLoose(globalThis, "metafile")) |flag| {
+                this.metafile = flag;
+            }
+
             if (try CompileOptions.fromJS(
                 globalThis,
                 config,
@@ -594,6 +960,12 @@ pub const JSBundler = struct {
 
                 const base_public_path = bun.StandaloneModuleGraph.targetBasePublicPath(this.compile.?.compile_target.os, "root/");
                 try this.public_path.append(base_public_path);
+
+                // When using --compile, only `external` sourcemaps work, as we do not
+                // look at the source map comment. Override any other sourcemap type.
+                if (this.source_map != .none) {
+                    this.source_map = .external;
+                }
 
                 if (compile.outfile.isEmpty()) {
                     const entry_point = this.entry_points.keys()[0];
@@ -643,6 +1015,7 @@ pub const JSBundler = struct {
             whitespace: bool = false,
             identifiers: bool = false,
             syntax: bool = false,
+            keep_names: bool = false,
         };
 
         pub const Serve = struct {
@@ -669,12 +1042,26 @@ pub const JSBundler = struct {
                 bun.default_allocator.free(loaders.loaders);
                 bun.default_allocator.free(loaders.extensions);
             }
+            // Free JSX allocated strings
+            if (self.jsx.factory.len > 0) {
+                allocator.free(self.jsx.factory);
+                self.jsx.factory = "";
+            }
+            if (self.jsx.fragment.len > 0) {
+                allocator.free(self.jsx.fragment);
+                self.jsx.fragment = "";
+            }
+            if (self.jsx.import_source.len > 0) {
+                allocator.free(self.jsx.import_source);
+                self.jsx.import_source = "";
+            }
             self.names.deinit();
             self.outdir.deinit();
             self.rootdir.deinit();
             self.public_path.deinit();
             self.conditions.deinit();
             self.drop.deinit();
+            self.features.deinit();
             self.banner.deinit();
             if (self.compile) |*compile| {
                 compile.deinit();
@@ -682,6 +1069,7 @@ pub const JSBundler = struct {
             self.env_prefix.deinit();
             self.footer.deinit();
             self.tsconfig_override.deinit();
+            self.files.deinitAndUnprotect();
         }
     };
 
@@ -693,6 +1081,28 @@ pub const JSBundler = struct {
             return globalThis.throwInvalidArguments("Expected a config object to be passed to Bun.build", .{});
         }
 
+        const vm = globalThis.bunVM();
+
+        // Detect and prevent calling Bun.build from within a macro during bundling.
+        // This would cause a deadlock because:
+        // 1. The bundler thread (singleton) is processing the outer Bun.build
+        // 2. During parsing, it encounters a macro and evaluates it
+        // 3. The macro calls Bun.build, which tries to enqueue to the same singleton thread
+        // 4. The singleton thread is blocked waiting for the macro to complete -> deadlock
+        if (vm.macro_mode) {
+            return globalThis.throw(
+                \\Bun.build cannot be called from within a macro during bundling.
+                \\
+                \\This would cause a deadlock because the bundler is waiting for the macro to complete,
+                \\but the macro's Bun.build call is waiting for the bundler.
+                \\
+                \\To bundle code at compile time in a macro, use Bun.spawnSync to invoke the CLI:
+                \\  const result = Bun.spawnSync(["bun", "build", entrypoint, "--format=esm"]);
+            ,
+                .{},
+            );
+        }
+
         var plugins: ?*Plugin = null;
         const config = try Config.fromJS(globalThis, arguments[0], &plugins, bun.default_allocator);
 
@@ -700,7 +1110,7 @@ pub const JSBundler = struct {
             config,
             plugins,
             globalThis,
-            globalThis.bunVM().eventLoop(),
+            vm.eventLoop(),
             bun.default_allocator,
         );
     }
@@ -817,8 +1227,8 @@ pub const JSBundler = struct {
                 resolve.value = .{ .no_match = {} };
             } else {
                 const global = resolve.bv2.plugins.?.globalObject();
-                const path = path_value.toSliceCloneWithAllocator(global, bun.default_allocator) orelse @panic("Unexpected: path is not a string");
-                const namespace = namespace_value.toSliceCloneWithAllocator(global, bun.default_allocator) orelse @panic("Unexpected: namespace is not a string");
+                const path = path_value.toSliceCloneWithAllocator(global, bun.default_allocator) catch @panic("Unexpected: path is not a string");
+                const namespace = namespace_value.toSliceCloneWithAllocator(global, bun.default_allocator) catch @panic("Unexpected: namespace is not a string");
                 resolve.value = .{
                     .success = .{
                         .path = path.slice(),
@@ -990,6 +1400,7 @@ pub const JSBundler = struct {
                             bun.outOfMemory();
                         },
                         error.JSError => {},
+                        error.JSTerminated => {},
                     }
 
                     @panic("Unexpected: source_code is not a string");
@@ -1039,6 +1450,33 @@ pub const JSBundler = struct {
         }
 
         extern fn JSBundlerPlugin__tombstone(*Plugin) void;
+        extern fn JSBundlerPlugin__runOnEndCallbacks(*Plugin, jsc.JSValue, jsc.JSValue, jsc.JSValue) jsc.JSValue;
+
+        pub fn runOnEndCallbacks(this: *Plugin, globalThis: *jsc.JSGlobalObject, build_promise: *jsc.JSPromise, build_result: jsc.JSValue, rejection: bun.JSError!jsc.JSValue) bun.JSError!jsc.JSValue {
+            jsc.markBinding(@src());
+
+            const rejection_value = rejection catch |err| switch (err) {
+                error.OutOfMemory => globalThis.createOutOfMemoryError(),
+                error.JSError => globalThis.takeError(err),
+                error.JSTerminated => return error.JSTerminated,
+            };
+
+            var scope: jsc.TopExceptionScope = undefined;
+            scope.init(globalThis, @src());
+            defer scope.deinit();
+
+            const value = JSBundlerPlugin__runOnEndCallbacks(
+                this,
+                build_promise.asValue(globalThis),
+                build_result,
+                rejection_value,
+            );
+
+            try scope.returnIfException();
+
+            return value;
+        }
+
         pub fn deinit(this: *Plugin) void {
             jsc.markBinding(@src());
             JSBundlerPlugin__tombstone(this);
@@ -1197,7 +1635,13 @@ pub const JSBundler = struct {
                             plugin.globalObject(),
                             resolve.import_record.source_file,
                             exception,
-                        ) catch bun.outOfMemory(),
+                        ) catch |err| switch (err) {
+                            error.OutOfMemory => bun.outOfMemory(),
+                            error.JSError, error.JSTerminated => {
+                                plugin.globalObject().reportActiveExceptionAsUnhandled(err);
+                                return;
+                            },
+                        },
                     };
                     resolve.bv2.onResolveAsync(resolve);
                 },
@@ -1209,7 +1653,13 @@ pub const JSBundler = struct {
                             plugin.globalObject(),
                             load.path,
                             exception,
-                        ) catch bun.outOfMemory(),
+                        ) catch |err| switch (err) {
+                            error.OutOfMemory => bun.outOfMemory(),
+                            error.JSError, error.JSTerminated => {
+                                plugin.globalObject().reportActiveExceptionAsUnhandled(err);
+                                return;
+                            },
+                        },
                     };
                     load.bv2.onLoadAsync(load);
                 },
@@ -1318,7 +1768,7 @@ pub const BuildArtifact = struct {
         globalThis: *jsc.JSGlobalObject,
     ) JSValue {
         var buf: [512]u8 = undefined;
-        const out = std.fmt.bufPrint(&buf, "{any}", .{bun.fmt.truncatedHash32(this.hash)}) catch @panic("Unexpected");
+        const out = std.fmt.bufPrint(&buf, "{f}", .{bun.fmt.truncatedHash32(this.hash)}) catch @panic("Unexpected");
         return ZigString.init(out).toJS(globalThis);
     }
 
@@ -1342,7 +1792,7 @@ pub const BuildArtifact = struct {
         return jsc.JSValue.jsNull();
     }
 
-    pub fn finalize(this: *BuildArtifact) callconv(.C) void {
+    pub fn finalize(this: *BuildArtifact) callconv(.c) void {
         this.deinit();
 
         bun.default_allocator.destroy(this);
@@ -1399,7 +1849,7 @@ pub const BuildArtifact = struct {
                 try formatter.writeIndent(Writer, writer);
                 try writer.print(
                     comptime Output.prettyFmt(
-                        "<r>hash<r>: <green>\"{any}\"<r>",
+                        "<r>hash<r>: <green>\"{f}\"<r>",
                         enable_ansi_colors,
                     ),
                     .{bun.fmt.truncatedHash32(this.hash)},
@@ -1456,6 +1906,7 @@ const string = []const u8;
 
 const CompileTarget = @import("../../compile_target.zig");
 const Fs = @import("../../fs.zig");
+const _resolver = @import("../../resolver/resolver.zig");
 const resolve_path = @import("../../resolver/resolve_path.zig");
 const std = @import("std");
 

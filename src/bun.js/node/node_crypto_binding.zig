@@ -257,8 +257,6 @@ const random = struct {
         const res = std.crypto.random.intRangeLessThan(i64, min, max);
 
         if (!callback.isUndefined()) {
-            callback = callback.withAsyncContextIfNeeded(global);
-
             try callback.callNextTick(global, [2]JSValue{ .js_undefined, JSValue.jsNumber(res) });
             return .js_undefined;
         }
@@ -487,8 +485,8 @@ pub fn setEngine(global: *JSGlobalObject, _: *jsc.CallFrame) JSError!JSValue {
 
 fn forEachHash(_: *const BoringSSL.EVP_MD, maybe_from: ?[*:0]const u8, _: ?[*:0]const u8, ctx: *anyopaque) callconv(.c) void {
     const from = maybe_from orelse return;
-    const hashes: *bun.CaseInsensitiveASCIIStringArrayHashMap(void) = @alignCast(@ptrCast(ctx));
-    hashes.put(bun.span(from), {}) catch bun.outOfMemory();
+    const hashes: *bun.CaseInsensitiveASCIIStringArrayHashMap(void) = @ptrCast(@alignCast(ctx));
+    bun.handleOom(hashes.put(bun.span(from), {}));
 }
 
 fn getHashes(global: *JSGlobalObject, _: *jsc.CallFrame) JSError!JSValue {
@@ -496,7 +494,7 @@ fn getHashes(global: *JSGlobalObject, _: *jsc.CallFrame) JSError!JSValue {
     defer hashes.deinit();
 
     // TODO(dylan-conway): cache the names
-    BoringSSL.EVP_MD_do_all_sorted(&forEachHash, @alignCast(@ptrCast(&hashes)));
+    BoringSSL.EVP_MD_do_all_sorted(&forEachHash, @ptrCast(@alignCast(&hashes)));
 
     const array = try JSValue.createEmptyArray(global, hashes.count());
 
@@ -538,12 +536,26 @@ const Scrypt = struct {
         const password = try Node.StringOrBuffer.fromJSMaybeAsync(global, bun.default_allocator, password_value, is_async, true) orelse {
             return global.throwInvalidArgumentTypeValue("password", "string, ArrayBuffer, Buffer, TypedArray, or DataView", password_value);
         };
-        errdefer password.deinit();
+
+        errdefer {
+            if (is_async) {
+                password.deinitAndUnprotect();
+            } else {
+                password.deinit();
+            }
+        }
 
         const salt = try Node.StringOrBuffer.fromJSMaybeAsync(global, bun.default_allocator, salt_value, is_async, true) orelse {
             return global.throwInvalidArgumentTypeValue("salt", "string, ArrayBuffer, Buffer, TypedArray, or DataView", salt_value);
         };
-        errdefer salt.deinit();
+
+        errdefer {
+            if (is_async) {
+                salt.deinitAndUnprotect();
+            } else {
+                salt.deinit();
+            }
+        }
 
         const keylen = try validators.validateInt32(global, keylen_value, "keylen", .{}, 0, null);
 
@@ -721,6 +733,14 @@ const Scrypt = struct {
     }
 
     fn deinit(this: *Scrypt) void {
+        this.salt.deinitAndUnprotect();
+        this.password.deinitAndUnprotect();
+        this.buf.deinit();
+    }
+
+    fn deinitSync(this: *Scrypt) void {
+        this.salt.deinit();
+        this.password.deinit();
         this.buf.deinit();
     }
 };
@@ -733,6 +753,7 @@ fn scrypt(global: *JSGlobalObject, callFrame: *jsc.CallFrame) JSError!JSValue {
 
 fn scryptSync(global: *JSGlobalObject, callFrame: *jsc.CallFrame) JSError!JSValue {
     var ctx = try Scrypt.fromJS(global, callFrame, false);
+    defer ctx.deinitSync();
     const buf, const bytes = try jsc.ArrayBuffer.alloc(global, .ArrayBuffer, ctx.keylen);
     ctx.runTask(bytes);
     return buf;

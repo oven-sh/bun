@@ -76,6 +76,9 @@ void CallSite::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, JSCStac
     if (!stackFrame.codeBlock()) {
         m_flags |= static_cast<unsigned int>(Flags::IsNative);
     }
+    if (stackFrame.isAsync()) {
+        m_flags |= static_cast<unsigned int>(Flags::IsAsync);
+    }
 }
 
 template<typename Visitor>
@@ -128,10 +131,10 @@ void CallSite::formatAsString(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WT
         }
 
         if (auto* object = thisValue.getObject()) {
-            auto catchScope = DECLARE_CATCH_SCOPE(vm);
+            auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
             auto className = object->calculatedClassName(object);
-            if (catchScope.exception()) {
-                catchScope.clearException();
+            if (topExceptionScope.exception()) {
+                (void)topExceptionScope.tryClearException();
             }
 
             if (className.length() > 0) {

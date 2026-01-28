@@ -27,6 +27,11 @@ run_pending_later: FlushPendingTask = .{},
 /// Currently, only used when `stdin` in `Bun.spawn` is a ReadableStream.
 readable_stream: jsc.WebCore.ReadableStream.Strong = .{},
 
+/// Strong reference to the JS wrapper object to prevent GC from collecting it
+/// while an async operation is pending. This is set when endFromJS returns a
+/// pending Promise and cleared when the operation completes.
+js_sink_ref: jsc.Strong.Optional = .empty,
+
 const log = Output.scoped(.FileSink, .visible);
 
 pub const RefCount = bun.ptr.RefCount(FileSink, "ref_count", deinit, .{});
@@ -60,14 +65,35 @@ pub fn memoryCost(this: *const FileSink) usize {
     return this.writer.memoryCost();
 }
 
-fn Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(_: *jsc.JSGlobalObject, jsvalue: jsc.JSValue) callconv(.C) void {
-    var this: *FileSink = @alignCast(@ptrCast(JSSink.fromJS(jsvalue) orelse return));
-    this.force_sync = true;
+fn Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(_: *jsc.JSGlobalObject, jsvalue: jsc.JSValue) callconv(.c) void {
+    var this: *FileSink = @ptrCast(@alignCast(JSSink.fromJS(jsvalue) orelse return));
+
     if (comptime !Environment.isWindows) {
+        this.force_sync = true;
         this.writer.force_sync = true;
         if (this.fd != bun.invalid_fd) {
             _ = bun.sys.updateNonblocking(this.fd, false);
         }
+    } else {
+        if (this.writer.source) |*source| {
+            switch (source.*) {
+                .pipe => |pipe| {
+                    if (uv.uv_stream_set_blocking(@ptrCast(pipe), 1) == .zero) {
+                        return;
+                    }
+                },
+                .tty => |tty| {
+                    if (uv.uv_stream_set_blocking(@ptrCast(tty), 1) == .zero) {
+                        return;
+                    }
+                },
+
+                else => {},
+            }
+        }
+
+        // Fallback to WriteFile() if it fails.
+        this.force_sync = true;
     }
 }
 
@@ -114,9 +140,15 @@ fn runPending(this: *FileSink) void {
 
     this.run_pending_later.has = false;
     const l = this.eventLoop();
+
     l.enter();
     defer l.exit();
     this.pending.run();
+
+    // Release the JS wrapper reference now that the pending operation is complete.
+    // This was held to prevent GC from collecting the wrapper while the async
+    // operation was in progress.
+    this.js_sink_ref.deinit();
 }
 
 pub fn onWrite(this: *FileSink, amount: usize, status: bun.io.WriteStatus) void {
@@ -180,7 +212,7 @@ pub fn onWrite(this: *FileSink, amount: usize, status: bun.io.WriteStatus) void 
 }
 
 pub fn onError(this: *FileSink, err: bun.sys.Error) void {
-    log("onError({any})", .{err});
+    log("onError({f})", .{err});
     if (this.pending.state == .pending) {
         this.pending.result = .{ .err = err };
         if (this.eventLoop().bunVM()) |vm| {
@@ -336,7 +368,11 @@ pub fn setup(this: *FileSink, options: *const FileSink.Options) bun.sys.Maybe(vo
 }
 
 pub fn loop(this: *FileSink) *bun.Async.Loop {
-    return this.event_loop_handle.loop();
+    if (comptime bun.Environment.isWindows) {
+        return this.event_loop_handle.loop().uv_loop;
+    } else {
+        return this.event_loop_handle.loop();
+    }
 }
 
 pub fn eventLoop(this: *FileSink) jsc.EventLoopHandle {
@@ -450,7 +486,15 @@ pub fn flushFromJS(this: *FileSink, globalThis: *JSGlobalObject, wait: bool) bun
 pub fn finalize(this: *FileSink) void {
     this.readable_stream.deinit();
     this.pending.deinit();
+    this.js_sink_ref.deinit();
     this.deref();
+}
+
+/// Protect the JS wrapper object from GC collection while an async operation is pending.
+/// This should be called when endFromJS returns a pending Promise.
+/// The reference is released when runPending() completes.
+pub fn protectJSWrapper(this: *FileSink, globalThis: *jsc.JSGlobalObject, js_wrapper: jsc.JSValue) void {
+    this.js_sink_ref.set(globalThis, js_wrapper);
 }
 
 pub fn init(fd: bun.FileDescriptor, event_loop_handle: anytype) *FileSink {
@@ -531,6 +575,7 @@ fn deinit(this: *FileSink) void {
     this.pending.deinit();
     this.writer.deinit();
     this.readable_stream.deinit();
+    this.js_sink_ref.deinit();
     if (this.event_loop_handle.globalObject()) |global| {
         webcore.AutoFlusher.unregisterDeferredMicrotaskWithType(@This(), this, global.bunVM());
     }
@@ -554,7 +599,9 @@ pub fn endFromJS(this: *FileSink, globalThis: *JSGlobalObject) bun.sys.Maybe(JSV
         return .{ .result = JSValue.jsNumber(this.written) };
     }
 
-    switch (this.writer.flush()) {
+    const flush_result = this.writer.flush();
+
+    switch (flush_result) {
         .done => |written| {
             this.updateRef(false);
             this.writer.end();
@@ -572,7 +619,10 @@ pub fn endFromJS(this: *FileSink, globalThis: *JSGlobalObject) bun.sys.Maybe(JSV
             }
             this.done = true;
             this.pending.result = .{ .owned = @truncate(pending_written) };
-            return .{ .result = this.pending.promise(globalThis).toJS() };
+
+            const promise_result = this.pending.promise(globalThis);
+
+            return .{ .result = promise_result.toJS() };
         },
         .wrote => |written| {
             this.writer.end();
@@ -710,11 +760,11 @@ pub fn assignToStream(this: *FileSink, stream: *jsc.WebCore.ReadableStream, glob
 
     if (!promise_result.isEmptyOrUndefinedOrNull()) {
         if (promise_result.asAnyPromise()) |promise| {
-            switch (promise.status(globalThis.vm())) {
+            switch (promise.status()) {
                 .pending => {
                     this.writer.enableKeepingProcessAlive(this.event_loop_handle);
                     this.ref();
-                    promise_result.then(globalThis, this, onResolveStream, onRejectStream);
+                    promise_result.then(globalThis, this, onResolveStream, onRejectStream) catch {}; // TODO: properly propagate exception upwards
                 },
                 .fulfilled => {
                     // These don't ref().

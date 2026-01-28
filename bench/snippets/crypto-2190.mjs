@@ -12,6 +12,9 @@ const scenarios = [
   { alg: "sha1", digest: "base64" },
   { alg: "sha256", digest: "hex" },
   { alg: "sha256", digest: "base64" },
+  { alg: "blake2b512", digest: "hex" },
+  { alg: "sha512-224", digest: "hex" },
+  { alg: "sha512-256", digest: "hex" },
 ];
 
 for (const { alg, digest } of scenarios) {
@@ -22,6 +25,10 @@ for (const { alg, digest } of scenarios) {
   if ("Bun" in globalThis) {
     bench(`${alg}-${digest} (Bun.CryptoHasher)`, () => {
       new Bun.CryptoHasher(alg).update(data).digest(digest);
+    });
+
+    bench(`${alg}-${digest} (Bun.CryptoHasher.hash)`, () => {
+      return Bun.CryptoHasher.hash(alg, data, digest);
     });
   }
 }

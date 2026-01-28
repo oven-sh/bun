@@ -245,12 +245,12 @@ pub const YarnLock = struct {
         }
     };
 
-    entries: std.ArrayList(Entry),
+    entries: std.array_list.Managed(Entry),
     allocator: Allocator,
 
     pub fn init(allocator: Allocator) YarnLock {
         return .{
-            .entries = std.ArrayList(Entry).init(allocator),
+            .entries = std.array_list.Managed(Entry).init(allocator),
             .allocator = allocator,
         };
     }
@@ -265,7 +265,7 @@ pub const YarnLock = struct {
     pub fn parse(self: *YarnLock, content: []const u8) !void {
         var lines = strings.split(content, "\n");
         var current_entry: ?Entry = null;
-        var current_specs = std.ArrayList([]const u8).init(self.allocator);
+        var current_specs = std.array_list.Managed([]const u8).init(self.allocator);
         defer current_specs.deinit();
 
         var current_deps: ?bun.StringHashMap(string) = null;
@@ -401,7 +401,7 @@ pub const YarnLock = struct {
                     } else if (strings.eqlComptime(key, "integrity")) {
                         current_entry.?.integrity = value;
                     } else if (strings.eqlComptime(key, "os")) {
-                        var os_list = std.ArrayList([]const u8).init(self.allocator);
+                        var os_list = std.array_list.Managed([]const u8).init(self.allocator);
                         var os_it = strings.split(value[1 .. value.len - 1], ",");
                         while (os_it.next()) |os| {
                             const trimmed_os = strings.trim(os, " \"");
@@ -409,7 +409,7 @@ pub const YarnLock = struct {
                         }
                         current_entry.?.os = try os_list.toOwnedSlice();
                     } else if (strings.eqlComptime(key, "cpu")) {
-                        var cpu_list = std.ArrayList([]const u8).init(self.allocator);
+                        var cpu_list = std.array_list.Managed([]const u8).init(self.allocator);
                         var cpu_it = strings.split(value[1 .. value.len - 1], ",");
                         while (cpu_it.next()) |cpu| {
                             const trimmed_cpu = strings.trim(cpu, " \"");
@@ -577,7 +577,7 @@ pub fn migrateYarnLockfile(
     var root_dep_count: u32 = 0;
     var root_dep_count_from_package_json: u32 = 0;
 
-    var root_dependencies = std.ArrayList(struct { name: []const u8, version: []const u8, dep_type: DependencyType }).init(allocator);
+    var root_dependencies = std.array_list.Managed(struct { name: []const u8, version: []const u8, dep_type: DependencyType }).init(allocator);
     defer {
         for (root_dependencies.items) |dep| {
             allocator.free(dep.name);
@@ -734,7 +734,7 @@ pub fn migrateYarnLockfile(
     var package_versions = bun.StringHashMap(VersionInfo).init(allocator);
     defer package_versions.deinit();
 
-    var scoped_packages = bun.StringHashMap(std.ArrayList(VersionInfo)).init(allocator);
+    var scoped_packages = bun.StringHashMap(std.array_list.Managed(VersionInfo)).init(allocator);
     defer {
         var it = scoped_packages.iterator();
         while (it.next()) |entry| {
@@ -770,7 +770,7 @@ pub fn migrateYarnLockfile(
 
         if (package_versions.get(name)) |existing| {
             if (!strings.eql(existing.version, version)) {
-                var list = scoped_packages.get(name) orelse std.ArrayList(VersionInfo).init(allocator);
+                var list = scoped_packages.get(name) orelse std.array_list.Managed(VersionInfo).init(allocator);
 
                 var found_existing = false;
                 var found_new = false;
@@ -1129,7 +1129,7 @@ pub fn migrateYarnLockfile(
         },
     });
 
-    var package_dependents = try allocator.alloc(std.ArrayList(Install.PackageID), next_package_id);
+    var package_dependents = try allocator.alloc(std.array_list.Managed(Install.PackageID), next_package_id);
     defer {
         for (package_dependents) |*list| {
             list.deinit();
@@ -1137,7 +1137,7 @@ pub fn migrateYarnLockfile(
         allocator.free(package_dependents);
     }
     for (package_dependents) |*list| {
-        list.* = std.ArrayList(Install.PackageID).init(allocator);
+        list.* = std.array_list.Managed(Install.PackageID).init(allocator);
     }
 
     for (yarn_lock.entries.items, 0..) |entry, yarn_idx| {
@@ -1368,7 +1368,7 @@ pub fn migrateYarnLockfile(
             const version_str = switch (this.packages.get(package_id).resolution.tag) {
                 .npm => brk: {
                     var version_buf: [64]u8 = undefined;
-                    const formatted = std.fmt.bufPrint(&version_buf, "{}", .{this.packages.get(package_id).resolution.value.npm.version.fmt(this.buffers.string_bytes.items)}) catch "";
+                    const formatted = std.fmt.bufPrint(&version_buf, "{f}", .{this.packages.get(package_id).resolution.value.npm.version.fmt(this.buffers.string_bytes.items)}) catch "";
                     break :brk formatted;
                 },
                 else => "unknown",
@@ -1671,6 +1671,8 @@ pub fn migrateYarnLockfile(
 
     try this.resolve(log);
 
+    try this.fetchNecessaryPackageMetadataAfterYarnOrPnpmMigration(manager, true);
+
     if (Environment.allow_assert) {
         try this.verifyData();
     }
@@ -1679,7 +1681,7 @@ pub fn migrateYarnLockfile(
 
     const result = LoadResult{ .ok = .{
         .lockfile = this,
-        .was_migrated = true,
+        .migrated = .yarn,
         .loaded_from_binary_lockfile = false,
         .serializer_result = .{},
         .format = .binary,

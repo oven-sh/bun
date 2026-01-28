@@ -130,7 +130,7 @@ if (process.argv.length === 2 &&
         // If the binary is build without `intl` the inspect option is
         // invalid. The test itself should handle this case.
         (process.features.inspector || !flag.startsWith('--inspect'))) {
-      if (flag === "--expose-gc" && process.versions.bun) {
+      if ((flag === "--expose-gc" || flag === "--expose_gc") && process.versions.bun) {
         globalThis.gc ??= () => Bun.gc(true);
         break;
       }
@@ -574,8 +574,7 @@ function canCreateSymLink() {
 
 function getCallSite(top) {
   const originalStackFormatter = Error.prepareStackTrace;
-  Error.prepareStackTrace = (err, stack) =>
-    `${stack[0].getFileName()}:${stack[0].getLineNumber()}`;
+  Error.prepareStackTrace = (err, stack) => `${stack[0].getFileName()}:${stack[0].getLineNumber()}:${stack[0].getColumnNumber()}`;
   const err = new Error();
   Error.captureStackTrace(err, top);
   // With the V8 Error API, the stack is not formatted until it is accessed

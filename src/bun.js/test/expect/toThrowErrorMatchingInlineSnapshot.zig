@@ -4,7 +4,7 @@ pub fn toThrowErrorMatchingInlineSnapshot(this: *Expect, globalThis: *JSGlobalOb
     const _arguments = callFrame.arguments_old(2);
     const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
 
-    incrementExpectCallCounter();
+    this.incrementExpectCallCounter();
 
     const not = this.flags.not;
     if (not) {
@@ -48,7 +48,6 @@ const jsc = bun.jsc;
 const CallFrame = bun.jsc.CallFrame;
 const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
-const incrementExpectCallCounter = bun.jsc.Expect.incrementExpectCallCounter;
 
 const Expect = bun.jsc.Expect.Expect;
 const getSignature = Expect.getSignature;

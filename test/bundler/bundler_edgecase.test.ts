@@ -274,6 +274,7 @@ describe("bundler", () => {
       "/entry.js": /* js */ `console.log(1)`,
     },
     outdir: "/out",
+    backend: "cli",
     loader: {
       ".cool": "wtf",
     },
@@ -2071,6 +2072,7 @@ describe("bundler", () => {
   });
 
   itBundled("edgecase/OutWithTwoFiles", {
+    backend: "cli",
     files: {
       "/entry.ts": `
         import index from './index.html' with { type: 'file' }

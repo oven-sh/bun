@@ -7,13 +7,13 @@ pub fn toHaveBeenCalledTimes(this: *Expect, globalThis: *JSGlobalObject, callfra
     defer this.postMatch(globalThis);
     const value: JSValue = try this.getValue(globalThis, thisValue, "toHaveBeenCalledTimes", "<green>expected<r>");
 
-    incrementExpectCallCounter();
+    this.incrementExpectCallCounter();
 
     const calls = try bun.cpp.JSMockFunction__getCalls(globalThis, value);
     if (!calls.jsType().isArray()) {
         var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
         defer formatter.deinit();
-        return globalThis.throw("Expected value must be a mock function: {any}", .{value.toFmt(&formatter)});
+        return globalThis.throw("Expected value must be a mock function: {f}", .{value.toFmt(&formatter)});
     }
 
     if (arguments.len < 1 or !arguments[0].isUInt32AsAnyInt()) {
@@ -31,11 +31,11 @@ pub fn toHaveBeenCalledTimes(this: *Expect, globalThis: *JSGlobalObject, callfra
     // handle failure
     if (not) {
         const signature = comptime getSignature("toHaveBeenCalledTimes", "<green>expected<r>", true);
-        return this.throw(globalThis, signature, "\n\n" ++ "Expected number of calls: not <green>{any}<r>\n" ++ "Received number of calls: <red>{any}<r>\n", .{ times, calls.getLength(globalThis) });
+        return this.throw(globalThis, signature, "\n\n" ++ "Expected number of calls: not <green>{d}<r>\n" ++ "Received number of calls: <red>{d}<r>\n", .{ times, try calls.getLength(globalThis) });
     }
 
     const signature = comptime getSignature("toHaveBeenCalledTimes", "<green>expected<r>", false);
-    return this.throw(globalThis, signature, "\n\n" ++ "Expected number of calls: <green>{any}<r>\n" ++ "Received number of calls: <red>{any}<r>\n", .{ times, calls.getLength(globalThis) });
+    return this.throw(globalThis, signature, "\n\n" ++ "Expected number of calls: <green>{d}<r>\n" ++ "Received number of calls: <red>{d}<r>\n", .{ times, try calls.getLength(globalThis) });
 }
 
 const bun = @import("bun");
@@ -44,7 +44,6 @@ const jsc = bun.jsc;
 const CallFrame = bun.jsc.CallFrame;
 const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
-const incrementExpectCallCounter = bun.jsc.Expect.incrementExpectCallCounter;
 
 const Expect = bun.jsc.Expect.Expect;
 const getSignature = Expect.getSignature;

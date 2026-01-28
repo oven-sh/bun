@@ -480,11 +480,15 @@ describe.if(isPosix)("BunFrontendDevServer inspector protocol", () => {
   test("should notify on clientNavigated events", async () => {
     await fetch(serverUrl.href).then(r => r.blob());
 
+    // IMPORTANT: Set up event listener BEFORE creating WebSocket to avoid race condition
+    // The clientConnected event is sent immediately in onOpen, so we must listen first
+    const connectedEventPromise = session.waitForEvent("BunFrontendDevServer.clientConnected");
+
     // Connect a client to trigger connection events
     const ws = await createHMRClient();
 
     // Wait for clientConnected event to get the connectionId
-    const connectedEvent = await session.waitForEvent("BunFrontendDevServer.clientConnected");
+    const connectedEvent = await connectedEventPromise;
     const connectionId = connectedEvent.connectionId;
 
     // Listen for clientNavigated event
@@ -512,11 +516,15 @@ describe.if(isPosix)("BunFrontendDevServer inspector protocol", () => {
   test("should notify on consoleLog events", async () => {
     await fetch(serverUrl.href).then(r => r.blob());
 
+    // IMPORTANT: Set up event listener BEFORE creating WebSocket to avoid race condition
+    // The clientConnected event is sent immediately in onOpen, so we must listen first
+    const connectedEventPromise = session.waitForEvent("BunFrontendDevServer.clientConnected");
+
     // Connect a client to trigger connection events
     const ws = await createHMRClient();
 
     // Wait for clientConnected event to get the connectionId
-    const connectedEvent = await session.waitForEvent("BunFrontendDevServer.clientConnected");
+    const connectedEvent = await connectedEventPromise;
 
     // Listen for consoleLog event
     const consoleLogPromise = session.waitForEvent("BunFrontendDevServer.consoleLog");

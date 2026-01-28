@@ -16,7 +16,7 @@ test("snapshots will recognize existing entries", async () => {
   let proc = Bun.spawnSync({
     cmd: [bunExe(), "test", "./test.test.js"],
     cwd: testDir,
-    env: bunEnv,
+    env: { ...bunEnv, CI: "false" },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -30,7 +30,7 @@ test("snapshots will recognize existing entries", async () => {
   proc = Bun.spawnSync({
     cmd: [bunExe(), "test", "./test.test.js"],
     cwd: testDir,
-    env: bunEnv,
+    env: { ...bunEnv, CI: "false" },
     stdout: "pipe",
     stderr: "pipe",
   });

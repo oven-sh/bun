@@ -1,10 +1,10 @@
 import assert from "node:assert";
+import { exampleSite } from "node-harness";
 import { createServer, request } from "node:http";
-import url from "node:url";
 
 export async function run() {
   const { promise, resolve, reject } = Promise.withResolvers();
-
+  await using server = exampleSite("http");
   const proxyServer = createServer(function (req, res) {
     // Use URL object instead of deprecated url.parse
     const parsedUrl = new URL(req.url, `http://${req.headers.host}`);
@@ -41,7 +41,7 @@ export async function run() {
       port: address.port,
       path: "/", // Change path to /
       headers: {
-        Host: "example.com",
+        Host: server.url.host,
         "accept-encoding": "identity",
       },
     };

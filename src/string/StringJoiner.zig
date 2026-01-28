@@ -22,7 +22,7 @@ const Node = struct {
     next: ?*Node = null,
 
     pub fn init(joiner_alloc: Allocator, slice: []const u8, slice_alloc: ?Allocator) *Node {
-        const node = joiner_alloc.create(Node) catch bun.outOfMemory();
+        const node = bun.handleOom(joiner_alloc.create(Node));
         node.* = .{
             .slice = slice,
             .allocator = NullableAllocator.init(slice_alloc),
@@ -51,7 +51,7 @@ pub fn pushStatic(this: *StringJoiner, data: []const u8) void {
 pub fn pushCloned(this: *StringJoiner, data: []const u8) void {
     if (data.len == 0) return;
     this.push(
-        this.allocator.dupe(u8, data) catch bun.outOfMemory(),
+        bun.handleOom(this.allocator.dupe(u8, data)),
         this.allocator,
     );
 }

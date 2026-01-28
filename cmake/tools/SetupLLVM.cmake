@@ -12,7 +12,13 @@ if(NOT ENABLE_LLVM)
   return()
 endif()
 
-set(DEFAULT_LLVM_VERSION "19.1.7")
+# LLVM 21 is required for Windows ARM64 (first version with ARM64 Windows builds)
+# Other platforms use LLVM 19.1.7
+if(WIN32 AND CMAKE_SYSTEM_PROCESSOR MATCHES "ARM64|aarch64|AARCH64")
+  set(DEFAULT_LLVM_VERSION "21.1.8")
+else()
+  set(DEFAULT_LLVM_VERSION "19.1.7")
+endif()
 
 optionx(LLVM_VERSION STRING "The version of LLVM to use" DEFAULT ${DEFAULT_LLVM_VERSION})
 
@@ -131,6 +137,9 @@ else()
   find_llvm_command(CMAKE_RANLIB llvm-ranlib)
   if(LINUX)
     find_llvm_command(LLD_PROGRAM ld.lld)
+    # Ensure vendor dependencies use lld instead of ld
+    list(APPEND CMAKE_ARGS -DCMAKE_EXE_LINKER_FLAGS=--ld-path=${LLD_PROGRAM})
+    list(APPEND CMAKE_ARGS -DCMAKE_SHARED_LINKER_FLAGS=--ld-path=${LLD_PROGRAM})
   endif()
   if(APPLE)
     find_llvm_command(CMAKE_DSYMUTIL dsymutil)

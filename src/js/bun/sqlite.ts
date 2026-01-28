@@ -299,9 +299,11 @@ class Statement {
 
     var arg0 = args[0];
 
-    !isArray(arg0) && (!arg0 || typeof arg0 !== "object" || isTypedArray(arg0))
-      ? this.#raw.run(internalFieldTuple, args)
-      : this.#raw.run(internalFieldTuple, ...args);
+    if (!isArray(arg0) && (!arg0 || typeof arg0 !== "object" || isTypedArray(arg0))) {
+      this.#raw.run(internalFieldTuple, args);
+    } else {
+      this.#raw.run(internalFieldTuple, ...args);
+    }
 
     return createChangesObject();
   }
@@ -516,9 +518,11 @@ class Database implements SqliteTypes.Database {
     }
 
     var arg0 = params[0];
-    !isArray(arg0) && (!arg0 || typeof arg0 !== "object" || isTypedArray(arg0))
-      ? SQL.run(this.#handle, this.#internalFlags, internalFieldTuple, query, params)
-      : SQL.run(this.#handle, this.#internalFlags, internalFieldTuple, query, ...params);
+    if (!isArray(arg0) && (!arg0 || typeof arg0 !== "object" || isTypedArray(arg0))) {
+      SQL.run(this.#handle, this.#internalFlags, internalFieldTuple, query, params);
+    } else {
+      SQL.run(this.#handle, this.#internalFlags, internalFieldTuple, query, ...params);
+    }
 
     return createChangesObject();
   }

@@ -5,13 +5,13 @@ import { basename, extname } from "path";
 const allFiles = fs.readdirSync(".").filter(f => f.endsWith(".js"));
 const outdir = process.argv[2];
 const builtins = Module.builtinModules;
-let commands = [];
+let commands: Promise<void>[] = [];
 
-let moduleFiles = [];
+let moduleFiles: string[] = [];
 for (const name of allFiles) {
   const mod = basename(name, extname(name)).replaceAll(".", "/");
   const file = allFiles.find(f => f.startsWith(mod));
-  moduleFiles.push(file);
+  moduleFiles.push(file as string);
 }
 
 for (let fileIndex = 0; fileIndex < allFiles.length; fileIndex++) {

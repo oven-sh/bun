@@ -95,7 +95,7 @@ pub const PathWatcher = struct {
     const Callback = *const fn (ctx: ?*anyopaque, event: Event, is_file: bool) void;
     const UpdateEndCallback = *const fn (ctx: ?*anyopaque) void;
 
-    fn uvEventCallback(event: *uv.uv_fs_event_t, filename: ?[*:0]const u8, events: c_int, status: uv.ReturnCode) callconv(.C) void {
+    fn uvEventCallback(event: *uv.uv_fs_event_t, filename: ?[*:0]const u8, events: c_int, status: uv.ReturnCode) callconv(.c) void {
         if (event.data == null) {
             Output.debugWarn("uvEventCallback called with null data", .{});
             return;
@@ -137,10 +137,10 @@ pub const PathWatcher = struct {
         var debug_count: if (bun.Environment.isDebug) usize else u0 = 0;
         for (this.handlers.values(), 0..) |*event, i| {
             if (event.emit(hash, timestamp, event_type)) {
-                const ctx: *FSWatcher = @alignCast(@ptrCast(this.handlers.keys()[i]));
+                const ctx: *FSWatcher = @ptrCast(@alignCast(this.handlers.keys()[i]));
                 onPathUpdateFn(ctx, event_type.toEvent(switch (ctx.encoding) {
                     .utf8 => .{ .string = bun.String.cloneUTF8(path) },
-                    else => .{ .bytes_to_free = bun.default_allocator.dupeZ(u8, path) catch bun.outOfMemory() },
+                    else => .{ .bytes_to_free = bun.handleOom(bun.default_allocator.dupeZ(u8, path)) },
                 }), is_file);
                 if (comptime bun.Environment.isDebug)
                     debug_count += 1;
@@ -176,7 +176,7 @@ pub const PathWatcher = struct {
             .result => |event_path| event_path,
         };
 
-        const watchers_entry = manager.watchers.getOrPut(bun.default_allocator, @as([]const u8, event_path)) catch bun.outOfMemory();
+        const watchers_entry = bun.handleOom(manager.watchers.getOrPut(bun.default_allocator, @as([]const u8, event_path)));
         if (watchers_entry.found_existing) {
             return .{ .result = watchers_entry.value_ptr.* };
         }
@@ -210,12 +210,12 @@ pub const PathWatcher = struct {
         uv.uv_unref(@ptrCast(&this.handle));
 
         watchers_entry.value_ptr.* = this;
-        watchers_entry.key_ptr.* = bun.default_allocator.dupeZ(u8, event_path) catch bun.outOfMemory();
+        watchers_entry.key_ptr.* = bun.handleOom(bun.default_allocator.dupeZ(u8, event_path));
 
         return .{ .result = this };
     }
 
-    fn uvClosedCallback(handler: *anyopaque) callconv(.C) void {
+    fn uvClosedCallback(handler: *anyopaque) callconv(.c) void {
         log("onClose", .{});
         const event = bun.cast(*uv.uv_fs_event_t, handler);
         const this = bun.cast(*PathWatcher, event.data);
@@ -285,7 +285,7 @@ pub fn watch(
         .err => |err| return .{ .err = err },
         .result => |watcher| watcher,
     };
-    watcher.handlers.put(bun.default_allocator, ctx, .{}) catch bun.outOfMemory();
+    bun.handleOom(watcher.handlers.put(bun.default_allocator, ctx, .{}));
     return .{ .result = watcher };
 }
 

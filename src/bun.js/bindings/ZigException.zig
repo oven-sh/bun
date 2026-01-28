@@ -109,7 +109,8 @@ pub const ZigException = extern struct {
                         .source_lines_len = source_lines_count,
                         .source_lines_to_collect = source_lines_count,
                         .frames_ptr = &this.frames,
-                        .frames_len = this.frames.len,
+                        .frames_len = 0,
+                        .frames_cap = this.frames.len,
                     },
                 };
                 this.loaded = true;
@@ -124,7 +125,7 @@ pub const ZigException = extern struct {
 
     pub fn addToErrorList(
         this: *ZigException,
-        error_list: *std.ArrayList(api.JsException),
+        error_list: *std.array_list.Managed(api.JsException),
         root_path: string,
         origin: ?*const ZigURL,
     ) !void {

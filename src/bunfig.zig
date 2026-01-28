@@ -49,12 +49,12 @@ pub const Bunfig = struct {
             // Token
             if (url.username.len == 0 and url.password.len > 0) {
                 registry.token = url.password;
-                registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{}/{s}/", .{ url.displayProtocol(), url.displayHost(), std.mem.trim(u8, url.pathname, "/") });
+                registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{f}/{s}/", .{ url.displayProtocol(), url.displayHost(), std.mem.trim(u8, url.pathname, "/") });
             } else if (url.username.len > 0 and url.password.len > 0) {
                 registry.username = url.username;
                 registry.password = url.password;
 
-                registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{}/{s}/", .{ url.displayProtocol(), url.displayHost(), std.mem.trim(u8, url.pathname, "/") });
+                registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{f}/{s}/", .{ url.displayProtocol(), url.displayHost(), std.mem.trim(u8, url.pathname, "/") });
             } else {
                 // Do not include a trailing slash. There might be parameters at the end.
                 registry.url = url.href;
@@ -129,7 +129,7 @@ pub const Bunfig = struct {
         ) !void {
             if (expr.asArray()) |array_| {
                 var array = array_;
-                var preloads = try std.ArrayList(string).initCapacity(allocator, array.array.items.len);
+                var preloads = try std.array_list.Managed(string).initCapacity(allocator, array.array.items.len);
                 errdefer preloads.deinit();
                 while (array.next()) |item| {
                     try this.expectString(item);
@@ -145,6 +145,43 @@ pub const Bunfig = struct {
                 }
             } else if (expr.data != .e_null) {
                 try this.addError(expr.loc, "Expected preload to be an array");
+            }
+        }
+
+        fn loadEnvConfig(this: *Parser, expr: js_ast.Expr) !void {
+            switch (expr.data) {
+                .e_null => {
+                    // env = null -> disable default .env files
+                    this.bunfig.disable_default_env_files = true;
+                },
+                .e_boolean => |boolean| {
+                    // env = false -> disable default .env files
+                    // env = true -> keep default behavior (load .env files)
+                    if (!boolean.value) {
+                        this.bunfig.disable_default_env_files = true;
+                    }
+                },
+                .e_object => |obj| {
+                    // env = { file: false } -> disable default .env files
+                    if (obj.get("file")) |file_expr| {
+                        switch (file_expr.data) {
+                            .e_null => {
+                                this.bunfig.disable_default_env_files = true;
+                            },
+                            .e_boolean => |boolean| {
+                                if (!boolean.value) {
+                                    this.bunfig.disable_default_env_files = true;
+                                }
+                            },
+                            else => {
+                                try this.addError(file_expr.loc, "Expected 'file' to be a boolean or null");
+                            },
+                        }
+                    }
+                },
+                else => {
+                    try this.addError(expr.loc, "Expected 'env' to be a boolean, null, or an object");
+                },
             }
         }
 
@@ -189,6 +226,10 @@ pub const Bunfig = struct {
             if (json.get("origin")) |expr| {
                 try this.expectString(expr);
                 this.bunfig.origin = try expr.data.e_string.string(allocator);
+            }
+
+            if (json.get("env")) |env_expr| {
+                try this.loadEnvConfig(env_expr);
             }
 
             if (comptime cmd == .RunCommand or cmd == .AutoCommand) {
@@ -239,14 +280,23 @@ pub const Bunfig = struct {
                         this.ctx.test_options.coverage.enabled = expr.data.e_boolean.value;
                     }
 
+                    if (test_.get("onlyFailures")) |expr| {
+                        try this.expect(expr, .e_boolean);
+                        this.ctx.test_options.reporters.only_failures = expr.data.e_boolean.value;
+                    }
+
                     if (test_.get("reporter")) |expr| {
                         try this.expect(expr, .e_object);
                         if (expr.get("junit")) |junit_expr| {
                             try this.expectString(junit_expr);
                             if (junit_expr.data.e_string.len() > 0) {
-                                this.ctx.test_options.file_reporter = .junit;
+                                this.ctx.test_options.reporters.junit = true;
                                 this.ctx.test_options.reporter_outfile = try junit_expr.data.e_string.string(allocator);
                             }
+                        }
+                        if (expr.get("dots") orelse expr.get("dot")) |dots_expr| {
+                            try this.expect(dots_expr, .e_boolean);
+                            this.ctx.test_options.reporters.dots = dots_expr.data.e_boolean.value;
                         }
                     }
 
@@ -323,6 +373,74 @@ pub const Bunfig = struct {
                     if (test_.get("coverageSkipTestFiles")) |expr| {
                         try this.expect(expr, .e_boolean);
                         this.ctx.test_options.coverage.skip_test_files = expr.data.e_boolean.value;
+                    }
+
+                    var randomize_from_config: ?bool = null;
+
+                    if (test_.get("randomize")) |expr| {
+                        try this.expect(expr, .e_boolean);
+                        randomize_from_config = expr.data.e_boolean.value;
+                        this.ctx.test_options.randomize = expr.data.e_boolean.value;
+                    }
+
+                    if (test_.get("seed")) |expr| {
+                        try this.expect(expr, .e_number);
+                        const seed_value = expr.data.e_number.toU32();
+
+                        // Validate that randomize is true when seed is specified
+                        // Either randomize must be set to true in this config, or already enabled
+                        const has_randomize_true = (randomize_from_config orelse this.ctx.test_options.randomize);
+                        if (!has_randomize_true) {
+                            try this.addError(expr.loc, "\"seed\" can only be used when \"randomize\" is true");
+                        }
+
+                        this.ctx.test_options.seed = seed_value;
+                    }
+
+                    if (test_.get("rerunEach")) |expr| {
+                        try this.expect(expr, .e_number);
+                        this.ctx.test_options.repeat_count = expr.data.e_number.toU32();
+                    }
+
+                    if (test_.get("concurrentTestGlob")) |expr| {
+                        switch (expr.data) {
+                            .e_string => |str| {
+                                // Reject empty strings
+                                if (str.len() == 0) {
+                                    try this.addError(expr.loc, "concurrentTestGlob cannot be an empty string");
+                                    return;
+                                }
+                                const pattern = try str.string(allocator);
+                                const patterns = try allocator.alloc(string, 1);
+                                patterns[0] = pattern;
+                                this.ctx.test_options.concurrent_test_glob = patterns;
+                            },
+                            .e_array => |arr| {
+                                if (arr.items.len == 0) {
+                                    try this.addError(expr.loc, "concurrentTestGlob array cannot be empty");
+                                    return;
+                                }
+
+                                const patterns = try allocator.alloc(string, arr.items.len);
+                                for (arr.items.slice(), 0..) |item, i| {
+                                    if (item.data != .e_string) {
+                                        try this.addError(item.loc, "concurrentTestGlob array must contain only strings");
+                                        return;
+                                    }
+                                    // Reject empty strings in array
+                                    if (item.data.e_string.len() == 0) {
+                                        try this.addError(item.loc, "concurrentTestGlob patterns cannot be empty strings");
+                                        return;
+                                    }
+                                    patterns[i] = try item.data.e_string.string(allocator);
+                                }
+                                this.ctx.test_options.concurrent_test_glob = patterns;
+                            },
+                            else => {
+                                try this.addError(expr.loc, "concurrentTestGlob must be a string or array of strings");
+                                return;
+                            },
+                        }
                     }
 
                     if (test_.get("coveragePathIgnorePatterns")) |expr| brk: {
@@ -620,6 +738,64 @@ pub const Bunfig = struct {
                             try this.addError(security_obj.loc, "Invalid security config, expected an object");
                         }
                     }
+
+                    if (install_obj.get("minimumReleaseAge")) |min_age| {
+                        switch (min_age.data) {
+                            .e_number => |seconds| {
+                                if (seconds.value < 0) {
+                                    try this.addError(min_age.loc, "Expected positive number of seconds for minimumReleaseAge");
+                                    return;
+                                }
+                                install.minimum_release_age_ms = seconds.value * std.time.ms_per_s;
+                            },
+                            else => {
+                                try this.addError(min_age.loc, "Expected number of seconds for minimumReleaseAge");
+                            },
+                        }
+                    }
+
+                    if (install_obj.get("minimumReleaseAgeExcludes")) |exclusions| {
+                        switch (exclusions.data) {
+                            .e_array => |arr| brk: {
+                                const raw_exclusions = arr.items.slice();
+                                if (raw_exclusions.len == 0) break :brk;
+
+                                const exclusions_list = try this.allocator.alloc(string, raw_exclusions.len);
+                                for (raw_exclusions, 0..) |p, i| {
+                                    try this.expectString(p);
+                                    exclusions_list[i] = try p.data.e_string.string(allocator);
+                                }
+                                install.minimum_release_age_excludes = exclusions_list;
+                            },
+                            else => {
+                                try this.addError(exclusions.loc, "Expected array for minimumReleaseAgeExcludes");
+                            },
+                        }
+                    }
+
+                    if (install_obj.get("publicHoistPattern")) |public_hoist_pattern_expr| {
+                        install.public_hoist_pattern = bun.install.PnpmMatcher.fromExpr(
+                            allocator,
+                            public_hoist_pattern_expr,
+                            this.log,
+                            this.source,
+                        ) catch |err| switch (err) {
+                            error.OutOfMemory => |oom| return oom,
+                            error.UnexpectedExpr, error.InvalidRegExp => return error.@"Invalid Bunfig",
+                        };
+                    }
+
+                    if (install_obj.get("hoistPattern")) |hoist_pattern_expr| {
+                        install.hoist_pattern = bun.install.PnpmMatcher.fromExpr(
+                            allocator,
+                            hoist_pattern_expr,
+                            this.log,
+                            this.source,
+                        ) catch |err| switch (err) {
+                            error.OutOfMemory => |oom| return oom,
+                            error.UnexpectedExpr, error.InvalidRegExp => return error.@"Invalid Bunfig",
+                        };
+                    }
                 }
 
                 if (json.get("run")) |run_expr| {
@@ -751,7 +927,7 @@ pub const Bunfig = struct {
                             .values = values,
                         };
                     }
-                    this.bunfig.bunfig_path = bun.default_allocator.dupe(u8, this.source.path.text) catch bun.outOfMemory();
+                    this.bunfig.bunfig_path = bun.handleOom(bun.default_allocator.dupe(u8, this.source.path.text));
 
                     if (serve_obj.get("publicPath")) |public_path| {
                         if (public_path.asString(allocator)) |value| {
@@ -990,7 +1166,7 @@ pub const Bunfig = struct {
                 else => {
                     this.log.addErrorFmtOpts(
                         this.allocator,
-                        "expected string but received {}",
+                        "expected string but received {f}",
                         .{
                             @as(js_ast.Expr.Tag, expr.data),
                         },
@@ -1009,7 +1185,7 @@ pub const Bunfig = struct {
             if (@as(js_ast.Expr.Tag, expr.data) != token) {
                 this.log.addErrorFmtOpts(
                     this.allocator,
-                    "expected {} but received {}",
+                    "expected {f} but received {f}",
                     .{
                         token,
                         @as(js_ast.Expr.Tag, expr.data),

@@ -68,9 +68,9 @@ namespace WebCore {
 using namespace JSC;
 using namespace JSC::DOMJIT;
 
-extern "C" JSC::EncodedJSValue TextEncoder__encode8(JSC::JSGlobalObject* global, const LChar* stringPtr, size_t stringLen);
+extern "C" JSC::EncodedJSValue TextEncoder__encode8(JSC::JSGlobalObject* global, const Latin1Character* stringPtr, size_t stringLen);
 extern "C" JSC::EncodedJSValue TextEncoder__encode16(JSC::JSGlobalObject* global, const char16_t* stringPtr, size_t stringLen);
-extern "C" size_t TextEncoder__encodeInto8(const LChar* stringPtr, size_t stringLen, void* ptr, size_t len);
+extern "C" size_t TextEncoder__encodeInto8(const Latin1Character* stringPtr, size_t stringLen, void* ptr, size_t len);
 extern "C" size_t TextEncoder__encodeInto16(const char16_t* stringPtr, size_t stringLen, void* ptr, size_t len);
 extern "C" JSC::EncodedJSValue TextEncoder__encodeRopeString(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSString* str);
 
@@ -189,7 +189,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSTextEncoderDOMConstruc
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
-    auto jsValue = toJSNewlyCreated<IDLInterface<TextEncoder>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTFMove(object));
+    auto jsValue = toJSNewlyCreated<IDLInterface<TextEncoder>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTF::move(object));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     setSubclassStructureIfNeeded<TextEncoder>(lexicalGlobalObject, callFrame, asObject(jsValue));
@@ -314,7 +314,7 @@ void JSTextEncoderPrototype::finishCreation(VM& vm)
 const ClassInfo JSTextEncoder::s_info = { "TextEncoder"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTextEncoder) };
 
 JSTextEncoder::JSTextEncoder(Structure* structure, JSDOMGlobalObject& globalObject, Ref<TextEncoder>&& impl)
-    : JSDOMWrapper<TextEncoder>(structure, globalObject, WTFMove(impl))
+    : JSDOMWrapper<TextEncoder>(structure, globalObject, WTF::move(impl))
 {
 }
 
@@ -527,7 +527,7 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
         // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
 #endif
     }
-    return createWrapper<TextEncoder>(globalObject, WTFMove(impl));
+    return createWrapper<TextEncoder>(globalObject, WTF::move(impl));
 }
 
 JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, TextEncoder& impl)

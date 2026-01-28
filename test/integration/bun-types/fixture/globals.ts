@@ -335,3 +335,8 @@ new Error("asdf", {
 new Error("asdf", {
   cause: new Error("asdf"),
 });
+
+// @ts-expect-error this interface is defined top level in globals.d.ts so we
+// are making sure that .d.ts is a module and that anything top level doesn't
+// leak to userland
+expectType<BunConsumerConvenienceMethods>();

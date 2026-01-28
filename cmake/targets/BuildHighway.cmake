@@ -4,7 +4,7 @@ register_repository(
   REPOSITORY
     google/highway
   COMMIT
-    12b325bc1793dee68ab2157995a690db859fe9e0
+    ac0d5d297b13ab1b89f48484fc7911082d76a93f
 )
 
 set(HIGHWAY_CMAKE_ARGS
@@ -19,6 +19,15 @@ set(HIGHWAY_CMAKE_ARGS
   # Disable building of the install target
   -DHWY_ENABLE_INSTALL=OFF
 )
+
+# On Windows ARM64 with clang-cl, the __ARM_NEON macro isn't defined by default
+# but NEON intrinsics are supported. Define it so Highway can detect NEON support.
+if(WIN32 AND CMAKE_SYSTEM_PROCESSOR MATCHES "ARM64|aarch64|AARCH64")
+  list(APPEND HIGHWAY_CMAKE_ARGS
+    -DCMAKE_C_FLAGS=-D__ARM_NEON=1
+    -DCMAKE_CXX_FLAGS=-D__ARM_NEON=1
+  )
+endif()
 
 register_cmake_command(
   TARGET

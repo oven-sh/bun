@@ -9,7 +9,7 @@ pub fn toEqualIgnoringWhitespace(this: *Expect, globalThis: *JSGlobalObject, cal
         return globalThis.throwInvalidArguments("toEqualIgnoringWhitespace() requires 1 argument", .{});
     }
 
-    incrementExpectCallCounter();
+    this.incrementExpectCallCounter();
 
     const expected = arguments[0];
     const value: JSValue = try this.getValue(globalThis, thisValue, "toEqualIgnoringWhitespace", "<green>expected<r>");
@@ -70,11 +70,11 @@ pub fn toEqualIgnoringWhitespace(this: *Expect, globalThis: *JSGlobalObject, cal
 
     if (not) {
         const signature = comptime getSignature("toEqualIgnoringWhitespace", "<green>expected<r>", true);
-        return this.throw(globalThis, signature, "\n\n" ++ "Expected: not <green>{any}<r>\n" ++ "Received: <red>{any}<r>\n", .{ expected_fmt, value_fmt });
+        return this.throw(globalThis, signature, "\n\n" ++ "Expected: not <green>{f}<r>\n" ++ "Received: <red>{f}<r>\n", .{ expected_fmt, value_fmt });
     }
 
     const signature = comptime getSignature("toEqualIgnoringWhitespace", "<green>expected<r>", false);
-    return this.throw(globalThis, signature, "\n\n" ++ "Expected: <green>{any}<r>\n" ++ "Received: <red>{any}<r>\n", .{ expected_fmt, value_fmt });
+    return this.throw(globalThis, signature, "\n\n" ++ "Expected: <green>{f}<r>\n" ++ "Received: <red>{f}<r>\n", .{ expected_fmt, value_fmt });
 }
 
 const std = @import("std");
@@ -86,7 +86,6 @@ const jsc = bun.jsc;
 const CallFrame = bun.jsc.CallFrame;
 const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
-const incrementExpectCallCounter = bun.jsc.Expect.incrementExpectCallCounter;
 
 const Expect = bun.jsc.Expect.Expect;
 const getSignature = Expect.getSignature;

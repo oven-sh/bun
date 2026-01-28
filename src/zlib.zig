@@ -131,11 +131,11 @@ pub fn NewZlibReader(comptime Writer: type, comptime buffer_size: usize) type {
         allocator: std.mem.Allocator,
         state: State = State.Uninitialized,
 
-        pub fn alloc(_: *anyopaque, items: uInt, len: uInt) callconv(.C) *anyopaque {
+        pub fn alloc(_: *anyopaque, items: uInt, len: uInt) callconv(.c) *anyopaque {
             return mimalloc.mi_malloc(items * len) orelse unreachable;
         }
 
-        pub fn free(_: *anyopaque, data: *anyopaque) callconv(.C) void {
+        pub fn free(_: *anyopaque, data: *anyopaque) callconv(.c) void {
             mimalloc.mi_free(data);
         }
 
@@ -209,7 +209,7 @@ pub fn NewZlibReader(comptime Writer: type, comptime buffer_size: usize) type {
             return null;
         }
 
-        pub fn readAll(this: *ZlibReader) !void {
+        pub fn readAll(this: *ZlibReader, is_done: bool) !void {
             while (this.state == State.Uninitialized or this.state == State.Inflating) {
 
                 // Before the call of inflate(), the application should ensure
@@ -247,11 +247,8 @@ pub fn NewZlibReader(comptime Writer: type, comptime buffer_size: usize) type {
                     this.zlib.next_out = &this.buf;
                 }
 
-                if (this.zlib.avail_in == 0) {
-                    return error.ShortRead;
-                }
-
-                const rc = inflate(&this.zlib, FlushValue.PartialFlush);
+                // Try to inflate even if avail_in is 0, as this could be a valid empty gzip stream
+                const rc = inflate(&this.zlib, FlushValue.NoFlush);
                 this.state = State.Inflating;
 
                 switch (rc) {
@@ -269,9 +266,22 @@ pub fn NewZlibReader(comptime Writer: type, comptime buffer_size: usize) type {
                         this.state = State.Error;
                         return error.OutOfMemory;
                     },
+                    ReturnCode.BufError => {
+                        // BufError with avail_in == 0 means we need more input data
+                        if (this.zlib.avail_in == 0) {
+                            if (is_done) {
+                                // Stream is truncated - we're at EOF but decoder needs more data
+                                this.state = State.Error;
+                                return error.ZlibError;
+                            }
+                            // Not at EOF - we can retry with more data
+                            return error.ShortRead;
+                        }
+                        this.state = State.Error;
+                        return error.ZlibError;
+                    },
                     ReturnCode.StreamError,
                     ReturnCode.DataError,
-                    ReturnCode.BufError,
                     ReturnCode.NeedDict,
                     ReturnCode.VersionError,
                     ReturnCode.ErrNo,
@@ -294,7 +304,7 @@ pub const ZlibError = error{
 };
 
 const ZlibAllocator = struct {
-    pub fn alloc(_: *anyopaque, items: uInt, len: uInt) callconv(.C) *anyopaque {
+    pub fn alloc(_: *anyopaque, items: uInt, len: uInt) callconv(.c) *anyopaque {
         if (bun.heap_breakdown.enabled) {
             const zone = bun.heap_breakdown.getZone("zlib");
             return zone.malloc_zone_calloc(items, len) orelse bun.outOfMemory();
@@ -303,7 +313,7 @@ const ZlibAllocator = struct {
         return mimalloc.mi_calloc(items, len) orelse bun.outOfMemory();
     }
 
-    pub fn free(_: *anyopaque, data: *anyopaque) callconv(.C) void {
+    pub fn free(_: *anyopaque, data: *anyopaque) callconv(.c) void {
         if (bun.heap_breakdown.enabled) {
             const zone = bun.heap_breakdown.getZone("zlib");
             zone.malloc_zone_free(data);
@@ -420,7 +430,7 @@ pub const ZlibReaderArrayList = struct {
         return null;
     }
 
-    pub fn readAll(this: *ZlibReader) ZlibError!void {
+    pub fn readAll(this: *ZlibReader, is_done: bool) ZlibError!void {
         defer {
             if (this.list.items.len > this.zlib.total_out) {
                 this.list.shrinkRetainingCapacity(this.zlib.total_out);
@@ -466,11 +476,8 @@ pub const ZlibReaderArrayList = struct {
                 this.zlib.avail_out = @truncate(this.list.items.len -| initial);
             }
 
-            if (this.zlib.avail_in == 0) {
-                return error.ShortRead;
-            }
-
-            const rc = inflate(&this.zlib, FlushValue.PartialFlush);
+            // Try to inflate even if avail_in is 0, as this could be a valid empty gzip stream
+            const rc = inflate(&this.zlib, FlushValue.NoFlush);
             this.state = State.Inflating;
 
             switch (rc) {
@@ -482,9 +489,22 @@ pub const ZlibReaderArrayList = struct {
                     this.state = State.Error;
                     return error.OutOfMemory;
                 },
+                ReturnCode.BufError => {
+                    // BufError with avail_in == 0 means we need more input data
+                    if (this.zlib.avail_in == 0) {
+                        if (is_done) {
+                            // Stream is truncated - we're at EOF but decoder needs more data
+                            this.state = State.Error;
+                            return error.ZlibError;
+                        }
+                        // Not at EOF - we can retry with more data
+                        return error.ShortRead;
+                    }
+                    this.state = State.Error;
+                    return error.ZlibError;
+                },
                 ReturnCode.StreamError,
                 ReturnCode.DataError,
-                ReturnCode.BufError,
                 ReturnCode.NeedDict,
                 ReturnCode.VersionError,
                 ReturnCode.ErrNo,
@@ -752,11 +772,11 @@ pub const ZlibCompressorArrayList = struct {
     allocator: std.mem.Allocator,
     state: State = State.Uninitialized,
 
-    pub fn alloc(_: *anyopaque, items: uInt, len: uInt) callconv(.C) *anyopaque {
+    pub fn alloc(_: *anyopaque, items: uInt, len: uInt) callconv(.c) *anyopaque {
         return mimalloc.mi_malloc(items * len) orelse unreachable;
     }
 
-    pub fn free(_: *anyopaque, data: *anyopaque) callconv(.C) void {
+    pub fn free(_: *anyopaque, data: *anyopaque) callconv(.c) void {
         mimalloc.mi_free(data);
     }
 
@@ -820,7 +840,10 @@ pub const ZlibCompressorArrayList = struct {
             @sizeOf(zStream_struct),
         )) {
             ReturnCode.Ok => {
-                try zlib_reader.list.ensureTotalCapacityPrecise(list_allocator, deflateBound(&zlib_reader.zlib, input.len));
+                zlib_reader.list.ensureTotalCapacityPrecise(list_allocator, deflateBound(&zlib_reader.zlib, input.len)) catch {
+                    zlib_reader.deinit();
+                    return error.OutOfMemory;
+                };
                 zlib_reader.list_ptr.* = zlib_reader.list;
                 zlib_reader.zlib.avail_out = @truncate(zlib_reader.list.capacity);
                 zlib_reader.zlib.next_out = zlib_reader.list.items.ptr;

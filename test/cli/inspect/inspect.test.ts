@@ -448,3 +448,81 @@ test.todo("junit reporter", async () => {
     .trim();
   expect(stripAnsi(report)).toMatchSnapshot();
 });
+
+// This test is checking that Bun.inspect || console.log on an Error instance is
+// ~the same whether you did `error.stack` or not.
+//
+// Since the 2nd time around, we parse the error.stack getter, we need to make sure
+// it doesn't lose frames.
+test("error.stack doesnt lose frames", () => {
+  function top() {
+    function middle() {
+      function bottom() {
+        throw new Error("test");
+      }
+      bottom();
+    }
+    middle();
+  }
+  function accessErrorStackProperty(yes: boolean): Error {
+    try {
+      top();
+      expect.unreachable();
+    } catch (e: any) {
+      if (yes) {
+        e.stack;
+      }
+
+      return e as Error;
+    }
+  }
+
+  function bottom(yes: boolean) {
+    return accessErrorStackProperty(yes);
+  }
+
+  Object.defineProperty(top, "name", { value: "IGNORE_ME_BEFORE_THIS_LINE" });
+  Object.defineProperty(bottom, "name", { value: "IGNORE_ME_AFTER_THIS_LINE" });
+
+  let yes = Bun.inspect(bottom(true));
+  yes = yes.slice(yes.indexOf("^") + 1);
+  yes = yes.slice(yes.indexOf("\n"));
+  yes = yes
+    .replaceAll(import.meta.dirname, "<dir>")
+    .replaceAll("\\", "/")
+    .replace(/\d+/gim, "<num>");
+
+  let no = Bun.inspect(bottom(false));
+  no = no.slice(no.indexOf("^") + 1);
+  no = no.slice(no.indexOf("\n"));
+  no = no
+    .replaceAll(import.meta.dirname, "<dir>")
+    .replaceAll("\\", "/")
+    .replace(/\d+/gim, "<num>");
+
+  expect(no).toMatchInlineSnapshot(`
+    "
+    error: test
+          at bottom (<dir>/inspect.test.ts:<num>:<num>)
+          at middle (<dir>/inspect.test.ts:<num>:<num>)
+          at IGNORE_ME_BEFORE_THIS_LINE (<dir>/inspect.test.ts:<num>:<num>)
+          at accessErrorStackProperty (<dir>/inspect.test.ts:<num>:<num>)
+          at <anonymous> (<dir>/inspect.test.ts:<num>:<num>)
+    "
+  `);
+
+  // In Bun v1.2.20 and lower, we would only have the first frame here.
+  expect(yes).toMatchInlineSnapshot(`
+    "
+    error: test
+          at bottom (<dir>/inspect.test.ts:<num>:<num>)
+          at middle (<dir>/inspect.test.ts:<num>:<num>)
+          at IGNORE_ME_BEFORE_THIS_LINE (<dir>/inspect.test.ts:<num>:<num>)
+          at accessErrorStackProperty (<dir>/inspect.test.ts:<num>:<num>)
+          at <dir>/inspect.test.ts:<num>:<num>
+    "
+  `);
+
+  // We allow it to differ by the existence of <anonymous> as a string. But that's it.
+  expect(no.split("\n").slice(0, -2).join("\n").trim()).toBe(yes.split("\n").slice(0, -2).join("\n").trim());
+});

@@ -169,11 +169,12 @@ describe("spawn stdin ReadableStream", () => {
     const chunkSize = 64 * 1024; // 64KB chunks
     const numChunks = 16; // 1MB total
     let pushedChunks = 0;
+    const chunk = Buffer.alloc(chunkSize, "x");
 
     const stream = new ReadableStream({
       pull(controller) {
         if (pushedChunks < numChunks) {
-          controller.enqueue("x".repeat(chunkSize));
+          controller.enqueue(chunk);
           pushedChunks++;
         } else {
           controller.close();
@@ -182,7 +183,16 @@ describe("spawn stdin ReadableStream", () => {
     });
 
     await using proc = spawn({
-      cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        let length = 0;
+        process.stdin.on('data', (data) => length += data.length);
+        process.once('beforeExit', () => console.error(length));
+        process.stdin.pipe(process.stdout)
+`,
+      ],
       stdin: stream,
       stdout: "pipe",
       env: bunEnv,
@@ -190,7 +200,7 @@ describe("spawn stdin ReadableStream", () => {
 
     const text = await proc.stdout.text();
     expect(text.length).toBe(chunkSize * numChunks);
-    expect(text).toBe("x".repeat(chunkSize * numChunks));
+    expect(text).toBe(chunk.toString().repeat(numChunks));
     expect(await proc.exited).toBe(0);
   });
 

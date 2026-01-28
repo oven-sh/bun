@@ -1,13 +1,25 @@
 import { SQL } from "bun";
-import { describe, expect, test } from "bun:test";
-import { getSecret } from "harness";
-const postgres = (...args) => new SQL(...args);
-const databaseUrl = getSecret("TLS_POSTGRES_DATABASE_URL");
+import { beforeEach, expect, test } from "bun:test";
+import { describeWithContainer } from "harness";
 
-describe("postgres batch insert crash fix #21311", () => {
-  test("should handle large batch inserts without crashing", async () => {
-    const sql = postgres(databaseUrl!);
-    try {
+describeWithContainer(
+  "postgres",
+  {
+    image: "postgres_plain",
+    env: {},
+    concurrent: true,
+    args: [],
+  },
+  async container => {
+    let databaseUrl: string;
+    beforeEach(async () => {
+      await container.ready;
+      databaseUrl = `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`;
+    });
+    const postgres = (...args) => new SQL(...args);
+
+    test("should handle large batch inserts without crashing", async () => {
+      await using sql = postgres(databaseUrl!);
       // Create a test table
       await sql`DROP TABLE IF EXISTS test_batch_21311`;
       await sql`CREATE TABLE test_batch_21311 (
@@ -33,14 +45,10 @@ describe("postgres batch insert crash fix #21311", () => {
 
       // Cleanup
       await sql`DROP TABLE test_batch_21311`;
-    } finally {
-      await sql.end();
-    }
-  });
+    });
 
-  test("should handle empty result sets without crashing", async () => {
-    const sql = postgres(databaseUrl!);
-    try {
+    test("should handle empty result sets without crashing", async () => {
+      await using sql = postgres(databaseUrl!);
       // Create a temporary table that will return no results
       await sql`DROP TABLE IF EXISTS test_empty_21311`;
       await sql`CREATE TABLE test_empty_21311 (
@@ -55,14 +63,10 @@ describe("postgres batch insert crash fix #21311", () => {
 
       // Cleanup
       await sql`DROP TABLE test_empty_21311`;
-    } finally {
-      await sql.end();
-    }
-  });
+    });
 
-  test("should handle mixed date formats in batch operations", async () => {
-    const sql = postgres(databaseUrl!);
-    try {
+    test("should handle mixed date formats in batch operations", async () => {
+      await using sql = postgres(databaseUrl!);
       // Create test table
       await sql`DROP TABLE IF EXISTS test_concurrent_21311`;
       await sql`CREATE TABLE test_concurrent_21311 (
@@ -100,8 +104,6 @@ describe("postgres batch insert crash fix #21311", () => {
       });
       // Cleanup
       await sql`DROP TABLE test_concurrent_21311`;
-    } finally {
-      await sql.end();
-    }
-  });
-});
+    });
+  },
+);

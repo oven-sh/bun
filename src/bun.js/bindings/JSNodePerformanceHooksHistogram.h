@@ -48,6 +48,9 @@ JSC_DECLARE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncPercentile);
 JSC_DECLARE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncPercentileBigInt);
 
 JSC_DECLARE_HOST_FUNCTION(jsFunction_createHistogram);
+JSC_DECLARE_HOST_FUNCTION(jsFunction_monitorEventLoopDelay);
+JSC_DECLARE_HOST_FUNCTION(jsFunction_enableEventLoopDelay);
+JSC_DECLARE_HOST_FUNCTION(jsFunction_disableEventLoopDelay);
 
 class HistogramData {
 public:

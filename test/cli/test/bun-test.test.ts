@@ -225,10 +225,10 @@ describe("bun test", () => {
       expect(stderr).toContain("should run");
     });
   });
-  describe("--only", () => {
-    test("should run nested describe.only when enabled", () => {
+  describe("only", () => {
+    test("should run nested describe.only", () => {
       const stderr = runTest({
-        args: ["--only"],
+        args: [],
         input: `
             import { test, describe } from "bun:test";
             describe("outer", () => {
@@ -244,14 +244,15 @@ describe("bun test", () => {
               })
             })
             `,
+        env: { CI: "false" },
       });
       expect(stderr).toContain("reachable");
       expect(stderr).not.toContain("unreachable");
       expect(stderr.match(/reachable/g)).toHaveLength(1);
     });
-    test("should skip non-only tests when enabled", () => {
+    test("should skip non-only tests", () => {
       const stderr = runTest({
-        args: ["--only"],
+        args: [],
         input: `
           import { test, describe } from "bun:test";
           test("test #1", () => {
@@ -277,7 +278,7 @@ describe("bun test", () => {
           });
           describe.only("describe #2", () => {
             test("test #8", () => {
-              console.error("reachable");
+              console.error("unreachable");
             });
             test.skip("test #9", () => {
               console.error("unreachable");
@@ -287,10 +288,11 @@ describe("bun test", () => {
             });
           });
         `,
+        env: { CI: "false" },
       });
       expect(stderr).toContain("reachable");
       expect(stderr).not.toContain("unreachable");
-      expect(stderr.match(/reachable/g)).toHaveLength(4);
+      expect(stderr.match(/reachable/g)).toHaveLength(3);
     });
   });
   describe("--bail", () => {
@@ -949,8 +951,8 @@ describe("bun test", () => {
           `,
         });
 
-        expect(stderr).toContain('"fs" module > has $method');
-        expect(stderr).toContain('"path" module > has $method');
+        expect(stderr).toContain("fs module > has $method");
+        expect(stderr).toContain("path module > has $method");
         expect(stderr).toContain("2 pass");
       });
 
@@ -974,8 +976,8 @@ describe("bun test", () => {
           `,
         });
 
-        expect(stderr).toContain('(pass) user "john_doe" age 30 active true');
-        expect(stderr).toContain('(pass) user "jane_smith" age 25 active false');
+        expect(stderr).toContain("(pass) user john_doe age 30 active true");
+        expect(stderr).toContain("(pass) user jane_smith age 25 active false");
         expect(stderr).toContain("2 pass");
       });
 
@@ -1025,8 +1027,8 @@ describe("bun test", () => {
           `,
         });
 
-        expect(stderr).toContain('(pass) "Alice" from "NYC"');
-        expect(stderr).toContain('(pass) "Bob" from "LA"');
+        expect(stderr).toContain("(pass) Alice from NYC");
+        expect(stderr).toContain("(pass) Bob from LA");
         expect(stderr).toContain("2 pass");
       });
 
@@ -1054,8 +1056,8 @@ describe("bun test", () => {
           `,
         });
 
-        expect(stderr).toContain('(pass) first user is "Alice"');
-        expect(stderr).toContain('(pass) first user is "Carol"');
+        expect(stderr).toContain("(pass) first user is Alice");
+        expect(stderr).toContain("(pass) first user is Carol");
         expect(stderr).toContain("2 pass");
       });
 
@@ -1083,9 +1085,9 @@ describe("bun test", () => {
           `,
         });
 
-        expect(stderr).toContain('"underscore"');
-        expect(stderr).toContain('"dollar"');
-        expect(stderr).toContain('"mix"');
+        expect(stderr).toContain("underscore");
+        expect(stderr).toContain("dollar");
+        expect(stderr).toContain("mix");
         expect(stderr).toContain("$123invalid");
         expect(stderr).toContain("$hasdash");
         expect(stderr).toContain("$hasspace");
@@ -1116,7 +1118,7 @@ describe("bun test", () => {
           `,
         });
 
-        expect(stderr).toContain('First user: "Alice" with tag: "admin"');
+        expect(stderr).toContain("First user: Alice with tag: admin");
       });
 
       test("handles missing properties gracefully", () => {
@@ -1458,7 +1460,7 @@ function runTest({
     const { stderr, exitCode } = spawnSync({
       cwd,
       cmd: [bunExe(), "test", ...args],
-      env: { ...bunEnv, ...env },
+      env: { ...bunEnv, AGENT: "0", ...env },
       stderr: "pipe",
       stdout: "ignore",
     });

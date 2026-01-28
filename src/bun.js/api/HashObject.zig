@@ -2,7 +2,22 @@ const HashObject = @This();
 
 pub const wyhash = hashWrap(std.hash.Wyhash);
 pub const adler32 = hashWrap(std.hash.Adler32);
-pub const crc32 = hashWrap(std.hash.Crc32);
+/// Use hardware-accelerated CRC32 from zlib
+pub const crc32 = hashWrap(struct {
+    pub fn hash(seed: u32, bytes: []const u8) u32 {
+        // zlib takes a 32-bit length, so chunk large inputs to avoid truncation.
+        var crc: u64 = seed;
+        var offset: usize = 0;
+        while (offset < bytes.len) {
+            const remaining = bytes.len - offset;
+            const max_len: usize = std.math.maxInt(u32);
+            const chunk_len: u32 = if (remaining > max_len) @intCast(max_len) else @intCast(remaining);
+            crc = bun.zlib.crc32(crc, bytes.ptr + offset, chunk_len);
+            offset += chunk_len;
+        }
+        return @intCast(crc);
+    }
+});
 pub const cityHash32 = hashWrap(std.hash.CityHash32);
 pub const cityHash64 = hashWrap(std.hash.CityHash64);
 pub const xxHash32 = hashWrap(struct {
@@ -29,10 +44,10 @@ pub const xxHash3 = hashWrap(struct {
 pub const murmur32v2 = hashWrap(std.hash.murmur.Murmur2_32);
 pub const murmur32v3 = hashWrap(std.hash.murmur.Murmur3_32);
 pub const murmur64v2 = hashWrap(std.hash.murmur.Murmur2_64);
-pub const rapidhash = hashWrap(std.hash.RapidHash);
+pub const rapidhash = hashWrap(bun.deprecated.RapidHash);
 
 pub fn create(globalThis: *jsc.JSGlobalObject) jsc.JSValue {
-    const function = jsc.createCallback(globalThis, ZigString.static("hash"), 1, wyhash);
+    const function = jsc.JSFunction.create(globalThis, "hash", wyhash, 1, .{});
     const fns = comptime .{
         "wyhash",
         "adler32",
@@ -48,12 +63,7 @@ pub fn create(globalThis: *jsc.JSGlobalObject) jsc.JSValue {
         "rapidhash",
     };
     inline for (fns) |name| {
-        const value = jsc.createCallback(
-            globalThis,
-            ZigString.static(name),
-            1,
-            @field(HashObject, name),
-        );
+        const value = jsc.JSFunction.create(globalThis, name, @field(HashObject, name), 1, .{});
         function.put(globalThis, comptime ZigString.static(name), value);
     }
 

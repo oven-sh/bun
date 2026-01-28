@@ -793,7 +793,7 @@ describe("bundler", () => {
       stdout: "main",
     },
   });
-  itBundled.skip("packagejson/DualPackageHazardImportAndRequireSameFile", {
+  itBundled("packagejson/DualPackageHazardImportAndRequireSameFile", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import value from 'demo-pkg'
@@ -812,7 +812,7 @@ describe("bundler", () => {
       stdout: "main main",
     },
   });
-  itBundled.skip("packagejson/DualPackageHazardImportAndRequireSeparateFiles", {
+  itBundled("packagejson/DualPackageHazardImportAndRequireSeparateFiles", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import './test-main'
@@ -861,7 +861,7 @@ describe("bundler", () => {
       stdout: "module\nmodule",
     },
   });
-  itBundled.skip("packagejson/DualPackageHazardImportAndRequireImplicitMain", {
+  itBundled("packagejson/DualPackageHazardImportAndRequireImplicitMain", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import './test-index'
@@ -1810,7 +1810,6 @@ describe("bundler", () => {
     },
   });
   itBundled("packagejson/ImportSelfUsingRequire", {
-    todo: true,
     files: {
       "/Users/user/project/src/index.js": /* js */ `
         module.exports = 'index'
@@ -1840,7 +1839,6 @@ describe("bundler", () => {
     },
   });
   itBundled("packagejson/ImportSelfUsingImport", {
-    todo: true,
     files: {
       "/Users/user/project/src/index.js": /* js */ `
         import xyz from "xyz"
@@ -1869,7 +1867,6 @@ describe("bundler", () => {
     },
   });
   itBundled("packagejson/ImportSelfUsingRequireScoped", {
-    todo: true,
     files: {
       "/Users/user/project/src/index.js": /* js */ `
         module.exports = 'index'
@@ -1899,7 +1896,6 @@ describe("bundler", () => {
     },
   });
   itBundled("packagejson/ImportSelfUsingImportScoped", {
-    todo: true,
     files: {
       "/Users/user/project/src/index.js": /* js */ `
         import xyz from "@some-scope/xyz"

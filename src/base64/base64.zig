@@ -271,9 +271,9 @@ const zig_base64 = struct {
             var result = source_len / 4 * 3;
             const leftover = source_len % 4;
             if (decoder.pad_char != null) {
-                if (leftover % 4 != 0) return error.InvalidPadding;
+                if (leftover != 0) return error.InvalidPadding;
             } else {
-                if (leftover % 4 == 1) return error.InvalidPadding;
+                if (leftover == 1) return error.InvalidPadding;
                 result += leftover * 3 / 4;
             }
             return result;

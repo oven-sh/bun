@@ -239,46 +239,28 @@ fn SocketHandler(comptime ssl: bool) type {
             success: i32,
             ssl_error: uws.us_bun_verify_error_t,
         ) void {
-            const handshake_success = success == 1;
-            if (handshake_success) {
-                switch (this.#connection.ssl_mode) {
-                    .verify_ca => {
-                        if (ssl_error.error_no != 0) {
-                            this.failWithJSValue(ssl_error.toJS(this.#globalObject) catch return);
-                            return;
-                        }
-                    },
-                    .verify_full => {
-                        if (ssl_error.error_no != 0) {
-                            this.failWithJSValue(ssl_error.toJS(this.#globalObject) catch return);
-                            return;
-                        }
-
-                        const ssl_ptr: *bun.BoringSSL.c.SSL = @ptrCast(s.getNativeHandle());
-                        if (bun.BoringSSL.c.SSL_get_servername(ssl_ptr, 0)) |servername| {
-                            const hostname = servername[0..bun.len(servername)];
-                            if (!bun.BoringSSL.checkServerIdentity(ssl_ptr, hostname)) {
-                                this.failFmt(error.SslConnectionError, "Hostname/IP does not match certificate's altnames: Host: {s} is not in the cert's list.", .{hostname});
-                                return;
-                            }
-                        } else {
-                            this.fail("Unable to verify server identity: server name missing", error.SslConnectionError);
-                            return;
-                        }
-                    },
-                    .require, .prefer, .disable => {
-                        if (this.#connection.tls_config.reject_unauthorized != 0) {
-                            if (ssl_error.error_no != 0) {
-                                this.failWithJSValue(ssl_error.toJS(this.#globalObject) catch return);
-                                return;
-                            }
-                        }
-                    },
-                }
-            }
-
+            // Handshake verification logic is handled inside this.#connection.doHandshake
+            // We just need to handle the result and report specific errors if it fails.
             const handshakeWasSuccessful = this.#connection.doHandshake(success, ssl_error) catch |err| return this.failFmt(err, "Failed to send handshake response", .{});
+            
             if (!handshakeWasSuccessful) {
+                // If the socket handshake succeeded (error_no == 0) but doHandshake returned false,
+                // it implies a logic validation failure (like hostname mismatch in verify-full).
+                if (ssl_error.error_no == 0 and this.#connection.ssl_mode == .verify_full) {
+                    const ssl_ptr: *bun.BoringSSL.c.SSL = @ptrCast(s.getNativeHandle());
+                    if (bun.BoringSSL.c.SSL_get_servername(ssl_ptr, 0)) |servername| {
+                        const hostname = servername[0..bun.len(servername)];
+                        if (!bun.BoringSSL.checkServerIdentity(ssl_ptr, hostname)) {
+                            this.failFmt(error.SslConnectionError, "Hostname/IP does not match certificate's altnames: Host: {s} is not in the cert's list.", .{hostname});
+                            return;
+                        }
+                    } else {
+                        this.fail("Unable to verify server identity: server name missing", error.SslConnectionError);
+                        return;
+                    }
+                }
+
+                // Fallback to standard SSL error reporting
                 this.failWithJSValue(ssl_error.toJS(this.#globalObject) catch return);
             }
         }

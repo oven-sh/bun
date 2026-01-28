@@ -115,24 +115,20 @@ if (!isDockerEnabled()) {
             await container.ready;
             await using sql = new SQL(getOptions());
             const random_name = ("t_" + randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
-            await sql`CREATE TABLE IF NOT EXISTS ${sql(random_name)} (a int)`;
-            try {
-              await sql.begin(async sql => {
-                await sql`insert into ${sql(random_name)} values(1)`;
-                await sql
-                  .savepoint(async sql => {
-                    await sql`insert into ${sql(random_name)} values(2)`;
-                    throw new Error("please rollback");
-                  })
-                  .catch(() => {
-                    /* ignore */
-                  });
-                await sql`insert into ${sql(random_name)} values(3)`;
-              });
-              expect((await sql`select count(1) from ${sql(random_name)}`)[0].count).toBe(2n);
-            } finally {
-              await sql`DROP TABLE IF EXISTS ${sql(random_name)}`;
-            }
+            await sql`CREATE TEMPORARY TABLE IF NOT EXISTS ${sql(random_name)} (a int)`;
+            await sql.begin(async sql => {
+              await sql`insert into ${sql(random_name)} values(1)`;
+              await sql
+                .savepoint(async sql => {
+                  await sql`insert into ${sql(random_name)} values(2)`;
+                  throw new Error("please rollback");
+                })
+                .catch(() => {
+                  /* ignore */
+                });
+              await sql`insert into ${sql(random_name)} values(3)`;
+            });
+            expect((await sql`select count(1) from ${sql(random_name)}`)[0].count).toBe(2n);
           });
 
           test("Savepoint returns Result", async () => {

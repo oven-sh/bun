@@ -4870,20 +4870,30 @@ pub const NodeFS = struct {
     }
 
     fn shouldThrowOutOfMemoryEarlyForJavaScript(encoding: Encoding, size: usize, syscall: Syscall.Tag) ?Syscall.Error {
-        // Strings & typed arrays max out at 4.7 GB.
-        // But, it's **string length**
-        // So you can load an 8 GB hex string, for example, it should be fine.
-        const adjusted_size = switch (encoding) {
-            .utf16le, .ucs2, .utf8 => size / 4 -| 1,
-            .hex => size / 2 -| 1,
-            .base64, .base64url => size / 3 -| 1,
-            .ascii, .latin1, .buffer => size,
+        // The encoding specifies how to ENCODE the raw bytes into a JavaScript string.
+        // We need to estimate the output string length in characters.
+        // WebKit's String::MaxLength is 2^31-1 characters (~2 billion).
+        const output_size, const limit = switch (encoding) {
+            // UTF-16le/UCS-2: 2 bytes per character
+            .utf16le, .ucs2 => .{ size / 2, jsc.VirtualMachine.string_allocation_limit },
+            // UTF-8: For valid UTF-8, output length <= input bytes (ASCII is 1:1,
+            // multi-byte sequences produce fewer UTF-16 code units than bytes)
+            .utf8 => .{ size, jsc.VirtualMachine.string_allocation_limit },
+            // Hex: Each byte produces 2 hex characters
+            .hex => .{ size *| 2, jsc.VirtualMachine.string_allocation_limit },
+            // Base64: ceil(size / 3) * 4 characters (every 3 bytes produce 4 chars, with padding)
+            .base64, .base64url => .{ ((size +| 2) / 3) *| 4, jsc.VirtualMachine.string_allocation_limit },
+            // ASCII/Latin1: 1 byte = 1 character
+            .ascii, .latin1 => .{ size, jsc.VirtualMachine.string_allocation_limit },
+            // Buffer: Returns a typed array, not a string - check against typed array limit
+            .buffer => .{ size, jsc.VirtualMachine.synthetic_allocation_limit },
         };
 
         if (
-        // Typed arrays in JavaScript are limited to 4.7 GB.
-        adjusted_size > jsc.VirtualMachine.synthetic_allocation_limit or
-            // If they do not have enough memory to open the file and they're on Linux, let's throw an error instead of dealing with the OOM killer.
+        // Check against the appropriate JavaScript limit (string or typed array)
+        output_size > limit or
+            // If they do not have enough memory to open the file and they're on Linux,
+            // let's throw an error instead of dealing with the OOM killer.
             (Environment.isLinux and size >= bun.getTotalMemorySize()))
         {
             return Syscall.Error.fromCode(.NOMEM, syscall);
@@ -5105,6 +5115,12 @@ pub const NodeFS = struct {
             };
 
             if (did_succeed) {
+                // Check size limit even for small files read in one go
+                if (args.limit_size_for_javascript) {
+                    if (shouldThrowOutOfMemoryEarlyForJavaScript(args.encoding, total, .read)) |err| {
+                        return .{ .err = err.withPathLike(args.path) };
+                    }
+                }
                 switch (args.encoding) {
                     .buffer => {
                         if (comptime flavor == .sync and string_type == .default) {

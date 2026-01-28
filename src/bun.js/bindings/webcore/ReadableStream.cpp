@@ -206,7 +206,17 @@ void ReadableStream::cancel(WebCore::JSDOMGlobalObject& globalObject, JSReadable
     arguments.append(readableStream);
     arguments.append(value);
     ASSERT(!arguments.hasOverflowed());
-    invokeReadableStreamFunction(globalObject, privateName, JSC::jsUndefined(), arguments);
+
+    auto function = globalObject.get(&globalObject, privateName);
+    if (!function.isCallable())
+        return;
+
+    auto callData = JSC::getCallData(function);
+    call(&globalObject, function, callData, JSC::jsUndefined(), arguments);
+    // Clear any exception - readableStreamCancel can reject if stream is already errored,
+    // which is expected behavior per the WHATWG Streams spec. The rejection will be
+    // handled by whoever is waiting on the cancel operation's return value (if anyone).
+    scope.clearException();
 }
 
 static inline bool checkReadableStream(JSDOMGlobalObject& globalObject, JSReadableStream* readableStream, JSC::JSValue function)
@@ -326,8 +336,17 @@ extern "C" void ReadableStream__cancel(JSC::EncodedJSValue possibleReadableStrea
     if (!readableStream) [[unlikely]]
         return;
 
-    if (!WebCore::ReadableStream::isLocked(globalObject, readableStream)) {
-        return;
+    // Only cancel unlocked streams if they haven't been disturbed yet.
+    // A disturbed stream that is unlocked may already be in an error state,
+    // and calling cancel on it could surface that error inappropriately.
+    // For unlocked, undisturbed streams (like TransformStream readable side
+    // passed to Response), we need to cancel them to propagate the abort.
+    bool isLocked = WebCore::ReadableStream::isLocked(globalObject, readableStream);
+    if (!isLocked) {
+        bool isDisturbed = WebCore::ReadableStream::isDisturbed(globalObject, readableStream);
+        if (isDisturbed) {
+            return;
+        }
     }
 
     WebCore::Exception exception { Bun::AbortError };

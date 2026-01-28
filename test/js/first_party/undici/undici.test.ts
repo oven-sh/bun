@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { request } from "undici";
+import { Agent, Client, Pool, request } from "undici";
 
 import { createServer } from "../../../http-test-server";
 
@@ -154,5 +154,37 @@ describe("undici", () => {
     //   const json = (await body.json()) as { form: { foo: string } };
     //   expect(json.form.foo).toBe("bar");
     // });
+  });
+
+  describe("Dispatcher", () => {
+    it("Agent should have close() method that returns a promise", async () => {
+      const agent = new Agent();
+      expect(typeof agent.close).toBe("function");
+      const result = await agent.close();
+      expect(result).toBe(null);
+    });
+
+    it("Agent should have destroy() method that returns a promise", async () => {
+      const agent = new Agent();
+      expect(typeof agent.destroy).toBe("function");
+      const result = await agent.destroy();
+      expect(result).toBe(null);
+    });
+
+    it("Pool should have close() and destroy() methods", async () => {
+      const pool = new Pool();
+      expect(typeof pool.close).toBe("function");
+      expect(typeof pool.destroy).toBe("function");
+      expect(await pool.close()).toBe(null);
+      expect(await pool.destroy()).toBe(null);
+    });
+
+    it("Client should have close() and destroy() methods", async () => {
+      const client = new Client();
+      expect(typeof client.close).toBe("function");
+      expect(typeof client.destroy).toBe("function");
+      expect(await client.close()).toBe(null);
+      expect(await client.destroy()).toBe(null);
+    });
   });
 });

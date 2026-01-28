@@ -1,0 +1,106 @@
+name: Rebuild CI Images
+
+on:
+  schedule:
+    # Run daily at 4 AM UTC
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: 'Platforms to rebuild (comma-separated, or "all")'
+        required: false
+        default: "all"
+        type: string
+
+jobs:
+  # Determine which platforms to build
+  matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      platforms: ${{ steps.set-matrix.outputs.platforms }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: set-matrix
+        run: |
+          if [ "${{ github.event.inputs.platforms }}" = "all" ] || [ -z "${{ github.event.inputs.platforms }}" ]; then
+            # All platforms used in CI
+            echo 'platforms=["linux-x64-debian-12","linux-x64-amazonlinux-2023","linux-x64-alpine-3.22","linux-aarch64-debian-12","linux-aarch64-amazonlinux-2023","linux-aarch64-alpine-3.22"]' >> $GITHUB_OUTPUT
+          else
+            # Convert comma-separated to JSON array
+            platforms=$(echo '${{ github.event.inputs.platforms }}' | jq -R -s -c 'split(",") | map(gsub("^\\s+|\\s+$";""))')
+            echo "platforms=$platforms" >> $GITHUB_OUTPUT
+          fi
+
+  rebuild:
+    needs: matrix
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: ${{ fromJson(needs.matrix.outputs.platforms) }}
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Parse platform
+        id: parse
+        run: |
+          platform="${{ matrix.platform }}"
+          # Parse platform string like "linux-x64-debian-12" or "linux-aarch64-alpine-3.22"
+          os=$(echo "$platform" | cut -d'-' -f1)
+          arch=$(echo "$platform" | cut -d'-' -f2)
+          distro=$(echo "$platform" | cut -d'-' -f3)
+          release=$(echo "$platform" | cut -d'-' -f4)
+
+          echo "os=$os" >> $GITHUB_OUTPUT
+          echo "arch=$arch" >> $GITHUB_OUTPUT
+          echo "distro=$distro" >> $GITHUB_OUTPUT
+          echo "release=$release" >> $GITHUB_OUTPUT
+
+      - name: Get bootstrap version
+        id: version
+        run: |
+          version=$(grep -E '^# Version: [0-9]+' scripts/bootstrap.sh | grep -oE '[0-9]+')
+          echo "version=v${version}" >> $GITHUB_OUTPUT
+          echo "Bootstrap version: v${version}"
+
+      - name: Rebuild and publish image
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          OS: ${{ steps.parse.outputs.os }}
+          ARCH: ${{ steps.parse.outputs.arch }}
+          DISTRO: ${{ steps.parse.outputs.distro }}
+          RELEASE: ${{ steps.parse.outputs.release }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          echo "Rebuilding CI image for $PLATFORM (version $VERSION)"
+
+          # Build and publish the image
+          # This will create/overwrite the AMI with name like "linux-x64-debian-12-v27"
+          bun run scripts/machine.mjs \
+            --os "$OS" \
+            --arch "$ARCH" \
+            --distro "$DISTRO" \
+            --release "$RELEASE" \
+            --ci \
+            publish-image
+
+      - name: Summary
+        run: |
+          echo "## Rebuilt CI Image" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Platform:** ${{ matrix.platform }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version:** ${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Date:** $(date -u +%Y-%m-%d)" >> $GITHUB_STEP_SUMMARY

@@ -27,7 +27,8 @@ export fn Bun__queueJSCDeferredWorkTaskConcurrently(jsc_vm: *VirtualMachine, tas
     var loop = jsc_vm.eventLoop();
     loop.enqueueTaskConcurrent(ConcurrentTask.new(.{
         .task = Task.init(task),
-        .next = .auto_delete,
+        .next = null,
+        .auto_delete = true,
     }));
 }
 

@@ -472,4 +472,147 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
   });
+
+  describe("export default class", () => {
+    test("export default class with method decorator", async () => {
+      using dir = tempDir("es-dec-export-default", {
+        "entry.js": `
+          import Cls from "./mod.js";
+          const c = new Cls();
+          console.log(c.foo());
+        `,
+        "mod.js": `
+          function dec(target, ctx) { return target; }
+          export default class {
+            @dec foo() { return 42; }
+          }
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "entry.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+
+      const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(filterStderr(rawStderr)).toBe("");
+      expect(stdout).toBe("42\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("export default class with class decorator", async () => {
+      using dir = tempDir("es-dec-export-default-cls", {
+        "entry.js": `
+          import Cls from "./mod.js";
+          const c = new Cls();
+          console.log(c.value);
+        `,
+        "mod.js": `
+          function addValue(cls, ctx) {
+            return class extends cls { value = "decorated"; };
+          }
+          @addValue export default class {}
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "entry.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+
+      const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(filterStderr(rawStderr)).toBe("");
+      expect(stdout).toBe("decorated\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("export default named class with decorator", async () => {
+      using dir = tempDir("es-dec-export-default-named", {
+        "entry.js": `
+          import Cls from "./mod.js";
+          const c = new Cls();
+          console.log(c.foo());
+        `,
+        "mod.js": `
+          function dec(target, ctx) { return target; }
+          export default class MyClass {
+            @dec foo() { return "named"; }
+          }
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "entry.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+
+      const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(filterStderr(rawStderr)).toBe("");
+      expect(stdout).toBe("named\n");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  describe("accessor with TypeScript annotations", () => {
+    test("accessor with definite assignment assertion (!)", async () => {
+      using dir = tempDir("es-dec-accessor-bang", {
+        "tsconfig.json": JSON.stringify({ compilerOptions: {} }),
+        "test.ts": `
+          function dec(target: any, ctx: any) { return target; }
+          class Foo {
+            @dec accessor child!: string;
+          }
+          const f = new Foo();
+          f.child = "hello";
+          console.log(f.child);
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+
+      const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(filterStderr(rawStderr)).toBe("");
+      expect(stdout).toBe("hello\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("accessor with optional marker (?)", async () => {
+      using dir = tempDir("es-dec-accessor-optional", {
+        "tsconfig.json": JSON.stringify({ compilerOptions: {} }),
+        "test.ts": `
+          function dec(target: any, ctx: any) { return target; }
+          class Foo {
+            @dec accessor child?: string;
+          }
+          const f = new Foo();
+          console.log(f.child);
+          f.child = "world";
+          console.log(f.child);
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+
+      const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(filterStderr(rawStderr)).toBe("");
+      expect(stdout).toBe("undefined\nworld\n");
+      expect(exitCode).toBe(0);
+    });
+  });
 });

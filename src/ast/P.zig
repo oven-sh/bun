@@ -3768,7 +3768,10 @@ pub fn NewParser_(
                                         }
                                     },
                                     else => {
-                                        Output.panic("Unexpected type in export default", .{});
+                                        // Standard decorator lowering can produce non-class
+                                        // statements as the export default value; conservatively
+                                        // assume they have side effects.
+                                        return false;
                                     },
                                 }
                             },

@@ -421,7 +421,7 @@ pub fn ParseProperty(
                             try p.lexer.next();
                         } else if (p.lexer.token == .t_exclamation and
                             !p.lexer.has_newline_before and
-                            kind == .normal and
+                            (kind == .normal or kind == .auto_accessor) and
                             !opts.is_async and
                             !opts.is_generator)
                         {

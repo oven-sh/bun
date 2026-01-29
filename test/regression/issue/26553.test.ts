@@ -64,8 +64,12 @@ describe("Issue #26553 - HTTP server socket events and properties", () => {
 
     server.on("connect", (req, socket, head) => {
       socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
-      // Close the socket after a short delay
-      setTimeout(() => socket.end(), 10);
+      // Use the 'drain' event to know when write is complete, then end the socket
+      socket.once("drain", () => socket.end());
+      // If write returned true (no backpressure), end immediately
+      if (socket.writableNeedDrain === false) {
+        socket.end();
+      }
     });
 
     await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
@@ -110,8 +114,12 @@ describe("Issue #26553 - HTTP server socket events and properties", () => {
     server.on("connect", (req, socket, head) => {
       // Write a known response
       socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
-      // Close the socket after a short delay
-      setTimeout(() => socket.end(), 10);
+      // Use the 'drain' event to know when write is complete, then end the socket
+      socket.once("drain", () => socket.end());
+      // If write returned true (no backpressure), end immediately
+      if (socket.writableNeedDrain === false) {
+        socket.end();
+      }
     });
 
     await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
@@ -145,6 +153,7 @@ describe("Issue #26553 - HTTP server socket events and properties", () => {
   test("socket bytesRead tracks data received for CONNECT tunnel", async () => {
     let bytesReadValue = 0;
     const { promise: closePromise, resolve: closeResolve } = Promise.withResolvers<void>();
+    const { promise: dataReceivedPromise, resolve: dataReceivedResolve } = Promise.withResolvers<void>();
     const testData = "Hello from client!";
 
     const server = http.createServer();
@@ -158,8 +167,10 @@ describe("Issue #26553 - HTTP server socket events and properties", () => {
 
     server.on("connect", (req, socket, head) => {
       socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
-      // Read data from the tunnel
-      socket.on("data", () => {});
+      // Read data from the tunnel and signal when received
+      socket.once("data", () => {
+        dataReceivedResolve();
+      });
     });
 
     await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
@@ -170,14 +181,13 @@ describe("Issue #26553 - HTTP server socket events and properties", () => {
         client.write("CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n");
       });
 
-      let receivedResponse = false;
-
+      // Wait for the server to receive the tunnel data before closing
       client.on("data", data => {
-        if (!receivedResponse && data.toString().includes("200 Connection Established")) {
-          receivedResponse = true;
+        if (data.toString().includes("200 Connection Established")) {
           // Send data through the tunnel
           client.write(testData);
-          setTimeout(() => client.end(), 50);
+          // Wait for server to receive the data, then close client
+          dataReceivedPromise.then(() => client.end());
         }
       });
 

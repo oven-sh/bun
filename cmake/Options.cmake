@@ -99,6 +99,9 @@ endif()
 
 if(ARCH STREQUAL "x64")
   optionx(ENABLE_BASELINE BOOL "If baseline features should be used for older CPUs (e.g. disables AVX, AVX2)" DEFAULT OFF)
+elseif(ARCH STREQUAL "aarch64" AND LINUX)
+  # ARM64 baseline only supported on Linux; macOS always uses apple_m1, Windows ARM64 doesn't support baseline yet
+  optionx(ENABLE_BASELINE BOOL "If baseline features should be used for older ARM64 CPUs (e.g. Cortex-A53)" DEFAULT OFF)
 endif()
 
 # Disabling logs by default for tests yields faster builds

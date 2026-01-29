@@ -25,6 +25,10 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm|ARM|arm64|ARM64|aarch64|AARCH64")
     # Windows ARM64: use /clang: prefix for clang-cl, skip for MSVC cl.exe subprojects
     # These flags are only understood by clang-cl, not MSVC cl.exe
     register_compiler_flags(/clang:-march=armv8-a+crc /clang:-mtune=ampere1)
+  elseif(ENABLE_BASELINE)
+    # Baseline ARM64: target ARMv8-A without optional extensions for older CPUs like Cortex-A53
+    # See https://github.com/oven-sh/bun/issues/26544
+    register_compiler_flags(-march=armv8-a -mtune=cortex-a53)
   else()
     register_compiler_flags(-march=armv8-a+crc -mtune=ampere1)
   endif()

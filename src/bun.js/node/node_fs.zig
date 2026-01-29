@@ -3482,6 +3482,7 @@ pub const NodeFS = struct {
             }
         }
 
+        sortReaddirEntries(ExpectedType, entries.items);
         return .success;
     }
 

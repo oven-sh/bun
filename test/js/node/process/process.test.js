@@ -602,17 +602,26 @@ describe.concurrent(() => {
       expect(process.getgroups()).toBeInstanceOf(Array);
       expect(process.getgroups().length).toBeGreaterThan(0);
     });
+    it("process.initgroups is a function", () => {
+      expect(typeof process.initgroups).toBe("function");
+    });
+    it("process.initgroups throws with invalid user type", () => {
+      expect(() => process.initgroups(123, 0)).toThrow();
+    });
+    it("process.initgroups throws with unknown user", () => {
+      expect(() => process.initgroups("nonexistent_user_12345", 0)).toThrow();
+    });
     it("process.getuid", () => {
       expect(typeof process.getuid()).toBe("number");
     });
   } else {
-    it("process.getegid, process.geteuid, process.getgid, process.getgroups, process.getuid, process.getuid are not implemented on Windows", () => {
+    it("POSIX-only process functions are not implemented on Windows", () => {
       expect(process.getegid).toBeUndefined();
       expect(process.geteuid).toBeUndefined();
       expect(process.getgid).toBeUndefined();
       expect(process.getgroups).toBeUndefined();
       expect(process.getuid).toBeUndefined();
-      expect(process.getuid).toBeUndefined();
+      expect(process.initgroups).toBeUndefined();
     });
   }
 

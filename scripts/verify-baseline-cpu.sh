@@ -67,19 +67,21 @@ run_test() {
   if "$QEMU_BIN" -cpu "$QEMU_CPU" "$@"; then
     echo "PASS: $label"
     return 0
-  fi
-  local exit_code=$?
-  if [ $exit_code -eq 132 ]; then
+  else
+    local exit_code=$?
     echo ""
-    echo "FATAL: Illegal instruction (SIGILL) detected during: $label"
-    echo "The binary uses CPU instructions not available on $QEMU_CPU."
-    if [ "$ARCH" = "x64" ]; then
-      echo "The baseline x64 build targets Nehalem (SSE4.2). AVX/AVX2/AVX512 instructions are not allowed."
-    else
-      echo "The aarch64 build targets Cortex-A53 (ARMv8.0-A+CRC). LSE atomics, SVE, and dotprod are not allowed."
+    echo "FAIL: $label (exit code $exit_code)"
+    if [ $exit_code -eq 132 ]; then
+      echo "FATAL: Illegal instruction (SIGILL) detected during: $label"
+      echo "The binary uses CPU instructions not available on $QEMU_CPU."
+      if [ "$ARCH" = "x64" ]; then
+        echo "The baseline x64 build targets Nehalem (SSE4.2). AVX/AVX2/AVX512 instructions are not allowed."
+      else
+        echo "The aarch64 build targets Cortex-A53 (ARMv8.0-A+CRC). LSE atomics, SVE, and dotprod are not allowed."
+      fi
     fi
+    exit $exit_code
   fi
-  exit $exit_code
 }
 
 run_test "bun --version" "$BINARY" --version

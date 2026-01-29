@@ -538,6 +538,24 @@ function getLinkBunStep(platform, options) {
 }
 
 /**
+ * Returns the artifact triplet for a platform, e.g. "bun-linux-aarch64" or "bun-linux-x64-musl-baseline".
+ * Matches the naming convention in cmake/targets/BuildBun.cmake.
+ * @param {Platform} platform
+ * @returns {string}
+ */
+function getTargetTriplet(platform) {
+  const { os, arch, abi, baseline } = platform;
+  let triplet = `bun-${os}-${arch}`;
+  if (abi === "musl") {
+    triplet += "-musl";
+  }
+  if (baseline) {
+    triplet += "-baseline";
+  }
+  return triplet;
+}
+
+/**
  * Returns true if a platform needs QEMU-based baseline CPU verification.
  * x64 baseline builds verify no AVX/AVX2 instructions snuck in.
  * aarch64 builds verify no LSE/SVE instructions snuck in.
@@ -570,9 +588,11 @@ function getVerifyBaselineStep(platform, options) {
     timeout_in_minutes: 5,
     command: [
       `buildkite-agent artifact download '*.zip' . --step ${targetKey}-build-bun`,
-      `unzip -o *.zip`,
-      `chmod +x bun`,
-      `./scripts/verify-baseline-cpu.sh --arch ${archArg} --binary ./bun`,
+      `unzip -o '${getTargetTriplet(platform)}.zip'`,
+      `unzip -o '${getTargetTriplet(platform)}-profile.zip'`,
+      `chmod +x ${getTargetTriplet(platform)}/bun ${getTargetTriplet(platform)}-profile/bun-profile`,
+      `./scripts/verify-baseline-cpu.sh --arch ${archArg} --binary ${getTargetTriplet(platform)}/bun`,
+      `./scripts/verify-baseline-cpu.sh --arch ${archArg} --binary ${getTargetTriplet(platform)}-profile/bun-profile`,
     ],
   };
 }

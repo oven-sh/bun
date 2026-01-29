@@ -1833,6 +1833,10 @@ pub const BundleOptions = struct {
 
     compile: bool = false,
     metafile: bool = false,
+    /// Path to write JSON metafile (for Bun.build API)
+    metafile_json_path: []const u8 = "",
+    /// Path to write markdown metafile (for Bun.build API)
+    metafile_markdown_path: []const u8 = "",
 
     /// Set when bake.DevServer is bundling.
     dev_server: ?*bun.bake.DevServer = null,

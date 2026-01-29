@@ -82,6 +82,13 @@ fn installWithCLI(ctx: Command.Context, cli: CommandLineArguments) !void {
     if (manager.any_failed_to_install) {
         Global.exit(1);
     }
+
+    if (!manager.options.local_package_features.dev_dependencies
+        or !manager.options.local_package_features.optional_dependencies
+        or !manager.options.local_package_features.peer_dependencies)
+    {
+        try PackageInstall.scheduleTopLevelOmittedCleanup(manager);
+    }
 }
 
 const string = []const u8;
@@ -93,5 +100,6 @@ const default_allocator = bun.default_allocator;
 const Command = bun.cli.Command;
 
 const PackageManager = bun.install.PackageManager;
+const PackageInstall = bun.install.PackageInstall;
 const CommandLineArguments = PackageManager.CommandLineArguments;
 const Subcommand = PackageManager.Subcommand;

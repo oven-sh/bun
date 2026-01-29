@@ -1218,6 +1218,188 @@ pub const PackageInstall = struct {
         }
     }
 
+    pub fn scheduleTopLevelOmittedCleanup(manager: *PackageManager) !void {
+        const std = @import("std");
+        const bun = @import("bun");
+        const FileSystem = bun.fs.FileSystem;
+        const String = bun.Semver.String;
+        const PackageNameHash = bun.install.PackageNameHash;
+
+        if (manager.lockfile == null) return;
+
+        // Try open top-level node_modules; nothing to do if missing.
+        var cwd = std.fs.cwd();
+        var node_modules_dir = cwd.openDir("node_modules", .{}) catch return;
+        defer node_modules_dir.close();
+
+        const name_hashes = manager.lockfile.packages.items(.name_hash);
+
+        // PASS 1: count candidates
+        var candidate_count: usize = 0;
+        var it = node_modules_dir.iterate();
+        while (it.next() catch null) |entry| {
+            if (!(entry.kind == .directory or entry.kind == .sym_link)) continue;
+            const name = entry.name;
+            if (name.len == 0) continue;
+            if (name[0] == '.') continue;
+
+            if (name[0] == '@') {
+                // scoped packages: check immediate children only
+                var scope_dir = node_modules_dir.openDir(name) catch continue;
+                defer scope_dir.close();
+                var sit = scope_dir.iterate();
+                while (sit.next() catch null) |inner| {
+                    if (!(inner.kind == .directory or inner.kind == .sym_link)) continue;
+                    const buf = try std.fmt.allocPrint(bun.default_allocator, "{s}/{s}", .{ name, inner.name });
+                    const hash = String.Builder.stringHash(buf);
+                    if (std.mem.indexOfScalar(PackageNameHash, name_hashes, hash) == null) candidate_count += 1;
+                    bun.default_allocator.free(buf);
+                }
+            } else {
+                const hash = String.Builder.stringHash(name);
+                if (std.mem.indexOfScalar(PackageNameHash, name_hashes, hash) == null) candidate_count += 1;
+            }
+        }
+
+        if (candidate_count == 0) return;
+
+        // Increment pending tasks once for the batch
+        manager.incrementPendingTasks(@intCast(u32, candidate_count));
+
+        // PASS 2: schedule deletion tasks
+        // Re-open node_modules to iterate again (old iterator consumed it).
+        node_modules_dir.close();
+        node_modules_dir = cwd.openDir("node_modules", .{}) catch return;
+        defer node_modules_dir.close();
+
+        var it2 = node_modules_dir.iterate();
+        while (it2.next() catch null) |entry| {
+            if (!(entry.kind == .directory or entry.kind == .sym_link)) continue;
+            const name = entry.name;
+            if (name.len == 0) continue;
+            if (name[0] == '.') continue;
+
+            if (name[0] == '@') {
+                var scope_dir = node_modules_dir.openDir(name) catch continue;
+                defer scope_dir.close();
+                var sit = scope_dir.iterate();
+                while (sit.next() catch null) |inner| {
+                    if (!(inner.kind == .directory or inner.kind == .sym_link)) continue;
+                    const pkg_name_buf = try std.fmt.allocPrint(bun.default_allocator, "{s}/{s}", .{ name, inner.name });
+                    const hash = String.Builder.stringHash(pkg_name_buf);
+                    if (std.mem.indexOfScalar(PackageNameHash, name_hashes, hash) == null) {
+                        // schedule delete for node_modules/<scope>/<pkg>
+                        const abs = bun.handleOom(bun.default_allocator.dupeZ(u8, bun.path.joinAbsString(FileSystem.instance.top_level_dir, &.{ "node_modules", name, inner.name }, .auto)));
+
+                        const DeleteTask = struct {
+                            absolute_path: []const u8,
+                            task: jsc.WorkPoolTask = .{ .callback = &run },
+
+                            pub fn run(task_ptr: *jsc.WorkPoolTask) void {
+                                var self: *@This() = @fieldParentPtr("task", task_ptr);
+                                var debug_timer = bun.Output.DebugTimer.start();
+                                defer {
+                                    PackageManager.get().decrementPendingTasks();
+                                    PackageManager.get().wake();
+                                }
+                                defer self.deinit();
+
+                                const dirname = std.fs.path.dirname(self.absolute_path) orelse {
+                                    Output.debugWarn("Unexpectedly failed to get dirname of {s}", .{ self.absolute_path });
+                                    return;
+                                };
+                                const basename = std.fs.path.basename(self.absolute_path);
+
+                                var dir = bun.openDirA(std.fs.cwd(), dirname) catch |err| {
+                                    if (comptime Environment.isDebug or Environment.enable_asan) {
+                                        Output.debugWarn("Failed to delete {s}: {s}", .{ self.absolute_path, @errorName(err) });
+                                    }
+                                    return;
+                                };
+                                defer bun.FD.fromStdDir(dir).close();
+
+                                dir.deleteTree(basename) catch |err| {
+                                    if (comptime Environment.isDebug or Environment.enable_asan) {
+                                        Output.debugWarn("Failed to delete {s} in {s}: {s}", .{ basename, dirname, @errorName(err) });
+                                    }
+                                };
+
+                                if (Environment.isDebug) {
+                                    _ = &debug_timer;
+                                    debug("deleteTree({s}, {s}) = {f}", .{ basename, dirname, debug_timer });
+                                }
+                            }
+
+                            pub fn deinit(this: *@This()) void {
+                                bun.default_allocator.free(this.absolute_path);
+                                bun.destroy(this);
+                            }
+                        };
+
+                        var t = try bun.default_allocator.create(DeleteTask);
+                        t.* = DeleteTask{ .absolute_path = abs, .task = .{ .callback = &DeleteTask.run } };
+                        manager.thread_pool.schedule(bun.ThreadPool.Batch.from(&t.task));
+                    }
+                    bun.default_allocator.free(pkg_name_buf);
+                }
+            } else {
+                const hash = String.Builder.stringHash(name);
+                if (std.mem.indexOfScalar(PackageNameHash, name_hashes, hash) == null) {
+                    const abs = bun.handleOom(bun.default_allocator.dupeZ(u8, bun.path.joinAbsString(FileSystem.instance.top_level_dir, &.{ "node_modules", name }, .auto)));
+
+                    const DeleteTask = struct {
+                        absolute_path: []const u8,
+                        task: jsc.WorkPoolTask = .{ .callback = &run },
+
+                        pub fn run(task_ptr: *jsc.WorkPoolTask) void {
+                            var self: *@This() = @fieldParentPtr("task", task_ptr);
+                            var debug_timer = bun.Output.DebugTimer.start();
+                            defer {
+                                PackageManager.get().decrementPendingTasks();
+                                PackageManager.get().wake();
+                            }
+                            defer self.deinit();
+
+                            const dirname = std.fs.path.dirname(self.absolute_path) orelse {
+                                Output.debugWarn("Unexpectedly failed to get dirname of {s}", .{ self.absolute_path });
+                                return;
+                            };
+                            const basename = std.fs.path.basename(self.absolute_path);
+
+                            var dir = bun.openDirA(std.fs.cwd(), dirname) catch |err| {
+                                if (comptime Environment.isDebug or Environment.enable_asan) {
+                                    Output.debugWarn("Failed to delete {s}: {s}", .{ self.absolute_path, @errorName(err) });
+                                }
+                                return;
+                            };
+                            defer bun.FD.fromStdDir(dir).close();
+
+                            dir.deleteTree(basename) catch |err| {
+                                if (comptime Environment.isDebug or Environment.enable_asan) {
+                                    Output.debugWarn("Failed to delete {s} in {s}: {s}", .{ basename, dirname, @errorName(err) });
+                                }
+                            };
+
+                            if (Environment.isDebug) {
+                                _ = &debug_timer;
+                                debug("deleteTree({s}, {s}) = {f}", .{ basename, dirname, debug_timer });
+                            }
+                        }
+
+                        pub fn deinit(this: *@This()) void {
+                            bun.default_allocator.free(this.absolute_path);
+                            bun.destroy(this);
+                        }
+                    };
+
+                    var t = try bun.default_allocator.create(DeleteTask);
+                    t.* = DeleteTask{ .absolute_path = abs, .task = .{ .callback = &DeleteTask.run } };
+                    manager.thread_pool.schedule(bun.ThreadPool.Batch.from(&t.task));
+                }
+            }
+        }
+    }
+
     pub fn isDanglingWindowsBinLink(node_mod_fd: bun.FileDescriptor, path: []const u16, temp_buffer: []u8) bool {
         const WinBinLinkingShim = @import("./windows-shim/BinLinkingShim.zig");
         const bin_path = bin_path: {

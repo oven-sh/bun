@@ -46,8 +46,8 @@ main();`,
     expect(stderr).toContain("helper.js");
     expect(stderr).toContain("app.js");
 
-    // Should NOT see the bundled virtual path (/$bunfs/root/ on Unix, B:/BUN/root/ on Windows)
-    expect(stderr).not.toMatch(/(\$bunfs|BUN)\/root\//);
+    // Should NOT see the bundled virtual path (/$bunfs/root/ on Unix, B:/~BUN/root/ on Windows)
+    expect(stderr).not.toMatch(/(\$bunfs|~BUN)\/root\//);
 
     // Verify it failed (the error was thrown)
     expect(exitCode).not.toBe(0);
@@ -87,8 +87,8 @@ main();`,
 
     const [_stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    // Without sourcemaps, we should see the bundled virtual path (/$bunfs/root/ on Unix, B:/BUN/root/ on Windows)
-    expect(stderr).toMatch(/(\$bunfs|BUN)\/root\//);
+    // Without sourcemaps, we should see the bundled virtual path (/$bunfs/root/ on Unix, B:/~BUN/root/ on Windows)
+    expect(stderr).toMatch(/(\$bunfs|~BUN)\/root\//);
 
     // Verify it failed (the error was thrown)
     expect(exitCode).not.toBe(0);
@@ -138,8 +138,8 @@ main();`,
     expect(stderr).toContain("helper.js");
     expect(stderr).toContain("app.js");
 
-    // Should NOT show bundled paths (/$bunfs/root/ on Unix, B:/BUN/root/ on Windows)
-    expect(stderr).not.toMatch(/(\$bunfs|BUN)\/root\//);
+    // Should NOT show bundled paths (/$bunfs/root/ on Unix, B:/~BUN/root/ on Windows)
+    expect(stderr).not.toMatch(/(\$bunfs|~BUN)\/root\//);
 
     // Verify it failed (the error was thrown)
     expect(exitCode).not.toBe(0);

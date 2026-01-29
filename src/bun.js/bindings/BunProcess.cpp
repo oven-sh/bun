@@ -438,7 +438,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
     // Support embedded .node files
     // See StandaloneModuleGraph.zig for what this "$bunfs" thing is
 #if OS(WINDOWS)
-#define StandaloneModuleGraph__base_path "B:/BUN/"_s
+#define StandaloneModuleGraph__base_path "B:/~BUN/"_s
 #else
 #define StandaloneModuleGraph__base_path "/$bunfs/"_s
 #endif

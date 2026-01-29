@@ -433,8 +433,12 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                 return;
             }
 
-            var cwd = std.fs.cwd();
-            // This is not exactly correct
+            // Use original_cwd to delete from the correct directory - this is important for
+            // workspace packages where CWD is changed to the workspace root but we want to
+            // delete from the original package's node_modules directory
+            var pkg_cwd = bun.openDirAbsolute(original_cwd) catch std.fs.cwd();
+            defer if (pkg_cwd.fd != std.fs.cwd().fd) pkg_cwd.close();
+
             var node_modules_buf: bun.PathBuffer = undefined;
             bun.copy(u8, &node_modules_buf, "node_modules" ++ std.fs.path.sep_str);
             const offset_buf = node_modules_buf["node_modules/".len..];
@@ -446,13 +450,13 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                 // This is a quick & dirty cleanup intended for when deleting top-level dependencies
                 if (std.mem.indexOfScalar(PackageNameHash, name_hashes, String.Builder.stringHash(request.name)) == null) {
                     bun.copy(u8, offset_buf, request.name);
-                    cwd.deleteTree(node_modules_buf[0 .. "node_modules/".len + request.name.len]) catch {};
+                    pkg_cwd.deleteTree(node_modules_buf[0 .. "node_modules/".len + request.name.len]) catch {};
                 }
             }
 
             // This is where we clean dangling symlinks
             // This could be slow if there are a lot of symlinks
-            if (bun.openDir(cwd, manager.options.bin_path)) |node_modules_bin_handle| {
+            if (bun.openDir(pkg_cwd, manager.options.bin_path)) |node_modules_bin_handle| {
                 var node_modules_bin: std.fs.Dir = node_modules_bin_handle;
                 defer node_modules_bin.close();
                 var iter: std.fs.Dir.Iterator = node_modules_bin.iterate();

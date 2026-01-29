@@ -232,6 +232,9 @@ void JSNodeHTTPServerSocket::onDrain()
 
 void JSNodeHTTPServerSocket::onData(const char* data, int length, bool last)
 {
+    // Track total bytes read
+    this->streamBuffer.total_bytes_read += length;
+
     // This function can be called during GC!
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(this->globalObject());
     if (!functionToCallOnData) {

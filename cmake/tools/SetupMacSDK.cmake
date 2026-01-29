@@ -31,13 +31,6 @@ execute_process(
   ERROR_QUIET
 )
 
-if(MACOS_VERSION VERSION_LESS ${CMAKE_OSX_DEPLOYMENT_TARGET})
-  message(FATAL_ERROR "Your computer is running macOS ${MACOS_VERSION}, which is older than the target macOS SDK ${CMAKE_OSX_DEPLOYMENT_TARGET}. To fix this, either:\n"
-    " - Upgrade your computer to macOS ${CMAKE_OSX_DEPLOYMENT_TARGET} or newer\n"
-    " - Download a newer version of the macOS SDK from Apple: https://developer.apple.com/download/all/?q=xcode\n"
-    " - Set -DCMAKE_OSX_DEPLOYMENT_TARGET=${MACOS_VERSION}\n")
-endif()
-
 execute_process(
   COMMAND xcrun --sdk macosx --show-sdk-path
   OUTPUT_VARIABLE DEFAULT_CMAKE_OSX_SYSROOT

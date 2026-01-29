@@ -254,12 +254,12 @@ bun --cpu-prof --cpu-prof-name my-profile.cpuprofile script.js
 bun --cpu-prof --cpu-prof-dir ./profiles script.js
 ```
 
-| Flag                         | Description                                              |
-| ---------------------------- | -------------------------------------------------------- |
+| Flag                         | Description                                                 |
+| ---------------------------- | ----------------------------------------------------------- |
 | `--cpu-prof`                 | Generate a `.cpuprofile` JSON file (Chrome DevTools format) |
-| `--cpu-prof-md`              | Generate a markdown CPU profile (grep/LLM-friendly)      |
-| `--cpu-prof-name <filename>` | Set output filename                                      |
-| `--cpu-prof-dir <dir>`       | Set output directory                                     |
+| `--cpu-prof-md`              | Generate a markdown CPU profile (grep/LLM-friendly)         |
+| `--cpu-prof-name <filename>` | Set output filename                                         |
+| `--cpu-prof-dir <dir>`       | Set output directory                                        |
 
 ## Heap profiling
 
@@ -288,9 +288,9 @@ bun --heap-prof --heap-prof-name my-snapshot.heapsnapshot script.js
 bun --heap-prof --heap-prof-dir ./profiles script.js
 ```
 
-| Flag                          | Description                                               |
-| ----------------------------- | --------------------------------------------------------- |
-| `--heap-prof`                 | Generate a V8 `.heapsnapshot` file on exit                |
-| `--heap-prof-md`              | Generate a markdown heap profile on exit                  |
-| `--heap-prof-name <filename>` | Set output filename                                       |
-| `--heap-prof-dir <dir>`       | Set output directory                                      |
+| Flag                          | Description                                |
+| ----------------------------- | ------------------------------------------ |
+| `--heap-prof`                 | Generate a V8 `.heapsnapshot` file on exit |
+| `--heap-prof-md`              | Generate a markdown heap profile on exit   |
+| `--heap-prof-name <filename>` | Set output filename                        |
+| `--heap-prof-dir <dir>`       | Set output directory                       |

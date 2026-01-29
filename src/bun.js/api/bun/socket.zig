@@ -1833,7 +1833,6 @@ pub const DuplexUpgradeContext = struct {
         if (this.tls) |tls| {
             tls.onTimeout(socket);
         }
-        this.deinitInNextTick();
     }
 
     fn onClose(this: *DuplexUpgradeContext) void {

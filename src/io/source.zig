@@ -353,6 +353,8 @@ pub const Source = union(enum) {
     }
 };
 
+extern "c" fn Bun__setStdinRawMode(raw: bool) void;
+
 export fn Source__setRawModeStdin(raw: bool) c_int {
     const tty = switch (Source.openTty(bun.jsc.VirtualMachine.get().uvLoop(), .stdin())) {
         .result => |tty| tty,
@@ -367,6 +369,7 @@ export fn Source__setRawModeStdin(raw: bool) c_int {
     if (tty.setMode(if (raw) .vt else .normal).toError(.uv_tty_set_mode)) |err| {
         return err.errno;
     }
+    Bun__setStdinRawMode(raw);
     return 0;
 }
 

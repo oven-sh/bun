@@ -39,9 +39,18 @@ pub noinline fn computeChunks(
         entry_bits.set(entry_bit);
 
         const has_html_chunk = loaders[source_index] == .html;
+
+        // For code splitting, entry point chunks should be keyed by ONLY the entry point's
+        // own bit, not the full entry_bits. This ensures that if an entry point file is
+        // reachable from other entry points (e.g., via re-exports), its content goes into
+        // a shared chunk rather than staying in the entry point's chunk.
+        // https://github.com/evanw/esbuild/blob/cd832972927f1f67b6d2cc895c06a8759c1cf309/internal/linker/linker.go#L3882
+        var entry_point_chunk_bits = try AutoBitSet.initEmpty(this.allocator(), this.graph.entry_points.len);
+        entry_point_chunk_bits.set(entry_bit);
+
         const js_chunk_key = brk: {
             if (code_splitting) {
-                break :brk try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len));
+                break :brk try temp_allocator.dupe(u8, entry_point_chunk_bits.bytes(this.graph.entry_points.len));
             } else {
                 // Force HTML chunks to always be generated, even if there's an identical JS file.
                 break :brk try std.fmt.allocPrint(temp_allocator, "{f}", .{JSChunkKeyFormatter{
@@ -61,7 +70,7 @@ pub noinline fn computeChunks(
                         .source_index = source_index,
                         .is_entry_point = true,
                     },
-                    .entry_bits = entry_bits.*,
+                    .entry_bits = entry_point_chunk_bits,
                     .content = .html,
                     .output_source_map = SourceMap.SourceMapPieces.init(this.allocator()),
                     .flags = .{ .is_browser_chunk_from_server_build = could_be_browser_target_from_server_build and ast_targets[source_index] == .browser },
@@ -90,7 +99,7 @@ pub noinline fn computeChunks(
                         .source_index = source_index,
                         .is_entry_point = true,
                     },
-                    .entry_bits = entry_bits.*,
+                    .entry_bits = entry_point_chunk_bits,
                     .content = .{
                         .css = .{
                             .imports_in_chunk_in_order = order,
@@ -117,7 +126,7 @@ pub noinline fn computeChunks(
                 .source_index = source_index,
                 .is_entry_point = true,
             },
-            .entry_bits = entry_bits.*,
+            .entry_bits = entry_point_chunk_bits,
             .content = .{
                 .javascript = .{},
             },
@@ -229,6 +238,16 @@ pub noinline fn computeChunks(
                                 .output_source_map = SourceMap.SourceMapPieces.init(this.allocator()),
                                 .flags = .{ .is_browser_chunk_from_server_build = is_browser_chunk_from_server_build },
                             };
+                        } else if (could_be_browser_target_from_server_build and
+                            !js_chunk_entry.value_ptr.entry_point.is_entry_point and
+                            !js_chunk_entry.value_ptr.flags.is_browser_chunk_from_server_build and
+                            ast_targets[source_index.get()] == .browser)
+                        {
+                            // If any file in the chunk has browser target, mark the whole chunk as browser.
+                            // This handles the case where a lazy-loaded chunk (code splitting chunk, not entry point)
+                            // contains browser-targeted files but was first created by a non-browser file.
+                            // We only apply this to non-entry-point chunks to preserve the correct side for server entry points.
+                            js_chunk_entry.value_ptr.flags.is_browser_chunk_from_server_build = true;
                         }
 
                         const entry = js_chunk_entry.value_ptr.files_with_parts_in_chunk.getOrPut(this.allocator(), @as(u32, @truncate(source_index.get()))) catch unreachable;

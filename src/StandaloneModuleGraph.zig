@@ -429,16 +429,49 @@ pub const StandaloneModuleGraph = struct {
 
             const bytecode: StringPointer = brk: {
                 if (output_file.bytecode_index != std.math.maxInt(u32)) {
-                    // Use up to 256 byte alignment for bytecode
-                    // Not aligning it correctly will cause a runtime assertion error, or a segfault.
+                    // Bytecode alignment for JSC bytecode cache deserialization.
+                    // Not aligning correctly causes a runtime assertion error or segfault.
+                    //
+                    // PLATFORM-SPECIFIC ALIGNMENT:
+                    // - PE (Windows) and Mach-O (macOS): The module graph data is embedded in
+                    //   a dedicated section with an 8-byte size header. At runtime, the section
+                    //   is memory-mapped at a page-aligned address (hence 128-byte aligned).
+                    //   The data buffer starts 8 bytes after the section start.
+                    //   For bytecode at offset O to be 128-byte aligned:
+                    //     (section_va + 8 + O) % 128 == 0
+                    //     => O % 128 == 120
+                    //
+                    // - ELF (Linux): The module graph data is appended to the executable and
+                    //   read into a heap-allocated buffer at runtime. The allocator provides
+                    //   natural alignment, and there's no 8-byte section header offset.
+                    //   However, using target_mod=120 is still safe because:
+                    //   - If the buffer is 128-aligned: bytecode at offset 120 is at (128n + 120),
+                    //     which when loaded at a 128-aligned address gives proper alignment.
+                    //   - The extra 120 bytes of padding is acceptable overhead.
+                    //
+                    // This alignment strategy (target_mod=120) works for all platforms because
+                    // it's the worst-case offset needed for the 8-byte header scenario.
                     const bytecode = output_files[output_file.bytecode_index].value.buffer.bytes;
-                    const aligned = std.mem.alignInSlice(string_builder.writable(), 128).?;
-                    @memcpy(aligned[0..bytecode.len], bytecode[0..bytecode.len]);
-                    const unaligned_space = aligned[bytecode.len..];
-                    const offset = @intFromPtr(aligned.ptr) - @intFromPtr(string_builder.ptr.?);
+                    const current_offset = string_builder.len;
+                    // Calculate padding so that (current_offset + padding) % 128 == 120
+                    // This accounts for the 8-byte section header on PE/Mach-O platforms.
+                    const target_mod: usize = 128 - @sizeOf(u64); // 120 = accounts for 8-byte header
+                    const current_mod = current_offset % 128;
+                    const padding = if (current_mod <= target_mod)
+                        target_mod - current_mod
+                    else
+                        128 - current_mod + target_mod;
+                    // Zero the padding bytes to ensure deterministic output
+                    const writable = string_builder.writable();
+                    @memset(writable[0..padding], 0);
+                    string_builder.len += padding;
+                    const aligned_offset = string_builder.len;
+                    const writable_after_padding = string_builder.writable();
+                    @memcpy(writable_after_padding[0..bytecode.len], bytecode[0..bytecode.len]);
+                    const unaligned_space = writable_after_padding[bytecode.len..];
                     const len = bytecode.len + @min(unaligned_space.len, 128);
                     string_builder.len += len;
-                    break :brk StringPointer{ .offset = @truncate(offset), .length = @truncate(len) };
+                    break :brk StringPointer{ .offset = @truncate(aligned_offset), .length = @truncate(len) };
                 } else {
                     break :brk .{};
                 }
@@ -1159,7 +1192,9 @@ pub const StandaloneModuleGraph = struct {
         return .success;
     }
 
-    pub fn fromExecutable(allocator: std.mem.Allocator) !?StandaloneModuleGraph {
+    /// Loads the standalone module graph from the executable, allocates it on the heap,
+    /// sets it globally, and returns the pointer.
+    pub fn fromExecutable(allocator: std.mem.Allocator) !?*StandaloneModuleGraph {
         if (comptime Environment.isMac) {
             const macho_bytes = Macho.getData() orelse return null;
             if (macho_bytes.len < @sizeOf(Offsets) + trailer.len) {
@@ -1173,7 +1208,7 @@ pub const StandaloneModuleGraph = struct {
                 return null;
             }
             const offsets = std.mem.bytesAsValue(Offsets, macho_bytes_slice).*;
-            return try StandaloneModuleGraph.fromBytes(allocator, @constCast(macho_bytes), offsets);
+            return try fromBytesAlloc(allocator, @constCast(macho_bytes), offsets);
         }
 
         if (comptime Environment.isWindows) {
@@ -1189,7 +1224,7 @@ pub const StandaloneModuleGraph = struct {
                 return null;
             }
             const offsets = std.mem.bytesAsValue(Offsets, pe_bytes_slice).*;
-            return try StandaloneModuleGraph.fromBytes(allocator, @constCast(pe_bytes), offsets);
+            return try fromBytesAlloc(allocator, @constCast(pe_bytes), offsets);
         }
 
         // Do not invoke libuv here.
@@ -1284,7 +1319,15 @@ pub const StandaloneModuleGraph = struct {
             }
         }
 
-        return try StandaloneModuleGraph.fromBytes(allocator, to_read, offsets);
+        return try fromBytesAlloc(allocator, to_read, offsets);
+    }
+
+    /// Allocates a StandaloneModuleGraph on the heap, populates it from bytes, sets it globally, and returns the pointer.
+    fn fromBytesAlloc(allocator: std.mem.Allocator, raw_bytes: []u8, offsets: Offsets) !*StandaloneModuleGraph {
+        const graph_ptr = try allocator.create(StandaloneModuleGraph);
+        graph_ptr.* = try StandaloneModuleGraph.fromBytes(allocator, raw_bytes, offsets);
+        graph_ptr.set();
+        return graph_ptr;
     }
 
     /// heuristic: `bun build --compile` won't be supported if the name is "bun", "bunx", or "node".

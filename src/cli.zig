@@ -392,6 +392,14 @@ pub const Command = struct {
             enabled: bool = false,
             name: []const u8 = "",
             dir: []const u8 = "",
+            md_format: bool = false,
+            json_format: bool = false,
+        } = .{},
+        heap_prof: struct {
+            enabled: bool = false,
+            text_format: bool = false,
+            name: []const u8 = "",
+            dir: []const u8 = "",
         } = .{},
     };
 
@@ -425,6 +433,7 @@ pub const Command = struct {
             outdir: []const u8 = "",
             outfile: []const u8 = "",
             metafile: [:0]const u8 = "",
+            metafile_md: [:0]const u8 = "",
             root_dir: []const u8 = "",
             public_path: []const u8 = "",
             entry_naming: []const u8 = "[dir]/[name].[ext]",
@@ -686,17 +695,33 @@ pub const Command = struct {
                 var offset_for_passthrough: usize = 0;
 
                 const ctx: *ContextData = brk: {
-                    if (graph.compile_exec_argv.len > 0) {
+                    if (graph.compile_exec_argv.len > 0 or bun.bun_options_argc > 0) {
                         const original_argv_len = bun.argv.len;
                         var argv_list = std.array_list.Managed([:0]const u8).fromOwnedSlice(bun.default_allocator, bun.argv);
-                        try bun.appendOptionsEnv(graph.compile_exec_argv, &argv_list, bun.default_allocator);
-                        bun.argv = argv_list.items;
+                        if (graph.compile_exec_argv.len > 0) {
+                            try bun.appendOptionsEnv(graph.compile_exec_argv, [:0]const u8, &argv_list);
+                        }
 
-                        // Calculate offset: skip executable name + all exec argv options
-                        offset_for_passthrough = if (bun.argv.len > 1) 1 + (bun.argv.len -| original_argv_len) else 0;
+                        // Store the full argv including user arguments
+                        const full_argv = argv_list.items;
+                        const num_exec_argv_options = full_argv.len -| original_argv_len;
+
+                        // Calculate offset: skip executable name + all exec argv options + BUN_OPTIONS args
+                        const num_parsed_options = num_exec_argv_options + bun.bun_options_argc;
+                        offset_for_passthrough = if (full_argv.len > 1) 1 + num_parsed_options else 0;
+
+                        // Temporarily set bun.argv to only include executable name + exec_argv options + BUN_OPTIONS args.
+                        // This prevents user arguments like --version/--help from being intercepted
+                        // by Bun's argument parser (they should be passed through to user code).
+                        bun.argv = full_argv[0..@min(1 + num_parsed_options, full_argv.len)];
 
                         // Handle actual options to parse.
-                        break :brk try Command.init(allocator, log, .AutoCommand);
+                        const result = try Command.init(allocator, log, .AutoCommand);
+
+                        // Restore full argv so passthrough calculation works correctly
+                        bun.argv = full_argv;
+
+                        break :brk result;
                     }
 
                     context_data = .{

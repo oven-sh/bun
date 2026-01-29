@@ -75,7 +75,9 @@ Ref<SourceProvider> SourceProvider::create(
     JSC::SourceProviderSourceType sourceType,
     bool isBuiltin)
 {
-    if (resolvedSource.module_info != nullptr) {
+    // Only use BunTranspiledModule when there's NO bytecode cache.
+    // When bytecode cache is present, let the normal caching path handle it.
+    if (resolvedSource.module_info != nullptr && resolvedSource.bytecode_cache == nullptr) {
         ASSERT(!resolvedSource.isCommonJSModule);
         sourceType = JSC::SourceProviderSourceType::BunTranspiledModule;
     }
@@ -105,6 +107,8 @@ Ref<SourceProvider> SourceProvider::create(
                 // no-op, for bun build --compile.
             };
             const auto destructor = resolvedSource.needsDeref ? destructorPtr : destructorNoOp;
+
+            dataLogLnIf(JSC::Options::verboseDiskCache(), "[Bun] Attaching bytecode cache: size=", resolvedSource.bytecode_cache_size, " url=", sourceURLString, " sourceType=", static_cast<int>(sourceType), " module_info=", resolvedSource.module_info != nullptr ? "yes" : "no");
 
             Ref<JSC::CachedBytecode> bytecode = JSC::CachedBytecode::create(std::span<uint8_t>(resolvedSource.bytecode_cache, resolvedSource.bytecode_cache_size), destructor, {});
             auto provider = adoptRef(*new SourceProvider(

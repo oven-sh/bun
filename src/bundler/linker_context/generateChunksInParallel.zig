@@ -507,26 +507,15 @@ pub fn generateChunksInParallel(
                         jsc.VirtualMachine.is_bundler_thread_for_bytecode_cache = true;
                         jsc.initialize(false);
                         var fdpath: bun.PathBuffer = undefined;
-                        // On Windows --compile builds, the source_provider_url must
-                        // include the standalone module graph prefix (e.g. "B:/BUN/root/")
-                        // so that the JSC bytecode cache key matches at runtime.
-                        //
-                        // JSC's SourceCodeKey compares host() of the source origin URL.
-                        // The Windows standalone prefix contains a drive letter (B:/),
-                        // which causes WTF::URL::fileURLWithFileSystemPath to produce a
-                        // URL with host='B'. At runtime, the module's source URL includes
-                        // this prefix (e.g. "B:/BUN/root/app.js"), so host()='B'. But at
-                        // build time, without the prefix, the URL is just "app.js.jsc"
-                        // which gives host()=''. This mismatch causes a bytecode cache
-                        // miss. Adding the prefix here makes both sides consistent.
-                        //
-                        // On macOS/Linux this isn't needed because the prefix (/$bunfs/)
-                        // has no drive letter, so host() is '' on both sides.
-                        const compile_prefix = if (c.options.compile and comptime bun.Environment.isWindows)
-                            bun.StandaloneModuleGraph.base_public_path_with_default_suffix
+                        // For --compile builds, the bytecode URL must match the module name
+                        // that will be used at runtime. The module name is:
+                        //   public_path + final_rel_path (e.g., "/$bunfs/root/app.js")
+                        // Without this prefix, the JSC bytecode cache key won't match at runtime.
+                        // For non-compile builds, use the normal .jsc extension.
+                        var source_provider_url = if (c.options.compile)
+                            try bun.String.createFormat("{s}{s}", .{ c.options.public_path, chunk.final_rel_path })
                         else
-                            "";
-                        var source_provider_url = try bun.String.createFormat("{s}{s}" ++ bun.bytecode_extension, .{ compile_prefix, chunk.final_rel_path });
+                            try bun.String.createFormat("{s}" ++ bun.bytecode_extension, .{chunk.final_rel_path});
                         source_provider_url.ref();
 
                         defer source_provider_url.deref();

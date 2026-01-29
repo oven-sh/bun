@@ -297,7 +297,7 @@ pub const All = struct {
                 now.* = timespec.now(.allow_mocked_time);
                 has_set_now.* = true;
             }
-            if (timer.next.greater(now)) {
+            if (timerIsInFuture(timer, now)) {
                 return null;
             }
 
@@ -306,6 +306,28 @@ pub const All = struct {
             return timer;
         }
         return null;
+    }
+
+    /// Returns true if the timer is scheduled for a time in the future.
+    /// For JavaScript timers (setTimeout, setInterval, setImmediate), we collapse
+    /// sub-millisecond precision to match the heap ordering behavior in EventLoopTimer.less().
+    /// This ensures that all timers scheduled for the same millisecond fire together,
+    /// preventing setImmediate callbacks from running between timer callbacks that
+    /// should fire at the same time.
+    fn timerIsInFuture(timer: *const EventLoopTimer, now: *const timespec) bool {
+        const sec_order = std.math.order(timer.next.sec, now.sec);
+        if (sec_order != .eq) return sec_order == .gt;
+
+        // For JavaScript timers, collapse sub-millisecond precision
+        // This matches the behavior in EventLoopTimer.less()
+        var timer_ns = timer.next.nsec;
+        var now_ns = now.nsec;
+        if (timer.jsTimerInternalsFlags() != null) {
+            timer_ns = std.time.ns_per_ms * @divTrunc(timer_ns, std.time.ns_per_ms);
+            now_ns = std.time.ns_per_ms * @divTrunc(now_ns, std.time.ns_per_ms);
+        }
+
+        return timer_ns > now_ns;
     }
 
     pub fn drainTimers(this: *All, vm: *VirtualMachine) void {

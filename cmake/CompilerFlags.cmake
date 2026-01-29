@@ -24,9 +24,19 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm|ARM|arm64|ARM64|aarch64|AARCH64")
   elseif(WIN32)
     # Windows ARM64: use /clang: prefix for clang-cl, skip for MSVC cl.exe subprojects
     # These flags are only understood by clang-cl, not MSVC cl.exe
-    register_compiler_flags(/clang:-march=armv8-a+crc /clang:-mtune=ampere1)
+    if(ENABLE_BASELINE)
+      # Baseline: ARMv8.0-A compatible, use outline atomics for LSE compatibility
+      register_compiler_flags(/clang:-march=armv8-a+crc /clang:-moutline-atomics)
+    else()
+      register_compiler_flags(/clang:-march=armv8-a+crc /clang:-mtune=ampere1)
+    endif()
   else()
-    register_compiler_flags(-march=armv8-a+crc -mtune=ampere1)
+    if(ENABLE_BASELINE)
+      # Baseline: ARMv8.0-A compatible, use outline atomics for LSE compatibility
+      register_compiler_flags(-march=armv8-a+crc -moutline-atomics)
+    else()
+      register_compiler_flags(-march=armv8-a+crc -mtune=ampere1)
+    endif()
   endif()
 elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|X86_64|x64|X64|amd64|AMD64")
   if(ENABLE_BASELINE)

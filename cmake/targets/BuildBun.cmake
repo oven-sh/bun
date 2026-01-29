@@ -683,6 +683,10 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm|ARM|arm64|ARM64|aarch64|AARCH64")
     # Windows ARM64: use a specific CPU with NEON support
     # Zig running under x64 emulation would detect wrong CPU with "native"
     set(ZIG_CPU "cortex_a76")
+  elseif(ENABLE_BASELINE)
+    # Baseline ARM64: target Cortex-A35 for older CPUs like Cortex-A53
+    # See https://github.com/oven-sh/bun/issues/26544
+    set(ZIG_CPU "cortex_a35")
   else()
     set(ZIG_CPU "native")
   endif()

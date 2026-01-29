@@ -66,17 +66,10 @@ test("dependency on workspace without version in package.json", async () => {
     "kjwoehcojrgjoj", // dist-tag does not exist, should choose local workspace
     "*.1.*",
     "*-pre",
+    "latest", // dist-tag exists, should choose local workspace
+    "", // empty string is treated as "latest" dist tag, should choose local workspace
   ];
-  const shouldNotWork: string[] = [
-    "1",
-    "1.*",
-    "1.1.*",
-    "1.1.0",
-    "*-pre+build",
-    "*+build",
-    "latest", // dist-tag exists, should choose package from npm
-    "",
-  ];
+  const shouldNotWork: string[] = ["1", "1.*", "1.1.*", "1.1.0", "*-pre+build", "*+build"];
 
   for (const version of shouldWork) {
     writeFileSync(
@@ -213,7 +206,7 @@ test("dependency on same name as workspace and dist-tag", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun install v1."),
     "",
-    "3 packages installed",
+    "2 packages installed",
   ]);
 });
 

@@ -902,19 +902,19 @@ Bun.wrapAnsi("\u001b[31mThe quick brown fox jumps over the lazy dog\u001b[0m", 2
 
 ```ts
 Bun.wrapAnsi("Hello World", 5, {
-  hard: true,       // Break words that exceed column width (default: false)
-  wordWrap: true,   // Wrap at word boundaries (default: true)
-  trim: true,       // Trim leading/trailing whitespace per line (default: true)
+  hard: true, // Break words that exceed column width (default: false)
+  wordWrap: true, // Wrap at word boundaries (default: true)
+  trim: true, // Trim leading/trailing whitespace per line (default: true)
   ambiguousIsNarrow: true, // Treat ambiguous-width characters as narrow (default: true)
 });
 ```
 
-| Option | Default | Description |
-| --- | --- | --- |
-| `hard` | `false` | If `true`, break words in the middle if they exceed the column width. |
-| `wordWrap` | `true` | If `true`, wrap at word boundaries. If `false`, only break at explicit newlines. |
-| `trim` | `true` | If `true`, trim leading and trailing whitespace from each line. |
-| `ambiguousIsNarrow` | `true` | If `true`, treat ambiguous-width Unicode characters as 1 column wide. If `false`, treat them as 2 columns wide. |
+| Option              | Default | Description                                                                                                     |
+| ------------------- | ------- | --------------------------------------------------------------------------------------------------------------- |
+| `hard`              | `false` | If `true`, break words in the middle if they exceed the column width.                                           |
+| `wordWrap`          | `true`  | If `true`, wrap at word boundaries. If `false`, only break at explicit newlines.                                |
+| `trim`              | `true`  | If `true`, trim leading and trailing whitespace from each line.                                                 |
+| `ambiguousIsNarrow` | `true`  | If `true`, treat ambiguous-width Unicode characters as 1 column wide. If `false`, treat them as 2 columns wide. |
 
 TypeScript definition:
 

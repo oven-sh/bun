@@ -1,4 +1,4 @@
-pub fn processLink(self: *Parser, content: []const u8, start: usize, base_off: OFF, is_image: bool) bun.JSError!?usize {
+pub fn processLink(self: *Parser, content: []const u8, start: usize, base_off: OFF, is_image: bool) Parser.Error!?usize {
     _ = base_off;
     // start points at '['
     // Find matching ']', skipping code spans and HTML tags (which take precedence)
@@ -360,7 +360,7 @@ pub fn labelContainsLink(self: *Parser, label: []const u8) bool {
 }
 
 /// Process wiki link: [[destination]] or [[destination|label]]
-pub fn processWikiLink(self: *Parser, content: []const u8, start: usize) bun.JSError!?usize {
+pub fn processWikiLink(self: *Parser, content: []const u8, start: usize) Parser.Error!?usize {
     // start points at first '[', next char is also '['
     var pos = start + 2;
 
@@ -415,7 +415,7 @@ pub fn processWikiLink(self: *Parser, content: []const u8, start: usize) bun.JSE
 }
 
 /// Render a reference link/image given the resolved ref def.
-pub fn renderRefLink(self: *Parser, label_content: []const u8, ref: RefDef, is_image: bool) bun.JSError!void {
+pub fn renderRefLink(self: *Parser, label_content: []const u8, ref: RefDef, is_image: bool) Parser.Error!void {
     if (self.image_nesting_level > 0) {
         // Inside image alt text — emit only text, no HTML tags
         try self.processInlineContent(label_content, 0);

@@ -21,7 +21,7 @@ pub const EmphDelim = struct {
 /// Merge all lines into buffer with \n between them (unmodified),
 /// then process inlines on the merged text. Hard/soft breaks are detected
 /// during inline processing when \n is encountered.
-pub fn processLeafBlock(self: *Parser, block_lines: []const VerbatimLine, trim_trailing: bool) bun.JSError!void {
+pub fn processLeafBlock(self: *Parser, block_lines: []const VerbatimLine, trim_trailing: bool) Parser.Error!void {
     if (block_lines.len == 0) return;
 
     self.buffer.clearRetainingCapacity();
@@ -45,7 +45,11 @@ pub fn processLeafBlock(self: *Parser, block_lines: []const VerbatimLine, trim_t
     try self.processInlineContent(merged, block_lines[0].beg);
 }
 
-pub fn processInlineContent(self: *Parser, content: []const u8, base_off: OFF) bun.JSError!void {
+pub fn processInlineContent(self: *Parser, content: []const u8, base_off: OFF) Parser.Error!void {
+    if (!self.stack_check.isSafeToRecurse()) {
+        return bun.throwStackOverflow();
+    }
+
     // Phase 1: Collect and resolve emphasis delimiters
     self.collectEmphasisDelimiters(content);
     self.resolveEmphasisDelimiters();

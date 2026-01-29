@@ -60,6 +60,9 @@ pub const Parser = struct {
     last_list_item_starts_with_two_blank_lines: bool = false,
     max_ref_def_output: u64 = 0,
 
+    // Stack overflow protection for recursive inline processing
+    stack_check: bun.StackCheck,
+
     pub const BlockHeader = extern struct {
         block_type: BlockType,
         _pad: [3]u8 = .{ 0, 0, 0 },
@@ -72,6 +75,8 @@ pub const Parser = struct {
     pub const MAX_EMPH_MATCHES = inlines_mod.MAX_EMPH_MATCHES;
     pub const RefDef = ref_defs_mod.RefDef;
 
+    pub const Error = bun.JSError || bun.StackOverflow;
+
     fn init(allocator: Allocator, text: []const u8, flags: Flags, rend: Renderer) Parser {
         const size: OFF = @intCast(text.len);
         var p = Parser{
@@ -83,6 +88,7 @@ pub const Parser = struct {
             .code_indent_offset = if (flags.no_indented_code_blocks) std.math.maxInt(u32) else 4,
             .doc_ends_with_newline = size > 0 and helpers.isNewline(text[size - 1]),
             .max_ref_def_output = @min(@min(16 * @as(u64, size), 1024 * 1024), std.math.maxInt(u32)),
+            .stack_check = bun.StackCheck.init(),
         };
         p.buildMarkCharMap();
         return p;
@@ -220,7 +226,7 @@ pub const Parser = struct {
 // Public API
 // ========================================
 
-pub fn renderToHtml(text: []const u8, allocator: Allocator, flags: Flags, render_opts: root.RenderOptions) error{OutOfMemory}![]u8 {
+pub fn renderToHtml(text: []const u8, allocator: Allocator, flags: Flags, render_opts: root.RenderOptions) Parser.Error![]u8 {
     // Skip UTF-8 BOM
     const input = helpers.skipUtf8Bom(text);
 
@@ -234,6 +240,7 @@ pub fn renderToHtml(text: []const u8, allocator: Allocator, flags: Flags, render
     parser.processDoc() catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.JSError, error.JSTerminated => unreachable,
+        error.StackOverflow => return error.StackOverflow,
     };
 
     return html_renderer.toOwnedSlice();
@@ -243,7 +250,7 @@ pub fn renderToHtml(text: []const u8, allocator: Allocator, flags: Flags, render
 /// Renderer implementation (e.g. for JS callback-based rendering).
 /// `render_options` carries render-only flags (tag_filter, heading_ids,
 /// autolink_headings) so they are not silently dropped by the API.
-pub fn renderWithRenderer(text: []const u8, allocator: Allocator, flags: Flags, render_options: root.RenderOptions, rend: Renderer) bun.JSError!void {
+pub fn renderWithRenderer(text: []const u8, allocator: Allocator, flags: Flags, render_options: root.RenderOptions, rend: Renderer) Parser.Error!void {
     _ = render_options; // Available for renderer implementations; parse layer does not use these.
     const input = helpers.skipUtf8Bom(text);
 

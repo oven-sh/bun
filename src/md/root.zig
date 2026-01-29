@@ -81,16 +81,16 @@ pub const Options = struct {
     }
 };
 
-pub fn renderToHtml(text: []const u8, allocator: std.mem.Allocator) error{OutOfMemory}![]u8 {
+pub fn renderToHtml(text: []const u8, allocator: std.mem.Allocator) parser.Parser.Error![]u8 {
     return renderToHtmlWithOptions(text, allocator, .{});
 }
 
-pub fn renderToHtmlWithOptions(text: []const u8, allocator: std.mem.Allocator, options: Options) error{OutOfMemory}![]u8 {
+pub fn renderToHtmlWithOptions(text: []const u8, allocator: std.mem.Allocator, options: Options) parser.Parser.Error![]u8 {
     return parser.renderToHtml(text, allocator, options.toFlags(), options.toRenderOptions());
 }
 
 /// Parse and render using a custom renderer implementation.
-pub fn renderWithRenderer(text: []const u8, allocator: std.mem.Allocator, options: Options, renderer: Renderer) bun.JSError!void {
+pub fn renderWithRenderer(text: []const u8, allocator: std.mem.Allocator, options: Options, renderer: Renderer) parser.Parser.Error!void {
     return parser.renderWithRenderer(text, allocator, options.toFlags(), options.toRenderOptions(), renderer);
 }
 

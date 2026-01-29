@@ -159,7 +159,10 @@ pub fn render(
     try js_renderer.extractCallbacks(if (callbacks_value.isObject()) callbacks_value else .js_undefined);
 
     // Run parser with the JS callback renderer
-    try md.renderWithRenderer(input, arena.allocator(), options, js_renderer.renderer());
+    md.renderWithRenderer(input, arena.allocator(), options, js_renderer.renderer()) catch |err| return switch (err) {
+        error.JSError, error.JSTerminated, error.OutOfMemory => |e| e,
+        error.StackOverflow => globalThis.throwStackOverflow(),
+    };
 
     // Return accumulated result
     const result = js_renderer.getResult();
@@ -232,7 +235,10 @@ fn renderAST(
     // Extract component overrides from 2nd argument
     try renderer.extractComponents(if (components_value.isObject()) components_value else .js_undefined);
 
-    try md.renderWithRenderer(input, arena.allocator(), options, renderer.renderer());
+    md.renderWithRenderer(input, arena.allocator(), options, renderer.renderer()) catch |err| return switch (err) {
+        error.JSError, error.JSTerminated, error.OutOfMemory => |e| e,
+        error.StackOverflow => globalThis.throwStackOverflow(),
+    };
 
     return renderer.getResult();
 }

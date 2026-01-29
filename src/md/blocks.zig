@@ -1,4 +1,4 @@
-pub fn processDoc(self: *Parser) bun.JSError!void {
+pub fn processDoc(self: *Parser) Parser.Error!void {
     const dummy_blank = Line{ .type = .blank };
     var pivot_line = dummy_blank;
     var line_buf: [2]Line = .{ .{}, .{} };

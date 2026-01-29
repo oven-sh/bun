@@ -42,7 +42,7 @@ pub fn processHtmlBlock(self: *Parser, block_lines: []const VerbatimLine) bun.JS
     try self.emitText(.html, "\n");
 }
 
-pub fn processTableBlock(self: *Parser, block_lines: []const VerbatimLine, col_count: u32) bun.JSError!void {
+pub fn processTableBlock(self: *Parser, block_lines: []const VerbatimLine, col_count: u32) Parser.Error!void {
     if (block_lines.len < 2) return;
 
     // First line is header, second is underline, rest are body
@@ -63,7 +63,7 @@ pub fn processTableBlock(self: *Parser, block_lines: []const VerbatimLine, col_c
     }
 }
 
-pub fn processTableRow(self: *Parser, vline: VerbatimLine, is_header: bool, col_count: u32) bun.JSError!void {
+pub fn processTableRow(self: *Parser, vline: VerbatimLine, is_header: bool, col_count: u32) Parser.Error!void {
     const row_text = self.text[vline.beg..vline.end];
     var start: usize = 0;
     var cell_index: u32 = 0;

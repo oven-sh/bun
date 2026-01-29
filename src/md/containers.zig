@@ -97,7 +97,7 @@ pub fn isContainerCompatible(self: *const Parser, existing: *const Container, ne
     return false;
 }
 
-pub fn processAllBlocks(self: *Parser) bun.JSError!void {
+pub fn processAllBlocks(self: *Parser) Parser.Error!void {
     var off: usize = 0;
     const bytes = self.block_bytes.items;
 

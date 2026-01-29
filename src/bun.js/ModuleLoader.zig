@@ -1215,6 +1215,8 @@ pub fn fetchBuiltinModule(jsc_vm: *VirtualMachine, specifier: bun.String) !?Reso
                 .source_code = file.toWTFString(),
                 .specifier = specifier,
                 .source_url = specifier.dupeRef(),
+                // bytecode_origin_path is the path used when generating bytecode; must match for cache hits
+                .bytecode_origin_path = if (file.bytecode_origin_path.len > 0) bun.String.fromBytes(file.bytecode_origin_path) else bun.String.empty,
                 .source_code_needs_deref = false,
                 .bytecode_cache = if (file.bytecode.len > 0) file.bytecode.ptr else null,
                 .bytecode_cache_size = file.bytecode.len,

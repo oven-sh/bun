@@ -98,6 +98,18 @@ Ref<SourceProvider> SourceProvider::create(
         // https://github.com/oven-sh/bun/issues/9521
     }
 
+    // Compute source origin: use explicit bytecode_origin_path if provided, otherwise derive from source_url.
+    // bytecode_origin_path is used for bytecode cache validation where the origin must match
+    // exactly what was used at build time.
+    const auto getSourceOrigin = [&]() -> SourceOrigin {
+        auto bytecodeOriginPath = resolvedSource.bytecode_origin_path.toWTFString(BunString::ZeroCopy);
+        if (!bytecodeOriginPath.isNull() && !bytecodeOriginPath.isEmpty()) {
+            // Convert file path to file:// URL (same as build time)
+            return SourceOrigin(WTF::URL::fileURLWithFileSystemPath(bytecodeOriginPath));
+        }
+        return toSourceOrigin(sourceURLString, isBuiltin);
+    };
+
     const auto getProvider = [&]() -> Ref<SourceProvider> {
         if (resolvedSource.bytecode_cache != nullptr) {
             const auto destructorPtr = [](const void* ptr) {
@@ -108,7 +120,7 @@ Ref<SourceProvider> SourceProvider::create(
             };
             const auto destructor = resolvedSource.needsDeref ? destructorPtr : destructorNoOp;
 
-            auto origin = toSourceOrigin(sourceURLString, isBuiltin);
+            auto origin = getSourceOrigin();
             dataLogLnIf(JSC::Options::verboseDiskCache(), "[Bun] Attaching bytecode cache: size=", resolvedSource.bytecode_cache_size, " url=", sourceURLString, " sourceType=", static_cast<int>(sourceType), " module_info=", resolvedSource.module_info != nullptr ? "yes" : "no");
             dataLogLnIf(JSC::Options::verboseDiskCache(), "[Bytecode Runtime] origin=", origin.url().string(), " sourceSize=", (string.isNull() ? 0u : string.impl()->length()), " is8Bit=", (string.isNull() ? true : string.impl()->is8Bit()));
 
@@ -130,7 +142,7 @@ Ref<SourceProvider> SourceProvider::create(
             resolvedSource,
             string.isNull() ? *StringImpl::empty() : *string.impl(),
             JSC::SourceTaintedOrigin::Untainted,
-            toSourceOrigin(sourceURLString, isBuiltin),
+            getSourceOrigin(),
             sourceURLString.impl(), TextPosition(),
             sourceType));
     };

@@ -93,6 +93,9 @@ pub const StandaloneModuleGraph = struct {
         sourcemap: Schema.StringPointer = .{},
         bytecode: Schema.StringPointer = .{},
         module_info: Schema.StringPointer = .{},
+        /// The file path used when generating bytecode (e.g., "B:/~BUN/root/app.js").
+        /// Must match exactly at runtime for bytecode cache hits.
+        bytecode_origin_path: Schema.StringPointer = .{},
         encoding: Encoding = .latin1,
         loader: bun.options.Loader = .file,
         module_format: ModuleFormat = .none,
@@ -161,6 +164,9 @@ pub const StandaloneModuleGraph = struct {
         wtf_string: bun.String = bun.String.empty,
         bytecode: []u8 = "",
         module_info: []u8 = "",
+        /// The file path used when generating bytecode (e.g., "B:/~BUN/root/app.js").
+        /// Must match exactly at runtime for bytecode cache hits.
+        bytecode_origin_path: []const u8 = "",
         module_format: ModuleFormat = .none,
         side: FileSide = .server,
 
@@ -336,6 +342,7 @@ pub const StandaloneModuleGraph = struct {
                         .none,
                     .bytecode = if (module.bytecode.length > 0) @constCast(sliceTo(raw_bytes, module.bytecode)) else &.{},
                     .module_info = if (module.module_info.length > 0) @constCast(sliceTo(raw_bytes, module.module_info)) else &.{},
+                    .bytecode_origin_path = if (module.bytecode_origin_path.length > 0) sliceToZ(raw_bytes, module.bytecode_origin_path) else "",
                     .module_format = module.module_format,
                     .side = module.side,
                 },
@@ -516,6 +523,13 @@ pub const StandaloneModuleGraph = struct {
                 }
             }
 
+            // When there's bytecode, store the bytecode output file's path as bytecode_origin_path.
+            // This path was used to generate the bytecode cache and must match at runtime.
+            const bytecode_origin_path: StringPointer = if (output_file.bytecode_index != std.math.maxInt(u32))
+                string_builder.appendCountZ(output_files[output_file.bytecode_index].dest_path)
+            else
+                .{};
+
             var module = CompiledModuleGraphFile{
                 .name = string_builder.fmtAppendCountZ("{s}{s}", .{
                     prefix,
@@ -534,6 +548,7 @@ pub const StandaloneModuleGraph = struct {
                 } else .none,
                 .bytecode = bytecode,
                 .module_info = module_info,
+                .bytecode_origin_path = bytecode_origin_path,
                 .side = switch (output_file.side orelse .server) {
                     .server => .server,
                     .client => .client,

@@ -311,8 +311,11 @@ pub const BundleV2 = struct {
                 }
             }
 
-            const is_js = v.all_loaders[source_index.get()].isJavaScriptLike();
-            const is_css = v.all_loaders[source_index.get()].isCSS();
+            const loader = v.all_loaders[source_index.get()];
+            // HTML is included because it can reference files (e.g., <img src>) that may also
+            // be inlined in CSS, and we need to ensure those files are emitted for HTML.
+            const is_js_or_html = loader.isJavaScriptLike() or loader == .html;
+            const is_css = loader.isCSS();
 
             const import_record_list_id = source_index;
             // when there are no import records, v index will be invalid
@@ -341,9 +344,9 @@ pub const BundleV2 = struct {
                             }
                         }
 
-                        // Mark if the file is imported by JS and its URL is inlined for CSS
+                        // Mark if the file is imported by JS/HTML and its URL is inlined for CSS
                         const is_inlined = import_record.source_index.isValid() and v.all_urls_for_css[import_record.source_index.get()].len > 0;
-                        if (is_js and is_inlined) {
+                        if (is_js_or_html and is_inlined) {
                             v.additional_files_imported_by_js_and_inlined_in_css.set(import_record.source_index.get());
                         } else if (is_css and is_inlined) {
                             v.additional_files_imported_by_css_and_inlined.set(import_record.source_index.get());

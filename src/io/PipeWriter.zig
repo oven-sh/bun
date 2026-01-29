@@ -804,12 +804,16 @@ fn BaseWindowsPipeWriter(
         }
 
         fn onPipeClose(handle: *uv.Pipe) callconv(.c) void {
-            const this = bun.cast(*uv.Pipe, handle.data);
+            // handle.data was set to point to the pipe itself before close was called
+            // If null, the handle was already cleaned up or there was a race condition
+            const this: *uv.Pipe = @ptrCast(@alignCast(handle.data orelse return));
             bun.default_allocator.destroy(this);
         }
 
         fn onTTYClose(handle: *uv.uv_tty_t) callconv(.c) void {
-            const this = bun.cast(*uv.uv_tty_t, handle.data);
+            // handle.data was set to point to the tty itself before close was called
+            // If null, the handle was already cleaned up or there was a race condition
+            const this: *uv.uv_tty_t = @ptrCast(@alignCast(handle.data orelse return));
             bun.default_allocator.destroy(this);
         }
 

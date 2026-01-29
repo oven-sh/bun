@@ -217,8 +217,9 @@ pub const PathWatcher = struct {
 
     fn uvClosedCallback(handler: *anyopaque) callconv(.c) void {
         log("onClose", .{});
-        const event = bun.cast(*uv.uv_fs_event_t, handler);
-        const this = bun.cast(*PathWatcher, event.data);
+        const event: *uv.uv_fs_event_t = @ptrCast(@alignCast(handler));
+        // event.data may be null if the handle was already cleaned up or there was a race condition
+        const this: *PathWatcher = @ptrCast(@alignCast(event.data orelse return));
         bun.destroy(this);
     }
 

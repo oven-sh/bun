@@ -37,6 +37,7 @@ if [ "$ARCH" = "x64" ]; then
     QEMU_BIN="qemu-x86_64-static"
   fi
   QEMU_CPU="Nehalem"
+  CPU_DESC="Nehalem (SSE4.2, no AVX/AVX2/AVX512)"
 elif [ "$ARCH" = "aarch64" ]; then
   QEMU_BIN="qemu-aarch64"
   if [ -f "/usr/bin/qemu-aarch64-static" ]; then
@@ -45,6 +46,7 @@ elif [ "$ARCH" = "aarch64" ]; then
   # cortex-a53 is ARMv8.0-A (no LSE atomics, no SVE). It's the most widely
   # supported ARMv8.0 model across QEMU versions.
   QEMU_CPU="cortex-a53"
+  CPU_DESC="Cortex-A53 (ARMv8.0-A+CRC, no LSE/SVE)"
 else
   echo "ERROR: Unknown arch: $ARCH"
   exit 1
@@ -55,30 +57,37 @@ if ! command -v "$QEMU_BIN" &>/dev/null; then
   exit 1
 fi
 
-echo "--- Verifying baseline CPU compatibility"
-echo "Binary: $BINARY"
-echo "QEMU: $QEMU_BIN -cpu $QEMU_CPU"
-echo "Host: $HOST_ARCH"
+BINARY_NAME=$(basename "$BINARY")
+
+echo "--- Verifying $BINARY_NAME on $CPU_DESC"
+echo "    Binary: $BINARY"
+echo "    QEMU:   $QEMU_BIN -cpu $QEMU_CPU"
+echo "    Host:   $HOST_ARCH"
+echo ""
 
 run_test() {
   local label="$1"
   shift
-  echo "+++ Test: $label"
+  echo "+++ $BINARY_NAME: $label"
   if "$QEMU_BIN" -cpu "$QEMU_CPU" "$@"; then
-    echo "PASS: $label"
+    echo "    PASS"
     return 0
   else
     local exit_code=$?
     echo ""
-    echo "FAIL: $label (exit code $exit_code)"
     if [ $exit_code -eq 132 ]; then
-      echo "FATAL: Illegal instruction (SIGILL) detected during: $label"
-      echo "The binary uses CPU instructions not available on $QEMU_CPU."
+      echo "    FAIL: Illegal instruction (SIGILL)"
+      echo ""
+      echo "    The $BINARY_NAME binary uses CPU instructions not available on $QEMU_CPU."
       if [ "$ARCH" = "x64" ]; then
-        echo "The baseline x64 build targets Nehalem (SSE4.2). AVX/AVX2/AVX512 instructions are not allowed."
+        echo "    The baseline x64 build targets Nehalem (SSE4.2)."
+        echo "    AVX, AVX2, and AVX512 instructions are not allowed."
       else
-        echo "The aarch64 build targets Cortex-A53 (ARMv8.0-A+CRC). LSE atomics, SVE, and dotprod are not allowed."
+        echo "    The aarch64 build targets Cortex-A53 (ARMv8.0-A+CRC)."
+        echo "    LSE atomics, SVE, and dotprod instructions are not allowed."
       fi
+    else
+      echo "    FAIL: exit code $exit_code"
     fi
     exit $exit_code
   fi
@@ -88,4 +97,4 @@ run_test "bun --version" "$BINARY" --version
 run_test "bun -e eval" "$BINARY" -e "console.log(JSON.stringify({ok:1+1}))"
 
 echo ""
-echo "Baseline CPU verification passed for $ARCH ($QEMU_CPU)."
+echo "    All checks passed for $BINARY_NAME on $QEMU_CPU."

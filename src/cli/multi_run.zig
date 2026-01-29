@@ -823,8 +823,8 @@ fn hasRunnableExtension(name: []const u8) bool {
     return loader.canBeRunByBun();
 }
 
-const std = @import("std");
 const FilterArg = @import("./filter_arg.zig");
+const std = @import("std");
 const RunCommand = @import("./run_command.zig").RunCommand;
 
 const bun = @import("bun");

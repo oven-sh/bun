@@ -2256,8 +2256,8 @@ pub const sync = struct {
 };
 
 const std = @import("std");
-const ProcessHandle = @import("../../../cli/filter_run.zig").ProcessHandle;
 const MultiRunProcessHandle = @import("../../../cli/multi_run.zig").ProcessHandle;
+const ProcessHandle = @import("../../../cli/filter_run.zig").ProcessHandle;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

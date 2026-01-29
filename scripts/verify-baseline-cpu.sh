@@ -28,16 +28,26 @@ fi
 
 # Install QEMU user-mode
 echo "--- Installing QEMU user-mode"
+SUDO=""
+if [ "$(id -u)" -ne 0 ]; then
+  if sudo -n true 2>/dev/null; then
+    SUDO="sudo -n"
+  else
+    echo "ERROR: Not root and passwordless sudo not available"
+    exit 1
+  fi
+fi
+
 if command -v apk &>/dev/null; then
   if [ "$ARCH" = "x64" ]; then
-    apk add --no-cache qemu-x86_64
+    $SUDO apk add --no-cache qemu-x86_64
   else
-    apk add --no-cache qemu-aarch64
+    $SUDO apk add --no-cache qemu-aarch64
   fi
 elif command -v dnf &>/dev/null; then
-  dnf install -y qemu-user-static
+  $SUDO dnf install -y qemu-user-static
 elif command -v apt-get &>/dev/null; then
-  apt-get update -qq && apt-get install -y -qq qemu-user-static
+  $SUDO apt-get update -qq && $SUDO apt-get install -y -qq qemu-user-static
 else
   echo "ERROR: No supported package manager found (apk/dnf/apt-get)"
   exit 1

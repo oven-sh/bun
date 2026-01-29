@@ -38,14 +38,15 @@ describe("issue #26575", () => {
       const cssContent = api.readFile("out/" + cssMatch![1]);
       expect(cssContent).toContain("data:image/webp;base64,");
 
-      // The image file should still exist in the output directory for the HTML <img> tag
-      const outputFiles = readdirSync(api.outdir);
-      const hasWebpFile = outputFiles.some(f => f.endsWith(".webp"));
-      expect(hasWebpFile).toBe(true);
-
       // The HTML should reference the hashed image file (not inline it)
-      expect(htmlContent).toMatch(/src=".*\.webp"/);
       expect(htmlContent).not.toContain("data:image/webp");
+      const imgSrcMatch = htmlContent.match(/src="(\.\/[^"]+\.webp)"/);
+      expect(imgSrcMatch).not.toBeNull();
+
+      // Verify the referenced image file actually exists in the output directory
+      const imgFilename = imgSrcMatch![1].replace("./", "");
+      const outputFiles = readdirSync(api.outdir);
+      expect(outputFiles).toContain(imgFilename);
     },
   });
 
@@ -78,13 +79,14 @@ describe("issue #26575", () => {
       expect(cssContent).not.toContain("data:image/png;base64,");
       expect(cssContent).toMatch(/url\(".*\.png"\)/);
 
-      // The image file should exist in the output directory
-      const outputFiles = readdirSync(api.outdir);
-      const hasPngFile = outputFiles.some(f => f.endsWith(".png"));
-      expect(hasPngFile).toBe(true);
-
       // The HTML should reference the hashed image file
-      expect(htmlContent).toMatch(/src=".*\.png"/);
+      const imgSrcMatch = htmlContent.match(/src="(\.\/[^"]+\.png)"/);
+      expect(imgSrcMatch).not.toBeNull();
+
+      // Verify the referenced image file actually exists in the output directory
+      const imgFilename = imgSrcMatch![1].replace("./", "");
+      const outputFiles = readdirSync(api.outdir);
+      expect(outputFiles).toContain(imgFilename);
     },
   });
 });

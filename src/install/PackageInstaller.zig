@@ -991,7 +991,7 @@ pub const PackageInstaller = struct {
                             patch_name_and_version_hash,
                         ) catch |err| switch (err) {
                             error.OutOfMemory => bun.outOfMemory(),
-                            error.InvalidURL => this.failWithInvalidUrl(
+                            error.InvalidURL, error.OfflineMode => this.failWithInvalidUrl(
                                 is_pending_package_install,
                                 log_level,
                             ),
@@ -1014,7 +1014,7 @@ pub const PackageInstaller = struct {
                             patch_name_and_version_hash,
                         ) catch |err| switch (err) {
                             error.OutOfMemory => bun.outOfMemory(),
-                            error.InvalidURL => this.failWithInvalidUrl(
+                            error.InvalidURL, error.OfflineMode => this.failWithInvalidUrl(
                                 is_pending_package_install,
                                 log_level,
                             ),
@@ -1042,7 +1042,7 @@ pub const PackageInstaller = struct {
                             patch_name_and_version_hash,
                         ) catch |err| switch (err) {
                             error.OutOfMemory => bun.outOfMemory(),
-                            error.InvalidURL => this.failWithInvalidUrl(
+                            error.InvalidURL, error.OfflineMode => this.failWithInvalidUrl(
                                 is_pending_package_install,
                                 log_level,
                             ),

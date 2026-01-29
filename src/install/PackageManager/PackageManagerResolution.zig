@@ -152,6 +152,14 @@ pub fn assignResolution(this: *PackageManager, dependency_id: DependencyID, pack
         dep.name = this.lockfile.packages.items(.name)[package_id];
         dep.name_hash = this.lockfile.packages.items(.name_hash)[package_id];
     }
+
+    // Propagate override context (first-write-wins for shared packages)
+    if (this.dep_pending_override.get(dependency_id)) |ctx_id| {
+        const gop = this.pkg_override_ctx.getOrPut(this.allocator, package_id) catch return;
+        if (!gop.found_existing) {
+            gop.value_ptr.* = ctx_id;
+        }
+    }
 }
 
 pub fn assignRootResolution(this: *PackageManager, dependency_id: DependencyID, package_id: PackageID) void {
@@ -167,6 +175,14 @@ pub fn assignRootResolution(this: *PackageManager, dependency_id: DependencyID, 
     if (dep.name.isEmpty() or strings.eql(dep.name.slice(string_buf), dep.version.literal.slice(string_buf))) {
         dep.name = this.lockfile.packages.items(.name)[package_id];
         dep.name_hash = this.lockfile.packages.items(.name_hash)[package_id];
+    }
+
+    // Propagate override context for root resolution
+    if (this.dep_pending_override.get(dependency_id)) |ctx_id| {
+        const gop = this.pkg_override_ctx.getOrPut(this.allocator, package_id) catch return;
+        if (!gop.found_existing) {
+            gop.value_ptr.* = ctx_id;
+        }
     }
 }
 
@@ -215,6 +231,70 @@ pub fn verifyResolutions(this: *PackageManager, log_level: PackageManager.Option
     }
 
     if (any_failed) this.crash();
+}
+
+/// Pre-populate override contexts for all resolved packages.
+/// This is needed during re-resolution when overrides change,
+/// because existing packages were resolved without context tracking.
+/// Does a BFS from root, propagating override tree node IDs along the dependency graph.
+pub fn populateOverrideContexts(this: *PackageManager) void {
+    if (!this.lockfile.overrides.hasTree()) return;
+
+    const OverrideMap = Lockfile.OverrideMap;
+    const packages = this.lockfile.packages.slice();
+    const dep_lists = packages.items(.dependencies);
+    const res_lists = packages.items(.resolutions);
+    const name_hashes = packages.items(.name_hash);
+
+    // Use a simple worklist (BFS queue)
+    const QueueItem = struct { pkg_id: PackageID, ctx: OverrideMap.NodeID };
+    var queue = std.ArrayListUnmanaged(QueueItem){};
+    defer queue.deinit(this.allocator);
+
+    // Start from root package
+    this.pkg_override_ctx.put(this.allocator, 0, 0) catch return;
+    queue.append(this.allocator, .{ .pkg_id = 0, .ctx = 0 }) catch return;
+
+    // BFS using index-based iteration to avoid O(N) shifts from orderedRemove(0)
+    var queue_idx: usize = 0;
+    while (queue_idx < queue.items.len) {
+        const item = queue.items[queue_idx];
+        queue_idx += 1;
+        const deps = dep_lists[item.pkg_id].get(this.lockfile.buffers.dependencies.items);
+        const ress = res_lists[item.pkg_id].get(this.lockfile.buffers.resolutions.items);
+
+        for (deps, ress) |dep, resolved_pkg_id| {
+            if (resolved_pkg_id >= packages.len) continue;
+
+            // Determine child context: if the dep matches a child in the override tree, use that child node
+            var child_ctx = item.ctx;
+            if (this.lockfile.overrides.findChild(item.ctx, dep.name_hash)) |child_id| {
+                child_ctx = child_id;
+            } else if (item.ctx != 0) {
+                // Also check if the dep matches a child of root (for packages that match
+                // a root-level entry in the tree but are discovered via a non-matching path)
+                if (this.lockfile.overrides.findChild(0, dep.name_hash)) |child_id| {
+                    child_ctx = child_id;
+                }
+            }
+
+            // Also check by resolved package's name_hash (in case dep name differs from pkg name)
+            if (child_ctx == item.ctx and resolved_pkg_id < name_hashes.len) {
+                const pkg_name_hash = name_hashes[resolved_pkg_id];
+                if (pkg_name_hash != dep.name_hash) {
+                    if (this.lockfile.overrides.findChild(item.ctx, pkg_name_hash)) |child_id| {
+                        child_ctx = child_id;
+                    }
+                }
+            }
+
+            const gop = this.pkg_override_ctx.getOrPut(this.allocator, resolved_pkg_id) catch continue;
+            if (!gop.found_existing) {
+                gop.value_ptr.* = child_ctx;
+                queue.append(this.allocator, .{ .pkg_id = resolved_pkg_id, .ctx = child_ctx }) catch continue;
+            }
+        }
+    }
 }
 
 const string = []const u8;

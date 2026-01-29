@@ -8,6 +8,7 @@ const has_workspace_package_ids_tag: u64 = @bitCast(@as([8]u8, "wOrKsPaC".*));
 const has_trusted_dependencies_tag: u64 = @bitCast(@as([8]u8, "tRuStEDd".*));
 const has_empty_trusted_dependencies_tag: u64 = @bitCast(@as([8]u8, "eMpTrUsT".*));
 const has_overrides_tag: u64 = @bitCast(@as([8]u8, "oVeRriDs".*));
+const has_nested_overrides_tag: u64 = @bitCast(@as([8]u8, "nStOvRd\x00".*));
 const has_catalogs_tag: u64 = @bitCast(@as([8]u8, "cAtAlOgS".*));
 const has_config_version_tag: u64 = @bitCast(@as([8]u8, "cNfGvRsN".*));
 
@@ -153,6 +154,29 @@ pub fn save(this: *Lockfile, options: *const PackageManager.Options, bytes: *std
             writer,
             []Dependency.External,
             external_overrides.items,
+        );
+    }
+
+    // Write nested override tree (if any)
+    if (this.overrides.hasTree()) {
+        try writer.writeAll(std.mem.asBytes(&has_nested_overrides_tag));
+
+        const node_count: u32 = @intCast(this.overrides.nodes.items.len);
+        try writer.writeAll(std.mem.asBytes(&node_count));
+
+        var external_nodes = try std.ArrayListUnmanaged(OverrideMap.OverrideNode.External).initCapacity(z_allocator, node_count);
+        defer external_nodes.deinit(z_allocator);
+        external_nodes.items.len = node_count;
+        for (external_nodes.items, this.overrides.nodes.items) |*dest, src| {
+            dest.* = src.toExternal();
+        }
+        try Lockfile.Buffers.writeArray(
+            StreamType,
+            stream,
+            @TypeOf(writer),
+            writer,
+            []OverrideMap.OverrideNode.External,
+            external_nodes.items,
         );
     }
 
@@ -475,6 +499,39 @@ pub fn load(
         }
     }
 
+    // Read nested override tree
+    {
+        const remaining_in_buffer = total_buffer_size -| stream.pos;
+
+        if (remaining_in_buffer > 8 and total_buffer_size <= stream.buffer.len) {
+            const next_num = try reader.readInt(u64, .little);
+            if (next_num == has_nested_overrides_tag) {
+                const node_count = try reader.readInt(u32, .little);
+                if (node_count > 0) {
+                    const external_nodes = try Lockfile.Buffers.readArray(
+                        stream,
+                        allocator,
+                        std.ArrayListUnmanaged(OverrideMap.OverrideNode.External),
+                    );
+                    const context: Dependency.Context = .{
+                        .allocator = allocator,
+                        .log = log,
+                        .buffer = lockfile.buffers.string_bytes.items,
+                        .package_manager = manager,
+                    };
+                    var nodes = &lockfile.overrides.nodes;
+                    try nodes.ensureTotalCapacity(allocator, external_nodes.items.len);
+                    for (external_nodes.items) |ext_node| {
+                        nodes.appendAssumeCapacity(OverrideMap.OverrideNode.fromExternal(ext_node, context));
+                    }
+                    lockfile.overrides.rebuildParentPointers();
+                }
+            } else {
+                stream.pos -= 8;
+            }
+        }
+    }
+
     {
         const remaining_in_buffer = total_buffer_size -| stream.pos;
 
@@ -634,6 +691,7 @@ const PatchedDep = install.PatchedDep;
 const alignment_bytes_to_repeat_buffer = install.alignment_bytes_to_repeat_buffer;
 
 const Lockfile = install.Lockfile;
+const OverrideMap = Lockfile.OverrideMap;
 const PackageIndex = Lockfile.PackageIndex;
 const Stream = Lockfile.Stream;
 const StringPool = Lockfile.StringPool;

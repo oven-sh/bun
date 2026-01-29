@@ -478,6 +478,64 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
         // allow overriding all dependencies unless the dependency is coming directly from an alias, "npm:<this dep>" or
         // if it's a workspaceOnly dependency
         if (!dependency.behavior.isWorkspace() and (dependency.version.tag != .npm or !dependency.version.value.npm.is_alias)) {
+            // Phase 1: Tree-based nested override check
+            if (this.lockfile.overrides.hasTree()) tree_check: {
+                const parent_pkg_id = getParentPackageIdFromMap(this, id);
+                const parent_ctx = if (parent_pkg_id != invalid_package_id)
+                    this.pkg_override_ctx.get(parent_pkg_id) orelse 0
+                else
+                    0;
+
+                // Walk up from context through ancestors, checking each level for matching children.
+                // If a child matches name_hash but fails key_spec, try the next sibling with the same name.
+                var ctx = parent_ctx;
+                while (true) {
+                    var candidate = this.lockfile.overrides.findChild(ctx, name_hash);
+                    while (candidate) |child_id| {
+                        const child = this.lockfile.overrides.nodes.items[child_id];
+
+                        // Check version constraint on the matched node (e.g., "express@^4.0.0")
+                        if (!child.key_spec.isEmpty()) {
+                            if (!isKeySpecCompatible(child.key_spec, dependency, this.lockfile.buffers.string_bytes.items)) {
+                                // Try next sibling with the same name_hash
+                                candidate = this.lockfile.overrides.findChildAfter(ctx, name_hash, child_id);
+                                continue;
+                            }
+                        }
+
+                        // Store context for propagation when this dep resolves
+                        this.dep_pending_override.put(this.allocator, id, child_id) catch {};
+
+                        if (child.value) |val| {
+                            // Apply the override
+                            debug("nested override: {s} -> {s}", .{ this.lockfile.str(&dependency.version.literal), this.lockfile.str(&val.version.literal) });
+                            name, name_hash = updateNameAndNameHashFromVersionReplacement(this.lockfile, name, name_hash, val.version);
+
+                            if (val.version.tag == .catalog) {
+                                if (this.lockfile.catalogs.get(this.lockfile, val.version.value.catalog, name)) |catalog_dep| {
+                                    name, name_hash = updateNameAndNameHashFromVersionReplacement(this.lockfile, name, name_hash, catalog_dep.version);
+                                    break :version catalog_dep.version;
+                                }
+                            }
+
+                            break :version val.version;
+                        }
+
+                        break :tree_check;
+                    }
+
+                    // Move up to parent context
+                    if (ctx == 0) break;
+                    const parent = this.lockfile.overrides.nodes.items[ctx].parent;
+                    if (parent == OverrideMap.invalid_node_id) break;
+                    ctx = parent;
+                }
+
+                // Inherit parent's context even if no override value applied
+                this.dep_pending_override.put(this.allocator, id, parent_ctx) catch {};
+            }
+
+            // Phase 2: Fall back to flat global override (existing behavior)
             if (this.lockfile.overrides.get(name_hash)) |new| {
                 debug("override: {s} -> {s}", .{ this.lockfile.str(&dependency.version.literal), this.lockfile.str(&new.literal) });
 
@@ -1327,6 +1385,104 @@ fn enqueueLocalTarball(
     return &task.threadpool_task;
 }
 
+/// Look up the parent PackageID for a given DependencyID using a precomputed
+/// reverse mapping, building/extending it lazily as needed.
+fn getParentPackageIdFromMap(this: *PackageManager, dep_id: DependencyID) PackageID {
+    const total_deps = this.lockfile.buffers.dependencies.items.len;
+    if (total_deps == 0) return invalid_package_id;
+
+    // Rebuild/extend the map when new dependencies have been added since last build.
+    if (dep_id >= this.dep_parent_map.items.len) {
+        const old_len = this.dep_parent_map.items.len;
+        this.dep_parent_map.ensureTotalCapacityPrecise(this.allocator, total_deps) catch return invalid_package_id;
+        this.dep_parent_map.appendNTimesAssumeCapacity(@as(PackageID, invalid_package_id), total_deps - old_len);
+
+        const dep_lists = this.lockfile.packages.items(.dependencies);
+        for (dep_lists, 0..) |dep_slice, pkg_id| {
+            const end = dep_slice.off +| dep_slice.len;
+            // Only fill entries that are new (>= old_len) or were never built.
+            if (end <= old_len) continue;
+            const start = @max(dep_slice.off, @as(u32, @intCast(old_len)));
+            var i: u32 = start;
+            while (i < end) : (i += 1) {
+                if (i < this.dep_parent_map.items.len) {
+                    this.dep_parent_map.items[i] = @intCast(pkg_id);
+                }
+            }
+        }
+    }
+
+    if (dep_id >= this.dep_parent_map.items.len) return invalid_package_id;
+    return this.dep_parent_map.items[dep_id];
+}
+
+/// Check if a dependency's version range is compatible with a key_spec constraint.
+/// For example, if key_spec is "^4.0.0" and the dependency version is "4.18.2" or "^4.0.0",
+/// checks if they can intersect (i.e., some version could satisfy both).
+fn isKeySpecCompatible(key_spec: String, dependency: *const Dependency, buf: string) bool {
+    if (key_spec.isEmpty()) return true;
+
+    // Only check npm dependencies with semver ranges
+    if (dependency.version.tag != .npm) return true;
+
+    const key_spec_str = key_spec.slice(buf);
+    if (key_spec_str.len == 0) return true;
+
+    // Parse key_spec as a semver query. The parsed query's internal strings
+    // reference key_spec_str, so we must use key_spec_str as the list_buf
+    // when calling satisfies on key_spec_group.
+    const sliced = Semver.SlicedString.init(key_spec_str, key_spec_str);
+    var key_spec_group = Semver.Query.parse(
+        bun.default_allocator,
+        key_spec_str,
+        sliced,
+    ) catch return true; // on parse error, allow optimistically
+    defer key_spec_group.deinit();
+
+    // Check if any boundary version of the dependency's range satisfies the key_spec.
+    // Walk the dependency's query list checking left/right boundary versions.
+    // Note: dep versions reference `buf` (lockfile strings), key_spec_group references `key_spec_str`.
+    const dep_group = dependency.version.value.npm.version;
+    var dep_list: ?*const Semver.Query.List = &dep_group.head;
+    while (dep_list) |queries| {
+        var curr: ?*const Semver.Query = &queries.head;
+        while (curr) |query| {
+            // key_spec_group's strings are in key_spec_str, version's strings are in buf
+            if (query.range.hasLeft()) {
+                if (key_spec_group.head.satisfies(query.range.left.version, key_spec_str, buf))
+                    return true;
+            }
+            if (query.range.hasRight()) {
+                if (key_spec_group.head.satisfies(query.range.right.version, key_spec_str, buf))
+                    return true;
+            }
+            curr = query.next;
+        }
+        dep_list = queries.next;
+    }
+
+    // Also check if any key_spec boundary satisfies the dependency range
+    // dep_group's strings are in buf, key_spec version's strings are in key_spec_str
+    var ks_list: ?*const Semver.Query.List = &key_spec_group.head;
+    while (ks_list) |queries| {
+        var curr: ?*const Semver.Query = &queries.head;
+        while (curr) |query| {
+            if (query.range.hasLeft()) {
+                if (dep_group.head.satisfies(query.range.left.version, buf, key_spec_str))
+                    return true;
+            }
+            if (query.range.hasRight()) {
+                if (dep_group.head.satisfies(query.range.right.version, buf, key_spec_str))
+                    return true;
+            }
+            curr = query.next;
+        }
+        ks_list = queries.next;
+    }
+
+    return false;
+}
+
 fn updateNameAndNameHashFromVersionReplacement(
     lockfile: *const Lockfile,
     original_name: String,
@@ -1897,6 +2053,7 @@ const TaskCallbackContext = bun.install.TaskCallbackContext;
 const invalid_package_id = bun.install.invalid_package_id;
 
 const Lockfile = bun.install.Lockfile;
+const OverrideMap = Lockfile.OverrideMap;
 const Package = Lockfile.Package;
 
 const NetworkTask = bun.install.NetworkTask;

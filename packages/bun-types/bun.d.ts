@@ -1006,7 +1006,7 @@ declare module "bun" {
     type Component<P = {}> = string | ((props: P) => any) | (new (props: P) => any);
 
     interface ChildrenProps {
-      children: JSX.Element[];
+      children: import("./jsx.d.ts").JSX.Element[];
     }
     interface HeadingProps extends ChildrenProps {
       /** Heading ID slug. Set when `headings: { ids: true }` is enabled. */
@@ -1313,7 +1313,7 @@ declare module "bun" {
       input: string | NodeJS.TypedArray | DataView<ArrayBuffer> | ArrayBufferLike,
       components?: ComponentOverrides,
       options?: ReactOptions,
-    ): JSX.Element;
+    ): import("./jsx.d.ts").JSX.Element;
   }
 
   /**

@@ -1,7 +1,6 @@
-import { test, expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { expect, test } from "bun:test";
+import { tempDir } from "harness";
 import fs from "node:fs";
-import path from "node:path";
 
 test("fs.readdir returns sorted entries", async () => {
   using dir = tempDir("readdir-sorted", {

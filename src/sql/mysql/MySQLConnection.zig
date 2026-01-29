@@ -61,6 +61,9 @@ pub fn init(
     };
 }
 
+pub fn getSSLMode(this: *const @This()) SSLMode {
+    return this.#ssl_mode;
+}
 pub fn canPipeline(this: *@This()) bool {
     return this.queue.canPipeline(this.getJSConnection());
 }

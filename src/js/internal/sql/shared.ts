@@ -670,7 +670,7 @@ function parseOptions(
 
   // Inject serverName for SNI and Hostname verification if not already present
   if (sslMode !== SSLMode.disable && !tls?.serverName) {
-    if (hostname) {
+    if (hostname && !require("node:net").isIP(hostname)) {
       if (typeof tls === "boolean") {
         tls = { serverName: hostname };
       } else if (tls) {
@@ -687,6 +687,17 @@ function parseOptions(
       (tls as Bun.TLSOptions).rejectUnauthorized = true;
     }
     // If tls is boolean (true), it defaults to rejectUnauthorized: true in the engine.
+  }
+
+  // Compatibility with postgres.js / libpq behavior:
+  // 'require' and 'prefer' modes do not verify the certificate chain by default.
+  // They only require that the connection IS encrypted.
+  if (sslMode === SSLMode.require || sslMode === SSLMode.prefer) {
+    if (tls === true) {
+      tls = { rejectUnauthorized: false };
+    } else if (typeof tls === "object" && tls !== null && (tls as Bun.TLSOptions).rejectUnauthorized === undefined) {
+      (tls as Bun.TLSOptions).rejectUnauthorized = false;
+    }
   }
 
   switch (adapter) {

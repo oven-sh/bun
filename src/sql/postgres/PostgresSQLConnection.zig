@@ -444,7 +444,7 @@ pub fn onHandshake(this: *PostgresSQLConnection, success: i32, ssl_error: uws.us
                         return;
                     }
                 } else {
-                    this.fail("Unable to verify server identity: server name missing", error.TLSVerificationFailed);
+                    this.fail("Unable to verify server identity: server name missing", error.TLSUpgradeFailed);
                     return;
                 }
             },

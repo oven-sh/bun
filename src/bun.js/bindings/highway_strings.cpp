@@ -632,6 +632,32 @@ void FillWithSkipMaskImpl(const uint8_t* HWY_RESTRICT mask, size_t mask_len, uin
     }
 }
 
+size_t IndexOfFirstDifferenceImpl(
+    const uint8_t* HWY_RESTRICT a,
+    const uint8_t* HWY_RESTRICT b,
+    size_t byte_len)
+{
+    if (byte_len == 0) return 0;
+    D8 d;
+    const size_t N = hn::Lanes(d);
+    const size_t simd_len = byte_len - (byte_len % N);
+    size_t i = 0;
+
+    for (; i < simd_len; i += N) {
+        const auto va = hn::LoadU(d, a + i);
+        const auto vb = hn::LoadU(d, b + i);
+        const auto ne = hn::Ne(va, vb);
+        const intptr_t pos = hn::FindFirstTrue(d, ne);
+        if (pos >= 0) return i + pos;
+    }
+
+    // Scalar tail
+    for (; i < byte_len; ++i) {
+        if (a[i] != b[i]) return i;
+    }
+    return byte_len;
+}
+
 } // namespace HWY_NAMESPACE
 } // namespace bun
 HWY_AFTER_NAMESPACE();
@@ -655,6 +681,7 @@ HWY_EXPORT(IndexOfNeedsEscapeForJavaScriptStringImplQuote);
 HWY_EXPORT(IndexOfNewlineOrNonASCIIImpl);
 HWY_EXPORT(IndexOfNewlineOrNonASCIIOrHashOrAtImpl);
 HWY_EXPORT(IndexOfSpaceOrNewlineOrNonASCIIImpl);
+HWY_EXPORT(IndexOfFirstDifferenceImpl);
 HWY_EXPORT(MemMemImpl);
 HWY_EXPORT(ScanCharFrequencyImpl);
 // Define the C-callable wrappers that use HWY_DYNAMIC_DISPATCH.
@@ -765,6 +792,11 @@ void highway_fill_with_skip_mask(
     bool skip_mask) // Whether to skip masking
 {
     HWY_DYNAMIC_DISPATCH(FillWithSkipMaskImpl)(mask, mask_len, output, input, length, skip_mask);
+}
+
+size_t highway_index_of_first_difference(const uint8_t* a, const uint8_t* b, size_t byte_len)
+{
+    return HWY_DYNAMIC_DISPATCH(IndexOfFirstDifferenceImpl)(a, b, byte_len);
 }
 
 } // extern "C"

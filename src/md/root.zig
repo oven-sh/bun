@@ -100,6 +100,5 @@ const Flags = types.Flags;
 pub const entity = @import("./entity.zig");
 pub const helpers = @import("./helpers.zig");
 
-const bun = @import("bun");
 const parser = @import("./parser.zig");
 const std = @import("std");

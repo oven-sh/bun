@@ -846,7 +846,6 @@ pub fn getBlockAt(self: *Parser, off: usize) *BlockHeader {
     return self.getBlockHeaderAt(off);
 }
 
-const bun = @import("bun");
 const helpers = @import("./helpers.zig");
 const parser_mod = @import("./parser.zig");
 const std = @import("std");

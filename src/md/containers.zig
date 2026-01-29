@@ -177,7 +177,6 @@ pub fn processAllBlocks(self: *Parser) Parser.Error!void {
     }
 }
 
-const bun = @import("bun");
 const parser_mod = @import("./parser.zig");
 
 const autolinks_mod = @import("./autolinks.zig");

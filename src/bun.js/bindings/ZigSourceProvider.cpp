@@ -121,8 +121,6 @@ Ref<SourceProvider> SourceProvider::create(
             const auto destructor = resolvedSource.needsDeref ? destructorPtr : destructorNoOp;
 
             auto origin = getSourceOrigin();
-            dataLogLnIf(JSC::Options::verboseDiskCache(), "[Bun] Attaching bytecode cache: size=", resolvedSource.bytecode_cache_size, " url=", sourceURLString, " sourceType=", static_cast<int>(sourceType), " module_info=", resolvedSource.module_info != nullptr ? "yes" : "no");
-            dataLogLnIf(JSC::Options::verboseDiskCache(), "[Bytecode Runtime] origin=", origin.url().string(), " sourceSize=", (string.isNull() ? 0u : string.impl()->length()), " is8Bit=", (string.isNull() ? true : string.impl()->is8Bit()));
 
             Ref<JSC::CachedBytecode> bytecode = JSC::CachedBytecode::create(std::span<uint8_t>(resolvedSource.bytecode_cache, resolvedSource.bytecode_cache_size), destructor, {});
             auto provider = adoptRef(*new SourceProvider(

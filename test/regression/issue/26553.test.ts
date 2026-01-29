@@ -5,7 +5,6 @@ import net from "node:net";
 describe("Issue #26553 - HTTP server socket events and properties", () => {
   test("connection event fires before connect event for CONNECT requests", async () => {
     const events: string[] = [];
-    let connectionSocket: any;
 
     const server = http.createServer();
 
@@ -13,7 +12,6 @@ describe("Issue #26553 - HTTP server socket events and properties", () => {
       events.push("connection");
       // Set a custom property on the socket that should be available in the 'connect' handler
       socket.myCustomId = 12345;
-      connectionSocket = socket;
     });
 
     server.on("connect", (req, socket, head) => {
@@ -63,12 +61,11 @@ describe("Issue #26553 - HTTP server socket events and properties", () => {
     });
 
     server.on("connect", (req, socket, head) => {
-      socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
-      // Use the 'drain' event to know when write is complete, then end the socket
-      socket.once("drain", () => socket.end());
-      // If write returned true (no backpressure), end immediately
-      if (socket.writableNeedDrain === false) {
+      const flushed = socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+      if (flushed) {
         socket.end();
+      } else {
+        socket.once("drain", () => socket.end());
       }
     });
 
@@ -112,13 +109,11 @@ describe("Issue #26553 - HTTP server socket events and properties", () => {
     });
 
     server.on("connect", (req, socket, head) => {
-      // Write a known response
-      socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
-      // Use the 'drain' event to know when write is complete, then end the socket
-      socket.once("drain", () => socket.end());
-      // If write returned true (no backpressure), end immediately
-      if (socket.writableNeedDrain === false) {
+      const flushed = socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+      if (flushed) {
         socket.end();
+      } else {
+        socket.once("drain", () => socket.end());
       }
     });
 

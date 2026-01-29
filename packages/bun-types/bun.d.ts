@@ -4798,6 +4798,43 @@ declare module "bun" {
   function sleepSync(ms: number): void;
 
   /**
+   * Parse a time string and return milliseconds, or format milliseconds as a string.
+   *
+   * Drop-in replacement for the `ms` npm package with compile-time inlining support.
+   *
+   * @example
+   * ```ts
+   * Bun.ms("2d")      // 172800000
+   * Bun.ms("1.5h")    // 5400000
+   * Bun.ms("1m")      // 60000
+   * Bun.ms("5s")      // 5000
+   * Bun.ms("100ms")   // 100
+   * Bun.ms("1mo")     // 2629800000
+   * Bun.ms("1y")      // 31557600000
+   * Bun.ms("100")     // 100
+   * Bun.ms(60000)     // "1m"
+   * Bun.ms(60000, { long: true })  // "1 minute"
+   * Bun.ms("invalid") // NaN
+   * ```
+   *
+   * Supports these units:
+   * - `ms`, `millisecond`, `milliseconds`
+   * - `s`, `sec`, `second`, `seconds`
+   * - `m`, `min`, `minute`, `minutes`
+   * - `h`, `hr`, `hour`, `hours`
+   * - `d`, `day`, `days`
+   * - `w`, `week`, `weeks`
+   * - `mo`, `month`, `months`
+   * - `y`, `yr`, `year`, `years`
+   *
+   * @param value - Time string to parse or milliseconds to format
+   * @param options - Formatting options (when value is a number)
+   * @returns Milliseconds (for string) or formatted string (for number). Returns NaN for invalid strings.
+   */
+  function ms(value: string): number;
+  function ms(value: number, options?: { long?: boolean }): string;
+
+  /**
    * Hash `input` using [SHA-2 512/256](https://en.wikipedia.org/wiki/SHA-2#Comparison_of_SHA_functions)
    *
    * @category Utilities

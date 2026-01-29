@@ -1399,6 +1399,13 @@ pub fn VisitExpr(
 
                         const name = macro_ref_data.name orelse e_.target.data.e_dot.name;
                         const record = &p.import_records.items[macro_ref_data.import_record_id];
+
+                        // Special case: import { ms } from "bun" - inline instead of executing as macro
+                        if (record.tag == .bun and strings.eqlComptime(name, "ms")) {
+                            const res = bun.handleOom(bun.api.ms.astFunction(p, e_, expr.loc));
+                            return res orelse expr;
+                        }
+
                         const copied = Expr{ .loc = expr.loc, .data = .{ .e_call = e_ } };
                         const start_error_count = p.log.msgs.items.len;
                         p.macro_call_count += 1;
@@ -1508,6 +1515,19 @@ pub fn VisitExpr(
                         }
                     }
                 };
+
+                // Constant folding for Bun.ms("1s") -> 1000 and Bun.ms(1000) -> "1s"
+                if (p.should_fold_typescript_constant_expressions or p.options.features.inlining) {
+                    if (e_.target.data.as(.e_dot)) |dot| {
+                        if (dot.target.data == .e_identifier and strings.eqlComptime(dot.name, "ms")) {
+                            const symbol = &p.symbols.items[dot.target.data.e_identifier.ref.innerIndex()];
+                            if (symbol.kind == .unbound and strings.eqlComptime(symbol.original_name, "Bun")) {
+                                const res = bun.handleOom(bun.api.ms.astFunction(p, e_, expr.loc));
+                                if (res) |r| return r;
+                            }
+                        }
+                    }
+                }
 
                 return expr;
             }

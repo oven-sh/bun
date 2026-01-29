@@ -622,9 +622,9 @@ const sql = new SQL({
   connectionTimeout: 30, // Timeout when establishing new connections
 
   // SSL/TLS options
-  ssl: "prefer", // or "disable", "require", "verify-ca", "verify-full"
-  // tls: {
-  //   rejectUnauthorized: true,
+  ssl: "prefer", // Default. | "disable" | "require" | "verify-ca" | "verify-full"
+  // tls: { // Setting tls: false will disable SSL unless ssl option is explicitly set
+  //   rejectUnauthorized: true, // Required for verify-ca and verify-full
   //   ca: "path/to/ca.pem",
   //   key: "path/to/key.pem",
   //   cert: "path/to/cert.pem",
@@ -667,9 +667,9 @@ const sql = new SQL({
   connectionTimeout: 30, // Timeout when establishing new connections
 
   // SSL/TLS options
-  tls: true,
-  // tls: {
-  //   rejectUnauthorized: true,
+  ssl: "prefer", // Default. | "disable" | "require" | "verify-ca" | "verify-full"
+  // tls: { // Setting tls: false will disable SSL unless ssl option is explicitly set
+  //   rejectUnauthorized: true, // Required for verify-ca and verify-full
   //   requestCert: true,
   //   ca: "path/to/ca.pem",
   //   key: "path/to/key.pem",
@@ -886,14 +886,16 @@ Bun supports SCRAM-SHA-256 (SASL), MD5, and Clear Text authentication. SASL is r
 
 ### SSL Modes Overview
 
-PostgreSQL supports different SSL/TLS modes to control how secure connections are established. These modes determine the behavior when connecting and the level of certificate verification performed.
+PostgreSQL supports different SSL/TLS modes to control how secure connections are established. The default mode is `prefer`.
+
+You can disable SSL by setting `ssl: "disable"` or `tls: false`. Note that `tls: false` will only disable SSL if the `ssl` option is not explicitly set.
 
 ```ts
 const sql = new SQL({
   hostname: "localhost",
   username: "user",
   password: "password",
-  ssl: "disable", // | "prefer" | "require" | "verify-ca" | "verify-full"
+  ssl: "prefer", // Default. | "disable" | "require" | "verify-ca" | "verify-full"
 });
 ```
 

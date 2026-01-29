@@ -344,6 +344,7 @@ pub const api = struct {
         html = 18,
         yaml = 19,
         json5 = 20,
+        md = 21,
         _,
 
         pub fn jsonStringify(self: @This(), writer: anytype) !void {

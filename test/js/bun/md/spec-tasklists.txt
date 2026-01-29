@@ -1,0 +1,127 @@
+
+# Tasklists
+
+With the flag `MD_FLAG_TASKLISTS`, MD4C enables extension for recognition of
+task lists.
+
+Basic task list may look as follows:
+
+```````````````````````````````` example
+ * [x] foo
+ * [X] bar
+ * [ ] baz
+.
+<ul>
+<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox" disabled checked>foo</li>
+<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox" disabled checked>bar</li>
+<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox" disabled>baz</li>
+</ul>
+.
+--ftasklists
+````````````````````````````````
+
+Task lists can also be in ordered lists:
+
+```````````````````````````````` example
+ 1. [x] foo
+ 2. [X] bar
+ 3. [ ] baz
+.
+<ol>
+<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox" disabled checked>foo</li>
+<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox" disabled checked>bar</li>
+<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox" disabled>baz</li>
+</ol>
+.
+--ftasklists
+````````````````````````````````
+
+Task lists can also be nested in ordinary lists:
+
+```````````````````````````````` example
+ * xxx:
+   * [x] foo
+   * [x] bar
+   * [ ] baz
+ * yyy:
+   * [ ] qux
+   * [x] quux
+   * [ ] quuz
+.
+<ul>
+<li>xxx:
+<ul>
+<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox" disabled checked>foo</li>
+<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox" disabled checked>bar</li>
+<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox" disabled>baz</li>
+</ul></li>
+<li>yyy:
+<ul>
+<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox" disabled>qux</li>
+<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox" disabled checked>quux</li>
+<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox" disabled>quuz</li>
+</ul></li>
+</ul>
+.
+--ftasklists
+````````````````````````````````
+
+Or in a parent task list:
+
+```````````````````````````````` example
+ 1. [x] xxx:
+    * [x] foo
+    * [x] bar
+    * [ ] baz
+ 2. [ ] yyy:
+    * [ ] qux
+    * [x] quux
+    * [ ] quuz
+.
+<ol>
+<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox" disabled checked>xxx:
+<ul>
+<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox" disabled checked>foo</li>
+<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox" disabled checked>bar</li>
+<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox" disabled>baz</li>
+</ul></li>
+<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox" disabled>yyy:
+<ul>
+<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox" disabled>qux</li>
+<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox" disabled checked>quux</li>
+<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox" disabled>quuz</li>
+</ul></li>
+</ol>
+.
+--ftasklists
+````````````````````````````````
+
+Also, ordinary lists can be nested in the task lists.
+
+```````````````````````````````` example
+ * [x] xxx:
+   * foo
+   * bar
+   * baz
+ * [ ] yyy:
+   * qux
+   * quux
+   * quuz
+.
+<ul>
+<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox" disabled checked>xxx:
+<ul>
+<li>foo</li>
+<li>bar</li>
+<li>baz</li>
+</ul></li>
+<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox" disabled>yyy:
+<ul>
+<li>qux</li>
+<li>quux</li>
+<li>quuz</li>
+</ul></li>
+</ul>
+.
+--ftasklists
+````````````````````````````````

@@ -57,6 +57,7 @@ pub fn trackResolutionFailure(store: *DirectoryWatchStore, import_source: []cons
         .bunsh,
         .sqlite,
         .sqlite_embedded,
+        .md,
         => bun.debugAssert(false),
     }
 

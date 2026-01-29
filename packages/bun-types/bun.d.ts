@@ -906,6 +906,417 @@ declare module "bun" {
   }
 
   /**
+   * Markdown related APIs.
+   *
+   * Provides fast markdown parsing and rendering with three output modes:
+   * - `html()` — render to an HTML string
+   * - `render()` — render with custom callbacks for each element
+   * - `react()` — parse to React-compatible JSX elements
+   *
+   * Supports GFM extensions (tables, strikethrough, task lists, autolinks) and
+   * component overrides to replace default HTML tags with custom components.
+   *
+   * @example
+   * ```tsx
+   * // Render markdown to HTML
+   * const html = Bun.markdown.html("# Hello **world**");
+   * // "<h1>Hello <strong>world</strong></h1>\n"
+   *
+   * // Render with custom callbacks
+   * const ansi = Bun.markdown.render("# Hello **world**", {
+   *   heading: (children, { level }) => `\x1b[1m${children}\x1b[0m\n`,
+   *   strong: (children) => `\x1b[1m${children}\x1b[22m`,
+   *   paragraph: (children) => children + "\n",
+   * });
+   *
+   * // Render as a React component
+   * function Markdown({ text }: { text: string }) {
+   *   return Bun.markdown.react(text);
+   * }
+   *
+   * // With component overrides
+   * const element = Bun.markdown.react("# Hello", { h1: MyHeadingComponent });
+   * ```
+   */
+  namespace markdown {
+    /**
+     * Options for configuring the markdown parser.
+     *
+     * By default, GFM extensions (tables, strikethrough, task lists) are enabled.
+     */
+    interface Options {
+      /** Enable GFM tables. Default: `true`. */
+      tables?: boolean;
+      /** Enable GFM strikethrough (`~~text~~`). Default: `true`. */
+      strikethrough?: boolean;
+      /** Enable GFM task lists (`- [x] item`). Default: `true`. */
+      tasklists?: boolean;
+      /** Treat soft line breaks as hard line breaks. Default: `false`. */
+      hardSoftBreaks?: boolean;
+      /** Enable wiki-style links (`[[target]]` or `[[target|label]]`). Default: `false`. */
+      wikiLinks?: boolean;
+      /** Enable underline syntax (`__text__` renders as `<u>` instead of `<strong>`). Default: `false`. */
+      underline?: boolean;
+      /** Enable LaTeX math (`$inline$` and `$$display$$`). Default: `false`. */
+      latexMath?: boolean;
+      /** Collapse whitespace in text content. Default: `false`. */
+      collapseWhitespace?: boolean;
+      /** Allow ATX headers without a space after `#`. Default: `false`. */
+      permissiveAtxHeaders?: boolean;
+      /** Disable indented code blocks. Default: `false`. */
+      noIndentedCodeBlocks?: boolean;
+      /** Disable HTML blocks. Default: `false`. */
+      noHtmlBlocks?: boolean;
+      /** Disable inline HTML spans. Default: `false`. */
+      noHtmlSpans?: boolean;
+      /**
+       * Enable the GFM tag filter, which replaces `<` with `&lt;` for disallowed
+       * HTML tags (e.g. `<script>`, `<style>`, `<iframe>`). Default: `false`.
+       */
+      tagFilter?: boolean;
+      /**
+       * Enable autolinks. Pass `true` to enable all autolink types (URL, WWW, email),
+       * or an object to enable individually.
+       *
+       * @example
+       * ```ts
+       * // Enable all autolinks
+       * { autolinks: true }
+       * // Enable only URL and email autolinks
+       * { autolinks: { url: true, email: true } }
+       * ```
+       */
+      autolinks?: boolean | { url?: boolean; www?: boolean; email?: boolean };
+      /**
+       * Configure heading IDs and autolink headings. Pass `true` to enable both
+       * heading IDs and autolink headings, or an object to configure individually.
+       *
+       * @example
+       * ```ts
+       * // Enable both heading IDs and autolink headings
+       * { headings: true }
+       * // Enable only heading IDs
+       * { headings: { ids: true } }
+       * ```
+       */
+      headings?: boolean | { ids?: boolean; autolink?: boolean };
+    }
+
+    /** A component that accepts props `P`: a function, class, or HTML tag name. */
+    type Component<P = {}> = string | ((props: P) => any) | (new (props: P) => any);
+
+    interface ChildrenProps {
+      children: import("./jsx.d.ts").JSX.Element[];
+    }
+    interface HeadingProps extends ChildrenProps {
+      /** Heading ID slug. Set when `headings: { ids: true }` is enabled. */
+      id?: string;
+    }
+    interface OrderedListProps extends ChildrenProps {
+      /** The start number. */
+      start: number;
+    }
+    interface ListItemProps extends ChildrenProps {
+      /** Task list checked state. Set for `- [x]` / `- [ ]` items. */
+      checked?: boolean;
+    }
+    interface CodeBlockProps extends ChildrenProps {
+      /** The info-string language (e.g. `"js"`). */
+      language?: string;
+    }
+    interface CellProps extends ChildrenProps {
+      /** Column alignment. */
+      align?: "left" | "center" | "right";
+    }
+    interface LinkProps extends ChildrenProps {
+      /** Link URL. */
+      href: string;
+      /** Link title attribute. */
+      title?: string;
+    }
+    interface ImageProps {
+      /** Image URL. */
+      src: string;
+      /** Alt text. */
+      alt?: string;
+      /** Image title attribute. */
+      title?: string;
+    }
+
+    /**
+     * Component overrides for `react()`.
+     *
+     * Replace default HTML tags with custom React components. Each override
+     * receives the same props the default element would get.
+     *
+     * @example
+     * ```tsx
+     * function Code({ language, children }: { language?: string; children: React.ReactNode }) {
+     *   return <pre data-language={language}><code>{children}</code></pre>;
+     * }
+     * Bun.markdown.react(text, { pre: Code });
+     * ```
+     */
+    interface ComponentOverrides {
+      h1?: Component<HeadingProps>;
+      h2?: Component<HeadingProps>;
+      h3?: Component<HeadingProps>;
+      h4?: Component<HeadingProps>;
+      h5?: Component<HeadingProps>;
+      h6?: Component<HeadingProps>;
+      p?: Component<ChildrenProps>;
+      blockquote?: Component<ChildrenProps>;
+      ul?: Component<ChildrenProps>;
+      ol?: Component<OrderedListProps>;
+      li?: Component<ListItemProps>;
+      pre?: Component<CodeBlockProps>;
+      hr?: Component<{}>;
+      html?: Component<ChildrenProps>;
+      table?: Component<ChildrenProps>;
+      thead?: Component<ChildrenProps>;
+      tbody?: Component<ChildrenProps>;
+      tr?: Component<ChildrenProps>;
+      th?: Component<CellProps>;
+      td?: Component<CellProps>;
+      em?: Component<ChildrenProps>;
+      strong?: Component<ChildrenProps>;
+      a?: Component<LinkProps>;
+      img?: Component<ImageProps>;
+      code?: Component<ChildrenProps>;
+      del?: Component<ChildrenProps>;
+      math?: Component<ChildrenProps>;
+      u?: Component<ChildrenProps>;
+      br?: Component<{}>;
+    }
+
+    /**
+     * Callbacks for `render()`. Each callback receives the accumulated children
+     * as a string and optional metadata, and returns a string.
+     *
+     * Return `null` or `undefined` to omit the element from the output.
+     * If no callback is registered for an element, its children pass through unchanged.
+     */
+    /** Meta passed to the `heading` callback. */
+    interface HeadingMeta {
+      /** Heading level (1–6). */
+      level: number;
+      /** Heading ID slug. Set when `headings: { ids: true }` is enabled. */
+      id?: string;
+    }
+
+    /** Meta passed to the `code` callback. */
+    interface CodeBlockMeta {
+      /** The info-string language (e.g. `"js"`). */
+      language?: string;
+    }
+
+    /** Meta passed to the `list` callback. */
+    interface ListMeta {
+      /** Whether this is an ordered list. */
+      ordered: boolean;
+      /** The start number for ordered lists. */
+      start?: number;
+    }
+
+    /** Meta passed to the `listItem` callback. */
+    interface ListItemMeta {
+      /** Task list checked state. Set for `- [x]` / `- [ ]` items. */
+      checked?: boolean;
+    }
+
+    /** Meta passed to `th` and `td` callbacks. */
+    interface CellMeta {
+      /** Column alignment. */
+      align?: "left" | "center" | "right";
+    }
+
+    /** Meta passed to the `link` callback. */
+    interface LinkMeta {
+      /** Link URL. */
+      href: string;
+      /** Link title attribute. */
+      title?: string;
+    }
+
+    /** Meta passed to the `image` callback. */
+    interface ImageMeta {
+      /** Image URL. */
+      src: string;
+      /** Image title attribute. */
+      title?: string;
+    }
+
+    interface RenderCallbacks {
+      /** Heading (level 1–6). `id` is set when `headings: { ids: true }` is enabled. */
+      heading?: (children: string, meta: HeadingMeta) => string | null | undefined;
+      /** Paragraph. */
+      paragraph?: (children: string) => string | null | undefined;
+      /** Blockquote. */
+      blockquote?: (children: string) => string | null | undefined;
+      /** Code block. `meta.language` is the info-string (e.g. `"js"`). Only passed for fenced code blocks with a language. */
+      code?: (children: string, meta?: CodeBlockMeta) => string | null | undefined;
+      /** Ordered or unordered list. `start` is the first item number for ordered lists. */
+      list?: (children: string, meta: ListMeta) => string | null | undefined;
+      /** List item. `meta.checked` is set for task list items (`- [x]` / `- [ ]`). Only passed for task list items. */
+      listItem?: (children: string, meta?: ListItemMeta) => string | null | undefined;
+      /** Horizontal rule. */
+      hr?: (children: string) => string | null | undefined;
+      /** Table. */
+      table?: (children: string) => string | null | undefined;
+      /** Table head. */
+      thead?: (children: string) => string | null | undefined;
+      /** Table body. */
+      tbody?: (children: string) => string | null | undefined;
+      /** Table row. */
+      tr?: (children: string) => string | null | undefined;
+      /** Table header cell. `meta.align` is set when column alignment is specified. */
+      th?: (children: string, meta?: CellMeta) => string | null | undefined;
+      /** Table data cell. `meta.align` is set when column alignment is specified. */
+      td?: (children: string, meta?: CellMeta) => string | null | undefined;
+      /** Raw HTML content. */
+      html?: (children: string) => string | null | undefined;
+      /** Strong emphasis (`**text**`). */
+      strong?: (children: string) => string | null | undefined;
+      /** Emphasis (`*text*`). */
+      emphasis?: (children: string) => string | null | undefined;
+      /** Link. `href` is the URL, `title` is the optional title attribute. */
+      link?: (children: string, meta: LinkMeta) => string | null | undefined;
+      /** Image. `src` is the URL, `title` is the optional title attribute. */
+      image?: (children: string, meta: ImageMeta) => string | null | undefined;
+      /** Inline code (`` `code` ``). */
+      codespan?: (children: string) => string | null | undefined;
+      /** Strikethrough (`~~text~~`). */
+      strikethrough?: (children: string) => string | null | undefined;
+      /** Plain text content. */
+      text?: (text: string) => string | null | undefined;
+    }
+
+    /** Options for `react()` — parser options and element symbol configuration. */
+    interface ReactOptions extends Options {
+      /**
+       * Which `$$typeof` symbol to use on the generated elements.
+       * - `19` (default): `Symbol.for('react.transitional.element')`
+       * - `18`: `Symbol.for('react.element')` — use this for React 18 and older
+       */
+      reactVersion?: 18 | 19;
+    }
+
+    /**
+     * Render markdown to an HTML string.
+     *
+     * @param input The markdown string or buffer to render
+     * @param options Parser options
+     * @returns An HTML string
+     *
+     * @example
+     * ```ts
+     * const html = Bun.markdown.html("# Hello **world**");
+     * // "<h1>Hello <strong>world</strong></h1>\n"
+     *
+     * // With options
+     * const html = Bun.markdown.html("## Hello", { headings: { ids: true } });
+     * // '<h2 id="hello">Hello</h2>\n'
+     * ```
+     */
+    export function html(
+      input: string | NodeJS.TypedArray | DataView<ArrayBuffer> | ArrayBufferLike,
+      options?: Options,
+    ): string;
+
+    /**
+     * Render markdown with custom JavaScript callbacks for each element.
+     *
+     * Each callback receives the accumulated children as a string and optional
+     * metadata, and returns a string. Return `null` or `undefined` to omit
+     * an element. If no callback is registered, children pass through unchanged.
+     *
+     * Parser options are passed as a separate third argument.
+     *
+     * @param input The markdown string to render
+     * @param callbacks Callbacks for each element type
+     * @param options Parser options
+     * @returns The accumulated string output
+     *
+     * @example
+     * ```ts
+     * // Custom HTML with classes
+     * const html = Bun.markdown.render("# Title\n\nHello **world**", {
+     *   heading: (children, { level }) => `<h${level} class="title">${children}</h${level}>`,
+     *   paragraph: (children) => `<p>${children}</p>`,
+     *   strong: (children) => `<b>${children}</b>`,
+     * });
+     *
+     * // ANSI terminal output
+     * const ansi = Bun.markdown.render("# Hello\n\n**bold**", {
+     *   heading: (children) => `\x1b[1;4m${children}\x1b[0m\n`,
+     *   paragraph: (children) => children + "\n",
+     *   strong: (children) => `\x1b[1m${children}\x1b[22m`,
+     * });
+     *
+     * // With parser options as third argument
+     * const text = Bun.markdown.render("Visit www.example.com", {
+     *   link: (children, { href }) => `[${children}](${href})`,
+     *   paragraph: (children) => children,
+     * }, { autolinks: true });
+     * ```
+     */
+    export function render(
+      input: string | NodeJS.TypedArray | DataView<ArrayBuffer> | ArrayBufferLike,
+      callbacks?: RenderCallbacks,
+      options?: Options,
+    ): string;
+
+    /**
+     * Render markdown to React JSX elements.
+     *
+     * Returns a React Fragment containing the parsed markdown as children.
+     * Can be returned directly from a component or passed to `renderToString()`.
+     *
+     * Override any HTML element with a custom component by passing it in the
+     * second argument, keyed by tag name. Custom components receive the same props
+     * the default elements would (e.g. `href` for links, `language` for code blocks).
+     *
+     * Parser options (including `reactVersion`) are passed as a separate third argument.
+     * Uses `Symbol.for('react.transitional.element')` by default (React 19).
+     * Pass `reactVersion: 18` for React 18 and older.
+     *
+     * @param input The markdown string or buffer to parse
+     * @param components Component overrides keyed by HTML tag name
+     * @param options Parser options and element symbol configuration
+     * @returns A React Fragment element containing the parsed markdown
+     *
+     * @example
+     * ```tsx
+     * // Use directly as a component return value
+     * function Markdown({ text }: { text: string }) {
+     *   return Bun.markdown.react(text);
+     * }
+     *
+     * // Server-side rendering
+     * import { renderToString } from "react-dom/server";
+     * const html = renderToString(Bun.markdown.react("# Hello **world**"));
+     *
+     * // Custom components receive element props
+     * function Code({ language, children }: { language?: string; children: React.ReactNode }) {
+     *   return <pre data-language={language}><code>{children}</code></pre>;
+     * }
+     * function Link({ href, children }: { href: string; children: React.ReactNode }) {
+     *   return <a href={href} target="_blank">{children}</a>;
+     * }
+     * const el = Bun.markdown.react(text, { pre: Code, a: Link });
+     *
+     * // For React 18 and older
+     * const el18 = Bun.markdown.react(text, undefined, { reactVersion: 18 });
+     * ```
+     */
+    export function react(
+      input: string | NodeJS.TypedArray | DataView<ArrayBuffer> | ArrayBufferLike,
+      components?: ComponentOverrides,
+      options?: ReactOptions,
+    ): import("./jsx.d.ts").JSX.Element;
+  }
+
+  /**
    * JSON5 related APIs
    */
   namespace JSON5 {

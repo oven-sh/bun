@@ -1333,6 +1333,50 @@ Generate metadata about the build in a structured format. The metafile contains 
   </Tab>
 </Tabs>
 
+#### Markdown metafile
+
+Use `--metafile-md` to generate a markdown metafile, which is LLM-friendly and easy to read in the terminal:
+
+```bash terminal icon="terminal"
+bun build ./src/index.ts --outdir ./dist --metafile-md ./dist/meta.md
+```
+
+Both `--metafile` and `--metafile-md` can be used together:
+
+```bash terminal icon="terminal"
+bun build ./src/index.ts --outdir ./dist --metafile ./dist/meta.json --metafile-md ./dist/meta.md
+```
+
+#### `metafile` option formats
+
+In the JavaScript API, `metafile` accepts several forms:
+
+```ts title="build.ts" icon="/icons/typescript.svg"
+// Boolean — include metafile in the result object
+await Bun.build({
+  entrypoints: ['./src/index.ts'],
+  outdir: './dist',
+  metafile: true,
+});
+
+// String — write JSON metafile to a specific path
+await Bun.build({
+  entrypoints: ['./src/index.ts'],
+  outdir: './dist',
+  metafile: "./dist/meta.json",
+});
+
+// Object — specify separate paths for JSON and markdown output
+await Bun.build({
+  entrypoints: ['./src/index.ts'],
+  outdir: './dist',
+  metafile: {
+    json: "./dist/meta.json",
+    markdown: "./dist/meta.md",
+  },
+});
+```
+
 The metafile structure contains:
 
 ```ts

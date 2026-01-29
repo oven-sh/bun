@@ -72,6 +72,10 @@ pub const LinkerContext = struct {
         target: options.Target = .browser,
         compile: bool = false,
         metafile: bool = false,
+        /// Path to write JSON metafile (for Bun.build API)
+        metafile_json_path: []const u8 = "",
+        /// Path to write markdown metafile (for Bun.build API)
+        metafile_markdown_path: []const u8 = "",
 
         mode: Mode = .bundle,
 
@@ -506,7 +510,7 @@ pub const LinkerContext = struct {
                     const loader = loaders[record.source_index.get()];
 
                     switch (loader) {
-                        .jsx, .js, .ts, .tsx, .napi, .sqlite, .json, .jsonc, .json5, .yaml, .html, .sqlite_embedded => {
+                        .jsx, .js, .ts, .tsx, .napi, .sqlite, .json, .jsonc, .json5, .yaml, .html, .sqlite_embedded, .md => {
                             log.addErrorFmt(
                                 source,
                                 record.range.loc,

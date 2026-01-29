@@ -171,6 +171,7 @@ pub const build_only_params = [_]ParamType{
     clap.parseParam("--outdir <STR>                   Default to \"dist\" if multiple files") catch unreachable,
     clap.parseParam("--outfile <STR>                  Write to a file") catch unreachable,
     clap.parseParam("--metafile <STR>?                Write a JSON file with metadata about the build") catch unreachable,
+    clap.parseParam("--metafile-md <STR>?             Write a markdown file with a visualization of the module graph (LLM-friendly)") catch unreachable,
     clap.parseParam("--sourcemap <STR>?               Build with sourcemaps - 'linked', 'inline', 'external', or 'none'") catch unreachable,
     clap.parseParam("--banner <STR>                   Add a banner to the bundled output such as \"use client\"; for a bundle being used with RSCs") catch unreachable,
     clap.parseParam("--footer <STR>                   Add a footer to the bundled output such as // built with bun!") catch unreachable,
@@ -1267,6 +1268,14 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 bun.handleOom(allocator.dupeZ(u8, metafile))
             else
                 "meta.json";
+        }
+
+        if (args.option("--metafile-md")) |metafile_md| {
+            // If --metafile-md is passed without a value, default to "meta.md"
+            ctx.bundler_options.metafile_md = if (metafile_md.len > 0)
+                bun.handleOom(allocator.dupeZ(u8, metafile_md))
+            else
+                "meta.md";
         }
 
         if (args.option("--root")) |root_dir| {

@@ -166,6 +166,7 @@ using namespace JSC;
     macro(makeGetterTypeError) \
     macro(maxAge) \
     macro(method) \
+    macro(metafileJson) \
     macro(mockedFunction) \
     macro(mode) \
     macro(mtimeMs) \

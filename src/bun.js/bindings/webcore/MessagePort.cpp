@@ -265,7 +265,7 @@ void MessagePort::dispatchMessages()
         ASSERT(context->isContextThread());
         auto* globalObject = defaultGlobalObject(context->globalObject());
         Ref vm = globalObject->vm();
-        auto scope = DECLARE_CATCH_SCOPE(vm);
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
         for (auto& message : messages) {
             // close() in Worker onmessage handler should prevent next message from dispatching.

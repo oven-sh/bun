@@ -227,6 +227,26 @@ bun --cpu-prof script.js
 
 This generates a `.cpuprofile` file you can open in Chrome DevTools (Performance tab → Load profile) or VS Code's CPU profiler.
 
+### Markdown output
+
+Use `--cpu-prof-md` to generate a markdown CPU profile, which is grep-friendly and designed for LLM analysis:
+
+```sh terminal icon="terminal"
+bun --cpu-prof-md script.js
+```
+
+Both `--cpu-prof` and `--cpu-prof-md` can be used together to generate both formats at once:
+
+```sh terminal icon="terminal"
+bun --cpu-prof --cpu-prof-md script.js
+```
+
+You can also trigger profiling via the `BUN_OPTIONS` environment variable:
+
+```sh terminal icon="terminal"
+BUN_OPTIONS="--cpu-prof-md" bun script.js
+```
+
 ### Options
 
 ```sh terminal icon="terminal"
@@ -234,8 +254,43 @@ bun --cpu-prof --cpu-prof-name my-profile.cpuprofile script.js
 bun --cpu-prof --cpu-prof-dir ./profiles script.js
 ```
 
-| Flag                         | Description          |
-| ---------------------------- | -------------------- |
-| `--cpu-prof`                 | Enable profiling     |
-| `--cpu-prof-name <filename>` | Set output filename  |
-| `--cpu-prof-dir <dir>`       | Set output directory |
+| Flag                         | Description                                              |
+| ---------------------------- | -------------------------------------------------------- |
+| `--cpu-prof`                 | Generate a `.cpuprofile` JSON file (Chrome DevTools format) |
+| `--cpu-prof-md`              | Generate a markdown CPU profile (grep/LLM-friendly)      |
+| `--cpu-prof-name <filename>` | Set output filename                                      |
+| `--cpu-prof-dir <dir>`       | Set output directory                                     |
+
+## Heap profiling
+
+Generate heap snapshots on exit to analyze memory usage and find memory leaks.
+
+```sh terminal icon="terminal"
+bun --heap-prof script.js
+```
+
+This generates a V8 `.heapsnapshot` file that can be loaded in Chrome DevTools (Memory tab → Load).
+
+### Markdown output
+
+Use `--heap-prof-md` to generate a markdown heap profile for CLI analysis:
+
+```sh terminal icon="terminal"
+bun --heap-prof-md script.js
+```
+
+<Note>If both `--heap-prof` and `--heap-prof-md` are specified, the markdown format is used.</Note>
+
+### Options
+
+```sh terminal icon="terminal"
+bun --heap-prof --heap-prof-name my-snapshot.heapsnapshot script.js
+bun --heap-prof --heap-prof-dir ./profiles script.js
+```
+
+| Flag                          | Description                                               |
+| ----------------------------- | --------------------------------------------------------- |
+| `--heap-prof`                 | Generate a V8 `.heapsnapshot` file on exit                |
+| `--heap-prof-md`              | Generate a markdown heap profile on exit                  |
+| `--heap-prof-name <filename>` | Set output filename                                       |
+| `--heap-prof-dir <dir>`       | Set output directory                                      |

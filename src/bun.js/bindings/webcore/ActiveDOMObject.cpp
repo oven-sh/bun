@@ -134,7 +134,7 @@
 //     auto* context = scriptExecutionContext();
 //     if (!context)
 //         return;
-//     context->eventLoop().queueTask(source, WTFMove(function));
+//     context->eventLoop().queueTask(source, WTF::move(function));
 // }
 
 // class ActiveDOMObjectEventDispatchTask : public EventLoopTask {
@@ -142,7 +142,7 @@
 //     ActiveDOMObjectEventDispatchTask(TaskSource source, EventLoopTaskGroup& group, ActiveDOMObject& object, Function<void()>&& dispatchEvent)
 //         : EventLoopTask(source, group)
 //         , m_object(object)
-//         , m_dispatchEvent(WTFMove(dispatchEvent))
+//         , m_dispatchEvent(WTF::move(dispatchEvent))
 //     {
 //         ++m_object.m_pendingActivityInstanceCount;
 //     }
@@ -173,10 +173,10 @@
 //     if (!context)
 //         return;
 //     auto& eventLoopTaskGroup = context->eventLoop();
-//     auto task = makeUnique<ActiveDOMObjectEventDispatchTask>(source, eventLoopTaskGroup, *this, [target = Ref { target }, event = WTFMove(event)] {
+//     auto task = makeUnique<ActiveDOMObjectEventDispatchTask>(source, eventLoopTaskGroup, *this, [target = Ref { target }, event = WTF::move(event)] {
 //         target->dispatchEvent(event);
 //     });
-//     eventLoopTaskGroup.queueTask(WTFMove(task));
+//     eventLoopTaskGroup.queueTask(WTF::move(task));
 // }
 
 // void ActiveDOMObject::queueCancellableTaskToDispatchEventInternal(EventTarget& target, TaskSource source, TaskCancellationGroup& cancellationGroup, Ref<Event>&& event)
@@ -186,10 +186,10 @@
 //     if (!context)
 //         return;
 //     auto& eventLoopTaskGroup = context->eventLoop();
-//     auto task = makeUnique<ActiveDOMObjectEventDispatchTask>(source, eventLoopTaskGroup, *this, CancellableTask(cancellationGroup, [target = Ref { target }, event = WTFMove(event)] {
+//     auto task = makeUnique<ActiveDOMObjectEventDispatchTask>(source, eventLoopTaskGroup, *this, CancellableTask(cancellationGroup, [target = Ref { target }, event = WTF::move(event)] {
 //         target->dispatchEvent(event);
 //     }));
-//     eventLoopTaskGroup.queueTask(WTFMove(task));
+//     eventLoopTaskGroup.queueTask(WTF::move(task));
 // }
 
 // } // namespace WebCore

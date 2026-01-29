@@ -193,6 +193,7 @@ test/regression/issue/02499/02499.test.ts
 test/js/node/test/parallel/test-http-server-stale-close.js
 test/js/third_party/comlink/comlink.test.ts
 test/regression/issue/22635/22635.test.ts
+test/js/node/test/parallel/test-http-url.parse-https.request.js
 
 
 # Bun::JSNodeHTTPServerSocket::clearSocketData

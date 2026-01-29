@@ -2,10 +2,14 @@ option(WEBKIT_VERSION "The version of WebKit to use")
 option(WEBKIT_LOCAL "If a local version of WebKit should be used instead of downloading")
 
 if(NOT WEBKIT_VERSION)
-  set(WEBKIT_VERSION 6d0f3aac0b817cc01a846b3754b21271adedac12)
+  set(WEBKIT_VERSION cc5e0bddf7eae1d820cf673158845fe9bd83c094)
 endif()
 
+# Use preview build URL for Windows ARM64 until the fix is merged to main
+set(WEBKIT_PREVIEW_PR 140)
+
 string(SUBSTRING ${WEBKIT_VERSION} 0 16 WEBKIT_VERSION_PREFIX)
+string(SUBSTRING ${WEBKIT_VERSION} 0 8 WEBKIT_VERSION_SHORT)
 
 if(WEBKIT_LOCAL)
   set(DEFAULT_WEBKIT_PATH ${VENDOR_PATH}/WebKit/WebKitBuild/${CMAKE_BUILD_TYPE})
@@ -28,13 +32,30 @@ if(WEBKIT_LOCAL)
     # make jsc-compile-debug jsc-copy-headers
     include_directories(
       ${WEBKIT_PATH}
+      ${WEBKIT_PATH}/JavaScriptCore/Headers
       ${WEBKIT_PATH}/JavaScriptCore/Headers/JavaScriptCore
       ${WEBKIT_PATH}/JavaScriptCore/PrivateHeaders
       ${WEBKIT_PATH}/bmalloc/Headers
       ${WEBKIT_PATH}/WTF/Headers
-      ${WEBKIT_PATH}/JavaScriptCore/DerivedSources/inspector
       ${WEBKIT_PATH}/JavaScriptCore/PrivateHeaders/JavaScriptCore
+      ${WEBKIT_PATH}/JavaScriptCore/DerivedSources/inspector
     )
+
+    # On Windows, add ICU include path from vcpkg
+    if(WIN32)
+      # Auto-detect vcpkg triplet
+      set(VCPKG_ARM64_PATH ${VENDOR_PATH}/WebKit/vcpkg_installed/arm64-windows-static)
+      set(VCPKG_X64_PATH ${VENDOR_PATH}/WebKit/vcpkg_installed/x64-windows-static)
+      if(EXISTS ${VCPKG_ARM64_PATH})
+        set(VCPKG_ICU_PATH ${VCPKG_ARM64_PATH})
+      else()
+        set(VCPKG_ICU_PATH ${VCPKG_X64_PATH})
+      endif()
+      if(EXISTS ${VCPKG_ICU_PATH}/include)
+        include_directories(${VCPKG_ICU_PATH}/include)
+        message(STATUS "Using ICU from vcpkg: ${VCPKG_ICU_PATH}/include")
+      endif()
+    endif()
   endif()
 
   # After this point, only prebuilt WebKit is supported
@@ -51,7 +72,7 @@ else()
   message(FATAL_ERROR "Unsupported operating system: ${CMAKE_SYSTEM_NAME}")
 endif()
 
-if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|ARM64|aarch64|AARCH64")
   set(WEBKIT_ARCH "arm64")
 elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "amd64|x86_64|x64|AMD64")
   set(WEBKIT_ARCH "amd64")
@@ -80,7 +101,14 @@ endif()
 
 setx(WEBKIT_NAME bun-webkit-${WEBKIT_OS}-${WEBKIT_ARCH}${WEBKIT_SUFFIX})
 set(WEBKIT_FILENAME ${WEBKIT_NAME}.tar.gz)
-setx(WEBKIT_DOWNLOAD_URL https://github.com/oven-sh/WebKit/releases/download/autobuild-${WEBKIT_VERSION}/${WEBKIT_FILENAME})
+
+if(WEBKIT_VERSION MATCHES "^autobuild-")
+  set(WEBKIT_TAG ${WEBKIT_VERSION})
+else()
+  set(WEBKIT_TAG autobuild-${WEBKIT_VERSION})
+endif()
+
+setx(WEBKIT_DOWNLOAD_URL https://github.com/oven-sh/WebKit/releases/download/${WEBKIT_TAG}/${WEBKIT_FILENAME})
 
 if(EXISTS ${WEBKIT_PATH}/package.json)
   file(READ ${WEBKIT_PATH}/package.json WEBKIT_PACKAGE_JSON)
@@ -90,7 +118,14 @@ if(EXISTS ${WEBKIT_PATH}/package.json)
   endif()
 endif()
 
-file(DOWNLOAD ${WEBKIT_DOWNLOAD_URL} ${CACHE_PATH}/${WEBKIT_FILENAME} SHOW_PROGRESS)
+file(
+  DOWNLOAD ${WEBKIT_DOWNLOAD_URL} ${CACHE_PATH}/${WEBKIT_FILENAME} SHOW_PROGRESS
+  STATUS WEBKIT_DOWNLOAD_STATUS
+)
+if(NOT "${WEBKIT_DOWNLOAD_STATUS}" MATCHES "^0;")
+  message(FATAL_ERROR "Failed to download WebKit: ${WEBKIT_DOWNLOAD_STATUS}")
+endif()
+
 file(ARCHIVE_EXTRACT INPUT ${CACHE_PATH}/${WEBKIT_FILENAME} DESTINATION ${CACHE_PATH} TOUCH)
 file(REMOVE ${CACHE_PATH}/${WEBKIT_FILENAME})
 file(REMOVE_RECURSE ${WEBKIT_PATH})

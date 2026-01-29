@@ -536,12 +536,26 @@ const Scrypt = struct {
         const password = try Node.StringOrBuffer.fromJSMaybeAsync(global, bun.default_allocator, password_value, is_async, true) orelse {
             return global.throwInvalidArgumentTypeValue("password", "string, ArrayBuffer, Buffer, TypedArray, or DataView", password_value);
         };
-        errdefer password.deinit();
+
+        errdefer {
+            if (is_async) {
+                password.deinitAndUnprotect();
+            } else {
+                password.deinit();
+            }
+        }
 
         const salt = try Node.StringOrBuffer.fromJSMaybeAsync(global, bun.default_allocator, salt_value, is_async, true) orelse {
             return global.throwInvalidArgumentTypeValue("salt", "string, ArrayBuffer, Buffer, TypedArray, or DataView", salt_value);
         };
-        errdefer salt.deinit();
+
+        errdefer {
+            if (is_async) {
+                salt.deinitAndUnprotect();
+            } else {
+                salt.deinit();
+            }
+        }
 
         const keylen = try validators.validateInt32(global, keylen_value, "keylen", .{}, 0, null);
 
@@ -719,6 +733,14 @@ const Scrypt = struct {
     }
 
     fn deinit(this: *Scrypt) void {
+        this.salt.deinitAndUnprotect();
+        this.password.deinitAndUnprotect();
+        this.buf.deinit();
+    }
+
+    fn deinitSync(this: *Scrypt) void {
+        this.salt.deinit();
+        this.password.deinit();
         this.buf.deinit();
     }
 };
@@ -731,6 +753,7 @@ fn scrypt(global: *JSGlobalObject, callFrame: *jsc.CallFrame) JSError!JSValue {
 
 fn scryptSync(global: *JSGlobalObject, callFrame: *jsc.CallFrame) JSError!JSValue {
     var ctx = try Scrypt.fromJS(global, callFrame, false);
+    defer ctx.deinitSync();
     const buf, const bytes = try jsc.ArrayBuffer.alloc(global, .ArrayBuffer, ctx.keylen);
     ctx.runTask(bytes);
     return buf;

@@ -5,7 +5,7 @@
 
 // these tests validate the handle scope functions in the normal
 // flow.  Forcing gc behavior to fully validate they are doing
-// the right right thing would be quite hard so we keep it
+// the right thing would be quite hard so we keep it
 // simple for now.
 
 static napi_value NewScope(napi_env env, napi_callback_info info) {

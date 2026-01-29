@@ -1,12 +1,13 @@
 import { cc, CString, ptr, type FFIFunction, type Library } from "bun:ffi";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { promises as fs } from "fs";
-import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, tempDirWithFiles } from "harness";
 import path from "path";
 
 // TODO: we need to install build-essential and Apple SDK in CI.
 // It can't find includes. It can on machines with that enabled.
-it.todoIf(isWindows)("can run a .c file", () => {
+// TinyCC's setjmp/longjmp error handling conflicts with ASan.
+it.todoIf(isWindows || isASAN)("can run a .c file", () => {
   const result = Bun.spawnSync({
     cmd: [bunExe(), path.join(__dirname, "cc-fixture.js")],
     cwd: __dirname,
@@ -17,7 +18,8 @@ it.todoIf(isWindows)("can run a .c file", () => {
   expect(result.exitCode).toBe(0);
 });
 
-describe("given an add(a, b) function", () => {
+// TinyCC's setjmp/longjmp error handling conflicts with ASan.
+describe.skipIf(isASAN)("given an add(a, b) function", () => {
   const source = /* c */ `
       int add(int a, int b) {
         return a + b;
@@ -111,7 +113,7 @@ describe("given a source file with syntax errors", () => {
   // FIXME: fails asan poisoning check
   // TinyCC uses `setjmp` on an internal error handler, then jumps there when it
   // encounters a syntax error. Newer versions of tcc added a public API to
-  // set a runtime error handler, but but we need to upgrade in order to get it.
+  // set a runtime error handler, but we need to upgrade in order to get it.
   // https://github.com/TinyCC/tinycc/blob/f8bd136d198bdafe71342517fa325da2e243dc68/libtcc.h#L106C9-L106C24
   it.skip("when compiled, throws an error", () => {
     expect(() => {

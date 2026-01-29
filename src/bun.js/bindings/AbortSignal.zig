@@ -167,7 +167,7 @@ pub const AbortSignal = opaque {
             const this: *Timeout = .new(.{
                 .signal = signal_,
                 .event_loop_timer = .{
-                    .next = bun.timespec.now().addMs(@intCast(milliseconds)),
+                    .next = bun.timespec.now(.allow_mocked_time).addMs(@intCast(milliseconds)),
                     .tag = .AbortSignalTimeout,
                     .state = .CANCELLED,
                 },

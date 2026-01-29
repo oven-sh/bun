@@ -190,7 +190,7 @@ pub const Source = struct {
             console_output_codepage = c.GetConsoleOutputCP();
             _ = c.SetConsoleOutputCP(CP_UTF8);
 
-            console_codepage = c.GetConsoleOutputCP();
+            console_codepage = c.GetConsoleCP();
             _ = c.SetConsoleCP(CP_UTF8);
 
             var mode: w.DWORD = undefined;

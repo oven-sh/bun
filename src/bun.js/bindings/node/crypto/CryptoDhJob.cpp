@@ -64,7 +64,7 @@ void DhJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSValue callback)
 extern "C" DhJob* Bun__DhJob__create(JSGlobalObject* globalObject, DhJobCtx* ctx, EncodedJSValue callback);
 DhJob* DhJob::create(JSGlobalObject* globalObject, DhJobCtx&& ctx, JSValue callback)
 {
-    DhJobCtx* ctxCopy = new DhJobCtx(WTFMove(ctx));
+    DhJobCtx* ctxCopy = new DhJobCtx(WTF::move(ctx));
     return Bun__DhJob__create(globalObject, ctxCopy, JSValue::encode(callback));
 }
 
@@ -77,7 +77,7 @@ void DhJob::schedule()
 extern "C" void Bun__DhJob__createAndSchedule(JSGlobalObject* globalObject, DhJobCtx* ctx, EncodedJSValue callback);
 void DhJob::createAndSchedule(JSGlobalObject* globalObject, DhJobCtx&& ctx, JSValue callback)
 {
-    DhJobCtx* ctxCopy = new DhJobCtx(WTFMove(ctx));
+    DhJobCtx* ctxCopy = new DhJobCtx(WTF::move(ctx));
     Bun__DhJob__createAndSchedule(globalObject, ctxCopy, JSValue::encode(callback));
 }
 
@@ -152,7 +152,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDiffieHellman, (JSGlobalObject * lexicalGlobalObject,
     RETURN_IF_EXCEPTION(scope, {});
 
     if (!callbackValue.isUndefined()) {
-        DhJob::createAndSchedule(lexicalGlobalObject, WTFMove(*ctx), callbackValue);
+        DhJob::createAndSchedule(lexicalGlobalObject, WTF::move(*ctx), callbackValue);
         return JSValue::encode(jsUndefined());
     }
 

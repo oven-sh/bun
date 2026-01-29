@@ -48,16 +48,6 @@ describe("Bun.build compile", () => {
         },
       }),
     ).toThrowErrorMatchingInlineSnapshot(`"Unknown compile target: bun-invalid-platform"`);
-
-    expect(() =>
-      Bun.build({
-        entrypoints: [join(dir, "index.js")],
-        compile: {
-          target: "bun-windows-arm64",
-          outfile: join(dir, "invalid-app"),
-        },
-      }),
-    ).toThrowErrorMatchingInlineSnapshot(`"Unsupported compile target: bun-windows-arm64"`);
   });
   test("compile with relative outfile paths", async () => {
     using dir = tempDir("build-compile-relative-paths", {

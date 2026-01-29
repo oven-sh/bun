@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import net from "net";
 
 // CVE-2020-8287 style request smuggling tests
@@ -385,5 +385,178 @@ test("handles multiple valid Transfer-Encoding headers", async () => {
       resolve();
     });
     client.write(validRequest);
+  });
+});
+
+// Tests for SPILL.TERM technique - invalid chunk terminators
+// Reference: https://portswigger.net/research/chunked-coding-converter-abusing-http-to-smuggle-requests
+describe("SPILL.TERM - invalid chunk terminators", () => {
+  test("rejects chunk with invalid terminator bytes", async () => {
+    // This tests the SPILL.TERM technique where an attacker uses invalid
+    // chunk terminators (e.g., "XY" instead of "\r\n") to desync parsers.
+    let bodyReadSucceeded = false;
+    await using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        try {
+          await req.text();
+          bodyReadSucceeded = true;
+        } catch {
+          // Expected: body read should fail due to invalid chunk terminator
+        }
+        return new Response("OK");
+      },
+    });
+
+    const client = net.connect(server.port, "127.0.0.1");
+
+    // Chunk size 5, but terminator is "XY" instead of "\r\n"
+    const maliciousRequest =
+      "POST / HTTP/1.1\r\n" +
+      "Host: localhost\r\n" +
+      "Transfer-Encoding: chunked\r\n" +
+      "\r\n" +
+      "5\r\n" +
+      "AAAAAXY" + // 5 bytes "AAAAA" + invalid terminator "XY"
+      "0\r\n" +
+      "\r\n";
+
+    await new Promise<void>((resolve, reject) => {
+      let responseData = "";
+      client.on("error", reject);
+      client.on("data", data => {
+        responseData += data.toString();
+      });
+      client.on("close", () => {
+        expect(responseData).toContain("HTTP/1.1 400");
+        expect(bodyReadSucceeded).toBe(false);
+        resolve();
+      });
+      client.write(maliciousRequest);
+    });
+  });
+
+  test("rejects chunk with CR but wrong second byte", async () => {
+    let bodyReadSucceeded = false;
+    await using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        try {
+          await req.text();
+          bodyReadSucceeded = true;
+        } catch {
+          // Expected: body read should fail due to invalid chunk terminator
+        }
+        return new Response("OK");
+      },
+    });
+
+    const client = net.connect(server.port, "127.0.0.1");
+
+    // Chunk size 3, terminator is "\rX" instead of "\r\n"
+    const maliciousRequest =
+      "POST / HTTP/1.1\r\n" +
+      "Host: localhost\r\n" +
+      "Transfer-Encoding: chunked\r\n" +
+      "\r\n" +
+      "3\r\n" +
+      "ABC\rX" + // 3 bytes "ABC" + invalid terminator "\rX"
+      "0\r\n" +
+      "\r\n";
+
+    await new Promise<void>((resolve, reject) => {
+      let responseData = "";
+      client.on("error", reject);
+      client.on("data", data => {
+        responseData += data.toString();
+      });
+      client.on("close", () => {
+        expect(responseData).toContain("HTTP/1.1 400");
+        expect(bodyReadSucceeded).toBe(false);
+        resolve();
+      });
+      client.write(maliciousRequest);
+    });
+  });
+
+  test("rejects chunk with LF but wrong first byte", async () => {
+    let bodyReadSucceeded = false;
+    await using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        try {
+          await req.text();
+          bodyReadSucceeded = true;
+        } catch {
+          // Expected: body read should fail due to invalid chunk terminator
+        }
+        return new Response("OK");
+      },
+    });
+
+    const client = net.connect(server.port, "127.0.0.1");
+
+    // Chunk size 3, terminator is "X\n" instead of "\r\n"
+    const maliciousRequest =
+      "POST / HTTP/1.1\r\n" +
+      "Host: localhost\r\n" +
+      "Transfer-Encoding: chunked\r\n" +
+      "\r\n" +
+      "3\r\n" +
+      "ABCX\n" + // 3 bytes "ABC" + invalid terminator "X\n"
+      "0\r\n" +
+      "\r\n";
+
+    await new Promise<void>((resolve, reject) => {
+      let responseData = "";
+      client.on("error", reject);
+      client.on("data", data => {
+        responseData += data.toString();
+      });
+      client.on("close", () => {
+        expect(responseData).toContain("HTTP/1.1 400");
+        expect(bodyReadSucceeded).toBe(false);
+        resolve();
+      });
+      client.write(maliciousRequest);
+    });
+  });
+
+  test("accepts valid chunk terminators", async () => {
+    let receivedBody = "";
+
+    await using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        receivedBody = await req.text();
+        return new Response("Success");
+      },
+    });
+
+    const client = net.connect(server.port, "127.0.0.1");
+
+    const validRequest =
+      "POST / HTTP/1.1\r\n" +
+      "Host: localhost\r\n" +
+      "Transfer-Encoding: chunked\r\n" +
+      "\r\n" +
+      "5\r\n" +
+      "Hello\r\n" +
+      "6\r\n" +
+      " World\r\n" +
+      "0\r\n" +
+      "\r\n";
+
+    await new Promise<void>((resolve, reject) => {
+      client.on("error", reject);
+      client.on("data", data => {
+        const response = data.toString();
+        expect(response).toContain("HTTP/1.1 200");
+        expect(receivedBody).toBe("Hello World");
+        client.end();
+        resolve();
+      });
+      client.write(validRequest);
+    });
   });
 });

@@ -22,7 +22,7 @@ pub fn notifyServerStarted(this: *HTTPServerAgent, instance: jsc.API.AnyServer) 
             this.next_server_id,
             @intCast(instance.vm().hot_reload_counter),
             &url,
-            @floatFromInt(bun.timespec.now().ms()),
+            @floatFromInt(bun.timespec.now(.allow_mocked_time).ms()),
             instance.ptr.ptr(),
         );
     }

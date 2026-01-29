@@ -48,7 +48,7 @@ fn readFromBlob(
     );
     const result = switch (maybe) {
         .result => |result| result,
-        .err => |err| return global.throwValue(err.toJS(global)),
+        .err => |err| return global.throwValue(try err.toJS(global)),
     };
     if (result.null_terminated.len == 0) return error.EmptyFile;
     return bun.default_allocator.dupeZ(u8, result.null_terminated);
@@ -91,22 +91,50 @@ pub fn asUSockets(this: *const SSLConfig) uws.SocketContext.BunSocketContextOpti
     return ctx_opts;
 }
 
+/// Returns socket options for client-side TLS with manual verification.
+/// Sets request_cert=1 (to receive server cert) and reject_unauthorized=0
+/// (to handle verification manually in handshake callback).
+pub fn asUSocketsForClientVerification(this: *const SSLConfig) uws.SocketContext.BunSocketContextOptions {
+    var opts = this.asUSockets();
+    opts.request_cert = 1;
+    opts.reject_unauthorized = 0;
+    return opts;
+}
+
+/// Returns a copy of this config for client-side TLS with manual verification.
+/// Sets request_cert=1 (to receive server cert) and reject_unauthorized=0
+/// (to handle verification manually in handshake callback).
+pub fn forClientVerification(this: SSLConfig) SSLConfig {
+    var copy = this;
+    copy.request_cert = 1;
+    copy.reject_unauthorized = 0;
+    return copy;
+}
+
 pub fn isSame(this: *const SSLConfig, other: *const SSLConfig) bool {
     inline for (comptime std.meta.fields(SSLConfig)) |field| {
         const first = @field(this, field.name);
         const second = @field(other, field.name);
         switch (field.type) {
             ?[*:0]const u8 => {
-                const a = first orelse return second == null;
-                const b = second orelse return false;
-                if (!stringsEqual(a, b)) return false;
+                // Compare optional single strings
+                if (first) |a| {
+                    const b = second orelse return false;
+                    if (!stringsEqual(a, b)) return false;
+                } else {
+                    if (second != null) return false;
+                }
             },
             ?[][*:0]const u8 => {
-                const slice1 = first orelse return second == null;
-                const slice2 = second orelse return false;
-                if (slice1.len != slice2.len) return false;
-                for (slice1, slice2) |a, b| {
-                    if (!stringsEqual(a, b)) return false;
+                // Compare optional arrays of strings (e.g., key, cert, ca)
+                if (first) |slice1| {
+                    const slice2 = second orelse return false;
+                    if (slice1.len != slice2.len) return false;
+                    for (slice1, slice2) |a, b| {
+                        if (!stringsEqual(a, b)) return false;
+                    }
+                } else {
+                    if (second != null) return false;
                 }
             },
             else => if (first != second) return false,

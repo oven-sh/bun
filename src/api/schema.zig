@@ -343,6 +343,7 @@ pub const api = struct {
         sqlite_embedded = 17,
         html = 18,
         yaml = 19,
+        json5 = 20,
         _,
 
         pub fn jsonStringify(self: @This(), writer: anytype) !void {
@@ -1654,6 +1655,9 @@ pub const api = struct {
         define: ?StringMap = null,
 
         drop: []const []const u8 = &.{},
+
+        /// feature_flags for dead-code elimination via `import { feature } from "bun:bundle"`
+        feature_flags: []const []const u8 = &.{},
 
         /// preserve_symlinks
         preserve_symlinks: ?bool = null,

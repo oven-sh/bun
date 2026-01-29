@@ -2119,13 +2119,14 @@ pub const default_trusted_dependencies = brk: {
     break :brk &final;
 };
 
-pub fn hasTrustedDependency(this: *const Lockfile, name: []const u8) bool {
+pub fn hasTrustedDependency(this: *const Lockfile, name: []const u8, resolution: *const Resolution) bool {
     if (this.trusted_dependencies) |trusted_dependencies| {
         const hash = @as(u32, @truncate(String.Builder.stringHash(name)));
         return trusted_dependencies.contains(hash);
     }
 
-    return default_trusted_dependencies.has(name);
+    // Only allow default trusted dependencies for npm packages
+    return resolution.tag == .npm and default_trusted_dependencies.has(name);
 }
 
 pub const NameHashMap = std.ArrayHashMapUnmanaged(PackageNameHash, String, ArrayIdentityContext.U64, false);

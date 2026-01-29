@@ -223,7 +223,7 @@ for (let withOverridenBufferWrite of [false, true]) {
       it("length overflow", () => {
         // Verify the maximum Uint8Array size. There is no concrete limit by spec. The
         // internal limits should be updated if this fails.
-        expect(() => new Uint8Array(2 ** 32 + 1)).toThrow(/length/);
+        expect(() => new Uint8Array(2 ** 32 + 1)).toThrow(/Out of memory/);
       });
 
       it("truncate input values", () => {
@@ -2863,6 +2863,16 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(buf.hexSlice()).toStrictEqual("30313233343536373839");
         expect(buf.hexSlice(3)).toStrictEqual("33343536373839");
         expect(buf.hexSlice(3, 4)).toStrictEqual("33");
+      });
+
+      // Regression test: large buffers that would produce strings exceeding max string length
+      it("Buffer.hexSlice() throws for large buffers", () => {
+        const { MAX_STRING_LENGTH } = require("buffer").constants;
+        // Hex output is 2x input size, so buffer size > MAX_STRING_LENGTH/2 will overflow
+        const largeBuffer = Buffer.allocUnsafe(Math.floor(MAX_STRING_LENGTH / 2) + 1);
+        expect(() => largeBuffer.hexSlice()).toThrow(
+          `Cannot create a string longer than ${MAX_STRING_LENGTH} characters`,
+        );
       });
 
       it("Buffer.ucs2Slice()", () => {

@@ -1622,6 +1622,15 @@ pub const StringSet = struct {
         };
     }
 
+    /// Initialize an empty StringSet at comptime (for use as a static constant).
+    /// WARNING: The resulting set must not be mutated. Any attempt to call insert(),
+    /// clone(), or other allocating methods will result in undefined behavior.
+    pub fn initComptime() StringSet {
+        return StringSet{
+            .map = Map.initContext(undefined, .{}),
+        };
+    }
+
     pub fn isEmpty(self: *const StringSet) bool {
         return self.count() == 0;
     }
@@ -1915,8 +1924,11 @@ pub const StatFS = switch (Environment.os) {
 };
 
 pub var argv: [][:0]const u8 = &[_][:0]const u8{};
+/// Number of arguments injected by BUN_OPTIONS environment variable.
+/// Used by standalone executables to include these in the parsed options window.
+pub var bun_options_argc: usize = 0;
 
-pub fn appendOptionsEnv(env: []const u8, args: *std.array_list.Managed([:0]const u8), allocator: std.mem.Allocator) !void {
+pub fn appendOptionsEnv(env: []const u8, comptime ArgType: type, args: *std.array_list.Managed(ArgType)) !void {
     var i: usize = 0;
     var offset_in_args: usize = 1;
     while (i < env.len) {
@@ -1935,6 +1947,7 @@ pub fn appendOptionsEnv(env: []const u8, args: *std.array_list.Managed([:0]const
             // Find the end of the option flag (--flag)
             while (j < env.len and !std.ascii.isWhitespace(env[j]) and env[j] != '=') : (j += 1) {}
 
+            const end_of_flag = j;
             var found_equals = false;
 
             // Check for equals sign
@@ -1958,12 +1971,25 @@ pub fn appendOptionsEnv(env: []const u8, args: *std.array_list.Managed([:0]const
             } else if (found_equals) {
                 // If we had --flag=value (no quotes), find next whitespace
                 while (j < env.len and !std.ascii.isWhitespace(env[j])) : (j += 1) {}
+            } else {
+                // No value found after flag (e.g., `--flag1 --flag2`).
+                // Reset j to end of flag name so we don't include trailing whitespace.
+                j = end_of_flag;
             }
 
             // Copy the entire argument including quotes
             const arg_len = j - start;
-            const arg = try allocator.allocSentinel(u8, arg_len, 0);
-            @memcpy(arg, env[start..j]);
+
+            const arg = switch (ArgType) {
+                bun.String => bun.String.cloneUTF8(env[start..j]),
+                [:0]const u8 => arg: {
+                    const arg = try bun.default_allocator.allocSentinel(u8, arg_len, 0);
+                    @memcpy(arg, env[start..j]);
+                    break :arg arg;
+                },
+                else => @compileError("unexpected arg type"),
+            };
+
             try args.insert(offset_in_args, arg);
             offset_in_args += 1;
 
@@ -1972,7 +1998,7 @@ pub fn appendOptionsEnv(env: []const u8, args: *std.array_list.Managed([:0]const
         }
 
         // Non-option arguments or standalone values
-        var buf = std.array_list.Managed(u8).init(allocator);
+        var buf = std.array_list.Managed(u8).init(bun.default_allocator);
 
         var in_single = false;
         var in_double = false;
@@ -2019,16 +2045,26 @@ pub fn appendOptionsEnv(env: []const u8, args: *std.array_list.Managed([:0]const
             }
         }
 
-        try buf.append(0);
-        const owned = try buf.toOwnedSlice();
-        try args.insert(offset_in_args, owned[0 .. owned.len - 1 :0]);
+        switch (ArgType) {
+            bun.String => {
+                defer buf.deinit();
+                try args.insert(offset_in_args, bun.String.cloneUTF8(buf.items));
+            },
+            [:0]const u8 => {
+                try buf.append(0);
+                const owned = try buf.toOwnedSlice();
+                try args.insert(offset_in_args, owned[0 .. owned.len - 1 :0]);
+            },
+            else => @compileError("unexpected arg type"),
+        }
+
         offset_in_args += 1;
     }
 }
 
-pub fn initArgv(allocator: std.mem.Allocator) !void {
+pub fn initArgv() !void {
     if (comptime Environment.isPosix) {
-        argv = try allocator.alloc([:0]const u8, std.os.argv.len);
+        argv = try bun.default_allocator.alloc([:0]const u8, std.os.argv.len);
         for (0..argv.len) |i| {
             argv[i] = std.mem.sliceTo(std.os.argv[i], 0);
         }
@@ -2063,7 +2099,7 @@ pub fn initArgv(allocator: std.mem.Allocator) !void {
         };
 
         const argvu16 = argvu16_ptr[0..@intCast(length)];
-        const out_argv = try allocator.alloc([:0]const u8, @intCast(length));
+        const out_argv = try bun.default_allocator.alloc([:0]const u8, @intCast(length));
         var string_builder = StringBuilder{};
 
         for (argvu16) |argraw| {
@@ -2071,7 +2107,7 @@ pub fn initArgv(allocator: std.mem.Allocator) !void {
             string_builder.count16Z(arg);
         }
 
-        try string_builder.allocate(allocator);
+        try string_builder.allocate(bun.default_allocator);
 
         for (argvu16, out_argv) |argraw, *out| {
             const arg = std.mem.span(argraw);
@@ -2083,13 +2119,15 @@ pub fn initArgv(allocator: std.mem.Allocator) !void {
 
         argv = out_argv;
     } else {
-        argv = try std.process.argsAlloc(allocator);
+        argv = try std.process.argsAlloc(bun.default_allocator);
     }
 
     if (bun.env_var.BUN_OPTIONS.get()) |opts| {
-        var argv_list = std.array_list.Managed([:0]const u8).fromOwnedSlice(allocator, argv);
-        try appendOptionsEnv(opts, &argv_list, allocator);
+        const original_len = argv.len;
+        var argv_list = std.array_list.Managed([:0]const u8).fromOwnedSlice(bun.default_allocator, argv);
+        try appendOptionsEnv(opts, [:0]const u8, &argv_list);
         argv = argv_list.items;
+        bun_options_argc = argv.len - original_len;
     }
 }
 
@@ -3033,7 +3071,13 @@ pub fn unsafeAssert(condition: bool) callconv(callconv_inline) void {
 
 pub const dns = @import("./dns.zig");
 
-pub fn getRoughTickCount() timespec {
+pub fn getRoughTickCount(comptime mock_mode: timespec.MockMode) timespec {
+    if (mock_mode == .allow_mocked_time) {
+        if (bun.jsc.Jest.bun_test.FakeTimers.current_time.getTimespecNow()) |fake_time| {
+            return fake_time;
+        }
+    }
+
     if (comptime Environment.isMac) {
         // https://opensource.apple.com/source/xnu/xnu-2782.30.5/libsyscall/wrappers/mach_approximate_time.c.auto.html
         // https://opensource.apple.com/source/Libc/Libc-1158.1.2/gen/clock_gettime.c.auto.html
@@ -3087,7 +3131,7 @@ pub fn getRoughTickCount() timespec {
     }
 
     if (comptime Environment.isWindows) {
-        const ms = getRoughTickCountMs();
+        const ms = getRoughTickCountMs(mock_mode);
         return timespec{
             .sec = @intCast(ms / 1000),
             .nsec = @intCast((ms % 1000) * 1_000_000),
@@ -3102,17 +3146,33 @@ pub fn getRoughTickCount() timespec {
 /// Requesting the current time frequently is somewhat expensive. So we can use a rough timestamp.
 ///
 /// This timestamp doesn't easily correlate to a specific time. It's only useful relative to other calls.
-pub fn getRoughTickCountMs() u64 {
+pub fn getRoughTickCountMs(comptime mock_mode: timespec.MockMode) u64 {
     if (Environment.isWindows) {
+        if (mock_mode == .allow_mocked_time) {
+            if (bun.jsc.Jest.bun_test.FakeTimers.current_time.getTimespecNow()) |fake_time| {
+                return fake_time.ns() / std.time.ns_per_ms;
+            }
+        }
         const GetTickCount64 = struct {
             pub extern "kernel32" fn GetTickCount64() std.os.windows.ULONGLONG;
         }.GetTickCount64;
         return GetTickCount64();
     }
 
-    const spec = getRoughTickCount();
+    const spec = getRoughTickCount(mock_mode);
     return spec.ns() / std.time.ns_per_ms;
 }
+
+pub const MaybeMockedTimespec = struct {
+    mocked: u64,
+    timespec: timespec,
+
+    pub const epoch = MaybeMockedTimespec{ .mocked = 0, .timespec = .epoch };
+
+    pub fn eql(this: *const MaybeMockedTimespec, other: *const MaybeMockedTimespec) bool {
+        return this.mocked == other.mocked and this.timespec.eql(&other.timespec);
+    }
+};
 
 pub const timespec = extern struct {
     sec: i64,
@@ -3120,22 +3180,13 @@ pub const timespec = extern struct {
 
     pub const epoch: timespec = .{ .sec = 0, .nsec = 0 };
 
+    pub const MockMode = enum {
+        allow_mocked_time,
+        force_real_time,
+    };
+
     pub fn eql(this: *const timespec, other: *const timespec) bool {
         return this.sec == other.sec and this.nsec == other.nsec;
-    }
-
-    pub fn toInstant(this: *const timespec) std.time.Instant {
-        if (comptime Environment.isPosix) {
-            return std.time.Instant{
-                .timestamp = @bitCast(this.*),
-            };
-        }
-
-        if (comptime Environment.isWindows) {
-            return std.time.Instant{
-                .timestamp = @intCast(this.sec * std.time.ns_per_s + this.nsec),
-            };
-        }
     }
 
     // TODO: this is wrong!
@@ -3202,12 +3253,12 @@ pub const timespec = extern struct {
         return a.order(b) == .gt;
     }
 
-    pub fn now() timespec {
-        return getRoughTickCount();
+    pub fn now(comptime mock_mode: MockMode) timespec {
+        return getRoughTickCount(mock_mode);
     }
 
-    pub fn sinceNow(start: *const timespec) u64 {
-        return now().duration(start).ns();
+    pub fn sinceNow(start: *const timespec, comptime mock_mode: MockMode) u64 {
+        return now(mock_mode).duration(start).ns();
     }
 
     pub fn addMs(this: *const timespec, interval: i64) timespec {
@@ -3226,9 +3277,43 @@ pub const timespec = extern struct {
 
         return new_timespec;
     }
+    pub fn addMsFloat(this: *const timespec, interval_ms: f64) timespec {
+        const ns_per_ms_f = @as(f64, @floatFromInt(std.time.ns_per_ms)); // 1_000_000
 
-    pub fn msFromNow(interval: i64) timespec {
-        return now().addMs(interval);
+        // Start from the current time
+        var new_timespec = this.*;
+
+        // Split into whole ms and sub-ms remainder (matches sinon/fake-timers logic)
+        // Use modulo to extract fractional milliseconds as nanoseconds
+        const ms_whole_f = @floor(interval_ms);
+        const ms_inc: i64 = std.math.lossyCast(i64, ms_whole_f);
+
+        // nanoRemainder: floor((msFloat * 1e6) % 1e6)
+        const ns_total_f = interval_ms * ns_per_ms_f;
+        const ns_remainder_f = @mod(ns_total_f, ns_per_ms_f);
+        const nsec_inc: i64 = @intFromFloat(@floor(ns_remainder_f));
+
+        // Convert milliseconds to seconds
+        const sec_inc = @divTrunc(ms_inc, std.time.ms_per_s);
+        const ms_remainder = @mod(ms_inc, std.time.ms_per_s);
+
+        new_timespec.sec +%= sec_inc;
+        new_timespec.nsec +%= ms_remainder * std.time.ns_per_ms + nsec_inc;
+
+        // Normalize nsec into [0, ns_per_s)
+        if (new_timespec.nsec >= std.time.ns_per_s) {
+            new_timespec.sec +%= 1;
+            new_timespec.nsec -%= std.time.ns_per_s;
+        } else if (new_timespec.nsec < 0) {
+            new_timespec.sec -%= 1;
+            new_timespec.nsec +%= std.time.ns_per_s;
+        }
+
+        return new_timespec;
+    }
+
+    pub fn msFromNow(comptime mock_mode: MockMode, interval: i64) timespec {
+        return now(mock_mode).addMs(interval);
     }
 
     pub fn min(a: timespec, b: timespec) timespec {

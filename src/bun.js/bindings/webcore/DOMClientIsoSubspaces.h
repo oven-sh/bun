@@ -81,6 +81,7 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDOMFormData;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDOMFormDataIterator;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDOMURL;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForURLPattern;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForURLSearchParams;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForURLSearchParamsIterator;
 

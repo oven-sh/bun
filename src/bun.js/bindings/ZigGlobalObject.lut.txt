@@ -84,6 +84,7 @@
   TransformStream                 TransformStreamConstructorCallback                   PropertyCallback
   TransformStreamDefaultController TransformStreamDefaultControllerConstructorCallback PropertyCallback
   URL                             DOMURLConstructorCallback                            DontEnum|PropertyCallback
+  URLPattern                      URLPatternConstructorCallback                        PropertyCallback
   URLSearchParams                 URLSearchParamsConstructorCallback                   DontEnum|PropertyCallback
   WebSocket                       WebSocketConstructorCallback                         PropertyCallback
   Worker                          WorkerConstructorCallback                            PropertyCallback

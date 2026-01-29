@@ -127,7 +127,7 @@ const ClassInfo JSFFIFunction::s_info = { "Function"_s, &Base::s_info, nullptr, 
 
 JSFFIFunction::JSFFIFunction(VM& vm, NativeExecutable* executable, JSGlobalObject* globalObject, Structure* structure, CFFIFunction&& function)
     : Base(vm, executable, globalObject, structure)
-    , m_function(WTFMove(function))
+    , m_function(WTF::move(function))
 {
     // used in NAPI
     dataPtr = nullptr;
@@ -153,7 +153,7 @@ JSFFIFunction* JSFFIFunction::create(VM& vm, Zig::GlobalObject* globalObject, un
 {
     NativeExecutable* executable = vm.getHostFunction(FFIFunction, ImplementationVisibility::Public, intrinsic, FFIFunction, nullptr, name);
     Structure* structure = globalObject->FFIFunctionStructure();
-    JSFFIFunction* function = new (NotNull, allocateCell<JSFFIFunction>(vm)) JSFFIFunction(vm, executable, globalObject, structure, reinterpret_cast<CFFIFunction>(WTFMove(FFIFunction)));
+    JSFFIFunction* function = new (NotNull, allocateCell<JSFFIFunction>(vm)) JSFFIFunction(vm, executable, globalObject, structure, reinterpret_cast<CFFIFunction>(WTF::move(FFIFunction)));
     function->finishCreation(vm, executable, length, name);
     return function;
 }
@@ -176,7 +176,7 @@ JSFFIFunction* JSFFIFunction::createForFFI(VM& vm, Zig::GlobalObject* globalObje
     NativeExecutable* executable = vm.getHostFunction(FFIFunction, ImplementationVisibility::Public, NoIntrinsic, FFIFunction, nullptr, name);
 #endif
     Structure* structure = globalObject->FFIFunctionStructure();
-    JSFFIFunction* function = new (NotNull, allocateCell<JSFFIFunction>(vm)) JSFFIFunction(vm, executable, globalObject, structure, reinterpret_cast<CFFIFunction>(WTFMove(FFIFunction)));
+    JSFFIFunction* function = new (NotNull, allocateCell<JSFFIFunction>(vm)) JSFFIFunction(vm, executable, globalObject, structure, reinterpret_cast<CFFIFunction>(WTF::move(FFIFunction)));
     function->finishCreation(vm, executable, length, name);
     return function;
 }
@@ -212,7 +212,7 @@ FFI_Callback_threadsafe_call(FFICallbackFunctionWrapper& wrapper, size_t argCoun
     for (size_t i = 0; i < argCount; ++i)
         argsVec.append(args[i]);
 
-    WebCore::ScriptExecutionContext::postTaskTo(globalObject->scriptExecutionContext()->identifier(), [argsVec = WTFMove(argsVec), wrapper](WebCore::ScriptExecutionContext& ctx) mutable {
+    WebCore::ScriptExecutionContext::postTaskTo(globalObject->scriptExecutionContext()->identifier(), [argsVec = WTF::move(argsVec), wrapper](WebCore::ScriptExecutionContext& ctx) mutable {
         auto* globalObject = JSC::jsCast<Zig::GlobalObject*>(ctx.jsGlobalObject());
         auto& vm = JSC::getVM(globalObject);
         JSC::MarkedArgumentBuffer arguments;

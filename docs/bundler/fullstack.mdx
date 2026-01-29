@@ -427,8 +427,8 @@ This will allow you to use TailwindCSS utility classes in your HTML and CSS file
 <!doctype html>
 <html>
   <head>
-    <link rel="stylesheet" href="tailwindcss" />
     <!-- [!code ++] -->
+    <link rel="stylesheet" href="tailwindcss" />
   </head>
   <!-- the rest of your HTML... -->
 </html>
@@ -448,8 +448,8 @@ Alternatively, you can import TailwindCSS in your CSS file:
 <!doctype html>
 <html>
   <head>
-    <link rel="stylesheet" href="./style.css" />
     <!-- [!code ++] -->
+    <link rel="stylesheet" href="./style.css" />
   </head>
   <!-- the rest of your HTML... -->
 </html>
@@ -491,6 +491,28 @@ Bun will lazily resolve and load each plugin and use them to bundle your routes.
   integrate this with the `bun build` CLI. These plugins work in `Bun.build()`'s JS API, but are not yet supported in
   the CLI.
 </Note>
+
+## Inline Environment Variables
+
+Bun can replace `process.env.*` references in your frontend JavaScript and TypeScript with their actual values at build time. Configure the `env` option in your `bunfig.toml`:
+
+```toml title="bunfig.toml" icon="settings"
+[serve.static]
+env = "PUBLIC_*"  # only inline env vars starting with PUBLIC_ (recommended)
+# env = "inline"  # inline all environment variables
+# env = "disable" # disable env var replacement (default)
+```
+
+<Note>
+  This only works with literal `process.env.FOO` references, not `import.meta.env` or indirect access like `const env =
+  process.env; env.FOO`.
+
+If an environment variable is not set, you may see runtime errors like `ReferenceError: process
+  is not defined` in the browser.
+
+</Note>
+
+See the [HTML & static sites documentation](/bundler/html-static#inline-environment-variables) for more details on build-time configuration and examples.
 
 ## How It Works
 

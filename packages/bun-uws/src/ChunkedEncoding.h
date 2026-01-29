@@ -213,6 +213,16 @@ namespace uWS {
                     emitSoon = std::string_view(data.data(), chunkSize(state) - 2);
                     shouldEmit = true;
                 }
+                // Validate that the chunk terminator is \r\n to prevent request smuggling
+                // The last 2 bytes of the chunk must be exactly \r\n
+                // Note: chunkSize always includes +2 for the terminator (added in consumeHexNumber),
+                // and chunks with size 0 (chunkSize == 2) are handled earlier at line 190.
+                // Therefore chunkSize >= 3 here, so no underflow is possible.
+                size_t terminatorOffset = chunkSize(state) - 2;
+                if (data[terminatorOffset] != '\r' || data[terminatorOffset + 1] != '\n') {
+                    state = STATE_IS_ERROR;
+                    return std::nullopt;
+                }
                 data.remove_prefix(chunkSize(state));
                 state = STATE_IS_CHUNKED;
                 if (shouldEmit) {

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import React from "react";
 import { renderToString } from "react-dom/server";
 
-const Markdown = Bun.unstable_markdown;
+const Markdown = Bun.markdown;
 
 /** renderToString the Fragment returned by Markdown.react.
  *  Uses reactVersion: 18 since the project has react-dom@18 installed. */
@@ -11,10 +11,10 @@ function reactRender(md: string, components?: any, opts?: any): string {
 }
 
 // ============================================================================
-// Bun.unstable_markdown.react() — React element AST
+// Bun.markdown.react() — React element AST
 // ============================================================================
 
-describe("Bun.unstable_markdown.react", () => {
+describe("Bun.markdown.react", () => {
   const REACT_ELEMENT_SYMBOL = Symbol.for("react.element");
   const REACT_FRAGMENT_SYMBOL = Symbol.for("react.fragment");
   const REACT_TRANSITIONAL_SYMBOL = Symbol.for("react.transitional.element");
@@ -259,10 +259,10 @@ This is **bold** and *italic*.
 });
 
 // ============================================================================
-// Bun.unstable_markdown.react() + React renderToString integration
+// Bun.markdown.react() + React renderToString integration
 // ============================================================================
 
-describe("Bun.unstable_markdown.react renderToString", () => {
+describe("Bun.markdown.react renderToString", () => {
   test("heading", () => {
     expect(reactRender("# Hello\n")).toBe("<h1>Hello</h1>");
   });
@@ -411,7 +411,7 @@ Hello **world**, this is *important*.
 
 // (render() is callback-based, component overrides are only for react())
 
-describe("Bun.unstable_markdown.react component overrides", () => {
+describe("Bun.markdown.react component overrides", () => {
   const REACT_TRANSITIONAL_SYMBOL = Symbol.for("react.transitional.element");
   const REACT_ELEMENT_SYMBOL = Symbol.for("react.element");
 
@@ -487,7 +487,7 @@ describe("Bun.unstable_markdown.react component overrides", () => {
   });
 });
 
-describe("Bun.unstable_markdown.react renderToString with component overrides", () => {
+describe("Bun.markdown.react renderToString with component overrides", () => {
   test("function component renders custom HTML", () => {
     function Heading({ children }: any) {
       return React.createElement("div", { className: "title" }, ...children);

@@ -919,11 +919,11 @@ declare module "bun" {
    * @example
    * ```tsx
    * // Render markdown to HTML
-   * const html = Bun.unstable_markdown.html("# Hello **world**");
+   * const html = Bun.markdown.html("# Hello **world**");
    * // "<h1>Hello <strong>world</strong></h1>\n"
    *
    * // Render with custom callbacks
-   * const ansi = Bun.unstable_markdown.render("# Hello **world**", {
+   * const ansi = Bun.markdown.render("# Hello **world**", {
    *   heading: (children, { level }) => `\x1b[1m${children}\x1b[0m\n`,
    *   strong: (children) => `\x1b[1m${children}\x1b[22m`,
    *   paragraph: (children) => children + "\n",
@@ -931,14 +931,14 @@ declare module "bun" {
    *
    * // Render as a React component
    * function Markdown({ text }: { text: string }) {
-   *   return Bun.unstable_markdown.react(text);
+   *   return Bun.markdown.react(text);
    * }
    *
    * // With component overrides
-   * const element = Bun.unstable_markdown.react("# Hello", { h1: MyHeadingComponent });
+   * const element = Bun.markdown.react("# Hello", { h1: MyHeadingComponent });
    * ```
    */
-  namespace unstable_markdown {
+  namespace markdown {
     /**
      * Options for configuring the markdown parser.
      *
@@ -1054,7 +1054,7 @@ declare module "bun" {
      * function Code({ language, children }: { language?: string; children: React.ReactNode }) {
      *   return <pre data-language={language}><code>{children}</code></pre>;
      * }
-     * Bun.unstable_markdown.react(text, { pre: Code });
+     * Bun.markdown.react(text, { pre: Code });
      * ```
      */
     interface ComponentOverrides {
@@ -1210,11 +1210,11 @@ declare module "bun" {
      *
      * @example
      * ```ts
-     * const html = Bun.unstable_markdown.html("# Hello **world**");
+     * const html = Bun.markdown.html("# Hello **world**");
      * // "<h1>Hello <strong>world</strong></h1>\n"
      *
      * // With options
-     * const html = Bun.unstable_markdown.html("## Hello", { headings: { ids: true } });
+     * const html = Bun.markdown.html("## Hello", { headings: { ids: true } });
      * // '<h2 id="hello">Hello</h2>\n'
      * ```
      */
@@ -1240,21 +1240,21 @@ declare module "bun" {
      * @example
      * ```ts
      * // Custom HTML with classes
-     * const html = Bun.unstable_markdown.render("# Title\n\nHello **world**", {
+     * const html = Bun.markdown.render("# Title\n\nHello **world**", {
      *   heading: (children, { level }) => `<h${level} class="title">${children}</h${level}>`,
      *   paragraph: (children) => `<p>${children}</p>`,
      *   strong: (children) => `<b>${children}</b>`,
      * });
      *
      * // ANSI terminal output
-     * const ansi = Bun.unstable_markdown.render("# Hello\n\n**bold**", {
+     * const ansi = Bun.markdown.render("# Hello\n\n**bold**", {
      *   heading: (children) => `\x1b[1;4m${children}\x1b[0m\n`,
      *   paragraph: (children) => children + "\n",
      *   strong: (children) => `\x1b[1m${children}\x1b[22m`,
      * });
      *
      * // With parser options as third argument
-     * const text = Bun.unstable_markdown.render("Visit www.example.com", {
+     * const text = Bun.markdown.render("Visit www.example.com", {
      *   link: (children, { href }) => `[${children}](${href})`,
      *   paragraph: (children) => children,
      * }, { autolinks: true });
@@ -1289,12 +1289,12 @@ declare module "bun" {
      * ```tsx
      * // Use directly as a component return value
      * function Markdown({ text }: { text: string }) {
-     *   return Bun.unstable_markdown.react(text);
+     *   return Bun.markdown.react(text);
      * }
      *
      * // Server-side rendering
      * import { renderToString } from "react-dom/server";
-     * const html = renderToString(Bun.unstable_markdown.react("# Hello **world**"));
+     * const html = renderToString(Bun.markdown.react("# Hello **world**"));
      *
      * // Custom components receive element props
      * function Code({ language, children }: { language?: string; children: React.ReactNode }) {
@@ -1303,10 +1303,10 @@ declare module "bun" {
      * function Link({ href, children }: { href: string; children: React.ReactNode }) {
      *   return <a href={href} target="_blank">{children}</a>;
      * }
-     * const el = Bun.unstable_markdown.react(text, { pre: Code, a: Link });
+     * const el = Bun.markdown.react(text, { pre: Code, a: Link });
      *
      * // For React 18 and older
-     * const el18 = Bun.unstable_markdown.react(text, undefined, { reactVersion: 18 });
+     * const el18 = Bun.markdown.react(text, undefined, { reactVersion: 18 });
      * ```
      */
     export function react(

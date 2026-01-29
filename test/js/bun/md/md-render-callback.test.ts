@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
 
-const Markdown = Bun.unstable_markdown;
+const Markdown = Bun.markdown;
 
 // ============================================================================
-// Bun.unstable_markdown.render() — callback-based string renderer
+// Bun.markdown.render() — callback-based string renderer
 // ============================================================================
 
-describe("Bun.unstable_markdown.render", () => {
+describe("Bun.markdown.render", () => {
   test("returns a string", () => {
     const result = Markdown.render("# Hello\n", {
       heading: (children: string) => `<h1>${children}</h1>`,

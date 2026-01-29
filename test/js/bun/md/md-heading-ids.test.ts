@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-const Markdown = Bun.unstable_markdown;
+const Markdown = Bun.markdown;
 
 // ============================================================================
 // Heading IDs and Autolink Headings (HTML output)

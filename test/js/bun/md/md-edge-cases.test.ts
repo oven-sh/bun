@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { renderToString } from "react-dom/server";
 
-const Markdown = Bun.unstable_markdown;
+const Markdown = Bun.markdown;
 
 // ============================================================================
 // Fuzzer-like tests: edge cases, pathological inputs, invariant checks

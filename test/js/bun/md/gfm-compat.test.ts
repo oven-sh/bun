@@ -10,7 +10,7 @@ import { describe, expect, test } from "bun:test";
  * Each section corresponds to a known incompatibility between md4c and GFM.
  */
 
-const markdown = Bun.unstable_markdown;
+const markdown = Bun.markdown;
 
 function render(input: string, options?: Record<string, boolean>): string {
   return markdown.html(input + "\n", options ?? {});

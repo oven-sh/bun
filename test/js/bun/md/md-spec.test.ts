@@ -68,7 +68,7 @@ function parseSpecFile(path: string): SpecExample[] {
   return examples;
 }
 
-const markdown = Bun.unstable_markdown;
+const markdown = Bun.markdown;
 
 function renderMarkdown(md: string, flags?: string[]): string {
   const options: Record<string, any> = {};

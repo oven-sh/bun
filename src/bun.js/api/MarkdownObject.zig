@@ -121,7 +121,7 @@ fn camelCaseOf(comptime snake: []const u8) []const u8 {
     };
 }
 
-/// `Bun.unstable_markdown.render(text, callbacks, options?)` — render markdown with custom callbacks.
+/// `Bun.markdown.render(text, callbacks, options?)` — render markdown with custom callbacks.
 ///
 /// Each callback receives the accumulated children as a string plus an optional
 /// metadata object, and returns a string. The final result is the concatenation
@@ -163,7 +163,7 @@ pub fn render(
     return bun.String.createUTF8ForJS(globalThis, result);
 }
 
-/// `Bun.unstable_markdown.react(text, components?, options?)` — returns a React Fragment element
+/// `Bun.markdown.react(text, components?, options?)` — returns a React Fragment element
 /// containing the parsed markdown as children.
 pub const renderReact = jsc.MarkedArgumentBuffer.wrap(renderReactImpl);
 

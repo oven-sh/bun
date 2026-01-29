@@ -1,31 +1,18 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
 
 describe("IIFE folding", () => {
   async function minify(code: string): Promise<string> {
-    using dir = tempDir("iife-test", {
-      "input.js": code,
+    const result = await Bun.build({
+      entrypoints: ["/input.js"],
+      minify: { syntax: true },
+      files: {
+        "/input.js": code,
+      },
     });
-
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "--minify", "input.js"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ]);
-
-    if (exitCode !== 0) {
-      throw new Error(`Build failed: ${stderr}`);
+    if (!result.success) {
+      throw new Error(result.logs.map(l => l.message).join("\n"));
     }
-
-    return stdout.trim();
+    return (await result.outputs[0].text()).trim();
   }
 
   describe("arrow function IIFEs", () => {
@@ -82,6 +69,11 @@ describe("IIFE folding", () => {
       expect(code).toContain("void 0");
       expect(code).not.toContain("function");
     });
+
+    test("function with parameters NOT folded", async () => {
+      const code = await minify("export const x = (function(a) { return a + 1 })(5)");
+      expect(code).toContain("function");
+    });
   });
 
   describe("edge cases - should NOT be folded", () => {
@@ -95,7 +87,7 @@ describe("IIFE folding", () => {
       expect(code).toContain("=>");
     });
 
-    test("function with body NOT folded (this binding)", async () => {
+    test("function with non-empty body NOT folded", async () => {
       const code = await minify("export const x = (function() { return this.x })()");
       expect(code).toContain("function");
     });
@@ -108,6 +100,18 @@ describe("IIFE folding", () => {
     test("async function NOT folded", async () => {
       const code = await minify("export const x = (async function() {})()");
       expect(code).toContain("async");
+    });
+
+    test("member access return NOT folded (this binding)", async () => {
+      // (() => obj.foo)()() should have `this === undefined`
+      // but if inlined to obj.foo(), `this === obj`
+      const code = await minify("export const x = (() => obj.foo)()");
+      expect(code).toContain("=>");
+    });
+
+    test("index access return NOT folded (this binding)", async () => {
+      const code = await minify("export const x = (() => obj['foo'])()");
+      expect(code).toContain("=>");
     });
   });
 });

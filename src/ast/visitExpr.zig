@@ -1556,8 +1556,15 @@ pub fn VisitExpr(
                         switch (stmt.data) {
                             .s_return => |ret| {
                                 if (ret.value) |value| {
+                                    // Skip if the return value is a member access (e_dot or e_index).
+                                    // Inlining (() => obj.foo)() to obj.foo would change `this` binding
+                                    // when the result is called: (() => obj.foo)()() should have
+                                    // `this === undefined`, but obj.foo() would have `this === obj`.
+                                    if (value.data == .e_dot or value.data == .e_index) {
+                                        return null;
+                                    }
                                     // (() => { return expr })() → expr
-                                    // (() => expr)() → expr (when prefer_expr is true)
+                                    // Also handles: (() => expr)() → expr
                                     return value;
                                 }
                                 // (() => { return })() → void 0

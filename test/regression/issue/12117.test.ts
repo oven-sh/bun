@@ -1,31 +1,38 @@
 import { expect, test } from "bun:test";
-import tls from "node:tls";
 import net from "node:net";
 import { join } from "node:path";
+import tls from "node:tls";
 
 const fixturesDir = join(import.meta.dir, "../../js/bun/http/fixtures");
 
 test("#12117 TLS socket reconnection should not leak onConnectEnd listeners", async () => {
-  await using server = Bun.listen({
-    hostname: "localhost",
+  await using server = Bun.serve({
     port: 0,
-    socket: {
-      data() {},
-      open(socket) {
-        socket.end();
-      },
+    tls: {
+      cert: Bun.file(join(fixturesDir, "cert.pem")),
+      key: Bun.file(join(fixturesDir, "cert.key")),
+    },
+    fetch() {
+      return new Response("OK");
     },
   });
 
   const port = server.port;
 
   for (let i = 0; i < 50; i++) {
-    const socket = new net.Socket();
+    const socket = tls.connect({
+      port,
+      host: "localhost",
+      rejectUnauthorized: false,
+    });
 
-    await new Promise<void>((resolve) => {
+    await new Promise<void>(resolve => {
       socket.on("error", () => resolve());
       socket.on("close", () => resolve());
-      socket.connect({ port, host: "localhost" });
+      socket.on("secureConnect", () => {
+        socket.end();
+        resolve();
+      });
     });
 
     const endListeners = socket.listenerCount("end");
@@ -55,8 +62,6 @@ test("#12117 TLS socket should clean up onConnectEnd listener on successful hand
   await new Promise<void>((resolve, reject) => {
     socket.on("secureConnect", () => {
       const endListeners = socket.listenerCount("end");
-      // With the fix, onConnectEnd is added with prependOnceListener and removed on successful handshake
-      // Should have at most 1 listener (onSocketEnd from Duplex)
       expect(endListeners).toBeLessThanOrEqual(1);
       socket.destroy();
       resolve();
@@ -73,5 +78,5 @@ test("#12117 AbortSignal listener cleanup", async () => {
     socket.destroy();
   }
 
-  controller.abort();
+  expect(() => controller.abort()).not.toThrow();
 });

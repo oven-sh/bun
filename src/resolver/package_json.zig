@@ -1761,7 +1761,8 @@ pub const ESModule = struct {
                             return Resolution{ .path = result, .status = .PackageResolve, .debug = .{ .token = target.first_token } };
                         } else {
                             const parts2 = [_]string{ str, subpath };
-                            const result = resolve_path.joinStringBuf(&resolve_target_buf2, parts2, .auto);
+                            // Use POSIX separators for package names (Node.js spec requirement)
+                            const result = resolve_path.joinStringBuf(&resolve_target_buf2, parts2, .posix);
                             if (r.debug_logs) |log| {
                                 log.addNoteFmt("Resolved \".{s}\" to \".{s}\"", .{ str, result });
                             }

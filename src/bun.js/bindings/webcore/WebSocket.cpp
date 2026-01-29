@@ -1758,7 +1758,8 @@ void WebSocket::flushPendingMessages()
                 }
                 }
             }
-        }, queuedMessage);
+        },
+            queuedMessage);
     }
 }
 

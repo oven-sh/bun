@@ -46,7 +46,7 @@ struct node_module;
 
 #include "root.h"
 #include "headers-handwritten.h"
-#include <JavaScriptCore/CatchScope.h>
+#include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/JSTypeInfo.h>
 #include <JavaScriptCore/Structure.h>
@@ -301,6 +301,7 @@ public:
     JSObject* lazyTestModuleObject() const { return m_lazyTestModuleObject.getInitializedOnMainThread(this); }
     Structure* CommonJSModuleObjectStructure() const { return m_commonJSModuleObjectStructure.getInitializedOnMainThread(this); }
     Structure* JSSocketAddressDTOStructure() const { return m_JSSocketAddressDTOStructure.getInitializedOnMainThread(this); }
+    Structure* JSReactElementStructure() const { return m_JSReactElementStructure.getInitializedOnMainThread(this); }
     Structure* ImportMetaObjectStructure() const { return m_importMetaObjectStructure.getInitializedOnMainThread(this); }
     Structure* ImportMetaBakeObjectStructure() const { return m_importMetaBakeObjectStructure.getInitializedOnMainThread(this); }
     Structure* AsyncContextFrameStructure() const { return m_asyncBoundFunctionStructure.getInitializedOnMainThread(this); }
@@ -563,6 +564,7 @@ public:
     V(public, LazyClassStructure, m_JSConnectionsListClassStructure)                                         \
     V(public, LazyClassStructure, m_JSHTTPParserClassStructure)                                              \
                                                                                                              \
+    V(private, LazyPropertyOfGlobalObject<Structure>, m_jsonlParseResultStructure)                           \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_pendingVirtualModuleResultStructure)                 \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_performMicrotaskFunction)                           \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_nativeMicrotaskTrampoline)                          \
@@ -593,6 +595,7 @@ public:
     V(private, LazyPropertyOfGlobalObject<Structure>, m_cachedGlobalProxyStructure)                          \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_commonJSModuleObjectStructure)                       \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_JSSocketAddressDTOStructure)                         \
+    V(private, LazyPropertyOfGlobalObject<Structure>, m_JSReactElementStructure)                             \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_memoryFootprintStructure)                            \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_requireFunctionUnbound)                               \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_requireResolveFunctionUnbound)                        \
@@ -696,6 +699,7 @@ public:
 
     void reload();
 
+    JSC::Structure* jsonlParseResultStructure() { return m_jsonlParseResultStructure.get(this); }
     JSC::Structure* pendingVirtualModuleResultStructure() { return m_pendingVirtualModuleResultStructure.get(this); }
 
     // We need to know if the napi module registered itself or we registered it.

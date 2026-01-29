@@ -404,7 +404,7 @@ pub fn getEphemeralKeyInfo(this: *This, globalObject: *jsc.JSGlobalObject, _: *j
 
     switch (kid) {
         BoringSSL.EVP_PKEY_DH => {
-            result.put(globalObject, ZigString.static("type"), bun.String.static("DH").toJS(globalObject));
+            result.put(globalObject, ZigString.static("type"), try bun.String.static("DH").toJS(globalObject));
             result.put(globalObject, ZigString.static("size"), JSValue.jsNumber(bits));
         },
 
@@ -427,7 +427,7 @@ pub fn getEphemeralKeyInfo(this: *This, globalObject: *jsc.JSGlobalObject, _: *j
                     curve_name = "";
                 }
             }
-            result.put(globalObject, ZigString.static("type"), bun.String.static("ECDH").toJS(globalObject));
+            result.put(globalObject, ZigString.static("type"), try bun.String.static("ECDH").toJS(globalObject));
             result.put(globalObject, ZigString.static("name"), ZigString.fromUTF8(curve_name).toJS(globalObject));
             result.put(globalObject, ZigString.static("size"), JSValue.jsNumber(bits));
         },

@@ -107,7 +107,7 @@ jobs:
           commit-message: "deps: update highway to ${{ steps.check-version.outputs.tag }} (${{ steps.check-version.outputs.latest }})"
           title: "deps: update highway to ${{ steps.check-version.outputs.tag }}"
           delete-branch: true
-          branch: deps/update-highway-${{ github.run_number }}
+          branch: deps/update-highway
           body: |
             ## What does this PR do?
 

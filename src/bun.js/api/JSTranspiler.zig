@@ -42,6 +42,7 @@ pub const Config = struct {
     minify_identifiers: bool = false,
     minify_syntax: bool = false,
     no_macros: bool = false,
+    repl_mode: bool = false,
 
     pub fn fromJS(this: *Config, globalThis: *jsc.JSGlobalObject, object: jsc.JSValue, allocator: std.mem.Allocator) bun.JSError!void {
         if (object.isUndefinedOrNull()) {
@@ -243,6 +244,10 @@ pub const Config = struct {
 
         if (try object.getBooleanLoose(globalThis, "deadCodeElimination")) |flag| {
             this.dead_code_elimination = flag;
+        }
+
+        if (try object.getBooleanLoose(globalThis, "replMode")) |flag| {
+            this.repl_mode = flag;
         }
 
         if (try object.getTruthy(globalThis, "minify")) |minify| {
@@ -569,7 +574,10 @@ pub const TransformTask = struct {
     }
 
     fn finish(this: *TransformTask, promise: *jsc.JSPromise) bun.JSTerminated!void {
-        return promise.resolve(this.global, this.output_code.transferToJS(this.global));
+        const value = this.output_code.transferToJS(this.global) catch |e| {
+            return promise.reject(this.global, this.global.takeException(e));
+        };
+        return promise.resolve(this.global, value);
     }
 
     pub fn deinit(this: *TransformTask) void {
@@ -698,7 +706,8 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
         transpiler.options.macro_remap = config.macro_map;
     }
 
-    transpiler.options.dead_code_elimination = config.dead_code_elimination;
+    // REPL mode disables DCE to preserve expressions like `42`
+    transpiler.options.dead_code_elimination = config.dead_code_elimination and !config.repl_mode;
     transpiler.options.minify_whitespace = config.minify_whitespace;
 
     // Keep defaults for these
@@ -717,6 +726,7 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
     transpiler.options.inlining = config.runtime.inlining;
     transpiler.options.hot_module_reloading = config.runtime.hot_module_reloading;
     transpiler.options.react_fast_refresh = false;
+    transpiler.options.repl_mode = config.repl_mode;
 
     return this;
 }
@@ -738,9 +748,47 @@ pub fn deinit(this: *JSTranspiler) void {
     bun.destroy(this);
 }
 
+/// Check if code looks like an object literal that would be misinterpreted as a block
+/// Returns true if code starts with { (after whitespace) and doesn't end with ;
+/// This matches Node.js REPL behavior for object literal disambiguation
+fn isLikelyObjectLiteral(code: []const u8) bool {
+    // Skip leading whitespace
+    var start: usize = 0;
+    while (start < code.len and (code[start] == ' ' or code[start] == '\t' or code[start] == '\n' or code[start] == '\r')) {
+        start += 1;
+    }
+
+    // Check if starts with {
+    if (start >= code.len or code[start] != '{') {
+        return false;
+    }
+
+    // Skip trailing whitespace
+    var end: usize = code.len;
+    while (end > 0 and (code[end - 1] == ' ' or code[end - 1] == '\t' or code[end - 1] == '\n' or code[end - 1] == '\r')) {
+        end -= 1;
+    }
+
+    // Check if ends with semicolon - if so, it's likely a block statement
+    if (end > 0 and code[end - 1] == ';') {
+        return false;
+    }
+
+    return true;
+}
+
 fn getParseResult(this: *JSTranspiler, allocator: std.mem.Allocator, code: []const u8, loader: ?Loader, macro_js_ctx: Transpiler.MacroJSValueType) ?Transpiler.ParseResult {
     const name = this.config.default_loader.stdinName();
-    const source = &logger.Source.initPathString(name, code);
+
+    // In REPL mode, wrap potential object literals in parentheses
+    // If code starts with { and doesn't end with ; it might be an object literal
+    // that would otherwise be parsed as a block statement
+    const processed_code: []const u8 = if (this.config.repl_mode and isLikelyObjectLiteral(code))
+        std.fmt.allocPrint(allocator, "({s})", .{code}) catch code
+    else
+        code;
+
+    const source = &logger.Source.initPathString(name, processed_code);
 
     const jsx = if (this.config.tsconfig != null)
         this.config.tsconfig.?.mergeJSX(this.transpiler.options.jsx)

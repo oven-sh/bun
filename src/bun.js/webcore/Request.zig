@@ -228,8 +228,11 @@ pub inline fn detachReadableStream(this: *Request, globalObject: *jsc.JSGlobalOb
 
 pub fn toJS(this: *Request, globalObject: *JSGlobalObject) JSValue {
     this.calculateEstimatedByteSize();
+    const js_value = js.toJSUnchecked(globalObject, this);
+    this.#js_ref = .initWeak(js_value);
+
     this.checkBodyStreamRef(globalObject);
-    return js.toJSUnchecked(globalObject, this);
+    return js_value;
 }
 
 extern "C" fn Bun__JSRequest__createForBake(globalObject: *jsc.JSGlobalObject, requestPtr: *Request) callconv(jsc.conv) jsc.JSValue;

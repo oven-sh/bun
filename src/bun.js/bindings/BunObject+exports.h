@@ -9,8 +9,10 @@
     macro(FFI) \
     macro(FileSystemRouter) \
     macro(Glob) \
+    macro(JSON5) \
     macro(JSONC) \
     macro(MD4) \
+    macro(markdown) \
     macro(MD5) \
     macro(S3Client) \
     macro(SHA1) \

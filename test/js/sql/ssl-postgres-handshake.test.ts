@@ -7,7 +7,7 @@ const PROTOCOL_V3_CODE = 196608;   // 0x00030000
 
 describe("PostgreSQL SSL Handshake (Mock Server)", () => {
   const HOST = "127.0.0.1";
-  const PORT = 40000 + Math.floor(Math.random() * 10000);
+  let PORT: number;
   
   let server: import("bun").Server;
   let events: string[] = [];
@@ -16,7 +16,7 @@ describe("PostgreSQL SSL Handshake (Mock Server)", () => {
   beforeAll(() => {
     server = Bun.listen({
       hostname: HOST,
-      port: PORT,
+      port: 0,
       socket: {
         data(socket, data) {
           const firstByte = data[0];
@@ -105,6 +105,9 @@ describe("PostgreSQL SSL Handshake (Mock Server)", () => {
         },
       },
     });
+
+    // Capture the port assigned by the OS
+    PORT = server.port;
   });
 
   afterAll(() => {

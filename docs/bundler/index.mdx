@@ -1354,22 +1354,22 @@ In the JavaScript API, `metafile` accepts several forms:
 ```ts title="build.ts" icon="/icons/typescript.svg"
 // Boolean — include metafile in the result object
 await Bun.build({
-  entrypoints: ['./src/index.ts'],
-  outdir: './dist',
+  entrypoints: ["./src/index.ts"],
+  outdir: "./dist",
   metafile: true,
 });
 
 // String — write JSON metafile to a specific path
 await Bun.build({
-  entrypoints: ['./src/index.ts'],
-  outdir: './dist',
+  entrypoints: ["./src/index.ts"],
+  outdir: "./dist",
   metafile: "./dist/meta.json",
 });
 
 // Object — specify separate paths for JSON and markdown output
 await Bun.build({
-  entrypoints: ['./src/index.ts'],
-  outdir: './dist',
+  entrypoints: ["./src/index.ts"],
+  outdir: "./dist",
   metafile: {
     json: "./dist/meta.json",
     markdown: "./dist/meta.md",

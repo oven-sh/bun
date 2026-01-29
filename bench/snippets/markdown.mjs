@@ -69,11 +69,43 @@ Some final paragraph with ~~strikethrough~~ text and more **formatting**.
 
 const large = medium.repeat(20);
 
+const renderCallbacks = {
+  heading: (children, { level }) => `<h${level}>${children}</h${level}>`,
+  paragraph: children => `<p>${children}</p>`,
+  strong: children => `<strong>${children}</strong>`,
+  emphasis: children => `<em>${children}</em>`,
+  codespan: children => `<code>${children}</code>`,
+  code: (children, { language }) =>
+    language
+      ? `<pre><code class="language-${language}">${children}</code></pre>`
+      : `<pre><code>${children}</code></pre>`,
+  link: (children, { href, title }) =>
+    title ? `<a href="${href}" title="${title}">${children}</a>` : `<a href="${href}">${children}</a>`,
+  image: (children, { src, title }) =>
+    title ? `<img src="${src}" alt="${children}" title="${title}" />` : `<img src="${src}" alt="${children}" />`,
+  list: (children, { ordered, start }) => (ordered ? `<ol start="${start}">${children}</ol>` : `<ul>${children}</ul>`),
+  listItem: children => `<li>${children}</li>`,
+  blockquote: children => `<blockquote>${children}</blockquote>`,
+  hr: () => `<hr />`,
+  strikethrough: children => `<del>${children}</del>`,
+  table: children => `<table>${children}</table>`,
+  thead: children => `<thead>${children}</thead>`,
+  tbody: children => `<tbody>${children}</tbody>`,
+  tr: children => `<tr>${children}</tr>`,
+  th: children => `<th>${children}</th>`,
+  td: children => `<td>${children}</td>`,
+};
+
 summary(() => {
-  if (typeof Bun !== "undefined" && Bun.markdown)
-    bench(`small (${small.length} chars) - Bun.markdown`, () => {
+  if (typeof Bun !== "undefined" && Bun.markdown) {
+    bench(`small (${small.length} chars) - Bun.markdown.html`, () => {
       return Bun.markdown.html(small);
     });
+
+    bench(`small (${small.length} chars) - Bun.markdown.render`, () => {
+      return Bun.markdown.render(small, renderCallbacks);
+    });
+  }
 
   bench(`small (${small.length} chars) - marked`, () => {
     return marked(small);
@@ -85,10 +117,15 @@ summary(() => {
 });
 
 summary(() => {
-  if (typeof Bun !== "undefined" && Bun.markdown)
-    bench(`medium (${medium.length} chars) - Bun.markdown`, () => {
+  if (typeof Bun !== "undefined" && Bun.markdown) {
+    bench(`medium (${medium.length} chars) - Bun.markdown.html`, () => {
       return Bun.markdown.html(medium);
     });
+
+    bench(`medium (${medium.length} chars) - Bun.markdown.render`, () => {
+      return Bun.markdown.render(medium, renderCallbacks);
+    });
+  }
 
   bench(`medium (${medium.length} chars) - marked`, () => {
     return marked(medium);
@@ -100,10 +137,15 @@ summary(() => {
 });
 
 summary(() => {
-  if (typeof Bun !== "undefined" && Bun.markdown)
-    bench(`large (${large.length} chars) - Bun.markdown`, () => {
+  if (typeof Bun !== "undefined" && Bun.markdown) {
+    bench(`large (${large.length} chars) - Bun.markdown.html`, () => {
       return Bun.markdown.html(large);
     });
+
+    bench(`large (${large.length} chars) - Bun.markdown.render`, () => {
+      return Bun.markdown.render(large, renderCallbacks);
+    });
+  }
 
   bench(`large (${large.length} chars) - marked`, () => {
     return marked(large);

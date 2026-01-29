@@ -256,7 +256,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             jsc.markBinding(@src());
             if (this.socket.isDetached()) return;
             const handlers = this.getHandlers();
-            log("onTimeout {s}", .{if (handlers.is_server) "S" else "C"});
+            log("onTimeout {s}", .{if (handlers.mode == .server) "S" else "C"});
             const callback = handlers.onTimeout;
             if (callback == .zero or this.flags.finalizing) return;
             if (handlers.vm.isShuttingDown()) {
@@ -281,7 +281,7 @@ pub fn NewSocket(comptime ssl: bool) type {
 
         pub fn handleConnectError(this: *This, errno: c_int) bun.JSError!void {
             const handlers = this.getHandlers();
-            log("onConnectError {s} ({d}, {d})", .{ if (handlers.is_server) "S" else "C", errno, this.ref_count.get() });
+            log("onConnectError {s} ({d}, {d})", .{ if (handlers.mode == .server) "S" else "C", errno, this.ref_count.get() });
             // Ensure the socket is still alive for any defer's we have
             this.ref();
             defer this.deref();
@@ -397,7 +397,8 @@ pub fn NewSocket(comptime ssl: bool) type {
         }
 
         pub fn isServer(this: *const This) bool {
-            return this.getHandlers().is_server;
+            const handlers = this.getHandlers();
+            return handlers.mode.isServer();
         }
 
         pub fn onOpen(this: *This, socket: Socket) void {
@@ -502,7 +503,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             jsc.markBinding(@src());
             if (this.socket.isDetached()) return;
             const handlers = this.getHandlers();
-            log("onEnd {s}", .{if (handlers.is_server) "S" else "C"});
+            log("onEnd {s}", .{if (handlers.mode == .server) "S" else "C"});
             // Ensure the socket remains alive until this is finished
             this.ref();
             defer this.deref();
@@ -534,7 +535,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             this.socket = s;
             if (this.socket.isDetached()) return;
             const handlers = this.getHandlers();
-            log("onHandshake {s} ({d})", .{ if (handlers.is_server) "S" else "C", success });
+            log("onHandshake {s} ({d})", .{ if (handlers.mode == .server) "S" else "C", success });
 
             const authorized = if (success == 1) true else false;
 
@@ -571,7 +572,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                 result = callback.call(globalObject, this_value, &[_]JSValue{this_value}) catch |err| globalObject.takeException(err);
 
                 // only call onOpen once for clients
-                if (!handlers.is_server) {
+                if (handlers.mode != .server) {
                     // clean onOpen callback so only called in the first handshake and not in every renegotiation
                     // on servers this would require a different approach but it's not needed because our servers will not call handshake multiple times
                     // servers don't support renegotiation
@@ -600,7 +601,7 @@ pub fn NewSocket(comptime ssl: bool) type {
         pub fn onClose(this: *This, _: Socket, err: c_int, _: ?*anyopaque) bun.JSError!void {
             jsc.markBinding(@src());
             const handlers = this.getHandlers();
-            log("onClose {s}", .{if (handlers.is_server) "S" else "C"});
+            log("onClose {s}", .{if (handlers.mode == .server) "S" else "C"});
             this.detachNativeCallback();
             this.socket.detach();
             defer this.deref();
@@ -648,7 +649,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             this.socket = s;
             if (this.socket.isDetached()) return;
             const handlers = this.getHandlers();
-            log("onData {s} ({d})", .{ if (handlers.is_server) "S" else "C", data.len });
+            log("onData {s} ({d})", .{ if (handlers.mode == .server) "S" else "C", data.len });
             if (this.native_callback.onData(data)) return;
 
             const callback = handlers.onData;
@@ -691,7 +692,7 @@ pub fn NewSocket(comptime ssl: bool) type {
         pub fn getListener(this: *This, _: *jsc.JSGlobalObject) JSValue {
             const handlers = this.handlers orelse return .js_undefined;
 
-            if (!handlers.is_server or this.socket.isDetached()) {
+            if (handlers.mode != .server or this.socket.isDetached()) {
                 return .js_undefined;
             }
 
@@ -1352,7 +1353,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             };
 
             const this_handlers = this.getHandlers();
-            const handlers = try Handlers.fromJS(globalObject, socket_obj, this_handlers.is_server);
+            const handlers = try Handlers.fromJS(globalObject, socket_obj, this_handlers.mode == .server);
             this_handlers.deinit();
             this_handlers.* = handlers;
 
@@ -1379,6 +1380,9 @@ pub fn NewSocket(comptime ssl: bool) type {
             }
             if (this.socket.isDetached() or this.socket.isNamedPipe()) {
                 return .js_undefined;
+            }
+            if (this.isServer()) {
+                return globalObject.throw("Server-side upgradeTLS is not supported. Use upgradeDuplexToTLS with isServer: true instead.", .{});
             }
             const args = callframe.arguments_old(1);
 
@@ -1571,7 +1575,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             this.socket.detach();
 
             // start TLS handshake after we set extension on the socket
-            new_socket.startTLS(!handlers_ptr.is_server);
+            new_socket.startTLS(handlers_ptr.mode != .server);
 
             success = true;
             return array;
@@ -1754,6 +1758,23 @@ pub fn NewWrappedHandler(comptime tls: bool) type {
     };
 }
 
+/// Unified socket mode replacing the old is_server bool + TLSMode pair.
+pub const SocketMode = enum {
+    /// Default — TLS client or non-TLS socket
+    client,
+    /// Listener-owned server. TLS (if any) configured at the listener level.
+    server,
+    /// Duplex upgraded to TLS server role. Not listener-owned —
+    /// markInactive uses client lifecycle path.
+    duplex_server,
+
+    /// Returns true for any mode that acts as a TLS server (ALPN, handshake direction).
+    /// Both .server and .duplex_server present as server to peers.
+    pub fn isServer(this: SocketMode) bool {
+        return this == .server or this == .duplex_server;
+    }
+};
+
 pub const DuplexUpgradeContext = struct {
     upgrade: uws.UpgradedDuplex,
     // We only us a tls and not a raw socket when upgrading a Duplex, Duplex dont support socketpairs
@@ -1764,6 +1785,7 @@ pub const DuplexUpgradeContext = struct {
     task_event: EventState = .StartTLS,
     ssl_config: ?jsc.API.ServerConfig.SSLConfig,
     is_open: bool = false,
+    mode: SocketMode = .client,
 
     pub const EventState = enum(u8) {
         StartTLS,
@@ -1846,7 +1868,8 @@ pub const DuplexUpgradeContext = struct {
         switch (this.task_event) {
             .StartTLS => {
                 if (this.ssl_config) |config| {
-                    this.upgrade.startTLS(config, true) catch |err| {
+                    log("DuplexUpgradeContext.startTLS mode={s}", .{@tagName(this.mode)});
+                    this.upgrade.startTLS(config, this.mode == .client) catch |err| {
                         switch (err) {
                             error.OutOfMemory => {
                                 bun.outOfMemory();
@@ -1914,8 +1937,15 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *jsc.JSGlobalObject, callframe: *jsc.C
         return globalObject.throw("Expected \"socket\" option", .{});
     };
 
-    const is_server = false; // A duplex socket is always handled as a client
-    const handlers = try Handlers.fromJS(globalObject, socket_obj, is_server);
+    var is_server = false;
+    if (try opts.getTruthy(globalObject, "isServer")) |is_server_val| {
+        is_server = is_server_val.toBoolean();
+    }
+    // Note: Handlers.fromJS is_server=false because these handlers are standalone
+    // allocations (not embedded in a Listener). The mode field on Handlers
+    // controls lifecycle (markInactive expects a Listener parent when .server).
+    // The TLS direction (client vs server) is controlled by DuplexUpgradeContext.mode.
+    const handlers = try Handlers.fromJS(globalObject, socket_obj, false);
 
     var ssl_opts: ?jsc.API.ServerConfig.SSLConfig = null;
     if (try opts.getTruthy(globalObject, "tls")) |tls| {
@@ -1937,6 +1967,9 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *jsc.JSGlobalObject, callframe: *jsc.C
 
     const handlers_ptr = bun.handleOom(handlers.vm.allocator.create(Handlers));
     handlers_ptr.* = handlers;
+    // Set mode to duplex_server so TLSSocket.isServer() returns true for ALPN server mode
+    // without affecting markInactive lifecycle (which requires a Listener parent).
+    handlers_ptr.mode = if (is_server) .duplex_server else .client;
     var tls = bun.new(TLSSocket, .{
         .ref_count = .init(),
         .handlers = handlers_ptr,
@@ -1963,6 +1996,7 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *jsc.JSGlobalObject, callframe: *jsc.C
         .vm = globalObject.bunVM(),
         .task = undefined,
         .ssl_config = socket_config.*,
+        .mode = if (is_server) .duplex_server else .client,
     });
     tls.ref();
 

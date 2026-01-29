@@ -2422,8 +2422,8 @@ const invalid_package_id = Install.invalid_package_id;
 
 const BinaryLockfile = bun.install.Lockfile;
 const DependencySlice = BinaryLockfile.DependencySlice;
-const OverrideMap = BinaryLockfile.OverrideMap;
 const LoadResult = BinaryLockfile.LoadResult;
+const OverrideMap = BinaryLockfile.OverrideMap;
 const Meta = BinaryLockfile.Package.Meta;
 
 const Npm = Install.Npm;

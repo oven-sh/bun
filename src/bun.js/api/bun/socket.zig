@@ -1764,6 +1764,7 @@ pub const DuplexUpgradeContext = struct {
     task_event: EventState = .StartTLS,
     ssl_config: ?jsc.API.ServerConfig.SSLConfig,
     is_open: bool = false,
+    teardown_scheduled: bool = false,
 
     pub const EventState = enum(u8) {
         StartTLS,
@@ -1802,6 +1803,7 @@ pub const DuplexUpgradeContext = struct {
         if (this.tls) |tls| {
             tls.onEnd(socket);
         }
+        this.deinitInNextTick();
     }
 
     fn onWritable(this: *DuplexUpgradeContext) void {
@@ -1822,6 +1824,7 @@ pub const DuplexUpgradeContext = struct {
                 tls.handleConnectError(@intFromEnum(bun.sys.SystemErrno.ECONNREFUSED)) catch {};
             }
         }
+        this.deinitInNextTick();
     }
 
     fn onTimeout(this: *DuplexUpgradeContext) void {
@@ -1830,6 +1833,7 @@ pub const DuplexUpgradeContext = struct {
         if (this.tls) |tls| {
             tls.onTimeout(socket);
         }
+        this.deinitInNextTick();
     }
 
     fn onClose(this: *DuplexUpgradeContext) void {
@@ -1868,11 +1872,14 @@ pub const DuplexUpgradeContext = struct {
             },
             .Close => {
                 this.upgrade.close();
+                this.deinit();
             },
         }
     }
 
     fn deinitInNextTick(this: *DuplexUpgradeContext) void {
+        if (this.teardown_scheduled) return;
+        this.teardown_scheduled = true;
         this.task_event = .Close;
         this.vm.enqueueTask(jsc.Task.init(&this.task));
     }

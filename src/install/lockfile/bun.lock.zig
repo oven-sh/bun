@@ -1028,12 +1028,11 @@ pub const Stringifier = struct {
     fn writeOverrideNodeKey(writer: *std.Io.Writer, node: OverrideMap.OverrideNode, buf: string) std.Io.Writer.Error!void {
         const key_spec_str = node.key_spec.slice(buf);
         if (key_spec_str.len > 0) {
-            // Write "name@key_spec" as a single JSON string
-            const name_str = node.name.slice(buf);
+            // Write "name@key_spec" as a single JSON string with proper escaping
             try writer.writeAll("\"");
-            try writer.writeAll(name_str);
+            try writer.print("{f}", .{node.name.fmtJson(buf, .{ .quote = false })});
             try writer.writeAll("@");
-            try writer.writeAll(key_spec_str);
+            try writer.print("{f}", .{node.key_spec.fmtJson(buf, .{ .quote = false })});
             try writer.writeAll("\"");
         } else {
             try writer.print("{f}", .{node.name.fmtJson(buf, .{})});

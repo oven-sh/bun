@@ -90,10 +90,12 @@ pub fn findChildAfter(this: *const OverrideMap, parent_node_id: NodeID, name_has
 /// for a match. Returns the most specific (deepest) matching child.
 /// This implements npm's "ruleset" semantics where closer overrides shadow ancestor overrides.
 pub fn findOverrideInContext(this: *const OverrideMap, context_node_id: NodeID, name_hash: PackageNameHash) ?NodeID {
+    if (context_node_id == invalid_node_id or context_node_id >= this.nodes.items.len) return null;
     var ctx = context_node_id;
     while (true) {
         if (this.findChild(ctx, name_hash)) |child_id| return child_id;
         if (ctx == 0) return null;
+        if (ctx >= this.nodes.items.len) return null;
         const parent = this.nodes.items[ctx].parent;
         if (parent == invalid_node_id) return null;
         ctx = parent;
@@ -619,11 +621,11 @@ fn parseOverrideObject(
                 version_str,
                 builder,
             )) |version| {
-                if (is_root_level and parent_node_id == 0) {
-                    // Global override: add to flat map
+                if (is_root_level and parent_node_id == 0 and key_spec_str.len == 0) {
+                    // Global unscoped override: add to flat map
                     this.map.putAssumeCapacity(name_hash, version);
                 } else {
-                    // Nested override: add to tree only
+                    // Nested or version-scoped override: add to tree only
                     try this.ensureRootNode(lockfile.allocator);
                     const key_spec = if (key_spec_str.len > 0) builder.append(String, key_spec_str) else String{};
                     _ = try this.getOrAddChild(lockfile.allocator, parent_node_id, .{
@@ -671,16 +673,16 @@ fn parseOverrideObject(
                 }
             }
 
-            if (is_root_level and parent_node_id == 0 and self_value != null and !has_children) {
-                // Simple case: only "." key at root level, treat as flat override
+            if (is_root_level and parent_node_id == 0 and key_spec_str.len == 0 and self_value != null and !has_children) {
+                // Simple case: only "." key at root level, unscoped, treat as flat override
                 this.map.putAssumeCapacity(name_hash, self_value.?);
             } else {
                 // Add to tree
                 try this.ensureRootNode(lockfile.allocator);
                 const key_spec = if (key_spec_str.len > 0) builder.append(String, key_spec_str) else String{};
 
-                if (is_root_level and self_value != null) {
-                    // Also add to flat map for backward compat
+                if (is_root_level and key_spec_str.len == 0 and self_value != null) {
+                    // Also add to flat map for unscoped root-level overrides for backward compat
                     this.map.putAssumeCapacity(name_hash, self_value.?);
                 }
 
@@ -820,6 +822,10 @@ pub fn parseFromResolutions(
 
         // Parse path segments (e.g., "parent/child" or "@scope/parent/child")
         const segments = splitResolutionPath(k);
+        if (segments.overflow) {
+            try log.addWarningFmt(source, key.loc, lockfile.allocator, "Resolution path has too many segments (max 8): \"{s}\"", .{k});
+            continue;
+        }
         if (segments.count == 1) {
             // Simple resolution (no nesting)
             if (try parseOverrideValue(
@@ -889,6 +895,7 @@ const ResolutionSegments = struct {
     segments: [8][]const u8 = undefined,
     count: usize = 0,
     last: []const u8 = "",
+    overflow: bool = false,
 
     fn get(this: *const ResolutionSegments, idx: usize) []const u8 {
         return this.segments[idx];
@@ -901,7 +908,11 @@ fn splitResolutionPath(k: []const u8) ResolutionSegments {
     var result = ResolutionSegments{};
     var remaining = k;
 
-    while (remaining.len > 0 and result.count < 8) {
+    while (remaining.len > 0) {
+        if (result.count >= result.segments.len) {
+            result.overflow = true;
+            break;
+        }
         // Strip **/ prefixes
         while (strings.hasPrefixComptime(remaining, "**/")) remaining = remaining[3..];
         if (remaining.len == 0) break;

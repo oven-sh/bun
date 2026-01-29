@@ -105,14 +105,17 @@ known_npm_aliases: NpmAliasMap = .{},
 
 /// Maps PackageID → OverrideMap.NodeID
 /// Tracks which override tree node is the context for each resolved package's children.
+/// Public: accessed by PackageManagerEnqueue, PackageManagerResolution, and install_with_manager.
 pkg_override_ctx: std.AutoHashMapUnmanaged(PackageID, OverrideMap.NodeID) = .{},
 
 /// Maps DependencyID → OverrideMap.NodeID
 /// Temporary: holds the override context for a dependency between enqueue and resolution.
+/// Public: written in PackageManagerEnqueue, read in PackageManagerResolution.
 dep_pending_override: std.AutoHashMapUnmanaged(DependencyID, OverrideMap.NodeID) = .{},
 
 /// Precomputed reverse mapping: DependencyID → owning PackageID.
 /// Built lazily to avoid O(N) scans per dependency in the enqueue path.
+/// Public: accessed by PackageManagerEnqueue.
 dep_parent_map: std.ArrayListUnmanaged(PackageID) = .{},
 
 event_loop: jsc.AnyEventLoop,

@@ -513,6 +513,9 @@ pub fn load(
                         allocator,
                         std.ArrayListUnmanaged(OverrideMap.OverrideNode.External),
                     );
+                    if (external_nodes.items.len != node_count) {
+                        return error.MalformedLockfile;
+                    }
                     const context: Dependency.Context = .{
                         .allocator = allocator,
                         .log = log,

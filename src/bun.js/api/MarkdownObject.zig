@@ -28,19 +28,20 @@ pub fn renderToHTML(
         return globalThis.throwInvalidArguments("Expected a string or buffer to render", .{});
     }
 
-    const buffer = try jsc.Node.StringOrBuffer.fromJS(globalThis, bun.default_allocator, input_value) orelse {
+    var arena: bun.ArenaAllocator = .init(bun.default_allocator);
+    defer arena.deinit();
+
+    const buffer = try jsc.Node.StringOrBuffer.fromJS(globalThis, arena.allocator(), input_value) orelse {
         return globalThis.throwInvalidArguments("Expected a string or buffer to render", .{});
     };
-    defer buffer.deinit();
 
     const input = buffer.slice();
 
     const options = try parseOptions(globalThis, opts_value);
 
-    const result = md.renderToHtmlWithOptions(input, bun.default_allocator, options) catch {
+    const result = md.renderToHtmlWithOptions(input, arena.allocator(), options) catch {
         return globalThis.throwOutOfMemory();
     };
-    defer bun.default_allocator.free(result);
 
     return bun.String.createUTF8ForJS(globalThis, result);
 }
@@ -136,10 +137,12 @@ pub fn render(
         return globalThis.throwInvalidArguments("Expected a string or buffer to render", .{});
     }
 
-    const buffer = try jsc.Node.StringOrBuffer.fromJS(globalThis, bun.default_allocator, input_value) orelse {
+    var arena: bun.ArenaAllocator = .init(bun.default_allocator);
+    defer arena.deinit();
+
+    const buffer = try jsc.Node.StringOrBuffer.fromJS(globalThis, arena.allocator(), input_value) orelse {
         return globalThis.throwInvalidArguments("Expected a string or buffer to render", .{});
     };
-    defer buffer.deinit();
 
     const input = buffer.slice();
 
@@ -156,7 +159,7 @@ pub fn render(
     try js_renderer.extractCallbacks(if (callbacks_value.isObject()) callbacks_value else .js_undefined);
 
     // Run parser with the JS callback renderer
-    try md.renderWithRenderer(input, bun.default_allocator, options, js_renderer.renderer());
+    try md.renderWithRenderer(input, arena.allocator(), options, js_renderer.renderer());
 
     // Return accumulated result
     const result = js_renderer.getResult();
@@ -209,10 +212,12 @@ fn renderAST(
         return globalThis.throwInvalidArguments("Expected a string or buffer to render", .{});
     }
 
-    const buffer = try jsc.Node.StringOrBuffer.fromJS(globalThis, bun.default_allocator, input_value) orelse {
+    var arena: bun.ArenaAllocator = .init(bun.default_allocator);
+    defer arena.deinit();
+
+    const buffer = try jsc.Node.StringOrBuffer.fromJS(globalThis, arena.allocator(), input_value) orelse {
         return globalThis.throwInvalidArguments("Expected a string or buffer to render", .{});
     };
-    defer buffer.deinit();
 
     const input = buffer.slice();
 
@@ -227,7 +232,7 @@ fn renderAST(
     // Extract component overrides from 2nd argument
     try renderer.extractComponents(if (components_value.isObject()) components_value else .js_undefined);
 
-    try md.renderWithRenderer(input, bun.default_allocator, options, renderer.renderer());
+    try md.renderWithRenderer(input, arena.allocator(), options, renderer.renderer());
 
     return renderer.getResult();
 }

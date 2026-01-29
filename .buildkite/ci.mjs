@@ -538,6 +538,46 @@ function getLinkBunStep(platform, options) {
 }
 
 /**
+ * Returns true if a platform needs QEMU-based baseline CPU verification.
+ * x64 baseline builds verify no AVX/AVX2 instructions snuck in.
+ * aarch64 builds verify no LSE/SVE instructions snuck in.
+ * @param {Platform} platform
+ * @returns {boolean}
+ */
+function needsBaselineVerification(platform) {
+  const { os, arch, baseline } = platform;
+  if (os !== "linux") return false;
+  return (arch === "x64" && baseline) || arch === "aarch64";
+}
+
+/**
+ * @param {Platform} platform
+ * @param {PipelineOptions} options
+ * @returns {Step}
+ */
+function getVerifyBaselineStep(platform, options) {
+  const { arch } = platform;
+  const targetKey = getTargetKey(platform);
+  const archArg = arch === "x64" ? "x64" : "aarch64";
+
+  return {
+    key: `${targetKey}-verify-baseline`,
+    label: `${getTargetLabel(platform)} - verify-baseline`,
+    depends_on: [`${targetKey}-build-bun`],
+    agents: getLinkBunAgent(platform, options),
+    retry: getRetry(),
+    cancel_on_build_failing: isMergeQueue(),
+    timeout_in_minutes: 5,
+    command: [
+      `buildkite-agent artifact download '*.zip' . --step ${targetKey}-build-bun`,
+      `unzip -o *.zip`,
+      `chmod +x bun`,
+      `./scripts/verify-baseline-cpu.sh --arch ${archArg} --binary ./bun`,
+    ],
+  };
+}
+
+/**
  * @param {Platform} platform
  * @param {PipelineOptions} options
  * @returns {Step}
@@ -1125,6 +1165,10 @@ async function getPipeline(options = {}) {
         steps.push(getBuildCppStep(target, options));
         steps.push(getBuildZigStep(target, options));
         steps.push(getLinkBunStep(target, options));
+
+        if (needsBaselineVerification(target)) {
+          steps.push(getVerifyBaselineStep(target, options));
+        }
 
         return getStepWithDependsOn(
           {

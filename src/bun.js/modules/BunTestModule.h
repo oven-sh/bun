@@ -8,7 +8,7 @@ void generateNativeModule_BunTest(
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
-    auto catchScope = DECLARE_CATCH_SCOPE(vm);
+    auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     JSObject* object = globalObject->lazyTestModuleObject();
 
@@ -19,16 +19,16 @@ void generateNativeModule_BunTest(
     // Also export all properties as named exports
     JSC::PropertyNameArrayBuilder properties(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
     object->methodTable()->getOwnPropertyNames(object, lexicalGlobalObject, properties, JSC::DontEnumPropertiesMode::Exclude);
-    if (catchScope.exception()) [[unlikely]] {
-        (void)catchScope.tryClearException();
+    if (topExceptionScope.exception()) [[unlikely]] {
+        (void)topExceptionScope.tryClearException();
         return;
     }
 
     for (auto& property : properties.releaseData()->propertyNameVector()) {
         JSC::PropertySlot slot(object, JSC::PropertySlot::InternalMethodType::Get);
         auto ownPropertySlot = object->methodTable()->getOwnPropertySlot(object, lexicalGlobalObject, property, slot);
-        if (catchScope.exception()) [[unlikely]] {
-            (void)catchScope.tryClearException();
+        if (topExceptionScope.exception()) [[unlikely]] {
+            (void)topExceptionScope.tryClearException();
         }
         if (ownPropertySlot) {
             exportNames.append(property);

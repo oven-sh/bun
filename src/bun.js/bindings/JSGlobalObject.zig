@@ -479,7 +479,7 @@ pub const JSGlobalObject = opaque {
         return JSC__JSGlobalObject__generateHeapSnapshot(this);
     }
 
-    // DEPRECATED - use CatchScope to check for exceptions and signal exceptions by returning JSError
+    // DEPRECATED - use TopExceptionScope to check for exceptions and signal exceptions by returning JSError
     pub fn hasException(this: *JSGlobalObject) bool {
         return JSGlobalObject__hasException(this);
     }

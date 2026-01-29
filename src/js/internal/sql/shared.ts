@@ -668,6 +668,17 @@ function parseOptions(
     tls = true;
   }
 
+  // Inject serverName for SNI and Hostname verification if not already present
+  if (sslMode !== SSLMode.disable && !tls?.serverName) {
+    if (hostname) {
+      if (typeof tls === "boolean") {
+        tls = { serverName: hostname };
+      } else if (tls) {
+        tls = { ...tls, serverName: hostname };
+      }
+    }
+  }
+
   // Enforce rejectUnauthorized = true for verify modes.
   // This ensures the SSL handshake actually performs verification so we can check the result in PostgresSQLConnection.zig.
   // We do not strictly require tls.ca here, allowing usage of system CAs.
@@ -876,17 +887,6 @@ function parseOptions(
     max = Number(max);
     if (max > 2 ** 31 || max < 1 || max !== max) {
       throw $ERR_INVALID_ARG_VALUE("options.max", max, "must be a non-negative integer between 1 and 2^31");
-    }
-  }
-
-  // Inject serverName for SNI and Hostname verification if not already present
-  if (sslMode !== SSLMode.disable && !tls?.serverName) {
-    if (hostname) {
-      if (typeof tls === "boolean") {
-        tls = { serverName: hostname };
-      } else if (tls) {
-        tls = { ...tls, serverName: hostname };
-      }
     }
   }
 

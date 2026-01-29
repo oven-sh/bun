@@ -260,6 +260,11 @@ fn SocketHandler(comptime ssl: bool) type {
                     }
                 }
 
+                if (ssl_error.error_no == 0) {
+                    this.fail("SSL/TLS verification failed", error.SslConnectionError);
+                    return;
+                }
+
                 // Fallback to standard SSL error reporting
                 this.failWithJSValue(ssl_error.toJS(this.#globalObject) catch return);
             }

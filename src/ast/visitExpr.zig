@@ -1509,8 +1509,97 @@ pub fn VisitExpr(
                     }
                 };
 
+                // IIFE folding optimization: simplify immediately invoked function expressions
+                // Reference: OXC's substitute_iife_call in substitute_alternate_syntax.rs:1599-1679
+                if (p.options.features.minify_syntax) {
+                    if (tryFoldIIFE(p, e_, expr.loc)) |folded| {
+                        return folded;
+                    }
+                }
+
                 return expr;
             }
+
+            /// Optimizes Immediately Invoked Function Expressions (IIFEs)
+            /// - `(() => {})()` → `void 0`
+            /// - `(() => expr)()` → `expr`
+            /// - `(() => { return expr })()` → `expr`
+            /// - `(() => { sideEffect() })()` → `(sideEffect(), void 0)`
+            /// - `(function() {})()` → `void 0`
+            fn tryFoldIIFE(p: *P, call: *E.Call, loc: logger.Loc) ?Expr {
+                // Condition 1: No arguments in the call
+                if (call.args.len != 0) return null;
+
+                // Condition 2: Not an optional chain
+                if (call.optional_chain != null) return null;
+
+                // Case A: Arrow function (() => ...)()
+                if (call.target.data.as(.e_arrow)) |arrow| {
+                    // No parameters allowed
+                    if (arrow.args.len != 0) return null;
+
+                    // Skip async arrows (they return Promises)
+                    if (arrow.is_async) return null;
+
+                    const stmts = arrow.body.stmts;
+
+                    // Case A1: Empty body → void 0
+                    // (() => {})() → void 0
+                    if (stmts.len == 0) {
+                        return p.newExpr(E.Undefined{}, loc);
+                    }
+
+                    // Case A2: Single statement body
+                    if (stmts.len == 1) {
+                        const stmt = stmts[0];
+
+                        switch (stmt.data) {
+                            .s_return => |ret| {
+                                if (ret.value) |value| {
+                                    // (() => { return expr })() → expr
+                                    // (() => expr)() → expr (when prefer_expr is true)
+                                    return value;
+                                }
+                                // (() => { return })() → void 0
+                                return p.newExpr(E.Undefined{}, loc);
+                            },
+                            .s_expr => |expr_stmt| {
+                                // (() => { sideEffect() })() → (sideEffect(), void 0)
+                                return p.newExpr(E.Binary{
+                                    .op = .bin_comma,
+                                    .left = expr_stmt.value,
+                                    .right = p.newExpr(E.Undefined{}, loc),
+                                }, loc);
+                            },
+                            else => return null,
+                        }
+                    }
+
+                    return null;
+                }
+
+                // Case B: Function expression (function() {})()
+                if (call.target.data.as(.e_function)) |func| {
+                    const f = &func.func;
+
+                    // No parameters allowed
+                    if (f.args.len != 0) return null;
+
+                    // Skip async/generator functions (they return Promise/Generator)
+                    if (f.flags.contains(.is_async) or f.flags.contains(.is_generator)) return null;
+
+                    // Only handle empty body (to avoid `this` binding issues)
+                    // (function() {})() → void 0
+                    if (f.body.stmts.len == 0) {
+                        return p.newExpr(E.Undefined{}, loc);
+                    }
+
+                    return null;
+                }
+
+                return null;
+            }
+
             pub fn e_new(p: *P, expr: Expr, _: ExprIn) Expr {
                 const e_ = expr.data.e_new;
                 e_.target = p.visitExpr(e_.target);

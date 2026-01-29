@@ -66,7 +66,7 @@ describe("issue #26575", () => {
   background-image: url("./img.png");
 }`,
       // Large image content that won't be inlined (over 128KB threshold)
-      "/img.png": "x".repeat(150000),
+      "/img.png": Buffer.alloc(150000, "x"),
     },
     entryPoints: ["/index.html"],
     onAfterBundle(api) {

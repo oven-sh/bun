@@ -1190,6 +1190,13 @@ pub const AsyncReaddirRecursiveTask = struct {
             }
         }
 
+        // Sort the final result list to match Node.js behavior
+        switch (this.args.tag()) {
+            inline else => |tag| {
+                sortReaddirEntries(@TypeOf(@field(this.result_list, @tagName(tag)).items[0]), @field(this.result_list, @tagName(tag)).items);
+            },
+        }
+
         this.globalObject.bunVMConcurrently().enqueueTaskConcurrent(jsc.ConcurrentTask.create(jsc.Task.init(this)));
     }
 
@@ -4440,6 +4447,26 @@ pub const NodeFS = struct {
         };
     }
 
+    fn sortReaddirEntries(comptime ExpectedType: type, entries: []ExpectedType) void {
+        std.mem.sort(ExpectedType, entries, {}, struct {
+            fn lessThan(_: void, a: ExpectedType, b: ExpectedType) bool {
+                const a_slice = switch (ExpectedType) {
+                    bun.String => a.byteSlice(),
+                    Buffer => a.buffer.byteSlice(),
+                    bun.jsc.Node.Dirent => a.name.byteSlice(),
+                    else => @compileError("unreachable"),
+                };
+                const b_slice = switch (ExpectedType) {
+                    bun.String => b.byteSlice(),
+                    Buffer => b.buffer.byteSlice(),
+                    bun.jsc.Node.Dirent => b.name.byteSlice(),
+                    else => @compileError("unreachable"),
+                };
+                return std.mem.order(u8, a_slice, b_slice) == .lt;
+            }
+        }.lessThan);
+    }
+
     fn readdirWithEntries(
         args: Arguments.Readdir,
         fd: bun.FileDescriptor,
@@ -4547,6 +4574,9 @@ pub const NodeFS = struct {
                 }
             }
         }
+
+        // Sort entries to match Node.js behavior
+        sortReaddirEntries(ExpectedType, entries.items);
 
         return .success;
     }

@@ -433,6 +433,7 @@ pub const Command = struct {
             outdir: []const u8 = "",
             outfile: []const u8 = "",
             metafile: [:0]const u8 = "",
+            metafile_md: [:0]const u8 = "",
             root_dir: []const u8 = "",
             public_path: []const u8 = "",
             entry_naming: []const u8 = "[dir]/[name].[ext]",

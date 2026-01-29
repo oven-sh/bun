@@ -73,7 +73,8 @@ test("fs.readdir recursive returns sorted entries", async () => {
 
   const entries = fs.readdirSync(String(dir), { recursive: true });
   // Sort expectations for recursive: all entries should be sorted
-  expect(entries.sort()).toEqual(entries);
+  const sortedEntries = entries.slice().sort();
+  expect(entries).toEqual(sortedEntries);
 });
 
 test("fs.readdir with mixed case returns sorted entries", async () => {

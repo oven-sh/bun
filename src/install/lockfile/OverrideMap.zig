@@ -892,7 +892,7 @@ pub fn parseFromResolutions(
 }
 
 const ResolutionSegments = struct {
-    segments: [8][]const u8 = undefined,
+    segments: [8][]const u8 = .{""} ** 8,
     count: usize = 0,
     last: []const u8 = "",
     overflow: bool = false,

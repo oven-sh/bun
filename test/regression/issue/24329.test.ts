@@ -13,8 +13,9 @@ test("bun npm placeholder script should exit with error if postinstall hasn't ru
 
   // This is the placeholder script content that gets written to bin/bun.exe
   // during npm package build (see packages/bun-release/scripts/upload-npm.ts)
-  const placeholderScript = `#!/bin/sh
-echo "Error: Bun's postinstall script was not run." >&2
+  // Note: no shebang — a #!/bin/sh shebang breaks Windows because npm's cmd-shim
+  // bakes the interpreter path into .ps1/.cmd wrappers before postinstall runs.
+  const placeholderScript = `echo "Error: Bun's postinstall script was not run." >&2
 echo "" >&2
 echo "This occurs when using --ignore-scripts during installation, or when using a" >&2
 echo "package manager like pnpm that does not run postinstall scripts by default." >&2
@@ -38,9 +39,11 @@ exit 1
   });
   expect(chmodExitCode).toBe(0);
 
-  // Run the placeholder script
+  // Run via sh explicitly — in real usage, bash/zsh automatically fall back to sh
+  // interpretation when execve returns ENOEXEC for a shebang-less executable file.
+  // Bun.spawn doesn't have that fallback, so we invoke sh directly here.
   await using proc = Bun.spawn({
-    cmd: ["./bun-placeholder", "--version"],
+    cmd: ["sh", "./bun-placeholder"],
     cwd: String(dir),
     env: bunEnv,
     stdout: "pipe",

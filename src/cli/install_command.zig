@@ -87,7 +87,11 @@ fn installWithCLI(ctx: Command.Context, cli: CommandLineArguments) !void {
         or !manager.options.local_package_features.optional_dependencies
         or !manager.options.local_package_features.peer_dependencies)
     {
-        try PackageInstall.scheduleTopLevelOmittedCleanup(manager);
+        PackageInstall.scheduleTopLevelOmittedCleanup(manager) catch |err| {  
+            if (PackageManager.verbose_install) {  
+                Output.debugWarn("omit cleanup skipped: {s}", .{`@errorName`(err)});  
+            }  
+        };
     }
 }
 

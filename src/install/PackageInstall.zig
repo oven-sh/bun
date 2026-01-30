@@ -1219,18 +1219,12 @@ pub const PackageInstall = struct {
     }
 
     pub fn scheduleTopLevelOmittedCleanup(manager: *PackageManager) !void {
-        const std = @import("std");
-        const bun = @import("bun");
-        const FileSystem = bun.fs.FileSystem;
-        const String = bun.Semver.String;
-        const PackageNameHash = bun.install.PackageNameHash;
-
         if (manager.lockfile == null) return;
 
         // Try open top-level node_modules; nothing to do if missing.
         var cwd = std.fs.cwd();
-        var node_modules_dir = cwd.openDir("node_modules", .{}) catch return;
-        defer node_modules_dir.close();
+        const node_modules_path = bun.path.joinAbsString(FileSystem.instance.top_level_dir, &.{ "node_modules" }, .auto);
+        var node_modules_dir = bun.openDirA(cwd, node_modules_path) catch return;
 
         const name_hashes = manager.lockfile.packages.items(.name_hash);
 
@@ -1269,7 +1263,7 @@ pub const PackageInstall = struct {
         // PASS 2: schedule deletion tasks
         // Re-open node_modules to iterate again (old iterator consumed it).
         node_modules_dir.close();
-        node_modules_dir = cwd.openDir("node_modules", .{}) catch return;
+        node_modules_dir = bun.openDirA(cwd, node_modules_path) catch return;
         defer node_modules_dir.close();
 
         var it2 = node_modules_dir.iterate();
@@ -1292,8 +1286,8 @@ pub const PackageInstall = struct {
                         const abs = bun.handleOom(bun.default_allocator.dupeZ(u8, bun.path.joinAbsString(FileSystem.instance.top_level_dir, &.{ "node_modules", name, inner.name }, .auto)));
 
                         const DeleteTask = struct {
-                            absolute_path: []const u8,
-                            task: jsc.WorkPoolTask = .{ .callback = &run },
+                            `#absolute_path`: []const u8,
+                            `#task`: jsc.WorkPoolTask = .{ .callback = &run },
 
                             pub fn run(task_ptr: *jsc.WorkPoolTask) void {
                                 var self: *@This() = @fieldParentPtr("task", task_ptr);
@@ -1304,8 +1298,8 @@ pub const PackageInstall = struct {
                                 }
                                 defer self.deinit();
 
-                                const dirname = std.fs.path.dirname(self.absolute_path) orelse {
-                                    Output.debugWarn("Unexpectedly failed to get dirname of {s}", .{ self.absolute_path });
+                                const dirname = std.fs.path.dirname(self.#absolute_path) orelse {
+                                    Output.debugWarn("Unexpectedly failed to get dirname of {s}", .{ self.#absolute_path });
                                     return;
                                 };
                                 const basename = std.fs.path.basename(self.absolute_path);
@@ -1331,13 +1325,13 @@ pub const PackageInstall = struct {
                             }
 
                             pub fn deinit(this: *@This()) void {
-                                bun.default_allocator.free(this.absolute_path);
+                                bun.default_allocator.free(this.#absolute_path);
                                 bun.destroy(this);
                             }
                         };
 
                         var t = try bun.default_allocator.create(DeleteTask);
-                        t.* = DeleteTask{ .absolute_path = abs, .task = .{ .callback = &DeleteTask.run } };
+                        t.* = .{ .#absolute_path = abs, .#task = .{ .callback = &DeleteTask.run } };
                         manager.thread_pool.schedule(bun.ThreadPool.Batch.from(&t.task));
                     }
                     bun.default_allocator.free(pkg_name_buf);
@@ -1679,5 +1673,6 @@ const PackageManager = install.PackageManager;
 const Repository = install.Repository;
 const Resolution = install.Resolution;
 const TruncatedPackageNameHash = install.TruncatedPackageNameHash;
+const PackageNameHash = bun.install.PackageNameHash;
 const buntaghashbuf_make = install.buntaghashbuf_make;
 const initializeStore = install.initializeStore;

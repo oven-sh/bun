@@ -1785,7 +1785,7 @@ pub const DuplexUpgradeContext = struct {
     task_event: EventState = .StartTLS,
     ssl_config: ?jsc.API.ServerConfig.SSLConfig,
     is_open: bool = false,
-    mode: SocketMode = .client,
+    #mode: SocketMode = .client,
 
     pub const EventState = enum(u8) {
         StartTLS,
@@ -1868,8 +1868,8 @@ pub const DuplexUpgradeContext = struct {
         switch (this.task_event) {
             .StartTLS => {
                 if (this.ssl_config) |config| {
-                    log("DuplexUpgradeContext.startTLS mode={s}", .{@tagName(this.mode)});
-                    this.upgrade.startTLS(config, this.mode == .client) catch |err| {
+                    log("DuplexUpgradeContext.startTLS mode={s}", .{@tagName(this.#mode)});
+                    this.upgrade.startTLS(config, this.#mode == .client) catch |err| {
                         switch (err) {
                             error.OutOfMemory => {
                                 bun.outOfMemory();
@@ -1996,7 +1996,7 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *jsc.JSGlobalObject, callframe: *jsc.C
         .vm = globalObject.bunVM(),
         .task = undefined,
         .ssl_config = socket_config.*,
-        .mode = if (is_server) .duplex_server else .client,
+        .#mode = if (is_server) .duplex_server else .client,
     });
     tls.ref();
 

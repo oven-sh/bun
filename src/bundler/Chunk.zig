@@ -504,7 +504,7 @@ pub const Chunk = struct {
         css_chunks: []u32 = &.{},
 
         /// Serialized ModuleInfo for ESM bytecode (--compile --bytecode --format=esm)
-        module_info_bytes: []const u8 = "",
+        module_info_bytes: ?[]const u8 = null,
         /// Unserialized ModuleInfo for deferred serialization (after chunk paths are resolved)
         module_info: ?*analyze_transpiled_module.ModuleInfo = null,
     };

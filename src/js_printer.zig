@@ -6329,16 +6329,18 @@ pub fn printCommonJS(
     return @as(usize, @intCast(@max(printer.writer.written, 0)));
 }
 
-pub fn serializeModuleInfo(module_info: ?*analyze_transpiled_module.ModuleInfo) []const u8 {
-    const mi = module_info orelse return "";
+/// Serializes ModuleInfo to an owned byte slice. Returns null on failure.
+/// The caller is responsible for freeing the returned slice with bun.default_allocator.
+pub fn serializeModuleInfo(module_info: ?*analyze_transpiled_module.ModuleInfo) ?[]const u8 {
+    const mi = module_info orelse return null;
     if (!mi.finalized) {
-        mi.finalize() catch return "";
+        mi.finalize() catch return null;
     }
     const deserialized = mi.asDeserialized();
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(bun.default_allocator);
-    deserialized.serialize(buf.writer(bun.default_allocator)) catch return "";
-    return buf.toOwnedSlice(bun.default_allocator) catch "";
+    deserialized.serialize(buf.writer(bun.default_allocator)) catch return null;
+    return buf.toOwnedSlice(bun.default_allocator) catch null;
 }
 
 const string = []const u8;

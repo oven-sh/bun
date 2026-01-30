@@ -426,7 +426,10 @@ pub fn transpileSourceCode(
                 const module_info: ?*analyze_transpiled_module.ModuleInfoDeserialized = blk: {
                     if (entry.esm_record.len > 0) {
                         if (entry.metadata.module_type == .cjs) {
-                            @panic("TranspilerCache contained cjs module with module info");
+                            if (comptime Environment.isDebug) {
+                                @panic("TranspilerCache contained cjs module with module info");
+                            }
+                            break :blk null;
                         }
                         break :blk analyze_transpiled_module.ModuleInfoDeserialized.createFromCachedRecord(entry.esm_record, bun.default_allocator);
                     }

@@ -494,6 +494,14 @@ pub fn generateChunksInParallel(
                 .none => {},
             }
 
+            // Compute side early so it can be used for bytecode, module_info, and main chunk output files
+            const side: bun.bake.Side = if (chunk.content == .css or chunk.flags.is_browser_chunk_from_server_build)
+                .client
+            else switch (c.graph.ast.items(.target)[chunk.entry_point.source_index]) {
+                .browser => .client,
+                else => .server,
+            };
+
             const bytecode_output_file: ?options.OutputFile = brk: {
                 if (c.options.generate_bytecode_cache) {
                     const loader: Loader = if (chunk.entry_point.is_entry_point)
@@ -511,11 +519,14 @@ pub fn generateChunksInParallel(
                         // that will be used at runtime. The module name is:
                         //   public_path + final_rel_path (e.g., "/$bunfs/root/app.js")
                         // Without this prefix, the JSC bytecode cache key won't match at runtime.
+                        // Use the per-chunk public_path (already computed above) for browser chunks
+                        // from server builds, and normalize with cheapPrefixNormalizer for consistency
+                        // with module_info path fixup.
                         // For non-compile builds, use the normal .jsc extension.
-                        var source_provider_url = if (c.options.compile)
-                            try bun.String.createFormat("{s}{s}", .{ c.options.public_path, chunk.final_rel_path })
-                        else
-                            try bun.String.createFormat("{s}" ++ bun.bytecode_extension, .{chunk.final_rel_path});
+                        var source_provider_url = if (c.options.compile) url_blk: {
+                            const normalizer = bun.bundle_v2.cheapPrefixNormalizer(public_path, chunk.final_rel_path);
+                            break :url_blk try bun.String.createFormat("{s}{s}", .{ normalizer[0], normalizer[1] });
+                        } else try bun.String.createFormat("{s}" ++ bun.bytecode_extension, .{chunk.final_rel_path});
                         source_provider_url.ref();
 
                         defer source_provider_url.deref();
@@ -540,7 +551,7 @@ pub fn generateChunksInParallel(
                                 .data = .{
                                     .buffer = .{ .data = bytecode, .allocator = cached_bytecode.allocator() },
                                 },
-                                .side = .server,
+                                .side = side,
                                 .entry_point_index = null,
                                 .is_executable = false,
                             });
@@ -567,8 +578,7 @@ pub fn generateChunksInParallel(
                         .js;
 
                     if (chunk.content == .javascript and loader.isJavaScriptLike()) {
-                        const module_info_bytes = chunk.content.javascript.module_info_bytes;
-                        if (module_info_bytes.len > 0) {
+                        if (chunk.content.javascript.module_info_bytes) |module_info_bytes| {
                             break :brk options.OutputFile.init(.{
                                 .output_path = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{s}.module-info", .{chunk.final_rel_path})),
                                 .input_path = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{s}.module-info", .{chunk.final_rel_path})),
@@ -581,7 +591,7 @@ pub fn generateChunksInParallel(
                                 .data = .{
                                     .buffer = .{ .data = module_info_bytes, .allocator = bun.default_allocator },
                                 },
-                                .side = .server,
+                                .side = side,
                                 .entry_point_index = null,
                                 .is_executable = false,
                             });
@@ -613,12 +623,6 @@ pub fn generateChunksInParallel(
             else
                 .chunk;
 
-            const side: bun.bake.Side = if (chunk.content == .css or chunk.flags.is_browser_chunk_from_server_build)
-                .client
-            else switch (c.graph.ast.items(.target)[chunk.entry_point.source_index]) {
-                .browser => .client,
-                else => .server,
-            };
             const chunk_index = output_files.insertForChunk(options.OutputFile.init(.{
                 .data = .{
                     .buffer = .{

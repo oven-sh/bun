@@ -865,7 +865,7 @@ body {
   background: url(./image.png);
 }`,
       // Small image content that will be inlined in CSS (< 128KB)
-      "/image.png": "x".repeat(100),
+      "/image.png": Buffer.alloc(100, "x").toString(),
     },
     entryPoints: ["/index.html"],
     onAfterBundle(api) {
@@ -873,10 +873,11 @@ body {
 
       // HTML should reference a hashed image file (not the original name)
       expect(htmlContent).not.toContain("./image.png");
-      expect(htmlContent).toMatch(/src="[^"]*\.png"/);
+      // Require hashed filename format: image-[hash].png or [hash].png
+      expect(htmlContent).toMatch(/src="[^"]*-[a-zA-Z0-9]+\.png"/);
 
       // Extract the image path from HTML
-      const imgMatch = htmlContent.match(/src="([^"]*\.png)"/);
+      const imgMatch = htmlContent.match(/src="([^"]*-[a-zA-Z0-9]+\.png)"/);
       expect(imgMatch).not.toBeNull();
 
       // The image file must exist and be readable (this will throw if file doesn't exist)

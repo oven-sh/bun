@@ -1177,11 +1177,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             // --windows-hide-console technically doesnt depend on WinAPI, but since since --windows-icon
             // does, all of these customization options have been gated to windows-only
             if (!Environment.isWindows) {
-                Output.errGeneric("--windows-hide-console is only available when compiling on Windows", .{});
-                Global.crash();
-            }
-            if (ctx.bundler_options.compile_target.os != .windows) {
-                Output.errGeneric("--windows-hide-console requires a Windows compile target", .{});
+                Output.errGeneric("Using --windows-hide-console is only available when compiling on Windows", .{});
                 Global.crash();
             }
             if (!ctx.bundler_options.compile) {
@@ -1192,11 +1188,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         }
         if (args.option("--windows-icon")) |path| {
             if (!Environment.isWindows) {
-                Output.errGeneric("--windows-icon is only available when compiling on Windows", .{});
-                Global.crash();
-            }
-            if (ctx.bundler_options.compile_target.os != .windows) {
-                Output.errGeneric("--windows-icon requires a Windows compile target", .{});
+                Output.errGeneric("Using --windows-icon is only available when compiling on Windows", .{});
                 Global.crash();
             }
             if (!ctx.bundler_options.compile) {
@@ -1207,11 +1199,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         }
         if (args.option("--windows-title")) |title| {
             if (!Environment.isWindows) {
-                Output.errGeneric("--windows-title is only available when compiling on Windows", .{});
-                Global.crash();
-            }
-            if (ctx.bundler_options.compile_target.os != .windows) {
-                Output.errGeneric("--windows-title requires a Windows compile target", .{});
+                Output.errGeneric("Using --windows-title is only available when compiling on Windows", .{});
                 Global.crash();
             }
             if (!ctx.bundler_options.compile) {
@@ -1222,11 +1210,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         }
         if (args.option("--windows-publisher")) |publisher| {
             if (!Environment.isWindows) {
-                Output.errGeneric("--windows-publisher is only available when compiling on Windows", .{});
-                Global.crash();
-            }
-            if (ctx.bundler_options.compile_target.os != .windows) {
-                Output.errGeneric("--windows-publisher requires a Windows compile target", .{});
+                Output.errGeneric("Using --windows-publisher is only available when compiling on Windows", .{});
                 Global.crash();
             }
             if (!ctx.bundler_options.compile) {
@@ -1237,11 +1221,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         }
         if (args.option("--windows-version")) |version| {
             if (!Environment.isWindows) {
-                Output.errGeneric("--windows-version is only available when compiling on Windows", .{});
-                Global.crash();
-            }
-            if (ctx.bundler_options.compile_target.os != .windows) {
-                Output.errGeneric("--windows-version requires a Windows compile target", .{});
+                Output.errGeneric("Using --windows-version is only available when compiling on Windows", .{});
                 Global.crash();
             }
             if (!ctx.bundler_options.compile) {
@@ -1252,11 +1232,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         }
         if (args.option("--windows-description")) |description| {
             if (!Environment.isWindows) {
-                Output.errGeneric("--windows-description is only available when compiling on Windows", .{});
-                Global.crash();
-            }
-            if (ctx.bundler_options.compile_target.os != .windows) {
-                Output.errGeneric("--windows-description requires a Windows compile target", .{});
+                Output.errGeneric("Using --windows-description is only available when compiling on Windows", .{});
                 Global.crash();
             }
             if (!ctx.bundler_options.compile) {
@@ -1267,11 +1243,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         }
         if (args.option("--windows-copyright")) |copyright| {
             if (!Environment.isWindows) {
-                Output.errGeneric("--windows-copyright is only available when compiling on Windows", .{});
-                Global.crash();
-            }
-            if (ctx.bundler_options.compile_target.os != .windows) {
-                Output.errGeneric("--windows-copyright requires a Windows compile target", .{});
+                Output.errGeneric("Using --windows-copyright is only available when compiling on Windows", .{});
                 Global.crash();
             }
             if (!ctx.bundler_options.compile) {

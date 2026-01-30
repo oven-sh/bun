@@ -263,9 +263,10 @@ describe("HTTP/2 upgrade — socket close ordering", () => {
     await request(client, "GET", "/");
 
     if (h2Session) h2Session.close();
-    await new Promise(r => setTimeout(r, 20));
+    const socketClosed = Promise.withResolvers<void>();
+    rawSocket!.once("close", () => socketClosed.resolve());
     rawSocket!.destroy();
-    await new Promise(r => setTimeout(r, 20));
+    await socketClosed.promise;
 
     client.close();
     netServer.close();

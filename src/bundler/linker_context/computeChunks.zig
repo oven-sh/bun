@@ -426,6 +426,7 @@ pub noinline fn computeChunks(
                 .bun => "bun",
                 .node => "node",
                 .bun_macro => "macro",
+                .cloudflare => "cloudflare",
                 .bake_server_components_ssr => "ssr",
             };
         }

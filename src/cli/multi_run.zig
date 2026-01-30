@@ -175,7 +175,7 @@ const State = struct {
         return this.remaining_scripts == 0;
     }
 
-    fn readChunk(this: *This, pipe: *PipeReader, chunk: []const u8) !void {
+    fn readChunk(this: *This, pipe: *PipeReader, chunk: []const u8) (std.Io.Writer.Error || bun.OOM)!void {
         try pipe.line_buffer.appendSlice(chunk);
 
         // Route to correct parent stream: child stdout -> parent stdout, child stderr -> parent stderr
@@ -184,7 +184,7 @@ const State = struct {
         // Process complete lines
         while (std.mem.indexOfScalar(u8, pipe.line_buffer.items, '\n')) |newline_pos| {
             const line = pipe.line_buffer.items[0 .. newline_pos + 1];
-            this.writeLineWithPrefix(pipe.handle, line, writer);
+            try this.writeLineWithPrefix(pipe.handle, line, writer);
             // Remove processed line from buffer
             const remaining = pipe.line_buffer.items[newline_pos + 1 ..];
             std.mem.copyForwards(u8, pipe.line_buffer.items[0..remaining.len], remaining);
@@ -192,35 +192,35 @@ const State = struct {
         }
     }
 
-    fn writeLineWithPrefix(this: *This, handle: *ProcessHandle, line: []const u8, writer: anytype) void {
-        this.writePrefix(handle, writer);
-        writer.writeAll(line) catch {};
+    fn writeLineWithPrefix(this: *This, handle: *ProcessHandle, line: []const u8, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        try this.writePrefix(handle, writer);
+        try writer.writeAll(line);
     }
 
-    fn writePrefix(this: *This, handle: *ProcessHandle, writer: anytype) void {
+    fn writePrefix(this: *This, handle: *ProcessHandle, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         if (this.use_colors) {
-            writer.writeAll(colors[handle.color_idx % colors.len]) catch {};
+            try writer.writeAll(colors[handle.color_idx % colors.len]);
         }
 
-        writer.writeAll(handle.config.label) catch {};
+        try writer.writeAll(handle.config.label);
         const padding = this.max_label_len -| handle.config.label.len;
         for (0..padding) |_| {
-            writer.writeByte(' ') catch {};
+            try writer.writeByte(' ');
         }
 
         if (this.use_colors) {
-            writer.writeAll(reset) catch {};
+            try writer.writeAll(reset);
         }
 
-        writer.writeAll(" | ") catch {};
+        try writer.writeAll(" | ");
     }
 
-    fn flushPipeBuffer(this: *This, handle: *ProcessHandle, pipe: *PipeReader) void {
+    fn flushPipeBuffer(this: *This, handle: *ProcessHandle, pipe: *PipeReader) std.Io.Writer.Error!void {
         if (pipe.line_buffer.items.len > 0) {
             const line = pipe.line_buffer.items;
             const needs_newline = line.len > 0 and line[line.len - 1] != '\n';
             const writer = if (pipe.is_stderr) Output.errorWriter() else Output.writer();
-            this.writeLineWithPrefix(handle, line, writer);
+            try this.writeLineWithPrefix(handle, line, writer);
             if (needs_newline) {
                 writer.writeAll("\n") catch {};
             }
@@ -228,40 +228,40 @@ const State = struct {
         }
     }
 
-    fn processExit(this: *This, handle: *ProcessHandle) !void {
+    fn processExit(this: *This, handle: *ProcessHandle) std.Io.Writer.Error!void {
         this.remaining_scripts -= 1;
 
         // Flush remaining buffers (stdout first, then stderr)
-        this.flushPipeBuffer(handle, &handle.stdout_reader);
-        this.flushPipeBuffer(handle, &handle.stderr_reader);
+        try this.flushPipeBuffer(handle, &handle.stdout_reader);
+        try this.flushPipeBuffer(handle, &handle.stderr_reader);
 
         // Print exit status to stderr (status messages always go to stderr)
         const writer = Output.errorWriter();
-        this.writePrefix(handle, writer);
+        try this.writePrefix(handle, writer);
 
         switch (handle.process.?.status) {
             .exited => |exited| {
                 if (exited.code != 0) {
-                    writer.print("Exited with code {d}\n", .{exited.code}) catch {};
+                    try writer.print("Exited with code {d}\n", .{exited.code});
                 } else {
                     if (handle.start_time != null and handle.end_time != null) {
                         const duration = handle.end_time.?.since(handle.start_time.?);
                         const ms = @as(f64, @floatFromInt(duration)) / 1_000_000.0;
                         if (ms > 1000.0) {
-                            writer.print("Done in {d:.2}s\n", .{ms / 1000.0}) catch {};
+                            try writer.print("Done in {d:.2}s\n", .{ms / 1000.0});
                         } else {
-                            writer.print("Done in {d:.0}ms\n", .{ms}) catch {};
+                            try writer.print("Done in {d:.0}ms\n", .{ms});
                         }
                     } else {
-                        writer.writeAll("Done\n") catch {};
+                        try writer.writeAll("Done\n");
                     }
                 }
             },
             .signaled => |signal| {
-                writer.print("Signaled: {s}\n", .{@tagName(signal)}) catch {};
+                try writer.print("Signaled: {s}\n", .{@tagName(signal)});
             },
             else => {
-                writer.writeAll("Error\n") catch {};
+                try writer.writeAll("Error\n");
             },
         }
 

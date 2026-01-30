@@ -4025,10 +4025,11 @@ fn fromJSWithoutDeferGC(
                                     joiner.pushStatic(blob.sharedView());
                                     continue;
                                 } else {
-                                    const sliced = try current.toSliceClone(global);
+                                    const sliced = try item.toSliceClone(global);
                                     const allocator = sliced.allocator.get();
                                     could_have_non_ascii = could_have_non_ascii or allocator != null;
                                     joiner.push(sliced.slice(), allocator);
+                                    continue;
                                 }
                             },
                             else => {},

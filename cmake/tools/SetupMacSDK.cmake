@@ -31,10 +31,6 @@ execute_process(
   ERROR_QUIET
 )
 
-if(MACOS_VERSION VERSION_LESS ${CMAKE_OSX_DEPLOYMENT_TARGET})
-  message(WARNING "macOS ${MACOS_VERSION} is older than target ${CMAKE_OSX_DEPLOYMENT_TARGET}, overriding")
-  set(CMAKE_OSX_DEPLOYMENT_TARGET ${MACOS_VERSION} CACHE STRING "" FORCE)
-endif()
 execute_process(
   COMMAND xcrun --sdk macosx --show-sdk-path
   OUTPUT_VARIABLE DEFAULT_CMAKE_OSX_SYSROOT

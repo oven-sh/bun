@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { realpathSync } from "fs";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import path from "path";
 
 // Helper: spawn bun with multi-run flags, returns { stdout, stderr, exitCode }

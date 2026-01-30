@@ -843,4 +843,46 @@ body {
       api.expectFile("out/" + jsFile).toContain("sourceMappingURL");
     },
   });
+
+  // Test for GitHub issue #26575 - Images incorrectly inlined when imported from CSS
+  // When an image is referenced from both HTML and CSS, the CSS may inline it as base64
+  // but the image file must still be emitted for the HTML reference to work.
+  itBundled("html/shared-image-html-css", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <img src="./image.png" alt="Image from HTML">
+  </body>
+</html>`,
+      "/styles.css": `
+.hero {
+  background: url(./image.png);
+}`,
+      // Small image content that will be inlined in CSS (< 128KB)
+      "/image.png": "x".repeat(100),
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const htmlContent = api.readFile("out/index.html");
+
+      // HTML should reference a hashed image file (not the original name)
+      expect(htmlContent).not.toContain("./image.png");
+      expect(htmlContent).toMatch(/src="[^"]*\.png"/);
+
+      // Extract the image path from HTML
+      const imgMatch = htmlContent.match(/src="([^"]*\.png)"/);
+      expect(imgMatch).not.toBeNull();
+
+      // The image file must exist and be readable (this will throw if file doesn't exist)
+      const imagePath = imgMatch![1];
+      const imageContent = api.readFile("out/" + imagePath);
+      expect(imageContent.length).toBeGreaterThan(0);
+    },
+  });
 });

@@ -311,8 +311,11 @@ pub const BundleV2 = struct {
                 }
             }
 
-            const is_js = v.all_loaders[source_index.get()].isJavaScriptLike();
-            const is_css = v.all_loaders[source_index.get()].isCSS();
+            const loader = v.all_loaders[source_index.get()];
+            const is_js = loader.isJavaScriptLike();
+            const is_css = loader.isCSS();
+            // HTML files also need asset files to be emitted (not inlined as data URLs)
+            const is_html = loader == .html;
 
             const import_record_list_id = source_index;
             // when there are no import records, v index will be invalid
@@ -341,9 +344,11 @@ pub const BundleV2 = struct {
                             }
                         }
 
-                        // Mark if the file is imported by JS and its URL is inlined for CSS
+                        // Mark if the file is imported by JS/HTML and its URL is inlined for CSS.
+                        // HTML needs actual file URLs (not data URLs), so treat HTML imports like JS imports.
+                        // https://github.com/oven-sh/bun/issues/26575
                         const is_inlined = import_record.source_index.isValid() and v.all_urls_for_css[import_record.source_index.get()].len > 0;
-                        if (is_js and is_inlined) {
+                        if ((is_js or is_html) and is_inlined) {
                             v.additional_files_imported_by_js_and_inlined_in_css.set(import_record.source_index.get());
                         } else if (is_css and is_inlined) {
                             v.additional_files_imported_by_css_and_inlined.set(import_record.source_index.get());

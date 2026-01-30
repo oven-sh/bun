@@ -969,6 +969,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         }
 
         if (ctx.bundler_options.bytecode) {
+            ctx.bundler_options.output_format = .cjs;
             ctx.args.target = .bun;
         }
 

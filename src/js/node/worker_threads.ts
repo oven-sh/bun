@@ -56,7 +56,7 @@ function getOrCreateStdioStream(worker: object, type: string, nativeWorker: WebW
 
   // CALL it using bracket notation.
   // This syntax `obj["method"]()` preserves the 'this' context.
-  const fds = nativeWorker["$getStdioFds"]();
+  const fds = nativeWorker["$getStdioFds"].$call(nativeWorker);
   if (!fds) return null;
 
   const fdIndex = type === "stdout" ? 0 : type === "stderr" ? 1 : 2;

@@ -493,17 +493,20 @@ fn deinit(this: *WebWorker) void {
     }
     bun.default_allocator.free(this.preloads);
 
-    // Close worker-side pipe ends to signal EOF to parent and prevent FD leaks
-    // Worker uses: stdout_pipe[1] (write), stderr_pipe[1] (write), stdin_pipe[0] (read)
-    // Parent-side ends remain open for parent to manage
+    // Close BOTH ends of the pipes.
+    // Since Bun.file(fd).stream() duplicates the FD, the JS side has its own copy.
+    // We must close these originals to avoid leaking file descriptors in the parent process.
     if (this.#stdout_pipe) |p| {
-        p[1].close(); // Close worker write end
+        p[0].close();
+        p[1].close();
     }
     if (this.#stderr_pipe) |p| {
-        p[1].close(); // Close worker write end
+        p[0].close();
+        p[1].close();
     }
     if (this.#stdin_pipe) |p| {
-        p[0].close(); // Close worker read end
+        p[0].close();
+        p[1].close();
     }
 
     bun.default_allocator.destroy(this);

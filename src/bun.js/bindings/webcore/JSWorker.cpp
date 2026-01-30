@@ -84,6 +84,8 @@ static JSC_DECLARE_CUSTOM_GETTER(jsWorker_onmessageerror);
 static JSC_DECLARE_CUSTOM_SETTER(setJSWorker_onmessageerror);
 static JSC_DECLARE_CUSTOM_GETTER(jsWorker_onerror);
 static JSC_DECLARE_CUSTOM_SETTER(setJSWorker_onerror);
+static JSC_DECLARE_CUSTOM_GETTER(jsWorker_stdoutGetter);
+static JSC_DECLARE_CUSTOM_GETTER(jsWorker_stderrGetter);
 
 class JSWorkerPrototype final : public JSC::JSNonFinalObject {
 public:
@@ -415,6 +417,50 @@ JSC_DEFINE_CUSTOM_GETTER(jsWorker_threadIdGetter, (JSGlobalObject * lexicalGloba
     return JSValue::encode(jsNumber(worker.clientIdentifier() - 1));
 }
 
+// External Zig functions for creating stdout/stderr streams
+extern "C" JSC::EncodedJSValue WebWorker__createStdoutStream(void* worker, JSC::JSGlobalObject* globalObject);
+extern "C" JSC::EncodedJSValue WebWorker__createStderrStream(void* worker, JSC::JSGlobalObject* globalObject);
+
+JSC_DEFINE_CUSTOM_GETTER(jsWorker_stdoutGetter, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
+{
+    auto* castedThis = jsDynamicCast<JSWorker*>(JSValue::decode(thisValue));
+    if (!castedThis) [[unlikely]]
+        return JSValue::encode(jsNull());
+
+    auto& worker = castedThis->wrapped();
+    // Return null if stdout capture was not requested
+    if (!worker.options().captureStdout)
+        return JSValue::encode(jsNull());
+
+    // Get the impl pointer (Zig WebWorker)
+    void* workerImpl = worker.impl();
+    if (!workerImpl)
+        return JSValue::encode(jsNull());
+
+    // Create and return the ReadableStream from the Zig layer
+    return WebWorker__createStdoutStream(workerImpl, lexicalGlobalObject);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(jsWorker_stderrGetter, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
+{
+    auto* castedThis = jsDynamicCast<JSWorker*>(JSValue::decode(thisValue));
+    if (!castedThis) [[unlikely]]
+        return JSValue::encode(jsNull());
+
+    auto& worker = castedThis->wrapped();
+    // Return null if stderr capture was not requested
+    if (!worker.options().captureStderr)
+        return JSValue::encode(jsNull());
+
+    // Get the impl pointer (Zig WebWorker)
+    void* workerImpl = worker.impl();
+    if (!workerImpl)
+        return JSValue::encode(jsNull());
+
+    // Create and return the ReadableStream from the Zig layer
+    return WebWorker__createStderrStream(workerImpl, lexicalGlobalObject);
+}
+
 /* Hash table for prototype */
 
 static const HashTableValue JSWorkerPrototypeTableValues[] = {
@@ -424,6 +470,8 @@ static const HashTableValue JSWorkerPrototypeTableValues[] = {
     { "onmessageerror"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsWorker_onmessageerror, setJSWorker_onmessageerror } },
     { "postMessage"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWorkerPrototypeFunction_postMessage, 1 } },
     { "ref"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWorkerPrototypeFunction_ref, 0 } },
+    { "stderr"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | JSC::PropertyAttribute::ReadOnly, NoIntrinsic, { HashTableValue::GetterSetterType, jsWorker_stderrGetter, nullptr } },
+    { "stdout"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | JSC::PropertyAttribute::ReadOnly, NoIntrinsic, { HashTableValue::GetterSetterType, jsWorker_stdoutGetter, nullptr } },
     { "terminate"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWorkerPrototypeFunction_terminate, 0 } },
     { "threadId"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete, NoIntrinsic, { HashTableValue::GetterSetterType, jsWorker_threadIdGetter, nullptr } },
     { "unref"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWorkerPrototypeFunction_unref, 0 } },

@@ -487,10 +487,13 @@ fn addScriptConfigs(
     } else {
         // Not a package.json script - run as a raw command
         // If it looks like a file path, prefix with bun executable
-        const is_file = raw_name.len > 0 and (raw_name[0] == '.' or raw_name[0] == '/' or hasRunnableExtension(raw_name));
+        const is_file = raw_name.len > 0 and (raw_name[0] == '.' or raw_name[0] == '/' or
+            (Environment.isWindows and raw_name[0] == '\\') or hasRunnableExtension(raw_name));
         const command_z = if (is_file) brk: {
             const bun_path = bun.selfExePath() catch "bun";
-            const cmd_str = try std.fmt.allocPrint(allocator, "{s} {s}" ++ "\x00", .{ bun_path, raw_name });
+            // Quote the bun path so that backslashes on Windows are not
+            // interpreted as escape characters by `bun exec` (Bun's shell).
+            const cmd_str = try std.fmt.allocPrint(allocator, "\"{s}\" {s}" ++ "\x00", .{ bun_path, raw_name });
             break :brk cmd_str[0 .. cmd_str.len - 1 :0];
         } else try allocator.dupeZ(u8, raw_name);
         try configs.append(.{

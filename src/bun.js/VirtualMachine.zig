@@ -3248,6 +3248,22 @@ fn printErrorInstance(
                 }
             }
         }
+
+        // Handle AggregateError's .errors array property
+        if (try error_instance.getOwn(this.global, "errors")) |errors_value| {
+            if (errors_value.jsType().isArray()) {
+                const length = errors_value.getLength(this.global);
+                var i: u32 = 0;
+                while (i < length) : (i += 1) {
+                    if (errors_value.getIndex(this.global, i)) |err| {
+                        if (err.jsType() == .ErrorInstance) {
+                            err.protect();
+                            try errors_to_append.append(err);
+                        }
+                    }
+                }
+            }
+        }
     } else if (mode == .js and error_instance != .zero) {
         // If you do reportError([1,2,3]] we should still show something at least.
         const tag = try jsc.Formatter.Tag.getAdvanced(

@@ -54,6 +54,10 @@ int main_using_file_directory_information(int argc, char *argv[]) {
   // open the current working directory using NT API
   HANDLE hFile = CreateFile(argv[1], GENERIC_READ, FILE_SHARE_READ, NULL,
                             OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
+  if (hFile == INVALID_HANDLE_VALUE) {
+    printf("Error opening directory: %lu\n", GetLastError());
+    return 1;
+  }
 
   // use NtQueryDirectoryFile
   char buffer[64096];
@@ -69,7 +73,7 @@ int main_using_file_directory_information(int argc, char *argv[]) {
 
   PFILE_DIRECTORY_INFORMATION pDirInfo = (PFILE_DIRECTORY_INFORMATION)buffer;
   while (TRUE) {
-    printf("%S\n", pDirInfo->FileName);
+    printf("%.*S\n", pDirInfo->FileNameLength / sizeof(WCHAR), pDirInfo->FileName);
     if (pDirInfo->NextEntryOffset == 0) {
       // if no more entries, continue to next query directory call
       status = NtQueryDirectoryFile(
@@ -116,7 +120,10 @@ int main_using_file_both_information(int argc, char *argv[]) {
   // open the current working directory using NT API
   HANDLE hFile = CreateFile(argv[1], GENERIC_READ, FILE_SHARE_READ, NULL,
                             OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
-
+  if (hFile == INVALID_HANDLE_VALUE) {
+    printf("Error opening directory: %lu\n", GetLastError());
+    return 1;
+  }
   // use NtQueryDirectoryFile
   char buffer[64096];
 
@@ -131,7 +138,7 @@ int main_using_file_both_information(int argc, char *argv[]) {
 
   PFILE_BOTH_DIR_INFORMATION pDirInfo = (PFILE_BOTH_DIR_INFORMATION)buffer;
   while (TRUE) {
-    printf("%S\n", pDirInfo->FileName);
+    printf("%.*S\n", pDirInfo->FileNameLength / sizeof(WCHAR), pDirInfo->FileName);
     if (pDirInfo->NextEntryOffset == 0) {
       // if no more entries, continue to next query directory call
       status = NtQueryDirectoryFile(
@@ -166,6 +173,10 @@ int main_using_findfirstfile_ex(int argc, char *argv[]) {
   // open the current working directory using NT API
   HANDLE hFile = CreateFile(argv[1], GENERIC_READ, FILE_SHARE_READ, NULL,
                             OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
+	if (hFile == INVALID_HANDLE_VALUE) {
+		printf("Error opening directory: %lu\n", GetLastError());
+		return 1;
+	}
 
   char buffer[64096];
 

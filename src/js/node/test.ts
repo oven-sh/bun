@@ -115,25 +115,25 @@ class TestContext {
   }
 
   before(arg0: unknown, arg1: unknown) {
-    const { fn } = createHook(arg0, arg1);
+    const { fn } = createHook(arg0, arg1, this);
     const { beforeAll } = bunTest();
     beforeAll(fn);
   }
 
   after(arg0: unknown, arg1: unknown) {
-    const { fn } = createHook(arg0, arg1);
+    const { fn } = createHook(arg0, arg1, this);
     const { afterAll } = bunTest();
     afterAll(fn);
   }
 
   beforeEach(arg0: unknown, arg1: unknown) {
-    const { fn } = createHook(arg0, arg1);
+    const { fn } = createHook(arg0, arg1, this);
     const { beforeEach } = bunTest();
     beforeEach(fn);
   }
 
   afterEach(arg0: unknown, arg1: unknown) {
-    const { fn } = createHook(arg0, arg1);
+    const { fn } = createHook(arg0, arg1, this);
     const { afterEach } = bunTest();
     afterEach(fn);
   }
@@ -374,13 +374,13 @@ function parseHookOptions(arg0: unknown, arg1: unknown) {
   return { fn, options };
 }
 
-function createHook(arg0: unknown, arg1: unknown) {
+function createHook(arg0: unknown, arg1: unknown, context?: TestContext) {
   const { fn, options } = parseHookOptions(arg0, arg1);
 
   const runHook = (done: (error?: unknown) => void) => {
     let result: unknown;
     try {
-      result = fn();
+      result = fn(context);
     } catch (error) {
       done(error);
       return;
@@ -396,7 +396,7 @@ function createHook(arg0: unknown, arg1: unknown) {
 }
 
 type TestFn = (ctx: TestContext) => unknown | Promise<unknown>;
-type HookFn = () => unknown | Promise<unknown>;
+type HookFn = (ctx?: TestContext) => unknown | Promise<unknown>;
 
 type TestOptions = {
   concurrency?: number | boolean | null;

@@ -13,6 +13,8 @@ const { HttpsProxyAgent } = require("https-proxy-agent") as {
 // Use docker-compose infrastructure for squid proxy
 
 const gc = harness.gc;
+const bunExe = harness.bunExe;
+const bunEnv = harness.bunEnv;
 const isDockerEnabled = harness.isDockerEnabled;
 
 // HTTP CONNECT proxy server for WebSocket tunneling
@@ -654,5 +656,88 @@ describe("ws module with HttpsProxyAgent", () => {
     expect(messages).toContain("connected");
     expect(messages).toContain("hello from ws module via agent");
     gc();
+  });
+});
+
+describe("WebSocket NO_PROXY bypass", () => {
+  test("NO_PROXY matching hostname bypasses explicit proxy for ws://", async () => {
+    // authProxy requires credentials; if NO_PROXY works, the WebSocket bypasses
+    // the proxy and connects directly. If NO_PROXY doesn't work, the proxy
+    // rejects with 407 and the WebSocket errors.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const ws = new WebSocket("ws://127.0.0.1:${wsPort}", { proxy: "http://127.0.0.1:${authProxyPort}" });
+         ws.onopen = () => { ws.close(); process.exit(0); };
+         ws.onerror = () => { process.exit(1); };`,
+      ],
+      env: { ...bunEnv, NO_PROXY: "127.0.0.1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) console.error("stderr:", stderr);
+    expect(exitCode).toBe(0);
+  });
+
+  test("NO_PROXY matching host:port bypasses proxy for ws://", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const ws = new WebSocket("ws://127.0.0.1:${wsPort}", { proxy: "http://127.0.0.1:${authProxyPort}" });
+         ws.onopen = () => { ws.close(); process.exit(0); };
+         ws.onerror = () => { process.exit(1); };`,
+      ],
+      env: { ...bunEnv, NO_PROXY: `127.0.0.1:${wsPort}` },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) console.error("stderr:", stderr);
+    expect(exitCode).toBe(0);
+  });
+
+  test("NO_PROXY not matching still uses proxy (auth fails)", async () => {
+    // NO_PROXY doesn't match the target, so the WebSocket should go through
+    // the auth proxy without credentials, which rejects with 407.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const ws = new WebSocket("ws://127.0.0.1:${wsPort}", { proxy: "http://127.0.0.1:${authProxyPort}" });
+         ws.onopen = () => { process.exit(1); };
+         ws.onerror = () => { process.exit(0); };`,
+      ],
+      env: { ...bunEnv, NO_PROXY: "other.host.com" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const exitCode = await proc.exited;
+    // exit(0) means onerror fired, proving the proxy was used (and auth failed)
+    expect(exitCode).toBe(0);
+  });
+
+  test("NO_PROXY=* bypasses all proxies", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const ws = new WebSocket("ws://127.0.0.1:${wsPort}", { proxy: "http://127.0.0.1:${authProxyPort}" });
+         ws.onopen = () => { ws.close(); process.exit(0); };
+         ws.onerror = () => { process.exit(1); };`,
+      ],
+      env: { ...bunEnv, NO_PROXY: "*" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) console.error("stderr:", stderr);
+    expect(exitCode).toBe(0);
   });
 });

@@ -1036,9 +1036,16 @@ pub const FetchTasklet = struct {
         var proxy: ?ZigURL = null;
         if (fetch_options.proxy) |proxy_opt| {
             if (!proxy_opt.isEmpty()) { //if is empty just ignore proxy
-                proxy = fetch_options.proxy orelse jsc_vm.transpiler.env.getHttpProxyFor(fetch_options.url);
+                // Check NO_PROXY even for explicitly-provided proxies
+                if (!jsc_vm.transpiler.env.isNoProxy(fetch_options.url.hostname, fetch_options.url.host)) {
+                    proxy = proxy_opt;
+                }
+            } else {
+                // if empty just use the default proxy resolution
+                proxy = jsc_vm.transpiler.env.getHttpProxyFor(fetch_options.url);
             }
         } else {
+            // no proxy provided, use default proxy resolution
             proxy = jsc_vm.transpiler.env.getHttpProxyFor(fetch_options.url);
         }
 

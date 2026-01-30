@@ -79,7 +79,7 @@ pub const ExecutionSequence = struct {
     remaining_repeat_count: u32,
     remaining_retry_count: u32,
     flaky_attempt_count: usize = 0,
-    flaky_attempts_buf: [MAX_FLAKY_ATTEMPTS]FlakyAttempt = undefined,
+    flaky_attempts_buf: [MAX_FLAKY_ATTEMPTS]FlakyAttempt = std.mem.zeroes([MAX_FLAKY_ATTEMPTS]FlakyAttempt),
     result: Result = .pending,
     executing: bool = false,
     started_at: bun.timespec = .epoch,

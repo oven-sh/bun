@@ -70,12 +70,16 @@ if(ENABLE_VALGRIND)
 endif()
 
 # Enable architecture-specific optimizations when not building for baseline.
-# On aarch64, upstream mimalloc force-enables MI_OPT_ARCH which adds
+# On Linux aarch64, upstream mimalloc force-enables MI_OPT_ARCH which adds
 # -march=armv8.1-a (LSE atomics). This crashes on ARMv8.0 CPUs
 # (Cortex-A53, Raspberry Pi 4, AWS a1 instances). Use MI_NO_OPT_ARCH
-# to override since it has priority over MI_OPT_ARCH in mimalloc's CMake.
-if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64|AARCH64")
+# to prevent that, but keep SIMD enabled. -moutline-atomics for runtime
+# dispatch to LSE/LL-SC. macOS arm64 always has LSE (Apple Silicon) so
+# MI_OPT_ARCH is safe there.
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64|AARCH64" AND NOT APPLE)
   list(APPEND MIMALLOC_CMAKE_ARGS -DMI_NO_OPT_ARCH=ON)
+  list(APPEND MIMALLOC_CMAKE_ARGS -DMI_OPT_SIMD=ON)
+  list(APPEND MIMALLOC_CMAKE_ARGS "-DCMAKE_C_FLAGS=-moutline-atomics")
 elseif(NOT ENABLE_BASELINE)
   list(APPEND MIMALLOC_CMAKE_ARGS -DMI_OPT_ARCH=ON)
   list(APPEND MIMALLOC_CMAKE_ARGS -DMI_OPT_SIMD=ON)

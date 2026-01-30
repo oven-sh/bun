@@ -399,6 +399,10 @@ pub const Bunfig = struct {
 
                     if (test_.get("rerunEach")) |expr| {
                         try this.expect(expr, .e_number);
+                        if (this.ctx.test_options.retry != 0) {
+                            try this.addError(expr.loc, "\"rerunEach\" cannot be used with \"retry\"");
+                            return;
+                        }
                         this.ctx.test_options.repeat_count = expr.data.e_number.toU32();
                     }
 

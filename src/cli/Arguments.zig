@@ -974,7 +974,6 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 args.flag("--debug-no-minify");
         }
 
-        // TODO: support --format=esm
         if (ctx.bundler_options.bytecode) {
             ctx.bundler_options.output_format = .cjs;
             ctx.args.target = .bun;
@@ -1187,6 +1186,10 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 Output.errGeneric("Using --windows-hide-console is only available when compiling on Windows", .{});
                 Global.crash();
             }
+            if (ctx.bundler_options.compile_target.os != .windows) {
+                Output.errGeneric("--windows-hide-console requires a Windows compile target", .{});
+                Global.crash();
+            }
             if (!ctx.bundler_options.compile) {
                 Output.errGeneric("--windows-hide-console requires --compile", .{});
                 Global.crash();
@@ -1196,6 +1199,10 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         if (args.option("--windows-icon")) |path| {
             if (!Environment.isWindows) {
                 Output.errGeneric("Using --windows-icon is only available when compiling on Windows", .{});
+                Global.crash();
+            }
+            if (ctx.bundler_options.compile_target.os != .windows) {
+                Output.errGeneric("--windows-icon requires a Windows compile target", .{});
                 Global.crash();
             }
             if (!ctx.bundler_options.compile) {
@@ -1209,6 +1216,10 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 Output.errGeneric("Using --windows-title is only available when compiling on Windows", .{});
                 Global.crash();
             }
+            if (ctx.bundler_options.compile_target.os != .windows) {
+                Output.errGeneric("--windows-title requires a Windows compile target", .{});
+                Global.crash();
+            }
             if (!ctx.bundler_options.compile) {
                 Output.errGeneric("--windows-title requires --compile", .{});
                 Global.crash();
@@ -1218,6 +1229,10 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         if (args.option("--windows-publisher")) |publisher| {
             if (!Environment.isWindows) {
                 Output.errGeneric("Using --windows-publisher is only available when compiling on Windows", .{});
+                Global.crash();
+            }
+            if (ctx.bundler_options.compile_target.os != .windows) {
+                Output.errGeneric("--windows-publisher requires a Windows compile target", .{});
                 Global.crash();
             }
             if (!ctx.bundler_options.compile) {
@@ -1231,6 +1246,10 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 Output.errGeneric("Using --windows-version is only available when compiling on Windows", .{});
                 Global.crash();
             }
+            if (ctx.bundler_options.compile_target.os != .windows) {
+                Output.errGeneric("--windows-version requires a Windows compile target", .{});
+                Global.crash();
+            }
             if (!ctx.bundler_options.compile) {
                 Output.errGeneric("--windows-version requires --compile", .{});
                 Global.crash();
@@ -1242,6 +1261,10 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 Output.errGeneric("Using --windows-description is only available when compiling on Windows", .{});
                 Global.crash();
             }
+            if (ctx.bundler_options.compile_target.os != .windows) {
+                Output.errGeneric("--windows-description requires a Windows compile target", .{});
+                Global.crash();
+            }
             if (!ctx.bundler_options.compile) {
                 Output.errGeneric("--windows-description requires --compile", .{});
                 Global.crash();
@@ -1251,6 +1274,10 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         if (args.option("--windows-copyright")) |copyright| {
             if (!Environment.isWindows) {
                 Output.errGeneric("Using --windows-copyright is only available when compiling on Windows", .{});
+                Global.crash();
+            }
+            if (ctx.bundler_options.compile_target.os != .windows) {
+                Output.errGeneric("--windows-copyright requires a Windows compile target", .{});
                 Global.crash();
             }
             if (!ctx.bundler_options.compile) {
@@ -1312,8 +1339,9 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             }
 
             ctx.bundler_options.output_format = format;
-            if (format != .cjs and ctx.bundler_options.bytecode) {
-                Output.errGeneric("format must be 'cjs' when bytecode is true. Eventually we'll add esm support as well.", .{});
+            // ESM bytecode is supported for --compile builds (module_info is embedded in binary)
+            if (format != .cjs and format != .esm and ctx.bundler_options.bytecode) {
+                Output.errGeneric("format must be 'cjs' or 'esm' when bytecode is true.", .{});
                 Global.exit(1);
             }
         }

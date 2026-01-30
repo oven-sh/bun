@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir, isWindows } from "harness";
 
 // Helper: spawn bun with multi-run flags, returns { stdout, stderr, exitCode }
 async function runMulti(

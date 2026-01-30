@@ -1,7 +1,112 @@
 import type { Socket } from "bun";
 import { setSocketOptions } from "bun:internal-for-testing";
-import { describe, test } from "bun:test";
-import { isPosix } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isPosix } from "harness";
+
+describe.if(isPosix)("HTTP server handles chunked transfer encoding", () => {
+  test("handles fragmented chunk terminators", async () => {
+    const script = `
+      const server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          const body = await req.text();
+          return new Response("Got: " + body);
+        },
+      });
+      const { promise, resolve } = Promise.withResolvers();
+      const socket = await Bun.connect({
+        hostname: "localhost",
+        port: server.port,
+        socket: {
+          data(socket, data) {
+            console.log(data.toString());
+            socket.end();
+          },
+          open(socket) {
+            socket.write("POST / HTTP/1.1\\r\\nHost: localhost\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n4\\r\\nWiki\\r");
+            socket.flush();
+            setTimeout(() => {
+              socket.write("\\n0\\r\\n\\r\\n");
+              socket.flush();
+            }, 50);
+          },
+          error() {},
+          close() { resolve(); },
+        },
+      });
+      await promise;
+      server.stop();
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    expect(stdout).toContain("200 OK");
+    expect(stdout).toContain("Got: Wiki");
+    expect(exitCode).toBe(0);
+  });
+
+  test("rejects invalid terminator in fragmented reads", async () => {
+    const script = `
+      const server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          const body = await req.text();
+          return new Response("Got: " + body);
+        },
+      });
+      const { promise, resolve } = Promise.withResolvers();
+      const socket = await Bun.connect({
+        hostname: "localhost",
+        port: server.port,
+        socket: {
+          data(socket, data) {
+            console.log(data.toString());
+            socket.end();
+          },
+          open(socket) {
+            socket.write("POST / HTTP/1.1\\r\\nHost: localhost\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n4\\r\\nTestX");
+            socket.flush();
+            setTimeout(() => {
+              socket.write("\\n0\\r\\n\\r\\n");
+              socket.flush();
+            }, 50);
+          },
+          error() {},
+          close() { resolve(); },
+        },
+      });
+      await promise;
+      server.stop();
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    expect(stdout).toContain("400");
+    expect(exitCode).toBe(0);
+  });
+});
 
 describe.if(isPosix)("HTTP server handles fragmented requests", () => {
   test("handles requests with tiny send buffer (regression test)", async () => {

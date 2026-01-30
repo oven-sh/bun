@@ -70,6 +70,7 @@ pub const LinkerContext = struct {
         css_chunking: bool = false,
         source_maps: options.SourceMapOption = .none,
         target: options.Target = .browser,
+        compile: bool = false,
         metafile: bool = false,
         /// Path to write JSON metafile (for Bun.build API)
         metafile_json_path: []const u8 = "",

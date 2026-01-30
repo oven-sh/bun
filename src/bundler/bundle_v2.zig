@@ -971,6 +971,7 @@ pub const BundleV2 = struct {
         this.linker.options.target = transpiler.options.target;
         this.linker.options.output_format = transpiler.options.output_format;
         this.linker.options.generate_bytecode_cache = transpiler.options.bytecode;
+        this.linker.options.compile = transpiler.options.compile;
         this.linker.options.metafile = transpiler.options.metafile;
         this.linker.options.metafile_json_path = transpiler.options.metafile_json_path;
         this.linker.options.metafile_markdown_path = transpiler.options.metafile_markdown_path;
@@ -4508,9 +4509,19 @@ pub const CrossChunkImport = struct {
 };
 
 pub const CompileResult = union(enum) {
+    pub const DeclInfo = struct {
+        pub const Kind = enum(u1) { declared, lexical };
+        name: []const u8,
+        kind: Kind,
+    };
+
     javascript: struct {
         source_index: Index.Int,
         result: js_printer.PrintResult,
+        /// Top-level declarations collected from converted statements during
+        /// parallel printing. Used by postProcessJSChunk to populate ModuleInfo
+        /// without re-scanning the original (unconverted) AST.
+        decls: []const DeclInfo = &.{},
 
         pub fn code(this: @This()) []const u8 {
             return switch (this.result) {

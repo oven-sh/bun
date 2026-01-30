@@ -488,7 +488,7 @@ fn addScriptConfigs(
         // Not a package.json script - run as a raw command
         // If it looks like a file path, prefix with bun executable
         const is_file = raw_name.len > 0 and (raw_name[0] == '.' or raw_name[0] == '/' or
-            raw_name[0] == std.fs.path.sep or hasRunnableExtension(raw_name));
+            (Environment.isWindows and raw_name[0] == '\\') or hasRunnableExtension(raw_name));
         const command_z = if (is_file) brk: {
             const bun_path = bun.selfExePath() catch "bun";
             // Quote the bun path so that backslashes on Windows are not

@@ -583,6 +583,7 @@ pub const BuildCommand = struct {
                     .asset => Output.prettyFmt("<magenta>", true),
                     .sourcemap => Output.prettyFmt("<d>", true),
                     .bytecode => Output.prettyFmt("<d>", true),
+                    .module_info => Output.prettyFmt("<d>", true),
                     .@"metafile-json", .@"metafile-markdown" => Output.prettyFmt("<green>", true),
                 });
 
@@ -614,6 +615,7 @@ pub const BuildCommand = struct {
                     .asset => "asset",
                     .sourcemap => "source map",
                     .bytecode => "bytecode",
+                    .module_info => "module info",
                     .@"metafile-json" => "metafile json",
                     .@"metafile-markdown" => "metafile markdown",
                 }});

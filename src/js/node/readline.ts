@@ -79,7 +79,6 @@ const StringPrototypeEndsWith = String.prototype.endsWith;
 const StringPrototypeRepeat = String.prototype.repeat;
 const StringPrototypeStartsWith = String.prototype.startsWith;
 const StringPrototypeTrim = String.prototype.trim;
-const StringPrototypeNormalize = String.prototype.normalize;
 const NumberIsNaN = Number.isNaN;
 const NumberIsFinite = Number.isFinite;
 const MathCeil = Math.ceil;

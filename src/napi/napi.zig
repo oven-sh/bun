@@ -677,7 +677,7 @@ pub export fn napi_make_callback(env_: napi_env, _: *anyopaque, recv_: napi_valu
         return envIsNull();
     };
     const recv, const func = .{ recv_.get(), func_.get() };
-    if (func.isEmptyOrUndefinedOrNull() or !func.isCallable()) {
+    if (func.isEmptyOrUndefinedOrNull() or (!func.isCallable() and !func.isAsyncContextFrame())) {
         return env.setLastError(.function_expected);
     }
 
@@ -1762,7 +1762,7 @@ pub export fn napi_create_threadsafe_function(
     };
     const func = func_.get();
 
-    if (call_js_cb == null and (func.isEmptyOrUndefinedOrNull() or !func.isCallable())) {
+    if (call_js_cb == null and (func.isEmptyOrUndefinedOrNull() or (!func.isCallable() and !func.isAsyncContextFrame()))) {
         return env.setLastError(.function_expected);
     }
 

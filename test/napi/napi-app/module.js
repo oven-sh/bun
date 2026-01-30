@@ -895,4 +895,52 @@ nativeTests.test_napi_typeof_boxed_primitives = () => {
   console.log("All boxed primitive tests passed!");
 };
 
+// https://github.com/oven-sh/bun/issues/25933
+// Test that napi_typeof returns napi_function for callbacks wrapped in
+// AsyncContextFrame (which happens inside AsyncLocalStorage.run()).
+nativeTests.test_napi_typeof_async_context_frame = async () => {
+  const { AsyncLocalStorage } = require("node:async_hooks");
+  const als = new AsyncLocalStorage();
+
+  await als.run({ key: "value" }, () => {
+    return new Promise(resolve => {
+      // Pass a callback to the native addon. Because we're inside
+      // AsyncLocalStorage.run(), Bun wraps it in AsyncContextFrame.
+      // The native call_js_cb will call napi_typeof on the received
+      // js_callback and print the result.
+      nativeTests.test_issue_25933(() => {});
+      // The threadsafe function callback fires asynchronously.
+      setTimeout(resolve, 50);
+    });
+  });
+};
+
+// Test that napi_make_callback works when the func is an AsyncContextFrame
+// (received by a threadsafe function's call_js_cb inside AsyncLocalStorage.run()).
+nativeTests.test_make_callback_with_async_context = async () => {
+  const { AsyncLocalStorage } = require("node:async_hooks");
+  const als = new AsyncLocalStorage();
+
+  await als.run({ key: "value" }, () => {
+    return new Promise(resolve => {
+      nativeTests.test_napi_make_callback_async_context_frame(() => {});
+      setTimeout(resolve, 50);
+    });
+  });
+};
+
+// Test that napi_create_threadsafe_function with call_js_cb=NULL accepts an
+// AsyncContextFrame as the func (received from another threadsafe function's call_js_cb).
+nativeTests.test_create_tsfn_with_async_context = async () => {
+  const { AsyncLocalStorage } = require("node:async_hooks");
+  const als = new AsyncLocalStorage();
+
+  await als.run({ key: "value" }, () => {
+    return new Promise(resolve => {
+      nativeTests.test_napi_create_tsfn_async_context_frame(() => {});
+      setTimeout(resolve, 100);
+    });
+  });
+};
+
 module.exports = nativeTests;

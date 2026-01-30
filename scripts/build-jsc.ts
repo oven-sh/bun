@@ -129,6 +129,7 @@ const getCommonFlags = (config: BuildConfig) => {
       "-DBUN_FAST_TLS=ON",
       "-DPTHREAD_JIT_PERMISSIONS_API=1",
       "-DUSE_PTHREAD_JIT_PERMISSIONS_API=ON",
+      "-DENABLE_REMOTE_INSPECTOR=ON",
     );
   } else if (IS_LINUX) {
     flags.push(
@@ -172,7 +173,6 @@ const getBuildFlags = (config: BuildConfig) => {
         "-DCMAKE_BUILD_TYPE=Debug",
         "-DENABLE_BUN_SKIP_FAILING_ASSERTIONS=ON",
         "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
-        "-DENABLE_REMOTE_INSPECTOR=ON",
         "-DUSE_VISIBILITY_ATTRIBUTE=1",
       );
 

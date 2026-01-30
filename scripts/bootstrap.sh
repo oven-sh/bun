@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version: 26
+# Version: 27
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -1061,6 +1061,11 @@ install_build_essentials() {
 			go \
 			xz
 		install_packages apache2-utils
+		# QEMU user-mode for baseline CPU verification in CI
+		case "$arch" in
+		x64)     install_packages qemu-x86_64 ;;
+		aarch64) install_packages qemu-aarch64 ;;
+		esac
 		;;
 	esac
 

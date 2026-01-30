@@ -365,6 +365,23 @@ The `--bytecode` argument enables bytecode compilation. Every time you run JavaS
 console.log(process.execArgv); // ["--smol", "--user-agent=MyBot"]
 ```
 
+### Runtime arguments via `BUN_OPTIONS`
+
+The `BUN_OPTIONS` environment variable is applied to standalone executables, allowing you to pass runtime flags without recompiling:
+
+```bash terminal icon="terminal"
+# Enable CPU profiling on a compiled executable
+BUN_OPTIONS="--cpu-prof" ./myapp
+
+# Enable heap profiling with markdown output
+BUN_OPTIONS="--heap-prof-md" ./myapp
+
+# Combine multiple flags
+BUN_OPTIONS="--smol --cpu-prof-md" ./myapp
+```
+
+This is useful for debugging or profiling production executables without rebuilding them.
+
 ---
 
 ## Automatic config loading

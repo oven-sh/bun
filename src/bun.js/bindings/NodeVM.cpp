@@ -799,6 +799,8 @@ void NodeVMGlobalObject::finishCreation(JSC::VM& vm)
     auto* parentGlobalObject = defaultGlobalObject(this);
     if (parentGlobalObject && parentGlobalObject->m_asyncContextData) {
         m_asyncContextData.set(vm, this, parentGlobalObject->m_asyncContextData.get());
+        if (parentGlobalObject->isAsyncContextTrackingEnabled())
+            setAsyncContextTrackingEnabled(true);
     }
 }
 

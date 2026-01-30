@@ -1,4 +1,5 @@
 export const NodeModuleModule__findPath = jsc.host_fn.wrap3(findPath);
+export const NodeModuleModule__findPackageJSON = jsc.host_fn.wrap2(findPackageJSON);
 
 // https://github.com/nodejs/node/blob/40ef9d541ed79470977f90eb445c291b95ab75a0/lib/internal/modules/cjs/loader.js#L666
 fn findPath(
@@ -63,6 +64,85 @@ fn findPathInner(
         else => return null,
     };
     return errorable.unwrap() catch null;
+}
+
+fn findPackageJSON(
+    global: *JSGlobalObject,
+    specifier_str: bun.String,
+    base_str: bun.String,
+) bun.JSError!JSValue {
+    var stack_buf = std.heap.stackFallback(8192, bun.default_allocator);
+    const alloc = stack_buf.get();
+
+    const specifier = specifier_str.toUTF8(alloc);
+    defer specifier.deinit();
+    const spec_slice = specifier.slice();
+
+    const base = base_str.toUTF8(alloc);
+    defer base.deinit();
+    const base_slice = base.slice();
+
+    // Determine the starting directory
+    var start_dir = base_slice;
+
+    // If base is a file:// URL, extract the path
+    if (std.mem.startsWith(u8, start_dir, "file://")) {
+        start_dir = start_dir[7..];
+    }
+
+    // Check if base ends with a slash (directory) or not (file)
+    if (!std.mem.endsWith(u8, start_dir, "/") and !std.mem.endsWith(u8, start_dir, "\\")) {
+        // Looks like a file path, get its directory
+        if (std.fs.path.dirname(start_dir)) |dir| {
+            start_dir = dir;
+        }
+    }
+
+    // If specifier is "..", walk up one level
+    var search_start = start_dir;
+    if (std.mem.eql(u8, spec_slice, "..") or std.mem.eql(u8, spec_slice, "../")) {
+        if (std.fs.path.dirname(start_dir)) |parent| {
+            search_start = parent;
+        }
+    } else if (!std.mem.eql(u8, spec_slice, ".") and spec_slice.len > 0) {
+        // For other specifiers, resolve relative to start_dir
+        // For now, keep it simple - just use start_dir
+    }
+
+    // Walk up the directory tree looking for package.json
+    var current: []const u8 = search_start;
+    var depth: u32 = 0;
+    const max_depth = 255;
+
+    while (depth < max_depth and current.len > 0) : (depth += 1) {
+        // Check if package.json exists in current directory
+        const pkg_path = try std.fmt.allocPrint(alloc, "{s}/package.json", .{current});
+        defer alloc.free(pkg_path);
+
+        const exists = bun.sys.existsAtType(.cwd(), pkg_path) catch {
+            // Continue to parent on error
+            break;
+        };
+
+        if (exists == .file) {
+            // Found package.json - return it as a string
+            const result = try alloc.dupe(u8, pkg_path);
+            const pkg_str = bun.String.init(result);
+            return pkg_str.toJS(global);
+        }
+
+        // Get parent directory
+        const parent = std.fs.path.dirname(current) orelse break;
+
+        // Stop at root or if we're not moving up
+        if (std.mem.eql(u8, parent, current) or std.mem.eql(u8, parent, "/") or std.mem.eql(u8, parent, ".")) {
+            break;
+        }
+
+        current = parent;
+    }
+
+    return .undefined;
 }
 
 pub fn _stat(path: []const u8) i32 {

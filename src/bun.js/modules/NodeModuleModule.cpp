@@ -39,6 +39,7 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionResolveFileName);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionResolveLookupPaths);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionSyncBuiltinExports);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionWrap);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionFindPackageJSON);
 
 JSC_DECLARE_CUSTOM_GETTER(getterRequireFunction);
 JSC_DECLARE_CUSTOM_SETTER(setterRequireFunction);
@@ -887,6 +888,53 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionGetCompileCacheDir,
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
+extern "C" JSC::EncodedJSValue Bun__Path__resolve(JSGlobalObject*, bool, const JSC::EncodedJSValue*, size_t);
+extern "C" JSC::EncodedJSValue NodeModuleModule__findPackageJSON(JSGlobalObject*, BunString, BunString);
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionFindPackageJSON,
+    (JSGlobalObject * globalObject,
+        JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (callFrame->argumentCount() < 1) {
+        return Bun::throwError(globalObject, scope,
+            Bun::ErrorCode::ERR_MISSING_ARGS,
+            "findPackageJSON() requires at least one argument"_s);
+    }
+
+    JSValue specifierValue = callFrame->argument(0);
+    JSValue baseValue = callFrame->argumentCount() > 1 ? callFrame->argument(1) : JSC::jsUndefined();
+
+    // Convert specifier to string
+    String specifier = specifierValue.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    // Resolve base path - default to current working directory
+    String basePath = "."_s;
+    if (!baseValue.isUndefined()) {
+        basePath = baseValue.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        // Handle file:// URLs
+        if (basePath.startsWith("file://"_s)) {
+            WTF::URL url(basePath);
+            if (url.isValid()) {
+                basePath = url.fileSystemPath();
+            }
+        }
+    }
+
+    // Call the Zig implementation
+    BunString specifier_bun = Bun::toString(specifier);
+    BunString basePath_bun = Bun::toString(basePath);
+    JSC::EncodedJSValue result = NodeModuleModule__findPackageJSON(globalObject, specifier_bun, basePath_bun);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    return result;
+}
+
 static JSValue getModuleObject(VM& vm, JSObject* moduleObject)
 {
     return moduleObject;
@@ -910,6 +958,7 @@ builtinModules          getBuiltinModulesObject           PropertyCallback
 constants               getConstantsObject                PropertyCallback
 createRequire           jsFunctionNodeModuleCreateRequire Function 1
 enableCompileCache      jsFunctionEnableCompileCache      Function 0
+findPackageJSON         jsFunctionFindPackageJSON         Function 2
 findSourceMap           Bun__JSSourceMap__find           Function 1
 getCompileCacheDir      jsFunctionGetCompileCacheDir      Function 0
 globalPaths             getGlobalPathsObject              PropertyCallback

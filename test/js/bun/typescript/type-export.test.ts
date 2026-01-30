@@ -6,7 +6,7 @@ const ext = isWindows ? ".exe" : "";
 function compileAndRun(dir: string, entrypoint: string) {
   const outfile = dir + `/compiled${ext}`;
   const buildResult = Bun.spawnSync({
-    cmd: [bunExe(), "build", "--compile", "--bytecode", entrypoint, "--outfile", outfile],
+    cmd: [bunExe(), "build", "--compile", "--bytecode", "--format=esm", entrypoint, "--outfile", outfile],
     env: bunEnv,
     cwd: dir,
     stdio: ["inherit", "pipe", "pipe"],

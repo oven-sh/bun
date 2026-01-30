@@ -1040,10 +1040,8 @@ pub const FetchTasklet = struct {
                 if (!jsc_vm.transpiler.env.isNoProxy(fetch_options.url.hostname, fetch_options.url.host)) {
                     proxy = proxy_opt;
                 }
-            } else {
-                // if empty just use the default proxy resolution
-                proxy = jsc_vm.transpiler.env.getHttpProxyFor(fetch_options.url);
             }
+            // else: proxy: "" means explicitly no proxy (direct connection)
         } else {
             // no proxy provided, use default proxy resolution
             proxy = jsc_vm.transpiler.env.getHttpProxyFor(fetch_options.url);

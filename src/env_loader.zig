@@ -250,8 +250,14 @@ pub const Loader = struct {
                     }
                 }
             } else {
-                // Entry is hostname/IPv6 only, match against hostname (suffix match)
-                if (strings.endsWith(hn, no_proxy_entry)) {
+                // Entry is hostname/IPv6 only, match exact or dot-boundary suffix (case-insensitive)
+                const entry_len = no_proxy_entry.len;
+                if (hn.len == entry_len) {
+                    if (strings.eqlCaseInsensitiveASCII(hn, no_proxy_entry, true)) return true;
+                } else if (hn.len > entry_len and
+                    hn[hn.len - entry_len - 1] == '.' and
+                    strings.eqlCaseInsensitiveASCII(hn[hn.len - entry_len ..], no_proxy_entry, true))
+                {
                     return true;
                 }
             }

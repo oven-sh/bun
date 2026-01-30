@@ -862,15 +862,36 @@ describe("proxy object format with headers", () => {
 
 describe("NO_PROXY with explicit proxy option", () => {
   // These tests use subprocess spawning because NO_PROXY is read from the
-  // process environment at startup. A dead proxy (port 1) is used so that
-  // if NO_PROXY doesn't work, the fetch fails with a connection error.
+  // process environment at startup. A dead proxy that immediately closes
+  // connections is used so that if NO_PROXY doesn't work, the fetch fails
+  // with a connection error.
+  let deadProxyPort: number;
+  let deadProxy: ReturnType<typeof Bun.listen>;
+
+  beforeAll(() => {
+    deadProxy = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(socket) {
+          socket.end();
+        },
+        data() {},
+      },
+    });
+    deadProxyPort = deadProxy.port;
+  });
+
+  afterAll(() => {
+    deadProxy.stop(true);
+  });
 
   test("NO_PROXY bypasses explicit proxy for fetch", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
-        `const resp = await fetch("http://localhost:${httpServer.port}", { proxy: "http://127.0.0.1:1" }); console.log(resp.status);`,
+        `const resp = await fetch("http://localhost:${httpServer.port}", { proxy: "http://127.0.0.1:${deadProxyPort}" }); console.log(resp.status);`,
       ],
       env: { ...bunEnv, NO_PROXY: "localhost" },
       stdout: "pipe",
@@ -888,7 +909,7 @@ describe("NO_PROXY with explicit proxy option", () => {
       cmd: [
         bunExe(),
         "-e",
-        `const resp = await fetch("http://localhost:${httpServer.port}", { proxy: "http://127.0.0.1:1" }); console.log(resp.status);`,
+        `const resp = await fetch("http://localhost:${httpServer.port}", { proxy: "http://127.0.0.1:${deadProxyPort}" }); console.log(resp.status);`,
       ],
       env: { ...bunEnv, NO_PROXY: `localhost:${httpServer.port}` },
       stdout: "pipe",
@@ -907,7 +928,7 @@ describe("NO_PROXY with explicit proxy option", () => {
       cmd: [
         bunExe(),
         "-e",
-        `try { await fetch("http://localhost:${httpServer.port}", { proxy: "http://127.0.0.1:1" }); process.exit(1); } catch { process.exit(0); }`,
+        `try { await fetch("http://localhost:${httpServer.port}", { proxy: "http://127.0.0.1:${deadProxyPort}" }); process.exit(1); } catch { process.exit(0); }`,
       ],
       env: { ...bunEnv, NO_PROXY: "other.com" },
       stdout: "pipe",

@@ -860,7 +860,7 @@ describe("proxy object format with headers", () => {
   });
 });
 
-describe("NO_PROXY with explicit proxy option", () => {
+describe.concurrent("NO_PROXY with explicit proxy option", () => {
   // These tests use subprocess spawning because NO_PROXY is read from the
   // process environment at startup. A dead proxy that immediately closes
   // connections is used so that if NO_PROXY doesn't work, the fetch fails

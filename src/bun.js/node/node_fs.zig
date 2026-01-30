@@ -1193,7 +1193,7 @@ pub const AsyncReaddirRecursiveTask = struct {
         // Sort the final result list to match Node.js behavior
         switch (this.args.tag()) {
             inline else => |tag| {
-                sortReaddirEntries(@TypeOf(@field(this.result_list, @tagName(tag)).items[0]), @field(this.result_list, @tagName(tag)).items);
+                NodeFS.sortReaddirEntries(@TypeOf(@field(this.result_list, @tagName(tag)).items[0]), @field(this.result_list, @tagName(tag)).items);
             },
         }
 
@@ -4448,7 +4448,7 @@ pub const NodeFS = struct {
         };
     }
 
-    fn sortReaddirEntries(comptime ExpectedType: type, entries: []ExpectedType) void {
+    pub fn sortReaddirEntries(comptime ExpectedType: type, entries: []ExpectedType) void {
         std.mem.sort(ExpectedType, entries, {}, struct {
             fn lessThan(_: void, a: ExpectedType, b: ExpectedType) bool {
                 const a_slice = switch (ExpectedType) {

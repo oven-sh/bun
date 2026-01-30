@@ -659,7 +659,7 @@ describe("ws module with HttpsProxyAgent", () => {
   });
 });
 
-describe("WebSocket NO_PROXY bypass", () => {
+describe.concurrent("WebSocket NO_PROXY bypass", () => {
   test("NO_PROXY matching hostname bypasses explicit proxy for ws://", async () => {
     // authProxy requires credentials; if NO_PROXY works, the WebSocket bypasses
     // the proxy and connects directly. If NO_PROXY doesn't work, the proxy

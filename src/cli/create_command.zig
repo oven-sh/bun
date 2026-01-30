@@ -1839,10 +1839,32 @@ pub const Example = struct {
         }
     };
 
-    const examples_url: string = "https://registry.npmjs.org/bun-examples-all/latest";
+    const default_examples_url: string = "https://registry.npmjs.org/bun-examples-all/latest";
+    const default_package_url: string = "https://registry.npmjs.org/@bun-examples";
     var url: URL = undefined;
+    var examples_url: string = default_examples_url;
+    var package_url: string = default_package_url;
 
     var app_name_buf: [512]u8 = undefined;
+
+    fn getRegistryUrl(env_loader: *DotEnv.Loader) string {
+        const registry_keys = [_]string{
+            "BUN_CONFIG_REGISTRY",
+            "NPM_CONFIG_REGISTRY",
+            "npm_config_registry",
+        };
+
+        inline for (registry_keys) |registry_key| {
+            if (env_loader.map.get(registry_key)) |registry| {
+                if (registry.len > 0) {
+                    return registry;
+                }
+            }
+        }
+
+        return "https://registry.npmjs.org";
+    }
+
     pub fn print(examples: []const Example, default_app_name: ?string) void {
         for (examples) |example| {
             const app_name = default_app_name orelse (std.fmt.bufPrint(&app_name_buf, "./{s}-app", .{example.name[0..@min(example.name.len, 492)]}) catch unreachable);
@@ -2069,7 +2091,8 @@ pub const Example = struct {
         var mutable = try ctx.allocator.create(MutableString);
         mutable.* = try MutableString.init(ctx.allocator, 2048);
 
-        url = URL.parse(try std.fmt.bufPrint(&url_buf, "https://registry.npmjs.org/@bun-examples/{s}/latest", .{name}));
+        const registry_url = getRegistryUrl(env_loader);
+        url = URL.parse(try std.fmt.bufPrint(&url_buf, "{s}/@bun-examples/{s}/latest", .{ registry_url, name }));
 
         var http_proxy: ?URL = env_loader.getHttpProxyFor(url);
 
@@ -2190,7 +2213,10 @@ pub const Example = struct {
     }
 
     pub fn fetchAll(ctx: Command.Context, env_loader: *DotEnv.Loader, progress_node: ?*Progress.Node) ![]Example {
-        url = URL.parse(examples_url);
+        var url_buf: [1024]u8 = undefined;
+        const registry_url = getRegistryUrl(env_loader);
+        const examples_url_str = try std.fmt.bufPrint(&url_buf, "{s}/bun-examples-all/latest", .{registry_url});
+        url = URL.parse(examples_url_str);
 
         const http_proxy: ?URL = env_loader.getHttpProxyFor(url);
 

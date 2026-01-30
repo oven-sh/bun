@@ -2021,3 +2021,21 @@ describe("workspace integration", () => {
     expect(r.exitCode).toBe(0);
   });
 });
+
+// ─── REGRESSION TESTS ─────────────────────────────────────────────────────────
+
+describe("regression", () => {
+  // https://github.com/oven-sh/bun/issues/26597
+  test("#26597: parallel file execution works (Windows backslash path handling)", async () => {
+    using dir = tempDir("mr-issue-26597", {
+      "a.js": "console.log('hello-a')",
+      "b.js": "console.log('hello-b')",
+    });
+    // This previously failed on Windows with "bun: command not found: C:Usersjake.bunbinbun.exe"
+    // because backslashes in the bun executable path were being stripped by the shell parser.
+    const r = await runMulti(["run", "--parallel", "a.js", "b.js"], String(dir));
+    expectPrefixed(r.stdout, "a.js", "hello-a");
+    expectPrefixed(r.stdout, "b.js", "hello-b");
+    expect(r.exitCode).toBe(0);
+  });
+});

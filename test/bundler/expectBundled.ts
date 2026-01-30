@@ -299,6 +299,13 @@ export interface BundlerTestInput {
 
   /** Run after the bun.build function is called with its output */
   onAfterApiBundle?(build: BuildOutput): Promise<void> | void;
+
+  /**
+   * Run the build entirely in memory using Bun.build's `files` API.
+   * No temp directories or files are created. Outputs are read from BuildArtifact.text().
+   * The `onAfterBundle` callback still works with the same API.
+   */
+  virtual?: boolean;
 }
 
 export interface SourceMapTests {
@@ -408,6 +415,40 @@ function testRef(id: string, options: BundlerTestInput): BundlerTestRef {
   return { id, options };
 }
 
+/**
+ * Extract capture function calls from file contents.
+ * Finds all occurrences of fnName(...) and returns the argument contents.
+ */
+function extractCaptures(fileContents: string, file: string, fnName: string): string[] {
+  let i = 0;
+  const length = fileContents.length;
+  const matches: string[] = [];
+  while (i < length) {
+    i = fileContents.indexOf(fnName, i);
+    if (i === -1) break;
+    const start = i;
+    let depth = 0;
+    while (i < length) {
+      const char = fileContents[i];
+      if (char === "(") depth++;
+      else if (char === ")") {
+        depth--;
+        if (depth === 0) break;
+      }
+      i++;
+    }
+    if (depth !== 0) {
+      throw new Error(`Could not find closing paren for ${fnName} call in ${file}`);
+    }
+    matches.push(fileContents.slice(start + fnName.length + 1, i));
+    i++;
+  }
+  if (matches.length === 0) {
+    throw new Error(`No ${fnName} calls found in ${file}`);
+  }
+  return matches;
+}
+
 function expectBundled(
   id: string,
   opts: BundlerTestInput,
@@ -494,6 +535,7 @@ function expectBundled(
     generateOutput = true,
     onAfterApiBundle,
     throw: _throw = false,
+    virtual = false,
     ...unknownProps
   } = opts;
 
@@ -578,6 +620,198 @@ function expectBundled(
   }
   if (dryRun) {
     return testRef(id, opts);
+  }
+
+  // Virtual mode: run entirely in memory without disk I/O
+  if (virtual) {
+    // Validate that unsupported options are not set
+    const unsupportedOptions: string[] = [];
+    if (runtimeFiles && Object.keys(runtimeFiles).length > 0) unsupportedOptions.push("runtimeFiles");
+    if (run) unsupportedOptions.push("run");
+    if (dce) unsupportedOptions.push("dce");
+    if (cjs2esm) unsupportedOptions.push("cjs2esm");
+    if (matchesReference) unsupportedOptions.push("matchesReference");
+    if (snapshotSourceMap) unsupportedOptions.push("snapshotSourceMap");
+    if (expectExactFilesize) unsupportedOptions.push("expectExactFilesize");
+    if (onAfterApiBundle) unsupportedOptions.push("onAfterApiBundle");
+    if (bundleWarnings) unsupportedOptions.push("bundleWarnings");
+    if (keepNames) unsupportedOptions.push("keepNames");
+    if (emitDCEAnnotations) unsupportedOptions.push("emitDCEAnnotations");
+    if (ignoreDCEAnnotations) unsupportedOptions.push("ignoreDCEAnnotations");
+    if (bytecode) unsupportedOptions.push("bytecode");
+    if (compile) unsupportedOptions.push("compile");
+    if (features && features.length > 0) unsupportedOptions.push("features");
+    if (outdir) unsupportedOptions.push("outdir (use outfile instead)");
+
+    if (unsupportedOptions.length > 0) {
+      throw new Error(`Virtual mode does not support the following options: ${unsupportedOptions.join(", ")}`);
+    }
+
+    return (async () => {
+      // Prepare virtual files with dedent applied for strings, preserve binary content as-is
+      // Use relative paths (strip leading /) to get consistent path comments in CSS output
+      const virtualFiles: Record<string, string | Buffer | Uint8Array | Blob> = {};
+      for (const [file, contents] of Object.entries(files)) {
+        const relativePath = file.startsWith("/") ? file.slice(1) : file;
+        virtualFiles[relativePath] = typeof contents === "string" ? dedent(contents) : contents;
+      }
+
+      // Convert entrypoints to relative paths too
+      const relativeEntryPoints = entryPoints.map(ep => (ep.startsWith("/") ? ep.slice(1) : ep));
+
+      const build = await Bun.build({
+        entrypoints: relativeEntryPoints,
+        files: virtualFiles,
+        target,
+        format,
+        minify: {
+          whitespace: minifyWhitespace,
+          syntax: minifySyntax,
+          identifiers: minifyIdentifiers,
+        },
+        external,
+        plugins: typeof plugins === "function" ? [{ name: "plugin", setup: plugins }] : plugins,
+        splitting,
+        treeShaking,
+        sourcemap: sourceMap,
+        publicPath,
+        banner,
+        footer,
+        packages,
+        loader,
+        jsx: jsx
+          ? {
+              runtime: jsx.runtime,
+              importSource: jsx.importSource,
+              factory: jsx.factory,
+              fragment: jsx.fragment,
+              sideEffects: jsx.sideEffects,
+              development: jsx.development,
+            }
+          : undefined,
+        define,
+        drop,
+        conditions,
+      });
+
+      const expectedErrors = bundleErrors
+        ? Object.entries(bundleErrors).flatMap(([file, v]) => v.map(error => ({ file, error })))
+        : null;
+
+      if (!build.success) {
+        // Collect actual errors from build logs
+        const actualErrors = build.logs
+          .filter(x => x.level === "error")
+          .map(x => ({
+            file: x.position?.file || "",
+            error: x.message,
+          }));
+
+        // Check if errors were expected
+        if (expectedErrors && expectedErrors.length > 0) {
+          const errorsLeft = [...expectedErrors];
+          const unexpectedErrors: typeof actualErrors = [];
+
+          for (const error of actualErrors) {
+            const i = errorsLeft.findIndex(item => error.file.endsWith(item.file) && error.error.includes(item.error));
+            if (i === -1) {
+              unexpectedErrors.push(error);
+            } else {
+              errorsLeft.splice(i, 1);
+            }
+          }
+
+          if (unexpectedErrors.length > 0) {
+            throw new Error(
+              "Unexpected errors reported while bundling:\n" +
+                unexpectedErrors.map(e => `${e.file}: ${e.error}`).join("\n") +
+                "\n\nExpected errors:\n" +
+                expectedErrors.map(e => `${e.file}: ${e.error}`).join("\n"),
+            );
+          }
+
+          if (errorsLeft.length > 0) {
+            throw new Error(
+              "Expected errors were not found while bundling:\n" +
+                errorsLeft.map(e => `${e.file}: ${e.error}`).join("\n") +
+                "\n\nActual errors:\n" +
+                actualErrors.map(e => `${e.file}: ${e.error}`).join("\n"),
+            );
+          }
+
+          return testRef(id, opts);
+        }
+
+        throw new Error(`Bundle failed:\n${actualErrors.map(e => `${e.file}: ${e.error}`).join("\n")}`);
+      } else if (expectedErrors && expectedErrors.length > 0) {
+        throw new Error(
+          "Errors were expected while bundling:\n" + expectedErrors.map(e => `${e.file}: ${e.error}`).join("\n"),
+        );
+      }
+
+      // Build in-memory file cache from BuildArtifact outputs
+      const outputCache: Record<string, string> = {};
+      for (const output of build.outputs) {
+        // Normalize path: "./a.css" -> "/a.css"
+        let outputPath = output.path;
+        if (outputPath.startsWith("./")) outputPath = outputPath.slice(1);
+        if (!outputPath.startsWith("/")) outputPath = "/" + outputPath;
+        outputCache[outputPath] = await output.text();
+      }
+
+      // Determine the main output file path
+      const mainOutputPath = Object.keys(outputCache)[0] || "/out.js";
+      const outfileVirtual = outfile ? (outfile.startsWith("/") ? outfile : "/" + outfile) : mainOutputPath;
+
+      // Create API object that reads from in-memory cache
+      const readFile = (file: string): string => {
+        // Normalize the file path
+        let normalizedFile = file;
+        if (normalizedFile.startsWith("./")) normalizedFile = normalizedFile.slice(1);
+        if (!normalizedFile.startsWith("/")) normalizedFile = "/" + normalizedFile;
+
+        // Try exact match first
+        if (normalizedFile in outputCache) return outputCache[normalizedFile];
+
+        // For single-output builds, allow accessing the output by the configured outfile path
+        const outputs = Object.keys(outputCache);
+        if (outputs.length === 1 && normalizedFile === outfileVirtual) {
+          return outputCache[outputs[0]];
+        }
+
+        throw new Error(`Virtual file not found: ${file}. Available: ${Object.keys(outputCache).join(", ")}`);
+      };
+
+      const api = {
+        root: "/virtual",
+        outfile: outfileVirtual,
+        outdir: "/virtual/out",
+        join: (...paths: string[]) => "/" + paths.join("/").replace(/^\/+/, ""),
+        readFile,
+        writeFile: (_file: string, _contents: string) => {
+          throw new Error("writeFile not supported in virtual mode");
+        },
+        expectFile: (file: string) => expect(readFile(file)),
+        prependFile: (_file: string, _contents: string) => {
+          throw new Error("prependFile not supported in virtual mode");
+        },
+        appendFile: (_file: string, _contents: string) => {
+          throw new Error("appendFile not supported in virtual mode");
+        },
+        assertFileExists: (file: string) => {
+          readFile(file); // Will throw if not found
+        },
+        warnings: {} as Record<string, ErrorMeta[]>,
+        options: opts,
+        captureFile: (file: string, fnName = "capture") => extractCaptures(readFile(file), file, fnName),
+      } satisfies BundlerTestBundleAPI;
+
+      if (onAfterBundle) {
+        onAfterBundle(api);
+      }
+
+      return testRef(id, opts);
+    })();
   }
 
   return (async () => {
@@ -1321,42 +1555,7 @@ for (const [key, blob] of build.outputs) {
       },
       warnings: warningReference,
       options: opts,
-      captureFile: (file, fnName = "capture") => {
-        const fileContents = readFile(file);
-        let i = 0;
-        const length = fileContents.length;
-        const matches = [];
-        while (i < length) {
-          i = fileContents.indexOf(fnName, i);
-          if (i === -1) {
-            break;
-          }
-          const start = i;
-          let depth = 0;
-          while (i < length) {
-            const char = fileContents[i];
-            if (char === "(") {
-              depth++;
-            } else if (char === ")") {
-              depth--;
-              if (depth === 0) {
-                break;
-              }
-            }
-            i++;
-          }
-          if (depth !== 0) {
-            throw new Error(`Could not find closing paren for ${fnName} call in ${file}`);
-          }
-          matches.push(fileContents.slice(start + fnName.length + 1, i));
-          i++;
-        }
-
-        if (matches.length === 0) {
-          throw new Error(`No ${fnName} calls found in ${file}`);
-        }
-        return matches;
-      },
+      captureFile: (file, fnName = "capture") => extractCaptures(readFile(file), file, fnName),
     } satisfies BundlerTestBundleAPI;
 
     // DCE keep scan

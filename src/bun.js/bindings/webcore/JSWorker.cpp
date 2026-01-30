@@ -74,6 +74,7 @@ static JSC_DECLARE_HOST_FUNCTION(jsWorkerPrototypeFunction_postMessage);
 static JSC_DECLARE_HOST_FUNCTION(jsWorkerPrototypeFunction_unref);
 static JSC_DECLARE_HOST_FUNCTION(jsWorkerPrototypeFunction_ref);
 static JSC_DECLARE_HOST_FUNCTION(jsWorkerPrototypeFunction_getHeapSnapshot);
+static JSC_DECLARE_HOST_FUNCTION(jsWorkerPrototypeFunction_getStdioFds);
 
 // Attributes
 
@@ -305,6 +306,27 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
             RETURN_IF_EXCEPTION(throwScope, {});
             options.execArgv.emplace(WTF::move(execArgv));
         }
+
+        // Parse stdio options for node:worker_threads (Node.js compatibility)
+        if (options.kind == WorkerOptions::Kind::Node) {
+            auto stdoutValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "stdout"_s));
+            RETURN_IF_EXCEPTION(throwScope, {});
+            if (stdoutValue && stdoutValue.toBoolean(lexicalGlobalObject)) {
+                options.captureStdout = true;
+            }
+
+            auto stderrValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "stderr"_s));
+            RETURN_IF_EXCEPTION(throwScope, {});
+            if (stderrValue && stderrValue.toBoolean(lexicalGlobalObject)) {
+                options.captureStderr = true;
+            }
+
+            auto stdinValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "stdin"_s));
+            RETURN_IF_EXCEPTION(throwScope, {});
+            if (stdinValue && stdinValue.toBoolean(lexicalGlobalObject)) {
+                options.captureStdin = true;
+            }
+        }
     }
 
     Vector<RefPtr<MessagePort>> ports;
@@ -411,6 +433,7 @@ static const HashTableValue JSWorkerPrototypeTableValues[] = {
     { "threadId"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete, NoIntrinsic, { HashTableValue::GetterSetterType, jsWorker_threadIdGetter, nullptr } },
     { "unref"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWorkerPrototypeFunction_unref, 0 } },
     { "getHeapSnapshot"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWorkerPrototypeFunction_getHeapSnapshot, 0 } },
+    { "$getStdioFds"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWorkerPrototypeFunction_getStdioFds, 0 } },
 };
 
 const ClassInfo JSWorkerPrototype::s_info = { "Worker"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSWorkerPrototype) };
@@ -708,6 +731,30 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapSnapshotBody(
 JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_getHeapSnapshot, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSWorker>::call<jsWorkerPrototypeFunction_getHeapSnapshotBody>(*lexicalGlobalObject, *callFrame, "getHeapSnapshot");
+}
+
+static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getStdioFdsBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame*, typename IDLOperation<JSWorker>::ClassParameter castedThis)
+{
+    auto& wrapped = castedThis->wrapped();
+
+    // Get the stdio FDs from the worker
+    int32_t stdoutFd = wrapped.getStdoutReadFd();
+    int32_t stderrFd = wrapped.getStderrReadFd();
+    int32_t stdinFd = wrapped.getStdinWriteFd();
+
+    // Return an array [stdoutFd, stderrFd, stdinFd]
+    // -1 means the pipe is not configured
+    JSC::JSArray* array = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, 3);
+    array->putDirectIndex(lexicalGlobalObject, 0, jsNumber(stdoutFd));
+    array->putDirectIndex(lexicalGlobalObject, 1, jsNumber(stderrFd));
+    array->putDirectIndex(lexicalGlobalObject, 2, jsNumber(stdinFd));
+
+    return JSValue::encode(array);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_getStdioFds, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSWorker>::call<jsWorkerPrototypeFunction_getStdioFdsBody>(*lexicalGlobalObject, *callFrame, "$getStdioFds");
 }
 
 JSC::GCClient::IsoSubspace* JSWorker::subspaceForImpl(JSC::VM& vm)

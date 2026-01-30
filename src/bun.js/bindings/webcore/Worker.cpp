@@ -126,10 +126,16 @@ extern "C" void* WebWorker__create(
     StringImpl** execArgvPtr,
     size_t execArgvLen,
     BunString* preloadModulesPtr,
-    size_t preloadModulesLen);
+    size_t preloadModulesLen,
+    bool captureStdout,
+    bool captureStderr,
+    bool captureStdin);
 extern "C" void WebWorker__setRef(
     void* worker,
     bool ref);
+extern "C" int32_t WebWorker__getStdoutReadFd(void* worker);
+extern "C" int32_t WebWorker__getStderrReadFd(void* worker);
+extern "C" int32_t WebWorker__getStdinWriteFd(void* worker);
 
 void Worker::setKeepAlive(bool keepAlive)
 {
@@ -206,7 +212,10 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
         execArgv.data(),
         execArgv.size(),
         preloadModules.begin(),
-        preloadModules.size());
+        preloadModules.size(),
+        worker->m_options.captureStdout,
+        worker->m_options.captureStderr,
+        worker->m_options.captureStdin);
     // now referenced by Zig
     worker->ref();
 
@@ -220,6 +229,21 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
     worker->m_workerCreationTime = MonotonicTime::now();
 
     return worker;
+}
+
+int32_t Worker::getStdoutReadFd() const
+{
+    return WebWorker__getStdoutReadFd(impl_);
+}
+
+int32_t Worker::getStderrReadFd() const
+{
+    return WebWorker__getStderrReadFd(impl_);
+}
+
+int32_t Worker::getStdinWriteFd() const
+{
+    return WebWorker__getStdinWriteFd(impl_);
 }
 
 Worker::~Worker()

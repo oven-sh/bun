@@ -40,6 +40,18 @@ execArgv: ?[]const WTFStringImpl,
 /// Used to distinguish between terminate() called by exit(), and terminate() called for other reasons
 exit_called: bool = false,
 
+/// Stdio capture options for node:worker_threads (Node.js compatibility)
+/// When true, the respective stream is captured and can be read from the parent
+capture_stdout: bool = false,
+capture_stderr: bool = false,
+capture_stdin: bool = false,
+
+/// Pipe file descriptors for stdio redirection
+/// Format: [read_fd, write_fd] - read end for parent, write end for worker
+stdout_pipe: ?[2]bun.FileDescriptor = null,
+stderr_pipe: ?[2]bun.FileDescriptor = null,
+stdin_pipe: ?[2]bun.FileDescriptor = null,
+
 pub const Status = enum(u8) {
     start,
     starting,
@@ -78,6 +90,33 @@ export fn WebWorker__updatePtr(worker: *WebWorker, ptr: *anyopaque) bool {
     };
     thread.detach();
     return true;
+}
+
+/// Get the stdout pipe read FD for the parent to read from.
+/// Returns -1 if no stdout pipe is configured.
+export fn WebWorker__getStdoutReadFd(worker: *WebWorker) i32 {
+    if (worker.stdout_pipe) |pipe| {
+        return @intCast(pipe[0].native());
+    }
+    return -1;
+}
+
+/// Get the stderr pipe read FD for the parent to read from.
+/// Returns -1 if no stderr pipe is configured.
+export fn WebWorker__getStderrReadFd(worker: *WebWorker) i32 {
+    if (worker.stderr_pipe) |pipe| {
+        return @intCast(pipe[0].native());
+    }
+    return -1;
+}
+
+/// Get the stdin pipe write FD for the parent to write to.
+/// Returns -1 if no stdin pipe is configured.
+export fn WebWorker__getStdinWriteFd(worker: *WebWorker) i32 {
+    if (worker.stdin_pipe) |pipe| {
+        return @intCast(pipe[1].native());
+    }
+    return -1;
 }
 
 fn resolveEntryPointSpecifier(
@@ -203,6 +242,9 @@ pub fn create(
     execArgv_len: usize,
     preload_modules_ptr: ?[*]bun.String,
     preload_modules_len: usize,
+    capture_stdout: bool,
+    capture_stderr: bool,
+    capture_stdin: bool,
 ) callconv(.c) ?*WebWorker {
     jsc.markBinding(@src());
     log("[{d}] WebWorker.create", .{this_context_id});
@@ -233,6 +275,59 @@ pub fn create(
         }
     }
 
+    // Create pipes for stdio capture if requested
+    var stdout_pipe: ?[2]bun.FileDescriptor = null;
+    var stderr_pipe: ?[2]bun.FileDescriptor = null;
+    var stdin_pipe: ?[2]bun.FileDescriptor = null;
+
+    if (capture_stdout) {
+        stdout_pipe = bun.sys.pipe().unwrap() catch |err| {
+            log("Failed to create stdout pipe: {}", .{err});
+            error_message.* = bun.String.static("Failed to create stdout pipe for worker");
+            for (preloads.items) |preload| {
+                bun.default_allocator.free(preload);
+            }
+            preloads.deinit();
+            return null;
+        };
+    }
+
+    if (capture_stderr) {
+        stderr_pipe = bun.sys.pipe().unwrap() catch |err| {
+            log("Failed to create stderr pipe: {}", .{err});
+            if (stdout_pipe) |p| {
+                p[0].close();
+                p[1].close();
+            }
+            error_message.* = bun.String.static("Failed to create stderr pipe for worker");
+            for (preloads.items) |preload| {
+                bun.default_allocator.free(preload);
+            }
+            preloads.deinit();
+            return null;
+        };
+    }
+
+    if (capture_stdin) {
+        stdin_pipe = bun.sys.pipe().unwrap() catch |err| {
+            log("Failed to create stdin pipe: {}", .{err});
+            if (stdout_pipe) |p| {
+                p[0].close();
+                p[1].close();
+            }
+            if (stderr_pipe) |p| {
+                p[0].close();
+                p[1].close();
+            }
+            error_message.* = bun.String.static("Failed to create stdin pipe for worker");
+            for (preloads.items) |preload| {
+                bun.default_allocator.free(preload);
+            }
+            preloads.deinit();
+            return null;
+        };
+    }
+
     var worker = bun.handleOom(bun.default_allocator.create(WebWorker));
     worker.* = WebWorker{
         .cpp_worker = cpp_worker,
@@ -254,6 +349,12 @@ pub fn create(
         .argv = if (argv_ptr) |ptr| ptr[0..argv_len] else &.{},
         .execArgv = if (inherit_execArgv) null else (if (execArgv_ptr) |ptr| ptr[0..execArgv_len] else &.{}),
         .preloads = preloads.items,
+        .capture_stdout = capture_stdout,
+        .capture_stderr = capture_stderr,
+        .capture_stdin = capture_stdin,
+        .stdout_pipe = stdout_pipe,
+        .stderr_pipe = stderr_pipe,
+        .stdin_pipe = stdin_pipe,
     };
 
     worker.parent_poll_ref.ref(parent);

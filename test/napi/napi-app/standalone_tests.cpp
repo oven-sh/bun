@@ -1998,6 +1998,127 @@ static napi_value test_napi_get_named_property_copied_string(const Napi::Callbac
   return ok(env);
 }
 
+// https://github.com/oven-sh/bun/issues/25933
+// When a threadsafe function is created inside AsyncLocalStorage.run(),
+// the js_callback gets wrapped in AsyncContextFrame. napi_typeof must
+// still report it as napi_function, not napi_object.
+static napi_threadsafe_function tsfn_25933 = nullptr;
+
+static void test_issue_25933_callback(napi_env env, napi_value js_callback,
+                                      void *context, void *data) {
+  napi_valuetype type;
+  napi_status status = napi_typeof(env, js_callback, &type);
+  if (status != napi_ok) {
+    printf("FAIL: napi_typeof returned error status %d\n", status);
+  } else if (type == napi_function) {
+    printf("PASS: napi_typeof returned napi_function\n");
+  } else {
+    printf("FAIL: napi_typeof returned %d, expected napi_function (%d)\n",
+           type, napi_function);
+  }
+  napi_release_threadsafe_function(tsfn_25933, napi_tsfn_release);
+  tsfn_25933 = nullptr;
+}
+
+static napi_value test_issue_25933(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  Napi::HandleScope scope(env);
+
+  // The first argument is the JS callback function.
+  // When called inside AsyncLocalStorage.run(), Bun wraps this in
+  // AsyncContextFrame via withAsyncContextIfNeeded.
+  napi_value js_cb = info[0];
+  napi_value name = Napi::String::New(env, "tsfn_typeof_test");
+
+  NODE_API_CALL(env,
+                napi_create_threadsafe_function(
+                    env, js_cb, nullptr, name, 0, 1, nullptr, nullptr,
+                    nullptr, &test_issue_25933_callback, &tsfn_25933));
+  NODE_API_CALL(env, napi_call_threadsafe_function(tsfn_25933, nullptr,
+                                                   napi_tsfn_nonblocking));
+  return env.Undefined();
+}
+
+// When a threadsafe function's call_js_cb receives a js_callback that is an
+// AsyncContextFrame, calling napi_make_callback on it should work (not fail
+// with function_expected).
+static napi_threadsafe_function tsfn_make_callback = nullptr;
+
+static void test_make_callback_tsfn_cb(napi_env env, napi_value js_callback,
+                                       void *context, void *data) {
+  napi_value recv;
+  napi_get_global(env, &recv);
+
+  napi_value result;
+  napi_status status = napi_make_callback(env, nullptr, recv, js_callback, 0, nullptr, &result);
+  if (status == napi_ok) {
+    printf("PASS: napi_make_callback succeeded\n");
+  } else {
+    printf("FAIL: napi_make_callback returned status %d\n", status);
+  }
+  napi_release_threadsafe_function(tsfn_make_callback, napi_tsfn_release);
+  tsfn_make_callback = nullptr;
+}
+
+static napi_value test_napi_make_callback_async_context_frame(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  Napi::HandleScope scope(env);
+
+  napi_value js_cb = info[0];
+  napi_value name = Napi::String::New(env, "tsfn_make_callback_test");
+
+  NODE_API_CALL(env,
+                napi_create_threadsafe_function(
+                    env, js_cb, nullptr, name, 0, 1, nullptr, nullptr,
+                    nullptr, &test_make_callback_tsfn_cb, &tsfn_make_callback));
+  NODE_API_CALL(env, napi_call_threadsafe_function(tsfn_make_callback, nullptr,
+                                                   napi_tsfn_nonblocking));
+  return env.Undefined();
+}
+
+// When a threadsafe function's call_js_cb receives a js_callback that is an
+// AsyncContextFrame, passing it to a second napi_create_threadsafe_function
+// with call_js_cb=NULL should succeed (not fail with function_expected).
+static napi_threadsafe_function tsfn_create_outer = nullptr;
+
+static void test_create_tsfn_outer_cb(napi_env env, napi_value js_callback,
+                                      void *context, void *data) {
+  // js_callback here is an AsyncContextFrame in Bun.
+  // Try to create a new threadsafe function with it and call_js_cb=NULL.
+  napi_value name;
+  napi_create_string_utf8(env, "inner_tsfn", NAPI_AUTO_LENGTH, &name);
+
+  napi_threadsafe_function inner_tsfn = nullptr;
+  napi_status status = napi_create_threadsafe_function(
+      env, js_callback, nullptr, name, 0, 1, nullptr, nullptr,
+      nullptr, /* call_js_cb */ nullptr, &inner_tsfn);
+  if (status != napi_ok) {
+    printf("FAIL: napi_create_threadsafe_function returned status %d\n", status);
+  } else {
+    printf("PASS: napi_create_threadsafe_function accepted AsyncContextFrame\n");
+    // Release immediately — we only needed to verify creation succeeds.
+    napi_release_threadsafe_function(inner_tsfn, napi_tsfn_release);
+  }
+  napi_release_threadsafe_function(tsfn_create_outer, napi_tsfn_release);
+  tsfn_create_outer = nullptr;
+}
+
+static napi_value test_napi_create_tsfn_async_context_frame(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  Napi::HandleScope scope(env);
+
+  napi_value js_cb = info[0];
+  napi_value name = Napi::String::New(env, "tsfn_create_test");
+
+  NODE_API_CALL(env,
+                napi_create_threadsafe_function(
+                    env, js_cb, nullptr, name, 0, 1, nullptr, nullptr,
+                    nullptr, &test_create_tsfn_outer_cb, &tsfn_create_outer));
+  NODE_API_CALL(env, napi_call_threadsafe_function(tsfn_create_outer, nullptr,
+                                                   napi_tsfn_nonblocking));
+  return env.Undefined();
+}
+
 void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_issue_7685);
   REGISTER_FUNCTION(env, exports, test_issue_11949);
@@ -2033,6 +2154,9 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, napi_get_typeof);
   REGISTER_FUNCTION(env, exports, test_external_buffer_data_lifetime);
   REGISTER_FUNCTION(env, exports, test_napi_get_named_property_copied_string);
+  REGISTER_FUNCTION(env, exports, test_issue_25933);
+  REGISTER_FUNCTION(env, exports, test_napi_make_callback_async_context_frame);
+  REGISTER_FUNCTION(env, exports, test_napi_create_tsfn_async_context_frame);
 }
 
 } // namespace napitests

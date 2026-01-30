@@ -880,6 +880,94 @@ npm/strip-ansi 212,992 chars long-ansi      1.36 ms/iter   1.38 ms
 
 ---
 
+## `Bun.wrapAnsi()`
+
+<Note>Drop-in replacement for `wrap-ansi` npm package</Note>
+
+`Bun.wrapAnsi(input: string, columns: number, options?: WrapAnsiOptions): string`
+
+Wrap text to a specified column width while preserving ANSI escape codes, hyperlinks, and handling Unicode/emoji width correctly. This is a native, high-performance alternative to the popular [`wrap-ansi`](https://www.npmjs.com/package/wrap-ansi) npm package.
+
+```ts
+// Basic wrapping at 20 columns
+Bun.wrapAnsi("The quick brown fox jumps over the lazy dog", 20);
+// => "The quick brown fox\njumps over the lazy\ndog"
+
+// Preserves ANSI escape codes
+Bun.wrapAnsi("\u001b[31mThe quick brown fox jumps over the lazy dog\u001b[0m", 20);
+// => "\u001b[31mThe quick brown fox\njumps over the lazy\ndog\u001b[0m"
+```
+
+### Options
+
+```ts
+Bun.wrapAnsi("Hello World", 5, {
+  hard: true, // Break words that exceed column width (default: false)
+  wordWrap: true, // Wrap at word boundaries (default: true)
+  trim: true, // Trim leading/trailing whitespace per line (default: true)
+  ambiguousIsNarrow: true, // Treat ambiguous-width characters as narrow (default: true)
+});
+```
+
+| Option              | Default | Description                                                                                                     |
+| ------------------- | ------- | --------------------------------------------------------------------------------------------------------------- |
+| `hard`              | `false` | If `true`, break words in the middle if they exceed the column width.                                           |
+| `wordWrap`          | `true`  | If `true`, wrap at word boundaries. If `false`, only break at explicit newlines.                                |
+| `trim`              | `true`  | If `true`, trim leading and trailing whitespace from each line.                                                 |
+| `ambiguousIsNarrow` | `true`  | If `true`, treat ambiguous-width Unicode characters as 1 column wide. If `false`, treat them as 2 columns wide. |
+
+TypeScript definition:
+
+```ts expandable
+namespace Bun {
+  export function wrapAnsi(
+    /**
+     * The string to wrap
+     */
+    input: string,
+    /**
+     * The maximum column width
+     */
+    columns: number,
+    /**
+     * Wrapping options
+     */
+    options?: {
+      /**
+       * If `true`, break words in the middle if they don't fit on a line.
+       * If `false`, only break at word boundaries.
+       *
+       * @default false
+       */
+      hard?: boolean;
+      /**
+       * If `true`, wrap at word boundaries when possible.
+       * If `false`, don't perform word wrapping (only wrap at explicit newlines).
+       *
+       * @default true
+       */
+      wordWrap?: boolean;
+      /**
+       * If `true`, trim leading and trailing whitespace from each line.
+       * If `false`, preserve whitespace.
+       *
+       * @default true
+       */
+      trim?: boolean;
+      /**
+       * When it's ambiguous and `true`, count ambiguous width characters as 1 character wide.
+       * If `false`, count them as 2 characters wide.
+       *
+       * @default true
+       */
+      ambiguousIsNarrow?: boolean;
+    },
+  ): string;
+}
+```
+
+---
+
 ## `serialize` & `deserialize` in `bun:jsc`
 
 To save a JavaScript value into an ArrayBuffer & back, use `serialize` and `deserialize` from the `"bun:jsc"` module.

@@ -84,6 +84,7 @@ pub const ProcessExitHandler = struct {
             LifecycleScriptSubprocess,
             ShellSubprocess,
             ProcessHandle,
+            MultiRunProcessHandle,
             SecurityScanSubprocess,
             SyncProcess,
         },
@@ -109,6 +110,10 @@ pub const ProcessExitHandler = struct {
             },
             @field(TaggedPointer.Tag, @typeName(ProcessHandle)) => {
                 const subprocess = this.ptr.as(ProcessHandle);
+                subprocess.onProcessExit(process, status, rusage);
+            },
+            @field(TaggedPointer.Tag, @typeName(MultiRunProcessHandle)) => {
+                const subprocess = this.ptr.as(MultiRunProcessHandle);
                 subprocess.onProcessExit(process, status, rusage);
             },
             @field(TaggedPointer.Tag, @typeName(ShellSubprocess)) => {
@@ -2251,6 +2256,7 @@ pub const sync = struct {
 };
 
 const std = @import("std");
+const MultiRunProcessHandle = @import("../../../cli/multi_run.zig").ProcessHandle;
 const ProcessHandle = @import("../../../cli/filter_run.zig").ProcessHandle;
 
 const bun = @import("bun");

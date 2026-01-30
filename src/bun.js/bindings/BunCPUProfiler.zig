@@ -95,7 +95,7 @@ fn buildOutputPath(path: *bun.AutoAbsPath, config: CPUProfilerConfig, is_md_form
 
     // Append directory if specified
     if (config.dir.len > 0) {
-        path.append(config.dir);
+        path.join(&.{config.dir});
     }
 
     // Append filename

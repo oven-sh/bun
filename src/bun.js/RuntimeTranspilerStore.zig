@@ -315,6 +315,7 @@ pub const RuntimeTranspilerStore = struct {
             var cache = jsc.RuntimeTranspilerCache{
                 .output_code_allocator = allocator,
                 .sourcemap_allocator = bun.default_allocator,
+                .esm_record_allocator = bun.default_allocator,
             };
             var log = logger.Log.init(allocator);
             defer {
@@ -471,6 +472,10 @@ pub const RuntimeTranspilerStore = struct {
                     dumpSourceString(vm, specifier, entry.output_code.byteSlice());
                 }
 
+                // TODO: module_info is only needed for standalone ESM bytecode.
+                // For now, skip it entirely in the runtime transpiler.
+                const module_info: ?*analyze_transpiled_module.ModuleInfoDeserialized = null;
+
                 this.resolved_source = ResolvedSource{
                     .allocator = null,
                     .source_code = switch (entry.output_code) {
@@ -483,6 +488,7 @@ pub const RuntimeTranspilerStore = struct {
                         },
                     },
                     .is_commonjs_module = entry.metadata.module_type == .cjs,
+                    .module_info = module_info,
                     .tag = this.resolved_source.tag,
                 };
 
@@ -541,6 +547,11 @@ pub const RuntimeTranspilerStore = struct {
                 printer = source_code_printer.?.*;
             }
 
+            const is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs;
+            // TODO: module_info is only needed for standalone ESM bytecode.
+            // For now, skip it entirely in the runtime transpiler.
+            const module_info: ?*analyze_transpiled_module.ModuleInfo = null;
+
             {
                 var mapper = vm.sourceMapHandler(&printer);
                 defer source_code_printer.?.* = printer;
@@ -550,7 +561,9 @@ pub const RuntimeTranspilerStore = struct {
                     &printer,
                     .esm_ascii,
                     mapper.get(),
+                    module_info,
                 ) catch |err| {
+                    if (module_info) |mi| mi.destroy();
                     this.parse_error = err;
                     return;
                 };
@@ -589,7 +602,8 @@ pub const RuntimeTranspilerStore = struct {
             this.resolved_source = ResolvedSource{
                 .allocator = null,
                 .source_code = source_code,
-                .is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs,
+                .is_commonjs_module = is_commonjs_module,
+                .module_info = if (module_info) |mi| @ptrCast(mi.asDeserialized()) else null,
                 .tag = this.resolved_source.tag,
             };
         }
@@ -597,6 +611,7 @@ pub const RuntimeTranspilerStore = struct {
 };
 
 const Fs = @import("../fs.zig");
+const analyze_transpiled_module = @import("../analyze_transpiled_module.zig");
 const node_fallbacks = @import("../node_fallbacks.zig");
 const std = @import("std");
 const AsyncModule = @import("./AsyncModule.zig").AsyncModule;

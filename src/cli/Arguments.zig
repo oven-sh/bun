@@ -130,6 +130,9 @@ pub const auto_or_run_params = [_]ParamType{
     clap.parseParam("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)") catch unreachable,
     clap.parseParam("--shell <STR>                     Control the shell used for package.json scripts. Supports either 'bun' or 'system'") catch unreachable,
     clap.parseParam("--workspaces                      Run a script in all workspace packages (from the \"workspaces\" field in package.json)") catch unreachable,
+    clap.parseParam("--parallel                        Run multiple scripts concurrently with Foreman-style output") catch unreachable,
+    clap.parseParam("--sequential                      Run multiple scripts sequentially with Foreman-style output") catch unreachable,
+    clap.parseParam("--no-exit-on-error                Continue running other scripts when one fails (with --parallel/--sequential)") catch unreachable,
 };
 
 pub const auto_only_params = [_]ParamType{
@@ -171,6 +174,7 @@ pub const build_only_params = [_]ParamType{
     clap.parseParam("--outdir <STR>                   Default to \"dist\" if multiple files") catch unreachable,
     clap.parseParam("--outfile <STR>                  Write to a file") catch unreachable,
     clap.parseParam("--metafile <STR>?                Write a JSON file with metadata about the build") catch unreachable,
+    clap.parseParam("--metafile-md <STR>?             Write a markdown file with a visualization of the module graph (LLM-friendly)") catch unreachable,
     clap.parseParam("--sourcemap <STR>?               Build with sourcemaps - 'linked', 'inline', 'external', or 'none'") catch unreachable,
     clap.parseParam("--banner <STR>                   Add a banner to the bundled output such as \"use client\"; for a bundle being used with RSCs") catch unreachable,
     clap.parseParam("--footer <STR>                   Add a footer to the bundled output such as // built with bun!") catch unreachable,
@@ -452,6 +456,9 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         ctx.filters = args.options("--filter");
         ctx.workspaces = args.flag("--workspaces");
         ctx.if_present = args.flag("--if-present");
+        ctx.parallel = args.flag("--parallel");
+        ctx.sequential = args.flag("--sequential");
+        ctx.no_exit_on_error = args.flag("--no-exit-on-error");
 
         if (args.option("--elide-lines")) |elide_lines| {
             if (elide_lines.len > 0) {
@@ -967,7 +974,6 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 args.flag("--debug-no-minify");
         }
 
-        // TODO: support --format=esm
         if (ctx.bundler_options.bytecode) {
             ctx.bundler_options.output_format = .cjs;
             ctx.args.target = .bun;
@@ -1180,6 +1186,10 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 Output.errGeneric("Using --windows-hide-console is only available when compiling on Windows", .{});
                 Global.crash();
             }
+            if (ctx.bundler_options.compile_target.os != .windows) {
+                Output.errGeneric("--windows-hide-console requires a Windows compile target", .{});
+                Global.crash();
+            }
             if (!ctx.bundler_options.compile) {
                 Output.errGeneric("--windows-hide-console requires --compile", .{});
                 Global.crash();
@@ -1189,6 +1199,10 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         if (args.option("--windows-icon")) |path| {
             if (!Environment.isWindows) {
                 Output.errGeneric("Using --windows-icon is only available when compiling on Windows", .{});
+                Global.crash();
+            }
+            if (ctx.bundler_options.compile_target.os != .windows) {
+                Output.errGeneric("--windows-icon requires a Windows compile target", .{});
                 Global.crash();
             }
             if (!ctx.bundler_options.compile) {
@@ -1202,6 +1216,10 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 Output.errGeneric("Using --windows-title is only available when compiling on Windows", .{});
                 Global.crash();
             }
+            if (ctx.bundler_options.compile_target.os != .windows) {
+                Output.errGeneric("--windows-title requires a Windows compile target", .{});
+                Global.crash();
+            }
             if (!ctx.bundler_options.compile) {
                 Output.errGeneric("--windows-title requires --compile", .{});
                 Global.crash();
@@ -1211,6 +1229,10 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         if (args.option("--windows-publisher")) |publisher| {
             if (!Environment.isWindows) {
                 Output.errGeneric("Using --windows-publisher is only available when compiling on Windows", .{});
+                Global.crash();
+            }
+            if (ctx.bundler_options.compile_target.os != .windows) {
+                Output.errGeneric("--windows-publisher requires a Windows compile target", .{});
                 Global.crash();
             }
             if (!ctx.bundler_options.compile) {
@@ -1224,6 +1246,10 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 Output.errGeneric("Using --windows-version is only available when compiling on Windows", .{});
                 Global.crash();
             }
+            if (ctx.bundler_options.compile_target.os != .windows) {
+                Output.errGeneric("--windows-version requires a Windows compile target", .{});
+                Global.crash();
+            }
             if (!ctx.bundler_options.compile) {
                 Output.errGeneric("--windows-version requires --compile", .{});
                 Global.crash();
@@ -1235,6 +1261,10 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 Output.errGeneric("Using --windows-description is only available when compiling on Windows", .{});
                 Global.crash();
             }
+            if (ctx.bundler_options.compile_target.os != .windows) {
+                Output.errGeneric("--windows-description requires a Windows compile target", .{});
+                Global.crash();
+            }
             if (!ctx.bundler_options.compile) {
                 Output.errGeneric("--windows-description requires --compile", .{});
                 Global.crash();
@@ -1244,6 +1274,10 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         if (args.option("--windows-copyright")) |copyright| {
             if (!Environment.isWindows) {
                 Output.errGeneric("Using --windows-copyright is only available when compiling on Windows", .{});
+                Global.crash();
+            }
+            if (ctx.bundler_options.compile_target.os != .windows) {
+                Output.errGeneric("--windows-copyright requires a Windows compile target", .{});
                 Global.crash();
             }
             if (!ctx.bundler_options.compile) {
@@ -1269,6 +1303,14 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 bun.handleOom(allocator.dupeZ(u8, metafile))
             else
                 "meta.json";
+        }
+
+        if (args.option("--metafile-md")) |metafile_md| {
+            // If --metafile-md is passed without a value, default to "meta.md"
+            ctx.bundler_options.metafile_md = if (metafile_md.len > 0)
+                bun.handleOom(allocator.dupeZ(u8, metafile_md))
+            else
+                "meta.md";
         }
 
         if (args.option("--root")) |root_dir| {
@@ -1297,8 +1339,9 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             }
 
             ctx.bundler_options.output_format = format;
-            if (format != .cjs and ctx.bundler_options.bytecode) {
-                Output.errGeneric("format must be 'cjs' when bytecode is true. Eventually we'll add esm support as well.", .{});
+            // ESM bytecode is supported for --compile builds (module_info is embedded in binary)
+            if (format != .cjs and format != .esm and ctx.bundler_options.bytecode) {
+                Output.errGeneric("format must be 'cjs' or 'esm' when bytecode is true.", .{});
                 Global.exit(1);
             }
         }

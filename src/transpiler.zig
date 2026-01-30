@@ -626,7 +626,7 @@ pub const Transpiler = struct {
         };
 
         switch (loader) {
-            .jsx, .tsx, .js, .ts, .json, .jsonc, .toml, .yaml, .text => {
+            .jsx, .tsx, .js, .ts, .json, .jsonc, .toml, .yaml, .json5, .text, .md => {
                 var result = transpiler.parse(
                     ParseOptions{
                         .allocator = transpiler.allocator,
@@ -783,6 +783,7 @@ pub const Transpiler = struct {
         comptime enable_source_map: bool,
         source_map_context: ?js_printer.SourceMapHandler,
         runtime_transpiler_cache: ?*bun.jsc.RuntimeTranspilerCache,
+        module_info: ?*analyze_transpiled_module.ModuleInfo,
     ) !usize {
         const tracer = if (enable_source_map)
             bun.perf.trace("JSPrinter.printWithSourceMap")
@@ -872,6 +873,7 @@ pub const Transpiler = struct {
                         .inline_require_and_import_errors = false,
                         .import_meta_ref = ast.import_meta_ref,
                         .runtime_transpiler_cache = runtime_transpiler_cache,
+                        .module_info = module_info,
                         .target = transpiler.options.target,
                         .print_dce_annotations = transpiler.options.emit_dce_annotations,
                         .hmr_ref = ast.wrapper_ref,
@@ -900,6 +902,7 @@ pub const Transpiler = struct {
             false,
             null,
             null,
+            null,
         );
     }
 
@@ -910,6 +913,7 @@ pub const Transpiler = struct {
         writer: Writer,
         comptime format: js_printer.Format,
         handler: js_printer.SourceMapHandler,
+        module_info: ?*analyze_transpiled_module.ModuleInfo,
     ) !usize {
         if (bun.feature_flag.BUN_FEATURE_FLAG_DISABLE_SOURCE_MAPS.get()) {
             return transpiler.printWithSourceMapMaybe(
@@ -921,6 +925,7 @@ pub const Transpiler = struct {
                 false,
                 handler,
                 result.runtime_transpiler_cache,
+                module_info,
             );
         }
         return transpiler.printWithSourceMapMaybe(
@@ -932,6 +937,7 @@ pub const Transpiler = struct {
             true,
             handler,
             result.runtime_transpiler_cache,
+            module_info,
         );
     }
 
@@ -1189,7 +1195,7 @@ pub const Transpiler = struct {
                 };
             },
             // TODO: use lazy export AST
-            inline .toml, .yaml, .json, .jsonc => |kind| {
+            inline .toml, .yaml, .json, .jsonc, .json5 => |kind| {
                 var expr = if (kind == .jsonc)
                     // We allow importing tsconfig.*.json or jsconfig.*.json with comments
                     // These files implicitly become JSONC files, which aligns with the behavior of text editors.
@@ -1200,6 +1206,8 @@ pub const Transpiler = struct {
                     TOML.parse(source, transpiler.log, allocator, false) catch return null
                 else if (kind == .yaml)
                     YAML.parse(source, transpiler.log, allocator) catch return null
+                else if (kind == .json5)
+                    JSON5.parse(source, transpiler.log, allocator) catch return null
                 else
                     @compileError("unreachable");
 
@@ -1335,6 +1343,39 @@ pub const Transpiler = struct {
             .text => {
                 const expr = js_ast.Expr.init(js_ast.E.String, js_ast.E.String{
                     .data = source.contents,
+                }, logger.Loc.Empty);
+                const stmt = js_ast.Stmt.alloc(js_ast.S.ExportDefault, js_ast.S.ExportDefault{
+                    .value = js_ast.StmtOrExpr{ .expr = expr },
+                    .default_name = js_ast.LocRef{
+                        .loc = logger.Loc{},
+                        .ref = Ref.None,
+                    },
+                }, logger.Loc{ .start = 0 });
+                var stmts = allocator.alloc(js_ast.Stmt, 1) catch unreachable;
+                stmts[0] = stmt;
+                var parts = allocator.alloc(js_ast.Part, 1) catch unreachable;
+                parts[0] = js_ast.Part{ .stmts = stmts };
+
+                return ParseResult{
+                    .ast = js_ast.Ast.fromParts(parts),
+                    .source = source.*,
+                    .loader = loader,
+                    .input_fd = input_fd,
+                };
+            },
+            .md => {
+                const html = bun.md.renderToHtml(source.contents, allocator) catch {
+                    transpiler.log.addErrorFmt(
+                        null,
+                        logger.Loc.Empty,
+                        transpiler.allocator,
+                        "Failed to render markdown to HTML",
+                        .{},
+                    ) catch {};
+                    return null;
+                };
+                const expr = js_ast.Expr.init(js_ast.E.String, js_ast.E.String{
+                    .data = html,
                 }, logger.Loc.Empty);
                 const stmt = js_ast.Stmt.alloc(js_ast.S.ExportDefault, js_ast.S.ExportDefault{
                     .value = js_ast.StmtOrExpr{ .expr = expr },
@@ -1586,6 +1627,7 @@ const Fs = @import("./fs.zig");
 const MimeType = @import("./http/MimeType.zig");
 const NodeFallbackModules = @import("./node_fallbacks.zig");
 const Router = @import("./router.zig");
+const analyze_transpiled_module = @import("./analyze_transpiled_module.zig");
 const runtime = @import("./runtime.zig");
 const std = @import("std");
 const DataURL = @import("./resolver/data_url.zig").DataURL;
@@ -1616,6 +1658,7 @@ const jsc = bun.jsc;
 const logger = bun.logger;
 const strings = bun.strings;
 const api = bun.schema.api;
+const JSON5 = bun.interchange.json5.JSON5Parser;
 const TOML = bun.interchange.toml.TOML;
 const YAML = bun.interchange.yaml.YAML;
 const default_macro_js_value = jsc.JSValue.zero;

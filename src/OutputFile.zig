@@ -15,6 +15,7 @@ hash: u64 = 0,
 is_executable: bool = false,
 source_map_index: u32 = std.math.maxInt(u32),
 bytecode_index: u32 = std.math.maxInt(u32),
+module_info_index: u32 = std.math.maxInt(u32),
 output_kind: jsc.API.BuildArtifact.OutputKind,
 /// Relative
 dest_path: []const u8 = "",
@@ -210,6 +211,7 @@ pub const Options = struct {
     hash: ?u64 = null,
     source_map_index: ?u32 = null,
     bytecode_index: ?u32 = null,
+    module_info_index: ?u32 = null,
     output_path: string,
     source_index: Index.Optional = .none,
     size: ?usize = null,
@@ -251,6 +253,7 @@ pub fn init(options: Options) OutputFile {
         .hash = options.hash orelse 0,
         .output_kind = options.output_kind,
         .bytecode_index = options.bytecode_index orelse std.math.maxInt(u32),
+        .module_info_index = options.module_info_index orelse std.math.maxInt(u32),
         .source_map_index = options.source_map_index orelse std.math.maxInt(u32),
         .is_executable = options.is_executable,
         .value = switch (options.data) {

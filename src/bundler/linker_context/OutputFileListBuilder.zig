@@ -3,7 +3,7 @@
 //!    chunk indexing remains the same:
 //!
 //!      1. chunks
-//!      2. sourcemaps and bytecode
+//!      2. sourcemaps, bytecode, and module_info
 //!      3. additional output files
 //!
 //!    We can calculate the space ahead of time and avoid having to do something
@@ -41,7 +41,7 @@ pub fn init(
     chunks: []const bun.bundle_v2.Chunk,
     _: usize,
 ) !@This() {
-    const length, const source_map_and_bytecode_count = OutputFileList.calculateOutputFileListCapacity(c, chunks);
+    const length, const supplementary_file_count = OutputFileList.calculateOutputFileListCapacity(c, chunks);
     var output_files = try std.array_list.Managed(options.OutputFile).initCapacity(
         allocator,
         length,
@@ -51,8 +51,8 @@ pub fn init(
     return .{
         .output_files = output_files,
         .index_for_chunk = 0,
-        .index_for_sourcemaps_and_bytecode = if (source_map_and_bytecode_count == 0) null else @as(u32, @truncate(chunks.len)),
-        .additional_output_files_start = @as(u32, @intCast(chunks.len)) + source_map_and_bytecode_count,
+        .index_for_sourcemaps_and_bytecode = if (supplementary_file_count == 0) null else @as(u32, @truncate(chunks.len)),
+        .additional_output_files_start = @as(u32, @intCast(chunks.len)) + supplementary_file_count,
         .total_insertions = 0,
     };
 }
@@ -94,7 +94,10 @@ pub fn calculateOutputFileListCapacity(c: *const bun.bundle_v2.LinkerContext, ch
         break :bytecode_count bytecode_count;
     } else 0;
 
-    return .{ @intCast(chunks.len + source_map_count + bytecode_count + c.parse_graph.additional_output_files.items.len), @intCast(source_map_count + bytecode_count) };
+    // module_info is generated for ESM bytecode in --compile builds
+    const module_info_count = if (c.options.generate_bytecode_cache and c.options.output_format == .esm and c.options.compile) bytecode_count else 0;
+
+    return .{ @intCast(chunks.len + source_map_count + bytecode_count + module_info_count + c.parse_graph.additional_output_files.items.len), @intCast(source_map_count + bytecode_count + module_info_count) };
 }
 
 pub fn insertForChunk(this: *OutputFileList, output_file: options.OutputFile) u32 {

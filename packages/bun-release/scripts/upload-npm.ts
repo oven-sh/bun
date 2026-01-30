@@ -73,9 +73,11 @@ async function buildRootModule(dryRun?: boolean) {
   });
   // Create placeholder scripts that print an error message if postinstall hasn't run.
   // On Unix, these are executed as shell scripts despite the .exe extension.
-  // On Windows, npm creates .cmd wrappers that would fail anyway if the binary isn't valid.
-  const placeholderScript = `#!/bin/sh
-echo "Error: Bun's postinstall script was not run." >&2
+  // Do NOT add a shebang (#!/bin/sh) here — npm's cmd-shim reads shebangs to generate
+  // .ps1/.cmd wrappers BEFORE postinstall runs, and bakes the interpreter path in.
+  // A #!/bin/sh shebang breaks Windows because the wrappers reference /bin/sh which
+  // doesn't exist, even after postinstall replaces the placeholder with the real binary.
+  const placeholderScript = `echo "Error: Bun's postinstall script was not run." >&2
 echo "" >&2
 echo "This occurs when using --ignore-scripts during installation, or when using a" >&2
 echo "package manager like pnpm that does not run postinstall scripts by default." >&2

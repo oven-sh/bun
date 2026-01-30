@@ -1302,11 +1302,11 @@ pub const PackageInstall = struct {
                                     Output.debugWarn("Unexpectedly failed to get dirname of {s}", .{ self.#absolute_path });
                                     return;
                                 };
-                                const basename = std.fs.path.basename(self.absolute_path);
+                                const basename = std.fs.path.basename(self.#absolute_path);
 
                                 var dir = bun.openDirA(std.fs.cwd(), dirname) catch |err| {
                                     if (comptime Environment.isDebug or Environment.enable_asan) {
-                                        Output.debugWarn("Failed to delete {s}: {s}", .{ self.absolute_path, @errorName(err) });
+                                        Output.debugWarn("Failed to delete {s}: {s}", .{ self.#absolute_path, @errorName(err) });
                                     }
                                     return;
                                 };

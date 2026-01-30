@@ -56,3 +56,6 @@ test/js/bun/css/files linguist-vendored
 
 .vscode/*.json linguist-language=JSON-with-Comments
 src/cli/init/tsconfig.default.json linguist-language=JSON-with-Comments
+
+# Chant spec files use a custom merge driver for intelligent conflict resolution
+.chant/specs/*.md merge=chant-spec

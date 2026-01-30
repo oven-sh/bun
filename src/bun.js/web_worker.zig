@@ -40,6 +40,17 @@ execArgv: ?[]const WTFStringImpl,
 /// Used to distinguish between terminate() called by exit(), and terminate() called for other reasons
 exit_called: bool = false,
 
+// stdout/stderr capture options for node:worker_threads
+capture_stdout: bool = false,
+capture_stderr: bool = false,
+
+// Pipe file descriptors for stdout/stderr capture
+// Read ends are for parent thread, write ends are for worker thread
+stdout_read_fd: ?bun.FileDescriptor = null,
+stderr_read_fd: ?bun.FileDescriptor = null,
+stdout_write_fd: ?bun.FileDescriptor = null,
+stderr_write_fd: ?bun.FileDescriptor = null,
+
 pub const Status = enum(u8) {
     start,
     starting,
@@ -196,6 +207,8 @@ pub fn create(
     mini: bool,
     default_unref: bool,
     eval_mode: bool,
+    capture_stdout: bool,
+    capture_stderr: bool,
     argv_ptr: ?[*]WTFStringImpl,
     argv_len: usize,
     inherit_execArgv: bool,
@@ -254,7 +267,47 @@ pub fn create(
         .argv = if (argv_ptr) |ptr| ptr[0..argv_len] else &.{},
         .execArgv = if (inherit_execArgv) null else (if (execArgv_ptr) |ptr| ptr[0..execArgv_len] else &.{}),
         .preloads = preloads.items,
+        .capture_stdout = capture_stdout,
+        .capture_stderr = capture_stderr,
     };
+
+    // Create pipes for stdout/stderr capture if requested
+    if (capture_stdout) {
+        switch (bun.sys.pipe()) {
+            .result => |pipe_fds| {
+                worker.stdout_read_fd = pipe_fds[0];
+                worker.stdout_write_fd = pipe_fds[1];
+                // Make read end non-blocking for parent's event loop
+                _ = bun.sys.setNonblocking(pipe_fds[0]);
+            },
+            .err => |err| {
+                log("Failed to create stdout pipe: {s}", .{@tagName(err.getErrno())});
+                error_message.* = bun.String.static("Failed to create stdout pipe");
+                worker.deinit();
+                return null;
+            },
+        }
+    }
+
+    if (capture_stderr) {
+        switch (bun.sys.pipe()) {
+            .result => |pipe_fds| {
+                worker.stderr_read_fd = pipe_fds[0];
+                worker.stderr_write_fd = pipe_fds[1];
+                // Make read end non-blocking for parent's event loop
+                _ = bun.sys.setNonblocking(pipe_fds[0]);
+            },
+            .err => |err| {
+                log("Failed to create stderr pipe: {s}", .{@tagName(err.getErrno())});
+                error_message.* = bun.String.static("Failed to create stderr pipe");
+                // Clean up stdout pipe if it was created
+                if (worker.stdout_read_fd) |fd| fd.close();
+                if (worker.stdout_write_fd) |fd| fd.close();
+                worker.deinit();
+                return null;
+            },
+        }
+    }
 
     worker.parent_poll_ref.ref(parent);
 
@@ -282,6 +335,19 @@ pub fn start(
     if (this.hasRequestedTerminate()) {
         this.exitAndDeinit();
         return;
+    }
+
+    // Redirect stdout/stderr to pipe write ends if capturing is enabled
+    // This must happen early, before any output from the worker
+    if (this.stdout_write_fd) |write_fd| {
+        _ = std.posix.dup2(write_fd.cast(), std.posix.STDOUT_FILENO);
+        write_fd.close();
+        this.stdout_write_fd = null;
+    }
+    if (this.stderr_write_fd) |write_fd| {
+        _ = std.posix.dup2(write_fd.cast(), std.posix.STDERR_FILENO);
+        write_fd.close();
+        this.stderr_write_fd = null;
     }
 
     assert(this.status.load(.acquire) == .start);
@@ -373,6 +439,15 @@ fn deinit(this: *WebWorker) void {
         bun.default_allocator.free(preload);
     }
     bun.default_allocator.free(this.preloads);
+
+    // Clean up any remaining pipe FDs (in case of early exit or error)
+    // Note: read FDs should ideally be consumed by parent before worker exits
+    // Write FDs should already be closed after dup2 in start()
+    if (this.stdout_write_fd) |fd| fd.close();
+    if (this.stderr_write_fd) |fd| fd.close();
+    // Don't close read FDs here - they are owned by the parent thread
+    // The parent will close them when the ReadableStream is finalized
+
     bun.default_allocator.destroy(this);
 }
 
@@ -634,11 +709,71 @@ pub fn exitAndDeinit(this: *WebWorker) noreturn {
     bun.exitThread();
 }
 
+/// Get the stdout read FD for the parent thread to read from.
+/// Returns -1 if stdout is not being captured.
+export fn WebWorker__getStdoutFd(worker: *WebWorker) i32 {
+    if (worker.stdout_read_fd) |fd| {
+        return fd.cast();
+    }
+    return -1;
+}
+
+/// Get the stderr read FD for the parent thread to read from.
+/// Returns -1 if stderr is not being captured.
+export fn WebWorker__getStderrFd(worker: *WebWorker) i32 {
+    if (worker.stderr_read_fd) |fd| {
+        return fd.cast();
+    }
+    return -1;
+}
+
+/// Create a ReadableStream from the stdout pipe FD.
+/// Takes ownership of the FD - it will be closed when the stream is finalized.
+/// Returns null if stdout is not being captured.
+export fn WebWorker__createStdoutStream(worker: *WebWorker, globalObject: *jsc.JSGlobalObject) JSValue {
+    const fd = worker.stdout_read_fd orelse return .null;
+    worker.stdout_read_fd = null; // Transfer ownership to the stream
+    return createReadableStreamFromFd(globalObject, fd) catch return .null;
+}
+
+/// Create a ReadableStream from the stderr pipe FD.
+/// Takes ownership of the FD - it will be closed when the stream is finalized.
+/// Returns null if stderr is not being captured.
+export fn WebWorker__createStderrStream(worker: *WebWorker, globalObject: *jsc.JSGlobalObject) JSValue {
+    const fd = worker.stderr_read_fd orelse return .null;
+    worker.stderr_read_fd = null; // Transfer ownership to the stream
+    return createReadableStreamFromFd(globalObject, fd) catch return .null;
+}
+
+/// Helper to create a ReadableStream from a file descriptor.
+/// Uses FileReader.Source which properly handles the event loop integration.
+fn createReadableStreamFromFd(globalObject: *jsc.JSGlobalObject, fd: bun.FileDescriptor) bun.JSError!JSValue {
+    const webcore = jsc.WebCore;
+
+    // Create a FileReader.Source which wraps FileReader for the ReadableStream interface
+    var source = webcore.FileReader.Source.new(.{
+        .globalThis = globalObject,
+        .context = .{
+            .event_loop = jsc.EventLoopHandle.init(globalObject.bunVM().eventLoop()),
+        },
+    });
+
+    // Set up the FileReader with the FD for reading from a pipe
+    source.context.fd = fd;
+    source.context.lazy = .{ .none = {} }; // Not lazy - we have the FD already
+
+    return source.toReadableStream(globalObject);
+}
+
 comptime {
     @export(&create, .{ .name = "WebWorker__create" });
     @export(&notifyNeedTermination, .{ .name = "WebWorker__notifyNeedTermination" });
     @export(&setRef, .{ .name = "WebWorker__setRef" });
     _ = WebWorker__updatePtr;
+    _ = WebWorker__getStdoutFd;
+    _ = WebWorker__getStderrFd;
+    _ = WebWorker__createStdoutStream;
+    _ = WebWorker__createStderrStream;
 }
 
 const std = @import("std");

@@ -1290,7 +1290,7 @@ pub const PackageInstall = struct {
                             `#task`: jsc.WorkPoolTask = .{ .callback = &run },
 
                             pub fn run(task_ptr: *jsc.WorkPoolTask) void {
-                                var self: *@This() = @fieldParentPtr("task", task_ptr);
+                                var self: *@This() = @fieldParentPtr("#task", task_ptr);
                                 var debug_timer = bun.Output.DebugTimer.start();
                                 defer {
                                     PackageManager.get().decrementPendingTasks();
@@ -1332,7 +1332,7 @@ pub const PackageInstall = struct {
 
                         var t = try bun.default_allocator.create(DeleteTask);
                         t.* = .{ .#absolute_path = abs, .#task = .{ .callback = &DeleteTask.run } };
-                        manager.thread_pool.schedule(bun.ThreadPool.Batch.from(&t.task));
+                        manager.thread_pool.schedule(bun.ThreadPool.Batch.from(&t.#task));
                     }
                     bun.default_allocator.free(pkg_name_buf);
                 }

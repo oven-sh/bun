@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { tempDir } from "harness";
 import { join } from "path";
+import { Writable } from "stream";
 import { Worker } from "worker_threads";
 
 describe("worker_threads stdio", () => {
@@ -79,7 +80,6 @@ describe("worker_threads stdio", () => {
     expect(typeof worker.stdout?.pipe).toBe("function");
 
     // Should not throw
-    const { Writable } = require("stream");
     const chunks: string[] = [];
     worker.stdout!.pipe(
       new Writable({

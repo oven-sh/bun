@@ -1292,13 +1292,13 @@ pub fn initWorker(
     const console = try allocator.create(ConsoleObject);
 
     // Use pipe writers if stdio capture is enabled, otherwise use default writers
-    const stdout_writer: bun.sys.File = if (worker.stdout_pipe) |pipe|
-        bun.sys.File.from(pipe[1]) // Write end of stdout pipe
+    const stdout_writer: bun.sys.File = if (worker.getStdoutWritePipe()) |write_fd|
+        bun.sys.File.from(write_fd) // Write end of stdout pipe
     else
         Output.rawWriter();
 
-    const stderr_writer: bun.sys.File = if (worker.stderr_pipe) |pipe|
-        bun.sys.File.from(pipe[1]) // Write end of stderr pipe
+    const stderr_writer: bun.sys.File = if (worker.getStderrWritePipe()) |write_fd|
+        bun.sys.File.from(write_fd) // Write end of stderr pipe
     else
         Output.rawErrorWriter();
 

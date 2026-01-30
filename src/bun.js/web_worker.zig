@@ -48,9 +48,9 @@ capture_stdin: bool = false,
 
 /// Pipe file descriptors for stdio redirection
 /// Format: [read_fd, write_fd] - read end for parent, write end for worker
-stdout_pipe: ?[2]bun.FileDescriptor = null,
-stderr_pipe: ?[2]bun.FileDescriptor = null,
-stdin_pipe: ?[2]bun.FileDescriptor = null,
+#stdout_pipe: ?[2]bun.FileDescriptor = null,
+#stderr_pipe: ?[2]bun.FileDescriptor = null,
+#stdin_pipe: ?[2]bun.FileDescriptor = null,
 
 pub const Status = enum(u8) {
     start,
@@ -95,7 +95,7 @@ export fn WebWorker__updatePtr(worker: *WebWorker, ptr: *anyopaque) bool {
 /// Get the stdout pipe read FD for the parent to read from.
 /// Returns -1 if no stdout pipe is configured.
 export fn WebWorker__getStdoutReadFd(worker: *WebWorker) i32 {
-    if (worker.stdout_pipe) |pipe| {
+    if (worker.#stdout_pipe) |pipe| {
         return @intCast(pipe[0].native());
     }
     return -1;
@@ -104,7 +104,7 @@ export fn WebWorker__getStdoutReadFd(worker: *WebWorker) i32 {
 /// Get the stderr pipe read FD for the parent to read from.
 /// Returns -1 if no stderr pipe is configured.
 export fn WebWorker__getStderrReadFd(worker: *WebWorker) i32 {
-    if (worker.stderr_pipe) |pipe| {
+    if (worker.#stderr_pipe) |pipe| {
         return @intCast(pipe[0].native());
     }
     return -1;
@@ -113,10 +113,28 @@ export fn WebWorker__getStderrReadFd(worker: *WebWorker) i32 {
 /// Get the stdin pipe write FD for the parent to write to.
 /// Returns -1 if no stdin pipe is configured.
 export fn WebWorker__getStdinWriteFd(worker: *WebWorker) i32 {
-    if (worker.stdin_pipe) |pipe| {
+    if (worker.#stdin_pipe) |pipe| {
         return @intCast(pipe[1].native());
     }
     return -1;
+}
+
+/// Get the stdout pipe write FD for the worker to write to.
+/// Returns null if no stdout pipe is configured.
+pub fn getStdoutWritePipe(worker: *const WebWorker) ?bun.FileDescriptor {
+    if (worker.#stdout_pipe) |pipe| {
+        return pipe[1];
+    }
+    return null;
+}
+
+/// Get the stderr pipe write FD for the worker to write to.
+/// Returns null if no stderr pipe is configured.
+pub fn getStderrWritePipe(worker: *const WebWorker) ?bun.FileDescriptor {
+    if (worker.#stderr_pipe) |pipe| {
+        return pipe[1];
+    }
+    return null;
 }
 
 fn resolveEntryPointSpecifier(
@@ -352,9 +370,9 @@ pub fn create(
         .capture_stdout = capture_stdout,
         .capture_stderr = capture_stderr,
         .capture_stdin = capture_stdin,
-        .stdout_pipe = stdout_pipe,
-        .stderr_pipe = stderr_pipe,
-        .stdin_pipe = stdin_pipe,
+        .#stdout_pipe = stdout_pipe,
+        .#stderr_pipe = stderr_pipe,
+        .#stdin_pipe = stdin_pipe,
     };
 
     worker.parent_poll_ref.ref(parent);
@@ -474,6 +492,21 @@ fn deinit(this: *WebWorker) void {
         bun.default_allocator.free(preload);
     }
     bun.default_allocator.free(this.preloads);
+
+    // Close pipe file descriptors to prevent leaks and signal EOF to readers
+    if (this.#stdout_pipe) |p| {
+        p[0].close();
+        p[1].close();
+    }
+    if (this.#stderr_pipe) |p| {
+        p[0].close();
+        p[1].close();
+    }
+    if (this.#stdin_pipe) |p| {
+        p[0].close();
+        p[1].close();
+    }
+
     bun.default_allocator.destroy(this);
 }
 

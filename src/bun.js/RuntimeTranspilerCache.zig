@@ -226,6 +226,10 @@ pub const RuntimeTranspilerCache = struct {
 
                     metadata.output_hash = hash(output_bytes);
                     metadata.sourcemap_hash = hash(sourcemap);
+                    if (esm_record.len > 0) {
+                        metadata.esm_record_hash = hash(esm_record);
+                    }
+
                     var metadata_stream = std.io.fixedBufferStream(&metadata_buf);
 
                     try metadata.encode(metadata_stream.writer());
@@ -373,6 +377,12 @@ pub const RuntimeTranspilerCache = struct {
                 const read_bytes = try file.preadAll(esm_record, this.metadata.esm_record_byte_offset);
                 if (read_bytes != this.metadata.esm_record_byte_length) {
                     return error.MissingData;
+                }
+
+                if (this.metadata.esm_record_hash != 0) {
+                    if (hash(esm_record) != this.metadata.esm_record_hash) {
+                        return error.InvalidHash;
+                    }
                 }
 
                 this.esm_record = esm_record;

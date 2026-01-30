@@ -77,7 +77,11 @@ function request(
       });
     });
     req.on("error", reject);
-    if (body !== undefined) req.end(body);
+    if (body !== undefined) {
+      req.end(body);
+    } else {
+      req.end();
+    }
   });
 }
 
@@ -412,13 +416,13 @@ describe("HTTP/2 upgrade — independent upgrade per connection", () => {
 if (typeof Bun !== "undefined") {
   describe("Node.js compatibility", () => {
     test("tests should run on node.js", async () => {
-      const process = Bun.spawn({
+      await using proc = Bun.spawn({
         cmd: [Bun.which("node") || "node", "--test", import.meta.filename],
         stdout: "inherit",
         stderr: "inherit",
         stdin: "ignore",
       });
-      expect(await process.exited).toBe(0);
+      assert.strictEqual(await proc.exited, 0);
     });
   });
 }

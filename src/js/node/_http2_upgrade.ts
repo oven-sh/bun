@@ -77,6 +77,7 @@ function tlsSocketRead(this: TLSProxySocket) {
   if (h) {
     h.resume();
   }
+  this._ctx.rawSocket.resume();
 }
 
 // _write: called when the H2 session writes outbound frames.
@@ -106,6 +107,12 @@ function tlsSocketDestroy(this: TLSProxySocket, err: Error | null, callback: (er
     h.close();
     this._ctx.nativeHandle = null;
   }
+  // Must invoke pending write callback with error per Writable stream contract
+  const writeCb = this._writeCallback;
+  if (writeCb) {
+    this._writeCallback = undefined;
+    writeCb(err ?? new Error("Socket destroyed"));
+  }
   callback(err);
 }
 
@@ -132,7 +139,9 @@ function socketOpen() {}
 // data: called with decrypted plaintext after the TLS layer decrypts incoming data.
 // Push into tlsSocket so the H2 session's _read() receives these frames.
 function socketData(this: TLSProxySocket, _socket: NativeHandle, chunk: Buffer) {
-  this.push(chunk);
+  if (!this.push(chunk)) {
+    this._ctx.rawSocket.pause();
+  }
 }
 
 // end: TLS peer signaled end-of-stream; signal EOF to the H2 session.
@@ -192,7 +201,7 @@ function socketHandshake(
 
   if (!success) {
     const err = verifyError || new Error("TLS handshake failed");
-    ctx.server.emit("tlsClientError", err, ctx.rawSocket);
+    ctx.server.emit("tlsClientError", err, tlsSocket);
     tlsSocket.destroy(err);
     return;
   }
@@ -245,6 +254,7 @@ function onTlsClose(this: TLSProxySocket) {
   const ctx = this._ctx;
   const raw = ctx.rawSocket;
   const ev = ctx.events;
+  if (!ev) return;
   raw.removeListener("data", ev[0]);
   raw.removeListener("end", ev[1]);
   raw.removeListener("drain", ev[2]);
@@ -356,6 +366,7 @@ function upgradeRawSocketToH2(
       data: {},
     });
   } catch (e) {
+    rawSocket.destroy(e as Error);
     tlsSocket.destroy(e as Error);
     return true;
   }

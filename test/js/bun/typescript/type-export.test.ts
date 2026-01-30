@@ -1,5 +1,26 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
+
+const ext = isWindows ? ".exe" : "";
+
+function compileAndRun(dir: string, entrypoint: string) {
+  const outfile = dir + `/compiled${ext}`;
+  const buildResult = Bun.spawnSync({
+    cmd: [bunExe(), "build", "--compile", "--bytecode", entrypoint, "--outfile", outfile],
+    env: bunEnv,
+    cwd: dir,
+    stdio: ["inherit", "pipe", "pipe"],
+  });
+  expect(buildResult.stderr.toString()).toBe("");
+  expect(buildResult.exitCode).toBe(0);
+
+  return Bun.spawnSync({
+    cmd: [outfile],
+    env: bunEnv,
+    cwd: dir,
+    stdio: ["inherit", "pipe", "pipe"],
+  });
+}
 
 const a_file = `
   export type my_string = "1";
@@ -64,35 +85,43 @@ for (const b_file of b_files) {
           "a.ts": a_file,
           "b.ts": b_file.value,
           "c.ts": c_file.value,
-
           "a_no_value.ts": a_no_value,
           "a_with_value.ts": a_with_value,
         });
 
-        const runAndVerify = (filename: string) => {
-          const result = Bun.spawnSync({
-            cmd: [bunExe(), "run", filename],
-            cwd: dir,
-            env: bunEnv,
-            stdio: ["inherit", "pipe", "inherit"],
+        describe.each(["run", "compile", "build"])("%s", mode => {
+          // TODO: "run" is skipped until ESM module_info is enabled in the runtime transpiler.
+          // Currently module_info is only generated for standalone ESM bytecode (--compile).
+          // Once enabled, flip this to include "run".
+          test.skipIf(mode === "run")("works", async () => {
+            let result: Bun.SyncSubprocess<"pipe", "inherit"> | Bun.SyncSubprocess<"pipe", "pipe">;
+            if (mode === "compile") {
+              result = compileAndRun(dir, dir + "/c.ts");
+            } else if (mode === "build") {
+              const build_result = await Bun.build({
+                entrypoints: [dir + "/c.ts"],
+                outdir: dir + "/dist",
+              });
+              expect(build_result.success).toBe(true);
+              result = Bun.spawnSync({
+                cmd: [bunExe(), "run", dir + "/dist/c.js"],
+                cwd: dir,
+                env: bunEnv,
+                stdio: ["inherit", "pipe", "inherit"],
+              });
+            } else {
+              result = Bun.spawnSync({
+                cmd: [bunExe(), "run", "c.ts"],
+                cwd: dir,
+                env: bunEnv,
+                stdio: ["inherit", "pipe", "inherit"],
+              });
+            }
+
+            const parsedOutput = JSON.parse(result.stdout.toString().trim());
+            expect(parsedOutput).toEqual({ my_value: "2", my_only: "3" });
+            expect(result.exitCode).toBe(0);
           });
-
-          const parsedOutput = JSON.parse(result.stdout.toString().trim());
-          expect(parsedOutput).toEqual({ my_value: "2", my_only: "3" });
-          expect(result.exitCode).toBe(0);
-        };
-
-        test("run", () => {
-          runAndVerify("c.ts");
-        });
-
-        test("build", async () => {
-          const build_result = await Bun.build({
-            entrypoints: [dir + "/c.ts"],
-            outdir: dir + "/dist",
-          });
-          expect(build_result.success).toBe(true);
-          runAndVerify(dir + "/dist/c.js");
         });
       });
     }
@@ -269,37 +298,48 @@ describe("through export merge", () => {
   }
 });
 
-test("check ownkeys from a star import", () => {
+describe("check ownkeys from a star import", () => {
   const dir = tempDirWithFiles("ownkeys-star-import", {
     ["main.ts"]: `
-            import * as ns from './a';
-            console.log(JSON.stringify({
-              keys: Object.keys(ns),
-              ns,
-              has_sometype: Object.hasOwn(ns, 'sometype'),
-            }));
-          `,
+      import * as ns from './a';
+      console.log(JSON.stringify({
+        keys: Object.keys(ns).sort(),
+        ns,
+        has_sometype: Object.hasOwn(ns, 'sometype'),
+      }));
+    `,
     ["a.ts"]: "export * from './b'; export {sometype} from './b';",
     ["b.ts"]: "export const value = 'b'; export const anotherValue = 'another'; export type sometype = 'sometype';",
   });
 
-  const result = Bun.spawnSync({
-    cmd: [bunExe(), "main.ts"],
-    cwd: dir,
-    env: bunEnv,
-    stdio: ["inherit", "pipe", "pipe"],
-  });
-
-  expect(result.stderr?.toString().trim()).toBe("");
-  expect(JSON.parse(result.stdout?.toString().trim())).toEqual({
+  const expected = {
     keys: ["anotherValue", "value"],
     ns: {
       anotherValue: "another",
       value: "b",
     },
     has_sometype: false,
+  };
+
+  describe.each(["run", "compile"] as const)("%s", mode => {
+    const testFn = mode === "run" ? test.skip : test;
+
+    testFn("works", () => {
+      const result =
+        mode === "compile"
+          ? compileAndRun(dir, dir + "/main.ts")
+          : Bun.spawnSync({
+              cmd: [bunExe(), "main.ts"],
+              cwd: dir,
+              env: bunEnv,
+              stdio: ["inherit", "pipe", "pipe"],
+            });
+
+      expect(result.stderr?.toString().trim()).toBe("");
+      expect(JSON.parse(result.stdout?.toString().trim())).toEqual(expected);
+      expect(result.exitCode).toBe(0);
+    });
   });
-  expect(result.exitCode).toBe(0);
 });
 
 test("check commonjs", () => {
@@ -410,10 +450,9 @@ describe("export type {Type} from './module'", () => {
   }
 });
 
-test("import only used in decorator (#8439)", () => {
+describe("import only used in decorator (#8439)", () => {
   const dir = tempDirWithFiles("import-only-used-in-decorator", {
     ["index.ts"]: /*js*/ `
-      // index.ts
       import { TestInterface } from "./interface.ts";
 
       function Decorator(): PropertyDecorator {
@@ -432,18 +471,29 @@ test("import only used in decorator (#8439)", () => {
     `,
     ["interface.ts"]: "export interface TestInterface {};",
     "tsconfig.json": JSON.stringify({
-      "compilerOptions": {
-        "experimentalDecorators": true,
-        "emitDecoratorMetadata": true,
+      compilerOptions: {
+        experimentalDecorators: true,
+        emitDecoratorMetadata: true,
       },
     }),
   });
-  const result = Bun.spawnSync({
-    cmd: [bunExe(), "index.ts"],
-    cwd: dir,
-    env: bunEnv,
-    stdio: ["inherit", "pipe", "pipe"],
+
+  describe.each(["run", "compile"] as const)("%s", mode => {
+    const testFn = mode === "run" ? test.skip : test;
+
+    testFn("works", () => {
+      const result =
+        mode === "compile"
+          ? compileAndRun(dir, dir + "/index.ts")
+          : Bun.spawnSync({
+              cmd: [bunExe(), "index.ts"],
+              cwd: dir,
+              env: bunEnv,
+              stdio: ["inherit", "pipe", "pipe"],
+            });
+
+      expect(result.stderr?.toString().trim()).toBe("");
+      expect(result.exitCode).toBe(0);
+    });
   });
-  expect(result.stderr?.toString().trim()).toBe("");
-  expect(result.exitCode).toBe(0);
 });

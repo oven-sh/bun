@@ -307,7 +307,16 @@ JSValue MessagePort::tryTakeMessage(JSGlobalObject* lexicalGlobalObject)
 
     auto ports = MessagePort::entanglePorts(*context, WTF::move(messageWithPorts->transferredPorts));
     auto message = messageWithPorts->message.releaseNonNull();
-    return message->deserialize(*lexicalGlobalObject, lexicalGlobalObject, WTF::move(ports), SerializationErrorMode::NonThrowing);
+    JSValue deserializedMessage = message->deserialize(*lexicalGlobalObject, lexicalGlobalObject, WTF::move(ports), SerializationErrorMode::NonThrowing);
+
+    // Wrap the message in { message: value } to distinguish "no message" (undefined)
+    // from "message with undefined value" ({ message: undefined }).
+    // This matches Node.js receiveMessageOnPort behavior.
+    // https://github.com/oven-sh/bun/issues/26501
+    auto& vm = lexicalGlobalObject->vm();
+    JSObject* result = constructEmptyObject(lexicalGlobalObject);
+    result->putDirect(vm, vm.propertyNames->message, deserializedMessage);
+    return result;
 }
 
 void MessagePort::dispatchEvent(Event& event)

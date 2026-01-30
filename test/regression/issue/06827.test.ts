@@ -6,7 +6,7 @@ import path from "path";
 describe("issue #6827 - Bun.write from empty Response doesn't create any file", () => {
   test("Bun.write with empty Response creates file", async () => {
     using dir = tempDir("issue-6827", {});
-    const filePath = path.join(String(dir), "ok.txt");
+    const filePath = path.join(dir, "ok.txt");
 
     // Should create an empty file
     const bytesWritten = await Bun.write(filePath, new Response(""));

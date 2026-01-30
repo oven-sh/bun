@@ -1,3 +1,6 @@
+# NOTE: Changes to this file trigger QEMU JIT stress tests in CI.
+# See scripts/verify-jit-stress-qemu.sh for details.
+
 option(WEBKIT_VERSION "The version of WebKit to use")
 option(WEBKIT_LOCAL "If a local version of WebKit should be used instead of downloading")
 

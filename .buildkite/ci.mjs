@@ -598,6 +598,49 @@ function getVerifyBaselineStep(platform, options) {
 }
 
 /**
+ * Returns true if the PR modifies SetupWebKit.cmake (WebKit version changes).
+ * JIT stress tests under QEMU should run when WebKit is updated to catch
+ * JIT-generated code that uses unsupported CPU instructions.
+ * @param {PipelineOptions} options
+ * @returns {boolean}
+ */
+function hasWebKitChanges(options) {
+  const { changedFiles = [] } = options;
+  return changedFiles.some(file => file.includes("SetupWebKit.cmake"));
+}
+
+/**
+ * Returns a step that runs JSC JIT stress tests under QEMU.
+ * This verifies that JIT-compiled code doesn't use CPU instructions
+ * beyond the baseline target (no AVX on x64, no LSE on aarch64).
+ * @param {Platform} platform
+ * @param {PipelineOptions} options
+ * @returns {Step}
+ */
+function getJitStressTestStep(platform, options) {
+  const { arch } = platform;
+  const targetKey = getTargetKey(platform);
+  const archArg = arch === "x64" ? "x64" : "aarch64";
+
+  return {
+    key: `${targetKey}-jit-stress-qemu`,
+    label: `${getTargetLabel(platform)} - jit-stress-qemu`,
+    depends_on: [`${targetKey}-build-bun`],
+    agents: getLinkBunAgent(platform, options),
+    retry: getRetry(),
+    cancel_on_build_failing: isMergeQueue(),
+    // JIT stress tests are slow under QEMU emulation
+    timeout_in_minutes: 30,
+    command: [
+      `buildkite-agent artifact download '*.zip' . --step ${targetKey}-build-bun`,
+      `unzip -o '${getTargetTriplet(platform)}.zip'`,
+      `chmod +x ${getTargetTriplet(platform)}/bun`,
+      `./scripts/verify-jit-stress-qemu.sh --arch ${archArg} --binary ${getTargetTriplet(platform)}/bun`,
+    ],
+  };
+}
+
+/**
  * @param {Platform} platform
  * @param {PipelineOptions} options
  * @returns {Step}
@@ -834,6 +877,7 @@ function getBenchmarkStep() {
  * @property {Platform[]} [buildPlatforms]
  * @property {Platform[]} [testPlatforms]
  * @property {string[]} [testFiles]
+ * @property {string[]} [changedFiles]
  */
 
 /**
@@ -1188,6 +1232,10 @@ async function getPipeline(options = {}) {
 
         if (needsBaselineVerification(target)) {
           steps.push(getVerifyBaselineStep(target, options));
+          // Run JIT stress tests under QEMU when WebKit is updated
+          if (hasWebKitChanges(options)) {
+            steps.push(getJitStressTestStep(target, options));
+          }
         }
 
         return getStepWithDependsOn(
@@ -1287,6 +1335,7 @@ async function main() {
       console.log(`- PR is only docs, skipping tests!`);
       return;
     }
+    options.changedFiles = allFiles;
   }
 
   startGroup("Generating pipeline...");

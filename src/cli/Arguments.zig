@@ -576,6 +576,10 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 };
             }
         }
+        if (ctx.test_options.retry != 0 and ctx.test_options.repeat_count != 0) {
+            Output.prettyErrorln("<r><red>error<r>: --retry cannot be used with --rerun-each", .{});
+            Global.exit(1);
+        }
         if (args.option("--test-name-pattern")) |namePattern| {
             ctx.test_options.test_filter_pattern = namePattern;
             const regex = RegularExpression.init(bun.String.fromBytes(namePattern), RegularExpression.Flags.none) catch {

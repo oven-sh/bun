@@ -317,15 +317,18 @@ class FileDebugSession extends DebugSession {
 
   mapRemoteToLocal(p: string | undefined): string | undefined {
     if (!p || !this.remoteRoot || !this.localRoot) return p;
+
     const remoteModule = this.#isWindowsRemote ? path.win32 : path.posix;
     let remoteRoot = remoteModule.normalize(this.remoteRoot);
     if (!remoteRoot.endsWith(remoteModule.sep)) remoteRoot += remoteModule.sep;
-    let target = remoteModule.normalize(p);
+
+    const remoteRootWithLocalSeparators = this.remoteRoot.split(remoteModule.sep).join(path.sep);
+    const target = path.normalize(p);
     const starts = this.#isWindowsRemote
-      ? target.toLowerCase().startsWith(remoteRoot.toLowerCase())
-      : target.startsWith(remoteRoot);
+      ? target.toLowerCase().startsWith(remoteRootWithLocalSeparators.toLowerCase())
+      : target.startsWith(remoteRootWithLocalSeparators);
     if (starts) {
-      const rel = target.slice(remoteRoot.length);
+      const rel = target.slice(remoteRootWithLocalSeparators.length);
       const localRel = rel.split(remoteModule.sep).join(path.sep);
       return path.join(this.localRoot, localRel);
     }
@@ -334,10 +337,16 @@ class FileDebugSession extends DebugSession {
 
   mapLocalToRemote(p: string | undefined): string | undefined {
     if (!p || !this.remoteRoot || !this.localRoot) return p;
+
     let localRoot = path.normalize(this.localRoot);
     if (!localRoot.endsWith(path.sep)) localRoot += path.sep;
+
     let localPath = path.normalize(p);
-    if (localPath.startsWith(localRoot)) {
+    const isWindowsPath = p.includes("\\");
+    const starts = isWindowsPath
+      ? localPath.toLowerCase().startsWith(localRoot.toLowerCase())
+      : localPath.startsWith(localRoot);
+    if (starts) {
       const rel = localPath.slice(localRoot.length);
       const remoteModule = this.#isWindowsRemote ? path.win32 : path.posix;
       const remoteRel = rel.split(path.sep).join(remoteModule.sep);

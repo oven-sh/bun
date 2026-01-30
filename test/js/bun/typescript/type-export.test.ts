@@ -77,8 +77,9 @@ for (const b_file of b_files) {
             stdio: ["inherit", "pipe", "inherit"],
           });
 
+          const parsedOutput = JSON.parse(result.stdout.toString().trim());
+          expect(parsedOutput).toEqual({ my_value: "2", my_only: "3" });
           expect(result.exitCode).toBe(0);
-          expect(JSON.parse(result.stdout.toString().trim())).toEqual({ my_value: "2", my_only: "3" });
         };
 
         test("run", () => {

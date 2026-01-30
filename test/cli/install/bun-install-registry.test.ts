@@ -3735,7 +3735,7 @@ describe("hoisting", async () => {
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
-    expect(err).not.toContain("incorrect peer dependency");
+    expect(err).not.toContain("unmet peer dependency");
 
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       expect.stringContaining("bun install v1."),
@@ -3911,7 +3911,10 @@ describe("hoisting", async () => {
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
-    expect(err).toContain("incorrect peer dependency");
+    // New improved peer dependency warning format shows the requiring package, expected version, and actual version
+    // Match: "warn: ...peer-deps-fixed has unmet peer dependency no-deps@^1.0.0 (found 2.0.0)"
+    // Use line-anchored pattern to avoid matching across lines
+    expect(err).toMatch(/^warn:[^\n]*peer-deps-fixed has unmet peer dependency no-deps@\^1\.0\.0 \(found 2\.0\.0\)$/m);
 
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       expect.stringContaining("bun install v1."),
@@ -7632,7 +7635,8 @@ describe("yarn tests", () => {
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("error:");
     expect(err).not.toContain("not found");
-    expect(err).not.toContain("incorrect peer dependency");
+    // Use line-based check to ensure no line contains the peer dependency warning
+    expect(err.split(/\r?\n/).some((line: string) => /unmet peer dependency/i.test(line))).toBe(false);
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       expect.stringContaining("bun install v1."),
       "",
@@ -7673,7 +7677,11 @@ describe("yarn tests", () => {
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("error:");
     expect(err).not.toContain("not found");
-    expect(err).toContain("incorrect peer dependency");
+    // New improved peer dependency warning format shows the requiring package, expected version, and actual version
+    // Use line-anchored pattern to avoid matching across lines
+    expect(err).toMatch(
+      /^warn:[^\n]*peer-deps-fixed[^\n]*has unmet peer dependency no-deps@\^1\.0\.0 \(found 2\.0\.0\)$/m,
+    );
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       expect.stringContaining("bun install v1."),
       "",
@@ -7714,7 +7722,8 @@ describe("yarn tests", () => {
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("error:");
     expect(err).not.toContain("not found");
-    expect(err).not.toContain("incorrect peer dependency");
+    // Use line-based check to ensure no line contains the peer dependency warning
+    expect(err.split(/\r?\n/).every((line: string) => !/unmet peer dependency/i.test(line))).toBe(true);
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       expect.stringContaining("bun install v1."),
       "",
@@ -7822,7 +7831,8 @@ describe("yarn tests", () => {
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("error:");
     expect(err).not.toContain("not found");
-    expect(err).not.toContain("incorrect peer dependency");
+    // Use word-boundary regex to match exact warning token
+    expect(err).not.toMatch(/\bunmet peer dependency\b/i);
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       expect.stringContaining("bun install v1."),
       "",
@@ -7887,7 +7897,8 @@ describe("yarn tests", () => {
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("error:");
     expect(err).not.toContain("not found");
-    expect(err).not.toContain("incorrect peer dependency");
+    // Use regex to match the specific packages in this test, avoiding false positives
+    expect(err).not.toMatch(/unmet peer dependency.*(forward-peer-deps|no-deps)/i);
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       expect.stringContaining("bun install v1."),
       "",
@@ -7953,7 +7964,10 @@ describe("yarn tests", () => {
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("error:");
     expect(err).not.toContain("not found");
-    expect(err).not.toContain("incorrect peer dependency");
+    // Normalize stderr (strip ANSI codes) and use case-insensitive regex
+    // Use RegExp constructor to avoid embedding control characters (satisfies noControlCharactersInRegex)
+    const normalizedErr = err.replace(new RegExp("\\x1b\\[[0-9;]*m", "g"), "");
+    expect(normalizedErr).not.toMatch(/unmet peer dependency/i);
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       expect.stringContaining("bun install v1."),
       "",

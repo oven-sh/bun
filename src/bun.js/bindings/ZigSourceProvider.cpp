@@ -75,9 +75,10 @@ Ref<SourceProvider> SourceProvider::create(
     JSC::SourceProviderSourceType sourceType,
     bool isBuiltin)
 {
-    // Only use BunTranspiledModule when there's NO bytecode cache.
-    // When bytecode cache is present, let the normal caching path handle it.
-    if (resolvedSource.module_info != nullptr && resolvedSource.bytecode_cache == nullptr) {
+    // Use BunTranspiledModule when module_info is present.
+    // This allows JSC to skip parsing during the analyze phase (uses pre-computed imports/exports).
+    // Bytecode cache (if present) is used separately during the evaluate phase.
+    if (resolvedSource.module_info != nullptr) {
         ASSERT(!resolvedSource.isCommonJSModule);
         sourceType = JSC::SourceProviderSourceType::BunTranspiledModule;
     }

@@ -3836,6 +3836,64 @@ fn fromJSMovable(
     return FromJSFunction(global, arg);
 }
 
+/// Read a file-backed blob's contents synchronously.
+/// Used when constructing a new Blob from parts that include file-backed blobs.
+fn readBlobFileSync(blob: *const Blob, allocator: std.mem.Allocator) ![]u8 {
+    const store = blob.store orelse return &[_]u8{};
+    if (store.data != .file) return &[_]u8{};
+
+    const file_store = &store.data.file;
+    const pathlike = file_store.pathlike;
+
+    // Open the file
+    const fd: bun.FileDescriptor = switch (pathlike) {
+        .fd => |fd| fd,
+        .path => |path| blk: {
+            var path_buf: bun.PathBuffer = undefined;
+            const result = bun.sys.open(path.sliceZ(&path_buf), bun.O.RDONLY, 0);
+            switch (result) {
+                .result => |opened_fd| break :blk opened_fd,
+                .err => return error.OpenFailed,
+            }
+        },
+    };
+    defer if (pathlike == .path) fd.close();
+
+    // Get file size
+    const size: usize = blk: {
+        if (blob.size != Blob.max_size and blob.size > 0) {
+            break :blk @intCast(blob.size);
+        }
+        // Stat the file to get size
+        switch (bun.sys.fstat(fd)) {
+            .result => |stat| {
+                if (stat.size > 0) break :blk @intCast(@as(u64, @intCast(@max(stat.size, 0))));
+                break :blk 0;
+            },
+            .err => return error.StatFailed,
+        }
+    };
+
+    if (size == 0) return &[_]u8{};
+
+    // Allocate buffer and read
+    const buffer = try allocator.alloc(u8, size);
+    errdefer allocator.free(buffer);
+
+    var total_read: usize = 0;
+    while (total_read < size) {
+        switch (bun.sys.read(fd, buffer[total_read..])) {
+            .result => |bytes_read| {
+                if (bytes_read == 0) break; // EOF
+                total_read += bytes_read;
+            },
+            .err => return error.ReadFailed,
+        }
+    }
+
+    return buffer[0..total_read];
+}
+
 fn fromJSWithoutDeferGC(
     global: *JSGlobalObject,
     arg: JSValue,
@@ -4022,7 +4080,16 @@ fn fromJSWithoutDeferGC(
                             .DOMWrapper => {
                                 if (item.as(Blob)) |blob| {
                                     could_have_non_ascii = could_have_non_ascii or blob.charset != .all_ascii;
-                                    joiner.pushStatic(blob.sharedView());
+                                    if (blob.needsToReadFile()) {
+                                        // File-backed blob - read contents synchronously
+                                        const file_contents = readBlobFileSync(blob, stack_mem_all) catch {
+                                            return global.throwInvalidArguments("Failed to read file for Blob constructor", .{});
+                                        };
+                                        could_have_non_ascii = true;
+                                        joiner.push(file_contents, stack_mem_all);
+                                    } else {
+                                        joiner.pushStatic(blob.sharedView());
+                                    }
                                     continue;
                                 } else {
                                     const sliced = try item.toSliceClone(global);
@@ -4043,7 +4110,16 @@ fn fromJSWithoutDeferGC(
             .DOMWrapper => {
                 if (current.as(Blob)) |blob| {
                     could_have_non_ascii = could_have_non_ascii or blob.charset != .all_ascii;
-                    joiner.pushStatic(blob.sharedView());
+                    if (blob.needsToReadFile()) {
+                        // File-backed blob - read contents synchronously
+                        const file_contents = readBlobFileSync(blob, stack_mem_all) catch {
+                            return global.throwInvalidArguments("Failed to read file for Blob constructor", .{});
+                        };
+                        could_have_non_ascii = true;
+                        joiner.push(file_contents, stack_mem_all);
+                    } else {
+                        joiner.pushStatic(blob.sharedView());
+                    }
                 } else {
                     const sliced = try current.toSliceClone(global);
                     const allocator = sliced.allocator.get();

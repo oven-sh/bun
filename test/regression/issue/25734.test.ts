@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { tempDir } from "harness";
 import fs from "node:fs";
 
-test("fs.readdir returns sorted entries", async () => {
+test("fs.readdir returns sorted entries", () => {
   using dir = tempDir("readdir-sorted", {
     "a": "",
     "b": "",
@@ -30,7 +30,7 @@ test("fs.readdir async returns sorted entries", async () => {
   expect(entries).toEqual(["0", "1", "2", "a", "b", "c"]);
 });
 
-test("fs.readdir with buffer encoding returns sorted entries", async () => {
+test("fs.readdir with buffer encoding returns sorted entries", () => {
   using dir = tempDir("readdir-sorted-buffer", {
     "a": "",
     "b": "",
@@ -45,7 +45,7 @@ test("fs.readdir with buffer encoding returns sorted entries", async () => {
   expect(names).toEqual(["0", "1", "2", "a", "b", "c"]);
 });
 
-test("fs.readdir with withFileTypes returns sorted entries", async () => {
+test("fs.readdir with withFileTypes returns sorted entries", () => {
   using dir = tempDir("readdir-sorted-dirent", {
     "a": "",
     "b": "",
@@ -60,7 +60,7 @@ test("fs.readdir with withFileTypes returns sorted entries", async () => {
   expect(names).toEqual(["0", "1", "2", "a", "b", "c"]);
 });
 
-test("fs.readdir recursive returns sorted entries", async () => {
+test("fs.readdir recursive returns sorted entries", () => {
   using dir = tempDir("readdir-sorted-recursive", {
     "a": "",
     "b": "",
@@ -76,7 +76,7 @@ test("fs.readdir recursive returns sorted entries", async () => {
   expect(entries).toEqual(sortedEntries);
 });
 
-test("fs.readdir with mixed case returns sorted entries", async () => {
+test("fs.readdir with mixed case returns sorted entries", () => {
   using dir = tempDir("readdir-sorted-mixed", {
     "Apple": "",
     "banana": "",

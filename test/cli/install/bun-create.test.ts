@@ -172,3 +172,45 @@ it("should not crash with --no-install and bun-create.postinstall starting with 
   expect(err).not.toContain("error:");
   expect(exitCode).toBe(0);
 });
+
+it("should respect BUN_CONFIG_REGISTRY environment variable", async () => {
+  const { stderr, exited } = spawn({
+    cmd: [bunExe(), "create", "@test/template"],
+    cwd: x_dir,
+    stdout: "inherit",
+    stdin: "inherit",
+    stderr: "pipe",
+    env: {
+      ...env,
+      BUN_CONFIG_REGISTRY: "https://custom-registry.example.com",
+    },
+  });
+
+  await exited;
+
+  const err = await stderr.text();
+  expect(err.split(/\r?\n/)).toContain(
+    `error: GET https://custom-registry.example.com/@test%2ftemplate - 404`,
+  );
+});
+
+it("should respect NPM_CONFIG_REGISTRY environment variable", async () => {
+  const { stderr, exited } = spawn({
+    cmd: [bunExe(), "create", "@test/template"],
+    cwd: x_dir,
+    stdout: "inherit",
+    stdin: "inherit",
+    stderr: "pipe",
+    env: {
+      ...env,
+      NPM_CONFIG_REGISTRY: "https://npm-custom-registry.example.com",
+    },
+  });
+
+  await exited;
+
+  const err = await stderr.text();
+  expect(err.split(/\r?\n/)).toContain(
+    `error: GET https://npm-custom-registry.example.com/@test%2ftemplate - 404`,
+  );
+});

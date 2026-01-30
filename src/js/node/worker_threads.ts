@@ -285,17 +285,17 @@ class Worker extends EventEmitter {
   }
 
   get stdin() {
-    // TODO:
+    // TODO: implement stdin capture
     return null;
   }
 
   get stdout() {
-    // TODO:
+    // TODO: implement stdout capture - return ReadableStream when captureStdout option is true
     return null;
   }
 
   get stderr() {
-    // TODO:
+    // TODO: implement stderr capture - return ReadableStream when captureStderr option is true
     return null;
   }
 

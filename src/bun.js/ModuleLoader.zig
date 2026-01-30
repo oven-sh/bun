@@ -423,18 +423,9 @@ pub fn transpileSourceCode(
                     dumpSourceString(jsc_vm, specifier, entry.output_code.byteSlice());
                 }
 
-                const module_info: ?*analyze_transpiled_module.ModuleInfoDeserialized = blk: {
-                    if (entry.esm_record.len > 0) {
-                        if (entry.metadata.module_type == .cjs) {
-                            if (comptime Environment.isDebug) {
-                                @panic("TranspilerCache contained cjs module with module info");
-                            }
-                            break :blk null;
-                        }
-                        break :blk analyze_transpiled_module.ModuleInfoDeserialized.createFromCachedRecord(entry.esm_record, bun.default_allocator);
-                    }
-                    break :blk null;
-                };
+                // TODO: module_info is only needed for standalone ESM bytecode.
+                // For now, skip it entirely in the runtime transpiler.
+                const module_info: ?*analyze_transpiled_module.ModuleInfoDeserialized = null;
 
                 return ResolvedSource{
                     .allocator = null,
@@ -520,10 +511,9 @@ pub fn transpileSourceCode(
             jsc_vm.transpiler.linker.import_counter = 0;
 
             const is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs;
-            const module_info: ?*analyze_transpiled_module.ModuleInfo = if (is_commonjs_module)
-                null
-            else
-                bun.handleOom(analyze_transpiled_module.ModuleInfo.create(bun.default_allocator, loader.isTypeScript()));
+            // TODO: module_info is only needed for standalone ESM bytecode.
+            // For now, skip it entirely in the runtime transpiler.
+            const module_info: ?*analyze_transpiled_module.ModuleInfo = null;
 
             var printer = source_code_printer.*;
             printer.ctx.reset();

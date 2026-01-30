@@ -31,6 +31,9 @@ if [ ! -f "$BINARY" ]; then
   exit 1
 fi
 
+# Convert to absolute path for use after pushd
+BINARY="$(cd "$(dirname "$BINARY")" && pwd)/$(basename "$BINARY")"
+
 # Select QEMU binary and CPU model
 if [ "$ARCH" = "x64" ]; then
   QEMU_BIN="qemu-x86_64"

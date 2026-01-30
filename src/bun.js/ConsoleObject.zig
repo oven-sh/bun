@@ -157,8 +157,8 @@ fn messageWithTypeAndLevel_(
         return;
     }
 
-    // Trace outputs to stderr per Node.js behavior
-    const use_stderr = level == .Warning or level == .Error or message_type == .Trace;
+    // Trace and Assert output to stderr per Node.js behavior
+    const use_stderr = level == .Warning or level == .Error or message_type == .Assert or message_type == .Trace;
     const enable_colors = if (use_stderr)
         Output.enable_ansi_colors_stderr
     else

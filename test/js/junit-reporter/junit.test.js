@@ -344,7 +344,6 @@ describe("junit reporter", () => {
     });
     await proc.exited;
 
-    expect(proc.exitCode).toBe(0);
     const xmlContent = await file(junitPath).text();
 
     // The flaky test should have flakyFailure elements (2 failures before passing on attempt 3)
@@ -373,6 +372,8 @@ describe("junit reporter", () => {
 
     expect(result.testsuites.$.failures).toBe("0");
     expect(result.testsuites.$.tests).toBe("2");
+
+    expect(proc.exitCode).toBe(0);
   });
 });
 

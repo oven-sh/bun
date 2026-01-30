@@ -2436,9 +2436,10 @@ declare module "bun" {
       | `bun-darwin-x64-${SIMD}`
       | `bun-linux-${Architecture}`
       | `bun-linux-${Architecture}-${Libc}`
+      | `bun-linux-x64-${SIMD}`
+      | `bun-linux-x64-${SIMD}-${Libc}`
       | "bun-windows-x64"
-      | `bun-windows-x64-${SIMD}`
-      | `bun-linux-x64-${SIMD}-${Libc}`;
+      | `bun-windows-x64-${SIMD}`;
   }
 
   /**

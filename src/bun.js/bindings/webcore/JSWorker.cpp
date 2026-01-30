@@ -305,6 +305,23 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
             RETURN_IF_EXCEPTION(throwScope, {});
             options.execArgv.emplace(WTF::move(execArgv));
         }
+
+        // Parse stdout option
+        auto stdoutValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "stdout"_s));
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (stdoutValue && stdoutValue.toBoolean(lexicalGlobalObject)) {
+            options.captureStdout = true;
+        }
+
+        // Parse stderr option
+        auto stderrValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "stderr"_s));
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (stderrValue && stderrValue.toBoolean(lexicalGlobalObject)) {
+            options.captureStderr = true;
+        }
+
+        // Note: resourceLimits option is not currently implemented
+        // as JSC doesn't have heap size limits like V8
     }
 
     Vector<RefPtr<MessagePort>> ports;

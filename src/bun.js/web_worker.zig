@@ -40,6 +40,10 @@ execArgv: ?[]const WTFStringImpl,
 /// Used to distinguish between terminate() called by exit(), and terminate() called for other reasons
 exit_called: bool = false,
 
+// stdout/stderr capture options for node:worker_threads
+capture_stdout: bool = false,
+capture_stderr: bool = false,
+
 pub const Status = enum(u8) {
     start,
     starting,
@@ -196,6 +200,8 @@ pub fn create(
     mini: bool,
     default_unref: bool,
     eval_mode: bool,
+    capture_stdout: bool,
+    capture_stderr: bool,
     argv_ptr: ?[*]WTFStringImpl,
     argv_len: usize,
     inherit_execArgv: bool,
@@ -254,6 +260,8 @@ pub fn create(
         .argv = if (argv_ptr) |ptr| ptr[0..argv_len] else &.{},
         .execArgv = if (inherit_execArgv) null else (if (execArgv_ptr) |ptr| ptr[0..execArgv_len] else &.{}),
         .preloads = preloads.items,
+        .capture_stdout = capture_stdout,
+        .capture_stderr = capture_stderr,
     };
 
     worker.parent_poll_ref.ref(parent);

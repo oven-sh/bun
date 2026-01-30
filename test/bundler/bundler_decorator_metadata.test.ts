@@ -1232,17 +1232,21 @@ describe("bundler", () => {
     files: {
       "/entry.ts": /* ts */ `
             ${reflectMetadata}
-            
+
             import { Foo } from "./foo.js";
-    
+
             function d1() {}
-    
+
             @d1
             class Bar {
                 constructor(foo: Foo) {}
             }
-    
-            console.log(Reflect.getMetadata("design:paramtypes", Bar)[0] === Foo);
+
+            // Imported types in metadata are wrapped in functions to avoid TDZ in circular imports
+            // So we need to call the function to get the actual type
+            const paramType = Reflect.getMetadata("design:paramtypes", Bar)[0];
+            const actualType = typeof paramType === "function" ? paramType() : paramType;
+            console.log(actualType === Foo);
         `,
       "/foo.js": /* js */ `
             const f = () => "Foo";

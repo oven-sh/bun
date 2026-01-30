@@ -30,7 +30,7 @@ interface Http2SecureServer {
 
 interface TLSProxySocket {
   _ctx: UpgradeContextType;
-  _writeCallback?: () => void;
+  _writeCallback: ((err?: Error | null) => void) | null;
   alpnProtocol: string | null;
   authorized: boolean;
   encrypted: boolean;
@@ -110,7 +110,7 @@ function tlsSocketDestroy(this: TLSProxySocket, err: Error | null, callback: (er
   // Must invoke pending write callback with error per Writable stream contract
   const writeCb = this._writeCallback;
   if (writeCb) {
-    this._writeCallback = undefined;
+    this._writeCallback = null;
     writeCb(err ?? new Error("Socket destroyed"));
   }
   callback(err);

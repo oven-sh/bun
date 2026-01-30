@@ -4452,16 +4452,20 @@ pub const NodeFS = struct {
     pub fn sortReaddirEntries(comptime ExpectedType: type, entries: []ExpectedType) void {
         std.mem.sort(ExpectedType, entries, {}, struct {
             fn lessThan(_: void, a: ExpectedType, b: ExpectedType) bool {
+                if (comptime ExpectedType == bun.jsc.Node.Dirent) {
+                    const path_order = std.mem.order(u8, a.path.byteSlice(), b.path.byteSlice());
+                    if (path_order != .eq) return path_order == .lt;
+                    return std.mem.order(u8, a.name.byteSlice(), b.name.byteSlice()) == .lt;
+                }
+
                 const a_slice = switch (ExpectedType) {
                     bun.String => a.byteSlice(),
                     Buffer => a.buffer.byteSlice(),
-                    bun.jsc.Node.Dirent => a.name.byteSlice(),
                     else => @compileError("unreachable"),
                 };
                 const b_slice = switch (ExpectedType) {
                     bun.String => b.byteSlice(),
                     Buffer => b.buffer.byteSlice(),
-                    bun.jsc.Node.Dirent => b.name.byteSlice(),
                     else => @compileError("unreachable"),
                 };
                 return std.mem.order(u8, a_slice, b_slice) == .lt;

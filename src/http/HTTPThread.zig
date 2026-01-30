@@ -282,7 +282,8 @@ pub fn connect(this: *@This(), client: *HTTPClient, comptime is_ssl: bool) !NewH
             return error.UnsupportedProxyProtocol;
         }
     }
-    return try this.context(is_ssl).connect(client, client.url.hostname, client.url.getPortAuto());
+    const target_hostname = client.hostname orelse client.url.hostname;
+    return try this.context(is_ssl).connect(client, target_hostname, client.url.getPortAuto());
 }
 
 pub fn context(this: *@This(), comptime is_ssl: bool) *NewHTTPContext(is_ssl) {

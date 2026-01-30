@@ -915,13 +915,6 @@ fn fetchImpl(
         }
 
         if (fetch_headers) |headers_| {
-            if (headers_.fastGet(bun.webcore.FetchHeaders.HTTPHeaderName.Host)) |_hostname| {
-                if (hostname) |host| {
-                    hostname = null;
-                    allocator.free(host);
-                }
-                hostname = bun.handleOom(_hostname.toOwnedSliceZ(allocator));
-            }
             if (url.isS3()) {
                 if (headers_.fastGet(bun.webcore.FetchHeaders.HTTPHeaderName.Range)) |_range| {
                     if (range) |range_| {

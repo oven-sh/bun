@@ -2128,6 +2128,39 @@ describe("http/1.1 response body length", () => {
     expect(response.status).toBe(200);
     expect(response.arrayBuffer()).resolves.toHaveLength(0);
   });
+
+  it("should allow custom Host header different from URL (issue #26579)", async () => {
+    // Start a test server that echoes back the Host header
+    const testServer = serve({
+      idleTimeout: 0,
+      port: 0,
+      fetch(req) {
+        const hostHeader = req.headers.get("host") || "not-set";
+        return new Response(JSON.stringify({ host: hostHeader }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      },
+    });
+
+    try {
+      const testServerUrl = `http://127.0.0.1:${testServer.port}`;
+
+      // Fetch to the actual server with a custom Host header
+      // The request should still connect to the actual server, but send the custom header
+      const response = await fetch(testServerUrl, {
+        headers: { "host": "custom-host.example.com" },
+      });
+
+      expect(response.status).toBe(200);
+      const body = await response.json<{ host: string }>();
+
+      // The server should receive the custom Host header
+      expect(body.host).toBe("custom-host.example.com");
+    } finally {
+      testServer.stop(true);
+    }
+  });
 });
 describe("fetch Response life cycle", () => {
   // error: Malformed_HTTP_Response fetching "http://localhost:58888/". For more information, pass `verbose: true` in the second argument to fetch()

@@ -42,9 +42,9 @@ exit_called: bool = false,
 
 /// Stdio capture options for node:worker_threads (Node.js compatibility)
 /// When true, the respective stream is captured and can be read from the parent
-capture_stdout: bool = false,
-capture_stderr: bool = false,
-capture_stdin: bool = false,
+#capture_stdout: bool = false,
+#capture_stderr: bool = false,
+#capture_stdin: bool = false,
 
 /// Pipe file descriptors for stdio redirection
 /// Format: [read_fd, write_fd] - read end for parent, write end for worker
@@ -367,9 +367,9 @@ pub fn create(
         .argv = if (argv_ptr) |ptr| ptr[0..argv_len] else &.{},
         .execArgv = if (inherit_execArgv) null else (if (execArgv_ptr) |ptr| ptr[0..execArgv_len] else &.{}),
         .preloads = preloads.items,
-        .capture_stdout = capture_stdout,
-        .capture_stderr = capture_stderr,
-        .capture_stdin = capture_stdin,
+        .#capture_stdout = capture_stdout,
+        .#capture_stderr = capture_stderr,
+        .#capture_stdin = capture_stdin,
         .#stdout_pipe = stdout_pipe,
         .#stderr_pipe = stderr_pipe,
         .#stdin_pipe = stdin_pipe,
@@ -493,18 +493,17 @@ fn deinit(this: *WebWorker) void {
     }
     bun.default_allocator.free(this.preloads);
 
-    // Close pipe file descriptors to prevent leaks and signal EOF to readers
+    // Close worker-side pipe ends to signal EOF to parent and prevent FD leaks
+    // Worker uses: stdout_pipe[1] (write), stderr_pipe[1] (write), stdin_pipe[0] (read)
+    // Parent-side ends remain open for parent to manage
     if (this.#stdout_pipe) |p| {
-        p[0].close();
-        p[1].close();
+        p[1].close(); // Close worker write end
     }
     if (this.#stderr_pipe) |p| {
-        p[0].close();
-        p[1].close();
+        p[1].close(); // Close worker write end
     }
     if (this.#stdin_pipe) |p| {
-        p[0].close();
-        p[1].close();
+        p[0].close(); // Close worker read end
     }
 
     bun.default_allocator.destroy(this);

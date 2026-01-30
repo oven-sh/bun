@@ -5,6 +5,7 @@ type WebWorker = InstanceType<typeof globalThis.Worker>;
 const EventEmitter = require("node:events");
 const Readable = require("internal/streams/readable");
 const { throwNotImplemented, warnNotImplementedOnce } = require("internal/shared");
+const { SafeWeakMap } = require("internal/primordials");
 
 const {
   MessageChannel,
@@ -37,8 +38,8 @@ type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
 // after their Worker exits
 let urlRevokeRegistry: FinalizationRegistry<string> | undefined = undefined;
 
-// Storage for stdio streams (using WeakMap to avoid class field parsing issues)
-const stdioStreams = new WeakMap<object, any>();
+// Storage for stdio streams (using SafeWeakMap to avoid userland patching)
+const stdioStreams = new SafeWeakMap();
 
 function getOrCreateStdioStream(worker: object, type: string, nativeWorker: WebWorker, options: any) {
   let streams = stdioStreams.get(worker);
@@ -119,12 +120,12 @@ function injectFakeEmitter(Class: any) {
     }
   }
 
-  Class.prototype.on = function (event: string, listener: any) {
+  Class.prototype.on = function (this: any, event: string, listener: any) {
     this.addEventListener(event, functionForEventType(event, listener));
     return this;
   };
 
-  Class.prototype.off = function (event: string, listener: any) {
+  Class.prototype.off = function (this: any, event: string, listener: any) {
     if (listener) {
       this.removeEventListener(event, listener[wrappedListener] || listener);
     } else {
@@ -133,7 +134,7 @@ function injectFakeEmitter(Class: any) {
     return this;
   };
 
-  Class.prototype.once = function (event: string, listener: any) {
+  Class.prototype.once = function (this: any, event: string, listener: any) {
     this.addEventListener(event, functionForEventType(event, listener), { once: true });
     return this;
   };
@@ -145,8 +146,24 @@ function injectFakeEmitter(Class: any) {
     return MessageEvent;
   }
 
-  Class.prototype.emit = function (event: string, ...args: any[]) {
-    this.dispatchEvent(new (EventClass(event))(event, ...args));
+  Class.prototype.emit = function (this: any, event: string, ...args: any[]) {
+    const EventConstructor = EventClass(event);
+    let eventInstance: Event;
+
+    if (EventConstructor === MessageEvent) {
+      // Wrap first argument as { data: <arg> } for MessageEvent
+      const init = args.length > 0 ? { data: args[0] } : { data: undefined };
+      eventInstance = new MessageEvent(event, init);
+    } else if (EventConstructor === ErrorEvent) {
+      // Wrap first argument as { error: <arg> } for ErrorEvent
+      const init = args.length > 0 ? { error: args[0] } : { error: undefined };
+      eventInstance = new ErrorEvent(event, init);
+    } else {
+      // Fallback for other event types
+      eventInstance = new (EventConstructor as any)(event, ...args);
+    }
+
+    this.dispatchEvent(eventInstance);
     return this;
   };
 

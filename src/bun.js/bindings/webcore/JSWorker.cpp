@@ -311,20 +311,26 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
         if (options.kind == WorkerOptions::Kind::Node) {
             auto stdoutValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "stdout"_s));
             RETURN_IF_EXCEPTION(throwScope, {});
-            if (stdoutValue && stdoutValue.toBoolean(lexicalGlobalObject)) {
-                options.captureStdout = true;
+            if (stdoutValue) {
+                Bun::V::validateBoolean(throwScope, lexicalGlobalObject, stdoutValue, "options.stdout"_s);
+                RETURN_IF_EXCEPTION(throwScope, {});
+                options.captureStdout = stdoutValue.toBoolean(lexicalGlobalObject);
             }
 
             auto stderrValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "stderr"_s));
             RETURN_IF_EXCEPTION(throwScope, {});
-            if (stderrValue && stderrValue.toBoolean(lexicalGlobalObject)) {
-                options.captureStderr = true;
+            if (stderrValue) {
+                Bun::V::validateBoolean(throwScope, lexicalGlobalObject, stderrValue, "options.stderr"_s);
+                RETURN_IF_EXCEPTION(throwScope, {});
+                options.captureStderr = stderrValue.toBoolean(lexicalGlobalObject);
             }
 
             auto stdinValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "stdin"_s));
             RETURN_IF_EXCEPTION(throwScope, {});
-            if (stdinValue && stdinValue.toBoolean(lexicalGlobalObject)) {
-                options.captureStdin = true;
+            if (stdinValue) {
+                Bun::V::validateBoolean(throwScope, lexicalGlobalObject, stdinValue, "options.stdin"_s);
+                RETURN_IF_EXCEPTION(throwScope, {});
+                options.captureStdin = stdinValue.toBoolean(lexicalGlobalObject);
             }
         }
     }

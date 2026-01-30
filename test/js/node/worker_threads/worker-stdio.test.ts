@@ -96,7 +96,7 @@ describe("worker_threads stdio", () => {
       });
     });
 
-    worker.terminate();
+    await worker.terminate();
 
     expect(chunks.join("")).toContain("Processing job");
   });

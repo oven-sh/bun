@@ -120,11 +120,9 @@ let resourceLimits = {};
 let workerData = _workerData;
 let threadId = _threadId;
 function receiveMessageOnPort(port: MessagePort) {
-  let res = _receiveMessageOnPort(port);
-  if (!res) return undefined;
-  return {
-    message: res,
-  };
+  // _receiveMessageOnPort returns { message: value } when a message is available,
+  // or undefined when no message is available
+  return _receiveMessageOnPort(port);
 }
 
 // TODO: parent port emulation is not complete

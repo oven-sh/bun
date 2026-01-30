@@ -52,7 +52,7 @@ ts_enums: Ast.TsEnumsMap = .{},
 
 flags: BundledAst.Flags = .{},
 
-pub const Flags = packed struct(u8) {
+pub const Flags = packed struct(u16) {
     // This is a list of CommonJS features. When a file uses CommonJS features,
     // it's not a candidate for "flat bundling" and must be wrapped in its own
     // closure.
@@ -65,6 +65,8 @@ pub const Flags = packed struct(u8) {
     has_lazy_export: bool = false,
     commonjs_module_exports_assigned_deoptimized: bool = false,
     has_explicit_use_strict_directive: bool = false,
+    has_import_meta: bool = false,
+    _padding: u7 = 0,
 };
 
 pub const empty = BundledAst.init(Ast.empty);
@@ -116,6 +118,7 @@ pub fn toAST(this: *const BundledAst) Ast {
         .has_lazy_export = this.flags.has_lazy_export,
         .commonjs_module_exports_assigned_deoptimized = this.flags.commonjs_module_exports_assigned_deoptimized,
         .directive = if (this.flags.has_explicit_use_strict_directive) "use strict" else null,
+        .has_import_meta = this.flags.has_import_meta,
     };
 }
 
@@ -168,6 +171,7 @@ pub fn init(ast: Ast) BundledAst {
             .has_lazy_export = ast.has_lazy_export,
             .commonjs_module_exports_assigned_deoptimized = ast.commonjs_module_exports_assigned_deoptimized,
             .has_explicit_use_strict_directive = strings.eqlComptime(ast.directive orelse "", "use strict"),
+            .has_import_meta = ast.has_import_meta,
         },
     };
 }

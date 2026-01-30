@@ -748,12 +748,19 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getStdioFdsBody(JSC:
     int32_t stderrFd = wrapped.getStderrReadFd();
     int32_t stdinFd = wrapped.getStdinWriteFd();
 
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
     // Return an array [stdoutFd, stderrFd, stdinFd]
     // -1 means the pipe is not configured
     JSC::JSArray* array = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, 3);
+    RETURN_IF_EXCEPTION(throwScope, {});
     array->putDirectIndex(lexicalGlobalObject, 0, jsNumber(stdoutFd));
+    RETURN_IF_EXCEPTION(throwScope, {});
     array->putDirectIndex(lexicalGlobalObject, 1, jsNumber(stderrFd));
+    RETURN_IF_EXCEPTION(throwScope, {});
     array->putDirectIndex(lexicalGlobalObject, 2, jsNumber(stdinFd));
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     return JSValue::encode(array);
 }

@@ -1,4 +1,3 @@
-const fs = require("node:fs");
 declare const self: typeof globalThis;
 type WebWorker = InstanceType<typeof globalThis.Worker>;
 

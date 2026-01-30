@@ -577,6 +577,19 @@ JSValue resolveAndFetchBuiltinModule(
     void* bunVM = globalObject->bunVM();
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Check for mocked module first
+    bool wasModuleMock = false;
+    JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, specifier, wasModuleMock);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (virtualModuleResult) {
+        // If a mock is found, return it directly since we're in a synchronous context
+        if (JSC::JSObject* mockObj = virtualModuleResult.getObject()) {
+            return mockObj;
+        }
+        return virtualModuleResult;
+    }
+
     ErrorableResolvedSource res;
     res.success = false;
     memset(&res.result, 0, sizeof res.result);

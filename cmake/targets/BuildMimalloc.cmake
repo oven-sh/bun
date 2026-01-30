@@ -69,8 +69,14 @@ if(ENABLE_VALGRIND)
   list(APPEND MIMALLOC_CMAKE_ARGS -DMI_VALGRIND=ON)
 endif()
 
-# Enable SIMD optimizations when not building for baseline (older CPUs)
-if(NOT ENABLE_BASELINE)
+# Enable architecture-specific optimizations when not building for baseline.
+# On aarch64, upstream mimalloc force-enables MI_OPT_ARCH which adds
+# -march=armv8.1-a (LSE atomics). This crashes on ARMv8.0 CPUs
+# (Cortex-A53, Raspberry Pi 4, AWS a1 instances). Use MI_NO_OPT_ARCH
+# to override since it has priority over MI_OPT_ARCH in mimalloc's CMake.
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64|AARCH64")
+  list(APPEND MIMALLOC_CMAKE_ARGS -DMI_NO_OPT_ARCH=ON)
+elseif(NOT ENABLE_BASELINE)
   list(APPEND MIMALLOC_CMAKE_ARGS -DMI_OPT_ARCH=ON)
   list(APPEND MIMALLOC_CMAKE_ARGS -DMI_OPT_SIMD=ON)
 endif()

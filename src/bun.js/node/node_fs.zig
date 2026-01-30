@@ -1193,7 +1193,10 @@ pub const AsyncReaddirRecursiveTask = struct {
         // Sort the final result list to match Node.js behavior
         switch (this.args.tag()) {
             inline else => |tag| {
-                NodeFS.sortReaddirEntries(@TypeOf(@field(this.result_list, @tagName(tag)).items[0]), @field(this.result_list, @tagName(tag)).items);
+                var results = &@field(this.result_list, @tagName(tag));
+                if (results.items.len > 0) {
+                    NodeFS.sortReaddirEntries(@TypeOf(results.items[0]), results.items);
+                }
             },
         }
 
@@ -3481,8 +3484,6 @@ pub const NodeFS = struct {
                 }
             }
         }
-
-        sortReaddirEntries(ExpectedType, entries.items);
         return .success;
     }
 

@@ -1447,6 +1447,7 @@ pub const TestCommand = struct {
 
         var scanner = bun.handleOom(Scanner.init(ctx.allocator, &vm.transpiler, ctx.positionals.len));
         defer scanner.deinit();
+        scanner.custom_test_name_suffixes = ctx.test_options.resolve_extensions;
         const has_relative_path = for (ctx.positionals) |arg| {
             if (std.fs.path.isAbsolute(arg) or
                 strings.startsWith(arg, "./") or
@@ -1590,15 +1591,39 @@ pub const TestCommand = struct {
             if (ctx.positionals.len < 2) {
                 if (Output.isAIAgent()) {
                     // Be very clear to ai.
-                    Output.errGeneric("0 test files matching **{{.test,.spec,_test_,_spec_}}.{{js,ts,jsx,tsx}} in --cwd={f}", .{bun.fmt.quote(bun.fs.FileSystem.instance.top_level_dir)});
+                    const suffixes = ctx.test_options.resolve_extensions orelse &Scanner.test_name_suffixes;
+                    var buf = bun.MutableString.initEmpty(bun.default_allocator);
+                    defer buf.deinit();
+                    var writer = buf.writer();
+                    writer.writeAll("0 test files matching **{") catch {};
+                    for (suffixes, 0..) |suffix, i| {
+                        if (i > 0) writer.writeAll(",") catch {};
+                        writer.writeAll(suffix) catch {};
+                    }
+                    writer.writeAll("}.{js,ts,jsx,tsx} in --cwd=") catch {};
+                    Output.errGeneric("{s}{f}", .{ buf.list.items, bun.fmt.quote(bun.fs.FileSystem.instance.top_level_dir) });
                 } else {
                     // Be friendlier to humans.
+                    const suffixes = ctx.test_options.resolve_extensions orelse &Scanner.test_name_suffixes;
+                    var buf = bun.MutableString.initEmpty(bun.default_allocator);
+                    defer buf.deinit();
+                    var writer = buf.writer();
+                    for (suffixes, 0..) |suffix, i| {
+                        if (i > 0) {
+                            if (i == suffixes.len - 1) {
+                                writer.writeAll(" or ") catch {};
+                            } else {
+                                writer.writeAll(", ") catch {};
+                            }
+                        }
+                        writer.print("\"{s}\"", .{suffix}) catch {};
+                    }
                     Output.prettyErrorln(
                         \\<yellow>No tests found!<r>
                         \\
-                        \\Tests need ".test", "_test_", ".spec" or "_spec_" in the filename <d>(ex: "MyApp.test.ts")<r>
+                        \\Tests need {s} in the filename <d>(ex: "MyApp{s}.ts")<r>
                         \\
-                    , .{});
+                    , .{ buf.list.items, suffixes[0] });
                 }
             } else {
                 if (Output.isAIAgent()) {
@@ -1624,11 +1649,26 @@ pub const TestCommand = struct {
                     Output.printStartEnd(ctx.start_time, std.time.nanoTimestamp());
                 }
 
+                const suffixes = ctx.test_options.resolve_extensions orelse &Scanner.test_name_suffixes;
+                var buf = bun.MutableString.initEmpty(bun.default_allocator);
+                defer buf.deinit();
+                var writer = buf.writer();
+                for (suffixes, 0..) |suffix, i| {
+                    if (i > 0) {
+                        if (i == suffixes.len - 1) {
+                            writer.writeAll(" or ") catch {};
+                        } else {
+                            writer.writeAll(", ") catch {};
+                        }
+                    }
+                    writer.print("\"{s}\"", .{suffix}) catch {};
+                }
+
                 Output.prettyErrorln(
                     \\
                     \\
-                    \\<blue>note<r><d>:<r> Tests need ".test", "_test_", ".spec" or "_spec_" in the filename <d>(ex: "MyApp.test.ts")<r>
-                , .{});
+                    \\<blue>note<r><d>:<r> Tests need {s} in the filename <d>(ex: "MyApp{s}.ts")<r>
+                , .{ buf.list.items, suffixes[0] });
 
                 // print a helpful note
                 if (has_file_like) |i| {

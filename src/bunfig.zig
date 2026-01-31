@@ -470,6 +470,37 @@ pub const Bunfig = struct {
                             },
                         }
                     }
+
+                    if (test_.get("resolveExtensions")) |expr| brk: {
+                        // Only apply bunfig value if not already set via CLI
+                        if (this.ctx.test_options.resolve_extensions != null) break :brk;
+
+                        switch (expr.data) {
+                            .e_string => |str| {
+                                const pattern = try str.string(allocator);
+                                const patterns = try allocator.alloc(string, 1);
+                                patterns[0] = pattern;
+                                this.ctx.test_options.resolve_extensions = patterns;
+                            },
+                            .e_array => |arr| {
+                                if (arr.items.len == 0) break :brk;
+
+                                const patterns = try allocator.alloc(string, arr.items.len);
+                                for (arr.items.slice(), 0..) |item, i| {
+                                    if (item.data != .e_string) {
+                                        try this.addError(item.loc, "resolveExtensions array must contain only strings");
+                                        return;
+                                    }
+                                    patterns[i] = try item.data.e_string.string(allocator);
+                                }
+                                this.ctx.test_options.resolve_extensions = patterns;
+                            },
+                            else => {
+                                try this.addError(expr.loc, "resolveExtensions must be a string or array of strings");
+                                return;
+                            },
+                        }
+                    }
                 }
             }
 

@@ -14,6 +14,9 @@ scan_dir_buf: bun.PathBuffer = undefined,
 options: *BundleOptions,
 has_iterated: bool = false,
 search_count: usize = 0,
+/// Custom test name suffixes to use instead of the default ones.
+/// If null, uses the default test_name_suffixes.
+custom_test_name_suffixes: ?[]const []const u8 = null,
 
 const log = bun.Output.scoped(.jest, .hidden);
 const Fifo = bun.LinearFifo(ScanEntry, .Dynamic);
@@ -129,8 +132,16 @@ pub fn couldBeTestFile(this: *Scanner, name: []const u8, comptime needs_test_suf
     if (extname.len == 0 or !this.options.loader(extname).isJavaScriptLike()) return false;
     if (comptime !needs_test_suffix) return true;
     const name_without_extension = name[0 .. name.len - extname.len];
-    inline for (test_name_suffixes) |suffix| {
-        if (strings.endsWithComptime(name_without_extension, suffix)) return true;
+
+    // Use custom suffixes if provided, otherwise use defaults
+    if (this.custom_test_name_suffixes) |custom_suffixes| {
+        for (custom_suffixes) |suffix| {
+            if (strings.endsWith(name_without_extension, suffix)) return true;
+        }
+    } else {
+        inline for (test_name_suffixes) |suffix| {
+            if (strings.endsWithComptime(name_without_extension, suffix)) return true;
+        }
     }
 
     return false;

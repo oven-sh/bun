@@ -607,8 +607,55 @@ pub const Channel = opaque {
             return err;
         }
 
+        // On Windows, c-ares may fail to detect DNS servers from the system
+        // and fall back to 127.0.0.1. This causes DNS queries to fail with
+        // ECONNREFUSED. Detect this case and use public DNS servers as fallback.
+        // See: https://github.com/oven-sh/bun/issues/26467
+        if (bun.Environment.isWindows) {
+            channel.applyWindowsDnsFallback();
+        }
+
         this.channel = channel;
         return null;
+    }
+
+    /// On Windows, c-ares uses IPHLPAPI (GetNetworkParams/GetAdaptersInfo) to detect
+    /// system DNS servers. This can fail on some Windows configurations, causing
+    /// c-ares to fall back to 127.0.0.1, which doesn't respond to DNS queries.
+    /// This function detects that case and sets public DNS servers as a fallback.
+    fn applyWindowsDnsFallback(channel: *Channel) void {
+        var servers: ?*struct_ares_addr_port_node = null;
+        if (Error.get(ares_get_servers_ports(channel, &servers))) |_| {
+            // Failed to get servers, can't apply fallback
+            return;
+        }
+        defer ares_free_data(servers);
+
+        // Check if the only configured server is localhost (127.0.0.1)
+        const first_server = servers orelse return;
+        if (first_server.next != null) {
+            // Multiple servers configured, don't override
+            return;
+        }
+
+        // Check if it's an IPv4 address
+        if (first_server.family != AF.INET) {
+            return;
+        }
+
+        // Check if it's 127.0.0.1 (localhost)
+        // struct_in_addr is std.posix.sockaddr.in which contains .sa (sockaddr struct)
+        // The s_addr is the first 4 bytes in network byte order
+        const addr_bytes: *const [4]u8 = @ptrCast(&first_server.addr.addr4);
+        const is_localhost = addr_bytes[0] == 127 and addr_bytes[1] == 0 and addr_bytes[2] == 0 and addr_bytes[3] == 1;
+
+        if (!is_localhost) {
+            return;
+        }
+
+        // The only DNS server is 127.0.0.1, which likely won't work.
+        // Set fallback public DNS servers: Cloudflare (1.1.1.1) and Google (8.8.8.8, 8.8.4.4)
+        _ = ares_set_servers_csv(channel, "1.1.1.1,8.8.8.8,8.8.4.4");
     }
 
     pub fn deinit(this: *Channel) void {

@@ -898,7 +898,6 @@ declare module "bun:sqlite" {
      * // => true
      * ```
      *
-     * @since Bun v1.1.14
      */
     safeIntegers(enabled: boolean): this;
     safeIntegers(): boolean;

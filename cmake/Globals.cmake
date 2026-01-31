@@ -106,9 +106,9 @@ else()
 endif()
 
 if(CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "arm64|ARM64|aarch64|AARCH64")
-  set(HOST_OS "aarch64")
+  set(HOST_ARCH "aarch64")
 elseif(CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "x86_64|X86_64|x64|X64|amd64|AMD64")
-  set(HOST_OS "x64")
+  set(HOST_ARCH "x64")
 else()
   unsupported(CMAKE_HOST_SYSTEM_PROCESSOR)
 endif()
@@ -433,6 +433,33 @@ function(register_command)
     list(APPEND CMD_EFFECTIVE_DEPENDS ${CMD_EXECUTABLE})
   endif()
 
+  # SKIP_CODEGEN: Skip commands that use BUN_EXECUTABLE if all outputs exist
+  # This is used for Windows ARM64 builds where x64 bun crashes under emulation
+  if(SKIP_CODEGEN AND CMD_EXECUTABLE STREQUAL "${BUN_EXECUTABLE}")
+    set(ALL_OUTPUTS_EXIST TRUE)
+    foreach(output ${CMD_OUTPUTS})
+      if(NOT EXISTS ${output})
+        set(ALL_OUTPUTS_EXIST FALSE)
+        break()
+      endif()
+    endforeach()
+    if(ALL_OUTPUTS_EXIST AND CMD_OUTPUTS)
+      message(STATUS "SKIP_CODEGEN: Skipping ${CMD_TARGET} (outputs exist)")
+      if(CMD_TARGET)
+        add_custom_target(${CMD_TARGET})
+      endif()
+      return()
+    elseif(NOT CMD_OUTPUTS)
+      message(STATUS "SKIP_CODEGEN: Skipping ${CMD_TARGET} (no outputs)")
+      if(CMD_TARGET)
+        add_custom_target(${CMD_TARGET})
+      endif()
+      return()
+    else()
+      message(FATAL_ERROR "SKIP_CODEGEN: Cannot skip ${CMD_TARGET} - missing outputs. Run codegen on x64 first.")
+    endif()
+  endif()
+
   foreach(target ${CMD_TARGETS})
     if(target MATCHES "/|\\\\")
       message(FATAL_ERROR "register_command: TARGETS contains \"${target}\", if it's a path add it to SOURCES instead")
@@ -650,6 +677,7 @@ function(register_bun_install)
       ${NPM_CWD}
     COMMAND
       ${BUN_EXECUTABLE}
+        ${BUN_FLAGS}
         install
         --frozen-lockfile
     SOURCES
@@ -757,7 +785,7 @@ function(register_cmake_command)
   set(MAKE_EFFECTIVE_ARGS -B${MAKE_BUILD_PATH} ${CMAKE_ARGS})
 
   set(setFlags GENERATOR BUILD_TYPE)
-  set(appendFlags C_FLAGS CXX_FLAGS LINKER_FLAGS)
+  set(appendFlags C_FLAGS CXX_FLAGS LINKER_FLAGS STATIC_LINKER_FLAGS EXE_LINKER_FLAGS SHARED_LINKER_FLAGS MODULE_LINKER_FLAGS)
   set(specialFlags POSITION_INDEPENDENT_CODE)
   set(flags ${setFlags} ${appendFlags} ${specialFlags})
 
@@ -802,6 +830,14 @@ function(register_cmake_command)
   foreach(flag ${effectiveFlags})
     list(APPEND MAKE_EFFECTIVE_ARGS "-DCMAKE_${flag}=${MAKE_${flag}}")
   endforeach()
+
+  # Workaround for CMake 4.1.0 bug: Force correct machine type for Windows ARM64
+  # Use toolchain file and set CMP0197 policy to prevent duplicate /machine: flags
+  if(WIN32 AND CMAKE_SYSTEM_PROCESSOR MATCHES "ARM64|aarch64|AARCH64")
+    list(APPEND MAKE_EFFECTIVE_ARGS "-DCMAKE_TOOLCHAIN_FILE=${CWD}/cmake/toolchains/windows-aarch64.cmake")
+    list(APPEND MAKE_EFFECTIVE_ARGS "-DCMAKE_POLICY_DEFAULT_CMP0197=NEW")
+    list(APPEND MAKE_EFFECTIVE_ARGS "-DCMAKE_PROJECT_INCLUDE=${CWD}/cmake/arm64-static-lib-fix.cmake")
+  endif()
 
   if(DEFINED FRESH)
     list(APPEND MAKE_EFFECTIVE_ARGS --fresh)

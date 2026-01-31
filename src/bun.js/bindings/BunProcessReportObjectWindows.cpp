@@ -12,7 +12,7 @@
 #include "JavaScriptCore/JSArray.h"
 #include "JavaScriptCore/ObjectConstructor.h"
 #include "JavaScriptCore/JSGlobalObject.h"
-#include "JavaScriptCore/CatchScope.h"
+#include "JavaScriptCore/TopExceptionScope.h"
 #include "JavaScriptCore/VM.h"
 #include "JavaScriptCore/Options.h"
 #include "wtf/text/WTFString.h"

@@ -15,7 +15,7 @@
 #include "ErrorCode+List.h"
 #include "JavaScriptCore/ArgList.h"
 #include "JavaScriptCore/CallData.h"
-#include "JavaScriptCore/CatchScope.h"
+#include "JavaScriptCore/TopExceptionScope.h"
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/JSCast.h"
 #include "JavaScriptCore/JSMap.h"
@@ -298,7 +298,7 @@ JSC_DEFINE_CUSTOM_SETTER(Process_defaultSetter, (JSC::JSGlobalObject * globalObj
     return true;
 }
 
-extern "C" bool Bun__resolveEmbeddedNodeFile(void*, BunString*, int32_t*);
+extern "C" bool Bun__resolveEmbeddedNodeFile(void*, BunString*);
 #if OS(WINDOWS)
 extern "C" HMODULE Bun__LoadLibraryBunString(BunString*);
 #endif
@@ -436,7 +436,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
     }
 
     CString utf8;
-    int32_t linuxMemfdToClose = -1;
 
     // Support embedded .node files
     // See StandaloneModuleGraph.zig for what this "$bunfs" thing is
@@ -448,7 +447,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
     bool deleteAfter = false;
     if (filename.startsWith(StandaloneModuleGraph__base_path)) {
         BunString bunStr = Bun::toString(filename);
-        if (Bun__resolveEmbeddedNodeFile(globalObject->bunVM(), &bunStr, &linuxMemfdToClose)) {
+        if (Bun__resolveEmbeddedNodeFile(globalObject->bunVM(), &bunStr)) {
             filename = bunStr.transferToWTFString();
             deleteAfter = !filename.startsWith("/proc/"_s);
         }
@@ -484,20 +483,11 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
                 delete[] dupeZ;
             }
         }
-        ASSERT(linuxMemfdToClose == -1);
 #else
         if (deleteAfter) {
             deleteAfter = false;
             Bun__unlink(utf8.data(), utf8.length());
         }
-#if OS(LINUX)
-        if (linuxMemfdToClose != -1) {
-            close(linuxMemfdToClose);
-            linuxMemfdToClose = -1;
-        }
-#else
-        ASSERT(linuxMemfdToClose == -1);
-#endif
 #endif
     };
 
@@ -1202,7 +1192,7 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
     // if there is an uncaughtExceptionCaptureCallback, call it and consider the exception handled
     auto capture = process->getUncaughtExceptionCaptureCallback();
     if (!capture.isEmpty() && !capture.isUndefinedOrNull()) {
-        auto scope = DECLARE_CATCH_SCOPE(vm);
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         (void)call(lexicalGlobalObject, capture, args, "uncaughtExceptionCaptureCallback"_s);
         if (auto ex = scope.exception()) {
             (void)scope.tryClearException();
@@ -1266,7 +1256,7 @@ extern "C" JSC::EncodedJSValue Bun__noSideEffectsToString(JSC::VM& vm, JSC::JSGl
 extern "C" void Bun__promises__emitUnhandledRejectionWarning(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue reason, JSC::EncodedJSValue promise)
 {
     auto& vm = globalObject->vm();
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto warning = JSC::createError(globalObject, "Unhandled promise rejection. This error originated either by "
                                                   "throwing inside of an async function without a catch block, "
                                                   "or by rejecting a promise which was not handled with .catch(). "
@@ -1318,7 +1308,7 @@ extern "C" bool Bun__VM__allowRejectionHandledWarning(void* vm);
 
 extern "C" bool Bun__emitHandledPromiseEvent(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue promise)
 {
-    auto scope = DECLARE_CATCH_SCOPE(JSC::getVM(lexicalGlobalObject));
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(lexicalGlobalObject));
     if (!lexicalGlobalObject->inherits(Zig::GlobalObject::info()))
         return false;
     auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
@@ -2343,7 +2333,7 @@ extern "C" void Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(JSC::JSGl
 static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC::JSObject* processObject, int fd)
 {
     auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     JSC::JSFunction* getStdioWriteStream = JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetStdioWriteStreamCodeGenerator(vm), globalObject);
     JSC::MarkedArgumentBuffer args;
@@ -2406,7 +2396,7 @@ static JSValue constructStderr(VM& vm, JSObject* processObject)
 static JSValue constructStdin(VM& vm, JSObject* processObject)
 {
     auto* globalObject = processObject->globalObject();
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSC::JSFunction* getStdinStream = JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetStdinStreamCodeGenerator(vm), globalObject);
     JSC::MarkedArgumentBuffer args;
     args.append(processObject);

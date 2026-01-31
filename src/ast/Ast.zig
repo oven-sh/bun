@@ -68,6 +68,7 @@ ts_enums: TsEnumsMap = .{},
 /// This is a list of named exports that may exist in a CommonJS module
 /// We use this with `commonjs_at_runtime` to re-export CommonJS
 has_commonjs_export_names: bool = false,
+has_import_meta: bool = false,
 import_meta_ref: Ref = Ref.None,
 
 pub const CommonJSNamedExport = struct {

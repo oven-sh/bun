@@ -242,6 +242,10 @@ pub const JSBundler = struct {
         bytecode: bool = false,
         banner: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         footer: OwnedString = OwnedString.initEmpty(bun.default_allocator),
+        /// Path to write JSON metafile (if specified via metafile object) - TEST: moved here
+        metafile_json_path: OwnedString = OwnedString.initEmpty(bun.default_allocator),
+        /// Path to write markdown metafile (if specified via metafile object) - TEST: moved here
+        metafile_markdown_path: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         css_chunking: bool = false,
         drop: bun.StringSet = bun.StringSet.init(bun.default_allocator),
         features: bun.StringSet = bun.StringSet.init(bun.default_allocator),
@@ -254,6 +258,7 @@ pub const JSBundler = struct {
         /// In-memory files that can be used as entrypoints or imported.
         /// These files do not need to exist on disk.
         files: FileMap = .{},
+        /// Generate metafile (JSON module graph)
         metafile: bool = false,
 
         pub const CompileOptions = struct {
@@ -670,8 +675,8 @@ pub const JSBundler = struct {
             if (try config.getOptionalEnum(globalThis, "format", options.Format)) |format| {
                 this.format = format;
 
-                if (this.bytecode and format != .cjs) {
-                    return globalThis.throwInvalidArguments("format must be 'cjs' when bytecode is true. Eventually we'll add esm support as well.", .{});
+                if (this.bytecode and format != .cjs and format != .esm) {
+                    return globalThis.throwInvalidArguments("format must be 'cjs' or 'esm' when bytecode is true.", .{});
                 }
             }
 
@@ -936,8 +941,30 @@ pub const JSBundler = struct {
                 this.throw_on_error = flag;
             }
 
-            if (try config.getBooleanLoose(globalThis, "metafile")) |flag| {
-                this.metafile = flag;
+            // Parse metafile option: boolean | string | { json?: string, markdown?: string }
+            if (try config.getOwn(globalThis, "metafile")) |metafile_value| {
+                if (metafile_value.isBoolean()) {
+                    this.metafile = metafile_value == .true;
+                } else if (metafile_value.isString()) {
+                    // metafile: "path/to/meta.json" - shorthand for { json: "..." }
+                    this.metafile = true;
+                    const slice = try metafile_value.toSlice(globalThis, bun.default_allocator);
+                    defer slice.deinit();
+                    try this.metafile_json_path.appendSliceExact(slice.slice());
+                } else if (metafile_value.isObject()) {
+                    // metafile: { json?: string, markdown?: string }
+                    this.metafile = true;
+                    if (try metafile_value.getOptional(globalThis, "json", ZigString.Slice)) |slice| {
+                        defer slice.deinit();
+                        try this.metafile_json_path.appendSliceExact(slice.slice());
+                    }
+                    if (try metafile_value.getOptional(globalThis, "markdown", ZigString.Slice)) |slice| {
+                        defer slice.deinit();
+                        try this.metafile_markdown_path.appendSliceExact(slice.slice());
+                    }
+                } else if (!metafile_value.isUndefinedOrNull()) {
+                    return globalThis.throwInvalidArguments("Expected metafile to be a boolean, string, or object with json/markdown paths", .{});
+                }
             }
 
             if (try CompileOptions.fromJS(
@@ -1070,6 +1097,8 @@ pub const JSBundler = struct {
             self.footer.deinit();
             self.tsconfig_override.deinit();
             self.files.deinitAndUnprotect();
+            self.metafile_json_path.deinit();
+            self.metafile_markdown_path.deinit();
         }
     };
 
@@ -1461,7 +1490,7 @@ pub const JSBundler = struct {
                 error.JSTerminated => return error.JSTerminated,
             };
 
-            var scope: jsc.CatchScope = undefined;
+            var scope: jsc.TopExceptionScope = undefined;
             scope.init(globalThis, @src());
             defer scope.deinit();
 
@@ -1688,9 +1717,12 @@ pub const BuildArtifact = struct {
         @"entry-point",
         sourcemap,
         bytecode,
+        module_info,
+        @"metafile-json",
+        @"metafile-markdown",
 
         pub fn isFileInStandaloneMode(this: OutputKind) bool {
-            return this != .sourcemap and this != .bytecode;
+            return this != .sourcemap and this != .bytecode and this != .module_info and this != .@"metafile-json" and this != .@"metafile-markdown";
         }
     };
 

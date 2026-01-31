@@ -1,8 +1,11 @@
+# NOTE: Changes to this file trigger QEMU JIT stress tests in CI.
+# See scripts/verify-jit-stress-qemu.sh for details.
+
 option(WEBKIT_VERSION "The version of WebKit to use")
 option(WEBKIT_LOCAL "If a local version of WebKit should be used instead of downloading")
 
 if(NOT WEBKIT_VERSION)
-  set(WEBKIT_VERSION daf95b4b4574799ff22c8c4effd0dc6e864968a5)
+  set(WEBKIT_VERSION 515344bc5d65aa2d4f9ff277b5fb944f0e051dcd)
 endif()
 
 # Use preview build URL for Windows ARM64 until the fix is merged to main

@@ -344,7 +344,7 @@ pub fn loadFromDir(
                 defer writer_allocating.deinit();
                 const writer = &writer_allocating.writer;
 
-                TextLockfile.Stringifier.saveFromBinary(allocator, result.ok.lockfile, &result, &manager.?.options, writer) catch |err| {
+                TextLockfile.Stringifier.saveFromBinary(allocator, result.ok.lockfile, &manager.?.options, writer) catch |err| {
                     Output.panic("failed to convert binary lockfile to text lockfile: {s}", .{@errorName(err)});
                 };
 
@@ -1243,7 +1243,7 @@ pub fn saveToDisk(this: *Lockfile, load_result: *const LoadResult, options: *con
             defer writer_allocating.deinit();
             const writer = &writer_allocating.writer;
 
-            TextLockfile.Stringifier.saveFromBinary(bun.default_allocator, this, load_result, options, writer) catch |err| switch (err) {
+            TextLockfile.Stringifier.saveFromBinary(bun.default_allocator, this, options, writer) catch |err| switch (err) {
                 error.WriteFailed => bun.outOfMemory(),
             };
 

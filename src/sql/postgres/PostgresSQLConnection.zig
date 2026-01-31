@@ -412,14 +412,21 @@ pub fn onOpen(this: *PostgresSQLConnection, socket: uws.AnySocket) void {
 
     // Protect against re-entrant onData calls during writes in onOpen (Windows/IOCP)
     this.flags.is_processing_data = true;
-    defer this.flags.is_processing_data = false;
 
     if (this.tls_status == .message_sent or this.tls_status == .pending) {
         this.startTLS(socket);
+        this.flags.is_processing_data = false;
+        if (this.read_buffer.remaining().len > 0) {
+            this.onData("");
+        }
         return;
     }
 
     this.start();
+    this.flags.is_processing_data = false;
+    if (this.read_buffer.remaining().len > 0) {
+        this.onData("");
+    }
 }
 
 pub fn onHandshake(this: *PostgresSQLConnection, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
@@ -509,7 +516,10 @@ fn drainInternal(this: *PostgresSQLConnection) void {
 }
 
 pub fn onData(this: *PostgresSQLConnection, data: []const u8) void {
-    if (this.flags.is_processing_data) return;
+    if (this.flags.is_processing_data) {
+        this.read_buffer.write(bun.default_allocator, data) catch @panic("failed to buffer data");
+        return;
+    }
 
     this.ref();
     this.flags.is_processing_data = true;
@@ -521,12 +531,23 @@ pub fn onData(this: *PostgresSQLConnection, data: []const u8) void {
     if (this.tls_status == .message_sent) {
         defer {
             this.flags.is_processing_data = false;
+            if (this.read_buffer.remaining().len > 0) {
+                this.onData("");
+            }
             this.deref();
         }
 
-        if (data.len == 0) return;
+        var input = data;
+        if (input.len == 0 and this.read_buffer.remaining().len > 0) {
+            input = this.read_buffer.remaining();
+            // consume the byte we are about to check
+            this.read_buffer.head += 1;
+            this.last_message_start = this.read_buffer.head;
+        }
 
-        switch (data[0]) {
+        if (input.len == 0) return;
+
+        switch (input[0]) {
             'S' => {
                 debug("onData: Server accepted SSL. Upgrading...", .{});
                 this.tls_status = .none;
@@ -574,6 +595,7 @@ pub fn onData(this: *PostgresSQLConnection, data: []const u8) void {
     // reset the head to the last message so remaining reflects the right amount of bytes
     this.read_buffer.head = this.last_message_start;
 
+    var processed_via_stack = false;
     if (this.read_buffer.remaining().len == 0) {
         var consumed: usize = 0;
         var offset: usize = 0;
@@ -598,27 +620,32 @@ pub fn onData(this: *PostgresSQLConnection, data: []const u8) void {
                 this.fail("Failed to read data", err);
             }
         };
-        // no need to reset anything, its already empty
-        return;
+        processed_via_stack = true;
     }
-    // read buffer is not empty, so we need to write the data to the buffer and then read it
-    this.read_buffer.write(bun.default_allocator, data) catch @panic("failed to write to read buffer");
-    PostgresRequest.onData(this, Reader, this.bufferedReader()) catch |err| {
-        if (err != error.ShortRead) {
-            bun.handleErrorReturnTrace(err, @errorReturnTrace());
-            this.fail("Failed to read data", err);
-            return;
-        }
 
-        if (comptime bun.Environment.allow_assert) {
-            debug("read_buffer: not empty and received short read: last_message_start: {d}, head: {d}, len: {d}", .{
-                this.last_message_start,
-                this.read_buffer.head,
-                this.read_buffer.byte_list.len,
-            });
-        }
-        return;
-    };
+    if (!processed_via_stack) {
+        // read buffer is not empty, so we need to write the data to the buffer and then read it
+        this.read_buffer.write(bun.default_allocator, data) catch @panic("failed to write to read buffer");
+    }
+
+    if (this.read_buffer.remaining().len > 0) {
+        PostgresRequest.onData(this, Reader, this.bufferedReader()) catch |err| {
+            if (err != error.ShortRead) {
+                bun.handleErrorReturnTrace(err, @errorReturnTrace());
+                this.fail("Failed to read data", err);
+                return;
+            }
+
+            if (comptime bun.Environment.allow_assert) {
+                debug("read_buffer: not empty and received short read: last_message_start: {d}, head: {d}, len: {d}", .{
+                    this.last_message_start,
+                    this.read_buffer.head,
+                    this.read_buffer.byte_list.len,
+                });
+            }
+            return;
+        };
+    }
 
     debug("clean read_buffer", .{});
     // success, we read everything! let's reset the last message start and the head

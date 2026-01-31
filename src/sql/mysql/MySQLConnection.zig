@@ -118,6 +118,10 @@ pub inline fn enqueueRequest(this: *@This(), request: *JSMySQLQuery) void {
     this.queue.add(request);
 }
 
+pub fn bufferData(this: *MySQLConnection, data: []const u8) !void {
+    try this.#read_buffer.write(bun.default_allocator, data);
+}
+
 pub fn flushQueue(this: *@This()) error{AuthenticationFailed}!void {
     this.flushData();
     if (!this.#flags.has_backpressure) {
@@ -310,10 +314,15 @@ pub fn readAndProcessData(this: *MySQLConnection, data: []const u8) !void {
                     });
                 }
 
-                this.#read_buffer.head = 0;
-                this.#last_message_start = 0;
-                this.#read_buffer.byte_list.len = 0;
-                this.#read_buffer.write(bun.default_allocator, data[offset..]) catch @panic("failed to write to read buffer");
+                if (this.#read_buffer.remaining().len > 0) {
+                    const remainder = data[offset..];
+                    this.#read_buffer.byte_list.insertSlice(bun.default_allocator, this.#read_buffer.head, remainder) catch @panic("failed to write to read buffer");
+                } else {
+                    this.#read_buffer.head = 0;
+                    this.#last_message_start = 0;
+                    this.#read_buffer.byte_list.len = 0;
+                    this.#read_buffer.write(bun.default_allocator, data[offset..]) catch @panic("failed to write to read buffer");
+                }
             } else {
                 if (comptime bun.Environment.allow_assert) {
                     bun.handleErrorReturnTrace(err, @errorReturnTrace());
@@ -321,13 +330,15 @@ pub fn readAndProcessData(this: *MySQLConnection, data: []const u8) !void {
                 return err;
             }
         };
-        return;
-    }
 
-    {
+        if (this.#read_buffer.remaining().len == 0) return;
+    } else {
         this.#read_buffer.head = this.#last_message_start;
 
         this.#read_buffer.write(bun.default_allocator, data) catch @panic("failed to write to read buffer");
+    }
+
+    {
         this.processPackets(Reader, this.bufferedReader()) catch |err| {
             debug("processPackets with buffer: {s}", .{@errorName(err)});
             if (err != error.ShortRead) {

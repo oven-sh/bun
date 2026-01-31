@@ -690,7 +690,6 @@ function parseOptions(
       }
     }
   }
-  }
 
   // Enforce rejectUnauthorized = true for verify modes.
   // This ensures the SSL handshake actually performs verification so we can check the result in PostgresSQLConnection.zig.

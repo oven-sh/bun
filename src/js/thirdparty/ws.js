@@ -126,6 +126,8 @@ class BunWebSocket extends EventEmitter {
   #binaryType = "nodebuffer";
   // Bitset to track whether event handlers are set.
   #eventId = 0;
+  // Track whether we've set up upgrade event emission
+  #upgradeEmitterSet = false;
 
   constructor(url, protocols, options) {
     super();
@@ -260,8 +262,27 @@ class BunWebSocket extends EventEmitter {
     return ws;
   }
 
+  #setupUpgradeEmitter() {
+    // Set up upgrade event emission only once
+    if (this.#upgradeEmitterSet) return;
+    this.#upgradeEmitterSet = true;
+
+    this.#ws.addEventListener("open", () => {
+      // Emit upgrade event before open event if there are upgrade listeners
+      if (this.listenerCount("upgrade") > 0) {
+        const statusCode = this.#ws.upgradeStatusCode || 101;
+        const response = {
+          statusCode: statusCode,
+          statusMessage: "Switching Protocols",
+          headers: {},
+        };
+        this.emit("upgrade", response);
+      }
+    });
+  }
+
   #onOrOnce(event, listener, once) {
-    if (event === "unexpected-response" || event === "upgrade" || event === "redirect") {
+    if (event === "redirect") {
       emitWarning(event, "ws.WebSocket '" + event + "' event is not implemented in bun");
     }
     const mask = 1 << eventIds[event];
@@ -276,10 +297,37 @@ class BunWebSocket extends EventEmitter {
         this.#eventId |= mask;
       }
       if (event === "open") {
+        // Set up upgrade emitter so upgrade events fire before open
+        this.#setupUpgradeEmitter();
         this.#ws.addEventListener(
           "open",
           () => {
             this.emit("open");
+          },
+          once,
+        );
+      } else if (event === "upgrade") {
+        // The 'upgrade' event is emitted when the WebSocket handshake completes successfully.
+        // Set up the upgrade emitter to fire on the native 'open' event.
+        this.#setupUpgradeEmitter();
+      } else if (event === "unexpected-response") {
+        // The 'unexpected-response' event is emitted when the server responds with
+        // a non-101 status code during the handshake. We emit this on 'error' events.
+        this.#ws.addEventListener(
+          "error",
+          err => {
+            // Create mock request/response objects for compatibility
+            const mockRequest = {
+              method: "GET",
+              url: this.#ws.url,
+              headers: {},
+            };
+            const mockResponse = {
+              statusCode: 0,
+              statusMessage: err?.message || "Connection failed",
+              headers: {},
+            };
+            this.emit("unexpected-response", mockRequest, mockResponse);
           },
           once,
         );

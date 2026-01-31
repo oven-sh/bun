@@ -953,7 +953,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                         const ws = bun.take(&this.outgoing_websocket).?;
 
                         // Create the WebSocket client with the tunnel
-                        ws.didConnectWithTunnel(tunnel, overflow.ptr, overflow.len, if (deflate_result.enabled) &deflate_result.params else null);
+                        ws.didConnectWithTunnel(tunnel, overflow.ptr, overflow.len, if (deflate_result.enabled) &deflate_result.params else null, @intCast(response.status_code));
 
                         // Switch state to connected - handleData will forward to tunnel
                         this.state = .done;
@@ -987,7 +987,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 // Once again for the TCP socket.
                 defer this.deref();
                 if (socket.socket.get()) |native_socket| {
-                    ws.didConnect(native_socket, overflow.ptr, overflow.len, if (deflate_result.enabled) &deflate_result.params else null, saved_custom_ssl_ctx);
+                    ws.didConnect(native_socket, overflow.ptr, overflow.len, if (deflate_result.enabled) &deflate_result.params else null, saved_custom_ssl_ctx, @intCast(response.status_code));
                 } else {
                     this.terminate(ErrorCode.failed_to_connect);
                 }

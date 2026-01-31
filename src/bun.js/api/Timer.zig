@@ -288,20 +288,33 @@ pub const All = struct {
     // And when we do call it, we want to be sure we only call it once.
     // and we do NOT want to hold the lock while the timer is running it's code.
     // This function has to be thread-safe.
-    fn next(this: *All, has_set_now: *bool, now: *timespec) ?*EventLoopTimer {
+    fn next(this: *All, has_set_now: *bool, now: *timespec, has_set_real_now: *bool, real_now: *timespec) ?*EventLoopTimer {
         this.lock.lock();
         defer this.lock.unlock();
 
         if (this.timers.peek()) |timer| {
-            if (!has_set_now.*) {
-                now.* = timespec.now(.allow_mocked_time);
-                has_set_now.* = true;
-            }
-            if (timer.next.greater(now)) {
+            // For timers that don't allow fake timers (like FakeTimersAutoAdvance),
+            // compare against real time since they were scheduled using real time.
+            const compare_now = if (!timer.tag.allowFakeTimers()) blk: {
+                if (!has_set_real_now.*) {
+                    real_now.* = timespec.now(.force_real_time);
+                    has_set_real_now.* = true;
+                }
+                break :blk real_now;
+            } else blk: {
+                if (!has_set_now.*) {
+                    now.* = timespec.now(.allow_mocked_time);
+                    has_set_now.* = true;
+                }
+                break :blk now;
+            };
+
+            if (timer.next.greater(compare_now)) {
                 return null;
             }
 
             assert(this.timers.deleteMin().? == timer);
+            timer.in_heap = .none;
 
             return timer;
         }
@@ -311,10 +324,12 @@ pub const All = struct {
     pub fn drainTimers(this: *All, vm: *VirtualMachine) void {
         // Set in next().
         var now: timespec = undefined;
-        // Split into a separate variable to avoid increasing the size of the timespec type.
+        var real_now: timespec = undefined;
+        // Split into separate variables to avoid increasing the size of the timespec type.
         var has_set_now: bool = false;
+        var has_set_real_now: bool = false;
 
-        while (this.next(&has_set_now, &now)) |t| {
+        while (this.next(&has_set_now, &now, &has_set_real_now, &real_now)) |t| {
             t.fire(&now, vm);
         }
     }

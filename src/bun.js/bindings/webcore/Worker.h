@@ -93,6 +93,12 @@ public:
     ScriptExecutionContextIdentifier clientIdentifier() const { return m_clientIdentifier; }
     WorkerOptions& options() { return m_options; }
 
+    // Stdio pipe FD getters for node:worker_threads compatibility
+    // Returns -1 if the respective pipe is not configured
+    int32_t getStdoutReadFd() const;
+    int32_t getStderrReadFd() const;
+    int32_t getStdinWriteFd() const;
+
 private:
     Worker(ScriptExecutionContext&, WorkerOptions&&);
 

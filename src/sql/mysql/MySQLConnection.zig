@@ -122,6 +122,10 @@ pub fn bufferData(this: *MySQLConnection, data: []const u8) !void {
     try this.#read_buffer.write(bun.default_allocator, data);
 }
 
+pub fn hasBufferedData(this: *const MySQLConnection) bool {
+    return this.#read_buffer.remaining().len > 0;
+}
+
 pub fn flushQueue(this: *@This()) error{AuthenticationFailed}!void {
     this.flushData();
     if (!this.#flags.has_backpressure) {
@@ -237,8 +241,9 @@ pub inline fn isConnected(this: *MySQLConnection) bool {
 }
 pub fn doHandshake(this: *MySQLConnection, success: i32, ssl_error: uws.us_bun_verify_error_t) !bool {
     // Protect against re-entrant onData calls during handshake writes
+    const was_processing = this.#flags.is_processing_data;
     this.#flags.is_processing_data = true;
-    defer this.#flags.is_processing_data = false;
+    defer this.#flags.is_processing_data = was_processing;
 
     debug("onHandshake: success={d} error={d} mode={s}", .{ success, ssl_error.error_no, @tagName(this.#ssl_mode) });
     const handshake_success = if (success == 1) true else false;

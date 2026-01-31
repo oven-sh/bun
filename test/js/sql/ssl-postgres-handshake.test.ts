@@ -206,7 +206,6 @@ describe("PostgreSQL SSL Handshake (Mock Server)", () => {
 
   test("Default (No Options) -> Prefer (SSLRequest -> Fallback -> Startup)", async () => {
     const { success, error } = await connect({});
-    if (error) console.error(error); // Debug log if it fails
     expect(success).toBe(true);
     expect(events).toEqual(["SSLRequest", "StartupMessage", "Query"]);
   });

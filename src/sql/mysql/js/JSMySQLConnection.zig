@@ -268,6 +268,12 @@ fn SocketHandler(comptime ssl: bool) type {
                 // Fallback to standard SSL error reporting
                 this.failWithJSValue(ssl_error.toJS(this.#globalObject) catch return);
             }
+
+            if (!this.#connection.isProcessingData() and this.#connection.hasBufferedData()) {
+                this.#connection.readAndProcessData("") catch |err| {
+                    this.onError(null, err);
+                };
+            }
         }
 
         pub const onHandshake = if (ssl) onHandshake_ else null;

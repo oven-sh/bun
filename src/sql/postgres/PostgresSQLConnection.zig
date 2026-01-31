@@ -412,6 +412,12 @@ pub fn onOpen(this: *PostgresSQLConnection, socket: uws.AnySocket) void {
 
     // Protect against re-entrant onData calls during writes in onOpen (Windows/IOCP)
     this.flags.is_processing_data = true;
+    defer {
+        this.flags.is_processing_data = false;
+        if (this.read_buffer.remaining().len > 0) {
+            this.onData("");
+        }
+    }
 
     if (this.tls_status == .message_sent or this.tls_status == .pending) {
         this.startTLS(socket);

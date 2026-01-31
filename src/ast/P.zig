@@ -5255,6 +5255,14 @@ pub fn NewParser_(
                 .m_identifier => |ref| {
                     p.recordUsage(ref);
                     if (p.is_import_item.contains(ref)) {
+                        // Mark as generated so linker doesn't error on missing exports.
+                        // This is common for TypeScript interfaces/types used in decorator
+                        // metadata which don't exist at runtime.
+                        // See: https://github.com/oven-sh/bun/issues/8439
+                        const symbol = &p.symbols.items[ref.innerIndex()];
+                        if (symbol.import_item_status == .none) {
+                            symbol.import_item_status = .generated;
+                        }
                         return p.maybeDefinedHelper(p.newExpr(
                             E.ImportIdentifier{
                                 .ref = ref,

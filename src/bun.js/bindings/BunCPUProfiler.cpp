@@ -19,6 +19,7 @@
 
 extern "C" void Bun__startCPUProfiler(JSC::VM* vm);
 extern "C" void Bun__stopCPUProfiler(JSC::VM* vm, BunString* outJSON, BunString* outText);
+extern "C" void Bun__setSamplingInterval(int intervalMicroseconds);
 
 void Bun__setSamplingInterval(int intervalMicroseconds)
 {

@@ -12,7 +12,7 @@ extern fn Bun__stopCPUProfiler(vm: *jsc.VM, outJSON: ?*bun.String, outText: ?*bu
 extern fn Bun__setSamplingInterval(intervalMicroseconds: c_int) void;
 
 pub fn setSamplingInterval(interval: u32) void {
-    Bun__setSamplingInterval(@as(c_int, @truncate(interval)));
+    Bun__setSamplingInterval(@intCast(interval));
 }
 
 pub fn startCPUProfiler(vm: *jsc.VM) void {

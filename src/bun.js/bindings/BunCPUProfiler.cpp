@@ -20,6 +20,11 @@
 extern "C" void Bun__startCPUProfiler(JSC::VM* vm);
 extern "C" void Bun__stopCPUProfiler(JSC::VM* vm, BunString* outJSON, BunString* outText);
 
+void Bun__setSamplingInterval(int intervalMicroseconds)
+{
+    Bun::setSamplingInterval(intervalMicroseconds);
+}
+
 namespace Bun {
 
 // Store the profiling start time in microseconds since Unix epoch

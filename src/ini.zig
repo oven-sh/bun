@@ -1352,7 +1352,7 @@ pub fn loadNpmrc(
 
                     // For GitLab registries, we need exact path matching since each project has its own auth token
                     // The conf_item.registry_url should match the beginning of the scoped registry URL path
-                    const is_gitlab = bun.strings.indexOf(url.host, "gitlab") != null;
+                    const is_gitlab = registry_utils.isGitLabRegistry(url.host);
                     if (is_gitlab) {
                         const scoped_path = bun.strings.withoutTrailingSlash(url.pathname);
                         const conf_path = bun.strings.withoutTrailingSlash(conf_item_url.pathname);
@@ -1455,6 +1455,8 @@ fn @"handle _auth"(
     v.password = password;
     return;
 }
+
+const registry_utils = @import("./install/registry_utils.zig");
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;

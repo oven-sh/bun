@@ -810,7 +810,7 @@ pub const ShellSubprocess = struct {
             },
 
             .windows = if (Environment.isWindows) bun.spawn.WindowsSpawnOptions.WindowsOptions{
-                .hide_window = true,
+                .hide_window = false,
                 .loop = event_loop,
             },
         };

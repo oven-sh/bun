@@ -680,14 +680,16 @@ function parseOptions(
   }
 
   // Inject serverName for SNI and Hostname verification if not already present
-  if (sslMode !== SSLMode.disable && !tls?.serverName) {
-    if (hostname && !require("node:net").isIP(hostname)) {
+  if (sslMode !== SSLMode.disable && !tls?.serverName && hostname) {
+    const isIp = require("node:net").isIP(hostname);
+    if (!isIp || sslMode === SSLMode.verify_full) {
       if (typeof tls === "boolean") {
         tls = { serverName: hostname };
       } else if (tls) {
         tls = { ...tls, serverName: hostname };
       }
     }
+  }
   }
 
   // Enforce rejectUnauthorized = true for verify modes.

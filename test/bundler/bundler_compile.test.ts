@@ -935,4 +935,24 @@ const server = serve({
     const result = await Bun.$`./app`.cwd(dir).env(bunEnv).nothrow();
     expect(result.stdout.toString().trim()).toBe("IT WORKS");
   });
+
+  // https://github.com/oven-sh/bun/issues/26617
+  // .txt files passed as entry points should appear in Bun.embeddedFiles
+  test("txt files are embedded in Bun.embeddedFiles with --compile", async () => {
+    const dir = tempDirWithFiles("compile-txt-embed", {
+      "app.ts": `
+        const files = Bun.embeddedFiles;
+        const txtFile = files.find(f => f.name.endsWith(".txt"));
+        if (!txtFile) throw new Error("txt file not in embeddedFiles: " + JSON.stringify(files.map(f => f.name)));
+        console.log(await txtFile.text());
+      `,
+      "data.txt": "hello from txt",
+    });
+
+    await Bun.$`${bunExe()} build --compile app.ts data.txt --outfile app`.cwd(dir).env(bunEnv).throws(true);
+
+    const result = await Bun.$`./app`.cwd(dir).env(bunEnv).nothrow();
+    expect(result.stdout.toString().trim()).toBe("hello from txt");
+    expect(result.exitCode).toBe(0);
+  });
 });

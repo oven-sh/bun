@@ -930,3 +930,92 @@ describe("--tolerate-republish", async () => {
     expect(err).not.toContain("error:");
   });
 });
+
+describe("split npmrc authentication", () => {
+  const authFormats = [
+    {
+      name: "split username and password",
+      scope: null,
+      packageName: "split-username-password-test",
+      async createNpmrc(registry: VerdaccioRegistry) {
+        const username = "testuser";
+        const password = "testpass123";
+        await registry.generateUser(username, password);
+
+        return `registry=http://localhost:${registry.port}/
+//localhost:${registry.port}/:username=${username}
+//localhost:${registry.port}/:_password=${Buffer.from(password).toString("base64")}
+//localhost:${registry.port}/:email=${username}@example.com
+`;
+      },
+    },
+    {
+      name: "split username and password with scoped registry",
+      scope: "@scoped",
+      packageName: "@scoped/split-scoped-test",
+      async createNpmrc(registry: VerdaccioRegistry) {
+        const username = "scopeduser";
+        const password = "scopedpass456";
+        await registry.generateUser(username, password);
+
+        return `@scoped:registry=http://localhost:${registry.port}/
+//localhost:${registry.port}/:username=${username}
+//localhost:${registry.port}/:_password=${Buffer.from(password).toString("base64")}
+//localhost:${registry.port}/:email=${username}@example.com
+`;
+      },
+    },
+    {
+      name: "split _authToken",
+      scope: null,
+      packageName: "split-authtoken-test",
+      async createNpmrc(registry: VerdaccioRegistry) {
+        const token = await registry.generateUser("tokenuser", "tokenpass");
+
+        return `registry=http://localhost:${registry.port}/
+//localhost:${registry.port}/:_authToken=${token}
+`;
+      },
+    },
+    {
+      name: "split _authToken with scoped registry",
+      scope: "@scoped",
+      packageName: "@scoped/split-token-test",
+      async createNpmrc(registry: VerdaccioRegistry) {
+        const token = await registry.generateUser("scopedtokenuser", "scopedtokenpass");
+
+        return `@scoped:registry=http://localhost:${registry.port}/
+//localhost:${registry.port}/:_authToken=${token}
+`;
+      },
+    },
+  ];
+
+  for (const format of authFormats) {
+    test(`should authenticate with ${format.name}`, async () => {
+      const { packageDir, packageJson } = await registry.createTestDir();
+      const npmrcContent = await format.createNpmrc(registry);
+
+      const pkgJson = {
+        name: format.packageName,
+        version: "1.0.0",
+      };
+
+      const cleanupPath = format.scope
+        ? join(registry.packagesPath, format.scope, format.packageName.split("/")[1])
+        : join(registry.packagesPath, format.packageName);
+
+      await Promise.all([
+        rm(cleanupPath, { recursive: true, force: true }),
+        write(join(packageDir, ".npmrc"), npmrcContent),
+        write(packageJson, JSON.stringify(pkgJson)),
+      ]);
+
+      const { out, err, exitCode } = await publish(env, packageDir);
+
+      expect(out).toContain(`+ ${format.packageName}@1.0.0`);
+      expect(err).not.toContain("missing authentication");
+      expect(exitCode).toBe(0);
+    });
+  }
+});

@@ -1384,42 +1384,6 @@ interface EventSourceInit {
   withCredentials?: boolean;
 }
 
-interface PromiseConstructor {
-  /**
-   * Create a deferred promise, with exposed `resolve` and `reject` methods which can be called
-   * separately.
-   *
-   * This is useful when you want to return a Promise and have code outside the Promise
-   * resolve or reject it.
-   *
-   * @example
-   * ```ts
-   * const { promise, resolve, reject } = Promise.withResolvers();
-   *
-   * setTimeout(() => {
-   *  resolve("Hello world!");
-   * }, 1000);
-   *
-   * await promise; // "Hello world!"
-   * ```
-   */
-  withResolvers<T>(): {
-    promise: Promise<T>;
-    resolve: (value?: T | PromiseLike<T>) => void;
-    reject: (reason?: any) => void;
-  };
-
-  /**
-   * Try to run a function and return the result.
-   * If the function throws, return the result of the `catch` function.
-   *
-   * @param fn - The function to run
-   * @param args - The arguments to pass to the function. This is similar to `setTimeout` and avoids the extra closure.
-   * @returns The result of the function or the result of the `catch` function
-   */
-  try<T, A extends any[] = []>(fn: (...args: A) => T | PromiseLike<T>, ...args: A): Promise<T>;
-}
-
 interface Navigator {
   readonly userAgent: string;
   readonly platform: "MacIntel" | "Win32" | "Linux x86_64";

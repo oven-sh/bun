@@ -186,6 +186,7 @@ WebSocket::WebSocket(ScriptExecutionContext& context)
     m_state = CONNECTING;
     m_hasPendingActivity.store(true);
     m_rejectUnauthorized = Bun__getTLSRejectUnauthorizedValue() != 0;
+    onDidChangeListener = &WebSocket::onDidChangeListenerImpl;
 }
 
 WebSocket::~WebSocket()
@@ -1279,22 +1280,17 @@ void WebSocket::didReceiveMessage(String&& message)
     //     }
     // }
 
-    if (this->hasEventListeners("message"_s)) {
-        // the main reason for dispatching on a separate tick is to handle when you haven't yet attached an event listener
+    if (m_hasMessageEventListener) {
+        // Dispatch immediately if we have a listener
         this->incPendingActivityCount();
         dispatchEvent(MessageEvent::create(WTF::move(message), m_url.string()));
         this->decPendingActivityCount();
         return;
     }
 
-    if (auto* context = scriptExecutionContext()) {
-        this->incPendingActivityCount();
-        context->postTask([this, message_ = WTF::move(message), protectedThis = Ref { *this }](ScriptExecutionContext& context) {
-            ASSERT(scriptExecutionContext());
-            protectedThis->dispatchEvent(MessageEvent::create(message_, protectedThis->m_url.string()));
-            protectedThis->decPendingActivityCount();
-        });
-    }
+    // Queue the message to be delivered when a listener is attached
+    // This mimics browser behavior where messages are buffered until onmessage is set
+    m_pendingMessages.append(QueuedTextMessage { WTF::move(message) });
 
     // });
 }
@@ -1310,95 +1306,57 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::spa
     //     if (auto* inspector = m_channel->channelInspector())
     //         inspector->didReceiveWebSocketFrame(WebSocketChannelInspector::createFrame(binaryData.data(), binaryData.size(), WebSocketFrame::OpCode::OpCodeBinary));
     // }
+
+    // For "message" events, check if we have a listener and queue if not.
+    // For "ping" and "pong" events, they have their own listeners, so we dispatch immediately.
+    bool isMessageEvent = eventName == eventNames().messageEvent;
+    bool hasListener = isMessageEvent ? m_hasMessageEventListener : this->hasEventListeners(eventName);
+
+    if (!hasListener && isMessageEvent) {
+        // Queue the binary message to be delivered when a listener is attached
+        Vector<uint8_t> dataCopy(binaryData.size());
+        memcpy(dataCopy.begin(), binaryData.data(), binaryData.size());
+        m_pendingMessages.append(QueuedBinaryMessage { eventName, WTF::move(dataCopy) });
+        return;
+    }
+
+    // Dispatch immediately if we have a listener
     switch (m_binaryType) {
-    case BinaryType::Blob:
-        if (this->hasEventListeners(eventName)) {
-            // the main reason for dispatching on a separate tick is to handle when you haven't yet attached an event listener
-            this->incPendingActivityCount();
-            RefPtr<Blob> blob = Blob::create(binaryData, scriptExecutionContext()->jsGlobalObject());
-            dispatchEvent(MessageEvent::create(eventName, blob.releaseNonNull(), m_url.string()));
-            this->decPendingActivityCount();
-            return;
-        }
-
-        if (auto* context = scriptExecutionContext()) {
-            RefPtr<Blob> blob = Blob::create(binaryData, context->jsGlobalObject());
-            context->postTask([this, name = eventName, blob = blob.releaseNonNull(), protectedThis = Ref { *this }](ScriptExecutionContext& context) {
-                ASSERT(scriptExecutionContext());
-                protectedThis->dispatchEvent(MessageEvent::create(name, blob, protectedThis->m_url.string()));
-                protectedThis->decPendingActivityCount();
-            });
-        }
-
+    case BinaryType::Blob: {
+        this->incPendingActivityCount();
+        RefPtr<Blob> blob = Blob::create(binaryData, scriptExecutionContext()->jsGlobalObject());
+        dispatchEvent(MessageEvent::create(eventName, blob.releaseNonNull(), m_url.string()));
+        this->decPendingActivityCount();
         break;
+    }
     case BinaryType::ArrayBuffer: {
-        if (this->hasEventListeners(eventName)) {
-            // the main reason for dispatching on a separate tick is to handle when you haven't yet attached an event listener
-            this->incPendingActivityCount();
-            dispatchEvent(MessageEvent::create(eventName, ArrayBuffer::create(binaryData), m_url.string()));
-            this->decPendingActivityCount();
-            return;
-        }
-
-        if (auto* context = scriptExecutionContext()) {
-            auto arrayBuffer = JSC::ArrayBuffer::create(binaryData);
-            this->incPendingActivityCount();
-            context->postTask([this, name = eventName, buffer = WTF::move(arrayBuffer), protectedThis = Ref { *this }](ScriptExecutionContext& context) {
-                ASSERT(scriptExecutionContext());
-                protectedThis->dispatchEvent(MessageEvent::create(name, buffer, m_url.string()));
-                protectedThis->decPendingActivityCount();
-            });
-        }
-
+        this->incPendingActivityCount();
+        dispatchEvent(MessageEvent::create(eventName, ArrayBuffer::create(binaryData), m_url.string()));
+        this->decPendingActivityCount();
         break;
     }
     case BinaryType::NodeBuffer: {
+        this->incPendingActivityCount();
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(scriptExecutionContext()->vm());
+        JSUint8Array* buffer = createBuffer(scriptExecutionContext()->jsGlobalObject(), binaryData);
 
-        if (this->hasEventListeners(eventName)) {
-            // the main reason for dispatching on a separate tick is to handle when you haven't yet attached an event listener
-            this->incPendingActivityCount();
-            auto scope = DECLARE_TOP_EXCEPTION_SCOPE(scriptExecutionContext()->vm());
-            JSUint8Array* buffer = createBuffer(scriptExecutionContext()->jsGlobalObject(), binaryData);
+        if (!buffer || scope.exception()) [[unlikely]] {
+            scope.clearExceptionExceptTermination();
 
-            if (!buffer || scope.exception()) [[unlikely]] {
-                scope.clearExceptionExceptTermination();
-
-                ErrorEvent::Init errorInit;
-                errorInit.message = "Failed to allocate memory for binary data"_s;
-                dispatchEvent(ErrorEvent::create(eventNames().errorEvent, errorInit));
-                this->decPendingActivityCount();
-                return;
-            }
-
-            JSC::EnsureStillAliveScope ensureStillAlive(buffer);
-            MessageEvent::Init init;
-            init.data = buffer;
-            init.origin = this->m_url.string();
-
-            dispatchEvent(MessageEvent::create(eventName, WTF::move(init), EventIsTrusted::Yes));
+            ErrorEvent::Init errorInit;
+            errorInit.message = "Failed to allocate memory for binary data"_s;
+            dispatchEvent(ErrorEvent::create(eventNames().errorEvent, errorInit));
             this->decPendingActivityCount();
             return;
         }
 
-        if (auto* context = scriptExecutionContext()) {
-            auto arrayBuffer = JSC::ArrayBuffer::tryCreate(binaryData);
+        JSC::EnsureStillAliveScope ensureStillAlive(buffer);
+        MessageEvent::Init init;
+        init.data = buffer;
+        init.origin = this->m_url.string();
 
-            this->incPendingActivityCount();
-
-            context->postTask([name = eventName, buffer = WTF::move(arrayBuffer), protectedThis = Ref { *this }](ScriptExecutionContext& context) {
-                size_t length = buffer->byteLength();
-                auto* globalObject = context.jsGlobalObject();
-                auto* subclassStructure = static_cast<Zig::GlobalObject*>(globalObject)->JSBufferSubclassStructure();
-                JSUint8Array* uint8array = JSUint8Array::create(globalObject, subclassStructure, buffer.copyRef(), 0, length);
-                JSC::EnsureStillAliveScope ensureStillAlive(uint8array);
-                MessageEvent::Init init;
-                init.data = uint8array;
-                init.origin = protectedThis->m_url.string();
-                protectedThis->dispatchEvent(MessageEvent::create(name, WTF::move(init), EventIsTrusted::Yes));
-                protectedThis->decPendingActivityCount();
-            });
-        }
-
+        dispatchEvent(MessageEvent::create(eventName, WTF::move(init), EventIsTrusted::Yes));
+        this->decPendingActivityCount();
         break;
     }
     }
@@ -1734,6 +1692,89 @@ void WebSocket::didConnectWithTunnel(void* tunnel, char* bufferedData, size_t bu
 
     // Now set the connected websocket on the tunnel to start forwarding data
     WebSocketProxyTunnel__setConnectedWebSocket(tunnel, this->m_connectedWebSocket.client);
+}
+
+void WebSocket::onDidChangeListenerImpl(EventTarget& self, const AtomString& eventType, OnDidChangeListenerKind kind)
+{
+    auto& webSocket = static_cast<WebSocket&>(self);
+
+    if (eventType != eventNames().messageEvent)
+        return;
+
+    if (kind == OnDidChangeListenerKind::Add) {
+        // Track that we have a message listener now
+        webSocket.m_hasMessageEventListener = true;
+        // Flush any pending messages that were queued before the listener was attached
+        webSocket.flushPendingMessages();
+    } else if (kind == OnDidChangeListenerKind::Remove || kind == OnDidChangeListenerKind::Clear) {
+        // Update the flag based on whether there are still listeners
+        webSocket.m_hasMessageEventListener = webSocket.hasEventListeners(eventNames().messageEvent);
+    }
+}
+
+void WebSocket::flushPendingMessages()
+{
+    if (m_state != OPEN || m_pendingMessages.isEmpty())
+        return;
+
+    // Move the queue to a local variable to avoid issues if new messages arrive during dispatch
+    auto pendingMessages = std::exchange(m_pendingMessages, Deque<QueuedMessage>());
+
+    for (auto& queuedMessage : pendingMessages) {
+        if (m_state != OPEN)
+            break;
+
+        std::visit([this](auto&& msg) {
+            using T = std::decay_t<decltype(msg)>;
+            if constexpr (std::is_same_v<T, QueuedTextMessage>) {
+                this->incPendingActivityCount();
+                dispatchEvent(MessageEvent::create(WTF::move(msg.message), m_url.string()));
+                this->decPendingActivityCount();
+            } else if constexpr (std::is_same_v<T, QueuedBinaryMessage>) {
+                // Re-dispatch the binary data using the same path as normal delivery
+                std::span<const uint8_t> binaryData(msg.data.begin(), msg.data.size());
+                switch (m_binaryType) {
+                case BinaryType::Blob: {
+                    this->incPendingActivityCount();
+                    RefPtr<Blob> blob = Blob::create(binaryData, scriptExecutionContext()->jsGlobalObject());
+                    dispatchEvent(MessageEvent::create(msg.eventName, blob.releaseNonNull(), m_url.string()));
+                    this->decPendingActivityCount();
+                    break;
+                }
+                case BinaryType::ArrayBuffer: {
+                    this->incPendingActivityCount();
+                    dispatchEvent(MessageEvent::create(msg.eventName, ArrayBuffer::create(binaryData), m_url.string()));
+                    this->decPendingActivityCount();
+                    break;
+                }
+                case BinaryType::NodeBuffer: {
+                    this->incPendingActivityCount();
+                    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(scriptExecutionContext()->vm());
+                    JSUint8Array* buffer = createBuffer(scriptExecutionContext()->jsGlobalObject(), binaryData);
+
+                    if (!buffer || scope.exception()) [[unlikely]] {
+                        scope.clearExceptionExceptTermination();
+                        ErrorEvent::Init errorInit;
+                        errorInit.message = "Failed to allocate memory for binary data"_s;
+                        dispatchEvent(ErrorEvent::create(eventNames().errorEvent, errorInit));
+                        this->decPendingActivityCount();
+                        return;
+                    }
+
+                    JSC::EnsureStillAliveScope ensureStillAlive(buffer);
+                    MessageEvent::Init init;
+                    init.data = buffer;
+                    init.origin = m_url.string();
+
+                    dispatchEvent(MessageEvent::create(msg.eventName, WTF::move(init), EventIsTrusted::Yes));
+                    this->decPendingActivityCount();
+                    break;
+                }
+                }
+            }
+        },
+            queuedMessage);
+    }
 }
 
 } // namespace WebCore

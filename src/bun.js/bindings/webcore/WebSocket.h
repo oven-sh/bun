@@ -37,6 +37,8 @@
 #include <wtf/URL.h>
 #include <wtf/HashSet.h>
 #include <wtf/Lock.h>
+#include <wtf/Deque.h>
+#include <variant>
 #include "FetchHeaders.h"
 #include "WebSocketErrorCode.h"
 
@@ -259,6 +261,22 @@ private:
 
     bool m_dispatchedErrorEvent { false };
     // RefPtr<PendingActivity<WebSocket>> m_pendingActivity;
+
+    // Message queue for buffering messages when no listener is attached
+    // This mimics browser behavior where messages are queued until a handler is set
+    struct QueuedTextMessage {
+        String message;
+    };
+    struct QueuedBinaryMessage {
+        AtomString eventName;
+        Vector<uint8_t> data;
+    };
+    using QueuedMessage = std::variant<QueuedTextMessage, QueuedBinaryMessage>;
+    Deque<QueuedMessage> m_pendingMessages;
+    bool m_hasMessageEventListener { false };
+
+    void flushPendingMessages();
+    static void onDidChangeListenerImpl(EventTarget& self, const AtomString& eventType, OnDidChangeListenerKind kind);
 };
 
 } // namespace WebCore

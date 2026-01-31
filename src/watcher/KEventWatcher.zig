@@ -6,6 +6,8 @@ pub const EventListIndex = u32;
 eventlist_index: EventListIndex = 0,
 
 fd: bun.FD.Optional = .none,
+pending_kevents_buf: [256]KEvent = undefined,
+pending_kevents_len: u16 = 0,
 
 const changelist_count = 128;
 

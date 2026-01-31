@@ -335,20 +335,30 @@ pub fn addFileDescriptorToKQueueWithoutChecks(this: *Watcher, fd: bun.FileDescri
 
     // Store the index for fast filtering later
     event.udata = @as(usize, @intCast(watchlist_id));
-    var events: [1]KEvent = .{event};
 
     // This took a lot of work to figure out the right permutation
     // Basically:
-    // - We register the event here.
+    // - We register the event here (or flush if at capacity).
     // our while(true) loop above receives notification of changes to any of the events created here.
+    if (this.platform.pending_kevents_len == this.platform.pending_kevents_buf.len) {
+        this.flushPendingKEvents();
+    }
+    this.platform.pending_kevents_buf[this.platform.pending_kevents_len] = event;
+    this.platform.pending_kevents_len += 1;
+}
+
+pub fn flushPendingKEvents(this: *Watcher) void {
+    const len = this.platform.pending_kevents_len;
+    if (len == 0) return;
     _ = std.posix.system.kevent(
         this.platform.fd.unwrap().?.native(),
-        @as([]KEvent, events[0..1]).ptr,
-        1,
-        @as([]KEvent, events[0..1]).ptr,
+        this.platform.pending_kevents_buf[0..len].ptr,
+        @intCast(len),
+        this.platform.pending_kevents_buf[0..len].ptr,
         0,
         null,
     );
+    this.platform.pending_kevents_len = 0;
 }
 
 fn appendFileAssumeCapacity(
@@ -390,6 +400,7 @@ fn appendFileAssumeCapacity(
 
     if (comptime Environment.isMac) {
         this.addFileDescriptorToKQueueWithoutChecks(fd, watchlist_id);
+        this.flushPendingKEvents();
     } else if (comptime Environment.isLinux) {
         // var file_path_to_use_ = std.mem.trimRight(u8, file_path_, "/");
         // var buf: [bun.MAX_PATH_BYTES+1]u8 = undefined;
@@ -451,40 +462,8 @@ fn appendDirectoryAssumeCapacity(
     };
 
     if (Environment.isMac) {
-        const KEvent = std.c.Kevent;
-
-        // https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/kqueue.2.html
-        var event = std.mem.zeroes(KEvent);
-
-        event.flags = std.c.EV.ADD | std.c.EV.CLEAR | std.c.EV.ENABLE;
-        // we want to know about the vnode
-        event.filter = std.c.EVFILT.VNODE;
-
-        // monitor:
-        // - Write
-        // - Rename
-        // - Delete
-        event.fflags = std.c.NOTE.WRITE | std.c.NOTE.RENAME | std.c.NOTE.DELETE;
-
-        // id
-        event.ident = @intCast(fd.native());
-
-        // Store the hash for fast filtering later
-        event.udata = @as(usize, @intCast(watchlist_id));
-        var events: [1]KEvent = .{event};
-
-        // This took a lot of work to figure out the right permutation
-        // Basically:
-        // - We register the event here.
-        // our while(true) loop above receives notification of changes to any of the events created here.
-        _ = std.posix.system.kevent(
-            this.platform.fd.unwrap().?.native(),
-            @as([]KEvent, events[0..1]).ptr,
-            1,
-            @as([]KEvent, events[0..1]).ptr,
-            0,
-            null,
-        );
+        this.addFileDescriptorToKQueueWithoutChecks(fd, watchlist_id);
+        this.flushPendingKEvents();
     } else if (Environment.isLinux) {
         const buf = bun.path_buffer_pool.get();
         defer {

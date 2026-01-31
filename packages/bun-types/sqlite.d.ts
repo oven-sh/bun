@@ -610,11 +610,14 @@ declare module "bun:sqlite" {
      * ```ts
      * const stmt = db.prepare("SELECT * FROM foo WHERE bar = ?");
      *
+     * stmt.all();
+     * // => [] (no previous bindings)
+     *
      * stmt.all("baz");
      * // => [{bar: "baz"}]
      *
      * stmt.all();
-     * // => []
+     * // => [{bar: "baz"}] (uses last bound value)
      *
      * stmt.all("foo");
      * // => [{bar: "foo"}]
@@ -633,11 +636,14 @@ declare module "bun:sqlite" {
      * ```ts
      * const stmt = db.prepare("SELECT * FROM foo WHERE bar = ?");
      *
+     * stmt.get();
+     * // => null (no previous bindings)
+     *
      * stmt.get("baz");
      * // => {bar: "baz"}
      *
      * stmt.get();
-     * // => null
+     * // => {bar: "baz"} (uses last bound value)
      *
      * stmt.get("foo");
      * // => {bar: "foo"}

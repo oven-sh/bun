@@ -95,62 +95,61 @@ req.end();
     expect(exitCode).toBe(0);
   });
 
-  test(
-    "request-promise with form-data and fs.createReadStream works correctly",
-    async () => {
-      // This test specifically reproduces the original issue:
-      // Using request-promise with form-data piping an fs.createReadStream
+  // This test requires a longer timeout because it installs npm packages (request, request-promise)
+  test("request-promise with form-data and fs.createReadStream works correctly", { timeout: 60_000 }, async () => {
+    // This test specifically reproduces the original issue:
+    // Using request-promise with form-data piping an fs.createReadStream
 
-      using server = Bun.serve({
-        port: 0,
-        async fetch(req) {
-          try {
-            const formData = await req.formData();
-            const file = formData.get("sourceFile");
-            if (!(file instanceof Blob)) {
-              return new Response(JSON.stringify({ success: false, error: "No file found" }), {
-                status: 400,
-                headers: { "Content-Type": "application/json" },
-              });
-            }
-            const content = await file.arrayBuffer();
-            return new Response(
-              JSON.stringify({
-                success: true,
-                bytesReceived: file.size,
-                // Verify content is correct (should be all 'A's)
-                contentValid: new Uint8Array(content).every(b => b === 65), // 65 is 'A'
-              }),
-              { headers: { "Content-Type": "application/json" } },
-            );
-          } catch (e: unknown) {
-            let errorMessage: string;
-            if (e instanceof Error) {
-              errorMessage = e.message;
-            } else if (typeof e === "object" && e !== null && "message" in e) {
-              errorMessage = String((e as { message: unknown }).message);
-            } else {
-              errorMessage = String(e);
-            }
-            return new Response(JSON.stringify({ success: false, error: errorMessage }), {
-              status: 500,
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        try {
+          const formData = await req.formData();
+          const file = formData.get("sourceFile");
+          if (!(file instanceof Blob)) {
+            return new Response(JSON.stringify({ success: false, error: "No file found" }), {
+              status: 400,
               headers: { "Content-Type": "application/json" },
             });
           }
-        },
-      });
+          const content = await file.arrayBuffer();
+          return new Response(
+            JSON.stringify({
+              success: true,
+              bytesReceived: file.size,
+              // Verify content is correct (should be all 'A's)
+              contentValid: new Uint8Array(content).every(b => b === 65), // 65 is 'A'
+            }),
+            { headers: { "Content-Type": "application/json" } },
+          );
+        } catch (e: unknown) {
+          let errorMessage: string;
+          if (e instanceof Error) {
+            errorMessage = e.message;
+          } else if (typeof e === "object" && e !== null && "message" in e) {
+            errorMessage = String((e as { message: unknown }).message);
+          } else {
+            errorMessage = String(e);
+          }
+          return new Response(JSON.stringify({ success: false, error: errorMessage }), {
+            status: 500,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+      },
+    });
 
-      using dir = tempDir("test-26638-form", {
-        "package.json": JSON.stringify({
-          name: "test-26638",
-          dependencies: {
-            request: "^2.88.2",
-            "request-promise": "^4.2.6",
-          },
-        }),
-        // Create a test file with known content (100KB)
-        "testfile.txt": Buffer.alloc(1024 * 100, "A").toString(),
-        "client.js": `
+    using dir = tempDir("test-26638-form", {
+      "package.json": JSON.stringify({
+        name: "test-26638",
+        dependencies: {
+          request: "^2.88.2",
+          "request-promise": "^4.2.6",
+        },
+      }),
+      // Create a test file with known content (100KB)
+      "testfile.txt": Buffer.alloc(1024 * 100, "A").toString(),
+      "client.js": `
 const fs = require('fs');
 const request = require('request-promise');
 
@@ -171,52 +170,50 @@ async function upload() {
 
 upload();
 `,
-      });
+    });
 
-      // Install dependencies
-      await using installProc = Bun.spawn({
-        cmd: [bunExe(), "install"],
-        cwd: String(dir),
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [installStdout, installStderr, installExitCode] = await Promise.all([
-        installProc.stdout.text(),
-        installProc.stderr.text(),
-        installProc.exited,
-      ]);
-      if (installExitCode !== 0) {
-        console.error("Install stdout:", installStdout);
-        console.error("Install stderr:", installStderr);
-      }
-      expect(installExitCode).toBe(0);
+    // Install dependencies
+    await using installProc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [installStdout, installStderr, installExitCode] = await Promise.all([
+      installProc.stdout.text(),
+      installProc.stderr.text(),
+      installProc.exited,
+    ]);
+    if (installExitCode !== 0) {
+      console.error("Install stdout:", installStdout);
+      console.error("Install stderr:", installStderr);
+    }
+    expect(installExitCode).toBe(0);
 
-      // Run the client
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "client.js"],
-        cwd: String(dir),
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+    // Run the client
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "client.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      if (stderr) {
-        console.error("stderr:", stderr);
-      }
+    if (stderr) {
+      console.error("stderr:", stderr);
+    }
 
-      // Check stdout before exitCode for better error messages on test failure
-      expect(stdout.trim()).not.toBe("");
-      const result = JSON.parse(stdout.trim());
-      expect(result.success).toBe(true);
-      expect(result.bytesReceived).toBe(1024 * 100);
-      expect(result.contentValid).toBe(true);
-      expect(exitCode).toBe(0);
-    },
-    { timeout: 60_000 },
-  );
+    // Check stdout before exitCode for better error messages on test failure
+    expect(stdout.trim()).not.toBe("");
+    const result = JSON.parse(stdout.trim());
+    expect(result.success).toBe(true);
+    expect(result.bytesReceived).toBe(1024 * 100);
+    expect(result.contentValid).toBe(true);
+    expect(exitCode).toBe(0);
+  });
 
   test("multiple rapid writes followed by immediate end() yields all data", async () => {
     // This test ensures that when many writes happen in quick succession

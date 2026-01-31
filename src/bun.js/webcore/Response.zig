@@ -668,6 +668,7 @@ pub fn constructError(
             .#body = Body{
                 .value = .{ .Empty = {} },
             },
+            .#url = bun.String.empty,
         },
     );
 
@@ -751,6 +752,7 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, j
     var response = bun.new(Response, Response{
         .#body = body,
         .#init = _init,
+        .#url = bun.String.empty,
         .#js_ref = .initWeak(js_this),
     });
 

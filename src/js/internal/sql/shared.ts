@@ -659,8 +659,13 @@ function parseOptions(
 
   // If user explicitly set tls: false, and didn't set a specific SSL mode (it remains prefer),
   // fallback to disable.
-  if (options.tls === false && !options.ssl && sslMode === SSLMode.prefer) {
+  if (options.tls === false) {
+    // Either honor explicit tls:false or surface the conflict with ssl/sslmode.
+    if (options.ssl && (options.ssl as any) !== "disable") {
+      throw $ERR_INVALID_ARG_VALUE("tls", false, "conflicts with ssl mode");
+    }
     sslMode = SSLMode.disable;
+    tls = false;
   }
 
   // If SSL is enabled but no TLS config is provided, default to system defaults (true)

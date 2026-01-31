@@ -333,7 +333,7 @@ declare module "bun" {
        * @deprecated Prefer {@link tls}
        * @default false
        */
-      ssl?: Bun.BunFile | TLSOptions | boolean | undefined;
+      ssl?: Bun.BunFile | TLSOptions | boolean | "disable" | "prefer" | "require" | "verify-ca" | "verify-full" | undefined;
 
       /**
        * Unix domain socket path for connection

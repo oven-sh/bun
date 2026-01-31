@@ -83,7 +83,7 @@ if (!isDockerEnabled()) {
             }
 
             expect(error).toBeDefined();
-            // Depending on where the error is caught (TSL layer or Postgres layer),
+            // Depending on where the error is caught (TLS layer or Postgres layer),
             // it should be an instance of Error or SQL.Error.
             // We check that connection failed specifically.
             expect(error).toBeInstanceOf(Error);

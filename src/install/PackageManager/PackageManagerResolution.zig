@@ -152,6 +152,14 @@ pub fn assignResolution(this: *PackageManager, dependency_id: DependencyID, pack
         dep.name = this.lockfile.packages.items(.name)[package_id];
         dep.name_hash = this.lockfile.packages.items(.name_hash)[package_id];
     }
+
+    // Propagate override context (first-write-wins for shared packages)
+    if (this.dep_pending_override.get(dependency_id)) |ctx_id| {
+        const gop = this.pkg_override_ctx.getOrPut(this.allocator, package_id) catch return;
+        if (!gop.found_existing) {
+            gop.value_ptr.* = ctx_id;
+        }
+    }
 }
 
 pub fn assignRootResolution(this: *PackageManager, dependency_id: DependencyID, package_id: PackageID) void {
@@ -167,6 +175,14 @@ pub fn assignRootResolution(this: *PackageManager, dependency_id: DependencyID, 
     if (dep.name.isEmpty() or strings.eql(dep.name.slice(string_buf), dep.version.literal.slice(string_buf))) {
         dep.name = this.lockfile.packages.items(.name)[package_id];
         dep.name_hash = this.lockfile.packages.items(.name_hash)[package_id];
+    }
+
+    // Propagate override context for root resolution
+    if (this.dep_pending_override.get(dependency_id)) |ctx_id| {
+        const gop = this.pkg_override_ctx.getOrPut(this.allocator, package_id) catch return;
+        if (!gop.found_existing) {
+            gop.value_ptr.* = ctx_id;
+        }
     }
 }
 
@@ -215,6 +231,136 @@ pub fn verifyResolutions(this: *PackageManager, log_level: PackageManager.Option
     }
 
     if (any_failed) this.crash();
+}
+
+/// Pre-populate override contexts for all resolved packages.
+/// This is needed during re-resolution when overrides change,
+/// because existing packages were resolved without context tracking.
+/// Does a BFS from root, propagating override tree node IDs along the dependency graph.
+pub fn populateOverrideContexts(this: *PackageManager) void {
+    if (!this.lockfile.overrides.hasTree()) return;
+
+    const OverrideMap = Lockfile.OverrideMap;
+    const packages = this.lockfile.packages.slice();
+    const dep_lists = packages.items(.dependencies);
+    const res_lists = packages.items(.resolutions);
+    const name_hashes = packages.items(.name_hash);
+    const resolutions = packages.items(.resolution);
+    const buf = this.lockfile.buffers.string_bytes.items;
+
+    // Use a simple worklist (BFS queue)
+    const QueueItem = struct { pkg_id: PackageID, ctx: OverrideMap.NodeID };
+    var queue = std.ArrayListUnmanaged(QueueItem){};
+    defer queue.deinit(this.allocator);
+
+    // Start from root package
+    this.pkg_override_ctx.put(this.allocator, 0, 0) catch return;
+    queue.append(this.allocator, .{ .pkg_id = 0, .ctx = 0 }) catch return;
+
+    // BFS using index-based iteration to avoid O(N) shifts from orderedRemove(0)
+    var queue_idx: usize = 0;
+    while (queue_idx < queue.items.len) {
+        const item = queue.items[queue_idx];
+        queue_idx += 1;
+        const deps = dep_lists[item.pkg_id].get(this.lockfile.buffers.dependencies.items);
+        const ress = res_lists[item.pkg_id].get(this.lockfile.buffers.resolutions.items);
+
+        for (deps, ress) |dep, resolved_pkg_id| {
+            if (resolved_pkg_id >= packages.len) continue;
+
+            // Determine child context: walk siblings with key_spec validation
+            // (mirrors the enqueue path's sibling-walk logic)
+            var child_ctx = item.ctx;
+            const resolved_version = if (resolved_pkg_id < resolutions.len and resolutions[resolved_pkg_id].tag == .npm)
+                resolutions[resolved_pkg_id].value.npm.version
+            else
+                null;
+
+            child_ctx = findValidChild(
+                &this.lockfile.overrides,
+                item.ctx,
+                dep.name_hash,
+                resolved_version,
+                buf,
+            ) orelse blk: {
+                // Also check root if current context is not root
+                if (item.ctx != 0) {
+                    break :blk findValidChild(
+                        &this.lockfile.overrides,
+                        0,
+                        dep.name_hash,
+                        resolved_version,
+                        buf,
+                    ) orelse item.ctx;
+                }
+                break :blk item.ctx;
+            };
+
+            // Also check by resolved package's name_hash (in case dep name differs from pkg name)
+            if (child_ctx == item.ctx and resolved_pkg_id < name_hashes.len) {
+                const pkg_name_hash = name_hashes[resolved_pkg_id];
+                if (pkg_name_hash != dep.name_hash) {
+                    child_ctx = findValidChild(
+                        &this.lockfile.overrides,
+                        item.ctx,
+                        pkg_name_hash,
+                        resolved_version,
+                        buf,
+                    ) orelse child_ctx;
+                }
+            }
+
+            const gop = this.pkg_override_ctx.getOrPut(this.allocator, resolved_pkg_id) catch continue;
+            if (!gop.found_existing) {
+                gop.value_ptr.* = child_ctx;
+                queue.append(this.allocator, .{ .pkg_id = resolved_pkg_id, .ctx = child_ctx }) catch continue;
+            }
+        }
+    }
+}
+
+/// Find a child matching name_hash under parent_ctx, walking siblings to skip
+/// nodes whose key_spec doesn't match the resolved version.
+fn findValidChild(
+    overrides: *const Lockfile.OverrideMap,
+    parent_ctx: Lockfile.OverrideMap.NodeID,
+    name_hash: PackageNameHash,
+    resolved_version: ?Semver.Version,
+    buf: string,
+) ?Lockfile.OverrideMap.NodeID {
+    var candidate = overrides.findChild(parent_ctx, name_hash);
+    while (candidate) |child_id| {
+        const child = overrides.nodes.items[child_id];
+        if (!child.key_spec.isEmpty()) {
+            if (!isKeySpecSatisfiedByVersion(child.key_spec, resolved_version, buf)) {
+                candidate = overrides.findChildAfter(parent_ctx, name_hash, child_id);
+                continue;
+            }
+        }
+        return child_id;
+    }
+    return null;
+}
+
+/// Check if a resolved Semver.Version satisfies a key_spec constraint.
+/// Used during BFS context propagation where we have actual resolved versions.
+fn isKeySpecSatisfiedByVersion(key_spec: String, resolved_version: ?Semver.Version, buf: string) bool {
+    if (key_spec.isEmpty()) return true;
+    const version = resolved_version orelse return true; // non-npm: match optimistically
+
+    const key_spec_str = key_spec.slice(buf);
+    if (key_spec_str.len == 0) return true;
+
+    const sliced = Semver.SlicedString.init(key_spec_str, key_spec_str);
+    var key_spec_group = Semver.Query.parse(
+        bun.default_allocator,
+        key_spec_str,
+        sliced,
+    ) catch return true; // on parse error, allow optimistically
+    defer key_spec_group.deinit();
+
+    // key_spec_group's strings are in key_spec_str, version's strings are in buf
+    return key_spec_group.head.satisfies(version, key_spec_str, buf);
 }
 
 const string = []const u8;

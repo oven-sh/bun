@@ -103,6 +103,21 @@ peer_dependencies: bun.LinearFifo(DependencyID, .Dynamic) = .init(default_alloca
 // name hash from alias package name -> aliased package dependency version info
 known_npm_aliases: NpmAliasMap = .{},
 
+/// Maps PackageID → OverrideMap.NodeID
+/// Tracks which override tree node is the context for each resolved package's children.
+/// Public: accessed by PackageManagerEnqueue, PackageManagerResolution, and install_with_manager.
+pkg_override_ctx: std.AutoHashMapUnmanaged(PackageID, OverrideMap.NodeID) = .{},
+
+/// Maps DependencyID → OverrideMap.NodeID
+/// Temporary: holds the override context for a dependency between enqueue and resolution.
+/// Public: written in PackageManagerEnqueue, read in PackageManagerResolution.
+dep_pending_override: std.AutoHashMapUnmanaged(DependencyID, OverrideMap.NodeID) = .{},
+
+/// Precomputed reverse mapping: DependencyID → owning PackageID.
+/// Built lazily to avoid O(N) scans per dependency in the enqueue path.
+/// Public: accessed by PackageManagerEnqueue.
+dep_parent_map: std.ArrayListUnmanaged(PackageID) = .{},
+
 event_loop: jsc.AnyEventLoop,
 
 // During `installPackages` we learn exactly what dependencies from --trust
@@ -1217,6 +1232,7 @@ pub const assignResolution = resolution.assignResolution;
 pub const assignRootResolution = resolution.assignRootResolution;
 pub const formatLaterVersionInCache = resolution.formatLaterVersionInCache;
 pub const getInstalledVersionsFromDiskCache = resolution.getInstalledVersionsFromDiskCache;
+pub const populateOverrideContexts = resolution.populateOverrideContexts;
 pub const resolveFromDiskCache = resolution.resolveFromDiskCache;
 pub const scopeForPackageName = resolution.scopeForPackageName;
 pub const verifyResolutions = resolution.verifyResolutions;
@@ -1322,4 +1338,5 @@ const TaskCallbackContext = bun.install.TaskCallbackContext;
 const initializeStore = bun.install.initializeStore;
 
 const Lockfile = bun.install.Lockfile;
+const OverrideMap = Lockfile.OverrideMap;
 const Package = Lockfile.Package;

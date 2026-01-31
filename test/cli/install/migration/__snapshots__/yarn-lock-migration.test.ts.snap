@@ -206,6 +206,9 @@ exports[`yarn.lock migration basic yarn.lock with resolutions: resolutions-yarn-
     },
   },
   "overrides": {
+    "webpack": {
+      "acorn": "8.11.2",
+    },
     "acorn": "8.11.3",
   },
   "packages": {

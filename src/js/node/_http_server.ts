@@ -532,6 +532,11 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         if (method === "CONNECT") {
           // Handle CONNECT method for HTTP tunneling/proxy
           if (server.listenerCount("connect") > 0) {
+            // Emit 'connection' event first (Node.js compatibility)
+            // This allows users to set custom properties on the socket before 'connect' fires
+            if (isSocketNew) {
+              server.emit("connection", socket);
+            }
             // For CONNECT, emit the event and let the handler respond
             // Don't assign the socket to a response for CONNECT
             // The handler should write the raw response
@@ -809,12 +814,13 @@ function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, r
 }
 
 const kBytesWritten = Symbol("kBytesWritten");
+const kBytesRead = Symbol("kBytesRead");
 const kEnableStreaming = Symbol("kEnableStreaming");
 const NodeHTTPServerSocket = class Socket extends Duplex {
-  bytesRead = 0;
   connecting = false;
   timeout = 0;
   [kBytesWritten] = 0;
+  [kBytesRead] = 0;
   [kHandle];
   server: Server;
   _httpMessage;
@@ -834,12 +840,25 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
 
   get bytesWritten() {
     const handle = this[kHandle];
-    return handle
-      ? (handle.response?.getBytesWritten?.() ?? handle.bytesWritten ?? this[kBytesWritten] ?? 0)
-      : (this[kBytesWritten] ?? 0);
+    if (handle) {
+      // For direct socket writes (e.g., CONNECT tunnels), use handle.bytesWritten
+      // For HTTP response writes, use handle.response.getBytesWritten()
+      const handleBytes = handle.bytesWritten ?? 0;
+      const responseBytes = handle.response?.getBytesWritten?.() ?? 0;
+      return Math.max(handleBytes, responseBytes, this[kBytesWritten] ?? 0);
+    }
+    return this[kBytesWritten] ?? 0;
   }
   set bytesWritten(value) {
     this[kBytesWritten] = value;
+  }
+
+  get bytesRead() {
+    const handle = this[kHandle];
+    return handle ? (handle.bytesRead ?? this[kBytesRead] ?? 0) : (this[kBytesRead] ?? 0);
+  }
+  set bytesRead(value) {
+    this[kBytesRead] = value;
   }
 
   [kEnableStreaming](enable: boolean) {
@@ -890,6 +909,14 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     }
   }
   #onClose() {
+    const handle = this[kHandle];
+    // Save bytesWritten and bytesRead before nulling the handle (Node.js compatibility)
+    if (handle) {
+      const handleBytes = handle.bytesWritten ?? 0;
+      const responseBytes = handle.response?.getBytesWritten?.() ?? 0;
+      this[kBytesWritten] = Math.max(handleBytes, responseBytes);
+      this[kBytesRead] = handle.bytesRead ?? 0;
+    }
     this[kHandle] = null;
 
     const message = this._httpMessage;
@@ -904,6 +931,9 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
         req.destroy();
       }
     }
+
+    // Emit the 'close' event on the socket (Node.js compatibility)
+    this.emit("close");
   }
   #onCloseForDestroy(closeCallback) {
     this.#onClose();

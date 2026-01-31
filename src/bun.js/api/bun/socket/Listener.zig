@@ -91,7 +91,7 @@ pub fn reload(this: *Listener, globalObject: *jsc.JSGlobalObject, callframe: *js
         return globalObject.throw("Expected \"socket\" object", .{});
     };
 
-    const handlers = try Handlers.fromJS(globalObject, socket_obj, this.handlers.is_server);
+    const handlers = try Handlers.fromJS(globalObject, socket_obj, this.handlers.mode == .server);
     this.handlers.deinit();
     this.handlers = handlers;
 
@@ -773,7 +773,7 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
 
     const handlers_ptr = bun.handleOom(handlers.vm.allocator.create(Handlers));
     handlers_ptr.* = handlers.*;
-    handlers_ptr.is_server = false;
+    handlers_ptr.mode = .client;
 
     var promise = jsc.JSPromise.create(globalObject);
     const promise_value = promise.toJS();

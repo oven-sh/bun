@@ -391,6 +391,16 @@ pub fn doPatchCommit(
     };
     defer patchfile_contents.deinit();
 
+    // In preview mode, print the diff to stdout and return without modifying any files
+    if (manager.options.patch_features.commit.preview) {
+        Output.writer().writeAll(patchfile_contents.items) catch |e| {
+            Output.err(e, "failed to write patch to stdout", .{});
+            Global.crash();
+        };
+        Output.flush();
+        return null;
+    }
+
     // write the patch contents to temp file then rename
     var tmpname_buf: [1024]u8 = undefined;
     const tempfile_name = try bun.fs.FileSystem.tmpname("tmp", &tmpname_buf, bun.fastRandom());

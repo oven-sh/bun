@@ -5,7 +5,15 @@ import { bunEnv, bunExe, isWindows, readdirSorted, tmpdirSync } from "harness";
 import { copyFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "os";
 import { join, resolve } from "path";
-import { dummyAfterAll, dummyBeforeAll, dummyBeforeEach, dummyRegistry, getPort, setHandler } from "./dummy.registry";
+import {
+  createTestContext,
+  destroyTestContext,
+  dummyAfterAll,
+  dummyBeforeAll,
+  dummyRegistryForContext,
+  setContextHandler,
+  type TestContext,
+} from "./dummy.registry";
 
 let x_dir: string;
 let current_tmpdir: string;
@@ -523,272 +531,267 @@ describe("--package flag", () => {
     expect(exited).toBe(1);
   });
 
-  describe("with mock registry", () => {
-    let port: number;
-
+  describe.concurrent("with mock registry", () => {
     beforeAll(() => {
       dummyBeforeAll();
-      port = getPort()!;
     });
 
     afterAll(() => {
       dummyAfterAll();
     });
 
-    beforeEach(async () => {
-      await dummyBeforeEach();
-    });
+    async function withContext(
+      opts: { linker?: "hoisted" | "isolated" } | undefined,
+      fn: (ctx: TestContext) => Promise<void>,
+    ): Promise<void> {
+      const ctx = await createTestContext(opts ? { linker: opts.linker! } : undefined);
+      try {
+        await fn(ctx);
+      } finally {
+        destroyTestContext(ctx);
+      }
+    }
 
-    const runWithRegistry = async (
-      ...args: string[]
-    ): Promise<[err: string, out: string, exited: number, urls: string[]]> => {
-      const urls: string[] = [];
-
-      const subprocess = spawn({
-        cmd: [bunExe(), "x", ...args],
-        cwd: x_dir,
-        stdout: "pipe",
-        stdin: "inherit",
-        stderr: "pipe",
-        env: {
-          ...env,
-          npm_config_registry: `http://localhost:${port}/`,
-        },
-      });
-
-      const [err, out, exited] = await Promise.all([
-        subprocess.stderr.text(),
-        subprocess.stdout.text(),
-        subprocess.exited,
-      ]);
-
-      return [err, out, exited, urls];
-    };
+    const defaultOpts = { linker: "hoisted" as const };
 
     it("should install specified package when binary differs from package name", async () => {
-      const urls: string[] = [];
+      await withContext(defaultOpts, async ctx => {
+        const urls: string[] = [];
 
-      // Set up dummy registry with a package that has a different binary name
-      setHandler(
-        dummyRegistry(urls, {
-          "1.0.0": {
-            bin: {
-              "different-bin": "index.js",
+        // Set up dummy registry with a package that has a different binary name
+        setContextHandler(
+          ctx,
+          dummyRegistryForContext(ctx, urls, {
+            "1.0.0": {
+              bin: {
+                "different-bin": "index.js",
+              },
+              as: "1.0.0",
             },
-            as: "1.0.0",
+          }),
+        );
+
+        // Tarball already exists in test directory
+
+        // Without --package, bunx different-bin would fail
+        // With --package, we correctly install my-special-pkg
+        const subprocess = spawn({
+          cmd: [bunExe(), "x", "--package", "my-special-pkg", "different-bin", "--help"],
+          cwd: ctx.package_dir,
+          stdout: "pipe",
+          stdin: "inherit",
+          stderr: "pipe",
+          env: {
+            ...env,
+            npm_config_registry: ctx.registry_url,
           },
-        }),
-      );
+        });
 
-      // Tarball already exists in test directory
+        const [err, out, exited] = await Promise.all([
+          subprocess.stderr.text(),
+          subprocess.stdout.text(),
+          subprocess.exited,
+        ]);
 
-      // Without --package, bunx different-bin would fail
-      // With --package, we correctly install my-special-pkg
-      const subprocess = spawn({
-        cmd: [bunExe(), "x", "--package", "my-special-pkg", "different-bin", "--help"],
-        cwd: x_dir,
-        stdout: "pipe",
-        stdin: "inherit",
-        stderr: "pipe",
-        env: {
-          ...env,
-          npm_config_registry: `http://localhost:${port}/`,
-        },
+        expect(urls.some(url => url.includes("/my-special-pkg"))).toBe(true);
+        // The package should install successfully
+        expect(err).toContain("Saved lockfile");
       });
-
-      const [err, out, exited] = await Promise.all([
-        subprocess.stderr.text(),
-        subprocess.stdout.text(),
-        subprocess.exited,
-      ]);
-
-      expect(urls.some(url => url.includes("/my-special-pkg"))).toBe(true);
-      // The package should install successfully
-      expect(err).toContain("Saved lockfile");
     });
 
     it("should support -p shorthand with mock registry", async () => {
-      const urls: string[] = [];
+      await withContext(defaultOpts, async ctx => {
+        const urls: string[] = [];
 
-      setHandler(
-        dummyRegistry(urls, {
-          "2.0.0": {
-            bin: {
-              "tool": "cli.js",
+        setContextHandler(
+          ctx,
+          dummyRegistryForContext(ctx, urls, {
+            "2.0.0": {
+              bin: {
+                tool: "cli.js",
+              },
+              as: "2.0.0",
             },
-            as: "2.0.0",
+          }),
+        );
+
+        // Tarball already exists in test directory
+
+        const subprocess = spawn({
+          cmd: [bunExe(), "x", "-p", "actual-package", "tool", "--version"],
+          cwd: ctx.package_dir,
+          stdout: "pipe",
+          stdin: "inherit",
+          stderr: "pipe",
+          env: {
+            ...env,
+            npm_config_registry: ctx.registry_url,
           },
-        }),
-      );
+        });
 
-      // Tarball already exists in test directory
+        const [err, out, exited] = await Promise.all([
+          subprocess.stderr.text(),
+          subprocess.stdout.text(),
+          subprocess.exited,
+        ]);
 
-      const subprocess = spawn({
-        cmd: [bunExe(), "x", "-p", "actual-package", "tool", "--version"],
-        cwd: x_dir,
-        stdout: "pipe",
-        stdin: "inherit",
-        stderr: "pipe",
-        env: {
-          ...env,
-          npm_config_registry: `http://localhost:${port}/`,
-        },
+        expect(urls.some(url => url.includes("/actual-package"))).toBe(true);
       });
-
-      const [err, out, exited] = await Promise.all([
-        subprocess.stderr.text(),
-        subprocess.stdout.text(),
-        subprocess.exited,
-      ]);
-
-      expect(urls.some(url => url.includes("/actual-package"))).toBe(true);
     });
 
     it("should support --package=<pkg> syntax with mock registry", async () => {
-      const urls: string[] = [];
+      await withContext(defaultOpts, async ctx => {
+        const urls: string[] = [];
 
-      setHandler(
-        dummyRegistry(urls, {
-          "3.0.0": {
-            bin: {
-              "runner": "run.js",
+        setContextHandler(
+          ctx,
+          dummyRegistryForContext(ctx, urls, {
+            "3.0.0": {
+              bin: {
+                runner: "run.js",
+              },
+              as: "3.0.0",
             },
-            as: "3.0.0",
+          }),
+        );
+
+        // Tarball already exists in test directory
+
+        const subprocess = spawn({
+          cmd: [bunExe(), "x", "--package=runner-pkg", "runner", "--help"],
+          cwd: ctx.package_dir,
+          stdout: "pipe",
+          stdin: "inherit",
+          stderr: "pipe",
+          env: {
+            ...env,
+            npm_config_registry: ctx.registry_url,
           },
-        }),
-      );
+        });
 
-      // Tarball already exists in test directory
+        const [err, out, exited] = await Promise.all([
+          subprocess.stderr.text(),
+          subprocess.stdout.text(),
+          subprocess.exited,
+        ]);
 
-      const subprocess = spawn({
-        cmd: [bunExe(), "x", "--package=runner-pkg", "runner", "--help"],
-        cwd: x_dir,
-        stdout: "pipe",
-        stdin: "inherit",
-        stderr: "pipe",
-        env: {
-          ...env,
-          npm_config_registry: `http://localhost:${port}/`,
-        },
+        expect(urls.some(url => url.includes("/runner-pkg"))).toBe(true);
       });
-
-      const [err, out, exited] = await Promise.all([
-        subprocess.stderr.text(),
-        subprocess.stdout.text(),
-        subprocess.exited,
-      ]);
-
-      expect(urls.some(url => url.includes("/runner-pkg"))).toBe(true);
     });
 
     it("should fail to run alternate binary without --package flag", async () => {
-      // Attempt to run multi-tool-alt without --package flag
-      // This should fail because bunx would try to install a package named "multi-tool-alt"
-      const subprocess = spawn({
-        cmd: [bunExe(), "x", "multi-tool-alt"],
-        cwd: x_dir,
-        stdout: "pipe",
-        stdin: "inherit",
-        stderr: "pipe",
-        env: {
-          ...env,
-          npm_config_registry: `http://localhost:${port}/`,
-        },
+      await withContext(defaultOpts, async ctx => {
+        // Attempt to run multi-tool-alt without --package flag
+        // This should fail because bunx would try to install a package named "multi-tool-alt"
+        const subprocess = spawn({
+          cmd: [bunExe(), "x", "multi-tool-alt"],
+          cwd: ctx.package_dir,
+          stdout: "pipe",
+          stdin: "inherit",
+          stderr: "pipe",
+          env: {
+            ...env,
+            npm_config_registry: ctx.registry_url,
+          },
+        });
+
+        const [err, _out, exited] = await Promise.all([
+          subprocess.stderr.text(),
+          subprocess.stdout.text(),
+          subprocess.exited,
+        ]);
+
+        // Should fail because there's no package named "multi-tool-alt"
+        expect(err).toContain("error:");
+        expect(exited).not.toBe(0);
       });
-
-      const [err, _out, exited] = await Promise.all([
-        subprocess.stderr.text(),
-        subprocess.stdout.text(),
-        subprocess.exited,
-      ]);
-
-      // Should fail because there's no package named "multi-tool-alt"
-      expect(err).toContain("error:");
-      expect(exited).not.toBe(0);
     });
 
     it("should execute the correct binary when package has multiple binaries", async () => {
-      const urls: string[] = [];
+      await withContext(defaultOpts, async ctx => {
+        const urls: string[] = [];
 
-      // Set up a package with two different binaries
-      setHandler(
-        dummyRegistry(urls, {
-          "1.0.0": {
+        // Set up a package with two different binaries
+        setContextHandler(
+          ctx,
+          dummyRegistryForContext(ctx, urls, {
+            "1.0.0": {
+              bin: {
+                "multi-tool": "bin/multi-tool.js",
+                "multi-tool-alt": "bin/multi-tool-alt.js",
+              },
+              as: "1.0.0",
+            },
+          }),
+        );
+
+        // Create the tarball with both binaries that output different messages
+        // First, let's create the package structure
+        const tempDir = tmpdirSync();
+        const packageDir = join(tempDir, "package");
+
+        await Bun.$`mkdir -p ${packageDir}/bin`;
+
+        await writeFile(
+          join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "multi-tool-pkg",
+            version: "1.0.0",
             bin: {
               "multi-tool": "bin/multi-tool.js",
               "multi-tool-alt": "bin/multi-tool-alt.js",
             },
-            as: "1.0.0",
-          },
-        }),
-      );
+          }),
+        );
 
-      // Create the tarball with both binaries that output different messages
-      // First, let's create the package structure
-      const tempDir = tmpdirSync();
-      const packageDir = join(tempDir, "package");
-
-      await Bun.$`mkdir -p ${packageDir}/bin`;
-
-      await writeFile(
-        join(packageDir, "package.json"),
-        JSON.stringify({
-          name: "multi-tool-pkg",
-          version: "1.0.0",
-          bin: {
-            "multi-tool": "bin/multi-tool.js",
-            "multi-tool-alt": "bin/multi-tool-alt.js",
-          },
-        }),
-      );
-
-      await writeFile(
-        join(packageDir, "bin", "multi-tool.js"),
-        `#!/usr/bin/env node
+        await writeFile(
+          join(packageDir, "bin", "multi-tool.js"),
+          `#!/usr/bin/env node
 console.log("EXECUTED: multi-tool (main binary)");
 `,
-      );
+        );
 
-      await writeFile(
-        join(packageDir, "bin", "multi-tool-alt.js"),
-        `#!/usr/bin/env node
+        await writeFile(
+          join(packageDir, "bin", "multi-tool-alt.js"),
+          `#!/usr/bin/env node
 console.log("EXECUTED: multi-tool-alt (alternate binary)");
 `,
-      );
+        );
 
-      // Make the binaries executable
-      await Bun.$`chmod +x ${packageDir}/bin/multi-tool.js ${packageDir}/bin/multi-tool-alt.js`;
+        // Make the binaries executable
+        await Bun.$`chmod +x ${packageDir}/bin/multi-tool.js ${packageDir}/bin/multi-tool-alt.js`;
 
-      // Create the tarball with package/ prefix
-      await Bun.$`cd ${tempDir} && tar -czf ${join(import.meta.dir, "multi-tool-pkg-1.0.0.tgz")} package`;
+        // Create the tarball with package/ prefix
+        await Bun.$`cd ${tempDir} && tar -czf ${join(import.meta.dir, "multi-tool-pkg-1.0.0.tgz")} package`;
 
-      // Test 1: Without --package, bunx multi-tool-alt should fail or install wrong package
-      // Test 2: With --package, we can run the alternate binary
-      const subprocess = spawn({
-        cmd: [bunExe(), "x", "--package", "multi-tool-pkg", "multi-tool-alt"],
-        cwd: x_dir,
-        stdout: "pipe",
-        stdin: "inherit",
-        stderr: "pipe",
-        env: {
-          ...env,
-          npm_config_registry: `http://localhost:${port}/`,
-        },
+        // Test 1: Without --package, bunx multi-tool-alt should fail or install wrong package
+        // Test 2: With --package, we can run the alternate binary
+        const subprocess = spawn({
+          cmd: [bunExe(), "x", "--package", "multi-tool-pkg", "multi-tool-alt"],
+          cwd: ctx.package_dir,
+          stdout: "pipe",
+          stdin: "inherit",
+          stderr: "pipe",
+          env: {
+            ...env,
+            npm_config_registry: ctx.registry_url,
+          },
+        });
+
+        const [_err, out, exited] = await Promise.all([
+          subprocess.stderr.text(),
+          subprocess.stdout.text(),
+          subprocess.exited,
+        ]);
+
+        // Verify the correct package was requested
+        expect(urls.some(url => url.includes("/multi-tool-pkg"))).toBe(true);
+
+        // Verify the correct binary was executed
+        expect(out).toContain("EXECUTED: multi-tool-alt (alternate binary)");
+        expect(out).not.toContain("EXECUTED: multi-tool (main binary)");
+        expect(exited).toBe(0);
       });
-
-      const [_err, out, exited] = await Promise.all([
-        subprocess.stderr.text(),
-        subprocess.stdout.text(),
-        subprocess.exited,
-      ]);
-
-      // Verify the correct package was requested
-      expect(urls.some(url => url.includes("/multi-tool-pkg"))).toBe(true);
-
-      // Verify the correct binary was executed
-      expect(out).toContain("EXECUTED: multi-tool-alt (alternate binary)");
-      expect(out).not.toContain("EXECUTED: multi-tool (main binary)");
-      expect(exited).toBe(0);
     });
   });
 });

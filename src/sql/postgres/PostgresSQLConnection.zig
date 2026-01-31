@@ -169,11 +169,13 @@ pub fn setOnClose(_: *PostgresSQLConnection, thisValue: jsc.JSValue, globalObjec
 }
 
 pub fn setupTLS(this: *PostgresSQLConnection) void {
-    debug("setupTLS", .{});
+    debug("setupTLS: upgrading socket...", .{});
     const new_socket = this.socket.SocketTCP.socket.connected.upgrade(this.tls_ctx.?, this.tls_config.server_name) orelse {
+        debug("setupTLS: upgrade failed", .{});
         this.fail("Failed to upgrade to TLS", error.TLSUpgradeFailed);
         return;
     };
+    debug("setupTLS: upgrade success", .{});
     this.socket = .{
         .SocketTLS = .{
             .socket = .{
@@ -181,9 +183,8 @@ pub fn setupTLS(this: *PostgresSQLConnection) void {
             },
         },
     };
-
-    this.start();
 }
+
 fn setupMaxLifetimeTimerIfNecessary(this: *PostgresSQLConnection) void {
     if (this.max_lifetime_interval_ms == 0) return;
     if (this.max_lifetime_timer.state == .ACTIVE) return;
@@ -409,6 +410,10 @@ pub fn onOpen(this: *PostgresSQLConnection, socket: uws.AnySocket) void {
     this.poll_ref.ref(this.vm);
     this.updateHasPendingActivity();
 
+    // Protect against re-entrant onData calls during writes in onOpen (Windows/IOCP)
+    this.flags.is_processing_data = true;
+    defer this.flags.is_processing_data = false;
+
     if (this.tls_status == .message_sent or this.tls_status == .pending) {
         this.startTLS(socket);
         return;
@@ -418,7 +423,7 @@ pub fn onOpen(this: *PostgresSQLConnection, socket: uws.AnySocket) void {
 }
 
 pub fn onHandshake(this: *PostgresSQLConnection, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
-    debug("onHandshake: {d} {d}", .{ success, ssl_error.error_no });
+    debug("onHandshake: success={d} error={d} mode={s}", .{ success, ssl_error.error_no, @tagName(this.ssl_mode) });
     const handshake_success = if (success == 1) true else false;
     if (handshake_success) {
         switch (this.ssl_mode) {
@@ -504,9 +509,47 @@ fn drainInternal(this: *PostgresSQLConnection) void {
 }
 
 pub fn onData(this: *PostgresSQLConnection, data: []const u8) void {
+    if (this.flags.is_processing_data) return;
+
     this.ref();
     this.flags.is_processing_data = true;
     const vm = this.vm;
+
+    debug("onData: len={d} tls_status={s}", .{ data.len, @tagName(this.tls_status) });
+    if (data.len > 0) debug("onData: first_byte='{c}' (0x{x})", .{ data[0], data[0] });
+
+    if (this.tls_status == .message_sent) {
+        defer {
+            this.flags.is_processing_data = false;
+            this.deref();
+        }
+
+        if (data.len == 0) return;
+
+        switch (data[0]) {
+            'S' => {
+                debug("onData: Server accepted SSL. Upgrading...", .{});
+                this.tls_status = .none;
+                this.setupTLS();
+                return;
+            },
+            'N' => {
+                debug("onData: Server rejected SSL.", .{});
+                if (this.ssl_mode != .prefer) {
+                    this.fail("The server does not support SSL connections", error.TLSUpgradeFailed);
+                    return;
+                }
+                this.tls_status = .none;
+                this.start();
+                return;
+            },
+            else => {
+                debug("onData: Unexpected response during SSL handshake.", .{});
+                this.fail("Failed to upgrade to SSL", error.TLSUpgradeFailed);
+                return;
+            },
+        }
+    }
 
     this.disableConnectionTimeout();
     defer {

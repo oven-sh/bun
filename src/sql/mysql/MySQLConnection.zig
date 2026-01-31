@@ -232,7 +232,11 @@ pub inline fn isConnected(this: *MySQLConnection) bool {
     return this.status == .connected;
 }
 pub fn doHandshake(this: *MySQLConnection, success: i32, ssl_error: uws.us_bun_verify_error_t) !bool {
-    debug("onHandshake: {d} {d} {s}", .{ success, ssl_error.error_no, @tagName(this.#ssl_mode) });
+    // Protect against re-entrant onData calls during handshake writes
+    this.#flags.is_processing_data = true;
+    defer this.#flags.is_processing_data = false;
+
+    debug("onHandshake: success={d} error={d} mode={s}", .{ success, ssl_error.error_no, @tagName(this.#ssl_mode) });
     const handshake_success = if (success == 1) true else false;
     this.#sequence_id = this.#sequence_id +% 1;
     if (handshake_success) {

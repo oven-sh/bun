@@ -292,6 +292,8 @@ fn SocketHandler(comptime ssl: bool) type {
         }
 
         pub fn onData(this: *JSMySQLConnection, _: SocketType, data: []const u8) void {
+            if (this.#connection.isProcessingData()) return;
+
             this.ref();
             defer this.deref();
             const vm = this.#vm;

@@ -638,7 +638,7 @@ function parseOptions(
   }
 
   // Handle explicit options.ssl overrides
-  if (options.ssl) {
+  if (options.ssl !== undefined) {
     if (typeof options.ssl === "string") {
       sslMode = normalizeSSLMode(options.ssl);
     } else if (typeof options.ssl === "boolean") {

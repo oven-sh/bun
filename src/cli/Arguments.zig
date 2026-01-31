@@ -1339,10 +1339,18 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             }
 
             ctx.bundler_options.output_format = format;
-            // ESM bytecode is supported for --compile builds (module_info is embedded in binary)
-            if (format != .cjs and format != .esm and ctx.bundler_options.bytecode) {
-                Output.errGeneric("format must be 'cjs' or 'esm' when bytecode is true.", .{});
-                Global.exit(1);
+            if (ctx.bundler_options.bytecode) {
+                if (format != .cjs and format != .esm) {
+                    Output.errGeneric("format must be 'cjs' or 'esm' when bytecode is true.", .{});
+                    Global.exit(1);
+                }
+                // ESM bytecode requires --compile because module_info (import/export metadata)
+                // is only available in compiled binaries. Without it, JSC must parse the file
+                // twice (once for module analysis, once for bytecode), which is a deopt.
+                if (format == .esm and !ctx.bundler_options.compile) {
+                    Output.errGeneric("ESM bytecode requires --compile. Use --format=cjs for bytecode without --compile.", .{});
+                    Global.exit(1);
+                }
             }
         }
 

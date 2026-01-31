@@ -1508,21 +1508,40 @@ BuildArtifact (entry-point) {
 
 ## Bytecode
 
-The `bytecode: boolean` option can be used to generate bytecode for any JavaScript/TypeScript entrypoints. This can greatly improve startup times for large applications. Supported for `"cjs"` and `"esm"` formats (ESM bytecode requires `compile: true`), only supports `"target": "bun"` and is dependent on a matching version of Bun. This adds a corresponding `.jsc` file for each entrypoint.
+The `bytecode: boolean` option can be used to generate bytecode for any JavaScript/TypeScript entrypoints. This can greatly improve startup times for large applications. Requires `"target": "bun"` and is dependent on a matching version of Bun.
+
+- **CommonJS**: Works with or without `compile: true`. Generates a `.jsc` file alongside each entrypoint.
+- **ESM**: Requires `compile: true`. Bytecode and module metadata are embedded in the standalone executable.
+
+Without an explicit `format`, bytecode defaults to CommonJS.
 
 <Tabs>
   <Tab title="JavaScript">
     ```ts title="build.ts" icon="/icons/typescript.svg"
+    // CommonJS bytecode (generates .jsc files)
     await Bun.build({
       entrypoints: ["./index.tsx"],
       outdir: "./out",
       bytecode: true,
     })
+
+    // ESM bytecode (requires compile)
+    await Bun.build({
+      entrypoints: ["./index.tsx"],
+      outfile: "./mycli",
+      bytecode: true,
+      format: "esm",
+      compile: true,
+    })
     ```
   </Tab>
   <Tab title="CLI">
     ```bash terminal icon="terminal"
+    # CommonJS bytecode
     bun build ./index.tsx --outdir ./out --bytecode
+
+    # ESM bytecode (requires --compile)
+    bun build ./index.tsx --outfile ./mycli --bytecode --format=esm --compile
     ```
   </Tab>
 </Tabs>
@@ -1690,8 +1709,10 @@ interface BuildConfig {
    * start times, but will make the final output larger and slightly increase
    * memory usage.
    *
-   * Supported for CommonJS (`format: "cjs"`) and ESM (`format: "esm"`).
-   * ESM bytecode requires `compile: true`.
+   * - CommonJS: works with or without `compile: true`
+   * - ESM: requires `compile: true`
+   *
+   * Without an explicit `format`, defaults to CommonJS.
    *
    * Must be `target: "bun"`
    * @default false

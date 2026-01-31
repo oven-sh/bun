@@ -7,9 +7,9 @@ Bytecode caching is a build-time optimization that dramatically improves applica
 
 ## Usage
 
-### Basic usage
+### Basic usage (CommonJS)
 
-Enable bytecode caching with the `--bytecode` flag:
+Enable bytecode caching with the `--bytecode` flag. Without `--format`, this defaults to CommonJS:
 
 ```bash terminal icon="terminal"
 bun build ./index.ts --target=bun --bytecode --outdir=./dist
@@ -17,7 +17,7 @@ bun build ./index.ts --target=bun --bytecode --outdir=./dist
 
 This generates two files:
 
-- `dist/index.js` - Your bundled JavaScript
+- `dist/index.js` - Your bundled JavaScript (CommonJS)
 - `dist/index.jsc` - The bytecode cache file
 
 At runtime, Bun automatically detects and uses the `.jsc` file:
@@ -28,13 +28,23 @@ bun ./dist/index.js  # Automatically uses index.jsc
 
 ### With standalone executables
 
-When creating executables with `--compile`, bytecode is embedded into the binary:
+When creating executables with `--compile`, bytecode is embedded into the binary. Both ESM and CommonJS formats are supported:
 
 ```bash terminal icon="terminal"
+# ESM (requires --compile)
+bun build ./cli.ts --compile --bytecode --format=esm --outfile=mycli
+
+# CommonJS (works with or without --compile)
 bun build ./cli.ts --compile --bytecode --outfile=mycli
 ```
 
 The resulting executable contains both the code and bytecode, giving you maximum performance in a single file.
+
+### ESM bytecode
+
+ESM bytecode requires `--compile` because Bun embeds module metadata (import/export information) in the compiled binary. This metadata allows the JavaScript engine to skip parsing entirely at runtime.
+
+Without `--compile`, ESM bytecode would still require parsing the source to analyze module dependencies—defeating the purpose of bytecode caching.
 
 ### Combining with other optimizations
 
@@ -92,20 +102,6 @@ Larger applications benefit more because they have more code to parse.
 - ❌ **Size-constrained environments**
 
 ## Limitations
-
-### Supported formats
-
-When using `--compile` to create standalone executables, bytecode supports both CommonJS and ESM output formats:
-
-```bash terminal icon="terminal"
-# ESM bytecode
-bun build --compile --bytecode --format=esm ./cli.ts --outfile=mycli
-
-# CJS bytecode
-bun build --compile --bytecode --format=cjs ./cli.ts --outfile=mycli
-```
-
-When `--format` is not specified, bytecode defaults to CommonJS for backwards compatibility.
 
 ### Version compatibility
 

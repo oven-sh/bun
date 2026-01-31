@@ -624,7 +624,7 @@ const sql = new SQL({
   // SSL/TLS options
   ssl: "prefer", // Default. | "disable" | "require" | "verify-ca" | "verify-full"
   // tls: { // Setting tls: false disables SSL
-  //   rejectUnauthorized: true, // Required for verify-ca and verify-full
+  //   rejectUnauthorized: true, // Default for verify-ca and verify-full
   //   ca: "path/to/ca.pem",
   //   key: "path/to/key.pem",
   //   cert: "path/to/cert.pem",
@@ -669,7 +669,7 @@ const sql = new SQL({
   // SSL/TLS options
   ssl: "prefer", // Default. | "disable" | "require" | "verify-ca" | "verify-full"
   // tls: { // Setting tls: false disables SSL
-  //   rejectUnauthorized: true, // Required for verify-ca and verify-full
+  //   rejectUnauthorized: true, // Default for verify-ca and verify-full
   //   requestCert: true,
   //   ca: "path/to/ca.pem",
   //   key: "path/to/key.pem",
@@ -888,7 +888,7 @@ Bun supports SCRAM-SHA-256 (SASL), MD5, and Clear Text authentication. SASL is r
 
 PostgreSQL supports different SSL/TLS modes to control how secure connections are established. The default mode is `prefer`.
 
-You can disable SSL by setting `ssl: "disable"` or `tls: false`. Note that `tls: false` takes precedence over connection strings, but will throw an error if a conflicting `ssl` option is explicitly set in the options object.
+You can disable SSL by setting `ssl: "disable"` or `tls: false`. Note that `tls: false` overrides the default `prefer` mode. However, to prevent accidental security downgrades, `Bun.SQL` will throw an error if you set `tls: false` while explicitly setting a secure `ssl` mode (like `"require"` or `"verify-full"`).
 
 ```ts
 const sql = new SQL({

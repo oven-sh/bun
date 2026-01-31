@@ -642,7 +642,7 @@ function parseOptions(
     if (typeof options.ssl === "string") {
       sslMode = normalizeSSLMode(options.ssl);
     } else if (typeof options.ssl === "boolean") {
-      sslMode = options.ssl ? SSLMode.prefer : SSLMode.disable;
+      sslMode = options.ssl ? SSLMode.require : SSLMode.disable;
     }
   }
 
@@ -657,12 +657,18 @@ function parseOptions(
     }
   }
 
-  // If user explicitly set tls: false, and didn't set a specific SSL mode (it remains prefer),
-  // fallback to disable.
+  // Handle tls: false interactions
+  // 1. If the user explicitly sets tls: false, we want to disable SSL.
+  // 2. However, if they ALSO explicitly set an ssl mode (like 'require'), we should not silently downgrade security.
+  // 3. If no ssl mode was set, it defaults to 'prefer', which we can safely downgrade to 'disable'.
   if (options.tls === false) {
-    // Either honor explicit tls:false or surface the conflict with ssl/sslmode.
+    // Avoid silently downgrading an explicit sslmode.
+    if (sslMode !== SSLMode.prefer && sslMode !== SSLMode.disable) {
+      throw $ERR_INVALID_ARG_VALUE("tls", false, "conflicts with currently set ssl mode");
+    }
+    // Check if ssl option was explicitly passed as something other than disable
     if (options.ssl && (options.ssl as any) !== "disable") {
-      throw $ERR_INVALID_ARG_VALUE("tls", false, "conflicts with ssl mode");
+      throw $ERR_INVALID_ARG_VALUE("tls", false, "conflicts with currently set ssl mode");
     }
     sslMode = SSLMode.disable;
     tls = false;

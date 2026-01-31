@@ -242,7 +242,7 @@ fn SocketHandler(comptime ssl: bool) type {
             // Handshake verification logic is handled inside this.#connection.doHandshake
             // We just need to handle the result and report specific errors if it fails.
             const handshakeWasSuccessful = this.#connection.doHandshake(success, ssl_error) catch |err| return this.failFmt(err, "Failed to send handshake response", .{});
-            
+
             if (!handshakeWasSuccessful) {
                 // If the socket handshake succeeded (error_no == 0) but doHandshake returned false,
                 // it implies a logic validation failure (like hostname mismatch in verify-full).

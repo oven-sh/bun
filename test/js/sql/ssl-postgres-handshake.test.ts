@@ -3,7 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:tes
 
 // Postgres Wire Protocol Constants
 const SSL_REQUEST_CODE = 80877103; // 0x04D2162F
-const PROTOCOL_V3_CODE = 196608;   // 0x00030000
+const PROTOCOL_V3_CODE = 196608; // 0x00030000
 
 describe("PostgreSQL SSL Handshake (Mock Server)", () => {
   const HOST = "127.0.0.1";
@@ -183,21 +183,22 @@ describe("PostgreSQL SSL Handshake (Mock Server)", () => {
 
   // Helper to instantiate SQL and run one query
   async function connect(config: any) {
-    const sql = new SQL({
-      ...config,
-      url: `postgres://postgres:postgres@${HOST}:${PORT}/postgres`,
-      max: 1,
-      idleTimeout: 1,
-      connectionTimeout: 1000,
-    });
-
+    let sql: SQL | undefined;
     try {
+      sql = new SQL({
+        ...config,
+        url: `postgres://postgres:postgres@${HOST}:${PORT}/postgres`,
+        max: 1,
+        idleTimeout: 1,
+        connectionTimeout: 1000,
+      });
+
       await sql`SELECT 1`;
       return { success: true, error: null };
     } catch (e: any) {
       return { success: false, error: e };
     } finally {
-      await sql.close();
+      if (sql) await sql.close();
     }
   }
 
@@ -211,7 +212,7 @@ describe("PostgreSQL SSL Handshake (Mock Server)", () => {
   });
 
   test("SSL: disable -> Only StartupMessage", async () => {
-    const { success } = await connect({ ssl: 'disable' });
+    const { success } = await connect({ ssl: "disable" });
     expect(success).toBe(true);
     expect(events).toEqual(["StartupMessage", "Query"]);
   });
@@ -223,19 +224,19 @@ describe("PostgreSQL SSL Handshake (Mock Server)", () => {
   });
 
   test("SSL: disable, TLS: true -> Only StartupMessage (SSL takes precedence)", async () => {
-    const { success } = await connect({ ssl: 'disable', tls: true });
+    const { success } = await connect({ ssl: "disable", tls: true });
     expect(success).toBe(true);
     expect(events).toEqual(["StartupMessage", "Query"]);
   });
 
   test("SSL: prefer -> SSLRequest -> StartupMessage", async () => {
-    const { success } = await connect({ ssl: 'prefer' });
+    const { success } = await connect({ ssl: "prefer" });
     expect(success).toBe(true);
     expect(events).toEqual(["SSLRequest", "StartupMessage", "Query"]);
   });
 
   test("SSL: require -> Fails on 'N' response", async () => {
-    const { success, error } = await connect({ ssl: 'require' });
+    const { success, error } = await connect({ ssl: "require" });
     expect(success).toBe(false);
     expect(events).toEqual(["SSLRequest"]);
     expect(error.message).toContain("The server does not support SSL connections");
@@ -247,15 +248,15 @@ describe("PostgreSQL SSL Handshake (Mock Server)", () => {
     expect(events).toEqual(["SSLRequest", "StartupMessage", "Query"]);
   });
 
-  test("SSL: require, TLS: false -> Fails config validation or handshake", async () => {
-    const { success, error } = await connect({ ssl: 'require', tls: false });
+  test("SSL: require, TLS: false -> Fails config validation", async () => {
+    const { success, error } = await connect({ ssl: "require", tls: false });
     expect(success).toBe(false);
-    expect(events).toEqual(["SSLRequest"]);
-    expect(error.message).toContain("The server does not support SSL connections");
+    expect(events).toEqual([]);
+    expect(error.message).toContain("conflicts with currently set ssl mode");
   });
 
   test("SSL: verify-ca (No CA) -> Fails before handshake", async () => {
-    const { success } = await connect({ ssl: 'verify-ca' });
+    const { success } = await connect({ ssl: "verify-ca" });
     expect(success).toBe(false);
     expect(events).not.toContain("StartupMessage");
   });

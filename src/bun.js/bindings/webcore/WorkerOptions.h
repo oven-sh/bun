@@ -34,6 +34,10 @@ struct WorkerOptions {
     Vector<String> argv;
     // If nullopt, inherit execArgv from the parent thread
     std::optional<Vector<String>> execArgv;
+    // stdout/stderr/stdin options for node:worker_threads
+    bool captureStdout { false };
+    bool captureStderr { false };
+    // resourceLimits would go here, but may not be applicable to JSC
 };
 
 } // namespace WebCore

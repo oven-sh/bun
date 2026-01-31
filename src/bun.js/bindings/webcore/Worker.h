@@ -93,6 +93,9 @@ public:
     ScriptExecutionContextIdentifier clientIdentifier() const { return m_clientIdentifier; }
     WorkerOptions& options() { return m_options; }
 
+    // Get the Zig WebWorker implementation pointer (for stdout/stderr stream creation)
+    void* impl() const { return impl_; }
+
 private:
     Worker(ScriptExecutionContext&, WorkerOptions&&);
 

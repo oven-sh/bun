@@ -32,6 +32,34 @@ test("support eval in worker", async () => {
   await worker.terminate();
 });
 
+// In Node.js worker_threads, messages go to parentPort only, not self.onmessage.
+// Libraries like fflate set both handlers, expecting only parentPort to fire.
+test("worker_threads messages should not trigger self.onmessage", async () => {
+  const workerCode = `
+const { parentPort } = require('worker_threads');
+let selfOnMessageCount = 0;
+let parentPortOnMessageCount = 0;
+
+self.onmessage = () => { selfOnMessageCount++; };
+parentPort.on('message', () => {
+  parentPortOnMessageCount++;
+  parentPort.postMessage({ selfOnMessageCount, parentPortOnMessageCount });
+});
+`;
+  const worker = new Worker(workerCode, { eval: true });
+  const result = await new Promise<{ selfOnMessageCount: number; parentPortOnMessageCount: number }>(
+    (resolve, reject) => {
+      worker.on("message", resolve);
+      worker.on("error", reject);
+      worker.postMessage({ test: 1 });
+    },
+  );
+  await worker.terminate();
+
+  expect(result.parentPortOnMessageCount).toBe(1);
+  expect(result.selfOnMessageCount).toBe(0);
+});
+
 test("all worker_threads module properties are present", () => {
   expect(wt).toHaveProperty("getEnvironmentData");
   expect(wt).toHaveProperty("isMainThread");

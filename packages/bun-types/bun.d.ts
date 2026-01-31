@@ -2593,7 +2593,8 @@ declare module "bun" {
      * start times, but will make the final output larger and slightly increase
      * memory usage.
      *
-     * Bytecode is currently only supported for CommonJS (`format: "cjs"`).
+     * Supported for CommonJS (`format: "cjs"`) and ESM (`format: "esm"`).
+     * ESM bytecode requires `compile: true`.
      *
      * Must be `target: "bun"`
      * @default false

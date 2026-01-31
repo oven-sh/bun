@@ -1508,7 +1508,7 @@ BuildArtifact (entry-point) {
 
 ## Bytecode
 
-The `bytecode: boolean` option can be used to generate bytecode for any JavaScript/TypeScript entrypoints. This can greatly improve startup times for large applications. Only supported for `"cjs"` format, only supports `"target": "bun"` and dependent on a matching version of Bun. This adds a corresponding `.jsc` file for each entrypoint.
+The `bytecode: boolean` option can be used to generate bytecode for any JavaScript/TypeScript entrypoints. This can greatly improve startup times for large applications. Supported for `"cjs"` and `"esm"` formats (ESM bytecode requires `compile: true`), only supports `"target": "bun"` and is dependent on a matching version of Bun. This adds a corresponding `.jsc` file for each entrypoint.
 
 <Tabs>
   <Tab title="JavaScript">
@@ -1690,7 +1690,8 @@ interface BuildConfig {
    * start times, but will make the final output larger and slightly increase
    * memory usage.
    *
-   * Bytecode is currently only supported for CommonJS (`format: "cjs"`).
+   * Supported for CommonJS (`format: "cjs"`) and ESM (`format: "esm"`).
+   * ESM bytecode requires `compile: true`.
    *
    * Must be `target: "bun"`
    * @default false

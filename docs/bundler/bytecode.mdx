@@ -90,34 +90,22 @@ Larger applications benefit more because they have more code to parse.
 - ❌ **Code that runs once**
 - ❌ **Development builds**
 - ❌ **Size-constrained environments**
-- ❌ **Code with top-level await** (not supported)
 
 ## Limitations
 
-### CommonJS only
+### Supported formats
 
-Bytecode caching currently works with CommonJS output format. Bun's bundler automatically converts most ESM code to CommonJS, but **top-level await** is the exception:
+When using `--compile` to create standalone executables, bytecode supports both CommonJS and ESM output formats:
 
-```js
-// This prevents bytecode caching
-const data = await fetch("https://api.example.com");
-export default data;
+```bash terminal icon="terminal"
+# ESM bytecode
+bun build --compile --bytecode --format=esm ./cli.ts --outfile=mycli
+
+# CJS bytecode
+bun build --compile --bytecode --format=cjs ./cli.ts --outfile=mycli
 ```
 
-**Why**: Top-level await requires async module evaluation, which can't be represented in CommonJS. The module graph becomes asynchronous, and the CommonJS wrapper function model breaks down.
-
-**Workaround**: Move async initialization into a function:
-
-```js
-async function init() {
-  const data = await fetch("https://api.example.com");
-  return data;
-}
-
-export default init;
-```
-
-Now the module exports a function that the consumer can await when needed.
+When `--format` is not specified, bytecode defaults to CommonJS for backwards compatibility.
 
 ### Version compatibility
 
@@ -235,8 +223,6 @@ It's normal for it it to log a cache miss multiple times since Bun doesn't curre
 - Using `--minify` to reduce code size before bytecode generation
 - Compressing `.jsc` files for network transfer (gzip/brotli)
 - Evaluating if the startup performance gain is worth the size increase
-
-**Top-level await**: Not supported. Refactor to use async initialization functions.
 
 ## What is bytecode?
 

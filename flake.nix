@@ -67,6 +67,10 @@
 
           # Libraries
           pkgs.openssl
+          pkgs.libmd
+          pkgs.acl
+          pkgs.attr
+          pkgs.gcc.cc.lib
           pkgs.zlib
           pkgs.libxml2
           pkgs.libiconv
@@ -132,6 +136,9 @@
         }) {
           inherit packages;
           hardeningDisable = [ "fortify" ];
+
+          # This disables _FORTIFY_SOURCE so debug builds (-O0) can compile
+          hardeningDisable = [ "fortify" ]; 
 
           shellHook = ''
             # Set up build environment

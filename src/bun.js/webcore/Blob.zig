@@ -3134,7 +3134,7 @@ pub fn getStat(this: *Blob, globalThis: *jsc.JSGlobalObject, callback: *jsc.Call
                             .encoded_slice = switch (path_like) {
                                 // it's already converted to utf8
                                 .encoded_slice => |slice| try slice.toOwned(bun.default_allocator),
-                                else => try ZigString.init(path_like.slice()).toSliceClone(bun.default_allocator),
+                                else => try ZigString.fromUTF8(path_like.slice()).toSliceClone(bun.default_allocator),
                             },
                         },
                     }, globalThis.bunVM());

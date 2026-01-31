@@ -1456,8 +1456,6 @@ fn @"handle _auth"(
     return;
 }
 
-const registry_utils = @import("./install/registry_utils.zig");
-
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
@@ -1472,3 +1470,5 @@ const js_ast = bun.ast;
 const E = bun.ast.E;
 const Expr = bun.ast.Expr;
 const Rope = js_ast.E.Object.Rope;
+
+const registry_utils = @import("./install/registry_utils.zig");

@@ -157,6 +157,7 @@ pub fn spawnMaybeSync(
     var terminal_info: ?Terminal.CreateResult = null;
     var existing_terminal: ?*Terminal = null; // Existing terminal passed by user
     var terminal_js_value: jsc.JSValue = .zero;
+    var sandbox: bun.spawn.SpawnOptions.Sandbox = .{};
     defer {
         if (abort_signal) |signal| {
             signal.unref();
@@ -420,6 +421,166 @@ pub fn spawnMaybeSync(
                     stdio[2] = .{ .fd = slave_fd };
                 }
             }
+
+            // Parse sandbox option
+            if (try args.getTruthy(globalThis, "sandbox")) |sandbox_val| {
+                // Parse sandbox.seccomp (seccomp BPF filter) - only on Linux, ignored on other platforms
+                if (comptime Environment.isLinux) {
+                    if (try sandbox_val.getTruthy(globalThis, "seccomp")) |seccomp_val| {
+                        // Check if it's an ArrayBuffer/TypedArray (simple format) or object (extended format)
+                        if (seccomp_val.asArrayBuffer(globalThis)) |array_buffer| {
+                            // Simple format: just the filter bytes
+                            const slice = array_buffer.slice();
+                            if (slice.len > 0) {
+                                if (slice.len % 8 != 0) {
+                                    return globalThis.throwInvalidArguments(
+                                        "sandbox.seccomp filter must be a multiple of 8 bytes (each BPF instruction is 8 bytes)",
+                                        .{},
+                                    );
+                                }
+                                sandbox.linux.seccomp_filter = try allocator.dupe(u8, slice);
+                            }
+                        } else if (seccomp_val.isObject()) {
+                            // Extended format: { filter: ArrayBuffer, flags?: string | string[] }
+                            if (try seccomp_val.getTruthy(globalThis, "filter")) |filter_val| {
+                                if (filter_val.asArrayBuffer(globalThis)) |array_buffer| {
+                                    const slice = array_buffer.slice();
+                                    if (slice.len > 0) {
+                                        if (slice.len % 8 != 0) {
+                                            return globalThis.throwInvalidArguments(
+                                                "sandbox.seccomp.filter must be a multiple of 8 bytes (each BPF instruction is 8 bytes)",
+                                                .{},
+                                            );
+                                        }
+                                        sandbox.linux.seccomp_filter = try allocator.dupe(u8, slice);
+                                    }
+                                } else {
+                                    return globalThis.throwInvalidArgumentType(
+                                        "spawn",
+                                        "sandbox.seccomp.filter",
+                                        "ArrayBuffer or TypedArray",
+                                    );
+                                }
+                            } else {
+                                return globalThis.throwInvalidArguments(
+                                    "sandbox.seccomp object must have 'filter' property",
+                                    .{},
+                                );
+                            }
+
+                            // Parse optional flags (string or array of strings)
+                            if (try seccomp_val.get(globalThis, "flags")) |flags_val| {
+                                if (!flags_val.isUndefinedOrNull()) {
+                                    var flags: u32 = 0;
+                                    if (flags_val.isString()) {
+                                        // Single flag: "LOG"
+                                        const flag = try SeccompFlag.fromJS(globalThis, flags_val) orelse {
+                                            return globalThis.throwInvalidArguments(
+                                                "Unknown seccomp flag. Expected: LOG or SPEC_ALLOW",
+                                                .{},
+                                            );
+                                        };
+                                        flags = @intFromEnum(flag);
+                                    } else if (flags_val.jsType().isArray()) {
+                                        // Array of flags: ["LOG", "SPEC_ALLOW"]
+                                        var iter = try flags_val.arrayIterator(globalThis);
+                                        while (try iter.next()) |item| {
+                                            const flag = try SeccompFlag.fromJS(globalThis, item) orelse {
+                                                return globalThis.throwInvalidArguments(
+                                                    "Unknown seccomp flag. Expected: LOG or SPEC_ALLOW",
+                                                    .{},
+                                                );
+                                            };
+                                            flags |= @intFromEnum(flag);
+                                        }
+                                    } else {
+                                        return globalThis.throwInvalidArgumentType(
+                                            "spawn",
+                                            "sandbox.seccomp.flags",
+                                            "string or array of strings",
+                                        );
+                                    }
+                                    sandbox.linux.seccomp_flags = flags;
+                                }
+                            }
+                        } else {
+                            return globalThis.throwInvalidArgumentType(
+                                "spawn",
+                                "sandbox.seccomp",
+                                "ArrayBuffer, TypedArray, or object",
+                            );
+                        }
+                    }
+                }
+
+                // Parse sandbox.seatbelt (macOS SBPL profile) - only on macOS, ignored on other platforms
+                if (comptime Environment.isMac) {
+                    if (try sandbox_val.getTruthy(globalThis, "seatbelt")) |seatbelt_val| {
+                        if (seatbelt_val.isString()) {
+                            const slice = seatbelt_val.toSlice(globalThis, allocator) catch {
+                                return globalThis.throwInvalidArgumentType("spawn", "sandbox.seatbelt", "string");
+                            };
+                            if (slice.len > 0) {
+                                sandbox.darwin.profile = try allocator.dupeZ(u8, slice.slice());
+                            }
+                        } else if (seatbelt_val.isObject()) {
+                            // Object format: { profile: "...", parameters?: {...} } or { namedProfile: "..." }
+                            if (try seatbelt_val.get(globalThis, "namedProfile")) |named_val| {
+                                if ((try seatbelt_val.get(globalThis, "profile")) != null) {
+                                    return globalThis.throwInvalidArguments("sandbox.seatbelt cannot have both 'profile' and 'namedProfile'", .{});
+                                }
+                                const slice = named_val.toSlice(globalThis, allocator) catch {
+                                    return globalThis.throwInvalidArgumentType("spawn", "sandbox.seatbelt.namedProfile", "string");
+                                };
+                                if (slice.len > 0) {
+                                    sandbox.darwin.profile = try allocator.dupeZ(u8, slice.slice());
+                                    sandbox.darwin.flags = 1; // SANDBOX_NAMED
+                                }
+                            } else if (try seatbelt_val.get(globalThis, "profile")) |profile_val| {
+                                const slice = profile_val.toSlice(globalThis, allocator) catch {
+                                    return globalThis.throwInvalidArgumentType("spawn", "sandbox.seatbelt.profile", "string");
+                                };
+                                if (slice.len > 0) {
+                                    sandbox.darwin.profile = try allocator.dupeZ(u8, slice.slice());
+                                }
+
+                                // Parse optional parameters
+                                if (try seatbelt_val.getTruthy(globalThis, "parameters")) |params_val| {
+                                    const params_obj = params_val.getObject() orelse {
+                                        return globalThis.throwInvalidArgumentType("spawn", "sandbox.seatbelt.parameters", "object");
+                                    };
+
+                                    var params_iter = try jsc.JSPropertyIterator(.{ .skip_empty_name = false, .include_value = true }).init(globalThis, params_obj);
+                                    defer params_iter.deinit();
+
+                                    // Format: ["KEY1", "VALUE1", "KEY2", "VALUE2", ..., null]
+                                    var params_list = try std.ArrayList(?[*:0]const u8).initCapacity(allocator, params_iter.len * 2 + 1);
+
+                                    while (try params_iter.next()) |key| {
+                                        const value = params_iter.value;
+                                        if (value.isUndefined()) continue;
+
+                                        const value_str = try value.toBunString(globalThis);
+                                        defer value_str.deref();
+
+                                        params_list.appendAssumeCapacity((try key.toOwnedSliceZ(allocator)).ptr);
+                                        params_list.appendAssumeCapacity((try value_str.toOwnedSliceZ(allocator)).ptr);
+                                    }
+
+                                    params_list.appendAssumeCapacity(null);
+                                    sandbox.darwin.parameters = @ptrCast(params_list.items.ptr);
+                                }
+                            } else {
+                                // Object doesn't have either 'profile' or 'namedProfile'
+                                return globalThis.throwInvalidArgumentType("spawn", "sandbox.seatbelt", "object with 'profile' or 'namedProfile'");
+                            }
+                        } else {
+                            return globalThis.throwInvalidArgumentType("spawn", "sandbox.seatbelt", "string or object");
+                        }
+                    }
+                }
+                // TODO: Parse sandbox.appContainer (Windows sandbox options)
+            }
         } else {
             try getArgv(globalThis, cmd_value, PATH, cwd, &argv0, allocator, &argv);
         }
@@ -577,6 +738,9 @@ pub fn spawnMaybeSync(
             if (terminal_info) |ti| break :blk ti.terminal.getSlaveFd().native();
             break :blk -1;
         } else {},
+
+        // Platform-specific sandbox configuration
+        .sandbox = sandbox,
 
         .windows = if (Environment.isWindows) .{
             .hide_window = windows_hide,
@@ -1098,6 +1262,22 @@ pub fn appendEnvpFromJS(globalThis: *jsc.JSGlobalObject, object: *jsc.JSObject, 
 
 const log = Output.scoped(.Subprocess, .hidden);
 extern "C" const BUN_DEFAULT_PATH_FOR_SPAWN: [*:0]const u8;
+
+/// Seccomp filter flags for Linux sandboxing.
+/// These correspond to SECCOMP_FILTER_FLAG_* constants.
+pub const SeccompFlag = enum(u32) {
+    LOG = 0x2, // SECCOMP_FILTER_FLAG_LOG
+    SPEC_ALLOW = 0x4, // SECCOMP_FILTER_FLAG_SPEC_ALLOW
+    // NEW_LISTENER = 0x8, // SECCOMP_FILTER_FLAG_NEW_LISTENER
+
+    const Map = bun.ComptimeStringMap(SeccompFlag, .{
+        .{ "LOG", .LOG },
+        .{ "SPEC_ALLOW", .SPEC_ALLOW },
+        // .{ "NEW_LISTENER", .NEW_LISTENER },
+    });
+
+    pub const fromJS = Map.fromJS;
+};
 
 const IPC = @import("../../ipc.zig");
 const Terminal = @import("./Terminal.zig");

@@ -25,6 +25,10 @@ export default [
         getter: "getContentType",
         cache: true,
       },
+      metadata: {
+        getter: "getMetadata",
+        cache: true,
+      },
     },
   }),
 ];

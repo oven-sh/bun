@@ -346,6 +346,32 @@ declare module "bun" {
     requestPayer?: boolean;
 
     /**
+     * User-defined metadata to store with the S3 object as `x-amz-meta-*` headers.
+     * Keys are automatically lowercased per AWS requirements.
+     * Maximum total metadata size is ~2KB.
+     *
+     * @see https://docs.aws.amazon.com/AmazonS3/latest/userguide/UsingMetadata.html#UserMetadata
+     *
+     * @example
+     *    // Setting custom metadata on upload
+     *     await s3.write("document.pdf", data, {
+     *       metadata: {
+     *         sku: "12345",
+     *         category: "reports"
+     *       }
+     *     });
+     *
+     * @example
+     *    // Metadata with presigned PUT URL
+     *     const url = file.presign({
+     *       method: "PUT",
+     *       metadata: { "custom-key": "value" }
+     *     });
+     *     // Client must include matching header: x-amz-meta-custom-key: value
+     */
+    metadata?: Record<string, string>;
+
+    /**
      * @deprecated The size of the internal buffer in bytes. Defaults to 5 MiB. use `partSize` and `queueSize` instead.
      */
     highWaterMark?: number;
@@ -400,6 +426,16 @@ declare module "bun" {
     lastModified: Date;
     etag: string;
     type: string;
+    /**
+     * User-defined metadata retrieved from `x-amz-meta-*` headers.
+     * Keys have the `x-amz-meta-` prefix stripped and are lowercased.
+     *
+     * @example
+     *    // Retrieving metadata
+     *     const stat = await file.stat();
+     *     console.log(stat.metadata); // { sku: "12345", category: "reports" }
+     */
+    metadata: Record<string, string>;
   }
 
   /**

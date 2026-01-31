@@ -270,6 +270,11 @@ const req = https.request('https://localhost:${server.port}/', {
   });
 });
 
+req.on('error', (e) => {
+  console.error('Request error:', e.message);
+  process.exit(1);
+});
+
 // Write many chunks as fast as possible
 const chunk = '${chunkContent}';
 for (let i = 0; i < numChunks; i++) {

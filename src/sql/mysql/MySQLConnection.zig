@@ -328,6 +328,7 @@ pub fn readAndProcessData(this: *MySQLConnection, data: []const u8) !void {
                     this.#read_buffer.byte_list.len = 0;
                     this.#read_buffer.write(bun.default_allocator, data[offset..]) catch @panic("failed to write to read buffer");
                 }
+                return;
             } else {
                 if (comptime bun.Environment.allow_assert) {
                     bun.handleErrorReturnTrace(err, @errorReturnTrace());

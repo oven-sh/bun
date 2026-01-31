@@ -582,10 +582,7 @@ pub fn doFlush(this: *@This(), _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JS
 
 pub fn doClose(this: *@This(), globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
     _ = globalObject;
-    this.stopTimers();
-
-    defer this.updateReferenceType();
-    this.#connection.cleanQueueAndClose(null, this.getQueriesArray());
+    this.close();
     return .js_undefined;
 }
 

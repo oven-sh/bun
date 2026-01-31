@@ -421,18 +421,10 @@ pub fn onOpen(this: *PostgresSQLConnection, socket: uws.AnySocket) void {
 
     if (this.tls_status == .message_sent or this.tls_status == .pending) {
         this.startTLS(socket);
-        this.flags.is_processing_data = false;
-        if (this.read_buffer.remaining().len > 0) {
-            this.onData("");
-        }
         return;
     }
 
     this.start();
-    this.flags.is_processing_data = false;
-    if (this.read_buffer.remaining().len > 0) {
-        this.onData("");
-    }
 }
 
 pub fn onHandshake(this: *PostgresSQLConnection, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
@@ -620,11 +612,11 @@ pub fn onData(this: *PostgresSQLConnection, data: []const u8) void {
                 this.last_message_start = 0;
                 this.read_buffer.byte_list.len = 0;
                 this.read_buffer.write(bun.default_allocator, data[offset..]) catch @panic("failed to write to read buffer");
-            } else {
-                bun.handleErrorReturnTrace(err, @errorReturnTrace());
-
-                this.fail("Failed to read data", err);
+                return;
             }
+
+            bun.handleErrorReturnTrace(err, @errorReturnTrace());
+            this.fail("Failed to read data", err);
         };
         processed_via_stack = true;
     }

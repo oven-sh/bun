@@ -10,7 +10,6 @@ declare global {
 type ArrayType =
   | "BOOLEAN"
   | "BYTEA"
-  | "CHAR"
   | "NAME"
   | "TEXT"
   | "CHAR"

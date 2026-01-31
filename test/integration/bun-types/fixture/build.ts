@@ -1,9 +1,20 @@
-import { expectType } from "./utilities";
+import { expectAssignable, expectType } from "./utilities";
 
 Bun.build({
   entrypoints: ["hey"],
   splitting: false,
 });
+
+// Build.CompileTarget should accept SIMD variants (issue #26247)
+expectAssignable<Bun.Build.CompileTarget>("bun-linux-x64-modern");
+expectAssignable<Bun.Build.CompileTarget>("bun-linux-x64-baseline");
+expectAssignable<Bun.Build.CompileTarget>("bun-linux-arm64-modern");
+expectAssignable<Bun.Build.CompileTarget>("bun-linux-arm64-baseline");
+expectAssignable<Bun.Build.CompileTarget>("bun-linux-x64-modern-glibc");
+expectAssignable<Bun.Build.CompileTarget>("bun-linux-x64-modern-musl");
+expectAssignable<Bun.Build.CompileTarget>("bun-darwin-x64-modern");
+expectAssignable<Bun.Build.CompileTarget>("bun-darwin-arm64-baseline");
+expectAssignable<Bun.Build.CompileTarget>("bun-windows-x64-modern");
 
 Bun.build({
   entrypoints: ["hey"],

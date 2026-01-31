@@ -126,8 +126,16 @@ req.end();
             }),
             { headers: { "Content-Type": "application/json" } },
           );
-        } catch (e: any) {
-          return new Response(JSON.stringify({ success: false, error: e.message }), {
+        } catch (e: unknown) {
+          let errorMessage: string;
+          if (e instanceof Error) {
+            errorMessage = e.message;
+          } else if (typeof e === "object" && e !== null && "message" in e) {
+            errorMessage = String((e as { message: unknown }).message);
+          } else {
+            errorMessage = String(e);
+          }
+          return new Response(JSON.stringify({ success: false, error: errorMessage }), {
             status: 500,
             headers: { "Content-Type": "application/json" },
           });
@@ -176,7 +184,15 @@ upload();
       stdout: "pipe",
       stderr: "pipe",
     });
-    const installExitCode = await installProc.exited;
+    const [installStdout, installStderr, installExitCode] = await Promise.all([
+      installProc.stdout.text(),
+      installProc.stderr.text(),
+      installProc.exited,
+    ]);
+    if (installExitCode !== 0) {
+      console.error("Install stdout:", installStdout);
+      console.error("Install stderr:", installStderr);
+    }
     expect(installExitCode).toBe(0);
 
     // Run the client

@@ -2841,6 +2841,45 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionsetgroups, (JSGlobalObject * globalObje
     return JSValue::encode(jsNumber(result));
 }
 
+JSC_DEFINE_HOST_FUNCTION(Process_functioninitgroups, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Get user argument (first argument) - must be a string username
+    auto user = callFrame->argument(0);
+    if (!user.isString()) {
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "user"_s, "string"_s, user);
+    }
+
+    auto userStr = user.getString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto userUtf8 = userStr.utf8();
+    auto userName = userUtf8.data();
+
+    // Verify the user exists
+    struct passwd pwd;
+    struct passwd* pp = nullptr;
+    char buf[8192];
+    if (getpwnam_r(userName, &pwd, buf, sizeof(buf), &pp) != 0 || pp == nullptr) {
+        auto message = makeString("User identifier does not exist: "_s, userStr);
+        scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_UNKNOWN_CREDENTIAL, message));
+        return {};
+    }
+
+    // Get extraGroup argument (second argument)
+    auto extraGroup = callFrame->argument(1);
+    extraGroup = maybe_gid_by_name(scope, globalObject, extraGroup);
+    RETURN_IF_EXCEPTION(scope, {});
+    gid_t gid = extraGroup.toUInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    auto result = initgroups(userName, gid);
+    if (result != 0) throwSystemError(scope, globalObject, "initgroups"_s, errno);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsUndefined());
+}
+
 #endif
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionAssert, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -4043,6 +4082,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   getgroups                        Process_functiongetgroups                           Function 0
   getuid                           Process_functiongetuid                              Function 0
 
+  initgroups                       Process_functioninitgroups                          Function 2
   setegid                          Process_functionsetegid                             Function 1
   seteuid                          Process_functionseteuid                             Function 1
   setgid                           Process_functionsetgid                              Function 1

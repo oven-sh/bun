@@ -80,11 +80,13 @@ run_test() {
       echo ""
       echo "    The $BINARY_NAME binary uses CPU instructions not available on $QEMU_CPU."
       if [ "$ARCH" = "x64" ]; then
-        echo "    The baseline x64 build targets Nehalem (SSE4.2)."
-        echo "    AVX, AVX2, and AVX512 instructions are not allowed."
+        MSG="The baseline x64 build uses instructions not available on Nehalem (SSE4.2). AVX, AVX2, and AVX512 instructions are not allowed in baseline builds."
       else
-        echo "    The aarch64 build targets Cortex-A53 (ARMv8.0-A+CRC)."
-        echo "    LSE atomics, SVE, and dotprod instructions are not allowed."
+        MSG="The aarch64 build uses instructions not available on Cortex-A53 (ARMv8.0-A+CRC). LSE atomics, SVE, and dotprod instructions are not allowed."
+      fi
+      echo "    $MSG"
+      if command -v buildkite-agent &>/dev/null; then
+        buildkite-agent annotate --style error "$BINARY_NAME: Illegal instruction (SIGILL) on $QEMU_CPU. $MSG"
       fi
     else
       echo "    FAIL: exit code $exit_code"

@@ -649,11 +649,11 @@ pub const PathLike = union(enum) {
                 const normal = path_handler.normalizeBuf(resolve, b, .windows);
                 return strings.toKernel32Path(@alignCast(std.mem.bytesAsSlice(u16, buf)), normal);
             }
-            const normal = path_handler.normalizeStringBuf(s, b, true, .windows, false);
-            // Handle the case where normalizing "." results in an empty string
-            if (normal.len == 0) {
+            // Handle "." specially since normalizeStringBuf strips it to an empty string
+            if (s.len == 1 and s[0] == '.') {
                 return strings.toKernel32Path(@alignCast(std.mem.bytesAsSlice(u16, buf)), ".");
             }
+            const normal = path_handler.normalizeStringBuf(s, b, true, .windows, false);
             return strings.toKernel32Path(@alignCast(std.mem.bytesAsSlice(u16, buf)), normal);
         }
 

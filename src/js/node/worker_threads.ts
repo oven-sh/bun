@@ -120,11 +120,11 @@ let resourceLimits = {};
 let workerData = _workerData;
 let threadId = _threadId;
 function receiveMessageOnPort(port: MessagePort) {
-  let res = _receiveMessageOnPort(port);
-  if (!res) return undefined;
-  return {
-    message: res,
-  };
+  // Native function now returns { message: value } when there IS a message,
+  // or undefined when the queue is empty.
+  // This correctly handles falsy message values like undefined, null, 0, false, "".
+  // https://github.com/oven-sh/bun/issues/26501
+  return _receiveMessageOnPort(port);
 }
 
 // TODO: parent port emulation is not complete

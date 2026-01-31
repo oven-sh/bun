@@ -193,6 +193,39 @@ test("receiveMessageOnPort works as FIFO", () => {
   }
 }, 9999999);
 
+// https://github.com/oven-sh/bun/issues/26501
+test("receiveMessageOnPort handles falsy message values correctly", () => {
+  const { port1, port2 } = new MessageChannel();
+
+  const values = [
+    undefined,
+    null,
+    0,
+    1,
+    false,
+    true,
+    '',
+    'hello world'
+  ];
+
+  for (const value of values) {
+    port1.postMessage(value);
+  }
+
+  const received = [];
+  for (let i = 0; i < values.length; i++) {
+    const message = receiveMessageOnPort(port2);
+    if (message !== undefined) {
+      received.push(message.message);
+    }
+  }
+
+  expect(received).toEqual(values);
+  expect(receiveMessageOnPort(port2)).toBe(undefined);
+
+  port1.close();
+});
+
 test("you can override globalThis.postMessage", async () => {
   const worker = new Worker(new URL("./worker-override-postMessage.js", import.meta.url).href);
   const message = await new Promise(resolve => {

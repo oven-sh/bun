@@ -91,13 +91,13 @@ req.end();
       console.error("stderr:", stderr);
     }
 
-    expect(exitCode).toBe(0);
+    // Check stdout before exitCode for better error messages on test failure
     expect(stdout.trim()).not.toBe("");
-
     const result = JSON.parse(stdout.trim());
     expect(result.success).toBe(true);
     // 100 chunks, each is "chunkXXX" + 100 dashes = 8 + 100 = 108 chars
     expect(result.bytesReceived).toBe(100 * 108);
+    expect(exitCode).toBe(0);
   });
 
   test("request-promise with form-data and fs.createReadStream works correctly", async () => {
@@ -143,8 +143,8 @@ req.end();
           "request-promise": "^4.2.6",
         },
       }),
-      // Create a test file with known content
-      "testfile.txt": "A".repeat(1024 * 100), // 100KB file
+      // Create a test file with known content (100KB)
+      "testfile.txt": Buffer.alloc(1024 * 100, "A").toString(),
       "client.js": `
 const fs = require('fs');
 const request = require('request-promise');
@@ -194,13 +194,13 @@ upload();
       console.error("stderr:", stderr);
     }
 
-    expect(exitCode).toBe(0);
+    // Check stdout before exitCode for better error messages on test failure
     expect(stdout.trim()).not.toBe("");
-
     const result = JSON.parse(stdout.trim());
     expect(result.success).toBe(true);
     expect(result.bytesReceived).toBe(1024 * 100);
     expect(result.contentValid).toBe(true);
+    expect(exitCode).toBe(0);
   });
 
   test("multiple rapid writes followed by immediate end() yields all data", async () => {
@@ -272,11 +272,11 @@ req.end();
       console.error("stderr:", stderr);
     }
 
-    expect(exitCode).toBe(0);
+    // Check stdout before exitCode for better error messages on test failure
     expect(stdout.trim()).not.toBe("");
-
     const result = JSON.parse(stdout.trim());
     expect(result.success).toBe(true);
     expect(result.bytesReceived).toBe(1000 * 100); // 1000 chunks * 100 bytes
+    expect(exitCode).toBe(0);
   });
 });

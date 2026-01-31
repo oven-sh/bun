@@ -1,8 +1,3 @@
-/// Registry utilities for package managers
-const std = @import("std");
-const bun = @import("bun");
-const strings = bun.strings;
-
 /// Check if a registry URL is a GitLab registry by examining the hostname
 pub fn isGitLabRegistry(registry_url: []const u8) bool {
     const url = bun.URL.parse(registry_url);
@@ -12,3 +7,9 @@ pub fn isGitLabRegistry(registry_url: []const u8) bool {
     const host = strings.copyLowercase(url.host, host_buf);
     return strings.indexOf(host, "gitlab") != null;
 }
+
+/// Registry utilities for package managers
+const strings = bun.strings;
+
+const std = @import("std");
+const bun = @import("bun");

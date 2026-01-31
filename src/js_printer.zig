@@ -3349,6 +3349,11 @@ fn NewPrinter(
                         p.print("set");
                         p.printSpace();
                     },
+                    .auto_accessor => {
+                        p.printSpaceBeforeIdentifier();
+                        p.print("accessor");
+                        p.printSpace();
+                    },
                     else => {},
                 }
 
@@ -3535,7 +3540,7 @@ fn NewPrinter(
                 },
             }
 
-            if (item.kind != .normal) {
+            if (item.kind != .normal and item.kind != .auto_accessor) {
                 if (comptime is_json) {
                     bun.unreachablePanic("item.kind must be normal in json", .{});
                 }

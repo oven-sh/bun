@@ -162,6 +162,80 @@ pub fn skipUtf8Bom(text: []const u8) []const u8 {
     return text;
 }
 
+/// Skip YAML frontmatter if present at the start of the text.
+/// Frontmatter starts with `---` on its own line at the very beginning,
+/// and ends with `---` or `...` on its own line.
+/// The content between markers must contain at least one `:` to be considered
+/// valid YAML (this prevents false positives with setext headings like "---\nFoo\n---").
+/// Returns the text after the closing delimiter (or the original text if no frontmatter).
+pub fn skipFrontmatter(text: []const u8) []const u8 {
+    // Must start with exactly "---" followed by newline (or end of string for empty frontmatter)
+    if (text.len < 3) return text;
+    if (text[0] != '-' or text[1] != '-' or text[2] != '-') return text;
+
+    // Check that the opening delimiter is followed by a newline or end of string
+    var pos: usize = 3;
+    // Skip optional spaces/tabs after ---
+    while (pos < text.len and (text[pos] == ' ' or text[pos] == '\t')) {
+        pos += 1;
+    }
+    // Must be followed by newline or end of text
+    if (pos < text.len and text[pos] != '\n' and text[pos] != '\r') {
+        return text; // Not a valid frontmatter opener (e.g., "---text")
+    }
+    // Skip the newline
+    if (pos < text.len and text[pos] == '\r') pos += 1;
+    if (pos < text.len and text[pos] == '\n') pos += 1;
+
+    const content_start = pos;
+
+    // Now search for the closing delimiter: `---` or `...` at the start of a line
+    while (pos < text.len) {
+        // Check for closing delimiter at start of this line
+        if (pos + 3 <= text.len) {
+            const is_dash_closer = text[pos] == '-' and text[pos + 1] == '-' and text[pos + 2] == '-';
+            const is_dot_closer = text[pos] == '.' and text[pos + 1] == '.' and text[pos + 2] == '.';
+            if (is_dash_closer or is_dot_closer) {
+                var end_pos = pos + 3;
+                // Skip optional spaces/tabs after closer
+                while (end_pos < text.len and (text[end_pos] == ' ' or text[end_pos] == '\t')) {
+                    end_pos += 1;
+                }
+                // Closer must be followed by newline or end of text
+                if (end_pos >= text.len or text[end_pos] == '\n' or text[end_pos] == '\r') {
+                    // Validate that the content looks like YAML (contains at least one ':')
+                    // This prevents false positives with setext headings like "---\nFoo\n---"
+                    const content = text[content_start..pos];
+                    var has_colon = false;
+                    for (content) |c| {
+                        if (c == ':') {
+                            has_colon = true;
+                            break;
+                        }
+                    }
+                    if (!has_colon) {
+                        return text; // Not valid YAML frontmatter
+                    }
+
+                    // Skip the newline after the closer
+                    if (end_pos < text.len and text[end_pos] == '\r') end_pos += 1;
+                    if (end_pos < text.len and text[end_pos] == '\n') end_pos += 1;
+                    return text[end_pos..];
+                }
+            }
+        }
+
+        // Move to the next line
+        while (pos < text.len and text[pos] != '\n') {
+            pos += 1;
+        }
+        if (pos < text.len) pos += 1; // Skip the newline
+    }
+
+    // No closing delimiter found - treat as no frontmatter (return original text)
+    return text;
+}
+
 /// Case-insensitive ASCII comparison.
 pub fn asciiCaseEql(a: []const u8, b: []const u8) bool {
     return bun.strings.eqlCaseInsensitiveASCIIICheckLength(a, b);

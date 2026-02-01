@@ -559,6 +559,12 @@ pub fn setRefInternal(this: *WebWorker, value: bool) void {
 /// Implement process.exit(). May only be called from the Worker thread.
 pub fn exit(this: *WebWorker) void {
     this.exit_called = true;
+    // Fire termination trap to immediately halt JS execution.
+    // This must be done before notifyNeedTermination() so that any
+    // remaining JS code doesn't continue executing.
+    if (this.vm) |vm| {
+        vm.jsc_vm.notifyNeedTermination();
+    }
     this.notifyNeedTermination();
 }
 
@@ -574,7 +580,6 @@ pub fn notifyNeedTermination(this: *WebWorker) callconv(.c) void {
 
     if (this.vm) |vm| {
         vm.eventLoop().wakeup();
-        // TODO(@190n) notifyNeedTermination
     }
 
     // TODO(@190n) delete

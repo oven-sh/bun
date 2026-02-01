@@ -202,7 +202,7 @@ fn start(other_vm: *VirtualMachine) void {
         Bun__startJSDebuggerThread(this.global, debugger.script_execution_context_id, &url, 0, debugger.mode == .connect);
     }
 
-    this.global.handleRejectedPromises();
+    this.global.handleRejectedPromises() catch {};
 
     if (this.log.msgs.items.len > 0) {
         this.log.print(Output.errorWriter()) catch {};

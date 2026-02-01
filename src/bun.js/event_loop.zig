@@ -397,7 +397,7 @@ pub fn autoTick(this: *EventLoop) void {
     }
 
     ctx.onAfterEventLoop();
-    this.global.handleRejectedPromises();
+    this.global.handleRejectedPromises() catch {};
 }
 
 pub fn tickPossiblyForever(this: *EventLoop) void {
@@ -494,7 +494,7 @@ pub fn tick(this: *EventLoop) void {
     const global_vm = ctx.jsc_vm;
 
     while (true) {
-        while (this.tickWithCount(ctx) > 0) : (this.global.handleRejectedPromises()) {
+        while (this.tickWithCount(ctx) > 0) : (this.global.handleRejectedPromises() catch {}) {
             this.tickConcurrent();
         } else {
             this.drainMicrotasksWithGlobal(global, global_vm) catch return;
@@ -509,7 +509,7 @@ pub fn tick(this: *EventLoop) void {
         this.tickConcurrent();
     }
 
-    this.global.handleRejectedPromises();
+    this.global.handleRejectedPromises() catch {};
 }
 
 pub fn tickWithoutJS(this: *EventLoop) void {

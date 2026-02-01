@@ -658,7 +658,7 @@ pub const BunTest = struct {
                         promise.setHandled();
 
             const prev_unhandled_count = vm.unhandled_error_counter;
-            globalThis.handleRejectedPromises();
+            globalThis.handleRejectedPromises() catch break;
             if (vm.unhandled_error_counter == prev_unhandled_count)
                 break;
         }

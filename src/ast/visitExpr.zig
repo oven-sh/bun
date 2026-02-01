@@ -1571,6 +1571,18 @@ pub fn VisitExpr(
                 p.fn_only_data_visit.is_inside_async_arrow_fn = old_inside_async_arrow_fn;
                 p.fn_or_arrow_data_visit = std.mem.bytesToValue(@TypeOf(p.fn_or_arrow_data_visit), &old_fn_or_arrow_data);
 
+                // Mark arrows that are candidates for the `() => obj.method()` to
+                // `obj.method.bind(obj)` transformation. The actual transformation is
+                // deferred to the printer, which can check if the captured symbol was
+                // assigned to anywhere in the code.
+                if (p.options.features.minify_syntax and
+                    e_.args.len == 0 and
+                    !e_.is_async and
+                    e_.body.stmts.len == 1)
+                {
+                    p.tryMarkArrowForBindCallTransform(e_);
+                }
+
                 if (react_hook_data) |*hook| try_mark_hook: {
                     const stmts = p.nearest_stmt_list orelse break :try_mark_hook;
                     bun.handleOom(stmts.append(p.getReactRefreshHookSignalDecl(hook.signature_cb)));

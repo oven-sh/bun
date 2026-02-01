@@ -154,6 +154,53 @@ pub fn Visit(
             return decs;
         }
 
+        /// Check if this arrow is a candidate for the `() => obj.method()` to
+        /// `obj.method.bind(obj)` transformation. If so, store the receiver ref
+        /// in the arrow so the printer can check if the symbol was assigned to.
+        pub fn tryMarkArrowForBindCallTransform(p: *P, arrow: *E.Arrow) void {
+            // Must have exactly one statement
+            if (arrow.body.stmts.len != 1) return;
+
+            const stmt = arrow.body.stmts[0];
+
+            // Must be a return statement
+            const return_value = switch (stmt.data) {
+                .s_return => |ret| ret.value orelse return,
+                else => return,
+            };
+
+            // The return value must be a call expression with no arguments
+            const call = switch (return_value.data) {
+                .e_call => |c| c,
+                else => return,
+            };
+
+            // Call must have no arguments and no optional chaining
+            if (call.args.len != 0 or call.optional_chain != null) return;
+
+            // Call target must be a property access (dot or index) without optional chaining
+            const receiver_ref: Ref = switch (call.target.data) {
+                .e_dot => |dot| if (dot.optional_chain != null) return else switch (dot.target.data) {
+                    .e_identifier => |ident| ident.ref,
+                    else => return,
+                },
+                .e_index => |idx| if (idx.optional_chain != null) return else switch (idx.target.data) {
+                    .e_identifier => |ident| ident.ref,
+                    else => return,
+                },
+                else => return,
+            };
+
+            // Don't transform unbound globals (like console, Math, etc.)
+            // They could be reassigned by other code we can't see.
+            const symbol = p.symbols.items[receiver_ref.innerIndex()];
+            if (symbol.kind == .unbound) return;
+
+            // Mark this arrow as a candidate for bind transformation.
+            // The printer will check if the symbol was assigned to before applying.
+            arrow.bind_call_target_ref = receiver_ref;
+        }
+
         pub fn visitDecls(noalias p: *P, decls: []G.Decl, was_const: bool, comptime is_possibly_decl_to_remove: bool) usize {
             var j: usize = 0;
             var out_decls = decls;

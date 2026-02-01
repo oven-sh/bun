@@ -269,6 +269,12 @@ pub const Arrow = struct {
     has_rest_arg: bool = false,
     prefer_expr: bool = false, // Use shorthand if true and "Body" is a single return statement
 
+    /// When minify_syntax is enabled and this arrow is a candidate for the
+    /// `() => obj.method()` -> `obj.method.bind(obj)` transformation, this
+    /// stores the ref of the receiver identifier (obj). The printer will check
+    /// if this symbol was_assigned_to and only apply the transformation if not.
+    bind_call_target_ref: ?Ref = null,
+
     pub const noop_return_undefined: Arrow = .{
         .args = &.{},
         .body = .{

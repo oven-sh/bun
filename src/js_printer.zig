@@ -2565,6 +2565,26 @@ fn NewPrinter(
                     }
                 },
                 .e_arrow => |e| {
+                    // Optimization: Convert `() => obj.method()` to `obj.method.bind(obj)`
+                    // when the receiver symbol was never assigned to.
+                    if (e.bind_call_target_ref) |target_ref| {
+                        if (p.symbols().get(target_ref)) |symbol| {
+                            // Only transform if the symbol was never assigned to.
+                            // For const/unbound, has_been_assigned_to is always false.
+                            // For hoisted (function params, var), it's true if assigned anywhere.
+                            if (!symbol.has_been_assigned_to) {
+                                // Get the call expression from the body
+                                const call = e.body.stmts[0].data.s_return.value.?.data.e_call;
+                                // Print: target.method.bind(target)
+                                p.printExpr(call.target, .postfix, ExprFlag.Set{});
+                                p.print(".bind(");
+                                p.printSymbol(target_ref);
+                                p.print(")");
+                                return;
+                            }
+                        }
+                    }
+
                     const wrap = level.gte(.assign);
 
                     if (wrap) {

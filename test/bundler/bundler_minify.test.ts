@@ -1192,4 +1192,258 @@ describe("bundler", () => {
       stdout: "object\nobject\nobject",
     },
   });
+
+  // Arrow to bind optimization tests
+  itBundled("minify/ArrowToBindConstIdentifier", {
+    files: {
+      "/entry.js": /* js */ `
+        const obj = { value: 42, method() { return this.value; } };
+        const fn = () => obj.method();
+        console.log(fn());
+      `,
+    },
+    minifySyntax: true,
+    target: "bun",
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // Should transform () => obj.method() to obj.method.bind(obj)
+      expect(code).toContain(".bind(");
+      expect(code).not.toMatch(/\(\)\s*=>\s*\w+\.\w+\(\)/);
+    },
+    run: {
+      stdout: "42",
+    },
+  });
+
+  itBundled("minify/ArrowToBindNoTransformUnboundGlobal", {
+    files: {
+      "/entry.js": /* js */ `
+        const fn = () => console.log();
+        fn();
+        console.log("done");
+      `,
+    },
+    minifySyntax: true,
+    target: "bun",
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // Should NOT transform unbound globals - they could be reassigned externally
+      expect(code).not.toContain(".bind(");
+      expect(code).toMatch(/\(\)\s*=>/);
+    },
+    run: {
+      stdout: "\ndone",
+    },
+  });
+
+  itBundled("minify/ArrowToBindComputedProperty", {
+    files: {
+      "/entry.js": /* js */ `
+        const obj = { myMethod() { return this.value; }, value: 99 };
+        const key = "myMethod";
+        const fn = () => obj[key]();
+        console.log(fn());
+      `,
+    },
+    minifySyntax: true,
+    target: "bun",
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // Should transform () => obj[key]() to obj[key].bind(obj)
+      expect(code).toContain(".bind(");
+    },
+    run: {
+      stdout: "99",
+    },
+  });
+
+  itBundled("minify/ArrowToBindNoTransformLetReassigned", {
+    files: {
+      "/entry.js": /* js */ `
+        let obj = { method() { return "first"; } };
+        const fn = () => obj.method();
+        obj = { method() { return "second"; } };
+        console.log(fn());
+      `,
+    },
+    minifySyntax: true,
+    target: "bun",
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // Should NOT transform because obj is reassigned
+      expect(code).not.toContain(".bind(");
+      expect(code).toMatch(/\(\)\s*=>/);
+    },
+    run: {
+      stdout: "second",
+    },
+  });
+
+  itBundled("minify/ArrowToBindLetNotReassigned", {
+    files: {
+      "/entry.js": /* js */ `
+        let obj = { value: 42, method() { return this.value; } };
+        const fn = () => obj.method();
+        console.log(fn());
+      `,
+    },
+    minifySyntax: true,
+    target: "bun",
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // Should transform because obj is not reassigned
+      expect(code).toContain(".bind(");
+    },
+    run: {
+      stdout: "42",
+    },
+  });
+
+  itBundled("minify/ArrowToBindFunctionParam", {
+    files: {
+      "/entry.js": /* js */ `
+        function fetch(init) {
+          return () => init.signal();
+        }
+        console.log(fetch({ signal: () => 555 })());
+      `,
+    },
+    minifySyntax: true,
+    target: "bun",
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // Should transform because init is not reassigned
+      expect(code).toContain(".bind(");
+    },
+    run: {
+      stdout: "555",
+    },
+  });
+
+  itBundled("minify/ArrowToBindFunctionParamReassigned", {
+    files: {
+      "/entry.js": /* js */ `
+        function fetch(init) {
+          const cb = () => init.signal();
+          init = { signal: () => 666 };
+          return cb;
+        }
+        console.log(fetch({ signal: () => 555 })());
+      `,
+    },
+    minifySyntax: true,
+    target: "bun",
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // Should NOT transform because init is reassigned
+      expect(code).not.toContain(".bind(");
+      expect(code).toMatch(/\(\)\s*=>/);
+    },
+    run: {
+      stdout: "666",
+    },
+  });
+
+  itBundled("minify/ArrowToBindNoTransformWithArgs", {
+    files: {
+      "/entry.js": /* js */ `
+        const obj = { method(x) { return x * 2; } };
+        const fn = () => obj.method(21);
+        console.log(fn());
+      `,
+    },
+    minifySyntax: true,
+    target: "bun",
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // Should NOT transform because the call has arguments
+      expect(code).not.toContain(".bind(");
+      expect(code).toMatch(/\(\)\s*=>/);
+    },
+    run: {
+      stdout: "42",
+    },
+  });
+
+  itBundled("minify/ArrowToBindNoTransformArrowWithParams", {
+    files: {
+      "/entry.js": /* js */ `
+        const obj = { method() { return 123; } };
+        const fn = (x) => obj.method();
+        console.log(fn(1));
+      `,
+    },
+    minifySyntax: true,
+    target: "bun",
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // Should NOT transform because the arrow has parameters
+      expect(code).not.toContain(".bind(");
+    },
+    run: {
+      stdout: "123",
+    },
+  });
+
+  itBundled("minify/ArrowToBindNoTransformAsync", {
+    files: {
+      "/entry.js": /* js */ `
+        const obj = { async method() { return 456; } };
+        const fn = async () => obj.method();
+        fn().then(console.log);
+      `,
+    },
+    minifySyntax: true,
+    target: "bun",
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // Should NOT transform because the arrow is async
+      expect(code).not.toContain(".bind(");
+      expect(code).toMatch(/async\s*\(\)\s*=>/);
+    },
+    run: {
+      stdout: "456",
+    },
+  });
+
+  itBundled("minify/ArrowToBindNoTransformOptionalChain", {
+    files: {
+      "/entry.js": /* js */ `
+        const obj = { method() { return 789; } };
+        const fn = () => obj?.method();
+        console.log(fn());
+      `,
+    },
+    minifySyntax: true,
+    target: "bun",
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // Should NOT transform because of optional chaining
+      expect(code).not.toContain(".bind(");
+      expect(code).toMatch(/\?\.\w+\(\)/);
+    },
+    run: {
+      stdout: "789",
+    },
+  });
+
+  itBundled("minify/ArrowToBindNoTransformOptionalCall", {
+    files: {
+      "/entry.js": /* js */ `
+        const obj = { method() { return 321; } };
+        const fn = () => obj.method?.();
+        console.log(fn());
+      `,
+    },
+    minifySyntax: true,
+    target: "bun",
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // Should NOT transform because of optional call
+      expect(code).not.toContain(".bind(");
+    },
+    run: {
+      stdout: "321",
+    },
+  });
 });

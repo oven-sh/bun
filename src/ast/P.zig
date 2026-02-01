@@ -122,6 +122,7 @@ pub fn NewParser_(
         pub const visitClass = astVisit.visitClass;
         pub const visitStmts = astVisit.visitStmts;
         pub const visitAndAppendStmt = astVisit.visitAndAppendStmt;
+        pub const tryMarkArrowForBindCallTransform = astVisit.tryMarkArrowForBindCallTransform;
 
         pub const BinaryExpressionVisitor = @import("./visitBinaryExpression.zig").CreateBinaryExpressionVisitor(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only).BinaryExpressionVisitor;
 

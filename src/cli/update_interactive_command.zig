@@ -1662,6 +1662,13 @@ pub const UpdateInteractiveCommand = struct {
                 },
                 'a', 'A' => {
                     @memset(state.selected, true);
+                    // For packages where current == update version, auto-set use_latest
+                    // so they get updated to the latest version (matching spacebar behavior)
+                    for (state.packages) |*pkg| {
+                        if (strings.eql(pkg.current_version, pkg.update_version)) {
+                            pkg.use_latest = true;
+                        }
+                    }
                     state.toggle_all = true; // Mark that 'a' was used
                 },
                 'n', 'N' => {

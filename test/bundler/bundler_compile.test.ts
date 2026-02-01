@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
+import { pathToFileURL } from "url";
 import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
@@ -967,11 +968,12 @@ const server = serve({
         export function helper() {
           const url = import.meta.url;
           console.log("Utils URL:", url);
-          // Verify the URL is the virtual path
-          if (url.includes("/$bunfs/") || url.includes("B:\\\\~BUN\\\\")) {
+          // Verify the URL is the virtual path by parsing it with URL API
+          const pathname = new URL(url).pathname;
+          if (pathname.includes("/$bunfs/")) {
             return "success";
           } else {
-            return "FAIL: import.meta.url is not virtual path: " + url;
+            return "FAIL: import.meta.url pathname is not virtual path: " + pathname;
           }
         }
       `,
@@ -981,7 +983,6 @@ const server = serve({
         name: "transform-model",
         setup(api) {
           api.onLoad({ filter: /model\.ts$/ }, async args => {
-            const { pathToFileURL } = await import("url");
             const contents = await Bun.file(args.path).text();
             // Replace placeholder with actual filesystem path
             const fileUrl = pathToFileURL(args.path).href;

@@ -88,8 +88,10 @@ async function hashAllFiles(dir: string) {
 function normalizeOutput(stdout: string) {
   return (
     stdout
-      // remove timestamps from output
+      // remove timestamps from output (e.g., "(30.7ms)" or "(30.7 ms)")
       .replace(/\(\d+(?:\.\d+)? m?s\)/gi, data => " ".repeat(data.length))
+      // remove "in Xms" timing at end of lines (e.g., "in 36.8ms")
+      .replace(/\bin \d+(?:\.\d+)?m?s\b/gi, data => " ".repeat(data.length))
       // displayed file sizes are in post-gzip compression, however
       // the gzip / node:zlib implementation is different in bun and node
       .replace(/\d+(\.\d+)? [km]?b/gi, data => " ".repeat(data.length))

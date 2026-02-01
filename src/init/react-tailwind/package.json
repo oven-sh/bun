@@ -10,13 +10,13 @@
   },
   "dependencies": {
     "bun-plugin-tailwind": "^0.1.2",
-    "react": "^19",
-    "react-dom": "^19",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
     "tailwindcss": "^4.1.11"
   },
   "devDependencies": {
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
+    "@types/react": "^19.2.3",
+    "@types/react-dom": "^19.2.3",
     "@types/bun": "latest"
   }
 }

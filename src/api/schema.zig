@@ -3047,6 +3047,12 @@ pub const api = struct {
         /// frozen_lockfile
         frozen_lockfile: ?bool = null,
 
+        /// offline
+        offline: ?bool = null,
+
+        /// prefer_offline
+        prefer_offline: ?bool = null,
+
         /// exact
         exact: ?bool = null,
 

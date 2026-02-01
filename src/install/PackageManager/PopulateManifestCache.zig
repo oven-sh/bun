@@ -1,4 +1,4 @@
-const StartManifestTaskError = bun.OOM || error{InvalidURL};
+const StartManifestTaskError = bun.OOM || error{ InvalidURL, OfflineMode };
 fn startManifestTask(manager: *PackageManager, pkg_name: []const u8, dep: *const Dependency, needs_extended_manifest: bool) StartManifestTaskError!void {
     const task_id = Task.Id.forManifest(pkg_name);
     if (manager.hasCreatedNetworkTask(task_id, dep.behavior.optional)) {

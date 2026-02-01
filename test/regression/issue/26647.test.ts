@@ -1,7 +1,7 @@
 // Test for UTF-8 path encoding bug in Bun.file().stat() and Bun.file().unlink()
 // Issue: https://github.com/oven-sh/bun/issues/26647
-import { test, expect } from "bun:test";
-import { statSync, existsSync } from "fs";
+import { expect, test } from "bun:test";
+import { existsSync, statSync } from "fs";
 import { tempDirWithFiles } from "harness";
 import { join } from "path";
 

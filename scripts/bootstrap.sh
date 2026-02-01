@@ -1107,11 +1107,11 @@ install_llvm() {
 	case "$pm" in
 	apt)
 		# apt.llvm.org's GPG key uses SHA1, which Debian 13+ (sqv) rejects since 2026-02-01.
-		# Allow SHA1 signatures until apt.llvm.org updates their key.
-		if [ -x /usr/bin/sqv ]; then
+		# Override the sequoia crypto policy to extend the SHA1 deadline.
+		# See: https://github.com/llvm/llvm-project/issues/153385
+		if [ -x /usr/bin/sqv ] && [ -f /usr/share/apt/default-sequoia.config ]; then
 			execute_sudo mkdir -p /etc/crypto-policies/back-ends
-			printf 'sha1.second_preimage_resistance = "always"\n' \
-				| execute_sudo tee /etc/crypto-policies/back-ends/apt-sequoia.config > /dev/null
+			execute_sudo /usr/bin/sh -c "sed 's/sha1.second_preimage_resistance = 2026-02-01/sha1.second_preimage_resistance = 2028-02-01/' /usr/share/apt/default-sequoia.config > /etc/crypto-policies/back-ends/apt-sequoia.config"
 		fi
 
 		bash="$(require bash)"

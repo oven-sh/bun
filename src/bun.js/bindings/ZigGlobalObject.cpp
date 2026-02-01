@@ -1699,6 +1699,7 @@ void GlobalObject::finishCreation(VM& vm)
     m_commonStrings.initialize();
     m_http2CommonStrings.initialize();
     m_bakeAdditions.initialize();
+    m_markdownTagStrings.initialize();
 
     Bun::addNodeModuleConstructorProperties(vm, this);
     m_JSNodeHTTPServerSocketStructure.initLater(

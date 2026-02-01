@@ -383,7 +383,9 @@ yourself with Bun.serve().
             // TODO: copy the AppleScript from create-react-app or Vite.
             Bun.spawn(["open", url]).exited.catch(() => {});
           } else if (process.platform === "win32") {
-            Bun.spawn(["start", url]).exited.catch(() => {});
+            // "start" is a cmd.exe built-in command, not an executable.
+            // The empty string argument is the window title (required for URLs with special characters).
+            Bun.spawn(["cmd.exe", "/c", "start", "", url]).exited.catch(() => {});
           } else {
             Bun.spawn(["xdg-open", url]).exited.catch(() => {});
           }

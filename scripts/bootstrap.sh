@@ -1096,7 +1096,7 @@ install_build_essentials() {
 }
 
 llvm_version_exact() {
-	print "19.1.7"
+	print "21.1.8"
 }
 
 llvm_version() {
@@ -1106,7 +1106,7 @@ llvm_version() {
 install_llvm() {
 	case "$pm" in
 	apt)
-		# Debian 13 (Trixie) has LLVM 19 natively, and apt.llvm.org doesn't have a trixie repo
+		# Debian 13 (Trixie) has LLVM 21 natively, and apt.llvm.org doesn't have a trixie repo
 		if [ "$distro" = "debian" ]; then
 			install_packages \
 				"llvm-$(llvm_version)" \
@@ -1177,7 +1177,7 @@ install_gcc() {
 		;;
 	esac
 
-	llvm_v="19"
+	llvm_v="21"
 
 	append_to_profile "export CC=clang-${llvm_v}"
 	append_to_profile "export CXX=clang++-${llvm_v}"

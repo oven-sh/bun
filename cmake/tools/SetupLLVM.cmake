@@ -12,13 +12,7 @@ if(NOT ENABLE_LLVM)
   return()
 endif()
 
-# LLVM 21 is required for Windows ARM64 (first version with ARM64 Windows builds)
-# Other platforms use LLVM 19.1.7
-if(WIN32 AND CMAKE_SYSTEM_PROCESSOR MATCHES "ARM64|aarch64|AARCH64")
-  set(DEFAULT_LLVM_VERSION "21.1.8")
-else()
-  set(DEFAULT_LLVM_VERSION "19.1.7")
-endif()
+set(DEFAULT_LLVM_VERSION "21.1.8")
 
 optionx(LLVM_VERSION STRING "The version of LLVM to use" DEFAULT ${DEFAULT_LLVM_VERSION})
 
@@ -78,14 +72,12 @@ macro(find_llvm_command variable command)
     )
   endif()
 
-  math(EXPR LLVM_VERSION_NEXT_MAJOR "${LLVM_VERSION_MAJOR} + 1")
-
   find_command(
     VARIABLE ${variable}
     VERSION_VARIABLE LLVM_VERSION
     COMMAND ${commands}
     PATHS ${LLVM_PATHS}
-    VERSION ">=${LLVM_VERSION_MAJOR}.1.0 <${LLVM_VERSION_NEXT_MAJOR}.0.0"
+    VERSION "${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}.${LLVM_VERSION_PATCH}"
   )
   list(APPEND CMAKE_ARGS -D${variable}=${${variable}})
 endmacro()

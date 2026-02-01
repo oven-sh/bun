@@ -32,13 +32,15 @@
 #include <wtf/HashSet.h>
 #include <wtf/RefCounted.h>
 #include <wtf/text/WTFString.h>
-#include <wtf/RefCountedAndCanMakeWeakPtr.h>
+#include <wtf/ThreadSafeRefCounted.h>
+#include <wtf/ThreadSafeWeakPtr.h>
+#include <wtf/Lock.h>
 
 namespace WebCore {
 
 class MessagePortChannelRegistry;
 
-class MessagePortChannel : public RefCountedAndCanMakeWeakPtr<MessagePortChannel> {
+class MessagePortChannel : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<MessagePortChannel> {
 public:
     static Ref<MessagePortChannel> create(MessagePortChannelRegistry&, const MessagePortIdentifier& port1, const MessagePortIdentifier& port2);
 
@@ -59,7 +61,7 @@ public:
 
     WEBCORE_EXPORT bool hasAnyMessagesPendingOrInFlight() const;
 
-    uint64_t beingTransferredCount();
+    uint64_t beingTransferredCount() const;
 
 #if !LOG_DISABLED
     String logString() const
@@ -72,14 +74,15 @@ private:
     MessagePortChannel(MessagePortChannelRegistry&, const MessagePortIdentifier& port1, const MessagePortIdentifier& port2);
 
     MessagePortIdentifier m_ports[2];
-    bool m_isClosed[2] { false, false };
-    std::optional<ProcessIdentifier> m_processes[2];
-    RefPtr<MessagePortChannel> m_entangledToProcessProtectors[2];
-    Vector<MessageWithMessagePorts> m_pendingMessages[2];
-    UncheckedKeyHashSet<RefPtr<MessagePortChannel>> m_pendingMessagePortTransfers[2];
-    RefPtr<MessagePortChannel> m_pendingMessageProtectors[2];
-    uint64_t m_messageBatchesInFlight { 0 };
+    bool m_isClosed[2] WTF_GUARDED_BY_LOCK(m_lock) { false, false };
+    std::optional<ProcessIdentifier> m_processes[2] WTF_GUARDED_BY_LOCK(m_lock);
+    RefPtr<MessagePortChannel> m_entangledToProcessProtectors[2] WTF_GUARDED_BY_LOCK(m_lock);
+    Vector<MessageWithMessagePorts> m_pendingMessages[2] WTF_GUARDED_BY_LOCK(m_lock);
+    UncheckedKeyHashSet<RefPtr<MessagePortChannel>> m_pendingMessagePortTransfers[2] WTF_GUARDED_BY_LOCK(m_lock);
+    RefPtr<MessagePortChannel> m_pendingMessageProtectors[2] WTF_GUARDED_BY_LOCK(m_lock);
+    uint64_t m_messageBatchesInFlight WTF_GUARDED_BY_LOCK(m_lock) { 0 };
 
+    mutable Lock m_lock;
     MessagePortChannelRegistry& m_registry;
 };
 

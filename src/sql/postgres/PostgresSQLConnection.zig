@@ -1689,7 +1689,7 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
                 },
                 .SASLFinal => |final| {
                     if (this.authentication_state != .SASL) {
-                        debug("SASLFinal - Unexpected SASLContinue for authentiation state: {s}", .{@tagName(std.meta.activeTag(this.authentication_state))});
+                        debug("SASLFinal - Unexpected SASLContinue for authentication state: {s}", .{@tagName(std.meta.activeTag(this.authentication_state))});
                         return error.UnexpectedMessage;
                     }
                     var sasl = &this.authentication_state.SASL;

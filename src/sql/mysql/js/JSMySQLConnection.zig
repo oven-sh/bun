@@ -222,7 +222,7 @@ fn SocketHandler(comptime ssl: bool) type {
             this.#connection.setSocket(socket);
 
             if (socket == .SocketTCP) {
-                // This handshake is not TLS handleshake is actually the MySQL handshake
+                // This handshake is not TLS handshake is actually the MySQL handshake
                 // When a connection is upgraded to TLS, the onOpen callback is called again and at this moment we dont wanna to change the status to handshaking
                 this.#connection.status = .handshaking;
                 this.ref(); // keep a ref for the socket
@@ -267,6 +267,7 @@ fn SocketHandler(comptime ssl: bool) type {
 
                 // Fallback to standard SSL error reporting
                 this.failWithJSValue(ssl_error.toJS(this.#globalObject) catch return);
+                return;
             }
 
             if (!this.#connection.isProcessingData() and this.#connection.hasBufferedData()) {

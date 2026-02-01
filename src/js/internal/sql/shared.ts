@@ -678,18 +678,6 @@ function parseOptions(
     tls = true;
   }
 
-  // Inject serverName for SNI and Hostname verification if not already present
-  if (sslMode !== SSLMode.disable && !tls?.serverName && hostname) {
-    const isIp = require("node:net").isIP(hostname);
-    if (!isIp || sslMode === SSLMode.verify_full) {
-      if (typeof tls === "boolean") {
-        tls = { serverName: hostname };
-      } else if (tls) {
-        tls = { ...tls, serverName: hostname };
-      }
-    }
-  }
-
   // Enforce rejectUnauthorized = true for verify modes.
   // This ensures the SSL handshake actually performs verification so we can check the result in PostgresSQLConnection.zig.
   // We do not strictly require tls.ca here, allowing usage of system CAs.
@@ -723,6 +711,18 @@ function parseOptions(
     case "mariadb": {
       hostname ||= options.hostname || options.host || env.MARIADB_HOST || env.MARIADBHOST || "localhost";
       break;
+    }
+  }
+
+  // Inject serverName for SNI and Hostname verification if not already present
+  if (sslMode !== SSLMode.disable && !tls?.serverName && hostname) {
+    const isIp = require("node:net").isIP(hostname);
+    if (!isIp || sslMode === SSLMode.verify_full) {
+      if (typeof tls === "boolean") {
+        tls = { serverName: hostname };
+      } else if (tls) {
+        tls = { ...tls, serverName: hostname };
+      }
     }
   }
 

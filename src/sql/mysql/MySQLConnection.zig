@@ -943,7 +943,10 @@ pub fn handlePreparedStatement(this: *MySQLConnection, comptime Context: type, r
             debug("handlePreparedStatement ERROR", .{});
             var err = ErrorPacket{};
             try err.decode(reader);
-            defer err.deinit();
+            var is_error_owned = true;
+            defer {
+                if (is_error_owned) err.deinit();
+            }
             const connection = this.getJSConnection();
             defer {
                 this.queue.advance(connection);
@@ -951,6 +954,7 @@ pub fn handlePreparedStatement(this: *MySQLConnection, comptime Context: type, r
             this.#flags.is_ready_for_query = true;
             statement.status = .failed;
             statement.error_response = err;
+            is_error_owned = false;
             this.queue.markAsReadyForQuery();
             this.queue.markCurrentRequestAsFinished(request);
 

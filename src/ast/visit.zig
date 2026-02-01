@@ -157,48 +157,23 @@ pub fn Visit(
         /// Check if this arrow is a candidate for the `() => obj.method()` to
         /// `obj.method.bind(obj)` transformation. If so, store the receiver ref
         /// in the arrow so the printer can check if the symbol was assigned to.
+        ///
+        /// NOTE: This optimization is currently DISABLED because it can change
+        /// semantics in cases where:
+        /// 1. The property (method) is reassigned after the arrow is created
+        /// 2. The property is a getter that returns different values on each access
+        ///
+        /// To safely enable this optimization, we would need to track:
+        /// - Property assignments to the receiver object
+        /// - Whether the property is defined as a getter
+        /// - Whether the object escapes to code that could modify it
+        ///
+        /// For now, we conservatively disable the transformation entirely.
         pub fn tryMarkArrowForBindCallTransform(p: *P, arrow: *E.Arrow) void {
-            // Must have exactly one statement
-            if (arrow.body.stmts.len != 1) return;
-
-            const stmt = arrow.body.stmts[0];
-
-            // Must be a return statement
-            const return_value = switch (stmt.data) {
-                .s_return => |ret| ret.value orelse return,
-                else => return,
-            };
-
-            // The return value must be a call expression with no arguments
-            const call = switch (return_value.data) {
-                .e_call => |c| c,
-                else => return,
-            };
-
-            // Call must have no arguments and no optional chaining
-            if (call.args.len != 0 or call.optional_chain != null) return;
-
-            // Call target must be a property access (dot or index) without optional chaining
-            const receiver_ref: Ref = switch (call.target.data) {
-                .e_dot => |dot| if (dot.optional_chain != null) return else switch (dot.target.data) {
-                    .e_identifier => |ident| ident.ref,
-                    else => return,
-                },
-                .e_index => |idx| if (idx.optional_chain != null) return else switch (idx.target.data) {
-                    .e_identifier => |ident| ident.ref,
-                    else => return,
-                },
-                else => return,
-            };
-
-            // Don't transform unbound globals (like console, Math, etc.)
-            // They could be reassigned by other code we can't see.
-            const symbol = p.symbols.items[receiver_ref.innerIndex()];
-            if (symbol.kind == .unbound) return;
-
-            // Mark this arrow as a candidate for bind transformation.
-            // The printer will check if the symbol was assigned to before applying.
-            arrow.bind_call_target_ref = receiver_ref;
+            _ = p;
+            _ = arrow;
+            // Disabled - see comment above for rationale
+            return;
         }
 
         pub fn visitDecls(noalias p: *P, decls: []G.Decl, was_const: bool, comptime is_possibly_decl_to_remove: bool) usize {

@@ -1194,6 +1194,9 @@ describe("bundler", () => {
   });
 
   // Arrow to bind optimization tests
+  // NOTE: The arrow-to-bind transformation is currently DISABLED because
+  // it can change semantics when properties are reassigned or are getters.
+  // These tests verify the transformation is NOT applied.
   itBundled("minify/ArrowToBindConstIdentifier", {
     files: {
       "/entry.js": /* js */ `
@@ -1206,9 +1209,8 @@ describe("bundler", () => {
     target: "bun",
     onAfterBundle(api) {
       const code = api.readFile("/out.js");
-      // Should transform () => obj.method() to obj.method.bind(obj)
-      expect(code).toContain(".bind(");
-      expect(code).not.toMatch(/\(\)\s*=>\s*\w+\.\w+\(\)/);
+      // Optimization disabled - should NOT transform
+      expect(code).not.toContain(".bind(");
     },
     run: {
       stdout: "42",
@@ -1249,8 +1251,8 @@ describe("bundler", () => {
     target: "bun",
     onAfterBundle(api) {
       const code = api.readFile("/out.js");
-      // Should transform () => obj[key]() to obj[key].bind(obj)
-      expect(code).toContain(".bind(");
+      // Optimization disabled - should NOT transform
+      expect(code).not.toContain(".bind(");
     },
     run: {
       stdout: "99",
@@ -1291,8 +1293,8 @@ describe("bundler", () => {
     target: "bun",
     onAfterBundle(api) {
       const code = api.readFile("/out.js");
-      // Should transform because obj is not reassigned
-      expect(code).toContain(".bind(");
+      // Optimization disabled - should NOT transform
+      expect(code).not.toContain(".bind(");
     },
     run: {
       stdout: "42",
@@ -1312,15 +1314,15 @@ describe("bundler", () => {
     target: "bun",
     onAfterBundle(api) {
       const code = api.readFile("/out.js");
-      // Should transform because init is not reassigned
-      expect(code).toContain(".bind(");
+      // Optimization disabled - should NOT transform
+      expect(code).not.toContain(".bind(");
     },
     run: {
       stdout: "555",
     },
   });
 
-  itBundled("minify/ArrowToBindFunctionParamReassigned", {
+  itBundled("minify/ArrowToBindNoTransformFunctionParamReassigned", {
     files: {
       "/entry.js": /* js */ `
         function fetch(init) {
@@ -1546,6 +1548,55 @@ describe("bundler", () => {
     },
     run: {
       stdout: "method called",
+    },
+  });
+  itBundled("minify/ArrowToBindNoTransformPropertyReassigned", {
+    files: {
+      "/entry.js": /* js */ `
+        const obj = { method() { return "original"; } };
+        const fn = () => obj.method();
+        obj.method = () => "reassigned";
+        console.log(fn());
+      `,
+    },
+    minifySyntax: true,
+    target: "bun",
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // Should NOT transform because obj.method is reassigned after the arrow is created
+      // If we transform to obj.method.bind(obj), it would capture the original method
+      // But the arrow should call the reassigned method
+      expect(code).not.toContain(".bind(");
+    },
+    run: {
+      stdout: "reassigned",
+    },
+  });
+  itBundled("minify/ArrowToBindNoTransformGetterProperty", {
+    files: {
+      "/entry.js": /* js */ `
+        let callCount = 0;
+        const obj = {
+          get method() {
+            callCount++;
+            return () => "from getter " + callCount;
+          }
+        };
+        const fn = () => obj.method();
+        console.log(fn());
+        console.log(fn());
+      `,
+    },
+    minifySyntax: true,
+    target: "bun",
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // Should NOT transform because method is a getter
+      // bind() would only call the getter once, but arrow calls it each time
+      expect(code).not.toContain(".bind(");
+    },
+    run: {
+      stdout: "from getter 1\nfrom getter 2",
     },
   });
 });

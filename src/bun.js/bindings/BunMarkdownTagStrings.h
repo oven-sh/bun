@@ -48,9 +48,9 @@ using namespace JSC;
 
 class MarkdownTagStrings {
 public:
-#define MARKDOWN_TAG_STRINGS_ACCESSOR_DEFINITION(name, str, idx) \
-    JSC::JSString* name##String(JSC::JSGlobalObject* globalObject) \
-    { \
+#define MARKDOWN_TAG_STRINGS_ACCESSOR_DEFINITION(name, str, idx)        \
+    JSC::JSString* name##String(JSC::JSGlobalObject* globalObject)      \
+    {                                                                   \
         return m_strings[idx].getInitializedOnMainThread(globalObject); \
     }
 

@@ -11,10 +11,10 @@
 namespace Bun {
 using namespace JSC;
 
-#define MARKDOWN_TAG_STRINGS_LAZY_PROPERTY_DEFINITION(name, str, idx) \
-    this->m_strings[idx].initLater( \
+#define MARKDOWN_TAG_STRINGS_LAZY_PROPERTY_DEFINITION(name, str, idx)              \
+    this->m_strings[idx].initLater(                                                \
         [](const JSC::LazyProperty<JSGlobalObject, JSString>::Initializer& init) { \
-            init.set(jsOwnedString(init.vm, str)); \
+            init.set(jsOwnedString(init.vm, str));                                 \
         });
 
 #define MARKDOWN_TAG_STRINGS_LAZY_PROPERTY_VISITOR(name, str, idx) \
@@ -47,9 +47,10 @@ extern "C" JSC::EncodedJSValue BunMarkdownTagStrings__getTagString(Zig::GlobalOb
     // Use a switch to call the appropriate accessor
     switch (tagIndex) {
 #define MARKDOWN_TAG_STRINGS_CASE(name, str, idx) \
-    case idx: return JSC::JSValue::encode(tagStrings.name##String(globalObject));
+    case idx:                                     \
+        return JSC::JSValue::encode(tagStrings.name##String(globalObject));
 
-    MARKDOWN_TAG_STRINGS_EACH_NAME(MARKDOWN_TAG_STRINGS_CASE)
+        MARKDOWN_TAG_STRINGS_EACH_NAME(MARKDOWN_TAG_STRINGS_CASE)
 
 #undef MARKDOWN_TAG_STRINGS_CASE
     default:

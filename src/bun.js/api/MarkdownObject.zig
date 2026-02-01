@@ -1078,15 +1078,6 @@ fn extractLanguage(src_text: []const u8, info_beg: u32) []const u8 {
     return "";
 }
 
-const std = @import("std");
-
-const bun = @import("bun");
-const md = bun.md;
-
-const jsc = bun.jsc;
-const JSValue = jsc.JSValue;
-const ZigString = jsc.ZigString;
-
 // Cached tag string indices - must match BunMarkdownTagStrings.h
 const TagIndex = enum(u8) {
     h1 = 0,
@@ -1169,3 +1160,12 @@ fn getSpanTypeTag(span_type: md.SpanType) TagIndex {
         .u => .u,
     };
 }
+
+const std = @import("std");
+
+const bun = @import("bun");
+const md = bun.md;
+
+const jsc = bun.jsc;
+const JSValue = jsc.JSValue;
+const ZigString = jsc.ZigString;

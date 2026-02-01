@@ -102,13 +102,18 @@ async function build(args) {
   }
 
   const toolchain = generateOptions["--toolchain"];
+  const isWindowsAarch64Toolchain =
+    isWindows &&
+    (toolchain === "windows-aarch64" ||
+      (typeof generateOptions["-DCMAKE_TOOLCHAIN_FILE"] === "string" &&
+        generateOptions["-DCMAKE_TOOLCHAIN_FILE"].includes("windows-aarch64")));
   if (toolchain) {
     const toolchainPath = resolve(import.meta.dirname, "..", "cmake", "toolchains", `${toolchain}.cmake`);
     generateOptions["--toolchain"] = toolchainPath;
   }
 
-  // Windows ARM64: automatically set required options
-  if (isWindowsARM64) {
+  // Windows ARM64 target: automatically set required options (native or cross-compiling)
+  if (isWindowsARM64 || isWindowsAarch64Toolchain) {
     // Use clang-cl instead of MSVC cl.exe for proper ARM64 flag support
     if (!generateOptions["-DCMAKE_C_COMPILER"]) {
       generateOptions["-DCMAKE_C_COMPILER"] = "clang-cl";
@@ -117,7 +122,7 @@ async function build(args) {
       generateOptions["-DCMAKE_CXX_COMPILER"] = "clang-cl";
     }
     console.log(
-      `Windows ARM64 detected: using clang-cl${isEmulatedWindowsARM64 ? " (bun is running under emulation)" : ""}`,
+      `Windows ARM64 target: using clang-cl${isEmulatedWindowsARM64 ? " (bun is running under emulation)" : ""}`,
     );
   }
 

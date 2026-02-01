@@ -43,10 +43,19 @@ import {
  * @typedef Target
  * @property {Os} os
  * @property {Arch} arch
+ * @property {Arch} [hostArch]
  * @property {Abi} [abi]
  * @property {boolean} [baseline]
  * @property {Profile} [profile]
  */
+
+/**
+ * @param {Target} target
+ * @returns {Arch}
+ */
+function getHostArch(target) {
+  return target.hostArch || target.arch;
+}
 
 /**
  * @param {Target} target
@@ -73,6 +82,7 @@ function getTargetKey(target) {
  */
 function getTargetLabel(target) {
   const { os, arch, abi, baseline, profile } = target;
+  const hostArch = getHostArch(target);
   let label = `${getBuildkiteEmoji(os)} ${arch}`;
   if (abi) {
     label += `-${abi}`;
@@ -83,6 +93,9 @@ function getTargetLabel(target) {
   if (profile && profile !== "release") {
     label += `-${profile}`;
   }
+  if (hostArch !== arch) {
+    label += ` (host ${hostArch})`;
+  }
   return label;
 }
 
@@ -90,6 +103,7 @@ function getTargetLabel(target) {
  * @typedef Platform
  * @property {Os} os
  * @property {Arch} arch
+ * @property {Arch} [hostArch]
  * @property {Abi} [abi]
  * @property {boolean} [baseline]
  * @property {Profile} [profile]
@@ -114,8 +128,8 @@ const buildPlatforms = [
   { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.22" },
   { os: "windows", arch: "x64", release: "2019" },
   { os: "windows", arch: "x64", baseline: true, release: "2019" },
-  // TODO: Enable when Windows ARM64 CI runners are ready
-  // { os: "windows", arch: "aarch64", release: "2019" },
+  // Cross-compile Windows ARM64 on Windows x64 agents.
+  { os: "windows", arch: "aarch64", hostArch: "x64", release: "2019" },
 ];
 
 /**
@@ -178,8 +192,9 @@ function getPlatformLabel(platform) {
  */
 function getImageKey(platform) {
   const { os, arch, distro, release, features, abi } = platform;
+  const hostArch = getHostArch(platform);
   const version = release.replace(/\./g, "");
-  let key = `${os}-${arch}-${version}`;
+  let key = `${os}-${hostArch}-${version}`;
   if (distro) {
     key += `-${distro}`;
   }
@@ -199,8 +214,9 @@ function getImageKey(platform) {
  * @returns {string}
  */
 function getImageLabel(platform) {
-  const { os, arch, distro, release } = platform;
-  return `${getBuildkiteEmoji(distro || os)} ${release} ${arch}`;
+  const { os, distro, release } = platform;
+  const hostArch = getHostArch(platform);
+  return `${getBuildkiteEmoji(distro || os)} ${release} ${hostArch}`;
 }
 
 /**
@@ -271,10 +287,11 @@ function getPriority() {
  */
 function getEc2Agent(platform, options, ec2Options) {
   const { os, arch, abi, distro, release } = platform;
+  const hostArch = getHostArch(platform);
   const { instanceType, cpuCount, threadsPerCore } = ec2Options;
   return {
     os,
-    arch,
+    arch: hostArch,
     abi,
     distro,
     release,
@@ -294,18 +311,19 @@ function getEc2Agent(platform, options, ec2Options) {
  * @returns {string}
  */
 function getCppAgent(platform, options) {
-  const { os, arch } = platform;
+  const { os } = platform;
+  const hostArch = getHostArch(platform);
 
   if (os === "darwin") {
     return {
       queue: `build-${os}`,
       os,
-      arch,
+      arch: hostArch,
     };
   }
 
   return getEc2Agent(platform, options, {
-    instanceType: arch === "aarch64" ? "c8g.4xlarge" : "c7i.4xlarge",
+    instanceType: hostArch === "aarch64" ? "c8g.4xlarge" : "c7i.4xlarge",
   });
 }
 
@@ -315,24 +333,25 @@ function getCppAgent(platform, options) {
  * @returns {string}
  */
 function getLinkBunAgent(platform, options) {
-  const { os, arch } = platform;
+  const { os } = platform;
+  const hostArch = getHostArch(platform);
 
   if (os === "darwin") {
     return {
       queue: `build-${os}`,
       os,
-      arch,
+      arch: hostArch,
     };
   }
 
   if (os === "windows") {
     return getEc2Agent(platform, options, {
-      instanceType: arch === "aarch64" ? "r8g.large" : "r7i.large",
+      instanceType: hostArch === "aarch64" ? "r8g.large" : "r7i.large",
     });
   }
 
   return getEc2Agent(platform, options, {
-    instanceType: arch === "aarch64" ? "r8g.xlarge" : "r7i.xlarge",
+    instanceType: hostArch === "aarch64" ? "r8g.xlarge" : "r7i.xlarge",
   });
 }
 
@@ -366,13 +385,14 @@ function getZigAgent(_platform, options) {
  * @returns {Agent}
  */
 function getTestAgent(platform, options) {
-  const { os, arch, profile } = platform;
+  const { os, profile } = platform;
+  const hostArch = getHostArch(platform);
 
   if (os === "darwin") {
     return {
       queue: `test-${os}`,
       os,
-      arch,
+      arch: hostArch,
     };
   }
 
@@ -385,7 +405,7 @@ function getTestAgent(platform, options) {
     });
   }
 
-  if (arch === "aarch64") {
+  if (hostArch === "aarch64") {
     if (profile === "asan") {
       return getEc2Agent(platform, options, {
         instanceType: "c8g.2xlarge",
@@ -463,6 +483,9 @@ function getBuildCommand(target, options, label) {
  */
 function getBuildCppStep(platform, options) {
   const command = getBuildCommand(platform, options);
+  const isCrossCompile = platform.hostArch && platform.hostArch !== platform.arch;
+  const toolchain = isCrossCompile ? getBuildToolchain(platform) : undefined;
+  const toolchainArg = toolchain ? ` --toolchain ${toolchain}` : "";
   return {
     key: `${getTargetKey(platform)}-build-cpp`,
     label: `${getTargetLabel(platform)} - build-cpp`,
@@ -476,7 +499,7 @@ function getBuildCppStep(platform, options) {
     // We used to build the C++ dependencies and bun in separate steps.
     // However, as long as the zig build takes longer than both sequentially,
     // it's cheaper to run them in the same step. Can be revisited in the future.
-    command: [`${command} --target bun`, `${command} --target dependencies`],
+    command: [`${command}${toolchainArg} --target bun`, `${command}${toolchainArg} --target dependencies`],
   };
 }
 
@@ -521,6 +544,9 @@ function getBuildZigStep(platform, options) {
  * @returns {Step}
  */
 function getLinkBunStep(platform, options) {
+  const isCrossCompile = platform.hostArch && platform.hostArch !== platform.arch;
+  const toolchain = isCrossCompile ? getBuildToolchain(platform) : undefined;
+  const toolchainArg = toolchain ? ` --toolchain ${toolchain}` : "";
   return {
     key: `${getTargetKey(platform)}-build-bun`,
     label: `${getTargetLabel(platform)} - build-bun`,
@@ -533,7 +559,7 @@ function getLinkBunStep(platform, options) {
       ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
       ...getBuildEnv(platform, options),
     },
-    command: `${getBuildCommand(platform, options, "build-bun")} --target bun`,
+    command: `${getBuildCommand(platform, options, "build-bun")}${toolchainArg} --target bun`,
   };
 }
 
@@ -713,7 +739,8 @@ function getTestBunStep(platform, options, testOptions = {}) {
  * @returns {Step}
  */
 function getBuildImageStep(platform, options) {
-  const { os, arch, distro, release, features } = platform;
+  const { os, distro, release, features } = platform;
+  const hostArch = getHostArch(platform);
   const { publishImages } = options;
   const action = publishImages ? "publish-image" : "create-image";
 
@@ -722,7 +749,7 @@ function getBuildImageStep(platform, options) {
     "./scripts/machine.mjs",
     action,
     `--os=${os}`,
-    `--arch=${arch}`,
+    `--arch=${hostArch}`,
     distro && `--distro=${distro}`,
     `--release=${release}`,
     "--cloud=aws",

@@ -2433,12 +2433,13 @@ declare module "bun" {
     type SIMD = "baseline" | "modern";
     type CompileTarget =
       | `bun-darwin-${Architecture}`
-      | `bun-darwin-x64-${SIMD}`
+      | `bun-darwin-${Architecture}-${SIMD}`
       | `bun-linux-${Architecture}`
       | `bun-linux-${Architecture}-${Libc}`
+      | `bun-linux-${Architecture}-${SIMD}`
+      | `bun-linux-${Architecture}-${SIMD}-${Libc}`
       | "bun-windows-x64"
-      | `bun-windows-x64-${SIMD}`
-      | `bun-linux-x64-${SIMD}-${Libc}`;
+      | `bun-windows-x64-${SIMD}`;
   }
 
   /**
@@ -2593,7 +2594,10 @@ declare module "bun" {
      * start times, but will make the final output larger and slightly increase
      * memory usage.
      *
-     * Bytecode is currently only supported for CommonJS (`format: "cjs"`).
+     * - CommonJS: works with or without `compile: true`
+     * - ESM: requires `compile: true`
+     *
+     * Without an explicit `format`, defaults to CommonJS.
      *
      * Must be `target: "bun"`
      * @default false
@@ -5678,7 +5682,7 @@ declare module "bun" {
      *
      * This will apply to all sockets from the same {@link Listener}. it is per socket only for {@link Bun.connect}.
      */
-    reload(handler: SocketHandler): void;
+    reload(options: Pick<SocketOptions<Data>, "socket">): void;
 
     /**
      * Get the server that created this socket
@@ -6021,7 +6025,7 @@ declare module "bun" {
     stop(closeActiveConnections?: boolean): void;
     ref(): void;
     unref(): void;
-    reload(options: Pick<Partial<SocketOptions>, "socket">): void;
+    reload(options: Pick<SocketOptions<Data>, "socket">): void;
     data: Data;
   }
   interface TCPSocketListener<Data = unknown> extends SocketListener<Data> {

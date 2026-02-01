@@ -13,7 +13,7 @@ jobs:
       pull-requests: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Check highway version
         id: check-version
@@ -99,7 +99,7 @@ jobs:
 
       - name: Create Pull Request
         if: success() && steps.check-version.outputs.current != steps.check-version.outputs.latest
-        uses: peter-evans/create-pull-request@v7
+        uses: peter-evans/create-pull-request@v8
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           add-paths: |

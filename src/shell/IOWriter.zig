@@ -252,7 +252,12 @@ pub fn cancelChunks(this: *IOWriter, ptr_: anytype) void {
         ChildPtr => ptr_,
         else => ChildPtr.init(ptr_),
     };
-    const actual_ptr = ptr.ptr.repr._ptr;
+    this.cancelChunksWithRawPtr(ptr.ptr.repr._ptr);
+}
+
+/// Cancel chunks by raw pointer address. Used when we have an opaque
+/// pointer and need to cancel chunks without type information.
+pub fn cancelChunksWithRawPtr(this: *IOWriter, actual_ptr: usize) void {
     if (this.writers.len() == 0) return;
     const idx = this.writer_idx;
     const slice: []Writer = this.writers.sliceMutable();

@@ -172,10 +172,27 @@ pub fn onIOWriterChunk(this: *Subshell, _: usize, err: ?jsc.SystemError) Yield {
 
 pub fn deinit(this: *Subshell) void {
     this.base.shell.deinit();
+
+    // Cancel any pending IOWriter chunks that reference this Subshell
+    // to prevent use-after-free when the write completes.
+    this.cancelPendingChunks();
+
     this.io.deref();
     this.redirection_file.deinit();
     this.base.endScope();
     this.parent.destroy(this);
+}
+
+/// Cancel any pending IOWriter chunks that reference this Subshell.
+fn cancelPendingChunks(this: *Subshell) void {
+    switch (this.io.stderr) {
+        .fd => |fd| fd.writer.cancelChunks(this),
+        else => {},
+    }
+    switch (this.io.stdout) {
+        .fd => |fd| fd.writer.cancelChunks(this),
+        else => {},
+    }
 }
 
 pub fn writeFailingError(this: *Subshell, comptime fmt: []const u8, args: anytype) Yield {

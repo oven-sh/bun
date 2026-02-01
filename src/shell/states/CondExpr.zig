@@ -211,6 +211,10 @@ fn doStat(this: *CondExpr) Yield {
 }
 
 pub fn deinit(this: *CondExpr) void {
+    // Cancel any pending IOWriter chunks that reference this CondExpr
+    // to prevent use-after-free when the write completes.
+    this.cancelPendingChunks();
+
     this.io.deinit();
     for (this.args.items) |item| {
         this.base.allocator().free(item);
@@ -218,6 +222,18 @@ pub fn deinit(this: *CondExpr) void {
     this.args.deinit();
     this.base.endScope();
     this.parent.destroy(this);
+}
+
+/// Cancel any pending IOWriter chunks that reference this CondExpr.
+fn cancelPendingChunks(this: *CondExpr) void {
+    switch (this.io.stderr) {
+        .fd => |fd| fd.writer.cancelChunks(this),
+        else => {},
+    }
+    switch (this.io.stdout) {
+        .fd => |fd| fd.writer.cancelChunks(this),
+        else => {},
+    }
 }
 
 pub fn childDone(this: *CondExpr, child: ChildPtr, exit_code: ExitCode) Yield {

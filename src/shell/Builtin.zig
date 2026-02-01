@@ -668,12 +668,59 @@ pub fn deinit(this: *Builtin) void {
     // No need to free it because it belongs to the parent cmd
     // _ = Syscall.close(this.cwd);
 
+    // Cancel any pending IOWriter chunks that reference this builtin
+    // to prevent use-after-free when the write completes.
+    this.cancelPendingChunks();
+
     this.stdout.deref();
     this.stderr.deref();
     this.stdin.deref();
 
     // Parent cmd frees this
     // this.arena.deinit();
+}
+
+/// Cancel any pending IOWriter chunks that reference this builtin's impl.
+/// This prevents use-after-free crashes when a write completes after
+/// the builtin has been freed.
+fn cancelPendingChunks(this: *Builtin) void {
+    const impl_ptr: usize = switch (this.kind) {
+        .cat => @intFromPtr(&this.impl.cat),
+        .touch => @intFromPtr(&this.impl.touch),
+        .mkdir => @intFromPtr(&this.impl.mkdir),
+        .@"export" => @intFromPtr(&this.impl.@"export"),
+        .echo => @intFromPtr(&this.impl.echo),
+        .cd => @intFromPtr(&this.impl.cd),
+        .which => @intFromPtr(&this.impl.which),
+        .rm => @intFromPtr(&this.impl.rm),
+        .pwd => @intFromPtr(&this.impl.pwd),
+        .mv => @intFromPtr(&this.impl.mv),
+        .ls => @intFromPtr(&this.impl.ls),
+        .exit => @intFromPtr(&this.impl.exit),
+        .true => @intFromPtr(&this.impl.true),
+        .false => @intFromPtr(&this.impl.false),
+        .yes => @intFromPtr(&this.impl.yes),
+        .seq => @intFromPtr(&this.impl.seq),
+        .dirname => @intFromPtr(&this.impl.dirname),
+        .basename => @intFromPtr(&this.impl.basename),
+        .cp => @intFromPtr(&this.impl.cp),
+    };
+
+    // Cancel chunks in stdout writer if it's an fd
+    switch (this.stdout) {
+        .fd => |fd| {
+            fd.writer.cancelChunksWithRawPtr(impl_ptr);
+        },
+        else => {},
+    }
+
+    // Cancel chunks in stderr writer if it's an fd
+    switch (this.stderr) {
+        .fd => |fd| {
+            fd.writer.cancelChunksWithRawPtr(impl_ptr);
+        },
+        else => {},
+    }
 }
 
 /// If the stdout/stderr is supposed to be captured then get the bytelist associated with that

@@ -274,9 +274,26 @@ pub fn deinit(this: *Pipeline) void {
     if (this.cmds) |cmds| {
         this.base.allocator().free(cmds);
     }
+
+    // Cancel any pending IOWriter chunks that reference this Pipeline
+    // to prevent use-after-free when the write completes.
+    this.cancelPendingChunks();
+
     this.io.deref();
     this.base.endScope();
     this.parent.destroy(this);
+}
+
+/// Cancel any pending IOWriter chunks that reference this Pipeline.
+fn cancelPendingChunks(this: *Pipeline) void {
+    switch (this.io.stderr) {
+        .fd => |fd| fd.writer.cancelChunks(this),
+        else => {},
+    }
+    switch (this.io.stdout) {
+        .fd => |fd| fd.writer.cancelChunks(this),
+        else => {},
+    }
 }
 
 fn initializePipes(pipes: []Pipe, set_count: *u32) Maybe(void) {

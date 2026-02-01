@@ -726,9 +726,25 @@ pub fn deinit(this: *Cmd) void {
         this.spawn_arena.deinit();
     }
 
+    // Cancel any pending IOWriter chunks that reference this Cmd
+    // to prevent use-after-free when the write completes.
+    this.cancelPendingChunks();
+
     this.io.deref();
     this.base.endScope();
     this.parent.destroy(this);
+}
+
+/// Cancel any pending IOWriter chunks that reference this Cmd.
+fn cancelPendingChunks(this: *Cmd) void {
+    switch (this.io.stderr) {
+        .fd => |fd| fd.writer.cancelChunks(this),
+        else => {},
+    }
+    switch (this.io.stdout) {
+        .fd => |fd| fd.writer.cancelChunks(this),
+        else => {},
+    }
 }
 
 pub fn bufferedInputClose(this: *Cmd) void {

@@ -4,6 +4,11 @@ set(CMAKE_SYSTEM_PROCESSOR aarch64)
 set(CMAKE_C_COMPILER_WORKS ON)
 set(CMAKE_CXX_COMPILER_WORKS ON)
 
+# Ensure clang/clang-cl targets Windows ARM64 (otherwise ARM64-specific flags like
+# -march=armv8-a are rejected as x86-only).
+set(CMAKE_C_COMPILER_TARGET aarch64-pc-windows-msvc CACHE STRING "" FORCE)
+set(CMAKE_CXX_COMPILER_TARGET aarch64-pc-windows-msvc CACHE STRING "" FORCE)
+
 # Force ARM64 architecture ID - this is what CMake uses to determine /machine: flag
 set(MSVC_C_ARCHITECTURE_ID ARM64 CACHE INTERNAL "")
 set(MSVC_CXX_ARCHITECTURE_ID ARM64 CACHE INTERNAL "")

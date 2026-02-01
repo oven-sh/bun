@@ -520,6 +520,10 @@ register_command(
     bun-js-sink
   COMMENT
     "Generating JSSink.{cpp,h}"
+  TARGETS
+    ${PERL_SETUP_TARGETS}
+  ENVIRONMENT
+    ${BUN_PERL_ENV}
   COMMAND
     ${BUN_EXECUTABLE}
       ${BUN_FLAGS}
@@ -591,8 +595,10 @@ foreach(i RANGE 0 ${BUN_OBJECT_LUT_SOURCES_MAX_INDEX})
       bun-codegen-lut-${filename}
     COMMENT
       "Generating ${filename}.lut.h"
-    DEPENDS
-      ${BUN_OBJECT_LUT_SOURCE}
+    TARGETS
+      ${PERL_SETUP_TARGETS}
+    ENVIRONMENT
+      ${BUN_PERL_ENV}
     COMMAND
       ${BUN_EXECUTABLE}
         ${BUN_FLAGS}

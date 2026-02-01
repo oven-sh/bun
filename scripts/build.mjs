@@ -23,6 +23,9 @@ const isWindowsARM64 =
     (process.env.PROCESSOR_IDENTIFIER || "").includes("ARMv8") ||
     process.arch === "arm64");
 
+// If bun is x64 on Windows ARM64, it may be running under emulation.
+const isEmulatedWindowsARM64 = isWindowsARM64 && process.arch !== "arm64";
+
 if (globalThis.Bun) {
   await import("./glob-sources.mjs");
 }
@@ -57,7 +60,14 @@ async function build(args) {
   if (process.platform === "win32" && !process.env["VSINSTALLDIR"]) {
     const shellPath = join(import.meta.dirname, "vs-shell.ps1");
     const scriptPath = import.meta.filename;
-    return spawn("pwsh", ["-NoProfile", "-NoLogo", "-File", shellPath, process.argv0, scriptPath, ...args]);
+    const requestedVsArch = args.includes("--toolchain")
+      ? args[args.indexOf("--toolchain") + 1] === "windows-aarch64"
+        ? "arm64"
+        : undefined
+      : undefined;
+
+    const env = requestedVsArch ? { ...process.env, BUN_VS_ARCH: requestedVsArch } : undefined;
+    return spawn("pwsh", ["-NoProfile", "-NoLogo", "-File", shellPath, process.argv0, scriptPath, ...args], { env });
   }
 
   if (isCI) {
@@ -86,6 +96,11 @@ async function build(args) {
     generateOptions["-DCACHE_STRATEGY"] = parseBoolean(getEnv("RELEASE", false) || "false") ? "none" : "auto";
   }
 
+  // On Windows ARM64, default to the ARM64 toolchain so CMake sets the correct /machine flags.
+  if (isWindowsARM64 && !generateOptions["--toolchain"] && !generateOptions["-DCMAKE_TOOLCHAIN_FILE"]) {
+    generateOptions["--toolchain"] = "windows-aarch64";
+  }
+
   const toolchain = generateOptions["--toolchain"];
   if (toolchain) {
     const toolchainPath = resolve(import.meta.dirname, "..", "cmake", "toolchains", `${toolchain}.cmake`);
@@ -101,12 +116,9 @@ async function build(args) {
     if (!generateOptions["-DCMAKE_CXX_COMPILER"]) {
       generateOptions["-DCMAKE_CXX_COMPILER"] = "clang-cl";
     }
-    // Skip codegen by default since x64 bun crashes under WoW64 emulation
-    // Can be overridden with -DSKIP_CODEGEN=OFF once ARM64 bun is available
-    if (!generateOptions["-DSKIP_CODEGEN"]) {
-      generateOptions["-DSKIP_CODEGEN"] = "ON";
-    }
-    console.log("Windows ARM64 detected: using clang-cl and SKIP_CODEGEN=ON");
+    console.log(
+      `Windows ARM64 detected: using clang-cl${isEmulatedWindowsARM64 ? " (bun is running under emulation)" : ""}`,
+    );
   }
 
   const generateArgs = Object.entries(generateOptions).flatMap(([flag, value]) =>

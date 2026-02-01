@@ -50,7 +50,7 @@ pub const Class = struct {
                 return false;
             }
 
-            if (property.kind == .normal) {
+            if (property.kind == .normal or property.kind == .auto_accessor) {
                 if (flags.contains(.is_static)) {
                     for ([2]?Expr{ property.value, property.initializer }) |val_| {
                         if (val_) |val| {
@@ -134,6 +134,7 @@ pub const Property = struct {
         declare,
         abstract,
         class_static_block,
+        auto_accessor,
 
         pub fn jsonStringify(self: @This(), writer: anytype) !void {
             return try writer.write(@tagName(self));

@@ -274,7 +274,7 @@ pub fn ParseProperty(
                                                 const scope_index = p.scopes_in_order.items.len;
                                                 if (try p.parseProperty(kind, opts, null)) |_prop| {
                                                     var prop = _prop;
-                                                    if (prop.kind == .normal and prop.value == null and opts.ts_decorators.len > 0) {
+                                                    if ((prop.kind == .normal or prop.kind == .auto_accessor) and prop.value == null and opts.ts_decorators.len > 0) {
                                                         prop.kind = .declare;
                                                         return prop;
                                                     }
@@ -289,7 +289,7 @@ pub fn ParseProperty(
                                                 opts.is_ts_abstract = true;
                                                 const scope_index = p.scopes_in_order.items.len;
                                                 if (try p.parseProperty(kind, opts, null)) |*prop| {
-                                                    if (prop.kind == .normal and prop.value == null and opts.ts_decorators.len > 0) {
+                                                    if ((prop.kind == .normal or prop.kind == .auto_accessor) and prop.value == null and opts.ts_decorators.len > 0) {
                                                         var prop_ = prop.*;
                                                         prop_.kind = .abstract;
                                                         return prop_;
@@ -297,6 +297,15 @@ pub fn ParseProperty(
                                                 }
                                                 p.discardScopesUpTo(scope_index);
                                                 return null;
+                                            }
+                                        },
+                                        .p_accessor => {
+                                            if (opts.is_class and !opts.is_async and !opts.is_generator and
+                                                (js_lexer.PropertyModifierKeyword.List.get(raw) orelse .p_static) == .p_accessor)
+                                            {
+                                                kind = .auto_accessor;
+                                                errors = null;
+                                                continue :restart;
                                             }
                                         },
                                         .p_private, .p_protected, .p_public, .p_readonly, .p_override => {
@@ -430,7 +439,7 @@ pub fn ParseProperty(
 
                 // Parse a class field with an optional initial value
                 if (opts.is_class and
-                    kind == .normal and !opts.is_async and
+                    (kind == .normal or kind == .auto_accessor) and !opts.is_async and
                     !opts.is_generator and
                     p.lexer.token != .t_open_paren and
                     !has_type_parameters and

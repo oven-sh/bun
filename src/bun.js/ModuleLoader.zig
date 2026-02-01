@@ -735,6 +735,18 @@ pub fn transpileSourceCode(
             };
         },
 
+        .py => {
+            // Return the file path with .python tag - C++ will run Python
+            // and create JSPyObject wrappers for exports
+            return ResolvedSource{
+                .allocator = null,
+                .source_code = bun.String.cloneUTF8(path.text),
+                .specifier = input_specifier,
+                .source_url = input_specifier.createIfDifferent(path.text),
+                .tag = .python,
+            };
+        },
+
         else => {
             if (flags.disableTranspiling()) {
                 return ResolvedSource{
@@ -828,17 +840,32 @@ pub export fn Bun__resolveAndFetchBuiltinModule(
     var log = logger.Log.init(jsc_vm.transpiler.allocator);
     defer log.deinit();
 
-    const alias = HardcodedModule.Alias.bun_aliases.getWithEql(specifier.*, bun.String.eqlComptime) orelse
-        return false;
-    const hardcoded = HardcodedModule.map.get(alias.path) orelse {
-        bun.debugAssert(false);
-        return false;
-    };
-    ret.* = .ok(
-        getHardcodedModule(jsc_vm, specifier.*, hardcoded) orelse
-            return false,
-    );
-    return true;
+    // Check hardcoded aliases first
+    if (HardcodedModule.Alias.bun_aliases.getWithEql(specifier.*, bun.String.eqlComptime)) |alias| {
+        const hardcoded = HardcodedModule.map.get(alias.path) orelse {
+            bun.debugAssert(false);
+            return false;
+        };
+        ret.* = .ok(
+            getHardcodedModule(jsc_vm, specifier.*, hardcoded) orelse
+                return false,
+        );
+        return true;
+    }
+
+    // Handle any python: prefixed module (for submodule imports like python:matplotlib.pyplot)
+    if (specifier.hasPrefixComptime("python:")) {
+        ret.* = .ok(.{
+            .allocator = null,
+            .source_code = specifier.dupeRef(),
+            .specifier = specifier.dupeRef(),
+            .source_url = specifier.dupeRef(),
+            .tag = .python_builtin,
+        });
+        return true;
+    }
+
+    return false;
 }
 
 pub export fn Bun__fetchBuiltinModule(
@@ -1222,6 +1249,43 @@ pub fn fetchBuiltinModule(jsc_vm: *VirtualMachine, specifier: bun.String) !?Reso
         }
     }
 
+    // Handle python: prefix for Python builtin modules
+    if (specifier.hasPrefixComptime("python:")) {
+        // Pass the full specifier (python:pathlib) - C++ will strip the prefix
+        return .{
+            .allocator = null,
+            .source_code = specifier.dupeRef(),
+            .specifier = specifier.dupeRef(),
+            .source_url = specifier.dupeRef(),
+            .tag = .python_builtin,
+        };
+    }
+
+    // Check if this is a Python package in .venv/lib/python{version}/site-packages/
+    // This allows `import numpy from "numpy"` to work for installed Python packages
+    const specifier_utf8 = specifier.toUTF8(bun.default_allocator);
+    defer specifier_utf8.deinit();
+    const spec_slice = specifier_utf8.slice();
+
+    // Only check for bare specifiers (not paths)
+    if (spec_slice.len > 0 and spec_slice[0] != '.' and spec_slice[0] != '/') {
+        // Check if package exists in .venv/lib/python{version}/site-packages/
+        var path_buf: bun.PathBuffer = undefined;
+        const venv_path = std.fmt.bufPrint(&path_buf, pypi.venv_site_packages ++ "/{s}", .{spec_slice}) catch return null;
+
+        // Check if directory exists (Python package) or .py file exists
+        if (bun.sys.directoryExistsAt(bun.FD.cwd(), venv_path).unwrap() catch false) {
+            // Return as python_builtin - the module loader will import it via Python
+            return .{
+                .allocator = null,
+                .source_code = specifier.dupeRef(),
+                .specifier = specifier.dupeRef(),
+                .source_url = specifier.dupeRef(),
+                .tag = .python_builtin,
+            };
+        }
+    }
+
     return null;
 }
 
@@ -1363,6 +1427,7 @@ const dumpSourceString = @import("./RuntimeTranspilerStore.zig").dumpSourceStrin
 const setBreakPointOnFirstLine = @import("./RuntimeTranspilerStore.zig").setBreakPointOnFirstLine;
 
 const bun = @import("bun");
+const pypi = bun.install.PyPI;
 const Environment = bun.Environment;
 const MutableString = bun.MutableString;
 const Output = bun.Output;

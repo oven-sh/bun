@@ -10,6 +10,8 @@ pub const PackageInstaller = struct {
     skip_delete: bool,
     force_install: bool,
     root_node_modules_folder: std.fs.Dir,
+    /// .venv/lib/python{version}/site-packages/ directory for Python packages
+    site_packages_folder: ?std.fs.Dir,
     summary: *PackageInstall.Summary,
     options: *const PackageManager.Options,
     metas: []const Lockfile.Package.Meta,
@@ -942,6 +944,10 @@ pub const PackageInstaller = struct {
                     installer.cache_dir = directory;
                 }
             },
+            .pypi => {
+                installer.cache_dir_subpath = this.manager.cachedTarballFolderName(resolution.value.pypi.url, patch_contents_hash);
+                installer.cache_dir = this.manager.getCacheDirectory();
+            },
             else => {
                 if (comptime Environment.allow_assert) {
                     @panic("Internal assertion failure: unexpected resolution tag");
@@ -1110,6 +1116,13 @@ pub const PackageInstaller = struct {
 
             const install_result: PackageInstall.Result = switch (resolution.tag) {
                 .symlink, .workspace => installer.installFromLink(this.skip_delete, destination_dir),
+                .pypi => result: {
+                    // Python packages are installed to .venv/lib/python{version}/site-packages/
+                    const site_packages = this.site_packages_folder orelse {
+                        break :result .fail(error.FileNotFound, .opening_cache_dir, null);
+                    };
+                    break :result installer.installPythonPackage(site_packages, installer.getInstallMethod());
+                },
                 else => result: {
                     if (resolution.tag == .root or (resolution.tag == .folder and !this.lockfile.isWorkspaceTreeId(this.current_tree_id))) {
                         // This is a transitive folder dependency. It is installed with a single symlink to the target folder/file,
@@ -1530,6 +1543,7 @@ const PackageInstall = install.PackageInstall;
 const PackageNameHash = install.PackageNameHash;
 const PatchTask = install.PatchTask;
 const PostinstallOptimizer = install.PostinstallOptimizer;
+const pypi = install.PyPI;
 const Resolution = install.Resolution;
 const Task = install.Task;
 const TaskCallbackContext = install.TaskCallbackContext;

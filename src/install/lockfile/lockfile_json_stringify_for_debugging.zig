@@ -110,6 +110,15 @@ fn jsonStringifyDependency(this: *const Lockfile, w: anytype, dep_id: Dependency
             try w.objectField("version");
             try w.print("\"catalog:{f}\"", .{info.fmtJson(sb, .{ .quote = false })});
         },
+        .pypi => {
+            try w.beginObject();
+            defer w.endObject() catch {};
+
+            const info = dep.version.value.pypi;
+
+            try w.objectField("name");
+            try w.write(info.name.slice(sb));
+        },
     }
 
     try w.objectField("package_id");

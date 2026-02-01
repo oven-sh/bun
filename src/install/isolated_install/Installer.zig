@@ -156,6 +156,7 @@ pub const Installer = struct {
             .root,
             .workspace,
             .symlink,
+            .pypi,
             => {},
 
             _ => {},
@@ -486,6 +487,56 @@ pub const Installer = struct {
                                     continue :next_step this.nextStep(current_step);
                                 },
                             };
+                        },
+
+                        .pypi => {
+                            // Python packages are installed to .venv/lib/python{version}/site-packages/
+                            const cache_dir_subpath = manager.cachedTarballFolderName(pkg_res.value.pypi.url, null);
+
+                            // Create .venv directory structure if it doesn't exist
+                            _ = bun.sys.mkdir(".venv", 0o755);
+                            _ = bun.sys.mkdir(".venv/lib", 0o755);
+                            _ = bun.sys.mkdir(pypi.venv_lib_dir, 0o755);
+                            _ = bun.sys.mkdir(pypi.venv_site_packages, 0o755);
+
+                            const cache_dir, const cache_dir_path = manager.getCacheDirectoryAndAbsPath();
+                            defer cache_dir_path.deinit();
+
+                            // Open the wheel cache directory
+                            const cached_wheel_dir = switch (bun.openDirForIteration(cache_dir, cache_dir_subpath)) {
+                                .result => |fd| fd,
+                                .err => |err| return .failure(.{ .link_package = err }),
+                            };
+                            defer cached_wheel_dir.close();
+
+                            // Build source path (wheel cache directory)
+                            var src_path: bun.AbsPath(.{ .sep = .auto, .unit = .os }) = .fromLongPath(cache_dir_path.slice());
+                            defer src_path.deinit();
+                            src_path.appendJoin(@as([]const u8, cache_dir_subpath));
+
+                            // Destination is site-packages
+                            var dest_path: bun.RelPath(.{ .sep = .auto, .unit = .os }) = .init();
+                            defer dest_path.deinit();
+                            dest_path.append(pypi.venv_site_packages);
+
+                            // Copy entire wheel contents to site-packages
+                            var hardlinker: Hardlinker = try .init(
+                                cached_wheel_dir,
+                                src_path,
+                                dest_path,
+                                &.{},
+                            );
+                            defer hardlinker.deinit();
+
+                            switch (try hardlinker.link()) {
+                                .result => {},
+                                .err => |err| return .failure(.{ .link_package = err }),
+                            }
+
+                            // Python packages don't need symlinks, binaries, or scripts - skip to done
+                            // Set the step to .done since we're skipping directly to it
+                            this.installer.store.entries.items(.step)[this.entry_id.get()].store(.done, .release);
+                            continue :next_step .done;
                         },
 
                         .folder, .root => {
@@ -883,6 +934,7 @@ pub const Installer = struct {
                         .folder,
                         .symlink,
                         .single_file_module,
+                        .pypi,
                         => {},
 
                         _ => {},
@@ -1612,6 +1664,7 @@ const PackageInstall = install.PackageInstall;
 const PackageManager = install.PackageManager;
 const PackageNameHash = install.PackageNameHash;
 const PostinstallOptimizer = install.PostinstallOptimizer;
+const pypi = @import("../pypi.zig");
 const Resolution = install.Resolution;
 const Store = install.Store;
 const TruncatedPackageNameHash = install.TruncatedPackageNameHash;

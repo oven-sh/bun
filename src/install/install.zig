@@ -141,6 +141,7 @@ pub const Features = struct {
     trusted_dependencies: bool = false,
     workspaces: bool = false,
     patched_dependencies: bool = false,
+    python_dependencies: bool = false,
 
     check_for_duplicate_dependencies: bool = false,
 
@@ -162,6 +163,7 @@ pub const Features = struct {
         .trusted_dependencies = true,
         .patched_dependencies = true,
         .workspaces = true,
+        .python_dependencies = true,
     };
 
     pub const folder = Features{
@@ -243,6 +245,8 @@ pub const PackageManifestError = error{
 pub const ExtractTarball = @import("./extract_tarball.zig");
 pub const NetworkTask = @import("./NetworkTask.zig");
 pub const Npm = @import("./npm.zig");
+pub const Pep440 = @import("./pep440.zig");
+pub const PyPI = @import("./pypi.zig");
 pub const PackageManager = @import("./PackageManager.zig");
 pub const PackageManifestMap = @import("./PackageManifestMap.zig");
 pub const Task = @import("./PackageManagerTask.zig");

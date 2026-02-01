@@ -40,6 +40,7 @@
 #include "JSCommonJSExtensions.h"
 
 #include "BunProcess.h"
+#include "BunPython.h"
 
 namespace Bun {
 using namespace JSC;
@@ -65,6 +66,7 @@ public:
 };
 
 extern "C" BunLoaderType Bun__getDefaultLoader(JSC::JSGlobalObject*, BunString* specifier);
+extern "C" JSC::EncodedJSValue BunObject_getter_main(JSC::JSGlobalObject*);
 
 static JSC::JSInternalPromise* rejectedInternalPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
 {
@@ -977,6 +979,15 @@ static JSValue fetchESMSourceCode(
             auto&& provider = Zig::SourceProvider::create(globalObject, res->result.value, JSC::SourceProviderSourceType::Module, true);
             RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, JSC::SourceCode(provider))));
         }
+        case SyntheticModuleType::PythonBuiltin: {
+            // Python builtin module - import from Python's standard library
+            WTF::String moduleName = res->result.value.source_code.toWTFString(BunString::NonNull);
+            auto function = Python::generatePythonBuiltinModuleSourceCode(globalObject, moduleName);
+            auto source = JSC::SourceCode(
+                JSC::SyntheticSourceProvider::create(WTF::move(function),
+                    JSC::SourceOrigin(), WTF::move(moduleKey)));
+            RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, WTF::move(source))));
+        }
 
 #define CASE(str, name)                                                                                                                              \
     case (SyntheticModuleType::name): {                                                                                                              \
@@ -1102,6 +1113,21 @@ static JSValue fetchESMSourceCode(
             JSC::SyntheticSourceProvider::create(WTF::move(function),
                 JSC::SourceOrigin(), specifier->toWTFString(BunString::ZeroCopy)));
         JSC::ensureStillAliveHere(value);
+        RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(globalObject->vm(), WTF::move(source))));
+    } else if (res->result.value.tag == SyntheticModuleType::Python) {
+        // Python module - run Python file and wrap exports as JSPyObject
+        WTF::String filePath = res->result.value.source_code.toWTFString(BunString::NonNull);
+        // Check if this is the main entry point by comparing against Bun.main
+        bool isMainEntry = false;
+        JSValue mainValue = JSValue::decode(BunObject_getter_main(globalObject));
+        if (mainValue.isString()) {
+            WTF::String mainPath = mainValue.toWTFString(globalObject);
+            isMainEntry = (filePath == mainPath);
+        }
+        auto function = Python::generatePythonModuleSourceCode(globalObject, filePath, isMainEntry);
+        auto source = JSC::SourceCode(
+            JSC::SyntheticSourceProvider::create(WTF::move(function),
+                JSC::SourceOrigin(), specifier->toWTFString(BunString::ZeroCopy)));
         RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(globalObject->vm(), WTF::move(source))));
     }
 

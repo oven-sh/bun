@@ -58,6 +58,7 @@ pub fn trackResolutionFailure(store: *DirectoryWatchStore, import_source: []cons
         .sqlite,
         .sqlite_embedded,
         .md,
+        .py,
         => bun.debugAssert(false),
     }
 

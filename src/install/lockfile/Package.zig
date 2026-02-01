@@ -55,6 +55,7 @@ pub fn Package(comptime SemverIntType: type) type {
             pub const optional = DependencyGroup{ .prop = "optionalDependencies", .field = "optional_dependencies", .behavior = .{ .optional = true } };
             pub const peer = DependencyGroup{ .prop = "peerDependencies", .field = "peer_dependencies", .behavior = .{ .peer = true } };
             pub const workspaces = DependencyGroup{ .prop = "workspaces", .field = "workspaces", .behavior = .{ .workspace = true } };
+            pub const python = DependencyGroup{ .prop = "pythonDependencies", .field = "python_dependencies", .behavior = .{ .python = true } };
         };
 
         pub inline fn isDisabled(this: *const @This(), cpu: Npm.Architecture, os: Npm.OperatingSystem) bool {
@@ -998,9 +999,12 @@ pub fn Package(comptime SemverIntType: type) type {
             key_loc: logger.Loc,
             value_loc: logger.Loc,
         ) !?Dependency {
+            // For python dependencies, always use .pypi tag
+            const effective_tag: ?Dependency.Version.Tag = comptime if (group.behavior.python) .pypi else tag;
+
             const external_version = brk: {
                 if (comptime Environment.isWindows) {
-                    switch (tag orelse Dependency.Version.Tag.infer(version)) {
+                    switch (effective_tag orelse Dependency.Version.Tag.infer(version)) {
                         .workspace, .folder, .symlink, .tarball => {
                             if (String.canInline(version)) {
                                 var copy = string_builder.append(String, version);
@@ -1028,7 +1032,7 @@ pub fn Package(comptime SemverIntType: type) type {
                 external_alias.value,
                 external_alias.hash,
                 sliced.slice,
-                tag,
+                effective_tag,
                 &sliced,
                 log,
                 pm,
@@ -1062,12 +1066,12 @@ pub fn Package(comptime SemverIntType: type) type {
 
             var workspace_path: ?String = null;
             var workspace_version = workspace_ver;
-            if (comptime tag == null) {
+            if (comptime effective_tag == null) {
                 workspace_path = lockfile.workspace_paths.get(name_hash);
                 workspace_version = lockfile.workspace_versions.get(name_hash);
             }
 
-            if (comptime tag != null) {
+            if (comptime effective_tag != null) {
                 bun.assert(dependency_version.tag != .npm and dependency_version.tag != .dist_tag);
             }
 
@@ -1378,7 +1382,8 @@ pub fn Package(comptime SemverIntType: type) type {
                         @as(usize, @intFromBool(features.dependencies)) +
                         @as(usize, @intFromBool(features.dev_dependencies)) +
                         @as(usize, @intFromBool(features.optional_dependencies)) +
-                        @as(usize, @intFromBool(features.peer_dependencies))
+                        @as(usize, @intFromBool(features.peer_dependencies)) +
+                        @as(usize, @intFromBool(features.python_dependencies))
                 ]DependencyGroup = undefined;
                 var out_group_i: usize = 0;
 
@@ -1403,6 +1408,11 @@ pub fn Package(comptime SemverIntType: type) type {
 
                 if (features.peer_dependencies) {
                     out_groups[out_group_i] = DependencyGroup.peer;
+                    out_group_i += 1;
+                }
+
+                if (features.python_dependencies) {
+                    out_groups[out_group_i] = DependencyGroup.python;
                     out_group_i += 1;
                 }
 
@@ -2145,6 +2155,7 @@ pub fn Package(comptime SemverIntType: type) type {
                                 .workspace => .init(.{ .workspace = old.resolution.value.workspace }),
                                 .remote_tarball => .init(.{ .remote_tarball = old.resolution.value.remote_tarball }),
                                 .single_file_module => .init(.{ .single_file_module = old.resolution.value.single_file_module }),
+                                .pypi => .init(.{ .pypi = old.resolution.value.pypi.migrate() }),
                                 else => .init(.{ .uninitialized = {} }),
                             },
                         };

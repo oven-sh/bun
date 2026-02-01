@@ -141,7 +141,22 @@ fn parseWithError(
 
         var value = input;
         var alias: ?string = null;
-        if (!Dependency.isTarball(input) and strings.isNPMPackageName(input)) {
+        var is_pypi = false;
+
+        // Check for pypi: prefix first - extract name and version
+        if (strings.hasPrefixComptime(input, "pypi:")) {
+            is_pypi = true;
+            const after_prefix = input["pypi:".len..];
+            // Find @ separator between package name and version
+            if (strings.indexOfChar(after_prefix, '@')) |at| {
+                alias = after_prefix[0..at]; // "cowsay"
+                value = after_prefix[at + 1 ..]; // "^6.1"
+            } else {
+                // No version specified, just package name
+                alias = after_prefix;
+                value = input[input.len..]; // Empty slice at end of input (must be within input for SlicedString)
+            }
+        } else if (!Dependency.isTarball(input) and strings.isNPMPackageName(input)) {
             alias = input;
             value = input[input.len..];
         } else if (input.len > 1) {
@@ -160,7 +175,7 @@ fn parseWithError(
             if (alias) |name| String.init(input, name) else placeholder,
             if (alias) |name| String.Builder.stringHash(name) else null,
             value,
-            null,
+            if (is_pypi) .pypi else null,
             &SlicedString.init(input, value),
             log,
             pm,
@@ -214,7 +229,14 @@ fn parseWithError(
             .version = version,
             .version_buf = input,
         };
-        if (alias) |name| {
+        if (version.tag == .pypi) {
+            // For pypi packages, get the name from the parsed version
+            const pypi_name = version.value.pypi.name.slice(input);
+            // Set is_aliased so getName() returns the name, not the literal
+            request.is_aliased = true;
+            request.name = allocator.dupe(u8, pypi_name) catch unreachable;
+            request.name_hash = String.Builder.stringHash(pypi_name);
+        } else if (alias) |name| {
             request.is_aliased = true;
             request.name = allocator.dupe(u8, name) catch unreachable;
             request.name_hash = String.Builder.stringHash(name);

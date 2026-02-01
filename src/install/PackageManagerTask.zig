@@ -66,6 +66,13 @@ pub const Id = enum(u64) {
         hasher.update(resolved);
         return @enumFromInt(@as(u64, 5 << 61) | @as(u64, @as(u61, @truncate(hasher.final()))));
     }
+
+    pub fn forPyPIManifest(name: string) Id {
+        var hasher = bun.Wyhash11.init(0);
+        hasher.update("pypi-manifest:");
+        hasher.update(name);
+        return @enumFromInt(hasher.final());
+    }
 };
 
 pub fn callback(task: *ThreadPool.Task) void {
@@ -288,6 +295,53 @@ pub fn callback(task: *ThreadPool.Task) void {
             this.data = .{ .extract = result };
             this.status = Status.success;
         },
+        .pypi_manifest => {
+            const allocator = bun.default_allocator;
+            var manifest_req = &this.request.pypi_manifest;
+
+            const body = &manifest_req.network.response_buffer;
+            defer body.deinit();
+
+            // Check for HTTP errors
+            if (manifest_req.network.response.metadata) |metadata| {
+                const status = metadata.response.status_code;
+                if (status >= 400) {
+                    this.log.addErrorFmt(null, logger.Loc.Empty, allocator, "PyPI error: {d} - GET {s}", .{
+                        status,
+                        manifest_req.name.slice(),
+                    }) catch unreachable;
+                    this.status = Status.fail;
+                    this.data = .{ .pypi_manifest = .{} };
+                    return;
+                }
+            }
+
+            // Parse the PyPI JSON response
+            const package_manifest = PyPI.PackageManifest.parse(
+                allocator,
+                &this.log,
+                body.slice(),
+                manifest_req.name.slice(),
+            ) catch |err| {
+                bun.handleErrorReturnTrace(err, @errorReturnTrace());
+
+                this.err = err;
+                this.status = Status.fail;
+                this.data = .{ .pypi_manifest = .{} };
+                return;
+            };
+
+            if (package_manifest) |result| {
+                this.status = Status.success;
+                this.data = .{ .pypi_manifest = result };
+            } else {
+                this.log.addErrorFmt(null, logger.Loc.Empty, allocator, "Failed to parse PyPI manifest for {s}", .{
+                    manifest_req.name.slice(),
+                }) catch unreachable;
+                this.status = Status.fail;
+                this.data = .{ .pypi_manifest = .{} };
+            }
+        },
     }
 }
 
@@ -312,6 +366,7 @@ pub const Tag = enum(u3) {
     git_clone = 2,
     git_checkout = 3,
     local_tarball = 4,
+    pypi_manifest = 5,
 };
 
 pub const Status = enum {
@@ -325,6 +380,7 @@ pub const Data = union {
     extract: ExtractData,
     git_clone: bun.FileDescriptor,
     git_checkout: ExtractData,
+    pypi_manifest: PyPI.PackageManifest,
 };
 
 pub const Request = union {
@@ -357,6 +413,10 @@ pub const Request = union {
     local_tarball: struct {
         tarball: ExtractTarball,
     },
+    pypi_manifest: struct {
+        name: strings.StringOrTinyString,
+        network: *NetworkTask,
+    },
 };
 
 const string = []const u8;
@@ -369,6 +429,7 @@ const ExtractData = install.ExtractData;
 const ExtractTarball = install.ExtractTarball;
 const NetworkTask = install.NetworkTask;
 const Npm = install.Npm;
+const PyPI = install.PyPI;
 const PackageID = install.PackageID;
 const PackageManager = install.PackageManager;
 const PatchTask = install.PatchTask;

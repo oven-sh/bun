@@ -97,6 +97,9 @@ pub fn ResolutionType(comptime SemverIntType: type) type {
                 // should not happen
                 .dist_tag => error.UnexpectedResolution,
                 .uninitialized => error.UnexpectedResolution,
+
+                // TODO: handle PyPI resolutions
+                .pypi => error.UnexpectedResolution,
             };
         }
 
@@ -173,6 +176,7 @@ pub fn ResolutionType(comptime SemverIntType: type) type {
                 .catalog => error.InvalidPnpmLockfile,
                 .dist_tag => error.InvalidPnpmLockfile,
                 .uninitialized => error.InvalidPnpmLockfile,
+                .pypi => error.InvalidPnpmLockfile,
             };
         }
 
@@ -211,6 +215,7 @@ pub fn ResolutionType(comptime SemverIntType: type) type {
                 .single_file_module => builder.count(this.value.single_file_module.slice(buf)),
                 .git => this.value.git.count(buf, Builder, builder),
                 .github => this.value.github.count(buf, Builder, builder),
+                .pypi => this.value.pypi.count(buf, Builder, builder),
                 else => {},
             }
         }
@@ -244,6 +249,9 @@ pub fn ResolutionType(comptime SemverIntType: type) type {
                     .github => Value.init(.{
                         .github = this.value.github.clone(buf, Builder, builder),
                     }),
+                    .pypi => Value.init(.{
+                        .pypi = this.value.pypi.clone(buf, Builder, builder),
+                    }),
                     .root => Value.init(.{ .root = {} }),
                     .uninitialized => Value.init(.{ .uninitialized = {} }),
                     else => {
@@ -264,6 +272,7 @@ pub fn ResolutionType(comptime SemverIntType: type) type {
                 .single_file_module => .init(.{ .single_file_module = this.value.single_file_module }),
                 .git => .init(.{ .git = this.value.git }),
                 .github => .init(.{ .github = this.value.github }),
+                .pypi => .init(.{ .pypi = this.value.pypi }),
                 .root => .init(.{ .root = {} }),
                 .uninitialized => .init(.{ .uninitialized = {} }),
                 else => {
@@ -370,6 +379,7 @@ pub fn ResolutionType(comptime SemverIntType: type) type {
                     lhs_string_buf,
                     rhs_string_buf,
                 ),
+                .pypi => lhs.value.pypi.eql(rhs.value.pypi),
                 else => unreachable,
             };
         }
@@ -419,6 +429,7 @@ pub fn ResolutionType(comptime SemverIntType: type) type {
                         .path_sep = formatter.path_sep,
                     })}),
                     .single_file_module => try writer.print("module:{s}", .{value.single_file_module.slice(buf)}),
+                    .pypi => try value.pypi.version.fmt(buf).format(writer),
                     else => {},
                 }
             }
@@ -442,6 +453,7 @@ pub fn ResolutionType(comptime SemverIntType: type) type {
                     .workspace => try writer.print("workspace:{s}", .{formatter.resolution.value.workspace.slice(formatter.buf)}),
                     .symlink => try writer.print("link:{s}", .{formatter.resolution.value.symlink.slice(formatter.buf)}),
                     .single_file_module => try writer.print("module:{s}", .{formatter.resolution.value.single_file_module.slice(formatter.buf)}),
+                    .pypi => try formatter.resolution.value.pypi.version.fmt(formatter.buf).format(writer),
                     else => try writer.writeAll("{}"),
                 }
                 try writer.writeAll(" }");
@@ -470,6 +482,9 @@ pub fn ResolutionType(comptime SemverIntType: type) type {
 
             /// URL to a tarball.
             remote_tarball: String,
+
+            /// PyPI package with version and wheel URL
+            pypi: VersionedURLType(SemverIntType),
 
             single_file_module: String,
 
@@ -505,6 +520,9 @@ pub fn ResolutionType(comptime SemverIntType: type) type {
 
             remote_tarball = 80,
 
+            /// PyPI package (wheel URL)
+            pypi = 88,
+
             // This is a placeholder for now.
             // But the intent is to eventually support URL imports at the package manager level.
             //
@@ -531,7 +549,7 @@ pub fn ResolutionType(comptime SemverIntType: type) type {
             }
 
             pub fn canEnqueueInstallTask(this: Tag) bool {
-                return this == .npm or this == .local_tarball or this == .remote_tarball or this == .git or this == .github;
+                return this == .npm or this == .local_tarball or this == .remote_tarball or this == .git or this == .github or this == .pypi;
             }
         };
     };

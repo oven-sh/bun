@@ -110,6 +110,7 @@ pub inline fn realname(this: *const Dependency) String {
         .github => this.version.value.github.package_name,
         .npm => this.version.value.npm.name,
         .tarball => this.version.value.tarball.package_name,
+        .pypi => this.version.value.pypi.name,
         else => this.name,
     };
 }
@@ -329,6 +330,9 @@ pub const Version = struct {
                     },
                 }
             },
+            .pypi => {
+                object.put(globalThis, "name", try dep.value.pypi.name.toJS(buf, globalThis));
+            },
             else => {
                 return globalThis.throwTODO("Unsupported dependency type");
             },
@@ -428,6 +432,7 @@ pub const Version = struct {
             .tarball => lhs.value.tarball.eql(rhs.value.tarball, lhs_buf, rhs_buf),
             .symlink => lhs.value.symlink.eql(rhs.value.symlink, lhs_buf, rhs_buf),
             .workspace => lhs.value.workspace.eql(rhs.value.workspace, lhs_buf, rhs_buf),
+            .pypi => lhs.value.pypi.eql(rhs.value.pypi, lhs_buf, rhs_buf),
             else => true,
         };
     }
@@ -463,6 +468,9 @@ pub const Version = struct {
 
         catalog = 9,
 
+        /// PyPI package (Python Package Index)
+        pypi = 10,
+
         pub const map = bun.ComptimeStringMap(Tag, .{
             .{ "npm", .npm },
             .{ "dist_tag", .dist_tag },
@@ -473,6 +481,7 @@ pub const Version = struct {
             .{ "git", .git },
             .{ "github", .github },
             .{ "catalog", .catalog },
+            .{ "pypi", .pypi },
         });
         pub const fromJS = map.fromJS;
 
@@ -741,6 +750,8 @@ pub const Version = struct {
                     // TODO(dylan-conway): apply .patch files on packages. In the future this could
                     // return `Tag.git` or `Tag.npm`.
                     if (strings.hasPrefixComptime(dependency, "patch:")) return .npm;
+                    // pypi:package@version - Python package from PyPI
+                    if (strings.hasPrefixComptime(dependency, "pypi:")) return .pypi;
                 },
                 else => {},
             }
@@ -818,6 +829,16 @@ pub const Version = struct {
         }
     };
 
+    /// PyPI package information (Python Package Index)
+    pub const PypiInfo = struct {
+        /// Package name (normalized for PyPI lookups)
+        name: String,
+
+        fn eql(this: PypiInfo, that: PypiInfo, this_buf: []const u8, that_buf: []const u8) bool {
+            return this.name.eql(that.name, this_buf, that_buf);
+        }
+    };
+
     pub const Value = union {
         uninitialized: void,
 
@@ -836,6 +857,9 @@ pub const Version = struct {
         // dep version without 'catalog:' protocol
         // empty string == default catalog
         catalog: String,
+
+        /// PyPI package
+        pypi: PypiInfo,
     };
 };
 
@@ -1250,6 +1274,15 @@ pub fn parseWithTag(
                 .literal = sliced.value(),
             };
         },
+        .pypi => {
+            // For PyPI dependencies, the name comes from the alias (dependency key)
+            // and the version specifier is in the dependency string
+            return .{
+                .value = .{ .pypi = .{ .name = alias } },
+                .tag = .pypi,
+                .literal = sliced.value(),
+            };
+        },
     }
 }
 
@@ -1311,7 +1344,8 @@ pub fn fromJS(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
 }
 
 pub const Behavior = packed struct(u8) {
-    _unused_1: u1 = 0,
+    /// Python dependency from pythonDependencies
+    python: bool = false,
     prod: bool = false,
     optional: bool = false,
     dev: bool = false,
@@ -1347,6 +1381,10 @@ pub const Behavior = packed struct(u8) {
 
     pub inline fn isBundled(this: Behavior) bool {
         return this.bundled;
+    }
+
+    pub inline fn isPython(this: Behavior) bool {
+        return this.python;
     }
 
     pub inline fn eq(lhs: Behavior, rhs: Behavior) bool {
@@ -1422,7 +1460,8 @@ pub const Behavior = packed struct(u8) {
             (features.optional_dependencies and this.isOptional()) or
             (features.dev_dependencies and this.isDev()) or
             (features.peer_dependencies and this.isPeer()) or
-            (features.workspaces and this.isWorkspace());
+            (features.workspaces and this.isWorkspace()) or
+            (features.python_dependencies and this.isPython());
     }
 
     comptime {

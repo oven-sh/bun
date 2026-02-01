@@ -137,7 +137,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
             // if we're removing, they don't have to specify where it is installed in the dependencies list
             // they can even put it multiple times and we will just remove all of them
             for (updates.*) |request| {
-                inline for ([_]string{ "dependencies", "devDependencies", "optionalDependencies", "peerDependencies" }) |list| {
+                inline for ([_]string{ "dependencies", "devDependencies", "optionalDependencies", "peerDependencies", "pythonDependencies" }) |list| {
                     if (current_package_json.root.asProperty(list)) |query| {
                         if (query.expr.data == .e_object) {
                             var dependencies = query.expr.data.e_object.properties.slice();
@@ -186,16 +186,47 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
             // update will not exceed the current dependency range if it exists
 
             if (updates.len != 0) {
-                try PackageJSONEditor.edit(
-                    manager,
-                    updates,
-                    &current_package_json.root,
-                    dependency_list,
-                    .{
-                        .exact_versions = manager.options.enable.exact_versions,
-                        .before_install = true,
-                    },
-                );
+                // Separate pypi packages from npm packages
+                var npm_updates = UpdateRequest.Array{};
+                var pypi_updates = UpdateRequest.Array{};
+
+                for (updates.*) |update| {
+                    if (update.version.tag == .pypi) {
+                        pypi_updates.append(manager.allocator, update) catch bun.outOfMemory();
+                    } else {
+                        npm_updates.append(manager.allocator, update) catch bun.outOfMemory();
+                    }
+                }
+
+                // Edit npm packages in the appropriate dependency list
+                if (npm_updates.items.len > 0) {
+                    var npm_slice = npm_updates.items;
+                    try PackageJSONEditor.edit(
+                        manager,
+                        &npm_slice,
+                        &current_package_json.root,
+                        dependency_list,
+                        .{
+                            .exact_versions = manager.options.enable.exact_versions,
+                            .before_install = true,
+                        },
+                    );
+                }
+
+                // Edit pypi packages in pythonDependencies
+                if (pypi_updates.items.len > 0) {
+                    var pypi_slice = pypi_updates.items;
+                    try PackageJSONEditor.edit(
+                        manager,
+                        &pypi_slice,
+                        &current_package_json.root,
+                        "pythonDependencies",
+                        .{
+                            .exact_versions = manager.options.enable.exact_versions,
+                            .before_install = true,
+                        },
+                    );
+                }
             } else if (subcommand == .update) {
                 try PackageJSONEditor.editUpdateNoArgs(
                     manager,

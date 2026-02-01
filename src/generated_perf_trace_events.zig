@@ -49,6 +49,7 @@ pub const PerfEvent = enum(i32) {
     @"JSPrinter.printWithSourceMap",
     @"ModuleResolver.resolve",
     @"PackageInstaller.install",
+    @"PackageInstaller.installPythonPackage",
     @"PackageManifest.Serializer.loadByFile",
     @"PackageManifest.Serializer.save",
     @"RuntimeTranspilerCache.fromFile",

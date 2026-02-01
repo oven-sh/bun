@@ -81,6 +81,17 @@ pub fn installHoistedPackages(
         skip_delete = false;
     }
 
+    // Create .venv/lib/python{version}/site-packages/ for Python packages
+    const site_packages_folder: ?std.fs.Dir = brk: {
+        // Create directory structure using version from pypi constants
+        bun.sys.mkdir(".venv", 0o755).unwrap() catch {};
+        bun.sys.mkdir(".venv/lib", 0o755).unwrap() catch {};
+        bun.sys.mkdir(pypi.venv_lib_dir, 0o755).unwrap() catch {};
+        bun.sys.mkdir(pypi.venv_site_packages, 0o755).unwrap() catch {};
+
+        break :brk bun.openDir(cwd.stdDir(), pypi.venv_site_packages) catch null;
+    };
+
     var summary = PackageInstall.Summary{};
 
     {
@@ -147,6 +158,7 @@ pub fn installHoistedPackages(
                 .metas = parts.items(.meta),
                 .bins = parts.items(.bin),
                 .root_node_modules_folder = node_modules_folder,
+                .site_packages_folder = site_packages_folder,
                 .names = parts.items(.name),
                 .pkg_name_hashes = parts.items(.name_hash),
                 .resolutions = parts.items(.resolution),
@@ -371,6 +383,7 @@ const Bin = install.Bin;
 const Lockfile = install.Lockfile;
 const PackageID = install.PackageID;
 const PackageInstall = install.PackageInstall;
+const pypi = @import("pypi.zig");
 
 const PackageManager = install.PackageManager;
 const ProgressStrings = PackageManager.ProgressStrings;

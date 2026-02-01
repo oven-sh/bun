@@ -1808,6 +1808,12 @@ pub fn resolveMaybeNeedsTrailingSlash(
         return;
     }
 
+    // Handle any python: prefixed module (allows submodule imports like python:matplotlib.pyplot)
+    if (bun.strings.hasPrefixComptime(specifier_utf8.slice(), "python:")) {
+        res.* = ErrorableString.ok(specifier);
+        return;
+    }
+
     const old_log = jsc_vm.log;
     // the logger can end up being called on another thread, it must not use threadlocal Heap Allocator
     var log = logger.Log.init(bun.default_allocator);
@@ -1821,6 +1827,58 @@ pub fn resolveMaybeNeedsTrailingSlash(
         jsc_vm.transpiler.resolver.log = old_log;
     }
     jsc_vm._resolve(&result, specifier_utf8.slice(), normalizeSource(source_utf8.slice()), is_esm, is_a_file_path) catch |err_| {
+        // Check if this is a Python package in .venv (fallback after node_modules)
+        // Only check for bare specifiers (not paths)
+        const spec_slice = specifier_utf8.slice();
+        if (spec_slice.len > 0 and spec_slice[0] != '.' and spec_slice[0] != '/') {
+            // Handle submodule imports like "matplotlib/pyplot" -> "python:matplotlib.pyplot"
+            // Extract the base package name (before any /)
+            const slash_idx = bun.strings.indexOfChar(spec_slice, '/');
+            const base_package = if (slash_idx) |idx| spec_slice[0..idx] else spec_slice;
+
+            // Check if package exists in .venv/lib/python{version}/site-packages/
+            // Normalize package name: Python uses underscores in module names, pip uses hyphens
+            var normalized_name_buf: [256]u8 = undefined;
+            var normalized_name = normalized_name_buf[0..@min(base_package.len, normalized_name_buf.len)];
+            for (base_package, 0..) |c, i| {
+                if (i >= normalized_name.len) break;
+                normalized_name[i] = if (c == '-') '_' else c;
+            }
+
+            var path_buf: bun.PathBuffer = undefined;
+            if (std.fmt.bufPrint(&path_buf, pypi.venv_site_packages ++ "/{s}", .{normalized_name})) |venv_path| {
+                // Check if directory exists (Python package directory)
+                const is_dir = bun.sys.directoryExistsAt(bun.FD.cwd(), venv_path).unwrap() catch false;
+
+                // Also check for single-file packages like typing_extensions.py, six.py
+                var py_path_buf: bun.PathBuffer = undefined;
+                const py_path = std.fmt.bufPrint(&py_path_buf, pypi.venv_site_packages ++ "/{s}.py", .{normalized_name}) catch null;
+                const is_py_file = if (py_path) |p| brk: {
+                    break :brk switch (bun.sys.existsAtType(bun.FD.cwd(), p)) {
+                        .result => |t| t == .file,
+                        .err => false,
+                    };
+                } else false;
+
+                if (is_dir or is_py_file) {
+                    // Add python: prefix so fetchBuiltinModule handles it
+                    // Normalize hyphens to underscores for Python module names
+                    // Keep slashes - BunPython.cpp will convert them to dots
+                    var module_buf: [512]u8 = undefined;
+                    var module_name = std.ArrayList(u8).initBuffer(&module_buf);
+                    module_name.appendSliceAssumeCapacity("python:");
+
+                    // Append normalized spec_slice (hyphens -> underscores)
+                    for (spec_slice) |c| {
+                        module_name.appendAssumeCapacity(if (c == '-') '_' else c);
+                    }
+
+                    res.* = ErrorableString.ok(bun.String.createAtomASCII(module_name.items));
+                    return;
+                }
+            } else |_| {}
+        }
+
         var err = err_;
         const msg: logger.Msg = brk: {
             const msgs: []logger.Msg = log.msgs.items;
@@ -3784,3 +3842,5 @@ const ServerEntryPoint = bun.transpiler.EntryPoints.ServerEntryPoint;
 
 const webcore = bun.webcore;
 const Body = webcore.Body;
+
+const pypi = @import("../install/pypi.zig");

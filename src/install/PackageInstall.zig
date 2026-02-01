@@ -1463,6 +1463,157 @@ pub const PackageInstall = struct {
         // TODO: linux io_uring
         return this.installWithCopyfile(destination_dir);
     }
+
+    /// Install a Python package from a wheel cache to site-packages.
+    /// Unlike npm packages, wheel contents (package dirs + dist-info) are copied directly
+    /// to site-packages, not wrapped in a subdirectory.
+    pub fn installPythonPackage(this: *@This(), site_packages_dir: std.fs.Dir, method_: Method) Result {
+        const tracer = bun.perf.trace("PackageInstaller.installPythonPackage");
+        defer tracer.end();
+
+        // Open the cache directory containing the extracted wheel
+        var cached_wheel_dir = bun.openDir(this.cache_dir, this.cache_dir_subpath) catch |err| {
+            return Result.fail(err, .opening_cache_dir, @errorReturnTrace());
+        };
+        defer cached_wheel_dir.close();
+
+        // Save original values
+        const original_cache_dir = this.cache_dir;
+        const original_cache_subpath = this.cache_dir_subpath;
+        const original_dest_subpath = this.destination_dir_subpath;
+        defer {
+            this.cache_dir = original_cache_dir;
+            this.cache_dir_subpath = original_cache_subpath;
+            this.destination_dir_subpath = original_dest_subpath;
+        }
+
+        // Set cache_dir to the wheel directory
+        this.cache_dir = cached_wheel_dir;
+
+        // Iterate through all entries in the wheel cache and copy each entry
+        var iter = cached_wheel_dir.iterate();
+        while (iter.next() catch |err| {
+            return Result.fail(err, .opening_cache_dir, @errorReturnTrace());
+        }) |entry| {
+            if (entry.kind == .directory) {
+                // Build null-terminated subdir name for both source and dest
+                if (entry.name.len >= this.destination_dir_subpath_buf.len) continue;
+                @memcpy(this.destination_dir_subpath_buf[0..entry.name.len], entry.name);
+                this.destination_dir_subpath_buf[entry.name.len] = 0;
+                const subdir_name_z: [:0]u8 = this.destination_dir_subpath_buf[0..entry.name.len :0];
+
+                // Set paths to point to this subdirectory
+                this.cache_dir_subpath = subdir_name_z;
+                this.destination_dir_subpath = subdir_name_z;
+
+                // Use the existing install method which handles clonefile/hardlink/copy fallback
+                const result = this.install(false, site_packages_dir, method_, .pypi);
+                if (result != .success) {
+                    return result;
+                }
+            } else if (entry.kind == .file) {
+                // Copy individual files at the wheel root (e.g., typing_extensions.py, six.py)
+                // Build null-terminated filename
+                if (entry.name.len >= this.destination_dir_subpath_buf.len) continue;
+                @memcpy(this.destination_dir_subpath_buf[0..entry.name.len], entry.name);
+                this.destination_dir_subpath_buf[entry.name.len] = 0;
+                const filename_z: [:0]const u8 = this.destination_dir_subpath_buf[0..entry.name.len :0];
+
+                // Copy the file from cache to site-packages
+                if (comptime Environment.isMac) {
+                    // Try clonefile first, then fall back to fcopyfile
+                    switch (bun.c.clonefileat(
+                        cached_wheel_dir.fd,
+                        filename_z,
+                        site_packages_dir.fd,
+                        filename_z,
+                        0,
+                    )) {
+                        0 => continue,
+                        else => |errno| switch (std.posix.errno(errno)) {
+                            .EXIST => continue,
+                            else => {
+                                // Fall back to fcopyfile
+                                var in_file = bun.sys.openat(.fromStdDir(cached_wheel_dir), filename_z, bun.O.RDONLY, 0).unwrap() catch |open_err| {
+                                    return Result.fail(open_err, .copyfile, @errorReturnTrace());
+                                };
+                                defer in_file.close();
+
+                                var out_file = site_packages_dir.createFile(entry.name, .{}) catch |create_err| {
+                                    return Result.fail(create_err, .copyfile, @errorReturnTrace());
+                                };
+                                defer out_file.close();
+
+                                switch (bun.sys.fcopyfile(in_file, .fromStdFile(out_file), std.posix.system.COPYFILE{ .DATA = true })) {
+                                    .result => continue,
+                                    .err => |copy_err| switch (copy_err.getErrno()) {
+                                        .EXIST => continue,
+                                        else => return Result.fail(copy_err.toZigErr(), .copyfile, @errorReturnTrace()),
+                                    },
+                                }
+                            },
+                        },
+                    }
+                } else if (comptime Environment.isLinux) {
+                    // Try hardlink first, then fall back to copy
+                    switch (bun.sys.linkat(
+                        .fromStdDir(cached_wheel_dir),
+                        filename_z,
+                        .fromStdDir(site_packages_dir),
+                        filename_z,
+                    )) {
+                        .result => continue,
+                        .err => |err| switch (err.getErrno()) {
+                            .EXIST => continue,
+                            else => {
+                                // Fall back to copy
+                                var in_file = bun.sys.openat(.fromStdDir(cached_wheel_dir), filename_z, bun.O.RDONLY, 0).unwrap() catch |open_err| {
+                                    return Result.fail(open_err, .copyfile, @errorReturnTrace());
+                                };
+                                defer in_file.close();
+
+                                var out_file = site_packages_dir.createFile(entry.name, .{}) catch |create_err| {
+                                    return Result.fail(create_err, .copyfile, @errorReturnTrace());
+                                };
+                                defer out_file.close();
+
+                                var copy_state: bun.CopyFileState = .{};
+                                bun.copyFileWithState(in_file, .fromStdFile(out_file), &copy_state).unwrap() catch |copy_err| {
+                                    return Result.fail(copy_err, .copyfile, @errorReturnTrace());
+                                };
+                            },
+                        },
+                    }
+                } else if (comptime Environment.isWindows) {
+                    // Use Windows CopyFileW
+                    var src_buf: bun.WPathBuffer = undefined;
+                    var dst_buf: bun.WPathBuffer = undefined;
+
+                    const src_path = bun.strings.toWPathNormalized(&src_buf, filename_z);
+                    const dst_path = bun.strings.toWPathNormalized(&dst_buf, filename_z);
+
+                    src_buf[src_path.len] = 0;
+                    dst_buf[dst_path.len] = 0;
+
+                    if (bun.windows.CopyFileExW(
+                        src_buf[0..src_path.len :0].ptr,
+                        dst_buf[0..dst_path.len :0].ptr,
+                        null,
+                        null,
+                        null,
+                        0,
+                    ) == 0) {
+                        const win_err = bun.windows.Win32Error.get();
+                        if (win_err != .ERROR_FILE_EXISTS) {
+                            return Result.fail(win_err.toSystemErrno().?.toZigErr(), .copyfile, @errorReturnTrace());
+                        }
+                    }
+                }
+            }
+        }
+
+        return .success;
+    }
 };
 
 const string = []const u8;

@@ -50,14 +50,15 @@
   macro(JSPrinter.printWithSourceMap, 46) \
   macro(ModuleResolver.resolve, 47) \
   macro(PackageInstaller.install, 48) \
-  macro(PackageManifest.Serializer.loadByFile, 49) \
-  macro(PackageManifest.Serializer.save, 50) \
-  macro(RuntimeTranspilerCache.fromFile, 51) \
-  macro(RuntimeTranspilerCache.save, 52) \
-  macro(RuntimeTranspilerCache.toFile, 53) \
-  macro(StandaloneModuleGraph.serialize, 54) \
-  macro(Symbols.followAll, 55) \
-  macro(TestCommand.printCodeCoverageLCov, 56) \
-  macro(TestCommand.printCodeCoverageLCovAndText, 57) \
-  macro(TestCommand.printCodeCoverageText, 58) \
+  macro(PackageInstaller.installPythonPackage, 49) \
+  macro(PackageManifest.Serializer.loadByFile, 50) \
+  macro(PackageManifest.Serializer.save, 51) \
+  macro(RuntimeTranspilerCache.fromFile, 52) \
+  macro(RuntimeTranspilerCache.save, 53) \
+  macro(RuntimeTranspilerCache.toFile, 54) \
+  macro(StandaloneModuleGraph.serialize, 55) \
+  macro(Symbols.followAll, 56) \
+  macro(TestCommand.printCodeCoverageLCov, 57) \
+  macro(TestCommand.printCodeCoverageLCovAndText, 58) \
+  macro(TestCommand.printCodeCoverageText, 59) \
   // end

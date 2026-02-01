@@ -406,7 +406,7 @@ pub const Stringifier = struct {
 
                     const res = pkg_resolutions[pkg_id];
                     switch (res.tag) {
-                        .root, .npm, .folder, .local_tarball, .github, .git, .symlink, .workspace, .remote_tarball => {},
+                        .root, .npm, .folder, .local_tarball, .github, .git, .symlink, .workspace, .remote_tarball, .pypi => {},
                         .uninitialized => continue,
                         // should not be possible, just being safe
                         .single_file_module => continue,
@@ -647,6 +647,35 @@ pub const Stringifier = struct {
                             try writer.print(", {f}]", .{
                                 repo.resolved.fmtJson(buf, .{}),
                             });
+                        },
+                        .pypi => {
+                            // Format: ["name@version", "wheel_url", { info }]
+                            try writer.print("[\"{f}@{f}\", ", .{
+                                pkg_name.fmtJson(buf, .{ .quote = false }),
+                                res.value.pypi.version.fmt(buf),
+                            });
+
+                            // Write the wheel URL
+                            try writer.print("\"{s}\", ", .{
+                                res.value.pypi.url.slice(buf),
+                            });
+
+                            try writePackageInfoObject(
+                                writer,
+                                dep.behavior,
+                                deps_buf,
+                                pkg_deps_sort_buf.items,
+                                &pkg_meta,
+                                &pkg_bin,
+                                buf,
+                                &optional_peers_buf,
+                                extern_strings,
+                                &pkg_map,
+                                relative_path,
+                                &path_buf,
+                            );
+
+                            try writer.writeByte(']');
                         },
                         else => unreachable,
                     }

@@ -954,5 +954,6 @@ public:
 
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSConnectionsList;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSHTTPParser;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPyObject;
 };
 } // namespace WebCore

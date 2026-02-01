@@ -22,11 +22,13 @@ dry_run: bool = false,
 link_workspace_packages: bool = true,
 remote_package_features: Features = .{
     .optional_dependencies = true,
+    .python_dependencies = true,
 },
 local_package_features: Features = .{
     .optional_dependencies = true,
     .dev_dependencies = true,
     .workspaces = true,
+    .python_dependencies = true,
 },
 patch_features: union(enum) {
     nothing: struct {},

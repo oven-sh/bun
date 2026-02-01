@@ -116,6 +116,7 @@ pub fn determinePreinstallState(
                 .npm => manager.cachedNPMPackageFolderName(lockfile.str(&pkg.name), pkg.resolution.value.npm.version, patch_hash),
                 .local_tarball => manager.cachedTarballFolderName(pkg.resolution.value.local_tarball, patch_hash),
                 .remote_tarball => manager.cachedTarballFolderName(pkg.resolution.value.remote_tarball, patch_hash),
+                .pypi => manager.cachedTarballFolderName(pkg.resolution.value.pypi.url, patch_hash),
                 else => "",
             };
 

@@ -32,32 +32,37 @@ pub const BufferReadStream = struct {
         _ = this.archive.readFree();
     }
 
+    pub const Format = enum {
+        tar_gzip,
+        zip,
+    };
+
     pub fn openRead(this: *BufferReadStream) Archive.Result {
-        // lib.archive_read_set_open_callback(this.archive, this.);
-        // _ = lib.archive_read_set_read_callback(this.archive, archive_read_callback);
-        // _ = lib.archive_read_set_seek_callback(this.archive, archive_seek_callback);
-        // _ = lib.archive_read_set_skip_callback(this.archive, archive_skip_callback);
-        // _ = lib.archive_read_set_close_callback(this.archive, archive_close_callback);
-        // // lib.archive_read_set_switch_callback(this.archive, this.archive_s);
-        // _ = lib.archive_read_set_callback_data(this.archive, this);
+        return this.openReadWithFormat(.tar_gzip);
+    }
 
-        _ = this.archive.readSupportFormatTar();
-        _ = this.archive.readSupportFormatGnutar();
-        _ = this.archive.readSupportFilterGzip();
+    pub fn openReadWithFormat(this: *BufferReadStream, format: Format) Archive.Result {
+        switch (format) {
+            .tar_gzip => {
+                _ = this.archive.readSupportFormatTar();
+                _ = this.archive.readSupportFormatGnutar();
+                _ = this.archive.readSupportFilterGzip();
 
-        // Ignore zeroed blocks in the archive, which occurs when multiple tar archives
-        // have been concatenated together.
-        // Without this option, only the contents of
-        // the first concatenated archive would be read.
-        _ = this.archive.readSetOptions("read_concatenated_archives");
-
-        // _ = lib.archive_read_support_filter_none(this.archive);
+                // Ignore zeroed blocks in the archive, which occurs when multiple tar archives
+                // have been concatenated together.
+                // Without this option, only the contents of
+                // the first concatenated archive would be read.
+                _ = this.archive.readSetOptions("read_concatenated_archives");
+            },
+            .zip => {
+                _ = this.archive.readSupportFormatZip();
+                _ = this.archive.readSupportFilterNone();
+            },
+        }
 
         const rc = this.archive.readOpenMemory(this.buf);
 
         this.reading = @intFromEnum(rc) > -1;
-
-        // _ = lib.archive_read_support_compression_all(this.archive);
 
         return rc;
     }
@@ -330,6 +335,7 @@ pub const Archiver = struct {
         close_handles: bool = true,
         log: bool = false,
         npm: bool = false,
+        format: BufferReadStream.Format = .tar_gzip,
     };
 
     pub fn extractToDir(
@@ -345,7 +351,7 @@ pub const Archiver = struct {
         var stream: BufferReadStream = undefined;
         stream.init(file_buffer);
         defer stream.deinit();
-        _ = stream.openRead();
+        _ = stream.openReadWithFormat(options.format);
         const archive = stream.archive;
         var count: u32 = 0;
         const dir_fd = dir.fd;

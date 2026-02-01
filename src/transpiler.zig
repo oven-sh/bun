@@ -691,6 +691,28 @@ pub const Transpiler = struct {
             .dataurl, .base64 => {
                 Output.panic("TODO: dataurl, base64", .{}); // TODO
             },
+            .py => {
+                const entry = transpiler.resolver.caches.fs.readFileWithAllocator(
+                    transpiler.allocator,
+                    transpiler.fs,
+                    file_path.text,
+                    resolve_result.dirname_fd,
+                    false,
+                    null,
+                ) catch |err| {
+                    transpiler.log.addErrorFmt(null, .Empty, transpiler.allocator, "{s} reading \"{s}\"", .{ @errorName(err), file_path.pretty }) catch {};
+                    return null;
+                };
+
+                output_file.size = entry.contents.len;
+
+                output_file.value = .{
+                    .buffer = .{
+                        .allocator = transpiler.allocator,
+                        .bytes = entry.contents,
+                    },
+                };
+            },
             .css => {
                 const alloc = transpiler.allocator;
 

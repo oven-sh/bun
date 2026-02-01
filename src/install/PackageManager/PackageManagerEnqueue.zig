@@ -230,6 +230,29 @@ pub fn enqueueParseNPMPackage(
     return &task.threadpool_task;
 }
 
+pub fn enqueueParsePyPIPackage(
+    this: *PackageManager,
+    task_id: Task.Id,
+    name: strings.StringOrTinyString,
+    network_task: *NetworkTask,
+) *ThreadPool.Task {
+    var task = this.preallocated_resolve_tasks.get();
+    task.* = Task{
+        .package_manager = this,
+        .log = logger.Log.init(this.allocator),
+        .tag = Task.Tag.pypi_manifest,
+        .request = .{
+            .pypi_manifest = .{
+                .network = network_task,
+                .name = name,
+            },
+        },
+        .id = task_id,
+        .data = undefined,
+    };
+    return &task.threadpool_task;
+}
+
 pub fn enqueuePackageForDownload(
     this: *PackageManager,
     name: []const u8,
@@ -447,7 +470,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
 
     var name = dependency.realname();
     var name_hash = switch (dependency.version.tag) {
-        .dist_tag, .git, .github, .npm, .tarball, .workspace => String.Builder.stringHash(this.lockfile.str(&name)),
+        .dist_tag, .git, .github, .npm, .tarball, .workspace, .pypi => String.Builder.stringHash(this.lockfile.str(&name)),
         else => dependency.name_hash,
     };
 
@@ -1154,6 +1177,103 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                 },
             }
         },
+        .pypi => {
+            // PyPI package - fetch manifest from PyPI JSON API
+            const name_str = this.lockfile.str(&name);
+            const task_id = Task.Id.forPyPIManifest(name_str);
+
+            if (comptime Environment.allow_assert) bun.assert(task_id.get() != 0);
+
+            if (comptime Environment.allow_assert)
+                debug(
+                    "enqueueDependency({d}, {s}, {s}, {s}) = pypi task {d}",
+                    .{
+                        id,
+                        @tagName(version.tag),
+                        this.lockfile.str(&name),
+                        this.lockfile.str(&version.literal),
+                        task_id,
+                    },
+                );
+
+            // Check if we already have the manifest - if so, resolve immediately
+            if (this.pypi_manifests.contains(name_hash)) {
+                // Manifest already downloaded, resolve the package now
+                const resolve_result = try getOrPutResolvedPackage(
+                    this,
+                    name_hash,
+                    name,
+                    dependency,
+                    version,
+                    dependency.behavior,
+                    id,
+                    resolution,
+                    install_peer,
+                    successFn,
+                );
+
+                if (resolve_result) |result| {
+                    // Queue transitive dependencies (just like npm does)
+                    if (result.is_first_time and result.package.dependencies.len > 0) {
+                        try this.lockfile.scratch.dependency_list_queue.writeItem(result.package.dependencies);
+                    }
+                    if (result.task) |task| {
+                        switch (task) {
+                            .network_task => |network_task| this.enqueueNetworkTask(network_task),
+                            .patch_task => |patch_task| this.enqueuePatchTask(patch_task),
+                        }
+                    }
+                }
+                return;
+            }
+
+            if (!this.hasCreatedNetworkTask(task_id, dependency.behavior.isRequired())) {
+                if (PackageManager.verbose_install) {
+                    Output.prettyErrorln("Enqueue PyPI package manifest for download: {s}", .{name_str});
+                }
+
+                var network_task = this.getNetworkTask();
+                network_task.* = .{
+                    .package_manager = this,
+                    .callback = undefined,
+                    .task_id = task_id,
+                    .allocator = this.allocator,
+                };
+
+                // Get version string from literal if specified (e.g., "2.3.5" from "pypi:numpy@2.3.5")
+                const version_str: ?[]const u8 = if (version.literal.len() > 0)
+                    this.lockfile.str(&version.literal)
+                else
+                    null;
+
+                network_task.forPyPIManifest(
+                    name_str,
+                    version_str,
+                    this.allocator,
+                ) catch |err| {
+                    if (dependency.behavior.isRequired()) {
+                        this.log.addErrorFmt(
+                            null,
+                            logger.Loc.Empty,
+                            this.allocator,
+                            "Failed to create PyPI manifest request for {s}: {s}",
+                            .{ name_str, @errorName(err) },
+                        ) catch unreachable;
+                    }
+                    return;
+                };
+
+                this.enqueueNetworkTask(network_task);
+            }
+
+            var manifest_entry_parse = this.task_queue.getOrPutContext(this.allocator, task_id, .{}) catch return;
+            if (!manifest_entry_parse.found_existing) {
+                manifest_entry_parse.value_ptr.* = TaskCallbackList{};
+            }
+
+            const callback_tag = comptime if (successFn == assignRootResolution) "root_dependency" else "dependency";
+            manifest_entry_parse.value_ptr.append(this.allocator, @unionInit(TaskCallbackContext, callback_tag, id)) catch return;
+        },
         else => {},
     }
 }
@@ -1841,6 +1961,210 @@ fn getOrPutResolvedPackage(
             }
         },
 
+        .pypi => {
+            // Look up the PyPI manifest
+            const name_str = this.lockfile.str(&name);
+            debug("getOrPutResolvedPackage .pypi: {s}", .{name_str});
+            const manifest = this.pypi_manifests.getPtr(name_hash) orelse {
+                debug("  no manifest found for pypi package {s}", .{name_str});
+                return null;
+            };
+
+            // Find the best wheel for the current platform
+            const best_wheel = manifest.findBestWheel(PyPI.PlatformTarget.current()) orelse {
+                if (behavior.isPeer()) {
+                    return null;
+                }
+                // No compatible wheel found
+                this.log.addErrorFmt(
+                    null,
+                    logger.Loc.Empty,
+                    this.allocator,
+                    "No compatible wheel found for PyPI package <b>{s}<r>",
+                    .{name_str},
+                ) catch unreachable;
+                return null;
+            };
+
+            const wheel_url = best_wheel.url.slice(manifest.string_buf);
+            const version_str = manifest.latestVersion();
+            debug("  found wheel for {s}: {s} (version {s})", .{ name_str, wheel_url, version_str });
+
+            // Parse the version string into a Semver.Version
+            // First normalize Python version (PEP 440) to strip .postN, .devN suffixes
+            var normalized_version_buf: [64]u8 = undefined;
+            const normalized_version = PyPI.DependencySpecifier.normalizeVersion(version_str, &normalized_version_buf);
+            const sliced_version = Semver.SlicedString.init(normalized_version, normalized_version);
+            const parsed_version = Semver.Version.parse(sliced_version);
+            if (!parsed_version.valid) {
+                this.log.addErrorFmt(
+                    null,
+                    logger.Loc.Empty,
+                    this.allocator,
+                    "Invalid version <b>{s}<r> for PyPI package <b>{s}<r>",
+                    .{ version_str, name_str },
+                ) catch unreachable;
+                return null;
+            }
+            const resolved_version = parsed_version.version.min();
+
+            // Check if there's already a package with this name and version for PyPI
+            if (this.lockfile.package_index.get(name_hash)) |index| {
+                switch (index) {
+                    .id => |existing_id| {
+                        const existing_resolution = this.lockfile.packages.items(.resolution)[existing_id];
+                        if (existing_resolution.tag == .pypi and existing_resolution.value.pypi.version.eql(resolved_version)) {
+                            successFn(this, dependency_id, existing_id);
+                            return .{
+                                .package = this.lockfile.packages.get(existing_id),
+                                .is_first_time = false,
+                            };
+                        }
+                    },
+                    .ids => |list| {
+                        for (list.items) |existing_id| {
+                            const existing_resolution = this.lockfile.packages.items(.resolution)[existing_id];
+                            if (existing_resolution.tag == .pypi and existing_resolution.value.pypi.version.eql(resolved_version)) {
+                                successFn(this, dependency_id, existing_id);
+                                return .{
+                                    .package = this.lockfile.packages.get(existing_id),
+                                    .is_first_time = false,
+                                };
+                            }
+                        }
+                    },
+                }
+            }
+
+            if (behavior.isPeer() and !install_peer) {
+                return null;
+            }
+
+            // Create a new package entry
+            var package = Lockfile.Package{};
+
+            // Build strings for the package
+            // Use manifest.name() which points to manifest's own buffer, not lockfile's buffer.
+            // This is important because string_builder.allocate() may resize lockfile's buffer.
+            const manifest_name = manifest.name();
+            var string_builder = this.lockfile.stringBuilder();
+            string_builder.count(manifest_name);
+            resolved_version.count(manifest.string_buf, *Lockfile.StringBuilder, &string_builder);
+            string_builder.count(wheel_url);
+
+            // Count transitive dependencies from requires_dist
+            var dep_iter = manifest.iterDependencies(PyPI.PlatformTarget.current());
+            const total_dependencies_count: u32 = @intCast(dep_iter.count());
+
+            if (PackageManager.verbose_install) {
+                Output.prettyErrorln("PyPI package {s} has {d} transitive dependencies", .{ manifest_name, total_dependencies_count });
+            }
+
+            // Count strings for each dependency name (normalized)
+            dep_iter = manifest.iterDependencies(PyPI.PlatformTarget.current());
+            while (dep_iter.next()) |spec| {
+                var dep_name_buf: [256]u8 = undefined;
+                const normalized = PyPI.DependencySpecifier.normalizeName(spec.name, &dep_name_buf);
+                string_builder.count(normalized);
+            }
+
+            try string_builder.allocate();
+            defer string_builder.clamp();
+
+            const name_string = string_builder.append(ExternalString, manifest_name);
+            package.name = name_string.value;
+            package.name_hash = name_string.hash;
+
+            // Store version and URL in resolution
+            package.resolution = Resolution.init(.{
+                .pypi = .{
+                    .version = resolved_version.append(manifest.string_buf, *Lockfile.StringBuilder, &string_builder),
+                    .url = string_builder.append(String, wheel_url),
+                },
+            });
+
+            // PyPI packages don't have install scripts by default
+            package.scripts.filled = true;
+            package.meta.setHasInstallScript(false);
+
+            // Parse and store transitive dependencies from requires_dist
+            if (total_dependencies_count > 0) {
+                var dependencies_list = &this.lockfile.buffers.dependencies;
+                var resolutions_list = &this.lockfile.buffers.resolutions;
+
+                try dependencies_list.ensureUnusedCapacity(this.allocator, total_dependencies_count);
+                try resolutions_list.ensureUnusedCapacity(this.allocator, total_dependencies_count);
+
+                package.dependencies.off = @intCast(dependencies_list.items.len);
+                package.dependencies.len = total_dependencies_count;
+                package.resolutions.off = package.dependencies.off;
+                package.resolutions.len = package.dependencies.len;
+
+                dep_iter = manifest.iterDependencies(PyPI.PlatformTarget.current());
+                while (dep_iter.next()) |spec| {
+                    var dep_name_buf: [256]u8 = undefined;
+                    const normalized = PyPI.DependencySpecifier.normalizeName(spec.name, &dep_name_buf);
+                    const dep_name = string_builder.append(ExternalString, normalized);
+
+                    if (PackageManager.verbose_install) {
+                        Output.prettyErrorln("  Adding PyPI dependency: {s}", .{normalized});
+                    }
+
+                    dependencies_list.appendAssumeCapacity(.{
+                        .name = dep_name.value,
+                        .name_hash = dep_name.hash,
+                        .behavior = .{ .python = true, .prod = true },
+                        .version = .{ .tag = .pypi, .value = .{ .pypi = .{ .name = dep_name.value } } },
+                    });
+                    resolutions_list.appendAssumeCapacity(invalid_package_id);
+                }
+            }
+
+            // Append the package to the lockfile
+            package = try this.lockfile.appendPackage(package);
+
+            if (comptime Environment.allow_assert) bun.assert(package.meta.id != invalid_package_id);
+            debug("  created pypi package {s} with id {d}", .{ manifest_name, package.meta.id });
+            defer successFn(this, dependency_id, package.meta.id);
+
+            // Check if wheel is already cached
+            var name_and_version_hash: ?u64 = null;
+            var patchfile_hash: ?u64 = null;
+            return switch (this.determinePreinstallState(
+                package,
+                this.lockfile,
+                &name_and_version_hash,
+                &patchfile_hash,
+            )) {
+                .done => .{ .package = package, .is_first_time = true },
+                .extract => extract: {
+                    // Skip wheel download when prefetch_resolved_tarballs is disabled
+                    if (!this.options.do.prefetch_resolved_tarballs) {
+                        break :extract .{ .package = package, .is_first_time = true };
+                    }
+
+                    const task_id = Task.Id.forTarball(wheel_url);
+
+                    break :extract .{
+                        .package = package,
+                        .is_first_time = true,
+                        .task = .{
+                            .network_task = try this.generateNetworkTaskForTarball(
+                                task_id,
+                                wheel_url,
+                                dependency.behavior.isRequired(),
+                                dependency_id,
+                                package,
+                                null,
+                                .no_authorization,
+                            ) orelse unreachable,
+                        },
+                    };
+                },
+                else => .{ .package = package, .is_first_time = true },
+            };
+        },
+
         else => return null,
     }
 }
@@ -1876,6 +2200,7 @@ const strings = bun.strings;
 
 const Semver = bun.Semver;
 const String = Semver.String;
+const ExternalString = Semver.ExternalString;
 
 const Fs = bun.fs;
 const FileSystem = Fs.FileSystem;
@@ -1887,6 +2212,7 @@ const ExtractTarball = bun.install.ExtractTarball;
 const Features = bun.install.Features;
 const FolderResolution = bun.install.FolderResolution;
 const Npm = bun.install.Npm;
+const PyPI = bun.install.PyPI;
 const PackageID = bun.install.PackageID;
 const PackageNameHash = bun.install.PackageNameHash;
 const PatchTask = bun.install.PatchTask;

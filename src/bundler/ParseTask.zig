@@ -606,7 +606,7 @@ fn getAST(
             return ast;
         },
         // TODO:
-        .dataurl, .base64, .bunsh => {
+        .dataurl, .base64, .bunsh, .py => {
             return try getEmptyAST(log, transpiler, opts, allocator, source, E.String);
         },
         .file, .wasm => {

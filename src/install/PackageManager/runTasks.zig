@@ -500,6 +500,104 @@ pub fn runTasks(
 
                 manager.task_batch.push(ThreadPool.Batch.from(manager.enqueueExtractNPMPackage(extract, task)));
             },
+            .pypi_manifest => |*manifest_req| {
+                const name = manifest_req.name;
+                if (log_level.showProgress()) {
+                    if (!has_updated_this_run) {
+                        manager.setNodeName(manager.downloads_node.?, name.slice(), ProgressStrings.download_emoji, true);
+                        has_updated_this_run = true;
+                    }
+                }
+
+                if (!has_network_error and task.response.metadata == null) {
+                    has_network_error = true;
+                    const min = manager.options.min_simultaneous_requests;
+                    const max = AsyncHTTP.max_simultaneous_requests.load(.monotonic);
+                    if (max > min) {
+                        AsyncHTTP.max_simultaneous_requests.store(@max(min, max / 2), .monotonic);
+                    }
+                }
+
+                // Handle retry-able errors.
+                if (task.response.metadata == null or task.response.metadata.?.response.status_code > 499) {
+                    const err = task.response.fail orelse error.HTTPError;
+
+                    if (task.retried < manager.options.max_retry_count) {
+                        task.retried += 1;
+                        manager.enqueueNetworkTask(task);
+
+                        if (manager.options.log_level.isVerbose()) {
+                            manager.log.addWarningFmt(
+                                null,
+                                logger.Loc.Empty,
+                                manager.allocator,
+                                "{s} downloading PyPI package manifest <b>{s}<r>. Retry {d}/{d}...",
+                                .{ bun.span(@errorName(err)), name.slice(), task.retried, manager.options.max_retry_count },
+                            ) catch unreachable;
+                        }
+
+                        continue;
+                    }
+                }
+
+                const metadata = task.response.metadata orelse {
+                    // Handle non-retry-able errors.
+                    const err = task.response.fail orelse error.HTTPError;
+
+                    if (manager.isNetworkTaskRequired(task.task_id)) {
+                        manager.log.addErrorFmt(
+                            null,
+                            logger.Loc.Empty,
+                            manager.allocator,
+                            "{s} downloading PyPI package manifest <b>{s}<r>",
+                            .{ @errorName(err), name.slice() },
+                        ) catch |e| bun.handleOom(e);
+                    } else {
+                        manager.log.addWarningFmt(
+                            null,
+                            logger.Loc.Empty,
+                            manager.allocator,
+                            "{s} downloading PyPI package manifest <b>{s}<r>",
+                            .{ @errorName(err), name.slice() },
+                        ) catch |e| bun.handleOom(e);
+                    }
+
+                    continue;
+                };
+                const response = metadata.response;
+
+                if (response.status_code > 399) {
+                    if (manager.isNetworkTaskRequired(task.task_id)) {
+                        manager.log.addErrorFmt(
+                            null,
+                            logger.Loc.Empty,
+                            manager.allocator,
+                            "<r><red><b>GET<r><red> {s}<d> - {d}<r>",
+                            .{ metadata.url, response.status_code },
+                        ) catch |err| bun.handleOom(err);
+                    } else {
+                        manager.log.addWarningFmt(
+                            null,
+                            logger.Loc.Empty,
+                            manager.allocator,
+                            "<r><yellow><b>GET<r><yellow> {s}<d> - {d}<r>",
+                            .{ metadata.url, response.status_code },
+                        ) catch |err| bun.handleOom(err);
+                    }
+
+                    continue;
+                }
+
+                if (log_level.isVerbose()) {
+                    Output.prettyError("    ", .{});
+                    Output.printElapsed(@as(f64, @floatFromInt(task.unsafe_http_client.elapsed)) / std.time.ns_per_ms);
+                    Output.prettyError("\n<d>Downloaded <r><green>{s}<r> PyPI manifest\n", .{name.slice()});
+                    Output.flush();
+                }
+
+                // Enqueue parsing task
+                manager.task_batch.push(ThreadPool.Batch.from(manager.enqueueParsePyPIPackage(task.task_id, name, task)));
+            },
             else => unreachable,
         }
     }
@@ -886,6 +984,62 @@ pub fn runTasks(
                     }
                 }
             },
+            .pypi_manifest => {
+                defer manager.preallocated_network_tasks.put(task.request.pypi_manifest.network);
+
+                if (task.status == .fail) {
+                    const name = task.request.pypi_manifest.name;
+                    const err = task.err orelse error.Failed;
+
+                    manager.log.addErrorFmt(
+                        null,
+                        logger.Loc.Empty,
+                        manager.allocator,
+                        "{s} parsing PyPI package manifest for <b>{s}<r>",
+                        .{
+                            @errorName(err),
+                            name.slice(),
+                        },
+                    ) catch |e| bun.handleOom(e);
+
+                    continue;
+                }
+
+                const manifest = &task.data.pypi_manifest;
+                const name = task.request.pypi_manifest.name.slice();
+                const name_hash = String.Builder.stringHash(name);
+
+                if (log_level.isVerbose()) {
+                    Output.prettyErrorln("<d>PyPI manifest parsed for {s}, version {s}<r>", .{
+                        manifest.name(),
+                        manifest.latestVersion(),
+                    });
+                }
+
+                // Store the PyPI manifest for later resolution
+                try manager.pypi_manifests.put(bun.default_allocator, name_hash, manifest.*);
+
+                if (@hasField(@TypeOf(callbacks), "manifests_only") and callbacks.manifests_only) {
+                    continue;
+                }
+
+                const dependency_list_entry = manager.task_queue.getEntry(task.id).?;
+                const dependency_list = dependency_list_entry.value_ptr.*;
+                dependency_list_entry.value_ptr.* = .{};
+
+                if (log_level.isVerbose()) {
+                    Output.prettyErrorln("<d>Processing {d} PyPI dependencies<r>", .{dependency_list.items.len});
+                }
+
+                try manager.processDependencyList(dependency_list, Ctx, extract_ctx, callbacks, install_peer);
+
+                if (log_level.showProgress()) {
+                    if (!has_updated_this_run) {
+                        manager.setNodeName(manager.downloads_node.?, name, ProgressStrings.download_emoji, true);
+                        has_updated_this_run = true;
+                    }
+                }
+            },
         }
     }
 }
@@ -1102,6 +1256,9 @@ const FileSystem = Fs.FileSystem;
 
 const HTTP = bun.http;
 const AsyncHTTP = HTTP.AsyncHTTP;
+
+const Semver = bun.Semver;
+const String = Semver.String;
 
 const DependencyID = bun.install.DependencyID;
 const Features = bun.install.Features;

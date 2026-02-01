@@ -954,6 +954,8 @@ pub fn migrateNPMLockfile(
                                                 },
                                             });
                                         },
+                                        // npm does not support PyPI packages
+                                        .pypi => return error.InvalidNPMLockfile,
                                     };
                                 };
                                 debug("-> {f}", .{res.fmtForDebug(string_buf.bytes.items)});

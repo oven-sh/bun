@@ -902,6 +902,19 @@ target_include_directories(${bun} PRIVATE
   ${NODEJS_HEADERS_PATH}/include/node
 )
 
+# --- Python ---
+set(PYTHON_ROOT /Users/dylan/code/bun/vendor/cpython/install)
+set(PYTHON_VERSION_MAJOR 3)
+set(PYTHON_VERSION_MINOR 13)
+set(PYTHON_VERSION "${PYTHON_VERSION_MAJOR}.${PYTHON_VERSION_MINOR}")
+target_include_directories(${bun} PRIVATE
+  ${PYTHON_ROOT}/include/python${PYTHON_VERSION}
+)
+# Pass PYTHON_ROOT to C++ so BunPython.cpp can use it for runtime paths
+target_compile_definitions(${bun} PRIVATE
+  PYTHON_ROOT="${PYTHON_ROOT}"
+)
+
 if(NOT WIN32)
   target_include_directories(${bun} PRIVATE ${CWD}/src/bun.js/bindings/libuv)
 endif()
@@ -1312,6 +1325,19 @@ add_custom_target(dependencies DEPENDS ${BUN_TARGETS})
 if(APPLE)
   target_link_libraries(${bun} PRIVATE icucore resolv)
   target_compile_definitions(${bun} PRIVATE U_DISABLE_RENAMING=1)
+endif()
+
+# --- Python ---
+# Link against shared Python library so extension modules can find symbols
+if(APPLE)
+  target_link_libraries(${bun} PRIVATE
+    "${PYTHON_ROOT}/lib/libpython${PYTHON_VERSION}.dylib"
+    "-framework CoreFoundation"
+  )
+else()
+  target_link_libraries(${bun} PRIVATE
+    "${PYTHON_ROOT}/lib/libpython${PYTHON_VERSION}.so"
+  )
 endif()
 
 if(USE_STATIC_SQLITE)

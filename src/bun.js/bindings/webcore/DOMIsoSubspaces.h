@@ -957,6 +957,7 @@ public:
 
     std::unique_ptr<IsoSubspace> m_subspaceForJSConnectionsList;
     std::unique_ptr<IsoSubspace> m_subspaceForJSHTTPParser;
+    std::unique_ptr<IsoSubspace> m_subspaceForPyObject;
 };
 } // namespace WebCore
 

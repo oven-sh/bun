@@ -911,6 +911,7 @@ pub fn installIsolatedPackages(
                 .github,
                 .local_tarball,
                 .remote_tarball,
+                .pypi,
                 => |pkg_res_tag| {
                     const patch_info = try installer.packagePatchInfo(pkg_name, pkg_name_hash, &pkg_res);
 
@@ -959,6 +960,7 @@ pub fn installIsolatedPackages(
                         .github => manager.cachedGitHubFolderName(&pkg_res.value.github, patch_info.contentsHash()),
                         .local_tarball => manager.cachedTarballFolderName(pkg_res.value.local_tarball, patch_info.contentsHash()),
                         .remote_tarball => manager.cachedTarballFolderName(pkg_res.value.remote_tarball, patch_info.contentsHash()),
+                        .pypi => manager.cachedTarballFolderName(pkg_res.value.pypi.url, patch_info.contentsHash()),
 
                         else => comptime unreachable,
                     });
@@ -1098,6 +1100,32 @@ pub fn installIsolatedPackages(
                                 error.OutOfMemory => bun.outOfMemory(),
                                 error.InvalidURL => {
                                     Output.err(err, "failed to enqueue tarball for download: {s}@{f}", .{
+                                        pkg_name.slice(string_buf),
+                                        pkg_res.fmt(string_buf, .auto),
+                                    });
+                                    Output.flush();
+                                    if (manager.options.enable.fail_early) {
+                                        Global.exit(1);
+                                    }
+                                    // .monotonic is okay because an error means the task isn't
+                                    // running on another thread.
+                                    entry_steps[entry_id.get()].store(.done, .monotonic);
+                                    installer.onTaskComplete(entry_id, .fail);
+                                    continue;
+                                },
+                            };
+                        },
+                        .pypi => {
+                            manager.enqueueTarballForDownload(
+                                dep_id,
+                                pkg_id,
+                                pkg_res.value.pypi.url.slice(string_buf),
+                                ctx,
+                                patch_info.nameAndVersionHash(),
+                            ) catch |err| switch (err) {
+                                error.OutOfMemory => bun.outOfMemory(),
+                                error.InvalidURL => {
+                                    Output.err(err, "failed to enqueue pypi tarball for download: {s}@{f}", .{
                                         pkg_name.slice(string_buf),
                                         pkg_res.fmt(string_buf, .auto),
                                     });

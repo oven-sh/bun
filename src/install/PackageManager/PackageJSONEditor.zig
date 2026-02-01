@@ -407,7 +407,7 @@ pub fn edit(
             var i: usize = 0;
             loop: while (i < updates.len) {
                 var request = &updates.*[i];
-                inline for ([_]string{ "dependencies", "devDependencies", "optionalDependencies", "peerDependencies" }) |list| {
+                inline for ([_]string{ "dependencies", "devDependencies", "optionalDependencies", "peerDependencies", "pythonDependencies" }) |list| {
                     if (current_package_json.asProperty(list)) |query| {
                         if (query.expr.data == .e_object) {
                             const name = request.getName();
@@ -421,7 +421,7 @@ pub fn edit(
                                             const version_literal = try value.expr.asStringCloned(allocator) orelse break :add_packages_to_update;
                                             var tag = Dependency.Version.Tag.infer(version_literal);
 
-                                            if (tag != .npm and tag != .dist_tag) break :add_packages_to_update;
+                                            if (tag != .npm and tag != .dist_tag and tag != .pypi) break :add_packages_to_update;
 
                                             const entry = bun.handleOom(manager.updating_packages.getOrPut(allocator, name));
 

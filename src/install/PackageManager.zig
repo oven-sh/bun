@@ -50,6 +50,7 @@ task_batch: ThreadPool.Batch = .{},
 task_queue: TaskDependencyQueue = .{},
 
 manifests: PackageManifestMap = .{},
+pypi_manifests: PyPIManifestMap = .{},
 folders: FolderResolution.Map = .{},
 git_repositories: RepositoryMap = .{},
 
@@ -1196,6 +1197,7 @@ pub const enqueueGitForCheckout = enqueue.enqueueGitForCheckout;
 pub const enqueueNetworkTask = enqueue.enqueueNetworkTask;
 pub const enqueuePackageForDownload = enqueue.enqueuePackageForDownload;
 pub const enqueueParseNPMPackage = enqueue.enqueueParseNPMPackage;
+pub const enqueueParsePyPIPackage = enqueue.enqueueParsePyPIPackage;
 pub const enqueuePatchTask = enqueue.enqueuePatchTask;
 pub const enqueuePatchTaskPre = enqueue.enqueuePatchTaskPre;
 pub const enqueueTarballForDownload = enqueue.enqueueTarballForDownload;
@@ -1313,6 +1315,8 @@ const PackageID = bun.install.PackageID;
 const PackageManager = bun.install.PackageManager;
 const PackageManifestMap = bun.install.PackageManifestMap;
 const PackageNameAndVersionHash = bun.install.PackageNameAndVersionHash;
+const PyPI = bun.install.PyPI;
+const PyPIManifestMap = std.HashMapUnmanaged(PackageNameHash, PyPI.PackageManifest, IdentityContext(PackageNameHash), 80);
 const PackageNameHash = bun.install.PackageNameHash;
 const PatchTask = bun.install.PatchTask;
 const PostinstallOptimizer = bun.install.PostinstallOptimizer;

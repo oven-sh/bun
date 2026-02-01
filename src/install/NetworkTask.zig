@@ -17,6 +17,9 @@ callback: union(Task.Tag) {
     git_clone: void,
     git_checkout: void,
     local_tarball: void,
+    pypi_manifest: struct {
+        name: strings.StringOrTinyString,
+    },
 },
 /// Key in patchedDependencies in package.json
 apply_patch_task: ?*PatchTask = null,
@@ -242,6 +245,71 @@ pub fn forManifest(
 
 pub fn getCompletionCallback(this: *NetworkTask) HTTP.HTTPClientResult.Callback {
     return HTTP.HTTPClientResult.Callback.New(*NetworkTask, notify).init(this);
+}
+
+/// Configure the network task to fetch a PyPI manifest
+pub fn forPyPIManifest(
+    this: *NetworkTask,
+    name: string,
+    version: ?string,
+    allocator: std.mem.Allocator,
+) ForManifestError!void {
+    // PyPI JSON API URL: https://pypi.org/pypi/{package}/json
+    // or with version: https://pypi.org/pypi/{package}/{version}/json
+    const pypi_base = "https://pypi.org/pypi/";
+
+    // Build URL: base + name + [/version] + /json
+    const version_len = if (version) |v| v.len + 1 else 0; // +1 for leading slash
+    const url_len = pypi_base.len + name.len + version_len + "/json".len;
+    const url_buf = try allocator.alloc(u8, url_len);
+    var pos: usize = 0;
+
+    @memcpy(url_buf[pos..][0..pypi_base.len], pypi_base);
+    pos += pypi_base.len;
+
+    @memcpy(url_buf[pos..][0..name.len], name);
+    pos += name.len;
+
+    if (version) |v| {
+        url_buf[pos] = '/';
+        pos += 1;
+        @memcpy(url_buf[pos..][0..v.len], v);
+        pos += v.len;
+    }
+
+    @memcpy(url_buf[pos..][0.."/json".len], "/json");
+
+    this.url_buf = url_buf;
+
+    // Simple headers - just Accept: application/json
+    var header_builder = HeaderBuilder{};
+    header_builder.count("Accept", "application/json");
+    try header_builder.allocate(allocator);
+    header_builder.append("Accept", "application/json");
+
+    this.response_buffer = try MutableString.init(allocator, 0);
+    this.allocator = allocator;
+
+    const url = URL.parse(this.url_buf);
+    this.unsafe_http_client = AsyncHTTP.init(allocator, .GET, url, header_builder.entries, header_builder.content.ptr.?[0..header_builder.content.len], &this.response_buffer, "", this.getCompletionCallback(), HTTP.FetchRedirect.follow, .{
+        .http_proxy = this.package_manager.httpProxy(url),
+    });
+    this.unsafe_http_client.client.flags.reject_unauthorized = this.package_manager.tlsRejectUnauthorized();
+
+    if (PackageManager.verbose_install) {
+        this.unsafe_http_client.client.verbose = .headers;
+    }
+
+    this.callback = .{
+        .pypi_manifest = .{
+            .name = try strings.StringOrTinyString.initAppendIfNeeded(name, *FileSystem.FilenameStore, FileSystem.FilenameStore.instance),
+        },
+    };
+
+    if (PackageManager.verbose_install) {
+        this.unsafe_http_client.verbose = .headers;
+        this.unsafe_http_client.client.verbose = .headers;
+    }
 }
 
 pub fn schedule(this: *NetworkTask, batch: *ThreadPool.Batch) void {

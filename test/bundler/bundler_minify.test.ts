@@ -1446,4 +1446,106 @@ describe("bundler", () => {
       stdout: "321",
     },
   });
+  itBundled("minify/ArrowToBindNoTransformThisTarget", {
+    files: {
+      "/entry.js": /* js */ `
+        class MyClass {
+          value = 42;
+          method() { return this.value; }
+          getMethod() {
+            // Arrow captures 'this' from enclosing context
+            // Cannot transform because 'this' is not an identifier
+            return () => this.method();
+          }
+        }
+        const obj = new MyClass();
+        const fn = obj.getMethod();
+        console.log(fn());
+      `,
+    },
+    minifySyntax: true,
+    target: "bun",
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // Should NOT transform because target is 'this', not a bound identifier
+      expect(code).not.toContain(".bind(");
+    },
+    run: {
+      stdout: "42",
+    },
+  });
+  itBundled("minify/ArrowToBindNoTransformWithCallArgs", {
+    files: {
+      "/entry.js": /* js */ `
+        const obj = { greet(name) { return "Hello, " + name; } };
+        // Arrow with call that has arguments - cannot transform
+        const fn = () => obj.greet("World");
+        console.log(fn());
+      `,
+    },
+    minifySyntax: true,
+    target: "bun",
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // Should NOT transform because the call has arguments
+      expect(code).not.toContain(".bind(");
+    },
+    run: {
+      stdout: "Hello, World",
+    },
+  });
+  itBundled("minify/ArrowToBindNoTransformArgumentsAccess", {
+    files: {
+      "/entry.js": /* js */ `
+        const obj = { greet(name) { return "Hello, " + name; } };
+        function test() {
+          // Arrow that uses arguments from enclosing function
+          const fn = () => obj.greet(arguments[0]);
+          return fn();
+        }
+        console.log(test("World"));
+      `,
+    },
+    minifySyntax: true,
+    target: "bun",
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // Should NOT transform because call has arguments
+      expect(code).not.toContain(".bind(");
+    },
+    run: {
+      stdout: "Hello, World",
+    },
+  });
+  itBundled("minify/ArrowToBindNoTransformNewTarget", {
+    files: {
+      "/entry.js": /* js */ `
+        const obj = {
+          check() { return "method called"; }
+        };
+        function MyConstructor() {
+          // Arrow that references new.target
+          this.fn = () => {
+            if (new.target) {
+              return obj.check();
+            }
+            return "no new.target";
+          };
+        }
+        const instance = new MyConstructor();
+        console.log(instance.fn());
+      `,
+    },
+    minifySyntax: true,
+    target: "bun",
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // Should NOT transform - arrow body has multiple statements (if/else logic)
+      // and references new.target which arrows inherit from enclosing scope
+      expect(code).not.toContain("obj.check.bind(");
+    },
+    run: {
+      stdout: "method called",
+    },
+  });
 });

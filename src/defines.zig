@@ -27,7 +27,7 @@ pub const DefineData = struct {
     flags: Flags = .{},
 
     pub const Flags = packed struct(u8) {
-        _padding: u3 = 0,
+        _padding: u2 = 0,
 
         valueless: bool = false,
 
@@ -36,6 +36,11 @@ pub const DefineData = struct {
         call_can_be_unwrapped_if_unused: js_ast.E.CallUnwrap = .never,
 
         method_call_must_be_replaced_with_undefined: bool = false,
+
+        /// If true, this define will be replaced even if the base identifier
+        /// is shadowed by a local variable. This is used for `--env` defines
+        /// where the user explicitly opted into env replacement.
+        replace_even_if_shadowed: bool = false,
     };
 
     pub const Options = struct {
@@ -45,6 +50,7 @@ pub const DefineData = struct {
         can_be_removed_if_unused: bool = false,
         call_can_be_unwrapped_if_unused: js_ast.E.CallUnwrap = .never,
         method_call_must_be_replaced_with_undefined: bool = false,
+        replace_even_if_shadowed: bool = false,
     };
 
     pub fn init(options: Options) DefineData {
@@ -55,6 +61,7 @@ pub const DefineData = struct {
                 .can_be_removed_if_unused = options.can_be_removed_if_unused,
                 .call_can_be_unwrapped_if_unused = options.call_can_be_unwrapped_if_unused,
                 .method_call_must_be_replaced_with_undefined = options.method_call_must_be_replaced_with_undefined,
+                .replace_even_if_shadowed = options.replace_even_if_shadowed,
             },
             .original_name_ptr = if (options.original_name) |name| name.ptr else null,
             .original_name_len = if (options.original_name) |name| @truncate(name.len) else 0,
@@ -88,6 +95,10 @@ pub const DefineData = struct {
 
     pub inline fn valueless(self: *const DefineData) bool {
         return self.flags.valueless;
+    }
+
+    pub inline fn replace_even_if_shadowed(self: *const DefineData) bool {
+        return self.flags.replace_even_if_shadowed;
     }
 
     pub fn initBoolean(value: bool) DefineData {

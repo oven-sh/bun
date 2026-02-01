@@ -19,7 +19,7 @@ pub fn writeInternal(
     writer: NewWriter(Context),
 ) !void {
     const message = this.message.slice();
-    const count: u32 = @sizeOf((u32)) + message.len + 1;
+    const count: u32 = @sizeOf(u32) + @as(u32, @intCast(message.len)) + 1;
     const header = [_]u8{
         'f',
     } ++ toBytes(Int32(count));

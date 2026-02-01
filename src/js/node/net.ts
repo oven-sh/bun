@@ -147,6 +147,9 @@ const SocketHandlers: SocketHandler = {
     const self = socket.data;
     if (!self || self[kclosed]) return;
     self[kclosed] = true;
+    if (self.secureConnecting) {
+      self.removeListener("end", onConnectEnd);
+    }
     //socket cannot be used after close
     detachSocket(self);
     SocketEmitEndNT(self, err);
@@ -190,6 +193,9 @@ const SocketHandlers: SocketHandler = {
     if (!self) return;
     if (self._hadError) return;
     self._hadError = true;
+    if (self.secureConnecting) {
+      self.removeListener("end", onConnectEnd);
+    }
 
     const callback = self[kwriteCallback];
     if (callback) {
@@ -540,6 +546,9 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     if (err) $debug(err);
     if (self[kclosed]) return;
     self[kclosed] = true;
+    if (self.secureConnecting) {
+      self.removeListener("end", onConnectEnd);
+    }
     // TODO: should we be doing something with err?
     self[kended] = true;
     if (!self.allowHalfOpen) self.write = writeAfterFIN;
@@ -588,6 +597,9 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     const { self } = socket.data;
     if (self._hadError) return;
     self._hadError = true;
+    if (self.secureConnecting) {
+      self.removeListener("end", onConnectEnd);
+    }
 
     const callback = self[kwriteCallback];
     if (callback) {
@@ -753,7 +765,7 @@ function Socket(options?) {
     if (signal.aborted) {
       process.nextTick(destroyNT, this, signal.reason);
     } else {
-      signal.addEventListener("abort", destroyWhenAborted.bind(this));
+      signal.addEventListener("abort", destroyWhenAborted.bind(this), { once: true });
     }
   }
   if (opts.blockList) {
@@ -949,7 +961,7 @@ Socket.prototype.connect = function connect(...args) {
       this._secureEstablished = false;
       this._securePending = true;
       this[kConnectOptions] = options;
-      this.prependListener("end", onConnectEnd);
+      this.prependOnceListener("end", onConnectEnd);
     }
     // start using existing connection
     if (connection) {
@@ -1102,6 +1114,10 @@ Socket.prototype._destroy = function _destroy(err, callback) {
   $debug("Socket.prototype._destroy");
 
   this.connecting = false;
+
+  if (this.secureConnecting || this._securePending) {
+    this.removeListener("end", onConnectEnd);
+  }
 
   for (let s = this; s !== null; s = s._parent) {
     clearTimeout(s[kTimeout]);
@@ -1739,7 +1755,7 @@ function internalConnect(self, options, address, port, addressType, localAddress
     self._secureEstablished = false;
     self._securePending = true;
     self[kConnectOptions] = options;
-    self.prependListener("end", onConnectEnd);
+    self.prependOnceListener("end", onConnectEnd);
   }
   //TLS
 
@@ -1876,7 +1892,7 @@ function internalConnectMultiple(context, canceled?) {
     self._secureEstablished = false;
     self._securePending = true;
     self[kConnectOptions] = context.options;
-    self.prependListener("end", onConnectEnd);
+    self.prependOnceListener("end", onConnectEnd);
   }
   //TLS
 

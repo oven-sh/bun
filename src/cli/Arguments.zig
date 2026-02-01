@@ -179,7 +179,7 @@ pub const build_only_params = [_]ParamType{
     clap.parseParam("--sourcemap <STR>?               Build with sourcemaps - 'linked', 'inline', 'external', or 'none'") catch unreachable,
     clap.parseParam("--banner <STR>                   Add a banner to the bundled output such as \"use client\"; for a bundle being used with RSCs") catch unreachable,
     clap.parseParam("--footer <STR>                   Add a footer to the bundled output such as // built with bun!") catch unreachable,
-    clap.parseParam("--format <STR>                   Specifies the module format to build to. \"esm\", \"cjs\" and \"iife\" are supported. Defaults to \"esm\".") catch unreachable,
+    clap.parseParam("--format <STR>                   Specifies the module format to build to. \"esm\", \"cjs\" and \"iife\" are supported. Defaults to \"esm\", or \"cjs\" with --bytecode.") catch unreachable,
     clap.parseParam("--root <STR>                     Root directory used for multiple entry points") catch unreachable,
     clap.parseParam("--splitting                      Enable code splitting") catch unreachable,
     clap.parseParam("--public-path <STR>              A prefix to be appended to any import paths in bundled code") catch unreachable,
@@ -1346,10 +1346,18 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             }
 
             ctx.bundler_options.output_format = format;
-            // ESM bytecode is supported for --compile builds (module_info is embedded in binary)
-            if (format != .cjs and format != .esm and ctx.bundler_options.bytecode) {
-                Output.errGeneric("format must be 'cjs' or 'esm' when bytecode is true.", .{});
-                Global.exit(1);
+            if (ctx.bundler_options.bytecode) {
+                if (format != .cjs and format != .esm) {
+                    Output.errGeneric("format must be 'cjs' or 'esm' when bytecode is true.", .{});
+                    Global.exit(1);
+                }
+                // ESM bytecode requires --compile because module_info (import/export metadata)
+                // is only available in compiled binaries. Without it, JSC must parse the file
+                // twice (once for module analysis, once for bytecode), which is a deopt.
+                if (format == .esm and !ctx.bundler_options.compile) {
+                    Output.errGeneric("ESM bytecode requires --compile. Use --format=cjs for bytecode without --compile.", .{});
+                    Global.exit(1);
+                }
             }
         }
 

@@ -162,11 +162,14 @@ pub fn Visit(
         /// semantics in cases where:
         /// 1. The property (method) is reassigned after the arrow is created
         /// 2. The property is a getter that returns different values on each access
+        /// 3. Constructability differs: arrows are not constructable but bound
+        ///    functions derived from regular methods may be
         ///
         /// To safely enable this optimization, we would need to track:
         /// - Property assignments to the receiver object
         /// - Whether the property is defined as a getter
         /// - Whether the object escapes to code that could modify it
+        /// - Whether the arrow could be used with `new`
         ///
         /// For now, we conservatively disable the transformation entirely.
         pub fn tryMarkArrowForBindCallTransform(p: *P, arrow: *E.Arrow) void {

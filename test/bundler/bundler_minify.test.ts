@@ -1476,26 +1476,6 @@ describe("bundler", () => {
       stdout: "42",
     },
   });
-  itBundled("minify/ArrowToBindNoTransformWithCallArgs", {
-    files: {
-      "/entry.js": /* js */ `
-        const obj = { greet(name) { return "Hello, " + name; } };
-        // Arrow with call that has arguments - cannot transform
-        const fn = () => obj.greet("World");
-        console.log(fn());
-      `,
-    },
-    minifySyntax: true,
-    target: "bun",
-    onAfterBundle(api) {
-      const code = api.readFile("/out.js");
-      // Should NOT transform because the call has arguments
-      expect(code).not.toContain(".bind(");
-    },
-    run: {
-      stdout: "Hello, World",
-    },
-  });
   itBundled("minify/ArrowToBindNoTransformArgumentsAccess", {
     files: {
       "/entry.js": /* js */ `

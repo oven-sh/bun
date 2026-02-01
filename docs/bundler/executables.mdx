@@ -322,10 +322,7 @@ Using bytecode compilation, `tsc` starts 2x faster:
 
 Bytecode compilation moves parsing overhead for large input files from runtime to bundle time. Your app starts faster, in exchange for making the `bun build` command a little slower. It doesn't obscure source code.
 
-<Warning>
-  **Experimental:** Bytecode compilation is an experimental feature. Only `cjs` format is supported (which means no
-  top-level-await). Let us know if you run into any issues!
-</Warning>
+<Note>Bytecode compilation supports both `cjs` and `esm` formats when used with `--compile`.</Note>
 
 ### What do these flags do?
 

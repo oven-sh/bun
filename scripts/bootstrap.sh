@@ -1106,23 +1106,12 @@ llvm_version() {
 install_llvm() {
 	case "$pm" in
 	apt)
-		# Debian 13 (Trixie) has LLVM 21 natively, and apt.llvm.org doesn't have a trixie repo
-		if [ "$distro" = "debian" ]; then
-			install_packages \
-				"llvm-$(llvm_version)" \
-				"clang-$(llvm_version)" \
-				"lld-$(llvm_version)" \
-				"llvm-$(llvm_version)-dev" \
-				"llvm-$(llvm_version)-tools" \
-				"libclang-rt-$(llvm_version)-dev"
-		else
-			bash="$(require bash)"
-			llvm_script="$(download_file "https://apt.llvm.org/llvm.sh")"
-			execute_sudo "$bash" "$llvm_script" "$(llvm_version)" all
+		bash="$(require bash)"
+		llvm_script="$(download_file "https://apt.llvm.org/llvm.sh")"
+		execute_sudo "$bash" "$llvm_script" "$(llvm_version)" all
 
-			# Install llvm-symbolizer explicitly to ensure it's available for ASAN
-			install_packages "llvm-$(llvm_version)-tools"
-		fi
+		# Install llvm-symbolizer explicitly to ensure it's available for ASAN
+		install_packages "llvm-$(llvm_version)-tools"
 		;;
 	brew)
 		install_packages "llvm@$(llvm_version)"

@@ -92,6 +92,7 @@ pub const AuditCommand = @import("./cli/audit_command.zig").AuditCommand;
 pub const InitCommand = @import("./cli/init_command.zig").InitCommand;
 pub const WhyCommand = @import("./cli/why_command.zig").WhyCommand;
 pub const FuzzilliCommand = @import("./cli/fuzzilli_command.zig").FuzzilliCommand;
+pub const ReplCommand = @import("./cli/repl_command.zig").ReplCommand;
 
 pub const Arguments = @import("./cli/Arguments.zig");
 
@@ -842,12 +843,8 @@ pub const Command = struct {
                 return;
             },
             .ReplCommand => {
-                // TODO: Put this in native code.
-                var ctx = try Command.init(allocator, log, .BunxCommand);
-                ctx.debug.run_in_bun = true; // force the same version of bun used. fixes bun-debug for example
-                var args = bun.argv[0..];
-                args[1] = "bun-repl";
-                try BunxCommand.exec(ctx, args);
+                const ctx = try Command.init(allocator, log, .RunCommand);
+                try ReplCommand.exec(ctx);
                 return;
             },
             .RemoveCommand => {

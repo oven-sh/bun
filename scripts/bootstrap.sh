@@ -1460,13 +1460,69 @@ create_buildkite_user() {
 	# reasons.
 	local hook_dir=${home}/hooks
 	mkdir -p -m 755 "${hook_dir}"
+
+	# Environment hook - sets checkout path
 	cat << EOF > "${hook_dir}/environment"
 #!/bin/sh
 set -efu
 
 export BUILDKITE_BUILD_CHECKOUT_PATH=${home}/build
 EOF
+
+	# Checkout hook - uses git fetch instead of clone when repo exists
+	# This works with the pre-baked repository from bake-dependencies.sh
+	cat << 'CHECKOUT_EOF' > "${hook_dir}/checkout"
+#!/bin/sh
+set -efu
+
+CHECKOUT_PATH="${BUILDKITE_BUILD_CHECKOUT_PATH}"
+COMMIT="${BUILDKITE_COMMIT}"
+REPO="${BUILDKITE_REPO}"
+
+echo "--- :git: Checkout"
+
+if [ -d "${CHECKOUT_PATH}/.git" ]; then
+    echo "Repository exists, using git fetch..."
+    cd "${CHECKOUT_PATH}"
+
+    # Fetch the specific commit
+    git fetch --depth=1 origin "${COMMIT}" || git fetch origin "${COMMIT}"
+
+    # Clean up any local changes
+    git reset --hard
+    git clean -fdx -e 'build/' -e 'vendor/'
+
+    # Checkout the commit
+    git checkout -f "${COMMIT}"
+else
+    echo "Repository does not exist, cloning..."
+    git clone --depth=1 "${REPO}" "${CHECKOUT_PATH}"
+    cd "${CHECKOUT_PATH}"
+    git fetch --depth=1 origin "${COMMIT}" || git fetch origin "${COMMIT}"
+    git checkout -f "${COMMIT}"
+fi
+
+echo "Checked out ${COMMIT}"
+CHECKOUT_EOF
+
+	# Pre-command hook - removes node_modules before bun install
+	cat << 'PRECOMMAND_EOF' > "${hook_dir}/pre-command"
+#!/bin/sh
+set -eu
+
+CHECKOUT_PATH="${BUILDKITE_BUILD_CHECKOUT_PATH}"
+
+# Remove node_modules before each build to ensure clean state
+# Dependencies are re-installed via bun install
+if [ -d "${CHECKOUT_PATH}/node_modules" ]; then
+    echo "Removing existing node_modules..."
+    rm -rf "${CHECKOUT_PATH}/node_modules"
+fi
+PRECOMMAND_EOF
+
 	execute_sudo chmod +x "${hook_dir}/environment"
+	execute_sudo chmod +x "${hook_dir}/checkout"
+	execute_sudo chmod +x "${hook_dir}/pre-command"
 	execute_sudo chown -R "$user:$group" "$hook_dir"
 
 	set +ef -"$opts"
@@ -1674,6 +1730,24 @@ ensure_no_tmpfs() {
 	execute_sudo systemctl mask tmp.mount
 }
 
+bake_bun_dependencies() {
+	if ! [ "$ci" = "1" ]; then
+		return
+	fi
+
+	print "Baking Bun dependencies into image..."
+
+	# The bake script will clone Bun and download all build dependencies
+	# This includes: Zig, WebKit, BoringSSL, mimalloc, zstd, etc.
+	bake_script="$(dirname "$0")/bake-dependencies.sh"
+	if [ -f "$bake_script" ]; then
+		# Run as buildkite-agent user so files have correct ownership
+		execute_as_user "BUN_REPO_PATH=/var/lib/buildkite-agent/build sh $bake_script"
+	else
+		print "Warning: bake-dependencies.sh not found, skipping dependency baking"
+	fi
+}
+
 main() {
 	check_features "$@"
 	check_operating_system
@@ -1690,6 +1764,7 @@ main() {
 	if [ "${BUN_NO_CORE_DUMP:-0}" != "1" ]; then
 		configure_core_dumps
 	fi
+	bake_bun_dependencies
 	clean_system
 	ensure_no_tmpfs
 }

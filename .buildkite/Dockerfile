@@ -136,7 +136,60 @@ set -efu
 export BUILDKITE_BUILD_CHECKOUT_PATH=/var/lib/buildkite-agent/build
 EOF
 
-RUN chmod 744 /var/lib/buildkite-agent/hooks/environment
+# Checkout hook - uses git fetch instead of clone when repo exists
+RUN cat <<'EOF' > /var/lib/buildkite-agent/hooks/checkout
+#!/bin/sh
+set -efu
+
+CHECKOUT_PATH="${BUILDKITE_BUILD_CHECKOUT_PATH}"
+COMMIT="${BUILDKITE_COMMIT}"
+REPO="${BUILDKITE_REPO}"
+
+echo "--- :git: Checkout"
+
+if [ -d "${CHECKOUT_PATH}/.git" ]; then
+    echo "Repository exists, using git fetch..."
+    cd "${CHECKOUT_PATH}"
+    git fetch --depth=1 origin "${COMMIT}" || git fetch origin "${COMMIT}"
+    git reset --hard
+    git clean -fdx -e 'build/' -e 'vendor/'
+    git checkout -f "${COMMIT}"
+else
+    echo "Repository does not exist, cloning..."
+    git clone --depth=1 "${REPO}" "${CHECKOUT_PATH}"
+    cd "${CHECKOUT_PATH}"
+    git fetch --depth=1 origin "${COMMIT}" || git fetch origin "${COMMIT}"
+    git checkout -f "${COMMIT}"
+fi
+
+echo "Checked out ${COMMIT}"
+EOF
+
+# Pre-command hook - removes node_modules before each build
+RUN cat <<'EOF' > /var/lib/buildkite-agent/hooks/pre-command
+#!/bin/sh
+set -eu
+
+CHECKOUT_PATH="${BUILDKITE_BUILD_CHECKOUT_PATH}"
+
+if [ -d "${CHECKOUT_PATH}/node_modules" ]; then
+    echo "Removing existing node_modules..."
+    rm -rf "${CHECKOUT_PATH}/node_modules"
+fi
+EOF
+
+RUN chmod 755 /var/lib/buildkite-agent/hooks/environment \
+    && chmod 755 /var/lib/buildkite-agent/hooks/checkout \
+    && chmod 755 /var/lib/buildkite-agent/hooks/pre-command
+
+# Pre-download the bake-dependencies script and run it
+# The script handles: cloning repo, installing deps, running cmake, downloading build deps
+# This avoids downloading dependencies during each CI build
+RUN curl -fsSL https://raw.githubusercontent.com/oven-sh/bun/main/scripts/bake-dependencies.sh -o /tmp/bake-dependencies.sh && \
+    BUN_REPO_PATH=/var/lib/buildkite-agent/build sh /tmp/bake-dependencies.sh && \
+    rm /tmp/bake-dependencies.sh
+
+WORKDIR /var/lib/buildkite-agent/build
 
 COPY  ../*/agent.mjs /var/bun/scripts/
 

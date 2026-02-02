@@ -393,6 +393,15 @@ extern "C" void bun_restore_stdio()
 {
 
 #if !OS(WINDOWS)
+    // Restore cursor visibility - some CLI apps hide the cursor and may not restore it on exit
+    // Send DECTCEM (DEC text cursor enable mode) sequence to show cursor
+    // Only write to stdout if it's a TTY to avoid polluting piped output
+    if (bun_stdio_tty[1]) {
+        // \e[?25h - show cursor (DECTCEM)
+        const char show_cursor[] = "\x1b[?25h";
+        // Ignore errors - best effort restoration
+        (void)write(1, show_cursor, sizeof(show_cursor) - 1);
+    }
 
     // restore stdio
     for (int32_t fd = 0; fd < 3; fd++) {

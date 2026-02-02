@@ -470,6 +470,100 @@ pub const Bunfig = struct {
                             },
                         }
                     }
+
+                    // Parse [[test.projects]] - per-file preload configuration
+                    if (test_.get("projects")) |projects_expr| {
+                        if (projects_expr.data != .e_array) {
+                            try this.addError(projects_expr.loc, "test.projects must be an array of project configurations");
+                            return;
+                        }
+
+                        const projects_arr = projects_expr.data.e_array.items.slice();
+                        if (projects_arr.len == 0) {
+                            try this.addError(projects_expr.loc, "test.projects array cannot be empty");
+                            return;
+                        }
+
+                        var projects = try allocator.alloc(Command.TestProject, projects_arr.len);
+
+                        for (projects_arr, 0..) |project_expr, i| {
+                            if (project_expr.data != .e_object) {
+                                try this.addError(project_expr.loc, "each project must be an object with 'include' and optional 'preload' fields");
+                                return;
+                            }
+
+                            // Parse include patterns (required)
+                            const include_expr = project_expr.get("include") orelse {
+                                try this.addError(project_expr.loc, "project must have an 'include' field with glob patterns");
+                                return;
+                            };
+
+                            const include: []const []const u8 = switch (include_expr.data) {
+                                .e_string => |str| brk: {
+                                    if (str.len() == 0) {
+                                        try this.addError(include_expr.loc, "include pattern cannot be an empty string");
+                                        return;
+                                    }
+                                    const pattern = try str.string(allocator);
+                                    const patterns = try allocator.alloc(string, 1);
+                                    patterns[0] = pattern;
+                                    break :brk patterns;
+                                },
+                                .e_array => |arr| brk: {
+                                    if (arr.items.len == 0) {
+                                        try this.addError(include_expr.loc, "include array cannot be empty");
+                                        return;
+                                    }
+                                    const patterns = try allocator.alloc(string, arr.items.len);
+                                    for (arr.items.slice(), 0..) |item, j| {
+                                        if (item.data != .e_string) {
+                                            try this.addError(item.loc, "include array must contain only strings");
+                                            return;
+                                        }
+                                        if (item.data.e_string.len() == 0) {
+                                            try this.addError(item.loc, "include patterns cannot be empty strings");
+                                            return;
+                                        }
+                                        patterns[j] = try item.data.e_string.string(allocator);
+                                    }
+                                    break :brk patterns;
+                                },
+                                else => {
+                                    try this.addError(include_expr.loc, "include must be a string or array of strings");
+                                    return;
+                                },
+                            };
+
+                            // Parse preload paths (optional)
+                            const preload: []const []const u8 = if (project_expr.get("preload")) |preload_expr| switch (preload_expr.data) {
+                                .e_string => |str| brk: {
+                                    const preload_path = try str.string(allocator);
+                                    const preload_paths = try allocator.alloc(string, 1);
+                                    preload_paths[0] = preload_path;
+                                    break :brk preload_paths;
+                                },
+                                .e_array => |arr| brk: {
+                                    if (arr.items.len == 0) break :brk &[_][]const u8{};
+                                    const preload_paths = try allocator.alloc(string, arr.items.len);
+                                    for (arr.items.slice(), 0..) |item, j| {
+                                        if (item.data != .e_string) {
+                                            try this.addError(item.loc, "preload array must contain only strings");
+                                            return;
+                                        }
+                                        preload_paths[j] = try item.data.e_string.string(allocator);
+                                    }
+                                    break :brk preload_paths;
+                                },
+                                else => {
+                                    try this.addError(preload_expr.loc, "preload must be a string or array of strings");
+                                    return;
+                                },
+                            } else &[_][]const u8{};
+
+                            projects[i] = .{ .include = include, .preload = preload };
+                        }
+                        this.ctx.test_options.projects = projects;
+                    }
                 }
             }
 

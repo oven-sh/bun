@@ -150,6 +150,22 @@ pub const TestRunner = struct {
         return false;
     }
 
+    /// Returns the preloads for a test file based on [[test.projects]] configuration.
+    /// Returns null if no project matches (fall back to global preload).
+    pub fn getProjectPreloadsForFile(this: *const TestRunner, file_path: []const u8) ?[]const []const u8 {
+        const projects = this.test_options.projects orelse return null;
+
+        for (projects) |project| {
+            for (project.include) |pattern| {
+                const result = bun.glob.match(pattern, file_path);
+                if (result == .match) {
+                    return project.preload;
+                }
+            }
+        }
+        return null;
+    }
+
     pub fn getOrPutFile(this: *TestRunner, file_path: string) struct { file_id: File.ID } {
         const entry = this.index.getOrPut(this.allocator, @as(u32, @truncate(bun.hash(file_path)))) catch unreachable; // TODO: this is wrong. you can't put a hash as the key in a hashmap.
         if (entry.found_existing) {

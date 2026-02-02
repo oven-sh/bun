@@ -1891,6 +1891,11 @@ pub const TestCommand = struct {
                 try vm.global.deleteModuleRegistryEntry(&entry);
             }
 
+            // Check if this file matches a project for per-file preloads
+            if (reporter.jest.getProjectPreloadsForFile(file_path)) |project_preloads| {
+                vm.preload = project_preloads;
+            }
+
             var bun_test_root = &jest.Jest.runner.?.bun_test_root;
             // Determine if this file should run tests concurrently based on glob pattern
             const should_run_concurrent = reporter.jest.shouldFileRunConcurrently(file_id);

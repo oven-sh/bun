@@ -221,7 +221,7 @@ fn swapScreens(this: *TuiRenderer, screen: *const TuiScreen) void {
         }
     }
     if (this.prev_page == null) {
-        this.prev_page = Page.init(.{ .cols = screen.page.size.cols, .rows = screen.page.size.rows, .styles = 256 }) catch return;
+        this.prev_page = Page.init(.{ .cols = screen.page.size.cols, .rows = screen.page.size.rows, .styles = 4096 }) catch return;
     }
     var prev = &(this.prev_page orelse return);
 

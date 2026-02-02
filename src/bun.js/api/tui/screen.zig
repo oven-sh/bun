@@ -105,6 +105,33 @@ page: Page,
 clip_stack: [8]ClipRect = undefined,
 clip_depth: u8 = 0,
 hyperlinks: HyperlinkPool = .{},
+/// Maps Style → already-assigned ID, so each unique style only calls
+/// styles.add() once. Prevents ref-count overflow on repeated style() calls.
+style_cache: StyleCache = .{},
+
+const StyleKey = struct {
+    bytes: [@sizeOf(Style)]u8,
+
+    fn fromStyle(s: Style) StyleKey {
+        var key: StyleKey = undefined;
+        @memcpy(&key.bytes, std.mem.asBytes(&s));
+        return key;
+    }
+};
+
+const StyleCache = std.HashMapUnmanaged(
+    StyleKey,
+    size.StyleCountInt,
+    struct {
+        pub fn hash(_: @This(), key: StyleKey) u64 {
+            return std.hash.Wyhash.hash(0, &key.bytes);
+        }
+        pub fn eql(_: @This(), a: StyleKey, b: StyleKey) bool {
+            return std.mem.eql(u8, &a.bytes, &b.bytes);
+        }
+    },
+    std.hash_map.default_max_load_percentage,
+);
 
 pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!*TuiScreen {
     const arguments = callframe.arguments();
@@ -115,7 +142,7 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
     const cols: size.CellCountInt = @intCast(@max(1, @min((try arguments[0].coerce(i32, globalThis)), 4096)));
     const rows: size.CellCountInt = @intCast(@max(1, @min((try arguments[1].coerce(i32, globalThis)), 4096)));
 
-    const page = Page.init(.{ .cols = cols, .rows = rows, .styles = 256 }) catch {
+    const page = Page.init(.{ .cols = cols, .rows = rows, .styles = 4096 }) catch {
         return globalThis.throw("Failed to allocate Screen", .{});
     };
 
@@ -124,12 +151,13 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
 
 pub fn finalize(this: *TuiScreen) callconv(.c) void {
     this.hyperlinks.deinit();
+    this.style_cache.deinit(bun.default_allocator);
     this.page.deinit();
     bun.destroy(this);
 }
 
 pub fn estimatedSize(this: *const TuiScreen) usize {
-    return this.page.memory.len;
+    return this.page.memory.len + this.style_cache.capacity() * (@sizeOf(StyleKey) + @sizeOf(size.StyleCountInt));
 }
 
 fn getCols(self: *const TuiScreen) size.CellCountInt {
@@ -321,9 +349,18 @@ pub fn style(this: *TuiScreen, globalThis: *jsc.JSGlobalObject, callframe: *jsc.
     // Default style (no flags, no colors) is always ID 0.
     if (s.default()) return jsc.JSValue.jsNumber(@as(i32, 0));
 
+    // Check our cache first — avoids calling styles.add() repeatedly
+    // which would overflow the ref count (u16) on long-running apps.
+    const key = StyleKey.fromStyle(s);
+    if (this.style_cache.get(key)) |cached_id| {
+        return jsc.JSValue.jsNumber(@as(i32, @intCast(cached_id)));
+    }
+
     const id = this.page.styles.add(this.page.memory, s) catch {
-        return globalThis.throw("Failed to intern style: style set full", .{});
+        return globalThis.throw("Failed to intern style: style set full (max 4096 unique styles)", .{});
     };
+
+    this.style_cache.put(bun.default_allocator, key, id) catch {};
 
     return jsc.JSValue.jsNumber(@as(i32, @intCast(id)));
 }
@@ -343,7 +380,9 @@ pub fn clearRect(this: *TuiScreen, globalThis: *jsc.JSGlobalObject, callframe: *
     var row_idx = clipped.y;
     while (row_idx < clipped.y +| clipped.h) : (row_idx += 1) {
         const row = this.page.getRow(row_idx);
-        this.page.clearCells(row, clipped.x, clipped.x +| clipped.w);
+        // Zero cells directly — see clear() for why we bypass clearCells.
+        const cells = row.cells.ptr(this.page.memory)[clipped.x..clipped.x +| clipped.w];
+        @memset(@as([]u64, @ptrCast(cells)), 0);
         row.dirty = true;
     }
     return .js_undefined;
@@ -448,7 +487,7 @@ pub fn resize(this: *TuiScreen, globalThis: *jsc.JSGlobalObject, callframe: *jsc
     const nr: size.CellCountInt = @intCast(@max(1, @min((try arguments[1].coerce(i32, globalThis)), 4096)));
     if (nc == this.getCols() and nr == this.getRows()) return .js_undefined;
 
-    var new_page = Page.init(.{ .cols = nc, .rows = nr, .styles = 256 }) catch {
+    var new_page = Page.init(.{ .cols = nc, .rows = nr, .styles = 4096 }) catch {
         return globalThis.throw("Failed to resize Screen", .{});
     };
 
@@ -467,6 +506,41 @@ pub fn resize(this: *TuiScreen, globalThis: *jsc.JSGlobalObject, callframe: *jsc
     this.page = new_page;
     // Free hyperlink ID array (it's sized to old dimensions)
     this.hyperlinks.freeIds();
+    // Re-add all cached styles to the new page's StyleSet so that
+    // previously returned style IDs remain valid after resize.
+    // Sort by old ID to preserve insertion order → same IDs on the new page.
+    const cache_count = this.style_cache.count();
+    if (cache_count > 0) {
+        const Pair = struct { key: StyleKey, old_id: size.StyleCountInt };
+        const pairs = bun.default_allocator.alloc(Pair, cache_count) catch {
+            // Fallback: just clear the cache; user must re-create styles.
+            this.style_cache.clearRetainingCapacity();
+            return .js_undefined;
+        };
+        defer bun.default_allocator.free(pairs);
+
+        var idx: usize = 0;
+        var it = this.style_cache.iterator();
+        while (it.next()) |entry| {
+            pairs[idx] = .{ .key = entry.key_ptr.*, .old_id = entry.value_ptr.* };
+            idx += 1;
+        }
+
+        // Sort by old_id so we re-add in the original insertion order.
+        std.mem.sort(Pair, pairs[0..idx], {}, struct {
+            fn lessThan(_: void, a: Pair, b: Pair) bool {
+                return a.old_id < b.old_id;
+            }
+        }.lessThan);
+
+        this.style_cache.clearRetainingCapacity();
+        for (pairs[0..idx]) |pair| {
+            var s: Style = undefined;
+            @memcpy(std.mem.asBytes(&s), &pair.key.bytes);
+            const new_id = this.page.styles.add(this.page.memory, s) catch continue;
+            this.style_cache.put(bun.default_allocator, pair.key, new_id) catch {};
+        }
+    }
     return .js_undefined;
 }
 
@@ -475,8 +549,14 @@ pub fn clear(this: *TuiScreen, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JS
     var ri: size.CellCountInt = 0;
     while (ri < this.getRows()) : (ri += 1) {
         const row = this.page.getRow(ri);
-        this.page.clearCells(row, 0, this.getCols());
+        // Zero cells directly — we don't use Ghostty's ref-counted style
+        // lifecycle (use/release per cell), so we must not call clearCells
+        // which would try to release() style refs we never incremented.
+        const cells = row.cells.ptr(this.page.memory)[0..this.page.size.cols];
+        @memset(@as([]u64, @ptrCast(cells)), 0);
         row.dirty = true;
+        row.styled = false;
+        row.grapheme = false;
     }
     this.hyperlinks.clearIds();
     return .js_undefined;

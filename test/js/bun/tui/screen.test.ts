@@ -358,7 +358,7 @@ describe("Bun.TUIScreen", () => {
   test("many unique styles up to capacity", () => {
     const screen = new Bun.TUIScreen(80, 24);
     const ids = new Set<number>();
-    // Create styles with unique colors — capacity is 256
+    // Create styles with unique colors — capacity is 4096
     // We leave some headroom since style 0 is reserved
     for (let i = 1; i < 200; i++) {
       const id = screen.style({ fg: i });

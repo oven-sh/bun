@@ -79,12 +79,13 @@ JSC_DEFINE_HOST_FUNCTION(functionStartRemoteDebugger,
     JSC::JSValue hostValue = callFrame->argument(0);
     JSC::JSValue portValue = callFrame->argument(1);
     const char* host = defaultHost;
+    WTF::CString hostCString;
     if (hostValue.isString()) {
 
         auto str = hostValue.toWTFString(globalObject);
-        auto cstr = toCString(str);
+        hostCString = toCString(str);
         if (!str.isEmpty())
-            host = cstr.span().data();
+            host = hostCString.span().data();
     } else if (!hostValue.isUndefined()) {
         throwVMError(globalObject, scope,
             createTypeError(globalObject, "host must be a string"_s));

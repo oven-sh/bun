@@ -15,8 +15,11 @@ test("spyOn returns a disposable that calls mockRestore", () => {
 test("mock() returns a disposable that calls mockRestore", () => {
   const fn = mock(() => "original");
 
+  fn();
+  expect(fn).toHaveBeenCalledTimes(1);
   expect(fn[Symbol.dispose]).toBeFunction();
   fn[Symbol.dispose]();
+  expect(fn).toHaveBeenCalledTimes(0);
 });
 
 test("using with spyOn auto-restores prototype methods", () => {

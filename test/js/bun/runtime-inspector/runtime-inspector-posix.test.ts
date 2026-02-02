@@ -188,13 +188,11 @@ describe.skipIf(isWindows)("Runtime inspector SIGUSR1 activation", () => {
 
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-    expect(output).toMatchInlineSnapshot(`
-      "READY
-      SIGNAL_1
-      SIGNAL_2
-      SIGNAL_3
-      "
-    `);
+    expect(output).toBe(`READY
+SIGNAL_1
+SIGNAL_2
+SIGNAL_3
+`);
     expect(stderr).not.toContain("Bun Inspector");
     expect(exitCode).toBe(0);
   });

@@ -10,9 +10,9 @@ if(EXISTS "${PERL_PATH}/perl/bin/perl.exe")
   return()
 endif()
 
-set(DOWNLOAD_URL ${PERL_URL})
-set(DOWNLOAD_PATH ${PERL_PATH})
-set(DOWNLOAD_SHA256 ${PERL_SHA256})
+set(DOWNLOAD_URL "${PERL_URL}")
+set(DOWNLOAD_PATH "${PERL_PATH}")
+set(DOWNLOAD_SHA256 "${PERL_SHA256}")
 include(${CMAKE_CURRENT_LIST_DIR}/DownloadUrl.cmake)
 
 if(EXISTS "${PERL_PATH}/perl/bin/perl.exe")

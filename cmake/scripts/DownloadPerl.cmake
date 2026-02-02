@@ -1,12 +1,18 @@
 get_filename_component(SCRIPT_NAME ${CMAKE_CURRENT_LIST_FILE} NAME)
 message(STATUS "Running script: ${SCRIPT_NAME}")
 
-if(NOT PERL_PATH OR NOT PERL_URL)
-  message(FATAL_ERROR "PERL_PATH and PERL_URL are required")
+if(NOT PERL_PATH OR NOT PERL_URL OR NOT PERL_SHA256)
+  message(FATAL_ERROR "PERL_PATH, PERL_URL, and PERL_SHA256 are required")
+endif()
+
+if(EXISTS "${PERL_PATH}/perl/bin/perl.exe")
+  message(STATUS "Perl found: ${PERL_PATH}/perl/bin/perl.exe")
+  return()
 endif()
 
 set(DOWNLOAD_URL ${PERL_URL})
 set(DOWNLOAD_PATH ${PERL_PATH})
+set(DOWNLOAD_SHA256 ${PERL_SHA256})
 include(${CMAKE_CURRENT_LIST_DIR}/DownloadUrl.cmake)
 
 if(EXISTS "${PERL_PATH}/perl/bin/perl.exe")
@@ -23,4 +29,3 @@ if(PERL_CANDIDATE_COUNT GREATER 0)
 endif()
 
 message(FATAL_ERROR "Downloaded Perl, but perl.exe was not found under ${PERL_PATH}")
-

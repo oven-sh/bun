@@ -1,5 +1,9 @@
 #include "Semaphore.h"
 
+#if !OS(WINDOWS) && !OS(DARWIN)
+#include <cerrno>
+#endif
+
 namespace Bun {
 
 Semaphore::Semaphore(unsigned int value)
@@ -44,7 +48,12 @@ bool Semaphore::wait()
 #elif OS(DARWIN)
     return semaphore_wait(m_semaphore) == KERN_SUCCESS;
 #else
-    return sem_wait(&m_semaphore) == 0;
+    // Retry on EINTR - sem_wait can be interrupted by any signal
+    while (sem_wait(&m_semaphore) != 0) {
+        if (errno != EINTR)
+            return false;
+    }
+    return true;
 #endif
 }
 

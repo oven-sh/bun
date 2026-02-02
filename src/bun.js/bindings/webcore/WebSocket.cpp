@@ -83,6 +83,7 @@
 namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(WebSocket);
 extern "C" int Bun__getTLSRejectUnauthorizedValue();
+extern "C" bool Bun__isNoProxy(const char* hostname, size_t hostname_len, const char* host, size_t host_len);
 
 static ErrorEvent::Init createErrorEventInit(WebSocket& webSocket, const String& reason, JSC::JSGlobalObject* globalObject)
 {
@@ -573,6 +574,19 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
 
     // Determine connection type based on proxy usage and TLS requirements
     bool hasProxy = proxyConfig.has_value();
+
+    // Check NO_PROXY even for explicitly-provided proxies
+    if (hasProxy) {
+        auto hostStr = m_url.host().toString();
+        auto hostWithPort = hostName(m_url, is_secure);
+        auto hostUtf8 = hostStr.utf8();
+        auto hostWithPortUtf8 = hostWithPort.utf8();
+        if (Bun__isNoProxy(hostUtf8.data(), hostUtf8.length(), hostWithPortUtf8.data(), hostWithPortUtf8.length())) {
+            proxyConfig = std::nullopt;
+            hasProxy = false;
+        }
+    }
+
     bool proxyIsHTTPS = hasProxy && proxyConfig->isHTTPS;
 
     // Connection type determines what kind of socket we use:
@@ -602,6 +616,16 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
         }
     }
 
+    // Compute Basic auth from target URL credentials (for WebSocket upgrade request)
+    String targetAuthorization;
+    if (!m_url.user().isEmpty()) {
+        auto credentials = makeString(m_url.user(), ':', m_url.password());
+        auto utf8 = credentials.utf8();
+        auto encoded = base64EncodeToString(std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(utf8.data()), utf8.length()));
+        targetAuthorization = makeString("Basic "_s, encoded);
+    }
+    ZigString targetAuth = Zig::toZigString(targetAuthorization);
+
     // Pass SSLConfig pointer to Zig (ownership transferred - Zig will deinit when connection closes)
     // After this call, m_sslConfig should not be used by C++ anymore
     void* sslConfig = m_sslConfig;
@@ -622,7 +646,8 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
             hasProxy ? &proxyHost : nullptr, proxyPort,
             (hasProxy && !proxyConfig->authorization.isEmpty()) ? &proxyAuth : nullptr,
             proxyHeaderNames.begin(), proxyHeaderValues.begin(), proxyHeaderNames.size(),
-            sslConfig, is_secure);
+            sslConfig, is_secure,
+            targetAuthorization.isEmpty() ? nullptr : &targetAuth);
     } else {
         us_socket_context_t* ctx = scriptExecutionContext()->webSocketContext<false>();
         RELEASE_ASSERT(ctx);
@@ -633,7 +658,8 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
             hasProxy ? &proxyHost : nullptr, proxyPort,
             (hasProxy && !proxyConfig->authorization.isEmpty()) ? &proxyAuth : nullptr,
             proxyHeaderNames.begin(), proxyHeaderValues.begin(), proxyHeaderNames.size(),
-            sslConfig, is_secure);
+            sslConfig, is_secure,
+            targetAuthorization.isEmpty() ? nullptr : &targetAuth);
     }
 
     proxyHeaderValues.clear();
@@ -1331,7 +1357,7 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::spa
         if (this->hasEventListeners(eventName)) {
             // the main reason for dispatching on a separate tick is to handle when you haven't yet attached an event listener
             this->incPendingActivityCount();
-            auto scope = DECLARE_CATCH_SCOPE(scriptExecutionContext()->vm());
+            auto scope = DECLARE_TOP_EXCEPTION_SCOPE(scriptExecutionContext()->vm());
             JSUint8Array* buffer = createBuffer(scriptExecutionContext()->jsGlobalObject(), binaryData);
 
             if (!buffer || scope.exception()) [[unlikely]] {

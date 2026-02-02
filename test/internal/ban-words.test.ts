@@ -76,6 +76,7 @@ for (const source of sources) {
       if (!source.endsWith(".zig")) continue;
       if (source.startsWith("src" + path.sep + "deps")) continue;
       if (source.startsWith("src" + path.sep + "codegen")) continue;
+      if (source.startsWith("src" + path.sep + "unicode" + path.sep + "uucode")) continue;
       const content = await file(source).text();
       for (const word of words_keys) {
         let regex = words[word].regex ? new RegExp(word, "gm") : undefined;

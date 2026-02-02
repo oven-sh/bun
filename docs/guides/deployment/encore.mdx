@@ -116,9 +116,9 @@ import { SQLDatabase } from "encore.dev/storage/sqldb";
 const db = new SQLDatabase("mydb", { migrations: "./migrations" });
 ```
 
-| Local  | Encore Cloud (free) | AWS        | GCP       |
-| ------ | ------------------- | ---------- | --------- |
-| Docker | Managed Postgres    | Amazon RDS | Cloud SQL |
+| Local  | AWS        | GCP       |
+| ------ | ---------- | --------- |
+| Docker | Amazon RDS | Cloud SQL |
 
 ### Pub/Sub
 
@@ -132,9 +132,9 @@ const _ = new Subscription(signups, "send-welcome", {
 });
 ```
 
-| Local     | Encore Cloud (free) | AWS       | GCP         |
-| --------- | ------------------- | --------- | ----------- |
-| In-memory | GCP Pub/Sub         | SNS + SQS | GCP Pub/Sub |
+| Local     | AWS       | GCP         |
+| --------- | --------- | ----------- |
+| In-memory | SNS + SQS | GCP Pub/Sub |
 
 ### Object storage
 
@@ -144,9 +144,9 @@ import { Bucket } from "encore.dev/storage/objects";
 const uploads = new Bucket("uploads", { versioned: false });
 ```
 
-| Local      | Encore Cloud (free) | AWS             | GCP             |
-| ---------- | ------------------- | --------------- | --------------- |
-| Local disk | Managed             | S3 + CloudFront | GCS + Cloud CDN |
+| Local      | AWS             | GCP             |
+| ---------- | --------------- | --------------- |
+| Local disk | S3 + CloudFront | GCS + Cloud CDN |
 
 ### Caches
 
@@ -156,9 +156,9 @@ import { CacheCluster } from "encore.dev/storage/cache";
 const cluster = new CacheCluster("my-cache", { evictionPolicy: "allkeys-lru" });
 ```
 
-| Local     | Encore Cloud (free) | AWS         | GCP         |
-| --------- | ------------------- | ----------- | ----------- |
-| In-memory | In-memory           | ElastiCache | Memorystore |
+| Local     | AWS         | GCP         |
+| --------- | ----------- | ----------- |
+| In-memory | ElastiCache | Memorystore |
 
 ### Cron jobs
 
@@ -172,9 +172,9 @@ const _ = new Cron("daily-cleanup", {
 });
 ```
 
-| Local    | Encore Cloud (free) | AWS     | GCP     |
-| -------- | ------------------- | ------- | ------- |
-| Disabled | Managed             | Managed | Managed |
+| Local    | AWS     | GCP     |
+| -------- | ------- | ------- |
+| Disabled | Managed | Managed |
 
 ### Secrets
 
@@ -188,9 +188,9 @@ import { secret } from "encore.dev/config";
 const mySecret = secret("MySecretKey");
 ```
 
-| Local         | Encore Cloud (free) | AWS             | GCP            |
-| ------------- | ------------------- | --------------- | -------------- |
-| .secrets file | Managed             | Secrets Manager | Secret Manager |
+| Local         | AWS             | GCP            |
+| ------------- | --------------- | -------------- |
+| .secrets file | Secrets Manager | Secret Manager |
 
 ---
 

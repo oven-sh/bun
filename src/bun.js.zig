@@ -38,6 +38,7 @@ pub const Run = struct {
                 .smol = ctx.runtime_options.smol,
                 .debugger = ctx.runtime_options.debugger,
                 .dns_result_order = DNSResolver.Order.fromStringOrDie(ctx.runtime_options.dns_result_order),
+                .disable_sigusr1 = ctx.runtime_options.disable_sigusr1,
             }),
             .arena = arena,
             .ctx = ctx,

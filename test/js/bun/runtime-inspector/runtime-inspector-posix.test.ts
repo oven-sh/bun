@@ -1,11 +1,14 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
 import { join } from "path";
+
+// ASAN builds have issues with signal handling reliability for SIGUSR1-based inspector activation
+const skipASAN = isASAN;
 
 // POSIX-specific tests (SIGUSR1 mechanism) - macOS and Linux only
 describe.skipIf(isWindows)("Runtime inspector SIGUSR1 activation", () => {
-  test("activates inspector when no user listener", async () => {
+  test.skipIf(skipASAN)("activates inspector when no user listener", async () => {
     using dir = tempDir("sigusr1-activate-test", {
       "test.js": `
         const fs = require("fs");
@@ -196,7 +199,7 @@ describe.skipIf(isWindows)("Runtime inspector SIGUSR1 activation", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("inspector does not activate twice via SIGUSR1", async () => {
+  test.skipIf(skipASAN)("inspector does not activate twice via SIGUSR1", async () => {
     using dir = tempDir("sigusr1-twice-test", {
       "test.js": `
         const fs = require("fs");
@@ -263,7 +266,7 @@ describe.skipIf(isWindows)("Runtime inspector SIGUSR1 activation", () => {
     expect(matches?.length ?? 0).toBe(2);
   });
 
-  test("SIGUSR1 to self activates inspector", async () => {
+  test.skipIf(skipASAN)("SIGUSR1 to self activates inspector", async () => {
     await using proc = spawn({
       cmd: [
         bunExe(),

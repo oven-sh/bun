@@ -21,6 +21,8 @@ if(USE_LLVM_VERSION)
   set(LLVM_VERSION_MAJOR ${CMAKE_MATCH_1})
   set(LLVM_VERSION_MINOR ${CMAKE_MATCH_2})
   set(LLVM_VERSION_PATCH ${CMAKE_MATCH_3})
+  # Accept any LLVM version within the same major.minor range (e.g. Alpine 3.23 ships 21.1.2)
+  set(LLVM_VERSION_RANGE ">=${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}.0 <${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}.99")
 endif()
 
 set(LLVM_PATHS)
@@ -77,7 +79,7 @@ macro(find_llvm_command variable command)
     VERSION_VARIABLE LLVM_VERSION
     COMMAND ${commands}
     PATHS ${LLVM_PATHS}
-    VERSION "${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}.${LLVM_VERSION_PATCH}"
+    VERSION "${LLVM_VERSION_RANGE}"
   )
   list(APPEND CMAKE_ARGS -D${variable}=${${variable}})
 endmacro()

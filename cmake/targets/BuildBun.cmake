@@ -1273,12 +1273,17 @@ else()
     ${WEBKIT_LIB_PATH}/libWTF.a
     ${WEBKIT_LIB_PATH}/libJavaScriptCore.a
   )
-  if(NOT APPLE OR EXISTS ${WEBKIT_LIB_PATH}/libbmalloc.a)
+  if(WEBKIT_LOCAL OR NOT APPLE OR EXISTS ${WEBKIT_LIB_PATH}/libbmalloc.a)
     target_link_libraries(${bun} PRIVATE ${WEBKIT_LIB_PATH}/libbmalloc.a)
   endif()
 endif()
 
 include_directories(${WEBKIT_INCLUDE_PATH})
+
+# When building with a local WebKit, ensure JSC is built before compiling Bun's C++ sources.
+if(WEBKIT_LOCAL AND TARGET jsc)
+  add_dependencies(${bun} jsc)
+endif()
 
 # Include the generated dependency versions header
 include_directories(${CMAKE_BINARY_DIR})
@@ -1324,9 +1329,14 @@ if(LINUX)
     target_link_libraries(${bun} PUBLIC libatomic.so)
   endif()
 
-  target_link_libraries(${bun} PRIVATE ${WEBKIT_LIB_PATH}/libicudata.a)
-  target_link_libraries(${bun} PRIVATE ${WEBKIT_LIB_PATH}/libicui18n.a)
-  target_link_libraries(${bun} PRIVATE ${WEBKIT_LIB_PATH}/libicuuc.a)
+  if(WEBKIT_LOCAL)
+    find_package(ICU REQUIRED COMPONENTS data i18n uc)
+    target_link_libraries(${bun} PRIVATE ICU::data ICU::i18n ICU::uc)
+  else()
+    target_link_libraries(${bun} PRIVATE ${WEBKIT_LIB_PATH}/libicudata.a)
+    target_link_libraries(${bun} PRIVATE ${WEBKIT_LIB_PATH}/libicui18n.a)
+    target_link_libraries(${bun} PRIVATE ${WEBKIT_LIB_PATH}/libicuuc.a)
+  endif()
 endif()
 
 if(WIN32)

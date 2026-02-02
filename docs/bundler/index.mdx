@@ -1333,6 +1333,50 @@ Generate metadata about the build in a structured format. The metafile contains 
   </Tab>
 </Tabs>
 
+#### Markdown metafile
+
+Use `--metafile-md` to generate a markdown metafile, which is LLM-friendly and easy to read in the terminal:
+
+```bash terminal icon="terminal"
+bun build ./src/index.ts --outdir ./dist --metafile-md ./dist/meta.md
+```
+
+Both `--metafile` and `--metafile-md` can be used together:
+
+```bash terminal icon="terminal"
+bun build ./src/index.ts --outdir ./dist --metafile ./dist/meta.json --metafile-md ./dist/meta.md
+```
+
+#### `metafile` option formats
+
+In the JavaScript API, `metafile` accepts several forms:
+
+```ts title="build.ts" icon="/icons/typescript.svg"
+// Boolean — include metafile in the result object
+await Bun.build({
+  entrypoints: ["./src/index.ts"],
+  outdir: "./dist",
+  metafile: true,
+});
+
+// String — write JSON metafile to a specific path
+await Bun.build({
+  entrypoints: ["./src/index.ts"],
+  outdir: "./dist",
+  metafile: "./dist/meta.json",
+});
+
+// Object — specify separate paths for JSON and markdown output
+await Bun.build({
+  entrypoints: ["./src/index.ts"],
+  outdir: "./dist",
+  metafile: {
+    json: "./dist/meta.json",
+    markdown: "./dist/meta.md",
+  },
+});
+```
+
 The metafile structure contains:
 
 ```ts
@@ -1464,22 +1508,43 @@ BuildArtifact (entry-point) {
 
 ## Bytecode
 
-The `bytecode: boolean` option can be used to generate bytecode for any JavaScript/TypeScript entrypoints. This can greatly improve startup times for large applications. Only supported for `"cjs"` format, only supports `"target": "bun"` and dependent on a matching version of Bun. This adds a corresponding `.jsc` file for each entrypoint.
+The `bytecode: boolean` option can be used to generate bytecode for any JavaScript/TypeScript entrypoints. This can greatly improve startup times for large applications. Requires `"target": "bun"` and is dependent on a matching version of Bun.
+
+- **CommonJS**: Works with or without `compile: true`. Generates a `.jsc` file alongside each entrypoint.
+- **ESM**: Requires `compile: true`. Bytecode and module metadata are embedded in the standalone executable.
+
+Without an explicit `format`, bytecode defaults to CommonJS.
 
 <Tabs>
   <Tab title="JavaScript">
     ```ts title="build.ts" icon="/icons/typescript.svg"
+    // CommonJS bytecode (generates .jsc files)
     await Bun.build({
       entrypoints: ["./index.tsx"],
       outdir: "./out",
       bytecode: true,
     })
+
+    // ESM bytecode (requires compile)
+    await Bun.build({
+      entrypoints: ["./index.tsx"],
+      outfile: "./mycli",
+      bytecode: true,
+      format: "esm",
+      compile: true,
+    })
     ```
+
   </Tab>
   <Tab title="CLI">
     ```bash terminal icon="terminal"
+    # CommonJS bytecode
     bun build ./index.tsx --outdir ./out --bytecode
+
+    # ESM bytecode (requires --compile)
+    bun build ./index.tsx --outfile ./mycli --bytecode --format=esm --compile
     ```
+
   </Tab>
 </Tabs>
 
@@ -1646,7 +1711,10 @@ interface BuildConfig {
    * start times, but will make the final output larger and slightly increase
    * memory usage.
    *
-   * Bytecode is currently only supported for CommonJS (`format: "cjs"`).
+   * - CommonJS: works with or without `compile: true`
+   * - ESM: requires `compile: true`
+   *
+   * Without an explicit `format`, defaults to CommonJS.
    *
    * Must be `target: "bun"`
    * @default false

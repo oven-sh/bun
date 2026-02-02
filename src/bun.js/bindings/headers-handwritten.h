@@ -116,8 +116,13 @@ typedef struct ResolvedSource {
     uint32_t tag;
     bool needsDeref;
     bool already_bundled;
+    // -- Bytecode cache fields --
     uint8_t* bytecode_cache;
     size_t bytecode_cache_size;
+    void* module_info;
+    // File path used as source origin for bytecode cache validation.
+    // Converted to file:// URL. If empty, origin is derived from source_url.
+    BunString bytecode_origin_path;
 } ResolvedSource;
 static const uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;
 typedef union ErrorableResolvedSourceResult {
@@ -251,6 +256,7 @@ const BunLoaderType BunLoaderTypeTOML = 9;
 const BunLoaderType BunLoaderTypeWASM = 10;
 const BunLoaderType BunLoaderTypeNAPI = 11;
 const BunLoaderType BunLoaderTypeYAML = 19;
+const BunLoaderType BunLoaderTypeMD = 20;
 
 #pragma mark - Stream
 

@@ -998,6 +998,10 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     stringWidth                                    Generated::BunObject::jsStringWidth                                 DontDelete|Function 2
     stripANSI                                      jsFunctionBunStripANSI                                              DontDelete|Function 1
     wrapAnsi                                       jsFunctionBunWrapAnsi                                               DontDelete|Function 3
+    TUIScreen                                      BunObject_lazyPropCb_wrap_TUIScreen                                 DontDelete|PropertyCallback
+    TUITerminalWriter                              BunObject_lazyPropCb_wrap_TUITerminalWriter                         DontDelete|PropertyCallback
+    TUIBufferWriter                                BunObject_lazyPropCb_wrap_TUIBufferWriter                           DontDelete|PropertyCallback
+    TUIKeyReader                                   BunObject_lazyPropCb_wrap_TUIKeyReader                              DontDelete|PropertyCallback
     Terminal                                       BunObject_lazyPropCb_wrap_Terminal                                  DontDelete|PropertyCallback
     unsafe                                         BunObject_lazyPropCb_wrap_unsafe                                    DontDelete|PropertyCallback
     version                                        constructBunVersion                                                 ReadOnly|DontDelete|PropertyCallback

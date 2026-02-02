@@ -3880,9 +3880,11 @@ fn readBlobFileSync(blob: *const Blob, allocator: std.mem.Allocator) ![]u8 {
     const buffer = try allocator.alloc(u8, size);
     errdefer allocator.free(buffer);
 
+    // Use pread to handle sliced blobs correctly (blob.offset may be non-zero)
+    const file_offset: i64 = @intCast(blob.offset);
     var total_read: usize = 0;
     while (total_read < size) {
-        switch (bun.sys.read(fd, buffer[total_read..])) {
+        switch (bun.sys.pread(fd, buffer[total_read..], file_offset + @as(i64, @intCast(total_read)))) {
             .result => |bytes_read| {
                 if (bytes_read == 0) break; // EOF
                 total_read += bytes_read;

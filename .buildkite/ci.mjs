@@ -538,6 +538,109 @@ function getLinkBunStep(platform, options) {
 }
 
 /**
+ * Returns the artifact triplet for a platform, e.g. "bun-linux-aarch64" or "bun-linux-x64-musl-baseline".
+ * Matches the naming convention in cmake/targets/BuildBun.cmake.
+ * @param {Platform} platform
+ * @returns {string}
+ */
+function getTargetTriplet(platform) {
+  const { os, arch, abi, baseline } = platform;
+  let triplet = `bun-${os}-${arch}`;
+  if (abi === "musl") {
+    triplet += "-musl";
+  }
+  if (baseline) {
+    triplet += "-baseline";
+  }
+  return triplet;
+}
+
+/**
+ * Returns true if a platform needs QEMU-based baseline CPU verification.
+ * x64 baseline builds verify no AVX/AVX2 instructions snuck in.
+ * aarch64 builds verify no LSE/SVE instructions snuck in.
+ * @param {Platform} platform
+ * @returns {boolean}
+ */
+function needsBaselineVerification(platform) {
+  const { os, arch, baseline } = platform;
+  if (os !== "linux") return false;
+  return (arch === "x64" && baseline) || arch === "aarch64";
+}
+
+/**
+ * @param {Platform} platform
+ * @param {PipelineOptions} options
+ * @returns {Step}
+ */
+function getVerifyBaselineStep(platform, options) {
+  const { arch } = platform;
+  const targetKey = getTargetKey(platform);
+  const archArg = arch === "x64" ? "x64" : "aarch64";
+
+  return {
+    key: `${targetKey}-verify-baseline`,
+    label: `${getTargetLabel(platform)} - verify-baseline`,
+    depends_on: [`${targetKey}-build-bun`],
+    agents: getLinkBunAgent(platform, options),
+    retry: getRetry(),
+    cancel_on_build_failing: isMergeQueue(),
+    timeout_in_minutes: 5,
+    command: [
+      `buildkite-agent artifact download '*.zip' . --step ${targetKey}-build-bun`,
+      `unzip -o '${getTargetTriplet(platform)}.zip'`,
+      `unzip -o '${getTargetTriplet(platform)}-profile.zip'`,
+      `chmod +x ${getTargetTriplet(platform)}/bun ${getTargetTriplet(platform)}-profile/bun-profile`,
+      `./scripts/verify-baseline-cpu.sh --arch ${archArg} --binary ${getTargetTriplet(platform)}/bun`,
+      `./scripts/verify-baseline-cpu.sh --arch ${archArg} --binary ${getTargetTriplet(platform)}-profile/bun-profile`,
+    ],
+  };
+}
+
+/**
+ * Returns true if the PR modifies SetupWebKit.cmake (WebKit version changes).
+ * JIT stress tests under QEMU should run when WebKit is updated to catch
+ * JIT-generated code that uses unsupported CPU instructions.
+ * @param {PipelineOptions} options
+ * @returns {boolean}
+ */
+function hasWebKitChanges(options) {
+  const { changedFiles = [] } = options;
+  return changedFiles.some(file => file.includes("SetupWebKit.cmake"));
+}
+
+/**
+ * Returns a step that runs JSC JIT stress tests under QEMU.
+ * This verifies that JIT-compiled code doesn't use CPU instructions
+ * beyond the baseline target (no AVX on x64, no LSE on aarch64).
+ * @param {Platform} platform
+ * @param {PipelineOptions} options
+ * @returns {Step}
+ */
+function getJitStressTestStep(platform, options) {
+  const { arch } = platform;
+  const targetKey = getTargetKey(platform);
+  const archArg = arch === "x64" ? "x64" : "aarch64";
+
+  return {
+    key: `${targetKey}-jit-stress-qemu`,
+    label: `${getTargetLabel(platform)} - jit-stress-qemu`,
+    depends_on: [`${targetKey}-build-bun`],
+    agents: getLinkBunAgent(platform, options),
+    retry: getRetry(),
+    cancel_on_build_failing: isMergeQueue(),
+    // JIT stress tests are slow under QEMU emulation
+    timeout_in_minutes: 30,
+    command: [
+      `buildkite-agent artifact download '*.zip' . --step ${targetKey}-build-bun`,
+      `unzip -o '${getTargetTriplet(platform)}.zip'`,
+      `chmod +x ${getTargetTriplet(platform)}/bun`,
+      `./scripts/verify-jit-stress-qemu.sh --arch ${archArg} --binary ${getTargetTriplet(platform)}/bun`,
+    ],
+  };
+}
+
+/**
  * @param {Platform} platform
  * @param {PipelineOptions} options
  * @returns {Step}
@@ -774,6 +877,7 @@ function getBenchmarkStep() {
  * @property {Platform[]} [buildPlatforms]
  * @property {Platform[]} [testPlatforms]
  * @property {string[]} [testFiles]
+ * @property {string[]} [changedFiles]
  */
 
 /**
@@ -1126,6 +1230,14 @@ async function getPipeline(options = {}) {
         steps.push(getBuildZigStep(target, options));
         steps.push(getLinkBunStep(target, options));
 
+        if (needsBaselineVerification(target)) {
+          steps.push(getVerifyBaselineStep(target, options));
+          // Run JIT stress tests under QEMU when WebKit is updated
+          if (hasWebKitChanges(options)) {
+            steps.push(getJitStressTestStep(target, options));
+          }
+        }
+
         return getStepWithDependsOn(
           {
             key: getTargetKey(target),
@@ -1223,6 +1335,7 @@ async function main() {
       console.log(`- PR is only docs, skipping tests!`);
       return;
     }
+    options.changedFiles = allFiles;
   }
 
   startGroup("Generating pipeline...");

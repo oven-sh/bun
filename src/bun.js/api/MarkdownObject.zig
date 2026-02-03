@@ -464,8 +464,8 @@ const ParseRenderer = struct {
         const entry = self.#stack.pop().?;
         const g = self.#globalObject;
 
-        // Determine HTML tag name
-        const type_str: []const u8 = blockTypeName(block_type, entry.data);
+        // Determine HTML tag index for cached string
+        const tag_index = getBlockTypeTag(block_type, entry.data);
 
         // For headings, compute slug before counting props
         const slug: ?[]const u8 = if (block_type == .h) self.#heading_tracker.leaveHeading(bun.default_allocator) else null;
@@ -496,7 +496,7 @@ const ParseRenderer = struct {
 
         // Build React element — use component override as type if set
         const component = self.getBlockComponent(block_type, entry.data);
-        const type_val: JSValue = if (component != .zero) component else try bun.String.createUTF8ForJS(g, type_str);
+        const type_val: JSValue = if (component != .zero) component else getCachedTagString(g, tag_index);
 
         const props = JSValue.createEmptyObject(g, props_count);
         self.#marked_args.append(props);
@@ -572,7 +572,7 @@ const ParseRenderer = struct {
         const entry = self.#stack.pop().?;
         const g = self.#globalObject;
 
-        const type_str: []const u8 = spanTypeName(span_type);
+        const tag_index = getSpanTypeTag(span_type);
 
         // Count props fields: always children (or alt for img) + metadata
         var props_count: usize = 1; // children (or alt for img)
@@ -592,7 +592,7 @@ const ParseRenderer = struct {
 
         // Build React element: { $$typeof, type, key, ref, props }
         const component = self.getSpanComponent(span_type);
-        const type_val: JSValue = if (component != .zero) component else try bun.String.createUTF8ForJS(g, type_str);
+        const type_val: JSValue = if (component != .zero) component else getCachedTagString(g, tag_index);
 
         const props = JSValue.createEmptyObject(g, props_count);
         self.#marked_args.append(props);
@@ -675,7 +675,7 @@ const ParseRenderer = struct {
         switch (text_type) {
             .br => {
                 const br_component = self.#components.br;
-                const br_type: JSValue = if (br_component != .zero) br_component else try bun.String.createUTF8ForJS(g, "br");
+                const br_type: JSValue = if (br_component != .zero) br_component else getCachedTagString(g, .br);
                 const empty_props = JSValue.createEmptyObject(g, 0);
                 self.#marked_args.append(empty_props);
                 const obj = self.createElement(br_type, empty_props);
@@ -704,53 +704,6 @@ const ParseRenderer = struct {
                 try parent.children.push(g, str);
             },
         }
-    }
-
-    // ========================================
-    // Type name mappings
-    // ========================================
-
-    fn blockTypeName(block_type: md.BlockType, data: u32) []const u8 {
-        return switch (block_type) {
-            .h => switch (data) {
-                1 => "h1",
-                2 => "h2",
-                3 => "h3",
-                4 => "h4",
-                5 => "h5",
-                else => "h6",
-            },
-            .p => "p",
-            .quote => "blockquote",
-            .ul => "ul",
-            .ol => "ol",
-            .li => "li",
-            .code => "pre",
-            .hr => "hr",
-            .html => "html",
-            .table => "table",
-            .thead => "thead",
-            .tbody => "tbody",
-            .tr => "tr",
-            .th => "th",
-            .td => "td",
-            .doc => "div",
-        };
-    }
-
-    fn spanTypeName(span_type: md.SpanType) []const u8 {
-        return switch (span_type) {
-            .em => "em",
-            .strong => "strong",
-            .a => "a",
-            .img => "img",
-            .code => "code",
-            .del => "del",
-            .latexmath => "math",
-            .latexmath_display => "math",
-            .wikilink => "a",
-            .u => "u",
-        };
     }
 };
 
@@ -1123,6 +1076,89 @@ fn extractLanguage(src_text: []const u8, info_beg: u32) []const u8 {
     }
     if (lang_end > info_beg) return src_text[info_beg..lang_end];
     return "";
+}
+
+// Cached tag string indices - must match BunMarkdownTagStrings.h
+const TagIndex = enum(u8) {
+    h1 = 0,
+    h2 = 1,
+    h3 = 2,
+    h4 = 3,
+    h5 = 4,
+    h6 = 5,
+    p = 6,
+    blockquote = 7,
+    ul = 8,
+    ol = 9,
+    li = 10,
+    pre = 11,
+    hr = 12,
+    html = 13,
+    table = 14,
+    thead = 15,
+    tbody = 16,
+    tr = 17,
+    th = 18,
+    td = 19,
+    div = 20,
+    em = 21,
+    strong = 22,
+    a = 23,
+    img = 24,
+    code = 25,
+    del = 26,
+    math = 27,
+    u = 28,
+    br = 29,
+};
+
+extern fn BunMarkdownTagStrings__getTagString(*jsc.JSGlobalObject, u8) JSValue;
+
+fn getCachedTagString(globalObject: *jsc.JSGlobalObject, tag: TagIndex) JSValue {
+    return BunMarkdownTagStrings__getTagString(globalObject, @intFromEnum(tag));
+}
+
+fn getBlockTypeTag(block_type: md.BlockType, data: u32) TagIndex {
+    return switch (block_type) {
+        .h => switch (data) {
+            1 => .h1,
+            2 => .h2,
+            3 => .h3,
+            4 => .h4,
+            5 => .h5,
+            else => .h6,
+        },
+        .p => .p,
+        .quote => .blockquote,
+        .ul => .ul,
+        .ol => .ol,
+        .li => .li,
+        .code => .pre,
+        .hr => .hr,
+        .html => .html,
+        .table => .table,
+        .thead => .thead,
+        .tbody => .tbody,
+        .tr => .tr,
+        .th => .th,
+        .td => .td,
+        .doc => .div,
+    };
+}
+
+fn getSpanTypeTag(span_type: md.SpanType) TagIndex {
+    return switch (span_type) {
+        .em => .em,
+        .strong => .strong,
+        .a => .a,
+        .img => .img,
+        .code => .code,
+        .del => .del,
+        .latexmath => .math,
+        .latexmath_display => .math,
+        .wikilink => .a,
+        .u => .u,
+    };
 }
 
 const std = @import("std");

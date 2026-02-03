@@ -675,8 +675,8 @@ pub const JSBundler = struct {
             if (try config.getOptionalEnum(globalThis, "format", options.Format)) |format| {
                 this.format = format;
 
-                if (this.bytecode and format != .cjs) {
-                    return globalThis.throwInvalidArguments("format must be 'cjs' when bytecode is true. Eventually we'll add esm support as well.", .{});
+                if (this.bytecode and format != .cjs and format != .esm) {
+                    return globalThis.throwInvalidArguments("format must be 'cjs' or 'esm' when bytecode is true.", .{});
                 }
             }
 
@@ -1017,6 +1017,13 @@ pub const JSBundler = struct {
 
                     try compile.outfile.appendSliceExact(outfile);
                 }
+            }
+
+            // ESM bytecode requires compile because module_info (import/export metadata)
+            // is only available in compiled binaries. Without it, JSC must parse the file
+            // twice (once for module analysis, once for bytecode), which is a deopt.
+            if (this.bytecode and this.format == .esm and this.compile == null) {
+                return globalThis.throwInvalidArguments("ESM bytecode requires compile: true. Use format: 'cjs' for bytecode without compile.", .{});
             }
 
             return this;
@@ -1717,11 +1724,12 @@ pub const BuildArtifact = struct {
         @"entry-point",
         sourcemap,
         bytecode,
+        module_info,
         @"metafile-json",
         @"metafile-markdown",
 
         pub fn isFileInStandaloneMode(this: OutputKind) bool {
-            return this != .sourcemap and this != .bytecode and this != .@"metafile-json" and this != .@"metafile-markdown";
+            return this != .sourcemap and this != .bytecode and this != .module_info and this != .@"metafile-json" and this != .@"metafile-markdown";
         }
     };
 

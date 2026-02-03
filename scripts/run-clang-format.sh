@@ -12,7 +12,7 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 MODE="${1:-format}"
 
 # Use LLVM_VERSION_MAJOR from environment or default to 19
-LLVM_VERSION="${LLVM_VERSION_MAJOR:-19}"
+LLVM_VERSION="${LLVM_VERSION_MAJOR:-21}"
 
 # Ensure we have the specific clang-format version
 CLANG_FORMAT="clang-format-${LLVM_VERSION}"

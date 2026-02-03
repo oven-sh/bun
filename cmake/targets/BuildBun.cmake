@@ -1139,6 +1139,15 @@ if(LINUX)
     -Wl,--wrap=pow
     -Wl,--wrap=powf
   )
+
+  # Disable LTO for workaround-missing-symbols.cpp to prevent LLD 21 from emitting
+  # glibc versioned symbol names (e.g. exp@GLIBC_2.17) from .symver directives into
+  # the .lto_discard assembler directive, which fails to parse the '@' character.
+  if(ENABLE_LTO)
+    set_source_files_properties(${CWD}/src/bun.js/bindings/workaround-missing-symbols.cpp
+      PROPERTIES COMPILE_OPTIONS "-fno-lto"
+    )
+  endif()
   endif()
 
   if(NOT ABI STREQUAL "musl")

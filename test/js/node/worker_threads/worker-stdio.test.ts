@@ -498,11 +498,11 @@ describe("worker_threads stdio", () => {
       worker.stdin!.write("Hello from parent");
       worker.stdin!.end();
 
-      const output = await new Promise<string>(resolve => {
-        let data = "";
-        worker.stdout.on("data", c => (data += c));
-        worker.on("exit", () => resolve(data));
-      });
+      const { promise, resolve } = Promise.withResolvers<string>();
+      let data = "";
+      worker.stdout.on("data", c => (data += c));
+      worker.on("exit", () => resolve(data));
+      const output = await promise;
 
       expect(output).toContain("Received: Hello from parent");
     });

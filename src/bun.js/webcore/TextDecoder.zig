@@ -314,7 +314,10 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
 
     var decoder = TextDecoder{};
 
-    if (encoding_value.isString()) {
+    // Handle encoding parameter - undefined, null, or missing should default to UTF-8
+    if (encoding_value.isUndefined() or encoding_value.isNull()) {
+        decoder.encoding = EncodingLabel.@"UTF-8";
+    } else if (encoding_value.isString()) {
         var str = try encoding_value.toSlice(globalThis, bun.default_allocator);
         defer str.deinit();
 
@@ -323,9 +326,6 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
         } else {
             return globalThis.ERR(.ENCODING_NOT_SUPPORTED, "Unsupported encoding label \"{s}\"", .{str.slice()}).throw();
         }
-    } else if (encoding_value.isUndefined()) {
-        // default to utf-8
-        decoder.encoding = EncodingLabel.@"UTF-8";
     } else {
         return globalThis.throwInvalidArguments("TextDecoder(encoding) label is invalid", .{});
     }

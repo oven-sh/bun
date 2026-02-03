@@ -1199,6 +1199,8 @@ async function getPipeline(options = {}) {
     buildImages || publishImages
       ? [...buildPlatforms, ...testPlatforms]
           .filter(({ os }) => os !== "darwin")
+          // Windows ARM64 cross-compiles from x64 runners, no separate image needed
+          .filter(({ os, arch }) => !(os === "windows" && arch === "aarch64"))
           .map(platform => [getImageKey(platform), platform])
       : [],
   );

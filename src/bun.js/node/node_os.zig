@@ -407,13 +407,14 @@ pub fn hostname(global: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
 pub fn loadavg(global: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
     const result = switch (bun.Environment.os) {
         .mac => loadavg: {
-            var avg: [3]f64 = undefined;
-            
+            var avg: [3]f64 = .{ 0, 0, 0 };
+
             // Use getloadavg() which is the standard POSIX function for this
-            if (c.getloadavg(&avg, 3) == -1) {
+            const count = c.getloadavg(&avg, 3);
+            if (count <= 0) {
                 break :loadavg [3]f64{ 0, 0, 0 };
             }
-            
+
             break :loadavg .{ avg[0], avg[1], avg[2] };
         },
         .linux => loadavg: {

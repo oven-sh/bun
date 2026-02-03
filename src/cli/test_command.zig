@@ -378,7 +378,6 @@ pub const JunitReporter = struct {
         assertions: u32,
         elapsed_ns: u64,
         line_number: u32,
-        flaky_attempts: []const bun.jsc.Jest.bun_test.Execution.ExecutionSequence.FlakyAttempt,
     ) !void {
         const elapsed_ns_f64: f64 = @floatFromInt(elapsed_ns);
         const elapsed_ms = elapsed_ns_f64 / std.time.ns_per_ms;
@@ -414,29 +413,7 @@ pub const JunitReporter = struct {
 
         switch (status) {
             .pass => {
-                if (flaky_attempts.len > 0) {
-                    try this.contents.appendSlice(bun.default_allocator, ">\n");
-                    for (flaky_attempts) |attempt| {
-                        const attempt_ns_f64: f64 = @floatFromInt(attempt.elapsed_ns);
-                        const attempt_seconds = attempt_ns_f64 / std.time.ns_per_s;
-                        try this.contents.appendSlice(bun.default_allocator, indent);
-                        if (attempt.failureMessage()) |message| {
-                            try this.contents.writer(bun.default_allocator).print(
-                                "  <flakyFailure message=\"{s}\" type=\"{s}\" time=\"{f}\" />\n",
-                                .{ message, attempt.failureType(), bun.fmt.trimmedPrecision(attempt_seconds, 6) },
-                            );
-                        } else {
-                            try this.contents.writer(bun.default_allocator).print(
-                                "  <flakyFailure type=\"{s}\" time=\"{f}\" />\n",
-                                .{ attempt.failureType(), bun.fmt.trimmedPrecision(attempt_seconds, 6) },
-                            );
-                        }
-                    }
-                    try this.contents.appendSlice(bun.default_allocator, indent);
-                    try this.contents.appendSlice(bun.default_allocator, "</testcase>\n");
-                } else {
-                    try this.contents.appendSlice(bun.default_allocator, " />\n");
-                }
+                try this.contents.appendSlice(bun.default_allocator, " />\n");
             },
             .fail => {
                 if (this.suite_stack.items.len > 0) {
@@ -877,7 +854,10 @@ pub const CommandLineReporter = struct {
                         }
                     }
 
-                    bun.handleOom(junit.writeTestCase(status, filename, display_label, concatenated_describe_scopes.items, assertions, elapsed_ns, line_number, sequence.flakyAttempts()));
+                    for (sequence.flakyAttempts()) |attempt| {
+                        bun.handleOom(junit.writeTestCase(attempt.result, filename, display_label, concatenated_describe_scopes.items, 0, attempt.elapsed_ns, line_number));
+                    }
+                    bun.handleOom(junit.writeTestCase(status, filename, display_label, concatenated_describe_scopes.items, assertions, elapsed_ns, line_number));
                 }
             }
         }

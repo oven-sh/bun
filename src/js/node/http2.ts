@@ -3201,7 +3201,11 @@ class ClientHttp2Session extends Http2Session {
       if (!self) return;
       self.emit("goaway", errorCode, lastStreamId, opaqueData || Buffer.allocUnsafe(0));
       if (self.closed) return;
-      self.destroy(undefined, errorCode);
+      // Use close() instead of destroy() to allow in-flight requests to complete per RFC 7540 Section 6.8
+      if (errorCode !== 0) {
+        self[bunHTTP2Native]?.emitErrorToAllStreams(errorCode);
+      }
+      self.close();
     },
     end(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       if (!self) return;

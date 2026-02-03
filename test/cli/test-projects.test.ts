@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
-describe("test.projects configuration", () => {
+describe.concurrent("test.projects configuration", () => {
   test("applies different preloads based on file pattern", async () => {
     const dir = tempDirWithFiles("test-projects-basic", {
       "setup-dom.ts": `(globalThis as any).__ENV__ = "dom";`,

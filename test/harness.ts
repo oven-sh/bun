@@ -5,6 +5,7 @@
  * without always needing to run `bun install` in development.
  */
 
+import * as numeric from "_util/numeric.ts";
 import { gc as bunGC, sleepSync, spawnSync, unsafe, which, write } from "bun";
 import { heapStats } from "bun:jsc";
 import { beforeAll, describe, expect } from "bun:test";
@@ -13,7 +14,6 @@ import { readdir, readFile, readlink, rm, writeFile } from "fs/promises";
 import fs, { closeSync, openSync, rmSync } from "node:fs";
 import os from "node:os";
 import { dirname, isAbsolute, join } from "path";
-import * as numeric from "_util/numeric.ts";
 
 export const BREAKING_CHANGES_BUN_1_2 = false;
 
@@ -44,7 +44,7 @@ export const isVerbose = process.env.DEBUG === "1";
 // test.todoIf(isFlaky && isMacOS)("this test is flaky");
 export const isFlaky = isCI;
 export const isBroken = isCI;
-export const isASAN = basename(process.execPath).includes("bun-asan");
+export const isASAN = basename(process.execPath).includes("bun-asan") || process.env.ASAN_OPTIONS !== undefined;
 
 export const bunEnv: NodeJS.Dict<string> = {
   ...process.env,

@@ -81,6 +81,19 @@ size_t IndexOfAnyCharImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, con
     } else {
         ASSERT(chars_len <= 16);
 
+        // Use FixedTag to preload search characters into fixed-size vectors.
+        // ScalableTag vectors (SVE) are sizeless and cannot be stored in arrays.
+        // FixedTag gives us a known compile-time size that can be stored in arrays,
+        // then ResizeBitCast converts back to scalable vectors in the inner loop.
+        static constexpr size_t kMaxPreloadedChars = 16;
+        const hn::FixedTag<uint8_t, 16> d_fixed;
+        using VecFixed = hn::Vec<decltype(d_fixed)>;
+        VecFixed char_vecs[kMaxPreloadedChars];
+        const size_t num_chars_to_preload = std::min(chars_len, kMaxPreloadedChars);
+        for (size_t c = 0; c < num_chars_to_preload; ++c) {
+            char_vecs[c] = hn::Set(d_fixed, chars[c]);
+        }
+
         const size_t simd_text_len = text_len - (text_len % N);
         size_t i = 0;
 
@@ -88,12 +101,8 @@ size_t IndexOfAnyCharImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, con
             const auto text_vec = hn::LoadN(d, text + i, N);
             auto found_mask = hn::MaskFalse(d);
 
-            // Broadcast and compare each search character individually.
-            // Cannot preload into a Vec array because SVE types are sizeless.
-            // hn::Set is a single broadcast instruction; the compiler will
-            // hoist these loop-invariant broadcasts out of the outer loop.
-            for (size_t c = 0; c < chars_len; ++c) {
-                found_mask = hn::Or(found_mask, hn::Eq(text_vec, hn::Set(d, chars[c])));
+            for (size_t c = 0; c < num_chars_to_preload; ++c) {
+                found_mask = hn::Or(found_mask, hn::Eq(text_vec, hn::ResizeBitCast(d, char_vecs[c])));
             }
 
             const intptr_t pos = hn::FindFirstTrue(d, found_mask);

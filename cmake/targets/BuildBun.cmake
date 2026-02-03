@@ -1310,7 +1310,7 @@ list(TRANSFORM BUN_DEPENDENCIES TOLOWER OUTPUT_VARIABLE BUN_TARGETS)
 add_custom_target(dependencies DEPENDS ${BUN_TARGETS})
 
 if(APPLE)
-  target_link_libraries(${bun} PRIVATE icucore resolv "-framework CoreFoundation" "-framework CoreServices")
+  target_link_libraries(${bun} PRIVATE icucore resolv)
   target_compile_definitions(${bun} PRIVATE U_DISABLE_RENAMING=1)
 endif()
 

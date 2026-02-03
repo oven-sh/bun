@@ -36,8 +36,6 @@ uint64_t uv__hrtime(uv_clocktype_t type);
 // #elif defined(__sun)
 // #include "uv/sunos.h"
 #elif defined(__APPLE__)
-#include <CoreFoundation/CoreFoundation.h>
-#include <CoreServices/CoreServices.h>
 #include "uv-posix-polyfills-darwin.c"
 // #elif defined(__DragonFly__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
 // #include "uv/bsd.h"
@@ -144,7 +142,19 @@ UV_EXTERN void uv_mutex_unlock(uv_mutex_t* mutex)
 
 #if defined(__APPLE__)
 #include <dispatch/dispatch.h>
+
+typedef const void * CFTypeRef;
+typedef const struct __CFString * CFStringRef;
+typedef const struct __CFAllocator * CFAllocatorRef;
+typedef const struct __CFDictionary * CFDictionaryRef;
+typedef const struct __CFBundle * CFBundleRef;
+typedef int32_t OSStatus;
+typedef uint32_t CFStringEncoding;
+enum { kCFStringEncodingUTF8 = 0x08000100 };
+
 typedef OSStatus (*LSSetApplicationInformationItemPtr)(int, void*, CFStringRef, CFStringRef, void*);
+
+static void (*pCFRelease)(CFTypeRef) = NULL;
 #endif
 
 UV_EXTERN int uv_set_process_title(const char* title)
@@ -173,6 +183,9 @@ UV_EXTERN int uv_set_process_title(const char* title)
     static void* application_services_handle = NULL;
     static void* core_foundation_handle = NULL;
 
+    // We also need to load this one dynamically now
+    static CFStringRef (*pCFStringCreateWithCString)(CFAllocatorRef, const char*, CFStringEncoding) = NULL;
+
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
         application_services_handle = dlopen("/System/Library/Frameworks/ApplicationServices.framework/Versions/A/ApplicationServices", RTLD_LAZY | RTLD_LOCAL);
@@ -185,15 +198,16 @@ UV_EXTERN int uv_set_process_title(const char* title)
         CFBundleRef (*pCFBundleGetBundleWithIdentifier)(CFStringRef) = (CFBundleRef (*)(CFStringRef))dlsym(core_foundation_handle, "CFBundleGetBundleWithIdentifier");
         void* (*pCFBundleGetDataPointerForName)(CFBundleRef, CFStringRef) = (void* (*)(CFBundleRef, CFStringRef))dlsym(core_foundation_handle, "CFBundleGetDataPointerForName");
         void* (*pCFBundleGetFunctionPointerForName)(CFBundleRef, CFStringRef) = (void* (*)(CFBundleRef, CFStringRef))dlsym(core_foundation_handle, "CFBundleGetFunctionPointerForName");
-        CFStringRef (*pCFStringCreateWithCString)(CFAllocatorRef, const char*, CFStringEncoding) = (CFStringRef (*)(CFAllocatorRef, const char*, CFStringEncoding))dlsym(core_foundation_handle, "CFStringCreateWithCString");
+        pCFStringCreateWithCString = (CFStringRef (*)(CFAllocatorRef, const char*, CFStringEncoding))dlsym(core_foundation_handle, "CFStringCreateWithCString");
+        pCFRelease = (void (*)(CFTypeRef))dlsym(core_foundation_handle, "CFRelease");
 
-        if (pCFBundleGetBundleWithIdentifier == NULL || pCFBundleGetDataPointerForName == NULL || pCFBundleGetFunctionPointerForName == NULL || pCFStringCreateWithCString == NULL) {
+        if (pCFBundleGetBundleWithIdentifier == NULL || pCFBundleGetDataPointerForName == NULL || pCFBundleGetFunctionPointerForName == NULL || pCFStringCreateWithCString == NULL || pCFRelease == NULL) {
              goto cleanup;
         }
 
         CFStringRef bundleName = pCFStringCreateWithCString(NULL, "com.apple.LaunchServices", kCFStringEncodingUTF8);
         CFBundleRef launch_services_bundle = pCFBundleGetBundleWithIdentifier(bundleName);
-        CFRelease(bundleName);
+        pCFRelease(bundleName);
         
         if (launch_services_bundle == NULL) {
             goto cleanup;
@@ -201,27 +215,27 @@ UV_EXTERN int uv_set_process_title(const char* title)
 
         CFStringRef asnName = pCFStringCreateWithCString(NULL, "_LSGetCurrentApplicationASN", kCFStringEncodingUTF8);
         pLSGetCurrentApplicationASN = (LSGetCurrentApplicationASNType)pCFBundleGetFunctionPointerForName(launch_services_bundle, asnName);
-        CFRelease(asnName);
+        pCFRelease(asnName);
         if (pLSGetCurrentApplicationASN == NULL) goto cleanup;
 
         CFStringRef setInfoName = pCFStringCreateWithCString(NULL, "_LSSetApplicationInformationItem", kCFStringEncodingUTF8);
         pLSSetApplicationInformationItem = (LSSetApplicationInformationItemType)pCFBundleGetFunctionPointerForName(launch_services_bundle, setInfoName);
-        CFRelease(setInfoName);
+        pCFRelease(setInfoName);
         if (pLSSetApplicationInformationItem == NULL) goto cleanup;
 
         CFStringRef connectionStatusName = pCFStringCreateWithCString(NULL, "_LSSetApplicationLaunchServicesServerConnectionStatus", kCFStringEncodingUTF8);
         pLSSetApplicationLaunchServicesServerConnectionStatus = (LSSetApplicationLaunchServicesServerConnectionStatusType)pCFBundleGetFunctionPointerForName(launch_services_bundle, connectionStatusName);
-        CFRelease(connectionStatusName);
+        pCFRelease(connectionStatusName);
         if (pLSSetApplicationLaunchServicesServerConnectionStatus == NULL) goto cleanup;
 
         CFStringRef checkInName = pCFStringCreateWithCString(NULL, "_LSApplicationCheckIn", kCFStringEncodingUTF8);
         pLSApplicationCheckIn = (LSApplicationCheckInType)pCFBundleGetFunctionPointerForName(launch_services_bundle, checkInName);
-        CFRelease(checkInName);
+        pCFRelease(checkInName);
         if (pLSApplicationCheckIn == NULL) goto cleanup;
 
         CFStringRef displayNameKeyName = pCFStringCreateWithCString(NULL, "_kLSDisplayNameKey", kCFStringEncodingUTF8);
         p_kLSDisplayNameKey = (CFStringRef*)pCFBundleGetDataPointerForName(launch_services_bundle, displayNameKeyName);
-        CFRelease(displayNameKeyName);
+        pCFRelease(displayNameKeyName);
         if (p_kLSDisplayNameKey == NULL || *p_kLSDisplayNameKey == NULL) goto cleanup;
 
         pCFBundleGetInfoDictionary = (CFBundleGetInfoDictionaryType)dlsym(core_foundation_handle, "CFBundleGetInfoDictionary");
@@ -247,9 +261,9 @@ UV_EXTERN int uv_set_process_title(const char* title)
         
         CFTypeRef asn = pLSGetCurrentApplicationASN();
         if (asn != NULL) {
-            CFStringRef value = CFStringCreateWithCString(NULL, title, kCFStringEncodingUTF8);
+            CFStringRef value = pCFStringCreateWithCString(NULL, title, kCFStringEncodingUTF8);
             pLSSetApplicationInformationItem(-2, asn, *p_kLSDisplayNameKey, value, NULL);
-            CFRelease(value);
+            pCFRelease(value);
         }
     }
 

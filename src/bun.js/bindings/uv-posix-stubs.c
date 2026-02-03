@@ -1508,7 +1508,6 @@ UV_EXTERN int uv_send_buffer_size(uv_handle_t* handle, int* value)
 }
 
 
-
 UV_EXTERN char** uv_setup_args(int argc, char** argv)
 {
     __bun_throw_not_implemented("uv_setup_args");

@@ -245,7 +245,6 @@ export const symbols = [
   "uv_sem_trywait",
   "uv_sem_wait",
   "uv_send_buffer_size",
-  // "uv_set_process_title",
   "uv_setup_args",
   "uv_shutdown",
   "uv_signal_init",

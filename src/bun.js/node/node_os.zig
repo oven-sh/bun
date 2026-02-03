@@ -407,25 +407,14 @@ pub fn hostname(global: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
 pub fn loadavg(global: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
     const result = switch (bun.Environment.os) {
         .mac => loadavg: {
-            var avg: c.struct_loadavg = undefined;
-            var size: usize = @sizeOf(@TypeOf(avg));
-
-            std.posix.sysctlbynameZ(
-                "vm.loadavg",
-                &avg,
-                &size,
-                null,
-                0,
-            ) catch |err| switch (err) {
-                else => break :loadavg [3]f64{ 0, 0, 0 },
-            };
-
-            const scale: f64 = @floatFromInt(avg.fscale);
-            break :loadavg .{
-                if (scale == 0.0) 0 else @as(f64, @floatFromInt(avg.ldavg[0])) / scale,
-                if (scale == 0.0) 0 else @as(f64, @floatFromInt(avg.ldavg[1])) / scale,
-                if (scale == 0.0) 0 else @as(f64, @floatFromInt(avg.ldavg[2])) / scale,
-            };
+            var avg: [3]f64 = undefined;
+            
+            // Use getloadavg() which is the standard POSIX function for this
+            if (c.getloadavg(&avg, 3) == -1) {
+                break :loadavg [3]f64{ 0, 0, 0 };
+            }
+            
+            break :loadavg .{ avg[0], avg[1], avg[2] };
         },
         .linux => loadavg: {
             var info: c.struct_sysinfo = undefined;

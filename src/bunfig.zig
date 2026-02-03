@@ -537,6 +537,10 @@ pub const Bunfig = struct {
                             // Parse preload paths (optional)
                             const preload: []const []const u8 = if (project_expr.get("preload")) |preload_expr| switch (preload_expr.data) {
                                 .e_string => |str| brk: {
+                                    if (str.len() == 0) {
+                                        try this.addError(preload_expr.loc, "preload path cannot be an empty string");
+                                        return;
+                                    }
                                     const preload_path = try str.string(allocator);
                                     const preload_paths = try allocator.alloc(string, 1);
                                     preload_paths[0] = preload_path;
@@ -548,6 +552,10 @@ pub const Bunfig = struct {
                                     for (arr.items.slice(), 0..) |item, j| {
                                         if (item.data != .e_string) {
                                             try this.addError(item.loc, "preload array must contain only strings");
+                                            return;
+                                        }
+                                        if (item.data.e_string.len() == 0) {
+                                            try this.addError(item.loc, "preload paths cannot be empty strings");
                                             return;
                                         }
                                         preload_paths[j] = try item.data.e_string.string(allocator);

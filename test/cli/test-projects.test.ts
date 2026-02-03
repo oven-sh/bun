@@ -207,6 +207,72 @@ preload = ["./setup-general.ts"]
     expect(exitCode).toBe(0);
   });
 
+  test("empty preload string produces error", async () => {
+    const dir = tempDirWithFiles("test-projects-empty-preload", {
+      "test.test.ts": `
+        import { test } from "bun:test";
+        test("dummy", () => {});
+      `,
+      "bunfig.toml": `
+[test]
+[[test.projects]]
+include = ["**/*.test.ts"]
+preload = ""
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test"],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    const output = stdout + stderr;
+    expect(output).toContain("empty");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("empty preload in array produces error", async () => {
+    const dir = tempDirWithFiles("test-projects-empty-preload-array", {
+      "test.test.ts": `
+        import { test } from "bun:test";
+        test("dummy", () => {});
+      `,
+      "bunfig.toml": `
+[test]
+[[test.projects]]
+include = ["**/*.test.ts"]
+preload = ["./valid.ts", ""]
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test"],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    const output = stdout + stderr;
+    expect(output).toContain("empty");
+    expect(exitCode).not.toBe(0);
+  });
+
   test("project without include field produces error", async () => {
     const dir = tempDirWithFiles("test-projects-no-include", {
       "test.test.ts": `

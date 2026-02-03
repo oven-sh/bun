@@ -77,10 +77,10 @@ const HAS_CCACHE = CCACHE !== null;
 // On Windows, use clang-cl for MSVC compatibility
 const CC_BASE = IS_WINDOWS
   ? findExecutable(["clang-cl.exe", "clang-cl"]) || "clang-cl"
-  : findExecutable(["clang-19", "clang"]) || "clang";
+  : findExecutable(["clang-21", "clang"]) || "clang";
 const CXX_BASE = IS_WINDOWS
   ? findExecutable(["clang-cl.exe", "clang-cl"]) || "clang-cl"
-  : findExecutable(["clang++-19", "clang++"]) || "clang++";
+  : findExecutable(["clang++-21", "clang++"]) || "clang++";
 
 const CC = HAS_CCACHE ? CCACHE : CC_BASE;
 const CXX = HAS_CCACHE ? CCACHE : CXX_BASE;

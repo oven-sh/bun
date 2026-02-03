@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version: 27
+# Version: 28
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -1096,7 +1096,7 @@ install_build_essentials() {
 }
 
 llvm_version_exact() {
-	print "19.1.7"
+	print "21.1.8"
 }
 
 llvm_version() {
@@ -1106,23 +1106,20 @@ llvm_version() {
 install_llvm() {
 	case "$pm" in
 	apt)
-		# Debian 13 (Trixie) has LLVM 19 natively, and apt.llvm.org doesn't have a trixie repo
-		if [ "$distro" = "debian" ]; then
-			install_packages \
-				"llvm-$(llvm_version)" \
-				"clang-$(llvm_version)" \
-				"lld-$(llvm_version)" \
-				"llvm-$(llvm_version)-dev" \
-				"llvm-$(llvm_version)-tools" \
-				"libclang-rt-$(llvm_version)-dev"
-		else
-			bash="$(require bash)"
-			llvm_script="$(download_file "https://apt.llvm.org/llvm.sh")"
-			execute_sudo "$bash" "$llvm_script" "$(llvm_version)" all
-
-			# Install llvm-symbolizer explicitly to ensure it's available for ASAN
-			install_packages "llvm-$(llvm_version)-tools"
+		# apt.llvm.org's GPG key uses SHA1, which Debian 13+ (sqv) rejects since 2026-02-01.
+		# Override the sequoia crypto policy to extend the SHA1 deadline.
+		# See: https://github.com/llvm/llvm-project/issues/153385
+		if [ -x /usr/bin/sqv ] && [ -f /usr/share/apt/default-sequoia.config ]; then
+			execute_sudo mkdir -p /etc/crypto-policies/back-ends
+			execute_sudo /usr/bin/sh -c "sed 's/sha1.second_preimage_resistance = 2026-02-01/sha1.second_preimage_resistance = 2028-02-01/' /usr/share/apt/default-sequoia.config > /etc/crypto-policies/back-ends/apt-sequoia.config"
 		fi
+
+		bash="$(require bash)"
+		llvm_script="$(download_file "https://apt.llvm.org/llvm.sh")"
+		execute_sudo "$bash" "$llvm_script" "$(llvm_version)" all
+
+		# Install llvm-symbolizer explicitly to ensure it's available for ASAN
+		install_packages "llvm-$(llvm_version)-tools"
 		;;
 	brew)
 		install_packages "llvm@$(llvm_version)"
@@ -1177,7 +1174,7 @@ install_gcc() {
 		;;
 	esac
 
-	llvm_v="19"
+	llvm_v="21"
 
 	append_to_profile "export CC=clang-${llvm_v}"
 	append_to_profile "export CXX=clang++-${llvm_v}"

@@ -14,10 +14,15 @@ param(
   [Switch]$DownloadWithoutCurl = $false
 );
 
-# filter out 32 bit + ARM
-if (-not ((Get-CimInstance Win32_ComputerSystem)).SystemType -match "x64-based") {
+# Detect system architecture
+$SystemType = (Get-CimInstance Win32_ComputerSystem).SystemType
+if ($SystemType -match "ARM64-based") {
+  $IsArm64 = $true
+} elseif ($SystemType -match "x64-based") {
+  $IsArm64 = $false
+} else {
   Write-Output "Install Failed:"
-  Write-Output "Bun for Windows is currently only available for x86 64-bit Windows.`n"
+  Write-Output "Bun for Windows is currently only available for x86 64-bit and ARM64 Windows.`n"
   return 1
 }
 
@@ -103,13 +108,18 @@ function Install-Bun {
     $Version = "bun-$Version"
   }
 
-  $Arch = "x64"
-  $IsBaseline = $ForceBaseline
-  if (!$IsBaseline) {
-    $IsBaseline = !( `
-      Add-Type -MemberDefinition '[DllImport("kernel32.dll")] public static extern bool IsProcessorFeaturePresent(int ProcessorFeature);' `
-        -Name 'Kernel32' -Namespace 'Win32' -PassThru `
-    )::IsProcessorFeaturePresent(40);
+  if ($IsArm64) {
+    $Arch = "aarch64"
+    $IsBaseline = $false
+  } else {
+    $Arch = "x64"
+    $IsBaseline = $ForceBaseline
+    if (!$IsBaseline) {
+      $IsBaseline = !( `
+        Add-Type -MemberDefinition '[DllImport("kernel32.dll")] public static extern bool IsProcessorFeaturePresent(int ProcessorFeature);' `
+          -Name 'Kernel32' -Namespace 'Win32' -PassThru `
+      )::IsProcessorFeaturePresent(40);
+    }
   }
 
   $BunRoot = if ($env:BUN_INSTALL) { $env:BUN_INSTALL } else { "${Home}\.bun" }
@@ -219,7 +229,8 @@ function Install-Bun {
     # I want to keep this error message in for a few months to ensure that
     # if someone somehow runs into this, it can be reported.
     Write-Output "Install Failed - You are missing a DLL required to run bun.exe"
-    Write-Output "This can be solved by installing the Visual C++ Redistributable from Microsoft:`nSee https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist`nDirect Download -> https://aka.ms/vs/17/release/vc_redist.x64.exe`n`n"
+    $VCRedistArch = if ($Arch -eq "aarch64") { "arm64" } else { "x64" }
+    Write-Output "This can be solved by installing the Visual C++ Redistributable from Microsoft:`nSee https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist`nDirect Download -> https://aka.ms/vs/17/release/vc_redist.${VCRedistArch}.exe`n`n"
     Write-Output "The error above should be unreachable as Bun does not depend on this library. Please comment in https://github.com/oven-sh/bun/issues/8598 or open a new issue.`n`n"
     Write-Output "The command '${BunBin}\bun.exe --revision' exited with code ${LASTEXITCODE}`n"
     return 1

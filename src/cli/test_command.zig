@@ -1894,14 +1894,19 @@ pub const TestCommand = struct {
                 try vm.global.deleteModuleRegistryEntry(&entry);
             }
 
-            // Set preload based on project match, or restore base preload
-            if (reporter.jest.getProjectPreloadsForFile(file_path)) |project_preloads| {
+            // Set preload based on project match
+            // For project preloads: restore base_preload after so next file can get its preloads
+            // For global preloads: don't restore, let the "only once" mechanism work naturally
+            const using_project_preload = if (reporter.jest.getProjectPreloadsForFile(file_path)) |project_preloads| blk: {
                 vm.preload = project_preloads;
-            } else {
+                break :blk true;
+            } else false;
+
+            // Only restore base_preload after project-specific preloads to avoid leaking per-file state
+            // Don't restore for global preloads - let loadPreloads() clear them (run once behavior)
+            defer if (using_project_preload) {
                 vm.preload = base_preload;
-            }
-            // Reset preload after this file finishes to avoid leaking per-file state
-            defer vm.preload = base_preload;
+            };
 
             var bun_test_root = &jest.Jest.runner.?.bun_test_root;
             // Determine if this file should run tests concurrently based on glob pattern

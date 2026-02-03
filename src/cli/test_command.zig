@@ -1883,6 +1883,9 @@ pub const TestCommand = struct {
         vm.onUnhandledRejectionCtx = null;
         vm.onUnhandledRejection = jest.on_unhandled_rejection.onUnhandledRejection;
 
+        // Capture the base/global preload to restore after per-file preloads
+        const base_preload = vm.preload;
+
         while (repeat_index < repeat_count) : (repeat_index += 1) {
             // Clear the module cache before re-running (except for the first run)
             if (repeat_index > 0) {
@@ -1891,10 +1894,14 @@ pub const TestCommand = struct {
                 try vm.global.deleteModuleRegistryEntry(&entry);
             }
 
-            // Check if this file matches a project for per-file preloads
+            // Set preload based on project match, or restore base preload
             if (reporter.jest.getProjectPreloadsForFile(file_path)) |project_preloads| {
                 vm.preload = project_preloads;
+            } else {
+                vm.preload = base_preload;
             }
+            // Reset preload after this file finishes to avoid leaking per-file state
+            defer vm.preload = base_preload;
 
             var bun_test_root = &jest.Jest.runner.?.bun_test_root;
             // Determine if this file should run tests concurrently based on glob pattern

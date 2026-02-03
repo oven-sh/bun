@@ -314,8 +314,10 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
 
     var decoder = TextDecoder{};
 
-    // Handle encoding parameter - undefined, null, or missing should default to UTF-8
-    if (encoding_value.isUndefined() or encoding_value.isNull()) {
+    // Handle encoding parameter - undefined or missing should default to UTF-8
+    // Note: null should NOT default to UTF-8 - per WebIDL spec, null is coerced
+    // to the string "null" which is not a valid encoding label
+    if (encoding_value.isUndefined()) {
         decoder.encoding = EncodingLabel.@"UTF-8";
     } else if (encoding_value.isString()) {
         var str = try encoding_value.toSlice(globalThis, bun.default_allocator);

@@ -1,7 +1,8 @@
 import { test, expect } from "bun:test";
 
+// Issue #5211: TextDecoder should accept undefined and default to UTF-8
+
 test("TextDecoder accepts undefined as encoding parameter", () => {
-  // Issue #5211: TextDecoder should accept undefined and default to UTF-8
   const decoder1 = new TextDecoder(undefined);
   const decoder2 = new TextDecoder();
   
@@ -17,8 +18,8 @@ test("TextDecoder accepts undefined as encoding parameter", () => {
   expect(result1).toBe("Hello");
 });
 
-test("TextDecoder accepts null as encoding parameter", () => {
-  // Should also accept null and default to UTF-8
-  const decoder = new TextDecoder(null);
-  expect(decoder.encoding).toBe("utf-8");
+test("TextDecoder throws RangeError for null encoding", () => {
+  // Per WebIDL spec, null is coerced to the string "null" which is not a valid
+  // encoding label, so it should throw a RangeError (not default to UTF-8)
+  expect(() => new TextDecoder(null as unknown as string)).toThrow();
 });

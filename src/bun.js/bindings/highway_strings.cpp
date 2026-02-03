@@ -81,10 +81,12 @@ size_t IndexOfAnyCharImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, con
     } else {
         ASSERT(chars_len <= 16);
 
-        // Use FixedTag to preload search characters into fixed-size vectors.
-        // ScalableTag vectors (SVE) are sizeless and cannot be stored in arrays.
-        // FixedTag gives us a known compile-time size that can be stored in arrays,
-        // then ResizeBitCast converts back to scalable vectors in the inner loop.
+        const size_t simd_text_len = text_len - (text_len % N);
+        size_t i = 0;
+
+#if !HWY_HAVE_SCALABLE && !HWY_TARGET_IS_SVE
+        // Preload search characters into fixed-size vectors for non-SVE targets.
+        // This avoids repeated broadcasts in the inner loop.
         static constexpr size_t kMaxPreloadedChars = 16;
         const hn::FixedTag<uint8_t, 16> d_fixed;
         using VecFixed = hn::Vec<decltype(d_fixed)>;
@@ -94,9 +96,6 @@ size_t IndexOfAnyCharImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, con
             char_vecs[c] = hn::Set(d_fixed, chars[c]);
         }
 
-        const size_t simd_text_len = text_len - (text_len % N);
-        size_t i = 0;
-
         for (; i < simd_text_len; i += N) {
             const auto text_vec = hn::LoadN(d, text + i, N);
             auto found_mask = hn::MaskFalse(d);
@@ -104,6 +103,18 @@ size_t IndexOfAnyCharImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, con
             for (size_t c = 0; c < num_chars_to_preload; ++c) {
                 found_mask = hn::Or(found_mask, hn::Eq(text_vec, hn::ResizeBitCast(d, char_vecs[c])));
             }
+#else
+        // SVE types are sizeless and cannot be stored in arrays.
+        // hn::Set is a single broadcast instruction; the compiler will
+        // hoist these loop-invariant broadcasts out of the outer loop.
+        for (; i < simd_text_len; i += N) {
+            const auto text_vec = hn::LoadN(d, text + i, N);
+            auto found_mask = hn::MaskFalse(d);
+
+            for (size_t c = 0; c < chars_len; ++c) {
+                found_mask = hn::Or(found_mask, hn::Eq(text_vec, hn::Set(d, chars[c])));
+            }
+#endif
 
             const intptr_t pos = hn::FindFirstTrue(d, found_mask);
             if (pos >= 0) {

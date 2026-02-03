@@ -26,6 +26,12 @@ if(RELEASE)
   list(APPEND LOLHTML_BUILD_ARGS --release)
 endif()
 
+# Cross-compilation: tell cargo to target ARM64
+if(WIN32 AND CMAKE_SYSTEM_PROCESSOR MATCHES "ARM64|aarch64|AARCH64")
+  list(APPEND LOLHTML_BUILD_ARGS --target aarch64-pc-windows-msvc)
+  set(LOLHTML_LIBRARY ${LOLHTML_BUILD_PATH}/aarch64-pc-windows-msvc/${LOLHTML_BUILD_TYPE}/${CMAKE_STATIC_LIBRARY_PREFIX}lolhtml${CMAKE_STATIC_LIBRARY_SUFFIX})
+endif()
+
 # Windows requires unwind tables, apparently.
 if (NOT WIN32)
   # The encoded escape sequences are intentional. They're how you delimit multiple arguments in a single environment variable.
@@ -51,11 +57,18 @@ if(WIN32)
   if(MSVC_VERSIONS)
     list(GET MSVC_VERSIONS -1 MSVC_LATEST)  # Get the latest version
     if(CMAKE_SYSTEM_PROCESSOR MATCHES "ARM64|aarch64")
-      set(MSVC_LINK_PATH "${MSVC_LATEST}/bin/HostARM64/arm64/link.exe")
+      # Use Hostx64/arm64 for cross-compilation from x64, fall back to native
+      if(EXISTS "${MSVC_LATEST}/bin/Hostx64/arm64/link.exe")
+        set(MSVC_LINK_PATH "${MSVC_LATEST}/bin/Hostx64/arm64/link.exe")
+      else()
+        set(MSVC_LINK_PATH "${MSVC_LATEST}/bin/HostARM64/arm64/link.exe")
+      endif()
       set(CARGO_LINKER_VAR "CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_LINKER")
+      set(MSVC_LIB_ARCH "arm64")
     else()
       set(MSVC_LINK_PATH "${MSVC_LATEST}/bin/Hostx64/x64/link.exe")
       set(CARGO_LINKER_VAR "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER")
+      set(MSVC_LIB_ARCH "x64")
     endif()
     if(EXISTS "${MSVC_LINK_PATH}")
       list(APPEND LOLHTML_ENV "${CARGO_LINKER_VAR}=${MSVC_LINK_PATH}")

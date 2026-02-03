@@ -109,8 +109,9 @@ describe("tilde expansion in cache paths", () => {
       "package.json": JSON.stringify({ name: "foo", version: "1.0.0" }),
     });
     const absoluteCachePath = join(testDir, "absolute-cache-dir");
-    // Write bunfig.toml with the absolute path
-    await Bun.write(join(testDir, "bunfig.toml"), `[install]\ncache = "${absoluteCachePath.replace(/\\/g, "/")}"`);
+    // Write bunfig.toml with forward slashes (works on all platforms)
+    const configPath = absoluteCachePath.replace(/\\/g, "/");
+    await Bun.write(join(testDir, "bunfig.toml"), `[install]\ncache = "${configPath}"`);
 
     const testEnv = { ...bunEnv };
     delete testEnv.BUN_INSTALL_CACHE_DIR;
@@ -127,7 +128,8 @@ describe("tilde expansion in cache paths", () => {
     const err = stderrForInstall(await proc.stderr.text());
 
     expect(err).toBeEmpty();
-    expect(out).toBe(absoluteCachePath);
+    // Normalize both paths to forward slashes for comparison
+    expect(out.replace(/\\/g, "/")).toBe(configPath);
 
     expect(await proc.exited).toBe(0);
   });

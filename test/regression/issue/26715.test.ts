@@ -104,10 +104,13 @@ describe("tilde expansion in cache paths", () => {
   });
 
   test("paths without tilde are not affected", async () => {
+    // Use a platform-independent absolute path within the test directory
     const testDir = tempDirWithFiles("no-tilde-", {
-      "bunfig.toml": '[install]\ncache = "/tmp/absolute-cache-dir"',
       "package.json": JSON.stringify({ name: "foo", version: "1.0.0" }),
     });
+    const absoluteCachePath = join(testDir, "absolute-cache-dir");
+    // Write bunfig.toml with the absolute path
+    await Bun.write(join(testDir, "bunfig.toml"), `[install]\ncache = "${absoluteCachePath.replace(/\\/g, "/")}"`);
 
     const testEnv = { ...bunEnv };
     delete testEnv.BUN_INSTALL_CACHE_DIR;
@@ -124,7 +127,7 @@ describe("tilde expansion in cache paths", () => {
     const err = stderrForInstall(await proc.stderr.text());
 
     expect(err).toBeEmpty();
-    expect(out).toBe("/tmp/absolute-cache-dir");
+    expect(out).toBe(absoluteCachePath);
 
     expect(await proc.exited).toBe(0);
   });

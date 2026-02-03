@@ -2383,6 +2383,32 @@ pub const basename = paths_.basename;
 
 pub const log = bun.Output.scoped(.STR, .hidden);
 pub const grapheme = @import("./immutable/grapheme.zig");
+
+/// Expands a leading tilde (~) in a path to the user's home directory.
+/// Returns the original string if it doesn't start with ~ or if the home directory cannot be determined.
+/// The tilde must be followed by a path separator or be the entire string (e.g., "~" or "~/foo").
+pub fn expandTilde(allocator: std.mem.Allocator, path: []const u8) OOM![]const u8 {
+    if (path.len == 0 or path[0] != '~') {
+        return path;
+    }
+    // Must be just "~" or "~/..." (not "~foo" which means another user's home)
+    if (path.len > 1 and path[1] != '/' and (Environment.isWindows and path[1] != '\\') == false) {
+        return path;
+    }
+
+    const home_dir = bun.env_var.HOME.get() orelse return path;
+
+    if (path.len == 1) {
+        // Just "~"
+        return try allocator.dupe(u8, home_dir);
+    }
+    // "~/..." - join home with the rest
+    const rest = path[1..]; // includes the leading /
+    const result = try allocator.alloc(u8, home_dir.len + rest.len);
+    @memcpy(result[0..home_dir.len], home_dir);
+    @memcpy(result[home_dir.len..], rest);
+    return result;
+}
 pub const CodePoint = i32;
 
 const string = []const u8;

@@ -696,7 +696,7 @@ pub const Bunfig = struct {
                             }
 
                             if (cache.asString(allocator)) |value| {
-                                install.cache_directory = value;
+                                install.cache_directory = try bun.strings.expandTilde(allocator, value);
                                 break :load;
                             }
 
@@ -715,7 +715,7 @@ pub const Bunfig = struct {
 
                                 if (cache.get("dir")) |directory| {
                                     if (directory.asString(allocator)) |value| {
-                                        install.cache_directory = value;
+                                        install.cache_directory = try bun.strings.expandTilde(allocator, value);
                                     }
                                 }
                             }

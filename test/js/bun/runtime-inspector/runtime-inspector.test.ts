@@ -331,7 +331,7 @@ describe("Runtime inspector activation", () => {
       expect(await proc.exited).not.toBe(0);
     });
 
-    test("can interrupt an infinite loop", async () => {
+    test.skipIf(skipASAN)("can interrupt an infinite loop", async () => {
       using dir = tempDir("debug-infinite-loop-test", {
         "target.js": `
           const fs = require("fs");

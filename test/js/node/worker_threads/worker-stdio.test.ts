@@ -23,11 +23,11 @@ describe("worker_threads stdio", () => {
       expect(worker.stderr).toBeNull();
       expect(worker.stdin).toBeNull();
 
-      await new Promise<void>(resolve => {
-        worker.on("message", () => resolve());
-        worker.on("error", () => resolve());
-        worker.on("exit", () => resolve());
-      });
+      const { promise, resolve } = Promise.withResolvers<void>();
+      worker.on("message", () => resolve());
+      worker.on("error", () => resolve());
+      worker.on("exit", () => resolve());
+      await promise;
 
       await worker.terminate();
     });
@@ -47,11 +47,11 @@ describe("worker_threads stdio", () => {
       expect(typeof worker.stdout?.pipe).toBe("function");
       expect(typeof worker.stdout?.on).toBe("function");
 
-      const output = await new Promise<string>(resolve => {
-        let data = "";
-        worker.stdout!.on("data", chunk => (data += chunk));
-        worker.on("exit", () => resolve(data));
-      });
+      const { promise, resolve } = Promise.withResolvers<string>();
+      let data = "";
+      worker.stdout!.on("data", chunk => (data += chunk));
+      worker.on("exit", () => resolve(data));
+      const output = await promise;
 
       expect(output.trim()).toBe("hello from worker");
     });
@@ -69,11 +69,11 @@ describe("worker_threads stdio", () => {
         stdout: true,
       });
 
-      const output = await new Promise<string>(resolve => {
-        let data = "";
-        worker.stdout!.on("data", chunk => (data += chunk));
-        worker.on("exit", () => resolve(data));
-      });
+      const { promise, resolve } = Promise.withResolvers<string>();
+      let data = "";
+      worker.stdout!.on("data", chunk => (data += chunk));
+      worker.on("exit", () => resolve(data));
+      const output = await promise;
 
       const lines = output.trim().split("\n");
       expect(lines).toEqual(["line 1", "line 2", "line 3"]);
@@ -83,7 +83,7 @@ describe("worker_threads stdio", () => {
       using dir = tempDir("worker-stdio-test", {
         "worker.js": `
           // Generate a large output (100KB+)
-          const line = "x".repeat(1000);
+          const line = Buffer.alloc(1000, "x").toString();
           for (let i = 0; i < 100; i++) {
             console.log(line);
           }
@@ -94,11 +94,11 @@ describe("worker_threads stdio", () => {
         stdout: true,
       });
 
-      const output = await new Promise<string>(resolve => {
-        let data = "";
-        worker.stdout!.on("data", chunk => (data += chunk));
-        worker.on("exit", () => resolve(data));
-      });
+      const { promise, resolve } = Promise.withResolvers<string>();
+      let data = "";
+      worker.stdout!.on("data", chunk => (data += chunk));
+      worker.on("exit", () => resolve(data));
+      const output = await promise;
 
       const lines = output.trim().split("\n");
       expect(lines.length).toBe(100);
@@ -118,11 +118,11 @@ describe("worker_threads stdio", () => {
         stdout: true,
       });
 
-      const output = await new Promise<string>(resolve => {
-        let data = "";
-        worker.stdout!.on("data", chunk => (data += chunk));
-        worker.on("exit", () => resolve(data));
-      });
+      const { promise, resolve } = Promise.withResolvers<string>();
+      let data = "";
+      worker.stdout!.on("data", chunk => (data += chunk));
+      worker.on("exit", () => resolve(data));
+      const output = await promise;
 
       // Use toContain for robustness - output buffering may combine lines
       expect(output).toContain("Hello 世界 🌍");
@@ -142,11 +142,11 @@ describe("worker_threads stdio", () => {
         stdout: true,
       });
 
-      const output = await new Promise<string>(resolve => {
-        let data = "";
-        worker.stdout!.on("data", chunk => (data += chunk));
-        worker.on("exit", () => resolve(data));
-      });
+      const { promise, resolve } = Promise.withResolvers<string>();
+      let data = "";
+      worker.stdout!.on("data", chunk => (data += chunk));
+      worker.on("exit", () => resolve(data));
+      const output = await promise;
 
       expect(output).toContain("line with\ttab");
       expect(output).toContain("line with\rcarriage return");
@@ -178,11 +178,11 @@ describe("worker_threads stdio", () => {
         }),
       );
 
-      await new Promise<void>(resolve => {
-        worker.on("message", (msg: { done?: boolean }) => {
-          if (msg.done) resolve();
-        });
+      const { promise, resolve } = Promise.withResolvers<void>();
+      worker.on("message", (msg: { done?: boolean }) => {
+        if (msg.done) resolve();
       });
+      await promise;
 
       await worker.terminate();
 
@@ -199,11 +199,11 @@ describe("worker_threads stdio", () => {
       });
 
       // Read from the stream to ensure we reach EOF
-      const output = await new Promise<string>(resolve => {
-        let data = "";
-        worker.stdout!.on("data", chunk => (data += chunk));
-        worker.stdout!.on("end", () => resolve(data));
-      });
+      const { promise, resolve } = Promise.withResolvers<string>();
+      let data = "";
+      worker.stdout!.on("data", chunk => (data += chunk));
+      worker.stdout!.on("end", () => resolve(data));
+      const output = await promise;
 
       expect(output.trim()).toBe("done");
     });
@@ -214,11 +214,11 @@ describe("worker_threads stdio", () => {
         stdout: true,
       });
 
-      const output = await new Promise<string>(resolve => {
-        let data = "";
-        worker.stdout!.on("data", chunk => (data += chunk));
-        worker.on("exit", () => resolve(data));
-      });
+      const { promise, resolve } = Promise.withResolvers<string>();
+      let data = "";
+      worker.stdout!.on("data", chunk => (data += chunk));
+      worker.on("exit", () => resolve(data));
+      const output = await promise;
 
       expect(output.trim()).toBe("eval worker output");
     });
@@ -238,11 +238,11 @@ describe("worker_threads stdio", () => {
       expect(typeof worker.stderr?.pipe).toBe("function");
       expect(typeof worker.stderr?.on).toBe("function");
 
-      const output = await new Promise<string>(resolve => {
-        let data = "";
-        worker.stderr!.on("data", chunk => (data += chunk));
-        worker.on("exit", () => resolve(data));
-      });
+      const { promise, resolve } = Promise.withResolvers<string>();
+      let data = "";
+      worker.stderr!.on("data", chunk => (data += chunk));
+      worker.on("exit", () => resolve(data));
+      const output = await promise;
 
       expect(stripAnsi(output).trim()).toBe("error from worker");
     });
@@ -259,11 +259,11 @@ describe("worker_threads stdio", () => {
         stderr: true,
       });
 
-      const output = await new Promise<string>(resolve => {
-        let data = "";
-        worker.stderr!.on("data", chunk => (data += chunk));
-        worker.on("exit", () => resolve(data));
-      });
+      const { promise, resolve } = Promise.withResolvers<string>();
+      let data = "";
+      worker.stderr!.on("data", chunk => (data += chunk));
+      worker.on("exit", () => resolve(data));
+      const output = await promise;
 
       const lines = stripAnsi(output).trim().split("\n");
       expect(lines).toEqual(["error 1", "error 2"]);
@@ -278,11 +278,11 @@ describe("worker_threads stdio", () => {
         stderr: true,
       });
 
-      const output = await new Promise<string>(resolve => {
-        let data = "";
-        worker.stderr!.on("data", chunk => (data += chunk));
-        worker.on("exit", () => resolve(data));
-      });
+      const { promise, resolve } = Promise.withResolvers<string>();
+      let data = "";
+      worker.stderr!.on("data", chunk => (data += chunk));
+      worker.on("exit", () => resolve(data));
+      const output = await promise;
 
       expect(stripAnsi(output).trim()).toBe("warning message");
     });
@@ -300,11 +300,11 @@ describe("worker_threads stdio", () => {
         stderr: true,
       });
 
-      const output = await new Promise<string>(resolve => {
-        let data = "";
-        worker.stderr!.on("data", chunk => (data += chunk));
-        worker.on("exit", () => resolve(data));
-      });
+      const { promise, resolve } = Promise.withResolvers<string>();
+      let data = "";
+      worker.stderr!.on("data", chunk => (data += chunk));
+      worker.on("exit", () => resolve(data));
+      const output = await promise;
 
       expect(output).toContain("Error: Something went wrong");
       expect(output).toContain("at someFunction");
@@ -330,9 +330,9 @@ describe("worker_threads stdio", () => {
         }),
       );
 
-      await new Promise<void>(resolve => {
-        worker.on("exit", () => resolve());
-      });
+      const { promise, resolve } = Promise.withResolvers<void>();
+      worker.on("exit", () => resolve());
+      await promise;
 
       expect(stripAnsi(chunks.join("")).trim()).toBe("piped error");
     });
@@ -347,11 +347,11 @@ describe("worker_threads stdio", () => {
       });
 
       // Read from the stream to ensure we reach EOF
-      const output = await new Promise<string>(resolve => {
-        let data = "";
-        worker.stderr!.on("data", chunk => (data += chunk));
-        worker.stderr!.on("end", () => resolve(data));
-      });
+      const { promise, resolve } = Promise.withResolvers<string>();
+      let data = "";
+      worker.stderr!.on("data", chunk => (data += chunk));
+      worker.stderr!.on("end", () => resolve(data));
+      const output = await promise;
 
       expect(stripAnsi(output).trim()).toBe("done");
     });
@@ -362,11 +362,11 @@ describe("worker_threads stdio", () => {
         stderr: true,
       });
 
-      const output = await new Promise<string>(resolve => {
-        let data = "";
-        worker.stderr!.on("data", chunk => (data += chunk));
-        worker.on("exit", () => resolve(data));
-      });
+      const { promise, resolve } = Promise.withResolvers<string>();
+      let data = "";
+      worker.stderr!.on("data", chunk => (data += chunk));
+      worker.on("exit", () => resolve(data));
+      const output = await promise;
 
       expect(stripAnsi(output).trim()).toBe("eval error output");
     });
@@ -386,13 +386,13 @@ describe("worker_threads stdio", () => {
         stderr: true,
       });
 
-      const [stdout, stderr] = await new Promise<[string, string]>(resolve => {
-        let stdoutData = "";
-        let stderrData = "";
-        worker.stdout!.on("data", chunk => (stdoutData += chunk));
-        worker.stderr!.on("data", chunk => (stderrData += chunk));
-        worker.on("exit", () => resolve([stdoutData, stderrData]));
-      });
+      const { promise, resolve } = Promise.withResolvers<[string, string]>();
+      let stdoutData = "";
+      let stderrData = "";
+      worker.stdout!.on("data", chunk => (stdoutData += chunk));
+      worker.stderr!.on("data", chunk => (stderrData += chunk));
+      worker.on("exit", () => resolve([stdoutData, stderrData]));
+      const [stdout, stderr] = await promise;
 
       expect(stdout.trim()).toBe("stdout message");
       expect(stripAnsi(stderr).trim()).toBe("stderr message");
@@ -413,13 +413,13 @@ describe("worker_threads stdio", () => {
         stderr: true,
       });
 
-      const [stdout, stderr] = await new Promise<[string, string]>(resolve => {
-        let stdoutData = "";
-        let stderrData = "";
-        worker.stdout!.on("data", chunk => (stdoutData += chunk));
-        worker.stderr!.on("data", chunk => (stderrData += chunk));
-        worker.on("exit", () => resolve([stdoutData, stderrData]));
-      });
+      const { promise, resolve } = Promise.withResolvers<[string, string]>();
+      let stdoutData = "";
+      let stderrData = "";
+      worker.stdout!.on("data", chunk => (stdoutData += chunk));
+      worker.stderr!.on("data", chunk => (stderrData += chunk));
+      worker.on("exit", () => resolve([stdoutData, stderrData]));
+      const [stdout, stderr] = await promise;
 
       expect(stdout.trim().split("\n")).toEqual(["out 1", "out 2"]);
       expect(stripAnsi(stderr).trim().split("\n")).toEqual(["err 1", "err 2"]);
@@ -440,13 +440,13 @@ describe("worker_threads stdio", () => {
         stderr: true,
       });
 
-      const [stdout, stderr] = await new Promise<[string, string]>(resolve => {
-        let stdoutData = "";
-        let stderrData = "";
-        worker.stdout!.on("data", chunk => (stdoutData += chunk));
-        worker.stderr!.on("data", chunk => (stderrData += chunk));
-        worker.on("exit", () => resolve([stdoutData, stderrData]));
-      });
+      const { promise, resolve } = Promise.withResolvers<[string, string]>();
+      let stdoutData = "";
+      let stderrData = "";
+      worker.stdout!.on("data", chunk => (stdoutData += chunk));
+      worker.stderr!.on("data", chunk => (stderrData += chunk));
+      worker.on("exit", () => resolve([stdoutData, stderrData]));
+      const [stdout, stderr] = await promise;
 
       const stdoutLines = stdout.trim().split("\n");
       const stderrLines = stripAnsi(stderr).trim().split("\n");

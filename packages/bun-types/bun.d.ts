@@ -2438,7 +2438,7 @@ declare module "bun" {
       | `bun-linux-${Architecture}-${Libc}`
       | `bun-linux-${Architecture}-${SIMD}`
       | `bun-linux-${Architecture}-${SIMD}-${Libc}`
-      | "bun-windows-x64"
+      | `bun-windows-${Architecture}`
       | `bun-windows-x64-${SIMD}`;
   }
 

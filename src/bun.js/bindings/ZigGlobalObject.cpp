@@ -302,7 +302,6 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             JSC::Options::useJITCage() = false;
             JSC::Options::useShadowRealm() = true;
             JSC::Options::useV8DateParser() = true;
-            JSC::Options::useMathSumPreciseMethod() = true;
             JSC::Options::evalMode() = evalMode;
             JSC::Options::heapGrowthSteepnessFactor() = 1.0;
             JSC::Options::heapGrowthMaxIncrease() = 2.0;
@@ -1699,6 +1698,7 @@ void GlobalObject::finishCreation(VM& vm)
     m_commonStrings.initialize();
     m_http2CommonStrings.initialize();
     m_bakeAdditions.initialize();
+    m_markdownTagStrings.initialize();
 
     Bun::addNodeModuleConstructorProperties(vm, this);
     m_JSNodeHTTPServerSocketStructure.initLater(

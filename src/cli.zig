@@ -353,6 +353,9 @@ pub const Command = struct {
         test_filter_pattern: ?[]const u8 = null,
         test_filter_regex: ?*RegularExpression = null,
         max_concurrency: u32 = 20,
+        /// Custom glob patterns for test file discovery (e.g., ["**/*.unit.ts", "**/*.int.ts"])
+        /// When set, overrides the default patterns (.test., _test_, .spec., _spec_)
+        include: ?[]const []const u8 = null,
 
         reporters: struct {
             dots: bool = false,

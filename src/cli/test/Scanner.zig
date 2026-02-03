@@ -5,6 +5,9 @@ exclusion_names: []const []const u8 = &.{},
 /// When this list is empty, no filters are applied.
 /// "test" suffixes (e.g. .spec.*) are always applied when traversing directories.
 filter_names: []const []const u8 = &.{},
+/// Custom glob patterns for test file discovery (e.g., ["**/*.unit.ts", "**/*.int.ts"])
+/// When set, overrides the default suffix patterns (.test., _test_, .spec., _spec_)
+include_patterns: ?[]const []const u8 = null,
 dirs_to_scan: Fifo,
 /// Paths to test files found while scanning.
 test_files: std.ArrayListUnmanaged(bun.PathString),
@@ -128,6 +131,16 @@ pub fn couldBeTestFile(this: *Scanner, name: []const u8, comptime needs_test_suf
     const extname = std.fs.path.extension(name);
     if (extname.len == 0 or !this.options.loader(extname).isJavaScriptLike()) return false;
     if (comptime !needs_test_suffix) return true;
+
+    // If custom include patterns are set, use glob matching instead of default suffixes
+    if (this.include_patterns) |patterns| {
+        for (patterns) |pattern| {
+            if (bun.glob.match(pattern, name).matches()) return true;
+        }
+        return false;
+    }
+
+    // Default behavior: check for .test, .spec, _test_, _spec_ suffixes
     const name_without_extension = name[0 .. name.len - extname.len];
     inline for (test_name_suffixes) |suffix| {
         if (strings.endsWithComptime(name_without_extension, suffix)) return true;

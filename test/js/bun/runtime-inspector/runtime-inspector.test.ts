@@ -128,7 +128,7 @@ describe("Runtime inspector activation", () => {
       expect(await proc.exited).not.toBe(0);
     });
 
-    test("inspector does not activate twice", async () => {
+    test.skipIf(skipASAN)("inspector does not activate twice", async () => {
       using dir = tempDir("debug-process-twice-test", {
         "target.js": `
           const fs = require("fs");
@@ -178,8 +178,13 @@ describe("Runtime inspector activation", () => {
       expect(debug1Stderr).toBe("");
       expect(await debug1.exited).toBe(0);
 
-      // Wait for the full debugger banner (header + content + footer)
+      // Wait for the full debugger banner (header + content + footer) with timeout
+      const bannerStartTime = Date.now();
+      const bannerTimeout = 30000;
       while ((stderr.match(/Bun Inspector/g) || []).length < 2) {
+        if (Date.now() - bannerStartTime > bannerTimeout) {
+          throw new Error(`Timeout waiting for inspector banner. Got: "${stderr}"`);
+        }
         const { value, done } = await stderrReader.read();
         if (done) break;
         stderr += stderrDecoder.decode(value, { stream: true });

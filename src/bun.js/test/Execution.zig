@@ -113,29 +113,6 @@ pub const ExecutionSequence = struct {
     pub const FlakyAttempt = struct {
         result: Result,
         elapsed_ns: u64,
-
-        pub fn failureType(this: FlakyAttempt) []const u8 {
-            return switch (this.result) {
-                .fail_because_timeout,
-                .fail_because_timeout_with_done_callback,
-                .fail_because_hook_timeout,
-                .fail_because_hook_timeout_with_done_callback,
-                => "TimeoutError",
-                else => "AssertionError",
-            };
-        }
-
-        pub fn failureMessage(this: FlakyAttempt) ?[]const u8 {
-            return switch (this.result) {
-                .fail_because_timeout, .fail_because_timeout_with_done_callback => "test timed out",
-                .fail_because_hook_timeout, .fail_because_hook_timeout_with_done_callback => "hook timed out",
-                .fail_because_failing_test_passed => "test marked with .failing() did not throw",
-                .fail_because_todo_passed => "TODO passed",
-                .fail_because_expected_has_assertions => "expected to have assertions, but none were run",
-                .fail_because_expected_assertion_count => "expected more assertions",
-                else => null,
-            };
-        }
     };
 
     pub fn flakyAttempts(this: *const ExecutionSequence) []const FlakyAttempt {

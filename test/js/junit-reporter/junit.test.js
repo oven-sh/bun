@@ -315,8 +315,8 @@ describe("junit reporter", () => {
     expect(xmlContent2).toContain("line=");
   });
 
-  it("should emit flakyFailure for tests that pass after retry", async () => {
-    const tmpDir = tempDirWithFiles("junit-flaky", {
+  it("should emit separate testcase entries for each retry attempt", async () => {
+    const tmpDir = tempDirWithFiles("junit-retry", {
       "package.json": "{}",
       "flaky.test.js": `
         import { test, expect } from "bun:test";
@@ -346,32 +346,18 @@ describe("junit reporter", () => {
 
     const xmlContent = await file(junitPath).text();
 
-    // The flaky test should have flakyFailure elements (2 failures before passing on attempt 3)
-    expect(xmlContent).toContain("<flakyFailure");
-    const flakyFailureCount = (xmlContent.match(/<flakyFailure/g) || []).length;
-    expect(flakyFailureCount).toBe(2);
+    // Each retry attempt should be a separate testcase with the same name
+    const flakyTestCases = [...xmlContent.matchAll(/<testcase[^>]*name="flaky test"[^>]*>/g)];
+    expect(flakyTestCases).toHaveLength(3);
 
-    // Each flakyFailure should have type and time attributes
-    const flakyElements = [...xmlContent.matchAll(/<flakyFailure\s+([^/]*)\//g)];
-    expect(flakyElements).toHaveLength(2);
-    for (const el of flakyElements) {
-      expect(el[1]).toContain('type="AssertionError"');
-      expect(el[1]).toMatch(/time="[\d.]+"/);
-    }
+    // The first two should have <failure> elements, the last should be self-closing
+    const flakyEntries = [...xmlContent.matchAll(/<testcase[^>]*name="flaky test"[^/]*(?:\/>|>[\s\S]*?<\/testcase>)/g)];
+    expect(flakyEntries).toHaveLength(3);
+    expect(flakyEntries[0][0]).toContain("<failure");
+    expect(flakyEntries[1][0]).toContain("<failure");
+    expect(flakyEntries[2][0]).not.toContain("<failure");
 
-    // The stable test should be self-closing (no flakyFailure)
     expect(xmlContent).toContain('name="stable test"');
-
-    // Both tests passed, so failures should be 0
-    const result = await new Promise((resolve, reject) => {
-      xml2js.parseString(xmlContent, (err, result) => {
-        if (err) reject(err);
-        else resolve(result);
-      });
-    });
-
-    expect(result.testsuites.$.failures).toBe("0");
-    expect(result.testsuites.$.tests).toBe("2");
 
     expect(proc.exitCode).toBe(0);
   });

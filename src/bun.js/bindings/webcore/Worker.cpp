@@ -233,16 +233,22 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
 
 JSC::JSValue Worker::getStdoutStream(JSC::JSGlobalObject* globalObject) const
 {
+    if (m_terminationFlags & TerminatedFlag)
+        return JSC::jsUndefined();
     return JSC::JSValue::decode(WebWorker__getStdoutStream(impl_, globalObject));
 }
 
 JSC::JSValue Worker::getStderrStream(JSC::JSGlobalObject* globalObject) const
 {
+    if (m_terminationFlags & TerminatedFlag)
+        return JSC::jsUndefined();
     return JSC::JSValue::decode(WebWorker__getStderrStream(impl_, globalObject));
 }
 
 int32_t Worker::getStdinWriteFd() const
 {
+    if (m_terminationFlags & TerminatedFlag)
+        return -1;
     return WebWorker__getStdinWriteFd(impl_);
 }
 

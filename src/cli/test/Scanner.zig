@@ -7,7 +7,7 @@ exclusion_names: []const []const u8 = &.{},
 filter_names: []const []const u8 = &.{},
 /// Custom glob patterns for test file discovery (e.g., ["**/*.unit.ts", "**/*.int.ts"])
 /// When set, overrides the default suffix patterns (.test., _test_, .spec., _spec_)
-include_patterns: ?[]const []const u8 = null,
+#include_patterns: ?[]const []const u8 = null,
 dirs_to_scan: Fifo,
 /// Paths to test files found while scanning.
 test_files: std.ArrayListUnmanaged(bun.PathString),
@@ -127,15 +127,15 @@ pub const test_name_suffixes = [_][]const u8{
     "_spec",
 };
 
-pub fn couldBeTestFile(this: *Scanner, name: []const u8, comptime needs_test_suffix: bool) bool {
+pub fn couldBeTestFile(this: *Scanner, name: []const u8, rel_path: []const u8, comptime needs_test_suffix: bool) bool {
     const extname = std.fs.path.extension(name);
     if (extname.len == 0 or !this.options.loader(extname).isJavaScriptLike()) return false;
     if (comptime !needs_test_suffix) return true;
 
-    // If custom include patterns are set, use glob matching instead of default suffixes
-    if (this.include_patterns) |patterns| {
+    // If custom include patterns are set, use glob matching with relative path
+    if (this.#include_patterns) |patterns| {
         for (patterns) |pattern| {
-            if (bun.glob.match(pattern, name).matches()) return true;
+            if (bun.glob.match(pattern, rel_path).matches()) return true;
         }
         return false;
     }
@@ -170,7 +170,7 @@ pub fn doesPathMatchFilter(this: *Scanner, name: []const u8) bool {
 }
 
 pub fn isTestFile(this: *Scanner, name: []const u8) bool {
-    return this.couldBeTestFile(name, false) and this.doesPathMatchFilter(name);
+    return this.couldBeTestFile(name, name, false) and this.doesPathMatchFilter(name);
 }
 
 pub fn next(this: *Scanner, entry: *FileSystem.Entry, fd: bun.StoredFileDescriptorType) void {
@@ -202,13 +202,15 @@ pub fn next(this: *Scanner, entry: *FileSystem.Entry, fd: bun.StoredFileDescript
             if (!entry.abs_path.isEmpty()) return;
 
             this.search_count += 1;
-            if (!this.couldBeTestFile(name, true)) return;
 
+            // Compute paths for test file check (needed for include pattern glob matching)
             const parts = &[_][]const u8{ entry.dir, entry.base() };
             const path = this.fs.absBuf(parts, &this.open_dir_buf);
+            const rel_path = bun.path.relative(this.fs.top_level_dir, path);
+
+            if (!this.couldBeTestFile(name, rel_path, true)) return;
 
             if (!this.doesAbsolutePathMatchFilter(path)) {
-                const rel_path = bun.path.relative(this.fs.top_level_dir, path);
                 if (!this.doesPathMatchFilter(rel_path)) return;
             }
 

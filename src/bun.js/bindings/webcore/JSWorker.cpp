@@ -74,7 +74,9 @@ static JSC_DECLARE_HOST_FUNCTION(jsWorkerPrototypeFunction_postMessage);
 static JSC_DECLARE_HOST_FUNCTION(jsWorkerPrototypeFunction_unref);
 static JSC_DECLARE_HOST_FUNCTION(jsWorkerPrototypeFunction_ref);
 static JSC_DECLARE_HOST_FUNCTION(jsWorkerPrototypeFunction_getHeapSnapshot);
-static JSC_DECLARE_HOST_FUNCTION(jsWorkerPrototypeFunction_getStdioFds);
+static JSC_DECLARE_HOST_FUNCTION(jsWorkerPrototypeFunction_getStdoutStream);
+static JSC_DECLARE_HOST_FUNCTION(jsWorkerPrototypeFunction_getStderrStream);
+static JSC_DECLARE_HOST_FUNCTION(jsWorkerPrototypeFunction_getStdinWriteFd);
 
 // Attributes
 
@@ -439,7 +441,9 @@ static const HashTableValue JSWorkerPrototypeTableValues[] = {
     { "threadId"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete, NoIntrinsic, { HashTableValue::GetterSetterType, jsWorker_threadIdGetter, nullptr } },
     { "unref"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWorkerPrototypeFunction_unref, 0 } },
     { "getHeapSnapshot"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWorkerPrototypeFunction_getHeapSnapshot, 0 } },
-    { "$getStdioFds"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWorkerPrototypeFunction_getStdioFds, 0 } },
+    { "$getStdoutStream"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWorkerPrototypeFunction_getStdoutStream, 0 } },
+    { "$getStderrStream"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWorkerPrototypeFunction_getStderrStream, 0 } },
+    { "$getStdinWriteFd"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWorkerPrototypeFunction_getStdinWriteFd, 0 } },
 };
 
 const ClassInfo JSWorkerPrototype::s_info = { "Worker"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSWorkerPrototype) };
@@ -739,35 +743,38 @@ JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_getHeapSnapshot, (JSGlobalObj
     return IDLOperation<JSWorker>::call<jsWorkerPrototypeFunction_getHeapSnapshotBody>(*lexicalGlobalObject, *callFrame, "getHeapSnapshot");
 }
 
-static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getStdioFdsBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame*, typename IDLOperation<JSWorker>::ClassParameter castedThis)
+static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getStdoutStreamBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame*, typename IDLOperation<JSWorker>::ClassParameter castedThis)
 {
     auto& wrapped = castedThis->wrapped();
-
-    // Get the stdio FDs from the worker
-    int32_t stdoutFd = wrapped.getStdoutReadFd();
-    int32_t stderrFd = wrapped.getStderrReadFd();
-    int32_t stdinFd = wrapped.getStdinWriteFd();
-
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-
-    // Return an array [stdoutFd, stderrFd, stdinFd]
-    // -1 means the pipe is not configured
-    JSC::JSArray* array = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, 3);
-    RETURN_IF_EXCEPTION(throwScope, {});
-    array->putDirectIndex(lexicalGlobalObject, 0, jsNumber(stdoutFd));
-    RETURN_IF_EXCEPTION(throwScope, {});
-    array->putDirectIndex(lexicalGlobalObject, 1, jsNumber(stderrFd));
-    RETURN_IF_EXCEPTION(throwScope, {});
-    array->putDirectIndex(lexicalGlobalObject, 2, jsNumber(stdinFd));
-    RETURN_IF_EXCEPTION(throwScope, {});
-
-    return JSValue::encode(array);
+    return JSValue::encode(wrapped.getStdoutStream(lexicalGlobalObject));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_getStdioFds, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_getStdoutStream, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    return IDLOperation<JSWorker>::call<jsWorkerPrototypeFunction_getStdioFdsBody>(*lexicalGlobalObject, *callFrame, "$getStdioFds");
+    return IDLOperation<JSWorker>::call<jsWorkerPrototypeFunction_getStdoutStreamBody>(*lexicalGlobalObject, *callFrame, "$getStdoutStream");
+}
+
+static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getStderrStreamBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame*, typename IDLOperation<JSWorker>::ClassParameter castedThis)
+{
+    auto& wrapped = castedThis->wrapped();
+    return JSValue::encode(wrapped.getStderrStream(lexicalGlobalObject));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_getStderrStream, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSWorker>::call<jsWorkerPrototypeFunction_getStderrStreamBody>(*lexicalGlobalObject, *callFrame, "$getStderrStream");
+}
+
+static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getStdinWriteFdBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame*, typename IDLOperation<JSWorker>::ClassParameter castedThis)
+{
+    auto& wrapped = castedThis->wrapped();
+    int32_t stdinFd = wrapped.getStdinWriteFd();
+    return JSValue::encode(jsNumber(stdinFd));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_getStdinWriteFd, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSWorker>::call<jsWorkerPrototypeFunction_getStdinWriteFdBody>(*lexicalGlobalObject, *callFrame, "$getStdinWriteFd");
 }
 
 JSC::GCClient::IsoSubspace* JSWorker::subspaceForImpl(JSC::VM& vm)

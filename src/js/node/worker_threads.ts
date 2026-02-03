@@ -50,37 +50,26 @@ function getOrCreateStdioStream(worker: object, type: string, nativeWorker: WebW
   if (streams[type] !== null) return streams[type];
   if (!options || !options[type]) return null;
 
-  // Use bracket notation to access internal methods safely without TS complaining about the type
-  // Check if the method exists using bracket notation (safe for TS)
-  if (typeof nativeWorker["$getStdioFds"] !== "function") return null;
+  // For stdout/stderr, get the ReadableStream directly from native code
+  if (type === "stdout") {
+    if (typeof nativeWorker["$getStdoutStream"] !== "function") return null;
+    const webStream = nativeWorker["$getStdoutStream"].$call(nativeWorker);
+    if (!webStream) return null;
+    const nodeStream = Readable.fromWeb(webStream);
+    streams[type] = nodeStream;
+    return nodeStream;
+  }
 
-  // CALL it using bracket notation.
-  // This syntax `obj["method"]()` preserves the 'this' context.
-  const fds = nativeWorker["$getStdioFds"].$call(nativeWorker);
-  if (!fds) return null;
-
-  const fdIndex = type === "stdout" ? 0 : type === "stderr" ? 1 : 2;
-  const fd = fds[fdIndex];
-
-  // Ensure we have a valid file descriptor (assuming -1 is invalid)
-  if (typeof fd !== "number" || fd < 0) return null;
-
-  // For stdout/stderr, create a Readable stream from the pipe FD
-  if (type === "stdout" || type === "stderr") {
-    const file = Bun.file(fd);
-    const webStream = file.stream();
+  if (type === "stderr") {
+    if (typeof nativeWorker["$getStderrStream"] !== "function") return null;
+    const webStream = nativeWorker["$getStderrStream"].$call(nativeWorker);
+    if (!webStream) return null;
     const nodeStream = Readable.fromWeb(webStream);
     streams[type] = nodeStream;
     return nodeStream;
   }
 
   if (type === "stdin") {
-    // Create a Node.js WriteStream from the file descriptor
-    // autoClose: false ensures we don't close the FD unexpectedly if the stream ends
-    // const nodeStream = fs.createWriteStream(null, { fd, autoClose: false });
-    // streams[type] = nodeStream;
-    // return nodeStream;
-
     // TODO: implement worker_threads.stdin, not part of this issue
     throwNotImplemented("worker_threads.stdin", 22585);
   }

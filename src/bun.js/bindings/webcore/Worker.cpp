@@ -133,8 +133,8 @@ extern "C" void* WebWorker__create(
 extern "C" void WebWorker__setRef(
     void* worker,
     bool ref);
-extern "C" int32_t WebWorker__getStdoutReadFd(void* worker);
-extern "C" int32_t WebWorker__getStderrReadFd(void* worker);
+extern "C" JSC::EncodedJSValue WebWorker__getStdoutStream(void* worker, JSC::JSGlobalObject* globalObject);
+extern "C" JSC::EncodedJSValue WebWorker__getStderrStream(void* worker, JSC::JSGlobalObject* globalObject);
 extern "C" int32_t WebWorker__getStdinWriteFd(void* worker);
 
 void Worker::setKeepAlive(bool keepAlive)
@@ -231,14 +231,14 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
     return worker;
 }
 
-int32_t Worker::getStdoutReadFd() const
+JSC::JSValue Worker::getStdoutStream(JSC::JSGlobalObject* globalObject) const
 {
-    return WebWorker__getStdoutReadFd(impl_);
+    return JSC::JSValue::decode(WebWorker__getStdoutStream(impl_, globalObject));
 }
 
-int32_t Worker::getStderrReadFd() const
+JSC::JSValue Worker::getStderrStream(JSC::JSGlobalObject* globalObject) const
 {
-    return WebWorker__getStderrReadFd(impl_);
+    return JSC::JSValue::decode(WebWorker__getStderrStream(impl_, globalObject));
 }
 
 int32_t Worker::getStdinWriteFd() const

@@ -92,22 +92,16 @@ export fn WebWorker__updatePtr(worker: *WebWorker, ptr: *anyopaque) bool {
     return true;
 }
 
-/// Get the stdout pipe read FD for the parent to read from.
-/// Returns -1 if no stdout pipe is configured.
-export fn WebWorker__getStdoutReadFd(worker: *WebWorker) i32 {
-    if (worker.#stdout_pipe) |pipe| {
-        return @intCast(pipe[0].native());
-    }
-    return -1;
+/// Create a ReadableStream from the stdout pipe.
+/// Returns a JSValue containing the ReadableStream, or undefined if no pipe is configured.
+export fn WebWorker__getStdoutStream(worker: *WebWorker, globalObject: *jsc.JSGlobalObject) JSValue {
+    return worker.createReadableStreamFromPipe(worker.#stdout_pipe, globalObject);
 }
 
-/// Get the stderr pipe read FD for the parent to read from.
-/// Returns -1 if no stderr pipe is configured.
-export fn WebWorker__getStderrReadFd(worker: *WebWorker) i32 {
-    if (worker.#stderr_pipe) |pipe| {
-        return @intCast(pipe[0].native());
-    }
-    return -1;
+/// Create a ReadableStream from the stderr pipe.
+/// Returns a JSValue containing the ReadableStream, or undefined if no pipe is configured.
+export fn WebWorker__getStderrStream(worker: *WebWorker, globalObject: *jsc.JSGlobalObject) JSValue {
+    return worker.createReadableStreamFromPipe(worker.#stderr_pipe, globalObject);
 }
 
 /// Get the stdin pipe write FD for the parent to write to.
@@ -117,6 +111,43 @@ export fn WebWorker__getStdinWriteFd(worker: *WebWorker) i32 {
         return @intCast(pipe[1].native());
     }
     return -1;
+}
+
+/// Helper function to create a ReadableStream from a pipe's read FD.
+/// The FD is duplicated so the stream owns its own copy, allowing the original
+/// to be closed when the worker exits while the stream can still be read.
+fn createReadableStreamFromPipe(worker: *WebWorker, pipe: ?[2]bun.FileDescriptor, globalObject: *jsc.JSGlobalObject) JSValue {
+    _ = worker;
+    const fds = pipe orelse return .js_undefined;
+    const read_fd = fds[0];
+
+    // Duplicate the FD so the stream owns its own copy
+    const duped_fd = bun.sys.dupWithFlags(read_fd, 0).unwrap() catch |err| {
+        log("Failed to duplicate pipe FD: {}", .{err});
+        return .js_undefined;
+    };
+
+    // Create a Blob.Store from the FD
+    const store = bun.webcore.Blob.Store.initFile(
+        .{ .fd = duped_fd },
+        null, // mime type
+        bun.default_allocator,
+    ) catch |err| {
+        log("Failed to create blob store: {}", .{err});
+        duped_fd.close();
+        return .js_undefined;
+    };
+
+    // Create a Blob from the store
+    var blob = bun.webcore.Blob.initWithStore(store, globalObject);
+    defer blob.deinit();
+
+    // Create a ReadableStream from the blob
+    // The blob's store owns the FD and will close it when the stream is done
+    return bun.webcore.ReadableStream.fromBlobCopyRef(globalObject, &blob, 0) catch |err| {
+        _ = globalObject.takeException(err);
+        return .js_undefined;
+    };
 }
 
 /// Get the stdout pipe write FD for the worker to write to.
@@ -493,9 +524,9 @@ fn deinit(this: *WebWorker) void {
     }
     bun.default_allocator.free(this.preloads);
 
-    // Close BOTH ends of the pipes.
-    // Since Bun.file(fd).stream() duplicates the FD, the JS side has its own copy.
-    // We must close these originals to avoid leaking file descriptors in the parent process.
+    // Close both ends of the pipes.
+    // The ReadableStream has its own duplicated FD, so we can safely close the originals.
+    // Closing the write end signals EOF to any readers.
     if (this.#stdout_pipe) |p| {
         p[0].close();
         p[1].close();

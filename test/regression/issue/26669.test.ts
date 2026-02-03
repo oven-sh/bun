@@ -2,64 +2,60 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 // https://github.com/oven-sh/bun/issues/26669
-// WebSocket client crashes when binaryType = "blob" and ping frames are received
-// without a "ping" event listener attached.
-test("WebSocket with binaryType blob should not crash on ping frames", async () => {
+// WebSocket client crashes ("Pure virtual function called!") when binaryType = "blob"
+// and no event listener is attached. The missing incPendingActivityCount() allows the
+// WebSocket to be GC'd before the postTask callback runs.
+test("WebSocket with binaryType blob should not crash when GC'd before postTask", async () => {
+  await using server = Bun.serve({
+    port: 0,
+    fetch(req, server) {
+      if (server.upgrade(req)) return undefined;
+      return new Response("Not a websocket");
+    },
+    websocket: {
+      open(ws) {
+        // Send binary data immediately - this triggers didReceiveBinaryData
+        // with the Blob path when client has binaryType = "blob"
+        ws.sendBinary(new Uint8Array(64));
+        ws.sendBinary(new Uint8Array(64));
+        ws.sendBinary(new Uint8Array(64));
+      },
+      message() {},
+    },
+  });
+
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
       `
-const server = Bun.serve({
-  port: 0,
-  fetch(req, server) {
-    const success = server.upgrade(req);
-    if (success) return undefined;
-    return new Response("Hello world");
-  },
-  websocket: {
-    idleTimeout: 1, // Triggers ping frames quickly
-    open(ws) {
-      console.log("[Server] Connection opened");
-    },
-    message(ws, message) {
-      console.log("[Server] Received:", message);
-      ws.send("Echo: " + message);
-    },
-    close(ws, code, message) {
-      console.log("[Server] Closed:", code);
-    },
-  },
-});
-
-const socket = new WebSocket("ws://localhost:" + server.port);
-socket.binaryType = "blob"; // This was causing the crash
-
-socket.addEventListener("open", () => {
-  console.log("[Client] Connected");
-  socket.send("Hello!");
-});
-
-socket.addEventListener("message", (event) => {
-  console.log("[Client] Received:", event.data);
-  // Close after receiving the echo to end the test
-  socket.close();
-});
-
-socket.addEventListener("close", (event) => {
-  console.log("[Client] Disconnected");
-  server.stop();
-  process.exit(0);
-});
-
-// Safety timeout - if we get here without crashing, the fix works
-setTimeout(() => {
-  console.log("[Test] Timeout reached without crash - test passed");
-  socket.close();
-  server.stop();
-  process.exit(0);
-}, 3000);
+const url = process.argv[1];
+// Create many short-lived WebSocket objects with blob binaryType and no listeners.
+// Without the fix, the missing incPendingActivityCount() lets the WebSocket get GC'd
+// before the postTask callback fires, causing "Pure virtual function called!".
+async function run() {
+  for (let i = 0; i < 100; i++) {
+    const ws = new WebSocket(url);
+    ws.binaryType = "blob";
+    // Intentionally: NO event listeners attached.
+    // This forces the postTask path in didReceiveBinaryData's Blob case.
+  }
+  // Force GC to collect the unreferenced WebSocket objects while postTask
+  // callbacks are still pending.
+  Bun.gc(true);
+  await Bun.sleep(50);
+  Bun.gc(true);
+  await Bun.sleep(50);
+  Bun.gc(true);
+  await Bun.sleep(100);
+}
+await run();
+Bun.gc(true);
+await Bun.sleep(200);
+console.log("OK");
+process.exit(0);
 `,
+      `ws://localhost:${server.port}`,
     ],
     env: bunEnv,
     stdout: "pipe",
@@ -68,13 +64,8 @@ setTimeout(() => {
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  // The bug caused a crash with "Pure virtual function called!" error
   expect(stderr).not.toContain("Pure virtual function called");
   expect(stderr).not.toContain("SIGABRT");
-
-  // Should see normal WebSocket communication
-  expect(stdout).toContain("[Client] Connected");
-  expect(stdout).toContain("[Server] Connection opened");
-
+  expect(stdout).toContain("OK");
   expect(exitCode).toBe(0);
 });

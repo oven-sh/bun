@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { rm } from "fs/promises";
-import { bunExe, bunEnv as env, stderrForInstall, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, stderrForInstall, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 // https://github.com/oven-sh/bun/issues/26715
@@ -16,34 +16,31 @@ describe("tilde expansion in cache paths", () => {
     // Remove any bunfig.toml that might override the .npmrc setting
     await rm(join(testDir, "bunfig.toml"), { force: true });
 
-    const originalCacheDir = env.BUN_INSTALL_CACHE_DIR;
-    delete env.BUN_INSTALL_CACHE_DIR;
+    // Clone env to avoid mutating shared object
+    const testEnv = { ...bunEnv };
+    delete testEnv.BUN_INSTALL_CACHE_DIR;
 
-    try {
-      const { stdout, stderr, exited } = Bun.spawn({
-        cmd: [bunExe(), "pm", "cache"],
-        cwd: testDir,
-        env,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "pm", "cache"],
+      cwd: testDir,
+      env: testEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-      const out = (await stdout.text()).trim();
-      const err = stderrForInstall(await stderr.text());
+    const out = (await proc.stdout.text()).trim();
+    const err = stderrForInstall(await proc.stderr.text());
 
-      expect(err).toBeEmpty();
-      // Should NOT contain literal "~" - it should be expanded to the home directory
-      expect(out).not.toContain("/~/");
-      expect(out).not.toStartWith("~");
-      // Should contain the home directory path
-      const homeDir = process.env.HOME || process.env.USERPROFILE;
-      expect(out).toStartWith(homeDir!);
-      expect(out).toEndWith(".bun-test-cache-dir");
+    expect(err).toBeEmpty();
+    // Should NOT contain literal "~" - it should be expanded to the home directory
+    expect(out).not.toContain("/~/");
+    expect(out).not.toStartWith("~");
+    // Should contain the home directory path
+    const homeDir = process.env.HOME || process.env.USERPROFILE;
+    expect(out).toStartWith(homeDir!);
+    expect(out).toEndWith(".bun-test-cache-dir");
 
-      expect(await exited).toBe(0);
-    } finally {
-      env.BUN_INSTALL_CACHE_DIR = originalCacheDir;
-    }
+    expect(await proc.exited).toBe(0);
   });
 
   test("bunfig.toml cache string expands tilde to home directory", async () => {
@@ -52,32 +49,28 @@ describe("tilde expansion in cache paths", () => {
       "package.json": JSON.stringify({ name: "foo", version: "1.0.0" }),
     });
 
-    const originalCacheDir = env.BUN_INSTALL_CACHE_DIR;
-    delete env.BUN_INSTALL_CACHE_DIR;
+    const testEnv = { ...bunEnv };
+    delete testEnv.BUN_INSTALL_CACHE_DIR;
 
-    try {
-      const { stdout, stderr, exited } = Bun.spawn({
-        cmd: [bunExe(), "pm", "cache"],
-        cwd: testDir,
-        env,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "pm", "cache"],
+      cwd: testDir,
+      env: testEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-      const out = (await stdout.text()).trim();
-      const err = stderrForInstall(await stderr.text());
+    const out = (await proc.stdout.text()).trim();
+    const err = stderrForInstall(await proc.stderr.text());
 
-      expect(err).toBeEmpty();
-      expect(out).not.toContain("/~/");
-      expect(out).not.toStartWith("~");
-      const homeDir = process.env.HOME || process.env.USERPROFILE;
-      expect(out).toStartWith(homeDir!);
-      expect(out).toEndWith(".bun-test-cache-dir");
+    expect(err).toBeEmpty();
+    expect(out).not.toContain("/~/");
+    expect(out).not.toStartWith("~");
+    const homeDir = process.env.HOME || process.env.USERPROFILE;
+    expect(out).toStartWith(homeDir!);
+    expect(out).toEndWith(".bun-test-cache-dir");
 
-      expect(await exited).toBe(0);
-    } finally {
-      env.BUN_INSTALL_CACHE_DIR = originalCacheDir;
-    }
+    expect(await proc.exited).toBe(0);
   });
 
   test("bunfig.toml cache.dir expands tilde to home directory", async () => {
@@ -86,32 +79,28 @@ describe("tilde expansion in cache paths", () => {
       "package.json": JSON.stringify({ name: "foo", version: "1.0.0" }),
     });
 
-    const originalCacheDir = env.BUN_INSTALL_CACHE_DIR;
-    delete env.BUN_INSTALL_CACHE_DIR;
+    const testEnv = { ...bunEnv };
+    delete testEnv.BUN_INSTALL_CACHE_DIR;
 
-    try {
-      const { stdout, stderr, exited } = Bun.spawn({
-        cmd: [bunExe(), "pm", "cache"],
-        cwd: testDir,
-        env,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "pm", "cache"],
+      cwd: testDir,
+      env: testEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-      const out = (await stdout.text()).trim();
-      const err = stderrForInstall(await stderr.text());
+    const out = (await proc.stdout.text()).trim();
+    const err = stderrForInstall(await proc.stderr.text());
 
-      expect(err).toBeEmpty();
-      expect(out).not.toContain("/~/");
-      expect(out).not.toStartWith("~");
-      const homeDir = process.env.HOME || process.env.USERPROFILE;
-      expect(out).toStartWith(homeDir!);
-      expect(out).toEndWith(".bun-test-cache-dir");
+    expect(err).toBeEmpty();
+    expect(out).not.toContain("/~/");
+    expect(out).not.toStartWith("~");
+    const homeDir = process.env.HOME || process.env.USERPROFILE;
+    expect(out).toStartWith(homeDir!);
+    expect(out).toEndWith(".bun-test-cache-dir");
 
-      expect(await exited).toBe(0);
-    } finally {
-      env.BUN_INSTALL_CACHE_DIR = originalCacheDir;
-    }
+    expect(await proc.exited).toBe(0);
   });
 
   test("paths without tilde are not affected", async () => {
@@ -120,28 +109,24 @@ describe("tilde expansion in cache paths", () => {
       "package.json": JSON.stringify({ name: "foo", version: "1.0.0" }),
     });
 
-    const originalCacheDir = env.BUN_INSTALL_CACHE_DIR;
-    delete env.BUN_INSTALL_CACHE_DIR;
+    const testEnv = { ...bunEnv };
+    delete testEnv.BUN_INSTALL_CACHE_DIR;
 
-    try {
-      const { stdout, stderr, exited } = Bun.spawn({
-        cmd: [bunExe(), "pm", "cache"],
-        cwd: testDir,
-        env,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "pm", "cache"],
+      cwd: testDir,
+      env: testEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-      const out = (await stdout.text()).trim();
-      const err = stderrForInstall(await stderr.text());
+    const out = (await proc.stdout.text()).trim();
+    const err = stderrForInstall(await proc.stderr.text());
 
-      expect(err).toBeEmpty();
-      expect(out).toBe("/tmp/absolute-cache-dir");
+    expect(err).toBeEmpty();
+    expect(out).toBe("/tmp/absolute-cache-dir");
 
-      expect(await exited).toBe(0);
-    } finally {
-      env.BUN_INSTALL_CACHE_DIR = originalCacheDir;
-    }
+    expect(await proc.exited).toBe(0);
   });
 
   test("~username paths are not expanded (only ~ is expanded)", async () => {
@@ -152,28 +137,24 @@ describe("tilde expansion in cache paths", () => {
       "package.json": JSON.stringify({ name: "foo", version: "1.0.0" }),
     });
 
-    const originalCacheDir = env.BUN_INSTALL_CACHE_DIR;
-    delete env.BUN_INSTALL_CACHE_DIR;
+    const testEnv = { ...bunEnv };
+    delete testEnv.BUN_INSTALL_CACHE_DIR;
 
-    try {
-      const { stdout, stderr, exited } = Bun.spawn({
-        cmd: [bunExe(), "pm", "cache"],
-        cwd: testDir,
-        env,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "pm", "cache"],
+      cwd: testDir,
+      env: testEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-      const out = (await stdout.text()).trim();
-      const err = stderrForInstall(await stderr.text());
+    const out = (await proc.stdout.text()).trim();
+    const err = stderrForInstall(await proc.stderr.text());
 
-      expect(err).toBeEmpty();
-      // Should still contain ~otheruser since we don't expand that form
-      expect(out).toContain("~otheruser");
+    expect(err).toBeEmpty();
+    // Should still contain ~otheruser since we don't expand that form
+    expect(out).toContain("~otheruser");
 
-      expect(await exited).toBe(0);
-    } finally {
-      env.BUN_INSTALL_CACHE_DIR = originalCacheDir;
-    }
+    expect(await proc.exited).toBe(0);
   });
 });

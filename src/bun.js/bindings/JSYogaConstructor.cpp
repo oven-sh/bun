@@ -63,6 +63,7 @@ JSC_DEFINE_HOST_FUNCTION(constructJSYogaConfig, (JSC::JSGlobalObject * globalObj
 
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
     JSC::Structure* structure = zigGlobalObject->m_JSYogaConfigClassStructure.get(zigGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
 
     // Handle subclassing
     JSC::JSValue newTarget = callFrame->newTarget();
@@ -76,10 +77,10 @@ JSC_DEFINE_HOST_FUNCTION(constructJSYogaConfig, (JSC::JSGlobalObject * globalObj
         RETURN_IF_EXCEPTION(scope, {});
         structure = JSC::InternalFunction::createSubclassStructure(
             globalObject, newTarget.getObject(), functionGlobalObject->m_JSYogaConfigClassStructure.get(functionGlobalObject));
-        scope.release();
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
-    return JSC::JSValue::encode(JSYogaConfig::create(vm, structure));
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSYogaConfig::create(vm, structure)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(callJSYogaConfig, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -97,6 +98,7 @@ JSC_DEFINE_HOST_FUNCTION(constructJSYogaNode, (JSC::JSGlobalObject * globalObjec
 
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
     JSC::Structure* structure = zigGlobalObject->m_JSYogaNodeClassStructure.get(zigGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
 
     // Handle subclassing
     JSC::JSValue newTarget = callFrame->newTarget();
@@ -110,7 +112,7 @@ JSC_DEFINE_HOST_FUNCTION(constructJSYogaNode, (JSC::JSGlobalObject * globalObjec
         RETURN_IF_EXCEPTION(scope, {});
         structure = JSC::InternalFunction::createSubclassStructure(
             globalObject, newTarget.getObject(), functionGlobalObject->m_JSYogaNodeClassStructure.get(functionGlobalObject));
-        scope.release();
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     // Optional config parameter
@@ -128,7 +130,9 @@ JSC_DEFINE_HOST_FUNCTION(constructJSYogaNode, (JSC::JSGlobalObject * globalObjec
         }
     }
 
-    return JSC::JSValue::encode(JSYogaNode::create(vm, structure, config, jsConfig));
+    auto* node = JSYogaNode::create(vm, globalObject, structure, config, jsConfig);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSC::JSValue::encode(node);
 }
 
 JSC_DEFINE_HOST_FUNCTION(callJSYogaNode, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

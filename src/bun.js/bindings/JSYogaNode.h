@@ -21,8 +21,8 @@ public:
     static constexpr unsigned StructureFlags = Base::StructureFlags;
     static constexpr JSC::DestructionMode needsDestruction = JSC::NeedsDestruction;
 
-    static JSYogaNode* create(JSC::VM&, JSC::Structure*, YGConfigRef config = nullptr, JSYogaConfig* jsConfig = nullptr);
-    static JSYogaNode* create(JSC::VM&, JSC::Structure*, Ref<YogaNodeImpl>&&);
+    static JSYogaNode* create(JSC::VM&, JSC::JSGlobalObject*, JSC::Structure*, YGConfigRef config = nullptr, JSYogaConfig* jsConfig = nullptr);
+    static JSYogaNode* create(JSC::VM&, JSC::JSGlobalObject*, JSC::Structure*, Ref<YogaNodeImpl>&&);
     static void destroy(JSC::JSCell*);
     static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue);
     ~JSYogaNode();

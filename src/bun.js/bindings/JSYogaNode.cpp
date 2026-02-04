@@ -32,17 +32,33 @@ JSYogaNode::~JSYogaNode()
     // Don't interfere with that mechanism
 }
 
-JSYogaNode* JSYogaNode::create(JSC::VM& vm, JSC::Structure* structure, YGConfigRef config, JSYogaConfig* jsConfig)
+JSYogaNode* JSYogaNode::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, YGConfigRef config, JSYogaConfig* jsConfig)
 {
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSYogaNode* node = new (NotNull, JSC::allocateCell<JSYogaNode>(vm)) JSYogaNode(vm, structure);
     node->finishCreation(vm, config, jsConfig);
+
+    // Initialize children array - this can throw so it must be done here
+    // where exceptions can be properly propagated to callers
+    JSC::JSArray* children = JSC::constructEmptyArray(globalObject, nullptr, 0);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    node->m_children.set(vm, node, children);
+
     return node;
 }
 
-JSYogaNode* JSYogaNode::create(JSC::VM& vm, JSC::Structure* structure, Ref<YogaNodeImpl>&& impl)
+JSYogaNode* JSYogaNode::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, Ref<YogaNodeImpl>&& impl)
 {
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSYogaNode* node = new (NotNull, JSC::allocateCell<JSYogaNode>(vm)) JSYogaNode(vm, structure, std::move(impl));
     node->finishCreation(vm);
+
+    // Initialize children array - this can throw so it must be done here
+    // where exceptions can be properly propagated to callers
+    JSC::JSArray* children = JSC::constructEmptyArray(globalObject, nullptr, 0);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    node->m_children.set(vm, node, children);
+
     return node;
 }
 
@@ -63,10 +79,8 @@ void JSYogaNode::finishCreation(JSC::VM& vm, YGConfigRef config, JSYogaConfig* j
         m_config.set(vm, this, jsConfig);
     }
 
-    // Initialize children array to maintain strong references
-    // This mirrors React Native's _reactSubviews NSMutableArray
-    JSC::JSGlobalObject* globalObject = this->globalObject();
-    m_children.set(vm, this, JSC::constructEmptyArray(globalObject, nullptr, 0));
+    // Note: m_children is initialized by create() after finishCreation returns,
+    // with proper exception scope handling. Do not initialize it here.
 }
 
 void JSYogaNode::finishCreation(JSC::VM& vm)
@@ -78,10 +92,8 @@ void JSYogaNode::finishCreation(JSC::VM& vm)
 
     // No JSYogaConfig in this path - it's only set when explicitly provided
 
-    // Initialize children array to maintain strong references
-    // This mirrors React Native's _reactSubviews NSMutableArray
-    JSC::JSGlobalObject* globalObject = this->globalObject();
-    m_children.set(vm, this, JSC::constructEmptyArray(globalObject, nullptr, 0));
+    // Note: m_children is initialized by create() after finishCreation returns,
+    // with proper exception scope handling. Do not initialize it here.
 }
 
 JSC::Structure* JSYogaNode::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)

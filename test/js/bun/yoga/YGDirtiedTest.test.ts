@@ -93,7 +93,7 @@ test("dirtied_hierarchy", () => {
   root_child1.setAlignItems(Yoga.ALIGN_FLEX_START);
   root_child1.setWidth(50);
   root_child1.setHeight(20);
-  root_child0.setMeasureFunc(() => ({ width: 0, height: 0 }));
+  root_child1.setMeasureFunc(() => ({ width: 0, height: 0 }));
   root.insertChild(root_child1, 0);
 
   root.calculateLayout(undefined, undefined, Yoga.DIRECTION_LTR);

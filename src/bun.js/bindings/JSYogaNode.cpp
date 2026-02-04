@@ -103,7 +103,23 @@ JSC::Structure* JSYogaNode::createStructure(JSC::VM& vm, JSC::JSGlobalObject* gl
 
 void JSYogaNode::destroy(JSC::JSCell* cell)
 {
-    static_cast<JSYogaNode*>(cell)->~JSYogaNode();
+    auto* thisObject = static_cast<JSYogaNode*>(cell);
+
+    // Explicitly free the YGNode here because the ref-counting chain
+    // (destroy() deref + finalize() deref -> ~YogaNodeImpl -> YGNodeFinalize)
+    // may not complete during VM shutdown if WeakHandleOwner::finalize()
+    // doesn't fire for all handles. This ensures the native Yoga memory
+    // is always freed when the JSYogaNode cell is swept.
+    auto& impl = thisObject->m_impl.get();
+    YGNodeRef node = impl.yogaNode();
+    if (node && impl.ownsNode()) {
+        // Use YGNodeFinalize (raw delete) instead of YGNodeFree (tree-traversing)
+        // because GC can sweep parent/child nodes in arbitrary order.
+        YGNodeFinalize(node);
+        impl.replaceYogaNode(nullptr); // Prevent double-free in ~YogaNodeImpl
+    }
+
+    thisObject->~JSYogaNode();
 }
 
 JSYogaNode* JSYogaNode::fromYGNode(YGNodeRef nodeRef)

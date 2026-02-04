@@ -3503,9 +3503,11 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetConfig, (JSC::JSGlobalObject * gl
             return {};
         }
         YGNodeSetConfig(thisObject->impl().yogaNode(), jsConfig->impl().yogaConfig());
+        thisObject->m_config.set(vm, thisObject, jsConfig);
     } else {
         // Set to default config if null/undefined
         YGNodeSetConfig(thisObject->impl().yogaNode(), const_cast<YGConfigRef>(YGConfigGetDefault()));
+        thisObject->m_config.clear();
     }
 
     return JSC::JSValue::encode(JSC::jsUndefined());

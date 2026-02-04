@@ -32,6 +32,7 @@ void JSYogaConstants::finishCreation(JSC::VM& vm)
     // Display values
     putDirectWithoutTransition(vm, JSC::Identifier::fromString(vm, "DISPLAY_FLEX"_s), JSC::jsNumber(static_cast<int>(YGDisplayFlex)), 0);
     putDirectWithoutTransition(vm, JSC::Identifier::fromString(vm, "DISPLAY_NONE"_s), JSC::jsNumber(static_cast<int>(YGDisplayNone)), 0);
+    putDirectWithoutTransition(vm, JSC::Identifier::fromString(vm, "DISPLAY_CONTENTS"_s), JSC::jsNumber(static_cast<int>(YGDisplayContents)), 0);
 
     // Edge values
     putDirectWithoutTransition(vm, JSC::Identifier::fromString(vm, "EDGE_LEFT"_s), JSC::jsNumber(static_cast<int>(YGEdgeLeft)), 0);
@@ -66,6 +67,14 @@ void JSYogaConstants::finishCreation(JSC::VM& vm)
     putDirectWithoutTransition(vm, JSC::Identifier::fromString(vm, "JUSTIFY_SPACE_AROUND"_s), JSC::jsNumber(static_cast<int>(YGJustifySpaceAround)), 0);
     putDirectWithoutTransition(vm, JSC::Identifier::fromString(vm, "JUSTIFY_SPACE_EVENLY"_s), JSC::jsNumber(static_cast<int>(YGJustifySpaceEvenly)), 0);
 
+    // Log level values
+    putDirectWithoutTransition(vm, JSC::Identifier::fromString(vm, "LOG_LEVEL_ERROR"_s), JSC::jsNumber(static_cast<int>(YGLogLevelError)), 0);
+    putDirectWithoutTransition(vm, JSC::Identifier::fromString(vm, "LOG_LEVEL_WARN"_s), JSC::jsNumber(static_cast<int>(YGLogLevelWarn)), 0);
+    putDirectWithoutTransition(vm, JSC::Identifier::fromString(vm, "LOG_LEVEL_INFO"_s), JSC::jsNumber(static_cast<int>(YGLogLevelInfo)), 0);
+    putDirectWithoutTransition(vm, JSC::Identifier::fromString(vm, "LOG_LEVEL_DEBUG"_s), JSC::jsNumber(static_cast<int>(YGLogLevelDebug)), 0);
+    putDirectWithoutTransition(vm, JSC::Identifier::fromString(vm, "LOG_LEVEL_VERBOSE"_s), JSC::jsNumber(static_cast<int>(YGLogLevelVerbose)), 0);
+    putDirectWithoutTransition(vm, JSC::Identifier::fromString(vm, "LOG_LEVEL_FATAL"_s), JSC::jsNumber(static_cast<int>(YGLogLevelFatal)), 0);
+
     // Measure mode values
     putDirectWithoutTransition(vm, JSC::Identifier::fromString(vm, "MEASURE_MODE_UNDEFINED"_s), JSC::jsNumber(static_cast<int>(YGMeasureModeUndefined)), 0);
     putDirectWithoutTransition(vm, JSC::Identifier::fromString(vm, "MEASURE_MODE_EXACTLY"_s), JSC::jsNumber(static_cast<int>(YGMeasureModeExactly)), 0);
@@ -90,6 +99,9 @@ void JSYogaConstants::finishCreation(JSC::VM& vm)
     putDirectWithoutTransition(vm, JSC::Identifier::fromString(vm, "UNIT_POINT"_s), JSC::jsNumber(static_cast<int>(YGUnitPoint)), 0);
     putDirectWithoutTransition(vm, JSC::Identifier::fromString(vm, "UNIT_PERCENT"_s), JSC::jsNumber(static_cast<int>(YGUnitPercent)), 0);
     putDirectWithoutTransition(vm, JSC::Identifier::fromString(vm, "UNIT_AUTO"_s), JSC::jsNumber(static_cast<int>(YGUnitAuto)), 0);
+    putDirectWithoutTransition(vm, JSC::Identifier::fromString(vm, "UNIT_MAX_CONTENT"_s), JSC::jsNumber(static_cast<int>(YGUnitMaxContent)), 0);
+    putDirectWithoutTransition(vm, JSC::Identifier::fromString(vm, "UNIT_FIT_CONTENT"_s), JSC::jsNumber(static_cast<int>(YGUnitFitContent)), 0);
+    putDirectWithoutTransition(vm, JSC::Identifier::fromString(vm, "UNIT_STRETCH"_s), JSC::jsNumber(static_cast<int>(YGUnitStretch)), 0);
 
     // Wrap values
     putDirectWithoutTransition(vm, JSC::Identifier::fromString(vm, "WRAP_NO_WRAP"_s), JSC::jsNumber(static_cast<int>(YGWrapNoWrap)), 0);

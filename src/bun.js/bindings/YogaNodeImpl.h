@@ -17,6 +17,7 @@ public:
     ~YogaNodeImpl();
 
     YGNodeRef yogaNode() const { return m_yogaNode; }
+    bool ownsNode() const { return m_ownsNode; }
 
     // JS wrapper management
     void setJSWrapper(JSYogaNode*);

@@ -37,7 +37,6 @@ private:
     explicit YogaNodeImpl(YGConfigRef config);
 
     YGNodeRef m_yogaNode;
-    bool m_ownsNode { true };
     JSC::Weak<JSYogaNode> m_wrapper;
 };
 

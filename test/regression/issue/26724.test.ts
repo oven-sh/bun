@@ -3,15 +3,26 @@ import { bunEnv, bunExe, tempDir } from "harness";
 
 describe("issue #26724: verbose fetch logging should not be enabled by default", () => {
   test("fetch should not output verbose logs without BUN_CONFIG_VERBOSE_FETCH", async () => {
+    // Start a local test server
+    using server = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response(JSON.stringify({ status: "ok" }), {
+          headers: { "Content-Type": "application/json" },
+        });
+      },
+    });
+
     using dir = tempDir("issue-26724", {
       "test.ts": `
-        const response = await fetch("https://httpbin.org/get");
+        const url = process.argv[2];
+        const response = await fetch(url);
         console.log("status:", response.status);
       `,
     });
 
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "run", "test.ts"],
+      cmd: [bunExe(), "run", "test.ts", `http://localhost:${server.port}/get`],
       env: {
         ...bunEnv,
         BUN_CONFIG_VERBOSE_FETCH: undefined, // Explicitly ensure it's not set
@@ -31,15 +42,26 @@ describe("issue #26724: verbose fetch logging should not be enabled by default",
   });
 
   test("fetch should output verbose logs when BUN_CONFIG_VERBOSE_FETCH=1", async () => {
+    // Start a local test server
+    using server = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response(JSON.stringify({ status: "ok" }), {
+          headers: { "Content-Type": "application/json" },
+        });
+      },
+    });
+
     using dir = tempDir("issue-26724-verbose", {
       "test.ts": `
-        const response = await fetch("https://httpbin.org/get");
+        const url = process.argv[2];
+        const response = await fetch(url);
         console.log("status:", response.status);
       `,
     });
 
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "run", "test.ts"],
+      cmd: [bunExe(), "run", "test.ts", `http://localhost:${server.port}/get`],
       env: {
         ...bunEnv,
         BUN_CONFIG_VERBOSE_FETCH: "1",
@@ -58,13 +80,25 @@ describe("issue #26724: verbose fetch logging should not be enabled by default",
   });
 
   test("node:http requests should not output verbose logs without BUN_CONFIG_VERBOSE_FETCH", async () => {
+    // Start a local test server
+    using server = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response(JSON.stringify({ status: "ok" }), {
+          headers: { "Content-Type": "application/json" },
+        });
+      },
+    });
+
     using dir = tempDir("issue-26724-nodehttp", {
       "test.ts": `
         import http from 'node:http';
 
+        const port = parseInt(process.argv[2], 10);
+
         const options = {
-          hostname: 'httpbin.org',
-          port: 80,
+          hostname: 'localhost',
+          port: port,
           path: '/get',
           method: 'GET',
         };
@@ -86,7 +120,7 @@ describe("issue #26724: verbose fetch logging should not be enabled by default",
     });
 
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "run", "test.ts"],
+      cmd: [bunExe(), "run", "test.ts", String(server.port)],
       env: {
         ...bunEnv,
         BUN_CONFIG_VERBOSE_FETCH: undefined, // Explicitly ensure it's not set
@@ -106,12 +140,24 @@ describe("issue #26724: verbose fetch logging should not be enabled by default",
   });
 
   test("bun test should not output verbose fetch logs without BUN_CONFIG_VERBOSE_FETCH", async () => {
+    // Start a local test server
+    using server = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response(JSON.stringify({ status: "ok" }), {
+          headers: { "Content-Type": "application/json" },
+        });
+      },
+    });
+
     using dir = tempDir("issue-26724-buntest", {
       "fetch.test.ts": `
         import { test, expect } from "bun:test";
 
+        const url = process.env.TEST_SERVER_URL;
+
         test("fetch works", async () => {
-          const response = await fetch("https://httpbin.org/get");
+          const response = await fetch(url!);
           expect(response.status).toBe(200);
         });
       `,
@@ -122,6 +168,7 @@ describe("issue #26724: verbose fetch logging should not be enabled by default",
       env: {
         ...bunEnv,
         BUN_CONFIG_VERBOSE_FETCH: undefined, // Explicitly ensure it's not set
+        TEST_SERVER_URL: `http://localhost:${server.port}/get`,
       },
       cwd: String(dir),
       stdout: "pipe",

@@ -79,14 +79,24 @@ pub fn openBracelessVariable(allocator: std.mem.Allocator, value: *EnvValue) !vo
 
 /// Called when `}` is encountered; finalize the current variable interpolation.
 pub fn closeVariable(allocator: std.mem.Allocator, value: *EnvValue) !void {
-    value.is_parsing_variable = false;
-
-    // Get the current active interpolation
-    if (value.interpolations.items.len <= value.interpolation_index) {
-        return; // Should not happen if logic is correct
+    // Find the last unclosed interpolation (LIFO for nesting)
+    var active_idx: ?usize = null;
+    var i: usize = value.interpolations.items.len;
+    while (i > 0) {
+        i -= 1;
+        if (!value.interpolations.items[i].closed) {
+            active_idx = i;
+            break;
+        }
     }
 
-    const interpolation = &value.interpolations.items[value.interpolation_index];
+    if (active_idx == null) {
+        value.is_parsing_variable = false;
+        return;
+    }
+
+    const idx = active_idx.?;
+    const interpolation = &value.interpolations.items[idx];
 
     interpolation.end_brace = value.buffer.len - 1;
     // variable_end = buffer.len - 2 (character before })
@@ -122,12 +132,14 @@ pub fn closeVariable(allocator: std.mem.Allocator, value: *EnvValue) !void {
         if (start + full_len <= val_slice.len) {
             const full_content = val_slice[start .. start + full_len];
 
-            if (std.mem.indexOf(u8, full_content, ":-")) |idx| {
-                const var_name = full_content[0..idx];
-                const default_val = full_content[idx + 2 ..];
+            if (std.mem.indexOf(u8, full_content, ":-")) |sep_idx| {
+                const var_name = full_content[0..sep_idx];
+                const default_val = full_content[sep_idx + 2 ..];
 
                 try interpolation.setVariableStr(allocator, std.mem.trim(u8, var_name, &[_]u8{ ' ', '\t' }));
                 try interpolation.setDefaultValue(allocator, default_val);
+                // Update variable_end to point to the start of strictly the separator so finalizer can find it
+                interpolation.variable_end = interpolation.variable_start + sep_idx;
             } else {
                 try interpolation.setVariableStr(allocator, std.mem.trim(u8, full_content, &[_]u8{ ' ', '\t' }));
             }
@@ -135,6 +147,18 @@ pub fn closeVariable(allocator: std.mem.Allocator, value: *EnvValue) !void {
     }
 
     interpolation.closed = true;
+
+    // Update parsing state based on remaining unclosed items
+    var still_parsing = false;
+    var j: usize = value.interpolations.items.len;
+    while (j > 0) {
+        j -= 1;
+        if (!value.interpolations.items[j].closed) {
+            still_parsing = true;
+            break;
+        }
+    }
+    value.is_parsing_variable = still_parsing;
     value.interpolation_index += 1;
 }
 

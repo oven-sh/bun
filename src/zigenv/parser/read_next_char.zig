@@ -150,10 +150,8 @@ pub fn readNextChar(allocator: std.mem.Allocator, value: *EnvValue, char: u8, op
         '{' => {
             try buffer_utils.addToBuffer(value, char);
             if (!value.quoted and !value.triple_quoted) {
-                if (!value.is_parsing_variable) {
-                    if (!buffer_utils.isPreviousCharAnEscape(value)) {
-                        try interpolation.openVariable(allocator, value);
-                    }
+                if (!buffer_utils.isPreviousCharAnEscape(value)) {
+                    try interpolation.openVariable(allocator, value);
                 }
             }
             return true;

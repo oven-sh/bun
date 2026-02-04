@@ -46,6 +46,7 @@
       "src/io/*.cpp",
       "src/bun.js/modules/*.cpp",
       "src/bun.js/bindings/*.cpp",
+      "src/bun.js/bindings/git/*.cpp",
       "src/bun.js/bindings/webcore/*.cpp",
       "src/bun.js/bindings/sqlite/*.cpp",
       "src/bun.js/bindings/webcrypto/*.cpp",

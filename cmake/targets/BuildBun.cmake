@@ -54,6 +54,7 @@ set(BUN_DEPENDENCIES
   Cares
   Highway
   LibDeflate
+  Libgit2
   LolHtml
   Lshpack
   Mimalloc
@@ -1322,7 +1323,7 @@ list(TRANSFORM BUN_DEPENDENCIES TOLOWER OUTPUT_VARIABLE BUN_TARGETS)
 add_custom_target(dependencies DEPENDS ${BUN_TARGETS})
 
 if(APPLE)
-  target_link_libraries(${bun} PRIVATE icucore resolv)
+  target_link_libraries(${bun} PRIVATE icucore resolv iconv)
   target_compile_definitions(${bun} PRIVATE U_DISABLE_RENAMING=1)
 endif()
 

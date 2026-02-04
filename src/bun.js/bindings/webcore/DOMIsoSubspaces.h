@@ -24,6 +24,8 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForNapiPrototype;
     std::unique_ptr<IsoSubspace> m_subspaceForJSSQLStatement;
     std::unique_ptr<IsoSubspace> m_subspaceForJSSQLStatementConstructor;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSGitRepository;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSGitCommit;
     std::unique_ptr<IsoSubspace> m_subspaceForJSSinkConstructor;
     std::unique_ptr<IsoSubspace> m_subspaceForJSSinkController;
     std::unique_ptr<IsoSubspace> m_subspaceForJSSink;

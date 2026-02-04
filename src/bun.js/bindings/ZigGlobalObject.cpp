@@ -125,6 +125,7 @@
 #include "JSSocketAddressDTO.h"
 #include "JSReactElement.h"
 #include "JSSQLStatement.h"
+#include "git/JSGit.h"
 #include "JSStringDecoder.h"
 #include "JSTextEncoder.h"
 #include "JSTextEncoderStream.h"
@@ -1866,6 +1867,16 @@ void GlobalObject::finishCreation(VM& vm)
     m_JSSQLStatementStructure.initLater(
         [](const Initializer<Structure>& init) {
             init.set(WebCore::createJSSQLStatementStructure(init.owner));
+        });
+
+    m_JSGitRepositoryStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            init.set(WebCore::createJSGitRepositoryStructure(init.owner));
+        });
+
+    m_JSGitCommitStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            init.set(WebCore::createJSGitCommitStructure(init.owner));
         });
 
     m_V8GlobalInternals.initLater(

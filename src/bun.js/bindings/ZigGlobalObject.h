@@ -316,6 +316,9 @@ public:
 
     Structure* JSSQLStatementStructure() const { return m_JSSQLStatementStructure.getInitializedOnMainThread(this); }
 
+    Structure* JSGitRepositoryStructure() const { return m_JSGitRepositoryStructure.getInitializedOnMainThread(this); }
+    Structure* JSGitCommitStructure() const { return m_JSGitCommitStructure.getInitializedOnMainThread(this); }
+
     v8::shim::GlobalInternals* V8GlobalInternals() const { return m_V8GlobalInternals.getInitializedOnMainThread(this); }
 
     Bun::BakeAdditionsToGlobalObject& bakeAdditions() { return m_bakeAdditions; }
@@ -620,6 +623,8 @@ public:
     V(private, LazyPropertyOfGlobalObject<Structure>, m_NapiTypeTagStructure)                                \
                                                                                                              \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_JSSQLStatementStructure)                             \
+    V(private, LazyPropertyOfGlobalObject<Structure>, m_JSGitRepositoryStructure)                            \
+    V(private, LazyPropertyOfGlobalObject<Structure>, m_JSGitCommitStructure)                                \
     V(private, LazyPropertyOfGlobalObject<v8::shim::GlobalInternals>, m_V8GlobalInternals)                   \
                                                                                                              \
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_bunObject)                                             \

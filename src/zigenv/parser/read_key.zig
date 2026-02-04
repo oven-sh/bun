@@ -1,10 +1,3 @@
-const std = @import("std");
-const EnvStream = @import("env_stream.zig").EnvStream;
-const EnvKey = @import("../data/env_key.zig").EnvKey;
-const ReadResult = @import("../data/read_result.zig").ReadResult;
-const ParserOptions = @import("../data/parser_options.zig").ParserOptions;
-const testing = std.testing;
-
 pub fn readKey(stream: *EnvStream, key: *EnvKey, options: ParserOptions) !ReadResult {
     if (!stream.good()) return ReadResult.end_of_stream_key;
 
@@ -20,10 +13,10 @@ pub fn readKey(stream: *EnvStream, key: *EnvKey, options: ParserOptions) !ReadRe
 
         switch (key_char) {
             ' ' => {
-                if (key.buffer.len == 0) continue; // left trim
+                if (key.buffer.length() == 0) continue; // left trim
 
                 // Handle "export" keyword (stripping "export " prefix)
-                if (options.support_export_prefix and key.buffer.len == 6 and std.mem.eql(u8, key.buffer.usedSlice(), "export")) {
+                if (options.support_export_prefix and key.buffer.length() == 6 and std.mem.eql(u8, key.buffer.usedSlice(), "export")) {
                     key.buffer.clearRetainingCapacity();
                     continue;
                 }
@@ -180,3 +173,10 @@ test "readKey with colon separator" {
     try testing.expectEqual(ReadResult.success, result);
     try testing.expectEqualStrings("KEY", key.key());
 }
+
+const std = @import("std");
+const EnvStream = @import("env_stream.zig").EnvStream;
+const EnvKey = @import("../data/env_key.zig").EnvKey;
+const ReadResult = @import("../data/read_result.zig").ReadResult;
+const ParserOptions = @import("../data/parser_options.zig").ParserOptions;
+const testing = std.testing;

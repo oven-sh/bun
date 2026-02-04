@@ -14,6 +14,7 @@ pub const FinalizeResult = enum {
 };
 
 test "ReadResult enum values" {
-    const std = @import("std");
     try std.testing.expect(@intFromEnum(ReadResult.success) == 0);
 }
+
+const std = @import("std");

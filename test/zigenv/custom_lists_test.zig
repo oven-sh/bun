@@ -113,10 +113,10 @@ test "ManagedList usage" {
     try list.append(20);
     try list.appendSlice(&[_]u32{ 30, 40 });
 
-    try testing.expectEqual(@as(usize, 4), list.list.items.len);
-    try testing.expectEqual(@as(u32, 10), list.list.items[0]);
-    try testing.expectEqual(@as(u32, 40), list.list.items[3]);
+    try testing.expectEqual(@as(usize, 4), list.items().len);
+    try testing.expectEqual(@as(u32, 10), list.items()[0]);
+    try testing.expectEqual(@as(u32, 40), list.items()[3]);
 
     list.clearRetainingCapacity();
-    try testing.expectEqual(@as(usize, 0), list.list.items.len);
+    try testing.expectEqual(@as(usize, 0), list.items().len);
 }

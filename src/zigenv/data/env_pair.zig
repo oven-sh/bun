@@ -14,8 +14,10 @@ pub const EnvPair = struct {
     }
 
     pub fn initWithCapacity(allocator: std.mem.Allocator, key_capacity: usize, value_capacity: usize) !EnvPair {
+        var key = try EnvKey.initCapacity(allocator, key_capacity);
+        errdefer key.deinit();
         return EnvPair{
-            .key = try EnvKey.initCapacity(allocator, key_capacity),
+            .key = key,
             .value = try EnvValue.initCapacity(allocator, value_capacity),
         };
     }
@@ -60,6 +62,6 @@ test "EnvPair initWithCapacity" {
     var pair = try EnvPair.initWithCapacity(allocator, 50, 150);
     defer pair.deinit();
 
-    try std.testing.expect(pair.key.buffer.capacity >= 50);
-    try std.testing.expect(pair.value.buffer.capacity >= 150);
+    try std.testing.expect(pair.key.buffer.capacity() >= 50);
+    try std.testing.expect(pair.value.buffer.capacity() >= 150);
 }

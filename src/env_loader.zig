@@ -576,7 +576,7 @@ pub const Loader = struct {
     // mostly for tests
     pub fn loadFromString(this: *Loader, str: string, comptime overwrite: bool, comptime expand: bool) OOM!void {
         const source = &logger.Source.initPathString("test", str);
-        Output.prettyErrorln("<b><blue>Bun is using Zig-Env to parse string...<r>", .{});
+
         const options = zigenv.ParserOptions{
             .support_export_prefix = true,
             .support_colon_separator = true,
@@ -607,7 +607,7 @@ pub const Loader = struct {
                 };
             }
         }
-        Output.prettyErrorln("<green>Zig-Env parsed string successfully.<r>", .{});
+
         std.mem.doNotOptimizeAway(&source);
     }
 
@@ -864,7 +864,7 @@ pub const Loader = struct {
 
         const source = &logger.Source.initPathString(base, buf[0..amount_read]);
 
-        Output.prettyErrorln("<b><blue>Bun is using Zig-Env to parse {s}...<r>", .{base});
+
         const options = zigenv.ParserOptions{
             .support_export_prefix = true,
             .support_colon_separator = true,
@@ -895,7 +895,7 @@ pub const Loader = struct {
                 };
             }
         }
-        Output.prettyErrorln("<green>Zig-Env parsed {s} successfully.<r>", .{base});
+
 
         @field(this, base) = source.*;
     }
@@ -959,7 +959,7 @@ pub const Loader = struct {
 
         const source = &logger.Source.initPathString(file_path, buf[0..amount_read]);
 
-        Output.prettyErrorln("<b><blue>Bun is using Zig-Env to parse {s}...<r>", .{file_path});
+
         const options = zigenv.ParserOptions{
             .support_export_prefix = true,
             .support_colon_separator = true,
@@ -990,7 +990,7 @@ pub const Loader = struct {
                 };
             }
         }
-        Output.prettyErrorln("<green>Zig-Env parsed {s} successfully.<r>", .{file_path});
+
 
         try this.custom_files_loaded.put(file_path, source.*);
     }

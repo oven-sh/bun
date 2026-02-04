@@ -1,7 +1,3 @@
-const std = @import("std");
-const EnvValue = @import("../data/env_value.zig").EnvValue;
-const addToBuffer = @import("../buffer/buffer_utils.zig").addToBuffer;
-
 /// Convert pairs of `\\` to single `\`, leave odd backslash for control char processing.
 /// This processes the pending streak of backslashes.
 pub fn walkBackSlashes(value: *EnvValue) !void {
@@ -64,11 +60,13 @@ pub fn processPossibleControlCharacter(value: *EnvValue, char: u8) !bool {
         },
         '$' => {
             try addToBuffer(value, '$');
-            value.escaped_dollar_index = value.buffer.len - 1;
+            value.escaped_dollar_index = value.buffer.length() - 1;
             process = true;
         },
         else => {
-            // Not a recognized escape.
+            // Not a recognized escape - add literal backslash then the char
+            try addToBuffer(value, '\\');
+            try addToBuffer(value, char);
             process = false;
         },
     }
@@ -162,7 +160,7 @@ test "processPossibleControlCharacter - unknown escapes" {
     // \z -> \z
     const processed = try processPossibleControlCharacter(&val, 'z');
     try std.testing.expect(!processed);
-    try std.testing.expectEqualStrings("", val.value());
+    try std.testing.expectEqualStrings("\\z", val.value());
     try std.testing.expectEqual(@as(usize, 0), val.back_slash_streak);
 }
 
@@ -201,3 +199,7 @@ test "full flow simulation" {
 
     try std.testing.expectEqualStrings("a\nb\\c", val.value());
 }
+
+const std = @import("std");
+const EnvValue = @import("../data/env_value.zig").EnvValue;
+const addToBuffer = @import("../buffer/buffer_utils.zig").addToBuffer;

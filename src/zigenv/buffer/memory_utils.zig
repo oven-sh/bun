@@ -20,7 +20,7 @@ pub fn deletePairs(pairs: *EnvPairList) void {
 test "deletePairs cleans up everything" {
     const allocator = std.testing.allocator;
     var pairs = EnvPairList.init(allocator);
-    // errdefer deletePairs(&pairs); // In case of failure in this test
+    errdefer deletePairs(&pairs); // In case of failure in this test
 
     // Create some pairs with owned buffers
     var i: usize = 0;

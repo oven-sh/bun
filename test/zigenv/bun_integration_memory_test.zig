@@ -110,5 +110,6 @@ test "Bun Integration: whitespace in interpolation" {
     try testing.expectEqualStrings("value", env.get("B").?);
     try testing.expectEqualStrings("value", env.get("C").?);
     try testing.expectEqualStrings("value", env.get("D").?);
-    try testing.expectEqualStrings("  default  ", env.get("MISSING").?); // Defaults might preserve whitespace in value part?
+    // Explicitly check that default values preserve surrounding whitespace within the ${...} braces
+    try testing.expectEqualStrings("  default  ", env.get("MISSING").?);
 }

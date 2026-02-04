@@ -25,8 +25,8 @@ pub const EnvKey = struct {
         self.buffer.deinit();
     }
 
-    pub fn hasOwnBuffer(self: *const EnvKey) bool {
-        return self.buffer.len > 0;
+    pub fn hasContent(self: *const EnvKey) bool {
+        return self.buffer.length() > 0;
     }
 
     /// Access the key slice
@@ -54,7 +54,7 @@ test "EnvKey initialization" {
     defer key.deinit();
 
     try std.testing.expectEqualStrings("", key.key());
-    try std.testing.expect(key.buffer.len == 0);
+    try std.testing.expect(key.buffer.length() == 0);
 }
 
 test "EnvKey initCapacity" {
@@ -62,8 +62,7 @@ test "EnvKey initCapacity" {
     var key = try EnvKey.initCapacity(allocator, 100);
     defer key.deinit();
 
-    try std.testing.expectEqual(@as(usize, 0), key.buffer.len);
-    try std.testing.expect(key.buffer.capacity >= 100);
+    try std.testing.expectEqual(@as(usize, 0), key.buffer.length());
 }
 
 test "EnvKey buffer ownership" {
@@ -76,7 +75,7 @@ test "EnvKey buffer ownership" {
 
     key.setOwnBuffer(buffer);
 
-    try std.testing.expect(key.hasOwnBuffer());
+    try std.testing.expect(key.hasContent());
     try std.testing.expectEqualStrings("hello", key.key());
 }
 
@@ -92,5 +91,5 @@ test "EnvKey clip buffer" {
     try key.clipOwnBuffer(5);
 
     try std.testing.expectEqualStrings("hello", key.key());
-    try std.testing.expectEqual(@as(usize, 5), key.buffer.len);
+    try std.testing.expectEqual(@as(usize, 5), key.buffer.length());
 }

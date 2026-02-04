@@ -1,8 +1,3 @@
-const std = @import("std");
-const VariablePosition = @import("variable_position.zig").VariablePosition;
-const VariablePositionList = @import("variable_position_list.zig").VariablePositionList;
-const ReusableBuffer = @import("../buffer/reusable_buffer.zig").ReusableBuffer;
-
 pub const EnvValue = struct {
     interpolations: VariablePositionList,
 
@@ -84,10 +79,10 @@ pub const EnvValue = struct {
         self.escaped_dollar_index = null;
     }
 
-    pub fn initCapacity(allocator: std.mem.Allocator, capacity: usize) !EnvValue {
+    pub fn initCapacity(allocator: std.mem.Allocator, capacity_val: usize) !EnvValue {
         var val = init(allocator);
         val.buffer.deinit();
-        val.buffer = try ReusableBuffer.initCapacity(allocator, capacity);
+        val.buffer = try ReusableBuffer.initCapacity(allocator, capacity_val);
         return val;
     }
 
@@ -97,7 +92,11 @@ pub const EnvValue = struct {
     }
 
     pub fn hasOwnBuffer(self: *const EnvValue) bool {
-        return self.buffer.len > 0;
+        return self.buffer.capacity() > 0;
+    }
+
+    pub fn hasContent(self: *const EnvValue) bool {
+        return self.buffer.length() > 0;
     }
 
     /// Access the value slice
@@ -134,8 +133,8 @@ test "EnvValue initCapacity" {
     var val = try EnvValue.initCapacity(allocator, 256);
     defer val.deinit();
 
-    try std.testing.expectEqual(@as(usize, 0), val.buffer.len);
-    try std.testing.expect(val.buffer.capacity >= 256);
+    try std.testing.expectEqual(@as(usize, 0), val.buffer.length());
+    try std.testing.expect(val.buffer.capacity() >= 256);
 }
 
 test "EnvValue buffer ownership" {
@@ -161,3 +160,8 @@ test "EnvValue interpolations" {
 
     try std.testing.expect(val.interpolations.items.len == 1);
 }
+
+const std = @import("std");
+const VariablePosition = @import("variable_position.zig").VariablePosition;
+const VariablePositionList = @import("variable_position_list.zig").VariablePositionList;
+const ReusableBuffer = @import("../buffer/reusable_buffer.zig").ReusableBuffer;

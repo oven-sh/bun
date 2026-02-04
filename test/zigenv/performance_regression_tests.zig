@@ -39,7 +39,7 @@ test "perf: large file parse performance (1000 entries)" {
 
     var timer = try std.time.Timer.start();
 
-    var env = try zigenv.parseString(allocator, content.list.items);
+    var env = try zigenv.parseString(allocator, content.items());
     defer env.deinit();
 
     const elapsed = timer.read();
@@ -71,7 +71,7 @@ test "perf: interpolation performance" {
 
     var timer = try std.time.Timer.start();
 
-    var env = try zigenv.parseString(allocator, content.list.items);
+    var env = try zigenv.parseString(allocator, content.items());
     defer env.deinit();
 
     const elapsed = timer.read();

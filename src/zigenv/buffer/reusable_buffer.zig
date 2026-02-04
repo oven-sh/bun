@@ -8,69 +8,69 @@ const std = @import("std");
 /// and to better support "reset without deallocation".
 pub const ReusableBuffer = struct {
     allocator: std.mem.Allocator,
-    ptr: [*]u8,
-    len: usize, // The "index" where items are added
-    capacity: usize, // Total allocated size
+    #ptr: [*]u8,
+    #len: usize, // The "index" where items are added
+    #capacity: usize, // Total allocated size
 
     /// Initialize an empty buffer with no initial allocation
     pub fn init(allocator: std.mem.Allocator) ReusableBuffer {
         return .{
             .allocator = allocator,
-            .ptr = undefined, // ptr is undefined if capacity is 0
-            .len = 0,
-            .capacity = 0,
+            .#ptr = undefined, // #ptr is undefined if capacity is 0
+            .#len = 0,
+            .#capacity = 0,
         };
     }
 
     /// Initialize a buffer with a specific capacity pre-allocated
-    pub fn initCapacity(allocator: std.mem.Allocator, capacity: usize) !ReusableBuffer {
-        if (capacity == 0) {
+    pub fn initCapacity(allocator: std.mem.Allocator, capacity_val: usize) !ReusableBuffer {
+        if (capacity_val == 0) {
             return init(allocator);
         }
 
-        const buffer = try allocator.alloc(u8, capacity);
+        const buffer = try allocator.alloc(u8, capacity_val);
         return .{
             .allocator = allocator,
-            .ptr = buffer.ptr,
-            .len = 0,
-            .capacity = capacity,
+            .#ptr = buffer.ptr,
+            .#len = 0,
+            .#capacity = capacity_val,
         };
     }
 
     /// Free all memory owned by this buffer
     pub fn deinit(self: *ReusableBuffer) void {
-        if (self.capacity > 0) {
-            const full_slice = self.ptr[0..self.capacity];
+        if (self.#capacity > 0) {
+            const full_slice = self.#ptr[0..self.#capacity];
             self.allocator.free(full_slice);
         }
-        self.len = 0;
-        self.capacity = 0;
-        self.ptr = undefined;
+        self.#len = 0;
+        self.#capacity = 0;
+        self.#ptr = undefined;
     }
 
     /// Returns the slice of used data
-    pub fn usedSlice(self: *const ReusableBuffer) []u8 {
-        if (self.capacity == 0) return &[_]u8{};
-        return self.ptr[0..self.len];
+    pub fn usedSlice(self: *const ReusableBuffer) []const u8 {
+        if (self.#capacity == 0) return &[_]u8{};
+        return self.#ptr[0..self.#len];
     }
 
     /// Alias for usedSlice to satisfy some common interfaces
-    pub fn items(self: *const ReusableBuffer) []u8 {
+    pub fn items(self: *const ReusableBuffer) []const u8 {
         return self.usedSlice();
     }
 
     /// Append a single byte to the buffer, growing by 30% if necessary
     pub fn append(self: *ReusableBuffer, item: u8) !void {
-        if (self.len >= self.capacity) {
-            try self.ensureCapacityWithGrowth(self.len + 1, 30);
+        if (self.#len >= self.#capacity) {
+            try self.ensureCapacityWithGrowth(self.#len + 1, 30);
         }
         self.appendAssumeCapacity(item);
     }
 
     /// Append multiple bytes to the buffer, growing by 30% if necessary
     pub fn appendSlice(self: *ReusableBuffer, items_slice: []const u8) !void {
-        const needed = self.len + items_slice.len;
-        if (needed > self.capacity) {
+        const needed = self.#len + items_slice.len;
+        if (needed > self.#capacity) {
             try self.ensureCapacityWithGrowth(needed, 30);
         }
         self.appendSliceAssumeCapacity(items_slice);
@@ -78,10 +78,10 @@ pub const ReusableBuffer = struct {
 
     /// Ensures capacity, growing by specified percentage if needed
     pub fn ensureCapacityWithGrowth(self: *ReusableBuffer, new_capacity: usize, growth_percent: u8) !void {
-        if (new_capacity <= self.capacity) return;
+        if (new_capacity <= self.#capacity) return;
 
         const growth_factor = @as(f32, @floatFromInt(100 + growth_percent)) / 100.0;
-        const new_size = @max(new_capacity, @as(usize, @intFromFloat(@as(f32, @floatFromInt(self.capacity)) * growth_factor)));
+        const new_size = @max(new_capacity, @as(usize, @intFromFloat(@as(f32, @floatFromInt(self.#capacity)) * growth_factor)));
 
         try self.ensureCapacity(new_size);
     }
@@ -90,10 +90,10 @@ pub const ReusableBuffer = struct {
     /// If growing, new bytes are uninitialized (but memory is allocated)
     /// If shrinking, len is reduced but capacity is retained
     pub fn resize(self: *ReusableBuffer, new_len: usize) !void {
-        if (new_len > self.capacity) {
+        if (new_len > self.#capacity) {
             try self.ensureCapacity(new_len);
         }
-        self.len = new_len;
+        self.#len = new_len;
     }
 
     /// Create a buffer from an existing slice, taking ownership of the memory
@@ -101,20 +101,20 @@ pub const ReusableBuffer = struct {
     pub fn fromOwnedSlice(allocator: std.mem.Allocator, slice: []u8) ReusableBuffer {
         return .{
             .allocator = allocator,
-            .ptr = slice.ptr,
-            .len = slice.len, // Assume full slice is used data
-            .capacity = slice.len, // And capacity matches length
+            .#ptr = slice.ptr,
+            .#len = slice.len, // Assume full slice is used data
+            .#capacity = slice.len, // And capacity matches length
         };
     }
 
     /// Clear the buffer contents but retain the allocated capacity for reuse
     pub fn clearRetainingCapacity(self: *ReusableBuffer) void {
-        self.len = 0;
+        self.#len = 0;
     }
 
     /// Create an independent copy of this buffer
     pub fn clone(self: *const ReusableBuffer) !ReusableBuffer {
-        var new_buffer = try initCapacity(self.allocator, self.len);
+        var new_buffer = try initCapacity(self.allocator, self.#len);
         new_buffer.appendSliceAssumeCapacity(self.usedSlice());
         return new_buffer;
     }
@@ -122,63 +122,75 @@ pub const ReusableBuffer = struct {
     /// Transfer ownership of the buffer contents out, leaving the buffer empty
     /// The caller is responsible for freeing the returned slice
     pub fn toOwnedSlice(self: *ReusableBuffer) []u8 {
-        if (self.len == 0 and self.capacity == 0) {
+        if (self.#capacity == 0) {
             return self.allocator.dupe(u8, &[_]u8{}) catch unreachable;
         }
 
-        // Return a slice that matches the length.
-        const new_ptr = self.allocator.realloc(self.ptr[0..self.capacity], self.len) catch {
-            // If shrink fails (unlikely given it's shrinking), duplicate to be safe.
-            return self.allocator.dupe(u8, self.ptr[0..self.len]) catch unreachable;
+        const old_ptr = self.#ptr;
+        const old_cap = self.#capacity;
+        const old_len = self.#len;
+
+        const new_ptr = self.allocator.realloc(old_ptr[0..old_cap], old_len) catch {
+            const duped = self.allocator.dupe(u8, old_ptr[0..old_len]) catch unreachable;
+            self.allocator.free(old_ptr[0..old_cap]);
+            self.#ptr = undefined;
+            self.#len = 0;
+            self.#capacity = 0;
+            return duped;
         };
 
         // Ownership transferred
-        self.ptr = undefined;
-        self.len = 0;
-        self.capacity = 0;
+        self.#ptr = undefined;
+        self.#len = 0;
+        self.#capacity = 0;
 
         return new_ptr;
     }
 
     /// Get the current length of the buffer
     pub inline fn length(self: *const ReusableBuffer) usize {
-        return self.len;
+        return self.#len;
+    }
+
+    /// Get the current capacity of the buffer
+    pub inline fn capacity(self: *const ReusableBuffer) usize {
+        return self.#capacity;
     }
 
     // Private helper methods
 
     fn ensureUnusedCapacity(self: *ReusableBuffer, additional: usize) !void {
-        const needed_capacity = self.len + additional;
-        if (self.capacity >= needed_capacity) {
+        const needed_capacity = self.#len + additional;
+        if (self.#capacity >= needed_capacity) {
             return;
         }
         try self.ensureCapacity(needed_capacity);
     }
 
     fn ensureCapacity(self: *ReusableBuffer, new_capacity: usize) !void {
-        if (self.capacity >= new_capacity) {
+        if (self.#capacity >= new_capacity) {
             return;
         }
 
-        const new_memory = if (self.capacity > 0)
-            try self.allocator.realloc(self.ptr[0..self.capacity], new_capacity)
+        const new_memory = if (self.#capacity > 0)
+            try self.allocator.realloc(self.#ptr[0..self.#capacity], new_capacity)
         else
             try self.allocator.alloc(u8, new_capacity);
 
-        self.ptr = new_memory.ptr;
-        self.capacity = new_memory.len;
+        self.#ptr = new_memory.ptr;
+        self.#capacity = new_memory.len;
     }
 
     fn appendAssumeCapacity(self: *ReusableBuffer, item: u8) void {
-        self.ptr[self.len] = item;
-        self.len += 1;
+        self.#ptr[self.#len] = item;
+        self.#len += 1;
     }
 
     fn appendSliceAssumeCapacity(self: *ReusableBuffer, new_items: []const u8) void {
-        const old_len = self.len;
+        const old_len = self.#len;
         const new_len = old_len + new_items.len;
-        @memcpy(self.ptr[old_len..new_len], new_items);
-        self.len = new_len;
+        @memcpy(self.#ptr[old_len..new_len], new_items);
+        self.#len = new_len;
     }
 
     pub const Writer = std.io.GenericWriter(*ReusableBuffer, std.mem.Allocator.Error, appendWrite);
@@ -202,7 +214,7 @@ test "ReusableBuffer: init and deinit" {
     defer buffer.deinit();
 
     try std.testing.expectEqual(@as(usize, 0), buffer.length());
-    try std.testing.expectEqual(@as(usize, 0), buffer.capacity);
+    try std.testing.expectEqual(@as(usize, 0), buffer.#capacity);
 }
 
 test "ReusableBuffer: initCapacity" {
@@ -210,7 +222,7 @@ test "ReusableBuffer: initCapacity" {
     defer buffer.deinit();
 
     try std.testing.expectEqual(@as(usize, 0), buffer.length());
-    try std.testing.expectEqual(@as(usize, 10), buffer.capacity);
+    try std.testing.expectEqual(@as(usize, 10), buffer.#capacity);
 }
 
 test "ReusableBuffer: append single byte" {
@@ -255,13 +267,13 @@ test "ReusableBuffer: resize shrink" {
     defer buffer.deinit();
 
     try buffer.appendSlice("hello world");
-    const old_capacity = buffer.capacity;
+    const old_capacity = buffer.#capacity;
 
     try buffer.resize(5);
 
     try std.testing.expectEqual(@as(usize, 5), buffer.length());
     try std.testing.expectEqualStrings("hello", buffer.usedSlice());
-    try std.testing.expectEqual(old_capacity, buffer.capacity); // Capacity should not change
+    try std.testing.expectEqual(old_capacity, buffer.#capacity); // Capacity should not change
 }
 
 test "ReusableBuffer: clearRetainingCapacity" {
@@ -269,12 +281,12 @@ test "ReusableBuffer: clearRetainingCapacity" {
     defer buffer.deinit();
 
     try buffer.appendSlice("hello");
-    const old_capacity = buffer.capacity;
+    const old_capacity = buffer.#capacity;
 
     buffer.clearRetainingCapacity();
 
     try std.testing.expectEqual(@as(usize, 0), buffer.length());
-    try std.testing.expectEqual(old_capacity, buffer.capacity);
+    try std.testing.expectEqual(old_capacity, buffer.#capacity);
 
     // Should be able to reuse without reallocation
     try buffer.appendSlice("world");
@@ -319,7 +331,7 @@ test "ReusableBuffer: toOwnedSlice" {
 
     try std.testing.expectEqualStrings("owned", slice);
     try std.testing.expectEqual(@as(usize, 0), buffer.length());
-    try std.testing.expectEqual(@as(usize, 0), buffer.capacity);
+    try std.testing.expectEqual(@as(usize, 0), buffer.#capacity);
 
     // Buffer should still be usable
     try buffer.appendSlice("new");
@@ -340,8 +352,8 @@ test "ReusableBuffer: multiple operations" {
     try std.testing.expectEqualStrings("xyz", buffer.usedSlice());
 
     try buffer.resize(6);
-    buffer.ptr[3] = '1';
-    buffer.ptr[4] = '2';
-    buffer.ptr[5] = '3';
+    buffer.#ptr[3] = '1';
+    buffer.#ptr[4] = '2';
+    buffer.#ptr[5] = '3';
     try std.testing.expectEqualStrings("xyz123", buffer.usedSlice());
 }

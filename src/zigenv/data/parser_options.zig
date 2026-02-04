@@ -70,4 +70,5 @@ test "ParserOptions bashCompatible" {
     const opts = ParserOptions.bashCompatible();
     try std.testing.expect(opts.allow_single_quote_heredocs);
     try std.testing.expect(opts.allow_double_quote_heredocs);
+    try std.testing.expect(opts.allow_braceless_variables);
 }

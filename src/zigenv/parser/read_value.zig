@@ -1,14 +1,3 @@
-const std = @import("std");
-const EnvStream = @import("env_stream.zig").EnvStream;
-const EnvValue = @import("../data/env_value.zig").EnvValue;
-const ParserOptions = @import("../data/parser_options.zig").ParserOptions;
-const ReadResult = @import("../data/read_result.zig").ReadResult;
-const readNextChar = @import("read_next_char.zig").readNextChar;
-const escape_processor = @import("escape_processor.zig");
-const quote_parser = @import("quote_parser.zig");
-const interpolation = @import("../interpolation/interpolation.zig");
-const testing = std.testing;
-
 pub fn readValue(allocator: std.mem.Allocator, stream: *EnvStream, value: *EnvValue, options: ParserOptions) !ReadResult {
     if (!stream.good()) return ReadResult.end_of_stream_value;
 
@@ -18,10 +7,10 @@ pub fn readValue(allocator: std.mem.Allocator, stream: *EnvStream, value: *EnvVa
         if (char_opt == null) break;
         key_char = char_opt.?;
 
-        if (try readNextChar(allocator, value, key_char, options) and stream.good()) {
-            continue;
+        const should_continue = try readNextChar(allocator, value, key_char, options);
+        if (!should_continue) {
+            break;
         }
-        break;
     }
 
     // End-of-value cleanup
@@ -54,8 +43,13 @@ pub fn readValue(allocator: std.mem.Allocator, stream: *EnvStream, value: *EnvVa
 
     // Trim right side of implicit double quote
     if (value.implicit_double_quote) {
-        while (value.buffer.len > 0 and value.buffer.ptr[value.buffer.len - 1] == ' ') {
-            value.buffer.len -= 1;
+        while (value.buffer.length() > 0) {
+            const items_data = value.buffer.usedSlice();
+            if (items_data[items_data.len - 1] == ' ') {
+                try value.buffer.resize(value.buffer.length() - 1);
+            } else {
+                break;
+            }
         }
     }
 
@@ -77,7 +71,7 @@ test "readValue simple value" {
     const result = try readValue(testing.allocator, &stream, &val, default_options);
 
     try testing.expectEqual(ReadResult.success, result);
-    try testing.expectEqual(@as(usize, 6), val.buffer.len);
+    try testing.expectEqual(@as(usize, 6), val.buffer.length());
 }
 
 test "readValue quoted value" {
@@ -103,7 +97,7 @@ test "readValue with escape" {
     const result = try readValue(testing.allocator, &stream, &val, default_options);
 
     try testing.expectEqual(ReadResult.success, result);
-    try testing.expect(val.buffer.len > 0);
+    try testing.expect(val.buffer.length() > 0);
 }
 
 test "readValue implicit double quote trimming" {
@@ -118,7 +112,7 @@ test "readValue implicit double quote trimming" {
     try testing.expectEqual(ReadResult.success, result);
     try testing.expect(val.implicit_double_quote);
     // Value should be trimmed on the right
-    try testing.expectEqual(@as(usize, 5), val.buffer.len);
+    try testing.expectEqual(@as(usize, 5), val.buffer.length());
 }
 
 test "readValue with interpolation" {
@@ -133,3 +127,14 @@ test "readValue with interpolation" {
     try testing.expectEqual(ReadResult.success, result);
     try testing.expectEqual(@as(usize, 1), val.interpolations.items.len);
 }
+
+const std = @import("std");
+const EnvStream = @import("env_stream.zig").EnvStream;
+const EnvValue = @import("../data/env_value.zig").EnvValue;
+const ParserOptions = @import("../data/parser_options.zig").ParserOptions;
+const ReadResult = @import("../data/read_result.zig").ReadResult;
+const readNextChar = @import("read_next_char.zig").readNextChar;
+const escape_processor = @import("escape_processor.zig");
+const quote_parser = @import("quote_parser.zig");
+const interpolation = @import("../interpolation/interpolation.zig");
+const testing = std.testing;

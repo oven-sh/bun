@@ -1,12 +1,3 @@
-const std = @import("std");
-const EnvValue = @import("../data/env_value.zig").EnvValue;
-const ParserOptions = @import("../data/parser_options.zig").ParserOptions;
-const buffer_utils = @import("../buffer/buffer_utils.zig");
-const escape_processor = @import("escape_processor.zig");
-const quote_parser = @import("quote_parser.zig");
-const interpolation = @import("../interpolation/interpolation.zig");
-const testing = std.testing;
-
 fn isValidIdentifierChar(c: u8) bool {
     return std.ascii.isAlphanumeric(c) or c == '_';
 }
@@ -44,15 +35,15 @@ pub fn readNextChar(allocator: std.mem.Allocator, value: *EnvValue, char: u8, op
         // Variables enabled only if not in single quotes/triple single quotes
         if (!value.quoted and !value.triple_quoted) {
             // Check if we have a $ in the buffer (and it wasn't escaped)
-            if (value.buffer.len > 0) {
-                const items = value.value();
-                if (items[items.len - 1] == '$') {
-                    const dollar_idx = value.buffer.len - 1;
+            if (value.buffer.length() > 0) {
+                const items_data = value.value();
+                if (items_data[items_data.len - 1] == '$') {
+                    const dollar_idx = value.buffer.length() - 1;
                     const is_escaped_dollar = if (value.escaped_dollar_index) |idx| idx == dollar_idx else false;
 
                     if (!is_escaped_dollar and !buffer_utils.isPreviousCharAnEscape(value)) {
                         if (isValidIdentifierStart(char)) {
-                            try interpolation.openBracelessVariable(allocator, value);
+                            try interpolation.openBracelessVariable(value);
                         }
                     }
                 }
@@ -79,7 +70,7 @@ pub fn readNextChar(allocator: std.mem.Allocator, value: *EnvValue, char: u8, op
     }
 
     // Handle first character special cases
-    if (value.buffer.len == 0) {
+    if (value.buffer.length() == 0) {
         if (char == '`') {
             if (value.backtick_quoted) {
                 return false;
@@ -128,10 +119,10 @@ pub fn readNextChar(allocator: std.mem.Allocator, value: *EnvValue, char: u8, op
                 (value.quoted and options.allow_single_quote_heredocs);
 
             if (!allow_newline) {
-                if (value.buffer.len > 0) {
-                    const items = value.value();
-                    if (items[items.len - 1] == '\r') {
-                        value.buffer.len -= 1;
+                if (value.buffer.length() > 0) {
+                    const items_data = value.value();
+                    if (items_data[items_data.len - 1] == '\r') {
+                        try value.buffer.resize(value.buffer.length() - 1);
                     }
                 }
                 return false;
@@ -151,7 +142,7 @@ pub fn readNextChar(allocator: std.mem.Allocator, value: *EnvValue, char: u8, op
             try buffer_utils.addToBuffer(value, char);
             if (!value.quoted and !value.triple_quoted) {
                 if (!buffer_utils.isPreviousCharAnEscape(value)) {
-                    try interpolation.openVariable(allocator, value);
+                    try interpolation.openVariable(value);
                 }
             }
             return true;
@@ -329,3 +320,12 @@ test "readNextChar interpolation" {
 
     try testing.expectEqual(@as(usize, 1), val.interpolations.items.len);
 }
+
+const std = @import("std");
+const EnvValue = @import("../data/env_value.zig").EnvValue;
+const ParserOptions = @import("../data/parser_options.zig").ParserOptions;
+const buffer_utils = @import("../buffer/buffer_utils.zig");
+const escape_processor = @import("escape_processor.zig");
+const quote_parser = @import("quote_parser.zig");
+const interpolation = @import("../interpolation/interpolation.zig");
+const testing = std.testing;

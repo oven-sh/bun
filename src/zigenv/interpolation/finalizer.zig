@@ -150,7 +150,7 @@ pub fn finalizeValue(
             // BUT "leave as is" means the text stays "${var}".
             // We just don't touch the buffer.
             // So removing it from the list is correct (we visited it).
-            var removed = pair.value.interpolations.orderedRemove(0);
+            var removed = pair.value.interpolations.orderedRemove(interp_idx);
             removed.deinit();
         }
     }

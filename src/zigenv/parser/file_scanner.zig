@@ -1,5 +1,3 @@
-const std = @import("std");
-
 pub const BufferSizeHints = struct {
     max_key_size: usize,
     max_value_size: usize,
@@ -82,7 +80,6 @@ pub fn scanBufferSizes(content: []const u8) BufferSizeHints {
 // ============================================================================
 // Tests
 // ============================================================================
-const testing = std.testing;
 
 test "scan simple key=value" {
     const content = "KEY=value";
@@ -169,3 +166,6 @@ test "scan returns zero for comment-only content" {
     const hints = scanBufferSizes(content);
     try testing.expectEqual(@as(usize, 0), hints.estimated_pair_count);
 }
+
+const std = @import("std");
+const testing = std.testing;

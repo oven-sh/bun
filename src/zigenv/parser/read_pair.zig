@@ -28,35 +28,34 @@ pub fn readPair(allocator: std.mem.Allocator, stream: *EnvStream, pair: *EnvPair
     }
 
     // Trim right side of key
-    while (pair.key.buffer.len > 0) {
-        if (pair.key.buffer.ptr[pair.key.buffer.len - 1] != ' ') {
+    while (pair.key.buffer.length() > 0) {
+        const used = pair.key.buffer.usedSlice();
+        if (used[used.len - 1] != ' ') {
             break;
         }
-        pair.key.buffer.len -= 1;
+        try pair.key.buffer.resize(pair.key.buffer.length() - 1);
     }
 
     // Read value
     const value_result = try readValue(allocator, stream, &pair.value, options);
+    defer interpolation.removeUnclosedInterpolation(&pair.value);
+
     if (value_result == ReadResult.end_of_stream_value) {
         return ReadResult.end_of_stream_value;
     }
 
     if (value_result == ReadResult.comment_encountered or value_result == ReadResult.success) {
-        interpolation.removeUnclosedInterpolation(&pair.value);
         return ReadResult.success;
     }
 
     if (value_result == ReadResult.empty) {
-        interpolation.removeUnclosedInterpolation(&pair.value);
         return ReadResult.empty;
     }
 
     if (value_result == ReadResult.end_of_stream_key) {
-        interpolation.removeUnclosedInterpolation(&pair.value);
         return ReadResult.end_of_stream_key;
     }
 
-    interpolation.removeUnclosedInterpolation(&pair.value);
     return ReadResult.fail;
 }
 
@@ -126,8 +125,6 @@ pub fn readPairsWithHints(
                         new_interp.default_value = "";
                     }
 
-                    new_interp.allocator = allocator; // Mark as owning memory
-
                     try new_pair.value.interpolations.append(new_interp);
                 }
             }
@@ -138,6 +135,7 @@ pub fn readPairsWithHints(
             // ... copy other relevant flags if needed by consumer?
             // Usually only quoted status matters for later processing.
 
+            errdefer new_pair.deinit();
             try pairs.append(new_pair);
 
             if (result == ReadResult.end_of_stream_value) break;

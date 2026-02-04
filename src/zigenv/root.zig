@@ -7,8 +7,6 @@ pub const EnvValue = @import("data/env_value.zig").EnvValue;
 pub const EnvPair = @import("data/env_pair.zig").EnvPair;
 pub const VariablePosition = @import("data/variable_position.zig").VariablePosition;
 pub const ReadResult = @import("data/read_result.zig").ReadResult;
-// FinalizeResult was likely in result_enums too, need to check if it's there.
-// Re-export read_result.zig might have it.
 pub const file_scanner = @import("parser/file_scanner.zig");
 pub const ParserOptions = @import("data/parser_options.zig").ParserOptions;
 pub const ManagedList = @import("data/managed_list.zig").ManagedList;

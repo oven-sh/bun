@@ -110,7 +110,7 @@ test "fuzz: random key-value structure" {
             try content.append('\n');
         }
 
-        if (zigenv.parseString(allocator, content.list.items)) |env_result| {
+        if (zigenv.parseString(allocator, content.items())) |env_result| {
             var env = env_result;
             env.deinit();
         } else |_| {
@@ -149,7 +149,7 @@ test "fuzz: random quote patterns" {
             try content.append(quote);
         }
 
-        if (zigenv.parseString(allocator, content.list.items)) |env_result| {
+        if (zigenv.parseString(allocator, content.items())) |env_result| {
             var env = env_result;
             env.deinit();
         } else |_| {

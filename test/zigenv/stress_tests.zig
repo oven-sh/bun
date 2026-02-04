@@ -50,7 +50,7 @@ test "stress: many key-value pairs (1000)" {
         try content.appendSlice(line);
     }
 
-    var env = try zigenv.parseString(allocator, content.list.items);
+    var env = try zigenv.parseString(allocator, content.items());
     defer env.deinit();
 
     try testing.expectEqual(@as(usize, 1000), env.map.count());
@@ -118,7 +118,7 @@ test "stress: many empty values" {
         try content.appendSlice(line);
     }
 
-    var env = try zigenv.parseString(allocator, content.list.items);
+    var env = try zigenv.parseString(allocator, content.items());
     defer env.deinit();
 
     try testing.expectEqual(@as(usize, 500), env.map.count());
@@ -140,7 +140,7 @@ test "stress: many duplicate keys" {
         try content.appendSlice(line);
     }
 
-    var env = try zigenv.parseString(allocator, content.list.items);
+    var env = try zigenv.parseString(allocator, content.items());
     defer env.deinit();
 
     // Last one should win
@@ -166,7 +166,7 @@ test "stress: mixed line ending styles (500 lines)" {
         try content.appendSlice(line);
     }
 
-    var env = try zigenv.parseString(allocator, content.list.items);
+    var env = try zigenv.parseString(allocator, content.items());
     defer env.deinit();
 
     // Should parse all lines correctly

@@ -1,6 +1,3 @@
-const std = @import("std");
-const EnvValue = @import("../data/env_value.zig").EnvValue;
-
 /// Add a character to the value buffer, resizing if needed.
 /// This implementation relies on ReusableBuffer inside EnvValue.
 pub fn addToBuffer(value: *EnvValue, char: u8) !void {
@@ -13,8 +10,9 @@ pub fn isPreviousCharAnEscape(value: *const EnvValue) bool {
     // len is the position where the next character will be written.
     // So len - 1 is the last character written.
     // len - 2 is the character before that.
-    const len = value.buffer.len;
-    return len > 1 and value.buffer.ptr[len - 2] == '\\';
+    const used = value.buffer.usedSlice();
+    const len = used.len;
+    return len > 1 and used[len - 2] == '\\';
 }
 
 test "addToBuffer" {
@@ -27,7 +25,7 @@ test "addToBuffer" {
     try addToBuffer(&val, 'c');
 
     try std.testing.expectEqualStrings("abc", val.value());
-    try std.testing.expectEqual(@as(usize, 3), val.buffer.len);
+    try std.testing.expectEqual(@as(usize, 3), val.buffer.length());
 }
 
 test "isPreviousCharAnEscape" {
@@ -48,3 +46,6 @@ test "isPreviousCharAnEscape" {
     try addToBuffer(&val2, '{');
     try std.testing.expect(!isPreviousCharAnEscape(&val2));
 }
+
+const std = @import("std");
+const EnvValue = @import("../data/env_value.zig").EnvValue;

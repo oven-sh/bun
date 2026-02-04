@@ -4,7 +4,10 @@ const VariablePosition = @import("../data/variable_position.zig").VariablePositi
 /// Count left whitespace inside ${...} for trimming.
 /// This replicates the C++ logic: it starts at variable_start and walks backwards to start_brace.
 pub fn getWhiteSpaceOffsetLeft(value: []const u8, interpolation: *const VariablePosition) usize {
+    if (value.len == 0) return 0;
     var tmp = interpolation.variable_start;
+    if (tmp >= value.len) tmp = value.len - 1;
+
     var size: usize = 0;
     while (tmp >= interpolation.start_brace) {
         if (value[tmp] != ' ') break;
@@ -18,8 +21,10 @@ pub fn getWhiteSpaceOffsetLeft(value: []const u8, interpolation: *const Variable
 /// Count right whitespace inside ${...} for trimming.
 /// This replicates the C++ logic: it starts at end_brace - 1 and walks backwards to start_brace.
 pub fn getWhiteSpaceOffsetRight(value: []const u8, interpolation: *const VariablePosition) usize {
-    if (interpolation.end_brace == 0) return 0;
+    if (value.len == 0 or interpolation.end_brace == 0) return 0;
     var tmp = interpolation.end_brace - 1;
+    if (tmp >= value.len) tmp = value.len - 1;
+
     var count: usize = 0;
     while (tmp >= interpolation.start_brace) {
         if (value[tmp] != ' ') break;

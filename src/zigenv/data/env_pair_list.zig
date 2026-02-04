@@ -80,7 +80,7 @@ pub const EnvPairList = struct {
         for (self.items) |*pair| {
             pair.deinit();
         }
-        self.items.len = 0;
+        self.items = self.items[0..0];
     }
 };
 

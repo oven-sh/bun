@@ -1,14 +1,3 @@
-const std = @import("std");
-const read_pair = @import("parser/read_pair.zig");
-const finalizer = @import("interpolation/finalizer.zig");
-const EnvStream = @import("parser/env_stream.zig").EnvStream;
-const memory = @import("buffer/memory_utils.zig");
-const file_scanner = @import("parser/file_scanner.zig");
-const ReusableBuffer = @import("buffer/reusable_buffer.zig").ReusableBuffer;
-const EnvPair = @import("data/env_pair.zig").EnvPair;
-const Allocator = std.mem.Allocator;
-const Env = @import("data/env.zig").Env;
-
 /// Parser configuration options for controlling parsing behavior.
 pub const ParserOptions = @import("data/parser_options.zig").ParserOptions;
 
@@ -28,7 +17,7 @@ pub fn parseFileWithOptions(
     const file = try std.fs.cwd().openFile(path, .{});
     defer file.close();
 
-    const content = try file.readToEndAlloc(allocator, std.math.maxInt(usize));
+    const content = try file.readToEndAlloc(allocator, 10 * 1024 * 1024);
     defer allocator.free(content);
 
     return parseStringWithOptions(allocator, content, options, lookup_fn, context);
@@ -95,7 +84,7 @@ pub fn parseReaderWithOptions(
     lookup_fn: ?finalizer.LookupFn,
     context: ?*anyopaque,
 ) !Env {
-    const content = try reader_obj.readAllAlloc(allocator, std.math.maxInt(usize));
+    const content = try reader_obj.readAllAlloc(allocator, 10 * 1024 * 1024);
     defer allocator.free(content);
     return parseStringWithOptions(allocator, content, options, lookup_fn, context);
 }
@@ -234,3 +223,14 @@ test "large file performance" {
 
     try std.testing.expectEqual(@as(usize, 1000), env.map.count());
 }
+
+const std = @import("std");
+const read_pair = @import("parser/read_pair.zig");
+const finalizer = @import("interpolation/finalizer.zig");
+const EnvStream = @import("parser/env_stream.zig").EnvStream;
+const memory = @import("buffer/memory_utils.zig");
+const file_scanner = @import("parser/file_scanner.zig");
+const ReusableBuffer = @import("buffer/reusable_buffer.zig").ReusableBuffer;
+const EnvPair = @import("data/env_pair.zig").EnvPair;
+const Allocator = std.mem.Allocator;
+const Env = @import("data/env.zig").Env;

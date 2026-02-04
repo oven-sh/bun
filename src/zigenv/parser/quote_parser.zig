@@ -1,7 +1,3 @@
-const std = @import("std");
-const EnvValue = @import("../data/env_value.zig").EnvValue;
-const buffer_utils = @import("../buffer/buffer_utils.zig");
-
 /// Detect and process single quote sequences.
 /// Returns true if end quotes detected and input should stop.
 pub fn walkSingleQuotes(value: *EnvValue) !bool {
@@ -13,7 +9,7 @@ pub fn walkSingleQuotes(value: *EnvValue) !bool {
     // We're at start if:
     // 1. buffer.len is 0 (quotes not added yet) OR buffer.len == single_quote_streak (only quotes in buffer)
     // 2. AND we're not already in a quote mode (otherwise we're ending, not starting)
-    const at_start = ((value.buffer.len == 0) or (value.buffer.len == value.single_quote_streak)) and (!value.quoted and !value.triple_quoted);
+    const at_start = ((value.buffer.length() == 0) or (value.buffer.length() == value.single_quote_streak)) and (!value.quoted and !value.triple_quoted);
 
     if (at_start) {
         if (value.single_quote_streak == 1) {
@@ -58,7 +54,7 @@ pub fn walkDoubleQuotes(value: *EnvValue) !bool {
     // We're at start if:
     // 1. buffer.len is 0 (quotes not added yet) OR buffer.len == double_quote_streak (only quotes in buffer)
     // 2. AND we're not already in a double quote mode (otherwise we're ending, not starting)
-    const at_start = ((value.buffer.len == 0) or (value.buffer.len == value.double_quote_streak)) and (!value.double_quoted and !value.triple_double_quoted);
+    const at_start = ((value.buffer.length() == 0) or (value.buffer.length() == value.double_quote_streak)) and (!value.double_quoted and !value.triple_double_quoted);
 
     if (at_start) {
         if (value.double_quote_streak == 1) {
@@ -262,3 +258,7 @@ test "walkDoubleQuotes - excess" {
     try std.testing.expect(stop);
     try std.testing.expectEqualStrings("\"\"", val.value());
 }
+
+const std = @import("std");
+const EnvValue = @import("../data/env_value.zig").EnvValue;
+const buffer_utils = @import("../buffer/buffer_utils.zig");

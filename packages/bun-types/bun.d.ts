@@ -752,9 +752,9 @@ declare module "bun" {
     /**
      * The result of `Bun.JSONL.parseChunk`.
      */
-    interface ParseChunkResult {
+    interface ParseChunkResult<T = unknown> {
       /** The successfully parsed JSON values. */
-      values: unknown[];
+      values: T[];
       /** How far into the input was consumed. When the input is a string, this is a character offset. When the input is a `TypedArray`, this is a byte offset. Use `input.slice(read)` or `input.subarray(read)` to get the unconsumed remainder. */
       read: number;
       /** `true` if all input was consumed successfully. `false` if the input ends with an incomplete value or a parse error occurred. */
@@ -790,6 +790,14 @@ declare module "bun" {
      * const items = Bun.JSONL.parse(buf);
      * // [{ a: 1 }, { b: 2 }]
      *
+     * // With TypeScript generics for type safety:
+     * interface User {
+     *   id: number;
+     *   name: string;
+     * }
+     * const users = Bun.JSONL.parse<User>('{"id":1,"name":"Alice"}\n{"id":2,"name":"Bob"}\n');
+     * // users is typed as User[]
+     *
      * // Partial results on error after valid values:
      * const partial = Bun.JSONL.parse('{"a":1}\n{bad}\n');
      * // [{ a: 1 }]
@@ -798,7 +806,7 @@ declare module "bun" {
      * Bun.JSONL.parse('{bad}\n'); // throws SyntaxError
      * ```
      */
-    export function parse(input: string | NodeJS.TypedArray | DataView<ArrayBuffer> | ArrayBufferLike): unknown[];
+    export function parse<T = unknown>(input: string | NodeJS.TypedArray | DataView<ArrayBuffer> | ArrayBufferLike): T[];
 
     /**
      * Parse a JSONL chunk, designed for streaming use.
@@ -828,14 +836,23 @@ declare module "bun" {
      *   for (const value of values) handle(value);
      *   buffer = buffer.subarray(read);
      * }
+     *
+     * // With TypeScript generics for type safety:
+     * interface LogEntry {
+     *   timestamp: string;
+     *   level: string;
+     *   message: string;
+     * }
+     * const result = Bun.JSONL.parseChunk<LogEntry>(chunk);
+     * // result.values is typed as LogEntry[]
      * ```
      */
-    export function parseChunk(input: string): ParseChunkResult;
-    export function parseChunk(
+    export function parseChunk<T = unknown>(input: string): ParseChunkResult<T>;
+    export function parseChunk<T = unknown>(
       input: NodeJS.TypedArray | DataView<ArrayBuffer> | ArrayBufferLike,
       start?: number,
       end?: number,
-    ): ParseChunkResult;
+    ): ParseChunkResult<T>;
   }
 
   /**

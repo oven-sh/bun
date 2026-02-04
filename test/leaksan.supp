@@ -121,3 +121,7 @@ leak:bun.js.Debugger.startJSDebuggerThread
 leak:WebCore::jsSQLStatementOpenStatementFunction
 # ci, test/js/node/test/parallel/test-dgram-unref-in-cluster.js
 leak:bun.js.api.bun.udp_socket.UDPSocket.udpSocket
+# Yoga YGNode allocations are GC-managed via YogaNodeImpl ref-counting;
+# JSC does not run finalizers at process exit, so LSAN sees them as leaks.
+leak:YGNodeNewWithConfig
+leak:YGNodeNew

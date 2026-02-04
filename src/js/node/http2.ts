@@ -61,6 +61,7 @@ const RegExpPrototypeExec = RegExp.prototype.exec;
 const ObjectAssign = Object.assign;
 const ArrayIsArray = Array.isArray;
 const ObjectKeys = Object.keys;
+const ObjectEntries = Object.entries;
 const FunctionPrototypeBind = Function.prototype.bind;
 const StringPrototypeTrim = String.prototype.trim;
 const ArrayPrototypePush = Array.prototype.push;
@@ -3734,25 +3735,25 @@ class Http1FallbackResponse extends EventEmitter {
   }
 
   setHeader(name, value) {
-    this._headers[name.toLowerCase()] = value;
+    this._headers[StringPrototypeToLowerCase.$call(name)] = value;
     return this;
   }
 
   getHeader(name) {
-    return this._headers[name.toLowerCase()];
+    return this._headers[StringPrototypeToLowerCase.$call(name)];
   }
 
   removeHeader(name) {
-    delete this._headers[name.toLowerCase()];
+    delete this._headers[StringPrototypeToLowerCase.$call(name)];
     return this;
   }
 
   hasHeader(name) {
-    return name.toLowerCase() in this._headers;
+    return StringPrototypeToLowerCase.$call(name) in this._headers;
   }
 
   getHeaderNames() {
-    return Object.keys(this._headers);
+    return ObjectKeys(this._headers);
   }
 
   writeHead(statusCode, statusMessage?, headers?) {
@@ -3768,7 +3769,7 @@ class Http1FallbackResponse extends EventEmitter {
     else this.statusMessage = STATUS_CODES[statusCode] || "Unknown";
 
     if (headers) {
-      for (const key of Object.keys(headers)) {
+      for (const key of ObjectKeys(headers)) {
         this.setHeader(key, headers[key]);
       }
     }
@@ -3786,8 +3787,8 @@ class Http1FallbackResponse extends EventEmitter {
       head += `Date: ${utcDate()}\r\n`;
     }
 
-    for (const [name, value] of Object.entries(this._headers)) {
-      if (Array.isArray(value)) {
+    for (const [name, value] of ObjectEntries(this._headers)) {
+      if (ArrayIsArray(value)) {
         for (const v of value) {
           head += `${name}: ${v}\r\n`;
         }
@@ -3815,7 +3816,7 @@ class Http1FallbackResponse extends EventEmitter {
 
     if (this._hasBody && chunk) {
       if (this.getHeader("transfer-encoding") === "chunked") {
-        const len = typeof chunk === "string" ? Buffer.byteLength(chunk) : chunk.length;
+        const len = typeof chunk === "string" ? Buffer.byteLength(chunk, encoding) : chunk.length;
         this.socket.write(len.toString(16) + "\r\n");
         this.socket.write(chunk, encoding);
         return this.socket.write("\r\n", undefined, callback);
@@ -3845,7 +3846,7 @@ class Http1FallbackResponse extends EventEmitter {
 
     if (!this.headersSent) {
       if (data && !this.hasHeader("content-length") && !this.hasHeader("transfer-encoding")) {
-        const len = typeof data === "string" ? Buffer.byteLength(data) : (data?.length ?? 0);
+        const len = typeof data === "string" ? Buffer.byteLength(data, encoding) : (data?.length ?? 0);
         this.setHeader("content-length", String(len));
       } else if (!data && !this.hasHeader("content-length") && !this.hasHeader("transfer-encoding")) {
         this.setHeader("content-length", "0");
@@ -3855,7 +3856,7 @@ class Http1FallbackResponse extends EventEmitter {
 
     if (this._hasBody && data) {
       if (this.getHeader("transfer-encoding") === "chunked") {
-        const len = typeof data === "string" ? Buffer.byteLength(data) : data.length;
+        const len = typeof data === "string" ? Buffer.byteLength(data, encoding) : data.length;
         this.socket.write(len.toString(16) + "\r\n");
         this.socket.write(data, encoding);
         this.socket.write("\r\n0\r\n\r\n");
@@ -3895,6 +3896,15 @@ function http1ConnectionListener(socket: Socket, options) {
   // Ensure socket has server property set
   socket.server = server;
 
+  // Get configurable classes from options (set by initializeOptions)
+  // Note: We default to Http1FallbackResponse because http.ServerResponse requires
+  // a native handle that isn't available when parsing raw sockets. Only use a custom
+  // ServerResponse if explicitly provided by the user.
+  const ServerResponse =
+    options.Http1ServerResponse && options.Http1ServerResponse !== http.ServerResponse
+      ? options.Http1ServerResponse
+      : Http1FallbackResponse;
+
   // Get the HTTP parser from the pool
   const parser = parsers.alloc();
   parser.socket = socket;
@@ -3905,8 +3915,9 @@ function http1ConnectionListener(socket: Socket, options) {
 
   // When the parser completes parsing headers, create a response and emit the request event
   parser.onIncoming = function onIncoming(req, shouldKeepAlive) {
-    // Create a lightweight HTTP/1.1 response that writes directly to the socket
-    const res = new Http1FallbackResponse(req, socket);
+    // Create a response using the configured ServerResponse class
+    // For Http1FallbackResponse, pass (req, socket). For custom classes, just pass (req).
+    const res = ServerResponse === Http1FallbackResponse ? new ServerResponse(req, socket) : new ServerResponse(req);
 
     // Emit the request event on the server
     if (req.headers.expect !== undefined && req.httpVersionMajor === 1 && req.httpVersionMinor === 1) {
@@ -4156,16 +4167,9 @@ class Http2SecureServer extends tls.Server {
       options = { ALPNProtocols: ["h2"] };
     }
 
-    const settings = options.settings;
-    if (typeof settings !== "undefined") {
-      validateObject(settings, "options.settings");
-    }
-    if (options.maxSessionInvalidFrames !== undefined)
-      validateUint32(options.maxSessionInvalidFrames, "maxSessionInvalidFrames");
+    // Initialize options with defaults (including Http1IncomingMessage/ServerResponse)
+    options = initializeOptions(options);
 
-    if (options.maxSessionRejectedStreams !== undefined) {
-      validateUint32(options.maxSessionRejectedStreams, "maxSessionRejectedStreams");
-    }
     super(options, connectionListener);
     this[kSessions] = new SafeSet();
     this.setMaxListeners(0);

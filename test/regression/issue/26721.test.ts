@@ -60,17 +60,17 @@ describe("HTTP/2 allowHTTP1 option", () => {
       res.end("ok http1\n");
     });
 
-    const serverPort = await new Promise<number>((resolve, reject) => {
-      server.listen(0, "127.0.0.1", () => {
-        const address = server.address();
-        if (!address || typeof address === "string") {
-          reject(new Error("Failed to get server address"));
-          return;
-        }
-        resolve(address.port);
-      });
-      server.once("error", reject);
+    const { promise: listenPromise, resolve: listenResolve, reject: listenReject } = Promise.withResolvers<number>();
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        listenReject(new Error("Failed to get server address"));
+        return;
+      }
+      listenResolve(address.port);
     });
+    server.once("error", listenReject);
+    const serverPort = await listenPromise;
 
     ctx = {
       server,
@@ -85,9 +85,9 @@ describe("HTTP/2 allowHTTP1 option", () => {
       if (typeof ctx.server.closeAllConnections === "function") {
         ctx.server.closeAllConnections();
       }
-      await new Promise<void>(resolve => {
-        ctx.server.close(() => resolve());
-      });
+      const { promise, resolve } = Promise.withResolvers<void>();
+      ctx.server.close(() => resolve());
+      await promise;
     }
   });
 
@@ -119,7 +119,9 @@ describe("HTTP/2 allowHTTP1 option", () => {
     expect(response.body).toBe("ok h2\n");
     expect(response.protocol).toBe("h2");
 
-    await new Promise<void>(resolve => client.close(resolve));
+    const { promise: closePromise, resolve: closeResolve } = Promise.withResolvers<void>();
+    client.close(closeResolve);
+    await closePromise;
   });
 
   test("HTTP/1.1 client can connect when allowHTTP1 is true (issue #26721)", async () => {
@@ -216,17 +218,17 @@ describe("HTTP/2 without allowHTTP1", () => {
       stream.end("ok");
     });
 
-    const port = await new Promise<number>((resolve, reject) => {
-      server.listen(0, "127.0.0.1", () => {
-        const address = server.address();
-        if (!address || typeof address === "string") {
-          reject(new Error("Failed to get server address"));
-          return;
-        }
-        resolve(address.port);
-      });
-      server.once("error", reject);
+    const { promise: listenPromise, resolve: listenResolve, reject: listenReject } = Promise.withResolvers<number>();
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        listenReject(new Error("Failed to get server address"));
+        return;
+      }
+      listenResolve(address.port);
     });
+    server.once("error", listenReject);
+    const port = await listenPromise;
 
     try {
       await new Promise<void>((resolve, reject) => {
@@ -253,7 +255,12 @@ describe("HTTP/2 without allowHTTP1", () => {
         req.end();
       });
     } finally {
-      await new Promise<void>(resolve => server.close(() => resolve()));
+      // Force close all connections and the server
+      // Use a short timeout to ensure this doesn't hang the test
+      await Promise.race([
+        new Promise<void>(resolve => server.close(() => resolve())),
+        new Promise<void>(resolve => setTimeout(resolve, 500)),
+      ]);
     }
   });
 });

@@ -114,7 +114,8 @@ const buildPlatforms = [
   { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.23" },
   { os: "windows", arch: "x64", release: "2019" },
   { os: "windows", arch: "x64", baseline: true, release: "2019" },
-  { os: "windows", arch: "aarch64", release: "2019" },
+  // TODO: Re-enable when Windows ARM64 VS component installation is resolved on Buildkite runners
+  // { os: "windows", arch: "aarch64", release: "2019" },
 ];
 
 /**
@@ -470,7 +471,7 @@ function getBuildCommand(target, options, label) {
  */
 function getWindowsArm64CrossFlags(target) {
   if (target.os === "windows" && target.arch === "aarch64") {
-    return " --toolchain windows-aarch64 -DSKIP_CODEGEN=ON -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl";
+    return " --toolchain windows-aarch64";
   }
   return "";
 }
@@ -483,6 +484,7 @@ function getWindowsArm64CrossFlags(target) {
 function getBuildCppStep(platform, options) {
   const command = getBuildCommand(platform, options);
   const crossFlags = getWindowsArm64CrossFlags(platform);
+
   return {
     key: `${getTargetKey(platform)}-build-cpp`,
     label: `${getTargetLabel(platform)} - build-cpp`,

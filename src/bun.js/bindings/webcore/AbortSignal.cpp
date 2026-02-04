@@ -171,8 +171,8 @@ void AbortSignal::runAbortSteps()
         algorithm.second(reason);
 
     // 3. Fire an event named abort at signal.
-    dispatchEvent(Event::create(eventNames().abortEvent, Event::CanBubble::No, Event::IsCancelable::No));
-
+    if (hasEventListeners(eventNames().abortEvent))
+        dispatchEvent(Event::create(eventNames().abortEvent, Event::CanBubble::No, Event::IsCancelable::No));
     setIsFiringEventListeners(false);
 }
 

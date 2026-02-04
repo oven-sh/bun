@@ -60,12 +60,9 @@ async function build(args) {
   if (process.platform === "win32" && !process.env["VSINSTALLDIR"]) {
     const shellPath = join(import.meta.dirname, "vs-shell.ps1");
     const scriptPath = import.meta.filename;
-    const requestedVsArch = args.includes("--toolchain")
-      ? args[args.indexOf("--toolchain") + 1] === "windows-aarch64"
-        ? "arm64"
-        : undefined
-      : undefined;
-
+    // When cross-compiling to ARM64, tell vs-shell.ps1 to set up the x64_arm64 VS environment
+    const toolchainIdx = args.indexOf("--toolchain");
+    const requestedVsArch = toolchainIdx !== -1 && args[toolchainIdx + 1] === "windows-aarch64" ? "arm64" : undefined;
     const env = requestedVsArch ? { ...process.env, BUN_VS_ARCH: requestedVsArch } : undefined;
     return spawn("pwsh", ["-NoProfile", "-NoLogo", "-File", shellPath, process.argv0, scriptPath, ...args], { env });
   }

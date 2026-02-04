@@ -32,11 +32,20 @@ if($env:VSINSTALLDIR -eq $null) {
 
   $vsDir = (& $vswhere -prerelease -latest -property installationPath)
   if ($vsDir -eq $null) {
-    $vsDir = Get-ChildItem -Path "C:\Program Files\Microsoft Visual Studio\2022" -Directory
+    # Check common VS installation paths
+    $searchPaths = @(
+      "C:\Program Files\Microsoft Visual Studio\2022",
+      "C:\Program Files (x86)\Microsoft Visual Studio\2022"
+    )
+    foreach ($searchPath in $searchPaths) {
+      if (Test-Path $searchPath) {
+        $vsDir = (Get-ChildItem -Path $searchPath -Directory | Select-Object -First 1).FullName
+        if ($vsDir -ne $null) { break }
+      }
+    }
     if ($vsDir -eq $null) {
       throw "Visual Studio directory not found."
     }
-    $vsDir = $vsDir.FullName
   }
 
   Push-Location $vsDir
@@ -79,7 +88,7 @@ if ($args.Count -gt 0) {
       $displayArgs += $arg
     }
   }
-  
+
   Write-Host "$ $command $displayArgs"
   & $command $commandArgs
   exit $LASTEXITCODE

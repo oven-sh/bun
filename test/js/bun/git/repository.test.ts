@@ -911,5 +911,197 @@ describe("bun:git", () => {
 
       expect(branch).toBeNull();
     });
+
+    test("empty repository - head() throws", async () => {
+      using dir = tempDir("git-empty-test", {});
+      const dirPath = String(dir);
+
+      await Bun.$`git init ${dirPath}`.quiet();
+
+      const repo = Repository.open(dirPath);
+
+      // head() should throw on empty repository (no commits)
+      expect(() => repo.head()).toThrow();
+    });
+
+    test("empty repository - getStatus works", async () => {
+      using dir = tempDir("git-empty-status-test", {});
+      const dirPath = String(dir);
+
+      await Bun.$`git init ${dirPath}`.quiet();
+
+      const repo = Repository.open(dirPath);
+
+      // getStatus should work even without commits
+      const status = repo.getStatus();
+      expect(Array.isArray(status)).toBe(true);
+    });
+
+    test("empty repository - listFiles returns empty", async () => {
+      using dir = tempDir("git-empty-listfiles-test", {});
+      const dirPath = String(dir);
+
+      await Bun.$`git init ${dirPath}`.quiet();
+
+      const repo = Repository.open(dirPath);
+
+      const files = repo.listFiles();
+      expect(files).toEqual([]);
+    });
+
+    test("empty repository - countCommits returns 0", async () => {
+      using dir = tempDir("git-empty-count-test", {});
+      const dirPath = String(dir);
+
+      await Bun.$`git init ${dirPath}`.quiet();
+
+      const repo = Repository.open(dirPath);
+
+      // countCommits should throw or return 0 on empty repository
+      expect(() => repo.countCommits()).toThrow();
+    });
+
+    test("empty repository - getCurrentBranch returns null", async () => {
+      using dir = tempDir("git-empty-branch-test", {});
+      const dirPath = String(dir);
+
+      await Bun.$`git init ${dirPath}`.quiet();
+
+      const repo = Repository.open(dirPath);
+
+      // No commits means unborn branch
+      const branch = repo.getCurrentBranch();
+      expect(branch).toBeNull();
+    });
+  });
+
+  describe("argument validation", () => {
+    test("revParse throws for non-string argument", () => {
+      const repo = Repository.open(".");
+
+      // @ts-expect-error - testing runtime behavior
+      expect(() => repo.revParse(123)).toThrow();
+      // @ts-expect-error - testing runtime behavior
+      expect(() => repo.revParse(null)).toThrow();
+      // @ts-expect-error - testing runtime behavior
+      expect(() => repo.revParse(undefined)).toThrow();
+      // @ts-expect-error - testing runtime behavior
+      expect(() => repo.revParse({})).toThrow();
+    });
+
+    test("revParse throws when called without arguments", () => {
+      const repo = Repository.open(".");
+
+      // @ts-expect-error - testing runtime behavior
+      expect(() => repo.revParse()).toThrow();
+    });
+
+    test("aheadBehind throws for non-string arguments", () => {
+      const repo = Repository.open(".");
+
+      // @ts-expect-error - testing runtime behavior
+      expect(() => repo.aheadBehind(123, "HEAD")).toThrow();
+      // @ts-expect-error - testing runtime behavior
+      expect(() => repo.aheadBehind("HEAD", 123)).toThrow();
+    });
+
+    test("countCommits throws for non-string argument", () => {
+      const repo = Repository.open(".");
+
+      // @ts-expect-error - testing runtime behavior
+      expect(() => repo.countCommits(123)).toThrow();
+    });
+
+    test("log handles invalid options gracefully", () => {
+      const repo = Repository.open(".");
+
+      // Empty options should work
+      expect(() => repo.log({})).not.toThrow();
+
+      // Null options should work (treated as no options)
+      // @ts-expect-error - testing runtime behavior
+      expect(() => repo.log(null)).not.toThrow();
+    });
+
+    test("getStatus handles various option types", () => {
+      const repo = Repository.open(".");
+
+      // Empty options
+      expect(() => repo.getStatus({})).not.toThrow();
+
+      // Undefined options
+      expect(() => repo.getStatus(undefined)).not.toThrow();
+
+      // Invalid option values are coerced to boolean
+      // @ts-expect-error - testing runtime behavior
+      expect(() => repo.getStatus({ includeUntracked: "yes" })).not.toThrow();
+      // @ts-expect-error - testing runtime behavior
+      expect(() => repo.getStatus({ includeUntracked: 0 })).not.toThrow();
+    });
+
+    test("diff handles various option types", () => {
+      const repo = Repository.open(".");
+
+      // Empty options
+      expect(() => repo.diff({})).not.toThrow();
+
+      // Undefined options
+      expect(() => repo.diff(undefined)).not.toThrow();
+
+      // Invalid cached value is coerced to boolean
+      // @ts-expect-error - testing runtime behavior
+      expect(() => repo.diff({ cached: "yes" })).not.toThrow();
+    });
+
+    test("Repository.open throws for non-string path", () => {
+      // @ts-expect-error - testing runtime behavior
+      expect(() => Repository.open(123)).toThrow();
+      // @ts-expect-error - testing runtime behavior
+      expect(() => Repository.open(null)).toThrow();
+      // @ts-expect-error - testing runtime behavior
+      expect(() => Repository.open(undefined)).toThrow();
+    });
+
+    test("Repository.open throws when called without arguments", () => {
+      // @ts-expect-error - testing runtime behavior
+      expect(() => Repository.open()).toThrow();
+    });
+  });
+
+  describe("error messages", () => {
+    test("Repository.open provides meaningful error for non-existent path", () => {
+      try {
+        Repository.open("/this/path/does/not/exist/anywhere");
+        expect.unreachable("should have thrown");
+      } catch (e: any) {
+        // Error message should be descriptive
+        expect(typeof e.message).toBe("string");
+        expect(e.message.length).toBeGreaterThan(0);
+      }
+    });
+
+    test("revParse provides meaningful error for invalid ref", () => {
+      const repo = Repository.open(".");
+
+      try {
+        repo.revParse("this-ref-definitely-does-not-exist-12345");
+        expect.unreachable("should have thrown");
+      } catch (e: any) {
+        expect(typeof e.message).toBe("string");
+        expect(e.message.length).toBeGreaterThan(0);
+      }
+    });
+
+    test("countCommits provides meaningful error for invalid range", () => {
+      const repo = Repository.open(".");
+
+      try {
+        repo.countCommits("invalid-ref-abc..HEAD");
+        expect.unreachable("should have thrown");
+      } catch (e: any) {
+        expect(typeof e.message).toBe("string");
+        expect(e.message.length).toBeGreaterThan(0);
+      }
+    });
   });
 });

@@ -290,7 +290,10 @@ JSC_DEFINE_HOST_FUNCTION(jsGitRepositoryGetStatus, (JSC::JSGlobalObject * lexica
 
     size_t count = git_status_list_entrycount(statusList);
     JSC::JSArray* result = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, count);
-    RETURN_IF_EXCEPTION(scope, {});
+    if (scope.exception()) [[unlikely]] {
+        git_status_list_free(statusList);
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
 
     for (size_t i = 0; i < count; i++) {
         const git_status_entry* entry = git_status_byindex(statusList, i);
@@ -322,7 +325,10 @@ JSC_DEFINE_HOST_FUNCTION(jsGitRepositoryGetStatus, (JSC::JSGlobalObject * lexica
             JSC::jsNumber(static_cast<int>(entry->status)));
 
         result->putDirectIndex(lexicalGlobalObject, i, entryObj);
-        RETURN_IF_EXCEPTION(scope, {});
+        if (scope.exception()) [[unlikely]] {
+            git_status_list_free(statusList);
+            return JSC::JSValue::encode(JSC::jsUndefined());
+        }
     }
 
     git_status_list_free(statusList);
@@ -556,7 +562,10 @@ JSC_DEFINE_HOST_FUNCTION(jsGitRepositoryListFiles, (JSC::JSGlobalObject * lexica
 
     size_t count = git_index_entrycount(index);
     JSC::JSArray* result = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, count);
-    RETURN_IF_EXCEPTION(scope, {});
+    if (scope.exception()) [[unlikely]] {
+        git_index_free(index);
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
 
     for (size_t i = 0; i < count; i++) {
         const git_index_entry* entry = git_index_get_byindex(index, i);
@@ -583,7 +592,10 @@ JSC_DEFINE_HOST_FUNCTION(jsGitRepositoryListFiles, (JSC::JSGlobalObject * lexica
             JSC::jsNumber(static_cast<double>(entry->file_size)));
 
         result->putDirectIndex(lexicalGlobalObject, i, entryObj);
-        RETURN_IF_EXCEPTION(scope, {});
+        if (scope.exception()) [[unlikely]] {
+            git_index_free(index);
+            return JSC::JSValue::encode(JSC::jsUndefined());
+        }
     }
 
     git_index_free(index);
@@ -683,7 +695,10 @@ JSC_DEFINE_HOST_FUNCTION(jsGitRepositoryDiff, (JSC::JSGlobalObject * lexicalGlob
     // Get file list
     size_t numDeltas = git_diff_num_deltas(diff);
     JSC::JSArray* files = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, numDeltas);
-    RETURN_IF_EXCEPTION(scope, {});
+    if (scope.exception()) [[unlikely]] {
+        git_diff_free(diff);
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
 
     for (size_t i = 0; i < numDeltas; i++) {
         const git_diff_delta* delta = git_diff_get_delta(diff, i);
@@ -715,7 +730,10 @@ JSC_DEFINE_HOST_FUNCTION(jsGitRepositoryDiff, (JSC::JSGlobalObject * lexicalGlob
         }
 
         files->putDirectIndex(lexicalGlobalObject, i, fileObj);
-        RETURN_IF_EXCEPTION(scope, {});
+        if (scope.exception()) [[unlikely]] {
+            git_diff_free(diff);
+            return JSC::JSValue::encode(JSC::jsUndefined());
+        }
     }
 
     git_diff_free(diff);

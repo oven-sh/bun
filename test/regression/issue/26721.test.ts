@@ -81,12 +81,13 @@ describe("HTTP/2 allowHTTP1 option", () => {
 
   afterAll(async () => {
     if (ctx?.server) {
-      await Promise.race([
-        new Promise<void>(resolve => {
-          ctx.server.close(() => resolve());
-        }),
-        new Promise<void>(resolve => setTimeout(resolve, 1000)),
-      ]);
+      // Close all active connections first to ensure server.close() completes
+      if (typeof ctx.server.closeAllConnections === "function") {
+        ctx.server.closeAllConnections();
+      }
+      await new Promise<void>(resolve => {
+        ctx.server.close(() => resolve());
+      });
     }
   });
 
@@ -135,6 +136,9 @@ describe("HTTP/2 allowHTTP1 option", () => {
           path: "/",
           method: "GET",
           rejectUnauthorized: false,
+          headers: {
+            Connection: "close", // Ensure connection is closed after request
+          },
           // Force HTTP/1.1 by not specifying ALPNProtocols or by using https module
         },
         res => {
@@ -176,6 +180,7 @@ describe("HTTP/2 allowHTTP1 option", () => {
           headers: {
             "Content-Type": "application/json",
             "Content-Length": Buffer.byteLength(postData),
+            Connection: "close", // Ensure connection is closed after request
           },
         },
         res => {

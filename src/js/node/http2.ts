@@ -3783,7 +3783,7 @@ class Http1FallbackResponse extends EventEmitter {
     let head = `HTTP/1.1 ${this.statusCode} ${this.statusMessage}\r\n`;
 
     if (this.sendDate && !this.hasHeader("date")) {
-      head += `Date: ${new Date().toUTCString()}\r\n`;
+      head += `Date: ${utcDate()}\r\n`;
     }
 
     for (const [name, value] of Object.entries(this._headers)) {
@@ -3818,9 +3818,9 @@ class Http1FallbackResponse extends EventEmitter {
         const len = typeof chunk === "string" ? Buffer.byteLength(chunk) : chunk.length;
         this.socket.write(len.toString(16) + "\r\n");
         this.socket.write(chunk, encoding);
-        this.socket.write("\r\n", undefined, callback);
+        return this.socket.write("\r\n", undefined, callback);
       } else {
-        this.socket.write(chunk, encoding, callback);
+        return this.socket.write(chunk, encoding, callback);
       }
     } else if (callback) {
       callback();

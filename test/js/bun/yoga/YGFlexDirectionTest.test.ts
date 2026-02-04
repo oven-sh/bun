@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { expect, test } from "bun:test";
 const Yoga = Bun.Yoga;
 
 // Enum compatibility layer: map Facebook Yoga enum style to Bun's constant style
@@ -109,7 +109,7 @@ const ExperimentalFeature = {
   WebFlexBasis: Yoga.EXPERIMENTAL_FEATURE_WEB_FLEX_BASIS,
 };
 
-test('flex_direction_column_no_height', () => {
+test("flex_direction_column_no_height", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -173,14 +173,14 @@ test('flex_direction_column_no_height', () => {
     expect(root_child2.getComputedWidth()).toBe(100);
     expect(root_child2.getComputedHeight()).toBe(10);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_direction_row_no_width', () => {
+test("flex_direction_row_no_width", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -245,14 +245,14 @@ test('flex_direction_row_no_width', () => {
     expect(root_child2.getComputedWidth()).toBe(10);
     expect(root_child2.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_direction_column', () => {
+test("flex_direction_column", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -317,14 +317,14 @@ test('flex_direction_column', () => {
     expect(root_child2.getComputedWidth()).toBe(100);
     expect(root_child2.getComputedHeight()).toBe(10);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_direction_row', () => {
+test("flex_direction_row", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -390,14 +390,14 @@ test('flex_direction_row', () => {
     expect(root_child2.getComputedWidth()).toBe(10);
     expect(root_child2.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_direction_column_reverse', () => {
+test("flex_direction_column_reverse", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -463,14 +463,14 @@ test('flex_direction_column_reverse', () => {
     expect(root_child2.getComputedWidth()).toBe(100);
     expect(root_child2.getComputedHeight()).toBe(10);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_direction_row_reverse', () => {
+test("flex_direction_row_reverse", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -536,14 +536,14 @@ test('flex_direction_row_reverse', () => {
     expect(root_child2.getComputedWidth()).toBe(10);
     expect(root_child2.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_direction_row_reverse_margin_left', () => {
+test("flex_direction_row_reverse_margin_left", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -610,14 +610,14 @@ test('flex_direction_row_reverse_margin_left', () => {
     expect(root_child2.getComputedWidth()).toBe(10);
     expect(root_child2.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_direction_row_reverse_margin_start', () => {
+test("flex_direction_row_reverse_margin_start", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -684,14 +684,14 @@ test('flex_direction_row_reverse_margin_start', () => {
     expect(root_child2.getComputedWidth()).toBe(10);
     expect(root_child2.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_direction_row_reverse_margin_right', () => {
+test("flex_direction_row_reverse_margin_right", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -758,14 +758,14 @@ test('flex_direction_row_reverse_margin_right', () => {
     expect(root_child2.getComputedWidth()).toBe(10);
     expect(root_child2.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_direction_row_reverse_margin_end', () => {
+test("flex_direction_row_reverse_margin_end", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -832,14 +832,14 @@ test('flex_direction_row_reverse_margin_end', () => {
     expect(root_child2.getComputedWidth()).toBe(10);
     expect(root_child2.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_direction_column_reverse_margin_top', () => {
+test("flex_direction_column_reverse_margin_top", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -906,14 +906,14 @@ test('flex_direction_column_reverse_margin_top', () => {
     expect(root_child2.getComputedWidth()).toBe(10);
     expect(root_child2.getComputedHeight()).toBe(0);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_direction_column_reverse_margin_bottom', () => {
+test("flex_direction_column_reverse_margin_bottom", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -980,14 +980,14 @@ test('flex_direction_column_reverse_margin_bottom', () => {
     expect(root_child2.getComputedWidth()).toBe(10);
     expect(root_child2.getComputedHeight()).toBe(0);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_direction_row_reverse_padding_left', () => {
+test("flex_direction_row_reverse_padding_left", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1054,14 +1054,14 @@ test('flex_direction_row_reverse_padding_left', () => {
     expect(root_child2.getComputedWidth()).toBe(10);
     expect(root_child2.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_direction_row_reverse_padding_start', () => {
+test("flex_direction_row_reverse_padding_start", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1128,14 +1128,14 @@ test('flex_direction_row_reverse_padding_start', () => {
     expect(root_child2.getComputedWidth()).toBe(10);
     expect(root_child2.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_direction_row_reverse_padding_right', () => {
+test("flex_direction_row_reverse_padding_right", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1202,14 +1202,14 @@ test('flex_direction_row_reverse_padding_right', () => {
     expect(root_child2.getComputedWidth()).toBe(10);
     expect(root_child2.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_direction_row_reverse_padding_end', () => {
+test("flex_direction_row_reverse_padding_end", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1276,14 +1276,14 @@ test('flex_direction_row_reverse_padding_end', () => {
     expect(root_child2.getComputedWidth()).toBe(10);
     expect(root_child2.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_direction_column_reverse_padding_top', () => {
+test("flex_direction_column_reverse_padding_top", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1350,14 +1350,14 @@ test('flex_direction_column_reverse_padding_top', () => {
     expect(root_child2.getComputedWidth()).toBe(10);
     expect(root_child2.getComputedHeight()).toBe(0);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_direction_column_reverse_padding_bottom', () => {
+test("flex_direction_column_reverse_padding_bottom", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1424,14 +1424,14 @@ test('flex_direction_column_reverse_padding_bottom', () => {
     expect(root_child2.getComputedWidth()).toBe(10);
     expect(root_child2.getComputedHeight()).toBe(0);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_direction_row_reverse_border_left', () => {
+test("flex_direction_row_reverse_border_left", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1498,14 +1498,14 @@ test('flex_direction_row_reverse_border_left', () => {
     expect(root_child2.getComputedWidth()).toBe(10);
     expect(root_child2.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_direction_row_reverse_border_start', () => {
+test("flex_direction_row_reverse_border_start", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1572,14 +1572,14 @@ test('flex_direction_row_reverse_border_start', () => {
     expect(root_child2.getComputedWidth()).toBe(10);
     expect(root_child2.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_direction_row_reverse_border_right', () => {
+test("flex_direction_row_reverse_border_right", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1646,14 +1646,14 @@ test('flex_direction_row_reverse_border_right', () => {
     expect(root_child2.getComputedWidth()).toBe(10);
     expect(root_child2.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_direction_row_reverse_border_end', () => {
+test("flex_direction_row_reverse_border_end", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1720,14 +1720,14 @@ test('flex_direction_row_reverse_border_end', () => {
     expect(root_child2.getComputedWidth()).toBe(10);
     expect(root_child2.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_direction_column_reverse_border_top', () => {
+test("flex_direction_column_reverse_border_top", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1794,14 +1794,14 @@ test('flex_direction_column_reverse_border_top', () => {
     expect(root_child2.getComputedWidth()).toBe(10);
     expect(root_child2.getComputedHeight()).toBe(0);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_direction_column_reverse_border_bottom', () => {
+test("flex_direction_column_reverse_border_bottom", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1868,14 +1868,14 @@ test('flex_direction_column_reverse_border_bottom', () => {
     expect(root_child2.getComputedWidth()).toBe(10);
     expect(root_child2.getComputedHeight()).toBe(0);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_direction_row_reverse_pos_left', () => {
+test("flex_direction_row_reverse_pos_left", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1957,14 +1957,14 @@ test('flex_direction_row_reverse_pos_left', () => {
     expect(root_child0_child2.getComputedWidth()).toBe(10);
     expect(root_child0_child2.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_direction_row_reverse_pos_start', () => {
+test("flex_direction_row_reverse_pos_start", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -2046,14 +2046,14 @@ test('flex_direction_row_reverse_pos_start', () => {
     expect(root_child0_child2.getComputedWidth()).toBe(10);
     expect(root_child0_child2.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_direction_row_reverse_pos_right', () => {
+test("flex_direction_row_reverse_pos_right", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -2135,14 +2135,14 @@ test('flex_direction_row_reverse_pos_right', () => {
     expect(root_child0_child2.getComputedWidth()).toBe(10);
     expect(root_child0_child2.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_direction_row_reverse_pos_end', () => {
+test("flex_direction_row_reverse_pos_end", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -2224,14 +2224,14 @@ test('flex_direction_row_reverse_pos_end', () => {
     expect(root_child0_child2.getComputedWidth()).toBe(10);
     expect(root_child0_child2.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_direction_column_reverse_pos_top', () => {
+test("flex_direction_column_reverse_pos_top", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -2313,14 +2313,14 @@ test('flex_direction_column_reverse_pos_top', () => {
     expect(root_child0_child2.getComputedWidth()).toBe(10);
     expect(root_child0_child2.getComputedHeight()).toBe(0);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_direction_column_reverse_pos_bottom', () => {
+test("flex_direction_column_reverse_pos_bottom", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -2402,14 +2402,14 @@ test('flex_direction_column_reverse_pos_bottom', () => {
     expect(root_child0_child2.getComputedWidth()).toBe(10);
     expect(root_child0_child2.getComputedHeight()).toBe(0);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_direction_row_reverse_inner_pos_left', () => {
+test("flex_direction_row_reverse_inner_pos_left", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -2493,14 +2493,14 @@ test('flex_direction_row_reverse_inner_pos_left', () => {
     expect(root_child0_child2.getComputedWidth()).toBe(10);
     expect(root_child0_child2.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_direction_row_reverse_inner_pos_right', () => {
+test("flex_direction_row_reverse_inner_pos_right", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -2584,14 +2584,14 @@ test('flex_direction_row_reverse_inner_pos_right', () => {
     expect(root_child0_child2.getComputedWidth()).toBe(10);
     expect(root_child0_child2.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_direction_col_reverse_inner_pos_top', () => {
+test("flex_direction_col_reverse_inner_pos_top", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -2675,14 +2675,14 @@ test('flex_direction_col_reverse_inner_pos_top', () => {
     expect(root_child0_child2.getComputedWidth()).toBe(10);
     expect(root_child0_child2.getComputedHeight()).toBe(0);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_direction_col_reverse_inner_pos_bottom', () => {
+test("flex_direction_col_reverse_inner_pos_bottom", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -2766,14 +2766,14 @@ test('flex_direction_col_reverse_inner_pos_bottom', () => {
     expect(root_child0_child2.getComputedWidth()).toBe(10);
     expect(root_child0_child2.getComputedHeight()).toBe(0);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test.skip('flex_direction_row_reverse_inner_pos_start', () => {
+test.skip("flex_direction_row_reverse_inner_pos_start", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -2857,14 +2857,14 @@ test.skip('flex_direction_row_reverse_inner_pos_start', () => {
     expect(root_child0_child2.getComputedWidth()).toBe(10);
     expect(root_child0_child2.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test.skip('flex_direction_row_reverse_inner_pos_end', () => {
+test.skip("flex_direction_row_reverse_inner_pos_end", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -2948,14 +2948,14 @@ test.skip('flex_direction_row_reverse_inner_pos_end', () => {
     expect(root_child0_child2.getComputedWidth()).toBe(10);
     expect(root_child0_child2.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_direction_row_reverse_inner_margin_left', () => {
+test("flex_direction_row_reverse_inner_margin_left", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -3039,14 +3039,14 @@ test('flex_direction_row_reverse_inner_margin_left', () => {
     expect(root_child0_child2.getComputedWidth()).toBe(10);
     expect(root_child0_child2.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_direction_row_reverse_inner_margin_right', () => {
+test("flex_direction_row_reverse_inner_margin_right", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -3130,14 +3130,14 @@ test('flex_direction_row_reverse_inner_margin_right', () => {
     expect(root_child0_child2.getComputedWidth()).toBe(10);
     expect(root_child0_child2.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_direction_col_reverse_inner_margin_top', () => {
+test("flex_direction_col_reverse_inner_margin_top", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -3221,14 +3221,14 @@ test('flex_direction_col_reverse_inner_margin_top', () => {
     expect(root_child0_child2.getComputedWidth()).toBe(10);
     expect(root_child0_child2.getComputedHeight()).toBe(0);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_direction_col_reverse_inner_margin_bottom', () => {
+test("flex_direction_col_reverse_inner_margin_bottom", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -3312,14 +3312,14 @@ test('flex_direction_col_reverse_inner_margin_bottom', () => {
     expect(root_child0_child2.getComputedWidth()).toBe(10);
     expect(root_child0_child2.getComputedHeight()).toBe(0);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_direction_row_reverse_inner_marign_start', () => {
+test("flex_direction_row_reverse_inner_marign_start", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -3403,14 +3403,14 @@ test('flex_direction_row_reverse_inner_marign_start', () => {
     expect(root_child0_child2.getComputedWidth()).toBe(10);
     expect(root_child0_child2.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_direction_row_reverse_inner_margin_end', () => {
+test("flex_direction_row_reverse_inner_margin_end", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -3494,14 +3494,14 @@ test('flex_direction_row_reverse_inner_margin_end', () => {
     expect(root_child0_child2.getComputedWidth()).toBe(10);
     expect(root_child0_child2.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_direction_row_reverse_inner_border_left', () => {
+test("flex_direction_row_reverse_inner_border_left", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -3585,14 +3585,14 @@ test('flex_direction_row_reverse_inner_border_left', () => {
     expect(root_child0_child2.getComputedWidth()).toBe(10);
     expect(root_child0_child2.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_direction_row_reverse_inner_border_right', () => {
+test("flex_direction_row_reverse_inner_border_right", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -3676,14 +3676,14 @@ test('flex_direction_row_reverse_inner_border_right', () => {
     expect(root_child0_child2.getComputedWidth()).toBe(10);
     expect(root_child0_child2.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_direction_col_reverse_inner_border_top', () => {
+test("flex_direction_col_reverse_inner_border_top", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -3767,14 +3767,14 @@ test('flex_direction_col_reverse_inner_border_top', () => {
     expect(root_child0_child2.getComputedWidth()).toBe(10);
     expect(root_child0_child2.getComputedHeight()).toBe(0);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_direction_col_reverse_inner_border_bottom', () => {
+test("flex_direction_col_reverse_inner_border_bottom", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -3858,14 +3858,14 @@ test('flex_direction_col_reverse_inner_border_bottom', () => {
     expect(root_child0_child2.getComputedWidth()).toBe(10);
     expect(root_child0_child2.getComputedHeight()).toBe(0);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_direction_row_reverse_inner_border_start', () => {
+test("flex_direction_row_reverse_inner_border_start", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -3949,14 +3949,14 @@ test('flex_direction_row_reverse_inner_border_start', () => {
     expect(root_child0_child2.getComputedWidth()).toBe(10);
     expect(root_child0_child2.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_direction_row_reverse_inner_border_end', () => {
+test("flex_direction_row_reverse_inner_border_end", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -4040,14 +4040,14 @@ test('flex_direction_row_reverse_inner_border_end', () => {
     expect(root_child0_child2.getComputedWidth()).toBe(10);
     expect(root_child0_child2.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_direction_row_reverse_inner_padding_left', () => {
+test("flex_direction_row_reverse_inner_padding_left", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -4131,14 +4131,14 @@ test('flex_direction_row_reverse_inner_padding_left', () => {
     expect(root_child0_child2.getComputedWidth()).toBe(10);
     expect(root_child0_child2.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_direction_row_reverse_inner_padding_right', () => {
+test("flex_direction_row_reverse_inner_padding_right", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -4222,14 +4222,14 @@ test('flex_direction_row_reverse_inner_padding_right', () => {
     expect(root_child0_child2.getComputedWidth()).toBe(10);
     expect(root_child0_child2.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_direction_col_reverse_inner_padding_top', () => {
+test("flex_direction_col_reverse_inner_padding_top", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -4313,14 +4313,14 @@ test('flex_direction_col_reverse_inner_padding_top', () => {
     expect(root_child0_child2.getComputedWidth()).toBe(10);
     expect(root_child0_child2.getComputedHeight()).toBe(0);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_direction_col_reverse_inner_padding_bottom', () => {
+test("flex_direction_col_reverse_inner_padding_bottom", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -4404,14 +4404,14 @@ test('flex_direction_col_reverse_inner_padding_bottom', () => {
     expect(root_child0_child2.getComputedWidth()).toBe(10);
     expect(root_child0_child2.getComputedHeight()).toBe(0);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_direction_row_reverse_inner_padding_start', () => {
+test("flex_direction_row_reverse_inner_padding_start", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -4495,14 +4495,14 @@ test('flex_direction_row_reverse_inner_padding_start', () => {
     expect(root_child0_child2.getComputedWidth()).toBe(10);
     expect(root_child0_child2.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_direction_row_reverse_inner_padding_end', () => {
+test("flex_direction_row_reverse_inner_padding_end", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -4586,14 +4586,14 @@ test('flex_direction_row_reverse_inner_padding_end', () => {
     expect(root_child0_child2.getComputedWidth()).toBe(10);
     expect(root_child0_child2.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_direction_alternating_with_percent', () => {
+test("flex_direction_alternating_with_percent", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -4634,7 +4634,7 @@ test('flex_direction_alternating_with_percent', () => {
     expect(root_child0.getComputedWidth()).toBe(100);
     expect(root_child0.getComputedHeight()).toBe(150);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 

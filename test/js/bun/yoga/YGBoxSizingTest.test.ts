@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { expect, test } from "bun:test";
 const Yoga = Bun.Yoga;
 
 const Align = {
@@ -75,7 +75,7 @@ const Wrap = {
   WrapReverse: Yoga.WRAP_WRAP_REVERSE,
 };
 
-test('box_sizing_content_box_simple', () => {
+test("box_sizing_content_box_simple", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -107,14 +107,14 @@ test('box_sizing_content_box_simple', () => {
     expect(root.getComputedWidth()).toBe(130);
     expect(root.getComputedHeight()).toBe(130);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('box_sizing_border_box_simple', () => {
+test("box_sizing_border_box_simple", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -145,14 +145,14 @@ test('box_sizing_border_box_simple', () => {
     expect(root.getComputedWidth()).toBe(100);
     expect(root.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('box_sizing_content_box_percent', () => {
+test("box_sizing_content_box_percent", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -199,14 +199,14 @@ test('box_sizing_content_box_percent', () => {
     expect(root_child0.getComputedWidth()).toBe(90);
     expect(root_child0.getComputedHeight()).toBe(65);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('box_sizing_border_box_percent', () => {
+test("box_sizing_border_box_percent", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -252,14 +252,14 @@ test('box_sizing_border_box_percent', () => {
     expect(root_child0.getComputedWidth()).toBe(50);
     expect(root_child0.getComputedHeight()).toBe(40);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('box_sizing_content_box_absolute', () => {
+test("box_sizing_content_box_absolute", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -306,14 +306,14 @@ test('box_sizing_content_box_absolute', () => {
     expect(root_child0.getComputedWidth()).toBe(40);
     expect(root_child0.getComputedHeight()).toBe(65);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('box_sizing_border_box_absolute', () => {
+test("box_sizing_border_box_absolute", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -359,14 +359,14 @@ test('box_sizing_border_box_absolute', () => {
     expect(root_child0.getComputedWidth()).toBe(40);
     expect(root_child0.getComputedHeight()).toBe(40);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('box_sizing_content_box_comtaining_block', () => {
+test("box_sizing_content_box_comtaining_block", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -428,14 +428,14 @@ test('box_sizing_content_box_comtaining_block', () => {
     expect(root_child0_child0.getComputedWidth()).toBe(50);
     expect(root_child0_child0.getComputedHeight()).toBe(31);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('box_sizing_border_box_comtaining_block', () => {
+test("box_sizing_border_box_comtaining_block", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -496,14 +496,14 @@ test('box_sizing_border_box_comtaining_block', () => {
     expect(root_child0_child0.getComputedWidth()).toBe(50);
     expect(root_child0_child0.getComputedHeight()).toBe(21);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('box_sizing_content_box_padding_only', () => {
+test("box_sizing_content_box_padding_only", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -531,14 +531,14 @@ test('box_sizing_content_box_padding_only', () => {
     expect(root.getComputedWidth()).toBe(110);
     expect(root.getComputedHeight()).toBe(110);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('box_sizing_content_box_padding_only_percent', () => {
+test("box_sizing_content_box_padding_only_percent", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -581,14 +581,14 @@ test('box_sizing_content_box_padding_only_percent', () => {
     expect(root_child0.getComputedWidth()).toBe(70);
     expect(root_child0.getComputedHeight()).toBe(95);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('box_sizing_border_box_padding_only', () => {
+test("box_sizing_border_box_padding_only", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -615,14 +615,14 @@ test('box_sizing_border_box_padding_only', () => {
     expect(root.getComputedWidth()).toBe(100);
     expect(root.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('box_sizing_border_box_padding_only_percent', () => {
+test("box_sizing_border_box_padding_only_percent", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -664,14 +664,14 @@ test('box_sizing_border_box_padding_only_percent', () => {
     expect(root_child0.getComputedWidth()).toBe(50);
     expect(root_child0.getComputedHeight()).toBe(75);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('box_sizing_content_box_border_only', () => {
+test("box_sizing_content_box_border_only", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -699,14 +699,14 @@ test('box_sizing_content_box_border_only', () => {
     expect(root.getComputedWidth()).toBe(120);
     expect(root.getComputedHeight()).toBe(120);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('box_sizing_content_box_border_only_percent', () => {
+test("box_sizing_content_box_border_only_percent", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -744,14 +744,14 @@ test('box_sizing_content_box_border_only_percent', () => {
     expect(root_child0.getComputedWidth()).toBe(50);
     expect(root_child0.getComputedHeight()).toBe(0);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('box_sizing_border_box_border_only', () => {
+test("box_sizing_border_box_border_only", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -778,14 +778,14 @@ test('box_sizing_border_box_border_only', () => {
     expect(root.getComputedWidth()).toBe(100);
     expect(root.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('box_sizing_border_box_border_only_percent', () => {
+test("box_sizing_border_box_border_only_percent", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -822,14 +822,14 @@ test('box_sizing_border_box_border_only_percent', () => {
     expect(root_child0.getComputedWidth()).toBe(50);
     expect(root_child0.getComputedHeight()).toBe(0);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('box_sizing_content_box_no_padding_no_border', () => {
+test("box_sizing_content_box_no_padding_no_border", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -853,14 +853,14 @@ test('box_sizing_content_box_no_padding_no_border', () => {
     expect(root.getComputedWidth()).toBe(100);
     expect(root.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('box_sizing_border_box_no_padding_no_border', () => {
+test("box_sizing_border_box_no_padding_no_border", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -883,14 +883,14 @@ test('box_sizing_border_box_no_padding_no_border', () => {
     expect(root.getComputedWidth()).toBe(100);
     expect(root.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('box_sizing_content_box_children', () => {
+test("box_sizing_content_box_children", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -982,14 +982,14 @@ test('box_sizing_content_box_children', () => {
     expect(root_child3.getComputedWidth()).toBe(25);
     expect(root_child3.getComputedHeight()).toBe(25);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('box_sizing_border_box_children', () => {
+test("box_sizing_border_box_children", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1080,14 +1080,14 @@ test('box_sizing_border_box_children', () => {
     expect(root_child3.getComputedWidth()).toBe(25);
     expect(root_child3.getComputedHeight()).toBe(25);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('box_sizing_content_box_siblings', () => {
+test("box_sizing_content_box_siblings", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1179,14 +1179,14 @@ test('box_sizing_content_box_siblings', () => {
     expect(root_child3.getComputedWidth()).toBe(25);
     expect(root_child3.getComputedHeight()).toBe(25);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('box_sizing_border_box_siblings', () => {
+test("box_sizing_border_box_siblings", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1277,14 +1277,14 @@ test('box_sizing_border_box_siblings', () => {
     expect(root_child3.getComputedWidth()).toBe(25);
     expect(root_child3.getComputedHeight()).toBe(25);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('box_sizing_content_box_max_width', () => {
+test("box_sizing_content_box_max_width", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1346,14 +1346,14 @@ test('box_sizing_content_box_max_width', () => {
     expect(root_child1.getComputedWidth()).toBe(25);
     expect(root_child1.getComputedHeight()).toBe(25);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('box_sizing_border_box_max_width', () => {
+test("box_sizing_border_box_max_width", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1414,14 +1414,14 @@ test('box_sizing_border_box_max_width', () => {
     expect(root_child1.getComputedWidth()).toBe(25);
     expect(root_child1.getComputedHeight()).toBe(25);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('box_sizing_content_box_max_height', () => {
+test("box_sizing_content_box_max_height", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1483,14 +1483,14 @@ test('box_sizing_content_box_max_height', () => {
     expect(root_child1.getComputedWidth()).toBe(25);
     expect(root_child1.getComputedHeight()).toBe(25);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('box_sizing_border_box_max_height', () => {
+test("box_sizing_border_box_max_height", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1551,14 +1551,14 @@ test('box_sizing_border_box_max_height', () => {
     expect(root_child1.getComputedWidth()).toBe(25);
     expect(root_child1.getComputedHeight()).toBe(25);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('box_sizing_content_box_min_width', () => {
+test("box_sizing_content_box_min_width", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1620,14 +1620,14 @@ test('box_sizing_content_box_min_width', () => {
     expect(root_child1.getComputedWidth()).toBe(25);
     expect(root_child1.getComputedHeight()).toBe(25);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('box_sizing_border_box_min_width', () => {
+test("box_sizing_border_box_min_width", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1688,14 +1688,14 @@ test('box_sizing_border_box_min_width', () => {
     expect(root_child1.getComputedWidth()).toBe(25);
     expect(root_child1.getComputedHeight()).toBe(25);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('box_sizing_content_box_min_height', () => {
+test("box_sizing_content_box_min_height", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1757,14 +1757,14 @@ test('box_sizing_content_box_min_height', () => {
     expect(root_child1.getComputedWidth()).toBe(25);
     expect(root_child1.getComputedHeight()).toBe(25);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('box_sizing_border_box_min_height', () => {
+test("box_sizing_border_box_min_height", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1825,14 +1825,14 @@ test('box_sizing_border_box_min_height', () => {
     expect(root_child1.getComputedWidth()).toBe(25);
     expect(root_child1.getComputedHeight()).toBe(25);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('box_sizing_content_box_no_height_no_width', () => {
+test("box_sizing_content_box_no_height_no_width", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1877,14 +1877,14 @@ test('box_sizing_content_box_no_height_no_width', () => {
     expect(root_child0.getComputedWidth()).toBe(100);
     expect(root_child0.getComputedHeight()).toBe(18);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('box_sizing_border_box_no_height_no_width', () => {
+test("box_sizing_border_box_no_height_no_width", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1928,14 +1928,14 @@ test('box_sizing_border_box_no_height_no_width', () => {
     expect(root_child0.getComputedWidth()).toBe(100);
     expect(root_child0.getComputedHeight()).toBe(18);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('box_sizing_content_box_nested', () => {
+test("box_sizing_content_box_nested", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -2015,14 +2015,14 @@ test('box_sizing_content_box_nested', () => {
     expect(root_child0_child0.getComputedWidth()).toBe(16);
     expect(root_child0_child0.getComputedHeight()).toBe(11);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('box_sizing_border_box_nested', () => {
+test("box_sizing_border_box_nested", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -2099,14 +2099,14 @@ test('box_sizing_border_box_nested', () => {
     expect(root_child0_child0.getComputedWidth()).toBe(10);
     expect(root_child0_child0.getComputedHeight()).toBe(6);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('box_sizing_content_box_nested_alternating', () => {
+test("box_sizing_content_box_nested_alternating", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -2208,14 +2208,14 @@ test('box_sizing_content_box_nested_alternating', () => {
     expect(root_child0_child0_child0.getComputedWidth()).toBe(10);
     expect(root_child0_child0_child0.getComputedHeight()).toBe(5);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('box_sizing_border_box_nested_alternating', () => {
+test("box_sizing_border_box_nested_alternating", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -2317,14 +2317,14 @@ test('box_sizing_border_box_nested_alternating', () => {
     expect(root_child0_child0_child0.getComputedWidth()).toBe(14);
     expect(root_child0_child0_child0.getComputedHeight()).toBe(9);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test.skip('box_sizing_content_box_flex_basis_row', () => {
+test.skip("box_sizing_content_box_flex_basis_row", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -2372,14 +2372,14 @@ test.skip('box_sizing_content_box_flex_basis_row', () => {
     expect(root_child0.getComputedWidth()).toBe(80);
     expect(root_child0.getComputedHeight()).toBe(55);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('box_sizing_border_box_flex_basis_row', () => {
+test("box_sizing_border_box_flex_basis_row", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -2426,14 +2426,14 @@ test('box_sizing_border_box_flex_basis_row', () => {
     expect(root_child0.getComputedWidth()).toBe(50);
     expect(root_child0.getComputedHeight()).toBe(30);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test.skip('box_sizing_content_box_flex_basis_column', () => {
+test.skip("box_sizing_content_box_flex_basis_column", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -2480,14 +2480,14 @@ test.skip('box_sizing_content_box_flex_basis_column', () => {
     expect(root_child0.getComputedWidth()).toBe(100);
     expect(root_child0.getComputedHeight()).toBe(80);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('box_sizing_border_box_flex_basis_column', () => {
+test("box_sizing_border_box_flex_basis_column", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -2533,14 +2533,14 @@ test('box_sizing_border_box_flex_basis_column', () => {
     expect(root_child0.getComputedWidth()).toBe(100);
     expect(root_child0.getComputedHeight()).toBe(50);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('box_sizing_content_box_padding_start', () => {
+test("box_sizing_content_box_padding_start", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -2565,14 +2565,14 @@ test('box_sizing_content_box_padding_start', () => {
     expect(root.getComputedWidth()).toBe(105);
     expect(root.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('box_sizing_border_box_padding_start', () => {
+test("box_sizing_border_box_padding_start", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -2596,14 +2596,14 @@ test('box_sizing_border_box_padding_start', () => {
     expect(root.getComputedWidth()).toBe(100);
     expect(root.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('box_sizing_content_box_padding_end', () => {
+test("box_sizing_content_box_padding_end", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -2628,14 +2628,14 @@ test('box_sizing_content_box_padding_end', () => {
     expect(root.getComputedWidth()).toBe(105);
     expect(root.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('box_sizing_border_box_padding_end', () => {
+test("box_sizing_border_box_padding_end", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -2659,14 +2659,14 @@ test('box_sizing_border_box_padding_end', () => {
     expect(root.getComputedWidth()).toBe(100);
     expect(root.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('box_sizing_content_box_border_start', () => {
+test("box_sizing_content_box_border_start", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -2691,14 +2691,14 @@ test('box_sizing_content_box_border_start', () => {
     expect(root.getComputedWidth()).toBe(105);
     expect(root.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('box_sizing_border_box_border_start', () => {
+test("box_sizing_border_box_border_start", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -2722,14 +2722,14 @@ test('box_sizing_border_box_border_start', () => {
     expect(root.getComputedWidth()).toBe(100);
     expect(root.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('box_sizing_content_box_border_end', () => {
+test("box_sizing_content_box_border_end", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -2754,14 +2754,14 @@ test('box_sizing_content_box_border_end', () => {
     expect(root.getComputedWidth()).toBe(105);
     expect(root.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('box_sizing_border_box_border_end', () => {
+test("box_sizing_border_box_border_end", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -2785,7 +2785,7 @@ test('box_sizing_border_box_border_end', () => {
     expect(root.getComputedWidth()).toBe(100);
     expect(root.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 

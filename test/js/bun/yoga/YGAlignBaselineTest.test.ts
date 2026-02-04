@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { expect, test } from "bun:test";
 const Yoga = Bun.Yoga;
 
 /**
@@ -8,8 +8,7 @@ const Yoga = Bun.Yoga;
  * LICENSE file in the root directory of this source tree.
  */
 
-
-test('align_baseline_parent_using_child_in_column_as_reference', () => {
+test("align_baseline_parent_using_child_in_column_as_reference", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -59,7 +58,7 @@ test('align_baseline_parent_using_child_in_column_as_reference', () => {
     expect(root_child1_child1.getComputedLeft()).toBe(0);
     expect(root_child1_child1.getComputedTop()).toBe(300);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
@@ -67,7 +66,7 @@ test('align_baseline_parent_using_child_in_column_as_reference', () => {
   }
 });
 
-test('align_baseline_parent_using_child_in_row_as_reference', () => {
+test("align_baseline_parent_using_child_in_row_as_reference", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -117,7 +116,7 @@ test('align_baseline_parent_using_child_in_row_as_reference', () => {
     expect(root_child1_child1.getComputedLeft()).toBe(500);
     expect(root_child1_child1.getComputedTop()).toBe(0);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 

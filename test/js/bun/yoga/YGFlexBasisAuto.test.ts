@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { expect, test } from "bun:test";
 const Yoga = Bun.Yoga;
 
 /**
@@ -8,8 +8,7 @@ const Yoga = Bun.Yoga;
  * LICENSE file in the root directory of this source tree.
  */
 
-
-test('flex_basis_auto', () => {
+test("flex_basis_auto", () => {
   const root = Yoga.Node.create();
 
   expect(root.getFlexBasis().unit).toBe(Yoga.UNIT_AUTO);

@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { expect, test } from "bun:test";
 const Yoga = Bun.Yoga;
 
 const Align = {
@@ -90,14 +90,14 @@ const Wrap = {
 };
 
 function instrinsicSizeMeasureFunc(
-  this: {text: string; flexDirection: number},
+  this: { text: string; flexDirection: number },
   width: number,
   widthMode: number,
   height: number,
   heightMode: number,
-): {width: number; height: number} {
+): { width: number; height: number } {
   const textLength = this.text.length;
-  const words = this.text.split(' ');
+  const words = this.text.split(" ");
   const flexDirection = this.flexDirection;
   const widthPerChar = 10;
   const heightPerChar = 10;
@@ -137,9 +137,7 @@ function instrinsicSizeMeasureFunc(
     }
 
     const maxLineWidth =
-      flexDirection == FlexDirection.Column
-        ? measuredWidth
-        : Math.max(longestWordWidth(), measuredWidth);
+      flexDirection == FlexDirection.Column ? measuredWidth : Math.max(longestWordWidth(), measuredWidth);
 
     let lines = 1;
     let currentLineLength = 0;
@@ -161,10 +159,10 @@ function instrinsicSizeMeasureFunc(
     return (currentLineLength === 0 ? lines - 1 : lines) * heightPerChar;
   }
 
-  return {width: measuredWidth, height: measuredHeight};
+  return { width: measuredWidth, height: measuredHeight };
 }
 
-test('contains_inner_text_long_word', () => {
+test("contains_inner_text_long_word", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -178,7 +176,12 @@ test('contains_inner_text_long_word', () => {
     const root_child0 = Yoga.Node.create(config);
     root_child0.setFlexDirection(FlexDirection.Row);
     root.insertChild(root_child0, 0);
-    root_child0.setMeasureFunc(instrinsicSizeMeasureFunc.bind({text: "LoremipsumdolorsitametconsecteturadipiscingelitSedeleifasdfettortoracauctorFuscerhoncusipsumtemporerosaliquamconsequatPraesentsoda", flexDirection: FlexDirection.Row}));
+    root_child0.setMeasureFunc(
+      instrinsicSizeMeasureFunc.bind({
+        text: "LoremipsumdolorsitametconsecteturadipiscingelitSedeleifasdfettortoracauctorFuscerhoncusipsumtemporerosaliquamconsequatPraesentsoda",
+        flexDirection: FlexDirection.Row,
+      }),
+    );
     root.calculateLayout(undefined, undefined, Direction.LTR);
 
     expect(root.getComputedLeft()).toBe(0);
@@ -203,14 +206,14 @@ test('contains_inner_text_long_word', () => {
     expect(root_child0.getComputedWidth()).toBe(1300);
     expect(root_child0.getComputedHeight()).toBe(10);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('contains_inner_text_no_width_no_height', () => {
+test("contains_inner_text_no_width_no_height", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -224,7 +227,12 @@ test('contains_inner_text_no_width_no_height', () => {
     const root_child0 = Yoga.Node.create(config);
     root_child0.setFlexDirection(FlexDirection.Row);
     root.insertChild(root_child0, 0);
-    root_child0.setMeasureFunc(instrinsicSizeMeasureFunc.bind({text: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed eleifasd et tortor ac auctor. Integer at volutpat libero, sed elementum dui interdum id. Aliquam consectetur massa vel neque aliquet, quis consequat risus fringilla. Fusce rhoncus ipsum tempor eros aliquam, vel tempus metus ullamcorper. Nam at nulla sed tellus vestibulum fringilla vel sit amet ligula. Proin velit lectus, euismod sit amet quam vel ultricies dolor, vitae finibus lorem ipsum. Pellentesque molestie at mi sit amet dictum. Donec vehicula lacinia felis sit amet consectetur. Praesent sodales enim sapien, sed varius ipsum pellentesque vel. Aenean eu mi eu justo tincidunt finibus vel sit amet ipsum. Sed bibasdum purus vel ipsum sagittis, quis fermentum dolor lobortis. Etiam vulputate eleifasd lectus vel varius. Phasellus imperdiet lectus sit amet ipsum egestas, ut bibasdum ipsum malesuada. Vestibulum ante ipsum primis in faucibus orci luctus et ultrices posuere cubilia Curae; Sed mollis eros sit amet elit porttitor, vel venenatis turpis venenatis. Nulla tempus tortor at eros efficitur, sit amet dapibus ipsum malesuada. Ut at mauris sed nunc malesuada convallis. Duis id sem vel magna varius eleifasd vel at est. Donec eget orci a ipsum tempor lobortis. Sed at consectetur ipsum.", flexDirection: FlexDirection.Row}));
+    root_child0.setMeasureFunc(
+      instrinsicSizeMeasureFunc.bind({
+        text: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed eleifasd et tortor ac auctor. Integer at volutpat libero, sed elementum dui interdum id. Aliquam consectetur massa vel neque aliquet, quis consequat risus fringilla. Fusce rhoncus ipsum tempor eros aliquam, vel tempus metus ullamcorper. Nam at nulla sed tellus vestibulum fringilla vel sit amet ligula. Proin velit lectus, euismod sit amet quam vel ultricies dolor, vitae finibus lorem ipsum. Pellentesque molestie at mi sit amet dictum. Donec vehicula lacinia felis sit amet consectetur. Praesent sodales enim sapien, sed varius ipsum pellentesque vel. Aenean eu mi eu justo tincidunt finibus vel sit amet ipsum. Sed bibasdum purus vel ipsum sagittis, quis fermentum dolor lobortis. Etiam vulputate eleifasd lectus vel varius. Phasellus imperdiet lectus sit amet ipsum egestas, ut bibasdum ipsum malesuada. Vestibulum ante ipsum primis in faucibus orci luctus et ultrices posuere cubilia Curae; Sed mollis eros sit amet elit porttitor, vel venenatis turpis venenatis. Nulla tempus tortor at eros efficitur, sit amet dapibus ipsum malesuada. Ut at mauris sed nunc malesuada convallis. Duis id sem vel magna varius eleifasd vel at est. Donec eget orci a ipsum tempor lobortis. Sed at consectetur ipsum.",
+        flexDirection: FlexDirection.Row,
+      }),
+    );
     root.calculateLayout(undefined, undefined, Direction.LTR);
 
     expect(root.getComputedLeft()).toBe(0);
@@ -249,14 +257,14 @@ test('contains_inner_text_no_width_no_height', () => {
     expect(root_child0.getComputedWidth()).toBe(2000);
     expect(root_child0.getComputedHeight()).toBe(70);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('contains_inner_text_no_width_no_height_long_word_in_paragraph', () => {
+test("contains_inner_text_no_width_no_height_long_word_in_paragraph", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -270,7 +278,12 @@ test('contains_inner_text_no_width_no_height_long_word_in_paragraph', () => {
     const root_child0 = Yoga.Node.create(config);
     root_child0.setFlexDirection(FlexDirection.Row);
     root.insertChild(root_child0, 0);
-    root_child0.setMeasureFunc(instrinsicSizeMeasureFunc.bind({text: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed eleifasd et tortor ac auctor. Integer at volutpat libero, sed elementum dui interdum id. Aliquam consectetur massa vel neque aliquet, quis consequat risus fringilla. Fusce rhoncus ipsum tempor eros aliquam, vel tempus metus ullamcorper. Nam at nulla sed tellus vestibulum fringilla vel sit amet ligula. Proin velit lectus, euismod sit amet quam vel ultricies dolor, vitae finibus loremipsumloremipsumloremipsumloremipsumloremipsumloremipsumloremipsumloremipsumloremipsumloremipsumloremipsumloremipsumloremipsumlorem Pellentesque molestie at mi sit amet dictum. Donec vehicula lacinia felis sit amet consectetur. Praesent sodales enim sapien, sed varius ipsum pellentesque vel. Aenean eu mi eu justo tincidunt finibus vel sit amet ipsum. Sed bibasdum purus vel ipsum sagittis, quis fermentum dolor lobortis. Etiam vulputate eleifasd lectus vel varius. Phasellus imperdiet lectus sit amet ipsum egestas, ut bibasdum ipsum malesuada. Vestibulum ante ipsum primis in faucibus orci luctus et ultrices posuere cubilia Curae; Sed mollis eros sit amet elit porttitor, vel venenatis turpis venenatis. Nulla tempus tortor at eros efficitur, sit amet dapibus ipsum malesuada. Ut at mauris sed nunc malesuada convallis. Duis id sem vel magna varius eleifasd vel at est. Donec eget orci a ipsum tempor lobortis. Sed at consectetur ipsum.", flexDirection: FlexDirection.Row}));
+    root_child0.setMeasureFunc(
+      instrinsicSizeMeasureFunc.bind({
+        text: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed eleifasd et tortor ac auctor. Integer at volutpat libero, sed elementum dui interdum id. Aliquam consectetur massa vel neque aliquet, quis consequat risus fringilla. Fusce rhoncus ipsum tempor eros aliquam, vel tempus metus ullamcorper. Nam at nulla sed tellus vestibulum fringilla vel sit amet ligula. Proin velit lectus, euismod sit amet quam vel ultricies dolor, vitae finibus loremipsumloremipsumloremipsumloremipsumloremipsumloremipsumloremipsumloremipsumloremipsumloremipsumloremipsumloremipsumloremipsumlorem Pellentesque molestie at mi sit amet dictum. Donec vehicula lacinia felis sit amet consectetur. Praesent sodales enim sapien, sed varius ipsum pellentesque vel. Aenean eu mi eu justo tincidunt finibus vel sit amet ipsum. Sed bibasdum purus vel ipsum sagittis, quis fermentum dolor lobortis. Etiam vulputate eleifasd lectus vel varius. Phasellus imperdiet lectus sit amet ipsum egestas, ut bibasdum ipsum malesuada. Vestibulum ante ipsum primis in faucibus orci luctus et ultrices posuere cubilia Curae; Sed mollis eros sit amet elit porttitor, vel venenatis turpis venenatis. Nulla tempus tortor at eros efficitur, sit amet dapibus ipsum malesuada. Ut at mauris sed nunc malesuada convallis. Duis id sem vel magna varius eleifasd vel at est. Donec eget orci a ipsum tempor lobortis. Sed at consectetur ipsum.",
+        flexDirection: FlexDirection.Row,
+      }),
+    );
     root.calculateLayout(undefined, undefined, Direction.LTR);
 
     expect(root.getComputedLeft()).toBe(0);
@@ -295,14 +308,14 @@ test('contains_inner_text_no_width_no_height_long_word_in_paragraph', () => {
     expect(root_child0.getComputedWidth()).toBe(2000);
     expect(root_child0.getComputedHeight()).toBe(70);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('contains_inner_text_fixed_width', () => {
+test("contains_inner_text_fixed_width", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -317,7 +330,12 @@ test('contains_inner_text_fixed_width', () => {
     root_child0.setFlexDirection(FlexDirection.Row);
     root_child0.setWidth(100);
     root.insertChild(root_child0, 0);
-    root_child0.setMeasureFunc(instrinsicSizeMeasureFunc.bind({text: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed eleifasd et tortor ac auctor. Integer at volutpat libero, sed elementum dui interdum id. Aliquam consectetur massa vel neque aliquet, quis consequat risus fringilla. Fusce rhoncus ipsum tempor eros aliquam, vel tempus metus ullamcorper. Nam at nulla sed tellus vestibulum fringilla vel sit amet ligula. Proin velit lectus, euismod sit amet quam vel ultricies dolor, vitae finibus lorem ipsum. Pellentesque molestie at mi sit amet dictum. Donec vehicula lacinia felis sit amet consectetur. Praesent sodales enim sapien, sed varius ipsum pellentesque vel. Aenean eu mi eu justo tincidunt finibus vel sit amet ipsum. Sed bibasdum purus vel ipsum sagittis, quis fermentum dolor lobortis. Etiam vulputate eleifasd lectus vel varius. Phasellus imperdiet lectus sit amet ipsum egestas, ut bibasdum ipsum malesuada. Vestibulum ante ipsum primis in faucibus orci luctus et ultrices posuere cubilia Curae; Sed mollis eros sit amet elit porttitor, vel venenatis turpis venenatis. Nulla tempus tortor at eros efficitur, sit amet dapibus ipsum malesuada. Ut at mauris sed nunc malesuada convallis. Duis id sem vel magna varius eleifasd vel at est. Donec eget orci a ipsum tempor lobortis. Sed at consectetur ipsum.", flexDirection: FlexDirection.Row}));
+    root_child0.setMeasureFunc(
+      instrinsicSizeMeasureFunc.bind({
+        text: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed eleifasd et tortor ac auctor. Integer at volutpat libero, sed elementum dui interdum id. Aliquam consectetur massa vel neque aliquet, quis consequat risus fringilla. Fusce rhoncus ipsum tempor eros aliquam, vel tempus metus ullamcorper. Nam at nulla sed tellus vestibulum fringilla vel sit amet ligula. Proin velit lectus, euismod sit amet quam vel ultricies dolor, vitae finibus lorem ipsum. Pellentesque molestie at mi sit amet dictum. Donec vehicula lacinia felis sit amet consectetur. Praesent sodales enim sapien, sed varius ipsum pellentesque vel. Aenean eu mi eu justo tincidunt finibus vel sit amet ipsum. Sed bibasdum purus vel ipsum sagittis, quis fermentum dolor lobortis. Etiam vulputate eleifasd lectus vel varius. Phasellus imperdiet lectus sit amet ipsum egestas, ut bibasdum ipsum malesuada. Vestibulum ante ipsum primis in faucibus orci luctus et ultrices posuere cubilia Curae; Sed mollis eros sit amet elit porttitor, vel venenatis turpis venenatis. Nulla tempus tortor at eros efficitur, sit amet dapibus ipsum malesuada. Ut at mauris sed nunc malesuada convallis. Duis id sem vel magna varius eleifasd vel at est. Donec eget orci a ipsum tempor lobortis. Sed at consectetur ipsum.",
+        flexDirection: FlexDirection.Row,
+      }),
+    );
     root.calculateLayout(undefined, undefined, Direction.LTR);
 
     expect(root.getComputedLeft()).toBe(0);
@@ -342,14 +360,14 @@ test('contains_inner_text_fixed_width', () => {
     expect(root_child0.getComputedWidth()).toBe(100);
     expect(root_child0.getComputedHeight()).toBe(1290);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('contains_inner_text_no_width_fixed_height', () => {
+test("contains_inner_text_no_width_fixed_height", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -364,7 +382,12 @@ test('contains_inner_text_no_width_fixed_height', () => {
     root_child0.setFlexDirection(FlexDirection.Row);
     root_child0.setHeight(20);
     root.insertChild(root_child0, 0);
-    root_child0.setMeasureFunc(instrinsicSizeMeasureFunc.bind({text: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed eleifasd et tortor ac auctor. Integer at volutpat libero, sed elementum dui interdum id. Aliquam consectetur massa vel neque aliquet, quis consequat risus fringilla. Fusce rhoncus ipsum tempor eros aliquam, vel tempus metus ullamcorper. Nam at nulla sed tellus vestibulum fringilla vel sit amet ligula. Proin velit lectus, euismod sit amet quam vel ultricies dolor, vitae finibus lorem ipsum. Pellentesque molestie at mi sit amet dictum. Donec vehicula lacinia felis sit amet consectetur. Praesent sodales enim sapien, sed varius ipsum pellentesque vel. Aenean eu mi eu justo tincidunt finibus vel sit amet ipsum. Sed bibasdum purus vel ipsum sagittis, quis fermentum dolor lobortis. Etiam vulputate eleifasd lectus vel varius. Phasellus imperdiet lectus sit amet ipsum egestas, ut bibasdum ipsum malesuada. Vestibulum ante ipsum primis in faucibus orci luctus et ultrices posuere cubilia Curae; Sed mollis eros sit amet elit porttitor, vel venenatis turpis venenatis. Nulla tempus tortor at eros efficitur, sit amet dapibus ipsum malesuada. Ut at mauris sed nunc malesuada convallis. Duis id sem vel magna varius eleifasd vel at est. Donec eget orci a ipsum tempor lobortis. Sed at consectetur ipsum.", flexDirection: FlexDirection.Row}));
+    root_child0.setMeasureFunc(
+      instrinsicSizeMeasureFunc.bind({
+        text: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed eleifasd et tortor ac auctor. Integer at volutpat libero, sed elementum dui interdum id. Aliquam consectetur massa vel neque aliquet, quis consequat risus fringilla. Fusce rhoncus ipsum tempor eros aliquam, vel tempus metus ullamcorper. Nam at nulla sed tellus vestibulum fringilla vel sit amet ligula. Proin velit lectus, euismod sit amet quam vel ultricies dolor, vitae finibus lorem ipsum. Pellentesque molestie at mi sit amet dictum. Donec vehicula lacinia felis sit amet consectetur. Praesent sodales enim sapien, sed varius ipsum pellentesque vel. Aenean eu mi eu justo tincidunt finibus vel sit amet ipsum. Sed bibasdum purus vel ipsum sagittis, quis fermentum dolor lobortis. Etiam vulputate eleifasd lectus vel varius. Phasellus imperdiet lectus sit amet ipsum egestas, ut bibasdum ipsum malesuada. Vestibulum ante ipsum primis in faucibus orci luctus et ultrices posuere cubilia Curae; Sed mollis eros sit amet elit porttitor, vel venenatis turpis venenatis. Nulla tempus tortor at eros efficitur, sit amet dapibus ipsum malesuada. Ut at mauris sed nunc malesuada convallis. Duis id sem vel magna varius eleifasd vel at est. Donec eget orci a ipsum tempor lobortis. Sed at consectetur ipsum.",
+        flexDirection: FlexDirection.Row,
+      }),
+    );
     root.calculateLayout(undefined, undefined, Direction.LTR);
 
     expect(root.getComputedLeft()).toBe(0);
@@ -389,14 +412,14 @@ test('contains_inner_text_no_width_fixed_height', () => {
     expect(root_child0.getComputedWidth()).toBe(2000);
     expect(root_child0.getComputedHeight()).toBe(20);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('contains_inner_text_fixed_width_fixed_height', () => {
+test("contains_inner_text_fixed_width_fixed_height", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -412,7 +435,12 @@ test('contains_inner_text_fixed_width_fixed_height', () => {
     root_child0.setWidth(50);
     root_child0.setHeight(20);
     root.insertChild(root_child0, 0);
-    root_child0.setMeasureFunc(instrinsicSizeMeasureFunc.bind({text: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed eleifasd et tortor ac auctor. Integer at volutpat libero, sed elementum dui interdum id. Aliquam consectetur massa vel neque aliquet, quis consequat risus fringilla. Fusce rhoncus ipsum tempor eros aliquam, vel tempus metus ullamcorper. Nam at nulla sed tellus vestibulum fringilla vel sit amet ligula. Proin velit lectus, euismod sit amet quam vel ultricies dolor, vitae finibus lorem ipsum. Pellentesque molestie at mi sit amet dictum. Donec vehicula lacinia felis sit amet consectetur. Praesent sodales enim sapien, sed varius ipsum pellentesque vel. Aenean eu mi eu justo tincidunt finibus vel sit amet ipsum. Sed bibasdum purus vel ipsum sagittis, quis fermentum dolor lobortis. Etiam vulputate eleifasd lectus vel varius. Phasellus imperdiet lectus sit amet ipsum egestas, ut bibasdum ipsum malesuada. Vestibulum ante ipsum primis in faucibus orci luctus et ultrices posuere cubilia Curae; Sed mollis eros sit amet elit porttitor, vel venenatis turpis venenatis. Nulla tempus tortor at eros efficitur, sit amet dapibus ipsum malesuada. Ut at mauris sed nunc malesuada convallis. Duis id sem vel magna varius eleifasd vel at est. Donec eget orci a ipsum tempor lobortis. Sed at consectetur ipsum.", flexDirection: FlexDirection.Row}));
+    root_child0.setMeasureFunc(
+      instrinsicSizeMeasureFunc.bind({
+        text: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed eleifasd et tortor ac auctor. Integer at volutpat libero, sed elementum dui interdum id. Aliquam consectetur massa vel neque aliquet, quis consequat risus fringilla. Fusce rhoncus ipsum tempor eros aliquam, vel tempus metus ullamcorper. Nam at nulla sed tellus vestibulum fringilla vel sit amet ligula. Proin velit lectus, euismod sit amet quam vel ultricies dolor, vitae finibus lorem ipsum. Pellentesque molestie at mi sit amet dictum. Donec vehicula lacinia felis sit amet consectetur. Praesent sodales enim sapien, sed varius ipsum pellentesque vel. Aenean eu mi eu justo tincidunt finibus vel sit amet ipsum. Sed bibasdum purus vel ipsum sagittis, quis fermentum dolor lobortis. Etiam vulputate eleifasd lectus vel varius. Phasellus imperdiet lectus sit amet ipsum egestas, ut bibasdum ipsum malesuada. Vestibulum ante ipsum primis in faucibus orci luctus et ultrices posuere cubilia Curae; Sed mollis eros sit amet elit porttitor, vel venenatis turpis venenatis. Nulla tempus tortor at eros efficitur, sit amet dapibus ipsum malesuada. Ut at mauris sed nunc malesuada convallis. Duis id sem vel magna varius eleifasd vel at est. Donec eget orci a ipsum tempor lobortis. Sed at consectetur ipsum.",
+        flexDirection: FlexDirection.Row,
+      }),
+    );
     root.calculateLayout(undefined, undefined, Direction.LTR);
 
     expect(root.getComputedLeft()).toBe(0);
@@ -437,14 +465,14 @@ test('contains_inner_text_fixed_width_fixed_height', () => {
     expect(root_child0.getComputedWidth()).toBe(50);
     expect(root_child0.getComputedHeight()).toBe(20);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('contains_inner_text_max_width_max_height', () => {
+test("contains_inner_text_max_width_max_height", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -460,7 +488,12 @@ test('contains_inner_text_max_width_max_height', () => {
     root_child0.setMaxWidth(50);
     root_child0.setMaxHeight(20);
     root.insertChild(root_child0, 0);
-    root_child0.setMeasureFunc(instrinsicSizeMeasureFunc.bind({text: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed eleifasd et tortor ac auctor. Integer at volutpat libero, sed elementum dui interdum id. Aliquam consectetur massa vel neque aliquet, quis consequat risus fringilla. Fusce rhoncus ipsum tempor eros aliquam, vel tempus metus ullamcorper. Nam at nulla sed tellus vestibulum fringilla vel sit amet ligula. Proin velit lectus, euismod sit amet quam vel ultricies dolor, vitae finibus lorem ipsum. Pellentesque molestie at mi sit amet dictum. Donec vehicula lacinia felis sit amet consectetur. Praesent sodales enim sapien, sed varius ipsum pellentesque vel. Aenean eu mi eu justo tincidunt finibus vel sit amet ipsum. Sed bibasdum purus vel ipsum sagittis, quis fermentum dolor lobortis. Etiam vulputate eleifasd lectus vel varius. Phasellus imperdiet lectus sit amet ipsum egestas, ut bibasdum ipsum malesuada. Vestibulum ante ipsum primis in faucibus orci luctus et ultrices posuere cubilia Curae; Sed mollis eros sit amet elit porttitor, vel venenatis turpis venenatis. Nulla tempus tortor at eros efficitur, sit amet dapibus ipsum malesuada. Ut at mauris sed nunc malesuada convallis. Duis id sem vel magna varius eleifasd vel at est. Donec eget orci a ipsum tempor lobortis. Sed at consectetur ipsum.", flexDirection: FlexDirection.Row}));
+    root_child0.setMeasureFunc(
+      instrinsicSizeMeasureFunc.bind({
+        text: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed eleifasd et tortor ac auctor. Integer at volutpat libero, sed elementum dui interdum id. Aliquam consectetur massa vel neque aliquet, quis consequat risus fringilla. Fusce rhoncus ipsum tempor eros aliquam, vel tempus metus ullamcorper. Nam at nulla sed tellus vestibulum fringilla vel sit amet ligula. Proin velit lectus, euismod sit amet quam vel ultricies dolor, vitae finibus lorem ipsum. Pellentesque molestie at mi sit amet dictum. Donec vehicula lacinia felis sit amet consectetur. Praesent sodales enim sapien, sed varius ipsum pellentesque vel. Aenean eu mi eu justo tincidunt finibus vel sit amet ipsum. Sed bibasdum purus vel ipsum sagittis, quis fermentum dolor lobortis. Etiam vulputate eleifasd lectus vel varius. Phasellus imperdiet lectus sit amet ipsum egestas, ut bibasdum ipsum malesuada. Vestibulum ante ipsum primis in faucibus orci luctus et ultrices posuere cubilia Curae; Sed mollis eros sit amet elit porttitor, vel venenatis turpis venenatis. Nulla tempus tortor at eros efficitur, sit amet dapibus ipsum malesuada. Ut at mauris sed nunc malesuada convallis. Duis id sem vel magna varius eleifasd vel at est. Donec eget orci a ipsum tempor lobortis. Sed at consectetur ipsum.",
+        flexDirection: FlexDirection.Row,
+      }),
+    );
     root.calculateLayout(undefined, undefined, Direction.LTR);
 
     expect(root.getComputedLeft()).toBe(0);
@@ -485,14 +518,14 @@ test('contains_inner_text_max_width_max_height', () => {
     expect(root_child0.getComputedWidth()).toBe(50);
     expect(root_child0.getComputedHeight()).toBe(20);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('contains_inner_text_max_width_max_height_column', () => {
+test("contains_inner_text_max_width_max_height_column", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -505,7 +538,12 @@ test('contains_inner_text_max_width_max_height_column', () => {
     const root_child0 = Yoga.Node.create(config);
     root_child0.setMaxWidth(50);
     root.insertChild(root_child0, 0);
-    root_child0.setMeasureFunc(instrinsicSizeMeasureFunc.bind({text: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed eleifasd et tortor ac auctor. Integer at volutpat libero, sed elementum dui interdum id. Aliquam consectetur massa vel neque aliquet, quis consequat risus fringilla. Fusce rhoncus ipsum tempor eros aliquam, vel tempus metus ullamcorper. Nam at nulla sed tellus vestibulum fringilla vel sit amet ligula. Proin velit lectus, euismod sit amet quam vel ultricies dolor, vitae finibus lorem ipsum. Pellentesque molestie at mi sit amet dictum. Donec vehicula lacinia felis sit amet consectetur. Praesent sodales enim sapien, sed varius ipsum pellentesque vel. Aenean eu mi eu justo tincidunt finibus vel sit amet ipsum. Sed bibasdum purus vel ipsum sagittis, quis fermentum dolor lobortis. Etiam vulputate eleifasd lectus vel varius. Phasellus imperdiet lectus sit amet ipsum egestas, ut bibasdum ipsum malesuada. Vestibulum ante ipsum primis in faucibus orci luctus et ultrices posuere cubilia Curae; Sed mollis eros sit amet elit porttitor, vel venenatis turpis venenatis. Nulla tempus tortor at eros efficitur, sit amet dapibus ipsum malesuada. Ut at mauris sed nunc malesuada convallis. Duis id sem vel magna varius eleifasd vel at est. Donec eget orci a ipsum tempor lobortis. Sed at consectetur ipsum.", flexDirection: FlexDirection.Column}));
+    root_child0.setMeasureFunc(
+      instrinsicSizeMeasureFunc.bind({
+        text: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed eleifasd et tortor ac auctor. Integer at volutpat libero, sed elementum dui interdum id. Aliquam consectetur massa vel neque aliquet, quis consequat risus fringilla. Fusce rhoncus ipsum tempor eros aliquam, vel tempus metus ullamcorper. Nam at nulla sed tellus vestibulum fringilla vel sit amet ligula. Proin velit lectus, euismod sit amet quam vel ultricies dolor, vitae finibus lorem ipsum. Pellentesque molestie at mi sit amet dictum. Donec vehicula lacinia felis sit amet consectetur. Praesent sodales enim sapien, sed varius ipsum pellentesque vel. Aenean eu mi eu justo tincidunt finibus vel sit amet ipsum. Sed bibasdum purus vel ipsum sagittis, quis fermentum dolor lobortis. Etiam vulputate eleifasd lectus vel varius. Phasellus imperdiet lectus sit amet ipsum egestas, ut bibasdum ipsum malesuada. Vestibulum ante ipsum primis in faucibus orci luctus et ultrices posuere cubilia Curae; Sed mollis eros sit amet elit porttitor, vel venenatis turpis venenatis. Nulla tempus tortor at eros efficitur, sit amet dapibus ipsum malesuada. Ut at mauris sed nunc malesuada convallis. Duis id sem vel magna varius eleifasd vel at est. Donec eget orci a ipsum tempor lobortis. Sed at consectetur ipsum.",
+        flexDirection: FlexDirection.Column,
+      }),
+    );
     root.calculateLayout(undefined, undefined, Direction.LTR);
 
     expect(root.getComputedLeft()).toBe(0);
@@ -530,14 +568,14 @@ test('contains_inner_text_max_width_max_height_column', () => {
     expect(root_child0.getComputedWidth()).toBe(50);
     expect(root_child0.getComputedHeight()).toBe(1890);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('contains_inner_text_max_width', () => {
+test("contains_inner_text_max_width", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -552,7 +590,12 @@ test('contains_inner_text_max_width', () => {
     root_child0.setFlexDirection(FlexDirection.Row);
     root_child0.setMaxWidth(100);
     root.insertChild(root_child0, 0);
-    root_child0.setMeasureFunc(instrinsicSizeMeasureFunc.bind({text: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed eleifasd et tortor ac auctor. Integer at volutpat libero, sed elementum dui interdum id. Aliquam consectetur massa vel neque aliquet, quis consequat risus fringilla. Fusce rhoncus ipsum tempor eros aliquam, vel tempus metus ullamcorper. Nam at nulla sed tellus vestibulum fringilla vel sit amet ligula. Proin velit lectus, euismod sit amet quam vel ultricies dolor, vitae finibus lorem ipsum. Pellentesque molestie at mi sit amet dictum. Donec vehicula lacinia felis sit amet consectetur. Praesent sodales enim sapien, sed varius ipsum pellentesque vel. Aenean eu mi eu justo tincidunt finibus vel sit amet ipsum. Sed bibasdum purus vel ipsum sagittis, quis fermentum dolor lobortis. Etiam vulputate eleifasd lectus vel varius. Phasellus imperdiet lectus sit amet ipsum egestas, ut bibasdum ipsum malesuada. Vestibulum ante ipsum primis in faucibus orci luctus et ultrices posuere cubilia Curae; Sed mollis eros sit amet elit porttitor, vel venenatis turpis venenatis. Nulla tempus tortor at eros efficitur, sit amet dapibus ipsum malesuada. Ut at mauris sed nunc malesuada convallis. Duis id sem vel magna varius eleifasd vel at est. Donec eget orci a ipsum tempor lobortis. Sed at consectetur ipsum.", flexDirection: FlexDirection.Row}));
+    root_child0.setMeasureFunc(
+      instrinsicSizeMeasureFunc.bind({
+        text: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed eleifasd et tortor ac auctor. Integer at volutpat libero, sed elementum dui interdum id. Aliquam consectetur massa vel neque aliquet, quis consequat risus fringilla. Fusce rhoncus ipsum tempor eros aliquam, vel tempus metus ullamcorper. Nam at nulla sed tellus vestibulum fringilla vel sit amet ligula. Proin velit lectus, euismod sit amet quam vel ultricies dolor, vitae finibus lorem ipsum. Pellentesque molestie at mi sit amet dictum. Donec vehicula lacinia felis sit amet consectetur. Praesent sodales enim sapien, sed varius ipsum pellentesque vel. Aenean eu mi eu justo tincidunt finibus vel sit amet ipsum. Sed bibasdum purus vel ipsum sagittis, quis fermentum dolor lobortis. Etiam vulputate eleifasd lectus vel varius. Phasellus imperdiet lectus sit amet ipsum egestas, ut bibasdum ipsum malesuada. Vestibulum ante ipsum primis in faucibus orci luctus et ultrices posuere cubilia Curae; Sed mollis eros sit amet elit porttitor, vel venenatis turpis venenatis. Nulla tempus tortor at eros efficitur, sit amet dapibus ipsum malesuada. Ut at mauris sed nunc malesuada convallis. Duis id sem vel magna varius eleifasd vel at est. Donec eget orci a ipsum tempor lobortis. Sed at consectetur ipsum.",
+        flexDirection: FlexDirection.Row,
+      }),
+    );
     root.calculateLayout(undefined, undefined, Direction.LTR);
 
     expect(root.getComputedLeft()).toBe(0);
@@ -577,14 +620,14 @@ test('contains_inner_text_max_width', () => {
     expect(root_child0.getComputedWidth()).toBe(100);
     expect(root_child0.getComputedHeight()).toBe(1290);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('contains_inner_text_fixed_width_shorter_text', () => {
+test("contains_inner_text_fixed_width_shorter_text", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -599,7 +642,9 @@ test('contains_inner_text_fixed_width_shorter_text', () => {
     root_child0.setFlexDirection(FlexDirection.Row);
     root_child0.setWidth(100);
     root.insertChild(root_child0, 0);
-    root_child0.setMeasureFunc(instrinsicSizeMeasureFunc.bind({text: "Lorem ipsum", flexDirection: FlexDirection.Row}));
+    root_child0.setMeasureFunc(
+      instrinsicSizeMeasureFunc.bind({ text: "Lorem ipsum", flexDirection: FlexDirection.Row }),
+    );
     root.calculateLayout(undefined, undefined, Direction.LTR);
 
     expect(root.getComputedLeft()).toBe(0);
@@ -624,14 +669,14 @@ test('contains_inner_text_fixed_width_shorter_text', () => {
     expect(root_child0.getComputedWidth()).toBe(100);
     expect(root_child0.getComputedHeight()).toBe(20);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('contains_inner_text_fixed_height_shorter_text', () => {
+test("contains_inner_text_fixed_height_shorter_text", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -646,7 +691,9 @@ test('contains_inner_text_fixed_height_shorter_text', () => {
     root_child0.setFlexDirection(FlexDirection.Row);
     root_child0.setHeight(100);
     root.insertChild(root_child0, 0);
-    root_child0.setMeasureFunc(instrinsicSizeMeasureFunc.bind({text: "Lorem ipsum", flexDirection: FlexDirection.Row}));
+    root_child0.setMeasureFunc(
+      instrinsicSizeMeasureFunc.bind({ text: "Lorem ipsum", flexDirection: FlexDirection.Row }),
+    );
     root.calculateLayout(undefined, undefined, Direction.LTR);
 
     expect(root.getComputedLeft()).toBe(0);
@@ -671,14 +718,14 @@ test('contains_inner_text_fixed_height_shorter_text', () => {
     expect(root_child0.getComputedWidth()).toBe(110);
     expect(root_child0.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('contains_inner_text_max_height', () => {
+test("contains_inner_text_max_height", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -693,7 +740,12 @@ test('contains_inner_text_max_height', () => {
     root_child0.setFlexDirection(FlexDirection.Row);
     root_child0.setMaxHeight(20);
     root.insertChild(root_child0, 0);
-    root_child0.setMeasureFunc(instrinsicSizeMeasureFunc.bind({text: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed eleifasd et tortor ac auctor. Integer at volutpat libero, sed elementum dui interdum id. Aliquam consectetur massa vel neque aliquet, quis consequat risus fringilla. Fusce rhoncus ipsum tempor eros aliquam, vel tempus metus ullamcorper. Nam at nulla sed tellus vestibulum fringilla vel sit amet ligula. Proin velit lectus, euismod sit amet quam vel ultricies dolor, vitae finibus lorem ipsum. Pellentesque molestie at mi sit amet dictum. Donec vehicula lacinia felis sit amet consectetur. Praesent sodales enim sapien, sed varius ipsum pellentesque vel. Aenean eu mi eu justo tincidunt finibus vel sit amet ipsum. Sed bibasdum purus vel ipsum sagittis, quis fermentum dolor lobortis. Etiam vulputate eleifasd lectus vel varius. Phasellus imperdiet lectus sit amet ipsum egestas, ut bibasdum ipsum malesuada. Vestibulum ante ipsum primis in faucibus orci luctus et ultrices posuere cubilia Curae; Sed mollis eros sit amet elit porttitor, vel venenatis turpis venenatis. Nulla tempus tortor at eros efficitur, sit amet dapibus ipsum malesuada. Ut at mauris sed nunc malesuada convallis. Duis id sem vel magna varius eleifasd vel at est. Donec eget orci a ipsum tempor lobortis. Sed at consectetur ipsum.", flexDirection: FlexDirection.Row}));
+    root_child0.setMeasureFunc(
+      instrinsicSizeMeasureFunc.bind({
+        text: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed eleifasd et tortor ac auctor. Integer at volutpat libero, sed elementum dui interdum id. Aliquam consectetur massa vel neque aliquet, quis consequat risus fringilla. Fusce rhoncus ipsum tempor eros aliquam, vel tempus metus ullamcorper. Nam at nulla sed tellus vestibulum fringilla vel sit amet ligula. Proin velit lectus, euismod sit amet quam vel ultricies dolor, vitae finibus lorem ipsum. Pellentesque molestie at mi sit amet dictum. Donec vehicula lacinia felis sit amet consectetur. Praesent sodales enim sapien, sed varius ipsum pellentesque vel. Aenean eu mi eu justo tincidunt finibus vel sit amet ipsum. Sed bibasdum purus vel ipsum sagittis, quis fermentum dolor lobortis. Etiam vulputate eleifasd lectus vel varius. Phasellus imperdiet lectus sit amet ipsum egestas, ut bibasdum ipsum malesuada. Vestibulum ante ipsum primis in faucibus orci luctus et ultrices posuere cubilia Curae; Sed mollis eros sit amet elit porttitor, vel venenatis turpis venenatis. Nulla tempus tortor at eros efficitur, sit amet dapibus ipsum malesuada. Ut at mauris sed nunc malesuada convallis. Duis id sem vel magna varius eleifasd vel at est. Donec eget orci a ipsum tempor lobortis. Sed at consectetur ipsum.",
+        flexDirection: FlexDirection.Row,
+      }),
+    );
     root.calculateLayout(undefined, undefined, Direction.LTR);
 
     expect(root.getComputedLeft()).toBe(0);
@@ -718,14 +770,14 @@ test('contains_inner_text_max_height', () => {
     expect(root_child0.getComputedWidth()).toBe(2000);
     expect(root_child0.getComputedHeight()).toBe(20);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('max_content_width', () => {
+test("max_content_width", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -794,14 +846,14 @@ test('max_content_width', () => {
     expect(root_child2.getComputedWidth()).toBe(25);
     expect(root_child2.getComputedHeight()).toBe(50);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test.skip('fit_content_width', () => {
+test.skip("fit_content_width", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -884,14 +936,14 @@ test.skip('fit_content_width', () => {
     expect(root_child0_child2.getComputedWidth()).toBe(25);
     expect(root_child0_child2.getComputedHeight()).toBe(50);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('stretch_width', () => {
+test("stretch_width", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -974,14 +1026,14 @@ test('stretch_width', () => {
     expect(root_child0_child2.getComputedWidth()).toBe(25);
     expect(root_child0_child2.getComputedHeight()).toBe(50);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('max_content_height', () => {
+test("max_content_height", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1049,14 +1101,14 @@ test('max_content_height', () => {
     expect(root_child2.getComputedWidth()).toBe(50);
     expect(root_child2.getComputedHeight()).toBe(25);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test.skip('fit_content_height', () => {
+test.skip("fit_content_height", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1138,14 +1190,14 @@ test.skip('fit_content_height', () => {
     expect(root_child0_child2.getComputedWidth()).toBe(50);
     expect(root_child0_child2.getComputedHeight()).toBe(25);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test.skip('stretch_height', () => {
+test.skip("stretch_height", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1227,14 +1279,14 @@ test.skip('stretch_height', () => {
     expect(root_child0_child2.getComputedWidth()).toBe(50);
     expect(root_child0_child2.getComputedHeight()).toBe(25);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('max_content_flex_basis_column', () => {
+test("max_content_flex_basis_column", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1302,14 +1354,14 @@ test('max_content_flex_basis_column', () => {
     expect(root_child2.getComputedWidth()).toBe(50);
     expect(root_child2.getComputedHeight()).toBe(25);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test.skip('fit_content_flex_basis_column', () => {
+test.skip("fit_content_flex_basis_column", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1391,14 +1443,14 @@ test.skip('fit_content_flex_basis_column', () => {
     expect(root_child0_child2.getComputedWidth()).toBe(50);
     expect(root_child0_child2.getComputedHeight()).toBe(25);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('stretch_flex_basis_column', () => {
+test("stretch_flex_basis_column", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1479,14 +1531,14 @@ test('stretch_flex_basis_column', () => {
     expect(root_child0_child2.getComputedWidth()).toBe(50);
     expect(root_child0_child2.getComputedHeight()).toBe(25);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test.skip('max_content_flex_basis_row', () => {
+test.skip("max_content_flex_basis_row", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1555,14 +1607,14 @@ test.skip('max_content_flex_basis_row', () => {
     expect(root_child2.getComputedWidth()).toBe(25);
     expect(root_child2.getComputedHeight()).toBe(50);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test.skip('fit_content_flex_basis_row', () => {
+test.skip("fit_content_flex_basis_row", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1645,14 +1697,14 @@ test.skip('fit_content_flex_basis_row', () => {
     expect(root_child0_child2.getComputedWidth()).toBe(25);
     expect(root_child0_child2.getComputedHeight()).toBe(50);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test.skip('stretch_flex_basis_row', () => {
+test.skip("stretch_flex_basis_row", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1734,14 +1786,14 @@ test.skip('stretch_flex_basis_row', () => {
     expect(root_child0_child2.getComputedWidth()).toBe(25);
     expect(root_child0_child2.getComputedHeight()).toBe(50);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test.skip('max_content_max_width', () => {
+test.skip("max_content_max_width", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1811,14 +1863,14 @@ test.skip('max_content_max_width', () => {
     expect(root_child2.getComputedWidth()).toBe(25);
     expect(root_child2.getComputedHeight()).toBe(50);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test.skip('fit_content_max_width', () => {
+test.skip("fit_content_max_width", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1902,14 +1954,14 @@ test.skip('fit_content_max_width', () => {
     expect(root_child0_child2.getComputedWidth()).toBe(25);
     expect(root_child0_child2.getComputedHeight()).toBe(50);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test.skip('stretch_max_width', () => {
+test.skip("stretch_max_width", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1993,14 +2045,14 @@ test.skip('stretch_max_width', () => {
     expect(root_child0_child2.getComputedWidth()).toBe(25);
     expect(root_child0_child2.getComputedHeight()).toBe(50);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test.skip('max_content_min_width', () => {
+test.skip("max_content_min_width", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -2070,14 +2122,14 @@ test.skip('max_content_min_width', () => {
     expect(root_child2.getComputedWidth()).toBe(25);
     expect(root_child2.getComputedHeight()).toBe(50);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test.skip('fit_content_min_width', () => {
+test.skip("fit_content_min_width", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -2161,14 +2213,14 @@ test.skip('fit_content_min_width', () => {
     expect(root_child0_child2.getComputedWidth()).toBe(25);
     expect(root_child0_child2.getComputedHeight()).toBe(50);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test.skip('stretch_min_width', () => {
+test.skip("stretch_min_width", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -2252,14 +2304,14 @@ test.skip('stretch_min_width', () => {
     expect(root_child0_child2.getComputedWidth()).toBe(25);
     expect(root_child0_child2.getComputedHeight()).toBe(50);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test.skip('max_content_max_height', () => {
+test.skip("max_content_max_height", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -2328,14 +2380,14 @@ test.skip('max_content_max_height', () => {
     expect(root_child2.getComputedWidth()).toBe(50);
     expect(root_child2.getComputedHeight()).toBe(25);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test.skip('fit_content_max_height', () => {
+test.skip("fit_content_max_height", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -2418,14 +2470,14 @@ test.skip('fit_content_max_height', () => {
     expect(root_child0_child2.getComputedWidth()).toBe(50);
     expect(root_child0_child2.getComputedHeight()).toBe(25);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test.skip('stretch_max_height', () => {
+test.skip("stretch_max_height", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -2508,14 +2560,14 @@ test.skip('stretch_max_height', () => {
     expect(root_child0_child2.getComputedWidth()).toBe(50);
     expect(root_child0_child2.getComputedHeight()).toBe(25);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test.skip('max_content_min_height', () => {
+test.skip("max_content_min_height", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -2584,14 +2636,14 @@ test.skip('max_content_min_height', () => {
     expect(root_child2.getComputedWidth()).toBe(50);
     expect(root_child2.getComputedHeight()).toBe(25);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test.skip('fit_content_min_height', () => {
+test.skip("fit_content_min_height", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -2674,14 +2726,14 @@ test.skip('fit_content_min_height', () => {
     expect(root_child0_child2.getComputedWidth()).toBe(50);
     expect(root_child0_child2.getComputedHeight()).toBe(25);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test.skip('stretch_min_height', () => {
+test.skip("stretch_min_height", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -2764,14 +2816,14 @@ test.skip('stretch_min_height', () => {
     expect(root_child0_child2.getComputedWidth()).toBe(50);
     expect(root_child0_child2.getComputedHeight()).toBe(25);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test.skip('text_max_content_width', () => {
+test.skip("text_max_content_width", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -2787,7 +2839,12 @@ test.skip('text_max_content_width', () => {
     const root_child0_child0 = Yoga.Node.create(config);
     root_child0_child0.setFlexDirection(FlexDirection.Row);
     root_child0.insertChild(root_child0_child0, 0);
-    root_child0_child0.setMeasureFunc(instrinsicSizeMeasureFunc.bind({text: "Lorem ipsum sdafhasdfkjlasdhlkajsfhasldkfhasdlkahsdflkjasdhflaksdfasdlkjhasdlfjahsdfljkasdhalsdfhas dolor sit amet", flexDirection: FlexDirection.Row}));
+    root_child0_child0.setMeasureFunc(
+      instrinsicSizeMeasureFunc.bind({
+        text: "Lorem ipsum sdafhasdfkjlasdhlkajsfhasldkfhasdlkahsdflkjasdhflaksdfasdlkjhasdlfjahsdfljkasdhalsdfhas dolor sit amet",
+        flexDirection: FlexDirection.Row,
+      }),
+    );
     root.calculateLayout(undefined, undefined, Direction.LTR);
 
     expect(root.getComputedLeft()).toBe(0);
@@ -2822,14 +2879,14 @@ test.skip('text_max_content_width', () => {
     expect(root_child0_child0.getComputedWidth()).toBe(1140);
     expect(root_child0_child0.getComputedHeight()).toBe(10);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test.skip('text_stretch_width', () => {
+test.skip("text_stretch_width", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -2845,7 +2902,9 @@ test.skip('text_stretch_width', () => {
     const root_child0_child0 = Yoga.Node.create(config);
     root_child0_child0.setFlexDirection(FlexDirection.Row);
     root_child0.insertChild(root_child0_child0, 0);
-    root_child0_child0.setMeasureFunc(instrinsicSizeMeasureFunc.bind({text: "Lorem ipsum dolor sit amet", flexDirection: FlexDirection.Row}));
+    root_child0_child0.setMeasureFunc(
+      instrinsicSizeMeasureFunc.bind({ text: "Lorem ipsum dolor sit amet", flexDirection: FlexDirection.Row }),
+    );
     root.calculateLayout(undefined, undefined, Direction.LTR);
 
     expect(root.getComputedLeft()).toBe(0);
@@ -2880,14 +2939,14 @@ test.skip('text_stretch_width', () => {
     expect(root_child0_child0.getComputedWidth()).toBe(200);
     expect(root_child0_child0.getComputedHeight()).toBe(20);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test.skip('text_fit_content_width', () => {
+test.skip("text_fit_content_width", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -2903,7 +2962,12 @@ test.skip('text_fit_content_width', () => {
     const root_child0_child0 = Yoga.Node.create(config);
     root_child0_child0.setFlexDirection(FlexDirection.Row);
     root_child0.insertChild(root_child0_child0, 0);
-    root_child0_child0.setMeasureFunc(instrinsicSizeMeasureFunc.bind({text: "Lorem ipsum sdafhasdfkjlasdhlkajsfhasldkfhasdlkahsdflkjasdhflaksdfasdlkjhasdlfjahsdfljkasdhalsdfhas dolor sit amet", flexDirection: FlexDirection.Row}));
+    root_child0_child0.setMeasureFunc(
+      instrinsicSizeMeasureFunc.bind({
+        text: "Lorem ipsum sdafhasdfkjlasdhlkajsfhasldkfhasdlkahsdflkjasdhflaksdfasdlkjhasdlfjahsdfljkasdhalsdfhas dolor sit amet",
+        flexDirection: FlexDirection.Row,
+      }),
+    );
     root.calculateLayout(undefined, undefined, Direction.LTR);
 
     expect(root.getComputedLeft()).toBe(0);
@@ -2938,14 +3002,14 @@ test.skip('text_fit_content_width', () => {
     expect(root_child0_child0.getComputedWidth()).toBe(870);
     expect(root_child0_child0.getComputedHeight()).toBe(30);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test.skip('text_max_content_min_width', () => {
+test.skip("text_max_content_min_width", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -2962,7 +3026,12 @@ test.skip('text_max_content_min_width', () => {
     const root_child0_child0 = Yoga.Node.create(config);
     root_child0_child0.setFlexDirection(FlexDirection.Row);
     root_child0.insertChild(root_child0_child0, 0);
-    root_child0_child0.setMeasureFunc(instrinsicSizeMeasureFunc.bind({text: "Lorem ipsum sdafhasdfkjlasdhlkajsfhasldkfhasdlkahsdflkjasdhflaksdfasdlkjhasdlfjahsdfljkasdhalsdfhas dolor sit amet", flexDirection: FlexDirection.Row}));
+    root_child0_child0.setMeasureFunc(
+      instrinsicSizeMeasureFunc.bind({
+        text: "Lorem ipsum sdafhasdfkjlasdhlkajsfhasldkfhasdlkahsdflkjasdhflaksdfasdlkjhasdlfjahsdfljkasdhalsdfhas dolor sit amet",
+        flexDirection: FlexDirection.Row,
+      }),
+    );
     root.calculateLayout(undefined, undefined, Direction.LTR);
 
     expect(root.getComputedLeft()).toBe(0);
@@ -2997,14 +3066,14 @@ test.skip('text_max_content_min_width', () => {
     expect(root_child0_child0.getComputedWidth()).toBe(1140);
     expect(root_child0_child0.getComputedHeight()).toBe(10);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test.skip('text_stretch_min_width', () => {
+test.skip("text_stretch_min_width", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -3021,7 +3090,9 @@ test.skip('text_stretch_min_width', () => {
     const root_child0_child0 = Yoga.Node.create(config);
     root_child0_child0.setFlexDirection(FlexDirection.Row);
     root_child0.insertChild(root_child0_child0, 0);
-    root_child0_child0.setMeasureFunc(instrinsicSizeMeasureFunc.bind({text: "Lorem ipsum dolor sit amet", flexDirection: FlexDirection.Row}));
+    root_child0_child0.setMeasureFunc(
+      instrinsicSizeMeasureFunc.bind({ text: "Lorem ipsum dolor sit amet", flexDirection: FlexDirection.Row }),
+    );
     root.calculateLayout(undefined, undefined, Direction.LTR);
 
     expect(root.getComputedLeft()).toBe(0);
@@ -3056,14 +3127,14 @@ test.skip('text_stretch_min_width', () => {
     expect(root_child0_child0.getComputedWidth()).toBe(200);
     expect(root_child0_child0.getComputedHeight()).toBe(20);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test.skip('text_fit_content_min_width', () => {
+test.skip("text_fit_content_min_width", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -3080,7 +3151,12 @@ test.skip('text_fit_content_min_width', () => {
     const root_child0_child0 = Yoga.Node.create(config);
     root_child0_child0.setFlexDirection(FlexDirection.Row);
     root_child0.insertChild(root_child0_child0, 0);
-    root_child0_child0.setMeasureFunc(instrinsicSizeMeasureFunc.bind({text: "Lorem ipsum sdafhasdfkjlasdhlkajsfhasldkfhasdlkahsdflkjasdhflaksdfasdlkjhasdlfjahsdfljkasdhalsdfhas dolor sit amet", flexDirection: FlexDirection.Row}));
+    root_child0_child0.setMeasureFunc(
+      instrinsicSizeMeasureFunc.bind({
+        text: "Lorem ipsum sdafhasdfkjlasdhlkajsfhasldkfhasdlkahsdflkjasdhflaksdfasdlkjhasdlfjahsdfljkasdhalsdfhas dolor sit amet",
+        flexDirection: FlexDirection.Row,
+      }),
+    );
     root.calculateLayout(undefined, undefined, Direction.LTR);
 
     expect(root.getComputedLeft()).toBe(0);
@@ -3115,14 +3191,14 @@ test.skip('text_fit_content_min_width', () => {
     expect(root_child0_child0.getComputedWidth()).toBe(870);
     expect(root_child0_child0.getComputedHeight()).toBe(30);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test.skip('text_max_content_max_width', () => {
+test.skip("text_max_content_max_width", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -3139,7 +3215,12 @@ test.skip('text_max_content_max_width', () => {
     const root_child0_child0 = Yoga.Node.create(config);
     root_child0_child0.setFlexDirection(FlexDirection.Row);
     root_child0.insertChild(root_child0_child0, 0);
-    root_child0_child0.setMeasureFunc(instrinsicSizeMeasureFunc.bind({text: "Lorem ipsum sdafhasdfkjlasdhlkajsfhasldkfhasdlkahsdflkjasdhflaksdfasdlkjhasdlfjahsdfljkasdhalsdfhas dolor sit amet", flexDirection: FlexDirection.Row}));
+    root_child0_child0.setMeasureFunc(
+      instrinsicSizeMeasureFunc.bind({
+        text: "Lorem ipsum sdafhasdfkjlasdhlkajsfhasldkfhasdlkahsdflkjasdhflaksdfasdlkjhasdlfjahsdfljkasdhalsdfhas dolor sit amet",
+        flexDirection: FlexDirection.Row,
+      }),
+    );
     root.calculateLayout(undefined, undefined, Direction.LTR);
 
     expect(root.getComputedLeft()).toBe(0);
@@ -3174,14 +3255,14 @@ test.skip('text_max_content_max_width', () => {
     expect(root_child0_child0.getComputedWidth()).toBe(1140);
     expect(root_child0_child0.getComputedHeight()).toBe(10);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test.skip('text_stretch_max_width', () => {
+test.skip("text_stretch_max_width", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -3198,7 +3279,9 @@ test.skip('text_stretch_max_width', () => {
     const root_child0_child0 = Yoga.Node.create(config);
     root_child0_child0.setFlexDirection(FlexDirection.Row);
     root_child0.insertChild(root_child0_child0, 0);
-    root_child0_child0.setMeasureFunc(instrinsicSizeMeasureFunc.bind({text: "Lorem ipsum dolor sit amet", flexDirection: FlexDirection.Row}));
+    root_child0_child0.setMeasureFunc(
+      instrinsicSizeMeasureFunc.bind({ text: "Lorem ipsum dolor sit amet", flexDirection: FlexDirection.Row }),
+    );
     root.calculateLayout(undefined, undefined, Direction.LTR);
 
     expect(root.getComputedLeft()).toBe(0);
@@ -3233,14 +3316,14 @@ test.skip('text_stretch_max_width', () => {
     expect(root_child0_child0.getComputedWidth()).toBe(200);
     expect(root_child0_child0.getComputedHeight()).toBe(20);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test.skip('text_fit_content_max_width', () => {
+test.skip("text_fit_content_max_width", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -3257,7 +3340,12 @@ test.skip('text_fit_content_max_width', () => {
     const root_child0_child0 = Yoga.Node.create(config);
     root_child0_child0.setFlexDirection(FlexDirection.Row);
     root_child0.insertChild(root_child0_child0, 0);
-    root_child0_child0.setMeasureFunc(instrinsicSizeMeasureFunc.bind({text: "Lorem ipsum sdafhasdfkjlasdhlkajsfhasldkfhasdlkahsdflkjasdhflaksdfasdlkjhasdlfjahsdfljkasdhalsdfhas dolor sit amet", flexDirection: FlexDirection.Row}));
+    root_child0_child0.setMeasureFunc(
+      instrinsicSizeMeasureFunc.bind({
+        text: "Lorem ipsum sdafhasdfkjlasdhlkajsfhasldkfhasdlkahsdflkjasdhflaksdfasdlkjhasdlfjahsdfljkasdhalsdfhas dolor sit amet",
+        flexDirection: FlexDirection.Row,
+      }),
+    );
     root.calculateLayout(undefined, undefined, Direction.LTR);
 
     expect(root.getComputedLeft()).toBe(0);
@@ -3292,7 +3380,7 @@ test.skip('text_fit_content_max_width', () => {
     expect(root_child0_child0.getComputedWidth()).toBe(870);
     expect(root_child0_child0.getComputedHeight()).toBe(30);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 

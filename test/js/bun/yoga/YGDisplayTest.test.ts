@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { expect, test } from "bun:test";
 const Yoga = Bun.Yoga;
 
 const Align = {
@@ -89,7 +89,7 @@ const Wrap = {
   WrapReverse: Yoga.WRAP_WRAP_REVERSE,
 };
 
-test('display_none', () => {
+test("display_none", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -142,14 +142,14 @@ test('display_none', () => {
     expect(root_child1.getComputedWidth()).toBe(0);
     expect(root_child1.getComputedHeight()).toBe(0);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('display_none_fixed_size', () => {
+test("display_none_fixed_size", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -203,14 +203,14 @@ test('display_none_fixed_size', () => {
     expect(root_child1.getComputedWidth()).toBe(0);
     expect(root_child1.getComputedHeight()).toBe(0);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('display_none_with_margin', () => {
+test("display_none_with_margin", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -268,14 +268,14 @@ test('display_none_with_margin', () => {
     expect(root_child1.getComputedWidth()).toBe(100);
     expect(root_child1.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('display_none_with_child', () => {
+test("display_none_with_child", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -365,14 +365,14 @@ test('display_none_with_child', () => {
     expect(root_child2.getComputedWidth()).toBe(50);
     expect(root_child2.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('display_none_with_position', () => {
+test("display_none_with_position", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -426,14 +426,14 @@ test('display_none_with_position', () => {
     expect(root_child1.getComputedWidth()).toBe(0);
     expect(root_child1.getComputedHeight()).toBe(0);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('display_none_with_position_absolute', () => {
+test("display_none_with_position_absolute", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -473,14 +473,14 @@ test('display_none_with_position_absolute', () => {
     expect(root_child0.getComputedWidth()).toBe(0);
     expect(root_child0.getComputedHeight()).toBe(0);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('display_contents', () => {
+test("display_contents", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -552,14 +552,14 @@ test('display_contents', () => {
     expect(root_child0_child1.getComputedWidth()).toBe(50);
     expect(root_child0_child1.getComputedHeight()).toBe(20);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('display_contents_fixed_size', () => {
+test("display_contents_fixed_size", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -633,14 +633,14 @@ test('display_contents_fixed_size', () => {
     expect(root_child0_child1.getComputedWidth()).toBe(50);
     expect(root_child0_child1.getComputedHeight()).toBe(20);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('display_contents_with_margin', () => {
+test("display_contents_with_margin", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -698,14 +698,14 @@ test('display_contents_with_margin', () => {
     expect(root_child1.getComputedWidth()).toBe(100);
     expect(root_child1.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('display_contents_with_padding', () => {
+test("display_contents_with_padding", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -781,14 +781,14 @@ test('display_contents_with_padding', () => {
     expect(root_child0_child1.getComputedWidth()).toBe(50);
     expect(root_child0_child1.getComputedHeight()).toBe(20);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('display_contents_with_position', () => {
+test("display_contents_with_position", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -861,14 +861,14 @@ test('display_contents_with_position', () => {
     expect(root_child0_child1.getComputedWidth()).toBe(50);
     expect(root_child0_child1.getComputedHeight()).toBe(20);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('display_contents_with_position_absolute', () => {
+test("display_contents_with_position_absolute", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -943,14 +943,14 @@ test('display_contents_with_position_absolute', () => {
     expect(root_child0_child1.getComputedWidth()).toBe(50);
     expect(root_child0_child1.getComputedHeight()).toBe(20);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('display_contents_nested', () => {
+test("display_contents_nested", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1036,14 +1036,14 @@ test('display_contents_nested', () => {
     expect(root_child0_child0_child1.getComputedWidth()).toBe(50);
     expect(root_child0_child0_child1.getComputedHeight()).toBe(20);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('display_contents_with_siblings', () => {
+test("display_contents_with_siblings", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1149,7 +1149,7 @@ test('display_contents_with_siblings', () => {
     expect(root_child2.getComputedWidth()).toBe(25);
     expect(root_child2.getComputedHeight()).toBe(30);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 

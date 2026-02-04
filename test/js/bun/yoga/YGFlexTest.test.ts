@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { expect, test } from "bun:test";
 const Yoga = Bun.Yoga;
 
 const Align = {
@@ -89,7 +89,7 @@ const Wrap = {
   WrapReverse: Yoga.WRAP_WRAP_REVERSE,
 };
 
-test('flex_basis_flex_grow_column', () => {
+test("flex_basis_flex_grow_column", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -141,14 +141,14 @@ test('flex_basis_flex_grow_column', () => {
     expect(root_child1.getComputedWidth()).toBe(100);
     expect(root_child1.getComputedHeight()).toBe(25);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_shrink_flex_grow_row', () => {
+test("flex_shrink_flex_grow_row", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -204,14 +204,14 @@ test('flex_shrink_flex_grow_row', () => {
     expect(root_child1.getComputedWidth()).toBe(250);
     expect(root_child1.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_shrink_flex_grow_child_flex_shrink_other_child', () => {
+test("flex_shrink_flex_grow_child_flex_shrink_other_child", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -268,14 +268,14 @@ test('flex_shrink_flex_grow_child_flex_shrink_other_child', () => {
     expect(root_child1.getComputedWidth()).toBe(250);
     expect(root_child1.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_basis_flex_grow_row', () => {
+test("flex_basis_flex_grow_row", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -328,14 +328,14 @@ test('flex_basis_flex_grow_row', () => {
     expect(root_child1.getComputedWidth()).toBe(25);
     expect(root_child1.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_basis_flex_shrink_column', () => {
+test("flex_basis_flex_shrink_column", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -387,14 +387,14 @@ test('flex_basis_flex_shrink_column', () => {
     expect(root_child1.getComputedWidth()).toBe(100);
     expect(root_child1.getComputedHeight()).toBe(50);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_basis_flex_shrink_row', () => {
+test("flex_basis_flex_shrink_row", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -447,14 +447,14 @@ test('flex_basis_flex_shrink_row', () => {
     expect(root_child1.getComputedWidth()).toBe(50);
     expect(root_child1.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_shrink_to_zero', () => {
+test("flex_shrink_to_zero", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -522,14 +522,14 @@ test('flex_shrink_to_zero', () => {
     expect(root_child2.getComputedWidth()).toBe(50);
     expect(root_child2.getComputedHeight()).toBe(50);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_basis_overrides_main_size', () => {
+test("flex_basis_overrides_main_size", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -598,14 +598,14 @@ test('flex_basis_overrides_main_size', () => {
     expect(root_child2.getComputedWidth()).toBe(100);
     expect(root_child2.getComputedHeight()).toBe(20);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_grow_shrink_at_most', () => {
+test("flex_grow_shrink_at_most", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -656,14 +656,14 @@ test('flex_grow_shrink_at_most', () => {
     expect(root_child0_child0.getComputedWidth()).toBe(100);
     expect(root_child0_child0.getComputedHeight()).toBe(0);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_grow_less_than_factor_one', () => {
+test("flex_grow_less_than_factor_one", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -729,7 +729,7 @@ test('flex_grow_less_than_factor_one', () => {
     expect(root_child2.getComputedWidth()).toBe(200);
     expect(root_child2.getComputedHeight()).toBe(184);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 

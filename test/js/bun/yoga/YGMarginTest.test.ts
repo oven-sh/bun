@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { expect, test } from "bun:test";
 const Yoga = Bun.Yoga;
 
 const Align = {
@@ -75,7 +75,7 @@ const Wrap = {
   WrapReverse: Yoga.WRAP_WRAP_REVERSE,
 };
 
-test('margin_start', () => {
+test("margin_start", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -114,14 +114,14 @@ test('margin_start', () => {
     expect(root_child0.getComputedWidth()).toBe(10);
     expect(root_child0.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('margin_top', () => {
+test("margin_top", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -159,14 +159,14 @@ test('margin_top', () => {
     expect(root_child0.getComputedWidth()).toBe(100);
     expect(root_child0.getComputedHeight()).toBe(10);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('margin_end', () => {
+test("margin_end", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -206,14 +206,14 @@ test('margin_end', () => {
     expect(root_child0.getComputedWidth()).toBe(10);
     expect(root_child0.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('margin_bottom', () => {
+test("margin_bottom", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -252,14 +252,14 @@ test('margin_bottom', () => {
     expect(root_child0.getComputedWidth()).toBe(100);
     expect(root_child0.getComputedHeight()).toBe(10);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('margin_and_flex_row', () => {
+test("margin_and_flex_row", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -299,14 +299,14 @@ test('margin_and_flex_row', () => {
     expect(root_child0.getComputedWidth()).toBe(80);
     expect(root_child0.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('margin_and_flex_column', () => {
+test("margin_and_flex_column", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -345,14 +345,14 @@ test('margin_and_flex_column', () => {
     expect(root_child0.getComputedWidth()).toBe(100);
     expect(root_child0.getComputedHeight()).toBe(80);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('margin_and_stretch_row', () => {
+test("margin_and_stretch_row", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -392,14 +392,14 @@ test('margin_and_stretch_row', () => {
     expect(root_child0.getComputedWidth()).toBe(100);
     expect(root_child0.getComputedHeight()).toBe(80);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('margin_and_stretch_column', () => {
+test("margin_and_stretch_column", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -438,14 +438,14 @@ test('margin_and_stretch_column', () => {
     expect(root_child0.getComputedWidth()).toBe(80);
     expect(root_child0.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('margin_with_sibling_row', () => {
+test("margin_with_sibling_row", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -498,14 +498,14 @@ test('margin_with_sibling_row', () => {
     expect(root_child1.getComputedWidth()).toBe(45);
     expect(root_child1.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('margin_with_sibling_column', () => {
+test("margin_with_sibling_column", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -557,14 +557,14 @@ test('margin_with_sibling_column', () => {
     expect(root_child1.getComputedWidth()).toBe(100);
     expect(root_child1.getComputedHeight()).toBe(45);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('margin_auto_bottom', () => {
+test("margin_auto_bottom", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -576,7 +576,7 @@ test('margin_auto_bottom', () => {
     root.setHeight(200);
 
     const root_child0 = Yoga.Node.create(config);
-    root_child0.setMargin(Edge.Bottom, 'auto');
+    root_child0.setMargin(Edge.Bottom, "auto");
     root_child0.setWidth(50);
     root_child0.setHeight(50);
     root.insertChild(root_child0, 0);
@@ -619,14 +619,14 @@ test('margin_auto_bottom', () => {
     expect(root_child1.getComputedWidth()).toBe(50);
     expect(root_child1.getComputedHeight()).toBe(50);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('margin_auto_top', () => {
+test("margin_auto_top", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -638,7 +638,7 @@ test('margin_auto_top', () => {
     root.setHeight(200);
 
     const root_child0 = Yoga.Node.create(config);
-    root_child0.setMargin(Edge.Top, 'auto');
+    root_child0.setMargin(Edge.Top, "auto");
     root_child0.setWidth(50);
     root_child0.setHeight(50);
     root.insertChild(root_child0, 0);
@@ -681,14 +681,14 @@ test('margin_auto_top', () => {
     expect(root_child1.getComputedWidth()).toBe(50);
     expect(root_child1.getComputedHeight()).toBe(50);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('margin_auto_bottom_and_top', () => {
+test("margin_auto_bottom_and_top", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -700,8 +700,8 @@ test('margin_auto_bottom_and_top', () => {
     root.setHeight(200);
 
     const root_child0 = Yoga.Node.create(config);
-    root_child0.setMargin(Edge.Top, 'auto');
-    root_child0.setMargin(Edge.Bottom, 'auto');
+    root_child0.setMargin(Edge.Top, "auto");
+    root_child0.setMargin(Edge.Bottom, "auto");
     root_child0.setWidth(50);
     root_child0.setHeight(50);
     root.insertChild(root_child0, 0);
@@ -744,14 +744,14 @@ test('margin_auto_bottom_and_top', () => {
     expect(root_child1.getComputedWidth()).toBe(50);
     expect(root_child1.getComputedHeight()).toBe(50);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('margin_auto_bottom_and_top_justify_center', () => {
+test("margin_auto_bottom_and_top_justify_center", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -763,8 +763,8 @@ test('margin_auto_bottom_and_top_justify_center', () => {
     root.setHeight(200);
 
     const root_child0 = Yoga.Node.create(config);
-    root_child0.setMargin(Edge.Top, 'auto');
-    root_child0.setMargin(Edge.Bottom, 'auto');
+    root_child0.setMargin(Edge.Top, "auto");
+    root_child0.setMargin(Edge.Bottom, "auto");
     root_child0.setWidth(50);
     root_child0.setHeight(50);
     root.insertChild(root_child0, 0);
@@ -807,14 +807,14 @@ test('margin_auto_bottom_and_top_justify_center', () => {
     expect(root_child1.getComputedWidth()).toBe(50);
     expect(root_child1.getComputedHeight()).toBe(50);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('margin_auto_multiple_children_column', () => {
+test("margin_auto_multiple_children_column", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -826,13 +826,13 @@ test('margin_auto_multiple_children_column', () => {
     root.setHeight(200);
 
     const root_child0 = Yoga.Node.create(config);
-    root_child0.setMargin(Edge.Top, 'auto');
+    root_child0.setMargin(Edge.Top, "auto");
     root_child0.setWidth(50);
     root_child0.setHeight(50);
     root.insertChild(root_child0, 0);
 
     const root_child1 = Yoga.Node.create(config);
-    root_child1.setMargin(Edge.Top, 'auto');
+    root_child1.setMargin(Edge.Top, "auto");
     root_child1.setWidth(50);
     root_child1.setHeight(50);
     root.insertChild(root_child1, 1);
@@ -885,14 +885,14 @@ test('margin_auto_multiple_children_column', () => {
     expect(root_child2.getComputedWidth()).toBe(50);
     expect(root_child2.getComputedHeight()).toBe(50);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('margin_auto_multiple_children_row', () => {
+test("margin_auto_multiple_children_row", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -905,13 +905,13 @@ test('margin_auto_multiple_children_row', () => {
     root.setHeight(200);
 
     const root_child0 = Yoga.Node.create(config);
-    root_child0.setMargin(Edge.Right, 'auto');
+    root_child0.setMargin(Edge.Right, "auto");
     root_child0.setWidth(50);
     root_child0.setHeight(50);
     root.insertChild(root_child0, 0);
 
     const root_child1 = Yoga.Node.create(config);
-    root_child1.setMargin(Edge.Right, 'auto');
+    root_child1.setMargin(Edge.Right, "auto");
     root_child1.setWidth(50);
     root_child1.setHeight(50);
     root.insertChild(root_child1, 1);
@@ -964,14 +964,14 @@ test('margin_auto_multiple_children_row', () => {
     expect(root_child2.getComputedWidth()).toBe(50);
     expect(root_child2.getComputedHeight()).toBe(50);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('margin_auto_left_and_right_column', () => {
+test("margin_auto_left_and_right_column", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -984,8 +984,8 @@ test('margin_auto_left_and_right_column', () => {
     root.setHeight(200);
 
     const root_child0 = Yoga.Node.create(config);
-    root_child0.setMargin(Edge.Left, 'auto');
-    root_child0.setMargin(Edge.Right, 'auto');
+    root_child0.setMargin(Edge.Left, "auto");
+    root_child0.setMargin(Edge.Right, "auto");
     root_child0.setWidth(50);
     root_child0.setHeight(50);
     root.insertChild(root_child0, 0);
@@ -1028,14 +1028,14 @@ test('margin_auto_left_and_right_column', () => {
     expect(root_child1.getComputedWidth()).toBe(50);
     expect(root_child1.getComputedHeight()).toBe(50);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('margin_auto_left_and_right', () => {
+test("margin_auto_left_and_right", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1046,8 +1046,8 @@ test('margin_auto_left_and_right', () => {
     root.setHeight(200);
 
     const root_child0 = Yoga.Node.create(config);
-    root_child0.setMargin(Edge.Left, 'auto');
-    root_child0.setMargin(Edge.Right, 'auto');
+    root_child0.setMargin(Edge.Left, "auto");
+    root_child0.setMargin(Edge.Right, "auto");
     root_child0.setWidth(50);
     root_child0.setHeight(50);
     root.insertChild(root_child0, 0);
@@ -1090,14 +1090,14 @@ test('margin_auto_left_and_right', () => {
     expect(root_child1.getComputedWidth()).toBe(50);
     expect(root_child1.getComputedHeight()).toBe(50);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('margin_auto_start_and_end_column', () => {
+test("margin_auto_start_and_end_column", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1110,8 +1110,8 @@ test('margin_auto_start_and_end_column', () => {
     root.setHeight(200);
 
     const root_child0 = Yoga.Node.create(config);
-    root_child0.setMargin(Edge.Start, 'auto');
-    root_child0.setMargin(Edge.End, 'auto');
+    root_child0.setMargin(Edge.Start, "auto");
+    root_child0.setMargin(Edge.End, "auto");
     root_child0.setWidth(50);
     root_child0.setHeight(50);
     root.insertChild(root_child0, 0);
@@ -1154,14 +1154,14 @@ test('margin_auto_start_and_end_column', () => {
     expect(root_child1.getComputedWidth()).toBe(50);
     expect(root_child1.getComputedHeight()).toBe(50);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('margin_auto_start_and_end', () => {
+test("margin_auto_start_and_end", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1172,8 +1172,8 @@ test('margin_auto_start_and_end', () => {
     root.setHeight(200);
 
     const root_child0 = Yoga.Node.create(config);
-    root_child0.setMargin(Edge.Start, 'auto');
-    root_child0.setMargin(Edge.End, 'auto');
+    root_child0.setMargin(Edge.Start, "auto");
+    root_child0.setMargin(Edge.End, "auto");
     root_child0.setWidth(50);
     root_child0.setHeight(50);
     root.insertChild(root_child0, 0);
@@ -1216,14 +1216,14 @@ test('margin_auto_start_and_end', () => {
     expect(root_child1.getComputedWidth()).toBe(50);
     expect(root_child1.getComputedHeight()).toBe(50);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('margin_auto_left_and_right_column_and_center', () => {
+test("margin_auto_left_and_right_column_and_center", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1235,8 +1235,8 @@ test('margin_auto_left_and_right_column_and_center', () => {
     root.setHeight(200);
 
     const root_child0 = Yoga.Node.create(config);
-    root_child0.setMargin(Edge.Left, 'auto');
-    root_child0.setMargin(Edge.Right, 'auto');
+    root_child0.setMargin(Edge.Left, "auto");
+    root_child0.setMargin(Edge.Right, "auto");
     root_child0.setWidth(50);
     root_child0.setHeight(50);
     root.insertChild(root_child0, 0);
@@ -1279,14 +1279,14 @@ test('margin_auto_left_and_right_column_and_center', () => {
     expect(root_child1.getComputedWidth()).toBe(50);
     expect(root_child1.getComputedHeight()).toBe(50);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('margin_auto_left', () => {
+test("margin_auto_left", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1298,7 +1298,7 @@ test('margin_auto_left', () => {
     root.setHeight(200);
 
     const root_child0 = Yoga.Node.create(config);
-    root_child0.setMargin(Edge.Left, 'auto');
+    root_child0.setMargin(Edge.Left, "auto");
     root_child0.setWidth(50);
     root_child0.setHeight(50);
     root.insertChild(root_child0, 0);
@@ -1341,14 +1341,14 @@ test('margin_auto_left', () => {
     expect(root_child1.getComputedWidth()).toBe(50);
     expect(root_child1.getComputedHeight()).toBe(50);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('margin_auto_right', () => {
+test("margin_auto_right", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1360,7 +1360,7 @@ test('margin_auto_right', () => {
     root.setHeight(200);
 
     const root_child0 = Yoga.Node.create(config);
-    root_child0.setMargin(Edge.Right, 'auto');
+    root_child0.setMargin(Edge.Right, "auto");
     root_child0.setWidth(50);
     root_child0.setHeight(50);
     root.insertChild(root_child0, 0);
@@ -1403,14 +1403,14 @@ test('margin_auto_right', () => {
     expect(root_child1.getComputedWidth()).toBe(50);
     expect(root_child1.getComputedHeight()).toBe(50);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('margin_auto_left_and_right_stretch', () => {
+test("margin_auto_left_and_right_stretch", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1422,8 +1422,8 @@ test('margin_auto_left_and_right_stretch', () => {
     root.setHeight(200);
 
     const root_child0 = Yoga.Node.create(config);
-    root_child0.setMargin(Edge.Left, 'auto');
-    root_child0.setMargin(Edge.Right, 'auto');
+    root_child0.setMargin(Edge.Left, "auto");
+    root_child0.setMargin(Edge.Right, "auto");
     root_child0.setWidth(50);
     root_child0.setHeight(50);
     root.insertChild(root_child0, 0);
@@ -1466,14 +1466,14 @@ test('margin_auto_left_and_right_stretch', () => {
     expect(root_child1.getComputedWidth()).toBe(50);
     expect(root_child1.getComputedHeight()).toBe(50);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('margin_auto_top_and_bottom_stretch', () => {
+test("margin_auto_top_and_bottom_stretch", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1484,8 +1484,8 @@ test('margin_auto_top_and_bottom_stretch', () => {
     root.setHeight(200);
 
     const root_child0 = Yoga.Node.create(config);
-    root_child0.setMargin(Edge.Top, 'auto');
-    root_child0.setMargin(Edge.Bottom, 'auto');
+    root_child0.setMargin(Edge.Top, "auto");
+    root_child0.setMargin(Edge.Bottom, "auto");
     root_child0.setWidth(50);
     root_child0.setHeight(50);
     root.insertChild(root_child0, 0);
@@ -1528,14 +1528,14 @@ test('margin_auto_top_and_bottom_stretch', () => {
     expect(root_child1.getComputedWidth()).toBe(50);
     expect(root_child1.getComputedHeight()).toBe(50);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('margin_should_not_be_part_of_max_height', () => {
+test("margin_should_not_be_part_of_max_height", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1575,14 +1575,14 @@ test('margin_should_not_be_part_of_max_height', () => {
     expect(root_child0.getComputedWidth()).toBe(100);
     expect(root_child0.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('margin_should_not_be_part_of_max_width', () => {
+test("margin_should_not_be_part_of_max_width", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1622,14 +1622,14 @@ test('margin_should_not_be_part_of_max_width', () => {
     expect(root_child0.getComputedWidth()).toBe(100);
     expect(root_child0.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('margin_auto_left_right_child_bigger_than_parent', () => {
+test("margin_auto_left_right_child_bigger_than_parent", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1641,8 +1641,8 @@ test('margin_auto_left_right_child_bigger_than_parent', () => {
     root.setHeight(52);
 
     const root_child0 = Yoga.Node.create(config);
-    root_child0.setMargin(Edge.Left, 'auto');
-    root_child0.setMargin(Edge.Right, 'auto');
+    root_child0.setMargin(Edge.Left, "auto");
+    root_child0.setMargin(Edge.Right, "auto");
     root_child0.setWidth(72);
     root_child0.setHeight(72);
     root.insertChild(root_child0, 0);
@@ -1670,14 +1670,14 @@ test('margin_auto_left_right_child_bigger_than_parent', () => {
     expect(root_child0.getComputedWidth()).toBe(72);
     expect(root_child0.getComputedHeight()).toBe(72);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('margin_auto_left_child_bigger_than_parent', () => {
+test("margin_auto_left_child_bigger_than_parent", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1689,7 +1689,7 @@ test('margin_auto_left_child_bigger_than_parent', () => {
     root.setHeight(52);
 
     const root_child0 = Yoga.Node.create(config);
-    root_child0.setMargin(Edge.Left, 'auto');
+    root_child0.setMargin(Edge.Left, "auto");
     root_child0.setWidth(72);
     root_child0.setHeight(72);
     root.insertChild(root_child0, 0);
@@ -1717,14 +1717,14 @@ test('margin_auto_left_child_bigger_than_parent', () => {
     expect(root_child0.getComputedWidth()).toBe(72);
     expect(root_child0.getComputedHeight()).toBe(72);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('margin_fix_left_auto_right_child_bigger_than_parent', () => {
+test("margin_fix_left_auto_right_child_bigger_than_parent", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1737,7 +1737,7 @@ test('margin_fix_left_auto_right_child_bigger_than_parent', () => {
 
     const root_child0 = Yoga.Node.create(config);
     root_child0.setMargin(Edge.Left, 10);
-    root_child0.setMargin(Edge.Right, 'auto');
+    root_child0.setMargin(Edge.Right, "auto");
     root_child0.setWidth(72);
     root_child0.setHeight(72);
     root.insertChild(root_child0, 0);
@@ -1765,14 +1765,14 @@ test('margin_fix_left_auto_right_child_bigger_than_parent', () => {
     expect(root_child0.getComputedWidth()).toBe(72);
     expect(root_child0.getComputedHeight()).toBe(72);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('margin_auto_left_fix_right_child_bigger_than_parent', () => {
+test("margin_auto_left_fix_right_child_bigger_than_parent", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1784,7 +1784,7 @@ test('margin_auto_left_fix_right_child_bigger_than_parent', () => {
     root.setHeight(52);
 
     const root_child0 = Yoga.Node.create(config);
-    root_child0.setMargin(Edge.Left, 'auto');
+    root_child0.setMargin(Edge.Left, "auto");
     root_child0.setMargin(Edge.Right, 10);
     root_child0.setWidth(72);
     root_child0.setHeight(72);
@@ -1813,14 +1813,14 @@ test('margin_auto_left_fix_right_child_bigger_than_parent', () => {
     expect(root_child0.getComputedWidth()).toBe(72);
     expect(root_child0.getComputedHeight()).toBe(72);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('margin_auto_top_stretching_child', () => {
+test("margin_auto_top_stretching_child", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1835,7 +1835,7 @@ test('margin_auto_top_stretching_child', () => {
     root_child0.setFlexGrow(1);
     root_child0.setFlexShrink(1);
     root_child0.setFlexBasis("0%");
-    root_child0.setMargin(Edge.Top, 'auto');
+    root_child0.setMargin(Edge.Top, "auto");
     root.insertChild(root_child0, 0);
 
     const root_child1 = Yoga.Node.create(config);
@@ -1876,14 +1876,14 @@ test('margin_auto_top_stretching_child', () => {
     expect(root_child1.getComputedWidth()).toBe(50);
     expect(root_child1.getComputedHeight()).toBe(50);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('margin_auto_left_stretching_child', () => {
+test("margin_auto_left_stretching_child", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1898,7 +1898,7 @@ test('margin_auto_left_stretching_child', () => {
     root_child0.setFlexGrow(1);
     root_child0.setFlexShrink(1);
     root_child0.setFlexBasis("0%");
-    root_child0.setMargin(Edge.Left, 'auto');
+    root_child0.setMargin(Edge.Left, "auto");
     root.insertChild(root_child0, 0);
 
     const root_child1 = Yoga.Node.create(config);
@@ -1939,14 +1939,14 @@ test('margin_auto_left_stretching_child', () => {
     expect(root_child1.getComputedWidth()).toBe(50);
     expect(root_child1.getComputedHeight()).toBe(50);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('margin_auto_overflowing_container', () => {
+test("margin_auto_overflowing_container", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1958,7 +1958,7 @@ test('margin_auto_overflowing_container', () => {
     root.setHeight(200);
 
     const root_child0 = Yoga.Node.create(config);
-    root_child0.setMargin(Edge.Bottom, 'auto');
+    root_child0.setMargin(Edge.Bottom, "auto");
     root_child0.setWidth(50);
     root_child0.setHeight(150);
     root.insertChild(root_child0, 0);
@@ -2001,7 +2001,7 @@ test('margin_auto_overflowing_container', () => {
     expect(root_child1.getComputedWidth()).toBe(50);
     expect(root_child1.getComputedHeight()).toBe(150);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 

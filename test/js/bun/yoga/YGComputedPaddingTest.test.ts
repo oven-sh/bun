@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { expect, test } from "bun:test";
 const Yoga = Bun.Yoga;
 
 /**
@@ -8,8 +8,7 @@ const Yoga = Bun.Yoga;
  * LICENSE file in the root directory of this source tree.
  */
 
-
-test('padding_start', () => {
+test("padding_start", () => {
   const root = Yoga.Node.create();
   root.setWidth(100);
   root.setHeight(100);

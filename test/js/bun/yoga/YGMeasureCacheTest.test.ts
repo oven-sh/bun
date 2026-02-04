@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { expect, test } from "bun:test";
 const Yoga = Bun.Yoga;
 
 const Align = {
@@ -90,12 +90,14 @@ const Wrap = {
 };
 
 type MeasureCounter = {
-  inc: (width: number, widthMode: number, height: number, heightMode: number) => {width?: number; height?: number};
+  inc: (width: number, widthMode: number, height: number, heightMode: number) => { width?: number; height?: number };
   get: () => number;
 };
 
 function getMeasureCounter(
-  cb?: ((width: number, widthMode: number, height: number, heightMode: number) => {width?: number; height?: number}) | null,
+  cb?:
+    | ((width: number, widthMode: number, height: number, heightMode: number) => { width?: number; height?: number })
+    | null,
   staticWidth = 0,
   staticHeight = 0,
 ): MeasureCounter {
@@ -105,9 +107,7 @@ function getMeasureCounter(
     inc: function (width: number, widthMode: number, height: number, heightMode: number) {
       counter += 1;
 
-      return cb
-        ? cb(width, widthMode, height, heightMode)
-        : {width: staticWidth, height: staticHeight};
+      return cb ? cb(width, widthMode, height, heightMode) : { width: staticWidth, height: staticHeight };
     },
 
     get: function () {
@@ -118,29 +118,23 @@ function getMeasureCounter(
 
 function getMeasureCounterMax(): MeasureCounter {
   return getMeasureCounter((width, widthMode, height, heightMode) => {
-    const measuredWidth =
-      widthMode === Yoga.MEASURE_MODE_UNDEFINED ? 10 : width;
-    const measuredHeight =
-      heightMode === Yoga.MEASURE_MODE_UNDEFINED ? 10 : height;
+    const measuredWidth = widthMode === Yoga.MEASURE_MODE_UNDEFINED ? 10 : width;
+    const measuredHeight = heightMode === Yoga.MEASURE_MODE_UNDEFINED ? 10 : height;
 
-    return {width: measuredWidth, height: measuredHeight};
+    return { width: measuredWidth, height: measuredHeight };
   });
 }
 
 function getMeasureCounterMin(): MeasureCounter {
   return getMeasureCounter((width, widthMode, height, heightMode) => {
     const measuredWidth =
-      widthMode === Yoga.MEASURE_MODE_UNDEFINED ||
-      (widthMode == Yoga.MEASURE_MODE_AT_MOST && width > 10)
-        ? 10
-        : width;
+      widthMode === Yoga.MEASURE_MODE_UNDEFINED || (widthMode == Yoga.MEASURE_MODE_AT_MOST && width > 10) ? 10 : width;
     const measuredHeight =
-      heightMode === Yoga.MEASURE_MODE_UNDEFINED ||
-      (heightMode == Yoga.MEASURE_MODE_AT_MOST && height > 10)
+      heightMode === Yoga.MEASURE_MODE_UNDEFINED || (heightMode == Yoga.MEASURE_MODE_AT_MOST && height > 10)
         ? 10
         : height;
 
-    return {width: measuredWidth, height: measuredHeight};
+    return { width: measuredWidth, height: measuredHeight };
   });
 }
 
@@ -151,9 +145,7 @@ function getMeasureCounterMin(): MeasureCounter {
  * LICENSE file in the root directory of this source tree.
  */
 
-
-
-test('measure_once_single_flexible_child', () => {
+test("measure_once_single_flexible_child", () => {
   const root = Yoga.Node.create();
   root.setFlexDirection(Yoga.FLEX_DIRECTION_ROW);
   root.setAlignItems(Yoga.ALIGN_FLEX_START);

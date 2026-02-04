@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { expect, test } from "bun:test";
 const Yoga = Bun.Yoga;
 
 /**
@@ -8,8 +8,7 @@ const Yoga = Bun.Yoga;
  * LICENSE file in the root directory of this source tree.
  */
 
-
-test('dirtied', () => {
+test("dirtied", () => {
   const root = Yoga.Node.create();
   root.setAlignItems(Yoga.ALIGN_FLEX_START);
   root.setWidth(100);
@@ -23,7 +22,7 @@ test('dirtied', () => {
   });
 
   // only nodes with a measure function can be marked dirty
-  root.setMeasureFunc(() => ({width: 0, height: 0}));
+  root.setMeasureFunc(() => ({ width: 0, height: 0 }));
 
   expect(dirtied).toBe(0);
 
@@ -38,7 +37,7 @@ test('dirtied', () => {
   root.freeRecursive();
 });
 
-test('dirtied_propagation', () => {
+test("dirtied_propagation", () => {
   const root = Yoga.Node.create();
   root.setAlignItems(Yoga.ALIGN_FLEX_START);
   root.setWidth(100);
@@ -48,7 +47,7 @@ test('dirtied_propagation', () => {
   root_child0.setAlignItems(Yoga.ALIGN_FLEX_START);
   root_child0.setWidth(50);
   root_child0.setHeight(20);
-  root_child0.setMeasureFunc(() => ({width: 0, height: 0}));
+  root_child0.setMeasureFunc(() => ({ width: 0, height: 0 }));
   root.insertChild(root_child0, 0);
 
   const root_child1 = Yoga.Node.create();
@@ -77,7 +76,7 @@ test('dirtied_propagation', () => {
   root.freeRecursive();
 });
 
-test('dirtied_hierarchy', () => {
+test("dirtied_hierarchy", () => {
   const root = Yoga.Node.create();
   root.setAlignItems(Yoga.ALIGN_FLEX_START);
   root.setWidth(100);
@@ -87,14 +86,14 @@ test('dirtied_hierarchy', () => {
   root_child0.setAlignItems(Yoga.ALIGN_FLEX_START);
   root_child0.setWidth(50);
   root_child0.setHeight(20);
-  root_child0.setMeasureFunc(() => ({width: 0, height: 0}));
+  root_child0.setMeasureFunc(() => ({ width: 0, height: 0 }));
   root.insertChild(root_child0, 0);
 
   const root_child1 = Yoga.Node.create();
   root_child1.setAlignItems(Yoga.ALIGN_FLEX_START);
   root_child1.setWidth(50);
   root_child1.setHeight(20);
-  root_child0.setMeasureFunc(() => ({width: 0, height: 0}));
+  root_child0.setMeasureFunc(() => ({ width: 0, height: 0 }));
   root.insertChild(root_child1, 0);
 
   root.calculateLayout(undefined, undefined, Yoga.DIRECTION_LTR);
@@ -120,12 +119,12 @@ test('dirtied_hierarchy', () => {
   root.freeRecursive();
 });
 
-test('dirtied_reset', () => {
+test("dirtied_reset", () => {
   const root = Yoga.Node.create();
   root.setAlignItems(Yoga.ALIGN_FLEX_START);
   root.setWidth(100);
   root.setHeight(100);
-  root.setMeasureFunc(() => ({width: 0, height: 0}));
+  root.setMeasureFunc(() => ({ width: 0, height: 0 }));
 
   root.calculateLayout(undefined, undefined, Yoga.DIRECTION_LTR);
 
@@ -147,7 +146,7 @@ test('dirtied_reset', () => {
   root.setAlignItems(Yoga.ALIGN_FLEX_START);
   root.setWidth(100);
   root.setHeight(100);
-  root.setMeasureFunc(() => ({width: 0, height: 0}));
+  root.setMeasureFunc(() => ({ width: 0, height: 0 }));
 
   root.markDirty();
 

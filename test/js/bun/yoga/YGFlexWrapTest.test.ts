@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { expect, test } from "bun:test";
 const Yoga = Bun.Yoga;
 
 // Enum compatibility layer: map Facebook Yoga enum style to Bun's constant style
@@ -109,7 +109,7 @@ const ExperimentalFeature = {
   WebFlexBasis: Yoga.EXPERIMENTAL_FEATURE_WEB_FLEX_BASIS,
 };
 
-test('wrap_column', () => {
+test("wrap_column", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -192,14 +192,14 @@ test('wrap_column', () => {
     expect(root_child3.getComputedWidth()).toBe(30);
     expect(root_child3.getComputedHeight()).toBe(30);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('wrap_row', () => {
+test("wrap_row", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -283,14 +283,14 @@ test('wrap_row', () => {
     expect(root_child3.getComputedWidth()).toBe(30);
     expect(root_child3.getComputedHeight()).toBe(30);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('wrap_row_align_items_flex_end', () => {
+test("wrap_row_align_items_flex_end", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -375,14 +375,14 @@ test('wrap_row_align_items_flex_end', () => {
     expect(root_child3.getComputedWidth()).toBe(30);
     expect(root_child3.getComputedHeight()).toBe(30);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('wrap_row_align_items_center', () => {
+test("wrap_row_align_items_center", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -467,14 +467,14 @@ test('wrap_row_align_items_center', () => {
     expect(root_child3.getComputedWidth()).toBe(30);
     expect(root_child3.getComputedHeight()).toBe(30);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_wrap_children_with_min_main_overriding_flex_basis', () => {
+test("flex_wrap_children_with_min_main_overriding_flex_basis", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -530,14 +530,14 @@ test('flex_wrap_children_with_min_main_overriding_flex_basis', () => {
     expect(root_child1.getComputedWidth()).toBe(55);
     expect(root_child1.getComputedHeight()).toBe(50);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_wrap_wrap_to_child_height', () => {
+test("flex_wrap_wrap_to_child_height", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -618,14 +618,14 @@ test('flex_wrap_wrap_to_child_height', () => {
     expect(root_child1.getComputedWidth()).toBe(100);
     expect(root_child1.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('flex_wrap_align_stretch_fits_one_row', () => {
+test("flex_wrap_align_stretch_fits_one_row", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -678,14 +678,14 @@ test('flex_wrap_align_stretch_fits_one_row', () => {
     expect(root_child1.getComputedWidth()).toBe(50);
     expect(root_child1.getComputedHeight()).toBe(0);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('wrap_reverse_row_align_content_flex_start', () => {
+test("wrap_reverse_row_align_content_flex_start", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -784,14 +784,14 @@ test('wrap_reverse_row_align_content_flex_start', () => {
     expect(root_child4.getComputedWidth()).toBe(30);
     expect(root_child4.getComputedHeight()).toBe(50);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('wrap_reverse_row_align_content_center', () => {
+test("wrap_reverse_row_align_content_center", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -891,14 +891,14 @@ test('wrap_reverse_row_align_content_center', () => {
     expect(root_child4.getComputedWidth()).toBe(30);
     expect(root_child4.getComputedHeight()).toBe(50);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('wrap_reverse_row_single_line_different_size', () => {
+test("wrap_reverse_row_single_line_different_size", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -997,14 +997,14 @@ test('wrap_reverse_row_single_line_different_size', () => {
     expect(root_child4.getComputedWidth()).toBe(30);
     expect(root_child4.getComputedHeight()).toBe(50);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('wrap_reverse_row_align_content_stretch', () => {
+test("wrap_reverse_row_align_content_stretch", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1104,14 +1104,14 @@ test('wrap_reverse_row_align_content_stretch', () => {
     expect(root_child4.getComputedWidth()).toBe(30);
     expect(root_child4.getComputedHeight()).toBe(50);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('wrap_reverse_row_align_content_space_around', () => {
+test("wrap_reverse_row_align_content_space_around", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1211,14 +1211,14 @@ test('wrap_reverse_row_align_content_space_around', () => {
     expect(root_child4.getComputedWidth()).toBe(30);
     expect(root_child4.getComputedHeight()).toBe(50);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('wrap_reverse_column_fixed_size', () => {
+test("wrap_reverse_column_fixed_size", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1318,14 +1318,14 @@ test('wrap_reverse_column_fixed_size', () => {
     expect(root_child4.getComputedWidth()).toBe(30);
     expect(root_child4.getComputedHeight()).toBe(50);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('wrapped_row_within_align_items_center', () => {
+test("wrapped_row_within_align_items_center", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1394,14 +1394,14 @@ test('wrapped_row_within_align_items_center', () => {
     expect(root_child0_child1.getComputedWidth()).toBe(80);
     expect(root_child0_child1.getComputedHeight()).toBe(80);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('wrapped_row_within_align_items_flex_start', () => {
+test("wrapped_row_within_align_items_flex_start", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1470,14 +1470,14 @@ test('wrapped_row_within_align_items_flex_start', () => {
     expect(root_child0_child1.getComputedWidth()).toBe(80);
     expect(root_child0_child1.getComputedHeight()).toBe(80);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('wrapped_row_within_align_items_flex_end', () => {
+test("wrapped_row_within_align_items_flex_end", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1546,14 +1546,14 @@ test('wrapped_row_within_align_items_flex_end', () => {
     expect(root_child0_child1.getComputedWidth()).toBe(80);
     expect(root_child0_child1.getComputedHeight()).toBe(80);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('wrapped_column_max_height', () => {
+test("wrapped_column_max_height", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1630,14 +1630,14 @@ test('wrapped_column_max_height', () => {
     expect(root_child2.getComputedWidth()).toBe(100);
     expect(root_child2.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('wrapped_column_max_height_flex', () => {
+test("wrapped_column_max_height_flex", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1720,14 +1720,14 @@ test('wrapped_column_max_height_flex', () => {
     expect(root_child2.getComputedWidth()).toBe(100);
     expect(root_child2.getComputedHeight()).toBe(100);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('wrap_nodes_with_content_sizing_overflowing_margin', () => {
+test("wrap_nodes_with_content_sizing_overflowing_margin", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1823,14 +1823,14 @@ test('wrap_nodes_with_content_sizing_overflowing_margin', () => {
     expect(root_child0_child1_child0.getComputedWidth()).toBe(40);
     expect(root_child0_child1_child0.getComputedHeight()).toBe(40);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('wrap_nodes_with_content_sizing_margin_cross', () => {
+test("wrap_nodes_with_content_sizing_margin_cross", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1926,14 +1926,14 @@ test('wrap_nodes_with_content_sizing_margin_cross', () => {
     expect(root_child0_child1_child0.getComputedWidth()).toBe(40);
     expect(root_child0_child1_child0.getComputedHeight()).toBe(40);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('wrap_with_min_cross_axis', () => {
+test("wrap_with_min_cross_axis", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -1988,14 +1988,14 @@ test('wrap_with_min_cross_axis', () => {
     expect(root_child1.getComputedWidth()).toBe(400);
     expect(root_child1.getComputedHeight()).toBe(200);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('wrap_with_max_cross_axis', () => {
+test("wrap_with_max_cross_axis", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -2050,14 +2050,14 @@ test('wrap_with_max_cross_axis', () => {
     expect(root_child1.getComputedWidth()).toBe(400);
     expect(root_child1.getComputedHeight()).toBe(200);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('nowrap_expands_flexline_box_to_min_cross', () => {
+test("nowrap_expands_flexline_box_to_min_cross", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -2096,14 +2096,14 @@ test('nowrap_expands_flexline_box_to_min_cross', () => {
     expect(root_child0.getComputedWidth()).toBe(0);
     expect(root_child0.getComputedHeight()).toBe(400);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 
     config.free();
   }
 });
-test('wrap_does_not_impose_min_cross_onto_single_flexline', () => {
+test("wrap_does_not_impose_min_cross_onto_single_flexline", () => {
   const config = Yoga.Config.create();
   let root;
 
@@ -2143,7 +2143,7 @@ test('wrap_does_not_impose_min_cross_onto_single_flexline', () => {
     expect(root_child0.getComputedWidth()).toBe(0);
     expect(root_child0.getComputedHeight()).toBe(0);
   } finally {
-    if (typeof root !== 'undefined') {
+    if (typeof root !== "undefined") {
       root.freeRecursive();
     }
 

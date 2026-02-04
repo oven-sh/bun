@@ -864,6 +864,15 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncFree, (JSC::JSGlobalObject * globalO
         // Lifecycle managed by RefCounted
     }
 
+    // Clear all WriteBarriers so the GC doesn't try to visit stale pointers.
+    // Without this, a freed node's visitAdditionalChildren could attempt to
+    // visit objects that are no longer valid.
+    thisObject->m_children.clear();
+    thisObject->m_measureFunc.clear();
+    thisObject->m_dirtiedFunc.clear();
+    thisObject->m_baselineFunc.clear();
+    thisObject->m_config.clear();
+
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
@@ -3100,6 +3109,15 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncRemoveAllChildren, (JSC::JSGlobalObj
     CHECK_YOGA_NODE_FREED(thisObject);
 
     YGNodeRemoveAllChildren(thisObject->impl().yogaNode());
+
+    // Clear the children array to release strong references, matching the Yoga tree state.
+    // Without this, the m_children JSArray retains stale references to removed children.
+    if (thisObject->m_children) {
+        JSC::JSArray* childrenArray = jsCast<JSC::JSArray*>(thisObject->m_children.get());
+        if (childrenArray)
+            childrenArray->setLength(globalObject, 0);
+    }
+
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
@@ -3160,10 +3178,14 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncFreeRecursive, (JSC::JSGlobalObject 
             }
         }
 
-        // Clear the JS wrapper for this node
+        // Clear the JS wrapper's WriteBarriers so the GC doesn't visit stale pointers
         JSYogaNode* jsNode = JSYogaNode::fromYGNode(currentNode);
         if (jsNode) {
-            // Lifecycle managed by RefCounted
+            jsNode->m_children.clear();
+            jsNode->m_measureFunc.clear();
+            jsNode->m_dirtiedFunc.clear();
+            jsNode->m_baselineFunc.clear();
+            jsNode->m_config.clear();
         }
     }
 

@@ -141,6 +141,14 @@ template<typename Visitor>
 void JSYogaNode::visitOutputConstraints(JSC::JSCell* cell, Visitor& visitor)
 {
     auto* thisObject = jsCast<JSYogaNode*>(cell);
+
+    // Lock for concurrent GC thread safety - the mutator thread may be modifying
+    // WriteBarriers (m_children, m_measureFunc, etc.) concurrently via insertChild,
+    // removeChild, setMeasureFunc, free(), etc. Without this lock, the GC thread
+    // can read a torn/partially-written pointer from a WriteBarrier, leading to
+    // a segfault in validateCell when it tries to decode a corrupted StructureID.
+    WTF::Locker locker { thisObject->cellLock() };
+
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitOutputConstraints(thisObject, visitor);
 

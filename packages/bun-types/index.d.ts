@@ -14,6 +14,7 @@
 /// <reference path="./html-rewriter.d.ts" />
 /// <reference path="./jsc.d.ts" />
 /// <reference path="./sqlite.d.ts" />
+/// <reference path="./git.d.ts" />
 /// <reference path="./test.d.ts" />
 /// <reference path="./wasm.d.ts" />
 /// <reference path="./overrides.d.ts" />

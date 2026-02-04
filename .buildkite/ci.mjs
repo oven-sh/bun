@@ -109,12 +109,12 @@ const buildPlatforms = [
   { os: "linux", arch: "x64", distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "linux", arch: "x64", baseline: true, distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "linux", arch: "x64", profile: "asan", distro: "amazonlinux", release: "2023", features: ["docker"] },
-  { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.22" },
-  { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.22" },
-  { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.22" },
+  { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.23" },
+  { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.23" },
+  { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.23" },
   { os: "windows", arch: "x64", release: "2019" },
   { os: "windows", arch: "x64", baseline: true, release: "2019" },
-  // TODO: Enable when Windows ARM64 CI runners are ready
+  // TODO: Re-enable when Windows ARM64 VS component installation is resolved on Buildkite runners
   // { os: "windows", arch: "aarch64", release: "2019" },
 ];
 
@@ -133,9 +133,9 @@ const testPlatforms = [
   { os: "linux", arch: "aarch64", distro: "ubuntu", release: "25.04", tier: "latest" },
   { os: "linux", arch: "x64", distro: "ubuntu", release: "25.04", tier: "latest" },
   { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "25.04", tier: "latest" },
-  { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.22", tier: "latest" },
-  { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.22", tier: "latest" },
-  { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.22", tier: "latest" },
+  { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.23", tier: "latest" },
+  { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.23", tier: "latest" },
+  { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.23", tier: "latest" },
   { os: "windows", arch: "x64", release: "2019", tier: "oldest" },
   { os: "windows", arch: "x64", release: "2019", baseline: true, tier: "oldest" },
   // TODO: Enable when Windows ARM64 CI runners are ready
@@ -304,6 +304,13 @@ function getCppAgent(platform, options) {
     };
   }
 
+  // Cross-compile Windows ARM64 from x64 runners
+  if (os === "windows" && arch === "aarch64") {
+    return getEc2Agent({ ...platform, arch: "x64" }, options, {
+      instanceType: "c7i.4xlarge",
+    });
+  }
+
   return getEc2Agent(platform, options, {
     instanceType: arch === "aarch64" ? "c8g.4xlarge" : "c7i.4xlarge",
   });
@@ -326,8 +333,10 @@ function getLinkBunAgent(platform, options) {
   }
 
   if (os === "windows") {
-    return getEc2Agent(platform, options, {
-      instanceType: arch === "aarch64" ? "r8g.large" : "r7i.large",
+    // Cross-compile Windows ARM64 from x64 runners
+    const agentPlatform = arch === "aarch64" ? { ...platform, arch: "x64" } : platform;
+    return getEc2Agent(agentPlatform, options, {
+      instanceType: "r7i.large",
     });
   }
 
@@ -345,7 +354,7 @@ function getZigPlatform() {
     arch: "aarch64",
     abi: "musl",
     distro: "alpine",
-    release: "3.22",
+    release: "3.23",
   };
 }
 
@@ -457,12 +466,25 @@ function getBuildCommand(target, options, label) {
 }
 
 /**
+ * Get extra flags needed when cross-compiling Windows ARM64 from x64.
+ * Applied to C++ and link steps (not Zig, which has its own toolchain handling).
+ */
+function getWindowsArm64CrossFlags(target) {
+  if (target.os === "windows" && target.arch === "aarch64") {
+    return " --toolchain windows-aarch64";
+  }
+  return "";
+}
+
+/**
  * @param {Platform} platform
  * @param {PipelineOptions} options
  * @returns {Step}
  */
 function getBuildCppStep(platform, options) {
   const command = getBuildCommand(platform, options);
+  const crossFlags = getWindowsArm64CrossFlags(platform);
+
   return {
     key: `${getTargetKey(platform)}-build-cpp`,
     label: `${getTargetLabel(platform)} - build-cpp`,
@@ -476,7 +498,7 @@ function getBuildCppStep(platform, options) {
     // We used to build the C++ dependencies and bun in separate steps.
     // However, as long as the zig build takes longer than both sequentially,
     // it's cheaper to run them in the same step. Can be revisited in the future.
-    command: [`${command} --target bun`, `${command} --target dependencies`],
+    command: [`${command}${crossFlags} --target bun`, `${command}${crossFlags} --target dependencies`],
   };
 }
 
@@ -533,7 +555,7 @@ function getLinkBunStep(platform, options) {
       ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
       ...getBuildEnv(platform, options),
     },
-    command: `${getBuildCommand(platform, options, "build-bun")} --target bun`,
+    command: `${getBuildCommand(platform, options, "build-bun")}${getWindowsArm64CrossFlags(platform)} --target bun`,
   };
 }
 
@@ -1179,6 +1201,8 @@ async function getPipeline(options = {}) {
     buildImages || publishImages
       ? [...buildPlatforms, ...testPlatforms]
           .filter(({ os }) => os !== "darwin")
+          // Windows ARM64 cross-compiles from x64 runners, no separate image needed
+          .filter(({ os, arch }) => !(os === "windows" && arch === "aarch64"))
           .map(platform => [getImageKey(platform), platform])
       : [],
   );

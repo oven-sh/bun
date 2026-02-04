@@ -792,7 +792,10 @@ JSC_DEFINE_HOST_FUNCTION(jsGitRepositoryCountCommits, (JSC::JSGlobalObject * lex
         }
 
         WTF::String rangeString = rangeValue.toWTFString(lexicalGlobalObject);
-        RETURN_IF_EXCEPTION(scope, {});
+        if (scope.exception()) [[unlikely]] {
+            git_revwalk_free(walk);
+            return JSC::JSValue::encode(JSC::jsUndefined());
+        }
         WTF::CString rangeCString = rangeString.utf8();
 
         error = git_revwalk_push_range(walk, rangeCString.data());

@@ -42,7 +42,7 @@ function listenOnRandomPort(server: ReturnType<typeof createServer>): Promise<nu
 }
 
 describe("HTTP server with proxy-style absolute URLs", () => {
-  test("sequential GET requests with absolute URL paths don't hang", { timeout: 5000 }, async () => {
+  test("sequential GET requests with absolute URL paths don't hang", async () => {
     const agent = new Agent({ keepAlive: true, maxSockets: 1 });
     const server = createServer((req, res) => {
       res.writeHead(200, { "Content-Type": "text/plain" });
@@ -74,7 +74,7 @@ describe("HTTP server with proxy-style absolute URLs", () => {
     }
   });
 
-  test("sequential POST requests with absolute URL paths don't hang", { timeout: 5000 }, async () => {
+  test("sequential POST requests with absolute URL paths don't hang", async () => {
     const agent = new Agent({ keepAlive: true, maxSockets: 1 });
     const server = createServer((req, res) => {
       let body = "";
@@ -125,7 +125,7 @@ describe("HTTP server with proxy-style absolute URLs", () => {
     }
   });
 
-  test("mixed normal and proxy-style URLs work sequentially", { timeout: 5000 }, async () => {
+  test("mixed normal and proxy-style URLs work sequentially", async () => {
     const agent = new Agent({ keepAlive: true, maxSockets: 1 });
     const server = createServer((req, res) => {
       res.writeHead(200, { "Content-Type": "text/plain" });

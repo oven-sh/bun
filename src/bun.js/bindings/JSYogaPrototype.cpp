@@ -861,6 +861,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncFree, (JSC::JSGlobalObject * globalO
     // Clear the internal pointer - actual cleanup in destructor
     if (thisObject->impl().yogaNode()) {
         YGNodeFree(thisObject->impl().yogaNode());
+        thisObject->impl().replaceYogaNode(nullptr);
         // Lifecycle managed by RefCounted
     }
 
@@ -3186,8 +3187,13 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncFreeRecursive, (JSC::JSGlobalObject 
             jsNode->m_dirtiedFunc.clear();
             jsNode->m_baselineFunc.clear();
             jsNode->m_config.clear();
+            jsNode->impl().replaceYogaNode(nullptr);
         }
     }
+
+    // Nullify the root node's yoga pointer before freeing (in case it wasn't
+    // reached via fromYGNode above, e.g. if the context pointer was already cleared).
+    thisObject->impl().replaceYogaNode(nullptr);
 
     // Now free the Yoga nodes
     YGNodeFreeRecursive(node);

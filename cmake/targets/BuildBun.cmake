@@ -1457,6 +1457,8 @@ if(NOT BUN_CPP_ONLY)
   # ==856230==See https://github.com/google/sanitizers/issues/856 for possible workarounds.
   # the linked issue refers to very old kernels but this still happens to us on modern ones.
   # disabling ASLR to run the binary works around it
+  # Skip post-build test/features when cross-compiling (can't run the target binary on the host)
+  if(NOT CMAKE_CROSSCOMPILING)
   set(TEST_BUN_COMMAND_BASE ${BUILD_PATH}/${bunExe} --revision)
   set(TEST_BUN_COMMAND_ENV_WRAP
     ${CMAKE_COMMAND} -E env BUN_DEBUG_QUIET_LOGS=1)
@@ -1505,6 +1507,7 @@ if(NOT BUN_CPP_ONLY)
         ${BUILD_PATH}/features.json
     )
   endif()
+  endif() # NOT CMAKE_CROSSCOMPILING
 
   if(CMAKE_HOST_APPLE AND bunStrip)
     register_command(
@@ -1551,7 +1554,10 @@ if(NOT BUN_CPP_ONLY)
       string(REPLACE bun ${bunTriplet} bunPath ${bun})
     endif()
 
-    set(bunFiles ${bunExe} features.json)
+    set(bunFiles ${bunExe})
+    if(NOT CMAKE_CROSSCOMPILING)
+      list(APPEND bunFiles features.json)
+    endif()
     if(WIN32)
       list(APPEND bunFiles ${bun}.pdb)
     elseif(APPLE)

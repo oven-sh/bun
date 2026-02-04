@@ -207,6 +207,21 @@ function emitCppCallToVariant(name: string, variant: Variant, dispatchFunctionNa
         cpp.line(`${type.cppName()} ${storageLocation};`);
       }
       const isUndefinedOrNull = type.flags.nonNull ? "isUndefined" : "isUndefinedOrNull";
+
+      // For string types with defaults, we need to keep the WTF::String alive
+      // outside the if block to prevent use-after-free when the BunString is used later.
+      // See: https://github.com/oven-sh/bun/issues/XXXXX
+      const isStringType =
+        type.kind === "DOMString" ||
+        type.kind === "USVString" ||
+        type.kind === "ByteString" ||
+        type.kind === "UTF8String";
+      let wtfStringHolder: string | undefined;
+      if (isStringType && "default" in type.flags) {
+        wtfStringHolder = cpp.nextTemporaryName("wtfStringHolder");
+        cpp.line(`WTF::String ${wtfStringHolder};`);
+      }
+
       if (isNullable) {
         assert(strategy.type === "uses-communication-buffer");
         cpp.line(`if ((${storageLocation}Set = !${jsValueRef}.${isUndefinedOrNull}())) {`);
@@ -215,11 +230,22 @@ function emitCppCallToVariant(name: string, variant: Variant, dispatchFunctionNa
         cpp.line(`if (!${jsValueRef}.${isUndefinedOrNull}()) {`);
       }
       cpp.indent();
-      emitConvertValue(storageLocation, arg.type, jsValueRef, exceptionContext, "assign");
+      if (wtfStringHolder) {
+        // For string types, just convert to WTF::String inside the if block
+        const idlType = type.kind === "UTF8String" ? "DOMString" : type.kind;
+        cpp.line(`${wtfStringHolder} = WebCore::convert<WebCore::IDL${idlType}>(*global, ${jsValueRef});`);
+        cpp.line(`RETURN_IF_EXCEPTION(throwScope, {});`);
+      } else {
+        emitConvertValue(storageLocation, arg.type, jsValueRef, exceptionContext, "assign");
+      }
       cpp.dedent();
       if ("default" in type.flags) {
         cpp.line(`} else {`);
         cpp.indent();
+        if (wtfStringHolder) {
+          // For string defaults, assign empty string to WTF::String holder
+          // The default BunString::Empty will be created from it below
+        }
         cpp.add(`${storageLocation} = `);
         type.emitCppDefaultValue(cpp);
         cpp.line(";");
@@ -228,6 +254,12 @@ function emitCppCallToVariant(name: string, variant: Variant, dispatchFunctionNa
         assert(isNullable);
       }
       cpp.line(`}`);
+
+      // For string types, create the BunString from the WTF::String holder
+      // now that we're outside the if block and the holder is still in scope
+      if (wtfStringHolder) {
+        cpp.line(`if (!${wtfStringHolder}.isEmpty()) ${storageLocation} = Bun::toString(${wtfStringHolder});`);
+      }
     } else {
       emitConvertValue(storageLocation, arg.type, jsValueRef, exceptionContext, needDeclare ? "declare" : "assign");
     }
@@ -610,9 +642,30 @@ function emitConvertDictionaryFunction(type: TypeImpl) {
     );
     cpp.line(`    RETURN_IF_EXCEPTION(throwScope, false);`);
     cpp.line(`}`);
+
+    // For string types with defaults, we need to keep the WTF::String alive
+    // outside the if block to prevent use-after-free when the BunString is used later.
+    const isStringType =
+      fieldType.kind === "DOMString" ||
+      fieldType.kind === "USVString" ||
+      fieldType.kind === "ByteString" ||
+      fieldType.kind === "UTF8String";
+    let wtfStringHolder: string | undefined;
+    if (isStringType && "default" in fieldType.flags) {
+      wtfStringHolder = cpp.nextTemporaryName("wtfStringHolder");
+      cpp.line(`WTF::String ${wtfStringHolder};`);
+    }
+
     cpp.line(`if (!propValue.isUndefined()) {`);
     cpp.indent();
-    emitConvertValue(`result->${key}`, fieldType, "propValue", { type: "none" }, "assign");
+    if (wtfStringHolder) {
+      // For string types, just convert to WTF::String inside the if block
+      const idlType = fieldType.kind === "UTF8String" ? "DOMString" : fieldType.kind;
+      cpp.line(`${wtfStringHolder} = WebCore::convert<WebCore::IDL${idlType}>(*global, propValue);`);
+      cpp.line(`RETURN_IF_EXCEPTION(throwScope, {});`);
+    } else {
+      emitConvertValue(`result->${key}`, fieldType, "propValue", { type: "none" }, "assign");
+    }
     cpp.dedent();
     cpp.line(`} else {`);
     cpp.indent();
@@ -628,6 +681,12 @@ function emitConvertDictionaryFunction(type: TypeImpl) {
     }
     cpp.dedent();
     cpp.line(`}`);
+
+    // For string types, create the BunString from the WTF::String holder
+    // now that we're outside the if block and the holder is still in scope
+    if (wtfStringHolder) {
+      cpp.line(`if (!${wtfStringHolder}.isEmpty()) result->${key} = Bun::toString(${wtfStringHolder});`);
+    }
   }
 
   cpp.line(`return true;`);

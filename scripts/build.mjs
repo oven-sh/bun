@@ -57,7 +57,11 @@ async function build(args) {
   if (process.platform === "win32" && !process.env["VSINSTALLDIR"]) {
     const shellPath = join(import.meta.dirname, "vs-shell.ps1");
     const scriptPath = import.meta.filename;
-    return spawn("pwsh", ["-NoProfile", "-NoLogo", "-File", shellPath, process.argv0, scriptPath, ...args]);
+    // When cross-compiling to ARM64, tell vs-shell.ps1 to set up the x64_arm64 VS environment
+    const toolchainIdx = args.indexOf("--toolchain");
+    const requestedVsArch = toolchainIdx !== -1 && args[toolchainIdx + 1] === "windows-aarch64" ? "arm64" : undefined;
+    const env = requestedVsArch ? { ...process.env, BUN_VS_ARCH: requestedVsArch } : undefined;
+    return spawn("pwsh", ["-NoProfile", "-NoLogo", "-File", shellPath, process.argv0, scriptPath, ...args], { env });
   }
 
   if (isCI) {
@@ -92,21 +96,9 @@ async function build(args) {
     generateOptions["--toolchain"] = toolchainPath;
   }
 
-  // Windows ARM64: automatically set required options
+  // Windows ARM64: log detection (compiler is selected by CMake/toolchain)
   if (isWindowsARM64) {
-    // Use clang-cl instead of MSVC cl.exe for proper ARM64 flag support
-    if (!generateOptions["-DCMAKE_C_COMPILER"]) {
-      generateOptions["-DCMAKE_C_COMPILER"] = "clang-cl";
-    }
-    if (!generateOptions["-DCMAKE_CXX_COMPILER"]) {
-      generateOptions["-DCMAKE_CXX_COMPILER"] = "clang-cl";
-    }
-    // Skip codegen by default since x64 bun crashes under WoW64 emulation
-    // Can be overridden with -DSKIP_CODEGEN=OFF once ARM64 bun is available
-    if (!generateOptions["-DSKIP_CODEGEN"]) {
-      generateOptions["-DSKIP_CODEGEN"] = "ON";
-    }
-    console.log("Windows ARM64 detected: using clang-cl and SKIP_CODEGEN=ON");
+    console.log("Windows ARM64 detected");
   }
 
   const generateArgs = Object.entries(generateOptions).flatMap(([flag, value]) =>

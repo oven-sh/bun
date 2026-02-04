@@ -988,6 +988,10 @@ void JSMockFunctionPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* g
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 
     this->putDirect(vm, Identifier::fromString(vm, "_isMockFunction"_s), jsBoolean(true), 0);
+
+    // Support `using spy = spyOn(...)` — auto-restores when leaving scope.
+    JSValue restoreFn = this->getDirect(vm, Identifier::fromString(vm, "mockRestore"_s));
+    this->putDirect(vm, vm.propertyNames->disposeSymbol, restoreFn, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsMockFunctionGetMockImplementation, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))

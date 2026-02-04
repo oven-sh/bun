@@ -2109,4 +2109,95 @@ describe("Bun.JSONL", () => {
       });
     });
   });
+
+  describe("TypeScript generics", () => {
+    interface User {
+      id: number;
+      name: string;
+      email: string;
+    }
+
+    interface Product {
+      sku: string;
+      price: number;
+    }
+
+    test("parse with generic type", () => {
+      const input = '{"id":1,"name":"Alice","email":"alice@example.com"}\n{"id":2,"name":"Bob","email":"bob@example.com"}\n';
+      const users = Bun.JSONL.parse<User>(input);
+
+      expect(users).toStrictEqual([
+        { id: 1, name: "Alice", email: "alice@example.com" },
+        { id: 2, name: "Bob", email: "bob@example.com" },
+      ]);
+
+      // TypeScript should infer users as User[]
+      expect(Array.isArray(users)).toBe(true);
+      if (users.length > 0) {
+        expect(typeof users[0].id).toBe("number");
+        expect(typeof users[0].name).toBe("string");
+        expect(typeof users[0].email).toBe("string");
+      }
+    });
+
+    test("parseChunk with generic type", () => {
+      const input = '{"sku":"ABC123","price":29.99}\n{"sku":"XYZ789","price":49.99}\n';
+      const result = Bun.JSONL.parseChunk<Product>(input);
+
+      expect(result.values).toStrictEqual([
+        { sku: "ABC123", price: 29.99 },
+        { sku: "XYZ789", price: 49.99 },
+      ]);
+      expect(result.done).toBe(true);
+      expect(result.error).toBe(null);
+
+      // TypeScript should infer result.values as Product[]
+      if (result.values.length > 0) {
+        expect(typeof result.values[0].sku).toBe("string");
+        expect(typeof result.values[0].price).toBe("number");
+      }
+    });
+
+    test("parse with primitive generic type", () => {
+      const numbers = Bun.JSONL.parse<number>("1\n2\n3\n4\n5\n");
+      expect(numbers).toStrictEqual([1, 2, 3, 4, 5]);
+
+      const strings = Bun.JSONL.parse<string>('"hello"\n"world"\n"test"\n');
+      expect(strings).toStrictEqual(["hello", "world", "test"]);
+
+      const booleans = Bun.JSONL.parse<boolean>("true\nfalse\ntrue\n");
+      expect(booleans).toStrictEqual([true, false, true]);
+    });
+
+    test("parseChunk with TypedArray and generic type", () => {
+      const encoder = new TextEncoder();
+      const buffer = encoder.encode('{"id":1,"name":"Alice","email":"alice@example.com"}\n{"id":2,"name":"Bob","email":"bob@example.com"}\n');
+      const result = Bun.JSONL.parseChunk<User>(buffer);
+
+      expect(result.values).toStrictEqual([
+        { id: 1, name: "Alice", email: "alice@example.com" },
+        { id: 2, name: "Bob", email: "bob@example.com" },
+      ]);
+      expect(result.done).toBe(true);
+      expect(result.error).toBe(null);
+    });
+
+    test("parse defaults to unknown when no generic specified", () => {
+      const input = '{"a":1}\n{"b":2}\n';
+      const result = Bun.JSONL.parse(input);
+
+      // Without generic, result should be unknown[]
+      expect(Array.isArray(result)).toBe(true);
+      expect(result).toStrictEqual([{ a: 1 }, { b: 2 }]);
+    });
+
+    test("parseChunk defaults to unknown when no generic specified", () => {
+      const input = '{"a":1}\n{"b":2}\n';
+      const result = Bun.JSONL.parseChunk(input);
+
+      // Without generic, result.values should be unknown[]
+      expect(Array.isArray(result.values)).toBe(true);
+      expect(result.values).toStrictEqual([{ a: 1 }, { b: 2 }]);
+    });
+  });
 });

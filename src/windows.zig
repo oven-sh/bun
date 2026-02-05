@@ -149,7 +149,7 @@ pub extern "kernel32" fn SetCurrentDirectoryW(
     lpPathName: win32.LPCWSTR,
 ) callconv(.winapi) win32.BOOL;
 pub const SetCurrentDirectory = SetCurrentDirectoryW;
-pub extern "ntdll" fn RtlNtStatusToDosError(win32.NTSTATUS) callconv(.winapi) Win32Error;
+pub extern "ntdll" fn RtlNtStatusToDosError(win32.NTSTATUS) callconv(.winapi) u32;
 pub extern "advapi32" fn SaferiIsExecutableFileType(szFullPathname: win32.LPCWSTR, bFromShellExecute: win32.BOOLEAN) callconv(.winapi) win32.BOOL;
 // This was originally copied from Zig's standard library
 /// Codes are from https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-erref/18d8fbe8-a967-4f1c-ae50-99ca8e491d2d
@@ -2971,7 +2971,7 @@ pub const Win32Error = enum(u16) {
     }
 
     pub fn fromNTStatus(status: win32.NTSTATUS) Win32Error {
-        return RtlNtStatusToDosError(status);
+        return @enumFromInt(RtlNtStatusToDosError(status));
     }
 };
 
@@ -4205,3 +4205,24 @@ const log = bun.sys.syslog;
 const w = std.os.windows;
 const win32 = windows;
 const windows = std.os.windows;
+
+test "Win32Error.fromNTStatus handles unknown error codes" {
+    // Regression test for https://github.com/oven-sh/bun/issues/26756
+    // RtlNtStatusToDosError can return Win32 error codes that are not defined
+    // in Bun's Win32Error enum. Using @enumFromInt with a non-exhaustive enum
+    // allows the _ catch-all to handle these unknown codes.
+
+    // Create a Win32Error from a value not explicitly defined in the enum
+    // (value 9999 is not a defined error code)
+    const unknown_code: Win32Error = @enumFromInt(9999);
+
+    // Verify the code can be converted back to integer
+    const raw: u16 = @intFromEnum(unknown_code);
+    try std.testing.expectEqual(@as(u16, 9999), raw);
+
+    // Verify it doesn't match SUCCESS
+    try std.testing.expect(unknown_code != .SUCCESS);
+
+    // Verify toSystemErrno returns null for unknown codes (as expected)
+    try std.testing.expectEqual(@as(?SystemErrno, null), unknown_code.toSystemErrno());
+}

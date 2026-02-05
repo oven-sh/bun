@@ -167,7 +167,7 @@ pub const ServerEntryPoint = struct {
                     \\var hmrSymbol = Symbol("BunServerHMR");
                     \\var entryNamespace = start;
                     \\function isServerConfig(def) {{
-                    \\   return def && def !== globalThis && (typeof def.fetch === 'function' || def.app != undefined) && typeof def.stop !== 'function';
+                    \\   return def && def !== globalThis && (typeof def.fetch === 'function' || def.app != undefined) && typeof def.reload !== 'function';
                     \\}}
                     \\if (typeof entryNamespace?.then === 'function') {{
                     \\   entryNamespace = entryNamespace.then((entryNamespace) => {{
@@ -206,7 +206,7 @@ pub const ServerEntryPoint = struct {
                 \\import * as start from "{f}";
                 \\var entryNamespace = start;
                 \\function isServerConfig(def) {{
-                \\   return def && def !== globalThis && (typeof def.fetch === 'function' || def.app != undefined) && typeof def.stop !== 'function';
+                \\   return def && def !== globalThis && (typeof def.fetch === 'function' || def.app != undefined) && typeof def.reload !== 'function';
                 \\}}
                 \\if (typeof entryNamespace?.then === 'function') {{
                 \\   entryNamespace = entryNamespace.then((entryNamespace) => {{

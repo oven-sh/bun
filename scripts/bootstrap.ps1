@@ -19,6 +19,9 @@ param (
 $ErrorActionPreference = "Stop"
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
 
+# Detect ARM64 architecture for installing native ARM64 packages
+$script:IsARM64 = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq [System.Runtime.InteropServices.Architecture]::Arm64
+
 function Execute-Command {
   $command = $args -join ' '
   Write-Output "$ $command"
@@ -244,6 +247,13 @@ function Install-NodeJs {
 }
 
 function Install-Bun {
+  if ($script:IsARM64) {
+    if (Which bun) {
+      return
+    }
+    Write-Warning "Bun ARM64 for Windows is not yet available via Chocolatey."
+    Write-Warning "Install bun manually or it will run under x64 emulation."
+  }
   Install-Package bun -Version "1.3.1"
 }
 
@@ -302,21 +312,48 @@ function Install-Buildkite {
 
 function Install-Build-Essentials {
   Install-Visual-Studio
-  Install-Packages `
-    cmake `
-    make `
-    ninja `
-    python `
-    golang `
-    nasm `
-    ruby `
-    strawberryperl `
-    mingw
+  Install-CMake
+  Install-Packages make ninja python golang ruby strawberryperl
+  if (-not $script:IsARM64) {
+    # nasm is an x86 assembler, not needed on ARM64
+    # mingw is not needed for ARM64 Windows builds
+    Install-Packages nasm mingw
+  }
   Install-Rust
   Install-Ccache
   # Needed to remap stack traces
   Install-PdbAddr2line
   Install-Llvm
+}
+
+function Install-CMake {
+  if ($script:IsARM64) {
+    if (Which cmake) {
+      return
+    }
+    # Chocolatey cmake package only downloads x64; install ARM64 natively
+    # to ensure CMAKE_SYSTEM_PROCESSOR is detected as ARM64.
+    # Update this version as needed.
+    $version = "3.31.2"
+    Write-Output "Installing CMake $version (ARM64)..."
+    $url = "https://github.com/Kitware/CMake/releases/download/v$version/cmake-$version-windows-arm64.msi"
+    $msi = Download-File $url -Name "cmake-arm64.msi"
+    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $startInfo.FileName = "msiexec"
+    $startInfo.Arguments = "/i `"$msi`" /quiet /norestart ADD_CMAKE_TO_PATH=System"
+    $startInfo.CreateNoWindow = $true
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $startInfo
+    $process.Start()
+    $process.WaitForExit()
+    if ($process.ExitCode -ne 0) {
+      throw "Failed to install CMake: code $($process.ExitCode)"
+    }
+    Remove-Item $msi -ErrorAction SilentlyContinue
+    Refresh-Path
+  } else {
+    Install-Package cmake
+  }
 }
 
 function Install-Visual-Studio {
@@ -385,9 +422,31 @@ function Install-PdbAddr2line {
 }
 
 function Install-Llvm {
-  Install-Package llvm `
-    -Command clang-cl `
-    -Version "21.1.8"
+  $version = "21.1.8"
+  if ($script:IsARM64) {
+    if (Which clang-cl) {
+      return
+    }
+    # Chocolatey LLVM package only downloads x64; install ARM64 natively.
+    Write-Output "Installing LLVM $version (ARM64)..."
+    $url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-$version/LLVM-$version-woa64.exe"
+    $installer = Download-File $url -Name "llvm-arm64.exe"
+    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $startInfo.FileName = $installer
+    $startInfo.Arguments = "/S"
+    $startInfo.CreateNoWindow = $true
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $startInfo
+    $process.Start()
+    $process.WaitForExit()
+    if ($process.ExitCode -ne 0) {
+      throw "Failed to install LLVM: code $($process.ExitCode)"
+    }
+    Remove-Item $installer -ErrorAction SilentlyContinue
+    Refresh-Path
+  } else {
+    Install-Package llvm -Command clang-cl -Version $version
+  }
   Add-To-Path "$env:ProgramFiles\LLVM\bin"
 }
 

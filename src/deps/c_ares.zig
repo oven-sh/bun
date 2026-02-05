@@ -1216,9 +1216,10 @@ pub const struct_ares_txt_reply = extern struct {
     };
 
     /// Extract CNAME target from a DNS response buffer.
-    /// Returns an owned copy of the CNAME target domain name if found, null otherwise.
+    /// Returns an owned copy of the CNAME target domain name if found.
+    /// Returns null if no CNAME found, or error.OutOfMemory if allocation fails.
     /// Caller is responsible for freeing the returned slice with bun.default_allocator.
-    fn extractCnameFromBuffer(buffer: [*c]u8, buffer_length: c_int) ?[]u8 {
+    fn extractCnameFromBuffer(buffer: [*c]u8, buffer_length: c_int) error{OutOfMemory}!?[]u8 {
         var dnsrec: ?*ares_dns_record_t = null;
         if (ares_dns_parse(buffer, @intCast(buffer_length), 0, &dnsrec) != ARES_SUCCESS) {
             return null;
@@ -1236,7 +1237,7 @@ pub const struct_ares_txt_reply = extern struct {
                 if (cname_ptr) |ptr| {
                     const cname_slice = bun.sliceTo(ptr, 0);
                     // Return an owned copy before dnsrec is destroyed
-                    return bun.default_allocator.dupe(u8, cname_slice) catch null;
+                    return try bun.default_allocator.dupe(u8, cname_slice);
                 }
             }
         }
@@ -1269,7 +1270,13 @@ pub const struct_ares_txt_reply = extern struct {
 
                 // No TXT records found, check for CNAME
                 // extractCnameFromBuffer returns an owned copy that the caller must free
-                if (extractCnameFromBuffer(buffer, buffer_length)) |cname| {
+                const cname_result = extractCnameFromBuffer(buffer, buffer_length) catch {
+                    // OOM during CNAME extraction
+                    function(this, Error.ENOMEM, timeouts, .{ .err = .ENOMEM });
+                    return;
+                };
+
+                if (cname_result) |cname| {
                     function(this, null, timeouts, .{ .cname = cname });
                     return;
                 }

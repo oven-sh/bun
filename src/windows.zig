@@ -4190,22 +4190,6 @@ pub fn GetEnvironmentVariableW(lpName: LPWSTR, lpBuffer: [*]u16, nSize: DWORD) G
 
 pub const env = @import("./windows/env.zig");
 
-const builtin = @import("builtin");
-const std = @import("std");
-
-const bun = @import("bun");
-const Environment = bun.Environment;
-const Output = bun.Output;
-const c = bun.c;
-
-const Maybe = bun.sys.Maybe;
-const SystemErrno = bun.sys.SystemErrno;
-const log = bun.sys.syslog;
-
-const w = std.os.windows;
-const win32 = windows;
-const windows = std.os.windows;
-
 test "Win32Error.fromNTStatus handles unknown error codes" {
     // Regression test for https://github.com/oven-sh/bun/issues/26756
     // RtlNtStatusToDosError can return Win32 error codes that are not defined
@@ -4226,3 +4210,19 @@ test "Win32Error.fromNTStatus handles unknown error codes" {
     // Verify toSystemErrno returns null for unknown codes (as expected)
     try std.testing.expectEqual(@as(?SystemErrno, null), unknown_code.toSystemErrno());
 }
+
+const builtin = @import("builtin");
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Output = bun.Output;
+const c = bun.c;
+
+const Maybe = bun.sys.Maybe;
+const SystemErrno = bun.sys.SystemErrno;
+const log = bun.sys.syslog;
+
+const w = std.os.windows;
+const win32 = windows;
+const windows = std.os.windows;

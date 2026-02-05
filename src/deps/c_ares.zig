@@ -1221,7 +1221,11 @@ pub const struct_ares_txt_reply = extern struct {
     /// Caller is responsible for freeing the returned slice with bun.default_allocator.
     fn extractCnameFromBuffer(buffer: [*c]u8, buffer_length: c_int) error{OutOfMemory}!?[]u8 {
         var dnsrec: ?*ares_dns_record_t = null;
-        if (ares_dns_parse(buffer, @intCast(buffer_length), 0, &dnsrec) != ARES_SUCCESS) {
+        const parse_result = ares_dns_parse(buffer, @intCast(buffer_length), 0, &dnsrec);
+        if (parse_result == ARES_ENOMEM) {
+            return error.OutOfMemory;
+        }
+        if (parse_result != ARES_SUCCESS) {
             return null;
         }
         defer ares_dns_record_destroy(dnsrec);

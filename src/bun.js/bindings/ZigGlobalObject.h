@@ -645,7 +645,7 @@ public:
     V(public, LazyPropertyOfGlobalObject<JSFunction>, m_ipcParseHandleFunction)                              \
                                                                                                              \
     V(public, LazyClassStructure, m_JSYogaConfigClassStructure)                                              \
-    V(public, LazyClassStructure, m_JSYogaNodeClassStructure)                                                 \
+    V(public, LazyClassStructure, m_JSYogaNodeClassStructure)                                                \
     V(public, LazyClassStructure, m_JSYogaModuleStructure)
 
 #define DECLARE_GLOBALOBJECT_GC_MEMBER(visibility, T, name) \

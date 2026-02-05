@@ -31,7 +31,7 @@ describe("bun update --interactive snapshots", () => {
     });
 
     // Test that the command doesn't crash with mixed package lengths
-    const result = await Bun.spawn({
+    await using proc = Bun.spawn({
       cmd: [bunExe(), "update", "--interactive", "--dry-run"],
       cwd: dir,
       env: bunEnv,
@@ -41,26 +41,26 @@ describe("bun update --interactive snapshots", () => {
     });
 
     // Send 'n' to exit without selecting anything
-    result.stdin.write("n\n");
-    result.stdin.end();
+    proc.stdin.write("n\n");
+    proc.stdin.end();
 
-    const stdout = await new Response(result.stdout).text();
-    const stderr = await new Response(result.stderr).text();
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
 
     // Replace version numbers and paths to avoid flakiness
     const normalizedOutput = normalizeOutput(stdout);
 
     // The output should show proper column spacing and formatting
     expect(normalizedOutput).toMatchSnapshot("update-interactive-no-crash");
-
-    // Should not crash or have formatting errors
-    expect(stderr).not.toContain("panic");
-    expect(stderr).not.toContain("underflow");
-    expect(stderr).not.toContain("overflow");
+    expect(exitCode).toBe(0);
   });
 
   it("should handle extremely long package names without crashing", async () => {
-    const veryLongName = "a".repeat(80);
+    // Use Buffer.alloc instead of .repeat() for better debug build performance
+    const veryLongName = Buffer.alloc(80, "a").toString();
     const dir = tempDirWithFiles("update-interactive-long-names", {
       "package.json": JSON.stringify({
         name: "test-project",
@@ -72,7 +72,7 @@ describe("bun update --interactive snapshots", () => {
       }),
     });
 
-    const result = await Bun.spawn({
+    await using proc = Bun.spawn({
       cmd: [bunExe(), "update", "--interactive", "--dry-run"],
       cwd: dir,
       env: bunEnv,
@@ -81,18 +81,19 @@ describe("bun update --interactive snapshots", () => {
       stderr: "pipe",
     });
 
-    result.stdin.write("n\n");
-    result.stdin.end();
+    proc.stdin.write("n\n");
+    proc.stdin.end();
 
-    const stdout = await new Response(result.stdout).text();
-    const stderr = await new Response(result.stderr).text();
+    const [stdout, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.exited,
+    ]);
 
     const normalizedOutput = normalizeOutput(stdout);
 
     // Should not crash
     expect(normalizedOutput).toMatchSnapshot("update-interactive-long-names");
-    expect(stderr).not.toContain("panic");
-    expect(stderr).not.toContain("underflow");
+    expect(exitCode).toBe(0);
   });
 
   it("should handle complex version strings without crashing", async () => {
@@ -108,7 +109,7 @@ describe("bun update --interactive snapshots", () => {
       }),
     });
 
-    const result = await Bun.spawn({
+    await using proc = Bun.spawn({
       cmd: [bunExe(), "update", "--interactive", "--dry-run"],
       cwd: dir,
       env: bunEnv,
@@ -117,18 +118,19 @@ describe("bun update --interactive snapshots", () => {
       stderr: "pipe",
     });
 
-    result.stdin.write("n\n");
-    result.stdin.end();
+    proc.stdin.write("n\n");
+    proc.stdin.end();
 
-    const stdout = await new Response(result.stdout).text();
-    const stderr = await new Response(result.stderr).text();
+    const [stdout, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.exited,
+    ]);
 
     const normalizedOutput = normalizeOutput(stdout);
 
     // Should not crash
     expect(normalizedOutput).toMatchSnapshot("update-interactive-complex-versions");
-    expect(stderr).not.toContain("panic");
-    expect(stderr).not.toContain("underflow");
+    expect(exitCode).toBe(0);
   });
 });
 
@@ -178,8 +180,8 @@ describe("bun update --interactive messages", () => {
     proc.stdin.end();
 
     const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
+      proc.stdout.text(),
+      proc.stderr.text(),
       proc.exited,
     ]);
 

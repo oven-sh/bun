@@ -39,6 +39,7 @@ test("setting self.onmessage = null allows worker to exit gracefully", async () 
     cmd: [bunExe(), "main.js"],
     env: bunEnv,
     cwd: String(dir),
+    stdout: "pipe",
     stderr: "pipe",
   });
 
@@ -98,6 +99,7 @@ test("setting self.onmessage = null multiple times works correctly", async () =>
     cmd: [bunExe(), "main.js"],
     env: bunEnv,
     cwd: String(dir),
+    stdout: "pipe",
     stderr: "pipe",
   });
 

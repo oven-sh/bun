@@ -162,7 +162,8 @@ describe("bun update --interactive messages", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    await installProc.exited;
+    const installExitCode = await installProc.exited;
+    expect(installExitCode).toBe(0);
 
     // Run update --interactive with select all
     await using proc = Bun.spawn({

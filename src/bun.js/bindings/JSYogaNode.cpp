@@ -14,9 +14,9 @@ using namespace JSC;
 
 const JSC::ClassInfo JSYogaNode::s_info = { "Node"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSYogaNode) };
 
-JSYogaNode::JSYogaNode(JSC::VM& vm, JSC::Structure* structure)
+JSYogaNode::JSYogaNode(JSC::VM& vm, JSC::Structure* structure, YGConfigRef config)
     : Base(vm, structure)
-    , m_impl(YogaNodeImpl::create())
+    , m_impl(YogaNodeImpl::create(config))
 {
 }
 
@@ -35,8 +35,8 @@ JSYogaNode::~JSYogaNode()
 JSYogaNode* JSYogaNode::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, YGConfigRef config, JSYogaConfig* jsConfig)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSYogaNode* node = new (NotNull, JSC::allocateCell<JSYogaNode>(vm)) JSYogaNode(vm, structure);
-    node->finishCreation(vm, config, jsConfig);
+    JSYogaNode* node = new (NotNull, JSC::allocateCell<JSYogaNode>(vm)) JSYogaNode(vm, structure, config);
+    node->finishCreation(vm, jsConfig);
 
     // Initialize children array - this can throw so it must be done here
     // where exceptions can be properly propagated to callers
@@ -62,14 +62,9 @@ JSYogaNode* JSYogaNode::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, J
     return node;
 }
 
-void JSYogaNode::finishCreation(JSC::VM& vm, YGConfigRef config, JSYogaConfig* jsConfig)
+void JSYogaNode::finishCreation(JSC::VM& vm, JSYogaConfig* jsConfig)
 {
     Base::finishCreation(vm);
-
-    // If we need to recreate with specific config, do so
-    if (config || jsConfig) {
-        m_impl = YogaNodeImpl::create(config);
-    }
 
     // Set this JS wrapper in the C++ impl
     m_impl->setJSWrapper(this);

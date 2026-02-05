@@ -1,6 +1,5 @@
 #pragma once
 #include "root.h"
-#include <memory>
 #include <JavaScriptCore/JSDestructibleObject.h>
 #include <JavaScriptCore/WriteBarrier.h>
 #include <wtf/Ref.h>
@@ -55,9 +54,9 @@ public:
     JSC::WriteBarrier<JSC::JSArray> m_children;
 
 private:
-    JSYogaNode(JSC::VM&, JSC::Structure*);
+    JSYogaNode(JSC::VM&, JSC::Structure*, YGConfigRef config = nullptr);
     JSYogaNode(JSC::VM&, JSC::Structure*, Ref<YogaNodeImpl>&&);
-    void finishCreation(JSC::VM&, YGConfigRef config, JSYogaConfig* jsConfig);
+    void finishCreation(JSC::VM&, JSYogaConfig* jsConfig);
     void finishCreation(JSC::VM&);
 
     Ref<YogaNodeImpl> m_impl;

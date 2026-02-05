@@ -1203,6 +1203,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncRemoveChild, (JSC::JSGlobalObject * 
         throwTypeError(globalObject, scope, "Argument must be a Yoga.Node"_s);
         return {};
     }
+    CHECK_YOGA_NODE_FREED(childNode);
 
     // Remove from Yoga tree
     YGNodeRemoveChild(thisObject->impl().yogaNode(), childNode->impl().yogaNode());
@@ -2510,6 +2511,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncInsertChild, (JSC::JSGlobalObject * 
         throwTypeError(globalObject, scope, "First argument must be a Yoga.Node instance"_s);
         return {};
     }
+    CHECK_YOGA_NODE_FREED(child);
 
     int index = callFrame->uncheckedArgument(1).toInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
@@ -3283,6 +3285,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncCopyStyle, (JSC::JSGlobalObject * gl
         throwTypeError(globalObject, scope, "First argument must be a Yoga.Node"_s);
         return {};
     }
+    CHECK_YOGA_NODE_FREED(sourceNode);
 
     YGNodeCopyStyle(thisObject->impl().yogaNode(), sourceNode->impl().yogaNode());
     return JSC::JSValue::encode(JSC::jsUndefined());
@@ -3324,10 +3327,14 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncClone, (JSC::JSGlobalObject * global
     struct NodePair {
         YGNodeRef original;
         YGNodeRef cloned;
+        JSYogaNode* jsCloned;
     };
 
     Vector<NodePair> stack;
-    stack.append({ thisObject->impl().yogaNode(), clonedNode });
+    stack.append({ thisObject->impl().yogaNode(), clonedNode, jsClonedNode });
+
+    // Map to store cloned node -> parent cloned node relationship
+    HashMap<YGNodeRef, YGNodeRef> childToParentMap;
 
     while (!stack.isEmpty()) {
         NodePair pair = stack.takeLast();
@@ -3368,8 +3375,16 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncClone, (JSC::JSGlobalObject * global
                     }
                 }
 
+                // Add cloned child to parent's m_children array
+                JSC::JSArray* parentChildrenArray = jsCast<JSC::JSArray*>(pair.jsCloned->m_children.get());
+                if (parentChildrenArray) {
+                    uint32_t length = parentChildrenArray->length();
+                    parentChildrenArray->putDirectIndex(globalObject, length, jsClonedChild);
+                    RETURN_IF_EXCEPTION(scope, {});
+                }
+
                 // Add to stack for processing grandchildren
-                stack.append({ originalChild, clonedChild });
+                stack.append({ originalChild, clonedChild, jsClonedChild });
             }
         }
     }

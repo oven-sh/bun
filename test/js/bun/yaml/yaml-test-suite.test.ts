@@ -6024,7 +6024,7 @@ test("yaml-test-suite/X4QW", () => {
 });
 
 test("yaml-test-suite/X8DW", () => {
-  // Explicit key and value seperated by comment
+  // Explicit key and value separated by comment
   const input: string = `---
 ? key
 # comment

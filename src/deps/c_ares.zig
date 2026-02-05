@@ -1210,15 +1210,15 @@ pub const struct_ares_txt_reply = extern struct {
     /// Result type for TXT queries that may contain CNAME redirects
     pub const TxtOrCname = union(enum) {
         txt: ?*struct_ares_txt_reply,
-        cname: []const u8,
+        /// Owned CNAME target - caller must free with bun.default_allocator
+        cname: []u8,
         err: Error,
     };
 
     /// Extract CNAME target from a DNS response buffer.
-    /// Returns the CNAME target domain name if found, null otherwise.
-    /// The returned string points to memory owned by the dnsrec and is valid
-    /// until ares_dns_record_destroy is called.
-    fn extractCnameFromBuffer(buffer: [*c]u8, buffer_length: c_int) ?[]const u8 {
+    /// Returns an owned copy of the CNAME target domain name if found, null otherwise.
+    /// Caller is responsible for freeing the returned slice with bun.default_allocator.
+    fn extractCnameFromBuffer(buffer: [*c]u8, buffer_length: c_int) ?[]u8 {
         var dnsrec: ?*ares_dns_record_t = null;
         if (ares_dns_parse(buffer, @intCast(buffer_length), 0, &dnsrec) != ARES_SUCCESS) {
             return null;
@@ -1234,7 +1234,9 @@ pub const struct_ares_txt_reply = extern struct {
             if (ares_dns_rr_get_type(rr) == .ARES_REC_TYPE_CNAME) {
                 const cname_ptr = ares_dns_rr_get_str(rr, ARES_RR_CNAME_CNAME);
                 if (cname_ptr) |ptr| {
-                    return bun.sliceTo(ptr, 0);
+                    const cname_slice = bun.sliceTo(ptr, 0);
+                    // Return an owned copy before dnsrec is destroyed
+                    return bun.default_allocator.dupe(u8, cname_slice) catch null;
                 }
             }
         }
@@ -1266,13 +1268,9 @@ pub const struct_ares_txt_reply = extern struct {
                 }
 
                 // No TXT records found, check for CNAME
+                // extractCnameFromBuffer returns an owned copy that the caller must free
                 if (extractCnameFromBuffer(buffer, buffer_length)) |cname| {
-                    // Need to copy the CNAME since the buffer will be freed
-                    const cname_copy = bun.default_allocator.dupe(u8, cname) catch {
-                        function(this, Error.ENOMEM, timeouts, .{ .err = .ENOMEM });
-                        return;
-                    };
-                    function(this, null, timeouts, .{ .cname = cname_copy });
+                    function(this, null, timeouts, .{ .cname = cname });
                     return;
                 }
 

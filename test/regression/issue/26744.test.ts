@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import dns from "dns/promises";
 
 /**
  * Regression test for GitHub issue #26744
@@ -15,8 +16,6 @@ import { describe, expect, test } from "bun:test";
  */
 describe("dns.resolveTxt with CNAME domains", () => {
   test("should follow CNAME and return TXT records", async () => {
-    const dns = require("dns/promises");
-
     // This domain is a CNAME pointing to sendgrid.net which has TXT records
     // Note: This test depends on external DNS infrastructure
     const hostname = "deletemecname2.suped.com";
@@ -43,7 +42,6 @@ describe("dns.resolveTxt with CNAME domains", () => {
   });
 
   test("should work with Resolver class", async () => {
-    const dns = require("dns/promises");
     const resolver = new dns.Resolver();
 
     // Use public DNS server
@@ -57,8 +55,6 @@ describe("dns.resolveTxt with CNAME domains", () => {
   });
 
   test("should still work for non-CNAME domains", async () => {
-    const dns = require("dns/promises");
-
     // google.com has TXT records directly (no CNAME)
     const result = await dns.resolveTxt("google.com");
 

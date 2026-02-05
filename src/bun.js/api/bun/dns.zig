@@ -529,6 +529,9 @@ pub const TxtResolveInfoRequest = struct {
         var head = this.head;
         bun.default_allocator.destroy(this);
 
+        // Free c-ares TXT result after processing (similar to drainPendingHostCares)
+        defer if (result) |txt_reply| txt_reply.deinit();
+
         head.processResolve(err_, timeout, result);
     }
 };

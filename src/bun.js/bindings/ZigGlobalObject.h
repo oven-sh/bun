@@ -316,6 +316,8 @@ public:
 
     Structure* JSSQLStatementStructure() const { return m_JSSQLStatementStructure.getInitializedOnMainThread(this); }
 
+    JSC::Structure* JSYogaModuleStructure() const { return m_JSYogaModuleStructure.getInitializedOnMainThread(this); }
+
     v8::shim::GlobalInternals* V8GlobalInternals() const { return m_V8GlobalInternals.getInitializedOnMainThread(this); }
 
     Bun::BakeAdditionsToGlobalObject& bakeAdditions() { return m_bakeAdditions; }
@@ -643,7 +645,8 @@ public:
     V(public, LazyPropertyOfGlobalObject<JSFunction>, m_ipcParseHandleFunction)                              \
                                                                                                              \
     V(public, LazyClassStructure, m_JSYogaConfigClassStructure)                                              \
-    V(public, LazyClassStructure, m_JSYogaNodeClassStructure)
+    V(public, LazyClassStructure, m_JSYogaNodeClassStructure)                                                 \
+    V(public, LazyClassStructure, m_JSYogaModuleStructure)
 
 #define DECLARE_GLOBALOBJECT_GC_MEMBER(visibility, T, name) \
     visibility:                                             \

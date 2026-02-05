@@ -3,6 +3,7 @@
 #include "JSYogaConfig.h"
 #include "YogaConfigImpl.h"
 #include "JSYogaNode.h"
+#include "JSYogaModule.h"
 #include "JSYogaPrototype.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/FunctionPrototype.h>
@@ -172,6 +173,12 @@ void setupJSYogaNodeClassStructure(JSC::LazyClassStructure::Initializer& init)
     init.setPrototype(prototype);
     init.setStructure(structure);
     init.setConstructor(constructor);
+}
+
+void setupJSYogaModuleClassStructure(JSC::LazyClassStructure::Initializer& init)
+{
+    auto* structure = JSYogaModule::createStructure(init.vm, init.global, init.global->objectPrototype());
+    init.setStructure(structure);
 }
 
 } // namespace Bun

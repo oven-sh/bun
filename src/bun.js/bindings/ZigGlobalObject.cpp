@@ -1804,6 +1804,10 @@ void GlobalObject::finishCreation(VM& vm)
         [](LazyClassStructure::Initializer& init) {
             setupJSYogaNodeClassStructure(init);
         });
+    m_JSYogaModuleStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            setupJSYogaModuleClassStructure(init);
+        });
 
     m_JSNodePerformanceHooksHistogramClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {

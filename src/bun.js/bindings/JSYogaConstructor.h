@@ -67,5 +67,6 @@ private:
 // Helper functions to set up class structures
 void setupJSYogaConfigClassStructure(JSC::LazyClassStructure::Initializer&);
 void setupJSYogaNodeClassStructure(JSC::LazyClassStructure::Initializer&);
+void setupJSYogaModuleClassStructure(JSC::LazyClassStructure::Initializer&);
 
 } // namespace Bun

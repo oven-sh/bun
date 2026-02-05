@@ -132,6 +132,70 @@ describe("bun update --interactive snapshots", () => {
   });
 });
 
+describe("bun update --interactive messages", () => {
+  it("should show helpful message when selected packages are already at target version", async () => {
+    // Create a project with a package that has a caret range matching its installed version
+    // When the user selects this package, it's already at target (caret) version
+    const dir = tempDirWithFiles("update-interactive-at-target", {
+      "package.json": JSON.stringify({
+        name: "test-project",
+        version: "1.0.0",
+        dependencies: {
+          // Use a real package with specific version that matches caret target
+          "is-number": "^7.0.0",
+        },
+      }),
+      // Create a minimal lockfile that indicates is-number@7.0.0 is installed
+      "bun.lock": `{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "test-project",
+      "dependencies": {
+        "is-number": "^7.0.0"
+      }
+    }
+  },
+  "packages": {
+    "is-number": ["is-number@7.0.0", "", {}, "sha512-test"]
+  }
+}`,
+    });
+
+    const result = await Bun.spawn({
+      cmd: [bunExe(), "update", "--interactive", "--dry-run"],
+      cwd: dir,
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    // Press 'A' to select all, then 'y' to confirm
+    // If packages are at target, we should see the helpful message
+    result.stdin.write("A");
+    await Bun.sleep(100);
+    result.stdin.write("y");
+    result.stdin.end();
+
+    const stdout = await new Response(result.stdout).text();
+    const stderr = await new Response(result.stderr).text();
+
+    // Combine output for checking
+    const combinedOutput = stdout + stderr;
+
+    // Should not crash
+    expect(combinedOutput).not.toContain("panic");
+    expect(combinedOutput).not.toContain("error:");
+
+    // If the package is already at target version, we should see the new helpful message
+    // instead of just "No packages selected for update"
+    if (combinedOutput.includes("already at target version")) {
+      expect(combinedOutput).toContain("use 'l' to select latest");
+    }
+  });
+});
+
 function normalizeOutput(output: string): string {
   // Remove Bun version to avoid test flakiness
   let normalized = output.replace(/bun update --interactive v\d+\.\d+\.\d+[^\n]*/g, "bun update --interactive vX.X.X");

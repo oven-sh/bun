@@ -1272,6 +1272,14 @@ pub const struct_ares_txt_reply = extern struct {
                     return;
                 }
 
+                // Only attempt CNAME extraction for valid-but-empty cases
+                // (ARES_SUCCESS with null txt_start, or ARES_ENODATA)
+                // For other errors (e.g., ARES_EBADRESP), return the error immediately
+                if (result != ARES_SUCCESS and result != ARES_ENODATA) {
+                    function(this, Error.get(result), timeouts, .{ .err = Error.get(result).? });
+                    return;
+                }
+
                 // No TXT records found, check for CNAME
                 // extractCnameFromBuffer returns an owned copy that the caller must free
                 const cname_result = extractCnameFromBuffer(buffer, buffer_length) catch {
@@ -1285,13 +1293,8 @@ pub const struct_ares_txt_reply = extern struct {
                     return;
                 }
 
-                // No CNAME either, return the original error
-                if (result != ARES_SUCCESS) {
-                    function(this, Error.get(result), timeouts, .{ .err = Error.get(result).? });
-                } else {
-                    // SUCCESS but null result means no TXT records
-                    function(this, Error.ENODATA, timeouts, .{ .err = .ENODATA });
-                }
+                // No CNAME either, return ENODATA
+                function(this, Error.ENODATA, timeouts, .{ .err = .ENODATA });
             }
         }.handleTxt;
     }

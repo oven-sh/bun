@@ -824,6 +824,12 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, WebCore::Scri
 
 GlobalObject::~GlobalObject()
 {
+    // Clear the context pointer in globalEventScope before destroying the context.
+    // This prevents use-after-free when event listeners are cleaned up during
+    // globalEventScope destruction - the onDidChangeListener callback would otherwise
+    // try to access the already-freed ScriptExecutionContext.
+    globalEventScope->m_context = nullptr;
+
     if (auto* ctx = scriptExecutionContext()) {
         ctx->removeFromContextsMap();
         ctx->deref();

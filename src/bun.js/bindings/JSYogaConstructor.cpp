@@ -21,6 +21,8 @@ static JSC_DECLARE_HOST_FUNCTION(constructJSYogaConfig);
 static JSC_DECLARE_HOST_FUNCTION(callJSYogaConfig);
 static JSC_DECLARE_HOST_FUNCTION(constructJSYogaNode);
 static JSC_DECLARE_HOST_FUNCTION(callJSYogaNode);
+static JSC_DECLARE_HOST_FUNCTION(createJSYogaConfig);
+static JSC_DECLARE_HOST_FUNCTION(createJSYogaNode);
 
 // Config Constructor implementation
 const JSC::ClassInfo JSYogaConfigConstructor::s_info = { "Config"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSYogaConfigConstructor) };
@@ -35,8 +37,8 @@ void JSYogaConfigConstructor::finishCreation(JSC::VM& vm, JSC::JSObject* prototy
     Base::finishCreation(vm, 0, "Config"_s, PropertyAdditionMode::WithStructureTransition);
     putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 
-    // Add static methods - create() is an alias for the constructor
-    putDirectNativeFunction(vm, this->globalObject(), JSC::Identifier::fromString(vm, "create"_s), 0, constructJSYogaConfig, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+    // Add static methods - create() is a factory function that doesn't require 'new'
+    putDirectNativeFunction(vm, this->globalObject(), JSC::Identifier::fromString(vm, "create"_s), 0, createJSYogaConfig, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 }
 
 // Node Constructor implementation
@@ -52,8 +54,8 @@ void JSYogaNodeConstructor::finishCreation(JSC::VM& vm, JSC::JSObject* prototype
     Base::finishCreation(vm, 1, "Node"_s, PropertyAdditionMode::WithStructureTransition); // 1 for optional config parameter
     putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 
-    // Add static methods - create() is an alias for the constructor
-    putDirectNativeFunction(vm, this->globalObject(), JSC::Identifier::fromString(vm, "create"_s), 1, constructJSYogaNode, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+    // Add static methods - create() is a factory function that doesn't require 'new'
+    putDirectNativeFunction(vm, this->globalObject(), JSC::Identifier::fromString(vm, "create"_s), 1, createJSYogaNode, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 }
 
 // Constructor functions
@@ -142,6 +144,49 @@ JSC_DEFINE_HOST_FUNCTION(callJSYogaNode, (JSC::JSGlobalObject * globalObject, JS
     auto scope = DECLARE_THROW_SCOPE(vm);
     throwTypeError(globalObject, scope, "Class constructor Node cannot be invoked without 'new'"_s);
     return {};
+}
+
+// Factory functions that don't require 'new'
+
+JSC_DEFINE_HOST_FUNCTION(createJSYogaConfig, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    JSC::VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* zigGlobalObject = defaultGlobalObject(globalObject);
+    JSC::Structure* structure = zigGlobalObject->m_JSYogaConfigClassStructure.get(zigGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSYogaConfig::create(vm, structure)));
+}
+
+JSC_DEFINE_HOST_FUNCTION(createJSYogaNode, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    JSC::VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* zigGlobalObject = defaultGlobalObject(globalObject);
+    JSC::Structure* structure = zigGlobalObject->m_JSYogaNodeClassStructure.get(zigGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    // Optional config parameter
+    YGConfigRef config = nullptr;
+    JSYogaConfig* jsConfig = nullptr;
+    if (callFrame->argumentCount() > 0) {
+        JSC::JSValue configArg = callFrame->uncheckedArgument(0);
+        if (!configArg.isUndefinedOrNull()) {
+            jsConfig = JSC::jsDynamicCast<JSYogaConfig*>(configArg);
+            if (!jsConfig) {
+                throwTypeError(globalObject, scope, "First argument must be a Yoga.Config instance"_s);
+                return {};
+            }
+            config = jsConfig->impl().yogaConfig();
+        }
+    }
+
+    auto* node = JSYogaNode::create(vm, globalObject, structure, config, jsConfig);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSC::JSValue::encode(node);
 }
 
 // Setup functions for lazy initialization

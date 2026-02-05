@@ -76,6 +76,19 @@ JSC::GCClient::IsoSubspace* JSYogaConfig::subspaceFor(JSC::VM& vm)
 }
 
 template<typename Visitor>
+void JSYogaConfig::visitChildrenImpl(JSC::JSCell* cell, Visitor& visitor)
+{
+    JSYogaConfig* thisObject = jsCast<JSYogaConfig*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+    visitor.append(thisObject->m_context);
+    visitor.append(thisObject->m_loggerFunc);
+    visitor.append(thisObject->m_cloneNodeFunc);
+}
+
+DEFINE_VISIT_CHILDREN(JSYogaConfig);
+
+template<typename Visitor>
 void JSYogaConfig::visitAdditionalChildren(Visitor& visitor)
 {
     visitor.append(m_context);

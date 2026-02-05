@@ -97,7 +97,7 @@ pub fn deinit(this: *Script) void {
     if (!this.parent.ptr.is(Interpreter) and !this.parent.ptr.is(Subshell)) {
         // The shell state is owned by the parent when the parent is Interpreter or Subshell
         // Otherwise this Script represents a command substitution which is duped from the parent
-        // and must be deinitalized.
+        // and must be deinitialized.
         this.base.shell.deinit();
     }
 

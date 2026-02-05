@@ -243,7 +243,32 @@ function Install-Git {
 }
 
 function Install-NodeJs {
-  Install-Package nodejs -Command node -Version "24.3.0"
+  $version = "24.3.0"
+  if ($script:IsARM64) {
+    if ((Which node) -and (& node --version) -like "*$version*") {
+      return
+    }
+    # Chocolatey nodejs package only installs x64; install ARM64 natively.
+    # x64 Node.js causes postinstall scripts to misdetect architecture.
+    Write-Output "Installing Node.js $version (ARM64)..."
+    $url = "https://nodejs.org/dist/v$version/node-v$version-arm64.msi"
+    $msi = Download-File $url -Name "node-arm64.msi"
+    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $startInfo.FileName = "msiexec"
+    $startInfo.Arguments = "/i `"$msi`" /quiet /norestart"
+    $startInfo.CreateNoWindow = $true
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $startInfo
+    $process.Start()
+    $process.WaitForExit()
+    if ($process.ExitCode -ne 0) {
+      throw "Failed to install Node.js: code $($process.ExitCode)"
+    }
+    Remove-Item $msi -ErrorAction SilentlyContinue
+    Refresh-Path
+  } else {
+    Install-Package nodejs -Command node -Version $version
+  }
 }
 
 function Install-Bun {

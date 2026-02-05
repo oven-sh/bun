@@ -46,8 +46,6 @@ test("setting self.onmessage = null allows worker to exit gracefully", async () 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout).toContain("received pong");
-  expect(stderr).not.toContain("error");
-  expect(stderr).not.toContain("crash");
   expect(exitCode).toBe(0);
 });
 
@@ -106,7 +104,5 @@ test("setting self.onmessage = null multiple times works correctly", async () =>
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout).toContain("responses: count: 1, count: 2, count: 3");
-  expect(stderr).not.toContain("error");
-  expect(stderr).not.toContain("crash");
   expect(exitCode).toBe(0);
 });

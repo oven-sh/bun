@@ -39,6 +39,12 @@ if($env:VSINSTALLDIR -eq $null) {
     # -HostArch only accepts "x86" or "amd64" — even on native ARM64, use "amd64"
     $hostArch = if ($script:VsArch -eq "arm64") { "amd64" } else { $script:VsArch }
     . $vsShell -Arch $script:VsArch -HostArch $hostArch
+
+    # VS dev shell with -HostArch amd64 sets PROCESSOR_ARCHITECTURE=AMD64,
+    # which causes CMake to misdetect the system as x64. Restore it on ARM64.
+    if ($script:IsARM64) {
+      $env:PROCESSOR_ARCHITECTURE = "ARM64"
+    }
   } finally {
     Pop-Location
   }

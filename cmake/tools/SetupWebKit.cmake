@@ -9,8 +9,6 @@ if(NOT WEBKIT_VERSION)
   set(WEBKIT_VERSION 7bc2f97e28353062bb54776ce01e4c2ff24c35cc)
 endif()
 
-# Use preview build URL for Windows ARM64 until the fix is merged to main
-set(WEBKIT_PREVIEW_PR 140)
 
 string(SUBSTRING ${WEBKIT_VERSION} 0 16 WEBKIT_VERSION_PREFIX)
 string(SUBSTRING ${WEBKIT_VERSION} 0 8 WEBKIT_VERSION_SHORT)

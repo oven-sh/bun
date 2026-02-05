@@ -417,8 +417,10 @@ function Disable-Windows-Threat-Protection {
 }
 
 function Uninstall-Windows-Defender {
-  Write-Output "Uninstalling Windows Defender..."
-  Uninstall-WindowsFeature -Name Windows-Defender
+  if (Get-Command Uninstall-WindowsFeature -ErrorAction SilentlyContinue) {
+    Write-Output "Uninstalling Windows Defender..."
+    Uninstall-WindowsFeature -Name Windows-Defender
+  }
 }
 
 function Disable-Windows-Services {
@@ -432,8 +434,12 @@ function Disable-Windows-Services {
   )
 
   foreach ($service in $services) {
-    Stop-Service $service -Force
-    Set-Service $service -StartupType Disabled
+    try {
+      Stop-Service $service -Force -ErrorAction SilentlyContinue
+      Set-Service $service -StartupType Disabled -ErrorAction SilentlyContinue
+    } catch {
+      Write-Warning "Could not disable service: $service"
+    }
   }
 }
 

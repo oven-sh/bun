@@ -114,8 +114,7 @@ const buildPlatforms = [
   { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.23" },
   { os: "windows", arch: "x64", release: "2019" },
   { os: "windows", arch: "x64", baseline: true, release: "2019" },
-  // TODO: Re-enable when Windows ARM64 VS component installation is resolved on Buildkite runners
-  // { os: "windows", arch: "aarch64", release: "2019" },
+  { os: "windows", arch: "aarch64", release: "11" },
 ];
 
 /**
@@ -138,8 +137,7 @@ const testPlatforms = [
   { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.23", tier: "latest" },
   { os: "windows", arch: "x64", release: "2019", tier: "oldest" },
   { os: "windows", arch: "x64", release: "2019", baseline: true, tier: "oldest" },
-  // TODO: Enable when Windows ARM64 CI runners are ready
-  // { os: "windows", arch: "aarch64", release: "2019", tier: "oldest" },
+  { os: "windows", arch: "aarch64", release: "11", tier: "latest" },
 ];
 
 /**
@@ -304,11 +302,12 @@ function getCppAgent(platform, options) {
     };
   }
 
-  // Cross-compile Windows ARM64 from x64 runners
+  // Native Windows ARM64 builds on Azure runners
   if (os === "windows" && arch === "aarch64") {
-    return getEc2Agent({ ...platform, arch: "x64" }, options, {
-      instanceType: "c7i.4xlarge",
-    });
+    return {
+      os,
+      arch,
+    };
   }
 
   return getEc2Agent(platform, options, {
@@ -333,9 +332,14 @@ function getLinkBunAgent(platform, options) {
   }
 
   if (os === "windows") {
-    // Cross-compile Windows ARM64 from x64 runners
-    const agentPlatform = arch === "aarch64" ? { ...platform, arch: "x64" } : platform;
-    return getEc2Agent(agentPlatform, options, {
+    // Native Windows ARM64 builds on Azure runners
+    if (arch === "aarch64") {
+      return {
+        os,
+        arch,
+      };
+    }
+    return getEc2Agent(platform, options, {
       instanceType: "r7i.large",
     });
   }
@@ -363,7 +367,17 @@ function getZigPlatform() {
  * @param {PipelineOptions} options
  * @returns {Agent}
  */
-function getZigAgent(_platform, options) {
+function getZigAgent(platform, options) {
+  const { os, arch } = platform;
+
+  // Native Windows ARM64 Zig builds on Azure runners
+  if (os === "windows" && arch === "aarch64") {
+    return {
+      os,
+      arch,
+    };
+  }
+
   return getEc2Agent(getZigPlatform(), options, {
     instanceType: "r8g.large",
   });
@@ -387,6 +401,13 @@ function getTestAgent(platform, options) {
 
   // TODO: delete this block when we upgrade to mimalloc v3
   if (os === "windows") {
+    // Native Windows ARM64 tests on Azure runners
+    if (arch === "aarch64") {
+      return {
+        os,
+        arch,
+      };
+    }
     return getEc2Agent(platform, options, {
       instanceType: "c7i.2xlarge",
       cpuCount: 2,
@@ -466,24 +487,12 @@ function getBuildCommand(target, options, label) {
 }
 
 /**
- * Get extra flags needed when cross-compiling Windows ARM64 from x64.
- * Applied to C++ and link steps (not Zig, which has its own toolchain handling).
- */
-function getWindowsArm64CrossFlags(target) {
-  if (target.os === "windows" && target.arch === "aarch64") {
-    return " --toolchain windows-aarch64";
-  }
-  return "";
-}
-
-/**
  * @param {Platform} platform
  * @param {PipelineOptions} options
  * @returns {Step}
  */
 function getBuildCppStep(platform, options) {
   const command = getBuildCommand(platform, options);
-  const crossFlags = getWindowsArm64CrossFlags(platform);
 
   return {
     key: `${getTargetKey(platform)}-build-cpp`,
@@ -498,7 +507,7 @@ function getBuildCppStep(platform, options) {
     // We used to build the C++ dependencies and bun in separate steps.
     // However, as long as the zig build takes longer than both sequentially,
     // it's cheaper to run them in the same step. Can be revisited in the future.
-    command: [`${command}${crossFlags} --target bun`, `${command}${crossFlags} --target dependencies`],
+    command: [`${command} --target bun`, `${command} --target dependencies`],
   };
 }
 
@@ -524,7 +533,10 @@ function getBuildToolchain(target) {
  * @returns {Step}
  */
 function getBuildZigStep(platform, options) {
+  const { os, arch } = platform;
   const toolchain = getBuildToolchain(platform);
+  // Native Windows ARM64 builds don't need a cross-compilation toolchain
+  const toolchainArg = os === "windows" && arch === "aarch64" ? "" : ` --toolchain ${toolchain}`;
   return {
     key: `${getTargetKey(platform)}-build-zig`,
     retry: getRetry(),
@@ -532,7 +544,7 @@ function getBuildZigStep(platform, options) {
     agents: getZigAgent(platform, options),
     cancel_on_build_failing: isMergeQueue(),
     env: getBuildEnv(platform, options),
-    command: `${getBuildCommand(platform, options)} --target bun-zig --toolchain ${toolchain}`,
+    command: `${getBuildCommand(platform, options)} --target bun-zig${toolchainArg}`,
     timeout_in_minutes: 35,
   };
 }
@@ -555,7 +567,7 @@ function getLinkBunStep(platform, options) {
       ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
       ...getBuildEnv(platform, options),
     },
-    command: `${getBuildCommand(platform, options, "build-bun")}${getWindowsArm64CrossFlags(platform)} --target bun`,
+    command: `${getBuildCommand(platform, options, "build-bun")} --target bun`,
   };
 }
 
@@ -1201,7 +1213,7 @@ async function getPipeline(options = {}) {
     buildImages || publishImages
       ? [...buildPlatforms, ...testPlatforms]
           .filter(({ os }) => os !== "darwin")
-          // Windows ARM64 cross-compiles from x64 runners, no separate image needed
+          // Windows ARM64 builds natively on Azure runners, no Docker image needed
           .filter(({ os, arch }) => !(os === "windows" && arch === "aarch64"))
           .map(platform => [getImageKey(platform), platform])
       : [],

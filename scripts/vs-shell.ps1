@@ -36,7 +36,9 @@ if($env:VSINSTALLDIR -eq $null) {
   Push-Location $vsDir
   try {
     $vsShell = (Join-Path -Path $vsDir -ChildPath "Common7\Tools\Launch-VsDevShell.ps1")
-    . $vsShell -Arch $script:VsArch -HostArch $script:VsArch
+    # -HostArch only accepts "x86" or "amd64" — even on native ARM64, use "amd64"
+    $hostArch = if ($script:VsArch -eq "arm64") { "amd64" } else { $script:VsArch }
+    . $vsShell -Arch $script:VsArch -HostArch $hostArch
   } finally {
     Pop-Location
   }

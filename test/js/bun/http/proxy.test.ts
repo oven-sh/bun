@@ -1,7 +1,7 @@
 import axios from "axios";
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { tls as tlsCert } from "harness";
+import { bunEnv, bunExe, tls as tlsCert } from "harness";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { once } from "node:events";
 import net from "node:net";
@@ -857,5 +857,86 @@ describe("proxy object format with headers", () => {
     // The request should succeed (without proxy, since URL object is ignored)
     expect(response.ok).toBe(true);
     expect(response.status).toBe(200);
+  });
+});
+
+describe.concurrent("NO_PROXY with explicit proxy option", () => {
+  // These tests use subprocess spawning because NO_PROXY is read from the
+  // process environment at startup. A dead proxy that immediately closes
+  // connections is used so that if NO_PROXY doesn't work, the fetch fails
+  // with a connection error.
+  let deadProxyPort: number;
+  let deadProxy: ReturnType<typeof Bun.listen>;
+
+  beforeAll(() => {
+    deadProxy = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(socket) {
+          socket.end();
+        },
+        data() {},
+      },
+    });
+    deadProxyPort = deadProxy.port;
+  });
+
+  afterAll(() => {
+    deadProxy.stop(true);
+  });
+
+  test("NO_PROXY bypasses explicit proxy for fetch", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const resp = await fetch("http://localhost:${httpServer.port}", { proxy: "http://127.0.0.1:${deadProxyPort}" }); console.log(resp.status);`,
+      ],
+      env: { ...bunEnv, NO_PROXY: "localhost" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) console.error("stderr:", stderr);
+    expect(stdout.trim()).toBe("200");
+    expect(exitCode).toBe(0);
+  });
+
+  test("NO_PROXY with port bypasses explicit proxy for fetch", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const resp = await fetch("http://localhost:${httpServer.port}", { proxy: "http://127.0.0.1:${deadProxyPort}" }); console.log(resp.status);`,
+      ],
+      env: { ...bunEnv, NO_PROXY: `localhost:${httpServer.port}` },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) console.error("stderr:", stderr);
+    expect(stdout.trim()).toBe("200");
+    expect(exitCode).toBe(0);
+  });
+
+  test("NO_PROXY non-match does not bypass explicit proxy", async () => {
+    // NO_PROXY doesn't match, so fetch should try the dead proxy and fail
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `try { await fetch("http://localhost:${httpServer.port}", { proxy: "http://127.0.0.1:${deadProxyPort}" }); process.exit(1); } catch { process.exit(0); }`,
+      ],
+      env: { ...bunEnv, NO_PROXY: "other.com" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const exitCode = await proc.exited;
+    // exit(0) means fetch threw (proxy connection failed), proving proxy was used
+    expect(exitCode).toBe(0);
   });
 });

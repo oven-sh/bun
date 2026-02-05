@@ -112,7 +112,7 @@ pub fn transpileSourceCode(
     }
 
     switch (loader) {
-        .js, .jsx, .ts, .tsx, .json, .jsonc, .toml, .yaml, .json5, .text => {
+        .js, .jsx, .ts, .tsx, .json, .jsonc, .toml, .yaml, .json5, .text, .md => {
             // Ensure that if there was an ASTMemoryAllocator in use, it's not used anymore.
             var ast_scope = js_ast.ASTMemoryAllocator.Scope{};
             ast_scope.enter();
@@ -178,6 +178,7 @@ pub fn transpileSourceCode(
             var cache = jsc.RuntimeTranspilerCache{
                 .output_code_allocator = allocator,
                 .sourcemap_allocator = bun.default_allocator,
+                .esm_record_allocator = bun.default_allocator,
             };
 
             const old = jsc_vm.transpiler.log;
@@ -422,6 +423,10 @@ pub fn transpileSourceCode(
                     dumpSourceString(jsc_vm, specifier, entry.output_code.byteSlice());
                 }
 
+                // TODO: module_info is only needed for standalone ESM bytecode.
+                // For now, skip it entirely in the runtime transpiler.
+                const module_info: ?*analyze_transpiled_module.ModuleInfoDeserialized = null;
+
                 return ResolvedSource{
                     .allocator = null,
                     .source_code = switch (entry.output_code) {
@@ -436,6 +441,7 @@ pub fn transpileSourceCode(
                     .specifier = input_specifier,
                     .source_url = input_specifier.createIfDifferent(path.text),
                     .is_commonjs_module = entry.metadata.module_type == .cjs,
+                    .module_info = module_info,
                     .tag = brk: {
                         if (entry.metadata.module_type == .cjs and source.path.isFile()) {
                             const actual_package_json: *PackageJSON = package_json orelse brk2: {
@@ -504,6 +510,11 @@ pub fn transpileSourceCode(
                 jsc_vm.resolved_count += jsc_vm.transpiler.linker.import_counter - start_count;
             jsc_vm.transpiler.linker.import_counter = 0;
 
+            const is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs;
+            // TODO: module_info is only needed for standalone ESM bytecode.
+            // For now, skip it entirely in the runtime transpiler.
+            const module_info: ?*analyze_transpiled_module.ModuleInfo = null;
+
             var printer = source_code_printer.*;
             printer.ctx.reset();
             defer source_code_printer.* = printer;
@@ -516,6 +527,7 @@ pub fn transpileSourceCode(
                     &printer,
                     .esm_ascii,
                     mapper.get(),
+                    module_info,
                 );
             };
 
@@ -529,9 +541,12 @@ pub fn transpileSourceCode(
                 }
             }
 
+            const module_info_deserialized: ?*anyopaque = if (module_info) |mi| @ptrCast(mi.asDeserialized()) else null;
+
             if (jsc_vm.isWatcherEnabled()) {
                 var resolved_source = jsc_vm.refCountedResolvedSource(printer.ctx.written, input_specifier, path.text, null, false);
-                resolved_source.is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs;
+                resolved_source.is_commonjs_module = is_commonjs_module;
+                resolved_source.module_info = module_info_deserialized;
                 return resolved_source;
             }
 
@@ -564,7 +579,8 @@ pub fn transpileSourceCode(
                 },
                 .specifier = input_specifier,
                 .source_url = input_specifier.createIfDifferent(path.text),
-                .is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs,
+                .is_commonjs_module = is_commonjs_module,
+                .module_info = module_info_deserialized,
                 .tag = tag,
             };
         },
@@ -1192,9 +1208,15 @@ pub fn fetchBuiltinModule(jsc_vm: *VirtualMachine, specifier: bun.String) !?Reso
                 .source_code = file.toWTFString(),
                 .specifier = specifier,
                 .source_url = specifier.dupeRef(),
+                // bytecode_origin_path is the path used when generating bytecode; must match for cache hits
+                .bytecode_origin_path = if (file.bytecode_origin_path.len > 0) bun.String.fromBytes(file.bytecode_origin_path) else bun.String.empty,
                 .source_code_needs_deref = false,
                 .bytecode_cache = if (file.bytecode.len > 0) file.bytecode.ptr else null,
                 .bytecode_cache_size = file.bytecode.len,
+                .module_info = if (file.module_info.len > 0)
+                    analyze_transpiled_module.ModuleInfoDeserialized.createFromCachedRecord(file.module_info, bun.default_allocator)
+                else
+                    null,
                 .is_commonjs_module = file.module_format == .cjs,
             };
         }
@@ -1324,6 +1346,7 @@ const string = []const u8;
 
 const Fs = @import("../fs.zig");
 const Runtime = @import("../runtime.zig");
+const analyze_transpiled_module = @import("../analyze_transpiled_module.zig");
 const ast = @import("../import_record.zig");
 const node_module_module = @import("./bindings/NodeModuleModule.zig");
 const std = @import("std");

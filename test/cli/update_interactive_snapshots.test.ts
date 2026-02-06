@@ -175,9 +175,8 @@ describe("bun update --interactive messages", () => {
       stderr: "pipe",
     });
 
-    // Press 'A' to select all packages by caret-compatibility, then 'y' to confirm
-    proc.stdin.write("A");
-    proc.stdin.write("y");
+    // Press 'A' to select all packages by caret-compatibility, then confirm with newline
+    proc.stdin.write("A\n");
     proc.stdin.end();
 
     const [stdout, stderr, exitCode] = await Promise.all([

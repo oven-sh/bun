@@ -58,20 +58,6 @@ else()
   message(FATAL_ERROR "Unsupported architecture: ${CMAKE_SYSTEM_PROCESSOR}")
 endif()
 
-# CMake 4.0+ policy CMP0197 controls how MSVC machine type flags are handled
-# Setting to NEW prevents duplicate /machine: flags being added to linker commands
-if(WIN32 AND ARCH STREQUAL "aarch64")
-  set(CMAKE_POLICY_DEFAULT_CMP0197 NEW)
-  set(CMAKE_MSVC_CMP0197 NEW)
-  # Set linker flags for exe/shared linking
-  set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /machine:ARM64")
-  set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} /machine:ARM64")
-  set(CMAKE_MODULE_LINKER_FLAGS "${CMAKE_MODULE_LINKER_FLAGS} /machine:ARM64")
-  set(CMAKE_STATIC_LINKER_FLAGS "${CMAKE_STATIC_LINKER_FLAGS} /machine:ARM64")
-  # Propagate to sub-projects so they don't inject /machine:x64
-  list(APPEND CMAKE_ARGS -DCMAKE_POLICY_DEFAULT_CMP0197=NEW)
-endif()
-
 # Windows Code Signing Option
 if(WIN32)
   optionx(ENABLE_WINDOWS_CODESIGNING BOOL "Enable Windows code signing with DigiCert KeyLocker" DEFAULT OFF)

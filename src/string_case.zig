@@ -311,8 +311,10 @@ extern fn icu_hasBinaryProperty(cp: u32, which: c_uint) bool;
 const uchar_uppercase = 30; // UCHAR_UPPERCASE
 const uchar_alphabetic = 0; // UCHAR_ALPHABETIC
 
-const bun = @import("bun");
 const std = @import("std");
+
+const bun = @import("bun");
 const strings = bun.strings;
+
 const jsc = bun.jsc;
 const JSValue = jsc.JSValue;

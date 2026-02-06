@@ -7,18 +7,25 @@ import { isDockerEnabled, tempDir } from "harness";
 import path from "path";
 import * as dockerCompose from "../../docker/index.ts";
 
+function getMinioContainerName(): string {
+  // Get container name without shell pipe for portability
+  const output = child_process.execSync(
+    `docker ps --filter "ancestor=minio/minio:latest" --filter "status=running" --format "{{.Names}}"`,
+    {
+      encoding: "utf-8",
+    },
+  );
+  const names = output.split("\n").filter(name => name.trim() !== "");
+  return names[0]?.trim() ?? "";
+}
+
 describe.skipIf(!isDockerEnabled())("issue #26780 - S3-to-file createPath", () => {
   it("should create parent directories when writing S3 file to local path", async () => {
     // Start MinIO using docker-compose
     const minioInfo = await dockerCompose.ensure("minio");
 
     // Get container name for docker exec
-    const containerName = child_process
-      .execSync(
-        `docker ps --filter "ancestor=minio/minio:latest" --filter "status=running" --format "{{.Names}}" | head -1`,
-        { encoding: "utf-8" },
-      )
-      .trim();
+    const containerName = getMinioContainerName();
 
     if (!containerName) {
       throw new Error("MinIO container not found");
@@ -65,12 +72,7 @@ describe.skipIf(!isDockerEnabled())("issue #26780 - S3-to-file createPath", () =
     const minioInfo = await dockerCompose.ensure("minio");
 
     // Get container name for docker exec
-    const containerName = child_process
-      .execSync(
-        `docker ps --filter "ancestor=minio/minio:latest" --filter "status=running" --format "{{.Names}}" | head -1`,
-        { encoding: "utf-8" },
-      )
-      .trim();
+    const containerName = getMinioContainerName();
 
     if (!containerName) {
       throw new Error("MinIO container not found");

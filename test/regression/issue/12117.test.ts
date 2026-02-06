@@ -5,10 +5,10 @@
 // false on close, causing it (and all its retained objects) to leak.
 
 import { describe, expect, it } from "bun:test";
-import { expectMaxObjectTypeCount, tls as COMMON_CERT } from "harness";
+import { tls as COMMON_CERT, expectMaxObjectTypeCount } from "harness";
+import { once } from "node:events";
 import net from "node:net";
 import tls from "node:tls";
-import { once } from "node:events";
 
 describe("TLS upgrade", () => {
   it("should not leak TLSSocket objects after close", async () => {
@@ -18,7 +18,7 @@ describe("TLS upgrade", () => {
         key: COMMON_CERT.key,
         cert: COMMON_CERT.cert,
       },
-      (socket) => {
+      socket => {
         socket.end("hello");
       },
     );

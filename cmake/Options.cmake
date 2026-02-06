@@ -68,6 +68,8 @@ if(WIN32 AND ARCH STREQUAL "aarch64")
   set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} /machine:ARM64")
   set(CMAKE_MODULE_LINKER_FLAGS "${CMAKE_MODULE_LINKER_FLAGS} /machine:ARM64")
   set(CMAKE_STATIC_LINKER_FLAGS "${CMAKE_STATIC_LINKER_FLAGS} /machine:ARM64")
+  # Propagate to sub-projects so they don't inject /machine:x64
+  list(APPEND CMAKE_ARGS -DCMAKE_POLICY_DEFAULT_CMP0197=NEW)
 endif()
 
 # Windows Code Signing Option

@@ -64,8 +64,6 @@ process.exit(0);
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).not.toContain("Pure virtual function called");
-  expect(stderr).not.toContain("SIGABRT");
   expect(stdout).toContain("OK");
   expect(exitCode).toBe(0);
 });

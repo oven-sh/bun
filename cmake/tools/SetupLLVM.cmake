@@ -50,6 +50,11 @@ if(APPLE)
   list(APPEND LLVM_PATHS ${HOMEBREW_PREFIX}/opt/llvm/bin)
 endif()
 
+if(WIN32)
+  # Prefer standalone LLVM over VS-bundled (standalone supports cross-compilation)
+  list(APPEND LLVM_PATHS "C:/Program Files/LLVM/bin")
+endif()
+
 if(UNIX)
   list(APPEND LLVM_PATHS /usr/lib/llvm/bin)
 

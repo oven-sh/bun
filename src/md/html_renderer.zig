@@ -490,7 +490,7 @@ pub const HtmlRenderer = struct {
         const needle = "&<>\"";
 
         while (true) {
-            const next = std.mem.indexOfAny(u8, txt[i..], needle) orelse {
+            const next = bun.strings.indexOfAny(txt[i..], needle) orelse {
                 self.write(txt[i..]);
                 return;
             };

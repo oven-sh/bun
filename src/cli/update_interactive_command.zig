@@ -1255,9 +1255,13 @@ pub const UpdateInteractiveCommand = struct {
 
                 // const is_bottom_scroll = needs_scrolling and state.viewport_start + state.viewport_height <= state.packages.len;
 
+                // Track how many lines we've actually displayed (headers take 2 lines)
+                var lines_displayed: usize = 0;
+
                 // Show top scroll indicator if needed
                 if (show_top_indicator) {
                     Output.pretty("  <d>↑ {d} more package{s} above<r>", .{ state.viewport_start, if (state.viewport_start == 1) "" else "s" });
+                    lines_displayed += 1;
                 }
 
                 // Calculate how many packages we can actually display
@@ -1267,9 +1271,6 @@ pub const UpdateInteractiveCommand = struct {
 
                 // Group by dependency type
                 var current_dep_type: ?[]const u8 = null;
-
-                // Track how many lines we've actually displayed (headers take 2 lines)
-                var lines_displayed: usize = 0;
                 var packages_displayed: usize = 0;
 
                 // Only display packages within viewport

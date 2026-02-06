@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDirWithFiles } from "harness";
 
 describe("bun update --interactive snapshots", () => {
   it("should not crash with various package name lengths", async () => {
@@ -209,8 +209,11 @@ describe("bun update --interactive messages", () => {
 });
 
 function normalizeOutput(output: string): string {
+  // First apply the standard normalization from harness
+  let normalized = normalizeBunSnapshot(output);
+
   // Remove Bun version to avoid test flakiness
-  let normalized = output.replace(/bun update --interactive v\d+\.\d+\.\d+[^\n]*/g, "bun update --interactive vX.X.X");
+  normalized = normalized.replace(/bun update --interactive v\d+\.\d+\.\d+[^\n]*/g, "bun update --interactive vX.X.X");
 
   // Normalize any absolute paths
   normalized = normalized.replace(/\/tmp\/[^\/\s]+/g, "/tmp/test-dir");

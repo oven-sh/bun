@@ -345,4 +345,34 @@ describe("s3 - Requester Pays", () => {
     expect(reqHeaders!.get("authorization")).toInclude("x-amz-request-payer");
     expect(reqHeaders!.get("x-amz-request-payer")).toBe("requester");
   });
+
+  it("should NOT include x-amz-request-payer header in static list() when requestPayer is false", async () => {
+    let reqHeaders: Headers | undefined = undefined;
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        reqHeaders = req.headers;
+        return new Response(
+          `<?xml version="1.0" encoding="UTF-8"?><ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+          <Name>my_bucket</Name>
+          </ListBucketResult>`,
+          {
+            headers: {
+              "Content-Type": "application/xml",
+            },
+            status: 200,
+          },
+        );
+      },
+    });
+
+    await S3Client.list(null, {
+      ...s3Options,
+      endpoint: server.url.href,
+      requestPayer: false,
+    });
+
+    expect(reqHeaders!.get("authorization")).not.toInclude("x-amz-request-payer");
+    expect(reqHeaders!.get("x-amz-request-payer")).toBeNull();
+  });
 });

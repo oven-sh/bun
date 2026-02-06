@@ -981,6 +981,19 @@ pub const FormData = struct {
         content_type: bun.Semver.String = .{},
         is_file: bool = false,
         zero_count: u8 = 0,
+        /// Explicit offset and length for binary file content to preserve null bytes.
+        /// Used when is_file is true to avoid Semver.String's null-byte scanning.
+        value_off: u32 = 0,
+        value_len: u32 = 0,
+
+        /// Get the value slice, using explicit offset/length for files to preserve null bytes.
+        pub fn valueSlice(self: *const Field, buf: []const u8) []const u8 {
+            if (self.is_file and self.value_len > 0) {
+                // For files, use the explicit offset/length to preserve binary data with null bytes
+                return buf[self.value_off..][0..self.value_len];
+            }
+            return self.value.slice(buf);
+        }
 
         pub const Entry = union(enum) {
             field: Field,
@@ -1088,7 +1101,7 @@ pub const FormData = struct {
             form: *jsc.DOMFormData,
 
             pub fn onEntry(wrap: *@This(), name: bun.Semver.String, field: Field, buf: []const u8) void {
-                const value_str = field.value.slice(buf);
+                const value_str = field.valueSlice(buf);
                 var key = jsc.ZigString.initUTF8(name.slice(buf));
 
                 if (field.is_file) {
@@ -1279,6 +1292,9 @@ pub const FormData = struct {
                 body = body[0 .. body.len - 2];
             }
             field.value = subslicer.sub(body).value();
+            // Store explicit offset/length for binary file content to preserve null bytes
+            field.value_off = @intCast(@intFromPtr(body.ptr) - @intFromPtr(input.ptr));
+            field.value_len = @intCast(body.len);
             field.filename = filename orelse .{};
             field.is_file = is_file;
 

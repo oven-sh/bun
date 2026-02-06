@@ -185,18 +185,16 @@ describe("bun update --interactive messages", () => {
       proc.exited,
     ]);
 
-    const combinedOutput = stdout + stderr;
+    // Strip ANSI codes so includes() checks aren't broken by colored CLI output
+    const combinedOutput = normalizeOutput(stdout + stderr);
 
     // The output should contain one of these valid responses:
     // 1. "All packages are up to date" - no updates available at all
     // 2. "already at target version" - packages selected but at target (new message from this PR)
     // 3. "Would update" - dry-run showing actual updates
-    const hasValidResponse =
-      combinedOutput.includes("All packages are up to date") ||
-      combinedOutput.includes("already at target version") ||
-      combinedOutput.includes("Would update");
-
-    expect(hasValidResponse).toBe(true);
+    expect(combinedOutput).toMatch(
+      /All packages are up to date|already at target version|Would update/,
+    );
 
     // If the new message appears, verify it includes the hint about using 'l'
     if (combinedOutput.includes("already at target version")) {

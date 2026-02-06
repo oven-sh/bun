@@ -44,15 +44,11 @@
     macro(allocUnsafe) \
     macro(braces) \
     macro(build) \
-    macro(camelCase) \
-    macro(capitalCase) \
     macro(color) \
     macro(connect) \
-    macro(constantCase) \
     macro(createParsedShellScript) \
     macro(createShellInterpreter) \
     macro(deflateSync) \
-    macro(dotCase) \
     macro(file) \
     macro(fs) \
     macro(gc) \
@@ -62,28 +58,21 @@
     macro(indexOfLine) \
     macro(inflateSync) \
     macro(jest) \
-    macro(kebabCase) \
     macro(listen) \
     macro(mmap) \
     macro(nanoseconds) \
-    macro(noCase) \
     macro(openInEditor) \
-    macro(pascalCase) \
-    macro(pathCase) \
     macro(registerMacro) \
     macro(resolve) \
     macro(resolveSync) \
-    macro(sentenceCase) \
     macro(serve) \
     macro(sha) \
     macro(shellEscape) \
-    macro(snakeCase) \
     macro(shrink) \
     macro(sleepSync) \
     macro(spawn) \
     macro(spawnSync) \
     macro(stringWidth) \
-    macro(trainCase) \
     macro(udpSocket) \
     macro(which) \
     macro(write) \

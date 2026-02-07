@@ -272,7 +272,7 @@ static void extendTextCodecMaps() WTF_REQUIRES_LOCK(encodingRegistryLock)
     // TextCodecICU removed - ICU converter data not available in Bun
     // The following encodings are not supported:
     // ISO-8859-2, 4, 5, 10, 13, 14, 15, 16
-    // Windows-1250, 1251, 1254, 1256, 1258
+    // Windows-1250, 1254, 1256, 1258
     // KOI8-R, macintosh, x-mac-cyrillic
 
     TextCodecCJK::registerEncodingNames(addToTextEncodingNameMap);

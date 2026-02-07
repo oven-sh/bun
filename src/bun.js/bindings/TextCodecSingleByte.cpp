@@ -48,6 +48,7 @@ enum class TextCodecSingleByte::Encoding : uint8_t {
     ISO_8859_7,
     ISO_8859_8,
     Windows_874,
+    Windows_1251,
     Windows_1253,
     Windows_1255,
     Windows_1257,
@@ -117,6 +118,18 @@ static constexpr SingleByteDecodeTable windows874 {
     0x0E30, 0x0E31, 0x0E32, 0x0E33, 0x0E34, 0x0E35, 0x0E36, 0x0E37, 0x0E38, 0x0E39, 0x0E3A, 0xFFFD, 0xFFFD, 0xFFFD, 0xFFFD, 0x0E3F,
     0x0E40, 0x0E41, 0x0E42, 0x0E43, 0x0E44, 0x0E45, 0x0E46, 0x0E47, 0x0E48, 0x0E49, 0x0E4A, 0x0E4B, 0x0E4C, 0x0E4D, 0x0E4E, 0x0E4F,
     0x0E50, 0x0E51, 0x0E52, 0x0E53, 0x0E54, 0x0E55, 0x0E56, 0x0E57, 0x0E58, 0x0E59, 0x0E5A, 0x0E5B, 0xFFFD, 0xFFFD, 0xFFFD, 0xFFFD
+};
+
+// From https://encoding.spec.whatwg.org/index-windows-1251.txt
+static constexpr SingleByteDecodeTable windows1251 {
+    0x0402, 0x0403, 0x201A, 0x0453, 0x201E, 0x2026, 0x2020, 0x2021, 0x20AC, 0x2030, 0x0409, 0x2039, 0x040A, 0x040C, 0x040B, 0x040F,
+    0x0452, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014, 0x0098, 0x2122, 0x0459, 0x203A, 0x045A, 0x045C, 0x045B, 0x045F,
+    0x00A0, 0x040E, 0x045E, 0x0408, 0x00A4, 0x0490, 0x00A6, 0x00A7, 0x0401, 0x00A9, 0x0404, 0x00AB, 0x00AC, 0x00AD, 0x00AE, 0x0407,
+    0x00B0, 0x00B1, 0x0406, 0x0456, 0x0491, 0x00B5, 0x00B6, 0x00B7, 0x0451, 0x2116, 0x0454, 0x00BB, 0x0458, 0x0405, 0x0455, 0x0457,
+    0x0410, 0x0411, 0x0412, 0x0413, 0x0414, 0x0415, 0x0416, 0x0417, 0x0418, 0x0419, 0x041A, 0x041B, 0x041C, 0x041D, 0x041E, 0x041F,
+    0x0420, 0x0421, 0x0422, 0x0423, 0x0424, 0x0425, 0x0426, 0x0427, 0x0428, 0x0429, 0x042A, 0x042B, 0x042C, 0x042D, 0x042E, 0x042F,
+    0x0430, 0x0431, 0x0432, 0x0433, 0x0434, 0x0435, 0x0436, 0x0437, 0x0438, 0x0439, 0x043A, 0x043B, 0x043C, 0x043D, 0x043E, 0x043F,
+    0x0440, 0x0441, 0x0442, 0x0443, 0x0444, 0x0445, 0x0446, 0x0447, 0x0448, 0x0449, 0x044A, 0x044B, 0x044C, 0x044D, 0x044E, 0x044F
 };
 
 // From https://encoding.spec.whatwg.org/index-windows-1253.txt with 0xFFFD filling the gaps
@@ -213,6 +226,8 @@ static SingleByteEncodeTable tableForEncoding(TextCodecSingleByte::Encoding enco
         return tableForEncoding<iso88598>();
     case TextCodecSingleByte::Encoding::Windows_874:
         return tableForEncoding<windows874>();
+    case TextCodecSingleByte::Encoding::Windows_1251:
+        return tableForEncoding<windows1251>();
     case TextCodecSingleByte::Encoding::Windows_1253:
         return tableForEncoding<windows1253>();
     case TextCodecSingleByte::Encoding::Windows_1255:
@@ -240,6 +255,8 @@ static const SingleByteDecodeTable& tableForDecoding(TextCodecSingleByte::Encodi
         return iso88598;
     case TextCodecSingleByte::Encoding::Windows_874:
         return windows874;
+    case TextCodecSingleByte::Encoding::Windows_1251:
+        return windows1251;
     case TextCodecSingleByte::Encoding::Windows_1253:
         return windows1253;
     case TextCodecSingleByte::Encoding::Windows_1255:
@@ -386,6 +403,10 @@ void TextCodecSingleByte::registerEncodingNames(EncodingNameRegistrar registrar)
         "iso885911"_s,
         "tis-620"_s });
 
+    registerAliases({ "windows-1251"_s,
+        "cp1251"_s,
+        "x-cp1251"_s });
+
     registerAliases({ "windows-1253"_s,
         "cp1253"_s,
         "x-cp1253"_s });
@@ -426,6 +447,9 @@ void TextCodecSingleByte::registerCodecs(TextCodecRegistrar registrar)
     });
     registrar("windows-874"_s, [] {
         return makeUnique<TextCodecSingleByte>(Encoding::Windows_874);
+    });
+    registrar("windows-1251"_s, [] {
+        return makeUnique<TextCodecSingleByte>(Encoding::Windows_1251);
     });
     registrar("windows-1253"_s, [] {
         return makeUnique<TextCodecSingleByte>(Encoding::Windows_1253);

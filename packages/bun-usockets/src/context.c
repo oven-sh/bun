@@ -672,6 +672,12 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
                     error = 0;
                     break;
                 }
+                case WSAENOTCONN: {
+                    // WSAENOTCONN means the non-blocking connect is still in progress.
+                    // The socket will be notified again when the connection completes.
+                    // Just return without doing anything - keep polling for writable.
+                    return;
+                }
                 default: {
                     break;
                 }

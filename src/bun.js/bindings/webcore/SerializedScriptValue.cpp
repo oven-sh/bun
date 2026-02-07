@@ -5574,6 +5574,13 @@ SerializedScriptValue::SerializedScriptValue(WTF::FixedVector<SimpleInMemoryProp
     m_memoryCost = computeMemoryCost();
 }
 
+SerializedScriptValue::SerializedScriptValue(WTF::FixedVector<SimpleCloneableValue>&& elements)
+    : m_simpleArrayElements(WTF::move(elements))
+    , m_fastPath(FastPath::SimpleArray)
+{
+    m_memoryCost = computeMemoryCost();
+}
+
 SerializedScriptValue::SerializedScriptValue(const String& fastPathString)
     : m_fastPathString(fastPathString)
     , m_fastPath(FastPath::String)
@@ -5652,6 +5659,15 @@ size_t SerializedScriptValue::computeMemoryCost() const
             }
         }
 
+        break;
+    case FastPath::SimpleArray:
+        cost += m_simpleArrayElements.byteSize();
+        for (const auto& elem : m_simpleArrayElements) {
+            std::visit(WTF::makeVisitor(
+                [&](JSC::JSValue) { cost += sizeof(JSC::JSValue); },
+                [&](const String& s) { cost += s.sizeInBytes(); }),
+                elem);
+        }
         break;
     case FastPath::None:
         break;
@@ -5843,7 +5859,9 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
     if (canUseFastPath) {
         bool canUseStringFastPath = false;
         bool canUseObjectFastPath = false;
+        bool canUseArrayFastPath = false;
         JSObject* object = nullptr;
+        JSArray* array = nullptr;
         Structure* structure = nullptr;
         if (value.isCell()) {
             auto* cell = value.asCell();
@@ -5853,7 +5871,10 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
                 object = cell->getObject();
                 structure = object->structure();
 
-                if (isObjectFastPathCandidate(structure)) {
+                if (auto* jsArray = jsDynamicCast<JSArray*>(object)) {
+                    canUseArrayFastPath = true;
+                    array = jsArray;
+                } else if (isObjectFastPathCandidate(structure)) {
                     canUseObjectFastPath = true;
                 }
             }
@@ -5864,6 +5885,41 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
             String stringValue = jsString->value(&lexicalGlobalObject);
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             return SerializedScriptValue::createStringFastPath(stringValue);
+        }
+
+        if (canUseArrayFastPath) {
+            ASSERT(array != nullptr);
+            unsigned length = array->length();
+            WTF::Vector<SimpleCloneableValue> elements;
+            elements.reserveInitialCapacity(length);
+
+            for (unsigned i = 0; i < length; i++) {
+                JSValue elem = array->getDirectIndex(&lexicalGlobalObject, i);
+                RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
+
+                if (!elem) {
+                    canUseArrayFastPath = false;
+                    break;
+                }
+
+                if (elem.isCell()) {
+                    if (!elem.isString()) {
+                        canUseArrayFastPath = false;
+                        break;
+                    }
+                    auto* str = asString(elem);
+                    String strValue = str->value(&lexicalGlobalObject);
+                    RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
+                    elements.append(Bun::toCrossThreadShareable(strValue));
+                } else {
+                    elements.append(elem);
+                }
+            }
+
+            if (canUseArrayFastPath) {
+                return SerializedScriptValue::createArrayFastPath(
+                    WTF::FixedVector<SimpleCloneableValue>(WTF::move(elements)));
+            }
         }
 
         if (canUseObjectFastPath) {
@@ -6142,6 +6198,11 @@ Ref<SerializedScriptValue> SerializedScriptValue::createObjectFastPath(WTF::Fixe
     return adoptRef(*new SerializedScriptValue(WTF::move(object)));
 }
 
+Ref<SerializedScriptValue> SerializedScriptValue::createArrayFastPath(WTF::FixedVector<SimpleCloneableValue>&& elements)
+{
+    return adoptRef(*new SerializedScriptValue(WTF::move(elements)));
+}
+
 RefPtr<SerializedScriptValue> SerializedScriptValue::create(JSContextRef originContext, JSValueRef apiValue, JSValueRef* exception)
 {
     JSGlobalObject* lexicalGlobalObject = toJS(originContext);
@@ -6287,6 +6348,28 @@ JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, 
             *didFail = false;
 
         return object;
+    }
+    case FastPath::SimpleArray: {
+        unsigned length = m_simpleArrayElements.size();
+        JSArray* resultArray = constructEmptyArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), length);
+        if (scope.exception()) [[unlikely]] {
+            if (didFail)
+                *didFail = true;
+            return {};
+        }
+
+        for (unsigned i = 0; i < length; i++) {
+            JSValue elemValue = std::visit(
+                WTF::makeVisitor(
+                    [](JSValue v) -> JSValue { return v; },
+                    [&](const String& s) -> JSValue { return jsString(vm, s); }),
+                m_simpleArrayElements[i]);
+            resultArray->putDirectIndex(globalObject, i, elemValue);
+        }
+
+        if (didFail)
+            *didFail = false;
+        return resultArray;
     }
     case FastPath::None: {
         break;

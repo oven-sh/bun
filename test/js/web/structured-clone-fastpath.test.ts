@@ -90,6 +90,55 @@ describe("Structured Clone Fast Path", () => {
     expect(delta).toBeLessThan(1024 * 1024);
   });
 
+  // === Array fast path tests ===
+
+  test("structuredClone should work with empty array", () => {
+    expect(structuredClone([])).toEqual([]);
+  });
+
+  test("structuredClone should work with array of numbers", () => {
+    const input = [1, 2, 3, 4, 5];
+    expect(structuredClone(input)).toEqual(input);
+  });
+
+  test("structuredClone should work with array of strings", () => {
+    const input = ["hello", "world", ""];
+    expect(structuredClone(input)).toEqual(input);
+  });
+
+  test("structuredClone should work with array of mixed primitives", () => {
+    const input = [1, "hello", true, false, null, undefined, 3.14];
+    const cloned = structuredClone(input);
+    expect(cloned).toEqual(input);
+  });
+
+  test("structuredClone should work with array of special numbers", () => {
+    const cloned = structuredClone([-0, NaN, Infinity, -Infinity]);
+    expect(Object.is(cloned[0], -0)).toBe(true);
+    expect(cloned[1]).toBeNaN();
+    expect(cloned[2]).toBe(Infinity);
+    expect(cloned[3]).toBe(-Infinity);
+  });
+
+  test("structuredClone should work with large array of numbers", () => {
+    const input = Array.from({ length: 10000 }, (_, i) => i);
+    expect(structuredClone(input)).toEqual(input);
+  });
+
+  test("structuredClone should fallback for arrays with nested objects", () => {
+    const input = [{ a: 1 }, { b: 2 }];
+    expect(structuredClone(input)).toEqual(input);
+  });
+
+  test("structuredClone should fallback for arrays with holes", () => {
+    const input = [1, , 3]; // sparse
+    const cloned = structuredClone(input);
+    // structured clone spec: holes become undefined
+    expect(cloned[0]).toBe(1);
+    expect(cloned[1]).toBe(undefined);
+    expect(cloned[2]).toBe(3);
+  });
+
   test("structuredClone on object with simple properties can exceed JSFinalObject::maxInlineCapacity", () => {
     let largeValue = {};
     for (let i = 0; i < 100; i++) {

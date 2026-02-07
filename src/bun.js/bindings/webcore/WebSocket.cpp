@@ -83,6 +83,7 @@
 namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(WebSocket);
 extern "C" int Bun__getTLSRejectUnauthorizedValue();
+extern "C" bool Bun__isNoProxy(const char* hostname, size_t hostname_len, const char* host, size_t host_len);
 
 static ErrorEvent::Init createErrorEventInit(WebSocket& webSocket, const String& reason, JSC::JSGlobalObject* globalObject)
 {
@@ -573,6 +574,19 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
 
     // Determine connection type based on proxy usage and TLS requirements
     bool hasProxy = proxyConfig.has_value();
+
+    // Check NO_PROXY even for explicitly-provided proxies
+    if (hasProxy) {
+        auto hostStr = m_url.host().toString();
+        auto hostWithPort = hostName(m_url, is_secure);
+        auto hostUtf8 = hostStr.utf8();
+        auto hostWithPortUtf8 = hostWithPort.utf8();
+        if (Bun__isNoProxy(hostUtf8.data(), hostUtf8.length(), hostWithPortUtf8.data(), hostWithPortUtf8.length())) {
+            proxyConfig = std::nullopt;
+            hasProxy = false;
+        }
+    }
+
     bool proxyIsHTTPS = hasProxy && proxyConfig->isHTTPS;
 
     // Connection type determines what kind of socket we use:
@@ -1309,6 +1323,7 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::spa
 
         if (auto* context = scriptExecutionContext()) {
             RefPtr<Blob> blob = Blob::create(binaryData, context->jsGlobalObject());
+            this->incPendingActivityCount();
             context->postTask([this, name = eventName, blob = blob.releaseNonNull(), protectedThis = Ref { *this }](ScriptExecutionContext& context) {
                 ASSERT(scriptExecutionContext());
                 protectedThis->dispatchEvent(MessageEvent::create(name, blob, protectedThis->m_url.string()));

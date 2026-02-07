@@ -36,5 +36,30 @@ describe("bundler", () => {
         stdout: "app entry\nheader rendering\nmenu showing\nitems: home,about,contact",
       },
     });
+
+    for (const minify of [false, true]) {
+      itBundled(`compile/splitting/ImportMetaInSplitChunk${minify ? "+minify" : ""}`, {
+        compile: true,
+        splitting: true,
+        bytecode: true,
+        format: "esm",
+        ...(minify ? { minifySyntax: true, minifyIdentifiers: true, minifyWhitespace: true } : {}),
+        files: {
+          "/entry.ts": /* js */ `
+            const mod = await import("./worker.ts");
+            mod.run();
+          `,
+          "/worker.ts": /* js */ `
+            export function run() {
+              console.log(typeof import.meta.url === "string" ? "ok" : "fail");
+              console.log(typeof import.meta.dir === "string" ? "ok" : "fail");
+            }
+          `,
+        },
+        run: {
+          stdout: "ok\nok",
+        },
+      });
+    }
   });
 });

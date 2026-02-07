@@ -1,0 +1,787 @@
+
+# Regressions
+
+These are (mostly) unit tests collected via bug resolving. Adding them here
+prevents us from reintroducing subtle bugs which we've already seen.
+
+
+## [Issue 2](https://github.com/mity/md4c/issues/2)
+
+Raw HTML block:
+
+```````````````````````````````` example
+<gi att1=tok1 att2=tok2>
+.
+<gi att1=tok1 att2=tok2>
+````````````````````````````````
+
+Inline:
+
+```````````````````````````````` example
+foo <gi att1=tok1 att2=tok2> bar
+.
+<p>foo <gi att1=tok1 att2=tok2> bar</p>
+````````````````````````````````
+
+Inline with a line break:
+
+```````````````````````````````` example
+foo <gi att1=tok1
+att2=tok2> bar
+.
+<p>foo <gi att1=tok1
+att2=tok2> bar</p>
+````````````````````````````````
+
+
+## [Issue 4](https://github.com/mity/md4c/issues/4)
+
+```````````````````````````````` example
+![alt text with *entity* &copy;](img.png 'title')
+.
+<p><img src="img.png" alt="alt text with entity ©" title="title"></p>
+````````````````````````````````
+
+
+## [Issue 9](https://github.com/mity/md4c/issues/9)
+
+```````````````````````````````` example
+> [foo
+> bar]: /url
+>
+> [foo bar]
+.
+<blockquote>
+<p><a href="/url">foo
+bar</a></p>
+</blockquote>
+````````````````````````````````
+
+
+## [Issue 10](https://github.com/mity/md4c/issues/10)
+
+```````````````````````````````` example
+[x]:
+x
+- <?
+
+  x
+.
+<ul>
+<li><?
+
+x
+</li>
+</ul>
+````````````````````````````````
+
+
+## [Issue 11](https://github.com/mity/md4c/issues/11)
+
+```````````````````````````````` example
+x [link](/url "foo &ndash; bar") x
+.
+<p>x <a href="/url" title="foo – bar">link</a> x</p>
+````````````````````````````````
+
+
+## [Issue 14](https://github.com/mity/md4c/issues/14)
+
+```````````````````````````````` example
+a***b* c*
+.
+<p>a*<em><em>b</em> c</em></p>
+````````````````````````````````
+
+
+## [Issue 15](https://github.com/mity/md4c/issues/15)
+
+```````````````````````````````` example
+***b* c*
+.
+<p>*<em><em>b</em> c</em></p>
+````````````````````````````````
+
+
+## [Issue 21](https://github.com/mity/md4c/issues/21)
+
+```````````````````````````````` example
+a*b**c*
+.
+<p>a<em>b**c</em></p>
+````````````````````````````````
+
+
+## [Issue 33](https://github.com/mity/md4c/issues/33)
+
+```````````````````````````````` example
+```&amp;&amp;&amp;&amp;&amp;&amp;&amp;&amp;
+.
+<pre><code class="language-&amp;&amp;&amp;&amp;&amp;&amp;&amp;&amp;"></code></pre>
+````````````````````````````````
+
+
+## [Issue 36](https://github.com/mity/md4c/issues/36)
+
+```````````````````````````````` example
+__x_ _x___
+.
+<p><em><em>x</em> <em>x</em></em>_</p>
+````````````````````````````````
+
+
+## [Issue 39](https://github.com/mity/md4c/issues/39)
+
+```````````````````````````````` example
+[\\]: x
+.
+````````````````````````````````
+
+
+## [Issue 40](https://github.com/mity/md4c/issues/40)
+
+```````````````````````````````` example
+[x](url
+'title'
+)x
+.
+<p><a href="url" title="title">x</a>x</p>
+````````````````````````````````
+
+
+## [Issue 41](https://github.com/mity/md4c/issues/41)
+```````````````````````````````` example
+* x|x
+---|---
+.
+<ul>
+<li>x|x
+---|---</li>
+</ul>
+.
+--ftables
+````````````````````````````````
+(Not a table, because the underline has wrong indentation and is not part of the
+list item.)
+
+```````````````````````````````` example
+* x|x
+  ---|---
+x|x
+.
+<ul>
+<li><table>
+<thead>
+<tr>
+<th>x</th>
+<th>x</th>
+</tr>
+</thead>
+</table>
+</li>
+</ul>
+<p>x|x</p>
+.
+--ftables
+````````````````````````````````
+(Here the underline has the right indentation so the table is detected.
+But the last line is not part of it due its indentation.)
+
+
+## [Issue 42](https://github.com/mity/md4c/issues/42)
+
+```````````````````````````````` example
+] http://x.x *x*
+
+|x|x|
+|---|---|
+|x|
+.
+<p>] http://x.x <em>x</em></p>
+<table>
+<thead>
+<tr>
+<th>x</th>
+<th>x</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>x</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+.
+--ftables
+````````````````````````````````
+
+
+## [Issue 53](https://github.com/mity/md4c/issues/53)
+
+```````````````````````````````` example
+This is [link](http://github.com/).
+.
+<p>This is <a href="http://github.com/">link</a>.</p>
+.
+--fpermissive-url-autolinks
+````````````````````````````````
+
+```````````````````````````````` example
+This is [link](http://github.com/)X
+.
+<p>This is <a href="http://github.com/">link</a>X</p>
+.
+--fpermissive-url-autolinks
+````````````````````````````````
+
+
+## [Issue 65](https://github.com/mity/md4c/issues/65)
+
+```````````````````````````````` example
+`
+.
+<p>`</p>
+````````````````````````````````
+
+
+## [Issue 69](https://github.com/mity/md4c/issues/69)
+```````````````````````````````` example
+~`foo`~
+.
+<p><del><code>foo</code></del></p>
+.
+--fstrikethrough
+````````````````````````````````
+
+```````````````````````````````` example
+~*foo*~
+.
+<p><del><em>foo</em></del></p>
+.
+--fstrikethrough
+````````````````````````````````
+
+```````````````````````````````` example
+*~foo~*
+.
+<p><em><del>foo</del></em></p>
+.
+--fstrikethrough
+````````````````````````````````
+
+
+## [Issue 74](https://github.com/mity/md4c/issues/74)
+
+```````````````````````````````` example
+[f]:
+-
+    xx
+-
+.
+<pre><code>xx
+</code></pre>
+<ul>
+<li></li>
+</ul>
+````````````````````````````````
+
+
+## [Issue 76](https://github.com/mity/md4c/issues/76)
+
+```````````````````````````````` example
+*(http://example.com)*
+.
+<p><em>(<a href="http://example.com">http://example.com</a>)</em></p>
+.
+--fpermissive-url-autolinks
+````````````````````````````````
+
+
+## [Issue 78](https://github.com/mity/md4c/issues/78)
+
+```````````````````````````````` example
+[SS ẞ]: /url
+[ẞ SS]
+.
+<p><a href="/url">ẞ SS</a></p>
+````````````````````````````````
+
+
+## [Issue 83](https://github.com/mity/md4c/issues/83)
+
+```````````````````````````````` example
+foo
+>
+.
+<p>foo</p>
+<blockquote>
+</blockquote>
+
+````````````````````````````````
+
+
+## [Issue 95](https://github.com/mity/md4c/issues/95)
+
+```````````````````````````````` example
+. foo
+.
+<p>. foo</p>
+````````````````````````````````
+
+
+## [Issue 96](https://github.com/mity/md4c/issues/96)
+
+```````````````````````````````` example
+[ab]: /foo
+[a] [ab] [abc]
+.
+<p>[a] <a href="/foo">ab</a> [abc]</p>
+````````````````````````````````
+
+```````````````````````````````` example
+[a b]: /foo
+[a   b]
+.
+<p><a href="/foo">a   b</a></p>
+````````````````````````````````
+
+
+## [Issue 97](https://github.com/mity/md4c/issues/97)
+
+```````````````````````````````` example
+*a **b c* d**
+.
+<p><em>a <em><em>b c</em> d</em></em></p>
+
+````````````````````````````````
+
+
+## [Issue 100](https://github.com/mity/md4c/issues/100)
+
+```````````````````````````````` example
+<foo@123456789012345678901234567890123456789012345678901234567890123.123456789012345678901234567890123456789012345678901234567890123>
+.
+<p><a href="mailto:foo@123456789012345678901234567890123456789012345678901234567890123.123456789012345678901234567890123456789012345678901234567890123">foo@123456789012345678901234567890123456789012345678901234567890123.123456789012345678901234567890123456789012345678901234567890123</a></p>
+````````````````````````````````
+
+```````````````````````````````` example
+<foo@123456789012345678901234567890123456789012345678901234567890123x.123456789012345678901234567890123456789012345678901234567890123>
+.
+<p>&lt;foo@123456789012345678901234567890123456789012345678901234567890123x.123456789012345678901234567890123456789012345678901234567890123&gt;</p>
+````````````````````````````````
+(Note the `x` here which turns it over the max. allowed length limit.)
+
+
+## [Issue 104](https://github.com/mity/md4c/issues/104)
+
+```````````````````````````````` example
+A | B
+--- | ---
+[x](url)
+.
+<table>
+<thead>
+<tr>
+<th>A</th>
+<th>B</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="url">x</a></td>
+<td></td>
+</tr>
+</tbody>
+</table>
+.
+--ftables
+````````````````````````````````
+
+
+## [Issue 107](https://github.com/mity/md4c/issues/107)
+
+```````````````````````````````` example
+***foo *bar baz***
+.
+<p>*<strong>foo <em>bar baz</em></strong></p>
+
+````````````````````````````````
+
+
+## [Issue 124](https://github.com/mity/md4c/issues/124)
+
+```````````````````````````````` example
+~~~
+                x
+~~~
+
+~~~
+                 x
+~~~
+.
+<pre><code>                x
+</code></pre>
+<pre><code>                 x
+</code></pre>
+````````````````````````````````
+
+
+## [Issue 131](https://github.com/mity/md4c/issues/131)
+
+```````````````````````````````` example
+[![alt][img]][link]
+
+[img]: img_url
+[link]: link_url
+.
+<p><a href="link_url"><img src="img_url" alt="alt"></a></p>
+````````````````````````````````
+
+
+## [Issue 138](https://github.com/mity/md4c/issues/138)
+
+```````````````````````````````` example
+| abc | def |
+| --- | --- |
+.
+<table>
+<thead>
+<tr>
+<th>abc</th>
+<th>def</th>
+</tr>
+</thead>
+</table>
+.
+--ftables
+````````````````````````````````
+
+
+## [Issue 142](https://github.com/mity/md4c/issues/142)
+
+```````````````````````````````` example
+[fooﬗ]: /url
+[fooﬕ]
+.
+<p>[fooﬕ]</p>
+````````````````````````````````
+
+
+## [Issue 149](https://github.com/mity/md4c/issues/149)
+
+```````````````````````````````` example
+- <script>
+- foo
+bar
+</script>
+.
+<ul>
+<li><script>
+</li>
+<li>foo
+bar
+</script></li>
+</ul>
+````````````````````````````````
+
+
+## [Issue 152](https://github.com/mity/md4c/issues/152)
+
+```````````````````````````````` example
+[http://example.com](http://example.com)
+.
+<p><a href="http://example.com">http://example.com</a></p>
+.
+--fpermissive-url-autolinks
+````````````````````````````````
+
+
+## [Issue 190](https://github.com/mity/md4c/issues/190)
+
+```````````````````````````````` example
+-
+
+    foo
+.
+<ul>
+<li></li>
+</ul>
+<pre><code>foo
+</code></pre>
+````````````````````````````````
+
+
+## [Issue 200](https://github.com/mity/md4c/issues/200)
+
+```````````````````````````````` example
+<!-- foo -->
+    ```
+    bar
+    ```
+.
+<!-- foo -->
+<pre><code>```
+bar
+```
+</code></pre>
+````````````````````````````````
+
+
+## [Issue 201](https://github.com/mity/md4c/issues/201)
+
+```````````````````````````````` example
+foo
+    ```
+    bar
+    ```
+.
+<p>foo
+<code>bar</code></p>
+````````````````````````````````
+
+
+## [Issue 207](https://github.com/mity/md4c/issues/207)
+
+```````````````````````````````` example
+<textarea>
+
+*foo*
+
+_bar_
+
+</textarea>
+
+baz
+.
+<textarea>
+
+*foo*
+
+_bar_
+
+</textarea>
+<p>baz</p>
+````````````````````````````````
+
+
+## [Issue 210](https://github.com/mity/md4c/issues/210)
+
+```````````````````````````````` example
+![outer ![inner](img_inner "inner title")](img_outer "outer title")
+.
+<p><img src="img_outer" alt="outer inner" title="outer title"></p>
+````````````````````````````````
+
+
+## [Issue 212](https://github.com/mity/md4c/issues/212)
+
+```````````````````````````````` example
+x
+|-
+|[*x*]()
+.
+<table>
+<thead>
+<tr>
+<th>x</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href=""><em>x</em></a></td>
+</tr>
+</tbody>
+</table>
+.
+--ftables
+````````````````````````````````
+
+
+## [Issue 213](https://github.com/mity/md4c/issues/215)
+
+```````````````````````````````` example
+x
+|-
+[|
+
+[[ ]][[![|]()]]
+.
+<table>
+<thead>
+<tr>
+<th>x</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>[</td>
+</tr>
+</tbody>
+</table>
+<p><x-wikilink data-target=" "> </x-wikilink><x-wikilink data-target="![|]()"><img src="" alt="|"></x-wikilink></p>
+.
+--ftables --fwiki-links
+````````````````````````````````
+
+
+## [Issue 215](https://github.com/mity/md4c/issues/215)
+
+```````````````````````````````` example
+title
+--→
+.
+<h2>title</h2>
+````````````````````````````````
+
+
+## [Issue 216](https://github.com/mity/md4c/issues/216)
+
+```````````````````````````````` example
+x <!A>
+.
+<p>x <!A></p>
+````````````````````````````````
+
+
+## [Issue 217](https://github.com/mity/md4c/issues/217)
+
+```````````````````````````````` example
+__!_!__
+
+__!x!__
+
+**!*!**
+
+---
+
+_*__*_*
+
+_*xx*_*
+
+_*__-_-
+
+_*xx-_-
+.
+<p><strong>!_!</strong></p>
+<p><strong>!x!</strong></p>
+<p><strong>!*!</strong></p>
+<hr />
+<p><em><em>__</em></em>*</p>
+<p><em><em>xx</em></em>*</p>
+<p><em>*__-</em>-</p>
+<p><em>*xx-</em>-</p>
+````````````````````````````````
+
+
+## [Issue 222](https://github.com/mity/md4c/issues/222)
+
+```````````````````````````````` example
+~foo ~bar baz~
+.
+<p>~foo <del>bar baz</del></p>
+.
+--fstrikethrough
+````````````````````````````````
+
+
+## [Issue 223](https://github.com/mity/md4c/issues/223)
+
+If from one side (and the other has no space/newline), replace new line with
+space.
+
+```````````````````````````````` example [no-normalize]
+`
+foo`
+.
+<p><code> foo</code></p>
+````````````````````````````````
+
+```````````````````````````````` example [no-normalize]
+`foo
+`
+.
+<p><code>foo </code></p>
+````````````````````````````````
+
+If from both side, eat it.
+
+```````````````````````````````` example [no-normalize]
+`
+foo
+`
+.
+<p><code>foo</code></p>
+````````````````````````````````
+
+
+## [Issue 226](https://github.com/mity/md4c/issues/226)
+
+```````````````````````````````` example
+https://example.com/
+https://example.com/dir/
+.
+<p><a href="https://example.com/">https://example.com/</a>
+<a href="https://example.com/dir/">https://example.com/dir/</a></p>
+.
+--fpermissive-url-autolinks
+````````````````````````````````
+
+
+## [Issue 242](https://github.com/mity/md4c/issues/242)
+
+```````````````````````````````` example
+copy ~user1/file to ~user2/file
+
+copy "~user1/file" to "~user2/file"
+.
+<p>copy ~user1/file to ~user2/file</p>
+<p>copy &quot;~user1/file&quot; to &quot;~user2/file&quot;</p>
+.
+--fstrikethrough
+````````````````````````````````
+
+
+## [Issue 248](https://github.com/mity/md4c/issues/248)
+
+(These are in spec.txt, but we need the [no-normalize] flag in order to
+catch the whitespace issues.)
+
+```````````````````````````````` example [no-normalize]
+#→Foo
+.
+<h1>Foo</h1>
+````````````````````````````````
+
+```````````````````````````````` example [no-normalize]
+  Foo *bar
+baz*→
+====
+.
+<h1>Foo <em>bar
+baz</em></h1>
+````````````````````````````````
+
+
+## [Issue 250](https://github.com/mity/md4c/issues/250)
+
+Handling trailing tabulator character versus hard break.
+
+Space + space + tab + newline is not hard break:
+```````````````````````````````` example [no-normalize]
+foo  →
+bar
+.
+<p>foo
+bar</p>
+````````````````````````````````
+
+Tab + space + space + newline is hard break:
+```````````````````````````````` example [no-normalize]
+foo→  
+bar
+.
+<p>foo<br>
+bar</p>
+````````````````````````````````
+

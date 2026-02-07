@@ -8,9 +8,9 @@ pkgs.mkShell rec {
     # Core build tools (matching bootstrap.sh)
     cmake
     ninja
-    clang_19
-    llvm_19
-    lld_19
+    clang_21
+    llvm_21
+    lld_21
     nodejs_24
     bun
     rustc
@@ -77,10 +77,10 @@ pkgs.mkShell rec {
   ];
 
   shellHook = ''
-    export CC="${pkgs.lib.getExe pkgs.clang_19}"
-    export CXX="${pkgs.lib.getExe' pkgs.clang_19 "clang++"}"
-    export AR="${pkgs.llvm_19}/bin/llvm-ar"
-    export RANLIB="${pkgs.llvm_19}/bin/llvm-ranlib"
+    export CC="${pkgs.lib.getExe pkgs.clang_21}"
+    export CXX="${pkgs.lib.getExe' pkgs.clang_21 "clang++"}"
+    export AR="${pkgs.llvm_21}/bin/llvm-ar"
+    export RANLIB="${pkgs.llvm_21}/bin/llvm-ranlib"
     export CMAKE_C_COMPILER="$CC"
     export CMAKE_CXX_COMPILER="$CXX"
     export CMAKE_AR="$AR"
@@ -88,7 +88,7 @@ pkgs.mkShell rec {
     export CMAKE_SYSTEM_PROCESSOR=$(uname -m)
     export TMPDIR=''${TMPDIR:-/tmp}
   '' + pkgs.lib.optionalString pkgs.stdenv.isLinux ''
-    export LD="${pkgs.lib.getExe' pkgs.lld_19 "ld.lld"}"
+    export LD="${pkgs.lib.getExe' pkgs.lld_21 "ld.lld"}"
     export NIX_CFLAGS_LINK="''${NIX_CFLAGS_LINK:+$NIX_CFLAGS_LINK }-fuse-ld=lld"
     export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath packages}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
   '' + ''

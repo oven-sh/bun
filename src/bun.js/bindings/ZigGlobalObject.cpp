@@ -123,6 +123,7 @@
 #include "JSReadableStreamDefaultReader.h"
 #include "JSSink.h"
 #include "JSSocketAddressDTO.h"
+#include "JSReactElement.h"
 #include "JSSQLStatement.h"
 #include "JSStringDecoder.h"
 #include "JSTextEncoder.h"
@@ -301,7 +302,6 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             JSC::Options::useJITCage() = false;
             JSC::Options::useShadowRealm() = true;
             JSC::Options::useV8DateParser() = true;
-            JSC::Options::useMathSumPreciseMethod() = true;
             JSC::Options::evalMode() = evalMode;
             JSC::Options::heapGrowthSteepnessFactor() = 1.0;
             JSC::Options::heapGrowthMaxIncrease() = 2.0;
@@ -1698,6 +1698,7 @@ void GlobalObject::finishCreation(VM& vm)
     m_commonStrings.initialize();
     m_http2CommonStrings.initialize();
     m_bakeAdditions.initialize();
+    m_markdownTagStrings.initialize();
 
     Bun::addNodeModuleConstructorProperties(vm, this);
     m_JSNodeHTTPServerSocketStructure.initLater(
@@ -1855,6 +1856,11 @@ void GlobalObject::finishCreation(VM& vm)
     m_JSSocketAddressDTOStructure.initLater(
         [](const Initializer<Structure>& init) {
             init.set(Bun::JSSocketAddressDTO::createStructure(init.vm, init.owner));
+        });
+
+    m_JSReactElementStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            init.set(Bun::JSReactElement::createStructure(init.vm, init.owner));
         });
 
     m_JSSQLStatementStructure.initLater(

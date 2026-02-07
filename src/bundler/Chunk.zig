@@ -502,6 +502,11 @@ pub const Chunk = struct {
         ///
         /// Mutated while sorting chunks in `computeChunks`
         css_chunks: []u32 = &.{},
+
+        /// Serialized ModuleInfo for ESM bytecode (--compile --bytecode --format=esm)
+        module_info_bytes: ?[]const u8 = null,
+        /// Unserialized ModuleInfo for deferred serialization (after chunk paths are resolved)
+        module_info: ?*analyze_transpiled_module.ModuleInfo = null,
     };
 
     pub const CssChunk = struct {
@@ -654,6 +659,7 @@ pub const ParseTask = bun.bundle_v2.ParseTask;
 const string = []const u8;
 
 const HTMLImportManifest = @import("./HTMLImportManifest.zig");
+const analyze_transpiled_module = @import("../analyze_transpiled_module.zig");
 const std = @import("std");
 
 const options = @import("../options.zig");

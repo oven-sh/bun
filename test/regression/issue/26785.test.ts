@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe } from "harness";
 
 // https://github.com/oven-sh/bun/issues/26785
 // Bun's regex printer was incorrectly handling backslash-escaped non-ASCII
@@ -8,8 +8,11 @@ import { bunEnv, bunExe, tempDir } from "harness";
 // adding another backslash, resulting in `\\uXXXX` which breaks regex semantics.
 
 test("regex with backslash-escaped non-ASCII character matches correctly", async () => {
-  using dir = tempDir("issue-26785", {
-    "test.js": `
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
 const R = /[\\⁄]/;  // backslash + U+2044 (fraction slash)
 const testString = '³⁄₅₂ cup of stuff';
 const match = testString.match(R);
@@ -21,11 +24,7 @@ console.log(JSON.stringify({
   index: match ? match.index : null
 }));
 `,
-  });
-
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "test.js"],
-    cwd: String(dir),
+    ],
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
@@ -44,18 +43,17 @@ console.log(JSON.stringify({
 });
 
 test("complex regex with backslash-escaped non-ASCII matches fractions", async () => {
-  using dir = tempDir("issue-26785-complex", {
-    "test.js": `
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
 // Original regex from the issue
 const R = /[½⅓⅔¼¾⅕⅖⅗⅘⅙⅚⅐⅛⅜⅝⅞⅑⅒]|([⁰¹²³⁴⁵⁶⁷⁸⁹]+|[₀₁₂₃₄₅₆₇₈₉]+|[0-9]+)([\\/\\⁄])([⁰¹²³⁴⁵⁶⁷⁸⁹]+|[₀₁₂₃₄₅₆₇₈₉]+|[0-9]+)/;
 const m = '³⁄₅₂ cup of stuff'.match(R);
 console.log(JSON.stringify(m));
 `,
-  });
-
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "test.js"],
-    cwd: String(dir),
+    ],
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
@@ -75,8 +73,11 @@ console.log(JSON.stringify(m));
 });
 
 test("regex with non-ASCII character without preceding backslash works", async () => {
-  using dir = tempDir("issue-26785-no-backslash", {
-    "test.js": `
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
 // Non-ASCII character without a preceding backslash should still work
 const R = /[⁄]/;
 const testString = '³⁄₅₂ cup of stuff';
@@ -86,11 +87,7 @@ console.log(JSON.stringify({
   index: match ? match.index : null
 }));
 `,
-  });
-
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "test.js"],
-    cwd: String(dir),
+    ],
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",

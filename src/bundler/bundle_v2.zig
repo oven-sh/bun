@@ -1921,6 +1921,10 @@ pub const BundleV2 = struct {
                     .drop = config.drop.map.keys(),
                     .bunfig_path = transpiler.options.bunfig_path,
                     .jsx = jsx_api,
+                    .tsconfig_override = if (config.tsconfig_override.slice().len > 0)
+                        config.tsconfig_override.slice()
+                    else
+                        null,
                 },
                 completion.env,
             );
@@ -2004,14 +2008,56 @@ pub const BundleV2 = struct {
                 transpiler.options.emit_dce_annotations = false;
             }
 
+            // Update resolver options before configureLinker, since configureLinker
+            // may read directory info (e.g., for auto-detecting JSX settings from tsconfig)
+            // and those reads cache results that depend on tsconfig_override being set.
+            transpiler.resolver.opts = transpiler.options;
+            transpiler.resolver.env_loader = transpiler.env;
+
+            // If tsconfig_override is set, we need to explicitly load it and attach it to the
+            // directory where the tsconfig file is located and to any entry point directories.
+            // This is necessary because the directory cache may have been populated by the main
+            // process (e.g., when loading the build script) without the tsconfig_override, and
+            // the bundler's resolver shares that global cache.
+            // Note: tsconfig_path is already normalized to absolute in JSBundler.zig
+            if (transpiler.options.tsconfig_override) |tsconfig_path| {
+                // Load the tsconfig
+                const tsconfig = transpiler.resolver.parseTSConfig(tsconfig_path, bun.invalid_fd) catch null;
+
+                if (tsconfig) |ts| {
+                    // Get the directory where the tsconfig file is located
+                    const tsconfig_dir = std.fs.path.dirname(tsconfig_path) orelse transpiler.fs.top_level_dir;
+
+                    // Set the tsconfig on its containing directory, unconditionally overwriting
+                    // any cached values to ensure the override takes effect
+                    if (transpiler.resolver.readDirInfo(tsconfig_dir) catch null) |tsconfig_dir_info| {
+                        tsconfig_dir_info.tsconfig_json = ts;
+                        tsconfig_dir_info.enclosing_tsconfig_json = ts;
+                    }
+
+                    // Also update enclosing_tsconfig_json for any entry point directories that may have been
+                    // cached before the tsconfig was loaded
+                    var abs_path_buf: bun.PathBuffer = undefined;
+                    for (config.entry_points.keys()) |entry_point| {
+                        // entry_point might be relative, resolve it
+                        const abs_entry = if (std.fs.path.isAbsolute(entry_point))
+                            entry_point
+                        else
+                            transpiler.fs.absBuf(&.{ transpiler.fs.top_level_dir, entry_point }, &abs_path_buf);
+                        const entry_dir = std.fs.path.dirname(abs_entry) orelse continue;
+                        if (transpiler.resolver.readDirInfo(entry_dir) catch null) |dir_info| {
+                            dir_info.enclosing_tsconfig_json = ts;
+                        }
+                    }
+                }
+            }
+
             transpiler.configureLinker();
             try transpiler.configureDefines();
 
             if (!transpiler.options.production) {
                 try transpiler.options.conditions.appendSlice(&.{"development"});
             }
-            transpiler.resolver.env_loader = transpiler.env;
-            transpiler.resolver.opts = transpiler.options;
         }
 
         pub fn completeOnBundleThread(completion: *JSBundleCompletionTask) void {

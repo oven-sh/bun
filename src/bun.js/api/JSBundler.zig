@@ -577,6 +577,23 @@ pub const JSBundler = struct {
                 try this.footer.appendSliceExact(slice.slice());
             }
 
+            if (try config.getOptional(globalThis, "tsconfig", ZigString.Slice)) |slice| {
+                defer slice.deinit();
+                const tsconfig_path = slice.slice();
+                // Normalize relative tsconfig path to absolute
+                if (std.fs.path.isAbsolute(tsconfig_path)) {
+                    try this.tsconfig_override.appendSliceExact(tsconfig_path);
+                } else {
+                    var abs_buf: bun.PathBuffer = undefined;
+                    const cwd = bun.getcwd(&abs_buf) catch {
+                        return globalThis.throwPretty("failed to get current working directory for tsconfig path", .{});
+                    };
+                    var path_buf: bun.PathBuffer = undefined;
+                    const abs_path = bun.path.joinAbsStringBuf(cwd, &path_buf, &.{tsconfig_path}, .auto);
+                    try this.tsconfig_override.appendSliceExact(abs_path);
+                }
+            }
+
             if (try config.getTruthy(globalThis, "sourcemap")) |source_map_js| {
                 if (source_map_js.isBoolean()) {
                     if (source_map_js == .true) {

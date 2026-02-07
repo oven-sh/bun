@@ -29,7 +29,7 @@ fn Bindings(comptime function_name: NodeFSFunctionEnum) type {
 
             var result = function(&this.node_fs, args, .sync);
             return switch (result) {
-                .err => |err| globalObject.throwValue(err.toJS(globalObject)),
+                .err => |err| globalObject.throwValue(try err.toJS(globalObject)),
                 .result => |*res| globalObject.toJS(res),
             };
         }
@@ -227,7 +227,7 @@ pub fn createMemfdForTesting(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.
             return jsc.JSValue.jsNumber(fd.cast());
         },
         .err => |err| {
-            return globalObject.throwValue(err.toJS(globalObject));
+            return globalObject.throwValue(try err.toJS(globalObject));
         },
     }
 }

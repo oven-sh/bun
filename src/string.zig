@@ -69,9 +69,9 @@ pub const String = extern struct {
     }
 
     extern fn BunString__transferToJS(this: *String, globalThis: *jsc.JSGlobalObject) jsc.JSValue;
-    pub fn transferToJS(this: *String, globalThis: *jsc.JSGlobalObject) jsc.JSValue {
+    pub fn transferToJS(this: *String, globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
         jsc.markBinding(@src());
-        return BunString__transferToJS(this, globalThis);
+        return bun.jsc.fromJSHostCall(globalThis, @src(), BunString__transferToJS, .{ this, globalThis });
     }
 
     pub fn toOwnedSlice(this: String, allocator: std.mem.Allocator) OOM![]u8 {
@@ -543,10 +543,10 @@ pub const String = extern struct {
         return if (ok) out else error.JSError;
     }
 
-    pub fn toJS(this: *const String, globalObject: *bun.jsc.JSGlobalObject) jsc.JSValue {
+    pub fn toJS(this: *const String, globalObject: *bun.jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
         jsc.markBinding(@src());
 
-        return BunString__toJS(globalObject, this);
+        return bun.jsc.fromJSHostCall(globalObject, @src(), BunString__toJS, .{ globalObject, this });
     }
 
     pub fn toJSDOMURL(this: *String, globalObject: *bun.jsc.JSGlobalObject) jsc.JSValue {
@@ -1093,20 +1093,15 @@ pub const String = extern struct {
     extern fn JSC__createRangeError(*jsc.JSGlobalObject, str: *const String) jsc.JSValue;
 
     pub fn jsGetStringWidth(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        const args = callFrame.arguments_old(1).slice();
+        const argument = callFrame.argument(0);
+        const str = try argument.toJSString(globalObject);
+        const view = str.view(globalObject);
 
-        if (args.len == 0 or !args.ptr[0].isString()) {
+        if (view.isEmpty()) {
             return .jsNumber(@as(i32, 0));
         }
 
-        const str = try args[0].toBunString(globalObject);
-        defer str.deref();
-
-        if (str.isEmpty()) {
-            return .jsNumber(@as(i32, 0));
-        }
-
-        const width = str.visibleWidth(false);
+        const width = bun.String.init(view).visibleWidth(false);
         return .jsNumber(width);
     }
 

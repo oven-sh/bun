@@ -1,0 +1,32 @@
+{
+  // Framework configuration
+  framework: "next",
+  bundle: {
+    packages: {
+      "@emotion/react": true,
+    },
+  },
+  array: [
+    {
+      entry_one: "one",
+      entry_two: "two",
+    },
+    {
+      entry_one: "three",
+      nested: [
+        {
+          entry_one: "four",
+        },
+      ],
+    },
+  ],
+  dev: {
+    one: {
+      two: {
+        three: 4,
+      },
+    },
+    foo: 123,
+    'foo.bar': "baz",
+  },
+}

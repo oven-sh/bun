@@ -350,7 +350,7 @@ JSC::EncodedJSValue JSBuffer__bufferFromPointerAndLengthAndDeinit(JSC::JSGlobalO
 
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto* subclassStructure = globalObject->JSBufferSubclassStructure();
-    auto scope = DECLARE_CATCH_SCOPE(lexicalGlobalObject->vm());
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(lexicalGlobalObject->vm());
 
     if (length > 0) [[likely]] {
         ASSERT(bytesDeallocator);
@@ -1649,8 +1649,8 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_swap16Body(JSC::JSGlobalObj
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    constexpr int elemSize = 2;
-    int64_t length = static_cast<int64_t>(castedThis->byteLength());
+    constexpr size_t elemSize = 2;
+    size_t length = castedThis->byteLength();
     if (length % elemSize != 0) {
         throwNodeRangeError(lexicalGlobalObject, scope, "Buffer size must be a multiple of 16-bits"_s);
         return {};
@@ -1661,14 +1661,14 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_swap16Body(JSC::JSGlobalObj
         return {};
     }
 
-    uint8_t* typedVector = castedThis->typedVector();
+    uint8_t* data = castedThis->typedVector();
+    size_t count = length / elemSize;
 
-    for (size_t elem = 0; elem < length; elem += elemSize) {
-        const size_t right = elem + 1;
-
-        uint8_t temp = typedVector[elem];
-        typedVector[elem] = typedVector[right];
-        typedVector[right] = temp;
+    for (size_t i = 0; i < count; i++) {
+        uint16_t val;
+        memcpy(&val, data + i * elemSize, sizeof(val));
+        val = __builtin_bswap16(val);
+        memcpy(data + i * elemSize, &val, sizeof(val));
     }
 
     return JSC::JSValue::encode(castedThis);
@@ -1715,7 +1715,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_swap64Body(JSC::JSGlobalObj
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     constexpr size_t elemSize = 8;
-    int64_t length = static_cast<int64_t>(castedThis->byteLength());
+    size_t length = castedThis->byteLength();
     if (length % elemSize != 0) {
         throwNodeRangeError(lexicalGlobalObject, scope, "Buffer size must be a multiple of 64-bits"_s);
         return {};
@@ -1726,19 +1726,14 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_swap64Body(JSC::JSGlobalObj
         return {};
     }
 
-    uint8_t* typedVector = castedThis->typedVector();
+    uint8_t* data = castedThis->typedVector();
+    size_t count = length / elemSize;
 
-    constexpr size_t swaps = elemSize / 2;
-    for (size_t elem = 0; elem < length; elem += elemSize) {
-        const size_t right = elem + elemSize - 1;
-        for (size_t k = 0; k < swaps; k++) {
-            const size_t i = right - k;
-            const size_t j = elem + k;
-
-            uint8_t temp = typedVector[i];
-            typedVector[i] = typedVector[j];
-            typedVector[j] = temp;
-        }
+    for (size_t i = 0; i < count; i++) {
+        uint64_t val;
+        memcpy(&val, data + i * elemSize, sizeof(val));
+        val = __builtin_bswap64(val);
+        memcpy(data + i * elemSize, &val, sizeof(val));
     }
 
     return JSC::JSValue::encode(castedThis);

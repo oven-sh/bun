@@ -159,17 +159,19 @@ pub const FFI = struct {
                 "c";
 
             // Create temp file path
+            var filename_buf: [256]u8 = undefined;
             var tmpname_buf: bun.PathBuffer = undefined;
             const tmpfilename = bun.fs.FileSystem.tmpname(
                 extname,
-                &tmpname_buf,
+                &filename_buf,
                 bun.hash(file.name),
             ) catch return null;
 
             const tmpdir: bun.FD = .fromStdDir(bun.fs.FileSystem.instance.tmpdir() catch return null);
 
             // Create and write to temp file
-            const tmpfile = bun.Tmpfile.create(tmpdir, tmpfilename).unwrap() catch return null;
+            const tmpfile_name_z: [:0]const u8 = filename_buf[0..tmpfilename.len :0];
+            const tmpfile = bun.Tmpfile.create(tmpdir, tmpfile_name_z).unwrap() catch return null;
             defer tmpfile.fd.close();
 
             switch (bun.api.node.fs.NodeFS.writeFileWithPathBuffer(
@@ -187,7 +189,7 @@ pub const FFI = struct {
 
             // Return the full path to the temp file
             const tmpdirPath = bun.fs.FileSystem.instance.fs.tmpdirPath();
-            const full_path = bun.path.joinAbsStringBufZ(tmpdirPath, &tmpname_buf, &.{tmpfilename}, .auto);
+            const full_path = bun.path.joinAbsStringBufZ(tmpdirPath, &tmpname_buf, &.{tmpfile_name_z}, .auto);
             return bun.default_allocator.dupeZ(u8, full_path) catch return null;
         }
 

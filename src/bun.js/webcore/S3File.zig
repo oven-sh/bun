@@ -421,7 +421,7 @@ pub const S3BlobStatTask = struct {
         const path = s3_store.path();
         const env = globalThis.bunVM().transpiler.env;
 
-        try S3.stat(credentials, path, @ptrCast(&S3BlobStatTask.onS3ExistsResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null, s3_store.request_payer);
+        try S3.stat(credentials, path, @ptrCast(&S3BlobStatTask.onS3ExistsResolved), this, if (env.getHttpProxy(true, null, null)) |proxy| proxy.href else null, s3_store.request_payer);
         return promise;
     }
     pub fn stat(globalThis: *jsc.JSGlobalObject, blob: *Blob) bun.JSTerminated!JSValue {
@@ -437,7 +437,7 @@ pub const S3BlobStatTask = struct {
         const path = s3_store.path();
         const env = globalThis.bunVM().transpiler.env;
 
-        try S3.stat(credentials, path, @ptrCast(&S3BlobStatTask.onS3StatResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null, s3_store.request_payer);
+        try S3.stat(credentials, path, @ptrCast(&S3BlobStatTask.onS3StatResolved), this, if (env.getHttpProxy(true, null, null)) |proxy| proxy.href else null, s3_store.request_payer);
         return promise;
     }
     pub fn size(globalThis: *jsc.JSGlobalObject, blob: *Blob) bun.JSTerminated!JSValue {
@@ -453,7 +453,7 @@ pub const S3BlobStatTask = struct {
         const path = s3_store.path();
         const env = globalThis.bunVM().transpiler.env;
 
-        try S3.stat(credentials, path, @ptrCast(&S3BlobStatTask.onS3SizeResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null, s3_store.request_payer);
+        try S3.stat(credentials, path, @ptrCast(&S3BlobStatTask.onS3SizeResolved), this, if (env.getHttpProxy(true, null, null)) |proxy| proxy.href else null, s3_store.request_payer);
         return promise;
     }
 
@@ -503,6 +503,8 @@ pub fn getPresignUrlFrom(this: *Blob, globalThis: *jsc.JSGlobalObject, extra_opt
         .acl = credentialsWithOptions.acl,
         .storage_class = credentialsWithOptions.storage_class,
         .request_payer = credentialsWithOptions.request_payer,
+        .content_disposition = credentialsWithOptions.content_disposition,
+        .content_type = credentialsWithOptions.content_type,
     }, false, .{ .expires = expires }) catch |sign_err| {
         return S3.throwSignError(sign_err, globalThis);
     };

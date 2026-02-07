@@ -64,6 +64,7 @@ const StringPrototypeTrim = String.prototype.trim;
 const ArrayPrototypePush = Array.prototype.push;
 const StringPrototypeToLowerCase = String.prototype.toLowerCase;
 const StringPrototypeIncludes = String.prototype.includes;
+const StringPrototypeStartsWith = String.prototype.startsWith;
 const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 const DatePrototypeToUTCString = Date.prototype.toUTCString;
 const DatePrototypeGetMilliseconds = Date.prototype.getMilliseconds;
@@ -72,6 +73,7 @@ const H2FrameParser = $zig("h2_frame_parser.zig", "H2FrameParserConstructor");
 const assertSettings = $newZigFunction("h2_frame_parser.zig", "jsAssertSettings", 1);
 const getPackedSettings = $newZigFunction("h2_frame_parser.zig", "jsGetPackedSettings", 1);
 const getUnpackedSettings = $newZigFunction("h2_frame_parser.zig", "jsGetUnpackedSettings", 1);
+const { upgradeRawSocketToH2 } = require("node:_http2_upgrade");
 
 const sensitiveHeaders = Symbol.for("nodejs.http2.sensitiveHeaders");
 const bunHTTP2Native = Symbol.for("::bunhttp2native::");
@@ -1994,10 +1996,10 @@ class Http2Stream extends Duplex {
       typeof callback == "function" && callback();
       return;
     }
-    if (!chunk) {
-      chunk = Buffer.alloc(0);
-    }
     this[bunHTTP2StreamStatus] = status | StreamState.EndedCalled;
+    // Don't create an empty buffer for end() without data - let the Duplex stream
+    // handle it naturally (just calls _final without _write for empty data).
+    // Creating an empty buffer here causes an extra empty DATA frame to be sent.
     return super.end(chunk, encoding, callback);
   }
 
@@ -2966,7 +2968,10 @@ class ServerHttp2Session extends Http2Session {
     return this.#parser?.setLocalWindowSize?.(windowSize);
   }
 
-  settings(settings: Settings, callback) {
+  settings(settings: Settings, callback?) {
+    if (callback !== undefined && typeof callback !== "function") {
+      throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
+    }
     this.#pendingSettingsAck = true;
     this.#parser?.settings(settings);
     if (typeof callback === "function") {
@@ -3038,6 +3043,7 @@ class ClientHttp2Session extends Http2Session {
   #socket_proxy: Proxy<TLSSocket | Socket>;
   #parser: typeof H2FrameParser | null;
   #url: URL;
+  #authority: string;
   #alpnProtocol: string | undefined = undefined;
   #localSettings: Settings | null = {
     headerTableSize: 4096,
@@ -3404,7 +3410,10 @@ class ClientHttp2Session extends Http2Session {
     return this.#parser?.getCurrentState();
   }
 
-  settings(settings: Settings, callback) {
+  settings(settings: Settings, callback?) {
+    if (callback !== undefined && typeof callback !== "function") {
+      throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
+    }
     this.#pendingSettingsAck = true;
     this.#parser?.settings(settings);
     if (typeof callback === "function") {
@@ -3454,6 +3463,19 @@ class ClientHttp2Session extends Http2Session {
       if (host[0] === "[") host = host.slice(1, -1);
     } else if (url.host) {
       host = url.host;
+    }
+
+    // Store computed authority like Node.js does (session[kAuthority] = `${host}:${port}`)
+    // Only include port if non-default (RFC 7540: omit default ports 443 for https, 80 for http)
+    const isDefaultPort = (protocol === "https:" && port === 443) || (protocol === "http:" && port === 80);
+    if (isDefaultPort) {
+      // IPv6 literals need brackets even without port (e.g., [::1])
+      const needsBrackets = StringPrototypeIncludes.$call(host, ":") && !StringPrototypeStartsWith.$call(host, "[");
+      this.#authority = needsBrackets ? `[${host}]` : host;
+    } else {
+      // IPv6 literals need brackets when appending port (e.g., [::1]:8080)
+      const needsBrackets = StringPrototypeIncludes.$call(host, ":") && !StringPrototypeStartsWith.$call(host, "[");
+      this.#authority = needsBrackets ? `[${host}]:${port}` : `${host}:${port}`;
     }
 
     function onConnect() {
@@ -3583,7 +3605,8 @@ class ClientHttp2Session extends Http2Session {
 
       let authority = headers[":authority"];
       if (!authority) {
-        authority = url.host;
+        // Use precomputed authority (like Node.js's session[kAuthority])
+        authority = this.#authority;
         if (!headers["host"]) {
           headers[":authority"] = authority;
         }
@@ -3859,6 +3882,7 @@ Http2Server.prototype[EventEmitter.captureRejectionSymbol] = function (err, even
 function onErrorSecureServerSession(err, socket) {
   if (!this.emit("clientError", err, socket)) socket.destroy(err);
 }
+
 function emitFrameErrorEventNT(stream, frameType, errorCode) {
   stream.emit("frameError", frameType, errorCode);
 }
@@ -3895,6 +3919,15 @@ class Http2SecureServer extends tls.Server {
       this.on("request", onRequestHandler);
     }
     this.on("tlsClientError", onErrorSecureServerSession);
+  }
+  emit(event: string, ...args: any[]) {
+    if (event === "connection") {
+      const socket = args[0];
+      if (socket && !(socket instanceof TLSSocket)) {
+        return upgradeRawSocketToH2(connectionListener, this, socket);
+      }
+    }
+    return super.emit(event, ...args);
   }
   setTimeout(ms, callback) {
     this.timeout = ms;

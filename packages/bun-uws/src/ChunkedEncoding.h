@@ -204,26 +204,38 @@ namespace uWS {
             }
 
             // do we have data to emit all?
-            if (data.length() >= chunkSize(state)) {
+            unsigned int remaining = chunkSize(state);
+            if (data.length() >= remaining) {
                 // emit all but 2 bytes then reset state to 0 and goto beginning
                 // not fin
                 std::string_view emitSoon;
                 bool shouldEmit = false;
-                if (chunkSize(state) > 2) {
-                    emitSoon = std::string_view(data.data(), chunkSize(state) - 2);
-                    shouldEmit = true;
+                // Validate the chunk terminator (\r\n) accounting for partial reads
+                switch (remaining) {
+                    default:
+                        // remaining > 2: emit data and validate full terminator
+                        emitSoon = std::string_view(data.data(), remaining - 2);
+                        shouldEmit = true;
+                        [[fallthrough]];
+                    case 2:
+                        // remaining >= 2: validate both \r and \n
+                        if (data[remaining - 2] != '\r' || data[remaining - 1] != '\n') {
+                            state = STATE_IS_ERROR;
+                            return std::nullopt;
+                        }
+                        break;
+                    case 1:
+                        // remaining == 1: only \n left to validate
+                        if (data[0] != '\n') {
+                            state = STATE_IS_ERROR;
+                            return std::nullopt;
+                        }
+                        break;
+                    case 0:
+                        // remaining == 0: terminator already consumed
+                        break;
                 }
-                // Validate that the chunk terminator is \r\n to prevent request smuggling
-                // The last 2 bytes of the chunk must be exactly \r\n
-                // Note: chunkSize always includes +2 for the terminator (added in consumeHexNumber),
-                // and chunks with size 0 (chunkSize == 2) are handled earlier at line 190.
-                // Therefore chunkSize >= 3 here, so no underflow is possible.
-                size_t terminatorOffset = chunkSize(state) - 2;
-                if (data[terminatorOffset] != '\r' || data[terminatorOffset + 1] != '\n') {
-                    state = STATE_IS_ERROR;
-                    return std::nullopt;
-                }
-                data.remove_prefix(chunkSize(state));
+                data.remove_prefix(remaining);
                 state = STATE_IS_CHUNKED;
                 if (shouldEmit) {
                     return emitSoon;
@@ -232,19 +244,45 @@ namespace uWS {
             } else {
                 /* We will consume all our input data */
                 std::string_view emitSoon;
-                if (chunkSize(state) > 2) {
-                    uint64_t maximalAppEmit = chunkSize(state) - 2;
-                    if (data.length() > maximalAppEmit) {
+                unsigned int size = chunkSize(state);
+                size_t len = data.length();
+                if (size > 2) {
+                    uint64_t maximalAppEmit = size - 2;
+                    if (len > maximalAppEmit) {
                         emitSoon = data.substr(0, maximalAppEmit);
+                        // Validate terminator bytes being consumed
+                        size_t terminatorBytesConsumed = len - maximalAppEmit;
+                        if (terminatorBytesConsumed >= 1 && data[maximalAppEmit] != '\r') {
+                            state = STATE_IS_ERROR;
+                            return std::nullopt;
+                        }
+                        if (terminatorBytesConsumed >= 2 && data[maximalAppEmit + 1] != '\n') {
+                            state = STATE_IS_ERROR;
+                            return std::nullopt;
+                        }
                     } else {
-                        //cb(data);
                         emitSoon = data;
                     }
+                } else if (size == 2) {
+                    // Only terminator bytes remain, validate what we have
+                    if (len >= 1 && data[0] != '\r') {
+                        state = STATE_IS_ERROR;
+                        return std::nullopt;
+                    }
+                    if (len >= 2 && data[1] != '\n') {
+                        state = STATE_IS_ERROR;
+                        return std::nullopt;
+                    }
+                } else if (size == 1) {
+                    // Only \n remains
+                    if (data[0] != '\n') {
+                        state = STATE_IS_ERROR;
+                        return std::nullopt;
+                    }
                 }
-                decChunkSize(state, (unsigned int) data.length());
+                decChunkSize(state, (unsigned int) len);
                 state |= STATE_IS_CHUNKED;
-                // new: decrease data by its size (bug)
-                data.remove_prefix(data.length()); // ny bug fix för getNextChunk
+                data.remove_prefix(len);
                 if (emitSoon.length()) {
                     return emitSoon;
                 } else {

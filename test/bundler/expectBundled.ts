@@ -541,9 +541,6 @@ function expectBundled(
     throw new Error("bundling:false only supports a single entry point");
   }
 
-  if (!ESBUILD && metafile) {
-    throw new Error("metafile not implemented in bun build");
-  }
   if (!ESBUILD && legalComments) {
     throw new Error("legalComments not implemented in bun build");
   }
@@ -1124,6 +1121,7 @@ function expectBundled(
           define: define ?? {},
           throw: _throw ?? false,
           compile,
+          metafile: !!metafile,
           jsx: jsx
             ? {
                 runtime: jsx.runtime,
@@ -1199,6 +1197,11 @@ for (const [key, blob] of build.outputs) {
         if (onAfterApiBundle) await onAfterApiBundle(build);
         configRef = null!;
         Bun.gc(true);
+
+        // Write metafile if requested
+        if (metafile && build.success && (build as any).metafile) {
+          writeFileSync(metafile, JSON.stringify((build as any).metafile, null, 2));
+        }
 
         const buildLogs = build.logs.filter(x => x.level === "error");
         if (buildLogs.length) {

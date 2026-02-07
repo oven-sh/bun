@@ -322,10 +322,7 @@ Using bytecode compilation, `tsc` starts 2x faster:
 
 Bytecode compilation moves parsing overhead for large input files from runtime to bundle time. Your app starts faster, in exchange for making the `bun build` command a little slower. It doesn't obscure source code.
 
-<Warning>
-  **Experimental:** Bytecode compilation is an experimental feature. Only `cjs` format is supported (which means no
-  top-level-await). Let us know if you run into any issues!
-</Warning>
+<Note>Bytecode compilation supports both `cjs` and `esm` formats when used with `--compile`.</Note>
 
 ### What do these flags do?
 
@@ -364,6 +361,23 @@ The `--bytecode` argument enables bytecode compilation. Every time you run JavaS
 // In the compiled app
 console.log(process.execArgv); // ["--smol", "--user-agent=MyBot"]
 ```
+
+### Runtime arguments via `BUN_OPTIONS`
+
+The `BUN_OPTIONS` environment variable is applied to standalone executables, allowing you to pass runtime flags without recompiling:
+
+```bash terminal icon="terminal"
+# Enable CPU profiling on a compiled executable
+BUN_OPTIONS="--cpu-prof" ./myapp
+
+# Enable heap profiling with markdown output
+BUN_OPTIONS="--heap-prof-md" ./myapp
+
+# Combine multiple flags
+BUN_OPTIONS="--smol --cpu-prof-md" ./myapp
+```
+
+This is useful for debugging or profiling production executables without rebuilding them.
 
 ---
 

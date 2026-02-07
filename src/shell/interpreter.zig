@@ -280,6 +280,17 @@ pub const Interpreter = struct {
     exit_code: ?ExitCode = 0,
     this_jsvalue: JSValue = .zero,
 
+    /// Tracks which resources have been cleaned up to avoid double-free.
+    /// When the interpreter finishes normally via finish(), it cleans up
+    /// the runtime resources (IO, shell env) and sets this to .runtime_cleaned.
+    /// The GC finalizer then only cleans up what remains (args, interpreter itself).
+    cleanup_state: enum(u8) {
+        /// Nothing has been cleaned up yet - need full cleanup
+        needs_full_cleanup,
+        /// Runtime resources (IO, shell env) have been cleaned up via finish()
+        runtime_cleaned,
+    } = .needs_full_cleanup,
+
     __alloc_scope: if (bun.Environment.enableAllocScopes) bun.AllocationScope else void,
     estimated_size_for_gc: usize = 0,
 
@@ -444,10 +455,10 @@ pub const Interpreter = struct {
 
             if (comptime free_buffered_io) {
                 if (this._buffered_stdout == .owned) {
-                    this._buffered_stdout.owned.deinit(bun.default_allocator);
+                    this._buffered_stdout.owned.clearAndFree(bun.default_allocator);
                 }
                 if (this._buffered_stderr == .owned) {
-                    this._buffered_stderr.owned.deinit(bun.default_allocator);
+                    this._buffered_stderr.owned.clearAndFree(bun.default_allocator);
                 }
             }
 
@@ -748,7 +759,8 @@ pub const Interpreter = struct {
             jsobjs.deinit();
             if (export_env) |*ee| ee.deinit();
             if (cwd) |*cc| cc.deref();
-            shargs.deinit();
+            // Note: Don't call shargs.deinit() here - interpreter.finalize() will do it
+            // since interpreter.args points to shargs after init() succeeds.
             interpreter.finalize();
             return error.JSError;
         }
@@ -994,7 +1006,7 @@ pub const Interpreter = struct {
         interp.exit_code = exit_code;
         switch (try interp.run()) {
             .err => |e| {
-                interp.deinitEverything();
+                interp.#deinitFromExec();
                 bun.Output.err(e, "Failed to run script <b>{s}<r>", .{std.fs.path.basename(path)});
                 bun.Global.exit(1);
                 return 1;
@@ -1003,7 +1015,7 @@ pub const Interpreter = struct {
         }
         mini.tick(&is_done, @as(fn (*anyopaque) bool, IsDone.isDone));
         const code = interp.exit_code.?;
-        interp.deinitEverything();
+        interp.#deinitFromExec();
         return code;
     }
 
@@ -1061,7 +1073,7 @@ pub const Interpreter = struct {
         interp.exit_code = exit_code;
         switch (try interp.run()) {
             .err => |e| {
-                interp.deinitEverything();
+                interp.#deinitFromExec();
                 bun.Output.err(e, "Failed to run script <b>{s}<r>", .{path_for_errors});
                 bun.Global.exit(1);
                 return 1;
@@ -1070,7 +1082,7 @@ pub const Interpreter = struct {
         }
         mini.tick(&is_done, @as(fn (*anyopaque) bool, IsDone.isDone));
         const code = interp.exit_code.?;
-        interp.deinitEverything();
+        interp.#deinitFromExec();
         return code;
     }
 
@@ -1142,7 +1154,7 @@ pub const Interpreter = struct {
         _ = callframe; // autofix
 
         if (this.setupIOBeforeRun().asErr()) |e| {
-            defer this.deinitEverything();
+            defer this.#deinitFromExec();
             const shellerr = bun.shell.ShellErr.newSys(e);
             return try throwShellErr(&shellerr, .{ .js = globalThis.bunVM().event_loop });
         }
@@ -1191,20 +1203,21 @@ pub const Interpreter = struct {
         defer decrPendingActivityFlag(&this.has_pending_activity);
 
         if (this.event_loop == .js) {
-            defer this.deinitAfterJSRun();
             this.exit_code = exit_code;
             const this_jsvalue = this.this_jsvalue;
             if (this_jsvalue != .zero) {
                 if (jsc.Codegen.JSShellInterpreter.resolveGetCached(this_jsvalue)) |resolve| {
                     const loop = this.event_loop.js;
                     const globalThis = this.globalThis;
-                    this.this_jsvalue = .zero;
+                    const buffered_stdout = this.getBufferedStdout(globalThis);
+                    const buffered_stderr = this.getBufferedStderr(globalThis);
                     this.keep_alive.disable();
+                    this.#derefRootShellAndIOIfNeeded(true);
                     loop.enter();
                     _ = resolve.call(globalThis, .js_undefined, &.{
                         JSValue.jsNumberFromU16(exit_code),
-                        this.getBufferedStdout(globalThis),
-                        this.getBufferedStderr(globalThis),
+                        buffered_stdout,
+                        buffered_stderr,
                     }) catch |err| globalThis.reportActiveExceptionAsUnhandled(err);
                     jsc.Codegen.JSShellInterpreter.resolveSetCached(this_jsvalue, globalThis, .js_undefined);
                     jsc.Codegen.JSShellInterpreter.rejectSetCached(this_jsvalue, globalThis, .js_undefined);
@@ -1219,35 +1232,66 @@ pub const Interpreter = struct {
         return .done;
     }
 
-    fn deinitAfterJSRun(this: *ThisInterpreter) void {
-        log("Interpreter(0x{x}) deinitAfterJSRun", .{@intFromPtr(this)});
-        this.root_io.deref();
-        this.keep_alive.disable();
-        this.root_shell.deinitImpl(false, false);
+    fn #derefRootShellAndIOIfNeeded(this: *ThisInterpreter, free_buffered_io: bool) void {
+        // Check if already cleaned up to prevent double-free
+        if (this.cleanup_state == .runtime_cleaned) {
+            return;
+        }
+
+        if (free_buffered_io) {
+            // Can safely be called multiple times.
+            if (this.root_shell._buffered_stderr == .owned) {
+                this.root_shell._buffered_stderr.owned.clearAndFree(bun.default_allocator);
+            }
+            if (this.root_shell._buffered_stdout == .owned) {
+                this.root_shell._buffered_stdout.owned.clearAndFree(bun.default_allocator);
+            }
+        }
+
+        // Has this already been finalized?
+        if (this.this_jsvalue != .zero) {
+            // Cannot be safely called multiple times.
+            this.root_io.deref();
+            this.root_shell.deinitImpl(false, false);
+        }
+
         this.this_jsvalue = .zero;
+        // Mark that runtime resources have been cleaned up
+        this.cleanup_state = .runtime_cleaned;
     }
 
     fn deinitFromFinalizer(this: *ThisInterpreter) void {
-        if (this.root_shell._buffered_stderr == .owned) {
-            this.root_shell._buffered_stderr.owned.deinit(bun.default_allocator);
+        log("Interpreter(0x{x}) deinitFromFinalizer (cleanup_state={s})", .{ @intFromPtr(this), @tagName(this.cleanup_state) });
+
+        switch (this.cleanup_state) {
+            .needs_full_cleanup => {
+                // The interpreter never finished normally (e.g., early error or never started),
+                // so we need to clean up IO and shell env here
+                this.root_io.deref();
+                this.root_shell.deinitImpl(false, true);
+            },
+            .runtime_cleaned => {
+                // finish() already cleaned up IO and shell env via #derefRootShellAndIOIfNeeded,
+                // nothing more to do for those resources
+            },
         }
-        if (this.root_shell._buffered_stdout == .owned) {
-            this.root_shell._buffered_stdout.owned.deinit(bun.default_allocator);
-        }
-        this.this_jsvalue = .zero;
+
+        this.keep_alive.disable();
         this.args.deinit();
         this.allocator.destroy(this);
     }
 
-    fn deinitEverything(this: *ThisInterpreter) void {
+    fn #deinitFromExec(this: *ThisInterpreter) void {
         log("deinit interpreter", .{});
+
+        this.this_jsvalue = .zero;
         this.root_io.deref();
         this.root_shell.deinitImpl(false, true);
+
         for (this.vm_args_utf8.items[0..]) |str| {
             str.deinit();
         }
         this.vm_args_utf8.deinit();
-        this.this_jsvalue = .zero;
         this.allocator.destroy(this);
     }
 

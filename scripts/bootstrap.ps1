@@ -1,4 +1,4 @@
-# Version: 11
+# Version: 12
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on Windows 10 or newer with PowerShell.
 
@@ -387,7 +387,7 @@ function Install-PdbAddr2line {
 function Install-Llvm {
   Install-Package llvm `
     -Command clang-cl `
-    -Version "19.1.7"
+    -Version "21.1.8"
   Add-To-Path "$env:ProgramFiles\LLVM\bin"
 }
 

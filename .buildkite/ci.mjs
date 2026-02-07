@@ -109,11 +109,13 @@ const buildPlatforms = [
   { os: "linux", arch: "x64", distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "linux", arch: "x64", baseline: true, distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "linux", arch: "x64", profile: "asan", distro: "amazonlinux", release: "2023", features: ["docker"] },
-  { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.22" },
-  { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.22" },
-  { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.22" },
+  { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.23" },
+  { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.23" },
+  { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.23" },
   { os: "windows", arch: "x64", release: "2019" },
   { os: "windows", arch: "x64", baseline: true, release: "2019" },
+  // TODO: Re-enable when Windows ARM64 VS component installation is resolved on Buildkite runners
+  // { os: "windows", arch: "aarch64", release: "2019" },
 ];
 
 /**
@@ -131,11 +133,13 @@ const testPlatforms = [
   { os: "linux", arch: "aarch64", distro: "ubuntu", release: "25.04", tier: "latest" },
   { os: "linux", arch: "x64", distro: "ubuntu", release: "25.04", tier: "latest" },
   { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "25.04", tier: "latest" },
-  { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.22", tier: "latest" },
-  { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.22", tier: "latest" },
-  { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.22", tier: "latest" },
+  { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.23", tier: "latest" },
+  { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.23", tier: "latest" },
+  { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.23", tier: "latest" },
   { os: "windows", arch: "x64", release: "2019", tier: "oldest" },
   { os: "windows", arch: "x64", release: "2019", baseline: true, tier: "oldest" },
+  // TODO: Enable when Windows ARM64 CI runners are ready
+  // { os: "windows", arch: "aarch64", release: "2019", tier: "oldest" },
 ];
 
 /**
@@ -300,6 +304,13 @@ function getCppAgent(platform, options) {
     };
   }
 
+  // Cross-compile Windows ARM64 from x64 runners
+  if (os === "windows" && arch === "aarch64") {
+    return getEc2Agent({ ...platform, arch: "x64" }, options, {
+      instanceType: "c7i.4xlarge",
+    });
+  }
+
   return getEc2Agent(platform, options, {
     instanceType: arch === "aarch64" ? "c8g.4xlarge" : "c7i.4xlarge",
   });
@@ -322,8 +333,10 @@ function getLinkBunAgent(platform, options) {
   }
 
   if (os === "windows") {
-    return getEc2Agent(platform, options, {
-      instanceType: arch === "aarch64" ? "r8g.large" : "r7i.large",
+    // Cross-compile Windows ARM64 from x64 runners
+    const agentPlatform = arch === "aarch64" ? { ...platform, arch: "x64" } : platform;
+    return getEc2Agent(agentPlatform, options, {
+      instanceType: "r7i.large",
     });
   }
 
@@ -341,7 +354,7 @@ function getZigPlatform() {
     arch: "aarch64",
     abi: "musl",
     distro: "alpine",
-    release: "3.22",
+    release: "3.23",
   };
 }
 
@@ -453,12 +466,25 @@ function getBuildCommand(target, options, label) {
 }
 
 /**
+ * Get extra flags needed when cross-compiling Windows ARM64 from x64.
+ * Applied to C++ and link steps (not Zig, which has its own toolchain handling).
+ */
+function getWindowsArm64CrossFlags(target) {
+  if (target.os === "windows" && target.arch === "aarch64") {
+    return " --toolchain windows-aarch64";
+  }
+  return "";
+}
+
+/**
  * @param {Platform} platform
  * @param {PipelineOptions} options
  * @returns {Step}
  */
 function getBuildCppStep(platform, options) {
   const command = getBuildCommand(platform, options);
+  const crossFlags = getWindowsArm64CrossFlags(platform);
+
   return {
     key: `${getTargetKey(platform)}-build-cpp`,
     label: `${getTargetLabel(platform)} - build-cpp`,
@@ -472,7 +498,7 @@ function getBuildCppStep(platform, options) {
     // We used to build the C++ dependencies and bun in separate steps.
     // However, as long as the zig build takes longer than both sequentially,
     // it's cheaper to run them in the same step. Can be revisited in the future.
-    command: [`${command} --target bun`, `${command} --target dependencies`],
+    command: [`${command}${crossFlags} --target bun`, `${command}${crossFlags} --target dependencies`],
   };
 }
 
@@ -529,7 +555,110 @@ function getLinkBunStep(platform, options) {
       ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
       ...getBuildEnv(platform, options),
     },
-    command: `${getBuildCommand(platform, options, "build-bun")} --target bun`,
+    command: `${getBuildCommand(platform, options, "build-bun")}${getWindowsArm64CrossFlags(platform)} --target bun`,
+  };
+}
+
+/**
+ * Returns the artifact triplet for a platform, e.g. "bun-linux-aarch64" or "bun-linux-x64-musl-baseline".
+ * Matches the naming convention in cmake/targets/BuildBun.cmake.
+ * @param {Platform} platform
+ * @returns {string}
+ */
+function getTargetTriplet(platform) {
+  const { os, arch, abi, baseline } = platform;
+  let triplet = `bun-${os}-${arch}`;
+  if (abi === "musl") {
+    triplet += "-musl";
+  }
+  if (baseline) {
+    triplet += "-baseline";
+  }
+  return triplet;
+}
+
+/**
+ * Returns true if a platform needs QEMU-based baseline CPU verification.
+ * x64 baseline builds verify no AVX/AVX2 instructions snuck in.
+ * aarch64 builds verify no LSE/SVE instructions snuck in.
+ * @param {Platform} platform
+ * @returns {boolean}
+ */
+function needsBaselineVerification(platform) {
+  const { os, arch, baseline } = platform;
+  if (os !== "linux") return false;
+  return (arch === "x64" && baseline) || arch === "aarch64";
+}
+
+/**
+ * @param {Platform} platform
+ * @param {PipelineOptions} options
+ * @returns {Step}
+ */
+function getVerifyBaselineStep(platform, options) {
+  const { arch } = platform;
+  const targetKey = getTargetKey(platform);
+  const archArg = arch === "x64" ? "x64" : "aarch64";
+
+  return {
+    key: `${targetKey}-verify-baseline`,
+    label: `${getTargetLabel(platform)} - verify-baseline`,
+    depends_on: [`${targetKey}-build-bun`],
+    agents: getLinkBunAgent(platform, options),
+    retry: getRetry(),
+    cancel_on_build_failing: isMergeQueue(),
+    timeout_in_minutes: 5,
+    command: [
+      `buildkite-agent artifact download '*.zip' . --step ${targetKey}-build-bun`,
+      `unzip -o '${getTargetTriplet(platform)}.zip'`,
+      `unzip -o '${getTargetTriplet(platform)}-profile.zip'`,
+      `chmod +x ${getTargetTriplet(platform)}/bun ${getTargetTriplet(platform)}-profile/bun-profile`,
+      `./scripts/verify-baseline-cpu.sh --arch ${archArg} --binary ${getTargetTriplet(platform)}/bun`,
+      `./scripts/verify-baseline-cpu.sh --arch ${archArg} --binary ${getTargetTriplet(platform)}-profile/bun-profile`,
+    ],
+  };
+}
+
+/**
+ * Returns true if the PR modifies SetupWebKit.cmake (WebKit version changes).
+ * JIT stress tests under QEMU should run when WebKit is updated to catch
+ * JIT-generated code that uses unsupported CPU instructions.
+ * @param {PipelineOptions} options
+ * @returns {boolean}
+ */
+function hasWebKitChanges(options) {
+  const { changedFiles = [] } = options;
+  return changedFiles.some(file => file.includes("SetupWebKit.cmake"));
+}
+
+/**
+ * Returns a step that runs JSC JIT stress tests under QEMU.
+ * This verifies that JIT-compiled code doesn't use CPU instructions
+ * beyond the baseline target (no AVX on x64, no LSE on aarch64).
+ * @param {Platform} platform
+ * @param {PipelineOptions} options
+ * @returns {Step}
+ */
+function getJitStressTestStep(platform, options) {
+  const { arch } = platform;
+  const targetKey = getTargetKey(platform);
+  const archArg = arch === "x64" ? "x64" : "aarch64";
+
+  return {
+    key: `${targetKey}-jit-stress-qemu`,
+    label: `${getTargetLabel(platform)} - jit-stress-qemu`,
+    depends_on: [`${targetKey}-build-bun`],
+    agents: getLinkBunAgent(platform, options),
+    retry: getRetry(),
+    cancel_on_build_failing: isMergeQueue(),
+    // JIT stress tests are slow under QEMU emulation
+    timeout_in_minutes: 30,
+    command: [
+      `buildkite-agent artifact download '*.zip' . --step ${targetKey}-build-bun`,
+      `unzip -o '${getTargetTriplet(platform)}.zip'`,
+      `chmod +x ${getTargetTriplet(platform)}/bun`,
+      `./scripts/verify-jit-stress-qemu.sh --arch ${archArg} --binary ${getTargetTriplet(platform)}/bun`,
+    ],
   };
 }
 
@@ -588,7 +717,7 @@ function getTestBunStep(platform, options, testOptions = {}) {
     agents: getTestAgent(platform, options),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
-    parallelism: os === "darwin" ? 2 : 10,
+    parallelism: os === "darwin" ? 2 : 20,
     timeout_in_minutes: profile === "asan" || os === "windows" ? 45 : 30,
     env: {
       ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
@@ -770,6 +899,7 @@ function getBenchmarkStep() {
  * @property {Platform[]} [buildPlatforms]
  * @property {Platform[]} [testPlatforms]
  * @property {string[]} [testFiles]
+ * @property {string[]} [changedFiles]
  */
 
 /**
@@ -1071,6 +1201,8 @@ async function getPipeline(options = {}) {
     buildImages || publishImages
       ? [...buildPlatforms, ...testPlatforms]
           .filter(({ os }) => os !== "darwin")
+          // Windows ARM64 cross-compiles from x64 runners, no separate image needed
+          .filter(({ os, arch }) => !(os === "windows" && arch === "aarch64"))
           .map(platform => [getImageKey(platform), platform])
       : [],
   );
@@ -1121,6 +1253,14 @@ async function getPipeline(options = {}) {
         steps.push(getBuildCppStep(target, options));
         steps.push(getBuildZigStep(target, options));
         steps.push(getLinkBunStep(target, options));
+
+        if (needsBaselineVerification(target)) {
+          steps.push(getVerifyBaselineStep(target, options));
+          // Run JIT stress tests under QEMU when WebKit is updated
+          if (hasWebKitChanges(options)) {
+            steps.push(getJitStressTestStep(target, options));
+          }
+        }
 
         return getStepWithDependsOn(
           {
@@ -1219,6 +1359,7 @@ async function main() {
       console.log(`- PR is only docs, skipping tests!`);
       return;
     }
+    options.changedFiles = allFiles;
   }
 
   startGroup("Generating pipeline...");

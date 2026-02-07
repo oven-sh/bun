@@ -74,7 +74,7 @@ extern "C" bool is_executable_file(const char* path)
 {
 #if defined(O_EXEC)
     // O_EXEC is macOS specific
-    int fd = open(path, O_EXEC | O_CLOEXEC, 0);
+    int fd = open(path, O_EXEC | O_CLOEXEC | O_NONBLOCK | O_NOCTTY, 0);
     if (fd < 0)
         return false;
     close(fd);

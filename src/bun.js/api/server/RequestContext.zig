@@ -918,17 +918,26 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 file.pathlike.fd
             else switch (bun.sys.open(file.pathlike.path.sliceZ(&file_buf), bun.O.RDONLY | bun.O.NONBLOCK | bun.O.CLOEXEC, 0)) {
                 .result => |_fd| _fd,
-                .err => |err| return this.runErrorHandler(err.withPath(file.pathlike.path.slice()).toJS(globalThis)),
+                .err => |err| {
+                    const js_err = err.withPath(file.pathlike.path.slice()).toJS(globalThis) catch {
+                        return this.renderProductionError(500);
+                    };
+                    return this.runErrorHandler(js_err);
+                },
             };
 
             // stat only blocks if the target is a file descriptor
             const stat: bun.Stat = switch (bun.sys.fstat(fd)) {
                 .result => |result| result,
                 .err => |err| {
-                    this.runErrorHandler(err.withPathLike(file.pathlike).toJS(globalThis));
+                    // Close fd before toJS call, which might throw
                     if (auto_close) {
                         fd.close();
                     }
+                    const js_err = err.withPathLike(file.pathlike).toJS(globalThis) catch {
+                        return this.renderProductionError(500);
+                    };
+                    this.runErrorHandler(js_err);
                     return;
                 },
             };
@@ -945,9 +954,8 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     };
                     var sys = err.withPathLike(file.pathlike).toSystemError();
                     sys.message = bun.String.static("MacOS does not support sending non-regular files");
-                    this.runErrorHandler(sys.toErrorInstance(
-                        globalThis,
-                    ));
+                    const js_err = sys.toErrorInstance(globalThis);
+                    this.runErrorHandler(js_err);
                     return;
                 }
             }
@@ -964,7 +972,8 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     };
                     var sys = err.withPathLike(file.pathlike).toShellSystemError();
                     sys.message = bun.String.static("File must be regular or FIFO");
-                    this.runErrorHandler(sys.toErrorInstance(globalThis));
+                    const js_err = sys.toErrorInstance(globalThis);
+                    this.runErrorHandler(js_err);
                     return;
                 }
             }
@@ -1043,7 +1052,8 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
             if (result == .err) {
                 if (this.server) |server| {
-                    this.runErrorHandler(result.err.toErrorInstance(server.globalThis));
+                    const js_err = result.err.toErrorInstance(server.globalThis);
+                    this.runErrorHandler(js_err);
                 }
                 return;
             }
@@ -1479,7 +1489,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         const path = blob.store.?.data.s3.path();
                         const env = globalThis.bunVM().transpiler.env;
 
-                        S3.stat(credentials, path, @ptrCast(&onS3SizeResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null, blob.store.?.data.s3.request_payer) catch {}; // TODO: properly propagate exception upwards
+                        S3.stat(credentials, path, @ptrCast(&onS3SizeResolved), this, if (env.getHttpProxy(true, null, null)) |proxy| proxy.href else null, blob.store.?.data.s3.request_payer) catch {}; // TODO: properly propagate exception upwards
                         return;
                     }
                     this.renderMetadata();
@@ -1853,13 +1863,17 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                                 .message = bun.String.static("Stream already used, please create a new one"),
                             };
                             stream.value.unprotect();
-                            this.runErrorHandler(err.toErrorInstance(globalThis));
+                            const js_err = err.toErrorInstance(globalThis);
+                            this.runErrorHandler(js_err);
                             return;
                         }
 
                         switch (stream.ptr) {
                             .Invalid => {
                                 this.response_body_readable_stream_ref.deinit();
+                                // Stream is invalid, render empty body
+                                this.doRenderBlob();
+                                return;
                             },
                             // toBlobIfPossible will typically convert .Blob streams, or .File streams into a Blob object, but cannot always.
                             .Blob,
@@ -1896,6 +1910,9 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                                 }
                                 this.ref();
                                 byte_stream.pipe = jsc.WebCore.Pipe.Wrap(@This(), onPipe).init(this);
+                                // Deinit the old Strong reference before creating a new one
+                                // to avoid leaking the Strong.Impl memory
+                                this.response_body_readable_stream_ref.deinit();
                                 this.response_body_readable_stream_ref = jsc.WebCore.ReadableStream.Strong.init(stream, globalThis);
 
                                 this.byte_stream = byte_stream;

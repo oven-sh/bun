@@ -360,12 +360,39 @@ fn getAST(
             const root = try YAML.parse(source, &temp_log, allocator);
             return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, &temp_log, root, source, "")).?);
         },
+        .json5 => {
+            const trace = bun.perf.trace("Bundler.ParseJSON5");
+            defer trace.end();
+            var temp_log = bun.logger.Log.init(allocator);
+            defer {
+                bun.handleOom(temp_log.cloneToWithRecycled(log, true));
+                temp_log.msgs.clearAndFree();
+            }
+            const root = try JSON5.parse(source, &temp_log, allocator);
+            return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, &temp_log, root, source, "")).?);
+        },
         .text => {
             const root = Expr.init(E.String, E.String{
                 .data = source.contents,
             }, Logger.Loc{ .start = 0 });
             var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, source, "")).?);
             ast.addUrlForCss(allocator, source, "text/plain", null);
+            return ast;
+        },
+        .md => {
+            const html = bun.md.renderToHtml(source.contents, allocator) catch {
+                log.addError(
+                    source,
+                    Logger.Loc.Empty,
+                    "Failed to render markdown to HTML",
+                ) catch |err| bun.handleOom(err);
+                return error.ParserError;
+            };
+            const root = Expr.init(E.String, E.String{
+                .data = html,
+            }, Logger.Loc{ .start = 0 });
+            var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, source, "")).?);
+            ast.addUrlForCss(allocator, source, "text/html", null);
             return ast;
         },
 
@@ -635,6 +662,16 @@ fn getCodeForParseTaskWithoutPlugins(
         .fd => |contents| brk: {
             const trace = bun.perf.trace("Bundler.readFile");
             defer trace.end();
+
+            // Check FileMap for in-memory files first
+            if (task.ctx.file_map) |file_map| {
+                if (file_map.get(file_path.text)) |file_contents| {
+                    break :brk .{
+                        .contents = file_contents,
+                        .fd = bun.invalid_fd,
+                    };
+                }
+            }
 
             if (strings.eqlComptime(file_path.namespace, "node")) lookup_builtin: {
                 if (task.ctx.framework) |f| {
@@ -1179,8 +1216,7 @@ fn runWithSourceCode(
     opts.features.bundler_feature_flags = transpiler.options.bundler_feature_flags;
     opts.features.hot_module_reloading = output_format == .internal_bake_dev and !source.index.isRuntime();
     opts.features.auto_polyfill_require = output_format == .esm and !opts.features.hot_module_reloading;
-    opts.features.react_fast_refresh = target == .browser and
-        transpiler.options.react_fast_refresh and
+    opts.features.react_fast_refresh = transpiler.options.react_fast_refresh and
         loader.isJSX() and
         !source.path.isNodeModule();
 
@@ -1210,6 +1246,7 @@ fn runWithSourceCode(
     }
 
     opts.tree_shaking = if (source.index.isRuntime()) true else transpiler.options.tree_shaking;
+    opts.code_splitting = transpiler.options.code_splitting;
     opts.module_type = task.module_type;
 
     task.jsx.parse = loader.isJSX();
@@ -1418,6 +1455,7 @@ const default_allocator = bun.default_allocator;
 const js_parser = bun.js_parser;
 const strings = bun.strings;
 const BabyList = bun.collections.BabyList;
+const JSON5 = bun.interchange.json5.JSON5Parser;
 const TOML = bun.interchange.toml.TOML;
 const YAML = bun.interchange.yaml.YAML;
 

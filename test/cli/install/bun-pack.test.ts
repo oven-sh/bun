@@ -649,10 +649,7 @@ describe("workspaces", () => {
       await runBunInstall(bunEnv, packageDir);
 
       // Bump pkg1's version WITHOUT re-running bun install
-      await write(
-        join(packageDir, "pkgs", "pkg1", "package.json"),
-        JSON.stringify({ name: "pkg1", version: "2.0.0" }),
-      );
+      await write(join(packageDir, "pkgs", "pkg1", "package.json"), JSON.stringify({ name: "pkg1", version: "2.0.0" }));
 
       // Pack pkg2 (a workspace member, not the root).
       // It should resolve pkg1's version from pkg1's package.json on disk,

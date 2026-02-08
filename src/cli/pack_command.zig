@@ -1409,7 +1409,7 @@ pub const PackCommand = struct {
         }
 
         // Create the edited package.json content after lifecycle scripts have run
-        const edited_package_json = try editRootPackageJSON(ctx.allocator, ctx.lockfile, json);
+        const edited_package_json = try editRootPackageJSON(ctx.allocator, ctx.lockfile, manager, json);
 
         var root_dir = root_dir: {
             var path_buf: PathBuffer = undefined;
@@ -2126,6 +2126,7 @@ pub const PackCommand = struct {
     fn editRootPackageJSON(
         allocator: std.mem.Allocator,
         maybe_lockfile: ?*Lockfile,
+        manager: *PackageManager,
         json: *PackageManager.WorkspacePackageJSONCache.MapEntry,
     ) OOM!string {
         for ([_]string{
@@ -2170,23 +2171,40 @@ pub const PackCommand = struct {
                                         };
 
                                         failed_to_resolve: {
-                                            // find the current workspace version and append to package spec without `workspace:`
+                                            // Read the current version directly from the workspace's package.json,
+                                            // not the lockfile, so that version bumps are reflected without
+                                            // needing to re-run `bun install`.
                                             const lockfile = maybe_lockfile orelse break :failed_to_resolve;
+                                            const name_hash = Semver.String.Builder.stringHash(dependency_name);
 
-                                            const workspace_version = lockfile.workspace_versions.get(Semver.String.Builder.stringHash(dependency_name)) orelse break :failed_to_resolve;
+                                            const workspace_path = lockfile.workspace_paths.get(name_hash) orelse break :failed_to_resolve;
+
+                                            var abs_path: bun.AbsPath(.{ .sep = .auto }) = .initTopLevelDir();
+                                            defer abs_path.deinit();
+                                            abs_path.append(workspace_path.slice(lockfile.buffers.string_bytes.items));
+                                            abs_path.append("package.json");
+
+                                            const ws_json = switch (manager.workspace_package_json_cache.getWithPath(allocator, manager.log, abs_path.slice(), .{
+                                                .guess_indentation = false,
+                                            })) {
+                                                .entry => |entry| entry,
+                                                .read_err, .parse_err => break :failed_to_resolve,
+                                            };
+
+                                            const version_str = (ws_json.root.get("version") orelse break :failed_to_resolve).asString(allocator) orelse break :failed_to_resolve;
 
                                             dependency.value = Expr.allocate(
                                                 allocator,
                                                 E.String,
                                                 .{
-                                                    .data = try std.fmt.allocPrint(allocator, "{s}{f}", .{
+                                                    .data = try std.fmt.allocPrint(allocator, "{s}{s}", .{
                                                         switch (c) {
                                                             '^' => "^",
                                                             '~' => "~",
                                                             '*' => "",
                                                             else => unreachable,
                                                         },
-                                                        workspace_version.fmt(lockfile.buffers.string_bytes.items),
+                                                        version_str,
                                                     }),
                                                 },
                                                 .{},

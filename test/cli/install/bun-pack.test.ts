@@ -615,6 +615,55 @@ describe("workspaces", () => {
       { "pathname": "package/root.js" },
     ]);
   });
+
+  for (const { input, prefix } of [
+    { input: "workspace:^", prefix: "^" },
+    { input: "workspace:~", prefix: "~" },
+    { input: "workspace:*", prefix: "" },
+  ]) {
+    test(`uses current package.json version after bump (${input})`, async () => {
+      await Promise.all([
+        write(
+          join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "pack-ws-version-bump",
+            version: "1.0.0",
+            workspaces: ["pkgs/*"],
+            dependencies: {
+              "pkg1": input,
+            },
+          }),
+        ),
+        write(join(packageDir, "root.js"), "console.log('hello')"),
+        write(join(packageDir, "pkgs", "pkg1", "package.json"), JSON.stringify({ name: "pkg1", version: "1.0.0" })),
+      ]);
+
+      // Install to create the lockfile with pkg1@1.0.0
+      await runBunInstall(bunEnv, packageDir);
+
+      // Bump the workspace package version WITHOUT re-running bun install
+      await write(
+        join(packageDir, "pkgs", "pkg1", "package.json"),
+        JSON.stringify({ name: "pkg1", version: "2.0.0" }),
+      );
+
+      // Remove any previously packed tarball
+      await rm(join(packageDir, "pack-ws-version-bump-1.0.0.tgz"), { force: true });
+
+      // Pack should use the NEW version from package.json, not the stale lockfile version
+      await pack(packageDir, bunEnv);
+
+      const tarball = readTarball(join(packageDir, "pack-ws-version-bump-1.0.0.tgz"));
+      expect(JSON.parse(tarball.entries[0].contents)).toEqual({
+        name: "pack-ws-version-bump",
+        version: "1.0.0",
+        workspaces: ["pkgs/*"],
+        dependencies: {
+          "pkg1": `${prefix}2.0.0`,
+        },
+      });
+    });
+  }
 });
 
 test("lifecycle scripts execution order", async () => {

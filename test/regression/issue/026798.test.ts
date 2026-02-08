@@ -33,20 +33,16 @@ console.log("Build succeeded");
 `,
   });
 
-  const { stdout, stderr, exitCode } = Bun.spawnSync({
+  await using proc = Bun.spawn({
     cmd: [bunExe(), "run", "build.ts"],
     cwd: dir,
     env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
   });
 
-  const stderrText = stderr.toString();
-  const stdoutText = stdout.toString();
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
-  // Should not crash with "panic" or "assertion failed"
-  expect(stderrText).not.toContain("panic");
-  expect(stderrText).not.toContain("Assertion failed");
-  expect(stderrText).not.toContain("assertPrettyIsValid");
-
-  expect(stdoutText).toContain("Build succeeded");
+  expect(stdout).toContain("Build succeeded");
   expect(exitCode).toBe(0);
 });

@@ -1006,6 +1006,21 @@ const SQL: typeof Bun.SQL = function SQL(
           pooledConn.onClose(() => {
             listenConnection = null;
             listenConnectionPromise = null;
+            // Re-establish connection and re-subscribe if there are active listeners
+            if (listeners.size > 0) {
+              ensureListenConnection().then(async (newConn) => {
+                for (const ch of listeners.keys()) {
+                  try {
+                    await newConn.unsafe(`LISTEN ${pool.escapeIdentifier(ch)}`);
+                  } catch {
+                    // If re-subscribe fails, remove the channel
+                    listeners.delete(ch);
+                  }
+                }
+              }).catch(() => {
+                // Connection re-establishment failed; listeners remain but won't fire
+              });
+            }
           });
         }
 
@@ -1043,12 +1058,7 @@ const SQL: typeof Bun.SQL = function SQL(
     // If this is a new channel, send LISTEN command BEFORE registering callback
     // This ensures we don't have dangling callbacks if LISTEN fails
     if (isNewChannel) {
-      try {
-        await conn.unsafe(`LISTEN ${pool.escapeIdentifier(channel)}`);
-      } catch (e) {
-        // LISTEN failed, don't register the callback
-        throw e;
-      }
+      await conn.unsafe(`LISTEN ${pool.escapeIdentifier(channel)}`);
       // LISTEN succeeded, now create the callback set
       callbacks = new Set();
       listeners.set(channel, callbacks);

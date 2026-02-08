@@ -76,6 +76,8 @@ enum class FastPath : uint8_t {
     String,
     SimpleObject,
     SimpleArray,
+    Int32Array,
+    DoubleArray,
 };
 
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
@@ -129,6 +131,10 @@ public:
 
     // Fast path for postMessage with dense arrays of primitives/strings
     static Ref<SerializedScriptValue> createArrayFastPath(WTF::FixedVector<SimpleCloneableValue>&& elements);
+
+    // Fast path for postMessage with dense Int32/Double arrays (butterfly memcpy)
+    static Ref<SerializedScriptValue> createInt32ArrayFastPath(Vector<uint8_t>&& butterflyData, uint32_t length);
+    static Ref<SerializedScriptValue> createDoubleArrayFastPath(Vector<uint8_t>&& butterflyData, uint32_t length);
 
     static Ref<SerializedScriptValue> nullValue();
 
@@ -233,6 +239,8 @@ private:
     explicit SerializedScriptValue(const String& fastPathString);
     explicit SerializedScriptValue(WTF::FixedVector<SimpleInMemoryPropertyTableEntry>&& object);
     explicit SerializedScriptValue(WTF::FixedVector<SimpleCloneableValue>&& elements);
+    // Constructor for Int32Array/DoubleArray butterfly memcpy fast path
+    SerializedScriptValue(Vector<uint8_t>&& butterflyData, uint32_t length, FastPath fastPath);
 
     size_t computeMemoryCost() const;
 
@@ -263,6 +271,10 @@ private:
 
     FixedVector<SimpleInMemoryPropertyTableEntry> m_simpleInMemoryPropertyTable {};
     FixedVector<SimpleCloneableValue> m_simpleArrayElements {};
+
+    // Int32Array / DoubleArray fast path: raw butterfly data
+    Vector<uint8_t> m_arrayButterflyData {};
+    uint32_t m_arrayLength { 0 };
 };
 
 template<class Encoder>

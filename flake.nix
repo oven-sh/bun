@@ -67,10 +67,6 @@
 
           # Libraries
           pkgs.openssl
-          pkgs.libmd
-          pkgs.acl
-          pkgs.attr
-          pkgs.gcc.cc.lib
           pkgs.zlib
           pkgs.libxml2
           pkgs.libiconv
@@ -137,11 +133,6 @@
           inherit packages;
           hardeningDisable = [ "fortify" ];
 
-          # --- ADD THIS LINE HERE ---
-          # This disables _FORTIFY_SOURCE so debug builds (-O0) can compile
-          hardeningDisable = [ "fortify" ]; 
-          # --------------------------
-
           shellHook = ''
             # Set up build environment
             export CC="${pkgs.lib.getExe clang}"
@@ -178,7 +169,7 @@
 
           # Additional environment variables
           CMAKE_BUILD_TYPE = "Debug";
-          # ENABLE_CCACHE = "1";
+          ENABLE_CCACHE = "1";
         };
       }
     );

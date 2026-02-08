@@ -657,6 +657,7 @@ describe("workspaces", () => {
       await pack(join(packageDir, "pkgs", "pkg2"), bunEnv);
 
       const tarball = readTarball(join(packageDir, "pkgs", "pkg2", "pkg2-1.0.0.tgz"));
+      expect(tarball.entries).toMatchObject([{ "pathname": "package/package.json" }]);
       expect(JSON.parse(tarball.entries[0].contents)).toEqual({
         name: "pkg2",
         version: "1.0.0",

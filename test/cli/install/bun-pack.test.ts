@@ -622,6 +622,7 @@ describe("workspaces", () => {
     { input: "workspace:*", prefix: "" },
   ]) {
     test(`uses current package.json version after bump (${input})`, async () => {
+      // Set up a workspace where pkg2 depends on pkg1
       await Promise.all([
         write(
           join(packageDir, "package.json"),
@@ -629,35 +630,39 @@ describe("workspaces", () => {
             name: "pack-ws-version-bump",
             version: "1.0.0",
             workspaces: ["pkgs/*"],
+          }),
+        ),
+        write(join(packageDir, "pkgs", "pkg1", "package.json"), JSON.stringify({ name: "pkg1", version: "1.0.0" })),
+        write(
+          join(packageDir, "pkgs", "pkg2", "package.json"),
+          JSON.stringify({
+            name: "pkg2",
+            version: "1.0.0",
             dependencies: {
               "pkg1": input,
             },
           }),
         ),
-        write(join(packageDir, "root.js"), "console.log('hello')"),
-        write(join(packageDir, "pkgs", "pkg1", "package.json"), JSON.stringify({ name: "pkg1", version: "1.0.0" })),
       ]);
 
       // Install to create the lockfile with pkg1@1.0.0
       await runBunInstall(bunEnv, packageDir);
 
-      // Bump the workspace package version WITHOUT re-running bun install
+      // Bump pkg1's version WITHOUT re-running bun install
       await write(
         join(packageDir, "pkgs", "pkg1", "package.json"),
         JSON.stringify({ name: "pkg1", version: "2.0.0" }),
       );
 
-      // Remove any previously packed tarball
-      await rm(join(packageDir, "pack-ws-version-bump-1.0.0.tgz"), { force: true });
+      // Pack pkg2 (a workspace member, not the root).
+      // It should resolve pkg1's version from pkg1's package.json on disk,
+      // not from the stale lockfile.
+      await pack(join(packageDir, "pkgs", "pkg2"), bunEnv);
 
-      // Pack should use the NEW version from package.json, not the stale lockfile version
-      await pack(packageDir, bunEnv);
-
-      const tarball = readTarball(join(packageDir, "pack-ws-version-bump-1.0.0.tgz"));
+      const tarball = readTarball(join(packageDir, "pkgs", "pkg2", "pkg2-1.0.0.tgz"));
       expect(JSON.parse(tarball.entries[0].contents)).toEqual({
-        name: "pack-ws-version-bump",
+        name: "pkg2",
         version: "1.0.0",
-        workspaces: ["pkgs/*"],
         dependencies: {
           "pkg1": `${prefix}2.0.0`,
         },

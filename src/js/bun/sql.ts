@@ -933,20 +933,8 @@ const SQL: typeof Bun.SQL = function SQL(
 
   sql.close = async (options?: { timeout?: number }) => {
     // Clean up listen connection before closing the pool
-    if (listenConnection) {
-      const pooledConn = (listenConnection as any)?.__pooledConnection;
-      if (pooledConn?.connection) {
-        pooledConn.connection.onnotification = undefined;
-      }
-      try {
-        await listenConnection.release();
-      } catch {
-        // Ignore errors during cleanup
-      }
-      listenConnection = null;
-      listenConnectionPromise = null;
-      listeners.clear();
-    }
+    listeners.clear();
+    await releaseListenConnectionIfUnused();
     await pool.close(options);
   };
 
@@ -965,7 +953,7 @@ const SQL: typeof Bun.SQL = function SQL(
   let listenConnectionPromise: Promise<any> | null = null;
 
   function onNotification(channel: string, payload: string) {
-    // Use queueMicrotask to ensure callback runs in a clean event loop context
+    // Use queueMicrotask to prevent reentrancy issues when callbacks issue SQL on the same connection
     queueMicrotask(() => {
       const callbacks = listeners.get(channel);
       if (callbacks) {
@@ -979,6 +967,22 @@ const SQL: typeof Bun.SQL = function SQL(
         }
       }
     });
+  }
+
+  async function releaseListenConnectionIfUnused() {
+    if (listeners.size === 0 && listenConnection) {
+      const pooledConn = (listenConnection as any)?.__pooledConnection;
+      if (pooledConn?.connection) {
+        pooledConn.connection.onnotification = undefined;
+      }
+      try {
+        await listenConnection.release();
+      } catch {
+        // Ignore errors during cleanup
+      }
+      listenConnection = null;
+      listenConnectionPromise = null;
+    }
   }
 
   async function ensureListenConnection() {
@@ -995,6 +999,14 @@ const SQL: typeof Bun.SQL = function SQL(
         const pooledConn = (reserved as any).__pooledConnection;
         if (pooledConn?.connection) {
           pooledConn.connection.onnotification = onNotification;
+        }
+
+        // Handle disconnection: reset state so future listen() calls can reconnect
+        if (pooledConn?.onClose) {
+          pooledConn.onClose(() => {
+            listenConnection = null;
+            listenConnectionPromise = null;
+          });
         }
 
         return reserved;
@@ -1060,21 +1072,7 @@ const SQL: typeof Bun.SQL = function SQL(
               // Ignore errors if connection is closed
             }
           }
-          // If no more listeners at all, release the reserved connection
-          if (listeners.size === 0 && listenConnection) {
-            const pooledConn = (listenConnection as any)?.__pooledConnection;
-            if (pooledConn?.connection) {
-              pooledConn.connection.onnotification = undefined;
-            }
-            // Release the reserved connection
-            try {
-              await listenConnection.release();
-            } catch {
-              // Ignore errors
-            }
-            listenConnection = null;
-            listenConnectionPromise = null;
-          }
+          await releaseListenConnectionIfUnused();
         }
       }
     };
@@ -1097,21 +1095,7 @@ const SQL: typeof Bun.SQL = function SQL(
       }
     }
 
-    // If no more listeners at all, release the reserved connection
-    if (listeners.size === 0 && listenConnection) {
-      const pooledConn = (listenConnection as any)?.__pooledConnection;
-      if (pooledConn?.connection) {
-        pooledConn.connection.onnotification = undefined;
-      }
-      // Release the reserved connection
-      try {
-        await listenConnection.release();
-      } catch {
-        // Ignore errors
-      }
-      listenConnection = null;
-      listenConnectionPromise = null;
-    }
+    await releaseListenConnectionIfUnused();
   };
 
   return sql;

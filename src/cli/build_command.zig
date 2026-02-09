@@ -85,31 +85,6 @@ pub const BuildCommand = struct {
         this_transpiler.options.bundler_feature_flags = Runtime.Features.initBundlerFeatureFlags(allocator, ctx.args.feature_flags);
 
         this_transpiler.options.css_chunking = ctx.bundler_options.css_chunking;
-
-        if (ctx.bundler_options.unwrap_cjs_to_esm.len > 0) {
-            var extra_packages = std.array_list.Managed([]const u8).init(allocator);
-            var extra_patterns = std.array_list.Managed(options.ExternalModules.WildcardPattern).init(allocator);
-            for (ctx.bundler_options.unwrap_cjs_to_esm) |entry| {
-                if (strings.indexOfChar(entry, '*')) |i| {
-                    extra_patterns.append(.{
-                        .prefix = entry[0..i],
-                        .suffix = entry[i + 1 ..],
-                    }) catch bun.outOfMemory();
-                } else {
-                    extra_packages.append(entry) catch bun.outOfMemory();
-                }
-            }
-            if (extra_packages.items.len > 0) {
-                const combined = allocator.alloc([]const u8, options.BundleOptions.default_unwrap_commonjs_packages.len + extra_packages.items.len) catch bun.outOfMemory();
-                @memcpy(combined[0..options.BundleOptions.default_unwrap_commonjs_packages.len], &options.BundleOptions.default_unwrap_commonjs_packages);
-                @memcpy(combined[options.BundleOptions.default_unwrap_commonjs_packages.len..], extra_packages.items);
-                this_transpiler.options.unwrap_commonjs_packages = combined;
-            }
-            if (extra_patterns.items.len > 0) {
-                this_transpiler.options.unwrap_commonjs_patterns = extra_patterns.items;
-            }
-        }
-
         this_transpiler.options.metafile = ctx.bundler_options.metafile.len > 0 or ctx.bundler_options.metafile_md.len > 0;
 
         this_transpiler.options.output_dir = ctx.bundler_options.outdir;

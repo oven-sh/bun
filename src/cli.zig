@@ -459,7 +459,6 @@ pub const Command = struct {
             banner: []const u8 = "",
             footer: []const u8 = "",
             css_chunking: bool = false,
-            unwrap_cjs_to_esm: []const []const u8 = &.{},
 
             bake: bool = false,
             bake_debug_dump_server: bool = false,

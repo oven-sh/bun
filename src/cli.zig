@@ -392,6 +392,7 @@ pub const Command = struct {
             enabled: bool = false,
             name: []const u8 = "",
             dir: []const u8 = "",
+            interval: u32 = 1000,
             md_format: bool = false,
             json_format: bool = false,
         } = .{},

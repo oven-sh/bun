@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { realpathSync } from "fs";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import path from "path";
 
 // Helper: spawn bun with multi-run flags, returns { stdout, stderr, exitCode }
 async function runMulti(
@@ -339,7 +341,7 @@ describe("parallel: output formatting", () => {
     using dir = tempDir("mr-par-empty", {
       "package.json": JSON.stringify({
         scripts: {
-          silent: `${bunExe()} -e ""`,
+          silent: `${bunExe()} -e "0"`,
         },
       }),
     });
@@ -364,7 +366,7 @@ describe("parallel: output formatting", () => {
   test("shows 'Done in Xms' for successful scripts", async () => {
     using dir = tempDir("mr-par-done", {
       "package.json": JSON.stringify({
-        scripts: { fast: `${bunExe()} -e ""` },
+        scripts: { fast: `${bunExe()} -e "0"` },
       }),
     });
     const r = await runMulti(["run", "--parallel", "fast"], String(dir));
@@ -922,9 +924,9 @@ describe("timing edge cases", () => {
     using dir = tempDir("mr-instant", {
       "package.json": JSON.stringify({
         scripts: {
-          a: `${bunExe()} -e ""`,
-          b: `${bunExe()} -e ""`,
-          c: `${bunExe()} -e ""`,
+          a: `${bunExe()} -e "0"`,
+          b: `${bunExe()} -e "0"`,
+          c: `${bunExe()} -e "0"`,
         },
       }),
     });
@@ -1019,8 +1021,12 @@ describe("working directory", () => {
       }),
     });
     const r = await runMulti(["run", "--parallel", "pwd"], String(dir));
-    const realDir = await Bun.$`realpath ${String(dir)}`.text();
-    expectPrefixed(r.stdout, "pwd", realDir.trim());
+    const realDir = realpathSync(String(dir));
+    // On Windows, process.cwd() returns backslash paths; normalize for comparison
+    const lines = r.stdout.split("\n").filter(l => /pwd\s+\|/.test(l));
+    expect(lines.length).toBeGreaterThan(0);
+    const cwdOutput = lines[0].split(" | ").slice(1).join(" | ").trim();
+    expect(path.normalize(cwdOutput)).toBe(path.normalize(realDir));
     expect(r.exitCode).toBe(0);
   });
 });
@@ -1175,7 +1181,7 @@ describe("abort: failure kills long-running processes", () => {
     expect(elapsed).toBeLessThan(15000);
   });
 
-  test("parallel: signaled process shows Signaled message", async () => {
+  test.skipIf(isWindows)("parallel: signaled process shows Signaled message", async () => {
     using dir = tempDir("mr-abort-signal", {
       "package.json": JSON.stringify({
         scripts: {
@@ -1897,14 +1903,17 @@ describe("workspace integration", () => {
     });
     const r = await runMulti(["run", "--parallel", "--filter", "*", "pwd"], String(dir));
     // Each package should report its own directory, not the root
-    const realDir = (await Bun.$`realpath ${String(dir)}`.text()).trim();
+    const realDir = realpathSync(String(dir));
     const lines = r.stdout.split("\n").filter(l => l.includes(" | "));
     const pkgALines = lines.filter(l => /pkg-a:pwd/.test(l));
     const pkgBLines = lines.filter(l => /pkg-b:pwd/.test(l));
     expect(pkgALines.length).toBeGreaterThan(0);
     expect(pkgBLines.length).toBeGreaterThan(0);
-    expect(pkgALines.some(l => l.includes(`${realDir}/packages/pkg-a`))).toBe(true);
-    expect(pkgBLines.some(l => l.includes(`${realDir}/packages/pkg-b`))).toBe(true);
+    // Normalize paths for cross-platform comparison (Windows uses backslashes)
+    const normPkgA = path.normalize(path.join(realDir, "packages", "pkg-a"));
+    const normPkgB = path.normalize(path.join(realDir, "packages", "pkg-b"));
+    expect(pkgALines.some(l => l.includes(normPkgA))).toBe(true);
+    expect(pkgBLines.some(l => l.includes(normPkgB))).toBe(true);
     expect(r.exitCode).toBe(0);
   });
 

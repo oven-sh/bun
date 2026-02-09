@@ -12,13 +12,7 @@ if(NOT ENABLE_LLVM)
   return()
 endif()
 
-# LLVM 21 is required for Windows ARM64 (first version with ARM64 Windows builds)
-# Other platforms use LLVM 19.1.7
-if(WIN32 AND CMAKE_SYSTEM_PROCESSOR MATCHES "ARM64|aarch64|AARCH64")
-  set(DEFAULT_LLVM_VERSION "21.1.8")
-else()
-  set(DEFAULT_LLVM_VERSION "19.1.7")
-endif()
+set(DEFAULT_LLVM_VERSION "21.1.8")
 
 optionx(LLVM_VERSION STRING "The version of LLVM to use" DEFAULT ${DEFAULT_LLVM_VERSION})
 
@@ -27,6 +21,8 @@ if(USE_LLVM_VERSION)
   set(LLVM_VERSION_MAJOR ${CMAKE_MATCH_1})
   set(LLVM_VERSION_MINOR ${CMAKE_MATCH_2})
   set(LLVM_VERSION_PATCH ${CMAKE_MATCH_3})
+  # Accept any LLVM version within the same major.minor range (e.g. Alpine 3.23 ships 21.1.2)
+  set(LLVM_VERSION_RANGE ">=${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}.0 <${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}.99")
 endif()
 
 set(LLVM_PATHS)
@@ -54,6 +50,11 @@ if(APPLE)
   list(APPEND LLVM_PATHS ${HOMEBREW_PREFIX}/opt/llvm/bin)
 endif()
 
+if(WIN32)
+  # Prefer standalone LLVM over VS-bundled (standalone supports cross-compilation)
+  list(APPEND LLVM_PATHS "C:/Program Files/LLVM/bin")
+endif()
+
 if(UNIX)
   list(APPEND LLVM_PATHS /usr/lib/llvm/bin)
 
@@ -78,14 +79,12 @@ macro(find_llvm_command variable command)
     )
   endif()
 
-  math(EXPR LLVM_VERSION_NEXT_MAJOR "${LLVM_VERSION_MAJOR} + 1")
-
   find_command(
     VARIABLE ${variable}
     VERSION_VARIABLE LLVM_VERSION
     COMMAND ${commands}
     PATHS ${LLVM_PATHS}
-    VERSION ">=${LLVM_VERSION_MAJOR}.1.0 <${LLVM_VERSION_NEXT_MAJOR}.0.0"
+    VERSION "${LLVM_VERSION_RANGE}"
   )
   list(APPEND CMAKE_ARGS -D${variable}=${${variable}})
 endmacro()

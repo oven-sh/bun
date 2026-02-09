@@ -6608,6 +6608,7 @@ pub fn NewParser_(
                 .top_level_await_keyword = p.top_level_await_keyword,
                 .commonjs_named_exports = p.commonjs_named_exports,
                 .has_commonjs_export_names = p.has_commonjs_export_names,
+                .has_import_meta = p.has_import_meta,
 
                 .hashbang = hashbang,
                 // TODO: cross-module constant inlining

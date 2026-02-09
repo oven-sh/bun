@@ -351,11 +351,13 @@ pub fn autoTick(this: *EventLoop) void {
     const ctx = this.virtual_machine;
 
     this.tickImmediateTasks(ctx);
-    if (comptime Environment.isPosix) {
+    if (comptime Environment.isWindows) {
         if (this.immediate_tasks.items.len > 0) {
             this.wakeup();
         }
     }
+    // On POSIX, pending immediates are handled via an immediate timeout in
+    // getTimeout() instead of writing to the eventfd, avoiding that overhead.
 
     if (comptime Environment.isPosix) {
         // Some tasks need to keep the event loop alive for one more tick.
@@ -438,11 +440,13 @@ pub fn autoTickActive(this: *EventLoop) void {
     var ctx = this.virtual_machine;
 
     this.tickImmediateTasks(ctx);
-    if (comptime Environment.isPosix) {
+    if (comptime Environment.isWindows) {
         if (this.immediate_tasks.items.len > 0) {
             this.wakeup();
         }
     }
+    // On POSIX, pending immediates are handled via an immediate timeout in
+    // getTimeout() instead of writing to the eventfd, avoiding that overhead.
 
     if (comptime Environment.isPosix) {
         const pending_unref = ctx.pending_unref_counter;

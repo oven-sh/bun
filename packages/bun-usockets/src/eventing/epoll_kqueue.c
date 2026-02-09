@@ -226,9 +226,10 @@ void us_loop_run(struct us_loop_t *loop) {
 
                 // > Multiple events which trigger the filter do not result in multiple kevents being placed on the kqueue
                 // > Instead, the filter will aggregate the events into a single kevent struct
+                // EVFILT_TIMER is dispatched as readable since timer callback polls always poll for readable.
                 // Note: EV_ERROR only sets the error in data as part of changelist. Not in this call!
                 int events = 0
-                    | ((filter == EVFILT_READ) ? LIBUS_SOCKET_READABLE : 0)
+                    | ((filter == EVFILT_READ || filter == EVFILT_TIMER) ? LIBUS_SOCKET_READABLE : 0)
                     | ((filter == EVFILT_WRITE) ? LIBUS_SOCKET_WRITABLE : 0);
                 const int error = (flags & (EV_ERROR)) ? ((int)fflags || 1) : 0;
                 const int eof = (flags & (EV_EOF));
@@ -298,8 +299,9 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
 
             // > Multiple events which trigger the filter do not result in multiple kevents being placed on the kqueue
             // > Instead, the filter will aggregate the events into a single kevent struct
+            // EVFILT_TIMER is dispatched as readable since timer callback polls always poll for readable.
             int events = 0
-                | ((filter == EVFILT_READ) ? LIBUS_SOCKET_READABLE : 0)
+                | ((filter == EVFILT_READ || filter == EVFILT_TIMER) ? LIBUS_SOCKET_READABLE : 0)
                 | ((filter == EVFILT_WRITE) ? LIBUS_SOCKET_WRITABLE : 0);
 
             // Note: EV_ERROR only sets the error in data as part of changelist. Not in this call!
@@ -359,12 +361,14 @@ int kqueue_change(int kqfd, int fd, int old_events, int new_events, void *user_d
 
     if(!is_readable && !is_writable) {
         if(!(old_events & LIBUS_SOCKET_WRITABLE)) {
-            // if we are not reading or writing, we need to add writable to receive FIN
-            EV_SET64(&change_list[change_length++], fd, EVFILT_WRITE, EV_ADD | EV_ONESHOT, 0, 0, (uint64_t)(void*)user_data, 0, 0);
+            /* Not polling for anything — register/re-enable EVFILT_WRITE to detect FIN.
+             * EV_ADD|EV_ENABLE|EV_DISPATCH handles both cases: creates the knote if it
+             * doesn't exist, or re-enables it if it was disabled from a previous dispatch. */
+            EV_SET64(&change_list[change_length++], fd, EVFILT_WRITE, EV_ADD | EV_ENABLE | EV_DISPATCH, 0, 0, (uint64_t)(void*)user_data, 0, 0);
         }
     } else if ((new_events & LIBUS_SOCKET_WRITABLE) != (old_events & LIBUS_SOCKET_WRITABLE)) {
         /* Do they differ in writable? */
-        EV_SET64(&change_list[change_length++], fd, EVFILT_WRITE, (new_events & LIBUS_SOCKET_WRITABLE) ? EV_ADD | EV_ONESHOT : EV_DELETE, 0, 0, (uint64_t)(void*)user_data, 0, 0);
+        EV_SET64(&change_list[change_length++], fd, EVFILT_WRITE, is_writable ? EV_ADD | EV_ENABLE | EV_DISPATCH : EV_DELETE, 0, 0, (uint64_t)(void*)user_data, 0, 0);
     }
     int ret;
     do {

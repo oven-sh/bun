@@ -119,6 +119,7 @@ JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_swap16);
 JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_swap32);
 JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_swap64);
 JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_toString);
+JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_slice);
 JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_write);
 JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigInt64LE);
 JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigInt64BE);
@@ -1879,6 +1880,81 @@ bool inline parseArrayIndex(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalO
     return true;
 }
 
+static inline size_t adjustSliceOffset(double offset, size_t length)
+{
+    // Emulate Math.trunc: NaN -> 0
+    if (std::isnan(offset) || offset == 0) {
+        return 0;
+    } else if (offset < 0) {
+        double adjusted = offset + static_cast<double>(length);
+        return adjusted > 0 ? static_cast<size_t>(adjusted) : 0;
+    } else {
+        return offset < static_cast<double>(length) ? static_cast<size_t>(offset) : length;
+    }
+}
+
+static JSC::EncodedJSValue jsBufferPrototypeFunction_sliceBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSArrayBufferView>::ClassParameter castedThis)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+
+    size_t byteLength = castedThis->byteLength();
+    size_t byteOffset = castedThis->byteOffset();
+
+    // Compute start offset
+    size_t startOffset = 0;
+    if (callFrame->argumentCount() > 0) {
+        JSValue startArg = callFrame->uncheckedArgument(0);
+        if (!startArg.isUndefined()) {
+            double startD = startArg.toNumber(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(throwScope, {});
+            startOffset = adjustSliceOffset(startD, byteLength);
+        }
+    }
+
+    // Compute end offset
+    size_t endOffset = byteLength;
+    if (callFrame->argumentCount() > 1) {
+        JSValue endArg = callFrame->uncheckedArgument(1);
+        if (!endArg.isUndefined()) {
+            double endD = endArg.toNumber(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(throwScope, {});
+            endOffset = adjustSliceOffset(endD, byteLength);
+        }
+    }
+
+    size_t newLength = endOffset > startOffset ? endOffset - startOffset : 0;
+
+    RefPtr<ArrayBuffer> buffer = castedThis->possiblySharedBuffer();
+    if (!buffer) {
+        throwOutOfMemoryError(globalObject, throwScope);
+        return {};
+    }
+
+    if (castedThis->isResizableOrGrowableShared()) {
+        auto* subclassStructure = globalObject->JSResizableOrGrowableSharedBufferSubclassStructure();
+        auto* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTF::move(buffer), byteOffset + startOffset, std::nullopt);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (!uint8Array) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, throwScope);
+            return {};
+        }
+        RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(uint8Array));
+    }
+
+    auto* subclassStructure = globalObject->JSBufferSubclassStructure();
+    auto* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTF::move(buffer), byteOffset + startOffset, newLength);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    if (!uint8Array) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, throwScope);
+        return {};
+    }
+
+    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(uint8Array));
+}
+
 // https://github.com/nodejs/node/blob/v22.9.0/lib/buffer.js#L834
 // using byteLength and byte offsets here is intentional
 static JSC::EncodedJSValue jsBufferPrototypeFunction_toStringBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSArrayBufferView>::ClassParameter castedThis)
@@ -2430,6 +2506,11 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_swap64, (JSGlobalObject * lex
     return IDLOperation<JSArrayBufferView>::call<jsBufferPrototypeFunction_swap64Body>(*lexicalGlobalObject, *callFrame, "swap64");
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_slice, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSArrayBufferView>::call<jsBufferPrototypeFunction_sliceBody>(*lexicalGlobalObject, *callFrame, "slice");
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_toString, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSArrayBufferView>::call<jsBufferPrototypeFunction_toStringBody>(*lexicalGlobalObject, *callFrame, "toString");
@@ -2711,8 +2792,8 @@ static const HashTableValue JSBufferPrototypeTableValues[]
           { "readUIntBE"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeReadUIntBECodeGenerator, 1 } },
           { "readUIntLE"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeReadUIntLECodeGenerator, 1 } },
 
-          { "slice"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeSliceCodeGenerator, 2 } },
-          { "subarray"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeSliceCodeGenerator, 2 } },
+          { "slice"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferPrototypeFunction_slice, 2 } },
+          { "subarray"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferPrototypeFunction_slice, 2 } },
           { "swap16"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferPrototypeFunction_swap16, 0 } },
           { "swap32"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferPrototypeFunction_swap32, 0 } },
           { "swap64"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferPrototypeFunction_swap64, 0 } },

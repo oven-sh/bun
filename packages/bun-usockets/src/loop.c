@@ -393,8 +393,11 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
             if (events & LIBUS_SOCKET_WRITABLE && !error) {
                 s->flags.last_write_failed = 0;
                 #ifdef LIBUS_USE_KQUEUE
-                /* Kqueue is one-shot so is not writable anymore */
-                p->state.poll_type = us_internal_poll_type(p) | ((events & LIBUS_SOCKET_READABLE) ? POLL_TYPE_POLLING_IN : 0);
+                /* Kqueue is one-shot so EVFILT_WRITE is no longer registered — clear POLLING_OUT.
+                 * Keep POLLING_IN from the poll's own state, NOT from `events`: kqueue delivers
+                 * each filter as a separate kevent, so a pure EVFILT_WRITE event won't have
+                 * LIBUS_SOCKET_READABLE set even though the socket is still registered for reads. */
+                p->state.poll_type = us_internal_poll_type(p) | (p->state.poll_type & POLL_TYPE_POLLING_IN);
                 #endif
 
                 s = s->context->on_writable(s);

@@ -15,6 +15,7 @@ let testDir = "";
 beforeEach(() => {
   testDir = tempDirWithFiles("watch", {
     "watch.txt": "hello",
+    "space file.txt": "hello",
     [encodingFileName]: "hello",
   });
 });
@@ -85,6 +86,33 @@ describe("fs.watchFile", () => {
     expect(entries.length).toBeGreaterThan(0);
 
     expect(entries[0][0].size).toBe(6);
+    expect(entries[0][1].size).toBe(5);
+    expect(entries[0][0].mtimeMs).toBeGreaterThan(entries[0][1].mtimeMs);
+  });
+
+  test("file: URL string with percent-encoded space", async () => {
+    const filepath = path.join(testDir, "space file.txt");
+    const fileUrl = "file://" + filepath.replace(/ /g, "%20");
+    let entries: any = [];
+    let { promise, resolve } = Promise.withResolvers<void>();
+    fs.watchFile(fileUrl, { interval: 50 }, (curr, prev) => {
+      entries.push([curr, prev]);
+      resolve();
+      resolve = () => {};
+    });
+
+    let increment = 0;
+    const interval = repeat(() => {
+      increment++;
+      fs.writeFileSync(filepath, "hello" + increment);
+    });
+    await promise;
+    clearInterval(interval);
+
+    fs.unwatchFile(fileUrl);
+
+    expect(entries.length).toBeGreaterThan(0);
+    expect(entries[0][0].size).toBeGreaterThan(5);
     expect(entries[0][1].size).toBe(5);
     expect(entries[0][0].mtimeMs).toBeGreaterThan(entries[0][1].mtimeMs);
   });

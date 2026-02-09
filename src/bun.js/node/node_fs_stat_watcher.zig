@@ -508,8 +508,16 @@ pub const StatWatcher = struct {
         const buf = bun.path_buffer_pool.get();
         defer bun.path_buffer_pool.put(buf);
         var slice = args.path.slice();
-        if (bun.strings.startsWith(slice, "file://")) {
-            slice = slice[6..];
+
+        var decoded_str: bun.String = .dead;
+        defer decoded_str.deref();
+        var decoded_slice: jsc.ZigString.Slice = .empty;
+        defer decoded_slice.deinit();
+        if (bun.strings.hasPrefixComptime(slice, "file:")) {
+            decoded_str = bun.jsc.URL.pathFromFileURL(bun.String.borrowUTF8(slice));
+            if (decoded_str.tag == .Dead) return error.InvalidPath;
+            decoded_slice = decoded_str.toUTF8(bun.default_allocator);
+            slice = decoded_slice.slice();
         }
 
         var parts = [_]string{slice};

@@ -333,6 +333,9 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
 
     /* Fetch ready polls */
 #ifdef LIBUS_USE_EPOLL
+    /* A zero timespec already has a fast path in ep_poll (fs/eventpoll.c):
+     * it sets timed_out=1 (line 1952) and returns before any scheduler
+     * interaction (line 1975). No equivalent of KEVENT_FLAG_IMMEDIATE needed. */
     loop->num_ready_polls = bun_epoll_pwait2(loop->fd, loop->ready_polls, 1024, timeout);
 #else
     do {

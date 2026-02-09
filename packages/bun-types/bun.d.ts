@@ -2565,14 +2565,6 @@ declare module "bun" {
           syntax?: boolean;
           identifiers?: boolean;
           keepNames?: boolean;
-          /**
-           * Force CJS to ESM conversion for specific packages.
-           * Supports wildcard patterns (e.g. `"react-*"`).
-           *
-           * By default, Bun already converts the React family of packages.
-           * Entries here extend (not replace) the default list.
-           */
-          unwrapCJSToESM?: string[];
         };
 
     /**

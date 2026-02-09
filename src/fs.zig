@@ -1745,7 +1745,7 @@ pub const Path = struct {
         }
 
         const pkgname = bun.options.JSX.Pragma.parsePackageName(name_to_use);
-        if (pkgname.len == 0 or !(std.ascii.isAlphanumeric(pkgname[0]) or pkgname[0] == '@'))
+        if (pkgname.len == 0 or !std.ascii.isAlphanumeric(pkgname[0]))
             return null;
 
         return pkgname;

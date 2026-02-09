@@ -48,10 +48,6 @@ pub const LinkerContext = struct {
 
     mangled_props: MangledProps = .{},
 
-    /// Files whose exports_kind was changed from .cjs to .esm_with_dynamic_fallback_from_cjs
-    /// in step 1 of scanImportsAndExports. Used by matchImportWithExport.
-    force_unwrapped_cjs: bun.bit_set.DynamicBitSetUnmanaged = .{},
-
     pub fn allocator(this: *const LinkerContext) std.mem.Allocator {
         return this.graph.allocator;
     }
@@ -2400,17 +2396,12 @@ pub const LinkerContext = struct {
         // Is this a file with dynamic exports?
         const is_commonjs_to_esm = flags.force_cjs_to_esm;
         if (other_kind.isESMWithDynamicFallback() or is_commonjs_to_esm) {
-            // For force-unwrapped CJS files (tracked in the bitset), use
-            // dynamic_fallback so imports resolve via property access on the
-            // exports object instead of resolving to undefined.
-            const is_force_unwrapped = c.force_unwrapped_cjs.capacity() > 0 and
-                c.force_unwrapped_cjs.isSet(other_id);
             return .{
                 .value = .{
                     .source_index = Index.source(other_source_index),
                     .import_ref = c.graph.ast.items(.exports_ref)[other_id],
                 },
-                .status = if (is_commonjs_to_esm and !is_force_unwrapped)
+                .status = if (is_commonjs_to_esm)
                     .dynamic_fallback_interop_default
                 else
                     .dynamic_fallback,

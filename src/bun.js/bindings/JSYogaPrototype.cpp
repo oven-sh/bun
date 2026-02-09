@@ -3313,7 +3313,7 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncClone, (JSC::JSGlobalObject * global
     struct CloneTask {
         JSYogaNode* original;
         JSYogaNode* clonedParent; // nullptr for root
-        uint32_t childIndex;      // index in parent's children (unused for root)
+        uint32_t childIndex; // index in parent's children (unused for root)
     };
 
     // result holds the root clone – set during the first iteration

@@ -336,7 +336,15 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
     loop->num_ready_polls = bun_epoll_pwait2(loop->fd, loop->ready_polls, 1024, timeout);
 #else
     do {
-        loop->num_ready_polls = kevent64(loop->fd, NULL, 0, loop->ready_polls, 1024, 0, timeout);
+        loop->num_ready_polls = kevent64(loop->fd, NULL, 0, loop->ready_polls, 1024,
+            /* When we won't idle (pending wakeups or zero timeout), use KEVENT_FLAG_IMMEDIATE.
+             * In XNU's kqueue_scan (bsd/kern/kern_event.c):
+             *  - KEVENT_FLAG_IMMEDIATE: returns immediately after kqueue_process() (line 8031)
+             *  - Zero timespec without the flag: falls through to assert_wait_deadline (line 8039)
+             *    and thread_block (line 8048), doing a full context switch cycle (~14us) even
+             *    though the deadline is already in the past. */
+            will_idle_inside_event_loop ? 0 : KEVENT_FLAG_IMMEDIATE,
+            timeout);
     } while (IS_EINTR(loop->num_ready_polls));
 #endif
 

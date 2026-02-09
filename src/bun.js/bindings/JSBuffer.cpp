@@ -1880,9 +1880,17 @@ bool inline parseArrayIndex(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalO
     return true;
 }
 
-static inline size_t adjustSliceOffset(double offset, size_t length)
+static ALWAYS_INLINE size_t adjustSliceOffsetInt32(int32_t offset, size_t length)
 {
-    // Emulate Math.trunc: NaN -> 0
+    if (offset < 0) {
+        int64_t adjusted = static_cast<int64_t>(offset) + static_cast<int64_t>(length);
+        return adjusted > 0 ? static_cast<size_t>(adjusted) : 0;
+    }
+    return static_cast<size_t>(offset) < length ? static_cast<size_t>(offset) : length;
+}
+
+static ALWAYS_INLINE size_t adjustSliceOffsetDouble(double offset, size_t length)
+{
     if (std::isnan(offset) || offset == 0) {
         return 0;
     } else if (offset < 0) {
@@ -1903,25 +1911,30 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_sliceBody(JSC::JSGlobalObje
     size_t byteLength = castedThis->byteLength();
     size_t byteOffset = castedThis->byteOffset();
 
-    // Compute start offset
     size_t startOffset = 0;
-    if (callFrame->argumentCount() > 0) {
+    size_t endOffset = byteLength;
+
+    unsigned argCount = callFrame->argumentCount();
+
+    if (argCount > 0) {
         JSValue startArg = callFrame->uncheckedArgument(0);
-        if (!startArg.isUndefined()) {
+        if (startArg.isInt32()) {
+            startOffset = adjustSliceOffsetInt32(startArg.asInt32(), byteLength);
+        } else if (!startArg.isUndefined()) {
             double startD = startArg.toNumber(lexicalGlobalObject);
             RETURN_IF_EXCEPTION(throwScope, {});
-            startOffset = adjustSliceOffset(startD, byteLength);
+            startOffset = adjustSliceOffsetDouble(startD, byteLength);
         }
     }
 
-    // Compute end offset
-    size_t endOffset = byteLength;
-    if (callFrame->argumentCount() > 1) {
+    if (argCount > 1) {
         JSValue endArg = callFrame->uncheckedArgument(1);
-        if (!endArg.isUndefined()) {
+        if (endArg.isInt32()) {
+            endOffset = adjustSliceOffsetInt32(endArg.asInt32(), byteLength);
+        } else if (!endArg.isUndefined()) {
             double endD = endArg.toNumber(lexicalGlobalObject);
             RETURN_IF_EXCEPTION(throwScope, {});
-            endOffset = adjustSliceOffset(endD, byteLength);
+            endOffset = adjustSliceOffsetDouble(endD, byteLength);
         }
     }
 

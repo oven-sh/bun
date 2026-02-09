@@ -445,6 +445,13 @@ static std::atomic<bool> Bun__stdinRawMode{false};
 
 BOOL WINAPI Ctrlhandler(DWORD signal);
 
+// Forward declarations for the unified Ctrl+C handler.
+// Bun__currentSyncPID is defined later in this file (spawnSync section).
+extern "C" std::atomic<int64_t> Bun__currentSyncPID;
+// Defined in SigintWatcher.cpp — bridge functions to avoid including SigintWatcher.h.
+extern "C" bool Bun__isSigintWatcherInstalled();
+extern "C" void Bun__sigintWatcherSignalReceived();
+
 extern "C" void Bun__setStdinRawMode(bool raw)
 {
     // release: main thread publishes mode change visible to handler thread on CTRL_C_EVENT
@@ -493,43 +500,61 @@ extern "C" int64_t Bun__getActiveSubprocessCount()
     return Bun__activeSubprocessCount.load(std::memory_order_acquire);
 }
 
+// Unified Windows console control handler. Runs on an OS-created thread
+// (see https://learn.microsoft.com/en-us/windows/console/handlerroutine).
+// All state reads use acquire ordering to synchronize with the main thread.
 BOOL WINAPI Ctrlhandler(DWORD signal)
 {
-    if (signal == CTRL_C_EVENT) {
-        // When stdin is in raw mode, Ctrl+C should behave like a keypress.
-        // This avoids delivering SIGINT to JS while a TUI is running.
-        if (Bun__stdinRawMode.load(std::memory_order_acquire)) {
-            // Best effort: inject Ctrl+C as input so it can be handled by
-            // userland key handlers.
-            HANDLE input = CreateFileW(L"CONIN$", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
-            if (input != INVALID_HANDLE_VALUE) {
-                INPUT_RECORD record{};
-                record.EventType = KEY_EVENT;
-                record.Event.KeyEvent.bKeyDown = TRUE;
-                record.Event.KeyEvent.wRepeatCount = 1;
-                record.Event.KeyEvent.wVirtualKeyCode = 'C';
-                record.Event.KeyEvent.wVirtualScanCode = static_cast<WORD>(MapVirtualKeyW('C', MAPVK_VK_TO_VSC));
-                record.Event.KeyEvent.uChar.UnicodeChar = 3;
-                record.Event.KeyEvent.dwControlKeyState = LEFT_CTRL_PRESSED;
+    if (signal != CTRL_C_EVENT)
+        return FALSE;
 
-                DWORD written = 0;
-                WriteConsoleInputW(input, &record, 1, &written);
-                CloseHandle(input);
-            }
+    // 1. Raw mode: inject Ctrl+C as a keypress (highest priority).
+    //    This avoids delivering SIGINT to JS while a TUI is running.
+    if (Bun__stdinRawMode.load(std::memory_order_acquire)) {
+        HANDLE input = CreateFileW(L"CONIN$", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+        if (input != INVALID_HANDLE_VALUE) {
+            INPUT_RECORD record{};
+            record.EventType = KEY_EVENT;
+            record.Event.KeyEvent.bKeyDown = TRUE;
+            record.Event.KeyEvent.wRepeatCount = 1;
+            record.Event.KeyEvent.wVirtualKeyCode = 'C';
+            record.Event.KeyEvent.wVirtualScanCode = static_cast<WORD>(MapVirtualKeyW('C', MAPVK_VK_TO_VSC));
+            record.Event.KeyEvent.uChar.UnicodeChar = 3;
+            record.Event.KeyEvent.dwControlKeyState = LEFT_CTRL_PRESSED;
 
-            return TRUE;
+            DWORD written = 0;
+            WriteConsoleInputW(input, &record, 1, &written);
+            CloseHandle(input);
         }
-
-        // When running a foreground shell subprocess, ignore Ctrl+C in the
-        // parent so the child can handle CTRL_C_EVENT directly.
-        if (Bun__activeSubprocessCount.load(std::memory_order_acquire) > 0) {
-            Bun__pendingCtrlC.store(true, std::memory_order_release);
-            return TRUE;
-        }
-
-        Bun__restoreWindowsStdio();
+        return TRUE;
     }
 
+    // 2. Sync child process (spawnSync): absorb, child gets CTRL_C_EVENT directly.
+    //    Defense-in-depth: Bun__registerSignalsForForwarding() also disables Ctrl+C
+    //    at the OS level via SetConsoleCtrlHandler(NULL, TRUE).
+    if (Bun__currentSyncPID.load(std::memory_order_acquire) != 0)
+        return TRUE;
+
+    // 3. Active shell subprocess (bun run / Bun.$): absorb, mark pending.
+    //    The parent will exit after the child exits (see onProcessExit in subproc.zig).
+    if (Bun__activeSubprocessCount.load(std::memory_order_acquire) > 0) {
+        Bun__pendingCtrlC.store(true, std::memory_order_release);
+        return TRUE;
+    }
+
+    // 4. SigintWatcher (node:vm breakOnSigint): notify and absorb.
+    //    The process is not exiting — SigintWatcher throws a JS exception.
+    //    Do NOT restore stdio here (the process is still running).
+    if (Bun__isSigintWatcherInstalled()) {
+        Bun__sigintWatcherSignalReceived();
+        return TRUE;
+    }
+
+    // 5. Default path: restore console state before falling through.
+    Bun__restoreWindowsStdio();
+
+    // 6. Return FALSE to let libuv's process.on('SIGINT') handler or
+    //    the default termination handler run.
     return FALSE;
 }
 

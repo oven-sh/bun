@@ -188,6 +188,46 @@ struct us_loop_t *us_create_loop(void *hint, void (*wakeup_cb)(struct us_loop_t 
     return loop;
 }
 
+/* Shared dispatch loop for both us_loop_run and us_loop_run_bun_tick */
+static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
+    for (loop->current_ready_poll = 0; loop->current_ready_poll < loop->num_ready_polls; loop->current_ready_poll++) {
+        struct us_poll_t *poll = GET_READY_POLL(loop, loop->current_ready_poll);
+        /* Any ready poll marked with nullptr will be ignored */
+        if (LIKELY(poll)) {
+            if (CLEAR_POINTER_TAG(poll) != poll) {
+                Bun__internal_dispatch_ready_poll(loop, poll);
+                continue;
+            }
+#ifdef LIBUS_USE_EPOLL
+            int events = loop->ready_polls[loop->current_ready_poll].events;
+            const int error = events & EPOLLERR;
+            const int eof = events & EPOLLHUP;
+#else
+            const struct kevent64_s* current_kevent = &loop->ready_polls[loop->current_ready_poll];
+            const int16_t filter = current_kevent->filter;
+            const uint16_t flags = current_kevent->flags;
+            const uint32_t fflags = current_kevent->fflags;
+
+            // Kqueue delivers each filter as a separate kevent. Map filter types to our
+            // internal event flags. EVFILT_TIMER and EVFILT_MACHPORT are dispatched as
+            // readable since their callback polls always poll for readable.
+            int events = 0
+                | ((filter == EVFILT_READ || filter == EVFILT_TIMER || filter == EVFILT_MACHPORT) ? LIBUS_SOCKET_READABLE : 0)
+                | ((filter == EVFILT_WRITE) ? LIBUS_SOCKET_WRITABLE : 0);
+
+            // Note: EV_ERROR only sets the error in data as part of changelist. Not in this call!
+            const int error = (flags & (EV_ERROR)) ? ((int)fflags || 1) : 0;
+            const int eof = (flags & (EV_EOF));
+#endif
+            /* Always filter all polls by what they actually poll for (callback polls always poll for readable) */
+            events &= us_poll_events(poll);
+            if (events || error || eof) {
+                us_internal_dispatch_ready_poll(poll, error, eof, events);
+            }
+        }
+    }
+}
+
 void us_loop_run(struct us_loop_t *loop) {
     us_loop_integrate(loop);
 
@@ -205,42 +245,7 @@ void us_loop_run(struct us_loop_t *loop) {
         } while (IS_EINTR(loop->num_ready_polls));
 #endif
 
-        /* Iterate ready polls, dispatching them by type */
-        for (loop->current_ready_poll = 0; loop->current_ready_poll < loop->num_ready_polls; loop->current_ready_poll++) {
-            struct us_poll_t *poll = GET_READY_POLL(loop, loop->current_ready_poll);
-            /* Any ready poll marked with nullptr will be ignored */
-            if (LIKELY(poll)) {
-                if (CLEAR_POINTER_TAG(poll) != poll) {
-                    Bun__internal_dispatch_ready_poll(loop, poll);
-                    continue;
-                }
-#ifdef LIBUS_USE_EPOLL
-                int events = loop->ready_polls[loop->current_ready_poll].events;
-                const int error = events & EPOLLERR;
-                const int eof = events & EPOLLHUP;
-#else
-                const struct kevent64_s* current_kevent = &loop->ready_polls[loop->current_ready_poll];
-                const int16_t filter = current_kevent->filter;
-                const uint16_t flags = current_kevent->flags;
-                const uint32_t fflags = current_kevent->fflags;
-
-                // > Multiple events which trigger the filter do not result in multiple kevents being placed on the kqueue
-                // > Instead, the filter will aggregate the events into a single kevent struct
-                // EVFILT_TIMER is dispatched as readable since timer callback polls always poll for readable.
-                // Note: EV_ERROR only sets the error in data as part of changelist. Not in this call!
-                int events = 0
-                    | ((filter == EVFILT_READ || filter == EVFILT_TIMER) ? LIBUS_SOCKET_READABLE : 0)
-                    | ((filter == EVFILT_WRITE) ? LIBUS_SOCKET_WRITABLE : 0);
-                const int error = (flags & (EV_ERROR)) ? ((int)fflags || 1) : 0;
-                const int eof = (flags & (EV_EOF));
-#endif
-                /* Always filter all polls by what they actually poll for (callback polls always poll for readable) */
-                events &= us_poll_events(poll);
-                if (events || error || eof) {
-                    us_internal_dispatch_ready_poll(poll, error, eof, events);
-                }
-            }
-        }
+        us_internal_dispatch_ready_polls(loop);
 
         /* Emit post callback */
         us_internal_loop_post(loop);
@@ -278,44 +283,7 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
 #endif
 
 
-    /* Iterate ready polls, dispatching them by type */
-    for (loop->current_ready_poll = 0; loop->current_ready_poll < loop->num_ready_polls; loop->current_ready_poll++) {
-        struct us_poll_t *poll = GET_READY_POLL(loop, loop->current_ready_poll);
-        /* Any ready poll marked with nullptr will be ignored */
-        if (LIKELY(poll)) {
-            if (CLEAR_POINTER_TAG(poll) != poll) {
-                Bun__internal_dispatch_ready_poll(loop, poll);
-                continue;
-            }
-#ifdef LIBUS_USE_EPOLL
-            int events = loop->ready_polls[loop->current_ready_poll].events;
-            const int error = events & EPOLLERR;
-            const int eof = events & EPOLLHUP;
-#else
-            const struct kevent64_s* current_kevent = &loop->ready_polls[loop->current_ready_poll];
-            const int16_t filter = current_kevent->filter;
-            const uint16_t flags = current_kevent->flags;
-            const uint32_t fflags = current_kevent->fflags;
-
-            // > Multiple events which trigger the filter do not result in multiple kevents being placed on the kqueue
-            // > Instead, the filter will aggregate the events into a single kevent struct
-            // EVFILT_TIMER is dispatched as readable since timer callback polls always poll for readable.
-            int events = 0
-                | ((filter == EVFILT_READ || filter == EVFILT_TIMER) ? LIBUS_SOCKET_READABLE : 0)
-                | ((filter == EVFILT_WRITE) ? LIBUS_SOCKET_WRITABLE : 0);
-
-            // Note: EV_ERROR only sets the error in data as part of changelist. Not in this call!
-            const int error = (flags & (EV_ERROR)) ? ((int)fflags || 1) : 0;
-            const int eof = (flags & (EV_EOF));
-
-#endif
-            /* Always filter all polls by what they actually poll for (callback polls always poll for readable) */
-            events &= us_poll_events(poll);
-            if (events || error || eof) {
-                us_internal_dispatch_ready_poll(poll, error, eof, events);
-            }
-        }
-    }
+    us_internal_dispatch_ready_polls(loop);
 
     /* Emit post callback */
     us_internal_loop_post(loop);

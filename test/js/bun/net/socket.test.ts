@@ -339,6 +339,10 @@ describe.concurrent("socket", () => {
     expect([fileURLToPath(new URL("./socket-huge-fixture.js", import.meta.url))]).toRun();
   }, 60_000);
 
+  it.skipIf(isWindows)("kqueue should not dispatch spurious drain events on readable", async () => {
+    expect([fileURLToPath(new URL("./kqueue-filter-coalesce-fixture.ts", import.meta.url))]).toRun();
+  });
+
   it("it should not crash when getting a ReferenceError on client socket open", async () => {
     using server = Bun.serve({
       port: 0,

@@ -139,6 +139,39 @@ describe("Structured Clone Fast Path", () => {
     expect(cloned[2]).toBe(3);
   });
 
+  test("structuredClone should work with array of doubles", () => {
+    const input = [1.5, 2.7, 3.14, 0.1 + 0.2];
+    const cloned = structuredClone(input);
+    expect(cloned).toEqual(input);
+  });
+
+  test("structuredClone creates independent copy of array", () => {
+    const input = [1, 2, 3];
+    const cloned = structuredClone(input);
+    cloned[0] = 999;
+    expect(input[0]).toBe(1);
+  });
+
+  test("structuredClone should preserve named properties on arrays", () => {
+    const input: any = [1, 2, 3];
+    input.foo = "bar";
+    const cloned = structuredClone(input);
+    expect(cloned.foo).toBe("bar");
+    expect(Array.from(cloned)).toEqual([1, 2, 3]);
+  });
+
+  test("postMessage should work with array fast path", async () => {
+    const { port1, port2 } = new MessageChannel();
+    const input = [1, 2, 3, "hello", true];
+    const { promise, resolve } = Promise.withResolvers();
+    port2.onmessage = (e: MessageEvent) => resolve(e.data);
+    port1.postMessage(input);
+    const result = await promise;
+    expect(result).toEqual(input);
+    port1.close();
+    port2.close();
+  });
+
   test("structuredClone on object with simple properties can exceed JSFinalObject::maxInlineCapacity", () => {
     let largeValue = {};
     for (let i = 0; i < 100; i++) {

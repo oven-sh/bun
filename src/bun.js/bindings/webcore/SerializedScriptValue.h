@@ -270,6 +270,8 @@ private:
     size_t m_memoryCost { 0 };
 
     FixedVector<SimpleInMemoryPropertyTableEntry> m_simpleInMemoryPropertyTable {};
+    // m_simpleArrayElements and m_arrayButterflyData/m_arrayLength are used exclusively:
+    // SimpleArray uses m_simpleArrayElements; Int32Array/DoubleArray use m_arrayButterflyData + m_arrayLength.
     FixedVector<SimpleCloneableValue> m_simpleArrayElements {};
 
     // Int32Array / DoubleArray fast path: raw butterfly data

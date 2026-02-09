@@ -5675,7 +5675,7 @@ size_t SerializedScriptValue::computeMemoryCost() const
         cost += m_simpleArrayElements.byteSize();
         for (const auto& elem : m_simpleArrayElements) {
             std::visit(WTF::makeVisitor(
-                [&](JSC::JSValue) { cost += sizeof(JSC::JSValue); },
+                [&](JSC::JSValue) { /* already included in byteSize() */ },
                 [&](const String& s) { cost += s.sizeInBytes(); }),
                 elem);
         }
@@ -5900,6 +5900,14 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
             String stringValue = jsString->value(&lexicalGlobalObject);
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             return SerializedScriptValue::createStringFastPath(stringValue);
+        }
+
+        if (canUseArrayFastPath) {
+            ASSERT(array != nullptr);
+            // Arrays with named properties (e.g. arr.foo = "bar") cannot use fast path
+            // as we only copy indexed elements. maxOffset == invalidOffset means no named properties.
+            if (structure->maxOffset() != invalidOffset)
+                canUseArrayFastPath = false;
         }
 
         if (canUseArrayFastPath) {

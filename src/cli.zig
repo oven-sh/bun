@@ -360,6 +360,9 @@ pub const Command = struct {
             junit: bool = false,
         } = .{},
         reporter_outfile: ?[]const u8 = null,
+
+        /// The name of a conditional config section from bunfig.toml (e.g., "ci" for [test.ci])
+        config_section_name: ?[]const u8 = null,
     };
 
     pub const Debugger = union(enum) {

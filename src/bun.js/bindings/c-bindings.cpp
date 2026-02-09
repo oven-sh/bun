@@ -431,20 +431,24 @@ extern "C" void Bun__restoreWindowsStdio();
 
 // Track active Bun Shell subprocesses (bun run scripts / Bun.$). When > 0,
 // ignore Ctrl+C in the parent so the child can handle CTRL_C_EVENT directly.
+// Must be handled atomically — read from console control handler thread.
 static std::atomic<int64_t> Bun__activeSubprocessCount{0};
 
 // Track if we absorbed a Ctrl+C while subprocess was active
-// so parent can exit after subprocess exits
+// so parent can exit after subprocess exits.
+// Must be handled atomically — written from handler thread, read from main thread.
 static std::atomic<bool> Bun__pendingCtrlC{false};
 
 // When stdin is in raw mode, treat Ctrl+C as a keypress (no SIGINT).
+// Must be handled atomically — written from main thread, read from handler thread.
 static std::atomic<bool> Bun__stdinRawMode{false};
 
 BOOL WINAPI Ctrlhandler(DWORD signal);
 
 extern "C" void Bun__setStdinRawMode(bool raw)
 {
-    Bun__stdinRawMode.store(raw, std::memory_order_relaxed);
+    // release: main thread publishes mode change visible to handler thread on CTRL_C_EVENT
+    Bun__stdinRawMode.store(raw, std::memory_order_release);
 
     // Ensure our handler runs before libuv's Ctrl handler when raw mode
     // is enabled. Windows calls handlers in reverse registration order.
@@ -456,32 +460,37 @@ extern "C" void Bun__setStdinRawMode(bool raw)
 
 extern "C" void Bun__incrementActiveSubprocess()
 {
-    Bun__activeSubprocessCount.fetch_add(1, std::memory_order_relaxed);
+    // acq_rel: increment must be visible to handler thread before subprocess runs
+    Bun__activeSubprocessCount.fetch_add(1, std::memory_order_acq_rel);
 }
 
 extern "C" void Bun__decrementActiveSubprocess()
 {
-    Bun__activeSubprocessCount.fetch_sub(1, std::memory_order_relaxed);
+    // acq_rel: decrement must be visible to handler thread; acquire pending state
+    Bun__activeSubprocessCount.fetch_sub(1, std::memory_order_acq_rel);
 }
 
 extern "C" bool Bun__hasPendingCtrlC()
 {
-    return Bun__pendingCtrlC.load(std::memory_order_relaxed);
+    // acquire: synchronizes-with the handler thread's release store
+    return Bun__pendingCtrlC.load(std::memory_order_acquire);
 }
 
 extern "C" void Bun__clearPendingCtrlC()
 {
-    Bun__pendingCtrlC.store(false, std::memory_order_relaxed);
+    Bun__pendingCtrlC.store(false, std::memory_order_release);
 }
 
 extern "C" void Bun__setPendingCtrlC()
 {
-    Bun__pendingCtrlC.store(true, std::memory_order_relaxed);
+    // release: handler thread publishes flag visible to main thread after subprocess exits
+    Bun__pendingCtrlC.store(true, std::memory_order_release);
 }
 
 extern "C" int64_t Bun__getActiveSubprocessCount()
 {
-    return Bun__activeSubprocessCount.load(std::memory_order_relaxed);
+    // acquire: handler thread reads count published by main thread
+    return Bun__activeSubprocessCount.load(std::memory_order_acquire);
 }
 
 BOOL WINAPI Ctrlhandler(DWORD signal)
@@ -489,7 +498,7 @@ BOOL WINAPI Ctrlhandler(DWORD signal)
     if (signal == CTRL_C_EVENT) {
         // When stdin is in raw mode, Ctrl+C should behave like a keypress.
         // This avoids delivering SIGINT to JS while a TUI is running.
-        if (Bun__stdinRawMode.load(std::memory_order_relaxed)) {
+        if (Bun__stdinRawMode.load(std::memory_order_acquire)) {
             // Best effort: inject Ctrl+C as input so it can be handled by
             // userland key handlers.
             HANDLE input = CreateFileW(L"CONIN$", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
@@ -513,8 +522,8 @@ BOOL WINAPI Ctrlhandler(DWORD signal)
 
         // When running a foreground shell subprocess, ignore Ctrl+C in the
         // parent so the child can handle CTRL_C_EVENT directly.
-        if (Bun__activeSubprocessCount.load(std::memory_order_relaxed) > 0) {
-            Bun__pendingCtrlC.store(true, std::memory_order_relaxed);
+        if (Bun__activeSubprocessCount.load(std::memory_order_acquire) > 0) {
+            Bun__pendingCtrlC.store(true, std::memory_order_release);
             return TRUE;
         }
 
@@ -857,8 +866,10 @@ extern "C" int ffi_fileno(FILE* file)
 #include <signal.h>
 #include <pthread.h>
 
-// Note: We only ever use bun.spawnSync on the main thread.
-extern "C" int64_t Bun__currentSyncPID = 0;
+// Note: We only ever use bun.spawnSync on the main thread, but the signal
+// handler reads this from an async-signal context. Must be atomic.
+extern "C" std::atomic<int64_t> Bun__currentSyncPID{0};
+static_assert(sizeof(std::atomic<int64_t>) == sizeof(int64_t), "atomic<int64_t> must be same size as int64_t for Zig FFI compatibility");
 static int Bun__pendingSignalToSend = 0;
 static struct sigaction previous_actions[NSIG];
 
@@ -915,7 +926,7 @@ extern "C" void Bun__sendPendingSignalIfNecessary()
 {
     int sig = Bun__pendingSignalToSend;
     Bun__pendingSignalToSend = 0;
-    int pid = Bun__currentSyncPID;
+    int pid = Bun__currentSyncPID.load(std::memory_order_acquire);
     if (sig == 0 || pid == 0)
         return;
 
@@ -930,12 +941,14 @@ extern "C" void Bun__registerSignalsForForwarding()
     sigemptyset(&sa.sa_mask);
     sa.sa_flags = SA_RESETHAND;
     sa.sa_handler = [](int sig) {
-        if (Bun__currentSyncPID == 0) {
+        // acquire: read PID published by main thread via release store
+        int64_t pid = Bun__currentSyncPID.load(std::memory_order_acquire);
+        if (pid == 0) {
             Bun__pendingSignalToSend = sig;
             return;
         }
 
-        Bun__forwardSignalFromParentToChildAndRestorePreviousAction(Bun__currentSyncPID, sig);
+        Bun__forwardSignalFromParentToChildAndRestorePreviousAction(pid, sig);
     };
 
 #define REGISTER_SIGNAL(SIG)                                 \
@@ -949,7 +962,7 @@ extern "C" void Bun__registerSignalsForForwarding()
 
 extern "C" void Bun__unregisterSignalsForForwarding()
 {
-    Bun__currentSyncPID = 0;
+    Bun__currentSyncPID.store(0, std::memory_order_release);
 
 #define UNREGISTER_SIGNAL(SIG)                                \
     if (sigaction(SIG, &previous_actions[SIG], NULL) == -1) { \
@@ -968,8 +981,10 @@ extern "C" void Bun__unregisterSignalsForForwarding()
 // can handle SIGINT properly without being killed by the parent or intermediate shell.
 #if OS(WINDOWS)
 
-// Note: We only ever use bun.spawnSync on the main thread.
-extern "C" int64_t Bun__currentSyncPID = 0;
+// Note: We only ever use bun.spawnSync on the main thread, but the console
+// control handler reads this from an OS-created handler thread. Must be atomic.
+extern "C" std::atomic<int64_t> Bun__currentSyncPID{0};
+static_assert(sizeof(std::atomic<int64_t>) == sizeof(int64_t), "atomic<int64_t> must be same size as int64_t for Zig FFI compatibility");
 
 extern "C" void Bun__registerSignalsForForwarding()
 {
@@ -981,7 +996,7 @@ extern "C" void Bun__registerSignalsForForwarding()
 
 extern "C" void Bun__unregisterSignalsForForwarding()
 {
-    Bun__currentSyncPID = 0;
+    Bun__currentSyncPID.store(0, std::memory_order_release);
     // Re-enable default Ctrl+C handling
     SetConsoleCtrlHandler(NULL, FALSE);
 }

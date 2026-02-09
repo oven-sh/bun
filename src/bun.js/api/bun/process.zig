@@ -1981,7 +1981,8 @@ pub const sync = struct {
         argv: [*:null]?[*:0]const u8,
         envp: [*:null]?[*:0]const u8,
     ) !Maybe(Result) {
-        Bun__currentSyncPID = 0;
+        // release: publish zero before registering signal forwarding
+        @atomicStore(i64, &Bun__currentSyncPID, 0, .release);
         Bun__registerSignalsForForwarding();
         defer {
             Bun__unregisterSignalsForForwarding();
@@ -1994,7 +1995,8 @@ pub const sync = struct {
         };
 
         var process = spawned.toProcess(undefined, true);
-        Bun__currentSyncPID = process.pid;
+        // release: publish PID visible to console control handler thread
+        @atomicStore(i64, &Bun__currentSyncPID, process.pid, .release);
         defer {
             process.detach();
             process.deref();
@@ -2017,7 +2019,8 @@ pub const sync = struct {
         argv: [*:null]?[*:0]const u8,
         envp: [*:null]?[*:0]const u8,
     ) !Maybe(Result) {
-        Bun__currentSyncPID = 0;
+        // release: publish zero before registering signal forwarding
+        @atomicStore(i64, &Bun__currentSyncPID, 0, .release);
         Bun__registerSignalsForForwarding();
         defer {
             Bun__unregisterSignalsForForwarding();
@@ -2031,7 +2034,8 @@ pub const sync = struct {
         const this = SyncWindowsProcess.new(.{
             .process = spawned.toProcess(undefined, true),
         });
-        Bun__currentSyncPID = this.process.pid;
+        // release: publish PID visible to console control handler thread
+        @atomicStore(i64, &Bun__currentSyncPID, this.process.pid, .release);
         this.process.ref();
         this.process.setExitHandler(this);
         defer this.deinit();
@@ -2122,7 +2126,8 @@ pub const sync = struct {
         argv: [*:null]?[*:0]const u8,
         envp: [*:null]?[*:0]const u8,
     ) !Maybe(Result) {
-        Bun__currentSyncPID = 0;
+        // release: publish zero before registering signal forwarding
+        @atomicStore(i64, &Bun__currentSyncPID, 0, .release);
         Bun__registerSignalsForForwarding();
         defer {
             Bun__unregisterSignalsForForwarding();
@@ -2132,7 +2137,8 @@ pub const sync = struct {
             .err => |err| return .{ .err = err },
             .result => |proces| proces,
         };
-        Bun__currentSyncPID = @intCast(process.pid);
+        // release: publish PID visible to signal handler context
+        @atomicStore(i64, &Bun__currentSyncPID, @intCast(process.pid), .release);
 
         Bun__sendPendingSignalIfNecessary();
 

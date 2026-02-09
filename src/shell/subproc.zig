@@ -954,12 +954,21 @@ pub const ShellSubprocess = struct {
 
         // On Windows, handle Ctrl+C that was absorbed while subprocess was running.
         // If we absorbed a Ctrl+C to let the child handle it, exit the parent now
-        // that the child has exited.
+        // that the child has exited. Use the graceful shutdown path so that
+        // process.on('exit') handlers fire and cleanup hooks run.
         if (Environment.isWindows) {
             Bun__decrementActiveSubprocess();
             if (Bun__hasPendingCtrlC()) {
                 Bun__clearPendingCtrlC();
-                // Exit with child's exit code (which reflects the signal)
+                // Graceful shutdown: matches the process.exit() path in
+                // node_process.zig — fires JS exit handlers, flushes profilers,
+                // runs cleanup hooks, then exits.
+                if (this.event_loop.bunVM()) |vm| {
+                    vm.exit_handler.exit_code = exit_code orelse 1;
+                    vm.onExit();
+                    vm.globalExit(); // noreturn
+                }
+                // Fallback if no VM (mini event loop) — hard exit
                 bun.Global.exit(exit_code orelse 1);
             }
         }

@@ -5675,8 +5675,8 @@ size_t SerializedScriptValue::computeMemoryCost() const
         cost += m_simpleArrayElements.byteSize();
         for (const auto& elem : m_simpleArrayElements) {
             std::visit(WTF::makeVisitor(
-                [&](JSC::JSValue) { /* already included in byteSize() */ },
-                [&](const String& s) { cost += s.sizeInBytes(); }),
+                           [&](JSC::JSValue) { /* already included in byteSize() */ },
+                           [&](const String& s) { cost += s.sizeInBytes(); }),
                 elem);
         }
         break;
@@ -5952,10 +5952,16 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
 
                 for (unsigned i = 0; i < length; i++) {
                     JSValue elem = data[i].get();
-                    if (!elem) { ok = false; break; }
+                    if (!elem) {
+                        ok = false;
+                        break;
+                    }
 
                     if (elem.isCell()) {
-                        if (!elem.isString()) { ok = false; break; }
+                        if (!elem.isString()) {
+                            ok = false;
+                            break;
+                        }
                         auto* str = asString(elem);
                         String strValue = str->value(&lexicalGlobalObject);
                         RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });

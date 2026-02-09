@@ -555,9 +555,8 @@ describe("Yoga.Node - Extended Tests", () => {
       const clonedParent = parent.clone();
       const clonedChild = clonedParent.getChild(0);
 
-      // After cloning, the cloned children maintain their original owner relationships
-      // This is expected behavior in Yoga - cloned nodes keep references to original parents
-      expect(clonedChild.getOwner()).toBe(parent);
+      // After a deep clone, the cloned child's owner is the cloned parent
+      expect(clonedChild.getOwner()).toBe(clonedParent);
     });
   });
 

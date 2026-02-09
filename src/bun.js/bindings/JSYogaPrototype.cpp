@@ -3302,94 +3302,85 @@ JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncClone, (JSC::JSGlobalObject * global
     }
     CHECK_YOGA_NODE_FREED(thisObject);
 
-    YGNodeRef clonedNode = YGNodeClone(thisObject->impl().yogaNode());
-
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
     JSC::Structure* structure = zigGlobalObject->m_JSYogaNodeClassStructure.get(zigGlobalObject);
 
-    // Create YogaNodeImpl directly with the cloned node to avoid double creation
-    auto clonedImpl = YogaNodeImpl::create(nullptr);
-    clonedImpl->replaceYogaNode(clonedNode);
-
-    // Create JSYogaNode wrapper with the impl
-    JSYogaNode* jsClonedNode = JSYogaNode::create(vm, globalObject, structure, std::move(clonedImpl));
-    RETURN_IF_EXCEPTION(scope, {});
-
-    // Copy JavaScript callbacks from the original node
-    if (thisObject->m_measureFunc) {
-        jsClonedNode->m_measureFunc.set(vm, jsClonedNode, thisObject->m_measureFunc.get());
-    }
-    if (thisObject->m_dirtiedFunc) {
-        jsClonedNode->m_dirtiedFunc.set(vm, jsClonedNode, thisObject->m_dirtiedFunc.get());
-    }
-
-    // Update context pointers for all cloned children using iterative approach
-    struct NodePair {
-        YGNodeRef original;
-        YGNodeRef cloned;
-        JSYogaNode* jsCloned;
+    // Deep-clone the tree iteratively.
+    // YGNodeClone() is a SHALLOW copy: it copies all style properties but shares
+    // the children vector.  We must sever those shared child links and replace
+    // them with independently-cloned nodes so that original and clone have no
+    // aliased YGNode pointers.
+    struct CloneTask {
+        JSYogaNode* original;
+        JSYogaNode* clonedParent; // nullptr for root
+        uint32_t childIndex;      // index in parent's children (unused for root)
     };
 
-    Vector<NodePair> stack;
-    stack.append({ thisObject->impl().yogaNode(), clonedNode, jsClonedNode });
+    // result holds the root clone – set during the first iteration
+    JSYogaNode* jsClonedRoot = nullptr;
 
-    // Map to store cloned node -> parent cloned node relationship
-    HashMap<YGNodeRef, YGNodeRef> childToParentMap;
+    Vector<CloneTask> stack;
+    stack.append({ thisObject, nullptr, 0 });
 
     while (!stack.isEmpty()) {
-        NodePair pair = stack.takeLast();
-        uint32_t childCount = YGNodeGetChildCount(pair.cloned);
+        CloneTask task = stack.takeLast();
+        JSYogaNode* original = task.original;
 
-        for (uint32_t i = 0; i < childCount; i++) {
-            YGNodeRef clonedChild = YGNodeGetChild(pair.cloned, i);
-            YGNodeRef originalChild = YGNodeGetChild(pair.original, i);
+        // Clone just this YGNode's properties; YGNodeClone copies children too
+        // (shallow) – we will detach and replace them below.
+        YGNodeRef originalYG = original->impl().yogaNode();
+        YGNodeRef clonedYG = YGNodeClone(originalYG);
 
-            if (clonedChild && originalChild) {
-                // Create YogaNodeImpl directly with cloned child to avoid double creation
-                auto clonedChildImpl = YogaNodeImpl::create(nullptr);
-                clonedChildImpl->replaceYogaNode(clonedChild);
+        // Create the impl/wrapper for the cloned node
+        auto clonedImpl = YogaNodeImpl::create(nullptr);
+        clonedImpl->replaceYogaNode(clonedYG);
 
-                // Create JS wrapper for cloned child
-                JSYogaNode* jsClonedChild = JSYogaNode::create(vm, globalObject, structure, std::move(clonedChildImpl));
-                if (UNLIKELY(scope.exception())) {
-                    (void)scope.tryClearException();
-                    continue;
-                }
+        JSYogaNode* jsCloned = JSYogaNode::create(vm, globalObject, structure, std::move(clonedImpl));
+        RETURN_IF_EXCEPTION(scope, {});
 
-                // Copy callbacks from original child
-                JSYogaNode* jsOriginalChild = JSYogaNode::fromYGNode(originalChild);
-                if (jsOriginalChild) {
-                    if (jsOriginalChild->m_measureFunc) {
-                        jsClonedChild->m_measureFunc.set(vm, jsClonedChild, jsOriginalChild->m_measureFunc.get());
-                    }
-                    if (jsOriginalChild->m_dirtiedFunc) {
-                        jsClonedChild->m_dirtiedFunc.set(vm, jsClonedChild, jsOriginalChild->m_dirtiedFunc.get());
-                    }
-                    // Copy baseline function too
-                    if (jsOriginalChild->m_baselineFunc) {
-                        jsClonedChild->m_baselineFunc.set(vm, jsClonedChild, jsOriginalChild->m_baselineFunc.get());
-                    }
-                    // Copy config reference
-                    if (jsOriginalChild->m_config) {
-                        jsClonedChild->m_config.set(vm, jsClonedChild, jsOriginalChild->m_config.get());
-                    }
-                }
+        // Copy JS callbacks
+        if (original->m_measureFunc)
+            jsCloned->m_measureFunc.set(vm, jsCloned, original->m_measureFunc.get());
+        if (original->m_dirtiedFunc)
+            jsCloned->m_dirtiedFunc.set(vm, jsCloned, original->m_dirtiedFunc.get());
+        if (original->m_baselineFunc)
+            jsCloned->m_baselineFunc.set(vm, jsCloned, original->m_baselineFunc.get());
+        if (original->m_config)
+            jsCloned->m_config.set(vm, jsCloned, original->m_config.get());
 
-                // Add cloned child to parent's m_children array
-                JSC::JSArray* parentChildrenArray = jsCast<JSC::JSArray*>(pair.jsCloned->m_children.get());
-                if (parentChildrenArray) {
-                    uint32_t length = parentChildrenArray->length();
-                    parentChildrenArray->putDirectIndex(globalObject, length, jsClonedChild);
-                    RETURN_IF_EXCEPTION(scope, {});
-                }
+        // Attach to parent or record as root
+        if (task.clonedParent) {
+            YGNodeInsertChild(task.clonedParent->impl().yogaNode(), clonedYG, task.childIndex);
+            JSC::JSArray* parentChildren = jsCast<JSC::JSArray*>(task.clonedParent->m_children.get());
+            if (parentChildren) {
+                parentChildren->putDirectIndex(globalObject, task.childIndex, jsCloned);
+                RETURN_IF_EXCEPTION(scope, {});
+            }
+        } else {
+            jsClonedRoot = jsCloned;
+        }
 
-                // Add to stack for processing grandchildren
-                stack.append({ originalChild, clonedChild, jsClonedChild });
+        // YGNodeClone shallow-copies children; detach them from the clone so we
+        // can insert independently-cloned replacements.
+        uint32_t childCount = YGNodeGetChildCount(originalYG);
+        for (int i = static_cast<int>(childCount) - 1; i >= 0; --i) {
+            YGNodeRef sharedChild = YGNodeGetChild(clonedYG, i);
+            // sharedChild's owner is still the original, not the clone, so
+            // YGNodeRemoveChild just erases the pointer from the clone's vector.
+            YGNodeRemoveChild(clonedYG, sharedChild);
+        }
+
+        // Queue children for deep-cloning (push in reverse so left-to-right order)
+        for (int i = static_cast<int>(childCount) - 1; i >= 0; --i) {
+            YGNodeRef originalChildYG = YGNodeGetChild(originalYG, i);
+            JSYogaNode* originalChild = JSYogaNode::fromYGNode(originalChildYG);
+            if (originalChild) {
+                stack.append({ originalChild, jsCloned, static_cast<uint32_t>(i) });
             }
         }
     }
 
-    return JSC::JSValue::encode(jsClonedNode);
+    return JSC::JSValue::encode(jsClonedRoot ? jsClonedRoot : JSC::jsNull());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsYogaNodeProtoFuncSetNodeType, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

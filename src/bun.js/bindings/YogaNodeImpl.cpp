@@ -30,8 +30,6 @@ YogaNodeImpl::~YogaNodeImpl()
     // Free the underlying Yoga node if it hasn't been freed already.
     // When the user calls .free() explicitly, replaceYogaNode(nullptr) sets
     // m_yogaNode to null first, so this guard prevents double-free.
-    // When another YogaNodeImpl takes over via replaceYogaNode(), m_ownsNode
-    // is set to false so we skip the free and avoid double-free.
     if (m_yogaNode && m_ownsNode) {
         // Use YGNodeFinalize instead of YGNodeFree: it frees the node's
         // memory without disconnecting it from its owner or children.
@@ -98,15 +96,9 @@ void YogaNodeImpl::replaceYogaNode(YGNodeRef newNode)
             YGNodeFinalize(m_yogaNode);
         }
 
-        // If another YogaNodeImpl currently owns this YGNode (e.g. clone
-        // path where YGNodeClone shares children), mark the previous owner
-        // as non-owning so it will not try to free the node in its destructor.
-        // We do NOT clear its m_yogaNode pointer because the original node
-        // still needs it for operations like getWidth(), calculateLayout(), etc.
-        auto* previousOwner = static_cast<YogaNodeImpl*>(YGNodeGetContext(newNode));
-        if (previousOwner && previousOwner != this) {
-            previousOwner->m_ownsNode = false;
-        }
+        // Update the context pointer to point to this impl.
+        // YGNodeClone performs a deep clone (new YGNode objects throughout),
+        // so there is no sharing of nodes and no previous owner to notify.
         YGNodeSetContext(newNode, this);
     }
 

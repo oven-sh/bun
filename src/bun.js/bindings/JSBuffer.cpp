@@ -1891,7 +1891,11 @@ static ALWAYS_INLINE size_t adjustSliceOffsetInt32(int32_t offset, size_t length
 
 static ALWAYS_INLINE size_t adjustSliceOffsetDouble(double offset, size_t length)
 {
-    if (std::isnan(offset) || offset == 0) {
+    if (std::isnan(offset)) {
+        return 0;
+    }
+    offset = std::trunc(offset);
+    if (offset == 0) {
         return 0;
     } else if (offset < 0) {
         double adjusted = offset + static_cast<double>(length);
@@ -1939,6 +1943,11 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_sliceBody(JSC::JSGlobalObje
     }
 
     size_t newLength = endOffset > startOffset ? endOffset - startOffset : 0;
+
+    if (castedThis->isDetached()) [[unlikely]] {
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Buffer is detached"_s);
+        return {};
+    }
 
     RefPtr<ArrayBuffer> buffer = castedThis->possiblySharedBuffer();
     if (!buffer) {

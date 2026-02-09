@@ -613,7 +613,7 @@ struct us_internal_async *us_internal_create_async(struct us_loop_t *loop, int f
     struct us_internal_callback_t *cb = (struct us_internal_callback_t *) p;
     cb->loop = loop;
     cb->cb_expects_the_loop = 1;
-    cb->leave_poll_ready = 0;
+    cb->leave_poll_ready = 1;  /* Edge-triggered: skip reading eventfd on wakeup */
 
     return (struct us_internal_async *) cb;
 }
@@ -635,12 +635,28 @@ void us_internal_async_set(struct us_internal_async *a, void (*cb)(struct us_int
     internal_cb->cb = (void (*)(struct us_internal_callback_t *)) cb;
 
     us_poll_start((struct us_poll_t *) a, internal_cb->loop, LIBUS_SOCKET_READABLE);
+#ifdef LIBUS_USE_EPOLL
+    /* Upgrade to edge-triggered to avoid reading the eventfd on each wakeup */
+    struct epoll_event event;
+    event.events = EPOLLIN | EPOLLET;
+    event.data.ptr = (struct us_poll_t *) a;
+    epoll_ctl(internal_cb->loop->fd, EPOLL_CTL_MOD,
+              us_poll_fd((struct us_poll_t *) a), &event);
+#endif
 }
 
 void us_internal_async_wakeup(struct us_internal_async *a) {
-    uint64_t one = 1;
-    int written = write(us_poll_fd((struct us_poll_t *) a), &one, 8);
-    (void)written;
+    int fd = us_poll_fd((struct us_poll_t *) a);
+    uint64_t val;
+    for (val = 1; ; val = 1) {
+        if (write(fd, &val, 8) >= 0) return;
+        if (errno == EINTR) continue;
+        if (errno == EAGAIN) {
+            /* Counter overflow — drain and retry */
+            if (read(fd, &val, 8) > 0 || errno == EAGAIN || errno == EINTR) continue;
+        }
+        break;
+    }
 }
 #else
 

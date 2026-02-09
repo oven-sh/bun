@@ -6467,6 +6467,11 @@ pub fn NewParser_(
                 parts.items[0].stmts = top_level_stmts;
             }
 
+            // REPL mode transforms
+            if (p.options.repl_mode) {
+                try repl_transforms.ReplTransforms(P).apply(p, parts, allocator);
+            }
+
             var top_level_symbols_to_parts = js_ast.Ast.TopLevelSymbolToParts{};
             var top_level = &top_level_symbols_to_parts;
 
@@ -6527,7 +6532,9 @@ pub fn NewParser_(
                     break :brk p.hmr_api_ref;
                 }
 
-                if (p.options.bundle and p.needsWrapperRef(parts.items)) {
+                // When code splitting is enabled, always create wrapper_ref to match esbuild behavior.
+                // Otherwise, use needsWrapperRef() to optimize away unnecessary wrappers.
+                if (p.options.bundle and (p.options.code_splitting or p.needsWrapperRef(parts.items))) {
                     break :brk p.newSymbol(
                         .other,
                         std.fmt.allocPrint(
@@ -6584,6 +6591,7 @@ pub fn NewParser_(
                 .top_level_await_keyword = p.top_level_await_keyword,
                 .commonjs_named_exports = p.commonjs_named_exports,
                 .has_commonjs_export_names = p.has_commonjs_export_names,
+                .has_import_meta = p.has_import_meta,
 
                 .hashbang = hashbang,
                 // TODO: cross-module constant inlining
@@ -6759,6 +6767,8 @@ var nullValueExpr = Expr.Data{ .e_null = nullExprValueData };
 var falseValueExpr = Expr.Data{ .e_boolean = E.Boolean{ .value = false } };
 
 const string = []const u8;
+
+const repl_transforms = @import("./repl_transforms.zig");
 
 const Define = @import("../defines.zig").Define;
 const DefineData = @import("../defines.zig").DefineData;

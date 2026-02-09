@@ -1150,12 +1150,12 @@ void generateNativeModule_NodeModule(JSC::JSGlobalObject* lexicalGlobalObject,
 {
     Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
-    auto catchScope = DECLARE_CATCH_SCOPE(vm);
+    auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* constructor = globalObject->m_nodeModuleConstructor.getInitializedOnMainThread(globalObject);
     if (constructor->hasNonReifiedStaticProperties()) {
         constructor->reifyAllStaticProperties(globalObject);
-        if (catchScope.exception()) {
-            (void)catchScope.tryClearException();
+        if (topExceptionScope.exception()) {
+            (void)topExceptionScope.tryClearException();
         }
     }
 
@@ -1170,9 +1170,9 @@ void generateNativeModule_NodeModule(JSC::JSGlobalObject* lexicalGlobalObject,
         const auto& property = Identifier::fromString(vm, entry.m_key);
         JSValue value = constructor->get(globalObject, property);
 
-        if (catchScope.exception()) [[unlikely]] {
+        if (topExceptionScope.exception()) [[unlikely]] {
             value = {};
-            (void)catchScope.tryClearException();
+            (void)topExceptionScope.tryClearException();
         }
 
         exportNames.append(property);

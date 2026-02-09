@@ -6,7 +6,8 @@ endif()
 
 optionx(BUILDKITE_ORGANIZATION_SLUG STRING "The organization slug to use on Buildkite" DEFAULT "bun")
 optionx(BUILDKITE_PIPELINE_SLUG STRING "The pipeline slug to use on Buildkite" DEFAULT "bun")
-optionx(BUILDKITE_BUILD_ID STRING "The build ID to use on Buildkite")
+optionx(BUILDKITE_BUILD_ID STRING "The build ID (UUID) to use on Buildkite")
+optionx(BUILDKITE_BUILD_NUMBER STRING "The build number to use on Buildkite")
 optionx(BUILDKITE_GROUP_ID STRING "The group ID to use on Buildkite")
 
 if(ENABLE_BASELINE)
@@ -32,7 +33,13 @@ if(NOT BUILDKITE_BUILD_ID)
   return()
 endif()
 
-setx(BUILDKITE_BUILD_URL https://buildkite.com/${BUILDKITE_ORGANIZATION_SLUG}/${BUILDKITE_PIPELINE_SLUG}/builds/${BUILDKITE_BUILD_ID})
+# Use BUILDKITE_BUILD_NUMBER for the URL if available, as the UUID format causes a 302 redirect
+# that CMake's file(DOWNLOAD) doesn't follow, resulting in empty response.
+if(BUILDKITE_BUILD_NUMBER)
+  setx(BUILDKITE_BUILD_URL https://buildkite.com/${BUILDKITE_ORGANIZATION_SLUG}/${BUILDKITE_PIPELINE_SLUG}/builds/${BUILDKITE_BUILD_NUMBER})
+else()
+  setx(BUILDKITE_BUILD_URL https://buildkite.com/${BUILDKITE_ORGANIZATION_SLUG}/${BUILDKITE_PIPELINE_SLUG}/builds/${BUILDKITE_BUILD_ID})
+endif()
 setx(BUILDKITE_BUILD_PATH ${BUILDKITE_BUILDS_PATH}/builds/${BUILDKITE_BUILD_ID})
 
 file(
@@ -48,8 +55,16 @@ if(NOT BUILDKITE_BUILD_STATUS EQUAL 0)
 endif()
 
 file(READ ${BUILDKITE_BUILD_PATH}/build.json BUILDKITE_BUILD)
-# Escape backslashes so CMake doesn't interpret JSON escape sequences (e.g., \n in commit messages)
-string(REPLACE "\\" "\\\\" BUILDKITE_BUILD "${BUILDKITE_BUILD}")
+# CMake's string(JSON ...) interprets escape sequences like \n, \r, \t.
+# We need to escape these specific sequences while preserving valid JSON escapes like \" and \\.
+# Strategy: Use a unique placeholder to protect \\ sequences, escape \n/\r/\t, then restore \\.
+# This prevents \\n (literal backslash + n) from being corrupted to \\\n.
+set(BKSLASH_PLACEHOLDER "___BKSLASH_PLACEHOLDER_7f3a9b2c___")
+string(REPLACE "\\\\" "${BKSLASH_PLACEHOLDER}" BUILDKITE_BUILD "${BUILDKITE_BUILD}")
+string(REPLACE "\\n" "\\\\n" BUILDKITE_BUILD "${BUILDKITE_BUILD}")
+string(REPLACE "\\r" "\\\\r" BUILDKITE_BUILD "${BUILDKITE_BUILD}")
+string(REPLACE "\\t" "\\\\t" BUILDKITE_BUILD "${BUILDKITE_BUILD}")
+string(REPLACE "${BKSLASH_PLACEHOLDER}" "\\\\" BUILDKITE_BUILD "${BUILDKITE_BUILD}")
 
 string(JSON BUILDKITE_BUILD_UUID GET ${BUILDKITE_BUILD} id)
 string(JSON BUILDKITE_JOBS GET ${BUILDKITE_BUILD} jobs)

@@ -158,3 +158,6 @@ test/js/node/test/parallel/test-worker-abort-on-uncaught-exception.js
 
 # TODO: WebCore fixes
 test/js/web/urlpattern/urlpattern.test.ts
+
+# TODO: jsc
+test/js/bun/jsonl/jsonl-parse.test.ts

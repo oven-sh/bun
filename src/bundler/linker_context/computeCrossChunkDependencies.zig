@@ -35,6 +35,7 @@ pub fn computeCrossChunkDependencies(c: *LinkerContext, chunks: []Chunk) bun.OOM
             .entry_point_chunk_indices = c.graph.files.items(.entry_point_chunk_index),
             .imports_to_bind = c.graph.meta.items(.imports_to_bind),
             .wrapper_refs = c.graph.ast.items(.wrapper_ref),
+            .exports_refs = c.graph.ast.items(.exports_ref),
             .sorted_and_filtered_export_aliases = c.graph.meta.items(.sorted_and_filtered_export_aliases),
             .resolved_exports = c.graph.meta.items(.resolved_exports),
             .ctx = c,
@@ -61,6 +62,7 @@ const CrossChunkDependencies = struct {
     entry_point_chunk_indices: []Index.Int,
     imports_to_bind: []RefImportData,
     wrapper_refs: []const Ref,
+    exports_refs: []const Ref,
     sorted_and_filtered_export_aliases: []const []const string,
     resolved_exports: []const ResolvedExports,
     ctx: *LinkerContext,
@@ -190,6 +192,7 @@ const CrossChunkDependencies = struct {
                         if (deps.symbols.getConst(target_ref).?.namespace_alias) |namespace_alias| {
                             target_ref = namespace_alias.namespace_ref;
                         }
+
                         if (comptime Environment.allow_assert)
                             debug("Cross-chunk export: {s}", .{deps.symbols.get(target_ref).?.original_name});
 
@@ -198,11 +201,13 @@ const CrossChunkDependencies = struct {
                 }
 
                 // Ensure "exports" is included if the current output format needs it
+                // https://github.com/evanw/esbuild/blob/v0.27.2/internal/linker/linker.go#L1049-L1051
                 if (flags.force_include_exports_for_entry_point) {
-                    imports.put(deps.wrapper_refs[chunk.entry_point.source_index], {}) catch unreachable;
+                    imports.put(deps.exports_refs[chunk.entry_point.source_index], {}) catch unreachable;
                 }
 
                 // Include the wrapper if present
+                // https://github.com/evanw/esbuild/blob/v0.27.2/internal/linker/linker.go#L1053-L1056
                 if (flags.wrap != .none) {
                     imports.put(deps.wrapper_refs[chunk.entry_point.source_index], {}) catch unreachable;
                 }

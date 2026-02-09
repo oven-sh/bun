@@ -7,7 +7,7 @@
 #include "helpers.h"
 #include "ZigGlobalObject.h"
 
-#include <JavaScriptCore/CatchScope.h>
+#include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/JSMap.h>
@@ -543,10 +543,10 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
         if (url.isValid() && url.protocolIsFile()) {
             auto fromString = url.fileSystemPath();
             BunString from = Bun::toString(fromString);
-            auto catchScope = DECLARE_CATCH_SCOPE(vm);
+            auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
             auto result = JSValue::decode(Bun__resolveSyncWithSource(globalObject, JSValue::encode(specifierString), &from, true, false));
-            if (catchScope.exception()) {
-                (void)catchScope.tryClearException();
+            if (topExceptionScope.exception()) {
+                (void)topExceptionScope.tryClearException();
             }
 
             if (result && result.isString()) {
@@ -646,7 +646,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
 
                             for (auto& name : names) {
                                 // consistent with regular esm handling code
-                                auto catchScope = DECLARE_CATCH_SCOPE(vm);
+                                auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
                                 JSValue value = object->get(globalObject, name);
                                 if (scope.exception()) [[unlikely]] {
                                     (void)scope.tryClearException();
@@ -813,12 +813,16 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, BunS
 
         JSC::JSObject* paramsObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
         const auto& builtinNames = WebCore::builtinNames(vm);
+        auto* pathJS = Bun::toJS(globalObject, *path);
+        RETURN_IF_EXCEPTION(scope, {});
         paramsObject->putDirect(
             vm, builtinNames.pathPublicName(),
-            Bun::toJS(globalObject, *path));
+            pathJS);
+        auto* importerJS = Bun::toJS(globalObject, *importer);
+        RETURN_IF_EXCEPTION(scope, {});
         paramsObject->putDirect(
             vm, builtinNames.importerPublicName(),
-            Bun::toJS(globalObject, *importer));
+            importerJS);
         arguments.append(paramsObject);
 
         auto result = AsyncContextFrame::call(globalObject, function, JSC::jsUndefined(), arguments);

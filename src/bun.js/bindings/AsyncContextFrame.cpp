@@ -43,6 +43,11 @@ JSValue AsyncContextFrame::withAsyncContextIfNeeded(JSGlobalObject* globalObject
         return callback;
     }
 
+    // If already wrapped in an AsyncContextFrame, return as-is to avoid double-wrapping.
+    if (jsDynamicCast<AsyncContextFrame*>(callback)) {
+        return callback;
+    }
+
     // Construct a low-overhead wrapper
     auto& vm = JSC::getVM(globalObject);
     return AsyncContextFrame::create(

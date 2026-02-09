@@ -4,7 +4,7 @@
 #include "../../../packages/bun-native-bundler-plugin-api/bundler_plugin.h"
 #include "JavaScriptCore/CallData.h"
 #include "headers-handwritten.h"
-#include <JavaScriptCore/CatchScope.h>
+#include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/JSTypeInfo.h>
 #include <JavaScriptCore/Structure.h>
@@ -522,7 +522,7 @@ extern "C" void JSBundlerPlugin__matchOnLoad(Bun::JSBundlerPlugin* plugin, const
     if (callData.type == JSC::CallData::Type::None) [[unlikely]]
         return;
 
-    auto scope = DECLARE_CATCH_SCOPE(plugin->vm());
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(plugin->vm());
     JSC::MarkedArgumentBuffer arguments;
     arguments.append(WRAP_BUNDLER_PLUGIN(context));
     arguments.append(JSC::jsString(plugin->vm(), pathStr));
@@ -565,7 +565,7 @@ extern "C" void JSBundlerPlugin__matchOnResolve(Bun::JSBundlerPlugin* plugin, co
     if (callData.type == JSC::CallData::Type::None) [[unlikely]]
         return;
 
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSC::MarkedArgumentBuffer arguments;
     arguments.append(JSC::jsString(vm, pathStr));
     arguments.append(JSC::jsString(vm, namespaceStringStr));

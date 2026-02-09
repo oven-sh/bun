@@ -145,6 +145,8 @@ function createWindow(windowUrl) {
         assert(blob);
         blob.arrayBuffer().then(buffer => {
           const code = new TextDecoder().decode(buffer);
+          console.log("EVALUATING CODE:", "\n------\n" + code + "\n------\n");
+          console.log("accessing hmr symbol:", (0, window.eval)("self")?.[Symbol.for("bun:hmr")]);
           (0, window.eval)(code);
         });
         return;
@@ -155,6 +157,7 @@ function createWindow(windowUrl) {
 
   // Intercept console messages
   const originalConsole = window.console;
+  window.originalConsole = console;
   window.console = {
     log: (...args) => {
       process.send({ type: "message", args: args });

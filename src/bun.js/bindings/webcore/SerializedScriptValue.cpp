@@ -6555,61 +6555,61 @@ JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, 
 
         for (unsigned i = 0; i < length; i++) {
             JSValue elemValue = std::visit(WTF::makeVisitor(
-                [](JSC::JSValue v) -> JSValue { return v; },
-                [&](const WTF::String& s) -> JSValue { return jsString(vm, s); },
-                [&](const SimpleCloneableObject& obj) -> JSValue {
-                    unsigned propCount = obj.properties.size();
+                                               [](JSC::JSValue v) -> JSValue { return v; },
+                                               [&](const WTF::String& s) -> JSValue { return jsString(vm, s); },
+                                               [&](const SimpleCloneableObject& obj) -> JSValue {
+                                                   unsigned propCount = obj.properties.size();
 
-                    // Check if we can use the cached structure (same property count AND names,
-                    // and no out-of-line storage — JSFinalObject::create cannot allocate a butterfly).
-                    bool useCache = cachedStructure && cachedIdentifiers.size() == propCount
-                        && cachedStructure->outOfLineCapacity() == 0;
-                    if (useCache) {
-                        for (unsigned j = 0; j < propCount; j++) {
-                            if (cachedIdentifiers[j].string() != obj.properties[j].propertyName) {
-                                useCache = false;
-                                break;
-                            }
-                        }
-                    }
+                                                   // Check if we can use the cached structure (same property count AND names,
+                                                   // and no out-of-line storage — JSFinalObject::create cannot allocate a butterfly).
+                                                   bool useCache = cachedStructure && cachedIdentifiers.size() == propCount
+                                                       && cachedStructure->outOfLineCapacity() == 0;
+                                                   if (useCache) {
+                                                       for (unsigned j = 0; j < propCount; j++) {
+                                                           if (cachedIdentifiers[j].string() != obj.properties[j].propertyName) {
+                                                               useCache = false;
+                                                               break;
+                                                           }
+                                                       }
+                                                   }
 
-                    JSObject* newObj;
-                    if (useCache) {
-                        // Structure cache hit → create with pre-built Structure (no transitions)
-                        newObj = JSFinalObject::create(vm, cachedStructure);
-                        for (unsigned j = 0; j < propCount; j++) {
-                            const auto& prop = obj.properties[j];
-                            JSValue propVal = std::visit(WTF::makeVisitor(
-                                [](JSValue v) -> JSValue { return v; },
-                                [&](const String& s) -> JSValue { return jsString(vm, s); }),
-                                prop.value);
-                            newObj->putDirect(vm, cachedIdentifiers[j], propVal);
-                        }
-                    } else {
-                        // No cache or shape mismatch → build from scratch
-                        newObj = constructEmptyObject(globalObject, globalObject->objectPrototype(),
-                            std::min(propCount, JSFinalObject::maxInlineCapacity));
-                        for (unsigned j = 0; j < propCount; j++) {
-                            const auto& prop = obj.properties[j];
-                            JSC::Identifier id = JSC::Identifier::fromString(vm, prop.propertyName);
-                            JSValue propVal = std::visit(WTF::makeVisitor(
-                                [](JSValue v) -> JSValue { return v; },
-                                [&](const String& s) -> JSValue { return jsString(vm, s); }),
-                                prop.value);
-                            newObj->putDirect(vm, id, propVal);
-                        }
+                                                   JSObject* newObj;
+                                                   if (useCache) {
+                                                       // Structure cache hit → create with pre-built Structure (no transitions)
+                                                       newObj = JSFinalObject::create(vm, cachedStructure);
+                                                       for (unsigned j = 0; j < propCount; j++) {
+                                                           const auto& prop = obj.properties[j];
+                                                           JSValue propVal = std::visit(WTF::makeVisitor(
+                                                                                            [](JSValue v) -> JSValue { return v; },
+                                                                                            [&](const String& s) -> JSValue { return jsString(vm, s); }),
+                                                               prop.value);
+                                                           newObj->putDirect(vm, cachedIdentifiers[j], propVal);
+                                                       }
+                                                   } else {
+                                                       // No cache or shape mismatch → build from scratch
+                                                       newObj = constructEmptyObject(globalObject, globalObject->objectPrototype(),
+                                                           std::min(propCount, JSFinalObject::maxInlineCapacity));
+                                                       for (unsigned j = 0; j < propCount; j++) {
+                                                           const auto& prop = obj.properties[j];
+                                                           JSC::Identifier id = JSC::Identifier::fromString(vm, prop.propertyName);
+                                                           JSValue propVal = std::visit(WTF::makeVisitor(
+                                                                                            [](JSValue v) -> JSValue { return v; },
+                                                                                            [&](const String& s) -> JSValue { return jsString(vm, s); }),
+                                                               prop.value);
+                                                           newObj->putDirect(vm, id, propVal);
+                                                       }
 
-                        // Cache the Structure from the first object we build
-                        if (!cachedStructure) {
-                            cachedStructure = newObj->structure();
-                            cachedIdentifiers.reserveInitialCapacity(propCount);
-                            for (const auto& prop : obj.properties)
-                                cachedIdentifiers.append(JSC::Identifier::fromString(vm, prop.propertyName));
-                        }
-                    }
+                                                       // Cache the Structure from the first object we build
+                                                       if (!cachedStructure) {
+                                                           cachedStructure = newObj->structure();
+                                                           cachedIdentifiers.reserveInitialCapacity(propCount);
+                                                           for (const auto& prop : obj.properties)
+                                                               cachedIdentifiers.append(JSC::Identifier::fromString(vm, prop.propertyName));
+                                                       }
+                                                   }
 
-                    return newObj;
-                }),
+                                                   return newObj;
+                                               }),
                 m_denseArrayElements[i]);
             values.append(elemValue);
         }

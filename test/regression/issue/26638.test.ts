@@ -36,9 +36,9 @@ describe("issue #26638", () => {
         const req = https.request(
           `https://localhost:${server.port}/`,
           { method: "POST", rejectUnauthorized: false },
-          (res) => {
+          res => {
             let data = "";
-            res.on("data", (c) => (data += c));
+            res.on("data", c => (data += c));
             res.on("end", () => {
               try {
                 resolve(JSON.parse(data));

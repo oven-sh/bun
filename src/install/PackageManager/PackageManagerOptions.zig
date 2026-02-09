@@ -345,6 +345,7 @@ pub fn load(
         if (config.production) |production| {
             if (production) {
                 this.local_package_features.dev_dependencies = false;
+                this.remote_package_features.dev_dependencies = false;
                 this.enable.fail_early = true;
                 this.enable.frozen_lockfile = true;
                 this.enable.force_save_lockfile = false;

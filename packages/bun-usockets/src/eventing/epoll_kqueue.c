@@ -326,8 +326,8 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
     /* Emit pre callback */
     us_internal_loop_pre(loop);
 
-
-    if (loop->data.jsc_vm) 
+    const int will_idle_inside_event_loop = !timeout || (timeout->tv_nsec != 0 || timeout->tv_sec != 0);
+    if (will_idle_inside_event_loop && loop->data.jsc_vm) 
         Bun__JSC_onBeforeWait(loop->data.jsc_vm);
 
     /* Fetch ready polls */

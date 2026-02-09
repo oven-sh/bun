@@ -930,6 +930,25 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(() => buf.subarray(0, 5)).toThrow(TypeError);
       });
 
+      it("slice() on resizable ArrayBuffer returns fixed-length view", () => {
+        const rab = new ArrayBuffer(10, { maxByteLength: 20 });
+        const buf = Buffer.from(rab);
+        buf[0] = 1;
+        buf[1] = 2;
+        buf[2] = 3;
+        buf[3] = 4;
+        buf[4] = 5;
+
+        const sliced = buf.slice(0, 5);
+        expect(sliced.length).toBe(5);
+        expect(sliced[0]).toBe(1);
+        expect(sliced[4]).toBe(5);
+
+        // Growing the buffer should NOT change the slice length
+        rab.resize(20);
+        expect(sliced.length).toBe(5);
+      });
+
       function forEachUnicode(label, test) {
         ["ucs2", "ucs-2", "utf16le", "utf-16le"].forEach(encoding =>
           it(`${label} (${encoding})`, test.bind(null, encoding)),

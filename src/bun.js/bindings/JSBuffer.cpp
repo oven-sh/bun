@@ -1957,7 +1957,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_sliceBody(JSC::JSGlobalObje
 
     if (castedThis->isResizableOrGrowableShared()) {
         auto* subclassStructure = globalObject->JSResizableOrGrowableSharedBufferSubclassStructure();
-        auto* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTF::move(buffer), byteOffset + startOffset, std::nullopt);
+        auto* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTF::move(buffer), byteOffset + startOffset, newLength);
         RETURN_IF_EXCEPTION(throwScope, {});
         if (!uint8Array) [[unlikely]] {
             throwOutOfMemoryError(globalObject, throwScope);

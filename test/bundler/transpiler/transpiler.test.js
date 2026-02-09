@@ -828,6 +828,74 @@ function foo() {}
       exp("let x: abstract new <T>() => Foo<T>", "let x");
     });
 
+    it("auto-accessor", () => {
+      const exp = ts.expectPrinted_;
+
+      // Basic lowering (matching esbuild TestLowerAutoAccessors)
+      exp(
+        "class Foo { accessor x }",
+        "class Foo {\n  #x;\n  get x() {\n    return this.#x;\n  }\n  set x(_) {\n    this.#x = _;\n  }\n}",
+      );
+      exp(
+        "class Foo { accessor x = null }",
+        "class Foo {\n  #x = null;\n  get x() {\n    return this.#x;\n  }\n  set x(_) {\n    this.#x = _;\n  }\n}",
+      );
+      exp(
+        "class Foo { static accessor x }",
+        "class Foo {\n  static #x;\n  static get x() {\n    return this.#x;\n  }\n  static set x(_) {\n    this.#x = _;\n  }\n}",
+      );
+      exp(
+        "class Foo { static accessor x = null }",
+        "class Foo {\n  static #x = null;\n  static get x() {\n    return this.#x;\n  }\n  static set x(_) {\n    this.#x = _;\n  }\n}",
+      );
+
+      // Private auto-accessors
+      exp(
+        "class Foo { accessor #x = 1 }",
+        "class Foo {\n  #_x = 1;\n  get #x() {\n    return this.#_x;\n  }\n  set #x(_) {\n    this.#_x = _;\n  }\n}",
+      );
+
+      // Computed keys (expression cached in temp var to avoid double evaluation)
+      exp(
+        "class Foo { accessor [x] }",
+        "var _a;\n\nclass Foo {\n  #a;\n  get [_a = x]() {\n    return this.#a;\n  }\n  set [_a](_) {\n    this.#a = _;\n  }\n}",
+      );
+      exp(
+        "class Foo { accessor [x] = null }",
+        "var _a;\n\nclass Foo {\n  #a = null;\n  get [_a = x]() {\n    return this.#a;\n  }\n  set [_a](_) {\n    this.#a = _;\n  }\n}",
+      );
+      exp(
+        "class Foo { static accessor [x] }",
+        "var _a;\n\nclass Foo {\n  static #a;\n  static get [_a = x]() {\n    return this.#a;\n  }\n  static set [_a](_) {\n    this.#a = _;\n  }\n}",
+      );
+      exp(
+        "class Foo { static accessor [x] = null }",
+        "var _a;\n\nclass Foo {\n  static #a = null;\n  static get [_a = x]() {\n    return this.#a;\n  }\n  static set [_a](_) {\n    this.#a = _;\n  }\n}",
+      );
+
+      // TypeScript modifiers (type stripping)
+      exp(
+        "class Foo { accessor x: number = 1 }",
+        "class Foo {\n  #x = 1;\n  get x() {\n    return this.#x;\n  }\n  set x(_) {\n    this.#x = _;\n  }\n}",
+      );
+      exp(
+        "class Foo { public accessor x = 1 }",
+        "class Foo {\n  #x = 1;\n  get x() {\n    return this.#x;\n  }\n  set x(_) {\n    this.#x = _;\n  }\n}",
+      );
+      exp("class Foo { declare accessor x: number }", "class Foo {\n}");
+      exp("abstract class Foo { abstract accessor x: number }", "class Foo {\n}");
+
+      // Computed backing field skips existing private names to avoid collisions
+      exp(
+        "class Foo { accessor [x]; #a = 1 }",
+        "var _a;\n\nclass Foo {\n  #b;\n  get [_a = x]() {\n    return this.#b;\n  }\n  set [_a](_) {\n    this.#b = _;\n  }\n  #a = 1;\n}",
+      );
+
+      // Contextual keyword edge cases (not auto-accessor syntax)
+      exp("class Foo { accessor() {} }", "class Foo {\n  accessor() {}\n}");
+      exp("class Foo { accessor = 1 }", "class Foo {\n  accessor = 1;\n}");
+    });
+
     it("as", () => {
       const exp = ts.expectPrinted_;
       exp("x as 1 < 1", "x < 1");
@@ -3605,7 +3673,14 @@ it("does not crash with --minify-syntax and revisiting dot expressions", () => {
     env: bunEnv,
   });
 
-  expect(stderr.toString()).toBe("");
+  expect(
+    stderr
+      .toString()
+      .split(/\r?\n/)
+      .filter(s => !s.startsWith("WARNING: ASAN interferes"))
+      .join("\n")
+      .trim(),
+  ).toBe("");
   expect(stdout.toString()).toBe("undefined\n");
   expect(exitCode).toBe(0);
 });

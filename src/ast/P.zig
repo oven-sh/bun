@@ -428,6 +428,10 @@ pub fn NewParser_(
         temp_refs_to_declare: List(TempRef) = .{},
         temp_ref_count: i32 = 0,
 
+        // Temp vars for auto-accessor computed keys, collected during visitClass
+        // and emitted as var declarations by the caller.
+        auto_accessor_computed_key_refs: List(LocRef) = .{},
+
         // When bundling, hoisted top-level local variables declared with "var" in
         // nested scopes are moved up to be declared in the top-level scope instead.
         // The old "var" statements are turned into regular assignments instead. This
@@ -4851,6 +4855,164 @@ pub fn NewParser_(
             stmts.append(closure) catch unreachable;
         }
 
+        pub fn lowerAutoAccessors(p: *P, properties: []G.Property) []G.Property {
+            var new_props = ListManaged(G.Property).init(p.allocator);
+            new_props.ensureTotalCapacity(properties.len * 3) catch unreachable;
+            var auto_accessor_count: u32 = 0;
+
+            for (properties) |prop| {
+                if (prop.kind != .auto_accessor) {
+                    new_props.append(prop) catch unreachable;
+                    continue;
+                }
+
+                const loc = if (prop.key) |k| k.loc else logger.Loc.Empty;
+                const is_static = prop.flags.contains(.is_static);
+                const is_computed = prop.flags.contains(.is_computed);
+
+                // Derive backing field name from the key
+                const backing_name: []const u8 = blk: {
+                    if (prop.key != null and prop.key.?.data == .e_private_identifier) {
+                        // accessor #x -> backing field #_x
+                        const orig_name = p.loadNameFromRef(prop.key.?.data.e_private_identifier.ref);
+                        break :blk std.fmt.allocPrint(p.allocator, "#_{s}", .{orig_name[1..]}) catch unreachable;
+                    } else if (!is_computed) {
+                        if (prop.key != null and prop.key.?.data == .e_string) {
+                            // accessor x -> backing field #x
+                            const str = prop.key.?.data.e_string;
+                            break :blk std.fmt.allocPrint(p.allocator, "#{s}", .{str.data}) catch unreachable;
+                        }
+                    }
+                    // Computed key -> counter-based name, skipping any
+                    // that collide with existing private names in the class
+                    // (private names are not subject to automatic renaming).
+                    while (true) : (auto_accessor_count += 1) {
+                        const offset: u8 = @intCast(@min(auto_accessor_count, 25));
+                        const candidate = std.fmt.allocPrint(p.allocator, "#{c}", .{
+                            @as(u8, 'a' + offset),
+                        }) catch unreachable;
+                        var collides = false;
+                        for (properties) |other| {
+                            if (other.key != null and other.key.?.data == .e_private_identifier) {
+                                const other_name = p.loadNameFromRef(other.key.?.data.e_private_identifier.ref);
+                                if (strings.eql(candidate, other_name)) {
+                                    collides = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if (!collides) {
+                            auto_accessor_count += 1;
+                            break :blk candidate;
+                        }
+                    }
+                    unreachable;
+                };
+
+                // Create backing field symbol
+                const backing_ref = p.newSymbol(
+                    if (is_static) .private_static_field else .private_field,
+                    backing_name,
+                ) catch unreachable;
+                p.recordDeclaredSymbol(backing_ref) catch unreachable;
+
+                // For private auto-accessors, update the original symbol kind
+                // from .private_field to .private_get_set_pair
+                if (prop.key != null and prop.key.?.data == .e_private_identifier) {
+                    const orig_ref = prop.key.?.data.e_private_identifier.ref;
+                    p.symbols.items[orig_ref.innerIndex()].kind =
+                        if (is_static) .private_static_get_set_pair else .private_get_set_pair;
+                }
+
+                // For computed keys, cache in a temp variable so the expression
+                // is only evaluated once (getter uses _a = expr, setter uses _a)
+                var getter_key = prop.key;
+                var setter_key = prop.key;
+                if (is_computed) {
+                    const temp_ref = p.newSymbol(.other, "_a") catch unreachable;
+                    p.recordDeclaredSymbol(temp_ref) catch unreachable;
+                    p.auto_accessor_computed_key_refs.append(
+                        p.allocator,
+                        LocRef{ .loc = loc, .ref = temp_ref },
+                    ) catch unreachable;
+
+                    // Getter key: _a = expr (evaluate and cache)
+                    getter_key = p.newExpr(E.Binary{
+                        .op = .bin_assign,
+                        .left = p.newExpr(E.Identifier{ .ref = temp_ref }, loc),
+                        .right = prop.key.?,
+                    }, loc);
+                    // Setter key: _a (reuse cached value)
+                    setter_key = p.newExpr(E.Identifier{ .ref = temp_ref }, loc);
+                }
+
+                // 1. Backing field (kind = .normal, private symbol, with initializer)
+                new_props.append(.{
+                    .kind = .normal,
+                    .key = p.newExpr(E.PrivateIdentifier{ .ref = backing_ref }, loc),
+                    .initializer = prop.initializer,
+                    .flags = Flags.Property.init(.{ .is_static = is_static }),
+                }) catch unreachable;
+
+                // Helper: this.#backing expression
+                const this_dot_backing = p.newExpr(E.Index{
+                    .target = p.newExpr(E.This{}, loc),
+                    .index = p.newExpr(E.PrivateIdentifier{ .ref = backing_ref }, loc),
+                }, loc);
+
+                // 2. Getter: get x() { return this.#backing; }
+                new_props.append(.{
+                    .kind = .get,
+                    .key = getter_key,
+                    .value = p.newExpr(E.Function{ .func = .{
+                        .body = G.FnBody.initReturnExpr(p.allocator, this_dot_backing) catch unreachable,
+                        .open_parens_loc = loc,
+                    } }, loc),
+                    .flags = Flags.Property.init(.{
+                        .is_static = is_static,
+                        .is_method = true,
+                        .is_computed = is_computed,
+                    }),
+                }) catch unreachable;
+
+                // 3. Setter: set x(_) { this.#backing = _; }
+                const setter_param_ref = p.newSymbol(.other, "_") catch unreachable;
+                const setter_arg = p.allocator.alloc(G.Arg, 1) catch unreachable;
+                setter_arg[0] = .{
+                    .binding = Binding.alloc(p.allocator, B.Identifier{ .ref = setter_param_ref }, loc),
+                };
+
+                const assign_expr = p.newExpr(E.Binary{
+                    .op = .bin_assign,
+                    .left = p.newExpr(E.Index{
+                        .target = p.newExpr(E.This{}, loc),
+                        .index = p.newExpr(E.PrivateIdentifier{ .ref = backing_ref }, loc),
+                    }, loc),
+                    .right = p.newExpr(E.Identifier{ .ref = setter_param_ref }, loc),
+                }, loc);
+
+                const setter_body_stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
+                setter_body_stmts[0] = p.s(S.SExpr{ .value = assign_expr }, loc);
+
+                new_props.append(.{
+                    .kind = .set,
+                    .key = setter_key,
+                    .value = p.newExpr(E.Function{ .func = .{
+                        .body = .{ .loc = loc, .stmts = setter_body_stmts },
+                        .args = setter_arg,
+                        .open_parens_loc = loc,
+                    } }, loc),
+                    .flags = Flags.Property.init(.{
+                        .is_static = is_static,
+                        .is_method = true,
+                        .is_computed = is_computed,
+                    }),
+                }) catch unreachable;
+            }
+
+            return new_props.items;
+        }
+
         pub fn lowerClass(
             noalias p: *P,
             stmtorexpr: js_ast.StmtOrExpr,
@@ -4910,9 +5072,9 @@ pub fn NewParser_(
                             const descriptor_key = prop.key.?;
                             const loc = descriptor_key.loc;
 
-                            // TODO: when we have the `accessor` modifier, add `and !prop.flags.contains(.has_accessor_modifier)` to
-                            // the if statement.
-                            const descriptor_kind: Expr = if (!prop.flags.contains(.is_method))
+                            const descriptor_kind: Expr = if (prop.kind == .auto_accessor)
+                                p.newExpr(E.Null{}, loc)
+                            else if (!prop.flags.contains(.is_method))
                                 p.newExpr(E.Undefined{}, loc)
                             else
                                 p.newExpr(E.Null{}, loc);
@@ -4929,7 +5091,7 @@ pub fn NewParser_(
 
                             if (p.options.features.emit_decorator_metadata) {
                                 switch (prop.kind) {
-                                    .normal, .abstract => {
+                                    .normal, .abstract, .auto_accessor => {
                                         {
                                             // design:type
                                             var args = p.allocator.alloc(Expr, 2) catch unreachable;

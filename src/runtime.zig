@@ -197,9 +197,6 @@ pub const Runtime = struct {
         /// So we have a list of packages which we know are safe to do this with.
         unwrap_commonjs_packages: []const string = &.{},
 
-        /// Wildcard patterns for unwrapping CJS to ESM (e.g. "react-*" becomes prefix="react-", suffix="").
-        unwrap_commonjs_patterns: []const bun.options.ExternalModules.WildcardPattern = &.{},
-
         commonjs_at_runtime: bool = false,
         unwrap_commonjs_to_esm: bool = false,
 
@@ -274,17 +271,7 @@ pub const Runtime = struct {
         }
 
         pub fn shouldUnwrapRequire(this: *const Features, package_name: string) bool {
-            if (package_name.len == 0) return false;
-            if (strings.indexEqualAny(this.unwrap_commonjs_packages, package_name) != null) return true;
-            for (this.unwrap_commonjs_patterns) |pattern| {
-                if (package_name.len >= pattern.prefix.len + pattern.suffix.len and
-                    strings.startsWith(package_name, pattern.prefix) and
-                    strings.endsWith(package_name, pattern.suffix))
-                {
-                    return true;
-                }
-            }
-            return false;
+            return package_name.len > 0 and strings.indexEqualAny(this.unwrap_commonjs_packages, package_name) != null;
         }
 
         pub const ReplaceableExport = union(enum) {

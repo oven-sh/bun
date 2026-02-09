@@ -5,12 +5,6 @@ pub fn scanImportsAndExports(this: *LinkerContext) ScanImportsAndExportsError!vo
     defer outer_trace.end();
     const reachable = this.graph.reachable_files;
     const output_format = this.options.output_format;
-
-    // Tracks files whose exports_kind was changed from .cjs to
-    // .esm_with_dynamic_fallback_from_cjs in Step 1. Used in Step 6 to
-    // generate symbol import/use for the exports ref, and by
-    // matchImportWithExport for correct import resolution.
-    this.force_unwrapped_cjs = bun.bit_set.DynamicBitSetUnmanaged.initEmpty(this.allocator(), this.graph.ast.len) catch bun.outOfMemory();
     {
         var import_records_list: []ImportRecord.List = this.graph.ast.items(.import_records);
 
@@ -162,30 +156,13 @@ pub fn scanImportsAndExports(this: *LinkerContext) ScanImportsAndExportsError!vo
                 }
             }
 
-            // CJS files that were force-unwrapped via per-package unwrapCJSToESM
-            // still have exports_kind == .cjs because the parser couldn't statically
-            // analyze their exports (e.g. conditional `module.exports.x = ...`).
-            // Convert them to esm_with_dynamic_fallback_from_cjs so the linker
-            // doesn't wrap them in __commonJS. However, files with direct
-            // `module.exports = <value>` assignments must remain CJS because they
-            // need the module variable provided by the CJS wrapper.
-            const ast_flags_for_id = ast_flags_list[id];
-            if (exports_kind[id] == .cjs and ast_flags_for_id.force_cjs_to_esm and
-                !ast_flags_for_id.commonjs_module_exports_assigned_deoptimized)
-            {
-                exports_kind[id] = .esm_with_dynamic_fallback_from_cjs;
-                this.force_unwrapped_cjs.set(id);
-            }
-
             const kind = exports_kind[id];
 
             // If the output format doesn't have an implicit CommonJS wrapper, any file
             // that uses CommonJS features will need to be wrapped, even though the
             // resulting wrapper won't be invoked by other files. An exception is
             // made for entry point files in CommonJS format (or when in pass-through mode).
-            if (kind == .cjs and
-                (!entry_point_kinds[id].isEntryPoint() or output_format == .iife or output_format == .esm))
-            {
+            if (kind == .cjs and (!entry_point_kinds[id].isEntryPoint() or output_format == .iife or output_format == .esm)) {
                 flags[id].wrap = .cjs;
             }
         }
@@ -230,7 +207,6 @@ pub fn scanImportsAndExports(this: *LinkerContext) ScanImportsAndExportsError!vo
                 .export_star_map = std.AutoHashMap(u32, void).init(this.allocator()),
                 .export_star_records = export_star_import_records,
                 .output_format = output_format,
-                .ast_flags = ast_flags_list,
             };
             defer dependency_wrapper.export_star_map.deinit();
 
@@ -797,7 +773,7 @@ pub fn scanImportsAndExports(this: *LinkerContext) ScanImportsAndExportsError!vo
                                 to_common_js_uses += 1;
                             }
                         }
-                    } else if (kind == .stmt and (export_kind == .esm_with_dynamic_fallback or this.force_unwrapped_cjs.isSet(other_id))) {
+                    } else if (kind == .stmt and export_kind == .esm_with_dynamic_fallback) {
                         // This is an import of a module that has a dynamic export fallback
                         // object. In that case we need to depend on that object in case
                         // something ends up needing to use it later. This could potentially
@@ -913,7 +889,6 @@ const DependencyWrapper = struct {
     entry_point_kinds: []EntryPoint.Kind,
     export_star_records: [][]u32,
     output_format: options.Format,
-    ast_flags: []const js_ast.BundledAst.Flags,
 
     pub fn hasDynamicExportsDueToExportStar(this: *DependencyWrapper, source_index: Index.Int) bool {
         // Terminate the traversal now if this file already has dynamic exports
@@ -963,17 +938,7 @@ const DependencyWrapper = struct {
 
             // This module must be wrapped
             if (flags.wrap == .none) {
-                const ek = this.exports_kind[source_index];
-                // Don't wrap CJS files whose exports_kind was changed
-                // to esm_with_dynamic_fallback_from_cjs in step 1 (force-unwrapped
-                // files without direct module.exports assignment).
-                if (ek == .esm_with_dynamic_fallback_from_cjs) {
-                    const af = this.ast_flags[source_index];
-                    if (af.force_cjs_to_esm and !af.commonjs_module_exports_assigned_deoptimized) {
-                        break :brk flags;
-                    }
-                }
-                flags.wrap = switch (ek) {
+                flags.wrap = switch (this.exports_kind[source_index]) {
                     .cjs => .cjs,
                     else => .esm,
                 };

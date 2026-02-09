@@ -6714,6 +6714,13 @@ pub fn NewParser_(
                 if (opts.bundle and opts.output_format != .cjs) {
                     if (source.path.packageName()) |pkg| {
                         if (opts.features.shouldUnwrapRequire(pkg)) {
+                            if (strings.eqlComptime(pkg, "react") or strings.eqlComptime(pkg, "react-dom")) {
+                                const version = opts.package_version;
+                                if (version.len > 2 and (version[0] == '0' or (version[0] == '1' and version[1] < '8'))) {
+                                    break :brk false;
+                                }
+                            }
+
                             break :brk true;
                         }
                     }

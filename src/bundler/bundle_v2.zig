@@ -1995,31 +1995,6 @@ pub const BundleV2 = struct {
             transpiler.options.banner = config.banner.slice();
             transpiler.options.footer = config.footer.slice();
             transpiler.options.react_fast_refresh = config.react_fast_refresh;
-
-            if (config.minify.unwrap_cjs_to_esm.count() > 0) {
-                var extra_packages = std.array_list.Managed([]const u8).init(alloc);
-                var extra_patterns = std.array_list.Managed(options.ExternalModules.WildcardPattern).init(alloc);
-                for (config.minify.unwrap_cjs_to_esm.keys()) |entry| {
-                    if (strings.indexOfChar(entry, '*')) |i| {
-                        try extra_patterns.append(.{
-                            .prefix = entry[0..i],
-                            .suffix = entry[i + 1 ..],
-                        });
-                    } else {
-                        try extra_packages.append(entry);
-                    }
-                }
-                if (extra_packages.items.len > 0) {
-                    const combined = try alloc.alloc([]const u8, options.BundleOptions.default_unwrap_commonjs_packages.len + extra_packages.items.len);
-                    @memcpy(combined[0..options.BundleOptions.default_unwrap_commonjs_packages.len], &options.BundleOptions.default_unwrap_commonjs_packages);
-                    @memcpy(combined[options.BundleOptions.default_unwrap_commonjs_packages.len..], extra_packages.items);
-                    transpiler.options.unwrap_commonjs_packages = combined;
-                }
-                if (extra_patterns.items.len > 0) {
-                    transpiler.options.unwrap_commonjs_patterns = extra_patterns.items;
-                }
-            }
-
             transpiler.options.metafile = config.metafile;
             transpiler.options.metafile_json_path = config.metafile_json_path.slice();
             transpiler.options.metafile_markdown_path = config.metafile_markdown_path.slice();

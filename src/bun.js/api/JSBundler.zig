@@ -703,14 +703,6 @@ pub const JSBundler = struct {
                     if (try minify.getBooleanLoose(globalThis, "keepNames")) |keep_names| {
                         this.minify.keep_names = keep_names;
                     }
-                    if (try minify.getArray(globalThis, "unwrapCJSToESM")) |arr| {
-                        var iter = try arr.arrayIterator(globalThis);
-                        while (try iter.next()) |entry| {
-                            var slice = try entry.toSliceOrNull(globalThis);
-                            defer slice.deinit();
-                            try this.minify.unwrap_cjs_to_esm.insert(slice.slice());
-                        }
-                    }
                 } else {
                     return globalThis.throwInvalidArguments("Expected minify to be a boolean or an object", .{});
                 }
@@ -1058,11 +1050,6 @@ pub const JSBundler = struct {
             identifiers: bool = false,
             syntax: bool = false,
             keep_names: bool = false,
-            unwrap_cjs_to_esm: bun.StringSet = bun.StringSet.init(bun.default_allocator),
-
-            pub fn deinit(self: *Minify) void {
-                self.unwrap_cjs_to_esm.deinit();
-            }
         };
 
         pub const Serve = struct {
@@ -1082,7 +1069,6 @@ pub const JSBundler = struct {
             self.define.deinit();
             self.dir.deinit();
             self.serve.deinit(allocator);
-            self.minify.deinit();
             if (self.loaders) |loaders| {
                 for (loaders.extensions) |ext| {
                     bun.default_allocator.free(ext);

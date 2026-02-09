@@ -190,7 +190,7 @@ pub const JSPromise = opaque {
             }
         };
 
-        var scope: jsc.CatchScope = undefined;
+        var scope: jsc.TopExceptionScope = undefined;
         scope.init(globalObject, @src());
         defer scope.deinit();
         var ctx = Wrapper{ .args = args };

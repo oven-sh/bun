@@ -14,6 +14,15 @@ import {
   startGroup,
 } from "./utils.mjs";
 
+// Detect Windows ARM64 - bun may run under x64 emulation (WoW64), so check multiple indicators
+const isWindowsARM64 =
+  isWindows &&
+  (process.env.PROCESSOR_ARCHITECTURE === "ARM64" ||
+    process.env.VSCMD_ARG_HOST_ARCH === "arm64" ||
+    process.env.MSYSTEM_CARCH === "aarch64" ||
+    (process.env.PROCESSOR_IDENTIFIER || "").includes("ARMv8") ||
+    process.arch === "arm64");
+
 if (globalThis.Bun) {
   await import("./glob-sources.mjs");
 }
@@ -48,7 +57,11 @@ async function build(args) {
   if (process.platform === "win32" && !process.env["VSINSTALLDIR"]) {
     const shellPath = join(import.meta.dirname, "vs-shell.ps1");
     const scriptPath = import.meta.filename;
-    return spawn("pwsh", ["-NoProfile", "-NoLogo", "-File", shellPath, process.argv0, scriptPath, ...args]);
+    // When cross-compiling to ARM64, tell vs-shell.ps1 to set up the x64_arm64 VS environment
+    const toolchainIdx = args.indexOf("--toolchain");
+    const requestedVsArch = toolchainIdx !== -1 && args[toolchainIdx + 1] === "windows-aarch64" ? "arm64" : undefined;
+    const env = requestedVsArch ? { ...process.env, BUN_VS_ARCH: requestedVsArch } : undefined;
+    return spawn("pwsh", ["-NoProfile", "-NoLogo", "-File", shellPath, process.argv0, scriptPath, ...args], { env });
   }
 
   if (isCI) {
@@ -81,6 +94,11 @@ async function build(args) {
   if (toolchain) {
     const toolchainPath = resolve(import.meta.dirname, "..", "cmake", "toolchains", `${toolchain}.cmake`);
     generateOptions["--toolchain"] = toolchainPath;
+  }
+
+  // Windows ARM64: log detection (compiler is selected by CMake/toolchain)
+  if (isWindowsARM64) {
+    console.log("Windows ARM64 detected");
   }
 
   const generateArgs = Object.entries(generateOptions).flatMap(([flag, value]) =>

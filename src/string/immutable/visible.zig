@@ -70,11 +70,13 @@ pub fn isZeroWidthCodepointType(comptime T: type, cp: T) bool {
     }
 
     // Thai combining marks
-    if ((cp >= 0xe31 and cp <= 0xe3a) or (cp >= 0xe47 and cp <= 0xe4e))
+    // Note: U+0E32 (SARA AA) and U+0E33 (SARA AM) are Grapheme_Base (spacing vowels), not combining
+    if (cp == 0xe31 or (cp >= 0xe34 and cp <= 0xe3a) or (cp >= 0xe47 and cp <= 0xe4e))
         return true;
 
     // Lao combining marks
-    if ((cp >= 0xeb1 and cp <= 0xebc) or (cp >= 0xec8 and cp <= 0xecd))
+    // Note: U+0EB2 and U+0EB3 are spacing vowels like Thai, not combining
+    if (cp == 0xeb1 or (cp >= 0xeb4 and cp <= 0xebc) or (cp >= 0xec8 and cp <= 0xecd))
         return true;
 
     // Combining Diacritical Marks Extended
@@ -927,7 +929,7 @@ pub const visible = struct {
         var input = input_;
         var len: usize = 0;
         var prev: ?u32 = null;
-        var break_state = grapheme.BreakState{};
+        var break_state: grapheme.BreakState = .default;
         var grapheme_state = GraphemeState{};
         var saw_1b = false;
         var saw_csi = false; // CSI: ESC [
@@ -964,7 +966,7 @@ pub const visible = struct {
                         const last_cp: u32 = input[bulk_end - 1];
                         grapheme_state.reset(last_cp, ambiguousAsWide);
                         prev = last_cp;
-                        break_state = grapheme.BreakState{};
+                        break_state = .default;
 
                         // If we consumed everything, advance and continue
                         if (bulk_end == idx) {

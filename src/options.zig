@@ -1854,9 +1854,6 @@ pub const BundleOptions = struct {
     /// So we have a list of packages which we know are safe to do this with.
     unwrap_commonjs_packages: []const string = &default_unwrap_commonjs_packages,
 
-    /// Wildcard patterns for unwrapping CJS to ESM (e.g. "react-*" becomes prefix="react-", suffix="").
-    unwrap_commonjs_patterns: []const ExternalModules.WildcardPattern = &.{},
-
     supports_multiple_outputs: bool = true,
 
     /// This is set by the process environment, which is used to override the

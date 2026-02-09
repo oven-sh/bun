@@ -10,32 +10,37 @@ const Yoga = Bun.Yoga;
 
 test("errata_all_contains_example_errata", () => {
   const config = Yoga.Config.create();
-  config.setErrata(Yoga.ERRATA_ALL);
+  try {
+    config.setErrata(Yoga.ERRATA_ALL);
 
-  expect(config.getErrata()).toBe(Yoga.ERRATA_ALL);
-  expect(config.getErrata() & Yoga.ERRATA_STRETCH_FLEX_BASIS).not.toBe(0);
-
-  config.free();
+    expect(config.getErrata()).toBe(Yoga.ERRATA_ALL);
+    expect(config.getErrata() & Yoga.ERRATA_STRETCH_FLEX_BASIS).not.toBe(0);
+  } finally {
+    config.free();
+  }
 });
 
 test("errata_none_omits_example_errata", () => {
   const config = Yoga.Config.create();
-  config.setErrata(Yoga.ERRATA_NONE);
+  try {
+    config.setErrata(Yoga.ERRATA_NONE);
 
-  expect(config.getErrata()).toBe(Yoga.ERRATA_NONE);
-  expect(config.getErrata() & Yoga.ERRATA_STRETCH_FLEX_BASIS).toBe(0);
-
-  config.free();
+    expect(config.getErrata()).toBe(Yoga.ERRATA_NONE);
+    expect(config.getErrata() & Yoga.ERRATA_STRETCH_FLEX_BASIS).toBe(0);
+  } finally {
+    config.free();
+  }
 });
 
 test("errata_is_settable", () => {
   const config = Yoga.Config.create();
+  try {
+    config.setErrata(Yoga.ERRATA_ALL);
+    expect(config.getErrata()).toBe(Yoga.ERRATA_ALL);
 
-  config.setErrata(Yoga.ERRATA_ALL);
-  expect(config.getErrata()).toBe(Yoga.ERRATA_ALL);
-
-  config.setErrata(Yoga.ERRATA_NONE);
-  expect(config.getErrata()).toBe(Yoga.ERRATA_NONE);
-
-  config.free();
+    config.setErrata(Yoga.ERRATA_NONE);
+    expect(config.getErrata()).toBe(Yoga.ERRATA_NONE);
+  } finally {
+    config.free();
+  }
 });

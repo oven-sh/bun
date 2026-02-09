@@ -65,6 +65,7 @@ YogaConfigImpl* YogaConfigImpl::fromYGConfig(YGConfigRef configRef)
 
 void YogaConfigImpl::replaceYogaConfig(YGConfigRef newConfig)
 {
+    m_freed = false;
     if (m_yogaConfig) {
         YGConfigFree(m_yogaConfig);
     }

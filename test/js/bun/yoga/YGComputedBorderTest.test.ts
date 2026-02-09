@@ -10,19 +10,21 @@ const Yoga = Bun.Yoga;
 
 test("border_start", () => {
   const root = Yoga.Node.create();
-  root.setWidth(100);
-  root.setHeight(100);
-  root.setBorder(Yoga.EDGE_START, 10);
+  try {
+    root.setWidth(100);
+    root.setHeight(100);
+    root.setBorder(Yoga.EDGE_START, 10);
 
-  root.calculateLayout(100, 100, Yoga.DIRECTION_LTR);
+    root.calculateLayout(100, 100, Yoga.DIRECTION_LTR);
 
-  expect(root.getComputedBorder(Yoga.EDGE_LEFT)).toBe(10);
-  expect(root.getComputedBorder(Yoga.EDGE_RIGHT)).toBe(0);
+    expect(root.getComputedBorder(Yoga.EDGE_LEFT)).toBe(10);
+    expect(root.getComputedBorder(Yoga.EDGE_RIGHT)).toBe(0);
 
-  root.calculateLayout(100, 100, Yoga.DIRECTION_RTL);
+    root.calculateLayout(100, 100, Yoga.DIRECTION_RTL);
 
-  expect(root.getComputedBorder(Yoga.EDGE_LEFT)).toBe(0);
-  expect(root.getComputedBorder(Yoga.EDGE_RIGHT)).toBe(10);
-
-  root.freeRecursive();
+    expect(root.getComputedBorder(Yoga.EDGE_LEFT)).toBe(0);
+    expect(root.getComputedBorder(Yoga.EDGE_RIGHT)).toBe(10);
+  } finally {
+    root.freeRecursive();
+  }
 });

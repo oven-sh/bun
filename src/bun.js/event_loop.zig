@@ -187,10 +187,26 @@ fn externRunCallback3(global: *jsc.JSGlobalObject, callback: jsc.JSValue, thisVa
     loop.runCallback(callback, global, thisValue, &.{ arg0, arg1, arg2 });
 }
 
+/// Called from `us_loop_run_bun_tick` (C) before the poll syscall.
+/// Runs setImmediate callbacks and returns whether there are more pending
+/// immediate tasks (which tells the C side to use a zero timeout so it
+/// doesn't block).
+fn tickImmediateTasksFromUSockets(loop: *uws.Loop) callconv(.c) bool {
+    const parent = loop.internal_loop_data.getParent();
+    switch (parent) {
+        .js => |event_loop| {
+            event_loop.tickImmediateTasks(event_loop.virtual_machine);
+            return event_loop.immediate_tasks.items.len > 0;
+        },
+        .mini => return false,
+    }
+}
+
 comptime {
     @export(&externRunCallback1, .{ .name = "Bun__EventLoop__runCallback1" });
     @export(&externRunCallback2, .{ .name = "Bun__EventLoop__runCallback2" });
     @export(&externRunCallback3, .{ .name = "Bun__EventLoop__runCallback3" });
+    @export(&tickImmediateTasksFromUSockets, .{ .name = "Bun__tickImmediateTasks" });
 }
 
 /// Prefer `runCallbackWithResult` unless you really need to make sure that microtasks are drained.
@@ -350,11 +366,8 @@ pub fn autoTick(this: *EventLoop) void {
     const loop = this.usocketsLoop();
     const ctx = this.virtual_machine;
 
-    this.tickImmediateTasks(ctx);
-    if (comptime Environment.isPosix) {
-        if (this.immediate_tasks.items.len > 0) {
-            this.wakeup();
-        }
+    if (comptime Environment.isWindows) {
+        this.tickImmediateTasks(ctx);
     }
 
     if (comptime Environment.isPosix) {
@@ -437,11 +450,8 @@ pub fn autoTickActive(this: *EventLoop) void {
     var loop = this.usocketsLoop();
     var ctx = this.virtual_machine;
 
-    this.tickImmediateTasks(ctx);
-    if (comptime Environment.isPosix) {
-        if (this.immediate_tasks.items.len > 0) {
-            this.wakeup();
-        }
+    if (comptime Environment.isWindows) {
+        this.tickImmediateTasks(ctx);
     }
 
     if (comptime Environment.isPosix) {

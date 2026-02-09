@@ -247,8 +247,18 @@ void us_loop_run(struct us_loop_t *loop) {
 }
 
 extern void Bun__JSC_onBeforeWait(void * _Nonnull jsc_vm);
+/* Returns true if there are more immediate tasks pending after running */
+extern _Bool Bun__tickImmediateTasks(struct us_loop_t * _Nonnull loop);
 
 void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout) {
+    /* Run setImmediate callbacks before polling.
+     * If there are more immediates pending after this, force a zero timeout
+     * so the poll syscall returns immediately instead of blocking. */
+    const struct timespec zero_timeout = {0, 0};
+    if (Bun__tickImmediateTasks(loop)) {
+        timeout = &zero_timeout;
+    }
+
     if (loop->num_polls == 0)
         return;
 
@@ -263,8 +273,7 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
     /* Emit pre callback */
     us_internal_loop_pre(loop);
 
-
-    if (loop->data.jsc_vm) 
+    if (loop->data.jsc_vm)
         Bun__JSC_onBeforeWait(loop->data.jsc_vm);
 
     /* Fetch ready polls */

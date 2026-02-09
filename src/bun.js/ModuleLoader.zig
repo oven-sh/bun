@@ -1139,13 +1139,35 @@ export fn Bun__runVirtualModule(globalObject: *JSGlobalObject, specifier_ptr: *c
 fn getHardcodedModule(jsc_vm: *VirtualMachine, specifier: bun.String, hardcoded: HardcodedModule) ?ResolvedSource {
     analytics.Features.builtin_modules.insert(hardcoded);
     return switch (hardcoded) {
-        .@"bun:main" => .{
-            .allocator = null,
-            .source_code = bun.String.cloneUTF8(jsc_vm.entry_point.source.contents),
-            .specifier = specifier,
-            .source_url = specifier,
-            .tag = .esm,
-            .source_code_needs_deref = true,
+        .@"bun:main" => {
+            // For standalone executables with bytecode, look up the entry point
+            // in the module graph to attach cached bytecode.
+            if (jsc_vm.standalone_module_graph) |graph| {
+                const entry_file = graph.entryPoint();
+                if (entry_file.bytecode.len > 0) {
+                    return .{
+                        .source_code = entry_file.toWTFString(),
+                        .specifier = specifier,
+                        .source_url = specifier,
+                        .bytecode_origin_path = if (entry_file.bytecode_origin_path.len > 0) bun.String.fromBytes(entry_file.bytecode_origin_path) else bun.String.empty,
+                        .source_code_needs_deref = false,
+                        .bytecode_cache = entry_file.bytecode.ptr,
+                        .bytecode_cache_size = entry_file.bytecode.len,
+                        .module_info = if (entry_file.module_info.len > 0)
+                            analyze_transpiled_module.ModuleInfoDeserialized.createFromCachedRecord(entry_file.module_info, bun.default_allocator)
+                        else
+                            null,
+                        .is_commonjs_module = entry_file.module_format == .cjs,
+                    };
+                }
+            }
+            return .{
+                .source_code = bun.String.cloneUTF8(jsc_vm.entry_point.source.contents),
+                .specifier = specifier,
+                .source_url = specifier,
+                .tag = .esm,
+                .source_code_needs_deref = true,
+            };
         },
         .@"bun:internal-for-testing" => {
             if (!Environment.isDebug) {

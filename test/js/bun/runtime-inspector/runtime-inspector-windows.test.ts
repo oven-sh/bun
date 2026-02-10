@@ -161,8 +161,7 @@ describe.skipIf(!isWindows)("Runtime inspector Windows file mapping", () => {
         fs.writeFileSync(path.join(process.cwd(), "pid"), String(process.pid));
         console.log("READY");
 
-        // Keep process alive briefly then exit
-        setTimeout(() => process.exit(0), 2000);
+        // Keep process alive until parent kills it
         setInterval(() => {}, 1000);
       `,
     });
@@ -211,16 +210,16 @@ describe.skipIf(!isWindows)("Runtime inspector Windows file mapping", () => {
     });
     await debug2.exited;
 
-    // Collect any remaining stderr and wait for process to exit
+    // Kill and collect remaining stderr — parent drives termination
+    targetProc.kill();
     stderrReader.releaseLock();
     const remainingStderr = await targetProc.stderr.text();
     stderr += remainingStderr;
-    const exitCode = await targetProc.exited;
+    await targetProc.exited;
 
     // Should only see one "Bun Inspector" banner (two occurrences of the text, for header and footer)
     const matches = stderr.match(/Bun Inspector/g);
     expect(matches?.length ?? 0).toBe(2);
-    expect(exitCode).toBe(0);
   });
 
   test("multiple Windows processes can have inspectors sequentially", async () => {
@@ -236,7 +235,7 @@ describe.skipIf(!isWindows)("Runtime inspector Windows file mapping", () => {
         fs.writeFileSync(path.join(process.cwd(), "pid-" + id), String(process.pid));
         console.log("READY-" + id);
 
-        setTimeout(() => process.exit(0), 5000);
+        // Keep process alive until parent kills it
         setInterval(() => {}, 1000);
       `,
     });

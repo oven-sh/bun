@@ -348,9 +348,8 @@ SIGNAL_3
         fs.writeFileSync(path.join(process.cwd(), "pid"), String(process.pid));
         console.log("READY");
 
-        // Keep process alive briefly then exit
-        setInterval(() => {}, 100);
-        setTimeout(() => process.exit(0), 2000);
+        // Keep process alive until parent kills it
+        setInterval(() => {}, 1000);
       `,
     });
 
@@ -375,16 +374,28 @@ SIGNAL_3
 
     const pid = parseInt(await Bun.file(join(String(dir), "pid")).text(), 10);
 
+    // Wait for the --inspect banner to appear before sending SIGUSR1
+    const stderrReader = proc.stderr.getReader();
+    let stderr = await readStderrUntil(stderrReader, hasBanner);
+
     // Send SIGUSR1 - should be ignored since RuntimeInspector is not installed
     process.kill(pid, "SIGUSR1");
 
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    // Kill and collect remaining stderr — parent drives termination
+    proc.kill();
+    const stderrDecoder = new TextDecoder();
+    while (true) {
+      const { value, done } = await stderrReader.read();
+      if (done) break;
+      stderr += stderrDecoder.decode(value, { stream: true });
+    }
+    stderrReader.releaseLock();
+    await proc.exited;
 
     // Should only see one "Bun Inspector" banner (from --inspect flag, not from SIGUSR1)
     // The banner has two occurrences of "Bun Inspector" (header and footer)
     const matches = stderr.match(/Bun Inspector/g);
     expect(matches?.length ?? 0).toBe(2);
-    expect(exitCode).toBe(0);
   });
 
   test("SIGUSR1 is ignored when started with --inspect-wait", async () => {

@@ -69,6 +69,7 @@
 #include "ZigSourceProvider.h"
 #include <JavaScriptCore/FunctionPrototype.h>
 #include "JSCommonJSModule.h"
+#include <JavaScriptCore/JSModuleLoader.h>
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
 #include <JavaScriptCore/JSSourceCode.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
@@ -683,6 +684,19 @@ JSC_DEFINE_CUSTOM_SETTER(setterUnderscoreCompile,
     return true;
 }
 
+static BunLoaderType loaderFromFilename(const String& filename)
+{
+    if (filename.endsWith(".ts"_s))
+        return BunLoaderTypeTS;
+    if (filename.endsWith(".tsx"_s))
+        return BunLoaderTypeTSX;
+    if (filename.endsWith(".jsx"_s))
+        return BunLoaderTypeJSX;
+    // _compile always receives JavaScript/TypeScript source code.
+    // Default to JS for unknown extensions (e.g. .custom, .node, etc.)
+    return BunLoaderTypeJS;
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * globalObject, CallFrame* callframe))
 {
     auto* moduleObject = jsDynamicCast<JSCommonJSModule*>(callframe->thisValue());
@@ -700,46 +714,95 @@ JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * glo
     String filenameString = filenameValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
 
-    String wrappedString;
     auto* zigGlobalObject = jsCast<Zig::GlobalObject*>(globalObject);
-    if (zigGlobalObject->hasOverriddenModuleWrapper) [[unlikely]] {
-        wrappedString = makeString(
-            zigGlobalObject->m_moduleWrapperStart,
-            sourceString,
-            zigGlobalObject->m_moduleWrapperEnd);
-    } else {
-        wrappedString = makeString(
-            "(function(exports,require,module,__filename,__dirname){"_s,
-            sourceString,
-            "\n})"_s);
+
+    // Determine loader from filename extension.
+    BunLoaderType loader = loaderFromFilename(filenameString);
+
+    // Transpile the source through Bun's transpiler. This handles:
+    // - TypeScript syntax (.ts, .tsx)
+    // - JSX syntax (.jsx, .tsx)
+    // - ESM import/export → CJS conversion (when code uses CJS features)
+    BunString specifier = Bun::toStringRef(filenameString);
+    BunString referrer = BunStringEmpty;
+    auto sourceUTF8 = sourceString.utf8();
+    ZigString sourceZig = { reinterpret_cast<const unsigned char*>(sourceUTF8.data()), sourceUTF8.length() };
+    ErrorableResolvedSource transpileResult = {};
+
+    Bun__transpileVirtualModule(globalObject, &specifier, &referrer, &sourceZig, loader, &transpileResult);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    if (!transpileResult.success) {
+        if (!throwScope.exception()) {
+            throwException(globalObject, throwScope, createError(globalObject, "Failed to transpile source in Module._compile"_s));
+        }
+        return {};
     }
 
-    moduleObject->sourceCode = makeSource(
-        WTF::move(wrappedString),
-        SourceOrigin(URL::fileURLWithFileSystemPath(filenameString)),
-        JSC::SourceTaintedOrigin::Untainted,
-        filenameString,
-        WTF::TextPosition(),
-        JSC::SourceProviderSourceType::Program);
+    ResolvedSource& source = transpileResult.result.value;
 
-    EncodedJSValue encodedFilename = JSValue::encode(filenameValue);
+    if (source.isCommonJSModule) {
+        // The transpiler detected CJS usage and already wrapped the code in
+        // (function(exports, require, module, __filename, __dirname) { ... }).
+        String wrappedString = source.source_code.toWTFString(BunString::ZeroCopy);
+
+        if (zigGlobalObject->hasOverriddenModuleWrapper) [[unlikely]] {
+            // Strip the default wrapper and re-wrap with the custom one.
+            auto trimStart = wrappedString.find('\n');
+            if (trimStart != WTF::notFound) {
+                wrappedString = makeString(
+                    zigGlobalObject->m_moduleWrapperStart,
+                    wrappedString.substring(trimStart, wrappedString.length() - trimStart - 4),
+                    zigGlobalObject->m_moduleWrapperEnd);
+            }
+        }
+
+        moduleObject->sourceCode = makeSource(
+            WTF::move(wrappedString),
+            SourceOrigin(URL::fileURLWithFileSystemPath(filenameString)),
+            JSC::SourceTaintedOrigin::Untainted,
+            filenameString,
+            WTF::TextPosition(),
+            JSC::SourceProviderSourceType::Program);
+
+        EncodedJSValue encodedFilename = JSValue::encode(filenameValue);
 #if OS(WINDOWS)
-    JSValue dirnameValue = JSValue::decode(Bun__Path__dirname(globalObject, true, &encodedFilename, 1));
+        JSValue dirnameValue = JSValue::decode(Bun__Path__dirname(globalObject, true, &encodedFilename, 1));
 #else
-    JSValue dirnameValue = JSValue::decode(Bun__Path__dirname(globalObject, false, &encodedFilename, 1));
+        JSValue dirnameValue = JSValue::decode(Bun__Path__dirname(globalObject, false, &encodedFilename, 1));
 #endif
-    RETURN_IF_EXCEPTION(throwScope, {});
+        RETURN_IF_EXCEPTION(throwScope, {});
 
-    String dirnameString = dirnameValue.toWTFString(globalObject);
+        String dirnameString = dirnameValue.toWTFString(globalObject);
 
-    WTF::NakedPtr<JSC::Exception> exception;
-    evaluateCommonJSModuleOnce(
-        vm,
-        jsCast<Zig::GlobalObject*>(globalObject),
-        moduleObject,
-        jsString(vm, dirnameString),
-        jsString(vm, filenameString));
-    RETURN_IF_EXCEPTION(throwScope, {});
+        evaluateCommonJSModuleOnce(
+            vm,
+            zigGlobalObject,
+            moduleObject,
+            jsString(vm, dirnameString),
+            jsString(vm, filenameString));
+        RETURN_IF_EXCEPTION(throwScope, {});
+    } else {
+        // The source contains ESM syntax (import/export). The transpiler kept it as ESM
+        // (with TS/JSX stripped). Provide the transpiled source to JSC's module loader
+        // and evaluate it as ESM, then populate the CJS module's exports.
+        auto provider = Zig::SourceProvider::create(zigGlobalObject, source, JSC::SourceProviderSourceType::Module, false);
+        zigGlobalObject->moduleLoader()->provideFetch(globalObject, filenameValue, JSC::SourceCode(WTF::move(provider)));
+        RETURN_IF_EXCEPTION(throwScope, {});
+
+        // Use requireESMFromHijackedExtension to synchronously evaluate the ESM module
+        // and populate the CJS module's exports from the ESM namespace.
+        JSC::JSFunction* requireESM = zigGlobalObject->requireESMFromHijackedExtension();
+        JSC::MarkedArgumentBuffer args;
+        args.append(filenameValue);
+        JSC::CallData callData = JSC::getCallData(requireESM);
+        NakedPtr<JSC::Exception> returnedException = nullptr;
+        JSC::profiledCall(globalObject, JSC::ProfilingReason::API, requireESM, callData, moduleObject, args, returnedException);
+        if (returnedException) [[unlikely]] {
+            throwException(globalObject, throwScope, returnedException->value());
+            return {};
+        }
+    }
 
     return JSValue::encode(jsUndefined());
 }

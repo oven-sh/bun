@@ -2154,7 +2154,7 @@ declare module "bun" {
   interface Hash {
     wyhash: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: bigint) => bigint;
     adler32: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer) => number;
-    crc32: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer) => number;
+    crc32: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: number) => number;
     cityHash32: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer) => number;
     cityHash64: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: bigint) => bigint;
     xxHash32: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: number) => number;
@@ -2438,14 +2438,19 @@ declare module "bun" {
       | `bun-linux-${Architecture}-${Libc}`
       | `bun-linux-${Architecture}-${SIMD}`
       | `bun-linux-${Architecture}-${SIMD}-${Libc}`
-      | "bun-windows-x64"
+      | `bun-windows-${Architecture}`
       | `bun-windows-x64-${SIMD}`;
   }
 
   /**
    * @see [Bun.build API docs](https://bun.com/docs/bundler#api)
    */
-  interface BuildConfigBase {
+  interface BuildConfig {
+    /**
+     * Enable code splitting
+     */
+    splitting?: boolean;
+
     /**
      * List of entrypoints, usually file paths
      */
@@ -2774,6 +2779,33 @@ declare module "bun" {
     metafile?: boolean;
 
     outdir?: string;
+
+    /**
+     * Create a standalone executable
+     *
+     * When `true`, creates an executable for the current platform.
+     * When a target string, creates an executable for that platform.
+     *
+     * @example
+     * ```ts
+     * // Create executable for current platform
+     * await Bun.build({
+     *   entrypoints: ['./app.js'],
+     *   compile: {
+     *     target: 'linux-x64',
+     *   },
+     *   outfile: './my-app'
+     * });
+     *
+     * // Cross-compile for Linux x64
+     * await Bun.build({
+     *   entrypoints: ['./app.js'],
+     *   compile: 'linux-x64',
+     *   outfile: './my-app'
+     * });
+     * ```
+     */
+    compile?: boolean | Bun.Build.CompileTarget | CompileBuildOptions;
   }
 
   interface CompileBuildOptions {
@@ -2831,57 +2863,6 @@ declare module "bun" {
       copyright?: string;
     };
   }
-
-  // Compile build config - uses outfile for executable output
-  interface CompileBuildConfig extends BuildConfigBase {
-    /**
-     * Create a standalone executable
-     *
-     * When `true`, creates an executable for the current platform.
-     * When a target string, creates an executable for that platform.
-     *
-     * @example
-     * ```ts
-     * // Create executable for current platform
-     * await Bun.build({
-     *   entrypoints: ['./app.js'],
-     *   compile: {
-     *     target: 'linux-x64',
-     *   },
-     *   outfile: './my-app'
-     * });
-     *
-     * // Cross-compile for Linux x64
-     * await Bun.build({
-     *   entrypoints: ['./app.js'],
-     *   compile: 'linux-x64',
-     *   outfile: './my-app'
-     * });
-     * ```
-     */
-    compile: boolean | Bun.Build.CompileTarget | CompileBuildOptions;
-
-    /**
-     * Splitting is not currently supported with `.compile`
-     */
-    splitting?: never;
-  }
-
-  interface NormalBuildConfig extends BuildConfigBase {
-    /**
-     * Enable code splitting
-     *
-     * This does not currently work with {@link CompileBuildConfig.compile `compile`}
-     *
-     * @default true
-     */
-    splitting?: boolean;
-  }
-
-  /**
-   * @see [Bun.build API docs](https://bun.com/docs/bundler#api)
-   */
-  type BuildConfig = CompileBuildConfig | NormalBuildConfig;
 
   /**
    * Hash and verify passwords using argon2 or bcrypt

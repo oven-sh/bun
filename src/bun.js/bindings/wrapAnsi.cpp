@@ -33,7 +33,7 @@ static char32_t decodeUTF16(const UChar* ptr, size_t available, size_t& outLen)
     }
 
     outLen = 1;
-    return c;
+    return static_cast<char32_t>(c);
 }
 
 static inline uint8_t getVisibleWidth(char32_t cp, bool ambiguousIsWide)

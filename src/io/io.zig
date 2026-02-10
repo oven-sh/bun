@@ -34,7 +34,7 @@ pub const Loop = struct {
 
             {
                 var epoll = std.mem.zeroes(std.os.linux.epoll_event);
-                epoll.events = std.os.linux.EPOLL.IN | std.os.linux.EPOLL.ERR | std.os.linux.EPOLL.HUP;
+                epoll.events = std.os.linux.EPOLL.IN | std.os.linux.EPOLL.ET | std.os.linux.EPOLL.ERR | std.os.linux.EPOLL.HUP;
                 epoll.data.ptr = @intFromPtr(&loop);
                 const rc = std.os.linux.epoll_ctl(loop.epoll_fd.cast(), std.os.linux.EPOLL.CTL_ADD, loop.waker.getFd().cast(), &epoll);
 
@@ -165,9 +165,8 @@ pub const Loop = struct {
                 const pollable: Pollable = Pollable.from(event.data.u64);
                 if (pollable.tag() == .empty) {
                     if (event.data.ptr == @intFromPtr(&loop)) {
-                        // this is the event poll, lets read it
-                        var bytes: [8]u8 = undefined;
-                        _ = bun.sys.read(loop.fd(), &bytes);
+                        // Edge-triggered: no need to read the eventfd counter
+                        continue;
                     }
                 }
                 _ = Poll.onUpdateEpoll(pollable.poll(), pollable.tag(), event);

@@ -313,7 +313,6 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             // interrupts (needed for runtime inspector activation via SIGUSR1).
             // Without this, signal-based delivery is ~94% reliable.
             JSC::Options::usePollingTraps() = true;
-            JSC::Options::useMathSumPreciseMethod() = true;
             JSC::Options::evalMode() = evalMode;
             JSC::Options::heapGrowthSteepnessFactor() = 1.0;
             JSC::Options::heapGrowthMaxIncrease() = 2.0;
@@ -1714,6 +1713,7 @@ void GlobalObject::finishCreation(VM& vm)
     m_commonStrings.initialize();
     m_http2CommonStrings.initialize();
     m_bakeAdditions.initialize();
+    m_markdownTagStrings.initialize();
 
     Bun::addNodeModuleConstructorProperties(vm, this);
     m_JSNodeHTTPServerSocketStructure.initLater(

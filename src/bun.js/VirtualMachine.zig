@@ -7,6 +7,7 @@ const VirtualMachine = @This();
 
 export var has_bun_garbage_collector_flag_enabled = false;
 pub export var isBunTest: bool = false;
+pub export var Bun__defaultRemainingRunsUntilSkipReleaseAccess: c_int = 10;
 
 // TODO: evaluate if this has any measurable performance impact.
 pub var synthetic_allocation_limit: usize = std.math.maxInt(u32);

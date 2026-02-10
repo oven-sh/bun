@@ -391,6 +391,116 @@ describe("Runtime inspector activation", () => {
       expect(targetStderr).toContain("Bun Inspector");
       expect(targetStderr).toMatch(/ws:\/\/localhost:\d+\//);
     });
+
+    test.skipIf(skipASAN)("can pause execution during while(true) via CDP", async () => {
+      using dir = tempDir("debug-cdp-pause-test", {
+        "target.js": `
+          const fs = require("fs");
+          const path = require("path");
+
+          // Write PID so parent can find us
+          fs.writeFileSync(path.join(process.cwd(), "pid"), String(process.pid));
+
+          // Infinite loop - the debugger should be able to pause this via CDP
+          while (true) {}
+        `,
+      });
+
+      // Start target process with infinite loop
+      await using targetProc = spawn({
+        cmd: [bunExe(), "target.js"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      // Wait for PID file to be written
+      const pidPath = join(String(dir), "pid");
+      let pid: number | undefined;
+      for (let i = 0; i < 50; i++) {
+        try {
+          const pidText = await Bun.file(pidPath).text();
+          pid = parseInt(pidText, 10);
+          if (pid > 0) break;
+        } catch {
+          // File not ready yet
+        }
+        await Bun.sleep(100);
+      }
+      expect(pid).toBeGreaterThan(0);
+
+      // Activate inspector via _debugProcess
+      await using debugProc = spawn({
+        cmd: [bunExe(), "-e", `process._debugProcess(${pid})`],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const debugStderr = await debugProc.stderr.text();
+      expect(debugStderr).toBe("");
+      expect(await debugProc.exited).toBe(0);
+
+      // Wait for inspector to activate and extract WebSocket URL
+      const { stderr: targetStderr } = await waitForDebuggerListening(targetProc.stderr);
+      const wsMatch = targetStderr.match(/ws:\/\/[^\s]+/);
+      expect(wsMatch).not.toBeNull();
+      const wsUrl = wsMatch![0];
+
+      // Connect via WebSocket to the inspector
+      const ws = new WebSocket(wsUrl);
+      const { promise: openPromise, resolve: openResolve, reject: openReject } = Promise.withResolvers<void>();
+      ws.onopen = () => openResolve();
+      ws.onerror = e => openReject(e);
+      await openPromise;
+
+      try {
+        let msgId = 1;
+        const pendingResponses = new Map<number, { resolve: (v: any) => void; reject: (e: any) => void }>();
+        const { promise: pausedPromise, resolve: pausedResolve } = Promise.withResolvers<any>();
+
+        ws.onmessage = event => {
+          const msg = JSON.parse(event.data as string);
+          if (msg.id !== undefined) {
+            const pending = pendingResponses.get(msg.id);
+            if (pending) {
+              pendingResponses.delete(msg.id);
+              pending.resolve(msg);
+            }
+          }
+          if (msg.method === "Debugger.paused") {
+            pausedResolve(msg);
+          }
+        };
+
+        function sendCDP(method: string, params: Record<string, any> = {}): Promise<any> {
+          const id = msgId++;
+          const { promise, resolve, reject } = Promise.withResolvers<any>();
+          pendingResponses.set(id, { resolve, reject });
+          ws.send(JSON.stringify({ id, method, params }));
+          return promise;
+        }
+
+        // Enable Runtime and Debugger domains
+        await sendCDP("Runtime.enable");
+        await sendCDP("Debugger.enable");
+
+        // Request pause - this should interrupt the while(true) loop
+        await sendCDP("Debugger.pause");
+
+        // Wait for Debugger.paused event (proves the JS thread was interrupted and paused)
+        const pausedEvent = await pausedPromise;
+        expect(pausedEvent.method).toBe("Debugger.paused");
+
+        // Resume execution
+        await sendCDP("Debugger.resume");
+      } finally {
+        ws.close();
+        targetProc.kill();
+        await targetProc.exited;
+      }
+    });
   });
 });
 

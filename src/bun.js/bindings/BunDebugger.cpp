@@ -134,6 +134,7 @@ public:
         auto* controllerDebugger = globalObject->inspectorController().debugger();
         if (controllerDebugger && !globalObject->debugger()) {
             controllerDebugger->attach(globalObject);
+            this->preAttachedDebugger = true;
         }
 
         Inspector::JSGlobalObjectDebugger* debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(globalObject->debugger());
@@ -420,8 +421,13 @@ public:
     }
 
     // Interrupt the JS thread to process pending CDP messages via StopTheWorld.
+    // Only used when the debugger was pre-attached during doConnect (SIGUSR1
+    // runtime activation where the event loop may not be running). For normal
+    // --inspect, the event loop delivers messages via postTaskTo.
     void interruptForMessageDelivery()
     {
+        if (!this->preAttachedDebugger)
+            return;
         this->needsBootstrapPause.store(true);
         VMManager::requestStopAll(VMManager::StopReason::JSDebugger);
     }
@@ -443,6 +449,10 @@ public:
 
     // When true, runWhilePaused sends a synthetic Debugger.paused event.
     std::atomic<bool> needsBootstrapPause { false };
+
+    // True when the debugger was pre-attached during doConnect (SIGUSR1 path).
+    // Used to gate requestStopAll in interruptForMessageDelivery.
+    bool preAttachedDebugger = false;
 
     bool unrefOnDisconnect = false;
 

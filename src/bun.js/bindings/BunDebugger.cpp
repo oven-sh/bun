@@ -786,6 +786,23 @@ bool hasBootstrapPauseRequested()
     return false;
 }
 
+// Find a VM (other than the given one) that has a bootstrap pause pending.
+JSC::VM* findVMWithBootstrapPause(JSC::VM& excludeVM)
+{
+    Locker<Lock> locker(inspectorConnectionsLock);
+    if (!inspectorConnections)
+        return nullptr;
+    for (auto& entry : *inspectorConnections) {
+        for (auto* connection : entry.value) {
+            if (connection->needsBootstrapPause.load()
+                && connection->globalObject
+                && &connection->globalObject->vm() != &excludeVM)
+                return &connection->globalObject->vm();
+        }
+    }
+    return nullptr;
+}
+
 // Schedule a debugger pause for connected sessions.
 // Called during STW after doConnect has already attached the debugger.
 // schedulePauseAtNextOpportunity + notifyNeedDebuggerBreak set up a pause
@@ -841,9 +858,11 @@ JSC::StopTheWorldStatus Bun__jsDebuggerCallback(JSC::VM& vm, JSC::StopTheWorldEv
     // doConnect must run on the connection's owning VM thread.
     bool connected = Bun::processPendingConnections(vm);
 
-    // If pending connections exist on a DIFFERENT VM, switch to it.
+    // If pending connections or bootstrap pauses exist on a DIFFERENT VM, switch to it.
     if (!connected) {
         if (auto* targetVM = Bun::findVMWithPendingConnections(vm))
+            return STW_CONTEXT_SWITCH(targetVM);
+        if (auto* targetVM = Bun::findVMWithBootstrapPause(vm))
             return STW_CONTEXT_SWITCH(targetVM);
     }
 

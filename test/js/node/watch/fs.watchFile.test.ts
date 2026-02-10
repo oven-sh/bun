@@ -1,3 +1,4 @@
+import { pathToFileURL } from "bun";
 import { isWindows, tempDirWithFiles } from "harness";
 import fs from "node:fs";
 import path from "path";
@@ -129,7 +130,6 @@ describe("fs.watchFile", () => {
   });
 
   test("should work with file: URL string containing percent-encoded spaces", async () => {
-    const { pathToFileURL } = require("bun");
     const filepath = path.join(testDir, "space dir", "space file.txt");
     const fileUrl = pathToFileURL(filepath).href; // e.g. file:///tmp/.../space%20dir/space%20file.txt
     expect(fileUrl).toContain("%20");

@@ -40,7 +40,9 @@ var inspector_activation_requested: std.atomic.Value(bool) = std.atomic.Value(bo
 /// Called from the dedicated SignalInspector thread (POSIX) or remote thread (Windows).
 /// This runs in normal thread context, so it's safe to call JSC APIs.
 fn requestInspectorActivation() void {
-    inspector_activation_requested.store(true, .release);
+    // Avoid redundant STW requests if already requested but not yet consumed.
+    if (inspector_activation_requested.swap(true, .acq_rel))
+        return;
 
     // Two mechanisms work together to handle all cases:
     //

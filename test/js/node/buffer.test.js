@@ -223,7 +223,7 @@ for (let withOverridenBufferWrite of [false, true]) {
       it("length overflow", () => {
         // Verify the maximum Uint8Array size. There is no concrete limit by spec. The
         // internal limits should be updated if this fails.
-        expect(() => new Uint8Array(2 ** 32 + 1)).toThrow(/length/);
+        expect(() => new Uint8Array(2 ** 32 + 1)).toThrow(/Out of memory/);
       });
 
       it("truncate input values", () => {
@@ -885,6 +885,68 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(f.length).toBe(2);
         expect(f[0]).toBe(0x66);
         expect(f[1]).toBe(0x6f);
+      });
+
+      it("slice() with fractional offsets truncates toward zero", () => {
+        const buf = Buffer.from([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+
+        // -0.1 should truncate to 0, not -1
+        const a = buf.slice(-0.1);
+        expect(a.length).toBe(10);
+        expect(a[0]).toBe(0);
+
+        // -1.9 should truncate to -1, not -2
+        const b = buf.slice(-1.9);
+        expect(b.length).toBe(1);
+        expect(b[0]).toBe(9);
+
+        // 1.9 should truncate to 1
+        const c = buf.slice(1.9, 4.1);
+        expect(c.length).toBe(3);
+        expect(c[0]).toBe(1);
+        expect(c[1]).toBe(2);
+        expect(c[2]).toBe(3);
+
+        // NaN should be treated as 0
+        const d = buf.slice(NaN, NaN);
+        expect(d.length).toBe(0);
+
+        const e = buf.slice(NaN);
+        expect(e.length).toBe(10);
+      });
+
+      it("slice() on detached buffer throws TypeError", () => {
+        const ab = new ArrayBuffer(10);
+        const buf = Buffer.from(ab);
+        // Detach the ArrayBuffer by transferring it
+        structuredClone(ab, { transfer: [ab] });
+        expect(() => buf.slice(0, 5)).toThrow(TypeError);
+      });
+
+      it("subarray() on detached buffer throws TypeError", () => {
+        const ab = new ArrayBuffer(10);
+        const buf = Buffer.from(ab);
+        structuredClone(ab, { transfer: [ab] });
+        expect(() => buf.subarray(0, 5)).toThrow(TypeError);
+      });
+
+      it("slice() on resizable ArrayBuffer returns fixed-length view", () => {
+        const rab = new ArrayBuffer(10, { maxByteLength: 20 });
+        const buf = Buffer.from(rab);
+        buf[0] = 1;
+        buf[1] = 2;
+        buf[2] = 3;
+        buf[3] = 4;
+        buf[4] = 5;
+
+        const sliced = buf.slice(0, 5);
+        expect(sliced.length).toBe(5);
+        expect(sliced[0]).toBe(1);
+        expect(sliced[4]).toBe(5);
+
+        // Growing the buffer should NOT change the slice length
+        rab.resize(20);
+        expect(sliced.length).toBe(5);
       });
 
       function forEachUnicode(label, test) {

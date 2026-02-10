@@ -654,8 +654,8 @@ pub const BunTest = struct {
             // Prevent the user's Promise rejection from going into the uncaught promise rejection queue.
             if (result != .zero)
                 if (result.asPromise()) |promise|
-                    if (promise.status(globalThis.vm()) == .rejected)
-                        promise.setHandled(globalThis.vm());
+                    if (promise.status() == .rejected)
+                        promise.setHandled();
 
             const prev_unhandled_count = vm.unhandled_error_counter;
             globalThis.handleRejectedPromises();
@@ -681,7 +681,7 @@ pub const BunTest = struct {
 
                 group.log("callTestCallback -> promise: data {f}", .{cfg_data});
 
-                switch (promise.status(globalThis.vm())) {
+                switch (promise.status()) {
                     .pending => {
                         // not immediately resolved; register 'then' to handle the result when it becomes available
                         const this_ref: *RefData = if (dcb_ref) |dcb_ref_value| dcb_ref_value.dupe() else ref(this_strong, cfg_data);

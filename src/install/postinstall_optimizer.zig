@@ -59,7 +59,7 @@ pub const PostinstallOptimizer = enum {
         // Loop through the list of optional dependencies with platform-specific constraints
         // Find a matching target-specific dependency.
         for (resolutions) |resolution| {
-            if (resolution > metas.len) continue;
+            if (resolution >= metas.len) continue;
             const meta: *const Meta = &metas[resolution];
             if (meta.arch == .all or meta.os == .all) continue;
             if (meta.arch.isMatch(target_cpu) and meta.os.isMatch(target_os)) {

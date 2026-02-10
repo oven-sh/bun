@@ -1128,6 +1128,7 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
     ...process.env,
     PATH: path,
     TMPDIR: tmpdirPath,
+    BUN_TMPDIR: tmpdirPath,
     USER: username,
     HOME: homedir,
     SHELL: shellPath,
@@ -1582,6 +1583,9 @@ function isJavaScriptTest(path) {
 function isNodeTest(path) {
   // Do not run node tests on macOS x64 in CI, those machines are slow and expensive.
   if (isCI && isMacOS && isX64) {
+    return false;
+  }
+  if (!isJavaScript(path)) {
     return false;
   }
   const unixPath = path.replaceAll(sep, "/");

@@ -32,7 +32,7 @@
 #include "KeyObject.h"
 
 namespace WTF {
-template<> class StringTypeAdapter<GCOwnedDataScope<StringView>, void> {
+template<> class StringTypeAdapter<GCOwnedDataScope<StringView>> {
 public:
     StringTypeAdapter(GCOwnedDataScope<StringView> string)
         : m_string { string }
@@ -197,7 +197,7 @@ static Structure* createErrorStructure(JSC::VM& vm, JSGlobalObject* globalObject
 
 JSObject* ErrorCodeCache::createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, JSValue message, JSValue options)
 {
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* cache = errorCache(globalObject);
     const auto& data = errors[static_cast<size_t>(code)];
     if (!cache->internalField(static_cast<unsigned>(code))) {
@@ -208,7 +208,7 @@ JSObject* ErrorCodeCache::createError(VM& vm, Zig::GlobalObject* globalObject, E
     auto* structure = jsCast<Structure*>(cache->internalField(static_cast<unsigned>(code)).get());
     auto* created_error = JSC::ErrorInstance::create(globalObject, structure, message, options, nullptr, JSC::RuntimeType::TypeNothing, data.type, true);
     if (auto* thrown_exception = scope.exception()) [[unlikely]] {
-        scope.clearException();
+        (void)scope.tryClearException();
         // TODO investigate what can throw here and whether it will throw non-objects
         // (this is better than before where we would have returned nullptr from createError if any
         // exception were thrown by ErrorInstance::create)
@@ -346,7 +346,7 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, WTF::StringBuilder& 
 
 void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::StringBuilder& builder, JSValue value)
 {
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     ASSERT(!value.isEmpty());
 

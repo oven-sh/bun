@@ -670,7 +670,7 @@ function generateZigFn(
     resultBindings.push(
       `pub fn ${formatZigName(fn.name)}(${generateZigParameterList(fn.parameters, globalThisArg)}) error{JSError}!${returnType} {`,
       `    if (comptime Environment.ci_assert) {`,
-      `        var scope: jsc.CatchScope = undefined;`,
+      `        var scope: jsc.TopExceptionScope = undefined;`,
       `        scope.init(${formatZigName(globalThisArg.name)}, @src());`,
       `        defer scope.deinit();`,
       ``,

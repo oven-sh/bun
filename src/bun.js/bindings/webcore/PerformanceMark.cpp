@@ -79,7 +79,7 @@ ExceptionOr<Ref<PerformanceMark>> PerformanceMark::create(JSC::JSGlobalObject& g
 
 PerformanceMark::PerformanceMark(const String& name, double startTime, RefPtr<SerializedScriptValue>&& serializedDetail)
     : PerformanceEntry(name, startTime, startTime)
-    , m_serializedDetail(WTFMove(serializedDetail))
+    , m_serializedDetail(WTF::move(serializedDetail))
 {
 }
 

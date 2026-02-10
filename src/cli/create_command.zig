@@ -80,7 +80,7 @@ fn execTask(allocator: std.mem.Allocator, task_: string, cwd: string, _: string,
         }
     }
 
-    if (strings.startsWith(task, "bun ")) {
+    if (npm_client != null and strings.startsWith(task, "bun ")) {
         argv = argv[2..];
     }
 

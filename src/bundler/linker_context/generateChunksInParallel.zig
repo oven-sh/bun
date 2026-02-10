@@ -304,6 +304,81 @@ pub fn generateChunksInParallel(
         }
     }
 
+    // After final_rel_path is computed for all chunks, fix up module_info
+    // cross-chunk import specifiers. During printing, cross-chunk imports use
+    // unique_key placeholders as paths. Now that final paths are known, replace
+    // those placeholders with the resolved paths and serialize.
+    if (c.options.generate_bytecode_cache and c.options.output_format == .esm and c.options.compile) {
+        // Build map from unique_key -> final resolved path
+        const b = @as(*bun.bundle_v2.BundleV2, @fieldParentPtr("linker", c));
+        var unique_key_to_path = bun.StringHashMap([]const u8).init(c.allocator());
+        defer unique_key_to_path.deinit();
+        for (chunks) |*ch| {
+            if (ch.unique_key.len > 0 and ch.final_rel_path.len > 0) {
+                // Use the per-chunk public_path to match what IntermediateOutput.code()
+                // uses during emission (browser chunks from server builds use the
+                // browser transpiler's public_path).
+                const public_path = if (ch.flags.is_browser_chunk_from_server_build)
+                    b.transpilerForTarget(.browser).options.public_path
+                else
+                    c.options.public_path;
+                const normalizer = bun.bundle_v2.cheapPrefixNormalizer(public_path, ch.final_rel_path);
+                const resolved = std.fmt.allocPrint(c.allocator(), "{s}{s}", .{ normalizer[0], normalizer[1] }) catch |err| bun.handleOom(err);
+                unique_key_to_path.put(ch.unique_key, resolved) catch |err| bun.handleOom(err);
+            }
+        }
+
+        // Fix up each chunk's module_info
+        for (chunks) |*chunk| {
+            if (chunk.content != .javascript) continue;
+            const mi = chunk.content.javascript.module_info orelse continue;
+
+            // Collect replacements first (can't modify string table while iterating)
+            const Replacement = struct { old_id: analyze_transpiled_module.StringID, resolved_path: []const u8 };
+            var replacements: std.ArrayListUnmanaged(Replacement) = .{};
+            defer replacements.deinit(c.allocator());
+
+            var offset: usize = 0;
+            for (mi.strings_lens.items, 0..) |slen, string_index| {
+                const len: usize = @intCast(slen);
+                const s = mi.strings_buf.items[offset..][0..len];
+                if (unique_key_to_path.get(s)) |resolved_path| {
+                    replacements.append(c.allocator(), .{
+                        .old_id = @enumFromInt(@as(u32, @intCast(string_index))),
+                        .resolved_path = resolved_path,
+                    }) catch |err| bun.handleOom(err);
+                }
+                offset += len;
+            }
+
+            for (replacements.items) |rep| {
+                const new_id = mi.str(rep.resolved_path) catch |err| bun.handleOom(err);
+                mi.replaceStringID(rep.old_id, new_id);
+            }
+
+            // Serialize the fixed-up module_info
+            chunk.content.javascript.module_info_bytes = bun.js_printer.serializeModuleInfo(mi);
+
+            // Free the ModuleInfo now that it's been serialized to bytes.
+            // It was allocated with bun.default_allocator (not the arena),
+            // so it must be explicitly destroyed.
+            mi.destroy();
+            chunk.content.javascript.module_info = null;
+        }
+    }
+
+    // Generate metafile JSON fragments for each chunk (after paths are resolved)
+    if (c.options.metafile) {
+        for (chunks) |*chunk| {
+            chunk.metafile_chunk_json = LinkerContext.MetafileBuilder.generateChunkJson(
+                bun.default_allocator,
+                c,
+                chunk,
+                chunks,
+            ) catch "";
+        }
+    }
+
     var output_files = try OutputFileListBuilder.init(bun.default_allocator, c, chunks, c.parse_graph.additional_output_files.items.len);
 
     const root_path = c.resolver.opts.output_dir;
@@ -327,7 +402,7 @@ pub fn generateChunksInParallel(
         for (chunks, 0..) |*chunk, chunk_index_in_chunks_list| {
             var display_size: usize = 0;
 
-            const public_path = if (chunk.is_browser_chunk_from_server_build)
+            const public_path = if (chunk.flags.is_browser_chunk_from_server_build)
                 bundler.transpilerForTarget(.browser).options.public_path
             else
                 c.options.public_path;
@@ -340,7 +415,7 @@ pub fn generateChunksInParallel(
                 chunk,
                 chunks,
                 &display_size,
-                c.resolver.opts.compile and !chunk.is_browser_chunk_from_server_build,
+                c.resolver.opts.compile and !chunk.flags.is_browser_chunk_from_server_build,
                 chunk.content.sourcemap(c.options.source_maps) != .none,
             );
             var code_result = _code_result catch @panic("Failed to allocate memory for output file");
@@ -419,6 +494,14 @@ pub fn generateChunksInParallel(
                 .none => {},
             }
 
+            // Compute side early so it can be used for bytecode, module_info, and main chunk output files
+            const side: bun.bake.Side = if (chunk.content == .css or chunk.flags.is_browser_chunk_from_server_build)
+                .client
+            else switch (c.graph.ast.items(.target)[chunk.entry_point.source_index]) {
+                .browser => .client,
+                else => .server,
+            };
+
             const bytecode_output_file: ?options.OutputFile = brk: {
                 if (c.options.generate_bytecode_cache) {
                     const loader: Loader = if (chunk.entry_point.is_entry_point)
@@ -432,7 +515,18 @@ pub fn generateChunksInParallel(
                         jsc.VirtualMachine.is_bundler_thread_for_bytecode_cache = true;
                         jsc.initialize(false);
                         var fdpath: bun.PathBuffer = undefined;
-                        var source_provider_url = try bun.String.createFormat("{s}" ++ bun.bytecode_extension, .{chunk.final_rel_path});
+                        // For --compile builds, the bytecode URL must match the module name
+                        // that will be used at runtime. The module name is:
+                        //   public_path + final_rel_path (e.g., "/$bunfs/root/app.js")
+                        // Without this prefix, the JSC bytecode cache key won't match at runtime.
+                        // Use the per-chunk public_path (already computed above) for browser chunks
+                        // from server builds, and normalize with cheapPrefixNormalizer for consistency
+                        // with module_info path fixup.
+                        // For non-compile builds, use the normal .jsc extension.
+                        var source_provider_url = if (c.options.compile) url_blk: {
+                            const normalizer = bun.bundle_v2.cheapPrefixNormalizer(public_path, chunk.final_rel_path);
+                            break :url_blk try bun.String.createFormat("{s}{s}", .{ normalizer[0], normalizer[1] });
+                        } else try bun.String.createFormat("{s}" ++ bun.bytecode_extension, .{chunk.final_rel_path});
                         source_provider_url.ref();
 
                         defer source_provider_url.deref();
@@ -457,7 +551,7 @@ pub fn generateChunksInParallel(
                                 .data = .{
                                     .buffer = .{ .data = bytecode, .allocator = cached_bytecode.allocator() },
                                 },
-                                .side = .server,
+                                .side = side,
                                 .entry_point_index = null,
                                 .is_executable = false,
                             });
@@ -473,6 +567,40 @@ pub fn generateChunksInParallel(
                 break :brk null;
             };
 
+            // Create module_info output file for ESM bytecode in --compile builds
+            const module_info_output_file: ?options.OutputFile = brk: {
+                if (c.options.generate_bytecode_cache and c.options.output_format == .esm and c.options.compile) {
+                    const loader: Loader = if (chunk.entry_point.is_entry_point)
+                        c.parse_graph.input_files.items(.loader)[
+                            chunk.entry_point.source_index
+                        ]
+                    else
+                        .js;
+
+                    if (chunk.content == .javascript and loader.isJavaScriptLike()) {
+                        if (chunk.content.javascript.module_info_bytes) |module_info_bytes| {
+                            break :brk options.OutputFile.init(.{
+                                .output_path = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{s}.module-info", .{chunk.final_rel_path})),
+                                .input_path = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{s}.module-info", .{chunk.final_rel_path})),
+                                .input_loader = .js,
+                                .hash = if (chunk.template.placeholder.hash != null) bun.hash(module_info_bytes) else null,
+                                .output_kind = .module_info,
+                                .loader = .file,
+                                .size = @as(u32, @truncate(module_info_bytes.len)),
+                                .display_size = @as(u32, @truncate(module_info_bytes.len)),
+                                .data = .{
+                                    .buffer = .{ .data = module_info_bytes, .allocator = bun.default_allocator },
+                                },
+                                .side = side,
+                                .entry_point_index = null,
+                                .is_executable = false,
+                            });
+                        }
+                    }
+                }
+                break :brk null;
+            };
+
             const source_map_index: ?u32 = if (sourcemap_output_file != null)
                 try output_files.insertForSourcemapOrBytecode(sourcemap_output_file.?)
             else
@@ -483,6 +611,11 @@ pub fn generateChunksInParallel(
             else
                 null;
 
+            const module_info_index: ?u32 = if (module_info_output_file != null)
+                try output_files.insertForSourcemapOrBytecode(module_info_output_file.?)
+            else
+                null;
+
             const output_kind = if (chunk.content == .css)
                 .asset
             else if (chunk.entry_point.is_entry_point)
@@ -490,12 +623,6 @@ pub fn generateChunksInParallel(
             else
                 .chunk;
 
-            const side: bun.bake.Side = if (chunk.content == .css or chunk.is_browser_chunk_from_server_build)
-                .client
-            else switch (c.graph.ast.items(.target)[chunk.entry_point.source_index]) {
-                .browser => .client,
-                else => .server,
-            };
             const chunk_index = output_files.insertForChunk(options.OutputFile.init(.{
                 .data = .{
                     .buffer = .{
@@ -510,9 +637,10 @@ pub fn generateChunksInParallel(
                 .output_kind = output_kind,
                 .input_loader = if (chunk.entry_point.is_entry_point) c.parse_graph.input_files.items(.loader)[chunk.entry_point.source_index] else .js,
                 .output_path = try bun.default_allocator.dupe(u8, chunk.final_rel_path),
-                .is_executable = chunk.is_executable,
+                .is_executable = chunk.flags.is_executable,
                 .source_map_index = source_map_index,
                 .bytecode_index = bytecode_index,
+                .module_info_index = module_info_index,
                 .side = side,
                 .entry_point_index = if (output_kind == .@"entry-point")
                     chunk.entry_point.source_index - @as(u32, (if (c.framework) |fw| if (fw.server_components != null) 3 else 1 else 1))
@@ -552,6 +680,7 @@ pub const ThreadPool = bun.bundle_v2.ThreadPool;
 
 const debugPartRanges = Output.scoped(.PartRanges, .hidden);
 
+const analyze_transpiled_module = @import("../../analyze_transpiled_module.zig");
 const std = @import("std");
 
 const bun = @import("bun");

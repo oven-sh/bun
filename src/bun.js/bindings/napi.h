@@ -669,7 +669,7 @@ public:
     NapiRef(Ref<NapiEnv>&& env, uint32_t count, Bun::NapiFinalizer finalizer)
         : env(env)
         , globalObject(JSC::Weak<JSC::JSGlobalObject>(env->globalObject()))
-        , finalizer(WTFMove(finalizer))
+        , finalizer(WTF::move(finalizer))
         , refCount(count)
     {
     }

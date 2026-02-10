@@ -183,4 +183,34 @@ describe("bun:jsc", () => {
     const input = await promise;
     expect({ ...input }).toStrictEqual({ "0": 2 });
   });
+
+  it.todoIf(isBuildKite && isWindows)("profile can be called multiple times", () => {
+    // Fibonacci generates deep stacks and is CPU-intensive
+    function fib(n: number): number {
+      if (n <= 1) return n;
+      return fib(n - 1) + fib(n - 2);
+    }
+
+    // First profile call
+    const result1 = profile(() => fib(30));
+    expect(result1).toBeDefined();
+    expect(result1.functions).toBeDefined();
+    expect(result1.stackTraces).toBeDefined();
+    expect(result1.stackTraces.traces.length).toBeGreaterThan(0);
+
+    // Second profile call - should work after first one completed
+    // This verifies that shutdown() -> pause() fix works
+    const result2 = profile(() => fib(30));
+    expect(result2).toBeDefined();
+    expect(result2.functions).toBeDefined();
+    expect(result2.stackTraces).toBeDefined();
+    expect(result2.stackTraces.traces.length).toBeGreaterThan(0);
+
+    // Third profile call - verify profiler can be reused multiple times
+    const result3 = profile(() => fib(30));
+    expect(result3).toBeDefined();
+    expect(result3.functions).toBeDefined();
+    expect(result3.stackTraces).toBeDefined();
+    expect(result3.stackTraces.traces.length).toBeGreaterThan(0);
+  });
 });

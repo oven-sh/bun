@@ -1016,7 +1016,7 @@ pub fn loadNpmrc(
     if (out.asProperty("ca")) |query| {
         if (query.expr.asUtf8StringLiteral()) |str| {
             install.ca = .{
-                .str = str,
+                .str = try allocator.dupe(u8, str),
             };
         } else if (query.expr.isArray()) {
             const arr = query.expr.data.e_array;

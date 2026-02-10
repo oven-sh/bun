@@ -617,7 +617,7 @@ pub fn joinAllWithCommaCallback(all: []Expr, comptime Context: type, ctx: Contex
             return callback(ctx, all[0]);
         },
         2 => {
-            return Expr.joinWithComma(
+            const result = Expr.joinWithComma(
                 callback(ctx, all[0]) orelse Expr{
                     .data = .{ .e_missing = .{} },
                     .loc = all[0].loc,
@@ -628,6 +628,10 @@ pub fn joinAllWithCommaCallback(all: []Expr, comptime Context: type, ctx: Contex
                 },
                 allocator,
             );
+            if (result.isMissing()) {
+                return null;
+            }
+            return result;
         },
         else => {
             var i: usize = 1;
@@ -643,6 +647,9 @@ pub fn joinAllWithCommaCallback(all: []Expr, comptime Context: type, ctx: Contex
                 }, allocator);
             }
 
+            if (expr.isMissing()) {
+                return null;
+            }
             return expr;
         },
     }

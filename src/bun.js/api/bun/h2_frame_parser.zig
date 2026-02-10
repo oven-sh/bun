@@ -20,6 +20,17 @@ const MAX_HEADER_TABLE_SIZE = std.math.maxInt(u32);
 const MAX_STREAM_ID = std.math.maxInt(i32);
 const MAX_FRAME_SIZE = std.math.maxInt(u24);
 const DEFAULT_WINDOW_SIZE = std.math.maxInt(u16);
+// Float versions for range validation before integer conversion
+const MAX_WINDOW_SIZE_F64: f64 = @floatFromInt(MAX_WINDOW_SIZE);
+const MAX_HEADER_TABLE_SIZE_F64: f64 = @floatFromInt(MAX_HEADER_TABLE_SIZE);
+const MAX_FRAME_SIZE_F64: f64 = @floatFromInt(MAX_FRAME_SIZE);
+// RFC 7541 Section 4.1: Each header entry has 32 bytes of overhead
+// for the HPACK dynamic table entry structure
+const HPACK_ENTRY_OVERHEAD = 32;
+// Maximum number of custom settings (same as Node.js MAX_ADDITIONAL_SETTINGS)
+const MAX_CUSTOM_SETTINGS = 10;
+// Maximum custom setting ID (0xFFFF per RFC 7540)
+const MAX_CUSTOM_SETTING_ID: f64 = 0xFFFF;
 
 const PaddingStrategy = enum {
     none,
@@ -37,7 +48,7 @@ const FrameType = enum(u8) {
     HTTP_FRAME_PING = 0x06,
     HTTP_FRAME_GOAWAY = 0x07,
     HTTP_FRAME_WINDOW_UPDATE = 0x08,
-    HTTP_FRAME_CONTINUATION = 0x09,
+    HTTP_FRAME_CONTINUATION = 0x09, // RFC 7540 Section 6.10: Continues header block fragments
     HTTP_FRAME_ALTSVC = 0x0A, // https://datatracker.ietf.org/doc/html/rfc7838#section-7.2
     HTTP_FRAME_ORIGIN = 0x0C, // https://datatracker.ietf.org/doc/html/rfc8336#section-2
 };
@@ -337,73 +348,73 @@ pub fn jsAssertSettings(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallF
 
         if (try options.get(globalObject, "headerTableSize")) |headerTableSize| {
             if (headerTableSize.isNumber()) {
-                const headerTableSizeValue = headerTableSize.toInt32();
-                if (headerTableSizeValue > MAX_HEADER_TABLE_SIZE or headerTableSizeValue < 0) {
-                    return globalObject.throw("Expected headerTableSize to be a number between 0 and 2^32-1", .{});
+                const value = headerTableSize.asNumber();
+                if (value < 0 or value > MAX_HEADER_TABLE_SIZE_F64) {
+                    return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE_RangeError, "Expected headerTableSize to be a number between 0 and 2^32-1", .{}).throw();
                 }
             } else if (!headerTableSize.isEmptyOrUndefinedOrNull()) {
-                return globalObject.throw("Expected headerTableSize to be a number", .{});
+                return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE_RangeError, "Expected headerTableSize to be a number", .{}).throw();
             }
         }
 
         if (try options.get(globalObject, "enablePush")) |enablePush| {
-            if (!enablePush.isBoolean() and !enablePush.isEmptyOrUndefinedOrNull()) {
-                return globalObject.throw("Expected enablePush to be a boolean", .{});
+            if (!enablePush.isBoolean() and !enablePush.isUndefined()) {
+                return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE, "Expected enablePush to be a boolean", .{}).throw();
             }
         }
 
         if (try options.get(globalObject, "initialWindowSize")) |initialWindowSize| {
             if (initialWindowSize.isNumber()) {
-                const initialWindowSizeValue = initialWindowSize.toInt32();
-                if (initialWindowSizeValue > MAX_HEADER_TABLE_SIZE or initialWindowSizeValue < 0) {
-                    return globalObject.throw("Expected initialWindowSize to be a number between 0 and 2^32-1", .{});
+                const value = initialWindowSize.asNumber();
+                if (value < 0 or value > MAX_WINDOW_SIZE_F64) {
+                    return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE_RangeError, "Expected initialWindowSize to be a number between 0 and 2^32-1", .{}).throw();
                 }
             } else if (!initialWindowSize.isEmptyOrUndefinedOrNull()) {
-                return globalObject.throw("Expected initialWindowSize to be a number", .{});
+                return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE_RangeError, "Expected initialWindowSize to be a number", .{}).throw();
             }
         }
 
         if (try options.get(globalObject, "maxFrameSize")) |maxFrameSize| {
             if (maxFrameSize.isNumber()) {
-                const maxFrameSizeValue = maxFrameSize.toInt32();
-                if (maxFrameSizeValue > MAX_FRAME_SIZE or maxFrameSizeValue < 16384) {
-                    return globalObject.throw("Expected maxFrameSize to be a number between 16,384 and 2^24-1", .{});
+                const value = maxFrameSize.asNumber();
+                if (value < 16384 or value > MAX_FRAME_SIZE_F64) {
+                    return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE_RangeError, "Expected maxFrameSize to be a number between 16,384 and 2^24-1", .{}).throw();
                 }
             } else if (!maxFrameSize.isEmptyOrUndefinedOrNull()) {
-                return globalObject.throw("Expected maxFrameSize to be a number", .{});
+                return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE_RangeError, "Expected maxFrameSize to be a number", .{}).throw();
             }
         }
 
         if (try options.get(globalObject, "maxConcurrentStreams")) |maxConcurrentStreams| {
             if (maxConcurrentStreams.isNumber()) {
-                const maxConcurrentStreamsValue = maxConcurrentStreams.toInt32();
-                if (maxConcurrentStreamsValue > MAX_HEADER_TABLE_SIZE or maxConcurrentStreamsValue < 0) {
-                    return globalObject.throw("Expected maxConcurrentStreams to be a number between 0 and 2^32-1", .{});
+                const value = maxConcurrentStreams.asNumber();
+                if (value < 0 or value > MAX_HEADER_TABLE_SIZE_F64) {
+                    return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE_RangeError, "Expected maxConcurrentStreams to be a number between 0 and 2^32-1", .{}).throw();
                 }
             } else if (!maxConcurrentStreams.isEmptyOrUndefinedOrNull()) {
-                return globalObject.throw("Expected maxConcurrentStreams to be a number", .{});
+                return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE_RangeError, "Expected maxConcurrentStreams to be a number", .{}).throw();
             }
         }
 
         if (try options.get(globalObject, "maxHeaderListSize")) |maxHeaderListSize| {
             if (maxHeaderListSize.isNumber()) {
-                const maxHeaderListSizeValue = maxHeaderListSize.toInt32();
-                if (maxHeaderListSizeValue > MAX_HEADER_TABLE_SIZE or maxHeaderListSizeValue < 0) {
-                    return globalObject.throw("Expected maxHeaderListSize to be a number between 0 and 2^32-1", .{});
+                const value = maxHeaderListSize.asNumber();
+                if (value < 0 or value > MAX_HEADER_TABLE_SIZE_F64) {
+                    return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE_RangeError, "Expected maxHeaderListSize to be a number between 0 and 2^32-1", .{}).throw();
                 }
             } else if (!maxHeaderListSize.isEmptyOrUndefinedOrNull()) {
-                return globalObject.throw("Expected maxHeaderListSize to be a number", .{});
+                return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE_RangeError, "Expected maxHeaderListSize to be a number", .{}).throw();
             }
         }
 
         if (try options.get(globalObject, "maxHeaderSize")) |maxHeaderSize| {
             if (maxHeaderSize.isNumber()) {
-                const maxHeaderSizeValue = maxHeaderSize.toInt32();
-                if (maxHeaderSizeValue > MAX_HEADER_TABLE_SIZE or maxHeaderSizeValue < 0) {
-                    return globalObject.throw("Expected maxHeaderSize to be a number between 0 and 2^32-1", .{});
+                const value = maxHeaderSize.asNumber();
+                if (value < 0 or value > MAX_HEADER_TABLE_SIZE_F64) {
+                    return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE_RangeError, "Expected maxHeaderSize to be a number between 0 and 2^32-1", .{}).throw();
                 }
             } else if (!maxHeaderSize.isEmptyOrUndefinedOrNull()) {
-                return globalObject.throw("Expected maxHeaderSize to be a number", .{});
+                return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE_RangeError, "Expected maxHeaderSize to be a number", .{}).throw();
             }
         }
     }
@@ -682,6 +693,37 @@ pub const H2FrameParser = struct {
     paddingStrategy: PaddingStrategy = .none,
 
     threadlocal var shared_request_buffer: [16384]u8 = undefined;
+
+    /// Encodes a single header into the ArrayList, growing if needed.
+    /// Returns the number of bytes written, or error on failure.
+    ///
+    /// Capacity estimation: name.len + value.len + HPACK_ENTRY_OVERHEAD
+    ///
+    /// Per RFC 7541, the HPACK wire format for a literal header field is:
+    ///   - 1 byte: type indicator (literal with/without indexing, never indexed)
+    ///   - 1-6 bytes: name length as variable-length integer (7-bit prefix)
+    ///   - N bytes: name string (raw or Huffman-encoded)
+    ///   - 1-6 bytes: value length as variable-length integer (7-bit prefix)
+    ///   - M bytes: value string (raw or Huffman-encoded)
+    ///
+    /// For most headers (name/value < 127 bytes), this is ~3 bytes overhead.
+    /// Using HPACK_ENTRY_OVERHEAD (32 bytes, from RFC 7541 Section 4.1) is a
+    /// conservative estimate that accounts for worst-case variable integer
+    /// encoding and ensures we never underallocate, even with very large headers.
+    fn encodeHeaderIntoList(
+        this: *H2FrameParser,
+        encoded_headers: *std.ArrayListUnmanaged(u8),
+        alloc: std.mem.Allocator,
+        name: []const u8,
+        value: []const u8,
+        never_index: bool,
+    ) !usize {
+        const required = encoded_headers.items.len + name.len + value.len + HPACK_ENTRY_OVERHEAD;
+        try encoded_headers.ensureTotalCapacity(alloc, required);
+        const bytes_written = try this.encode(encoded_headers.allocatedSlice(), encoded_headers.items.len, name, value, never_index);
+        encoded_headers.items.len += bytes_written;
+        return bytes_written;
+    }
 
     /// The streams hashmap may mutate when growing we use this when we need to make sure its safe to iterate over it
     pub const StreamResumableIterator = struct {
@@ -1087,10 +1129,16 @@ pub const H2FrameParser = struct {
             return stream;
         }
 
+        /// Returns true if the stream can still receive data from the remote peer.
+        /// Per RFC 7540 Section 5.1:
+        /// - OPEN: both endpoints can send and receive
+        /// - HALF_CLOSED_LOCAL: local sent END_STREAM, but can still receive from remote
+        /// - HALF_CLOSED_REMOTE: remote sent END_STREAM, no more data to receive
+        /// - CLOSED: stream is finished
         pub fn canReceiveData(this: *Stream) bool {
             return switch (this.state) {
-                .IDLE, .RESERVED_LOCAL, .RESERVED_REMOTE, .OPEN, .HALF_CLOSED_LOCAL => false,
-                .HALF_CLOSED_REMOTE, .CLOSED => true,
+                .IDLE, .RESERVED_LOCAL, .RESERVED_REMOTE, .OPEN, .HALF_CLOSED_LOCAL => true,
+                .HALF_CLOSED_REMOTE, .CLOSED => false,
             };
         }
 
@@ -1205,16 +1253,18 @@ pub const H2FrameParser = struct {
         var it = this.streams.valueIterator();
         while (it.next()) |stream| {
             log("incrementWindowSizeIfNeeded stream {} {} {} {}", .{ stream.id, stream.usedWindowSize, stream.windowSize, this.isServer });
-            if (stream.usedWindowSize >= stream.windowSize) {
+            if (stream.usedWindowSize >= stream.windowSize / 2 and stream.usedWindowSize > 0) {
+                const consumed = stream.usedWindowSize;
                 stream.usedWindowSize = 0;
                 log("incrementWindowSizeIfNeeded stream {} {} {}", .{ stream.id, stream.windowSize, this.isServer });
-                this.sendWindowUpdate(stream.id, UInt31WithReserved.init(@truncate(stream.windowSize), false));
+                this.sendWindowUpdate(stream.id, UInt31WithReserved.init(@truncate(consumed), false));
             }
         }
         log("incrementWindowSizeIfNeeded connection {} {} {}", .{ this.usedWindowSize, this.windowSize, this.isServer });
-        if (this.usedWindowSize >= this.windowSize) {
+        if (this.usedWindowSize >= this.windowSize / 2 and this.usedWindowSize > 0) {
+            const consumed = this.usedWindowSize;
             this.usedWindowSize = 0;
-            this.sendWindowUpdate(0, UInt31WithReserved.init(@truncate(this.windowSize), false));
+            this.sendWindowUpdate(0, UInt31WithReserved.init(@truncate(consumed), false));
         }
     }
 
@@ -1854,6 +1904,8 @@ pub const H2FrameParser = struct {
 
         var sensitiveHeaders: JSValue = .js_undefined;
         var count: usize = 0;
+        // RFC 7540 Section 6.5.2: Track cumulative header list size
+        var headerListSize: usize = 0;
 
         while (true) {
             const header = this.decode(payload[offset..]) catch break;
@@ -1865,6 +1917,23 @@ pub const H2FrameParser = struct {
                 if (this.streams.getEntry(stream_id)) |entry| return entry.value_ptr;
                 return null;
             }
+
+            // RFC 7540 Section 6.5.2: Calculate header list size
+            // Size = name length + value length + HPACK entry overhead per header
+            headerListSize += header.name.len + header.value.len + HPACK_ENTRY_OVERHEAD;
+
+            // Check against maxHeaderListSize setting
+            if (headerListSize > this.localSettings.maxHeaderListSize) {
+                this.rejectedStreams += 1;
+                if (this.maxRejectedStreams <= this.rejectedStreams) {
+                    this.sendGoAway(stream_id, ErrorCode.ENHANCE_YOUR_CALM, "ENHANCE_YOUR_CALM", this.lastStreamID, true);
+                } else {
+                    this.endStream(stream, ErrorCode.ENHANCE_YOUR_CALM);
+                }
+                if (this.streams.getEntry(stream_id)) |entry| return entry.value_ptr;
+                return null;
+            }
+
             count += 1;
             if (this.maxHeaderListPairs < count) {
                 this.rejectedStreams += 1;
@@ -2229,6 +2298,11 @@ pub const H2FrameParser = struct {
         return data.len;
     }
 
+    /// RFC 7540 Section 6.10: Handle CONTINUATION frame (type=0x9).
+    /// CONTINUATION frames continue header block fragments that don't fit in a single HEADERS frame.
+    /// - Must follow a HEADERS, PUSH_PROMISE, or CONTINUATION frame without END_HEADERS flag
+    /// - No padding allowed (unlike HEADERS frames)
+    /// - Must have same stream identifier as the initiating frame
     pub fn handleContinuationFrame(this: *H2FrameParser, frame: FrameHeader, data: []const u8, stream_: ?*Stream) bun.JSError!usize {
         log("handleContinuationFrame", .{});
         var stream = stream_ orelse {
@@ -2362,6 +2436,25 @@ pub const H2FrameParser = struct {
                 // we can now write any request
                 if (this.outstandingSettings > 0) {
                     this.outstandingSettings -= 1;
+
+                    // Per RFC 7540 Section 6.9.2: When INITIAL_WINDOW_SIZE changes, adjust
+                    // all existing stream windows by the difference. Now that our SETTINGS
+                    // is ACKed, the peer knows about our window size, so we can enforce it.
+                    if (this.outstandingSettings == 0 and this.localSettings.initialWindowSize != DEFAULT_WINDOW_SIZE) {
+                        const old_size: i64 = DEFAULT_WINDOW_SIZE;
+                        const new_size: i64 = this.localSettings.initialWindowSize;
+                        const delta = new_size - old_size;
+                        var it = this.streams.valueIterator();
+                        while (it.next()) |stream| {
+                            // Adjust the stream's local window size by the delta
+                            if (delta >= 0) {
+                                stream.windowSize +|= @intCast(@as(u64, @intCast(delta)));
+                            } else {
+                                stream.windowSize -|= @intCast(@as(u64, @intCast(-delta)));
+                            }
+                        }
+                        log("adjusted stream windows by delta {} (old: {}, new: {})", .{ delta, old_size, new_size });
+                    }
                 }
 
                 this.dispatch(.onLocalSettings, this.localSettings.toJS(this.handlers.globalObject));
@@ -2441,9 +2534,17 @@ pub const H2FrameParser = struct {
         // new stream open
         const entry = bun.handleOom(this.streams.getOrPut(streamIdentifier));
 
+        // Per RFC 7540 Section 6.5.1: The sender of SETTINGS can only rely on the
+        // setting being applied AFTER receiving SETTINGS_ACK. Until then, the peer
+        // hasn't seen our settings and uses the default window size.
+        // So we must accept data up to DEFAULT_WINDOW_SIZE until our SETTINGS is ACKed.
+        const local_window_size = if (this.outstandingSettings > 0)
+            DEFAULT_WINDOW_SIZE
+        else
+            this.localSettings.initialWindowSize;
         entry.value_ptr.* = Stream.init(
             streamIdentifier,
-            this.localSettings.initialWindowSize,
+            local_window_size,
             if (this.remoteSettings) |s| s.initialWindowSize else DEFAULT_WINDOW_SIZE,
             this.paddingStrategy,
         );
@@ -2610,82 +2711,126 @@ pub const H2FrameParser = struct {
 
         if (try options.get(globalObject, "headerTableSize")) |headerTableSize| {
             if (headerTableSize.isNumber()) {
-                const headerTableSizeValue = headerTableSize.toInt32();
-                if (headerTableSizeValue > MAX_HEADER_TABLE_SIZE or headerTableSizeValue < 0) {
-                    return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE, "Expected headerTableSize to be a number between 0 and 2^32-1", .{}).throw();
+                const value = headerTableSize.asNumber();
+                if (value < 0 or value > MAX_HEADER_TABLE_SIZE_F64) {
+                    return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE_RangeError, "Expected headerTableSize to be a number between 0 and 2^32-1", .{}).throw();
                 }
-                this.localSettings.headerTableSize = @intCast(headerTableSizeValue);
+                this.localSettings.headerTableSize = @intFromFloat(value);
             } else if (!headerTableSize.isEmptyOrUndefinedOrNull()) {
-                return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE, "Expected headerTableSize to be a number", .{}).throw();
+                return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE_RangeError, "Expected headerTableSize to be a number", .{}).throw();
             }
         }
 
         if (try options.get(globalObject, "enablePush")) |enablePush| {
             if (enablePush.isBoolean()) {
                 this.localSettings.enablePush = if (enablePush.asBoolean()) 1 else 0;
-            } else if (!enablePush.isEmptyOrUndefinedOrNull()) {
+            } else if (!enablePush.isUndefined()) {
                 return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE, "Expected enablePush to be a boolean", .{}).throw();
             }
         }
 
         if (try options.get(globalObject, "initialWindowSize")) |initialWindowSize| {
             if (initialWindowSize.isNumber()) {
-                const initialWindowSizeValue = initialWindowSize.toInt32();
-                if (initialWindowSizeValue > MAX_WINDOW_SIZE or initialWindowSizeValue < 0) {
-                    return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE, "Expected initialWindowSize to be a number between 0 and 2^32-1", .{}).throw();
+                const value = initialWindowSize.asNumber();
+                if (value < 0 or value > MAX_WINDOW_SIZE_F64) {
+                    return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE_RangeError, "Expected initialWindowSize to be a number between 0 and 2^32-1", .{}).throw();
                 }
-                log("initialWindowSize: {d}", .{initialWindowSizeValue});
-                this.localSettings.initialWindowSize = @intCast(initialWindowSizeValue);
+                log("initialWindowSize: {d}", .{@as(u32, @intFromFloat(value))});
+                this.localSettings.initialWindowSize = @intFromFloat(value);
             } else if (!initialWindowSize.isEmptyOrUndefinedOrNull()) {
-                return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE, "Expected initialWindowSize to be a number", .{}).throw();
+                return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE_RangeError, "Expected initialWindowSize to be a number", .{}).throw();
             }
         }
 
         if (try options.get(globalObject, "maxFrameSize")) |maxFrameSize| {
             if (maxFrameSize.isNumber()) {
-                const maxFrameSizeValue = maxFrameSize.toInt32();
-                if (maxFrameSizeValue > MAX_FRAME_SIZE or maxFrameSizeValue < 16384) {
-                    return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE, "Expected maxFrameSize to be a number between 16,384 and 2^24-1", .{}).throw();
+                const value = maxFrameSize.asNumber();
+                if (value < 16384 or value > MAX_FRAME_SIZE_F64) {
+                    return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE_RangeError, "Expected maxFrameSize to be a number between 16,384 and 2^24-1", .{}).throw();
                 }
-                this.localSettings.maxFrameSize = @intCast(maxFrameSizeValue);
+                this.localSettings.maxFrameSize = @intFromFloat(value);
             } else if (!maxFrameSize.isEmptyOrUndefinedOrNull()) {
-                return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE, "Expected maxFrameSize to be a number", .{}).throw();
+                return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE_RangeError, "Expected maxFrameSize to be a number", .{}).throw();
             }
         }
 
         if (try options.get(globalObject, "maxConcurrentStreams")) |maxConcurrentStreams| {
             if (maxConcurrentStreams.isNumber()) {
-                const maxConcurrentStreamsValue = maxConcurrentStreams.toInt32();
-                if (maxConcurrentStreamsValue > MAX_HEADER_TABLE_SIZE or maxConcurrentStreamsValue < 0) {
-                    return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE, "Expected maxConcurrentStreams to be a number between 0 and 2^32-1", .{}).throw();
+                const value = maxConcurrentStreams.asNumber();
+                if (value < 0 or value > MAX_HEADER_TABLE_SIZE_F64) {
+                    return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE_RangeError, "Expected maxConcurrentStreams to be a number between 0 and 2^32-1", .{}).throw();
                 }
-                this.localSettings.maxConcurrentStreams = @intCast(maxConcurrentStreamsValue);
+                this.localSettings.maxConcurrentStreams = @intFromFloat(value);
             } else if (!maxConcurrentStreams.isEmptyOrUndefinedOrNull()) {
-                return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE, "Expected maxConcurrentStreams to be a number", .{}).throw();
+                return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE_RangeError, "Expected maxConcurrentStreams to be a number", .{}).throw();
             }
         }
 
         if (try options.get(globalObject, "maxHeaderListSize")) |maxHeaderListSize| {
             if (maxHeaderListSize.isNumber()) {
-                const maxHeaderListSizeValue = maxHeaderListSize.toInt32();
-                if (maxHeaderListSizeValue > MAX_HEADER_TABLE_SIZE or maxHeaderListSizeValue < 0) {
-                    return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE, "Expected maxHeaderListSize to be a number between 0 and 2^32-1", .{}).throw();
+                const value = maxHeaderListSize.asNumber();
+                if (value < 0 or value > MAX_HEADER_TABLE_SIZE_F64) {
+                    return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE_RangeError, "Expected maxHeaderListSize to be a number between 0 and 2^32-1", .{}).throw();
                 }
-                this.localSettings.maxHeaderListSize = @intCast(maxHeaderListSizeValue);
+                this.localSettings.maxHeaderListSize = @intFromFloat(value);
             } else if (!maxHeaderListSize.isEmptyOrUndefinedOrNull()) {
-                return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE, "Expected maxHeaderListSize to be a number", .{}).throw();
+                return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE_RangeError, "Expected maxHeaderListSize to be a number", .{}).throw();
             }
         }
 
         if (try options.get(globalObject, "maxHeaderSize")) |maxHeaderSize| {
             if (maxHeaderSize.isNumber()) {
-                const maxHeaderSizeValue = maxHeaderSize.toInt32();
-                if (maxHeaderSizeValue > MAX_HEADER_TABLE_SIZE or maxHeaderSizeValue < 0) {
-                    return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE, "Expected maxHeaderSize to be a number between 0 and 2^32-1", .{}).throw();
+                const value = maxHeaderSize.asNumber();
+                if (value < 0 or value > MAX_HEADER_TABLE_SIZE_F64) {
+                    return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE_RangeError, "Expected maxHeaderSize to be a number between 0 and 2^32-1", .{}).throw();
                 }
-                this.localSettings.maxHeaderListSize = @intCast(maxHeaderSizeValue);
+                this.localSettings.maxHeaderListSize = @intFromFloat(value);
             } else if (!maxHeaderSize.isEmptyOrUndefinedOrNull()) {
-                return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE, "Expected maxHeaderSize to be a number", .{}).throw();
+                return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE_RangeError, "Expected maxHeaderSize to be a number", .{}).throw();
+            }
+        }
+
+        // Validate customSettings
+        if (try options.get(globalObject, "customSettings")) |customSettings| {
+            if (!customSettings.isUndefined()) {
+                const custom_settings_obj = customSettings.getObject() orelse {
+                    return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE, "Expected customSettings to be an object", .{}).throw();
+                };
+
+                var count: usize = 0;
+                var iter = try jsc.JSPropertyIterator(.{
+                    .skip_empty_name = false,
+                    .include_value = true,
+                }).init(globalObject, custom_settings_obj);
+                defer iter.deinit();
+
+                while (try iter.next()) |prop_name| {
+                    count += 1;
+                    if (count > MAX_CUSTOM_SETTINGS) {
+                        return globalObject.ERR(.HTTP2_TOO_MANY_CUSTOM_SETTINGS, "Number of custom settings exceeds MAX_ADDITIONAL_SETTINGS", .{}).throw();
+                    }
+
+                    // Validate setting ID (key) is in range [0, 0xFFFF]
+                    const setting_id_str = prop_name.toUTF8(bun.default_allocator);
+                    defer setting_id_str.deinit();
+                    const setting_id = std.fmt.parseInt(u32, setting_id_str.slice(), 10) catch {
+                        return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE_RangeError, "Invalid custom setting identifier", .{}).throw();
+                    };
+                    if (setting_id > 0xFFFF) {
+                        return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE_RangeError, "Invalid custom setting identifier", .{}).throw();
+                    }
+
+                    // Validate setting value is in range [0, 2^32-1]
+                    const setting_value = iter.value;
+                    if (setting_value.isNumber()) {
+                        const value = setting_value.asNumber();
+                        if (value < 0 or value > MAX_HEADER_TABLE_SIZE_F64) {
+                            return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE_RangeError, "Invalid custom setting value", .{}).throw();
+                        }
+                    } else {
+                        return globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE_RangeError, "Expected custom setting value to be a number", .{}).throw();
+                    }
+                }
             }
         }
         return;
@@ -3402,9 +3547,20 @@ pub const H2FrameParser = struct {
             return globalObject.throw("Expected sensitiveHeaders to be an object", .{});
         }
 
-        // max frame size will be always at least 16384
-        var buffer = shared_request_buffer[0 .. shared_request_buffer.len - FrameHeader.byteSize];
-        var encoded_size: usize = 0;
+        // Use remote settings maxFrameSize if available, otherwise default to localSettings
+        const settings = this.remoteSettings orelse this.localSettings;
+        _ = settings;
+        // Use shared buffer when possible, fall back to heap for large headers
+        var buf_fallback = bun.allocators.BufferFallbackAllocator.init(&shared_request_buffer, bun.default_allocator);
+        const alloc = buf_fallback.allocator();
+        // Use ArrayList with initial capacity of shared buffer size, doubling when needed
+        var encoded_headers = std.ArrayListUnmanaged(u8){};
+        // IMPORTANT: defer cleanup immediately after init to prevent memory leaks on early returns
+        defer encoded_headers.deinit(alloc);
+        // Pre-allocate to shared buffer size (this uses the stack buffer via BufferFallbackAllocator)
+        encoded_headers.ensureTotalCapacity(alloc, shared_request_buffer.len) catch {
+            return globalObject.throw("Failed to allocate header buffer", .{});
+        };
         // max header name length for lshpack
         var name_buffer: [4096]u8 = undefined;
         @memset(&name_buffer, 0);
@@ -3418,7 +3574,7 @@ pub const H2FrameParser = struct {
         var single_value_headers: [SingleValueHeaders.keys().len]bool = undefined;
         @memset(&single_value_headers, false);
 
-        // TODO: support CONTINUE for more headers if headers are too big
+        // Encode trailer headers using HPACK
         while (try iter.next()) |header_name| {
             if (header_name.length() == 0) continue;
 
@@ -3472,7 +3628,10 @@ pub const H2FrameParser = struct {
                     const value = value_slice.slice();
                     log("encode header {s} {s}", .{ validated_name, value });
 
-                    encoded_size += this.encode(buffer, encoded_size, validated_name, value, never_index) catch {
+                    _ = this.encodeHeaderIntoList(&encoded_headers, alloc, validated_name, value, never_index) catch |err| {
+                        if (err == error.OutOfMemory) {
+                            return globalObject.throw("Failed to allocate header buffer", .{});
+                        }
                         stream.state = .CLOSED;
                         const identifier = stream.getIdentifier();
                         identifier.ensureStillAlive();
@@ -3509,7 +3668,10 @@ pub const H2FrameParser = struct {
                 const value = value_slice.slice();
                 log("encode header {s} {s}", .{ name, value });
 
-                encoded_size += this.encode(buffer, encoded_size, validated_name, value, never_index) catch {
+                _ = this.encodeHeaderIntoList(&encoded_headers, alloc, validated_name, value, never_index) catch |err| {
+                    if (err == error.OutOfMemory) {
+                        return globalObject.throw("Failed to allocate header buffer", .{});
+                    }
                     stream.state = .CLOSED;
                     const identifier = stream.getIdentifier();
                     identifier.ensureStillAlive();
@@ -3521,25 +3683,75 @@ pub const H2FrameParser = struct {
                         jsc.JSValue.jsNumber(@intFromEnum(FrameType.HTTP_FRAME_HEADERS)),
                         jsc.JSValue.jsNumber(@intFromEnum(ErrorCode.FRAME_SIZE_ERROR)),
                     );
-
                     this.dispatchWithExtra(.onStreamError, identifier, jsc.JSValue.jsNumber(stream.rstCode));
-
                     return .js_undefined;
                 };
             }
         }
-        const flags: u8 = @intFromEnum(HeadersFrameFlags.END_HEADERS) | @intFromEnum(HeadersFrameFlags.END_STREAM);
+        const encoded_data = encoded_headers.items;
+        const encoded_size = encoded_data.len;
+
+        // RFC 7540 Section 8.1: Trailers are sent as a HEADERS frame with END_STREAM flag
+        const base_flags: u8 = @intFromEnum(HeadersFrameFlags.END_STREAM);
+        // RFC 7540 Section 4.2: SETTINGS_MAX_FRAME_SIZE determines max frame payload
+        const actual_max_frame_size = (this.remoteSettings orelse this.localSettings).maxFrameSize;
 
         log("trailers encoded_size {}", .{encoded_size});
-        var frame: FrameHeader = .{
-            .type = @intFromEnum(FrameType.HTTP_FRAME_HEADERS),
-            .flags = flags,
-            .streamIdentifier = stream.id,
-            .length = @intCast(encoded_size),
-        };
+
         const writer = this.toWriter();
-        _ = frame.write(@TypeOf(writer), writer);
-        _ = writer.write(buffer[0..encoded_size]) catch 0;
+
+        // RFC 7540 Section 6.2 & 6.10: Check if we need CONTINUATION frames
+        if (encoded_size <= actual_max_frame_size) {
+            // Single HEADERS frame - header block fits in one frame
+            var frame: FrameHeader = .{
+                .type = @intFromEnum(FrameType.HTTP_FRAME_HEADERS),
+                .flags = base_flags | @intFromEnum(HeadersFrameFlags.END_HEADERS),
+                .streamIdentifier = stream.id,
+                .length = @intCast(encoded_size),
+            };
+            _ = frame.write(@TypeOf(writer), writer);
+            _ = writer.write(encoded_data) catch 0;
+        } else {
+            // RFC 7540 Section 6.2 & 6.10: Header block exceeds MAX_FRAME_SIZE.
+            // Must split into HEADERS frame followed by one or more CONTINUATION frames.
+            // Note: CONTINUATION frames cannot have padding (Section 6.10) - they carry
+            // only header block fragments. END_HEADERS must be set on the last frame.
+            log("Using CONTINUATION frames for trailers: encoded_size={d} max_frame_size={d}", .{ encoded_size, actual_max_frame_size });
+
+            // RFC 7540 Section 6.2: First chunk goes in HEADERS frame (without END_HEADERS flag)
+            // Trailers use END_STREAM but NOT END_HEADERS when more frames follow
+            const first_chunk_size = actual_max_frame_size;
+
+            var headers_frame: FrameHeader = .{
+                .type = @intFromEnum(FrameType.HTTP_FRAME_HEADERS),
+                .flags = base_flags, // END_STREAM but NOT END_HEADERS
+                .streamIdentifier = stream.id,
+                .length = @intCast(first_chunk_size),
+            };
+            _ = headers_frame.write(@TypeOf(writer), writer);
+            _ = writer.write(encoded_data[0..first_chunk_size]) catch 0;
+
+            // RFC 7540 Section 6.10: CONTINUATION frames carry remaining header block fragments.
+            // They have no padding, no priority - just frame header + header block fragment.
+            var offset: usize = first_chunk_size;
+            while (offset < encoded_size) {
+                const remaining = encoded_size - offset;
+                const chunk_size = @min(remaining, actual_max_frame_size);
+                const is_last = (offset + chunk_size >= encoded_size);
+
+                // RFC 7540 Section 6.10: END_HEADERS flag must be set on the last frame
+                var cont_frame: FrameHeader = .{
+                    .type = @intFromEnum(FrameType.HTTP_FRAME_CONTINUATION),
+                    .flags = if (is_last) @intFromEnum(HeadersFrameFlags.END_HEADERS) else 0,
+                    .streamIdentifier = stream.id,
+                    .length = @intCast(chunk_size),
+                };
+                _ = cont_frame.write(@TypeOf(writer), writer);
+                _ = writer.write(encoded_data[offset..][0..chunk_size]) catch 0;
+
+                offset += chunk_size;
+            }
+        }
         const identifier = stream.getIdentifier();
         identifier.ensureStillAlive();
         if (stream.state == .HALF_CLOSED_REMOTE) {
@@ -3803,9 +4015,20 @@ pub const H2FrameParser = struct {
         if (!sensitive_arg.isObject()) {
             return globalObject.throw("Expected sensitiveHeaders to be an object", .{});
         }
-        // max frame size will be always at least 16384
-        var buffer = shared_request_buffer[0 .. shared_request_buffer.len - FrameHeader.byteSize - 5];
-        var encoded_size: usize = 0;
+        // Use remote settings maxFrameSize if available, otherwise use localSettings.
+        const settings = this.remoteSettings orelse this.localSettings;
+        _ = settings;
+        // Use shared buffer when possible, fall back to heap for large headers
+        var buf_fallback = bun.allocators.BufferFallbackAllocator.init(&shared_request_buffer, bun.default_allocator);
+        const alloc = buf_fallback.allocator();
+        // Use ArrayList with initial capacity of shared buffer size, doubling when needed
+        var encoded_headers = std.ArrayListUnmanaged(u8){};
+        // IMPORTANT: defer cleanup immediately after init to prevent memory leaks on early returns
+        defer encoded_headers.deinit(alloc);
+        // Pre-allocate to shared buffer size (this uses the stack buffer via BufferFallbackAllocator)
+        encoded_headers.ensureTotalCapacity(alloc, shared_request_buffer.len) catch {
+            return globalObject.throw("Failed to allocate header buffer", .{});
+        };
         // max header name length for lshpack
         var name_buffer: [4096]u8 = undefined;
         @memset(&name_buffer, 0);
@@ -3820,8 +4043,6 @@ pub const H2FrameParser = struct {
             .include_value = true,
         }).init(globalObject, headers_obj);
         defer iter.deinit();
-        var header_count: u32 = 0;
-
         var single_value_headers: [SingleValueHeaders.keys().len]bool = undefined;
         @memset(&single_value_headers, false);
 
@@ -3835,23 +4056,6 @@ pub const H2FrameParser = struct {
                 defer name_slice.deinit();
                 const name = name_slice.slice();
 
-                defer header_count += 1;
-                if (this.maxHeaderListPairs < header_count) {
-                    this.rejectedStreams += 1;
-                    const stream = this.handleReceivedStreamID(stream_id) orelse {
-                        return jsc.JSValue.jsNumber(-1);
-                    };
-                    if (!stream_ctx_arg.isEmptyOrUndefinedOrNull() and stream_ctx_arg.isObject()) {
-                        stream.setContext(stream_ctx_arg, globalObject);
-                    }
-                    stream.state = .CLOSED;
-                    stream.rstCode = @intFromEnum(ErrorCode.ENHANCE_YOUR_CALM);
-                    const identifier = stream.getIdentifier();
-                    identifier.ensureStillAlive();
-                    stream.freeResources(this, false);
-                    this.dispatchWithExtra(.onStreamError, identifier, jsc.JSValue.jsNumber(stream.rstCode));
-                    return jsc.JSValue.jsNumber(stream_id);
-                }
                 const validated_name = toValidHeaderName(name, name_buffer[0..name.len]) catch {
                     const exception = globalObject.toTypeError(.INVALID_HTTP_TOKEN, "The arguments Header name is invalid. Received \"{s}\"", .{name});
                     return globalObject.throwValue(exception);
@@ -3921,7 +4125,10 @@ pub const H2FrameParser = struct {
                         const value = value_slice.slice();
                         log("encode header {s} {s}", .{ validated_name, value });
 
-                        encoded_size += this.encode(buffer, encoded_size, validated_name, value, never_index) catch {
+                        _ = this.encodeHeaderIntoList(&encoded_headers, alloc, validated_name, value, never_index) catch |err| {
+                            if (err == error.OutOfMemory) {
+                                return globalObject.throw("Failed to allocate header buffer", .{});
+                            }
                             const stream = this.handleReceivedStreamID(stream_id) orelse {
                                 return jsc.JSValue.jsNumber(-1);
                             };
@@ -3955,7 +4162,10 @@ pub const H2FrameParser = struct {
                     const value = value_slice.slice();
                     log("encode header {s} {s}", .{ validated_name, value });
 
-                    encoded_size += this.encode(buffer, encoded_size, validated_name, value, never_index) catch {
+                    _ = this.encodeHeaderIntoList(&encoded_headers, alloc, validated_name, value, never_index) catch |err| {
+                        if (err == error.OutOfMemory) {
+                            return globalObject.throw("Failed to allocate header buffer", .{});
+                        }
                         const stream = this.handleReceivedStreamID(stream_id) orelse {
                             return jsc.JSValue.jsNumber(-1);
                         };
@@ -3970,6 +4180,9 @@ pub const H2FrameParser = struct {
                 }
             }
         }
+        const encoded_data = encoded_headers.items;
+        const encoded_size = encoded_data.len;
+
         const stream = this.handleReceivedStreamID(stream_id) orelse {
             return jsc.JSValue.jsNumber(-1);
         };
@@ -4135,40 +4348,131 @@ pub const H2FrameParser = struct {
             return jsc.JSValue.jsNumber(stream_id);
         }
 
-        const padding = stream.getPadding(encoded_size, buffer.len - 1);
-        const payload_size = encoded_size + (if (padding != 0) @as(usize, @intCast(padding)) + 1 else 0);
-        log("padding: {d} size: {d} max_size: {d} payload_size: {d}", .{ padding, encoded_size, buffer.len - 1, payload_size });
-        if (padding != 0) {
-            flags |= @intFromEnum(HeadersFrameFlags.PADDED);
-        }
-        var frame: FrameHeader = .{
-            .type = @intFromEnum(FrameType.HTTP_FRAME_HEADERS),
-            .flags = flags,
-            .streamIdentifier = stream.id,
-            .length = @intCast(payload_size),
-        };
+        // RFC 7540 Section 4.2: SETTINGS_MAX_FRAME_SIZE determines max frame payload (default 16384)
+        const actual_max_frame_size = (this.remoteSettings orelse this.localSettings).maxFrameSize;
+
+        // RFC 7540 Section 6.2: HEADERS frame can include optional PRIORITY (5 bytes)
+        const priority_overhead: usize = if (has_priority) StreamPriority.byteSize else 0;
+
+        // Compute available payload budget for HEADERS frame (before padding is applied)
+        const available_payload = actual_max_frame_size - priority_overhead;
+
+        // RFC 7540 Section 6.10: CONTINUATION frames carry ONLY header block fragments.
+        // Unlike HEADERS frames, CONTINUATION frames CANNOT have padding or priority fields.
+        // When we need CONTINUATION frames, disable padding to keep the logic simple.
+        // Pass available_payload as maxLen so getPadding can apply padding when headers fit in one frame.
+        const padding: u8 = if (encoded_size > available_payload) 0 else stream.getPadding(encoded_size, available_payload);
+        const padding_overhead: usize = if (padding != 0) @as(usize, @intCast(padding)) + 1 else 0;
+
+        // Max payload for HEADERS frame (accounting for priority and padding overhead)
+        const headers_frame_max_payload = available_payload - padding_overhead;
 
         const writer = this.toWriter();
-        _ = frame.write(@TypeOf(writer), writer);
-        //https://datatracker.ietf.org/doc/html/rfc7540#section-6.2
-        if (has_priority) {
-            var stream_identifier: UInt31WithReserved = .{
-                .reserved = exclusive,
-                .uint31 = @intCast(parent),
-            };
 
-            var priority: StreamPriority = .{
-                .streamIdentifier = stream_identifier.toUInt32(),
-                .weight = @intCast(weight),
-            };
+        // Check if we need CONTINUATION frames
+        if (encoded_size <= headers_frame_max_payload) {
+            // Single HEADERS frame - fits in one frame
+            const payload_size = encoded_size + priority_overhead + padding_overhead;
+            log("padding: {d} size: {d} max_size: {d} payload_size: {d}", .{ padding, encoded_size, encoded_data.len, payload_size });
 
-            _ = priority.write(@TypeOf(writer), writer);
+            if (padding != 0) {
+                flags |= @intFromEnum(HeadersFrameFlags.PADDED);
+            }
+
+            var frame: FrameHeader = .{
+                .type = @intFromEnum(FrameType.HTTP_FRAME_HEADERS),
+                .flags = flags,
+                .streamIdentifier = stream.id,
+                .length = @intCast(payload_size),
+            };
+            _ = frame.write(@TypeOf(writer), writer);
+
+            // Write priority data if present
+            if (has_priority) {
+                var stream_identifier: UInt31WithReserved = .{
+                    .reserved = exclusive,
+                    .uint31 = @intCast(parent),
+                };
+                var priority_data: StreamPriority = .{
+                    .streamIdentifier = stream_identifier.toUInt32(),
+                    .weight = @intCast(weight),
+                };
+                _ = priority_data.write(@TypeOf(writer), writer);
+            }
+
+            // Handle padding
+            if (padding != 0) {
+                // Need extra capacity for padding length byte and padding bytes
+                encoded_headers.ensureTotalCapacity(alloc, encoded_size + padding_overhead) catch {
+                    return globalObject.throw("Failed to allocate padding buffer", .{});
+                };
+                const buffer = encoded_headers.allocatedSlice();
+                bun.memmove(buffer[1..][0..encoded_size], buffer[0..encoded_size]);
+                buffer[0] = padding;
+                _ = writer.write(buffer[0 .. encoded_size + padding_overhead]) catch 0;
+            } else {
+                _ = writer.write(encoded_data) catch 0;
+            }
+        } else {
+            // RFC 7540 Section 6.2 & 6.10: Header blocks exceeding MAX_FRAME_SIZE must be split
+            // into HEADERS frame followed by one or more CONTINUATION frames.
+            // - HEADERS frame without END_HEADERS flag indicates more frames follow
+            // - CONTINUATION frames carry remaining header block fragments
+            // - Last frame (HEADERS or CONTINUATION) must have END_HEADERS flag set
+            // - All frames must have the same stream identifier
+            // - No other frames can be interleaved on this stream until END_HEADERS
+            log("Using CONTINUATION frames: encoded_size={d} max_frame_payload={d}", .{ encoded_size, actual_max_frame_size });
+
+            // RFC 7540 Section 6.2: First chunk goes in HEADERS frame (without END_HEADERS flag)
+            // HEADERS frame can carry PRIORITY but CONTINUATION frames cannot.
+            const first_chunk_size = actual_max_frame_size - priority_overhead;
+            const headers_flags = flags & ~@as(u8, @intFromEnum(HeadersFrameFlags.END_HEADERS));
+
+            var headers_frame: FrameHeader = .{
+                .type = @intFromEnum(FrameType.HTTP_FRAME_HEADERS),
+                .flags = headers_flags | (if (has_priority) @intFromEnum(HeadersFrameFlags.PRIORITY) else 0),
+                .streamIdentifier = stream.id,
+                .length = @intCast(first_chunk_size + priority_overhead),
+            };
+            _ = headers_frame.write(@TypeOf(writer), writer);
+
+            // Write priority data if present (only in HEADERS frame, not CONTINUATION)
+            if (has_priority) {
+                var stream_identifier: UInt31WithReserved = .{
+                    .reserved = exclusive,
+                    .uint31 = @intCast(parent),
+                };
+                var priority_data: StreamPriority = .{
+                    .streamIdentifier = stream_identifier.toUInt32(),
+                    .weight = @intCast(weight),
+                };
+                _ = priority_data.write(@TypeOf(writer), writer);
+            }
+
+            // Write first chunk of header block fragment
+            _ = writer.write(encoded_data[0..first_chunk_size]) catch 0;
+
+            // RFC 7540 Section 6.10: CONTINUATION frames carry remaining header block fragments.
+            // CONTINUATION frame format: just frame header + header block fragment (no padding, no priority)
+            var offset: usize = first_chunk_size;
+            while (offset < encoded_size) {
+                const remaining = encoded_size - offset;
+                const chunk_size = @min(remaining, actual_max_frame_size);
+                const is_last = (offset + chunk_size >= encoded_size);
+
+                // RFC 7540 Section 6.10: END_HEADERS flag must be set on the last frame
+                var cont_frame: FrameHeader = .{
+                    .type = @intFromEnum(FrameType.HTTP_FRAME_CONTINUATION),
+                    .flags = if (is_last) @intFromEnum(HeadersFrameFlags.END_HEADERS) else 0,
+                    .streamIdentifier = stream.id,
+                    .length = @intCast(chunk_size),
+                };
+                _ = cont_frame.write(@TypeOf(writer), writer);
+                _ = writer.write(encoded_data[offset..][0..chunk_size]) catch 0;
+
+                offset += chunk_size;
+            }
         }
-        if (padding != 0) {
-            bun.memmove(buffer[1..][0..encoded_size], buffer[0..encoded_size]);
-            buffer[0] = padding;
-        }
-        _ = writer.write(buffer[0..payload_size]) catch 0;
 
         if (end_stream) {
             stream.endAfterHeaders = true;

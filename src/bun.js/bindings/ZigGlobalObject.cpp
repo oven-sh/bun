@@ -307,6 +307,12 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             JSC::Options::useJITCage() = false;
             JSC::Options::useShadowRealm() = true;
             JSC::Options::useV8DateParser() = true;
+            // Use polling traps (checking m_trapBits) instead of signal-based traps
+            // (InvalidationPoint + Mach exceptions) in DFG/FTL. Polling is checked at
+            // every loop back-edge and is 100% reliable for delivering requestStopAll
+            // interrupts (needed for runtime inspector activation via SIGUSR1).
+            // Without this, signal-based delivery is ~94% reliable.
+            JSC::Options::usePollingTraps() = true;
             JSC::Options::useMathSumPreciseMethod() = true;
             JSC::Options::evalMode() = evalMode;
             JSC::Options::heapGrowthSteepnessFactor() = 1.0;

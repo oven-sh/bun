@@ -512,6 +512,124 @@ describe("@types/bun integration test", () => {
     });
   });
 
+  describe("core-js type compatibility", () => {
+    // Tests that bun-types are compatible with core-js type patterns.
+    // core-js defines ponyfill constructors that extend global built-in
+    // interfaces, and these will fail with TS2430 if bun-types deviates
+    // from the spec signatures.
+    typeTest("bun-types signatures are compatible with core-js extends pattern", {
+      files: {
+        "core-js-extends-check.ts": `
+          // The resolve parameter must be non-optional (required) per the spec.
+          // core-js's CoreJSPromiseConstructor extends PromiseConstructor with
+          // this signature — if bun-types makes resolve optional, this fails with TS2430.
+          interface StrictPromiseWithResolvers<T> {
+            promise: Promise<T>;
+            resolve: (value: T | PromiseLike<T>) => void;
+            reject: (reason?: any) => void;
+          }
+          interface StrictPromiseConstructor extends PromiseConstructor {
+            withResolvers<T>(): StrictPromiseWithResolvers<T>;
+          }
+
+          // ArrayBuffer.resize must return void per the spec.
+          // If bun-types returns ArrayBuffer instead, this fails with TS2430.
+          interface StrictArrayBuffer extends ArrayBuffer {
+            resize(newByteLength?: number): void;
+          }
+        `,
+      },
+      emptyInterfaces: expectedEmptyInterfacesWhenNoDOM,
+      diagnostics: diagnostics => {
+        const relevantDiagnostics = diagnostics.filter(d => d.line?.startsWith("core-js-extends-check.ts"));
+        expect(relevantDiagnostics).toEqual([]);
+      },
+    });
+
+    // Intentionally fetches type definitions from the upstream core-js v4-types
+    // branch at test time rather than vendoring them, so we always test against
+    // the latest core-js types and catch new incompatibilities early.
+    // https://github.com/zloirock/core-js/tree/v4-types/packages/core-js-types
+    const CORE_JS_TYPES_TREE_API = "https://api.github.com/repos/zloirock/core-js/git/trees/v4-types?recursive=1";
+    const CORE_JS_TYPES_RAW_BASE = "https://raw.githubusercontent.com/zloirock/core-js/v4-types";
+    const CORE_JS_TYPES_PREFIX = "packages/core-js-types/src/base/";
+
+    async function fetchWithRetry(url: string, retries = 3): Promise<Response> {
+      for (let i = 0; i < retries; i++) {
+        try {
+          const response = await fetch(url);
+          if (response.ok) return response;
+          if (i === retries - 1) throw new Error(`Failed to fetch ${url}: ${response.status}`);
+        } catch (error) {
+          if (i === retries - 1) throw error;
+        }
+        await Bun.sleep(1000 * (i + 1));
+      }
+      throw new Error("unreachable");
+    }
+
+    test("no conflicts with upstream core-js-types", async () => {
+      // Discover all non-pure .d.ts files from the core-js-types package
+      const treeResponse = await fetchWithRetry(CORE_JS_TYPES_TREE_API);
+      const tree: { tree: { path: string; type: string }[] } = await treeResponse.json();
+
+      const typesFiles = tree.tree
+        .filter(
+          entry =>
+            entry.type === "blob" &&
+            entry.path.startsWith(CORE_JS_TYPES_PREFIX) &&
+            entry.path.endsWith(".d.ts") &&
+            !entry.path.includes("/pure/"),
+        )
+        .map(entry => entry.path.slice(CORE_JS_TYPES_PREFIX.length));
+
+      if (typesFiles.length === 0) throw new Error("No core-js type files found — API may have changed");
+
+      // Fetch all files in parallel
+      const files: Record<string, string> = {};
+      await Promise.all(
+        typesFiles.map(async file => {
+          const response = await fetchWithRetry(`${CORE_JS_TYPES_RAW_BASE}/${CORE_JS_TYPES_PREFIX}${file}`);
+          files[`core-js-types/${file}`] = await response.text();
+        }),
+      );
+
+      files["core-js-compat.ts"] =
+        typesFiles.map(file => `/// <reference path="core-js-types/${file}" />`).join("\n") +
+        `
+        // Verify usage works with both bun-types and core-js-types loaded
+        const buf = new ArrayBuffer(1024, { maxByteLength: 2048 });
+        buf.resize(2048);
+
+        const { promise, resolve, reject } = Promise.withResolvers<string>();
+        resolve("hello");
+      `;
+
+      const fixtureDir = await createIsolatedFixture();
+      const { diagnostics, emptyInterfaces } = await diagnose(fixtureDir, { files });
+
+      // core-js declares some DOM interfaces (Element, Node, etc.) for
+      // iterable-dom-collections — these are empty without lib.dom.d.ts.
+      // Just verify we're a superset of the base expected empty interfaces.
+      for (const name of expectedEmptyInterfacesWhenNoDOM) {
+        expect(emptyInterfaces).toContain(name);
+      }
+
+      // Filter out core-js internal issues (missing cross-references, circular types)
+      // that aren't caused by bun-types incompatibility.
+      const ignoredCodes = new Set([
+        2688, // "Cannot find type definition file" — core-js cross-references between its own files
+        2502, // "referenced directly or indirectly in its own type annotation" — circular refs in core-js
+      ]);
+      const relevantDiagnostics = diagnostics.filter(
+        d =>
+          !ignoredCodes.has(d.code) &&
+          (d.line === null || d.line.startsWith("core-js-compat.ts") || d.line.startsWith("core-js-types/")),
+      );
+      expect(relevantDiagnostics).toEqual([]);
+    });
+  });
+
   describe("lib configuration", () => {
     typeTest("checks with no lib at all", {
       options: {

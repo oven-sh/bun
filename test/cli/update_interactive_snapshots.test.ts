@@ -51,7 +51,7 @@ describe("bun update --interactive snapshots", () => {
     ]);
 
     // Replace version numbers and paths to avoid flakiness
-    const normalizedOutput = normalizeOutput(stdout);
+    const normalizedOutput = normalizeOutput(stdout, dir);
 
     // The output should show proper column spacing and formatting
     expect(normalizedOutput).toMatchSnapshot("update-interactive-no-crash");
@@ -89,7 +89,7 @@ describe("bun update --interactive snapshots", () => {
       proc.exited,
     ]);
 
-    const normalizedOutput = normalizeOutput(stdout);
+    const normalizedOutput = normalizeOutput(stdout, dir);
 
     // Should not crash
     expect(normalizedOutput).toMatchSnapshot("update-interactive-long-names");
@@ -126,7 +126,7 @@ describe("bun update --interactive snapshots", () => {
       proc.exited,
     ]);
 
-    const normalizedOutput = normalizeOutput(stdout);
+    const normalizedOutput = normalizeOutput(stdout, dir);
 
     // Should not crash
     expect(normalizedOutput).toMatchSnapshot("update-interactive-complex-versions");
@@ -186,7 +186,7 @@ describe("bun update --interactive messages", () => {
     ]);
 
     // Strip ANSI codes so includes() checks aren't broken by colored CLI output
-    const combinedOutput = normalizeOutput(stdout + stderr);
+    const combinedOutput = normalizeOutput(stdout + stderr, dir);
 
     // The output should contain one of these valid responses:
     // 1. "All packages are up to date" - no updates available at all
@@ -206,9 +206,9 @@ describe("bun update --interactive messages", () => {
   });
 });
 
-function normalizeOutput(output: string): string {
+function normalizeOutput(output: string, dir?: string): string {
   // First apply the standard normalization from harness
-  let normalized = normalizeBunSnapshot(output);
+  let normalized = normalizeBunSnapshot(output, dir);
 
   // Remove Bun version to avoid test flakiness
   normalized = normalized.replace(/bun update --interactive v\d+\.\d+\.\d+[^\n]*/g, "bun update --interactive vX.X.X");

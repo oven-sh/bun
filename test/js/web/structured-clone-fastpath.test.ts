@@ -668,18 +668,19 @@ describe("Structured Clone Fast Path", () => {
 
   // === Additional DenseArray edge case tests ===
 
-  test("shared object reference in source array produces distinct clones", () => {
+  test("shared object reference in source array preserves identity", () => {
     const shared = { x: 1, y: "hello" };
     const input = [shared, shared, shared];
     const cloned = structuredClone(input);
     expect(cloned).toEqual(input);
-    // Each cloned element should be a distinct object
-    expect(cloned[0]).not.toBe(cloned[1]);
-    expect(cloned[1]).not.toBe(cloned[2]);
-    // Mutating one should not affect others
+    // structuredClone preserves shared references per the HTML spec
+    expect(cloned[0]).toBe(cloned[1]);
+    expect(cloned[1]).toBe(cloned[2]);
+    expect(cloned[0]).not.toBe(shared);
+    // Mutating one should affect all shared references
     cloned[0].x = 999;
-    expect(cloned[1].x).toBe(1);
-    expect(cloned[2].x).toBe(1);
+    expect(cloned[1].x).toBe(999);
+    expect(cloned[2].x).toBe(999);
   });
 
   test("objects with long string property values", () => {

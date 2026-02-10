@@ -5980,6 +5980,7 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
                 elements.reserveInitialCapacity(length);
                 bool ok = true;
                 bool hasObjects = false;
+                HashSet<JSObject*> seenObjects;
 
                 for (unsigned i = 0; i < length; i++) {
                     JSValue elem = data[i].get();
@@ -5998,6 +5999,12 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
                         elements.append(Bun::toCrossThreadShareable(strValue));
                     } else if (elem.isObject()) {
                         auto* obj = elem.getObject();
+                        // Shared references can't be preserved in the fast path,
+                        // fall back to the normal serialization path.
+                        if (!seenObjects.add(obj).isNewEntry) {
+                            ok = false;
+                            break;
+                        }
                         auto* objStructure = obj->structure();
                         if (!isObjectFastPathCandidate(objStructure)) {
                             ok = false;

@@ -20,7 +20,7 @@ test("--bail writes JUnit reporter outfile", async () => {
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const exitCode = await proc.exited;
 
   // The test should fail and bail
   expect(exitCode).not.toBe(0);
@@ -58,7 +58,7 @@ test("--bail writes JUnit reporter outfile with multiple files", async () => {
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const exitCode = await proc.exited;
 
   // The test should fail and bail
   expect(exitCode).not.toBe(0);
@@ -71,6 +71,7 @@ test("--bail writes JUnit reporter outfile with multiple files", async () => {
   expect(xml).toContain("<?xml");
   expect(xml).toContain("<testsuites");
   expect(xml).toContain("</testsuites>");
-  // The passing test from the first file should be recorded
+  // Both the passing and failing tests should be recorded
   expect(xml).toContain("passing test");
+  expect(xml).toContain("another failing test");
 });

@@ -402,6 +402,47 @@ pub const Bunfig = struct {
                         this.ctx.test_options.repeat_count = expr.data.e_number.toU32();
                     }
 
+                    if (test_.get("include")) |expr| {
+                        switch (expr.data) {
+                            .e_string => |str| {
+                                // Reject empty strings
+                                if (str.len() == 0) {
+                                    try this.addError(expr.loc, "include pattern cannot be an empty string");
+                                    return;
+                                }
+                                const pattern = try str.string(allocator);
+                                const patterns = try allocator.alloc(string, 1);
+                                patterns[0] = pattern;
+                                this.ctx.test_options.include = patterns;
+                            },
+                            .e_array => |arr| {
+                                if (arr.items.len == 0) {
+                                    try this.addError(expr.loc, "include array cannot be empty");
+                                    return;
+                                }
+
+                                const patterns = try allocator.alloc(string, arr.items.len);
+                                for (arr.items.slice(), 0..) |item, i| {
+                                    if (item.data != .e_string) {
+                                        try this.addError(item.loc, "include array must contain only strings");
+                                        return;
+                                    }
+                                    // Reject empty strings in array
+                                    if (item.data.e_string.len() == 0) {
+                                        try this.addError(item.loc, "include patterns cannot be empty strings");
+                                        return;
+                                    }
+                                    patterns[i] = try item.data.e_string.string(allocator);
+                                }
+                                this.ctx.test_options.include = patterns;
+                            },
+                            else => {
+                                try this.addError(expr.loc, "include must be a string or array of strings");
+                                return;
+                            },
+                        }
+                    }
+
                     if (test_.get("concurrentTestGlob")) |expr| {
                         switch (expr.data) {
                             .e_string => |str| {

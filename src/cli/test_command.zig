@@ -1447,6 +1447,7 @@ pub const TestCommand = struct {
 
         var scanner = bun.handleOom(Scanner.init(ctx.allocator, &vm.transpiler, ctx.positionals.len));
         defer scanner.deinit();
+        scanner.#include_patterns = ctx.test_options.include;
         const has_relative_path = for (ctx.positionals) |arg| {
             if (std.fs.path.isAbsolute(arg) or
                 strings.startsWith(arg, "./") or
@@ -1585,20 +1586,35 @@ pub const TestCommand = struct {
         if (test_files.len == 0) {
             failed_to_find_any_tests = true;
 
+            const has_custom_include = ctx.test_options.include != null;
+
             // "bun test" - positionals[0] == "test"
             // Therefore positionals starts at [1].
             if (ctx.positionals.len < 2) {
                 if (Output.isAIAgent()) {
                     // Be very clear to ai.
-                    Output.errGeneric("0 test files matching **{{.test,.spec,_test_,_spec_}}.{{js,ts,jsx,tsx}} in --cwd={f}", .{bun.fmt.quote(bun.fs.FileSystem.instance.top_level_dir)});
+                    if (has_custom_include) {
+                        Output.errGeneric("0 test files matching custom include patterns in --cwd={f}", .{bun.fmt.quote(bun.fs.FileSystem.instance.top_level_dir)});
+                    } else {
+                        Output.errGeneric("0 test files matching **{{.test,.spec,_test_,_spec_}}.{{js,ts,jsx,tsx}} in --cwd={f}", .{bun.fmt.quote(bun.fs.FileSystem.instance.top_level_dir)});
+                    }
                 } else {
                     // Be friendlier to humans.
-                    Output.prettyErrorln(
-                        \\<yellow>No tests found!<r>
-                        \\
-                        \\Tests need ".test", "_test_", ".spec" or "_spec_" in the filename <d>(ex: "MyApp.test.ts")<r>
-                        \\
-                    , .{});
+                    if (has_custom_include) {
+                        Output.prettyErrorln(
+                            \\<yellow>No tests found!<r>
+                            \\
+                            \\No files matched the custom include patterns in bunfig.toml
+                            \\
+                        , .{});
+                    } else {
+                        Output.prettyErrorln(
+                            \\<yellow>No tests found!<r>
+                            \\
+                            \\Tests need ".test", "_test_", ".spec" or "_spec_" in the filename <d>(ex: "MyApp.test.ts")<r>
+                            \\
+                        , .{});
+                    }
                 }
             } else {
                 if (Output.isAIAgent()) {
@@ -1624,11 +1640,19 @@ pub const TestCommand = struct {
                     Output.printStartEnd(ctx.start_time, std.time.nanoTimestamp());
                 }
 
-                Output.prettyErrorln(
-                    \\
-                    \\
-                    \\<blue>note<r><d>:<r> Tests need ".test", "_test_", ".spec" or "_spec_" in the filename <d>(ex: "MyApp.test.ts")<r>
-                , .{});
+                if (has_custom_include) {
+                    Output.prettyErrorln(
+                        \\
+                        \\
+                        \\<blue>note<r><d>:<r> Using custom include patterns from bunfig.toml
+                    , .{});
+                } else {
+                    Output.prettyErrorln(
+                        \\
+                        \\
+                        \\<blue>note<r><d>:<r> Tests need ".test", "_test_", ".spec" or "_spec_" in the filename <d>(ex: "MyApp.test.ts")<r>
+                    , .{});
+                }
 
                 // print a helpful note
                 if (has_file_like) |i| {

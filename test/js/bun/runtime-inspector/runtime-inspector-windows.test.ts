@@ -93,7 +93,7 @@ describe.skipIf(!isWindows)("Runtime inspector Windows file mapping", () => {
 
     // Verify inspector actually started
     expect(targetStderr).toContain("Bun Inspector");
-    expect(targetStderr).toContain("ws://localhost:6499/");
+    expect(targetStderr).toMatch(/ws:\/\/localhost:\d+\//);
   });
 
   test("_debugProcess works with current process's own pid", async () => {

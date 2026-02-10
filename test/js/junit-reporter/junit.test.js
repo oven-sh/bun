@@ -336,7 +336,7 @@ describe("junit reporter", () => {
     });
 
     const junitPath = `${tmpDir}/junit.xml`;
-    const proc = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile", junitPath], {
+    await using proc = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile", junitPath], {
       cwd: tmpDir,
       env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
       stdout: "pipe",

@@ -409,6 +409,9 @@ pub fn parseArguments(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame
             result.options.retry = runner.test_options.retry;
         }
     }
+    if ((result.options.retry orelse 0) != 0 and result.options.repeats != 0) {
+        return globalThis.throwPretty("{f}(): Cannot set both retry and repeats", .{signature});
+    }
 
     const default_timeout_ms: ?u32 = if (bun.jsc.Jest.Jest.runner) |runner| if (runner.default_timeout_ms != 0) runner.default_timeout_ms else null else null;
     const override_timeout_ms: ?u32 = if (bun.jsc.Jest.Jest.runner) |runner| if (runner.default_timeout_override != std.math.maxInt(u32)) runner.default_timeout_override else null else null;

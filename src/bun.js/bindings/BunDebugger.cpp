@@ -25,6 +25,11 @@ namespace Bun {
 using namespace JSC;
 using namespace WebCore;
 
+// True when the inspector was activated at runtime (SIGUSR1 / process._debugProcess),
+// as opposed to --inspect at startup. When true, connect() uses requestStopAll to
+// interrupt busy JS execution. When false (--inspect), the event loop handles delivery.
+static std::atomic<bool> runtimeInspectorActivated { false };
+
 class BunInspectorConnection;
 
 static WebCore::ScriptExecutionContext* debuggerScriptExecutionContext = nullptr;
@@ -174,15 +179,15 @@ public:
             }
         });
 
-        // Interrupt busy JS execution so the StopTheWorld callback can process
-        // this connection even if the event loop isn't running (e.g., while(true){}).
-        // The deferred call via postTaskConcurrently retries after the debugger VM
-        // participates in the first STW (in case the synchronous call arrives while
-        // the first STW is still in progress).
-        VMManager::requestStopAll(VMManager::StopReason::JSDebugger);
-        debuggerScriptExecutionContext->postTaskConcurrently([](ScriptExecutionContext&) {
+        // Only use StopTheWorld for runtime-activated inspector (SIGUSR1 path)
+        // where the event loop may not be running (e.g., while(true){}).
+        // For --inspect, the event loop delivers doConnect via ensureOnContextThread above.
+        if (runtimeInspectorActivated.load()) {
             VMManager::requestStopAll(VMManager::StopReason::JSDebugger);
-        });
+            debuggerScriptExecutionContext->postTaskConcurrently([](ScriptExecutionContext&) {
+                VMManager::requestStopAll(VMManager::StopReason::JSDebugger);
+            });
+        }
     }
 
     void disconnect()
@@ -862,7 +867,8 @@ JSC::StopTheWorldStatus Bun__jsDebuggerCallback(JSC::VM& vm, JSC::StopTheWorldEv
         return STW_CONTINUE();
 
     // Phase 1: Activate inspector if requested (SIGUSR1 handler sets a flag)
-    Bun__activateInspector();
+    if (Bun__activateInspector())
+        Bun::runtimeInspectorActivated.store(true);
 
     // Phase 2: Process pending connections for THIS VM.
     // doConnect must run on the connection's owning VM thread.

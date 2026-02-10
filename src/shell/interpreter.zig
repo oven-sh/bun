@@ -1154,7 +1154,11 @@ pub const Interpreter = struct {
         _ = callframe; // autofix
 
         if (this.setupIOBeforeRun().asErr()) |e| {
-            defer this.#deinitFromExec();
+            // Clean up resources but let the GC finalizer handle deallocation.
+            // Using #deinitFromExec() here would free the interpreter immediately,
+            // causing a use-after-free when GC later calls deinitFromFinalizer().
+            this.keep_alive.disable();
+            this.#derefRootShellAndIOIfNeeded(true);
             const shellerr = bun.shell.ShellErr.newSys(e);
             return try throwShellErr(&shellerr, .{ .js = globalThis.bunVM().event_loop });
         }

@@ -129,15 +129,8 @@ public:
         this->hasEverConnected = true;
         globalObject->inspectorController().connectFrontend(*this, true, false); // waitingForConnection
 
-        // Pre-attach the debugger so that notifyNeedDebuggerBreak() can trigger a pause
-        // for CDP message dispatch. This is needed when the event loop isn't running
-        // (e.g., while(true) {}). The debugger would normally be attached by the
-        // Debugger.enable CDP command, but we can't dispatch CDP messages during
-        // StopTheWorld (JSC's JSON parser needs GC heap operations that conflict with STW).
-        // By attaching early, we enable the pause mechanism so messages can be
-        // dispatched in the normal runWhilePaused loop after STW completes.
-        // Pre-attach the debugger so that notifyNeedDebuggerBreak() can trigger a pause
-        // for CDP message dispatch. This only fires on the SIGUSR1 path because --inspect
+        // Pre-attach the debugger so that schedulePauseAtNextOpportunity() can work
+        // during the STW callback. This only fires on the SIGUSR1 path because --inspect
         // and --inspect-wait already have the debugger attached by JSC at startup
         // (globalObject->debugger() is non-null), so the condition is false for those paths.
         auto* controllerDebugger = globalObject->inspectorController().debugger();

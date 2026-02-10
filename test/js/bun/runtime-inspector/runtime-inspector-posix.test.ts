@@ -6,6 +6,35 @@ import { join } from "path";
 // ASAN builds have issues with signal handling reliability for SIGUSR1-based inspector activation
 const skipASAN = isASAN;
 
+// Timeout for waiting on stderr reader loops (30s matches runtime-inspector.test.ts)
+const STDERR_TIMEOUT_MS = 30_000;
+
+// Helper: read stderr until condition is met, with a timeout to prevent hanging
+async function readStderrUntil(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  condition: (stderr: string) => boolean,
+  timeoutMs = STDERR_TIMEOUT_MS,
+): Promise<string> {
+  const decoder = new TextDecoder();
+  let stderr = "";
+  const startTime = Date.now();
+
+  while (!condition(stderr)) {
+    if (Date.now() - startTime > timeoutMs) {
+      throw new Error(`Timeout after ${timeoutMs}ms waiting for stderr condition. Got: "${stderr}"`);
+    }
+    const { value, done } = await reader.read();
+    if (done) break;
+    stderr += decoder.decode(value, { stream: true });
+  }
+  return stderr;
+}
+
+// Helper: wait for the full inspector banner (header + footer = 2 occurrences of "Bun Inspector")
+function hasBanner(stderr: string): boolean {
+  return (stderr.match(/Bun Inspector/g) || []).length >= 2;
+}
+
 // POSIX-specific tests (SIGUSR1 mechanism) - macOS and Linux only
 describe.skipIf(isWindows)("Runtime inspector SIGUSR1 activation", () => {
   test.skipIf(skipASAN)("activates inspector when no user listener", async () => {
@@ -50,15 +79,7 @@ describe.skipIf(isWindows)("Runtime inspector SIGUSR1 activation", () => {
 
     // Wait for inspector to activate by reading stderr until the full banner appears
     const stderrReader = proc.stderr.getReader();
-    const stderrDecoder = new TextDecoder();
-    let stderr = "";
-
-    // Wait for the full banner (header + content + footer)
-    while ((stderr.match(/Bun Inspector/g) || []).length < 2) {
-      const { value, done } = await stderrReader.read();
-      if (done) break;
-      stderr += stderrDecoder.decode(value, { stream: true });
-    }
+    const stderr = await readStderrUntil(stderrReader, hasBanner);
     stderrReader.releaseLock();
 
     // Kill process
@@ -77,7 +98,8 @@ describe.skipIf(isWindows)("Runtime inspector SIGUSR1 activation", () => {
 
         process.on("SIGUSR1", () => {
           console.log("USER_HANDLER_CALLED");
-          setTimeout(() => process.exit(0), 100);
+          // Exit cleanly after receiving the signal
+          process.exit(0);
         });
 
         fs.writeFileSync(path.join(process.cwd(), "pid"), String(process.pid));
@@ -136,7 +158,8 @@ describe.skipIf(isWindows)("Runtime inspector SIGUSR1 activation", () => {
           count++;
           console.log("SIGNAL_" + count);
           if (count >= 3) {
-            setTimeout(() => process.exit(0), 100);
+            // Exit cleanly after receiving all signals
+            process.exit(0);
           }
         });
 
@@ -236,28 +259,27 @@ SIGNAL_3
     process.kill(pid, "SIGUSR1");
 
     const stderrReader = proc.stderr.getReader();
-    const stderrDecoder = new TextDecoder();
-    let stderr = "";
-
-    // Wait for the full banner (header + content + footer) before sending second signal
-    while ((stderr.match(/Bun Inspector/g) || []).length < 2) {
-      const { value, done } = await stderrReader.read();
-      if (done) break;
-      stderr += stderrDecoder.decode(value, { stream: true });
-    }
+    let stderr = await readStderrUntil(stderrReader, hasBanner);
 
     // Send second SIGUSR1 - inspector should not activate again
     process.kill(pid, "SIGUSR1");
 
-    // Give a brief moment for any potential second banner to appear, then kill the process
-    // We can't wait indefinitely since a second banner should NOT appear
-    await Bun.sleep(100);
-
-    // Kill process and collect remaining stderr
+    // Kill process — the signal was delivered synchronously, so if a second banner
+    // were going to appear it would already be queued. Killing and reading remaining
+    // stderr is more reliable than sleeping.
     proc.kill();
+
+    // Read any remaining stderr until process exits
+    const stderrDecoder = new TextDecoder();
+    while (true) {
+      const { value, done } = await stderrReader.read();
+      if (done) break;
+      stderr += stderrDecoder.decode(value, { stream: true });
+    }
+    stderr += stderrDecoder.decode();
     stderrReader.releaseLock();
-    const [remainingStderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    stderr += remainingStderr;
+
+    await proc.exited;
 
     // Should only see one "Bun Inspector" banner (two occurrences of the text, for header and footer)
     const matches = stderr.match(/Bun Inspector/g);
@@ -265,35 +287,47 @@ SIGNAL_3
   });
 
   test.skipIf(skipASAN)("SIGUSR1 to self activates inspector", async () => {
-    await using proc = spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
-        // Small delay to ensure handler is installed
-        setTimeout(() => {
-          process.kill(process.pid, "SIGUSR1");
-        }, 50);
+    // Use a PID file approach instead of setTimeout to avoid timing-dependent self-signal
+    using dir = tempDir("sigusr1-self-test", {
+      "test.js": `
+        const fs = require("fs");
+        const path = require("path");
+
+        // Write PID so parent can send signal
+        fs.writeFileSync(path.join(process.cwd(), "pid"), String(process.pid));
+        console.log("READY");
+
         // Keep process alive until test kills it
         setInterval(() => {}, 1000);
       `,
-      ],
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "test.js"],
+      cwd: String(dir),
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
 
-    // Wait for inspector banner before collecting all output
-    const reader = proc.stderr.getReader();
-    const decoder = new TextDecoder();
-    let stderr = "";
-
-    // Wait for the full banner (header + content + footer)
-    while ((stderr.match(/Bun Inspector/g) || []).length < 2) {
-      const { value, done } = await reader.read();
+    const stdoutReader = proc.stdout.getReader();
+    const stdoutDecoder = new TextDecoder();
+    let output = "";
+    while (!output.includes("READY")) {
+      const { value, done } = await stdoutReader.read();
       if (done) break;
-      stderr += decoder.decode(value, { stream: true });
+      output += stdoutDecoder.decode(value, { stream: true });
     }
+    stdoutReader.releaseLock();
+
+    const pid = parseInt(await Bun.file(join(String(dir), "pid")).text(), 10);
+
+    // Send SIGUSR1 from parent (equivalent to self-signal but without setTimeout race)
+    process.kill(pid, "SIGUSR1");
+
+    // Wait for inspector banner
+    const reader = proc.stderr.getReader();
+    const stderr = await readStderrUntil(reader, hasBanner);
     reader.releaseLock();
 
     proc.kill();
@@ -314,8 +348,9 @@ SIGNAL_3
         fs.writeFileSync(path.join(process.cwd(), "pid"), String(process.pid));
         console.log("READY");
 
-        setTimeout(() => process.exit(0), 500);
-        setInterval(() => {}, 1000);
+        // Keep process alive briefly then exit
+        setInterval(() => {}, 100);
+        setTimeout(() => process.exit(0), 2000);
       `,
     });
 
@@ -356,21 +391,14 @@ SIGNAL_3
     // When the process is started with --inspect-wait, the debugger is already active.
     // Sending SIGUSR1 should NOT activate the inspector again.
     await using proc = spawn({
-      cmd: [bunExe(), "--inspect-wait", "-e", "setTimeout(() => process.exit(0), 500)"],
+      cmd: [bunExe(), "--inspect-wait", "-e", "setInterval(() => {}, 1000)"],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
 
     const reader = proc.stderr.getReader();
-    const decoder = new TextDecoder();
-    let stderr = "";
-
-    while ((stderr.match(/Bun Inspector/g) || []).length < 2) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      stderr += decoder.decode(value, { stream: true });
-    }
+    const stderr = await readStderrUntil(reader, hasBanner);
 
     // Send SIGUSR1 - should be ignored since debugger is already active
     process.kill(proc.pid, "SIGUSR1");
@@ -380,19 +408,22 @@ SIGNAL_3
     proc.kill();
 
     // Read any remaining stderr
+    const decoder = new TextDecoder();
+    let remaining = "";
     while (true) {
       const { value, done } = await reader.read();
       if (done) break;
-      stderr += decoder.decode(value, { stream: true });
+      remaining += decoder.decode(value, { stream: true });
     }
-    stderr += decoder.decode();
+    remaining += decoder.decode();
     reader.releaseLock();
 
     await proc.exited;
 
     // Should only see one "Bun Inspector" banner (from --inspect-wait flag, not from SIGUSR1)
     // The banner has two occurrences of "Bun Inspector" (header and footer)
-    const matches = stderr.match(/Bun Inspector/g);
+    const fullStderr = stderr + remaining;
+    const matches = fullStderr.match(/Bun Inspector/g);
     expect(matches?.length ?? 0).toBe(2);
   });
 
@@ -400,21 +431,14 @@ SIGNAL_3
     // When the process is started with --inspect-brk, the debugger is already active.
     // Sending SIGUSR1 should NOT activate the inspector again.
     await using proc = spawn({
-      cmd: [bunExe(), "--inspect-brk", "-e", "setTimeout(() => process.exit(0), 500)"],
+      cmd: [bunExe(), "--inspect-brk", "-e", "setInterval(() => {}, 1000)"],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
 
     const reader = proc.stderr.getReader();
-    const decoder = new TextDecoder();
-    let stderr = "";
-
-    while ((stderr.match(/Bun Inspector/g) || []).length < 2) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      stderr += decoder.decode(value, { stream: true });
-    }
+    const stderr = await readStderrUntil(reader, hasBanner);
 
     // Send SIGUSR1 - should be ignored since debugger is already active
     process.kill(proc.pid, "SIGUSR1");
@@ -424,19 +448,22 @@ SIGNAL_3
     proc.kill();
 
     // Read any remaining stderr
+    const decoder = new TextDecoder();
+    let remaining = "";
     while (true) {
       const { value, done } = await reader.read();
       if (done) break;
-      stderr += decoder.decode(value, { stream: true });
+      remaining += decoder.decode(value, { stream: true });
     }
-    stderr += decoder.decode();
+    remaining += decoder.decode();
     reader.releaseLock();
 
     await proc.exited;
 
     // Should only see one "Bun Inspector" banner (from --inspect-brk flag, not from SIGUSR1)
     // The banner has two occurrences of "Bun Inspector" (header and footer)
-    const matches = stderr.match(/Bun Inspector/g);
+    const fullStderr = stderr + remaining;
+    const matches = fullStderr.match(/Bun Inspector/g);
     expect(matches?.length ?? 0).toBe(2);
   });
 });

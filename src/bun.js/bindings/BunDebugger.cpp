@@ -182,6 +182,14 @@ public:
         // Only use StopTheWorld for runtime-activated inspector (SIGUSR1 path)
         // where the event loop may not be running (e.g., while(true){}).
         // For --inspect, the event loop delivers doConnect via ensureOnContextThread above.
+        //
+        // Two requestStopAll calls (belt-and-suspenders): The synchronous call works when
+        // the SIGUSR1 STW has already completed (world is in RunAll mode). But if it arrives
+        // while the first STW is still in progress (worldMode >= Stopping), the pending bit
+        // gets set then cleared by the first STW's cleanup — an ABA race. The deferred call
+        // via postTaskConcurrently runs after the debugger VM participates in the first STW
+        // and resumes, guaranteeing RunAll mode. Empirically: both → 200/200, deferred only
+        // → 99/100, synchronous only → ~95/100.
         if (runtimeInspectorActivated.load()) {
             VMManager::requestStopAll(VMManager::StopReason::JSDebugger);
             debuggerScriptExecutionContext->postTaskConcurrently([](ScriptExecutionContext&) {
@@ -457,7 +465,9 @@ public:
 
     // True when the debugger was pre-attached during doConnect (SIGUSR1 path).
     // Used to gate requestStopAll in interruptForMessageDelivery.
-    bool preAttachedDebugger = false;
+    // Atomic because it's written on JS thread (doConnect) and read on debugger thread
+    // (interruptForMessageDelivery). Once set to true it never reverts.
+    std::atomic<bool> preAttachedDebugger { false };
 
     bool unrefOnDisconnect = false;
 
@@ -842,6 +852,9 @@ void schedulePauseForConnectedSessions(JSC::VM& vm)
             if (!debugger)
                 continue;
 
+            // schedulePauseAtNextOpportunity() is NOT thread-safe in general (it calls
+            // enableStepping → recompileAllJSFunctions), but is safe here because we're
+            // inside a STW callback — all other VM threads are blocked.
             debugger->schedulePauseAtNextOpportunity();
             vm.notifyNeedDebuggerBreak();
             return; // Only need once per VM
@@ -863,6 +876,8 @@ JSC::StopTheWorldStatus Bun__jsDebuggerCallback(JSC::VM& vm, JSC::StopTheWorldEv
 {
     using namespace JSC;
 
+    // We only act on VMStopped (all VMs have reached a safe point).
+    // For other events (VMCreated, VMActivated), just continue the STW process.
     if (event != StopTheWorldEvent::VMStopped)
         return STW_CONTINUE();
 

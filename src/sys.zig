@@ -4092,6 +4092,12 @@ pub fn copyFileZSlowWithHandle(in_handle: bun.FileDescriptor, to_dir: bun.FileDe
             _ = std.os.linux.fallocate(out_handle.cast(), 0, 0, @intCast(stat_.size));
         }
 
+        // Seek input to beginning — the caller may have written to this fd,
+        // leaving the file offset at EOF. copy_file_range / sendfile / read
+        // all use the current offset when called with null offsets.
+        // Ignore errors: the fd may be non-seekable (e.g. a pipe).
+        _ = setFileOffset(in_handle, 0);
+
         switch (bun.copyFile(in_handle, out_handle)) {
             .err => |e| return .{ .err = e },
             .result => {},

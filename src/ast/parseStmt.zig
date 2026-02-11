@@ -445,7 +445,7 @@ pub fn ParseStmt(
         }
         fn t_at(p: *P, opts: *ParseStatementOptions) anyerror!Stmt {
             // Parse decorators before class statements, which are potentially exported
-            if (is_typescript_enabled) {
+            if (is_typescript_enabled or p.options.features.standard_decorators) {
                 const scope_index = p.scopes_in_order.items.len;
                 const ts_decorators = try p.parseTypeScriptDecorators();
 
@@ -473,7 +473,10 @@ pub fn ParseStmt(
                 // "@decorator export declare abstract class Foo {}"
                 // "@decorator export default class Foo {}"
                 // "@decorator export default abstract class Foo {}"
-                if (p.lexer.token != .t_class and p.lexer.token != .t_export and !p.lexer.isContextualKeyword("abstract") and !p.lexer.isContextualKeyword("declare")) {
+                if (p.lexer.token != .t_class and p.lexer.token != .t_export and
+                    !(is_typescript_enabled and p.lexer.isContextualKeyword("abstract")) and
+                    !(is_typescript_enabled and p.lexer.isContextualKeyword("declare")))
+                {
                     try p.lexer.expected(.t_class);
                 }
 

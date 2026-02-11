@@ -3864,7 +3864,7 @@ pub const BundleV2 = struct {
                 if (loader.shouldCopyForBundling()) {
                     var additional_files: *BabyList(AdditionalFile) = &graph.input_files.items(.additional_files)[importer_source_index];
                     bun.handleOom(additional_files.append(this.allocator(), .{ .source_index = new_task.source_index.get() }));
-                    new_input_file.side_effects = _resolver.SideEffects.no_side_effects__pure_data;
+                    graph.input_files.items(.side_effects)[new_task.source_index.get()] = _resolver.SideEffects.no_side_effects__pure_data;
                     graph.estimated_file_loader_count += 1;
                 }
 
@@ -3919,7 +3919,7 @@ pub const BundleV2 = struct {
         const path_to_source_index_map = this.pathToSourceIndexMap(ctx.target);
         for (import_records.slice(), 0..) |*record, i| {
             if (path_to_source_index_map.getPath(&record.path)) |source_index| {
-                if (save_import_record_source_index or input_file_loaders[source_index] == .css)
+                if (save_import_record_source_index or input_file_loaders[source_index].isCSS())
                     record.source_index.value = source_index;
 
                 if (getRedirectId(ctx.redirect_import_record_index)) |compare| {

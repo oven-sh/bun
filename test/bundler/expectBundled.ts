@@ -719,6 +719,9 @@ function expectBundled(
       if (plugins) {
         throw new Error("plugins not possible in backend=CLI");
       }
+      if (optimizeImports) {
+        throw new Error("optimizeImports not possible in backend=CLI (API-only option)");
+      }
       const cmd = (
         !ESBUILD
           ? [

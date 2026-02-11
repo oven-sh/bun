@@ -11,7 +11,7 @@ const log = Output.scoped(.barrel, .hidden);
 
 pub const RequestedExports = union(enum) {
     all,
-    partial: std.StringArrayHashMapUnmanaged(void),
+    partial: bun.StringArrayHashMapUnmanaged(void),
 };
 
 const BarrelExportResolution = struct {
@@ -39,7 +39,7 @@ fn resolveBarrelExport(alias: []const u8, named_exports: JSAst.NamedExports, nam
 ///
 /// Export * records are never deferred (always resolved) to avoid circular races.
 pub fn applyBarrelOptimization(this: *BundleV2, parse_result: *ParseTask.Result) void {
-    applyBarrelOptimizationImpl(this, parse_result) catch bun.outOfMemory();
+    bun.handleOom(applyBarrelOptimizationImpl(this, parse_result));
 }
 
 fn applyBarrelOptimizationImpl(this: *BundleV2, parse_result: *ParseTask.Result) !void {
@@ -119,7 +119,7 @@ fn applyBarrelOptimizationImpl(this: *BundleV2, parse_result: *ParseTask.Result)
         log("barrel detected: {s} (source={d}, {d} deferred)", .{
             if (result.package_name.len > 0) result.package_name else result.source.path.text,
             source_index,
-            named_exports.count() - needed_records.count(),
+            named_exports.count() -| needed_records.count(),
         });
 
         // Merge with existing entry (keep already-requested names) or create new
@@ -156,7 +156,9 @@ fn resolveBarrelRecords(this: *BundleV2, barrel_idx: u32, barrels_to_resolve: *s
     });
     defer resolve_result.resolve_queue.deinit();
     const scheduled = this.processResolveQueue(resolve_result.resolve_queue, target, barrel_idx);
-    this.patchImportRecordSourceIndices(barrel_ir, .{
+    // Re-derive pointer after processResolveQueue may have reallocated graph.ast
+    const barrel_ir_updated = &this.graph.ast.slice().items(.import_records)[barrel_idx];
+    this.patchImportRecordSourceIndices(barrel_ir_updated, .{
         .source_index = Index.init(barrel_idx),
         .source_path = this.graph.input_files.items(.source)[barrel_idx].path.text,
         .loader = this.graph.input_files.items(.loader)[barrel_idx],
@@ -180,10 +182,19 @@ pub fn scheduleBarrelDeferredImports(this: *BundleV2, result: *ParseTask.Result.
     // This runs for every file, even before any barrels are known. When a barrel
     // is later parsed, applyBarrelOptimization reads these pre-recorded requests
     // to decide which exports to keep. O(file's imports) per file.
+
+    // Build a set of import_record_indices that have named_imports entries,
+    // so we can detect bare imports (those with no specific export bindings).
+    var named_ir_indices_stack = std.heap.stackFallback(4096, this.allocator());
+    const named_ir_indices_alloc = named_ir_indices_stack.get();
+    var named_ir_indices = std.AutoArrayHashMapUnmanaged(u32, void){};
+    defer named_ir_indices.deinit(named_ir_indices_alloc);
+
     var ni_iter = result.ast.named_imports.iterator();
     while (ni_iter.next()) |ni_entry| {
         const ni = ni_entry.value_ptr;
         if (ni.import_record_index >= file_import_records.len) continue;
+        try named_ir_indices.put(named_ir_indices_alloc, ni.import_record_index, {});
         const ir = file_import_records.slice()[ni.import_record_index];
         if (!ir.source_index.isValid()) continue;
         const target = ir.source_index.get();
@@ -203,6 +214,30 @@ pub fn scheduleBarrelDeferredImports(this: *BundleV2, result: *ParseTask.Result.
             }
         } else if (!gop.found_existing) {
             gop.value_ptr.* = .{ .partial = .{} };
+        }
+    }
+
+    // Handle import records without named bindings (not in named_imports).
+    // - `import "x"` (bare statement): tree-shakeable with sideEffects: false — skip.
+    // - `require("x")`: synchronous, needs full module — always mark as .all.
+    // - `import("x")`: mark as .all ONLY if the barrel has no prior requests,
+    //   meaning this is the sole reference. If the barrel already has a .partial
+    //   entry from a static import, the dynamic import is likely a secondary
+    //   (possibly circular) reference and should not escalate requirements.
+    for (file_import_records.slice(), 0..) |ir, idx| {
+        if (!ir.source_index.isValid()) continue;
+        if (ir.flags.is_internal) continue;
+        if (named_ir_indices.contains(@intCast(idx))) continue;
+        if (ir.flags.was_originally_bare_import) continue;
+        const target = ir.source_index.get();
+        if (ir.kind == .require) {
+            const gop = try this.requested_exports.getOrPut(this.allocator(), target);
+            gop.value_ptr.* = .all;
+        } else if (ir.kind == .dynamic) {
+            // Only escalate to .all if no prior requests exist for this target.
+            if (!this.requested_exports.contains(target)) {
+                try this.requested_exports.put(this.allocator(), target, .all);
+            }
         }
     }
 
@@ -226,6 +261,21 @@ pub fn scheduleBarrelDeferredImports(this: *BundleV2, result: *ParseTask.Result.
             try queue.append(queue_alloc, .{ .barrel_source_index = ir.source_index.get(), .alias = "", .is_star = true });
         } else if (ni.alias) |alias| {
             try queue.append(queue_alloc, .{ .barrel_source_index = ir.source_index.get(), .alias = alias, .is_star = false });
+        }
+    }
+
+    // Add bare require/dynamic-import targets to BFS as star imports (matching
+    // the seeding logic above — require always, dynamic only when sole reference).
+    for (file_import_records.slice(), 0..) |ir, idx| {
+        if (!ir.source_index.isValid()) continue;
+        if (ir.flags.is_internal) continue;
+        if (named_ir_indices.contains(@intCast(idx))) continue;
+        if (ir.flags.was_originally_bare_import) continue;
+        const target = ir.source_index.get();
+        const is_all = if (this.requested_exports.get(target)) |re| re == .all else false;
+        const should_add = ir.kind == .require or (ir.kind == .dynamic and is_all);
+        if (should_add) {
+            try queue.append(queue_alloc, .{ .barrel_source_index = target, .alias = "", .is_star = true });
         }
     }
 
@@ -287,9 +337,11 @@ pub fn scheduleBarrelDeferredImports(this: *BundleV2, result: *ParseTask.Result.
             }
         }
 
-        const graph_ast = this.graph.ast.slice();
-        if (barrel_idx >= graph_ast.len) continue;
-        const barrel_ir = &graph_ast.items(.import_records)[barrel_idx];
+        if (barrel_idx >= this.graph.ast.len) continue;
+
+        // Use a helper to get barrel_ir freshly each time, since
+        // resolveBarrelRecords can reallocate graph.ast and invalidate pointers.
+        var barrel_ir = &this.graph.ast.slice().items(.import_records)[barrel_idx];
 
         if (item.is_star) {
             for (barrel_ir.slice(), 0..) |rec, idx| {
@@ -303,9 +355,10 @@ pub fn scheduleBarrelDeferredImports(this: *BundleV2, result: *ParseTask.Result.
         }
 
         const alias = item.alias;
-        const resolution = resolveBarrelExport(alias, graph_ast.items(.named_exports)[barrel_idx], graph_ast.items(.named_imports)[barrel_idx]) orelse {
+        const graph_ast_snapshot = this.graph.ast.slice();
+        const resolution = resolveBarrelExport(alias, graph_ast_snapshot.items(.named_exports)[barrel_idx], graph_ast_snapshot.items(.named_imports)[barrel_idx]) orelse {
             // Name not in named re-exports — might come from export *.
-            for (graph_ast.items(.export_star_import_records)[barrel_idx]) |star_idx| {
+            for (graph_ast_snapshot.items(.export_star_import_records)[barrel_idx]) |star_idx| {
                 if (star_idx >= barrel_ir.len) continue;
                 if (unDeferRecord(barrel_ir, star_idx)) {
                     try barrels_to_resolve.put(barrels_to_resolve_alloc, barrel_idx, {});
@@ -315,7 +368,8 @@ pub fn scheduleBarrelDeferredImports(this: *BundleV2, result: *ParseTask.Result.
                     // Deferred record was never resolved — resolve inline now.
                     newly_scheduled += resolveBarrelRecords(this, barrel_idx, &barrels_to_resolve);
                     // Re-derive pointer after resolution may have mutated slices.
-                    star_rec = this.graph.ast.slice().items(.import_records)[barrel_idx].slice()[star_idx];
+                    barrel_ir = &this.graph.ast.slice().items(.import_records)[barrel_idx];
+                    star_rec = barrel_ir.slice()[star_idx];
                 }
                 if (star_rec.source_index.isValid()) {
                     try queue.append(queue_alloc, .{ .barrel_source_index = star_rec.source_index.get(), .alias = alias, .is_star = false });
@@ -334,7 +388,8 @@ pub fn scheduleBarrelDeferredImports(this: *BundleV2, result: *ParseTask.Result.
             if (!rec.source_index.isValid()) {
                 // Deferred record was never resolved — resolve inline now.
                 newly_scheduled += resolveBarrelRecords(this, barrel_idx, &barrels_to_resolve);
-                rec = this.graph.ast.slice().items(.import_records)[barrel_idx].slice()[resolution.import_record_index];
+                barrel_ir = &this.graph.ast.slice().items(.import_records)[barrel_idx];
+                rec = barrel_ir.slice()[resolution.import_record_index];
             }
             if (rec.source_index.isValid()) {
                 try queue.append(queue_alloc, .{ .barrel_source_index = rec.source_index.get(), .alias = propagate_alias, .is_star = false });

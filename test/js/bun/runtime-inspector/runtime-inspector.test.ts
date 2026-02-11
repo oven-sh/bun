@@ -24,9 +24,9 @@ async function waitForDebuggerListening(
   // The banner format is:
   // --------------------- Bun Inspector ---------------------
   // Listening:
-  //   ws://localhost:6499/...
+  //   ws://localhost:<port>/...
   // Inspect in browser:
-  //   https://debug.bun.sh/#localhost:6499/...
+  //   https://debug.bun.sh/#localhost:<port>/...
   // --------------------- Bun Inspector ---------------------
   try {
     while ((stderr.match(/Bun Inspector/g) || []).length < 2) {
@@ -54,7 +54,7 @@ describe("Runtime inspector activation", () => {
     test.skipIf(skipASAN)("activates inspector in target process", async () => {
       // Start target process - prints PID to stdout then stays alive
       await using targetProc = spawn({
-        cmd: [bunExe(), "-e", `console.log(process.pid); setInterval(() => {}, 1000);`],
+        cmd: [bunExe(), "--inspect-port=0", "-e", `console.log(process.pid); setInterval(() => {}, 1000);`],
         env: bunEnv,
         stdout: "pipe",
         stderr: "pipe",
@@ -108,7 +108,7 @@ describe("Runtime inspector activation", () => {
     test.skipIf(skipASAN)("inspector does not activate twice", async () => {
       // Start target process - prints PID to stdout then stays alive
       await using targetProc = spawn({
-        cmd: [bunExe(), "-e", `console.log(process.pid); setInterval(() => {}, 1000);`],
+        cmd: [bunExe(), "--inspect-port=0", "-e", `console.log(process.pid); setInterval(() => {}, 1000);`],
         env: bunEnv,
         stdout: "pipe",
         stderr: "pipe",
@@ -170,15 +170,15 @@ describe("Runtime inspector activation", () => {
     });
 
     test.skipIf(skipASAN)("can activate inspector in multiple processes sequentially", async () => {
-      // Note: Runtime inspector uses hardcoded port 6499, so we must test
-      // sequential activation (activate first, shut down, then activate second)
-      // rather than concurrent activation.
+      // Test sequential activation: activate first, shut down, then activate second.
+      // Each process uses a random port, so concurrent would also work, but
+      // sequential tests the full lifecycle.
       const targetScript = `console.log(process.pid); setInterval(() => {}, 1000);`;
 
       // First process: activate inspector, verify, then shut down
       {
         await using target1 = spawn({
-          cmd: [bunExe(), "-e", targetScript],
+          cmd: [bunExe(), "--inspect-port=0", "-e", targetScript],
           env: bunEnv,
           stdout: "pipe",
           stderr: "pipe",
@@ -209,10 +209,10 @@ describe("Runtime inspector activation", () => {
         await target1.exited;
       }
 
-      // Second process: now that first is shut down, port 6499 is free
+      // Second process
       {
         await using target2 = spawn({
-          cmd: [bunExe(), "-e", targetScript],
+          cmd: [bunExe(), "--inspect-port=0", "-e", targetScript],
           env: bunEnv,
           stdout: "pipe",
           stderr: "pipe",
@@ -260,7 +260,7 @@ describe("Runtime inspector activation", () => {
     test.skipIf(skipASAN)("can interrupt an infinite loop", async () => {
       // Start target process with infinite loop
       await using targetProc = spawn({
-        cmd: [bunExe(), "-e", `console.log(process.pid); while (true) {}`],
+        cmd: [bunExe(), "--inspect-port=0", "-e", `console.log(process.pid); while (true) {}`],
         env: bunEnv,
         stdout: "pipe",
         stderr: "pipe",
@@ -299,7 +299,7 @@ describe("Runtime inspector activation", () => {
     test.skipIf(skipASAN)("can pause execution during while(true) via CDP", async () => {
       // Start target process with infinite loop
       await using targetProc = spawn({
-        cmd: [bunExe(), "-e", `console.log(process.pid); while (true) {}`],
+        cmd: [bunExe(), "--inspect-port=0", "-e", `console.log(process.pid); while (true) {}`],
         env: bunEnv,
         stdout: "pipe",
         stderr: "pipe",
@@ -387,7 +387,7 @@ describe("Runtime inspector activation", () => {
     test.skipIf(skipASAN)("CDP messages work after client reconnects", async () => {
       // Start target process - prints PID to stdout then stays alive
       await using targetProc = spawn({
-        cmd: [bunExe(), "-e", `console.log(process.pid); setInterval(() => {}, 1000);`],
+        cmd: [bunExe(), "--inspect-port=0", "-e", `console.log(process.pid); setInterval(() => {}, 1000);`],
         env: bunEnv,
         stdout: "pipe",
         stderr: "pipe",

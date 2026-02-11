@@ -164,6 +164,9 @@ hot_reload_counter: u32 = 0,
 
 debugger: ?jsc.Debugger = null,
 has_started_debugger: bool = false,
+/// Pre-configured inspector port for runtime activation (via --inspect-port).
+/// Used by RuntimeInspector when SIGUSR1/process._debugProcess activates the inspector.
+inspect_port: ?[]const u8 = null,
 has_terminated: bool = false,
 
 debug_thread_id: if (Environment.allow_assert) std.Thread.Id else void,
@@ -1083,6 +1086,7 @@ pub fn initWithModuleGraph(
     uws.Loop.get().internal_loop_data.jsc_vm = vm.jsc_vm;
 
     vm.configureDebugger(opts.debugger);
+    vm.inspect_port = opts.inspect_port;
     vm.body_value_hive_allocator = Body.Value.HiveAllocator.init(bun.typedAllocator(jsc.WebCore.Body.Value));
 
     configureSigusr1Handler(vm, opts);
@@ -1115,6 +1119,8 @@ pub const Options = struct {
     destruct_main_thread_on_exit: bool = false,
     /// Disable SIGUSR1 handler for runtime debugger activation (matches Node.js).
     disable_sigusr1: bool = false,
+    /// Pre-configured inspector port for runtime activation (--inspect-port).
+    inspect_port: ?[]const u8 = null,
 };
 
 /// Configure SIGUSR1 handling for runtime debugger activation (main thread only).
@@ -1280,8 +1286,15 @@ fn configureDebugger(this: *VirtualMachine, cli_flag: bun.cli.Command.Debugger) 
             }
         },
         .enable => {
+            // If --inspect/--inspect-brk/--inspect-wait is used without an explicit port,
+            // use --inspect-port if provided.
+            const path_or_port = if (cli_flag.enable.path_or_port.len == 0)
+                this.inspect_port orelse cli_flag.enable.path_or_port
+            else
+                cli_flag.enable.path_or_port;
+
             this.debugger = .{
-                .path_or_port = cli_flag.enable.path_or_port,
+                .path_or_port = path_or_port,
                 .from_environment_variable = unix,
                 .wait_for_connection = if (cli_flag.enable.wait_for_connection) .forever else wait_for_connection,
                 .set_breakpoint_on_first_line = set_breakpoint_on_first_line or cli_flag.enable.set_breakpoint_on_first_line,

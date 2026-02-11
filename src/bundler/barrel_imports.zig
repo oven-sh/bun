@@ -7,9 +7,6 @@
 //! barrels are known. When a barrel later loads, applyBarrelOptimization reads
 //! `requested_exports` to see what's already been requested. No graph scan needed.
 
-const BundleV2 = @import("./bundle_v2.zig").BundleV2;
-const ParseTask = @import("./ParseTask.zig").ParseTask;
-const Output = bun.Output;
 const log = Output.scoped(.barrel, .hidden);
 
 pub const RequestedExports = union(enum) {
@@ -354,11 +351,13 @@ pub fn scheduleBarrelDeferredImports(this: *BundleV2, result: *ParseTask.Result.
     return newly_scheduled;
 }
 
-const bun = @import("bun");
 const std = @import("std");
-const Fs = @import("../fs.zig");
-const Logger = @import("../logger.zig");
+const BundleV2 = @import("./bundle_v2.zig").BundleV2;
+const ParseTask = @import("./ParseTask.zig").ParseTask;
+
+const bun = @import("bun");
 const ImportRecord = bun.ImportRecord;
+const Output = bun.Output;
+
 const Index = bun.ast.Index;
 const JSAst = bun.ast.BundledAst;
-const js_ast = bun.ast;

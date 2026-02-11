@@ -257,6 +257,7 @@ public:
                 isBootstrapPause = true;
                 connection->needsBootstrapPause.store(false);
             }
+            connection->needsMessageDeliveryPause.store(false);
         }
 
         for (auto* connection : connections) {
@@ -283,6 +284,13 @@ public:
                 }
             }
         }
+
+        // Mark all connections as being in the pause loop so that
+        // interruptForMessageDelivery skips requestStopAll (which would
+        // deadlock: the debugger thread blocks in STW while the target
+        // VM is in this C++ loop and never reaches a JS safe point).
+        for (auto* connection : connections)
+            connection->isInPauseLoop.store(true);
 
         if (connections.size() == 1) {
             while (!isDoneProcessingEvents) {
@@ -311,6 +319,9 @@ public:
                 }
             }
         }
+
+        for (auto* connection : connections)
+            connection->isInPauseLoop.store(false);
     }
 
     void receiveMessagesOnInspectorThread(ScriptExecutionContext& context, Zig::GlobalObject* globalObject, bool connectIfNeeded)
@@ -437,7 +448,14 @@ public:
     {
         if (!runtimeInspectorActivated.load())
             return;
-        this->needsBootstrapPause.store(true);
+        // If the target VM is already in the runWhilePaused message pump,
+        // skip the STW request. The pump busy-polls receiveMessagesOnInspectorThread
+        // and will pick up the message. Calling requestStopAll here would deadlock:
+        // the debugger thread blocks in STW while the target VM is in C++ code
+        // that never reaches a JS safe point.
+        if (this->isInPauseLoop.load())
+            return;
+        this->needsMessageDeliveryPause.store(true);
         VMManager::requestStopAll(VMManager::StopReason::JSDebugger);
     }
 
@@ -458,6 +476,14 @@ public:
 
     // When true, runWhilePaused sends a synthetic Debugger.paused event.
     std::atomic<bool> needsBootstrapPause { false };
+
+    // When true, a STW pause is needed to deliver CDP messages (no synthetic event).
+    std::atomic<bool> needsMessageDeliveryPause { false };
+
+    // When true, the connection is in the runWhilePaused message pump loop.
+    // interruptForMessageDelivery must skip requestStopAll to avoid deadlock:
+    // the debugger thread would block in STW while the target VM is in C++ code.
+    std::atomic<bool> isInPauseLoop { false };
 
     bool unrefOnDisconnect = false;
 
@@ -801,7 +827,22 @@ bool hasBootstrapPauseRequested()
     return false;
 }
 
-// Find a VM (other than the given one) that has a bootstrap pause pending.
+// Check if any connection has a pending message delivery pause request.
+bool hasMessageDeliveryPauseRequested()
+{
+    Locker<Lock> locker(inspectorConnectionsLock);
+    if (!inspectorConnections)
+        return false;
+    for (auto& entry : *inspectorConnections) {
+        for (auto* connection : entry.value) {
+            if (connection->needsMessageDeliveryPause.load())
+                return true;
+        }
+    }
+    return false;
+}
+
+// Find a VM (other than the given one) that has a pause pending (bootstrap or message delivery).
 JSC::VM* findVMWithBootstrapPause(JSC::VM& excludeVM)
 {
     Locker<Lock> locker(inspectorConnectionsLock);
@@ -809,7 +850,7 @@ JSC::VM* findVMWithBootstrapPause(JSC::VM& excludeVM)
         return nullptr;
     for (auto& entry : *inspectorConnections) {
         for (auto* connection : entry.value) {
-            if (connection->needsBootstrapPause.load()
+            if ((connection->needsBootstrapPause.load() || connection->needsMessageDeliveryPause.load())
                 && connection->globalObject
                 && &connection->globalObject->vm() != &excludeVM)
                 return &connection->globalObject->vm();
@@ -823,7 +864,7 @@ JSC::VM* findVMWithBootstrapPause(JSC::VM& excludeVM)
 // schedulePauseAtNextOpportunity + notifyNeedDebuggerBreak set up a pause
 // that fires after STW resumes. The NeedDebuggerBreak handler in VMTraps
 // calls breakProgram() to enter the pause from any JIT tier.
-void schedulePauseForConnectedSessions(JSC::VM& vm)
+void schedulePauseForConnectedSessions(JSC::VM& vm, bool isBootstrap)
 {
     Locker<Lock> locker(inspectorConnectionsLock);
     if (!inspectorConnections)
@@ -836,7 +877,8 @@ void schedulePauseForConnectedSessions(JSC::VM& vm)
             if (&connection->globalObject->vm() != &vm)
                 continue;
 
-            connection->needsBootstrapPause.store(true);
+            if (isBootstrap)
+                connection->needsBootstrapPause.store(true);
 
             auto* debugger = connection->globalObject->debugger();
             if (!debugger)
@@ -889,8 +931,9 @@ JSC::StopTheWorldStatus Bun__jsDebuggerCallback(JSC::VM& vm, JSC::StopTheWorldEv
 
     // Phase 3: Schedule a debugger pause so CDP messages can be dispatched
     // in runWhilePaused after STW resumes.
-    if (connected || Bun::hasBootstrapPauseRequested()) {
-        Bun::schedulePauseForConnectedSessions(vm);
+    bool isBootstrap = connected || Bun::hasBootstrapPauseRequested();
+    if (isBootstrap || Bun::hasMessageDeliveryPauseRequested()) {
+        Bun::schedulePauseForConnectedSessions(vm, isBootstrap);
     }
 
     return STW_RESUME_ALL();

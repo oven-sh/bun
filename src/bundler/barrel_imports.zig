@@ -232,6 +232,24 @@ pub fn scheduleBarrelDeferredImports(this: *BundleV2, result: *ParseTask.Result.
         }
     }
 
+    // Also seed the BFS with exports previously requested from THIS file
+    // that couldn't propagate because this file wasn't parsed yet.
+    // This handles the case where file A requests export "d" from file B,
+    // but B hadn't been parsed when A's BFS ran, so B's export * records
+    // were empty and the propagation stopped.
+    const this_source_index = result.source.index.get();
+    if (this.requested_exports.get(this_source_index)) |existing| {
+        switch (existing) {
+            .all => try queue.append(queue_alloc, .{ .barrel_source_index = this_source_index, .alias = "", .is_star = true }),
+            .partial => |partial| {
+                var partial_iter = partial.iterator();
+                while (partial_iter.next()) |p_entry| {
+                    try queue.append(queue_alloc, .{ .barrel_source_index = this_source_index, .alias = p_entry.key_ptr.*, .is_star = false });
+                }
+            },
+        }
+    }
+
     if (queue.items.len == 0) return 0;
 
     // Items [0, initial_queue_len) are from this file's imports and were

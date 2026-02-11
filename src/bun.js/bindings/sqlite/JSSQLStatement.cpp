@@ -1970,17 +1970,16 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementBackupToFunction, (JSC::JSGlobalObject * 
     int totalPages = sqlite3_backup_pagecount(backup);
     sqlite3_backup_finish(backup);
 
-    if (ownsDest)
-        sqlite3_close_v2(destSqlite);
-
     if (rc != SQLITE_DONE) [[unlikely]] {
-        if (rc == SQLITE_BUSY || rc == SQLITE_LOCKED) {
-            throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, rc));
-        } else {
-            throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, destSqlite));
-        }
+        // Use the rc-based overload for all error cases: destSqlite may
+        // already be closed (ownsDest), so we cannot safely dereference it.
+        if (ownsDest) sqlite3_close_v2(destSqlite);
+        throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, rc));
         return {};
     }
+
+    if (ownsDest)
+        sqlite3_close_v2(destSqlite);
 
     RELEASE_AND_RETURN(scope, JSValue::encode(jsNumber(totalPages)));
 }

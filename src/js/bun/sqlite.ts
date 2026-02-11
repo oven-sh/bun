@@ -125,16 +125,7 @@ interface CppSQL {
   fcntl(handle: TODO, ...args: TODO[]): TODO;
   close(handle: TODO, throwOnError: boolean): void;
   setCustomSQLite(path: string): void;
-  backupInit(
-    sourceHandle: TODO,
-    dest: string | TODO,
-    finalizationTarget: TODO,
-    sourceSchema?: string,
-    destSchema?: string,
-  ): TODO;
-  backupStep(backupHandle: TODO, pageCount: number): false | { totalPages: number; remainingPages: number };
-  backupFinish(backupHandle: TODO): boolean;
-  backupDispose(backupHandle: TODO): void;
+  backupTo(sourceHandle: TODO, dest: string | TODO): number;
 }
 
 let SQL: CppSQL;

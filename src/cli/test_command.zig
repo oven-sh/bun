@@ -854,6 +854,9 @@ pub const CommandLineReporter = struct {
                         }
                     }
 
+                    for (sequence.flakyAttempts()) |attempt| {
+                        bun.handleOom(junit.writeTestCase(attempt.result, filename, display_label, concatenated_describe_scopes.items, 0, attempt.elapsed_ns, line_number));
+                    }
                     bun.handleOom(junit.writeTestCase(status, filename, display_label, concatenated_describe_scopes.items, assertions, elapsed_ns, line_number));
                 }
             }

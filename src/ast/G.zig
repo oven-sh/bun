@@ -32,6 +32,7 @@ pub const Class = struct {
     close_brace_loc: logger.Loc = logger.Loc.Empty,
     properties: []Property = &([_]Property{}),
     has_decorators: bool = false,
+    should_lower_standard_decorators: bool = false,
 
     pub fn canBeMoved(this: *const Class) bool {
         if (this.extends != null)
@@ -134,6 +135,7 @@ pub const Property = struct {
         declare,
         abstract,
         class_static_block,
+        auto_accessor,
 
         pub fn jsonStringify(self: @This(), writer: anytype) !void {
             return try writer.write(@tagName(self));

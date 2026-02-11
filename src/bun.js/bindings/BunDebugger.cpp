@@ -130,13 +130,17 @@ public:
         globalObject->inspectorController().connectFrontend(*this, true, false); // waitingForConnection
 
         // Pre-attach the debugger so that schedulePauseAtNextOpportunity() can work
-        // during the STW callback. This only fires on the SIGUSR1 path because --inspect
-        // and --inspect-wait already have the debugger attached by JSC at startup
-        // (globalObject->debugger() is non-null), so the condition is false for those paths.
-        auto* controllerDebugger = globalObject->inspectorController().debugger();
-        if (controllerDebugger && !globalObject->debugger()) {
-            controllerDebugger->attach(globalObject);
-            this->preAttachedDebugger = true;
+        // during the STW callback. Only do this on the SIGUSR1 path — for --inspect,
+        // the debugger gets attached later via the Debugger.enable CDP command.
+        // Without the runtimeInspectorActivated guard, this would fire for --inspect too
+        // (debugger isn't attached yet at doConnect time), causing interruptForMessageDelivery
+        // to fire requestStopAll for every CDP message, which deadlocks on Windows.
+        if (runtimeInspectorActivated.load()) {
+            auto* controllerDebugger = globalObject->inspectorController().debugger();
+            if (controllerDebugger && !globalObject->debugger()) {
+                controllerDebugger->attach(globalObject);
+                this->preAttachedDebugger = true;
+            }
         }
 
         Inspector::JSGlobalObjectDebugger* debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(globalObject->debugger());

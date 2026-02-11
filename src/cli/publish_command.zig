@@ -1272,7 +1272,7 @@ pub const PublishCommand = struct {
             if (auth_type) |auth| @tagName(auth) else "web"
         else
             "legacy";
-        const ci_name = bun.detectCI();
+        const ci_name = bun.ci.detectCIName();
 
         {
             headers.count("accept", "*/*");
@@ -1299,14 +1299,7 @@ pub const PublishCommand = struct {
             }
             headers.count("npm-command", "publish");
 
-            try print_writer.print("{s} {s} {s} workspaces/{}{s}{s}", .{
-                Global.user_agent,
-                Global.os_name,
-                Global.arch_name,
-                uses_workspaces,
-                if (ci_name != null) " ci/" else "",
-                ci_name orelse "",
-            });
+            try print_writer.print("{s} {s} {s} workspaces/{}{s}{s}", .{ Global.user_agent, Global.os_name, Global.arch_name, uses_workspaces, if (ci_name != null) " ci/" else "", ci_name orelse "" });
             // headers.count("user-agent", "npm/10.8.3 node/v24.3.0 darwin arm64 workspaces/false");
             headers.count("user-agent", print_buf.items);
             print_buf.clearRetainingCapacity();
@@ -1348,14 +1341,7 @@ pub const PublishCommand = struct {
             }
             headers.append("npm-command", "publish");
 
-            try print_writer.print("{s} {s} {s} workspaces/{}{s}{s}", .{
-                Global.user_agent,
-                Global.os_name,
-                Global.arch_name,
-                uses_workspaces,
-                if (ci_name != null) " ci/" else "",
-                ci_name orelse "",
-            });
+            try print_writer.print("{s} {s} {s} workspaces/{}{s}{s}", .{ Global.user_agent, Global.os_name, Global.arch_name, uses_workspaces, if (ci_name != null) " ci/" else "", ci_name orelse "" });
             // headers.append("user-agent", "npm/10.8.3 node/v24.3.0 darwin arm64 workspaces/false");
             headers.append("user-agent", print_buf.items);
             print_buf.clearRetainingCapacity();

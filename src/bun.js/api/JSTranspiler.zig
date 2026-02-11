@@ -42,6 +42,7 @@ pub const Config = struct {
     minify_identifiers: bool = false,
     minify_syntax: bool = false,
     no_macros: bool = false,
+    repl_mode: bool = false,
 
     pub fn fromJS(this: *Config, globalThis: *jsc.JSGlobalObject, object: jsc.JSValue, allocator: std.mem.Allocator) bun.JSError!void {
         if (object.isUndefinedOrNull()) {
@@ -165,7 +166,8 @@ pub const Config = struct {
                 }
 
                 if (!kind.isStringLike()) {
-                    try tsconfig.jsonStringify(globalThis, 0, &out);
+                    // Use jsonStringifyFast for SIMD-optimized serialization
+                    try tsconfig.jsonStringifyFast(globalThis, &out);
                 } else {
                     out = try tsconfig.toBunString(globalThis);
                 }
@@ -204,7 +206,8 @@ pub const Config = struct {
                 defer out.deref();
                 // TODO: write a converter between JSC types and Bun AST types
                 if (is_object) {
-                    try macros.jsonStringify(globalThis, 0, &out);
+                    // Use jsonStringifyFast for SIMD-optimized serialization
+                    try macros.jsonStringifyFast(globalThis, &out);
                 } else {
                     out = try macros.toBunString(globalThis);
                 }
@@ -241,6 +244,10 @@ pub const Config = struct {
 
         if (try object.getBooleanLoose(globalThis, "deadCodeElimination")) |flag| {
             this.dead_code_elimination = flag;
+        }
+
+        if (try object.getBooleanLoose(globalThis, "replMode")) |flag| {
+            this.repl_mode = flag;
         }
 
         if (try object.getTruthy(globalThis, "minify")) |minify| {
@@ -388,7 +395,7 @@ pub const Config = struct {
                             const replacementValue = try value.getIndex(globalThis, 1);
                             if (try exportReplacementValue(replacementValue, globalThis, allocator)) |to_replace| {
                                 const replacementKey = try value.getIndex(globalThis, 0);
-                                var slice = replacementKey.toSliceCloneWithAllocator(globalThis, allocator) orelse return error.JSError;
+                                var slice = try replacementKey.toSliceCloneWithAllocator(globalThis, allocator);
                                 errdefer slice.deinit();
                                 const replacement_name = slice.slice();
 
@@ -453,7 +460,7 @@ pub const TransformTask = struct {
     pub const AsyncTransformTask = jsc.ConcurrentPromiseTask(TransformTask);
     pub const AsyncTransformEventLoopTask = AsyncTransformTask.EventLoopTask;
 
-    pub fn create(transpiler: *JSTranspiler, input_code: bun.jsc.Node.StringOrBuffer, globalThis: *JSGlobalObject, loader: Loader) !*AsyncTransformTask {
+    pub fn create(transpiler: *JSTranspiler, input_code: bun.jsc.Node.StringOrBuffer, globalThis: *JSGlobalObject, loader: Loader) *AsyncTransformTask {
         var transform_task = TransformTask.new(.{
             .input_code = input_code,
             .transpiler = transpiler.transpiler,
@@ -474,8 +481,7 @@ pub const TransformTask = struct {
         transform_task.transpiler.setAllocator(bun.default_allocator);
 
         transpiler.ref();
-        errdefer transform_task.deinit();
-        return try AsyncTransformTask.createOnJSThread(bun.default_allocator, globalThis, transform_task);
+        return AsyncTransformTask.createOnJSThread(bun.default_allocator, globalThis, transform_task);
     }
 
     pub fn run(this: *TransformTask) void {
@@ -568,7 +574,10 @@ pub const TransformTask = struct {
     }
 
     fn finish(this: *TransformTask, promise: *jsc.JSPromise) bun.JSTerminated!void {
-        return promise.resolve(this.global, this.output_code.transferToJS(this.global));
+        const value = this.output_code.transferToJS(this.global) catch |e| {
+            return promise.reject(this.global, this.global.takeException(e));
+        };
+        return promise.resolve(this.global, value);
     }
 
     pub fn deinit(this: *TransformTask) void {
@@ -666,7 +675,7 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
     }
 
     if ((config.log.warnings + config.log.errors) > 0) {
-        return globalThis.throwValue(try config.log.toJS(globalThis, allocator, "Failed to create transpiler"));
+        return globalThis.throwValue(try config.log.toJS(globalThis, bun.default_allocator, "Failed to create transpiler"));
     }
 
     const log = &config.log;
@@ -677,7 +686,7 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
         jsc.VirtualMachine.get().transpiler.env,
     ) catch |err| {
         if ((log.warnings + log.errors) > 0) {
-            return globalThis.throwValue(try log.toJS(globalThis, allocator, "Failed to create transpiler"));
+            return globalThis.throwValue(try log.toJS(globalThis, bun.default_allocator, "Failed to create transpiler"));
         }
 
         return globalThis.throwError(err, "Error creating transpiler");
@@ -688,7 +697,7 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
     transpiler.options.env.behavior = .disable;
     transpiler.configureDefines() catch |err| {
         if ((log.warnings + log.errors) > 0) {
-            return globalThis.throwValue(try log.toJS(globalThis, allocator, "Failed to load define"));
+            return globalThis.throwValue(try log.toJS(globalThis, bun.default_allocator, "Failed to load define"));
         }
         return globalThis.throwError(err, "Failed to load define");
     };
@@ -697,7 +706,8 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
         transpiler.options.macro_remap = config.macro_map;
     }
 
-    transpiler.options.dead_code_elimination = config.dead_code_elimination;
+    // REPL mode disables DCE to preserve expressions like `42`
+    transpiler.options.dead_code_elimination = config.dead_code_elimination and !config.repl_mode;
     transpiler.options.minify_whitespace = config.minify_whitespace;
 
     // Keep defaults for these
@@ -716,6 +726,7 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
     transpiler.options.inlining = config.runtime.inlining;
     transpiler.options.hot_module_reloading = config.runtime.hot_module_reloading;
     transpiler.options.react_fast_refresh = false;
+    transpiler.options.repl_mode = config.repl_mode;
 
     return this;
 }
@@ -737,9 +748,47 @@ pub fn deinit(this: *JSTranspiler) void {
     bun.destroy(this);
 }
 
+/// Check if code looks like an object literal that would be misinterpreted as a block
+/// Returns true if code starts with { (after whitespace) and doesn't end with ;
+/// This matches Node.js REPL behavior for object literal disambiguation
+fn isLikelyObjectLiteral(code: []const u8) bool {
+    // Skip leading whitespace
+    var start: usize = 0;
+    while (start < code.len and (code[start] == ' ' or code[start] == '\t' or code[start] == '\n' or code[start] == '\r')) {
+        start += 1;
+    }
+
+    // Check if starts with {
+    if (start >= code.len or code[start] != '{') {
+        return false;
+    }
+
+    // Skip trailing whitespace
+    var end: usize = code.len;
+    while (end > 0 and (code[end - 1] == ' ' or code[end - 1] == '\t' or code[end - 1] == '\n' or code[end - 1] == '\r')) {
+        end -= 1;
+    }
+
+    // Check if ends with semicolon - if so, it's likely a block statement
+    if (end > 0 and code[end - 1] == ';') {
+        return false;
+    }
+
+    return true;
+}
+
 fn getParseResult(this: *JSTranspiler, allocator: std.mem.Allocator, code: []const u8, loader: ?Loader, macro_js_ctx: Transpiler.MacroJSValueType) ?Transpiler.ParseResult {
     const name = this.config.default_loader.stdinName();
-    const source = &logger.Source.initPathString(name, code);
+
+    // In REPL mode, wrap potential object literals in parentheses
+    // If code starts with { and doesn't end with ; it might be an object literal
+    // that would otherwise be parsed as a block statement
+    const processed_code: []const u8 = if (this.config.repl_mode and isLikelyObjectLiteral(code))
+        std.fmt.allocPrint(allocator, "({s})", .{code}) catch code
+    else
+        code;
+
+    const source = &logger.Source.initPathString(name, processed_code);
 
     const jsx = if (this.config.tsconfig != null)
         this.config.tsconfig.?.mergeJSX(this.transpiler.options.jsx)
@@ -847,7 +896,7 @@ pub fn transform(this: *JSTranspiler, globalThis: *jsc.JSGlobalObject, callframe
     var code = try jsc.Node.StringOrBuffer.fromJSWithEncodingMaybeAsync(globalThis, bun.default_allocator, code_arg, .utf8, true, allow_string_object) orelse {
         return globalThis.throwInvalidArgumentType("transform", "code", "string or Uint8Array");
     };
-    errdefer code.deinit();
+    errdefer code.deinitAndUnprotect();
 
     args.eat();
     const loader: ?Loader = brk: {
@@ -859,21 +908,12 @@ pub fn transform(this: *JSTranspiler, globalThis: *jsc.JSGlobalObject, callframe
         break :brk null;
     };
 
-    if (code == .buffer) {
-        code_arg.protect();
-    }
     var task = TransformTask.create(
         this,
         code,
         globalThis,
         loader orelse this.config.default_loader,
-    ) catch {
-        if (code == .buffer) {
-            code_arg.unprotect();
-        }
-        globalThis.throwOutOfMemory();
-        return error.JSError;
-    };
+    );
     task.schedule();
     return task.promise.value();
 }
@@ -1028,7 +1068,7 @@ fn namedImportsToJS(global: *JSGlobalObject, import_records: []const ImportRecor
     array.ensureStillAlive();
 
     for (import_records, 0..) |record, i| {
-        if (record.is_internal) continue;
+        if (record.flags.is_internal) continue;
 
         array.ensureStillAlive();
         const path = jsc.ZigString.init(record.path.text).toJS(global);

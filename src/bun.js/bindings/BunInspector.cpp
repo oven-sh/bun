@@ -74,7 +74,7 @@ public:
                 Bun__tickWhilePaused(&done);
             };
         }
-        this->globalObject->inspectorDebuggable().dispatchMessageFromRemote(WTFMove(messageString));
+        this->globalObject->inspectorDebuggable().dispatchMessageFromRemote(WTF::move(messageString));
     }
 
     void drain()
@@ -138,7 +138,7 @@ static void addInspector(void* app, JSC::JSGlobalObject* globalObject)
             delete inspector; }
         };
 
-        ((uWS::SSLApp*)app)->ws<SSLBunInspectorConnection*>("/bun:inspect", std::move(handler));
+        ((uWS::SSLApp*)app)->ws<SSLBunInspectorConnection*>("/bun:inspect", WTF::move(handler));
     } else {
 
         auto handler = uWS::App::WebSocketBehavior<BunInspectorConnectionNoSSL*> {
@@ -174,7 +174,7 @@ static void addInspector(void* app, JSC::JSGlobalObject* globalObject)
             delete inspector; }
         };
 
-        ((uWS::App*)app)->ws<BunInspectorConnectionNoSSL*>("/bun:inspect", std::move(handler));
+        ((uWS::App*)app)->ws<BunInspectorConnectionNoSSL*>("/bun:inspect", WTF::move(handler));
     }
 }
 

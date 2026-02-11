@@ -14,6 +14,15 @@ import {
   startGroup,
 } from "./utils.mjs";
 
+// Detect Windows ARM64 - bun may run under x64 emulation (WoW64), so check multiple indicators
+const isWindowsARM64 =
+  isWindows &&
+  (process.env.PROCESSOR_ARCHITECTURE === "ARM64" ||
+    process.env.VSCMD_ARG_HOST_ARCH === "arm64" ||
+    process.env.MSYSTEM_CARCH === "aarch64" ||
+    (process.env.PROCESSOR_IDENTIFIER || "").includes("ARMv8") ||
+    process.arch === "arm64");
+
 if (globalThis.Bun) {
   await import("./glob-sources.mjs");
 }
@@ -48,7 +57,11 @@ async function build(args) {
   if (process.platform === "win32" && !process.env["VSINSTALLDIR"]) {
     const shellPath = join(import.meta.dirname, "vs-shell.ps1");
     const scriptPath = import.meta.filename;
-    return spawn("pwsh", ["-NoProfile", "-NoLogo", "-File", shellPath, process.argv0, scriptPath, ...args]);
+    // When cross-compiling to ARM64, tell vs-shell.ps1 to set up the x64_arm64 VS environment
+    const toolchainIdx = args.indexOf("--toolchain");
+    const requestedVsArch = toolchainIdx !== -1 && args[toolchainIdx + 1] === "windows-aarch64" ? "arm64" : undefined;
+    const env = requestedVsArch ? { ...process.env, BUN_VS_ARCH: requestedVsArch } : undefined;
+    return spawn("pwsh", ["-NoProfile", "-NoLogo", "-File", shellPath, process.argv0, scriptPath, ...args], { env });
   }
 
   if (isCI) {
@@ -63,6 +76,7 @@ async function build(args) {
 
   const generateOptions = parseOptions(args, generateFlags);
   const buildOptions = parseOptions(args, buildFlags);
+  const ciCppBuild = isCI && !!process.env.BUN_CPP_ONLY;
 
   const buildPath = resolve(generateOptions["-B"] || buildOptions["--build"] || "build");
   generateOptions["-B"] = buildPath;
@@ -73,7 +87,7 @@ async function build(args) {
   }
 
   if (!generateOptions["-DCACHE_STRATEGY"]) {
-    generateOptions["-DCACHE_STRATEGY"] = parseBoolean(getEnv("RELEASE", false) || "false") ? "none" : "read-write";
+    generateOptions["-DCACHE_STRATEGY"] = parseBoolean(getEnv("RELEASE", false) || "false") ? "none" : "auto";
   }
 
   const toolchain = generateOptions["--toolchain"];
@@ -82,10 +96,18 @@ async function build(args) {
     generateOptions["--toolchain"] = toolchainPath;
   }
 
+  // Windows ARM64: log detection (compiler is selected by CMake/toolchain)
+  if (isWindowsARM64) {
+    console.log("Windows ARM64 detected");
+  }
+
   const generateArgs = Object.entries(generateOptions).flatMap(([flag, value]) =>
     flag.startsWith("-D") ? [`${flag}=${value}`] : [flag, value],
   );
 
+  try {
+    await Bun.file(buildPath + "/CMakeCache.txt").delete();
+  } catch (e) {}
   await startGroup("CMake Configure", () => spawn("cmake", generateArgs, { env }));
 
   const envPath = resolve(buildPath, ".env");
@@ -103,10 +125,9 @@ async function build(args) {
 
   await startGroup("CMake Build", () => spawn("cmake", buildArgs, { env }));
 
-  const target = buildOptions["--target"] || buildOptions["-t"];
-  if (isCI && target === "build-cpp") {
-    await startGroup("sccache stats", () => {
-      spawn("sccache", ["--show-stats"], { env });
+  if (ciCppBuild) {
+    await startGroup("ccache stats", () => {
+      spawn("ccache", ["--show-stats"], { env });
     });
   }
 

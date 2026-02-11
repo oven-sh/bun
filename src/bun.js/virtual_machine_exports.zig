@@ -18,6 +18,10 @@ pub export fn Bun__drainMicrotasks() void {
 }
 
 export fn Bun__readOriginTimer(vm: *jsc.VirtualMachine) u64 {
+    // Check if performance.now() is overridden (for fake timers)
+    if (vm.overridden_performance_now) |overridden| {
+        return overridden;
+    }
     return vm.origin_timer.read();
 }
 
@@ -152,6 +156,13 @@ export fn Bun__setTLSRejectUnauthorizedValue(value: i32) void {
 
 export fn Bun__getTLSRejectUnauthorizedValue() i32 {
     return if (jsc.VirtualMachine.get().getTLSRejectUnauthorized()) 1 else 0;
+}
+
+export fn Bun__isNoProxy(hostname_ptr: [*]const u8, hostname_len: usize, host_ptr: [*]const u8, host_len: usize) bool {
+    const vm = jsc.VirtualMachine.get();
+    const hostname: ?[]const u8 = if (hostname_len > 0) hostname_ptr[0..hostname_len] else null;
+    const host: ?[]const u8 = if (host_len > 0) host_ptr[0..host_len] else null;
+    return vm.transpiler.env.isNoProxy(hostname, host);
 }
 
 export fn Bun__setVerboseFetchValue(value: i32) void {

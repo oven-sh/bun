@@ -890,7 +890,7 @@ static const GB18030EncodeIndex& gb18030EncodeIndex()
 // https://unicode-org.atlassian.net/browse/ICU-22357
 // The 2-byte values are handled correctly by values from gb18030()
 // but these need to be exceptions from gb18030Ranges().
-static std::optional<uint16_t> gb18030AsymmetricEncode(char16_t codePoint)
+static std::optional<uint16_t> gb18030AsymmetricEncode(char32_t codePoint)
 {
     switch (codePoint) {
     case 0xE81E:
@@ -1081,7 +1081,7 @@ static Vector<uint8_t> gbEncodeShared(StringView string, Function<void(char32_t,
 
 static Vector<uint8_t> gb18030Encode(StringView string, Function<void(char32_t, Vector<uint8_t>&)>&& unencodableHandler)
 {
-    return gbEncodeShared(string, WTFMove(unencodableHandler), IsGBK::No);
+    return gbEncodeShared(string, WTF::move(unencodableHandler), IsGBK::No);
 }
 
 // https://encoding.spec.whatwg.org/#gbk-decoder
@@ -1092,7 +1092,7 @@ String TextCodecCJK::gbkDecode(std::span<const uint8_t> bytes, bool flush, bool 
 
 static Vector<uint8_t> gbkEncode(StringView string, Function<void(char32_t, Vector<uint8_t>&)>&& unencodableHandler)
 {
-    return gbEncodeShared(string, WTFMove(unencodableHandler), IsGBK::Yes);
+    return gbEncodeShared(string, WTF::move(unencodableHandler), IsGBK::Yes);
 }
 
 constexpr size_t maxUChar32Digits = 10;

@@ -30,7 +30,7 @@ pub fn resetArena(this: *ModuleLoader, jsc_vm: *VirtualMachine) void {
     }
 }
 
-pub fn resolveEmbeddedFile(vm: *VirtualMachine, input_path: []const u8, extname: []const u8) ?[]const u8 {
+pub fn resolveEmbeddedFile(vm: *VirtualMachine, path_buf: *bun.PathBuffer, input_path: []const u8, extname: []const u8) ?[]const u8 {
     if (input_path.len == 0) return null;
     var graph = vm.standalone_module_graph orelse return null;
     const file = graph.find(input_path) orelse return null;
@@ -40,8 +40,9 @@ pub fn resolveEmbeddedFile(vm: *VirtualMachine, input_path: []const u8, extname:
     }
 
     // atomically write to a tmpfile and then move it to the final destination
-    var tmpname_buf: bun.PathBuffer = undefined;
-    const tmpfilename = bun.fs.FileSystem.tmpname(extname, &tmpname_buf, bun.hash(file.name)) catch return null;
+    const tmpname_buf = bun.path_buffer_pool.get();
+    defer bun.path_buffer_pool.put(tmpname_buf);
+    const tmpfilename = bun.fs.FileSystem.tmpname(extname, tmpname_buf, bun.hash(file.name)) catch return null;
 
     const tmpdir: bun.FD = .fromStdDir(bun.fs.FileSystem.instance.tmpdir() catch return null);
 
@@ -50,7 +51,7 @@ pub fn resolveEmbeddedFile(vm: *VirtualMachine, input_path: []const u8, extname:
     defer tmpfile.fd.close();
 
     switch (bun.api.node.fs.NodeFS.writeFileWithPathBuffer(
-        &tmpname_buf, // not used
+        tmpname_buf, // not used
 
         .{
             .data = .{
@@ -66,7 +67,7 @@ pub fn resolveEmbeddedFile(vm: *VirtualMachine, input_path: []const u8, extname:
         },
         else => {},
     }
-    return bun.path.joinAbs(bun.fs.FileSystem.instance.fs.tmpdirPath(), .auto, tmpfilename);
+    return bun.path.joinAbsStringBuf(bun.fs.FileSystem.RealFS.tmpdirPath(), path_buf, &[_]string{tmpfilename}, .auto);
 }
 
 pub export fn Bun__getDefaultLoader(global: *JSGlobalObject, str: *const bun.String) api.Loader {
@@ -99,7 +100,7 @@ pub fn transpileSourceCode(
     const disable_transpilying = comptime flags.disableTranspiling();
 
     if (comptime disable_transpilying) {
-        if (!(loader.isJavaScriptLike() or loader == .toml or loader == .yaml or loader == .text or loader == .json or loader == .jsonc)) {
+        if (!(loader.isJavaScriptLike() or loader == .toml or loader == .yaml or loader == .json5 or loader == .text or loader == .json or loader == .jsonc)) {
             // Don't print "export default <file path>"
             return ResolvedSource{
                 .allocator = null,
@@ -111,7 +112,7 @@ pub fn transpileSourceCode(
     }
 
     switch (loader) {
-        .js, .jsx, .ts, .tsx, .json, .jsonc, .toml, .yaml, .text => {
+        .js, .jsx, .ts, .tsx, .json, .jsonc, .toml, .yaml, .json5, .text, .md => {
             // Ensure that if there was an ASTMemoryAllocator in use, it's not used anymore.
             var ast_scope = js_ast.ASTMemoryAllocator.Scope{};
             ast_scope.enter();
@@ -177,6 +178,7 @@ pub fn transpileSourceCode(
             var cache = jsc.RuntimeTranspilerCache{
                 .output_code_allocator = allocator,
                 .sourcemap_allocator = bun.default_allocator,
+                .esm_record_allocator = bun.default_allocator,
             };
 
             const old = jsc_vm.transpiler.log;
@@ -231,6 +233,7 @@ pub fn transpileSourceCode(
                 .macro_remappings = macro_remappings,
                 .jsx = jsc_vm.transpiler.options.jsx,
                 .emit_decorator_metadata = jsc_vm.transpiler.options.emit_decorator_metadata,
+                .experimental_decorators = jsc_vm.transpiler.options.experimental_decorators,
                 .virtual_source = virtual_source,
                 .dont_bundle_twice = true,
                 .allow_commonjs = true,
@@ -360,7 +363,7 @@ pub fn transpileSourceCode(
                 };
             }
 
-            if (loader == .json or loader == .jsonc or loader == .toml or loader == .yaml) {
+            if (loader == .json or loader == .jsonc or loader == .toml or loader == .yaml or loader == .json5) {
                 if (parse_result.empty) {
                     return ResolvedSource{
                         .allocator = null,
@@ -421,6 +424,10 @@ pub fn transpileSourceCode(
                     dumpSourceString(jsc_vm, specifier, entry.output_code.byteSlice());
                 }
 
+                // TODO: module_info is only needed for standalone ESM bytecode.
+                // For now, skip it entirely in the runtime transpiler.
+                const module_info: ?*analyze_transpiled_module.ModuleInfoDeserialized = null;
+
                 return ResolvedSource{
                     .allocator = null,
                     .source_code = switch (entry.output_code) {
@@ -435,6 +442,7 @@ pub fn transpileSourceCode(
                     .specifier = input_specifier,
                     .source_url = input_specifier.createIfDifferent(path.text),
                     .is_commonjs_module = entry.metadata.module_type == .cjs,
+                    .module_info = module_info,
                     .tag = brk: {
                         if (entry.metadata.module_type == .cjs and source.path.isFile()) {
                             const actual_package_json: *PackageJSON = package_json orelse brk2: {
@@ -503,6 +511,11 @@ pub fn transpileSourceCode(
                 jsc_vm.resolved_count += jsc_vm.transpiler.linker.import_counter - start_count;
             jsc_vm.transpiler.linker.import_counter = 0;
 
+            const is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs;
+            // TODO: module_info is only needed for standalone ESM bytecode.
+            // For now, skip it entirely in the runtime transpiler.
+            const module_info: ?*analyze_transpiled_module.ModuleInfo = null;
+
             var printer = source_code_printer.*;
             printer.ctx.reset();
             defer source_code_printer.* = printer;
@@ -515,6 +528,7 @@ pub fn transpileSourceCode(
                     &printer,
                     .esm_ascii,
                     mapper.get(),
+                    module_info,
                 );
             };
 
@@ -528,9 +542,12 @@ pub fn transpileSourceCode(
                 }
             }
 
+            const module_info_deserialized: ?*anyopaque = if (module_info) |mi| @ptrCast(mi.asDeserialized()) else null;
+
             if (jsc_vm.isWatcherEnabled()) {
                 var resolved_source = jsc_vm.refCountedResolvedSource(printer.ctx.written, input_specifier, path.text, null, false);
-                resolved_source.is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs;
+                resolved_source.is_commonjs_module = is_commonjs_module;
+                resolved_source.module_info = module_info_deserialized;
                 return resolved_source;
             }
 
@@ -563,7 +580,8 @@ pub fn transpileSourceCode(
                 },
                 .specifier = input_specifier,
                 .source_url = input_specifier.createIfDifferent(path.text),
-                .is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs,
+                .is_commonjs_module = is_commonjs_module,
+                .module_info = module_info_deserialized,
                 .tag = tag,
             };
         },
@@ -1191,9 +1209,15 @@ pub fn fetchBuiltinModule(jsc_vm: *VirtualMachine, specifier: bun.String) !?Reso
                 .source_code = file.toWTFString(),
                 .specifier = specifier,
                 .source_url = specifier.dupeRef(),
+                // bytecode_origin_path is the path used when generating bytecode; must match for cache hits
+                .bytecode_origin_path = if (file.bytecode_origin_path.len > 0) bun.String.fromBytes(file.bytecode_origin_path) else bun.String.empty,
                 .source_code_needs_deref = false,
                 .bytecode_cache = if (file.bytecode.len > 0) file.bytecode.ptr else null,
                 .bytecode_cache_size = file.bytecode.len,
+                .module_info = if (file.module_info.len > 0)
+                    analyze_transpiled_module.ModuleInfoDeserialized.createFromCachedRecord(file.module_info, bun.default_allocator)
+                else
+                    null,
                 .is_commonjs_module = file.module_format == .cjs,
             };
         }
@@ -1305,7 +1329,9 @@ export fn Bun__resolveEmbeddedNodeFile(vm: *VirtualMachine, in_out_str: *bun.Str
 
     const input_path = in_out_str.toUTF8(bun.default_allocator);
     defer input_path.deinit();
-    const result = ModuleLoader.resolveEmbeddedFile(vm, input_path.slice(), "node") orelse return false;
+    const path_buf = bun.path_buffer_pool.get();
+    defer bun.path_buffer_pool.put(path_buf);
+    const result = ModuleLoader.resolveEmbeddedFile(vm, path_buf, input_path.slice(), "node") orelse return false;
     in_out_str.* = bun.String.cloneUTF8(result);
     return true;
 }
@@ -1321,6 +1347,7 @@ const string = []const u8;
 
 const Fs = @import("../fs.zig");
 const Runtime = @import("../runtime.zig");
+const analyze_transpiled_module = @import("../analyze_transpiled_module.zig");
 const ast = @import("../import_record.zig");
 const node_module_module = @import("./bindings/NodeModuleModule.zig");
 const std = @import("std");

@@ -23,7 +23,7 @@ Using your system's package manager, install Bun's dependencies:
 {% codetabs group="os" %}
 
 ```bash#macOS (Homebrew)
-$ brew install automake cmake coreutils gnu-sed go icu4c libiconv libtool ninja pkg-config rust ruby sccache
+$ brew install automake ccache cmake coreutils gnu-sed go icu4c libiconv libtool ninja pkg-config rust ruby
 ```
 
 ```bash#Ubuntu/Debian
@@ -35,7 +35,7 @@ $ sudo pacman -S base-devel cmake git go libiconv libtool make ninja pkg-config 
 ```
 
 ```bash#Fedora
-$ sudo dnf install cargo clang19 llvm19 lld19 cmake git golang libtool ninja-build pkg-config rustc ruby libatomic-static libstdc++-static sed unzip which libicu-devel 'perl(Math::BigInt)'
+$ sudo dnf install cargo clang21 llvm21 lld21 cmake git golang libtool ninja-build pkg-config rustc ruby libatomic-static libstdc++-static sed unzip which libicu-devel 'perl(Math::BigInt)'
 ```
 
 ```bash#openSUSE Tumbleweed
@@ -65,57 +65,42 @@ $ brew install bun
 
 {% /codetabs %}
 
-### Optional: Install `sccache`
+### Optional: Install `ccache`
 
-sccache is used to cache compilation artifacts, significantly speeding up builds. It must be installed with S3 support:
+ccache is used to cache compilation artifacts, significantly speeding up builds:
 
 ```bash
 # For macOS
-$ brew install sccache
+$ brew install ccache
 
-# For Linux. Note that the version in your package manager may not have S3 support.
-$ cargo install sccache --features=s3
+# For Ubuntu/Debian
+$ sudo apt install ccache
+
+# For Arch
+$ sudo pacman -S ccache
+
+# For Fedora
+$ sudo dnf install ccache
+
+# For openSUSE
+$ sudo zypper install ccache
 ```
 
-This will install `sccache` with S3 support. Our build scripts will automatically detect and use `sccache` with our shared S3 cache. **Note**: Not all versions of `sccache` are compiled with S3 support, hence we recommend installing it via `cargo`.
-
-#### Registering AWS Credentials for `sccache` (Core Developers Only)
-
-Core developers have write access to the shared S3 cache. To enable write access, you must log in with AWS credentials. The easiest way to do this is to use the [`aws` CLI](https://aws.amazon.com/cli/) and invoke [`aws configure` to provide your AWS security info](https://docs.aws.amazon.com/cli/latest/reference/configure/).
-
-The `cmake` scripts should automatically detect your AWS credentials from the environment or the `~/.aws/credentials` file.
-
-<details>
-    <summary>Logging in to the `aws` CLI</summary>
-
-    1. Install the AWS CLI by following [the official guide](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html).
-    2. Log in to your AWS account console. A team member should provide you with your credentials.
-    3. Click your name in the top right > Security credentials.
-    4. Scroll to "Access keys" and create a new access key.
-    5. Run `aws configure` in your terminal and provide the access key ID and secret access key when prompted.
-</details>
-
-<details>
-    <summary>Common Issues You May Encounter</summary>
-
-    - To confirm that the cache is being used, you can use the `sccache --show-stats` command right after a build. This will expose very useful statistics, including cache hits/misses.
-    - If you have multiple AWS profiles configured, ensure that the correct profile is set in the `AWS_PROFILE` environment variable.
-    - `sccache` follows a server-client model. If you run into weird issues where `sccache` refuses to use S3, even though you have AWS credentials configured, try killing any running `sccache` servers with `sccache --stop-server` and then re-running the build.
-</details>
+Our build scripts will automatically detect and use `ccache` if available. You can check cache statistics with `ccache --show-stats`.
 
 ## Install LLVM
 
-Bun requires LLVM 19 (`clang` is part of LLVM). This version requirement is to match WebKit (precompiled), as mismatching versions will cause memory allocation failures at runtime. In most cases, you can install LLVM through your system package manager:
+Bun requires LLVM 21.1.8 (`clang` is part of LLVM). This version is enforced by the build system — mismatching versions will cause memory allocation failures at runtime. In most cases, you can install LLVM through your system package manager:
 
 {% codetabs group="os" %}
 
 ```bash#macOS (Homebrew)
-$ brew install llvm@19
+$ brew install llvm@21
 ```
 
 ```bash#Ubuntu/Debian
 $ # LLVM has an automatic installation script that is compatible with all versions of Ubuntu
-$ wget https://apt.llvm.org/llvm.sh -O - | sudo bash -s -- 19 all
+$ wget https://apt.llvm.org/llvm.sh -O - | sudo bash -s -- 21 all
 ```
 
 ```bash#Arch
@@ -127,17 +112,17 @@ $ sudo dnf install llvm clang lld-devel
 ```
 
 ```bash#openSUSE Tumbleweed
-$ sudo zypper install clang19 lld19 llvm19
+$ sudo zypper install clang21 lld21 llvm21
 ```
 
 {% /codetabs %}
 
-If none of the above solutions apply, you will have to install it [manually](https://github.com/llvm/llvm-project/releases/tag/llvmorg-19.1.7).
+If none of the above solutions apply, you will have to install it [manually](https://github.com/llvm/llvm-project/releases/tag/llvmorg-21.1.8).
 
-Make sure Clang/LLVM 19 is in your path:
+Make sure Clang/LLVM 21 is in your path:
 
 ```bash
-$ which clang-19
+$ which clang-21
 ```
 
 If not, run this to manually add it:
@@ -146,13 +131,13 @@ If not, run this to manually add it:
 
 ```bash#macOS (Homebrew)
 # use fish_add_path if you're using fish
-# use path+="$(brew --prefix llvm@19)/bin" if you are using zsh
-$ export PATH="$(brew --prefix llvm@19)/bin:$PATH"
+# use path+="$(brew --prefix llvm@21)/bin" if you are using zsh
+$ export PATH="$(brew --prefix llvm@21)/bin:$PATH"
 ```
 
 ```bash#Arch
 # use fish_add_path if you're using fish
-$ export PATH="$PATH:/usr/lib/llvm19/bin"
+$ export PATH="$PATH:/usr/lib/llvm21/bin"
 ```
 
 {% /codetabs %}
@@ -201,7 +186,7 @@ Bun generally takes about 2.5 minutes to compile a debug build when there are Zi
 - Batch up your changes
 - Ensure zls is running with incremental watching for LSP errors (if you use VSCode and install Zig and run `bun run build` once to download Zig, this should just work)
 - Prefer using the debugger ("CodeLLDB" in VSCode) to step through the code.
-- Use debug logs. `BUN_DEBUG_<scope>=1` will enable debug logging for the corresponding `Output.scoped(.<scope>, .hidden)` logs. You can also set `BUN_DEBUG_QUIET_LOGS=1` to disable all debug logging that isn't explicitly enabled. To dump debug lgos into a file, `BUN_DEBUG=<path-to-file>.log`. Debug logs are aggressively removed in release builds.
+- Use debug logs. `BUN_DEBUG_<scope>=1` will enable debug logging for the corresponding `Output.scoped(.<scope>, .hidden)` logs. You can also set `BUN_DEBUG_QUIET_LOGS=1` to disable all debug logging that isn't explicitly enabled. To dump debug logs into a file, `BUN_DEBUG=<path-to-file>.log`. Debug logs are aggressively removed in release builds.
 - src/js/\*\*.ts changes are pretty much instant to rebuild. C++ changes are a bit slower, but still much faster than the Zig code (Zig is one compilation unit, C++ is many).
 
 ## Code generation scripts
@@ -274,18 +259,13 @@ $ git clone https://github.com/oven-sh/WebKit vendor/WebKit
 # Check out the commit hash specified in `set(WEBKIT_VERSION <commit_hash>)` in cmake/tools/SetupWebKit.cmake
 $ git -C vendor/WebKit checkout <commit_hash>
 
-# Make a debug build of JSC. This will output build artifacts in ./vendor/WebKit/WebKitBuild/Debug
-# Optionally, you can use `bun run jsc:build` for a release build
-$ bun run jsc:build:debug && rm vendor/WebKit/WebKitBuild/Debug/JavaScriptCore/DerivedSources/inspector/InspectorProtocolObjects.h
-
-# After an initial run of `make jsc-debug`, you can rebuild JSC with:
-$ cmake --build vendor/WebKit/WebKitBuild/Debug --target jsc && rm vendor/WebKit/WebKitBuild/Debug/JavaScriptCore/DerivedSources/inspector/InspectorProtocolObjects.h
-
-# Build bun with the local JSC build
+# Build bun with the local JSC build — this automatically configures and builds JSC
 $ bun run build:local
 ```
 
-Using `bun run build:local` will build Bun in the `./build/debug-local` directory (instead of `./build/debug`), you'll have to change a couple of places to use this new directory:
+`bun run build:local` handles everything: configuring JSC, building JSC, and building Bun. On subsequent runs, JSC will incrementally rebuild if any WebKit sources changed. `ninja -Cbuild/debug-local` also works after the first build, and will build Bun+JSC.
+
+The build output goes to `./build/debug-local` (instead of `./build/debug`), so you'll need to update a couple of places:
 
 - The first line in [`src/js/builtins.d.ts`](/src/js/builtins.d.ts)
 - The `CompilationDatabase` line in [`.clangd` config](/.clangd) should be `CompilationDatabase: build/debug-local`
@@ -296,7 +276,7 @@ Note that the WebKit folder, including build artifacts, is 8GB+ in size.
 
 If you are using a JSC debug build and using VScode, make sure to run the `C/C++: Select a Configuration` command to configure intellisense to find the debug headers.
 
-Note that if you change make changes to our [WebKit fork](https://github.com/oven-sh/WebKit), you will also have to change [`SetupWebKit.cmake`](/cmake/tools/SetupWebKit.cmake) to point to the commit hash.
+Note that if you make changes to our [WebKit fork](https://github.com/oven-sh/WebKit), you will also have to change [`SetupWebKit.cmake`](/cmake/tools/SetupWebKit.cmake) to point to the commit hash.
 
 ## Troubleshooting
 
@@ -319,7 +299,7 @@ The issue may manifest when initially running `bun setup` as Clang being unable 
 ```
 The C++ compiler
 
-  "/usr/bin/clang++-19"
+  "/usr/bin/clang++-21"
 
 is not able to compile a simple test program.
 ```

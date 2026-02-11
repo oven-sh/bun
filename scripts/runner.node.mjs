@@ -77,9 +77,8 @@ const testTimeout = 3 * 60_000;
 const integrationTimeout = 5 * 60_000;
 
 function getNodeParallelTestTimeout(testPath) {
-  if (testPath.includes("test-dns")) {
-    return 90_000;
-  }
+  if (testPath.includes("test-dns")) return 60_000;
+  if (testPath.includes("-docker-")) return 60_000;
   if (!isCI) return 60_000; // everything slower in debug mode
   if (options["step"]?.includes("-asan-")) return 60_000;
   return 20_000;
@@ -494,7 +493,7 @@ async function runTests() {
     if (isBuildkite) {
       // Group flaky tests together, regardless of the title
       const context = flaky ? "flaky" : title;
-      const style = flaky || title.startsWith("vendor") ? "warning" : "error";
+      const style = flaky ? "warning" : "error";
       if (!flaky) attempt = 1; // no need to show the retries count on failures, we know it maxed out
 
       if (title.startsWith("vendor")) {
@@ -1129,6 +1128,7 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
     ...process.env,
     PATH: path,
     TMPDIR: tmpdirPath,
+    BUN_TMPDIR: tmpdirPath,
     USER: username,
     HOME: homedir,
     SHELL: shellPath,
@@ -1583,6 +1583,9 @@ function isJavaScriptTest(path) {
 function isNodeTest(path) {
   // Do not run node tests on macOS x64 in CI, those machines are slow and expensive.
   if (isCI && isMacOS && isX64) {
+    return false;
+  }
+  if (!isJavaScript(path)) {
     return false;
   }
   const unixPath = path.replaceAll(sep, "/");

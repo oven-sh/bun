@@ -3918,6 +3918,12 @@ pub fn handleTemplateValue(
                 if (store.data == .file) {
                     if (store.data.file.pathlike == .path) {
                         const path = store.data.file.pathlike.path.slice();
+
+                        // Check for null bytes in path (security: prevent null byte injection)
+                        if (bun.strings.indexOfChar(path, 0) != null) {
+                            return globalThis.ERR(.INVALID_ARG_VALUE, "The shell argument must be a string without null bytes. Received {f}", .{bun.fmt.quote(path)}).throw();
+                        }
+
                         if (!try builder.appendUTF8(path, true)) {
                             return globalThis.throw("Shell script string contains invalid UTF-16", .{});
                         }
@@ -3983,6 +3989,12 @@ pub fn handleTemplateValue(
             if (try template_value.getOwnTruthy(globalThis, "raw")) |maybe_str| {
                 const bunstr = try maybe_str.toBunString(globalThis);
                 defer bunstr.deref();
+
+                // Check for null bytes in shell argument (security: prevent null byte injection)
+                if (bunstr.indexOfAsciiChar(0) != null) {
+                    return globalThis.ERR(.INVALID_ARG_VALUE, "The shell argument must be a string without null bytes. Received \"{f}\"", .{bunstr.toZigString()}).throw();
+                }
+
                 if (!try builder.appendBunStr(bunstr, false)) {
                     return globalThis.throw("Shell script string contains invalid UTF-16", .{});
                 }
@@ -4031,6 +4043,11 @@ pub const ShellSrcBuilder = struct {
     pub fn appendJSValueStr(this: *ShellSrcBuilder, jsval: JSValue, comptime allow_escape: bool) bun.JSError!bool {
         const bunstr = try jsval.toBunString(this.globalThis);
         defer bunstr.deref();
+
+        // Check for null bytes in shell argument (security: prevent null byte injection)
+        if (bunstr.indexOfAsciiChar(0) != null) {
+            return this.globalThis.ERR(.INVALID_ARG_VALUE, "The shell argument must be a string without null bytes. Received \"{f}\"", .{bunstr.toZigString()}).throw();
+        }
 
         return try this.appendBunStr(bunstr, allow_escape);
     }

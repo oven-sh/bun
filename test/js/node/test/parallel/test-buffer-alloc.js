@@ -13,7 +13,7 @@ const {
 // internal limits should be updated if this fails.
 assert.throws(
   () => new Uint8Array(kMaxLength + 1),
-  { name: 'RangeError', message: `length too large: ${kMaxLength + 1}` },
+  { name: 'RangeError', message: `Out of memory` },
 );
 
 const b = Buffer.allocUnsafe(1024);

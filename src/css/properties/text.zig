@@ -197,24 +197,24 @@ pub const TextShadow = struct {
         };
     }
 
-    pub fn toCss(this: *const @This(), comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
-        try this.x_offset.toCss(W, dest);
+    pub fn toCss(this: *const @This(), dest: *css.Printer) css.PrintErr!void {
+        try this.x_offset.toCss(dest);
         try dest.writeChar(' ');
-        try this.y_offset.toCss(W, dest);
+        try this.y_offset.toCss(dest);
 
         if (!this.blur.eql(&Length.zero()) or !this.spread.eql(&Length.zero())) {
             try dest.writeChar(' ');
-            try this.blur.toCss(W, dest);
+            try this.blur.toCss(dest);
 
             if (!this.spread.eql(&Length.zero())) {
                 try dest.writeChar(' ');
-                try this.spread.toCss(W, dest);
+                try this.spread.toCss(dest);
             }
         }
 
         if (!this.color.eql(&CssColor{ .current_color = {} })) {
             try dest.writeChar(' ');
-            try this.color.toCss(W, dest);
+            try this.color.toCss(dest);
         }
 
         return;

@@ -125,6 +125,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         pub fn wrapTLS(
             this: ThisSocket,
             options: SocketContext.BunSocketContextOptions,
+            old_socket_ext_size: i32,
             socket_ext_size: i32,
             comptime deref: bool,
             comptime ContextType: type,
@@ -162,9 +163,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         getValue(socket),
                         TLSSocket.from(socket),
                     );
-                    if (@TypeOf(res) != void) res catch |err| switch (err) {
-                        error.JSTerminated => return null, // TODO: declare throw scope
-                    };
+                    if (@TypeOf(res) != void) res catch return null; // Exception set on global object
                     return socket;
                 }
                 pub fn on_close(socket: *us_socket_t, code: i32, reason: ?*anyopaque) callconv(.c) ?*us_socket_t {
@@ -174,20 +173,16 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         code,
                         reason,
                     );
-                    if (@TypeOf(res) != void) res catch |err| switch (err) {
-                        error.JSTerminated => return null, // TODO: declare throw scope
-                    };
+                    if (@TypeOf(res) != void) res catch return null; // Exception set on global object
                     return socket;
                 }
                 pub fn on_data(socket: *us_socket_t, buf: ?[*]u8, len: i32) callconv(.c) ?*us_socket_t {
                     const res = Fields.onData(
                         getValue(socket),
                         TLSSocket.from(socket),
-                        buf.?[0..@as(usize, @intCast(len))],
+                        if (buf) |data_ptr| data_ptr[0..@as(usize, @intCast(len))] else "",
                     );
-                    if (@TypeOf(res) != void) res catch |err| switch (err) {
-                        error.JSTerminated => return null, // TODO: declare throw scope
-                    };
+                    if (@TypeOf(res) != void) res catch return null; // Exception set on global object
                     return socket;
                 }
                 pub fn on_writable(socket: *us_socket_t) callconv(.c) ?*us_socket_t {
@@ -195,9 +190,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         getValue(socket),
                         TLSSocket.from(socket),
                     );
-                    if (@TypeOf(res) != void) res catch |err| switch (err) {
-                        error.JSTerminated => return null, // TODO: declare throw scope
-                    };
+                    if (@TypeOf(res) != void) res catch return null; // Exception set on global object
                     return socket;
                 }
                 pub fn on_timeout(socket: *us_socket_t) callconv(.c) ?*us_socket_t {
@@ -205,9 +198,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         getValue(socket),
                         TLSSocket.from(socket),
                     );
-                    if (@TypeOf(res) != void) res catch |err| switch (err) {
-                        error.JSTerminated => return null, // TODO: declare throw scope
-                    };
+                    if (@TypeOf(res) != void) res catch return null; // Exception set on global object
                     return socket;
                 }
                 pub fn on_long_timeout(socket: *us_socket_t) callconv(.c) ?*us_socket_t {
@@ -215,9 +206,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         getValue(socket),
                         TLSSocket.from(socket),
                     );
-                    if (@TypeOf(res) != void) res catch |err| switch (err) {
-                        error.JSTerminated => return null, // TODO: declare throw scope
-                    };
+                    if (@TypeOf(res) != void) res catch return null; // Exception set on global object
                     return socket;
                 }
                 pub fn on_connect_error(socket: *us_socket_t, code: i32) callconv(.c) ?*us_socket_t {
@@ -226,9 +215,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         TLSSocket.from(socket),
                         code,
                     );
-                    if (@TypeOf(res) != void) res catch |err| switch (err) {
-                        error.JSTerminated => return null, // TODO: declare throw scope
-                    };
+                    if (@TypeOf(res) != void) res catch return null; // Exception set on global object
                     return socket;
                 }
                 pub fn on_connect_error_connecting_socket(socket: *ConnectingSocket, code: i32) callconv(.c) ?*ConnectingSocket {
@@ -237,9 +224,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         TLSSocket.fromConnecting(socket),
                         code,
                     );
-                    if (@TypeOf(res) != void) res catch |err| switch (err) {
-                        error.JSTerminated => return null, // TODO: declare throw scope
-                    };
+                    if (@TypeOf(res) != void) res catch return null; // Exception set on global object
                     return socket;
                 }
                 pub fn on_end(socket: *us_socket_t) callconv(.c) ?*us_socket_t {
@@ -247,9 +232,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         getValue(socket),
                         TLSSocket.from(socket),
                     );
-                    if (@TypeOf(res) != void) res catch |err| switch (err) {
-                        error.JSTerminated => return null, // TODO: declare throw scope
-                    };
+                    if (@TypeOf(res) != void) res catch return null; // Exception set on global object
                     return socket;
                 }
                 pub fn on_handshake(socket: *us_socket_t, success: i32, verify_error: us_bun_verify_error_t, _: ?*anyopaque) callconv(.c) void {
@@ -259,9 +242,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         success,
                         verify_error,
                     );
-                    if (@TypeOf(res) != void) res catch |err| switch (err) {
-                        error.JSTerminated => return,
-                    };
+                    if (@TypeOf(res) != void) res catch return; // Exception set on global object
                 }
             };
 
@@ -280,7 +261,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
 
             const this_socket = this.socket.get() orelse return null;
 
-            const socket = c.us_socket_wrap_with_tls(ssl_int, this_socket, options, events, socket_ext_size) orelse return null;
+            const socket = c.us_socket_wrap_with_tls(ssl_int, this_socket, options, events, old_socket_ext_size, socket_ext_size) orelse return null;
             return NewSocketHandler(true).from(socket);
         }
 
@@ -295,16 +276,29 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         }
 
         pub inline fn fd(this: ThisSocket) bun.FileDescriptor {
-            if (comptime is_ssl) {
-                @compileError("SSL sockets do not have a file descriptor accessible this way");
-            }
             const socket = this.socket.get() orelse return bun.invalid_fd;
-
-            // on windows uSockets exposes SOCKET
-            return if (comptime Environment.isWindows)
-                .fromNative(@ptrCast(socket.getNativeHandle(is_ssl).?))
-            else
-                .fromNative(@intCast(@intFromPtr(socket.getNativeHandle(is_ssl))));
+            if (comptime is_ssl) {
+                if (socket.getNativeHandle(is_ssl)) |handle| {
+                    const ssl_ptr: *BoringSSL.SSL = @as(*BoringSSL.SSL, @ptrCast(handle));
+                    const fd_value = BoringSSL.SSL_get_fd(ssl_ptr);
+                    if (fd_value == -1) {
+                        return bun.invalid_fd;
+                    }
+                    return if (Environment.isWindows)
+                        .fromNative(@ptrFromInt(@as(usize, @intCast(fd_value))))
+                    else
+                        .fromNative(fd_value);
+                }
+                return bun.invalid_fd;
+            }
+            if (socket.getNativeHandle(is_ssl)) |handle| {
+                // on windows uSockets exposes SOCKET
+                return if (comptime Environment.isWindows)
+                    .fromNative(@ptrCast(handle))
+                else
+                    .fromNative(@intCast(@intFromPtr(handle)));
+            }
+            return bun.invalid_fd;
         }
 
         pub fn markNeedsMoreForSendfile(this: ThisSocket) void {
@@ -710,9 +704,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         getValue(socket),
                         SocketHandlerType.from(socket),
                     );
-                    if (@TypeOf(res) != void) res catch |err| switch (err) {
-                        error.JSTerminated => return null, // TODO: declare throw scope
-                    };
+                    if (@TypeOf(res) != void) res catch return null; // Exception set on global object
                     return socket;
                 }
                 pub fn on_close(socket: *us_socket_t, code: i32, reason: ?*anyopaque) callconv(.c) ?*us_socket_t {
@@ -722,20 +714,16 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         code,
                         reason,
                     );
-                    if (@TypeOf(res) != void) res catch |err| switch (err) {
-                        error.JSTerminated => return null, // TODO: declare throw scope
-                    };
+                    if (@TypeOf(res) != void) res catch return null; // Exception set on global object
                     return socket;
                 }
                 pub fn on_data(socket: *us_socket_t, buf: ?[*]u8, len: i32) callconv(.c) ?*us_socket_t {
                     const res = Fields.onData(
                         getValue(socket),
                         SocketHandlerType.from(socket),
-                        buf.?[0..@as(usize, @intCast(len))],
+                        if (buf) |data_ptr| data_ptr[0..@as(usize, @intCast(len))] else "",
                     );
-                    if (@TypeOf(res) != void) res catch |err| switch (err) {
-                        error.JSTerminated => return null, // TODO: declare throw scope
-                    };
+                    if (@TypeOf(res) != void) res catch return null; // Exception set on global object
                     return socket;
                 }
                 pub fn on_writable(socket: *us_socket_t) callconv(.c) ?*us_socket_t {
@@ -743,9 +731,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         getValue(socket),
                         SocketHandlerType.from(socket),
                     );
-                    if (@TypeOf(res) != void) res catch |err| switch (err) {
-                        error.JSTerminated => return null, // TODO: declare throw scope
-                    };
+                    if (@TypeOf(res) != void) res catch return null; // Exception set on global object
                     return socket;
                 }
                 pub fn on_timeout(socket: *us_socket_t) callconv(.c) ?*us_socket_t {
@@ -753,9 +739,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         getValue(socket),
                         SocketHandlerType.from(socket),
                     );
-                    if (@TypeOf(res) != void) res catch |err| switch (err) {
-                        error.JSTerminated => return null, // TODO: declare throw scope
-                    };
+                    if (@TypeOf(res) != void) res catch return null; // Exception set on global object
                     return socket;
                 }
                 pub fn on_connect_error_connecting_socket(socket: *ConnectingSocket, code: i32) callconv(.c) ?*ConnectingSocket {
@@ -770,9 +754,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         SocketHandlerType.fromConnecting(socket),
                         code,
                     );
-                    if (@TypeOf(res) != void) res catch |err| switch (err) {
-                        error.JSTerminated => return null, // TODO: declare throw scope
-                    };
+                    if (@TypeOf(res) != void) res catch return null; // Exception set on global object
                     return socket;
                 }
                 pub fn on_connect_error(socket: *us_socket_t, code: i32) callconv(.c) ?*us_socket_t {
@@ -787,9 +769,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         SocketHandlerType.from(socket),
                         code,
                     );
-                    if (@TypeOf(res) != void) res catch |err| switch (err) {
-                        error.JSTerminated => return null, // TODO: declare throw scope
-                    };
+                    if (@TypeOf(res) != void) res catch return null; // Exception set on global object
                     return socket;
                 }
                 pub fn on_end(socket: *us_socket_t) callconv(.c) ?*us_socket_t {
@@ -797,9 +777,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         getValue(socket),
                         SocketHandlerType.from(socket),
                     );
-                    if (@TypeOf(res) != void) res catch |err| switch (err) {
-                        error.JSTerminated => return null, // TODO: declare throw scope
-                    };
+                    if (@TypeOf(res) != void) res catch return null; // Exception set on global object
                     return socket;
                 }
                 pub fn on_handshake(socket: *us_socket_t, success: i32, verify_error: us_bun_verify_error_t, _: ?*anyopaque) callconv(.c) void {
@@ -809,9 +787,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         success,
                         verify_error,
                     );
-                    if (@TypeOf(res) != void) res catch |err| switch (err) {
-                        error.JSTerminated => return,
-                    };
+                    if (@TypeOf(res) != void) res catch return; // Exception set on global object
                 }
             };
 
@@ -876,9 +852,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         getValue(socket),
                         ThisSocket.from(socket),
                     );
-                    if (@TypeOf(res) != void) res catch |err| switch (err) {
-                        error.JSTerminated => return null, // TODO: declare throw scope
-                    };
+                    if (@TypeOf(res) != void) res catch return null; // Exception set on global object
                     return socket;
                 }
                 pub fn on_close(socket: *us_socket_t, code: i32, reason: ?*anyopaque) callconv(.c) ?*us_socket_t {
@@ -888,20 +862,16 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         code,
                         reason,
                     );
-                    if (@TypeOf(res) != void) res catch |err| switch (err) {
-                        error.JSTerminated => return null, // TODO: declare throw scope
-                    };
+                    if (@TypeOf(res) != void) res catch return null; // Exception set on global object
                     return socket;
                 }
                 pub fn on_data(socket: *us_socket_t, buf: ?[*]u8, len: i32) callconv(.c) ?*us_socket_t {
                     const res = Fields.onData(
                         getValue(socket),
                         ThisSocket.from(socket),
-                        buf.?[0..@as(usize, @intCast(len))],
+                        if (buf) |data_ptr| data_ptr[0..@as(usize, @intCast(len))] else "",
                     );
-                    if (@TypeOf(res) != void) res catch |err| switch (err) {
-                        error.JSTerminated => return null, // TODO: declare throw scope
-                    };
+                    if (@TypeOf(res) != void) res catch return null; // Exception set on global object
                     return socket;
                 }
                 pub fn on_fd(socket: *us_socket_t, file_descriptor: c_int) callconv(.c) ?*us_socket_t {
@@ -910,9 +880,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         ThisSocket.from(socket),
                         file_descriptor,
                     );
-                    if (@TypeOf(res) != void) res catch |err| switch (err) {
-                        error.JSTerminated => return null, // TODO: declare throw scope
-                    };
+                    if (@TypeOf(res) != void) res catch return null; // Exception set on global object
                     return socket;
                 }
                 pub fn on_writable(socket: *us_socket_t) callconv(.c) ?*us_socket_t {
@@ -920,9 +888,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         getValue(socket),
                         ThisSocket.from(socket),
                     );
-                    if (@TypeOf(res) != void) res catch |err| switch (err) {
-                        error.JSTerminated => return null, // TODO: declare throw scope
-                    };
+                    if (@TypeOf(res) != void) res catch return null; // Exception set on global object
                     return socket;
                 }
                 pub fn on_timeout(socket: *us_socket_t) callconv(.c) ?*us_socket_t {
@@ -930,9 +896,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         getValue(socket),
                         ThisSocket.from(socket),
                     );
-                    if (@TypeOf(res) != void) res catch |err| switch (err) {
-                        error.JSTerminated => return null, // TODO: declare throw scope
-                    };
+                    if (@TypeOf(res) != void) res catch return null; // Exception set on global object
                     return socket;
                 }
                 pub fn on_long_timeout(socket: *us_socket_t) callconv(.c) ?*us_socket_t {
@@ -940,9 +904,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         getValue(socket),
                         ThisSocket.from(socket),
                     );
-                    if (@TypeOf(res) != void) res catch |err| switch (err) {
-                        error.JSTerminated => return null, // TODO: declare throw scope
-                    };
+                    if (@TypeOf(res) != void) res catch return null; // Exception set on global object
                     return socket;
                 }
                 pub fn on_connect_error_connecting_socket(socket: *ConnectingSocket, code: i32) callconv(.c) ?*ConnectingSocket {
@@ -957,9 +919,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         ThisSocket.fromConnecting(socket),
                         code,
                     );
-                    if (@TypeOf(res) != void) res catch |err| switch (err) {
-                        error.JSTerminated => return null, // TODO: declare throw scope
-                    };
+                    if (@TypeOf(res) != void) res catch return null; // Exception set on global object
                     return socket;
                 }
                 pub fn on_connect_error(socket: *us_socket_t, code: i32) callconv(.c) ?*us_socket_t {
@@ -980,9 +940,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         ThisSocket.from(socket),
                         code,
                     );
-                    if (@TypeOf(res) != void) res catch |err| switch (err) {
-                        error.JSTerminated => return null, // TODO: declare throw scope
-                    };
+                    if (@TypeOf(res) != void) res catch return null; // Exception set on global object
                     return socket;
                 }
                 pub fn on_end(socket: *us_socket_t) callconv(.c) ?*us_socket_t {
@@ -990,9 +948,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         getValue(socket),
                         ThisSocket.from(socket),
                     );
-                    if (@TypeOf(res) != void) res catch |err| switch (err) {
-                        error.JSTerminated => return null, // TODO: declare throw scope
-                    };
+                    if (@TypeOf(res) != void) res catch return null; // Exception set on global object
                     return socket;
                 }
                 pub fn on_handshake(socket: *us_socket_t, success: i32, verify_error: us_bun_verify_error_t, _: ?*anyopaque) callconv(.c) void {
@@ -1002,9 +958,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         success,
                         verify_error,
                     );
-                    if (@TypeOf(res) != void) res catch |err| switch (err) {
-                        error.JSTerminated => return,
-                    };
+                    if (@TypeOf(res) != void) res catch return; // Exception set on global object
                 }
             };
 
@@ -1053,7 +1007,8 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         ) bool {
             // ext_size of -1 means we want to keep the current ext size
             // in particular, we don't want to allocate a new socket
-            const new_socket = socket_ctx.adoptSocket(comptime is_ssl, socket, -1) orelse return false;
+            // old_ext_size is irrelevant when ext_size is -1 (no resize occurs)
+            const new_socket = socket_ctx.adoptSocket(comptime is_ssl, socket, -1, -1) orelse return false;
             bun.assert(new_socket == socket);
             var adopted = ThisSocket.from(new_socket);
             if (adopted.ext(*anyopaque)) |holder| {
@@ -1313,7 +1268,7 @@ const c = struct {
         on_connect_error_connecting_socket: ?*const fn (*ConnectingSocket, i32) callconv(.c) ?*ConnectingSocket = null,
         on_handshake: ?*const fn (*us_socket_t, i32, uws.us_bun_verify_error_t, ?*anyopaque) callconv(.c) void = null,
     };
-    pub extern fn us_socket_wrap_with_tls(ssl: i32, s: *uws.us_socket_t, options: uws.SocketContext.BunSocketContextOptions, events: c.us_socket_events_t, socket_ext_size: i32) ?*uws.us_socket_t;
+    pub extern fn us_socket_wrap_with_tls(ssl: i32, s: *uws.us_socket_t, options: uws.SocketContext.BunSocketContextOptions, events: c.us_socket_events_t, old_socket_ext_size: i32, socket_ext_size: i32) ?*uws.us_socket_t;
 };
 
 const debug = bun.Output.scoped(.uws, .visible);

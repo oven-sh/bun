@@ -82,8 +82,10 @@ pub const BuildCommand = struct {
         this_transpiler.options.banner = ctx.bundler_options.banner;
         this_transpiler.options.footer = ctx.bundler_options.footer;
         this_transpiler.options.drop = ctx.args.drop;
+        this_transpiler.options.bundler_feature_flags = Runtime.Features.initBundlerFeatureFlags(allocator, ctx.args.feature_flags);
 
         this_transpiler.options.css_chunking = ctx.bundler_options.css_chunking;
+        this_transpiler.options.metafile = ctx.bundler_options.metafile.len > 0 or ctx.bundler_options.metafile_md.len > 0;
 
         this_transpiler.options.output_dir = ctx.bundler_options.outdir;
         this_transpiler.options.output_format = ctx.bundler_options.output_format;
@@ -307,7 +309,7 @@ pub const BuildCommand = struct {
                 this_transpiler.resolver.opts.entry_naming = this_transpiler.options.entry_naming;
             }
 
-            break :brk (BundleV2.generateFromCLI(
+            const build_result = BundleV2.generateFromCLI(
                 &this_transpiler,
                 allocator,
                 bun.jsc.AnyEventLoop.init(ctx.allocator),
@@ -325,7 +327,63 @@ pub const BuildCommand = struct {
 
                 Output.flush();
                 exitOrWatch(1, ctx.debug.hot_reload == .watch);
-            }).items;
+            };
+
+            // Write metafile if requested
+            if (build_result.metafile) |metafile_json| {
+                if (ctx.bundler_options.metafile.len > 0) {
+                    // Use makeOpen which auto-creates parent directories on failure
+                    const file = switch (bun.sys.File.makeOpen(ctx.bundler_options.metafile, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o664)) {
+                        .result => |f| f,
+                        .err => |err| {
+                            Output.err(err, "could not open metafile {f}", .{bun.fmt.quote(ctx.bundler_options.metafile)});
+                            exitOrWatch(1, ctx.debug.hot_reload == .watch);
+                            unreachable;
+                        },
+                    };
+                    defer file.close();
+
+                    switch (file.writeAll(metafile_json)) {
+                        .result => {},
+                        .err => |err| {
+                            Output.err(err, "could not write metafile {f}", .{bun.fmt.quote(ctx.bundler_options.metafile)});
+                            exitOrWatch(1, ctx.debug.hot_reload == .watch);
+                            unreachable;
+                        },
+                    }
+                }
+
+                // Write markdown metafile if requested
+                if (ctx.bundler_options.metafile_md.len > 0) {
+                    const metafile_md = MetafileBuilder.generateMarkdown(allocator, metafile_json) catch |err| blk: {
+                        Output.warn("Failed to generate markdown metafile: {s}", .{@errorName(err)});
+                        break :blk null;
+                    };
+                    if (metafile_md) |md_content| {
+                        defer allocator.free(md_content);
+                        const file = switch (bun.sys.File.makeOpen(ctx.bundler_options.metafile_md, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o664)) {
+                            .result => |f| f,
+                            .err => |err| {
+                                Output.err(err, "could not open metafile-md {f}", .{bun.fmt.quote(ctx.bundler_options.metafile_md)});
+                                exitOrWatch(1, ctx.debug.hot_reload == .watch);
+                                unreachable;
+                            },
+                        };
+                        defer file.close();
+
+                        switch (file.writeAll(md_content)) {
+                            .result => {},
+                            .err => |err| {
+                                Output.err(err, "could not write metafile-md {f}", .{bun.fmt.quote(ctx.bundler_options.metafile_md)});
+                                exitOrWatch(1, ctx.debug.hot_reload == .watch);
+                                unreachable;
+                            },
+                        }
+                    }
+                }
+            }
+
+            break :brk build_result.output_files.items;
         };
         const bundled_end = std.time.nanoTimestamp();
 
@@ -439,7 +497,13 @@ pub const BuildCommand = struct {
                     this_transpiler.options.output_format,
                     ctx.bundler_options.windows,
                     ctx.bundler_options.compile_exec_argv orelse "",
-                    null,
+                    ctx.bundler_options.compile_executable_path,
+                    .{
+                        .disable_default_env_files = !ctx.bundler_options.compile_autoload_dotenv,
+                        .disable_autoload_bunfig = !ctx.bundler_options.compile_autoload_bunfig,
+                        .disable_autoload_tsconfig = !ctx.bundler_options.compile_autoload_tsconfig,
+                        .disable_autoload_package_json = !ctx.bundler_options.compile_autoload_package_json,
+                    },
                 ) catch |err| {
                     Output.printErrorln("failed to create executable: {s}", .{@errorName(err)});
                     Global.exit(1);
@@ -519,6 +583,8 @@ pub const BuildCommand = struct {
                     .asset => Output.prettyFmt("<magenta>", true),
                     .sourcemap => Output.prettyFmt("<d>", true),
                     .bytecode => Output.prettyFmt("<d>", true),
+                    .module_info => Output.prettyFmt("<d>", true),
+                    .@"metafile-json", .@"metafile-markdown" => Output.prettyFmt("<green>", true),
                 });
 
                 try writer.writeAll(rel_path);
@@ -549,6 +615,9 @@ pub const BuildCommand = struct {
                     .asset => "asset",
                     .sourcemap => "source map",
                     .bytecode => "bytecode",
+                    .module_info => "module info",
+                    .@"metafile-json" => "metafile json",
+                    .@"metafile-markdown" => "metafile markdown",
                 }});
                 if (Output.enable_ansi_colors_stdout)
                     try writer.writeAll("\x1b[0m");
@@ -643,12 +712,14 @@ fn printSummary(bundled_end: i128, minify_duration: u64, minified: bool, input_c
 
 const string = []const u8;
 
+const MetafileBuilder = @import("../bundler/linker_context/MetafileBuilder.zig");
 const fs = @import("../fs.zig");
 const options = @import("../options.zig");
 const resolve_path = @import("../resolver/resolve_path.zig");
 const std = @import("std");
 const BundleV2 = @import("../bundler/bundle_v2.zig").BundleV2;
 const Command = @import("../cli.zig").Command;
+const Runtime = @import("../runtime.zig").Runtime;
 
 const bun = @import("bun");
 const Global = bun.Global;

@@ -1538,7 +1538,7 @@ export function parseNumber(value) {
 
 /**
  * @param {string} string
- * @returns {"darwin" | "linux" | "windows" | "freebsd"}
+ * @returns {"darwin" | "linux" | "windows"}
  */
 export function parseOs(string) {
   if (/darwin|apple|mac/i.test(string)) {
@@ -1549,9 +1549,6 @@ export function parseOs(string) {
   }
   if (/win/i.test(string)) {
     return "windows";
-  }
-  if (/freebsd/i.test(string)) {
-    return "freebsd";
   }
   throw new Error(`Unsupported operating system: ${string}`);
 }
@@ -1915,10 +1912,6 @@ export function getUsernameForDistro(distro) {
   if (/amazon|amzn|al\d+|rhel/i.test(distro)) {
     return "ec2-user";
   }
-  if (/freebsd/i.test(distro)) {
-    return "root";
-  }
-
   throw new Error(`Unsupported distro: ${distro}`);
 }
 
@@ -2842,7 +2835,7 @@ export function printEnvironment() {
 
   if (isCI) {
     startGroup("Environment", () => {
-      for (const [key, value] of Object.entries(process.env)) {
+      for (const [key, value] of Object.entries(process.env).toSorted()) {
         console.log(`${key}:`, value);
       }
     });
@@ -2986,6 +2979,8 @@ const emojiMap = {
   gear: ["⚙️", "gear"],
   clipboard: ["📋", "clipboard"],
   rocket: ["🚀", "rocket"],
+  openbsd: ["🐡", "openbsd"],
+  netbsd: ["🚩", "netbsd"],
 };
 
 /**

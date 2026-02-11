@@ -144,7 +144,7 @@ const Platform = switch (Environment.os) {
     .linux => @import("./watcher/INotifyWatcher.zig"),
     .mac => @import("./watcher/KEventWatcher.zig"),
     .windows => WindowsWatcher,
-    else => @compileError("Unsupported platform"),
+    .wasm => @compileError("Unsupported platform"),
 };
 
 pub const WatchEvent = struct {
@@ -166,12 +166,7 @@ pub const WatchEvent = struct {
 
     pub fn merge(this: *WatchEvent, other: WatchEvent) void {
         this.name_len += other.name_len;
-        this.op = Op{
-            .delete = this.op.delete or other.op.delete,
-            .metadata = this.op.metadata or other.op.metadata,
-            .rename = this.op.rename or other.op.rename,
-            .write = this.op.write or other.op.write,
-        };
+        this.op = Op.merge(this.op, other.op);
     }
 
     pub const Op = packed struct(u8) {
@@ -180,7 +175,8 @@ pub const WatchEvent = struct {
         rename: bool = false,
         write: bool = false,
         move_to: bool = false,
-        _padding: u3 = 0,
+        create: bool = false,
+        _padding: u2 = 0,
 
         pub fn merge(before: Op, after: Op) Op {
             return .{
@@ -189,6 +185,7 @@ pub const WatchEvent = struct {
                 .metadata = before.metadata or after.metadata,
                 .rename = before.rename or after.rename,
                 .move_to = before.move_to or after.move_to,
+                .create = before.create or after.create,
             };
         }
 

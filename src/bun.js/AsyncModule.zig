@@ -417,7 +417,7 @@ pub const AsyncModule = struct {
         jsc.markBinding(@src());
         var specifier = specifier_;
         var referrer = referrer_;
-        var scope: jsc.CatchScope = undefined;
+        var scope: jsc.TopExceptionScope = undefined;
         scope.init(globalThis, @src());
         defer {
             specifier.deref();
@@ -694,6 +694,7 @@ pub const AsyncModule = struct {
                 &printer,
                 .esm_ascii,
                 mapper.get(),
+                null,
             );
         }
 

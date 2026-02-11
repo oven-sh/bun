@@ -179,7 +179,7 @@ pub const VendorPrefix = packed struct(u8) {
     /// Fields listed here so we can iterate them in the order we want
     pub const FIELDS: []const []const u8 = &.{ "webkit", "moz", "ms", "o", "none" };
 
-    pub fn toCss(this: *const VendorPrefix, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const VendorPrefix, dest: *Printer) PrintErr!void {
         return switch (this.asBits()) {
             VendorPrefix.asBits(.{ .webkit = true }) => dest.writeStr("-webkit-"),
             VendorPrefix.asBits(.{ .moz = true }) => dest.writeStr("-moz-"),
@@ -517,14 +517,14 @@ pub fn DefineRectShorthand(comptime T: type, comptime V: type) type {
             };
         }
 
-        pub fn toCss(this: *const T, comptime W: type, dest: *Printer(W)) PrintErr!void {
+        pub fn toCss(this: *const T, dest: *Printer) PrintErr!void {
             const rect = css_values.rect.Rect(V){
                 .top = this.top,
                 .right = this.right,
                 .bottom = this.bottom,
                 .left = this.left,
             };
-            return rect.toCss(W, dest);
+            return rect.toCss(dest);
         }
     };
 }
@@ -532,12 +532,12 @@ pub fn DefineRectShorthand(comptime T: type, comptime V: type) type {
 pub fn DefineSizeShorthand(comptime T: type, comptime V: type) type {
     if (std.meta.fields(T).len != 2) @compileError("DefineSizeShorthand must be used on a struct with 2 fields");
     return struct {
-        pub fn toCss(this: *const T, comptime W: type, dest: *Printer(W)) PrintErr!void {
+        pub fn toCss(this: *const T, dest: *Printer) PrintErr!void {
             const size: css_values.size.Size2D(V) = .{
                 .a = @field(this, std.meta.fields(T)[0].name),
                 .b = @field(this, std.meta.fields(T)[1].name),
             };
-            return size.toCss(W, dest);
+            return size.toCss(dest);
             // TODO: unfuck this
             // @panic(todo_stuff.depth);
         }
@@ -788,7 +788,7 @@ pub fn DeriveParse(comptime T: type) type {
         //     unreachable;
         // }
 
-        // pub fn parse(this: *const T, comptime W: type, dest: *Printer(W)) PrintErr!void {
+        // pub fn parse(this: *const T, dest: *Printer) PrintErr!void {
         //     // to implement this, we need to cargo expand the derive macro
         //     _ = this; // autofix
         //     _ = dest; // autofix
@@ -810,14 +810,14 @@ pub fn DeriveToCss(comptime T: type) type {
     const is_enum_or_union_enum = tyinfo == .@"union" or tyinfo == .@"enum";
 
     return struct {
-        pub fn toCss(this: *const T, comptime W: type, dest: *Printer(W)) PrintErr!void {
+        pub fn toCss(this: *const T, dest: *Printer) PrintErr!void {
             if (comptime is_enum_or_union_enum) {
                 inline for (std.meta.fields(T), 0..) |field, i| {
                     if (@intFromEnum(this.*) == enum_fields[i].value) {
                         if (comptime tyinfo == .@"enum" or field.type == void) {
                             return dest.writeStr(enum_fields[i].name);
                         } else if (comptime generic.hasToCss(field.type)) {
-                            return generic.toCss(field.type, &@field(this, field.name), W, dest);
+                            return generic.toCss(field.type, &@field(this, field.name), dest);
                         } else if (@hasDecl(field.type, "__generateToCss") and @typeInfo(field.type) == .@"struct") {
                             const variant_fields = std.meta.fields(field.type);
                             if (variant_fields.len > 1) {
@@ -826,10 +826,10 @@ pub fn DeriveToCss(comptime T: type) type {
                                     // Unwrap it from the optional
                                     if (@typeInfo(variant_field.type) == .optional) {
                                         if (@field(@field(this, field.name), variant_field.name)) |*value| {
-                                            try value.toCss(W, dest);
+                                            try value.toCss(dest);
                                         }
                                     } else {
-                                        try @field(@field(this, field.name), variant_field.name).toCss(W, dest);
+                                        try @field(@field(this, field.name), variant_field.name).toCss(dest);
                                     }
 
                                     // Emit a space if there are more fields after
@@ -839,7 +839,7 @@ pub fn DeriveToCss(comptime T: type) type {
                                 }
                             } else {
                                 const variant_field = variant_fields[0];
-                                try @field(variant_field.type, "toCss")(@field(@field(this, field.name), variant_field.name), W, dest);
+                                try @field(variant_field.type, "toCss")(@field(@field(this, field.name), variant_field.name), dest);
                             }
                         } else {
                             @compileError("Don't know how to serialize this variant: " ++ @typeName(field.type) ++ ", on " ++ @typeName(T) ++ ".\n\nYou probably want to implement a `toCss` function for this type, or add a dummy `fn __generateToCss() void {}` to the type signal that it is okay for it to be auto-generated by this function..");
@@ -879,7 +879,7 @@ pub const enum_property_util = struct {
         return .{ .err = location.newUnexpectedTokenError(.{ .ident = ident }) };
     }
 
-    pub fn toCss(comptime T: type, this: *const T, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(comptime T: type, this: *const T, dest: *Printer) PrintErr!void {
         return dest.writeStr(asStr(T, this));
     }
 };
@@ -907,7 +907,7 @@ pub fn DefineEnumProperty(comptime T: type) type {
             return .{ .err = location.newUnexpectedTokenError(.{ .ident = ident }) };
         }
 
-        pub fn toCss(this: *const T, comptime W: type, dest: *Printer(W)) PrintErr!void {
+        pub fn toCss(this: *const T, dest: *Printer) PrintErr!void {
             return dest.writeStr(@tagName(this.*));
         }
 
@@ -1293,7 +1293,7 @@ pub fn ValidQualifiedRuleParser(comptime T: type) void {
 }
 
 pub const DefaultAtRule = struct {
-    pub fn toCss(_: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(_: *const @This(), dest: *Printer) PrintErr!void {
         return dest.newError(.fmt_error, null);
     }
 
@@ -3130,16 +3130,14 @@ pub fn StyleSheet(comptime AtRule: type) type {
         pub fn toCssWithWriter(
             this: *const @This(),
             allocator: Allocator,
-            writer: anytype,
+            writer: *std.Io.Writer,
             options: css_printer.PrinterOptions,
             import_info: ?bun.css.ImportInfo,
             local_names: ?*const LocalsResultsMap,
             symbols: *const bun.ast.Symbol.Map,
         ) PrintResult(ToCssResultInternal) {
-            const W = @TypeOf(writer);
-
-            var printer = Printer(@TypeOf(writer)).new(allocator, std.array_list.Managed(u8).init(allocator), writer, options, import_info, local_names, symbols);
-            const result = this.toCssWithWriterImpl(allocator, W, &printer, options) catch {
+            var printer = Printer.new(allocator, std.array_list.Managed(u8).init(allocator), writer, options, import_info, local_names, symbols);
+            const result = this.toCssWithWriterImpl(allocator, &printer, options) catch {
                 bun.assert(printer.error_kind != null);
                 return .{
                     .err = printer.error_kind.?,
@@ -3149,7 +3147,7 @@ pub fn StyleSheet(comptime AtRule: type) type {
             return .{ .result = result };
         }
 
-        pub fn toCssWithWriterImpl(this: *const @This(), allocator: Allocator, comptime W: type, printer: *Printer(W), options: css_printer.PrinterOptions) PrintErr!ToCssResultInternal {
+        pub fn toCssWithWriterImpl(this: *const @This(), allocator: Allocator, printer: *Printer, options: css_printer.PrinterOptions) PrintErr!ToCssResultInternal {
             const project_root = options.project_root;
 
             // #[cfg(feature = "sourcemap")]
@@ -3173,7 +3171,7 @@ pub fn StyleSheet(comptime AtRule: type) type {
                 var references = CssModuleReferences{};
                 printer.css_module = CssModule.new(allocator, config, &this.sources, project_root, &references);
 
-                try this.rules.toCss(W, printer);
+                try this.rules.toCss(printer);
                 try printer.newline();
 
                 return ToCssResultInternal{
@@ -3187,7 +3185,7 @@ pub fn StyleSheet(comptime AtRule: type) type {
                     .references = references,
                 };
             } else {
-                try this.rules.toCss(W, printer);
+                try this.rules.toCss(printer);
                 try printer.newline();
                 return ToCssResultInternal{
                     .dependencies = printer.dependencies,
@@ -3492,7 +3490,7 @@ pub const StyleAttribute = struct {
         var symbols = bun.ast.Symbol.Map{};
         var dest = std.Io.Writer.Allocating.init(allocator);
         const writer = &dest.writer;
-        var printer = Printer(@TypeOf(writer)).new(
+        var printer = Printer.new(
             allocator,
             std.array_list.Managed(u8).init(allocator),
             writer,
@@ -3503,7 +3501,7 @@ pub const StyleAttribute = struct {
         );
         printer.sources = &this.sources;
 
-        try this.declarations.toCss(@TypeOf(writer), &printer);
+        try this.declarations.toCss(&printer);
 
         return ToCssResult{
             .dependencies = printer.dependencies,
@@ -6328,7 +6326,7 @@ pub const Token = union(TokenKind) {
         };
     }
 
-    pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const This, dest: *Printer) PrintErr!void {
         return switch (this.*) {
             .ident => |value| serializer.serializeIdentifier(value, dest) catch return dest.addFmtError(),
             .at_keyword => |value| {
@@ -6404,7 +6402,7 @@ pub const Token = union(TokenKind) {
             },
             .bad_string => |value| {
                 try dest.writeChar('"');
-                var writer = serializer.CssStringWriter(*Printer(W)).new(dest);
+                var writer = serializer.CssStringWriter(@TypeOf(dest)).new(dest);
                 return writer.writeStr(value) catch return dest.addFmtError();
             },
             .close_paren => dest.writeStr(")"),
@@ -6771,7 +6769,7 @@ pub const serializer = struct {
         return writer.writeAll("\"");
     }
 
-    pub fn serializeDimension(value: f32, unit: []const u8, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn serializeDimension(value: f32, unit: []const u8, dest: *Printer) PrintErr!void {
         // Check if the value is an integer - use Rust-compatible conversion
         const int_value: ?i32 = if (fract(value) == 0.0)
             bun.intFromFloat(i32, value)
@@ -6788,9 +6786,9 @@ pub const serializer = struct {
         if (value != 0.0 and @abs(value) < 1.0) {
             // TODO: calculate the actual number of chars here
             var buf: [64]u8 = undefined;
-            var fbs = std.io.fixedBufferStream(&buf);
-            token.toCssGeneric(fbs.writer()) catch return dest.addFmtError();
-            const s = fbs.getWritten();
+            var fbs = std.Io.Writer.fixed(&buf);
+            token.toCssGeneric(&fbs) catch return dest.addFmtError();
+            const s = fbs.buffered();
             if (value < 0.0) {
                 try dest.writeStr("-");
                 return dest.writeStr(bun.strings.trimLeadingPattern2(s, '-', '0'));
@@ -7001,21 +6999,20 @@ pub const to_css = struct {
         var s = std.Io.Writer.Allocating.init(allocator);
         errdefer s.deinit();
         const writer = &s.writer;
-        const W = @TypeOf(writer);
         // PERF: think about how cheap this is to create
-        var printer = Printer(W).new(allocator, std.array_list.Managed(u8).init(allocator), writer, options, import_info, local_names, symbols);
+        var printer = Printer.new(allocator, std.array_list.Managed(u8).init(allocator), writer, options, import_info, local_names, symbols);
         defer printer.deinit();
         switch (T) {
-            CSSString => try CSSStringFns.toCss(this, W, &printer),
-            else => try this.toCss(W, &printer),
+            CSSString => try CSSStringFns.toCss(this, &printer),
+            else => try this.toCss(&printer),
         }
         return s.written();
     }
 
-    pub fn fromList(comptime T: type, this: []const T, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn fromList(comptime T: type, this: []const T, dest: *Printer) PrintErr!void {
         const len = this.len;
         for (this, 0..) |*val, idx| {
-            try val.toCss(W, dest);
+            try val.toCss(dest);
             if (idx < len - 1) {
                 try dest.delim(',', false);
             }
@@ -7023,10 +7020,10 @@ pub const to_css = struct {
         return;
     }
 
-    pub fn fromBabyList(comptime T: type, this: *const bun.BabyList(T), comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn fromBabyList(comptime T: type, this: *const bun.BabyList(T), dest: *Printer) PrintErr!void {
         const len = this.len;
         for (this.sliceConst(), 0..) |*val, idx| {
-            try val.toCss(W, dest);
+            try val.toCss(dest);
             if (idx < len - 1) {
                 try dest.delim(',', false);
             }
@@ -7034,14 +7031,14 @@ pub const to_css = struct {
         return;
     }
 
-    pub fn integer(comptime T: type, this: T, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn integer(comptime T: type, this: T, dest: *Printer) PrintErr!void {
         const MAX_LEN = comptime maxDigits(T);
         var buf: [MAX_LEN]u8 = undefined;
         const str = std.fmt.bufPrint(buf[0..], "{d}", .{this}) catch unreachable;
         return dest.writeStr(str);
     }
 
-    pub fn float32(this: f32, writer: anytype) !void {
+    pub fn float32(this: f32, writer: *Printer) !void {
         var scratch: [129]u8 = undefined;
         const str, _ = try dtoa_short(&scratch, this, 6);
         return writer.writeAll(str);

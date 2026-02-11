@@ -21,6 +21,10 @@ endforeach()
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm|ARM|arm64|ARM64|aarch64|AARCH64")
   if(APPLE)
     register_compiler_flags(-mcpu=apple-m1)
+  elseif(WIN32)
+    # Windows ARM64: use /clang: prefix for clang-cl, skip for MSVC cl.exe subprojects
+    # These flags are only understood by clang-cl, not MSVC cl.exe
+    register_compiler_flags(/clang:-march=armv8-a+crc /clang:-mtune=ampere1)
   else()
     register_compiler_flags(-march=armv8-a+crc -mtune=ampere1)
   endif()
@@ -48,6 +52,23 @@ if(ENABLE_ASAN)
   register_compiler_flags(
     DESCRIPTION "Enable AddressSanitizer"
     -fsanitize=address
+  )
+endif()
+
+if(ENABLE_FUZZILLI)
+  register_compiler_flags(
+    DESCRIPTION "Enable coverage instrumentation for fuzzing"
+    -fsanitize-coverage=trace-pc-guard
+  )
+
+  register_linker_flags(
+    DESCRIPTION "Link coverage instrumentation"
+    -fsanitize-coverage=trace-pc-guard
+  )
+
+  register_compiler_flags(
+    DESCRIPTION "Enable fuzzilli-specific code"
+    -DFUZZILLI_ENABLED
   )
 endif()
 
@@ -225,10 +246,17 @@ if(UNIX)
   )
 endif()
 
-register_compiler_flags(
-  DESCRIPTION "Set C/C++ error limit"
-  -ferror-limit=${ERROR_LIMIT}
-)
+if(WIN32)
+  register_compiler_flags(
+    DESCRIPTION "Set C/C++ error limit"
+    /clang:-ferror-limit=${ERROR_LIMIT}
+  )
+else()
+  register_compiler_flags(
+    DESCRIPTION "Set C/C++ error limit"
+    -ferror-limit=${ERROR_LIMIT}
+  )
+endif()
 
 # --- LTO ---
 if(ENABLE_LTO)

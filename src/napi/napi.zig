@@ -411,7 +411,7 @@ pub export fn napi_create_string_latin1(env_: napi_env, str: ?[*]const u8, lengt
     log("napi_create_string_latin1: {s}", .{slice});
 
     if (slice.len == 0) {
-        result.set(env, bun.String.empty.toJS(env.toJS()));
+        result.set(env, bun.String.empty.toJS(env.toJS()) catch return env.setLastError(.generic_failure));
         return env.ok();
     }
 
@@ -420,7 +420,7 @@ pub export fn napi_create_string_latin1(env_: napi_env, str: ?[*]const u8, lengt
 
     @memcpy(bytes, slice);
 
-    result.set(env, string.toJS(env.toJS()));
+    result.set(env, string.toJS(env.toJS()) catch return env.setLastError(.generic_failure));
     return env.ok();
 }
 pub export fn napi_create_string_utf8(env_: napi_env, str: ?[*]const u8, length: usize, result_: ?*napi_value) napi_status {
@@ -486,14 +486,14 @@ pub export fn napi_create_string_utf16(env_: napi_env, str: ?[*]const char16_t, 
         log("napi_create_string_utf16: {d} {f}", .{ slice.len, bun.fmt.FormatUTF16{ .buf = slice[0..@min(slice.len, 512)] } });
 
     if (slice.len == 0) {
-        result.set(env, bun.String.empty.toJS(env.toJS()));
+        result.set(env, bun.String.empty.toJS(env.toJS()) catch return env.setLastError(.generic_failure));
         return env.ok();
     }
 
     var string, const chars = bun.String.createUninitialized(.utf16, slice.len);
     @memcpy(chars, slice);
 
-    result.set(env, string.transferToJS(env.toJS()));
+    result.set(env, string.transferToJS(env.toJS()) catch return env.setLastError(.generic_failure));
     return env.ok();
 }
 
@@ -677,7 +677,7 @@ pub export fn napi_make_callback(env_: napi_env, _: *anyopaque, recv_: napi_valu
         return envIsNull();
     };
     const recv, const func = .{ recv_.get(), func_.get() };
-    if (func.isEmptyOrUndefinedOrNull() or !func.isCallable()) {
+    if (func.isEmptyOrUndefinedOrNull() or (!func.isCallable() and !func.isAsyncContextFrame())) {
         return env.setLastError(.function_expected);
     }
 
@@ -1683,6 +1683,7 @@ pub const ThreadSafeFunction = struct {
                 .env = this.env,
                 .fun = fun,
                 .data = this.finalizer_data,
+                .hint = this.ctx,
             };
             finalizer.enqueue();
         } else {
@@ -1761,7 +1762,7 @@ pub export fn napi_create_threadsafe_function(
     };
     const func = func_.get();
 
-    if (call_js_cb == null and (func.isEmptyOrUndefinedOrNull() or !func.isCallable())) {
+    if (call_js_cb == null and (func.isEmptyOrUndefinedOrNull() or (!func.isCallable() and !func.isAsyncContextFrame()))) {
         return env.setLastError(.function_expected);
     }
 
@@ -1911,6 +1912,10 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn _ZN2v812api_internal23GetFunctionTemplateDataEPNS_7IsolateENS_5LocalINS_4DataEEE() *anyopaque;
     pub extern fn _ZNK2v88Function7GetNameEv() *anyopaque;
     pub extern fn _ZNK2v85Value10IsFunctionEv() *anyopaque;
+    pub extern fn _ZNK2v85Value5IsMapEv() *anyopaque;
+    pub extern fn _ZNK2v85Value7IsArrayEv() *anyopaque;
+    pub extern fn _ZNK2v85Value7IsInt32Ev() *anyopaque;
+    pub extern fn _ZNK2v85Value8IsBigIntEv() *anyopaque;
     pub extern fn _ZN2v812api_internal17FromJustIsNothingEv() *anyopaque;
     pub extern fn uv_os_getpid() *anyopaque;
     pub extern fn uv_os_getppid() *anyopaque;
@@ -1992,6 +1997,10 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn @"?GetFunctionTemplateData@api_internal@v8@@YA?AV?$Local@VValue@v8@@@2@PEAVIsolate@2@V?$Local@VData@v8@@@2@@Z"() *anyopaque;
     pub extern fn @"?GetName@Function@v8@@QEBA?AV?$Local@VValue@v8@@@2@XZ"() *anyopaque;
     pub extern fn @"?IsFunction@Value@v8@@QEBA_NXZ"() *anyopaque;
+    pub extern fn @"?IsMap@Value@v8@@QEBA_NXZ"() *anyopaque;
+    pub extern fn @"?IsArray@Value@v8@@QEBA_NXZ"() *anyopaque;
+    pub extern fn @"?IsInt32@Value@v8@@QEBA_NXZ"() *anyopaque;
+    pub extern fn @"?IsBigInt@Value@v8@@QEBA_NXZ"() *anyopaque;
     pub extern fn @"?FromJustIsNothing@api_internal@v8@@YAXXZ"() *anyopaque;
 };
 

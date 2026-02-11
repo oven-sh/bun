@@ -43,6 +43,9 @@ extern void Bun__internal_ensureDateHeaderTimerIsEnabled(struct us_loop_t *loop)
 
 void sweep_timer_cb(struct us_internal_callback_t *cb);
 
+// when the sweep timer is disabled, we don't need to do anything
+void sweep_timer_noop(struct us_timer_t *timer) {}
+
 void us_internal_enable_sweep_timer(struct us_loop_t *loop) {
     loop->data.sweep_timer_count++;
     if (loop->data.sweep_timer_count == 1) {
@@ -54,7 +57,7 @@ void us_internal_enable_sweep_timer(struct us_loop_t *loop) {
 void us_internal_disable_sweep_timer(struct us_loop_t *loop) {
     loop->data.sweep_timer_count--;
     if (loop->data.sweep_timer_count == 0) {
-        us_timer_set(loop->data.sweep_timer, (void (*)(struct us_timer_t *)) sweep_timer_cb, 0, 0);
+        us_timer_set(loop->data.sweep_timer, (void (*)(struct us_timer_t *)) sweep_timer_noop, 0, 0);
     }
 }
 
@@ -90,6 +93,9 @@ void us_internal_loop_data_free(struct us_loop_t *loop) {
 }
 
 void us_wakeup_loop(struct us_loop_t *loop) {
+#ifndef LIBUS_USE_LIBUV
+    __atomic_fetch_add(&loop->pending_wakeups, 1, __ATOMIC_RELEASE);
+#endif
     us_internal_async_wakeup(loop->data.wakeup_async);
 }
 
@@ -190,9 +196,17 @@ void us_internal_handle_low_priority_sockets(struct us_loop_t *loop) {
         loop_data->low_prio_head = s->next;
         if (s->next) s->next->prev = 0;
         s->next = 0;
+        int ssl = s->flags.is_tls;
+        
+        if(us_socket_is_closed(ssl, s)) {
+            s->flags.low_prio_state = 2;    
+            us_socket_context_unref(ssl, s->context);
+            continue;
+        }
 
-        us_internal_socket_context_link_socket(0, s->context, s);
-        us_poll_change(&s->p, us_socket_context(0, s)->loop, us_poll_events(&s->p) | LIBUS_SOCKET_READABLE);
+        us_internal_socket_context_link_socket(ssl, s->context, s);
+        us_socket_context_unref(ssl, s->context);
+        us_poll_change(&s->p, us_socket_context(ssl, s)->loop, us_poll_events(&s->p) | LIBUS_SOCKET_READABLE);
 
         s->flags.low_prio_state = 2;
     }
@@ -240,6 +254,7 @@ void us_internal_free_closed_sockets(struct us_loop_t *loop) {
     /* Free all closed sockets (maybe it is better to reverse order?) */
     for (struct us_socket_t *s = loop->data.closed_head; s; ) {
         struct us_socket_t *next = s->next;
+        s->prev = s->next = 0;
         us_poll_free((struct us_poll_t *) s, loop);
         s = next;
     }
@@ -344,6 +359,9 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         s->flags.allow_half_open = listen_socket->s.flags.allow_half_open;
                         s->flags.is_paused = 0;
                         s->flags.is_ipc = 0;
+                        s->flags.is_closed = 0;
+                        s->flags.adopted = 0;
+                        s->flags.is_tls = listen_socket->s.flags.is_tls;
 
                         /* We always use nodelay */
                         bsd_socket_nodelay(client_fd, 1);
@@ -351,7 +369,10 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         us_internal_socket_context_link_socket(0, listen_socket->s.context, s);
 
                         listen_socket->s.context->on_open(s, 0, bsd_addr_get_ip(&addr), bsd_addr_get_ip_length(&addr));
-
+                        /* After socket adoption, track the new socket; the old one becomes invalid */
+                        if(s && s->flags.adopted && s->prev) {
+                            s = s->prev;
+                        }
                         /* Exit accept loop if listen socket was closed in on_open handler */
                         if (us_socket_is_closed(0, &listen_socket->s)) {
                             break;
@@ -366,22 +387,41 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
     case POLL_TYPE_SOCKET: {
             /* We should only use s, no p after this point */
             struct us_socket_t *s = (struct us_socket_t *) p;
+            /* After socket adoption, track the new socket; the old one becomes invalid */
+            if(s && s->flags.adopted && s->prev) {
+                s = s->prev;
+            }
             /* The context can change after calling a callback but the loop is always the same */
             struct us_loop_t* loop = s->context->loop;
             if (events & LIBUS_SOCKET_WRITABLE && !error) {
-                /* Note: if we failed a write as a socket of one loop then adopted
-                 * to another loop, this will be wrong. Absurd case though */
-                loop->data.last_write_failed = 0;
+                s->flags.last_write_failed = 0;
+                #ifdef LIBUS_USE_KQUEUE
+                /* Kqueue EVFILT_WRITE is one-shot so the filter is removed after delivery.
+                 * Clear POLLING_OUT to reflect this.
+                 * Keep POLLING_IN from the poll's own state, NOT from `events`: kqueue delivers
+                 * each filter as a separate kevent, so a pure EVFILT_WRITE event won't have
+                 * LIBUS_SOCKET_READABLE set even though the socket is still registered for reads. */
+                p->state.poll_type = us_internal_poll_type(p) | (p->state.poll_type & POLL_TYPE_POLLING_IN);
+                #endif
 
                 s = s->context->on_writable(s);
+                /* After socket adoption, track the new socket; the old one becomes invalid */
+                if(s && s->flags.adopted && s->prev) {
+                    s = s->prev;
+                }
 
                 if (!s || us_socket_is_closed(0, s)) {
                     return;
                 }
 
                 /* If we have no failed write or if we shut down, then stop polling for more writable */
-                if (!loop->data.last_write_failed || us_socket_is_shut_down(0, s)) {
+                if (!s->flags.last_write_failed || us_socket_is_shut_down(0, s)) {
                     us_poll_change(&s->p, loop, us_poll_events(&s->p) & LIBUS_SOCKET_READABLE);
+                } else {
+                    #ifdef LIBUS_USE_KQUEUE
+                    /* Kqueue one-shot writable needs to be re-registered */
+                    us_poll_change(&s->p, loop, us_poll_events(&s->p) | LIBUS_SOCKET_WRITABLE);
+                    #endif
                 }
             }
 
@@ -465,6 +505,10 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
 
                     if (length > 0) {
                         s = s->context->on_data(s, loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, length);
+                        /* After socket adoption, track the new socket; the old one becomes invalid */
+                        if(s && s->flags.adopted && s->prev) {
+                            s = s->prev;
+                        }
                         // loop->num_ready_polls isn't accessible on Windows.
                         #ifndef WIN32
                         // rare case: we're reading a lot of data, there's more to be read, and either:

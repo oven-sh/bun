@@ -20,7 +20,7 @@ pub fn whoami(allocator: std.mem.Allocator, manager: *PackageManager) WhoamiErro
     }
 
     const auth_type = if (manager.options.publish_config.auth_type) |auth_type| @tagName(auth_type) else "web";
-    const ci_name = bun.detectCI();
+    const ci_name = bun.ci.detectCIName();
 
     var print_buf = std.array_list.Managed(u8).init(allocator);
     defer print_buf.deinit();
@@ -69,14 +69,7 @@ pub fn whoami(allocator: std.mem.Allocator, manager: *PackageManager) WhoamiErro
         headers.append("npm-auth-type", auth_type);
         headers.append("npm-command", "whoami");
 
-        try print_writer.print("{s} {s} {s} workspaces/{}{s}{s}", .{
-            Global.user_agent,
-            Global.os_name,
-            Global.arch_name,
-            false,
-            if (ci_name != null) " ci/" else "",
-            ci_name orelse "",
-        });
+        try print_writer.print("{s} {s} {s} workspaces/{}{s}{s}", .{ Global.user_agent, Global.os_name, Global.arch_name, false, if (ci_name != null) " ci/" else "", ci_name orelse "" });
         headers.append("user-agent", print_buf.items);
         print_buf.clearRetainingCapacity();
 
@@ -653,7 +646,7 @@ pub const OperatingSystem = enum(u16) {
         .linux => @enumFromInt(linux),
         .mac => @enumFromInt(darwin),
         .windows => @enumFromInt(win32),
-        else => @compileError("Unsupported operating system: " ++ @tagName(Environment.os)),
+        .wasm => @compileError("Unsupported operating system: " ++ @tagName(Environment.os)),
     };
 
     pub fn isMatch(this: OperatingSystem, target: OperatingSystem) bool {
@@ -679,7 +672,7 @@ pub const OperatingSystem = enum(u16) {
         .linux => "linux",
         .mac => "darwin",
         .windows => "win32",
-        else => @compileError("Unsupported operating system: " ++ @tagName(current)),
+        .wasm => @compileError("Unsupported operating system: " ++ @tagName(current)),
     };
 
     pub fn negatable(this: OperatingSystem) Negatable(OperatingSystem) {
@@ -772,13 +765,13 @@ pub const Architecture = enum(u16) {
     pub const current: Architecture = switch (Environment.arch) {
         .arm64 => @enumFromInt(arm64),
         .x64 => @enumFromInt(x64),
-        else => @compileError("Specify architecture: " ++ Environment.arch),
+        .wasm => @compileError("Specify architecture: " ++ Environment.arch),
     };
 
     pub const current_name = switch (Environment.arch) {
         .arm64 => "arm64",
         .x64 => "x64",
-        else => @compileError("Unsupported architecture: " ++ @tagName(current)),
+        .wasm => @compileError("Unsupported architecture: " ++ @tagName(current)),
     };
 
     pub const NameMap = bun.ComptimeStringMap(u16, .{
@@ -1344,7 +1337,7 @@ pub const PackageManifest = struct {
         pub fn generate(global: *JSGlobalObject) JSValue {
             const obj = JSValue.createEmptyObject(global, 1);
             const parseManifestString = ZigString.static("parseManifest");
-            obj.put(global, parseManifestString, jsc.createCallback(global, parseManifestString, 2, jsParseManifest));
+            obj.put(global, parseManifestString, jsc.JSFunction.create(global, "parseManifest", jsParseManifest, 2, .{}));
             return obj;
         }
 

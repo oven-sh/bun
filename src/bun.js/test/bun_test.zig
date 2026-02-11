@@ -570,7 +570,7 @@ pub const BunTest = struct {
                 group.log("-> inserting timer", .{});
                 globalThis.bunVM().timer.insert(&this.timer);
                 if (group.getLogEnabled()) {
-                    const duration = this.timer.next.duration(&bun.timespec.now());
+                    const duration = this.timer.next.duration(&bun.timespec.now(.force_real_time));
                     group.log("-> timer duration: {}", .{duration});
                 }
             }
@@ -654,8 +654,8 @@ pub const BunTest = struct {
             // Prevent the user's Promise rejection from going into the uncaught promise rejection queue.
             if (result != .zero)
                 if (result.asPromise()) |promise|
-                    if (promise.status(globalThis.vm()) == .rejected)
-                        promise.setHandled(globalThis.vm());
+                    if (promise.status() == .rejected)
+                        promise.setHandled();
 
             const prev_unhandled_count = vm.unhandled_error_counter;
             globalThis.handleRejectedPromises();
@@ -681,7 +681,7 @@ pub const BunTest = struct {
 
                 group.log("callTestCallback -> promise: data {f}", .{cfg_data});
 
-                switch (promise.status(globalThis.vm())) {
+                switch (promise.status()) {
                     .pending => {
                         // not immediately resolved; register 'then' to handle the result when it becomes available
                         const this_ref: *RefData = if (dcb_ref) |dcb_ref_value| dcb_ref_value.dupe() else ref(this_strong, cfg_data);
@@ -924,6 +924,10 @@ pub const ExecutionEntryCfg = struct {
     /// 0 = unlimited timeout
     timeout: u32,
     has_done_parameter: bool,
+    /// Number of times to retry a failed test (0 = no retries)
+    retry_count: u32 = 0,
+    /// Number of times to repeat a test (0 = run once, 1 = run twice, etc.)
+    repeat_count: u32 = 0,
 };
 pub const ExecutionEntry = struct {
     base: BaseScope,
@@ -935,9 +939,14 @@ pub const ExecutionEntry = struct {
     /// when this entry begins executing, the timespec will be set to the current time plus the timeout(ms).
     timespec: bun.timespec = .epoch,
     added_in_phase: AddedInPhase,
+    /// Number of times to retry a failed test (0 = no retries)
+    retry_count: u32,
+    /// Number of times to repeat a test (0 = run once, 1 = run twice, etc.)
+    repeat_count: u32,
 
     next: ?*ExecutionEntry = null,
-    skip_to: ?*ExecutionEntry = null,
+    /// if this entry fails, go to the entry 'failure_skip_past.next'
+    failure_skip_past: ?*ExecutionEntry = null,
 
     const AddedInPhase = enum { preload, collection, execution };
 
@@ -948,6 +957,8 @@ pub const ExecutionEntry = struct {
             .timeout = cfg.timeout,
             .has_done_parameter = cfg.has_done_parameter,
             .added_in_phase = phase,
+            .retry_count = cfg.retry_count,
+            .repeat_count = cfg.repeat_count,
         });
 
         if (cb) |c| {
@@ -1013,6 +1024,8 @@ pub const RunOneResult = union(enum) {
         timeout: bun.timespec = .epoch,
     },
 };
+
+pub const FakeTimers = @import("./timers/FakeTimers.zig");
 
 pub const Execution = @import("./Execution.zig");
 pub const debug = @import("./debug.zig");

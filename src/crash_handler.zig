@@ -322,7 +322,7 @@ pub fn crashHandler(
                             }
                         },
                         .mac, .linux => {},
-                        else => @compileError("TODO"),
+                        .wasm => @compileError("TODO"),
                     }
 
                     writer.writeAll(": ") catch std.posix.abort();
@@ -831,7 +831,7 @@ fn handleSegfaultPosix(sig: i32, info: *const std.posix.siginfo_t, _: ?*const an
     const addr = switch (bun.Environment.os) {
         .linux => @intFromPtr(info.fields.sigfault.addr),
         .mac => @intFromPtr(info.addr),
-        else => @compileError(unreachable),
+        .windows, .wasm => @compileError("unreachable"),
     };
 
     crashHandler(
@@ -895,7 +895,7 @@ pub fn init() void {
         .mac, .linux => {
             resetOnPosix();
         },
-        else => @compileError("TODO"),
+        .wasm => @compileError("TODO"),
     }
 }
 
@@ -1103,6 +1103,7 @@ const Platform = enum(u8) {
 
     windows_x86_64 = 'w',
     windows_x86_64_baseline = 'e',
+    windows_aarch64 = 'W',
 
     const current = @field(Platform, @tagName(bun.Environment.os) ++
         "_" ++ @tagName(builtin.target.cpu.arch) ++
@@ -1532,7 +1533,7 @@ fn report(url: []const u8) void {
                 },
             }
         },
-        else => @compileError("Not implemented"),
+        .wasm => @compileError("Not implemented"),
     }
 }
 
@@ -1699,8 +1700,8 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace, limits: WriteStackTraceLimi
 
     const programs: []const [:0]const u8 = switch (bun.Environment.os) {
         .windows => &.{"pdb-addr2line"},
-        // if `llvm-symbolizer` doesn't work, also try `llvm-symbolizer-19`
-        else => &.{ "llvm-symbolizer", "llvm-symbolizer-19" },
+        // if `llvm-symbolizer` doesn't work, also try `llvm-symbolizer-21`
+        else => &.{ "llvm-symbolizer", "llvm-symbolizer-21" },
     };
     for (programs) |program| {
         var arena = bun.ArenaAllocator.init(bun.default_allocator);
@@ -1846,12 +1847,11 @@ pub const js_bindings = struct {
     const JSValue = jsc.JSValue;
 
     pub fn generate(global: *jsc.JSGlobalObject) jsc.JSValue {
-        const obj = jsc.JSValue.createEmptyObject(global, 3);
+        const obj = jsc.JSValue.createEmptyObject(global, 8);
         inline for (.{
             .{ "getMachOImageZeroOffset", jsGetMachOImageZeroOffset },
             .{ "getFeaturesAsVLQ", jsGetFeaturesAsVLQ },
             .{ "getFeatureData", jsGetFeatureData },
-
             .{ "segfault", jsSegfault },
             .{ "panic", jsPanic },
             .{ "rootError", jsRootError },
@@ -1859,7 +1859,7 @@ pub const js_bindings = struct {
             .{ "raiseIgnoringPanicHandler", jsRaiseIgnoringPanicHandler },
         }) |tuple| {
             const name = jsc.ZigString.static(tuple[0]);
-            obj.put(global, name, jsc.createCallback(global, name, 1, tuple[1]));
+            obj.put(global, name, jsc.JSFunction.create(global, tuple[0], tuple[1], 1, .{}));
         }
         return obj;
     }
@@ -1918,15 +1918,15 @@ pub const js_bindings = struct {
         const list = bun.analytics.packed_features_list;
         const array = try JSValue.createEmptyArray(global, list.len);
         for (list, 0..) |feature, i| {
-            try array.putIndex(global, @intCast(i), bun.String.static(feature).toJS(global));
+            try array.putIndex(global, @intCast(i), try bun.String.static(feature).toJS(global));
         }
         obj.put(global, jsc.ZigString.static("features"), array);
-        obj.put(global, jsc.ZigString.static("version"), bun.String.init(Global.package_json_version).toJS(global));
+        obj.put(global, jsc.ZigString.static("version"), try bun.String.init(Global.package_json_version).toJS(global));
         obj.put(global, jsc.ZigString.static("is_canary"), jsc.JSValue.jsBoolean(bun.Environment.is_canary));
 
         // This is the source of truth for the git sha.
         // Not the github ref or the git tag.
-        obj.put(global, jsc.ZigString.static("revision"), bun.String.init(bun.Environment.git_sha).toJS(global));
+        obj.put(global, jsc.ZigString.static("revision"), try bun.String.init(bun.Environment.git_sha).toJS(global));
 
         obj.put(global, jsc.ZigString.static("generated_at"), JSValue.jsNumberFromInt64(@max(std.time.milliTimestamp(), 0)));
         return obj;

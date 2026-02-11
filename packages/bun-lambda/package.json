@@ -15,5 +15,8 @@
     "build-layer": "bun scripts/build-layer.ts",
     "publish-layer": "bun scripts/publish-layer.ts",
     "format": "prettier --write ."
+  },
+  "overrides": {
+    "braces": "^3.0.3"
   }
 }

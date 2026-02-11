@@ -104,29 +104,6 @@ pub const ErrorKind = enum(u8) {
     js_aggregate,
 };
 
-pub fn initFromJs(dev: *DevServer, owner: Owner, value: JSValue) !SerializedFailure {
-    {
-        _ = value;
-        @panic("TODO");
-    }
-    // Avoid small re-allocations without requesting so much from the heap
-    var sfb = std.heap.stackFallback(65536, dev.allocator());
-    var payload = std.array_list.Managed(u8).initCapacity(sfb.get(), 65536) catch
-        unreachable; // enough space
-    const w = payload.writer();
-
-    try w.writeInt(u32, @bitCast(owner.encode()), .little);
-    // try writeJsValue(value);
-
-    // Avoid-recloning if it is was moved to the hap
-    const data = if (payload.items.ptr == &sfb.buffer)
-        try dev.allocator().dupe(u8, payload.items)
-    else
-        payload.items;
-
-    return .{ .data = data };
-}
-
 pub fn initFromLog(
     dev: *DevServer,
     owner: Owner,

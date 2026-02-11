@@ -9,9 +9,9 @@ on:
   pull_request:
   merge_group:
 env:
-  BUN_VERSION: "1.2.20"
-  LLVM_VERSION: "19.1.7"
-  LLVM_VERSION_MAJOR: "19"
+  BUN_VERSION: "1.3.2"
+  LLVM_VERSION: "21.1.8"
+  LLVM_VERSION_MAJOR: "21"
 
 jobs:
   autofix:

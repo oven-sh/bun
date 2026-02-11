@@ -814,6 +814,8 @@ pub const RunCommand = struct {
                 }
             }
 
+            // Always skip default .env files for package.json script runner
+            // (see comment in env_loader.zig:542-548 - the script's own bun instance loads .env)
             this_transpiler.runEnvLoader(true) catch {};
         }
 
@@ -1053,9 +1055,6 @@ pub const RunCommand = struct {
                                 bun.copy(u8, path_buf[dir_slice.len..], base);
                                 path_buf[dir_slice.len + base.len] = 0;
                                 const slice = path_buf[0 .. dir_slice.len + base.len :0];
-                                if (Environment.isWindows) {
-                                    @panic("TODO");
-                                }
                                 if (!(bun.sys.isExecutableFilePath(slice))) continue;
                                 // we need to dupe because the string pay point to a pointer that only exists in the current scope
                                 _ = try results.getOrPut(this_transpiler.fs.filename_store.append(@TypeOf(base), base) catch continue);
@@ -1515,6 +1514,7 @@ pub const RunCommand = struct {
                     .entry_point_run,
                 );
         };
+        var resolved_to_unrunnable_file: ?struct { path: []const u8, loader: bun.options.Loader } = null;
         if (resolution) |resolved| {
             var resolved_mutable = resolved;
             const path = resolved_mutable.path().?;
@@ -1524,6 +1524,7 @@ pub const RunCommand = struct {
                 return _bootAndHandleError(ctx, path.text, loader);
             } else {
                 log("Resolved file `{s}` but ignoring because loader is {s}", .{ path.text, @tagName(loader) });
+                resolved_to_unrunnable_file = .{ .path = path.text, .loader = loader };
             }
         } else |_| {
             // Support globs for HTML entry points.
@@ -1603,14 +1604,19 @@ pub const RunCommand = struct {
         }
 
         if (log_errors) {
-            const ext = std.fs.path.extension(target_name);
-            const default_loader = options.defaultLoaders.get(ext);
-            if (default_loader != null and default_loader.?.isJavaScriptLikeOrJSON() or target_name.len > 0 and (target_name[0] == '.' or target_name[0] == '/' or std.fs.path.isAbsolute(target_name))) {
-                Output.prettyError("<r><red>error<r><d>:<r> <b>Module not found \"<b>{s}<r>\"\n", .{target_name});
-            } else if (ext.len > 0) {
-                Output.prettyError("<r><red>error<r><d>:<r> <b>File not found \"<b>{s}<r>\"\n", .{target_name});
+            if (resolved_to_unrunnable_file) |info| {
+                Output.prettyError("<r><red>error<r><d>:<r> <b>Cannot run \"{s}\"<r>\n", .{info.path});
+                Output.prettyError("<r><d>note<r><d>:<r> Bun cannot run {s} files directly\n", .{@tagName(info.loader)});
             } else {
-                Output.prettyError("<r><red>error<r><d>:<r> <b>Script not found \"<b>{s}<r>\"\n", .{target_name});
+                const ext = std.fs.path.extension(target_name);
+                const default_loader = options.defaultLoaders.get(ext);
+                if (default_loader != null and default_loader.?.isJavaScriptLikeOrJSON() or target_name.len > 0 and (target_name[0] == '.' or target_name[0] == '/' or std.fs.path.isAbsolute(target_name))) {
+                    Output.prettyError("<r><red>error<r><d>:<r> <b>Module not found \"<b>{s}<r>\"\n", .{target_name});
+                } else if (ext.len > 0) {
+                    Output.prettyError("<r><red>error<r><d>:<r> <b>File not found \"<b>{s}<r>\"\n", .{target_name});
+                } else {
+                    Output.prettyError("<r><red>error<r><d>:<r> <b>Script not found \"<b>{s}<r>\"\n", .{target_name});
+                }
             }
 
             Global.exit(1);
@@ -1686,6 +1692,92 @@ pub const BunXFastPath = struct {
     var direct_launch_buffer: bun.WPathBuffer = undefined;
     var environment_buffer: bun.WPathBuffer = undefined;
 
+    /// Append a single UTF-8 argument to a Windows command line (UTF-16), with proper quoting and escaping.
+    /// Returns the number of UTF-16 code units written.
+    ///
+    /// Based on libuv's quote_cmd_arg function:
+    /// https://github.com/libuv/libuv/blob/v1.x/src/win/process.c#L443-L518
+    ///
+    /// SAFETY: Caller must ensure `buffer` has sufficient space. Worst case requires
+    /// approximately `2 * arg.len + 3` UTF-16 code units (when every character needs escaping).
+    /// The command line buffer is sized to Windows' 32,767 character limit.
+    fn appendWindowsArgument(buffer: []u16, arg: []const u8) usize {
+        // Temporary buffer for UTF-16 conversion (max 2048 wide chars = 4KB)
+        var temp_buf: [2048]u16 = undefined;
+
+        // Convert UTF-8 to UTF-16
+        const utf16_result = bun.strings.convertUTF8toUTF16InBuffer(&temp_buf, arg);
+        const source = temp_buf[0..utf16_result.len];
+        const len = source.len;
+
+        if (len == 0) {
+            // Empty argument needs quotes
+            buffer[0] = '"';
+            buffer[1] = '"';
+            return 2;
+        }
+
+        // Check if we need quoting (contains space, tab, or quote)
+        const needs_quote = for (source) |c| {
+            if (c == ' ' or c == '\t' or c == '"') break true;
+        } else false;
+
+        if (!needs_quote) {
+            // No quoting needed, just copy to output
+            @memcpy(buffer[0..len], source);
+            return len;
+        }
+
+        // Check if we have embedded quotes or backslashes
+        const has_quote_or_backslash = for (source) |c| {
+            if (c == '"' or c == '\\') break true;
+        } else false;
+
+        if (!has_quote_or_backslash) {
+            // Simple case: just wrap in quotes
+            buffer[0] = '"';
+            @memcpy(buffer[1 .. 1 + len], source);
+            buffer[len + 1] = '"';
+            return len + 2;
+        }
+
+        // Complex case: need to handle backslash escaping
+        // Use libuv's algorithm: process backwards, then reverse
+        var pos: usize = 0;
+        buffer[pos] = '"';
+        pos += 1;
+
+        const start = pos;
+        var quote_hit: bool = true;
+
+        var i: usize = len;
+        while (i > 0) {
+            i -= 1;
+            buffer[pos] = source[i];
+            pos += 1;
+
+            if (quote_hit and source[i] == '\\') {
+                buffer[pos] = '\\';
+                pos += 1;
+            } else if (source[i] == '"') {
+                quote_hit = true;
+                buffer[pos] = '\\';
+                pos += 1;
+            } else {
+                quote_hit = false;
+            }
+        }
+
+        // Reverse the content we just wrote (between opening quote and current position)
+        std.mem.reverse(u16, buffer[start..pos]);
+
+        // Add closing quote
+        buffer[pos] = '"';
+        pos += 1;
+
+        return pos;
+    }
+
     /// If this returns, it implies the fast path cannot be taken
     fn tryLaunch(ctx: Command.Context, path_to_use: [:0]u16, env: *DotEnv.Loader, passthrough: []const []const u8) void {
         if (!bun.FeatureFlags.windows_bunx_fast_path) return;
@@ -1711,10 +1803,17 @@ pub const BunXFastPath = struct {
         }).cast();
 
         var i: usize = 0;
-        for (passthrough) |str| {
+        for (passthrough) |arg| {
+            // Add space separator before each argument
             command_line[i] = ' ';
-            const result = bun.strings.convertUTF8toUTF16InBuffer(command_line[1 + i ..], str);
-            i += result.len + 1;
+            i += 1;
+
+            // Append the argument with proper quoting/escaping
+            if (comptime Environment.isWindows) {
+                i += appendWindowsArgument(command_line[i..], arg);
+            } else {
+                unreachable;
+            }
         }
         ctx.passthrough = passthrough;
 

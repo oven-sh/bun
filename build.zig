@@ -18,22 +18,6 @@ const OperatingSystem = @import("src/env.zig").OperatingSystem;
 
 const pathRel = fs.path.relative;
 
-/// When updating this, make sure to adjust SetupZig.cmake
-const recommended_zig_version = "0.14.0";
-
-// comptime {
-//     if (!std.mem.eql(u8, builtin.zig_version_string, recommended_zig_version)) {
-//         @compileError(
-//             "" ++
-//                 "Bun requires Zig version " ++ recommended_zig_version ++ ", but you have " ++
-//                 builtin.zig_version_string ++ ". This is automatically configured via Bun's " ++
-//                 "CMake setup. You likely meant to run `bun run build`. If you are trying to " ++
-//                 "upgrade the Zig compiler, edit ZIG_COMMIT in cmake/tools/SetupZig.cmake or " ++
-//                 "comment this error out.",
-//         );
-//     }
-// }
-
 const zero_sha = "0000000000000000000000000000000000000000";
 
 const BunBuildOptions = struct {
@@ -48,7 +32,9 @@ const BunBuildOptions = struct {
     /// enable debug logs in release builds
     enable_logs: bool = false,
     enable_asan: bool,
+    enable_fuzzilli: bool,
     enable_valgrind: bool,
+    enable_tinycc: bool,
     use_mimalloc: bool,
     tracy_callstack_depth: u16,
     reported_nodejs_version: Version,
@@ -97,7 +83,9 @@ const BunBuildOptions = struct {
         opts.addOption(bool, "baseline", this.isBaseline());
         opts.addOption(bool, "enable_logs", this.enable_logs);
         opts.addOption(bool, "enable_asan", this.enable_asan);
+        opts.addOption(bool, "enable_fuzzilli", this.enable_fuzzilli);
         opts.addOption(bool, "enable_valgrind", this.enable_valgrind);
+        opts.addOption(bool, "enable_tinycc", this.enable_tinycc);
         opts.addOption(bool, "use_mimalloc", this.use_mimalloc);
         opts.addOption([]const u8, "reported_nodejs_version", b.fmt("{f}", .{this.reported_nodejs_version}));
         opts.addOption(bool, "zig_self_hosted_backend", this.no_llvm);
@@ -271,7 +259,9 @@ pub fn build(b: *Build) !void {
         .tracy_callstack_depth = b.option(u16, "tracy_callstack_depth", "") orelse 10,
         .enable_logs = b.option(bool, "enable_logs", "Enable logs in release") orelse false,
         .enable_asan = b.option(bool, "enable_asan", "Enable asan") orelse false,
+        .enable_fuzzilli = b.option(bool, "enable_fuzzilli", "Enable fuzzilli instrumentation") orelse false,
         .enable_valgrind = b.option(bool, "enable_valgrind", "Enable valgrind") orelse false,
+        .enable_tinycc = b.option(bool, "enable_tinycc", "Enable TinyCC for FFI JIT compilation") orelse true,
         .use_mimalloc = b.option(bool, "use_mimalloc", "Use mimalloc as default allocator") orelse false,
         .llvm_codegen_threads = b.option(u32, "llvm_codegen_threads", "Number of threads to use for LLVM codegen") orelse 1,
     };
@@ -355,6 +345,7 @@ pub fn build(b: *Build) !void {
         const step = b.step("check-debug", "Check for semantic analysis errors on some platforms");
         addMultiCheck(b, step, build_options, &.{
             .{ .os = .windows, .arch = .x86_64 },
+            .{ .os = .windows, .arch = .aarch64 },
             .{ .os = .mac, .arch = .aarch64 },
             .{ .os = .linux, .arch = .x86_64 },
         }, &.{.Debug});
@@ -365,6 +356,7 @@ pub fn build(b: *Build) !void {
         const step = b.step("check-all", "Check for semantic analysis errors on all supported platforms");
         addMultiCheck(b, step, build_options, &.{
             .{ .os = .windows, .arch = .x86_64 },
+            .{ .os = .windows, .arch = .aarch64 },
             .{ .os = .mac, .arch = .x86_64 },
             .{ .os = .mac, .arch = .aarch64 },
             .{ .os = .linux, .arch = .x86_64 },
@@ -379,6 +371,7 @@ pub fn build(b: *Build) !void {
         const step = b.step("check-all-debug", "Check for semantic analysis errors on all supported platforms in debug mode");
         addMultiCheck(b, step, build_options, &.{
             .{ .os = .windows, .arch = .x86_64 },
+            .{ .os = .windows, .arch = .aarch64 },
             .{ .os = .mac, .arch = .x86_64 },
             .{ .os = .mac, .arch = .aarch64 },
             .{ .os = .linux, .arch = .x86_64 },
@@ -393,12 +386,14 @@ pub fn build(b: *Build) !void {
         const step = b.step("check-windows", "Check for semantic analysis errors on Windows");
         addMultiCheck(b, step, build_options, &.{
             .{ .os = .windows, .arch = .x86_64 },
+            .{ .os = .windows, .arch = .aarch64 },
         }, &.{ .Debug, .ReleaseFast });
     }
     {
         const step = b.step("check-windows-debug", "Check for semantic analysis errors on Windows");
         addMultiCheck(b, step, build_options, &.{
             .{ .os = .windows, .arch = .x86_64 },
+            .{ .os = .windows, .arch = .aarch64 },
         }, &.{.Debug});
     }
     {
@@ -435,6 +430,7 @@ pub fn build(b: *Build) !void {
         const step = b.step("translate-c", "Copy generated translated-c-headers.zig to zig-out");
         for ([_]TargetDescription{
             .{ .os = .windows, .arch = .x86_64 },
+            .{ .os = .windows, .arch = .aarch64 },
             .{ .os = .mac, .arch = .x86_64 },
             .{ .os = .mac, .arch = .aarch64 },
             .{ .os = .linux, .arch = .x86_64 },
@@ -462,6 +458,146 @@ pub fn build(b: *Build) !void {
         // });
         // const run = b.addRunArtifact(exe);
         // step.dependOn(&run.step);
+    }
+
+    // zig build generate-grapheme-tables
+    // Regenerates src/string/immutable/grapheme_tables.zig from the vendored uucode.
+    // Run this when updating src/deps/uucode. Normal builds use the committed file.
+    {
+        const step = b.step("generate-grapheme-tables", "Regenerate grapheme property tables from vendored uucode");
+
+        // --- Phase 1: Build uucode tables (separate module graph, no tables dependency) ---
+        const bt_config_mod = b.createModule(.{
+            .root_source_file = b.path("src/deps/uucode/src/config.zig"),
+            .target = b.graph.host,
+        });
+        const bt_types_mod = b.createModule(.{
+            .root_source_file = b.path("src/deps/uucode/src/types.zig"),
+            .target = b.graph.host,
+        });
+        bt_types_mod.addImport("config.zig", bt_config_mod);
+        bt_config_mod.addImport("types.zig", bt_types_mod);
+
+        const bt_config_x_mod = b.createModule(.{
+            .root_source_file = b.path("src/deps/uucode/src/x/config.x.zig"),
+            .target = b.graph.host,
+        });
+        const bt_types_x_mod = b.createModule(.{
+            .root_source_file = b.path("src/deps/uucode/src/x/types.x.zig"),
+            .target = b.graph.host,
+        });
+        bt_types_x_mod.addImport("config.x.zig", bt_config_x_mod);
+        bt_config_x_mod.addImport("types.x.zig", bt_types_x_mod);
+        bt_config_x_mod.addImport("types.zig", bt_types_mod);
+        bt_config_x_mod.addImport("config.zig", bt_config_mod);
+
+        const bt_build_config_mod = b.createModule(.{
+            .root_source_file = b.path("src/unicode/uucode/uucode_config.zig"),
+            .target = b.graph.host,
+        });
+        bt_build_config_mod.addImport("types.zig", bt_types_mod);
+        bt_build_config_mod.addImport("config.zig", bt_config_mod);
+        bt_build_config_mod.addImport("types.x.zig", bt_types_x_mod);
+        bt_build_config_mod.addImport("config.x.zig", bt_config_x_mod);
+
+        const build_tables_mod = b.createModule(.{
+            .root_source_file = b.path("src/deps/uucode/src/build/tables.zig"),
+            .target = b.graph.host,
+            .optimize = .Debug,
+        });
+        build_tables_mod.addImport("config.zig", bt_config_mod);
+        build_tables_mod.addImport("build_config", bt_build_config_mod);
+        build_tables_mod.addImport("types.zig", bt_types_mod);
+
+        const build_tables_exe = b.addExecutable(.{
+            .name = "uucode_build_tables",
+            .root_module = build_tables_mod,
+            .use_llvm = true,
+        });
+        const run_build_tables = b.addRunArtifact(build_tables_exe);
+        run_build_tables.setCwd(b.path("src/deps/uucode"));
+        const tables_path = run_build_tables.addOutputFileArg("tables.zig");
+
+        // --- Phase 2: Build grapheme-gen with full uucode (separate module graph) ---
+        const rt_config_mod = b.createModule(.{
+            .root_source_file = b.path("src/deps/uucode/src/config.zig"),
+            .target = b.graph.host,
+        });
+        const rt_types_mod = b.createModule(.{
+            .root_source_file = b.path("src/deps/uucode/src/types.zig"),
+            .target = b.graph.host,
+        });
+        rt_types_mod.addImport("config.zig", rt_config_mod);
+        rt_config_mod.addImport("types.zig", rt_types_mod);
+
+        const rt_config_x_mod = b.createModule(.{
+            .root_source_file = b.path("src/deps/uucode/src/x/config.x.zig"),
+            .target = b.graph.host,
+        });
+        const rt_types_x_mod = b.createModule(.{
+            .root_source_file = b.path("src/deps/uucode/src/x/types.x.zig"),
+            .target = b.graph.host,
+        });
+        rt_types_x_mod.addImport("config.x.zig", rt_config_x_mod);
+        rt_config_x_mod.addImport("types.x.zig", rt_types_x_mod);
+        rt_config_x_mod.addImport("types.zig", rt_types_mod);
+        rt_config_x_mod.addImport("config.zig", rt_config_mod);
+
+        const rt_build_config_mod = b.createModule(.{
+            .root_source_file = b.path("src/unicode/uucode/uucode_config.zig"),
+            .target = b.graph.host,
+        });
+        rt_build_config_mod.addImport("types.zig", rt_types_mod);
+        rt_build_config_mod.addImport("config.zig", rt_config_mod);
+        rt_build_config_mod.addImport("types.x.zig", rt_types_x_mod);
+        rt_build_config_mod.addImport("config.x.zig", rt_config_x_mod);
+
+        const rt_tables_mod = b.createModule(.{
+            .root_source_file = tables_path,
+            .target = b.graph.host,
+        });
+        rt_tables_mod.addImport("types.zig", rt_types_mod);
+        rt_tables_mod.addImport("types.x.zig", rt_types_x_mod);
+        rt_tables_mod.addImport("config.zig", rt_config_mod);
+        rt_tables_mod.addImport("build_config", rt_build_config_mod);
+
+        const rt_get_mod = b.createModule(.{
+            .root_source_file = b.path("src/deps/uucode/src/get.zig"),
+            .target = b.graph.host,
+        });
+        rt_get_mod.addImport("types.zig", rt_types_mod);
+        rt_get_mod.addImport("tables", rt_tables_mod);
+        rt_types_mod.addImport("get.zig", rt_get_mod);
+
+        const uucode_mod = b.createModule(.{
+            .root_source_file = b.path("src/deps/uucode/src/root.zig"),
+            .target = b.graph.host,
+        });
+        uucode_mod.addImport("types.zig", rt_types_mod);
+        uucode_mod.addImport("config.zig", rt_config_mod);
+        uucode_mod.addImport("types.x.zig", rt_types_x_mod);
+        uucode_mod.addImport("tables", rt_tables_mod);
+        uucode_mod.addImport("get.zig", rt_get_mod);
+
+        // grapheme_gen executable
+        const gen_exe = b.addExecutable(.{
+            .name = "grapheme-gen",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/unicode/uucode/grapheme_gen.zig"),
+                .target = b.graph.host,
+                .optimize = .Debug,
+                .imports = &.{
+                    .{ .name = "uucode", .module = uucode_mod },
+                },
+            }),
+            .use_llvm = true,
+        });
+
+        const run_gen = b.addRunArtifact(gen_exe);
+        const gen_output = run_gen.captureStdOut();
+
+        const install = b.addInstallFile(gen_output, "../src/string/immutable/grapheme_tables.zig");
+        step.dependOn(&install.step);
     }
 }
 
@@ -506,6 +642,8 @@ fn addMultiCheck(
                 .no_llvm = root_build_options.no_llvm,
                 .enable_asan = root_build_options.enable_asan,
                 .enable_valgrind = root_build_options.enable_valgrind,
+                .enable_tinycc = root_build_options.enable_tinycc,
+                .enable_fuzzilli = root_build_options.enable_fuzzilli,
                 .use_mimalloc = root_build_options.use_mimalloc,
                 .override_no_export_cpp_apis = root_build_options.override_no_export_cpp_apis,
             };
@@ -619,15 +757,22 @@ fn configureObj(b: *Build, opts: *BunBuildOptions, obj: *Compile) void {
             obj.llvm_codegen_threads = opts.llvm_codegen_threads orelse 0;
     }
 
-    obj.no_link_obj = opts.os != .windows;
+    obj.no_link_obj = opts.os != .windows and !opts.no_llvm;
+
 
     if (opts.enable_asan and !enableFastBuild(b)) {
         if (@hasField(Build.Module, "sanitize_address")) {
+            if (opts.enable_fuzzilli) {
+                obj.sanitize_coverage_trace_pc_guard = true;
+            }
             obj.root_module.sanitize_address = true;
         } else {
             const fail_step = b.addFail("asan is not supported on this platform");
             obj.step.dependOn(&fail_step.step);
         }
+    } else if (opts.enable_fuzzilli) {
+        const fail_step = b.addFail("fuzzilli requires asan");
+        obj.step.dependOn(&fail_step.step);
     }
     obj.bundle_compiler_rt = false;
     obj.bundle_ubsan_rt = false;
@@ -781,6 +926,13 @@ fn addInternalImports(b: *Build, mod: *Module, opts: *BunBuildOptions) void {
         });
         mod.addImport("cpp", cppImport);
         cppImport.addImport("bun", mod);
+    }
+    {
+        const ciInfoImport = b.createModule(.{
+            .root_source_file = (std.Build.LazyPath{ .cwd_relative = opts.codegen_path }).path(b, "ci_info.zig"),
+        });
+        mod.addImport("ci_info", ciInfoImport);
+        ciInfoImport.addImport("bun", mod);
     }
     inline for (.{
         .{ .import = "completions-bash", .file = b.path("completions/bun.bash") },

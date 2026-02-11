@@ -282,7 +282,7 @@ pub const LengthValue = union(enum) {
         return .{ .err = location.newUnexpectedTokenError(token.*) };
     }
 
-    pub fn toCss(this: *const @This(), comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+    pub fn toCss(this: *const @This(), dest: *css.Printer) css.PrintErr!void {
         const value, const unit = this.toUnitValue();
 
         // The unit can be omitted if the value is zero, except inside calc()
@@ -291,7 +291,7 @@ pub const LengthValue = union(enum) {
             return dest.writeChar('0');
         }
 
-        return css.serializer.serializeDimension(value, unit, W, dest);
+        return css.serializer.serializeDimension(value, unit, dest);
     }
 
     pub fn isZero(this: *const LengthValue) bool {
@@ -561,10 +561,10 @@ pub const Length = union(enum) {
         return .{ .result = .{ .value = len } };
     }
 
-    pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const @This(), dest: *Printer) PrintErr!void {
         return switch (this.*) {
-            .value => |a| a.toCss(W, dest),
-            .calc => |c| c.toCss(W, dest),
+            .value => |a| a.toCss(dest),
+            .calc => |c| c.toCss(dest),
         };
     }
 

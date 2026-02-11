@@ -121,6 +121,7 @@
               "/runtime/file-io",
               "/runtime/streams",
               "/runtime/binary-data",
+              "/runtime/archive",
               "/runtime/sql",
               "/runtime/sqlite",
               "/runtime/s3",
@@ -149,6 +150,9 @@
               "/runtime/secrets",
               "/runtime/console",
               "/runtime/yaml",
+              "/runtime/markdown",
+              "/runtime/json5",
+              "/runtime/jsonl",
               "/runtime/html-rewriter",
               "/runtime/hashing",
               "/runtime/glob",
@@ -188,7 +192,7 @@
           {
             "group": "Publishing & Analysis",
             "icon": "upload",
-            "pages": ["/pm/cli/publish", "/pm/cli/outdated", "/pm/cli/why", "/pm/cli/audit"]
+            "pages": ["/pm/cli/publish", "/pm/cli/outdated", "/pm/cli/why", "/pm/cli/audit", "/pm/cli/info"]
           },
           {
             "group": "Workspace Management",
@@ -326,6 +330,7 @@
             "group": "Utilities",
             "icon": "wrench",
             "pages": [
+              "/guides/util/upgrade",
               "/guides/util/detect-bun",
               "/guides/util/version",
               "/guides/util/hash-a-password",
@@ -354,7 +359,7 @@
               "/guides/ecosystem/discordjs",
               "/guides/ecosystem/docker",
               "/guides/ecosystem/drizzle",
-              "/guides/ecosystem/edgedb",
+              "/guides/ecosystem/gel",
               "/guides/ecosystem/elysia",
               "/guides/ecosystem/express",
               "/guides/ecosystem/hono",
@@ -369,6 +374,7 @@
               "/guides/ecosystem/qwik",
               "/guides/ecosystem/react",
               "/guides/ecosystem/remix",
+              "/guides/ecosystem/tanstack-start",
               "/guides/ecosystem/sentry",
               "/guides/ecosystem/solidstart",
               "/guides/ecosystem/ssr-react",
@@ -463,6 +469,7 @@
               "/guides/test/update-snapshots",
               "/guides/test/coverage",
               "/guides/test/coverage-threshold",
+              "/guides/test/concurrent-test-glob",
               "/guides/test/skip-tests",
               "/guides/test/todo-tests",
               "/guides/test/timeout",
@@ -493,6 +500,7 @@
               "/guides/runtime/import-json",
               "/guides/runtime/import-toml",
               "/guides/runtime/import-yaml",
+              "/guides/runtime/import-json5",
               "/guides/runtime/import-html",
               "/guides/util/import-meta-dir",
               "/guides/util/import-meta-file",

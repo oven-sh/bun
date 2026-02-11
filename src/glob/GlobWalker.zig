@@ -154,6 +154,12 @@ pub const SyscallAccessor = struct {
         };
     }
 
+    /// Like statat but does not follow symlinks.
+    pub fn lstatat(handle: Handle, path: [:0]const u8) Maybe(bun.Stat) {
+        if (comptime bun.Environment.isWindows) return statatWindows(handle.value, path);
+        return Syscall.lstatat(handle.value, path);
+    }
+
     pub fn openat(handle: Handle, path: [:0]const u8) !Maybe(Handle) {
         return switch (Syscall.openat(handle.value, path, bun.O.DIRECTORY | bun.O.RDONLY, 0)) {
             .err => |err| .{ .err = err },
@@ -245,6 +251,24 @@ pub const DirEntryAccessor = struct {
             }
         }
         return Syscall.stat(path);
+    }
+
+    /// Like statat but does not follow symlinks.
+    pub fn lstatat(handle: Handle, path_: [:0]const u8) Maybe(bun.Stat) {
+        var path: [:0]const u8 = path_;
+        var buf: bun.PathBuffer = undefined;
+        if (handle.value) |entry| {
+            return Syscall.lstatat(entry.fd, path);
+        }
+
+        if (!bun.path.Platform.auto.isAbsolute(path)) {
+            if (handle.value) |entry| {
+                const slice = bun.path.joinStringBuf(&buf, [_][]const u8{ entry.dir, path }, .auto);
+                buf[slice.len] = 0;
+                path = buf[0..slice.len :0];
+            }
+        }
+        return Syscall.lstat(path);
     }
 
     pub fn open(path: [:0]const u8) !Maybe(Handle) {
@@ -902,6 +926,93 @@ pub fn GlobWalker_(
 
                                     continue;
                                 },
+                                // Some filesystems (e.g., Docker bind mounts, FUSE, NFS) return
+                                // DT_UNKNOWN for d_type. Use lazy stat to determine the real kind
+                                // only when needed (PR #18172 pattern for performance).
+                                .unknown => {
+                                    // First check if name might match pattern (avoid unnecessary stat)
+                                    const might_match = this.walker.matchPatternImpl(dir_iter_state.pattern, entry_name);
+                                    if (!might_match) continue;
+
+                                    // Need to stat to determine actual kind (lstatat to not follow symlinks)
+                                    // Use stack fallback for short names (typical case) to avoid arena allocation
+                                    const stackbuf_size = 256;
+                                    var stfb = std.heap.stackFallback(stackbuf_size, this.walker.arena.allocator());
+                                    const name_z = bun.handleOom(stfb.get().dupeZ(u8, entry_name));
+                                    const stat_result = Accessor.lstatat(dir.fd, name_z);
+                                    const real_kind = switch (stat_result) {
+                                        .result => |st| bun.sys.kindFromMode(@intCast(st.mode)),
+                                        .err => continue, // Skip entries we can't stat
+                                    };
+
+                                    // Process based on actual kind
+                                    switch (real_kind) {
+                                        .file => {
+                                            const matches = this.walker.matchPatternFile(entry_name, dir_iter_state.component_idx, dir.is_last, dir_iter_state.pattern, dir_iter_state.next_pattern);
+                                            if (matches) {
+                                                const prepared = try this.walker.prepareMatchedPath(entry_name, dir.dir_path) orelse continue;
+                                                return .{ .result = prepared };
+                                            }
+                                        },
+                                        .directory => {
+                                            var add_dir: bool = false;
+                                            const recursion_idx_bump_ = this.walker.matchPatternDir(dir_iter_state.pattern, dir_iter_state.next_pattern, entry_name, dir_iter_state.component_idx, dir_iter_state.is_last, &add_dir);
+
+                                            if (recursion_idx_bump_) |recursion_idx_bump| {
+                                                const subdir_parts: []const []const u8 = &[_][]const u8{
+                                                    dir.dir_path[0..dir.dir_path.len],
+                                                    entry_name,
+                                                };
+
+                                                const subdir_entry_name = try this.walker.join(subdir_parts);
+
+                                                if (recursion_idx_bump == 2) {
+                                                    try this.walker.workbuf.append(
+                                                        this.walker.arena.allocator(),
+                                                        WorkItem.new(subdir_entry_name, dir_iter_state.component_idx + recursion_idx_bump, .directory),
+                                                    );
+                                                    try this.walker.workbuf.append(
+                                                        this.walker.arena.allocator(),
+                                                        WorkItem.new(subdir_entry_name, dir_iter_state.component_idx, .directory),
+                                                    );
+                                                } else {
+                                                    try this.walker.workbuf.append(
+                                                        this.walker.arena.allocator(),
+                                                        WorkItem.new(subdir_entry_name, dir_iter_state.component_idx + recursion_idx_bump, .directory),
+                                                    );
+                                                }
+                                            }
+
+                                            if (add_dir and !this.walker.only_files) {
+                                                const prepared_path = try this.walker.prepareMatchedPath(entry_name, dir.dir_path) orelse continue;
+                                                return .{ .result = prepared_path };
+                                            }
+                                        },
+                                        .sym_link => {
+                                            if (this.walker.follow_symlinks) {
+                                                const subdir_parts: []const []const u8 = &[_][]const u8{
+                                                    dir.dir_path[0..dir.dir_path.len],
+                                                    entry_name,
+                                                };
+                                                const entry_start: u32 = @intCast(if (dir.dir_path.len == 0) 0 else dir.dir_path.len + 1);
+                                                const subdir_entry_name = try this.walker.join(subdir_parts);
+
+                                                try this.walker.workbuf.append(
+                                                    this.walker.arena.allocator(),
+                                                    WorkItem.newSymlink(subdir_entry_name, dir_iter_state.component_idx, entry_start),
+                                                );
+                                            } else if (!this.walker.only_files) {
+                                                const matches = this.walker.matchPatternFile(entry_name, dir_iter_state.component_idx, dir_iter_state.is_last, dir_iter_state.pattern, dir_iter_state.next_pattern);
+                                                if (matches) {
+                                                    const prepared_path = try this.walker.prepareMatchedPath(entry_name, dir.dir_path) orelse continue;
+                                                    return .{ .result = prepared_path };
+                                                }
+                                            }
+                                        },
+                                        else => {}, // Skip other types (block devices, etc.)
+                                    }
+                                    continue;
+                                },
                                 else => continue,
                             }
                         },
@@ -1431,12 +1542,12 @@ pub fn GlobWalker_(
             if (component.len == 0) return null;
 
             out: {
-                if (component.len == 1 and pattern[component.start] == '.') {
+                if (bun.strings.eqlComptime(pattern[component.start .. component.start + component.len], ".")) {
                     component.syntax_hint = .Dot;
                     has_relative_patterns.* = true;
                     break :out;
                 }
-                if (component.len == 2 and pattern[component.start] == '.' and pattern[component.start] == '.') {
+                if (bun.strings.eqlComptime(pattern[component.start .. component.start + component.len], "..")) {
                     component.syntax_hint = .DotBack;
                     has_relative_patterns.* = true;
                     break :out;

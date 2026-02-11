@@ -6,7 +6,7 @@
 
 #include "JavaScriptCore/ArgList.h"
 #include "JavaScriptCore/CallData.h"
-#include "JavaScriptCore/CatchScope.h"
+#include "JavaScriptCore/TopExceptionScope.h"
 #include "JavaScriptCore/Error.h"
 #include "JavaScriptCore/ErrorInstance.h"
 #include "JavaScriptCore/ExceptionScope.h"
@@ -125,7 +125,7 @@ static JSValue formatStackTraceToJSValueWithoutPrepareStackTrace(JSC::VM& vm, Zi
             prepareStackTrace = prepare;
         }
     } else {
-        auto scope = DECLARE_CATCH_SCOPE(vm);
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
         auto* errorConstructor = lexicalGlobalObject->m_errorStructure.constructor(globalObject);
         prepareStackTrace = errorConstructor->getIfPropertyExists(lexicalGlobalObject, JSC::Identifier::fromString(vm, "prepareStackTrace"_s));
@@ -250,7 +250,7 @@ WTF::String formatStackTrace(
             }
         }
 
-        WTF::String functionName = Zig::functionName(vm, globalObjectForFrame, frame, !errorInstance, &flags);
+        WTF::String functionName = Zig::functionName(vm, globalObjectForFrame, frame, errorInstance ? Zig::FinalizerSafety::NotInFinalizer : Zig::FinalizerSafety::MustNotTriggerGC, &flags);
         OrdinalNumber originalLine = {};
         OrdinalNumber originalColumn = {};
         OrdinalNumber displayLine = {};
@@ -526,12 +526,12 @@ WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, Vector<StackFrame>& sta
     OrdinalNumber line = OrdinalNumber::fromOneBasedInt(line_in);
     OrdinalNumber column = OrdinalNumber::fromOneBasedInt(column_in);
 
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     WTF::String result = computeErrorInfoToString(vm, stackTrace, line, column, sourceURL);
     if (scope.exception()) {
         // TODO: is this correct? vm.setOnComputeErrorInfo doesnt appear to properly handle a function that can throw
         // test/js/node/test/parallel/test-stream-writable-write-writev-finish.js is the one that trips the exception checker
-        scope.clearException();
+        (void)scope.tryClearException();
         result = WTF::emptyString();
     }
 
@@ -687,7 +687,7 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
     JSCStackTrace::getFramesForCaller(vm, callFrame, errorObject, caller, stackTrace, stackTraceLimit);
 
     if (auto* instance = jsDynamicCast<JSC::ErrorInstance*>(errorObject)) {
-        instance->setStackFrames(vm, WTFMove(stackTrace));
+        instance->setStackFrames(vm, WTF::move(stackTrace));
         if (instance->hasMaterializedErrorInfo()) {
             const auto& propertyName = vm.propertyNames->stack;
             VM::DeletePropertyModeScope scope(vm, VM::DeletePropertyMode::IgnoreConfigurable);

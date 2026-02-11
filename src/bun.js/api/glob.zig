@@ -44,7 +44,7 @@ const ScanOpts = struct {
             const cwd = switch (bun.sys.getcwd((&path_buf))) {
                 .result => |cwd| cwd,
                 .err => |err| {
-                    const errJs = err.toJS(globalThis);
+                    const errJs = try err.toJS(globalThis);
                     return globalThis.throwValue(errJs);
                 },
             };
@@ -135,9 +135,9 @@ pub const WalkTask = struct {
         syscall: Syscall.Error,
         unknown: anyerror,
 
-        pub fn toJS(this: Err, globalThis: *JSGlobalObject) JSValue {
+        pub fn toJS(this: Err, globalThis: *JSGlobalObject) bun.JSError!JSValue {
             return switch (this) {
-                .syscall => |err| err.toJS(globalThis),
+                .syscall => |err| try err.toJS(globalThis),
                 .unknown => |err| ZigString.fromBytes(@errorName(err)).toJS(globalThis),
             };
         }
@@ -158,7 +158,7 @@ pub const WalkTask = struct {
             .alloc = alloc,
             .has_pending_activity = has_pending_activity,
         };
-        return try AsyncGlobWalkTask.createOnJSThread(alloc, globalThis, walkTask);
+        return AsyncGlobWalkTask.createOnJSThread(alloc, globalThis, walkTask);
     }
 
     pub fn run(this: *WalkTask) void {
@@ -237,7 +237,7 @@ fn makeGlobWalker(
             only_files,
         )) {
             .err => |err| {
-                return globalThis.throwValue(err.toJS(globalThis));
+                return globalThis.throwValue(try err.toJS(globalThis));
             },
             else => {},
         }
@@ -254,7 +254,7 @@ fn makeGlobWalker(
         only_files,
     )) {
         .err => |err| {
-            return globalThis.throwValue(err.toJS(globalThis));
+            return globalThis.throwValue(try err.toJS(globalThis));
         },
         else => {},
     }
@@ -275,7 +275,7 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
         return globalThis.throw("Glob.constructor: first argument is not a string", .{});
     }
 
-    const pat_str: []u8 = @constCast((pat_arg.toSliceClone(globalThis) orelse return error.JSError).slice());
+    const pat_str: []u8 = @constCast((try pat_arg.toSliceClone(globalThis)).slice());
 
     const glob = bun.handleOom(alloc.create(Glob));
     glob.* = .{ .pattern = pat_str };
@@ -345,7 +345,7 @@ pub fn __scanSync(this: *Glob, globalThis: *JSGlobalObject, callframe: *jsc.Call
 
     switch (try globWalker.walk()) {
         .err => |err| {
-            return globalThis.throwValue(err.toJS(globalThis));
+            return globalThis.throwValue(try err.toJS(globalThis));
         },
         .result => {},
     }

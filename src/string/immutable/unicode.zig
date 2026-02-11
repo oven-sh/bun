@@ -1885,15 +1885,7 @@ pub fn encodeUTF8Comptime(comptime cp: u32) []const u8 {
 // This is a clone of golang's "utf8.EncodeRune" that has been modified to encode using
 // WTF-8 instead. See https://simonsapin.github.io/wtf-8/ for more info.
 pub fn encodeWTF8Rune(p: *[4]u8, r: i32) u3_fast {
-    return @call(
-        .always_inline,
-        encodeWTF8RuneT,
-        .{
-            p,
-            u32,
-            @as(u32, @intCast(r)),
-        },
-    );
+    return encodeWTF8RuneT(p, u32, @intCast(r));
 }
 
 pub fn encodeWTF8RuneT(p: *[4]u8, comptime R: type, r: R) u3_fast {

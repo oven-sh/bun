@@ -78,6 +78,43 @@ In `bun:test`, test timeouts throw an uncatchable exception to force the test to
 
 The default timeout for each test is 5000ms (5 seconds) if not overridden by this timeout option or `jest.setDefaultTimeout()`.
 
+## Retries and Repeats
+
+### test.retry
+
+Use the `retry` option to automatically retry a test if it fails. The test passes if it succeeds within the specified number of attempts. This is useful for flaky tests that may fail intermittently.
+
+```ts title="example.test.ts" icon="/icons/typescript.svg"
+import { test } from "bun:test";
+
+test(
+  "flaky network request",
+  async () => {
+    const response = await fetch("https://example.com/api");
+    expect(response.ok).toBe(true);
+  },
+  { retry: 3 }, // Retry up to 3 times if the test fails
+);
+```
+
+### test.repeats
+
+Use the `repeats` option to run a test multiple times regardless of pass/fail status. The test fails if any iteration fails. This is useful for detecting flaky tests or stress testing. Note that `repeats: N` runs the test N+1 times total (1 initial run + N repeats).
+
+```ts title="example.test.ts" icon="/icons/typescript.svg"
+import { test } from "bun:test";
+
+test(
+  "ensure test is stable",
+  () => {
+    expect(Math.random()).toBeLessThan(1);
+  },
+  { repeats: 20 }, // Runs 21 times total (1 initial + 20 repeats)
+);
+```
+
+<Note>You cannot use both `retry` and `repeats` on the same test.</Note>
+
 ### 🧟 Zombie Process Killer
 
 When a test times out and processes spawned in the test via `Bun.spawn`, `Bun.spawnSync`, or `node:child_process` are not killed, they will be automatically killed and a message will be logged to the console. This prevents zombie processes from lingering in the background after timed-out tests.

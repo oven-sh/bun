@@ -1,7 +1,8 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { rmSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { join } from "path";
 import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
@@ -87,6 +88,135 @@ describe("bundler", () => {
       env: {
         BUN_JSC_verboseDiskCache: "1",
       },
+    },
+  });
+  // ESM bytecode test matrix: each scenario × {default, minified} = 2 tests per scenario.
+  // With --compile, static imports are inlined into one chunk, but dynamic imports
+  // create separate modules in the standalone graph — each with its own bytecode + ModuleInfo.
+  const esmBytecodeScenarios: Array<{
+    name: string;
+    files: Record<string, string>;
+    stdout: string;
+  }> = [
+    {
+      name: "HelloWorld",
+      files: {
+        "/entry.ts": `console.log("Hello, world!");`,
+      },
+      stdout: "Hello, world!",
+    },
+    {
+      // top-level await is ESM-only; if ModuleInfo or bytecode generation
+      // mishandles async modules, this breaks.
+      name: "TopLevelAwait",
+      files: {
+        "/entry.ts": `
+          const result = await Promise.resolve("tla works");
+          console.log(result);
+        `,
+      },
+      stdout: "tla works",
+    },
+    {
+      // import.meta is ESM-only.
+      name: "ImportMeta",
+      files: {
+        "/entry.ts": `
+          console.log(typeof import.meta.url === "string" ? "ok" : "fail");
+          console.log(typeof import.meta.dir === "string" ? "ok" : "fail");
+        `,
+      },
+      stdout: "ok\nok",
+    },
+    {
+      // Dynamic import creates a separate module in the standalone graph,
+      // exercising per-module bytecode + ModuleInfo.
+      name: "DynamicImport",
+      files: {
+        "/entry.ts": `
+          const { value } = await import("./lazy.ts");
+          console.log("lazy:", value);
+        `,
+        "/lazy.ts": `export const value = 42;`,
+      },
+      stdout: "lazy: 42",
+    },
+    {
+      // Dynamic import of a module that itself uses top-level await.
+      // The dynamically imported module is a separate chunk with async
+      // evaluation — stresses both ModuleInfo and async bytecode loading.
+      name: "DynamicImportTLA",
+      files: {
+        "/entry.ts": `
+          const mod = await import("./async-mod.ts");
+          console.log("value:", mod.value);
+        `,
+        "/async-mod.ts": `export const value = await Promise.resolve(99);`,
+      },
+      stdout: "value: 99",
+    },
+    {
+      // Multiple dynamic imports: several separate modules in the graph,
+      // each with its own bytecode + ModuleInfo.
+      name: "MultipleDynamicImports",
+      files: {
+        "/entry.ts": `
+          const [a, b] = await Promise.all([
+            import("./mod-a.ts"),
+            import("./mod-b.ts"),
+          ]);
+          console.log(a.value, b.value);
+        `,
+        "/mod-a.ts": `export const value = "a";`,
+        "/mod-b.ts": `export const value = "b";`,
+      },
+      stdout: "a b",
+    },
+  ];
+
+  for (const scenario of esmBytecodeScenarios) {
+    for (const minify of [false, true]) {
+      itBundled(`compile/ESMBytecode+${scenario.name}${minify ? "+minify" : ""}`, {
+        compile: true,
+        bytecode: true,
+        format: "esm",
+        ...(minify && {
+          minifySyntax: true,
+          minifyIdentifiers: true,
+          minifyWhitespace: true,
+        }),
+        files: scenario.files,
+        run: { stdout: scenario.stdout },
+      });
+    }
+  }
+
+  // Multi-entry ESM bytecode with Worker (can't be in the matrix — needs
+  // entryPointsRaw, outfile, setCwd). Each entry becomes a separate module
+  // in the standalone graph with its own bytecode + ModuleInfo.
+  itBundled("compile/WorkerBytecodeESM", {
+    backend: "cli",
+    compile: true,
+    bytecode: true,
+    format: "esm",
+    files: {
+      "/entry.ts": /* js */ `
+        import {rmSync} from 'fs';
+        // Verify we're not just importing from the filesystem
+        rmSync("./worker.ts", {force: true});
+        console.log("Hello, world!");
+        new Worker("./worker.ts");
+      `,
+      "/worker.ts": /* js */ `
+        console.log("Worker loaded!");
+    `.trim(),
+    },
+    entryPointsRaw: ["./entry.ts", "./worker.ts"],
+    outfile: "dist/out",
+    run: {
+      stdout: "Hello, world!\nWorker loaded!\n",
+      file: "dist/out",
+      setCwd: true,
     },
   });
   // https://github.com/oven-sh/bun/issues/8697
@@ -311,6 +441,8 @@ describe("bundler", () => {
     format: "cjs" | "esm";
   }> = [
     { bytecode: true, minify: true, format: "cjs" },
+    { bytecode: true, format: "esm" },
+    { bytecode: true, minify: true, format: "esm" },
     { format: "cjs" },
     { format: "cjs", minify: true },
     { format: "esm" },
@@ -734,5 +866,73 @@ const server = serve({
       .cwd(dir)
       .env(bunEnv)
       .throws(true);
+  });
+
+  // Verify ESM bytecode is actually loaded from the cache at runtime, not just generated.
+  // Uses regex matching on stderr (not itBundled) since we don't know the exact
+  // number of cache hit/miss lines for ESM standalone.
+  test("ESM bytecode cache is used at runtime", async () => {
+    const ext = isWindows ? ".exe" : "";
+    using dir = tempDir("esm-bytecode-cache", {
+      "entry.js": `console.log("esm bytecode loaded");`,
+    });
+
+    const outfile = join(String(dir), `app${ext}`);
+
+    // Build with ESM + bytecode
+    await using build = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "--compile",
+        "--bytecode",
+        "--format=esm",
+        join(String(dir), "entry.js"),
+        "--outfile",
+        outfile,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [, buildStderr, buildExitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+
+    expect(buildStderr).toBe("");
+    expect(buildExitCode).toBe(0);
+
+    // Run with verbose disk cache to verify bytecode is loaded
+    await using exe = Bun.spawn({
+      cmd: [outfile],
+      env: { ...bunEnv, BUN_JSC_verboseDiskCache: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [exeStdout, exeStderr, exeExitCode] = await Promise.all([exe.stdout.text(), exe.stderr.text(), exe.exited]);
+
+    expect(exeStdout).toContain("esm bytecode loaded");
+    expect(exeStderr).toMatch(/\[Disk Cache\].*Cache hit/i);
+    expect(exeExitCode).toBe(0);
+  });
+
+  // When compiling with 8+ entry points, the main entry point should still run correctly.
+  test("compile with 8+ entry points runs main entry correctly", async () => {
+    const dir = tempDirWithFiles("compile-many-entries", {
+      "app.js": `console.log("IT WORKS");`,
+      "assets/file-1": "",
+      "assets/file-2": "",
+      "assets/file-3": "",
+      "assets/file-4": "",
+      "assets/file-5": "",
+      "assets/file-6": "",
+      "assets/file-7": "",
+      "assets/file-8": "",
+    });
+
+    await Bun.$`${bunExe()} build --compile app.js assets/* --outfile app`.cwd(dir).env(bunEnv).throws(true);
+
+    const result = await Bun.$`./app`.cwd(dir).env(bunEnv).nothrow();
+    expect(result.stdout.toString().trim()).toBe("IT WORKS");
   });
 });

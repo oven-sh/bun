@@ -112,7 +112,7 @@ pub fn findImportedFilesInCSSOrder(this: *LinkerContext, temp_allocator: std.mem
                     }
 
                     // Record external depednencies
-                    if (!record.is_internal) {
+                    if (!record.flags.is_internal) {
                         var all_conditions = wrapping_conditions.deepCloneInfallible(visitor.allocator);
                         var all_import_records = bun.handleOom(wrapping_import_records.clone(visitor.allocator));
                         // If this import has conditions, append it to the list of overall
@@ -620,13 +620,12 @@ fn debugCssOrderImpl(this: *LinkerContext, order: *const BabyList(Chunk.CssImpor
             const conditions_str = if (entry.conditions.len > 0) conditions_str: {
                 var arrlist = std.Io.Writer.Allocating.init(arena.allocator());
                 const writer = &arrlist.writer;
-                const W = @TypeOf(writer);
                 writer.writeAll("[") catch unreachable;
                 var symbols = Symbol.Map{};
                 for (entry.conditions.sliceConst(), 0..) |*condition_, j| {
                     const condition: *const bun.css.ImportConditions = condition_;
                     const scratchbuf = std.array_list.Managed(u8).init(arena.allocator());
-                    var printer = bun.css.Printer(W).new(
+                    var printer = bun.css.Printer.new(
                         arena.allocator(),
                         scratchbuf,
                         writer,
@@ -640,7 +639,7 @@ fn debugCssOrderImpl(this: *LinkerContext, order: *const BabyList(Chunk.CssImpor
                         &symbols,
                     );
 
-                    condition.toCss(W, &printer) catch unreachable;
+                    condition.toCss(&printer) catch unreachable;
                     if (j != entry.conditions.len - 1) {
                         writer.writeAll(", ") catch unreachable;
                     }

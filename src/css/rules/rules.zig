@@ -82,30 +82,30 @@ pub fn CssRule(comptime Rule: type) type {
 
         const This = @This();
 
-        pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
+        pub fn toCss(this: *const This, dest: *Printer) PrintErr!void {
             return switch (this.*) {
-                .media => |x| x.toCss(W, dest),
-                .import => |x| x.toCss(W, dest),
-                .style => |x| x.toCss(W, dest),
-                .keyframes => |x| x.toCss(W, dest),
-                .font_face => |x| x.toCss(W, dest),
-                .font_palette_values => |x| x.toCss(W, dest),
-                .page => |x| x.toCss(W, dest),
-                .supports => |x| x.toCss(W, dest),
-                .counter_style => |x| x.toCss(W, dest),
-                .namespace => |x| x.toCss(W, dest),
-                .moz_document => |x| x.toCss(W, dest),
-                .nesting => |x| x.toCss(W, dest),
-                .viewport => |x| x.toCss(W, dest),
-                .custom_media => |x| x.toCss(W, dest),
-                .layer_statement => |x| x.toCss(W, dest),
-                .layer_block => |x| x.toCss(W, dest),
-                .property => |x| x.toCss(W, dest),
-                .starting_style => |x| x.toCss(W, dest),
-                .container => |x| x.toCss(W, dest),
-                .scope => |x| x.toCss(W, dest),
-                .unknown => |x| x.toCss(W, dest),
-                .custom => |x| x.toCss(W, dest) catch return dest.addFmtError(),
+                .media => |x| x.toCss(dest),
+                .import => |x| x.toCss(dest),
+                .style => |x| x.toCss(dest),
+                .keyframes => |x| x.toCss(dest),
+                .font_face => |x| x.toCss(dest),
+                .font_palette_values => |x| x.toCss(dest),
+                .page => |x| x.toCss(dest),
+                .supports => |x| x.toCss(dest),
+                .counter_style => |x| x.toCss(dest),
+                .namespace => |x| x.toCss(dest),
+                .moz_document => |x| x.toCss(dest),
+                .nesting => |x| x.toCss(dest),
+                .viewport => |x| x.toCss(dest),
+                .custom_media => |x| x.toCss(dest),
+                .layer_statement => |x| x.toCss(dest),
+                .layer_block => |x| x.toCss(dest),
+                .property => |x| x.toCss(dest),
+                .starting_style => |x| x.toCss(dest),
+                .container => |x| x.toCss(dest),
+                .scope => |x| x.toCss(dest),
+                .unknown => |x| x.toCss(dest),
+                .custom => |x| x.toCss(dest) catch return dest.addFmtError(),
                 .ignored => {},
             };
         }
@@ -461,7 +461,7 @@ pub fn CssRuleList(comptime AtRule: type) type {
             return;
         }
 
-        pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
+        pub fn toCss(this: *const This, dest: *Printer) PrintErr!void {
             var first = true;
             var last_without_block = false;
 
@@ -493,7 +493,7 @@ pub fn CssRuleList(comptime AtRule: type) type {
                     }
                     try dest.newline();
                 }
-                try rule.toCss(W, dest);
+                try rule.toCss(dest);
                 last_without_block = rule.* == .import or rule.* == .namespace or rule.* == .layer_statement;
             }
         }

@@ -283,7 +283,8 @@ declare module "bun" {
      *     return new Response();
      *   },
      *   websocket: {
-     *     open(ws) {
+     *     data: {} as {accessToken: string | null},
+     *     message(ws) {
      *       console.log(ws.data.accessToken);
      *     }
      *   }
@@ -445,7 +446,7 @@ declare module "bun" {
     closeOnBackpressureLimit?: boolean;
 
     /**
-     * Sets the the number of seconds to wait before timing out a connection
+     * Sets the number of seconds to wait before timing out a connection
      * due to no messages or pings.
      *
      * @default 120
@@ -486,13 +487,15 @@ declare module "bun" {
   }
 
   namespace Serve {
-    type ExtractRouteParams<T> = T extends `${string}:${infer Param}/${infer Rest}`
-      ? { [K in Param]: string } & ExtractRouteParams<Rest>
-      : T extends `${string}:${infer Param}`
-        ? { [K in Param]: string }
-        : T extends `${string}*`
-          ? {}
-          : {};
+    type ExtractRouteParams<T> = string extends T
+      ? Record<string, string>
+      : T extends `${string}:${infer Param}/${infer Rest}`
+        ? { [K in Param]: string } & ExtractRouteParams<Rest>
+        : T extends `${string}:${infer Param}`
+          ? { [K in Param]: string }
+          : T extends `${string}*`
+            ? {}
+            : {};
 
     /**
      * Development configuration for {@link Bun.serve}
@@ -549,14 +552,16 @@ declare module "bun" {
       [Path in R]:
         | BaseRouteValue
         | Handler<BunRequest<Path>, Server<WebSocketData>, Response>
-        | Partial<Record<HTTPMethod, Handler<BunRequest<Path>, Server<WebSocketData>, Response>>>;
+        | Partial<Record<HTTPMethod, Handler<BunRequest<Path>, Server<WebSocketData>, Response> | Response>>;
     };
 
     type RoutesWithUpgrade<WebSocketData, R extends string> = {
       [Path in R]:
         | BaseRouteValue
         | Handler<BunRequest<Path>, Server<WebSocketData>, Response | undefined | void>
-        | Partial<Record<HTTPMethod, Handler<BunRequest<Path>, Server<WebSocketData>, Response | undefined | void>>>;
+        | Partial<
+            Record<HTTPMethod, Handler<BunRequest<Path>, Server<WebSocketData>, Response | undefined | void> | Response>
+          >;
     };
 
     type FetchOrRoutes<WebSocketData, R extends string> =
@@ -753,7 +758,7 @@ declare module "bun" {
       ipv6Only?: boolean;
 
       /**
-       * Sets the the number of seconds to wait before timing out a connection
+       * Sets the number of seconds to wait before timing out a connection
        * due to inactivity.
        *
        * @default 10
@@ -786,7 +791,7 @@ declare module "bun" {
      * } satisfies Bun.Serve.Options<{ name: string }>;
      * ```
      */
-    type Options<WebSocketData, R extends string = never> = Bun.__internal.XOR<
+    type Options<WebSocketData, R extends string = string> = Bun.__internal.XOR<
       HostnamePortServeOptions<WebSocketData>,
       UnixServeOptions<WebSocketData>
     > &
@@ -1078,6 +1083,15 @@ declare module "bun" {
     readonly hostname: string | undefined;
 
     /**
+     * The protocol the server is listening on.
+     *
+     * - "http" for normal servers
+     * - "https" when TLS is enabled
+     * - null for unix sockets or when unavailable
+     */
+    readonly protocol: "http" | "https" | null;
+
+    /**
      * Is the server running in development mode?
      *
      * In development mode, `Bun.serve()` returns rendered error messages with
@@ -1276,7 +1290,7 @@ declare module "bun" {
    * });
    * ```
    */
-  function serve<WebSocketData = undefined, R extends string = string>(
+  function serve<WebSocketData = undefined, R extends string = never>(
     options: Serve.Options<WebSocketData, R>,
   ): Server<WebSocketData>;
 }

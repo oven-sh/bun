@@ -55,14 +55,14 @@ pub const Position = union(enum) {
         } };
     }
 
-    pub fn toCss(this: *const Position, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+    pub fn toCss(this: *const Position, dest: *css.Printer) css.PrintErr!void {
         return switch (this.*) {
             .static => dest.writeStr("static"),
             .relative => dest.writeStr("relative"),
             .absolute => dest.writeStr("absolute"),
             .fixed => dest.writeStr("fixed"),
             .sticky => |prefix| {
-                try prefix.toCss(W, dest);
+                try prefix.toCss(dest);
                 return dest.writeStr("sticky");
             },
         };

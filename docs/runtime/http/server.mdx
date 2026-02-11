@@ -32,12 +32,8 @@ const server = Bun.serve({
     // Redirect from /blog/hello to /blog/hello/world
     "/blog/hello": Response.redirect("/blog/hello/world"),
 
-    // Serve a file by buffering it in memory
-    "/favicon.ico": new Response(await Bun.file("./favicon.ico").bytes(), {
-      headers: {
-        "Content-Type": "image/x-icon",
-      },
-    }),
+    // Serve a file by lazily loading it into memory
+    "/favicon.ico": Bun.file("./favicon.ico"),
   },
 
   // (optional) fallback for unmatched routes:
@@ -126,7 +122,7 @@ bun --port=4002 server.ts
 - `BUN_PORT` environment variable
 
 ```sh
-bun_PORT=4002 bun server.ts
+BUN_PORT=4002 bun server.ts
 ```
 
 - `PORT` environment variable
@@ -197,14 +193,16 @@ This is the maximum amount of time a connection is allowed to be idle before the
 Thus far, the examples on this page have used the explicit `Bun.serve` API. Bun also supports an alternate syntax.
 
 ```ts server.ts
-import { type Serve } from "bun";
+import type { Serve } from "bun";
 
 export default {
   fetch(req) {
     return new Response("Bun!");
   },
-} satisfies Serve;
+} satisfies Serve.Options<undefined>;
 ```
+
+The type parameter `<undefined>` represents WebSocket data — if you add a `websocket` handler with custom data attached via `server.upgrade(req, { data: ... })`, replace `undefined` with your data type.
 
 Instead of passing the server options into `Bun.serve`, `export default` it. This file can be executed as-is; when Bun sees a file with a `default` export containing a `fetch` handler, it passes it into `Bun.serve` under the hood.
 

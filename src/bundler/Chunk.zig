@@ -9,7 +9,9 @@ pub const Chunk = struct {
     /// for more info on this technique.
     unique_key: string = "",
 
-    files_with_parts_in_chunk: std.AutoArrayHashMapUnmanaged(Index.Int, void) = .{},
+    /// Maps source index to bytes contributed to this chunk's output (for metafile).
+    /// The value is updated during chunk generation to track bytesInOutput.
+    files_with_parts_in_chunk: std.AutoArrayHashMapUnmanaged(Index.Int, usize) = .{},
 
     /// We must not keep pointers to this type until all chunks have been allocated.
     entry_bits: AutoBitSet = undefined,
@@ -25,10 +27,6 @@ pub const Chunk = struct {
 
     entry_point: Chunk.EntryPoint = .{},
 
-    is_executable: bool = false,
-    has_html_chunk: bool = false,
-    is_browser_chunk_from_server_build: bool = false,
-
     output_source_map: SourceMap.SourceMapPieces,
 
     intermediate_output: IntermediateOutput = .{ .empty = {} },
@@ -37,6 +35,21 @@ pub const Chunk = struct {
     renamer: renamer.Renamer = undefined,
 
     compile_results_for_chunk: []CompileResult = &.{},
+
+    /// Pre-built JSON fragment for this chunk's metafile output entry.
+    /// Generated during parallel chunk generation, joined at the end.
+    metafile_chunk_json: []const u8 = "",
+
+    /// Pack boolean flags to reduce padding overhead.
+    /// Previously 3 separate bool fields caused ~21 bytes of padding waste.
+    flags: Flags = .{},
+
+    pub const Flags = packed struct(u8) {
+        is_executable: bool = false,
+        has_html_chunk: bool = false,
+        is_browser_chunk_from_server_build: bool = false,
+        _padding: u5 = 0,
+    };
 
     pub inline fn isEntryPoint(this: *const Chunk) bool {
         return this.entry_point.is_entry_point;
@@ -489,6 +502,11 @@ pub const Chunk = struct {
         ///
         /// Mutated while sorting chunks in `computeChunks`
         css_chunks: []u32 = &.{},
+
+        /// Serialized ModuleInfo for ESM bytecode (--compile --bytecode --format=esm)
+        module_info_bytes: ?[]const u8 = null,
+        /// Unserialized ModuleInfo for deferred serialization (after chunk paths are resolved)
+        module_info: ?*analyze_transpiled_module.ModuleInfo = null,
     };
 
     pub const CssChunk = struct {
@@ -641,6 +659,7 @@ pub const ParseTask = bun.bundle_v2.ParseTask;
 const string = []const u8;
 
 const HTMLImportManifest = @import("./HTMLImportManifest.zig");
+const analyze_transpiled_module = @import("../analyze_transpiled_module.zig");
 const std = @import("std");
 
 const options = @import("../options.zig");

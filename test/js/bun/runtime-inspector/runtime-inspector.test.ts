@@ -1,7 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
-import { join } from "path";
+import { bunEnv, bunExe, isASAN, isWindows } from "harness";
 
 // ASAN builds have issues with signal handling reliability for SIGUSR1-based inspector activation
 const skipASAN = isASAN;
@@ -53,41 +52,19 @@ async function waitForDebuggerListening(
 describe("Runtime inspector activation", () => {
   describe("process._debugProcess", () => {
     test.skipIf(skipASAN)("activates inspector in target process", async () => {
-      using dir = tempDir("debug-process-test", {
-        "target.js": `
-          const fs = require("fs");
-          const path = require("path");
-
-          // Write PID so parent can find us
-          fs.writeFileSync(path.join(process.cwd(), "pid"), String(process.pid));
-          console.log("READY");
-
-          // Keep process alive
-          setInterval(() => {}, 1000);
-        `,
-      });
-
-      // Start target process
+      // Start target process - prints PID to stdout then stays alive
       await using targetProc = spawn({
-        cmd: [bunExe(), "target.js"],
-        cwd: String(dir),
+        cmd: [bunExe(), "-e", `console.log(process.pid); setInterval(() => {}, 1000);`],
         env: bunEnv,
         stdout: "pipe",
         stderr: "pipe",
       });
 
-      // Wait for target to be ready
+      // Read PID from stdout (confirms JS is executing)
       const reader = targetProc.stdout.getReader();
-      const decoder = new TextDecoder();
-      let output = "";
-      while (!output.includes("READY")) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        output += decoder.decode(value, { stream: true });
-      }
+      const { value } = await reader.read();
       reader.releaseLock();
-
-      const pid = parseInt(await Bun.file(join(String(dir), "pid")).text(), 10);
+      const pid = parseInt(new TextDecoder().decode(value).trim(), 10);
 
       // Use _debugProcess to activate inspector
       await using debugProc = spawn({
@@ -129,38 +106,19 @@ describe("Runtime inspector activation", () => {
     });
 
     test.skipIf(skipASAN)("inspector does not activate twice", async () => {
-      using dir = tempDir("debug-process-twice-test", {
-        "target.js": `
-          const fs = require("fs");
-          const path = require("path");
-
-          fs.writeFileSync(path.join(process.cwd(), "pid"), String(process.pid));
-          console.log("READY");
-
-          // Keep process alive until parent kills it
-          setInterval(() => {}, 1000);
-        `,
-      });
-
+      // Start target process - prints PID to stdout then stays alive
       await using targetProc = spawn({
-        cmd: [bunExe(), "target.js"],
-        cwd: String(dir),
+        cmd: [bunExe(), "-e", `console.log(process.pid); setInterval(() => {}, 1000);`],
         env: bunEnv,
         stdout: "pipe",
         stderr: "pipe",
       });
 
+      // Read PID from stdout (confirms JS is executing)
       const reader = targetProc.stdout.getReader();
-      const decoder = new TextDecoder();
-      let output = "";
-      while (!output.includes("READY")) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        output += decoder.decode(value, { stream: true });
-      }
+      const { value } = await reader.read();
       reader.releaseLock();
-
-      const pid = parseInt(await Bun.file(join(String(dir), "pid")).text(), 10);
+      const pid = parseInt(new TextDecoder().decode(value).trim(), 10);
 
       // Start reading stderr before triggering debugger
       const stderrReader = targetProc.stderr.getReader();
@@ -215,42 +173,21 @@ describe("Runtime inspector activation", () => {
       // Note: Runtime inspector uses hardcoded port 6499, so we must test
       // sequential activation (activate first, shut down, then activate second)
       // rather than concurrent activation.
-      using dir = tempDir("debug-process-multi-test", {
-        "target.js": `
-          const fs = require("fs");
-          const path = require("path");
-          const id = process.argv[2];
-
-          fs.writeFileSync(path.join(process.cwd(), "pid-" + id), String(process.pid));
-          console.log("READY-" + id);
-
-          // Keep process alive until parent kills it
-          setInterval(() => {}, 1000);
-        `,
-      });
-
-      const decoder = new TextDecoder();
+      const targetScript = `console.log(process.pid); setInterval(() => {}, 1000);`;
 
       // First process: activate inspector, verify, then shut down
       {
         await using target1 = spawn({
-          cmd: [bunExe(), "target.js", "1"],
-          cwd: String(dir),
+          cmd: [bunExe(), "-e", targetScript],
           env: bunEnv,
           stdout: "pipe",
           stderr: "pipe",
         });
 
         const reader1 = target1.stdout.getReader();
-        let output1 = "";
-        while (!output1.includes("READY-1")) {
-          const { value, done } = await reader1.read();
-          if (done) break;
-          output1 += decoder.decode(value, { stream: true });
-        }
+        const { value: v1 } = await reader1.read();
         reader1.releaseLock();
-
-        const pid1 = parseInt(await Bun.file(join(String(dir), "pid-1")).text(), 10);
+        const pid1 = parseInt(new TextDecoder().decode(v1).trim(), 10);
         expect(pid1).toBeGreaterThan(0);
 
         await using debug1 = spawn({
@@ -275,23 +212,16 @@ describe("Runtime inspector activation", () => {
       // Second process: now that first is shut down, port 6499 is free
       {
         await using target2 = spawn({
-          cmd: [bunExe(), "target.js", "2"],
-          cwd: String(dir),
+          cmd: [bunExe(), "-e", targetScript],
           env: bunEnv,
           stdout: "pipe",
           stderr: "pipe",
         });
 
         const reader2 = target2.stdout.getReader();
-        let output2 = "";
-        while (!output2.includes("READY-2")) {
-          const { value, done } = await reader2.read();
-          if (done) break;
-          output2 += decoder.decode(value, { stream: true });
-        }
+        const { value: v2 } = await reader2.read();
         reader2.releaseLock();
-
-        const pid2 = parseInt(await Bun.file(join(String(dir), "pid-2")).text(), 10);
+        const pid2 = parseInt(new TextDecoder().decode(v2).trim(), 10);
         expect(pid2).toBeGreaterThan(0);
 
         await using debug2 = spawn({
@@ -455,39 +385,19 @@ describe("Runtime inspector activation", () => {
     });
 
     test.skipIf(skipASAN)("CDP messages work after client reconnects", async () => {
-      using dir = tempDir("debug-cdp-reconnect-test", {
-        "target.js": `
-          const fs = require("fs");
-          const path = require("path");
-
-          fs.writeFileSync(path.join(process.cwd(), "pid"), String(process.pid));
-          console.log("READY");
-
-          // Keep process alive
-          setInterval(() => {}, 1000);
-        `,
-      });
-
+      // Start target process - prints PID to stdout then stays alive
       await using targetProc = spawn({
-        cmd: [bunExe(), "target.js"],
-        cwd: String(dir),
+        cmd: [bunExe(), "-e", `console.log(process.pid); setInterval(() => {}, 1000);`],
         env: bunEnv,
         stdout: "pipe",
         stderr: "pipe",
       });
 
-      // Wait for READY
-      const stdoutReader = targetProc.stdout.getReader();
-      const stdoutDecoder = new TextDecoder();
-      let output = "";
-      while (!output.includes("READY")) {
-        const { value, done } = await stdoutReader.read();
-        if (done) break;
-        output += stdoutDecoder.decode(value, { stream: true });
-      }
-      stdoutReader.releaseLock();
-
-      const pid = parseInt(await Bun.file(join(String(dir), "pid")).text(), 10);
+      // Read PID from stdout (confirms JS is executing)
+      const reader = targetProc.stdout.getReader();
+      const { value } = await reader.read();
+      reader.releaseLock();
+      const pid = parseInt(new TextDecoder().decode(value).trim(), 10);
       expect(pid).toBeGreaterThan(0);
 
       // Activate inspector via _debugProcess
@@ -573,39 +483,19 @@ describe("Runtime inspector activation", () => {
 
 describe.skipIf(isWindows)("--disable-sigusr1", () => {
   test("prevents inspector activation and uses default signal behavior", async () => {
-    using dir = tempDir("disable-sigusr1-test", {
-      "target.js": `
-        const fs = require("fs");
-        const path = require("path");
-
-        fs.writeFileSync(path.join(process.cwd(), "pid"), String(process.pid));
-        console.log("READY");
-
-        // Keep process alive until signal terminates it
-        setInterval(() => {}, 1000);
-      `,
-    });
-
-    // Start with --disable-sigusr1
+    // Start with --disable-sigusr1 - prints PID to stdout then stays alive
     await using targetProc = spawn({
-      cmd: [bunExe(), "--disable-sigusr1", "target.js"],
-      cwd: String(dir),
+      cmd: [bunExe(), "--disable-sigusr1", "-e", `console.log(process.pid); setInterval(() => {}, 1000);`],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
 
+    // Read PID from stdout (confirms JS is executing)
     const reader = targetProc.stdout.getReader();
-    const decoder = new TextDecoder();
-    let output = "";
-    while (!output.includes("READY")) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      output += decoder.decode(value, { stream: true });
-    }
+    const { value } = await reader.read();
     reader.releaseLock();
-
-    const pid = parseInt(await Bun.file(join(String(dir), "pid")).text(), 10);
+    const pid = parseInt(new TextDecoder().decode(value).trim(), 10);
 
     // Send SIGUSR1 directly - without handler, this will terminate the process
     process.kill(pid, "SIGUSR1");

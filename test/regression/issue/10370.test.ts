@@ -22,7 +22,8 @@ test("bun build --no-bundle --outdir should output files correctly - issue #1037
     proc.exited,
   ]);
 
-  expect(stderr).not.toContain("error");
+  expect(stderr).toBeEmpty();
+  expect(stdout).toContain("index.js");
   expect(exitCode).toBe(0);
   
   const distDir = join(String(dir), "dist");

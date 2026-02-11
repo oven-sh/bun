@@ -260,13 +260,29 @@ devTest("hmr handles rapid consecutive edits", {
       await Bun.sleep(1);
     }
 
+    // Wait for the final render message event-driven. Due to filesystem watcher
+    // batching, a single write can trigger multiple reloads, so we may receive
+    // duplicate "render 10" messages. Drain all messages until we see the final
+    // render message and then drain any stragglers.
     const finalRender = "render 10";
+    let sawFinal = false;
     while (true) {
       const message = await client.getStringMessage();
-      if (message === finalRender) break;
       if (typeof message === "string" && message.includes("HMR_ERROR")) {
         throw new Error("Unexpected HMR error message: " + message);
       }
+      if (message === finalRender) {
+        sawFinal = true;
+        break;
+      }
+    }
+
+    // Drain any remaining in-flight messages (e.g. duplicate reloads) so
+    // the client destructor doesn't throw on unread messages.
+    if (sawFinal) {
+      // Give a small window for any in-flight messages to arrive.
+      await Bun.sleep(100);
+      client.messages.length = 0;
     }
 
     const hmrErrors = await client.js`return globalThis.__hmrErrors ? [...globalThis.__hmrErrors] : [];`;

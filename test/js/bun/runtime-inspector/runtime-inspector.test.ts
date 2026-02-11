@@ -501,6 +501,116 @@ describe("Runtime inspector activation", () => {
         await targetProc.exited;
       }
     });
+
+    test.skipIf(skipASAN)("CDP messages work after client reconnects", async () => {
+      using dir = tempDir("debug-cdp-reconnect-test", {
+        "target.js": `
+          const fs = require("fs");
+          const path = require("path");
+
+          fs.writeFileSync(path.join(process.cwd(), "pid"), String(process.pid));
+          console.log("READY");
+
+          // Keep process alive
+          setInterval(() => {}, 1000);
+        `,
+      });
+
+      await using targetProc = spawn({
+        cmd: [bunExe(), "target.js"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      // Wait for READY
+      const stdoutReader = targetProc.stdout.getReader();
+      const stdoutDecoder = new TextDecoder();
+      let output = "";
+      while (!output.includes("READY")) {
+        const { value, done } = await stdoutReader.read();
+        if (done) break;
+        output += stdoutDecoder.decode(value, { stream: true });
+      }
+      stdoutReader.releaseLock();
+
+      const pid = parseInt(await Bun.file(join(String(dir), "pid")).text(), 10);
+      expect(pid).toBeGreaterThan(0);
+
+      // Activate inspector via _debugProcess
+      await using debugProc = spawn({
+        cmd: [bunExe(), "-e", `process._debugProcess(${pid})`],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(await debugProc.exited).toBe(0);
+
+      // Wait for inspector banner and extract WS URL
+      const { stderr: targetStderr } = await waitForDebuggerListening(targetProc.stderr);
+      const wsMatch = targetStderr.match(/ws:\/\/[^\s]+/);
+      expect(wsMatch).not.toBeNull();
+      const wsUrl = wsMatch![0];
+
+      // Helper to create a CDP WebSocket client
+      function createCDPClient(url: string) {
+        const ws = new WebSocket(url);
+        let msgId = 1;
+        const pendingResponses = new Map<number, { resolve: (v: any) => void; reject: (e: any) => void }>();
+
+        ws.onmessage = event => {
+          const msg = JSON.parse(event.data as string);
+          if (msg.id !== undefined) {
+            const pending = pendingResponses.get(msg.id);
+            if (pending) {
+              pendingResponses.delete(msg.id);
+              pending.resolve(msg);
+            }
+          }
+        };
+
+        function sendCDP(method: string, params: Record<string, any> = {}): Promise<any> {
+          const id = msgId++;
+          const { promise, resolve, reject } = Promise.withResolvers<any>();
+          pendingResponses.set(id, { resolve, reject });
+          ws.send(JSON.stringify({ id, method, params }));
+          return promise;
+        }
+
+        async function waitForOpen(): Promise<void> {
+          const { promise, resolve, reject } = Promise.withResolvers<void>();
+          ws.onopen = () => resolve();
+          ws.onerror = e => reject(e);
+          return promise;
+        }
+
+        return { ws, sendCDP, waitForOpen };
+      }
+
+      // First connection: verify CDP works
+      const client1 = createCDPClient(wsUrl);
+      await client1.waitForOpen();
+
+      const result1 = await client1.sendCDP("Runtime.evaluate", { expression: "1 + 1" });
+      expect(result1.result.result.value).toBe(2);
+
+      // Disconnect first client
+      client1.ws.close();
+      // Brief wait for disconnect to propagate
+      await Bun.sleep(100);
+
+      // Second connection: verify CDP still works after reconnect
+      const client2 = createCDPClient(wsUrl);
+      await client2.waitForOpen();
+
+      const result2 = await client2.sendCDP("Runtime.evaluate", { expression: "2 + 3" });
+      expect(result2.result.result.value).toBe(5);
+
+      client2.ws.close();
+      targetProc.kill();
+      await targetProc.exited;
+    });
   });
 });
 

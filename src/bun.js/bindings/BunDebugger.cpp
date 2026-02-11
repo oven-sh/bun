@@ -448,7 +448,6 @@ private:
     }
 
 public:
-
     // Interrupt the JS thread to process pending CDP messages via StopTheWorld.
     // Only used on the SIGUSR1 runtime activation path where the event loop may
     // not be running (e.g., while(true){}). For --inspect, the event loop

@@ -99,6 +99,7 @@ pub fn NewParser_(
         pub const parseStmtsUpTo = parse_zig.parseStmtsUpTo;
         pub const parseAsyncPrefixExpr = parse_zig.parseAsyncPrefixExpr;
         pub const parseTypeScriptDecorators = parse_zig.parseTypeScriptDecorators;
+        pub const parseStandardDecorator = parse_zig.parseStandardDecorator;
         pub const parseTypeScriptNamespaceStmt = parse_zig.parseTypeScriptNamespaceStmt;
         pub const parseTypeScriptImportEqualsStmt = parse_zig.parseTypeScriptImportEqualsStmt;
         pub const parseTypescriptEnumStmt = parse_zig.parseTypescriptEnumStmt;
@@ -135,6 +136,10 @@ pub fn NewParser_(
         const symbols_zig = @import("./symbols.zig").Symbols(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only);
         pub const findSymbol = symbols_zig.findSymbol;
         pub const findSymbolWithRecordUsage = symbols_zig.findSymbolWithRecordUsage;
+
+        const lowerDecorators_zig = @import("./lowerDecorators.zig").LowerDecorators(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only);
+        pub const lowerStandardDecoratorsStmt = lowerDecorators_zig.lowerStandardDecoratorsStmt;
+        pub const lowerStandardDecoratorsExpr = lowerDecorators_zig.lowerStandardDecoratorsExpr;
 
         macro: MacroState = undefined,
         allocator: Allocator,
@@ -485,6 +490,10 @@ pub fn NewParser_(
 
         /// Used for react refresh, it must be able to insert `const _s = $RefreshSig$();`
         nearest_stmt_list: ?*ListManaged(Stmt) = null,
+
+        /// Name from assignment context for anonymous decorated class expressions.
+        /// Set before visitExpr, consumed by lowerStandardDecoratorsImpl.
+        decorator_class_name: ?[]const u8 = null,
 
         const RecentlyVisitedTSNamespace = struct {
             expr: Expr.Data = Expr.empty.data,
@@ -3759,7 +3768,10 @@ pub fn NewParser_(
                                         }
                                     },
                                     else => {
-                                        Output.panic("Unexpected type in export default", .{});
+                                        // Standard decorator lowering can produce non-class
+                                        // statements as the export default value; conservatively
+                                        // assume they have side effects.
+                                        return false;
                                     },
                                 }
                             },
@@ -4857,6 +4869,11 @@ pub fn NewParser_(
         ) []Stmt {
             switch (stmtorexpr) {
                 .stmt => |stmt| {
+                    // Standard decorator lowering path (for both JS and TS files)
+                    if (stmt.data.s_class.class.should_lower_standard_decorators) {
+                        return p.lowerStandardDecoratorsStmt(stmt);
+                    }
+
                     if (comptime !is_typescript_enabled) {
                         if (!stmt.data.s_class.class.has_decorators) {
                             var stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
@@ -5007,7 +5024,7 @@ pub fn NewParser_(
                                             }
                                         }
                                     },
-                                    .spread, .declare => {}, // not allowed in a class
+                                    .spread, .declare, .auto_accessor => {}, // not allowed in a class (auto_accessor is standard decorators only)
                                     .class_static_block => {}, // not allowed to decorate this
                                 }
                             }

@@ -328,41 +328,19 @@ describe("Runtime inspector activation", () => {
     });
 
     test.skipIf(skipASAN)("can interrupt an infinite loop", async () => {
-      using dir = tempDir("debug-infinite-loop-test", {
-        "target.js": `
-          const fs = require("fs");
-          const path = require("path");
-
-          // Write PID so parent can find us
-          fs.writeFileSync(path.join(process.cwd(), "pid"), String(process.pid));
-
-          // Infinite loop - the inspector should be able to interrupt this
-          while (true) {}
-        `,
-      });
-
       // Start target process with infinite loop
       await using targetProc = spawn({
-        cmd: [bunExe(), "target.js"],
-        cwd: String(dir),
+        cmd: [bunExe(), "-e", `console.log(process.pid); while (true) {}`],
         env: bunEnv,
         stdout: "pipe",
         stderr: "pipe",
       });
 
-      // Wait for PID file to be written
-      const pidPath = join(String(dir), "pid");
-      let pid: number | undefined;
-      for (let i = 0; i < 50; i++) {
-        try {
-          const pidText = await Bun.file(pidPath).text();
-          pid = parseInt(pidText, 10);
-          if (pid > 0) break;
-        } catch {
-          // File not ready yet
-        }
-        await Bun.sleep(100);
-      }
+      // Read PID from stdout (written before the infinite loop starts)
+      const reader = targetProc.stdout.getReader();
+      const { value } = await reader.read();
+      reader.releaseLock();
+      const pid = parseInt(new TextDecoder().decode(value).trim(), 10);
       expect(pid).toBeGreaterThan(0);
 
       // Use _debugProcess to activate inspector - this should interrupt the infinite loop
@@ -389,41 +367,19 @@ describe("Runtime inspector activation", () => {
     });
 
     test.skipIf(skipASAN)("can pause execution during while(true) via CDP", async () => {
-      using dir = tempDir("debug-cdp-pause-test", {
-        "target.js": `
-          const fs = require("fs");
-          const path = require("path");
-
-          // Write PID so parent can find us
-          fs.writeFileSync(path.join(process.cwd(), "pid"), String(process.pid));
-
-          // Infinite loop - the debugger should be able to pause this via CDP
-          while (true) {}
-        `,
-      });
-
       // Start target process with infinite loop
       await using targetProc = spawn({
-        cmd: [bunExe(), "target.js"],
-        cwd: String(dir),
+        cmd: [bunExe(), "-e", `console.log(process.pid); while (true) {}`],
         env: bunEnv,
         stdout: "pipe",
         stderr: "pipe",
       });
 
-      // Wait for PID file to be written
-      const pidPath = join(String(dir), "pid");
-      let pid: number | undefined;
-      for (let i = 0; i < 50; i++) {
-        try {
-          const pidText = await Bun.file(pidPath).text();
-          pid = parseInt(pidText, 10);
-          if (pid > 0) break;
-        } catch {
-          // File not ready yet
-        }
-        await Bun.sleep(100);
-      }
+      // Read PID from stdout (written before the infinite loop starts)
+      const reader = targetProc.stdout.getReader();
+      const { value } = await reader.read();
+      reader.releaseLock();
+      const pid = parseInt(new TextDecoder().decode(value).trim(), 10);
       expect(pid).toBeGreaterThan(0);
 
       // Activate inspector via _debugProcess

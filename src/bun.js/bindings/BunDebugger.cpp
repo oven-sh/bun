@@ -319,13 +319,24 @@ public:
             }
         }
 
-        for (auto* connection : connections)
+        for (auto* connection : connections) {
             connection->pauseFlags.store(0);
+            // Reset the scheduled flag so the debugger thread can post new
+            // tasks after the pause loop exits.
+            connection->jsThreadMessageScheduled.store(false);
+        }
     }
 
     void receiveMessagesOnInspectorThread(ScriptExecutionContext& context, Zig::GlobalObject* globalObject, bool connectIfNeeded)
     {
-        this->jsThreadMessageScheduledCount.store(0);
+        // Only clear the scheduled flag when NOT in the pause loop.
+        // During the pause loop, receiveMessagesOnInspectorThread is called
+        // repeatedly by the busy-poll. Clearing the flag would cause the
+        // debugger thread to re-post a task + interruptForMessageDelivery
+        // on every subsequent message, which is wasteful (and the posted
+        // tasks pile up for after the loop exits).
+        if (!(this->pauseFlags.load() & kInPauseLoop))
+            this->jsThreadMessageScheduled.store(false);
         WTF::Vector<WTF::String, 12> messages;
 
         {
@@ -365,7 +376,7 @@ public:
 
     void receiveMessagesOnDebuggerThread(ScriptExecutionContext& context, Zig::GlobalObject* debuggerGlobalObject)
     {
-        debuggerThreadMessageScheduledCount.store(0);
+        debuggerThreadMessageScheduled.store(false);
         WTF::Vector<WTF::String, 12> messages;
 
         {
@@ -394,7 +405,7 @@ public:
             debuggerThreadMessages.append(inputMessage);
         }
 
-        if (this->debuggerThreadMessageScheduledCount++ == 0) {
+        if (!this->debuggerThreadMessageScheduled.exchange(true)) {
             debuggerScriptExecutionContext->postTaskConcurrently([connection = this](ScriptExecutionContext& context) {
                 connection->receiveMessagesOnDebuggerThread(context, static_cast<Zig::GlobalObject*>(context.jsGlobalObject()));
             });
@@ -407,10 +418,24 @@ public:
             Locker<Lock> locker(jsThreadMessagesLock);
             jsThreadMessages.appendVector(inputMessages);
         }
+        scheduleInspectorThreadDelivery();
+    }
 
+    void sendMessageToInspectorFromDebuggerThread(const WTF::String& inputMessage)
+    {
+        {
+            Locker<Lock> locker(jsThreadMessagesLock);
+            jsThreadMessages.append(inputMessage);
+        }
+        scheduleInspectorThreadDelivery();
+    }
+
+private:
+    void scheduleInspectorThreadDelivery()
+    {
         if (this->jsWaitForMessageFromInspectorLock.isLocked()) {
             this->jsWaitForMessageFromInspectorLock.unlock();
-        } else if (this->jsThreadMessageScheduledCount++ == 0) {
+        } else if (!this->jsThreadMessageScheduled.exchange(true)) {
             ScriptExecutionContext::postTaskTo(scriptExecutionContextIdentifier, [connection = this](ScriptExecutionContext& context) {
                 connection->receiveMessagesOnInspectorThread(context, static_cast<Zig::GlobalObject*>(context.jsGlobalObject()), true);
             });
@@ -422,22 +447,7 @@ public:
         }
     }
 
-    void sendMessageToInspectorFromDebuggerThread(const WTF::String& inputMessage)
-    {
-        {
-            Locker<Lock> locker(jsThreadMessagesLock);
-            jsThreadMessages.append(inputMessage);
-        }
-
-        if (this->jsWaitForMessageFromInspectorLock.isLocked()) {
-            this->jsWaitForMessageFromInspectorLock.unlock();
-        } else if (this->jsThreadMessageScheduledCount++ == 0) {
-            ScriptExecutionContext::postTaskTo(scriptExecutionContextIdentifier, [connection = this](ScriptExecutionContext& context) {
-                connection->receiveMessagesOnInspectorThread(context, static_cast<Zig::GlobalObject*>(context.jsGlobalObject()), true);
-            });
-            this->interruptForMessageDelivery();
-        }
-    }
+public:
 
     // Interrupt the JS thread to process pending CDP messages via StopTheWorld.
     // Only used on the SIGUSR1 runtime activation path where the event loop may
@@ -459,11 +469,11 @@ public:
 
     WTF::Vector<WTF::String, 12> debuggerThreadMessages;
     WTF::Lock debuggerThreadMessagesLock = WTF::Lock();
-    std::atomic<uint32_t> debuggerThreadMessageScheduledCount { 0 };
+    std::atomic<bool> debuggerThreadMessageScheduled { false };
 
     WTF::Vector<WTF::String, 12> jsThreadMessages;
     WTF::Lock jsThreadMessagesLock = WTF::Lock();
-    std::atomic<uint32_t> jsThreadMessageScheduledCount { 0 };
+    std::atomic<bool> jsThreadMessageScheduled { false };
 
     JSC::JSGlobalObject* globalObject;
     ScriptExecutionContextIdentifier scriptExecutionContextIdentifier;

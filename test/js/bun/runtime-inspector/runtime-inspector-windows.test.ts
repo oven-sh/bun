@@ -223,9 +223,9 @@ describe.skipIf(!isWindows)("Runtime inspector Windows file mapping", () => {
   });
 
   test("multiple Windows processes can have inspectors sequentially", async () => {
-    // Note: Runtime inspector uses hardcoded port 6499, so we must test
-    // sequential activation (activate first, shut down, then activate second)
-    // rather than concurrent activation.
+    // Test sequential activation: activate first, shut down, then activate second.
+    // Each process uses a random port, so concurrent would also work, but
+    // sequential tests the full lifecycle.
     using dir = tempDir("windows-multi-test", {
       "target.js": `
         const fs = require("fs");
@@ -284,7 +284,7 @@ describe.skipIf(!isWindows)("Runtime inspector Windows file mapping", () => {
       await target1.exited;
     }
 
-    // Second process: now that first is shut down, port 6499 is free
+    // Second process
     {
       await using target2 = spawn({
         cmd: [bunExe(), "target.js", "2"],

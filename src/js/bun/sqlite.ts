@@ -51,6 +51,9 @@ const constants = {
 
   SQLITE_DESERIALIZE_READONLY: 0x00000004 /* Ok for sqlite3_deserialize() */,
 
+  SQLITE_BUSY: 5,
+  SQLITE_LOCKED: 6,
+
   SQLITE_FCNTL_LOCKSTATE: 1,
   SQLITE_FCNTL_GET_LOCKPROXYFILE: 2,
   SQLITE_FCNTL_SET_LOCKPROXYFILE: 3,
@@ -122,6 +125,16 @@ interface CppSQL {
   fcntl(handle: TODO, ...args: TODO[]): TODO;
   close(handle: TODO, throwOnError: boolean): void;
   setCustomSQLite(path: string): void;
+  backupInit(
+    sourceHandle: TODO,
+    dest: string | TODO,
+    finalizationTarget: TODO,
+    sourceSchema?: string,
+    destSchema?: string,
+  ): TODO;
+  backupStep(backupHandle: TODO, pageCount: number): false | { totalPages: number; remainingPages: number };
+  backupFinish(backupHandle: TODO): boolean;
+  backupDispose(backupHandle: TODO): void;
 }
 
 let SQL: CppSQL;
@@ -340,6 +353,101 @@ class Statement {
   }
 }
 
+class DatabaseBackup {
+  #handle;
+  #finished = false;
+  #success = false;
+  #pageCount = 0;
+  #remaining = 0;
+
+  constructor(sourceHandle: TODO, dest: string | TODO, sourceSchema?: string, destSchema?: string) {
+    if (!SQL) initializeSQL();
+    // Pass `this` as finalization target so GC cleans up if user forgets to dispose
+    this.#handle = SQL.backupInit(sourceHandle, dest, this, sourceSchema, destSchema);
+  }
+
+  get [toStringTag]() {
+    return "DatabaseBackup";
+  }
+
+  get pageCount() {
+    return this.#pageCount;
+  }
+
+  get remaining() {
+    return this.#remaining;
+  }
+
+  toJSON() {
+    return {
+      finished: this.#finished,
+      success: this.#success,
+      pageCount: this.#pageCount,
+      remaining: this.#remaining,
+    };
+  }
+
+  toString() {
+    return `[DatabaseBackup finished=${this.#finished} success=${this.#success}]`;
+  }
+
+  // pageCount is passed directly to sqlite3_backup_step().
+  // Positive values copy that many pages. -1 copies all remaining pages
+  // (equivalent to finish()). 0 is a no-op that returns progress info.
+  step(pageCount = 100) {
+    if (this.#finished) return false;
+    let result;
+    try {
+      result = SQL.backupStep(this.#handle, pageCount);
+    } catch (e) {
+      // SQLITE_BUSY and SQLITE_LOCKED are transient -- allow retry
+      const errno = e?.errno;
+      if ((errno & 0xff) !== constants.SQLITE_BUSY && (errno & 0xff) !== constants.SQLITE_LOCKED) {
+        this.#finished = true;
+        this.#success = false;
+      }
+      throw e;
+    }
+    if (result === false) {
+      this.#finished = true;
+      this.#success = true;
+      this.#remaining = 0;
+      return false;
+    }
+    this.#pageCount = result.totalPages;
+    this.#remaining = result.remainingPages;
+    return true;
+  }
+
+  finish() {
+    if (this.#finished) return this.#success;
+    try {
+      this.#success = SQL.backupFinish(this.#handle);
+      this.#finished = true;
+      if (this.#success) this.#remaining = 0;
+    } catch (e) {
+      const errno = e?.errno;
+      if ((errno & 0xff) !== constants.SQLITE_BUSY && (errno & 0xff) !== constants.SQLITE_LOCKED) {
+        this.#finished = true;
+        this.#success = false;
+      }
+      throw e;
+    }
+    return this.#success;
+  }
+
+  abort() {
+    if (this.#finished) return;
+    this.#finished = true;
+    this.#success = false;
+    SQL.backupDispose(this.#handle);
+  }
+
+  [Symbol.dispose]() {
+    this.abort();
+  }
+}
+
 const cachedCount = Symbol.for("Bun.Database.cache.count");
 
 class Database implements SqliteTypes.Database {
@@ -362,6 +470,7 @@ class Database implements SqliteTypes.Database {
 
           if (options.readonly) {
             deserializeFlags |= constants.SQLITE_DESERIALIZE_READONLY;
+            this.#isReadonly = true;
           }
         }
 
@@ -411,6 +520,8 @@ class Database implements SqliteTypes.Database {
       flags = options;
     }
 
+    this.#isReadonly = (flags & constants.SQLITE_OPEN_READONLY) !== 0;
+
     const anonymous = filename === "" || filename === ":memory:";
     if (anonymous && (flags & constants.SQLITE_OPEN_READONLY) !== 0) {
       throw new Error("Cannot open an anonymous database in read-only mode.");
@@ -431,6 +542,7 @@ class Database implements SqliteTypes.Database {
   #cachedQueriesValues: Statement[] = [];
   filename;
   #hasClosed = false;
+  #isReadonly = false;
   get handle() {
     return this.#handle;
   }
@@ -449,6 +561,42 @@ class Database implements SqliteTypes.Database {
 
   serialize(optionalName?: string) {
     return SQL.serialize(this.#handle, optionalName || "main");
+  }
+
+  backupTo(
+    destination: string | Database,
+    options?: { incremental?: boolean; sourceSchema?: string; destSchema?: string },
+  ) {
+    if (this.#hasClosed) {
+      throw new Error("Cannot backup a closed database");
+    }
+
+    let dest;
+    if (destination instanceof Database) {
+      if (destination === this) {
+        throw new Error("Cannot backup a database to itself");
+      }
+      if (destination.#hasClosed) {
+        throw new Error("Cannot backup to a closed database");
+      }
+      if (destination.#isReadonly) {
+        throw new Error("Cannot backup to a readonly database");
+      }
+      dest = destination.#handle;
+    } else if (typeof destination === "string") {
+      dest = destination;
+    } else {
+      throw new TypeError(`Expected 'destination' to be a string or Database, got '${typeof destination}'`);
+    }
+
+    const sourceSchema = options?.sourceSchema;
+    const destSchema = options?.destSchema;
+    const backup = new DatabaseBackup(this.#handle, dest, sourceSchema, destSchema);
+
+    if (!options?.incremental) {
+      backup.finish();
+    }
+    return backup;
   }
 
   static #deserialize(serialized: NodeJS.TypedArray | ArrayBufferLike, openFlags: number, deserializeFlags: number) {
@@ -681,6 +829,7 @@ class SQLiteError extends Error {
 export default {
   __esModule: true,
   Database,
+  DatabaseBackup,
   Statement,
   constants,
   default: Database,

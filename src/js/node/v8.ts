@@ -70,13 +70,13 @@ function getHeapStatistics() {
   
   // Return cached value if still valid
   if (cachedHeapStats !== null && now < cacheExpiry) {
-    return cachedHeapStats;
+    return { ...cachedHeapStats };
   }
   
   // Calculate time since last call
   // First call assumes spam scenario (timeSinceLastCall = 0)
   // JavaScript is single-threaded, so no race conditions
-  const timeSinceLastCall = isFirstCall ? 0 : now - lastCallTime;
+  const timeSinceLastCall = isFirstCall ? Infinity : now - lastCallTime;
   lastCallTime = now;
   isFirstCall = false;
   
@@ -110,7 +110,7 @@ function getHeapStatistics() {
   
   cacheExpiry = now + cacheDuration;
   
-  return cachedHeapStats;
+  return { ...cachedHeapStats };
 }
 function getHeapSpaceStatistics() {
   notimpl("getHeapSpaceStatistics");

@@ -610,7 +610,7 @@ public:
     V(private, LazyPropertyOfGlobalObject<Structure>, m_importMetaBakeObjectStructure)                       \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_asyncBoundFunctionStructure)                         \
     V(public, LazyPropertyOfGlobalObject<JSC::JSObject>, m_JSDOMFileConstructor)                             \
-    V(public, LazyPropertyOfGlobalObject<Structure>, m_JSFileStructure)                                     \
+    V(public, LazyPropertyOfGlobalObject<Structure>, m_JSFileStructure)                                      \
     V(public, LazyPropertyOfGlobalObject<JSC::JSObject>, m_JSMIMEParamsConstructor)                          \
     V(public, LazyPropertyOfGlobalObject<JSC::JSObject>, m_JSMIMETypeConstructor)                            \
                                                                                                              \

@@ -99,6 +99,7 @@ pub fn NewParser_(
         pub const parseStmtsUpTo = parse_zig.parseStmtsUpTo;
         pub const parseAsyncPrefixExpr = parse_zig.parseAsyncPrefixExpr;
         pub const parseTypeScriptDecorators = parse_zig.parseTypeScriptDecorators;
+        pub const parseStandardDecorator = parse_zig.parseStandardDecorator;
         pub const parseTypeScriptNamespaceStmt = parse_zig.parseTypeScriptNamespaceStmt;
         pub const parseTypeScriptImportEqualsStmt = parse_zig.parseTypeScriptImportEqualsStmt;
         pub const parseTypescriptEnumStmt = parse_zig.parseTypescriptEnumStmt;
@@ -135,6 +136,10 @@ pub fn NewParser_(
         const symbols_zig = @import("./symbols.zig").Symbols(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only);
         pub const findSymbol = symbols_zig.findSymbol;
         pub const findSymbolWithRecordUsage = symbols_zig.findSymbolWithRecordUsage;
+
+        const lowerDecorators_zig = @import("./lowerDecorators.zig").LowerDecorators(parser_feature__typescript, parser_feature__jsx, parser_feature__scan_only);
+        pub const lowerStandardDecoratorsStmt = lowerDecorators_zig.lowerStandardDecoratorsStmt;
+        pub const lowerStandardDecoratorsExpr = lowerDecorators_zig.lowerStandardDecoratorsExpr;
 
         macro: MacroState = undefined,
         allocator: Allocator,
@@ -485,6 +490,10 @@ pub fn NewParser_(
 
         /// Used for react refresh, it must be able to insert `const _s = $RefreshSig$();`
         nearest_stmt_list: ?*ListManaged(Stmt) = null,
+
+        /// Name from assignment context for anonymous decorated class expressions.
+        /// Set before visitExpr, consumed by lowerStandardDecoratorsImpl.
+        decorator_class_name: ?[]const u8 = null,
 
         const RecentlyVisitedTSNamespace = struct {
             expr: Expr.Data = Expr.empty.data,
@@ -3759,7 +3768,10 @@ pub fn NewParser_(
                                         }
                                     },
                                     else => {
-                                        Output.panic("Unexpected type in export default", .{});
+                                        // Standard decorator lowering can produce non-class
+                                        // statements as the export default value; conservatively
+                                        // assume they have side effects.
+                                        return false;
                                     },
                                 }
                             },
@@ -4857,6 +4869,11 @@ pub fn NewParser_(
         ) []Stmt {
             switch (stmtorexpr) {
                 .stmt => |stmt| {
+                    // Standard decorator lowering path (for both JS and TS files)
+                    if (stmt.data.s_class.class.should_lower_standard_decorators) {
+                        return p.lowerStandardDecoratorsStmt(stmt);
+                    }
+
                     if (comptime !is_typescript_enabled) {
                         if (!stmt.data.s_class.class.has_decorators) {
                             var stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
@@ -5007,7 +5024,7 @@ pub fn NewParser_(
                                             }
                                         }
                                     },
-                                    .spread, .declare => {}, // not allowed in a class
+                                    .spread, .declare, .auto_accessor => {}, // not allowed in a class (auto_accessor is standard decorators only)
                                     .class_static_block => {}, // not allowed to decorate this
                                 }
                             }
@@ -6467,6 +6484,11 @@ pub fn NewParser_(
                 parts.items[0].stmts = top_level_stmts;
             }
 
+            // REPL mode transforms
+            if (p.options.repl_mode) {
+                try repl_transforms.ReplTransforms(P).apply(p, parts, allocator);
+            }
+
             var top_level_symbols_to_parts = js_ast.Ast.TopLevelSymbolToParts{};
             var top_level = &top_level_symbols_to_parts;
 
@@ -6586,6 +6608,7 @@ pub fn NewParser_(
                 .top_level_await_keyword = p.top_level_await_keyword,
                 .commonjs_named_exports = p.commonjs_named_exports,
                 .has_commonjs_export_names = p.has_commonjs_export_names,
+                .has_import_meta = p.has_import_meta,
 
                 .hashbang = hashbang,
                 // TODO: cross-module constant inlining
@@ -6761,6 +6784,8 @@ var nullValueExpr = Expr.Data{ .e_null = nullExprValueData };
 var falseValueExpr = Expr.Data{ .e_boolean = E.Boolean{ .value = false } };
 
 const string = []const u8;
+
+const repl_transforms = @import("./repl_transforms.zig");
 
 const Define = @import("../defines.zig").Define;
 const DefineData = @import("../defines.zig").DefineData;

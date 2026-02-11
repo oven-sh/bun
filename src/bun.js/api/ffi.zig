@@ -606,6 +606,9 @@ pub const FFI = struct {
     };
 
     pub fn Bun__FFI__cc(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        if (comptime !Environment.enable_tinycc) {
+            return globalThis.throw("bun:ffi cc() is not available in this build (TinyCC is disabled)", .{});
+        }
         const arguments = callframe.arguments_old(1).slice();
         if (arguments.len == 0 or !arguments[0].isObject()) {
             return globalThis.throwInvalidArguments("Expected object", .{});
@@ -834,6 +837,9 @@ pub const FFI = struct {
     }
 
     pub fn callback(globalThis: *JSGlobalObject, interface: jsc.JSValue, js_callback: jsc.JSValue) bun.JSError!JSValue {
+        if (comptime !Environment.enable_tinycc) {
+            return globalThis.throw("bun:ffi callback() is not available in this build (TinyCC is disabled)", .{});
+        }
         jsc.markBinding(@src());
         if (!interface.isObject()) {
             return globalThis.toInvalidArguments("Expected object", .{});
@@ -1003,6 +1009,10 @@ pub const FFI = struct {
     }
 
     pub fn open(global: *JSGlobalObject, name_str: ZigString, object_value: jsc.JSValue) jsc.JSValue {
+        if (comptime !Environment.enable_tinycc) {
+            global.throw("bun:ffi dlopen() is not available in this build (TinyCC is disabled)", .{}) catch {};
+            return .zero;
+        }
         jsc.markBinding(@src());
         const vm = VirtualMachine.get();
         var name_slice = name_str.toSlice(bun.default_allocator);
@@ -1025,7 +1035,6 @@ pub const FFI = struct {
                     .wasm => @compileError("TODO"),
                 },
             )) |resolved| {
-                @memcpy(filepath_buf[0..resolved.len], resolved);
                 filepath_buf[resolved.len] = 0;
                 break :brk filepath_buf[0..resolved.len];
             }
@@ -1170,6 +1179,10 @@ pub const FFI = struct {
     }
 
     pub fn linkSymbols(global: *JSGlobalObject, object_value: jsc.JSValue) jsc.JSValue {
+        if (comptime !Environment.enable_tinycc) {
+            global.throw("bun:ffi linkSymbols() is not available in this build (TinyCC is disabled)", .{}) catch {};
+            return .zero;
+        }
         jsc.markBinding(@src());
         const allocator = VirtualMachine.get().allocator;
 
@@ -2418,8 +2431,13 @@ fn makeNapiEnvIfNeeded(functions: []const FFI.Function, globalThis: *JSGlobalObj
 
 const string = []const u8;
 
+const TCC = if (Environment.enable_tinycc) @import("../../deps/tcc.zig") else struct {
+    pub const State = struct {
+        pub fn deinit(_: *State) void {}
+    };
+};
+
 const Fs = @import("../../fs.zig");
-const TCC = @import("../../deps/tcc.zig");
 const napi = @import("../../napi/napi.zig");
 const options = @import("../../options.zig");
 const std = @import("std");

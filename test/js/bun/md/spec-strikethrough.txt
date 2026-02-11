@@ -1,0 +1,63 @@
+
+# Strike-Through
+
+With the flag `MD_FLAG_STRIKETHROUGH`, MD4C enables extension for recognition
+of strike-through spans.
+
+Strike-through text is any text wrapped in one or two tildes (`~`).
+
+```````````````````````````````` example
+~Hi~ Hello, world!
+.
+<p><del>Hi</del> Hello, world!</p>
+.
+--fstrikethrough
+````````````````````````````````
+
+If the length of the opener and closer doesn't match, the strike-through is
+not recognized.
+
+```````````````````````````````` example
+This ~text~~ is curious.
+.
+<p>This ~text~~ is curious.</p>
+.
+--fstrikethrough
+````````````````````````````````
+
+Too long tilde sequence won't be recognized:
+
+```````````````````````````````` example
+foo ~~~bar~~~
+.
+<p>foo ~~~bar~~~</p>
+.
+--fstrikethrough
+````````````````````````````````
+
+Also note the markers cannot open a strike-through span if they are followed
+with a whitespace; and similarly, then cannot close the span if they are
+preceded with a whitespace:
+
+```````````````````````````````` example
+~foo ~bar
+.
+<p>~foo ~bar</p>
+.
+--fstrikethrough
+````````````````````````````````
+
+
+As with regular emphasis delimiters, a new paragraph will cause the cessation
+of parsing a strike-through:
+
+```````````````````````````````` example
+This ~~has a
+
+new paragraph~~.
+.
+<p>This ~~has a</p>
+<p>new paragraph~~.</p>
+.
+--fstrikethrough
+````````````````````````````````

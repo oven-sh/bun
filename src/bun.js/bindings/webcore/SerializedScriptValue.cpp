@@ -5599,6 +5599,19 @@ SerializedScriptValue::SerializedScriptValue(Vector<uint8_t>&& butterflyData, ui
     m_memoryCost = computeMemoryCost();
 }
 
+SerializedScriptValue::SerializedScriptValue(WTF::FixedVector<DenseArrayElement>&& denseElements)
+    : m_denseArrayElements(WTF::move(denseElements))
+    , m_fastPath(FastPath::DenseArray)
+{
+    m_memoryCost = computeMemoryCost();
+}
+
+Ref<SerializedScriptValue> SerializedScriptValue::createDenseArrayFastPath(
+    WTF::FixedVector<DenseArrayElement>&& elements)
+{
+    return adoptRef(*new SerializedScriptValue(WTF::move(elements)));
+}
+
 size_t SerializedScriptValue::computeMemoryCost() const
 {
     size_t cost = m_data.size();
@@ -5683,6 +5696,23 @@ size_t SerializedScriptValue::computeMemoryCost() const
     case FastPath::Int32Array:
     case FastPath::DoubleArray:
         cost += m_arrayButterflyData.size();
+        break;
+    case FastPath::DenseArray:
+        cost += m_denseArrayElements.byteSize();
+        for (const auto& elem : m_denseArrayElements) {
+            std::visit(WTF::makeVisitor(
+                           [&](JSC::JSValue) { /* already included in byteSize() */ },
+                           [&](const String& s) { cost += s.sizeInBytes(); },
+                           [&](const SimpleCloneableObject& obj) {
+                               cost += obj.properties.byteSize();
+                               for (const auto& prop : obj.properties) {
+                                   cost += prop.propertyName.sizeInBytes();
+                                   if (std::holds_alternative<WTF::String>(prop.value))
+                                       cost += std::get<WTF::String>(prop.value).sizeInBytes();
+                               }
+                           }),
+                elem);
+        }
         break;
     case FastPath::None:
         break;
@@ -5946,35 +5976,100 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
                 && !array->structure()->holesMustForwardToPrototype(array)) {
 
                 auto* data = array->butterfly()->contiguous().data();
-                WTF::Vector<SimpleCloneableValue> elements;
+                WTF::Vector<DenseArrayElement> elements;
                 elements.reserveInitialCapacity(length);
                 bool ok = true;
+                bool hasObjects = false;
+                HashSet<JSObject*> seenObjects;
 
                 for (unsigned i = 0; i < length; i++) {
                     JSValue elem = data[i].get();
                     if (!elem) {
                         ok = false;
                         break;
-                    }
+                    } // hole
 
-                    if (elem.isCell()) {
-                        if (!elem.isString()) {
-                            ok = false;
-                            break;
-                        }
+                    if (!elem.isCell()) {
+                        // primitive: int32, double, bool, null, undefined
+                        elements.append(elem);
+                    } else if (elem.isString()) {
                         auto* str = asString(elem);
                         String strValue = str->value(&lexicalGlobalObject);
                         RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
                         elements.append(Bun::toCrossThreadShareable(strValue));
+                    } else if (elem.isObject()) {
+                        auto* obj = elem.getObject();
+                        // Shared references can't be preserved in the fast path,
+                        // fall back to the normal serialization path.
+                        if (!seenObjects.add(obj).isNewEntry) {
+                            ok = false;
+                            break;
+                        }
+                        auto* objStructure = obj->structure();
+                        if (!isObjectFastPathCandidate(objStructure)) {
+                            ok = false;
+                            break;
+                        }
+
+                        // Collect properties (same logic as SimpleObject fast path)
+                        WTF::Vector<SimpleInMemoryPropertyTableEntry> properties;
+                        bool objOk = true;
+                        objStructure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
+                            JSValue propValue = obj->getDirect(entry.offset());
+                            if (propValue.isCell()) {
+                                if (!propValue.isString()) {
+                                    objOk = false;
+                                    return false;
+                                }
+                                auto* string = asString(propValue);
+                                String stringValue = string->value(&lexicalGlobalObject);
+                                if (scope.exception()) {
+                                    objOk = false;
+                                    return false;
+                                }
+                                properties.append({ entry.key()->isolatedCopy(),
+                                    Bun::toCrossThreadShareable(stringValue) });
+                            } else {
+                                properties.append({ entry.key()->isolatedCopy(), propValue });
+                            }
+                            return true;
+                        });
+                        RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
+                        if (!objOk) {
+                            ok = false;
+                            break;
+                        }
+
+                        SimpleCloneableObject clonedObj;
+                        clonedObj.properties = WTF::FixedVector<SimpleInMemoryPropertyTableEntry>(WTF::move(properties));
+                        elements.append(WTF::move(clonedObj));
+                        hasObjects = true;
                     } else {
-                        elements.append(elem);
+                        ok = false;
+                        break; // Symbol, BigInt, etc. → fallback
                     }
                 }
 
                 if (ok) {
-                    return SerializedScriptValue::createArrayFastPath(
-                        WTF::FixedVector<SimpleCloneableValue>(WTF::move(elements)));
+                    if (hasObjects) {
+                        return SerializedScriptValue::createDenseArrayFastPath(
+                            WTF::FixedVector<DenseArrayElement>(WTF::move(elements)));
+                    } else {
+                        // No objects present → use existing SimpleArray path
+                        WTF::Vector<SimpleCloneableValue> simpleElements;
+                        simpleElements.reserveInitialCapacity(length);
+                        for (auto& elem : elements) {
+                            std::visit(WTF::makeVisitor(
+                                           [&](JSC::JSValue v) { simpleElements.append(v); },
+                                           [&](WTF::String& s) { simpleElements.append(WTF::move(s)); },
+                                           [&](SimpleCloneableObject&) { ASSERT_NOT_REACHED(); }),
+                                elem);
+                        }
+                        return SerializedScriptValue::createArrayFastPath(
+                            WTF::FixedVector<SimpleCloneableValue>(WTF::move(simpleElements)));
+                    }
                 }
+                // holes / unsupported types → fall through to normal serialization path
             }
 
             // ArrayStorage / Undecided / holes forwarding → fall through to normal serialization path
@@ -6431,6 +6526,98 @@ JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, 
                     [](JSValue v) -> JSValue { return v; },
                     [&](const String& s) -> JSValue { return jsString(vm, s); }),
                 m_simpleArrayElements[i]);
+            values.append(elemValue);
+        }
+
+        Structure* resultStructure = globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous);
+        ObjectInitializationScope initScope(vm);
+        JSArray* resultArray = JSArray::tryCreateUninitializedRestricted(initScope, resultStructure, length);
+
+        if (!resultArray) [[unlikely]] {
+            if (didFail)
+                *didFail = true;
+            return {};
+        }
+
+        for (unsigned i = 0; i < length; i++)
+            resultArray->initializeIndex(initScope, i, values.at(i));
+
+        if (didFail)
+            *didFail = false;
+        return resultArray;
+    }
+    case FastPath::DenseArray: {
+        unsigned length = m_denseArrayElements.size();
+
+        // Pre-convert all elements to JSValues (including creating JSStrings and objects)
+        // before entering ObjectInitializationScope, since allocations are not allowed inside it.
+        MarkedArgumentBuffer values;
+        values.ensureCapacity(length);
+
+        // Structure cache: reuse the Structure from the first object for subsequent objects
+        // with the same shape (same property names in same order), avoiding repeated
+        // Structure transitions. Only used when property names exactly match.
+        Structure* cachedStructure = nullptr;
+        Vector<JSC::Identifier> cachedIdentifiers;
+
+        for (unsigned i = 0; i < length; i++) {
+            JSValue elemValue = std::visit(WTF::makeVisitor(
+                                               [](JSC::JSValue v) -> JSValue { return v; },
+                                               [&](const WTF::String& s) -> JSValue { return jsString(vm, s); },
+                                               [&](const SimpleCloneableObject& obj) -> JSValue {
+                                                   unsigned propCount = obj.properties.size();
+
+                                                   // Check if we can use the cached structure (same property count AND names,
+                                                   // and no out-of-line storage — JSFinalObject::create cannot allocate a butterfly).
+                                                   bool useCache = cachedStructure && cachedIdentifiers.size() == propCount
+                                                       && cachedStructure->outOfLineCapacity() == 0;
+                                                   if (useCache) {
+                                                       for (unsigned j = 0; j < propCount; j++) {
+                                                           if (cachedIdentifiers[j].string() != obj.properties[j].propertyName) {
+                                                               useCache = false;
+                                                               break;
+                                                           }
+                                                       }
+                                                   }
+
+                                                   JSObject* newObj;
+                                                   if (useCache) {
+                                                       // Structure cache hit → create with pre-built Structure (no transitions)
+                                                       newObj = JSFinalObject::create(vm, cachedStructure);
+                                                       for (unsigned j = 0; j < propCount; j++) {
+                                                           const auto& prop = obj.properties[j];
+                                                           JSValue propVal = std::visit(WTF::makeVisitor(
+                                                                                            [](JSValue v) -> JSValue { return v; },
+                                                                                            [&](const String& s) -> JSValue { return jsString(vm, s); }),
+                                                               prop.value);
+                                                           newObj->putDirect(vm, cachedIdentifiers[j], propVal);
+                                                       }
+                                                   } else {
+                                                       // No cache or shape mismatch → build from scratch
+                                                       newObj = constructEmptyObject(globalObject, globalObject->objectPrototype(),
+                                                           std::min(propCount, JSFinalObject::maxInlineCapacity));
+                                                       for (unsigned j = 0; j < propCount; j++) {
+                                                           const auto& prop = obj.properties[j];
+                                                           JSC::Identifier id = JSC::Identifier::fromString(vm, prop.propertyName);
+                                                           JSValue propVal = std::visit(WTF::makeVisitor(
+                                                                                            [](JSValue v) -> JSValue { return v; },
+                                                                                            [&](const String& s) -> JSValue { return jsString(vm, s); }),
+                                                               prop.value);
+                                                           newObj->putDirect(vm, id, propVal);
+                                                       }
+
+                                                       // Cache the Structure from the first object we build
+                                                       if (!cachedStructure) {
+                                                           cachedStructure = newObj->structure();
+                                                           cachedIdentifiers.reserveInitialCapacity(propCount);
+                                                           for (const auto& prop : obj.properties)
+                                                               cachedIdentifiers.append(JSC::Identifier::fromString(vm, prop.propertyName));
+                                                       }
+                                                   }
+
+                                                   return newObj;
+                                               }),
+                m_denseArrayElements[i]);
             values.append(elemValue);
         }
 

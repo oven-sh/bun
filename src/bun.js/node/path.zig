@@ -71,13 +71,12 @@ fn PathParsed(comptime T: type) type {
         name: []const T = "",
 
         pub fn toJSObject(this: @This(), globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
-            var jsObject = jsc.JSValue.createEmptyObject(globalObject, 5);
-            jsObject.put(globalObject, jsc.ZigString.static("root"), try bun.String.createUTF8ForJS(globalObject, this.root));
-            jsObject.put(globalObject, jsc.ZigString.static("dir"), try bun.String.createUTF8ForJS(globalObject, this.dir));
-            jsObject.put(globalObject, jsc.ZigString.static("base"), try bun.String.createUTF8ForJS(globalObject, this.base));
-            jsObject.put(globalObject, jsc.ZigString.static("ext"), try bun.String.createUTF8ForJS(globalObject, this.ext));
-            jsObject.put(globalObject, jsc.ZigString.static("name"), try bun.String.createUTF8ForJS(globalObject, this.name));
-            return jsObject;
+            const root = try bun.String.createUTF8ForJS(globalObject, this.root);
+            const dir = try bun.String.createUTF8ForJS(globalObject, this.dir);
+            const base = try bun.String.createUTF8ForJS(globalObject, this.base);
+            const ext = try bun.String.createUTF8ForJS(globalObject, this.ext);
+            const name_val = try bun.String.createUTF8ForJS(globalObject, this.name);
+            return PathParsedObject__create(globalObject, root, dir, base, ext, name_val);
         }
     };
 }
@@ -2748,6 +2747,14 @@ pub fn resolveJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, allocato
 }
 
 extern "c" fn Process__getCachedCwd(*jsc.JSGlobalObject) jsc.JSValue;
+extern "c" fn PathParsedObject__create(
+    *jsc.JSGlobalObject,
+    jsc.JSValue,
+    jsc.JSValue,
+    jsc.JSValue,
+    jsc.JSValue,
+    jsc.JSValue,
+) jsc.JSValue;
 
 pub fn resolve(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*]jsc.JSValue, args_len: u16) bun.JSError!jsc.JSValue {
     var arena = bun.ArenaAllocator.init(bun.default_allocator);

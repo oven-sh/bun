@@ -52,4 +52,11 @@ bench("structuredClone([10 strings])", () => structuredClone(stringsSmall));
 bench("structuredClone([100 strings])", () => structuredClone(stringsMedium));
 bench("structuredClone([10 mixed])", () => structuredClone(mixed));
 
+// Array of objects (DenseArray fast path target)
+var objectsSmall = Array.from({ length: 10 }, (_, i) => ({ id: i, name: `item-${i}`, active: true }));
+var objectsMedium = Array.from({ length: 100 }, (_, i) => ({ id: i, name: `item-${i}`, active: true }));
+
+bench("structuredClone([10 objects])", () => structuredClone(objectsSmall));
+bench("structuredClone([100 objects])", () => structuredClone(objectsMedium));
+
 await run();

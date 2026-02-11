@@ -22,6 +22,9 @@ const testDir = tempDirWithFiles("watch", {
   "sym-sync.txt": "hello",
   "sym.txt": "hello",
   [encodingFileName]: "hello",
+  "sub dir with spaces": {
+    "file.txt": "hello",
+  },
 });
 
 describe("fs.watch", () => {
@@ -322,6 +325,37 @@ describe("fs.watch", () => {
         try {
           expect(event).toBe("change");
           expect(filename).toBe("url.txt");
+        } catch (e: any) {
+          err = e;
+        } finally {
+          clearInterval(interval);
+          watcher.close();
+        }
+      });
+
+      watcher.once("close", () => {
+        done(err);
+      });
+
+      const interval = repeat(() => {
+        fs.writeFileSync(filepath, "world");
+      });
+    } catch (e: any) {
+      done(e);
+    }
+  });
+
+  test("should work with file: URL string containing percent-encoded spaces", done => {
+    const filepath = path.join(testDir, "sub dir with spaces", "file.txt");
+    const fileUrl = pathToFileURL(filepath).href; // e.g. file:///tmp/.../sub%20dir%20with%20spaces/file.txt
+    expect(fileUrl).toContain("%20");
+    try {
+      const watcher = fs.watch(fileUrl);
+      let err: Error | undefined = undefined;
+      watcher.on("change", function (event, filename) {
+        try {
+          expect(event).toBe("change");
+          expect(filename).toBe("file.txt");
         } catch (e: any) {
           err = e;
         } finally {

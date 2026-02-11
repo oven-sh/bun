@@ -275,6 +275,12 @@ describe.concurrent("napi", () => {
       expect(result).not.toContain("FAIL");
     });
 
+    it("finalize_cb is tied to the ArrayBuffer lifetime, not the Buffer view", async () => {
+      const result = await checkSameOutput("test_external_buffer_data_lifetime", []);
+      expect(result).toContain("PASS: external buffer data intact through ArrayBuffer after GC");
+      expect(result).not.toContain("FAIL");
+    });
+
     it("empty buffer returns null pointer and 0 length from napi_get_buffer_info and napi_get_typedarray_info", async () => {
       const result = await checkSameOutput("test_napi_empty_buffer_info", []);
       expect(result).toContain("PASS: napi_get_buffer_info returns null pointer and 0 length for empty buffer");
@@ -553,6 +559,34 @@ describe.concurrent("napi", () => {
     await checkSameOutput("test_napi_numeric_string_keys", []);
   });
 
+  it("napi_get_named_property copies utf8 string data", async () => {
+    // Must spawn bun directly (not via checkSameOutput/main.js) because the
+    // bug only reproduces when global property names like "Response" haven't
+    // been pre-atomized. Loading through main.js → module.js pre-initializes
+    // globals, masking the use-after-free in the atom string table.
+    const addonPath = join(__dirname, "napi-app", "build", "Debug", "napitests.node");
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const addon = require(${JSON.stringify(addonPath)}); addon.test_napi_get_named_property_copied_string(() => { Bun.gc(true); });`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toInclude("PASS");
+    expect(exitCode).toBe(0);
+  });
+
   it("behaves as expected when performing operations with default values", async () => {
     await checkSameOutput("test_napi_get_default_values", []);
   });
@@ -762,6 +796,30 @@ describe("cleanup hooks", () => {
       // This test explores edge cases with empty/invalid napi_values
       // Bun has special handling for isEmpty() that Node doesn't have
       expect(output).toContain("napi_typeof");
+    });
+
+    it("should return napi_function for AsyncContextFrame in threadsafe callback", async () => {
+      // Test for https://github.com/oven-sh/bun/issues/25933
+      // When a threadsafe function is created inside AsyncLocalStorage.run(),
+      // the callback gets wrapped in AsyncContextFrame. napi_typeof must
+      // report it as napi_function, not napi_object.
+      const output = await checkSameOutput("test_napi_typeof_async_context_frame", []);
+      expect(output).toContain("PASS: napi_typeof returned napi_function");
+    });
+
+    it("should handle AsyncContextFrame in napi_make_callback", async () => {
+      // When a threadsafe function's call_js_cb receives an AsyncContextFrame
+      // as js_callback and passes it to napi_make_callback, it should succeed.
+      const output = await checkSameOutput("test_make_callback_with_async_context", []);
+      expect(output).toContain("PASS: napi_make_callback succeeded");
+    });
+
+    it("should accept AsyncContextFrame in napi_create_threadsafe_function with null call_js_cb", async () => {
+      // When a threadsafe function's call_js_cb receives an AsyncContextFrame
+      // and passes it to a second napi_create_threadsafe_function with
+      // call_js_cb=NULL, it should not reject with function_expected.
+      const output = await checkSameOutput("test_create_tsfn_with_async_context", []);
+      expect(output).toContain("PASS: napi_create_threadsafe_function accepted AsyncContextFrame");
     });
 
     it("should return napi_object for boxed primitives (String, Number, Boolean)", async () => {

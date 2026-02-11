@@ -265,7 +265,7 @@ void BroadcastChannel::dispatchMessage(Ref<SerializedScriptValue>&& message)
             return;
 
         auto& vm = JSC::getVM(globalObject);
-        auto scope = DECLARE_CATCH_SCOPE(vm);
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         Vector<RefPtr<MessagePort>> dummyPorts;
         auto event = MessageEvent::create(*globalObject, WTF::move(message), {}, {}, nullptr, WTF::move(dummyPorts));
         if (scope.exception()) [[unlikely]] {

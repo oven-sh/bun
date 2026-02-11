@@ -222,6 +222,17 @@ randomize = true
 seed = 2444615283
 ```
 
+#### retry
+
+Default retry count for all tests. Failed tests will be retried up to this many times. Per-test `{ retry: N }` overrides this value. Default `0` (no retries).
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+retry = 3
+```
+
+The `--retry` CLI flag will override this setting when specified.
+
 #### rerunEach
 
 Re-run each test file multiple times to identify flaky tests:

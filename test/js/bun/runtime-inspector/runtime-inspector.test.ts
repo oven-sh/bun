@@ -591,10 +591,10 @@ describe("Runtime inspector activation", () => {
       const result1 = await client1.sendCDP("Runtime.evaluate", { expression: "1 + 1" });
       expect(result1.result.result.value).toBe(2);
 
-      // Disconnect first client
+      const { promise, resolve } = Promise.withResolvers<void>();
+      client1.ws.onclose = () => resolve();
       client1.ws.close();
-      // Brief wait for disconnect to propagate
-      await Bun.sleep(100);
+      await promise;
 
       // Second connection: verify CDP still works after reconnect
       const client2 = createCDPClient(wsUrl);

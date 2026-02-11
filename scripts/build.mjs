@@ -85,13 +85,9 @@ async function build(args) {
     generateOptions["--toolchain"] = toolchainPath;
   }
 
-  // Windows ARM64: cmake.exe is x64 so the OS reports PROCESSOR_ARCHITECTURE=AMD64.
-  // Override CMAKE_SYSTEM_PROCESSOR so cmake detects ARM64 correctly.
+  // Windows ARM64: log detection (compiler is selected by CMake/toolchain)
   if (isWindowsARM64) {
     console.log("Windows ARM64 detected");
-    if (!generateOptions["-DCMAKE_SYSTEM_PROCESSOR"]) {
-      generateOptions["-DCMAKE_SYSTEM_PROCESSOR"] = "ARM64";
-    }
   }
 
   const generateArgs = Object.entries(generateOptions).flatMap(([flag, value]) =>

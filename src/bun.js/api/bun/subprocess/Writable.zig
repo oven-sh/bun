@@ -100,7 +100,11 @@ pub const Writable = union(enum) {
                                 _ = err; // autofix
                                 pipe.deref();
                                 if (stdio.* == .readable_stream) {
-                                    stdio.readable_stream.cancel(event_loop.global);
+                                    if (stdio.readable_stream.get(event_loop.global)) |s| {
+                                        var stream = s;
+                                        stream.cancel(event_loop.global);
+                                    }
+                                    stdio.readable_stream.deinit();
                                 }
                                 return error.UnexpectedCreatingStdin;
                             },
@@ -112,13 +116,19 @@ pub const Writable = union(enum) {
                         subprocess.flags.has_stdin_destructor_called = false;
 
                         if (stdio.* == .readable_stream) {
-                            const assign_result = pipe.assignToStream(&stdio.readable_stream, event_loop.global);
-                            if (assign_result.toError()) |err| {
-                                pipe.deref();
-                                subprocess.deref();
-                                return event_loop.global.throwValue(err);
+                            if (stdio.readable_stream.get(event_loop.global)) |s| {
+                                var stream = s;
+                                const assign_result = pipe.assignToStream(&stream, event_loop.global);
+                                stdio.readable_stream.deinit();
+                                if (assign_result.toError()) |err| {
+                                    pipe.deref();
+                                    subprocess.deref();
+                                    return event_loop.global.throwValue(err);
+                                }
+                                promise_for_stream.* = assign_result;
+                            } else {
+                                stdio.readable_stream.deinit();
                             }
-                            promise_for_stream.* = assign_result;
                         }
 
                         return Writable{
@@ -173,7 +183,11 @@ pub const Writable = union(enum) {
                         _ = err; // autofix
                         pipe.deref();
                         if (stdio.* == .readable_stream) {
-                            stdio.readable_stream.cancel(event_loop.global);
+                            if (stdio.readable_stream.get(event_loop.global)) |s| {
+                                var stream = s;
+                                stream.cancel(event_loop.global);
+                            }
+                            stdio.readable_stream.deinit();
                         }
 
                         return error.UnexpectedCreatingStdin;
@@ -188,13 +202,19 @@ pub const Writable = union(enum) {
                 subprocess.flags.deref_on_stdin_destroyed = true;
 
                 if (stdio.* == .readable_stream) {
-                    const assign_result = pipe.assignToStream(&stdio.readable_stream, event_loop.global);
-                    if (assign_result.toError()) |err| {
-                        pipe.deref();
-                        subprocess.deref();
-                        return event_loop.global.throwValue(err);
+                    if (stdio.readable_stream.get(event_loop.global)) |s| {
+                        var stream = s;
+                        const assign_result = pipe.assignToStream(&stream, event_loop.global);
+                        stdio.readable_stream.deinit();
+                        if (assign_result.toError()) |err| {
+                            pipe.deref();
+                            subprocess.deref();
+                            return event_loop.global.throwValue(err);
+                        }
+                        promise_for_stream.* = assign_result;
+                    } else {
+                        stdio.readable_stream.deinit();
                     }
-                    promise_for_stream.* = assign_result;
                 }
 
                 return Writable{

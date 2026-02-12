@@ -260,14 +260,35 @@ devTest("hmr handles rapid consecutive edits", {
       await Bun.sleep(1);
     }
 
+    // Wait event-driven for "render 10" to appear. Intermediate renders may
+    // be skipped (watcher coalescing) and the final render may fire multiple
+    // times (duplicate reloads), so we just listen for any occurrence.
     const finalRender = "render 10";
-    while (true) {
-      const message = await client.getStringMessage();
-      if (message === finalRender) break;
-      if (typeof message === "string" && message.includes("HMR_ERROR")) {
-        throw new Error("Unexpected HMR error message: " + message);
-      }
-    }
+    await new Promise<void>((resolve, reject) => {
+      const check = () => {
+        for (const msg of client.messages) {
+          if (typeof msg === "string" && msg.includes("HMR_ERROR")) {
+            cleanup();
+            reject(new Error("Unexpected HMR error message: " + msg));
+            return;
+          }
+          if (msg === finalRender) {
+            cleanup();
+            resolve();
+            return;
+          }
+        }
+      };
+      const cleanup = () => {
+        client.off("message", check);
+      };
+      client.on("message", check);
+      // Check messages already buffered.
+      check();
+    });
+    // Drain all buffered messages — intermediate renders and possible
+    // duplicates of the final render are expected and harmless.
+    client.messages.length = 0;
 
     const hmrErrors = await client.js`return globalThis.__hmrErrors ? [...globalThis.__hmrErrors] : [];`;
     if (hmrErrors.length > 0) {

@@ -8,6 +8,13 @@ const server_signature_base64_len = bun.base64.encodeLenFromSize(server_signatur
 
 const salted_password_byte_len = 32;
 
+/// Minimum PBKDF2 iteration count to prevent MITM downgrade attacks.
+/// RFC 7677 recommends a minimum of 4096 iterations for SCRAM-SHA-256.
+/// A MITM attacker could modify the SASLContinue message to set a low
+/// iteration count (e.g., i=1), making offline password brute-force
+/// significantly faster.
+const min_iteration_count = 4096;
+
 nonce_base64_bytes: [nonce_base64_len]u8 = .{0} ** nonce_base64_len,
 nonce_len: u8 = 0,
 
@@ -35,6 +42,9 @@ fn hmac(password: []const u8, data: []const u8) ?[32]u8 {
 }
 
 pub fn computeSaltedPassword(this: *SASL, salt_bytes: []const u8, iteration_count: u32, connection: *PostgresSQLConnection) !void {
+    if (iteration_count < min_iteration_count) {
+        return error.SASL_ITERATION_COUNT_TOO_LOW;
+    }
     this.salted_password_created = true;
     if (Crypto.EVP.pbkdf2(&this.salted_password_bytes, connection.password, salt_bytes, iteration_count, .sha256) == null) {
         return error.PBKDFD2;

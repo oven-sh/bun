@@ -641,16 +641,22 @@ export const azure = {
       console.log(`[azure] Run: ${script}`);
       // Note: Azure Run Command output is limited to the last 4096 bytes.
       // Full output is not available — only the tail is returned.
+      // value[0] = stdout (ComponentStatus/StdOut), value[1] = stderr (ComponentStatus/StdErr)
       const result = await runCommand(vmName, [script]);
-      const stdout = typeof result === "string" ? result : (result?.value?.[0]?.message ?? "");
+      const values = result?.value ?? [];
+      const stdout = values[0]?.message ?? "";
+      const stderr = values[1]?.message ?? "";
       if (opts?.stdio === "inherit") {
         if (stdout) process.stdout.write(stdout);
+        if (stderr) process.stderr.write(stderr);
       }
-      return { exitCode: 0, stdout, stderr: "" };
+      // Detect errors: check stderr and the display status
+      const hasError = stderr.length > 0 || values.some(v => v?.displayStatus === "Provisioning failed");
+      const exitCode = hasError ? 1 : 0;
+      return { exitCode, stdout, stderr };
     };
 
     const spawnSafeFn = spawnFn;
-
     const upload = async (source, destination) => {
       // Read the file locally and write it on the VM via Run Command
       const { readFileSync } = await import("node:fs");

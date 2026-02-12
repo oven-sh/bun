@@ -68,6 +68,7 @@ static const HashTableValue JSDOMFilePrototypeTableValues[] = {
 
 class JSDOMFilePrototype final : public JSC::JSNonFinalObject {
     using Base = JSC::JSNonFinalObject;
+
 public:
     static constexpr unsigned StructureFlags = Base::StructureFlags;
 

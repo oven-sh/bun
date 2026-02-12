@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync } from "node:fs";
 import { isArm64, isLinux, isMacOS, isMusl, isWindows, tempDir } from "harness";
+import { chmodSync } from "node:fs";
 import { join } from "path";
 
 describe("Bun.build compile", () => {

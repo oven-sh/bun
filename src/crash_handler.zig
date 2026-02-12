@@ -831,7 +831,7 @@ const metadata_version_line = std.fmt.comptimePrint(
 /// POSIX signal context. Layout matches kernel headers; verified against Zig
 /// std lib's signal_ucontext_t in lib/std/debug/cpu_context.zig.
 const SignalUcontext = switch (bun.Environment.os) {
-    .linux => if (comptime bun.Environment.isAarch64)
+    .linux => if (bun.Environment.isAarch64)
         // https://github.com/torvalds/linux/blob/master/arch/arm64/include/uapi/asm/sigcontext.h
         extern struct {
             _flags: usize,
@@ -873,7 +873,7 @@ const SignalUcontext = switch (bun.Environment.os) {
                 rip: u64,
             },
         },
-    .mac => if (comptime bun.Environment.isAarch64)
+    .mac => if (bun.Environment.isAarch64)
         // https://github.com/apple-oss-distributions/xnu/blob/main/bsd/arm/_mcontext.h
         extern struct {
             _onstack: i32,
@@ -938,7 +938,7 @@ fn handleSegfaultPosix(sig: i32, info: *const std.posix.siginfo_t, ctx_ptr: ?*co
     // (especially after the crash handler calls @trap() / ud2).
     const fault_ip: ?usize = if (ctx_ptr) |ctx| blk: {
         const uc: *const SignalUcontext = @ptrCast(@alignCast(ctx));
-        break :blk if (comptime bun.Environment.isAarch64) uc.mcontext.pc else uc.mcontext.rip;
+        break :blk if (bun.Environment.isAarch64) uc.mcontext.pc else uc.mcontext.rip;
     } else null;
 
     // Print fault IP to stderr immediately, before crashHandler runs.
@@ -948,8 +948,9 @@ fn handleSegfaultPosix(sig: i32, info: *const std.posix.siginfo_t, ctx_ptr: ?*co
         nosuspend {
             var buf: [128]u8 = undefined;
             const msg = std.fmt.bufPrint(&buf, "Fault address: 0x{x}, IP: 0x{x}\n", .{ addr, ip }) catch &[0]u8{};
-            var stderr = std.io.getStdErr();
-            stderr.writeAll(msg) catch {};
+            var writer_w = std.fs.File.stderr().writerStreaming(&.{});
+            const writer = &writer_w.interface;
+            writer.writeAll(msg) catch {};
         }
     }
 

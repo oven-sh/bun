@@ -2679,6 +2679,10 @@ const string = []const u8;
 /// Sanitize a filename for use in a Content-Disposition header value.
 /// Strips characters that could enable HTTP header injection (CRLF) or
 /// break out of the quoted filename value (double quotes, backslashes).
+///
+/// The returned slice points to a threadlocal buffer and is only valid
+/// until the next call on the same thread. Callers must consume it
+/// immediately (e.g. via bufPrint) and never store the slice.
 fn sanitizeFilenameForContentDisposition(input: []const u8) []const u8 {
     const T = struct {
         threadlocal var buf: [1024]u8 = undefined;

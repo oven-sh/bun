@@ -101,6 +101,21 @@ fn applyBarrelOptimizationImpl(this: *BundleV2, parse_result: *ParseTask.Result)
         }
     }
 
+    // Dev server: also include exports persisted from previous builds. This
+    // handles the case where file A imports Alpha from the barrel (previous
+    // build) and file B adds Beta (current build). Without this, Alpha would
+    // be re-deferred because only B's requests are in requested_exports.
+    if (this.transpiler.options.dev_server) |dev| {
+        if (dev.barrel_needed_exports.get(result.source.path.text)) |persisted| {
+            var persisted_iter = persisted.keyIterator();
+            while (persisted_iter.next()) |alias_ptr| {
+                if (resolveBarrelExport(alias_ptr.*, named_exports, named_imports)) |resolution| {
+                    try needed_records.put(needed_records_alloc, resolution.import_record_index, {});
+                }
+            }
+        }
+    }
+
     // Mark unneeded named re-export records as is_unused.
     var has_deferrals = false;
     export_iter = named_exports.iterator();
@@ -116,16 +131,28 @@ fn applyBarrelOptimizationImpl(this: *BundleV2, parse_result: *ParseTask.Result)
     }
 
     if (has_deferrals) {
-        log("barrel detected: {s} (source={d}, {d} deferred)", .{
+        log("barrel detected: {s} (source={d}, {d} deferred, {d} needed)", .{
             if (result.package_name.len > 0) result.package_name else result.source.path.text,
             source_index,
             named_exports.count() -| needed_records.count(),
+            needed_records.count(),
         });
 
         // Merge with existing entry (keep already-requested names) or create new
         const gop = try this.requested_exports.getOrPut(this.allocator(), source_index);
         if (!gop.found_existing) {
             gop.value_ptr.* = .{ .partial = .{} };
+        }
+
+        // Register with DevServer so isFileCached returns null for this barrel,
+        // ensuring it gets re-parsed on every incremental build. This is needed
+        // because the set of needed exports can change when importing files change.
+        if (this.transpiler.options.dev_server) |dev| {
+            const alloc = dev.allocator();
+            const barrel_gop = try dev.barrel_files_with_deferrals.getOrPut(alloc, result.source.path.text);
+            if (!barrel_gop.found_existing) {
+                barrel_gop.key_ptr.* = try alloc.dupe(u8, result.source.path.text);
+            }
         }
     }
 }
@@ -190,12 +217,29 @@ pub fn scheduleBarrelDeferredImports(this: *BundleV2, result: *ParseTask.Result.
     var named_ir_indices = std.AutoArrayHashMapUnmanaged(u32, void){};
     defer named_ir_indices.deinit(named_ir_indices_alloc);
 
+    // In dev server mode, patchImportRecordSourceIndices skips saving source_indices
+    // on import records (the dev server uses path-based identifiers instead). But
+    // barrel optimization requires source_indices to seed requested_exports and to
+    // BFS un-defer records. Resolve paths → source_indices here as a fallback.
+    const path_to_source_index_map = if (this.transpiler.options.dev_server != null)
+        this.pathToSourceIndexMap(result.ast.target)
+    else
+        null;
+
     var ni_iter = result.ast.named_imports.iterator();
     while (ni_iter.next()) |ni_entry| {
         const ni = ni_entry.value_ptr;
         if (ni.import_record_index >= file_import_records.len) continue;
         try named_ir_indices.put(named_ir_indices_alloc, ni.import_record_index, {});
-        const ir = file_import_records.slice()[ni.import_record_index];
+        const ir = &file_import_records.slice()[ni.import_record_index];
+        // In dev server mode, source_index may not be patched — resolve via path map.
+        if (!ir.source_index.isValid()) {
+            if (path_to_source_index_map) |map| {
+                if (map.getPath(&ir.path)) |src_idx| {
+                    ir.source_index.value = src_idx;
+                }
+            }
+        }
         if (!ir.source_index.isValid()) continue;
         const target = ir.source_index.get();
 
@@ -212,6 +256,10 @@ pub fn scheduleBarrelDeferredImports(this: *BundleV2, result: *ParseTask.Result.
                 gop.value_ptr.* = .{ .partial = .{} };
                 try gop.value_ptr.partial.put(this.allocator(), alias, {});
             }
+            // Persist the export request on DevServer so it survives across builds.
+            if (this.transpiler.options.dev_server) |dev| {
+                persistBarrelExport(dev, ir.path.text, alias);
+            }
         } else if (!gop.found_existing) {
             gop.value_ptr.* = .{ .partial = .{} };
         }
@@ -224,7 +272,14 @@ pub fn scheduleBarrelDeferredImports(this: *BundleV2, result: *ParseTask.Result.
     //   meaning this is the sole reference. If the barrel already has a .partial
     //   entry from a static import, the dynamic import is likely a secondary
     //   (possibly circular) reference and should not escalate requirements.
-    for (file_import_records.slice(), 0..) |ir, idx| {
+    for (file_import_records.slice(), 0..) |*ir, idx| {
+        if (!ir.source_index.isValid()) {
+            if (path_to_source_index_map) |map| {
+                if (map.getPath(&ir.path)) |src_idx| {
+                    ir.source_index.value = src_idx;
+                }
+            }
+        }
         if (!ir.source_index.isValid()) continue;
         if (ir.flags.is_internal) continue;
         if (named_ir_indices.contains(@intCast(idx))) continue;
@@ -404,6 +459,23 @@ pub fn scheduleBarrelDeferredImports(this: *BundleV2, result: *ParseTask.Result.
     }
 
     return newly_scheduled;
+}
+
+/// Persist an export name for a barrel file on the DevServer. Called during
+/// seeding so that exports requested in previous builds are not lost when the
+/// barrel is re-parsed in an incremental build where the requesting file is
+/// not stale.
+fn persistBarrelExport(dev: *bun.bake.DevServer, barrel_path: []const u8, alias: []const u8) void {
+    const alloc = dev.allocator();
+    const outer_gop = dev.barrel_needed_exports.getOrPut(alloc, barrel_path) catch return;
+    if (!outer_gop.found_existing) {
+        outer_gop.key_ptr.* = alloc.dupe(u8, barrel_path) catch return;
+        outer_gop.value_ptr.* = .{};
+    }
+    const inner_gop = outer_gop.value_ptr.getOrPut(alloc, alias) catch return;
+    if (!inner_gop.found_existing) {
+        inner_gop.key_ptr.* = alloc.dupe(u8, alias) catch return;
+    }
 }
 
 const std = @import("std");

@@ -60,6 +60,22 @@ pub fn convertStmtsForChunkForDevServer(
             const record = ast.import_records.mut(st.import_record_index);
             if (record.path.is_disabled) continue;
 
+            if (record.flags.is_unused) {
+                // Barrel optimization: this import was deferred (unused submodule).
+                // Don't add to dep array, but declare the namespace ref as an
+                // empty object so body code referencing it doesn't throw.
+                if (st.star_name_loc != null or st.items.len > 0 or st.default_name != null) {
+                    try stmts.inside_wrapper_prefix.appendNonDependency(Stmt.alloc(S.Local, .{
+                        .kind = .k_var,
+                        .decls = try G.Decl.List.fromSlice(allocator, &.{.{
+                            .binding = Binding.alloc(allocator, B.Identifier{ .ref = st.namespace_ref }, stmt.loc),
+                            .value = Expr.init(E.Object, .{}, stmt.loc),
+                        }}),
+                    }, stmt.loc));
+                }
+                continue;
+            }
+
             const is_builtin = record.tag == .builtin or record.tag == .bun or record.tag == .runtime;
             const is_bare_import = st.star_name_loc == null and st.items.len == 0 and st.default_name == null;
 

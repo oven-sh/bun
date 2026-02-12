@@ -6,8 +6,8 @@ import { describe, expect, it } from "bun:test";
 
 describe("S3 - CRLF Header Injection Prevention", () => {
   const baseOptions = {
-    accessKeyId: "test",
-    secretAccessKey: "test",
+    accessKeyId: "FAKE_ACCESS_KEY",
+    secretAccessKey: "FAKE_SECRET",
     endpoint: "http://127.0.0.1:1234",
     bucket: "test",
   };
@@ -150,21 +150,23 @@ describe("S3 - CRLF Header Injection Prevention", () => {
     it("should reject CRLF in contentDisposition on write()", async () => {
       const client = new S3Client(baseOptions);
       const file = client.file("test-key");
-      expect(file.write("data", { contentDisposition: "attachment\r\nX-Injected: true" })).rejects.toThrow(
-        /contentDisposition/,
-      );
+      await expect(async () => {
+        await file.write("data", { contentDisposition: "attachment\r\nX-Injected: true" });
+      }).toThrow(/contentDisposition/);
     });
 
     it("should reject CRLF in contentEncoding on write()", async () => {
       const client = new S3Client(baseOptions);
       const file = client.file("test-key");
-      expect(file.write("data", { contentEncoding: "gzip\r\nX-Injected: true" })).rejects.toThrow(/contentEncoding/);
+      await expect(async () => {
+        await file.write("data", { contentEncoding: "gzip\r\nX-Injected: true" });
+      }).toThrow(/contentEncoding/);
     });
   });
 
   it("CRLF in contentDisposition should not reach the wire", async () => {
     const requests: string[] = [];
-    const server = Bun.listen({
+    using server = Bun.listen({
       hostname: "127.0.0.1",
       port: 0,
       socket: {
@@ -179,32 +181,25 @@ describe("S3 - CRLF Header Injection Prevention", () => {
       },
     });
 
+    const client = new S3Client({
+      accessKeyId: "FAKE_ACCESS_KEY",
+      secretAccessKey: "FAKE_SECRET",
+      endpoint: `http://127.0.0.1:${server.port}`,
+      bucket: "test",
+    });
+
+    const file = client.file("test-key");
     try {
-      const client = new S3Client({
-        accessKeyId: "test",
-        secretAccessKey: "testsecret1234567890123456789012",
-        endpoint: `http://127.0.0.1:${server.port}`,
-        bucket: "test",
+      await file.write("test-data", {
+        contentDisposition: "attachment; filename=report.pdf\r\nX-Injected: true",
       });
+    } catch {
+      // Expected to throw
+    }
 
-      const file = client.file("test-key");
-      try {
-        await file.write("test-data", {
-          contentDisposition: "attachment; filename=report.pdf\r\nX-Injected: true",
-        });
-      } catch {
-        // Expected to throw
-      }
-
-      // Give a moment for any request to arrive
-      await Bun.sleep(200);
-
-      // Verify no injected header made it to the wire
-      for (const req of requests) {
-        expect(req).not.toContain("X-Injected");
-      }
-    } finally {
-      server.stop();
+    // Verify no injected header made it to the wire
+    for (const req of requests) {
+      expect(req).not.toContain("X-Injected");
     }
   });
 });

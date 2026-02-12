@@ -1632,6 +1632,75 @@ describe("HTTP Server Security Tests - Advanced", () => {
     });
   });
 
+  describe("Response Splitting Protection", () => {
+    test("rejects CRLF in statusMessage set via property assignment followed by res.end()", async () => {
+      const { promise: errorPromise, resolve: resolveError } = Promise.withResolvers<Error>();
+      server.on("request", (req, res) => {
+        res.statusCode = 200;
+        res.statusMessage = "OK\r\nSet-Cookie: admin=true";
+        try {
+          res.end("body");
+        } catch (e: any) {
+          resolveError(e);
+          res.statusMessage = "OK";
+          res.end("safe");
+        }
+      });
+
+      const response = (await sendRequest("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")) as string;
+      const err = await errorPromise;
+      expect((err as any).code).toBe("ERR_INVALID_CHAR");
+      // The injected Set-Cookie header must NOT appear in the response
+      expect(response).not.toInclude("Set-Cookie: admin=true");
+    });
+
+    test("rejects CRLF in statusMessage set via property assignment followed by res.write()", async () => {
+      const { promise: errorPromise, resolve: resolveError } = Promise.withResolvers<Error>();
+      server.on("request", (req, res) => {
+        res.statusCode = 200;
+        res.statusMessage = "OK\r\nX-Injected: evil";
+        try {
+          res.write("chunk");
+        } catch (e: any) {
+          resolveError(e);
+          res.statusMessage = "OK";
+          res.end("safe");
+        }
+      });
+
+      const response = (await sendRequest("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")) as string;
+      const err = await errorPromise;
+      expect((err as any).code).toBe("ERR_INVALID_CHAR");
+      expect(response).not.toInclude("X-Injected: evil");
+    });
+
+    test("rejects CRLF in statusMessage passed to writeHead()", async () => {
+      server.on("request", (req, res) => {
+        expect(() => {
+          res.writeHead(200, "OK\r\nX-Injected: evil");
+        }).toThrow(/Invalid character in statusMessage/);
+        res.writeHead(200, "OK");
+        res.end("safe");
+      });
+
+      const response = (await sendRequest("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")) as string;
+      expect(response).not.toInclude("X-Injected");
+      expect(response).toInclude("safe");
+    });
+
+    test("allows valid statusMessage without control characters", async () => {
+      server.on("request", (req, res) => {
+        res.statusCode = 200;
+        res.statusMessage = "Everything Is Fine";
+        res.end("ok");
+      });
+
+      const response = (await sendRequest("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")) as string;
+      expect(response).toInclude("200 Everything Is Fine");
+      expect(response).toInclude("ok");
+    });
+  });
+
   test("Server should not crash in clientError is emitted when calling destroy", async () => {
     await using server = http.createServer(async (req, res) => {
       res.end("Hello World");

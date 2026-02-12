@@ -2676,7 +2676,6 @@ fn writeHeaders(
 const ctxLog = Output.scoped(.RequestContext, .visible);
 const string = []const u8;
 
-const std = @import("std");
 /// Sanitize a filename for use in a Content-Disposition header value.
 /// Strips characters that could enable HTTP header injection (CRLF) or
 /// break out of the quoted filename value (double quotes, backslashes).
@@ -2694,6 +2693,7 @@ fn sanitizeFilenameForContentDisposition(input: []const u8) []const u8 {
     return T.buf[0..len];
 }
 
+const std = @import("std");
 const Fallback = @import("../../../runtime.zig").Fallback;
 const linux = std.os.linux;
 

@@ -837,7 +837,7 @@ const SignalUcontext = switch (bun.Environment.os) {
             _flags: usize,
             _link: ?*anyopaque,
             _stack: std.os.linux.stack_t,
-            _sigmask: std.os.linux.sigset_t,
+            _sigmask: [1024 / @bitSizeOf(std.c.c_ulong)]std.c.c_ulong,
             mcontext: extern struct {
                 _fault_address: u64 align(16),
                 _x: [30]u64,
@@ -923,6 +923,14 @@ const SignalUcontext = switch (bun.Environment.os) {
         },
     .windows, .wasm => @compileError("not applicable"),
 };
+
+comptime {
+    if (bun.Environment.os == .linux) {
+        const expected = @offsetOf(std.os.linux.ucontext_t, "mcontext");
+        if (@offsetOf(SignalUcontext, "mcontext") != expected)
+            @compileError("SignalUcontext.mcontext offset doesn't match std ucontext_t");
+    }
+}
 
 fn handleSegfaultPosix(sig: i32, info: *const std.posix.siginfo_t, ctx_ptr: ?*const anyopaque) callconv(.c) noreturn {
     const addr = switch (bun.Environment.os) {

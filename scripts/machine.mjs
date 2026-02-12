@@ -4,6 +4,7 @@ import { existsSync, mkdtempSync, readdirSync } from "node:fs";
 import { basename, extname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { inspect, parseArgs } from "node:util";
+import { azure } from "./azure.mjs";
 import { docker } from "./docker.mjs";
 import { tart } from "./tart.mjs";
 import {
@@ -1047,16 +1048,14 @@ function getRdpFile(hostname, username) {
  * @property {(options: MachineOptions) => Promise<Machine>} createMachine
  */
 
-/**
- * @param {string} name
- * @returns {Cloud}
- */
 function getCloud(name) {
   switch (name) {
     case "docker":
       return docker;
     case "aws":
       return aws;
+    case "azure":
+      return azure;
     case "tart":
       return tart;
   }
@@ -1241,7 +1240,9 @@ async function main() {
     bootstrapPath = resolve(
       import.meta.dirname,
       os === "windows"
-        ? "bootstrap.ps1"
+        ? arch === "aarch64"
+          ? "bootstrap-arm64.ps1"
+          : "bootstrap.ps1"
         : features?.includes("docker")
           ? "../.buildkite/Dockerfile-bootstrap.sh"
           : "bootstrap.sh",

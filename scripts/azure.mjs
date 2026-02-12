@@ -1,0 +1,690 @@
+// Azure REST API client for machine.mjs
+// Used by the [build images] pipeline to create Windows VM images (x64 and ARM64)
+
+import { getSecret, isCI } from "./utils.mjs";
+
+/**
+ * @typedef {Object} AzureConfig
+ * @property {string} tenantId
+ * @property {string} clientId
+ * @property {string} clientSecret
+ * @property {string} subscriptionId
+ * @property {string} resourceGroup
+ * @property {string} location
+ * @property {string} galleryName
+ */
+
+/** @returns {AzureConfig} */
+function getConfig() {
+  const env = (name, fallback) => {
+    if (isCI) {
+      return getSecret(name, { required: !fallback }) || fallback;
+    }
+    return process.env[name] || fallback;
+  };
+
+  return {
+    tenantId: env("AZURE_TENANT_ID"),
+    clientId: env("AZURE_CLIENT_ID"),
+    clientSecret: env("AZURE_CLIENT_SECRET"),
+    subscriptionId: env("AZURE_SUBSCRIPTION_ID"),
+    resourceGroup: env("AZURE_RESOURCE_GROUP", "BUN-CI"),
+    location: env("AZURE_LOCATION", "centralus"),
+    galleryName: env("AZURE_GALLERY_NAME", "bunCIGallery"),
+  };
+}
+
+let _config;
+function config() {
+  return (_config ??= getConfig());
+}
+
+// ============================================================================
+// Authentication
+// ============================================================================
+
+let _accessToken = null;
+let _tokenExpiry = 0;
+
+async function getAccessToken() {
+  if (_accessToken && Date.now() < _tokenExpiry - 300_000) {
+    return _accessToken;
+  }
+
+  const { tenantId, clientId, clientSecret } = config();
+  const response = await fetch(`https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "client_credentials",
+      client_id: clientId,
+      client_secret: clientSecret,
+      scope: "https://management.azure.com/.default",
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`[azure] Auth failed: ${response.status} ${await response.text()}`);
+  }
+
+  const data = await response.json();
+  _accessToken = data.access_token;
+  _tokenExpiry = Date.now() + data.expires_in * 1000;
+  return _accessToken;
+}
+
+// ============================================================================
+// REST Client
+// ============================================================================
+
+/**
+ * @param {"GET"|"PUT"|"POST"|"PATCH"|"DELETE"} method
+ * @param {string} path - Relative path under management.azure.com, or absolute URL
+ * @param {object} [body]
+ * @param {string} [apiVersion]
+ */
+async function azureFetch(method, path, body, apiVersion = "2024-07-01") {
+  const token = await getAccessToken();
+
+  const url = path.startsWith("http") ? new URL(path) : new URL(`https://management.azure.com${path}`);
+
+  if (!url.searchParams.has("api-version")) {
+    url.searchParams.set("api-version", apiVersion);
+  }
+
+  const options = {
+    method,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+  };
+
+  if (body && method !== "GET" && method !== "DELETE") {
+    options.body = JSON.stringify(body);
+  }
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const response = await fetch(url, options);
+
+    if (response.status === 429 || response.status >= 500) {
+      const wait = Math.pow(2, attempt) * 1000;
+      console.warn(`[azure] ${method} ${path} returned ${response.status}, retrying in ${wait}ms...`);
+      await new Promise(r => setTimeout(r, wait));
+      continue;
+    }
+
+    // 202 Accepted — async operation, poll for completion
+    if (response.status === 202) {
+      const operationUrl = response.headers.get("Azure-AsyncOperation") || response.headers.get("Location");
+      if (operationUrl) {
+        return waitForOperation(operationUrl);
+      }
+    }
+
+    if (response.status === 204) {
+      return null;
+    }
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`[azure] ${method} ${path} failed: ${response.status} ${text}`);
+    }
+
+    const text = await response.text();
+    return text ? JSON.parse(text) : null;
+  }
+
+  throw new Error(`[azure] ${method} ${path} failed after 3 retries`);
+}
+
+async function waitForOperation(operationUrl, maxWaitMs = 600_000) {
+  const start = Date.now();
+
+  while (Date.now() - start < maxWaitMs) {
+    const token = await getAccessToken();
+    const response = await fetch(operationUrl, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    if (!response.ok) {
+      throw new Error(`[azure] Operation poll failed: ${response.status} ${await response.text()}`);
+    }
+
+    const data = await response.json();
+
+    if (data.status === "Succeeded") {
+      return data.properties?.output ?? data;
+    }
+    if (data.status === "Failed" || data.status === "Canceled") {
+      throw new Error(`[azure] Operation ${data.status}: ${data.error?.message ?? "unknown"}`);
+    }
+
+    await new Promise(r => setTimeout(r, 5000));
+  }
+
+  throw new Error(`[azure] Operation timed out after ${maxWaitMs}ms`);
+}
+
+// ============================================================================
+// Resource helpers
+// ============================================================================
+
+function rgPath() {
+  const { subscriptionId, resourceGroup } = config();
+  return `/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}`;
+}
+
+// ============================================================================
+// Public IP
+// ============================================================================
+
+async function createPublicIp(name) {
+  const { location } = config();
+  console.log(`[azure] Creating public IP: ${name}`);
+  const result = await azureFetch("PUT", `${rgPath()}/providers/Microsoft.Network/publicIPAddresses/${name}`, {
+    location,
+    sku: { name: "Standard" },
+    properties: {
+      publicIPAllocationMethod: "Static",
+      deleteOption: "Delete",
+    },
+  });
+  return result?.properties?.ipAddress;
+}
+
+async function deletePublicIp(name) {
+  await azureFetch("DELETE", `${rgPath()}/providers/Microsoft.Network/publicIPAddresses/${name}`).catch(() => {});
+}
+
+// ============================================================================
+// Network Interface
+// ============================================================================
+
+async function createNic(name, publicIpName, subnetId) {
+  const { location } = config();
+  console.log(`[azure] Creating NIC: ${name}`);
+  const publicIpId = `${rgPath()}/providers/Microsoft.Network/publicIPAddresses/${publicIpName}`;
+  await azureFetch("PUT", `${rgPath()}/providers/Microsoft.Network/networkInterfaces/${name}`, {
+    location,
+    properties: {
+      ipConfigurations: [
+        {
+          name: "ipconfig1",
+          properties: {
+            privateIPAllocationMethod: "Dynamic",
+            publicIPAddress: { id: publicIpId, properties: { deleteOption: "Delete" } },
+            subnet: { id: subnetId },
+          },
+        },
+      ],
+    },
+  });
+  return `${rgPath()}/providers/Microsoft.Network/networkInterfaces/${name}`;
+}
+
+async function deleteNic(name) {
+  await azureFetch("DELETE", `${rgPath()}/providers/Microsoft.Network/networkInterfaces/${name}`).catch(() => {});
+}
+
+// ============================================================================
+// Virtual Machines
+// ============================================================================
+
+/**
+ * @param {object} opts
+ * @param {string} opts.name
+ * @param {string} opts.vmSize
+ * @param {object} opts.imageReference
+ * @param {number} opts.osDiskSizeGB
+ * @param {string} opts.nicId
+ * @param {string} opts.adminUsername
+ * @param {string} opts.adminPassword
+ * @param {Record<string, string>} [opts.tags]
+ */
+async function createVm(opts) {
+  const { location } = config();
+  console.log(`[azure] Creating VM: ${opts.name} (${opts.vmSize})`);
+  const result = await azureFetch("PUT", `${rgPath()}/providers/Microsoft.Compute/virtualMachines/${opts.name}`, {
+    location,
+    tags: opts.tags,
+    properties: {
+      hardwareProfile: { vmSize: opts.vmSize },
+      storageProfile: {
+        imageReference: opts.imageReference,
+        osDisk: {
+          createOption: "FromImage",
+          diskSizeGB: opts.osDiskSizeGB,
+          deleteOption: "Delete",
+          managedDisk: { storageAccountType: "Premium_LRS" },
+        },
+      },
+      osProfile: {
+        computerName: opts.name.substring(0, 15),
+        adminUsername: opts.adminUsername,
+        adminPassword: opts.adminPassword,
+      },
+      networkProfile: {
+        networkInterfaces: [{ id: opts.nicId, properties: { deleteOption: "Delete" } }],
+      },
+    },
+  });
+  return result;
+}
+
+async function getVm(name) {
+  try {
+    return await azureFetch(
+      "GET",
+      `${rgPath()}/providers/Microsoft.Compute/virtualMachines/${name}?$expand=instanceView`,
+    );
+  } catch {
+    return null;
+  }
+}
+
+async function getVmPowerState(name) {
+  const vm = await getVm(name);
+  const statuses = vm?.properties?.instanceView?.statuses ?? [];
+  const powerStatus = statuses.find(s => s.code?.startsWith("PowerState/"));
+  return powerStatus?.code;
+}
+
+async function stopVm(name) {
+  console.log(`[azure] Stopping VM: ${name}`);
+  await azureFetch("POST", `${rgPath()}/providers/Microsoft.Compute/virtualMachines/${name}/deallocate`);
+}
+
+async function generalizeVm(name) {
+  console.log(`[azure] Generalizing VM: ${name}`);
+  await azureFetch("POST", `${rgPath()}/providers/Microsoft.Compute/virtualMachines/${name}/generalize`);
+}
+
+async function deleteVm(name) {
+  console.log(`[azure] Deleting VM: ${name}`);
+  await azureFetch("DELETE", `${rgPath()}/providers/Microsoft.Compute/virtualMachines/${name}?forceDeletion=true`);
+}
+
+async function getPublicIpAddress(publicIpName) {
+  const result = await azureFetch("GET", `${rgPath()}/providers/Microsoft.Network/publicIPAddresses/${publicIpName}`);
+  return result?.properties?.ipAddress;
+}
+
+/**
+ * Run a PowerShell script on a Windows VM via Azure Run Command.
+ * This works even without SSH installed on the VM.
+ */
+async function runCommand(vmName, script) {
+  console.log(`[azure] Running command on VM: ${vmName}`);
+  return azureFetch("POST", `${rgPath()}/providers/Microsoft.Compute/virtualMachines/${vmName}/runCommand`, {
+    commandId: "RunPowerShellScript",
+    script: Array.isArray(script) ? script : [script],
+  });
+}
+
+/**
+ * Install OpenSSH server and configure authorized keys on a Windows VM.
+ */
+async function installSsh(vmName, authorizedKeys) {
+  const script = `
+    $ErrorActionPreference = "Stop"
+
+    # Install OpenSSH Server
+    Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
+    Start-Service sshd
+    Set-Service -Name sshd -StartupType Automatic
+
+    # Set PowerShell as default shell
+    $pwshPath = (Get-Command powershell).Source
+    New-ItemProperty -Path "HKLM:\\SOFTWARE\\OpenSSH" -Name DefaultShell -Value $pwshPath -PropertyType String -Force
+
+    # Firewall rule
+    $rule = Get-NetFirewallRule -Name "OpenSSH-Server" -ErrorAction SilentlyContinue
+    if (-not $rule) {
+      New-NetFirewallRule -Profile Any -Name "OpenSSH-Server" -DisplayName "OpenSSH Server (sshd)" -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22
+    }
+
+    # Authorized keys
+    $sshPath = "C:\\ProgramData\\ssh"
+    if (-not (Test-Path $sshPath)) { New-Item -Path $sshPath -ItemType Directory }
+    $keysPath = Join-Path $sshPath "administrators_authorized_keys"
+    Set-Content -Path $keysPath -Value @"
+${authorizedKeys.join("\n")}
+"@
+    icacls.exe $keysPath /inheritance:r /grant "Administrators:F" /grant "SYSTEM:F"
+
+    Restart-Service sshd
+    Write-Host "OpenSSH installed and configured"
+  `;
+  return runCommand(vmName, script);
+}
+
+// ============================================================================
+// Virtual Network
+// ============================================================================
+
+async function ensureVNet(vnetName, subnetName) {
+  const { location } = config();
+  const path = `${rgPath()}/providers/Microsoft.Network/virtualNetworks/${vnetName}`;
+
+  // Check if VNet exists
+  try {
+    const vnet = await azureFetch("GET", path);
+    if (vnet) {
+      const subnet = vnet.properties?.subnets?.find(s => s.name === subnetName);
+      if (subnet) return subnet.id;
+    }
+  } catch {}
+
+  console.log(`[azure] Creating VNet: ${vnetName} with subnet: ${subnetName}`);
+  await azureFetch("PUT", path, {
+    location,
+    properties: {
+      addressSpace: { addressPrefixes: ["10.0.0.0/16"] },
+      subnets: [
+        {
+          name: subnetName,
+          properties: { addressPrefix: "10.0.0.0/24" },
+        },
+      ],
+    },
+  });
+
+  const vnet = await azureFetch("GET", path);
+  return vnet.properties.subnets.find(s => s.name === subnetName).id;
+}
+
+// ============================================================================
+// Compute Gallery
+// ============================================================================
+
+async function ensureGallery() {
+  const { location, galleryName } = config();
+  const path = `${rgPath()}/providers/Microsoft.Compute/galleries/${galleryName}`;
+
+  try {
+    const gallery = await azureFetch("GET", path);
+    if (gallery) return;
+  } catch {}
+
+  console.log(`[azure] Creating gallery: ${galleryName}`);
+  await azureFetch("PUT", path, { location });
+}
+
+async function ensureImageDefinition(name, os, arch) {
+  const { location, galleryName } = config();
+  const path = `${rgPath()}/providers/Microsoft.Compute/galleries/${galleryName}/images/${name}`;
+
+  try {
+    const def = await azureFetch("GET", path);
+    if (def) return;
+  } catch {}
+
+  console.log(`[azure] Creating image definition: ${name}`);
+  await azureFetch("PUT", path, {
+    location,
+    properties: {
+      osType: os === "windows" ? "Windows" : "Linux",
+      osState: "Generalized",
+      hyperVGeneration: "V2",
+      architecture: arch === "aarch64" ? "Arm64" : "x64",
+      identifier: {
+        publisher: "bun",
+        offer: `${os}-${arch}-ci`,
+        sku: "buildkite-agent",
+      },
+    },
+  });
+}
+
+async function createImageVersion(imageDefName, version, vmId) {
+  const { location, galleryName } = config();
+  const path = `${rgPath()}/providers/Microsoft.Compute/galleries/${galleryName}/images/${imageDefName}/versions/${version}`;
+
+  console.log(`[azure] Creating image version: ${imageDefName}/${version}`);
+  const result = await azureFetch("PUT", path, {
+    location,
+    properties: {
+      storageProfile: {
+        source: { id: vmId },
+      },
+    },
+  });
+  return result;
+}
+
+async function createImageVersionWithLabel(imageDefName, version, vmId, label) {
+  const { location, galleryName } = config();
+  const path = `${rgPath()}/providers/Microsoft.Compute/galleries/${galleryName}/images/${imageDefName}/versions/${version}`;
+
+  console.log(`[azure] Creating image version: ${imageDefName}/${version} (label: ${label})`);
+  const result = await azureFetch("PUT", path, {
+    location,
+    tags: { "image-name": label },
+    properties: {
+      storageProfile: {
+        source: { id: vmId },
+      },
+    },
+  });
+  return result;
+}
+
+// ============================================================================
+// Base Images
+// ============================================================================
+
+function getBaseImageReference(os, arch) {
+  if (os === "windows") {
+    if (arch === "aarch64") {
+      return {
+        publisher: "MicrosoftWindowsDesktop",
+        offer: "windows11preview-arm64",
+        sku: "win11-24h2-pro",
+        version: "latest",
+      };
+    }
+    // Windows Server 2019 x64 — oldest supported version
+    return {
+      publisher: "MicrosoftWindowsServer",
+      offer: "WindowsServer",
+      sku: "2019-datacenter-gensecond",
+      version: "latest",
+    };
+  }
+  throw new Error(`[azure] Unsupported OS: ${os}`);
+}
+
+function getVmSize(arch) {
+  return arch === "aarch64" ? "Standard_D4ps_v6" : "Standard_D4s_v5";
+}
+
+// ============================================================================
+// Exports
+// ============================================================================
+
+export const azure = {
+  get name() {
+    return "azure";
+  },
+
+  config,
+
+  /**
+   * @param {import("./machine.mjs").MachineOptions} options
+   * @returns {Promise<import("./machine.mjs").Machine>}
+   */
+  async createMachine(options) {
+    const { os, arch, tags, sshKeys } = options;
+    const vmName = `bun-${os}-${arch}-${Date.now()}`;
+    const publicIpName = `${vmName}-ip`;
+    const nicName = `${vmName}-nic`;
+    const vmSize = options.instanceType || getVmSize(arch);
+    const diskSizeGB = options.diskSizeGb || (os === "windows" ? 150 : 40);
+
+    // Generate a random password for the admin account
+    const adminPassword = `P@${crypto.randomUUID().replace(/-/g, "").substring(0, 20)}!`;
+
+    // Ensure VNet exists
+    const subnetId = await ensureVNet("bun-ci-vnet", "default");
+
+    // Create public IP
+    await createPublicIp(publicIpName);
+
+    // Create NIC
+    const nicId = await createNic(nicName, publicIpName, subnetId);
+
+    // Create VM
+    const imageReference = options.imageId ? { id: options.imageId } : getBaseImageReference(os, arch);
+
+    await createVm({
+      name: vmName,
+      vmSize,
+      imageReference,
+      osDiskSizeGB: diskSizeGB,
+      nicId,
+      adminUsername: "bunadmin",
+      adminPassword,
+      tags: tags
+        ? Object.fromEntries(
+            Object.entries(tags)
+              .filter(([_, v]) => v != null)
+              .map(([k, v]) => [k, String(v)]),
+          )
+        : undefined,
+    });
+
+    // Wait for public IP to be assigned
+    let publicIp;
+    for (let i = 0; i < 30; i++) {
+      publicIp = await getPublicIpAddress(publicIpName);
+      if (publicIp) break;
+      await new Promise(r => setTimeout(r, 5000));
+    }
+
+    if (!publicIp) {
+      throw new Error(`[azure] Failed to get public IP for ${vmName}`);
+    }
+
+    console.log(`[azure] VM created: ${vmName} at ${publicIp}`);
+
+    // Install SSH on Windows VMs so machine.mjs can upload bootstrap scripts
+    if (os === "windows") {
+      const authorizedKeys = sshKeys?.filter(k => k.publicKey)?.map(k => k.publicKey) ?? [];
+      await installSsh(vmName, authorizedKeys);
+    }
+
+    const sshKey = sshKeys?.find(({ privatePath }) => {
+      try {
+        return require("fs").existsSync(privatePath);
+      } catch {
+        return false;
+      }
+    });
+
+    const connect = async () => ({
+      hostname: publicIp,
+      username: "bunadmin",
+      password: adminPassword,
+      identityPaths: sshKey ? [sshKey.privatePath] : undefined,
+    });
+
+    const { spawnSsh: spawnSshFn, spawnSshSafe: spawnSshSafeFn } = await import("./utils.mjs");
+
+    const spawnFn = async (command, opts) => {
+      const conn = await connect();
+      return spawnSshFn({ ...conn, command }, opts);
+    };
+
+    const spawnSafeFn = async (command, opts) => {
+      const conn = await connect();
+      return spawnSshSafeFn({ ...conn, command }, opts);
+    };
+
+    const { spawnScp } = await import("./utils.mjs");
+
+    const upload = async (source, destination) => {
+      const conn = await connect();
+      return spawnScp({ ...conn, source, destination });
+    };
+
+    const attach = async () => {
+      const conn = await connect();
+      await spawnSshSafeFn({ ...conn });
+    };
+
+    const waitForSsh = async () => {
+      const conn = await connect();
+      for (let i = 0; i < 60; i++) {
+        try {
+          await spawnSshSafeFn({ ...conn, command: ["echo", "ok"] });
+          return;
+        } catch {
+          await new Promise(r => setTimeout(r, 10_000));
+        }
+      }
+      throw new Error(`[azure] SSH timeout for ${vmName}`);
+    };
+
+    const snapshot = async label => {
+      const vmId = `${rgPath()}/providers/Microsoft.Compute/virtualMachines/${vmName}`;
+
+      // Stop and generalize
+      await stopVm(vmName);
+
+      // Wait for VM to be deallocated
+      for (let i = 0; i < 60; i++) {
+        const state = await getVmPowerState(vmName);
+        if (state === "PowerState/deallocated") break;
+        await new Promise(r => setTimeout(r, 5000));
+      }
+
+      await generalizeVm(vmName);
+
+      // Ensure gallery and image definition exist
+      await ensureGallery();
+      // Use underscore format to match robobun's getAzureGalleryImageName()
+      const release = options.release || (arch === "aarch64" ? "11" : "2019");
+      const safeRelease = release.replace(/\./g, "_");
+      const imageDefName = `${os}_${arch}_${safeRelease}`;
+      await ensureImageDefinition(imageDefName, os, arch);
+
+      // Azure gallery image versions must be semver (Major.Minor.Patch).
+      // Use timestamp-based version, and store the label as a tag so
+      // robobun/CI can look up images by their logical name.
+      const now = new Date();
+      const version = `${now.getFullYear() % 100}.${now.getMonth() * 100 + now.getDate()}.${now.getHours() * 10000 + now.getMinutes() * 100 + now.getSeconds()}`;
+      await createImageVersionWithLabel(imageDefName, version, vmId, label);
+
+      console.log(`[azure] Image created: ${imageDefName}/${version} (label: ${label})`);
+      return label;
+    };
+
+    const terminate = async () => {
+      await deleteVm(vmName);
+      // Resources with deleteOption=Delete are cleaned up automatically
+      // But clean up anything that might be left
+      await deleteNic(nicName);
+      await deletePublicIp(publicIpName);
+    };
+
+    return {
+      cloud: "azure",
+      id: vmName,
+      imageId: options.imageId,
+      instanceType: vmSize,
+      region: config().location,
+      get publicIp() {
+        return publicIp;
+      },
+      spawn: spawnFn,
+      spawnSafe: spawnSafeFn,
+      upload,
+      attach,
+      snapshot,
+      waitForSsh,
+      close: terminate,
+      [Symbol.asyncDispose]: terminate,
+    };
+  },
+};

@@ -302,16 +302,9 @@ function getCppAgent(platform, options) {
     };
   }
 
-  // Native Windows ARM64 builds on Azure runners
-  if (os === "windows" && arch === "aarch64") {
-    return {
-      os,
-      arch,
-    };
-  }
-
   return getEc2Agent(platform, options, {
-    instanceType: arch === "aarch64" ? "c8g.4xlarge" : "c7i.4xlarge",
+    instanceType:
+      os === "windows" && arch === "aarch64" ? "Standard_D4ps_v6" : arch === "aarch64" ? "c8g.4xlarge" : "c7i.4xlarge",
   });
 }
 
@@ -332,15 +325,8 @@ function getLinkBunAgent(platform, options) {
   }
 
   if (os === "windows") {
-    // Native Windows ARM64 builds on Azure runners
-    if (arch === "aarch64") {
-      return {
-        os,
-        arch,
-      };
-    }
     return getEc2Agent(platform, options, {
-      instanceType: "r7i.large",
+      instanceType: arch === "aarch64" ? "Standard_D4ps_v6" : "r7i.large",
     });
   }
 
@@ -370,12 +356,11 @@ function getZigPlatform() {
 function getZigAgent(platform, options) {
   const { os, arch } = platform;
 
-  // Native Windows ARM64 Zig builds on Azure runners
+  // Windows ARM64 Zig builds on Azure runners
   if (os === "windows" && arch === "aarch64") {
-    return {
-      os,
-      arch,
-    };
+    return getEc2Agent(platform, options, {
+      instanceType: "Standard_D4ps_v6",
+    });
   }
 
   return getEc2Agent(getZigPlatform(), options, {
@@ -401,15 +386,8 @@ function getTestAgent(platform, options) {
 
   // TODO: delete this block when we upgrade to mimalloc v3
   if (os === "windows") {
-    // Native Windows ARM64 tests on Azure runners
-    if (arch === "aarch64") {
-      return {
-        os,
-        arch,
-      };
-    }
     return getEc2Agent(platform, options, {
-      instanceType: "c7i.2xlarge",
+      instanceType: arch === "aarch64" ? "Standard_D4ps_v6" : "c7i.2xlarge",
       cpuCount: 2,
       threadsPerCore: 1,
     });
@@ -751,6 +729,7 @@ function getBuildImageStep(platform, options) {
   const { publishImages } = options;
   const action = publishImages ? "publish-image" : "create-image";
 
+  const cloud = os === "windows" ? "azure" : "aws";
   const command = [
     "node",
     "./scripts/machine.mjs",
@@ -759,7 +738,7 @@ function getBuildImageStep(platform, options) {
     `--arch=${arch}`,
     distro && `--distro=${distro}`,
     `--release=${release}`,
-    "--cloud=aws",
+    `--cloud=${cloud}`,
     "--ci",
     "--authorized-org=oven-sh",
   ];
@@ -1213,8 +1192,6 @@ async function getPipeline(options = {}) {
     buildImages || publishImages
       ? [...buildPlatforms, ...testPlatforms]
           .filter(({ os }) => os !== "darwin")
-          // Windows ARM64 builds natively on Azure runners, no Docker image needed
-          .filter(({ os, arch }) => !(os === "windows" && arch === "aarch64"))
           .map(platform => [getImageKey(platform), platform])
       : [],
   );

@@ -3,6 +3,11 @@
 #include "root.h"
 #include <wtf/SIMDHelpers.h>
 
+// Zig exports for visible width calculation
+extern "C" size_t Bun__visibleWidthExcludeANSI_utf16(const uint16_t* ptr, size_t len, bool ambiguous_as_wide);
+extern "C" size_t Bun__visibleWidthExcludeANSI_latin1(const uint8_t* ptr, size_t len);
+extern "C" uint8_t Bun__codepointWidth(uint32_t cp, bool ambiguous_as_wide);
+
 namespace Bun {
 namespace ANSI {
 
@@ -184,6 +189,70 @@ static const Char* consumeANSI(const Char* start, const Char* end)
         }
     }
     return end;
+}
+
+// ============================================================================
+// Shared character decoding and width utilities
+// ============================================================================
+
+// Decode a single UTF-16 code unit (or surrogate pair) into a codepoint.
+static inline char32_t decodeUTF16(const UChar* ptr, size_t available, size_t& outLen)
+{
+    UChar c = ptr[0];
+    if (c >= 0xD800 && c <= 0xDBFF && available >= 2) {
+        UChar c2 = ptr[1];
+        if (c2 >= 0xDC00 && c2 <= 0xDFFF) {
+            outLen = 2;
+            return 0x10000 + (((c - 0xD800) << 10) | (c2 - 0xDC00));
+        }
+    }
+    outLen = 1;
+    return static_cast<char32_t>(c);
+}
+
+// Get the terminal display width of a single codepoint.
+static inline uint8_t codepointWidth(char32_t cp, bool ambiguousAsWide)
+{
+    return Bun__codepointWidth(cp, ambiguousAsWide);
+}
+
+// Get the visible width of a string, excluding ANSI escape codes.
+template<typename Char>
+static size_t stringWidth(const Char* start, size_t len, bool ambiguousAsWide = false)
+{
+    if (len == 0)
+        return 0;
+    if constexpr (sizeof(Char) == 1) {
+        (void)ambiguousAsWide;
+        return Bun__visibleWidthExcludeANSI_latin1(reinterpret_cast<const uint8_t*>(start), len);
+    } else {
+        return Bun__visibleWidthExcludeANSI_utf16(reinterpret_cast<const uint16_t*>(start), len, ambiguousAsWide);
+    }
+}
+
+// Advance past one character (handling surrogate pairs for UTF-16).
+template<typename Char>
+static inline size_t charLength(const Char* it, const Char* end)
+{
+    if constexpr (sizeof(Char) == 1) {
+        return 1;
+    } else {
+        if (*it >= 0xD800 && *it <= 0xDBFF && (end - it) >= 2 && it[1] >= 0xDC00 && it[1] <= 0xDFFF)
+            return 2;
+        return 1;
+    }
+}
+
+// Decode a character and get its codepoint + length.
+template<typename Char>
+static inline char32_t decodeChar(const Char* it, const Char* end, size_t& outLen)
+{
+    if constexpr (sizeof(Char) == 1) {
+        outLen = 1;
+        return static_cast<char32_t>(static_cast<uint8_t>(*it));
+    } else {
+        return decodeUTF16(it, end - it, outLen);
+    }
 }
 
 } // namespace ANSI

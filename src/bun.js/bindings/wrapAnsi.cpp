@@ -7,38 +7,20 @@
 #include <wtf/Vector.h>
 #include <cmath>
 
-// Zig exports for visible width calculation
-extern "C" size_t Bun__visibleWidthExcludeANSI_utf16(const uint16_t* ptr, size_t len, bool ambiguous_as_wide);
-extern "C" size_t Bun__visibleWidthExcludeANSI_latin1(const uint8_t* ptr, size_t len);
-extern "C" uint8_t Bun__codepointWidth(uint32_t cp, bool ambiguous_as_wide);
-
 namespace Bun {
 using namespace WTF;
 
-// ============================================================================
-// UTF-16 Decoding Utilities (needed for hard wrap with surrogate pairs)
-// ============================================================================
+// Use shared utilities from ANSIHelpers.h:
+//   ANSI::decodeUTF16, ANSI::codepointWidth, ANSI::stringWidth, ANSI::charLength
 
-static char32_t decodeUTF16(const UChar* ptr, size_t available, size_t& outLen)
+static inline char32_t decodeUTF16(const UChar* ptr, size_t available, size_t& outLen)
 {
-    UChar c = ptr[0];
-
-    // Check for surrogate pair
-    if (c >= 0xD800 && c <= 0xDBFF && available >= 2) {
-        UChar c2 = ptr[1];
-        if (c2 >= 0xDC00 && c2 <= 0xDFFF) {
-            outLen = 2;
-            return 0x10000 + (((c - 0xD800) << 10) | (c2 - 0xDC00));
-        }
-    }
-
-    outLen = 1;
-    return static_cast<char32_t>(c);
+    return ANSI::decodeUTF16(ptr, available, outLen);
 }
 
 static inline uint8_t getVisibleWidth(char32_t cp, bool ambiguousIsWide)
 {
-    return Bun__codepointWidth(cp, ambiguousIsWide);
+    return ANSI::codepointWidth(cp, ambiguousIsWide);
 }
 
 // Options for wrapping
@@ -49,25 +31,10 @@ struct WrapAnsiOptions {
     bool ambiguousIsNarrow = true;
 };
 
-// ============================================================================
-// String Width Calculation (using Zig implementation)
-// ============================================================================
-
 template<typename Char>
 static size_t stringWidth(const Char* start, const Char* end, bool ambiguousIsNarrow)
 {
-    size_t len = end - start;
-    if (len == 0)
-        return 0;
-
-    if constexpr (sizeof(Char) == 1) {
-        // 8-bit JSC strings are Latin1, not UTF-8
-        // Note: Latin1 doesn't have ambiguous width characters (all are in U+0000-U+00FF)
-        (void)ambiguousIsNarrow;
-        return Bun__visibleWidthExcludeANSI_latin1(reinterpret_cast<const uint8_t*>(start), len);
-    } else {
-        return Bun__visibleWidthExcludeANSI_utf16(reinterpret_cast<const uint16_t*>(start), len, !ambiguousIsNarrow);
-    }
+    return ANSI::stringWidth(start, end - start, !ambiguousIsNarrow);
 }
 
 // ============================================================================

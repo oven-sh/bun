@@ -610,6 +610,68 @@ declare module "bun" {
    */
   function stripANSI(input: string): string;
 
+  interface TruncateAnsiOptions {
+    /**
+     * Where to place the truncation indicator.
+     * @default "end"
+     */
+    position?: "end" | "start" | "middle";
+
+    /**
+     * Add a space between the text and the truncation character.
+     * @default false
+     */
+    space?: boolean;
+
+    /**
+     * When `true`, prefer breaking at a whitespace character (within 3
+     * positions of the break point) instead of mid-word.
+     * @default false
+     */
+    preferTruncationOnSpace?: boolean;
+
+    /**
+     * Custom string to use as the truncation indicator instead of `…`.
+     * @default "…"
+     */
+    truncationCharacter?: string;
+  }
+
+  /**
+   * Truncate a string to fit within the specified column width, preserving
+   * ANSI escape codes. A drop-in replacement for the `cli-truncate` package.
+   *
+   * The truncation character inherits the ANSI style at the truncation point
+   * for `"end"` and `"start"` positions.
+   *
+   * @category Utilities
+   *
+   * @param input The string to truncate
+   * @param columns The maximum number of terminal columns to occupy
+   * @param options Position string or options object
+   * @returns The truncated string, or the original string if it already fits
+   *
+   * @example
+   * ```ts
+   * import { truncateAnsi } from "bun";
+   *
+   * truncateAnsi("unicorn", 4);           // "uni…"
+   * truncateAnsi("unicorn", 4, "start");  // "…orn"
+   * truncateAnsi("unicorn", 5, "middle"); // "un…rn"
+   *
+   * // ANSI codes are preserved
+   * truncateAnsi("\u001b[31municorn\u001b[39m", 4); // "\u001b[31muni…\u001b[39m"
+   *
+   * // Options object
+   * truncateAnsi("unicorns", 5, { position: "end", space: true }); // "uni …"
+   * ```
+   */
+  function truncateAnsi(
+    input: string,
+    columns: number,
+    options?: "end" | "start" | "middle" | TruncateAnsiOptions,
+  ): string;
+
   interface WrapAnsiOptions {
     /**
      * If `true`, break words in the middle if they don't fit on a line.

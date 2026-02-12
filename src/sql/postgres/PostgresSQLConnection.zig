@@ -1626,7 +1626,10 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
                     // This will usually start with "v="
                     const comparison_signature = final.data.slice();
 
-                    if (comparison_signature.len < 2 or !bun.strings.eqlLong(server_signature, comparison_signature[2..], true)) {
+                    if (comparison_signature.len < 2 or
+                        server_signature.len != comparison_signature.len - 2 or
+                        BoringSSL.c.CRYPTO_memcmp(server_signature.ptr, comparison_signature[2..].ptr, server_signature.len) != 0)
+                    {
                         debug("SASLFinal - SASL Server signature mismatch\nExpected: {s}\nActual: {s}", .{ server_signature, comparison_signature[2..] });
                         this.fail("The server did not return the correct signature", error.SASL_SIGNATURE_MISMATCH);
                     } else {

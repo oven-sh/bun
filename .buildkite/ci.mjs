@@ -102,6 +102,19 @@ function getTargetLabel(target) {
 /**
  * @type {Platform[]}
  */
+// Azure VM sizes — single source of truth for both ci.mjs and azure.mjs
+const azureVmSize = {
+  "windows-aarch64": "Standard_D4ps_v6", // 4 vCPU, 16 GiB, Cobalt 100
+  "windows-x64": "Standard_D8ds_v6", // 8 vCPU, 32 GiB
+};
+
+function getAzureVmSize(os, arch) {
+  return azureVmSize[`${os}-${arch}`];
+}
+
+/**
+ * @type {Platform[]}
+ */
 const buildPlatforms = [
   { os: "darwin", arch: "aarch64", release: "14" },
   { os: "darwin", arch: "x64", release: "14" },
@@ -303,8 +316,7 @@ function getCppAgent(platform, options) {
   }
 
   return getEc2Agent(platform, options, {
-    instanceType:
-      os === "windows" && arch === "aarch64" ? "Standard_D4ps_v6" : arch === "aarch64" ? "c8g.4xlarge" : "c7i.4xlarge",
+    instanceType: os === "windows" ? getAzureVmSize(os, arch) : arch === "aarch64" ? "c8g.4xlarge" : "c7i.4xlarge",
   });
 }
 
@@ -326,7 +338,7 @@ function getLinkBunAgent(platform, options) {
 
   if (os === "windows") {
     return getEc2Agent(platform, options, {
-      instanceType: arch === "aarch64" ? "Standard_D4ps_v6" : "r7i.large",
+      instanceType: getAzureVmSize(os, arch),
     });
   }
 
@@ -356,10 +368,10 @@ function getZigPlatform() {
 function getZigAgent(platform, options) {
   const { os, arch } = platform;
 
-  // Windows ARM64 Zig builds on Azure runners
-  if (os === "windows" && arch === "aarch64") {
+  // Windows Zig builds on Azure runners
+  if (os === "windows") {
     return getEc2Agent(platform, options, {
-      instanceType: "Standard_D4ps_v6",
+      instanceType: getAzureVmSize(os, arch),
     });
   }
 
@@ -387,7 +399,7 @@ function getTestAgent(platform, options) {
   // TODO: delete this block when we upgrade to mimalloc v3
   if (os === "windows") {
     return getEc2Agent(platform, options, {
-      instanceType: arch === "aarch64" ? "Standard_D4ps_v6" : "c7i.2xlarge",
+      instanceType: getAzureVmSize(os, arch),
       cpuCount: 2,
       threadsPerCore: 1,
     });

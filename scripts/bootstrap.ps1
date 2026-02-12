@@ -26,16 +26,6 @@ $script:IsARM64 = [System.Runtime.InteropServices.RuntimeInformation]::OSArchite
 # Utility functions
 # ============================================================================
 
-function Execute-Command {
-  $command = $args -join ' '
-  Write-Output "$ $command"
-
-  & $args[0] $args[1..$args.Length]
-
-  if ((-not $?) -or ($LASTEXITCODE -ne 0 -and $null -ne $LASTEXITCODE)) {
-    throw "Command failed: $command"
-  }
-}
 
 function Which {
   param ([switch]$Required = $false)
@@ -180,7 +170,7 @@ function Install-Scoop-Package {
   }
 
   Write-Output "Installing $Name (via Scoop)..."
-  Execute-Command scoop install $Name
+  scoop install $Name
   Refresh-Path
 }
 
@@ -192,10 +182,10 @@ function Install-Git {
   Install-Scoop-Package git
 
   if ($CI) {
-    Execute-Command git config --system --add safe.directory "*"
-    Execute-Command git config --system core.autocrlf false
-    Execute-Command git config --system core.eol lf
-    Execute-Command git config --system core.longpaths true
+    git config --system --add safe.directory "*"
+    git config --system core.autocrlf false
+    git config --system core.eol lf
+    git config --system core.longpaths true
   }
 }
 
@@ -208,11 +198,18 @@ function Install-CMake {
 }
 
 function Install-Llvm {
-  if ($script:IsARM64) {
-    Install-Scoop-Package llvm-arm64 -Command clang-cl
-  } else {
-    Install-Scoop-Package llvm -Command clang-cl
+  $LLVM_VERSION = "21.1.8"
+  if (Which clang-cl) {
+    return
   }
+  if ($script:IsARM64) {
+    Write-Output "Installing LLVM $LLVM_VERSION (ARM64 via Scoop)..."
+    scoop install "llvm-arm64@$LLVM_VERSION"
+  } else {
+    Write-Output "Installing LLVM $LLVM_VERSION (x64 via Scoop)..."
+    scoop install "llvm@$LLVM_VERSION"
+  }
+  Refresh-Path
 }
 
 function Install-Ninja {
@@ -257,8 +254,9 @@ function Install-Pwsh {
     return
   }
 
-  Write-Output "Installing PowerShell Core (ARM64)..."
-  $msi = Download-File "https://github.com/PowerShell/PowerShell/releases/download/v7.5.2/PowerShell-7.5.2-win-arm64.msi" -Name "pwsh-arm64.msi"
+  $pwshArch = if ($script:IsARM64) { "arm64" } else { "x64" }
+  Write-Output "Installing PowerShell Core ($pwshArch)..."
+  $msi = Download-File "https://github.com/PowerShell/PowerShell/releases/download/v7.5.2/PowerShell-7.5.2-win-$pwshArch.msi" -Name "pwsh-$pwshArch.msi"
   $process = Start-Process msiexec -ArgumentList "/i `"$msi`" /quiet /norestart ADD_PATH=1" -Wait -PassThru -NoNewWindow
   if ($process.ExitCode -ne 0) {
     throw "Failed to install PowerShell: code $($process.ExitCode)"
@@ -304,7 +302,7 @@ function Install-Bun {
   Write-Output "Installing Bun..."
   $installScript = Download-File "https://bun.sh/install.ps1" -Name "bun-install.ps1"
   $pwsh = Which pwsh powershell -Required
-  Execute-Command $pwsh $installScript
+  & $pwsh $installScript
 }
 
 function Install-Rust {
@@ -316,7 +314,7 @@ function Install-Rust {
   $rustupInit = Download-File "https://win.rustup.rs/" -Name "rustup-init.exe"
 
   Write-Output "Installing Rust..."
-  Execute-Command $rustupInit -y
+  & $rustupInit -y
 
   Write-Output "Moving Rust to $env:ProgramFiles..."
   $rustPath = Join-Path $env:ProgramFiles "Rust"
@@ -358,7 +356,7 @@ function Install-Visual-Studio {
 }
 
 function Install-PdbAddr2line {
-  Execute-Command cargo install --examples "pdb-addr2line@0.11.2"
+  cargo install --examples "pdb-addr2line@0.11.2"
 }
 
 function Install-Nssm {
@@ -403,7 +401,7 @@ function Install-Buildkite {
   $env:buildkiteAgentToken = "xxx"
   $installScript = Download-File "https://raw.githubusercontent.com/buildkite/agent/main/install.ps1"
   $pwsh = Which pwsh powershell -Required
-  Execute-Command $pwsh $installScript
+  & $pwsh $installScript
   Refresh-Path
 
   if ($CI) {

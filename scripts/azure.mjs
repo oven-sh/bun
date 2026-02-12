@@ -143,7 +143,7 @@ async function azureFetch(method, path, body, apiVersion = "2024-07-01") {
   throw new Error(`[azure] ${method} ${path} failed after 3 retries`);
 }
 
-async function waitForOperation(operationUrl, maxWaitMs = 600_000) {
+async function waitForOperation(operationUrl, maxWaitMs = 3_600_000) {
   const start = Date.now();
   let fetchErrors = 0;
 
@@ -337,6 +337,9 @@ async function createVm(opts) {
         adminUsername: opts.adminUsername,
         adminPassword: opts.adminPassword,
       },
+      securityProfile: {
+        securityType: "TrustedLaunch",
+      },
       networkProfile: {
         networkInterfaces: [{ id: opts.nicId, properties: { deleteOption: "Delete" } }],
       },
@@ -477,8 +480,12 @@ async function ensureImageDefinition(name, os, arch) {
         identifier: {
           publisher: "bun",
           offer: `${os}-${arch}-ci`,
-          sku: "buildkite-agent",
+          sku: name,
         },
+        features: [
+          { name: "DiskControllerTypes", value: "SCSI, NVMe" },
+          { name: "SecurityType", value: "TrustedLaunch" },
+        ],
       },
     },
     GALLERY_API_VERSION,
@@ -630,9 +637,10 @@ export const azure = {
     // This avoids the sshd startup issues on Azure Windows VMs.
 
     const spawnFn = async (command, opts) => {
-      // Convert command array to a single PowerShell command string
       const script = command.join(" ");
       console.log(`[azure] Run: ${script}`);
+      // Note: Azure Run Command output is limited to the last 4096 bytes.
+      // Full output is not available — only the tail is returned.
       const result = await runCommand(vmName, [script]);
       const stdout = typeof result === "string" ? result : (result?.value?.[0]?.message ?? "");
       if (opts?.stdio === "inherit") {
@@ -687,40 +695,37 @@ export const azure = {
 
       await generalizeVm(vmName);
 
-      // Ensure gallery and image definition exist
+      // Ensure gallery and image definition exist.
+      // Use the label as the image definition name — this matches what ci.mjs
+      // emits as the image-name agent tag, so robobun can look it up directly.
       await ensureGallery();
-      // Use underscore format to match robobun's getAzureGalleryImageName()
-      const release = options.release || (arch === "aarch64" ? "11" : "2019");
-      const safeRelease = release.replace(/\./g, "_");
-      const imageDefName = `${os}_${arch}_${safeRelease}`;
+      const imageDefName = label;
       await ensureImageDefinition(imageDefName, os, arch);
 
-      // Azure gallery image versions must be semver (Major.Minor.Patch).
-      // Use timestamp-based version, and store the label as a tag so
-      // robobun/CI can look up images by their logical name.
-      const now = new Date();
-      const version = `${now.getFullYear() % 100}.${now.getMonth() * 100 + now.getDate()}.${now.getHours() * 10000 + now.getMinutes() * 100 + now.getSeconds()}`;
-      await createImageVersionWithLabel(imageDefName, version, vmId, label);
+      // Create a single version "1.0.0" under this definition.
+      await createImageVersion(imageDefName, "1.0.0", vmId);
 
-      // Wait for image version to finish provisioning before deleting the source VM
+      // Wait for image replication to complete before returning.
+      // Single-region replication typically takes 5-15 minutes.
       const { galleryName } = config();
-      const versionPath = `${rgPath()}/providers/Microsoft.Compute/galleries/${galleryName}/images/${imageDefName}/versions/${version}`;
-      console.log(`[azure] Waiting for image to replicate...`);
+      const versionPath = `${rgPath()}/providers/Microsoft.Compute/galleries/${galleryName}/images/${imageDefName}/versions/1.0.0`;
+      console.log(`[azure] Waiting for image replication...`);
       for (let i = 0; i < 120; i++) {
         const ver = await azureFetch("GET", versionPath, undefined, GALLERY_API_VERSION);
         const state = ver?.properties?.provisioningState;
         if (state === "Succeeded") {
-          console.log(`[azure] Image replicated successfully`);
+          console.log(`[azure] Image ready: ${imageDefName}/1.0.0`);
           break;
         }
         if (state === "Failed") {
-          throw new Error(`[azure] Image replication failed: ${JSON.stringify(ver?.properties?.provisioningProfile)}`);
+          throw new Error(`[azure] Image replication failed: ${JSON.stringify(ver?.properties)}`);
         }
-        console.log(`[azure] Image state: ${state}, waiting...`);
-        await new Promise(r => setTimeout(r, 15_000));
+        if (i % 6 === 0) {
+          console.log(`[azure] Image replicating... (${i}m elapsed)`);
+        }
+        await new Promise(r => setTimeout(r, 10_000));
       }
 
-      console.log(`[azure] Image created: ${imageDefName}/${version} (label: ${label})`);
       return label;
     };
 

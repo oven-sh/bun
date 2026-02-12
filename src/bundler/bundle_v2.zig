@@ -3365,7 +3365,12 @@ pub const BundleV2 = struct {
                 import_record.source_index = Index.runtime;
             }
 
-            if (import_record.flags.is_unused) {
+            // For non-dev-server builds, barrel-deferred records need their
+            // source_index cleared so they don't get linked. For dev server,
+            // skip this — is_unused is also set by ConvertESMExportsForHmr
+            // deduplication, and clearing those source_indices breaks module
+            // identity (e.g., __esModule on ESM namespace objects).
+            if (import_record.flags.is_unused and this.transpiler.options.dev_server == null) {
                 import_record.source_index = Index.invalid;
             }
 

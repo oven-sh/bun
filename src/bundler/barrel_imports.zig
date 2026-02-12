@@ -231,17 +231,17 @@ pub fn scheduleBarrelDeferredImports(this: *BundleV2, result: *ParseTask.Result.
         const ni = ni_entry.value_ptr;
         if (ni.import_record_index >= file_import_records.len) continue;
         try named_ir_indices.put(named_ir_indices_alloc, ni.import_record_index, {});
-        const ir = &file_import_records.slice()[ni.import_record_index];
-        // In dev server mode, source_index may not be patched — resolve via path map.
-        if (!ir.source_index.isValid()) {
-            if (path_to_source_index_map) |map| {
-                if (map.getPath(&ir.path)) |src_idx| {
-                    ir.source_index.value = src_idx;
-                }
-            }
-        }
-        if (!ir.source_index.isValid()) continue;
-        const target = ir.source_index.get();
+        const ir = file_import_records.slice()[ni.import_record_index];
+        // In dev server mode, source_index may not be patched — resolve via
+        // path map as a read-only fallback. Do NOT write back to the import
+        // record — the dev server intentionally leaves source_indices unset
+        // and other code (IncrementalGraph, printer) depends on that.
+        const target = if (ir.source_index.isValid())
+            ir.source_index.get()
+        else if (path_to_source_index_map) |map|
+            map.getPath(&ir.path) orelse continue
+        else
+            continue;
 
         const gop = try this.requested_exports.getOrPut(this.allocator(), target);
         if (ni.alias_is_star) {
@@ -272,19 +272,16 @@ pub fn scheduleBarrelDeferredImports(this: *BundleV2, result: *ParseTask.Result.
     //   meaning this is the sole reference. If the barrel already has a .partial
     //   entry from a static import, the dynamic import is likely a secondary
     //   (possibly circular) reference and should not escalate requirements.
-    for (file_import_records.slice(), 0..) |*ir, idx| {
-        if (!ir.source_index.isValid()) {
-            if (path_to_source_index_map) |map| {
-                if (map.getPath(&ir.path)) |src_idx| {
-                    ir.source_index.value = src_idx;
-                }
-            }
-        }
-        if (!ir.source_index.isValid()) continue;
+    for (file_import_records.slice(), 0..) |ir, idx| {
+        const target = if (ir.source_index.isValid())
+            ir.source_index.get()
+        else if (path_to_source_index_map) |map|
+            map.getPath(&ir.path) orelse continue
+        else
+            continue;
         if (ir.flags.is_internal) continue;
         if (named_ir_indices.contains(@intCast(idx))) continue;
         if (ir.flags.was_originally_bare_import) continue;
-        const target = ir.source_index.get();
         if (ir.kind == .require) {
             const gop = try this.requested_exports.getOrPut(this.allocator(), target);
             gop.value_ptr.* = .all;
@@ -310,23 +307,32 @@ pub fn scheduleBarrelDeferredImports(this: *BundleV2, result: *ParseTask.Result.
         const ni = ni_entry.value_ptr;
         if (ni.import_record_index >= file_import_records.len) continue;
         const ir = file_import_records.slice()[ni.import_record_index];
-        if (!ir.source_index.isValid()) continue;
+        const ir_target = if (ir.source_index.isValid())
+            ir.source_index.get()
+        else if (path_to_source_index_map) |map|
+            map.getPath(&ir.path) orelse continue
+        else
+            continue;
 
         if (ni.alias_is_star) {
-            try queue.append(queue_alloc, .{ .barrel_source_index = ir.source_index.get(), .alias = "", .is_star = true });
+            try queue.append(queue_alloc, .{ .barrel_source_index = ir_target, .alias = "", .is_star = true });
         } else if (ni.alias) |alias| {
-            try queue.append(queue_alloc, .{ .barrel_source_index = ir.source_index.get(), .alias = alias, .is_star = false });
+            try queue.append(queue_alloc, .{ .barrel_source_index = ir_target, .alias = alias, .is_star = false });
         }
     }
 
     // Add bare require/dynamic-import targets to BFS as star imports (matching
     // the seeding logic above — require always, dynamic only when sole reference).
     for (file_import_records.slice(), 0..) |ir, idx| {
-        if (!ir.source_index.isValid()) continue;
+        const target = if (ir.source_index.isValid())
+            ir.source_index.get()
+        else if (path_to_source_index_map) |map|
+            map.getPath(&ir.path) orelse continue
+        else
+            continue;
         if (ir.flags.is_internal) continue;
         if (named_ir_indices.contains(@intCast(idx))) continue;
         if (ir.flags.was_originally_bare_import) continue;
-        const target = ir.source_index.get();
         const is_all = if (this.requested_exports.get(target)) |re| re == .all else false;
         const should_add = ir.kind == .require or (ir.kind == .dynamic and is_all);
         if (should_add) {

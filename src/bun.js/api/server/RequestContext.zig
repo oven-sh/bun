@@ -2294,11 +2294,23 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     const basename = std.fs.path.basename(filename);
                     if (basename.len > 0) {
                         var filename_buf: [1024]u8 = undefined;
-
-                        resp.writeHeader(
-                            "content-disposition",
-                            std.fmt.bufPrint(&filename_buf, "filename=\"{s}\"", .{basename[0..@min(basename.len, 1024 - 32)]}) catch "",
-                        );
+                        // Sanitize the basename to prevent header injection (CRLF)
+                        // and quote escaping. Strip \r, \n, and replace " with '.
+                        var sanitized_buf: [1024 - 32]u8 = undefined;
+                        const max_len = @min(basename.len, sanitized_buf.len);
+                        var sanitized_len: usize = 0;
+                        for (basename[0..max_len]) |c| {
+                            if (c != '\r' and c != '\n') {
+                                sanitized_buf[sanitized_len] = if (c == '"') '\'' else c;
+                                sanitized_len += 1;
+                            }
+                        }
+                        if (sanitized_len > 0) {
+                            resp.writeHeader(
+                                "content-disposition",
+                                std.fmt.bufPrint(&filename_buf, "filename=\"{s}\"", .{sanitized_buf[0..sanitized_len]}) catch "",
+                            );
+                        }
                     }
                 }
             }

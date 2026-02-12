@@ -2294,11 +2294,15 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     const basename = std.fs.path.basename(filename);
                     if (basename.len > 0) {
                         var filename_buf: [1024]u8 = undefined;
-
-                        resp.writeHeader(
-                            "content-disposition",
-                            std.fmt.bufPrint(&filename_buf, "filename=\"{s}\"", .{basename[0..@min(basename.len, 1024 - 32)]}) catch "",
-                        );
+                        // Sanitize the basename to prevent header injection via
+                        // CRLF sequences or unescaped quotes in the filename.
+                        const sanitized_basename = sanitizeFilenameForContentDisposition(basename[0..@min(basename.len, 1024 - 32)]);
+                        if (sanitized_basename.len > 0) {
+                            resp.writeHeader(
+                                "content-disposition",
+                                std.fmt.bufPrint(&filename_buf, "filename=\"{s}\"", .{sanitized_basename}) catch "",
+                            );
+                        }
                     }
                 }
             }
@@ -2673,6 +2677,23 @@ const ctxLog = Output.scoped(.RequestContext, .visible);
 const string = []const u8;
 
 const std = @import("std");
+/// Sanitize a filename for use in a Content-Disposition header value.
+/// Strips characters that could enable HTTP header injection (CRLF) or
+/// break out of the quoted filename value (double quotes, backslashes).
+fn sanitizeFilenameForContentDisposition(input: []const u8) []const u8 {
+    const T = struct {
+        threadlocal var buf: [1024]u8 = undefined;
+    };
+    var len: usize = 0;
+    for (input) |c| {
+        if (c == '\r' or c == '\n' or c == '"' or c == '\\' or c == 0) continue;
+        if (len >= T.buf.len) break;
+        T.buf[len] = c;
+        len += 1;
+    }
+    return T.buf[0..len];
+}
+
 const Fallback = @import("../../../runtime.zig").Fallback;
 const linux = std.os.linux;
 

@@ -89,7 +89,7 @@ BUN_FFI_IMPORT extern struct NapiEnv Bun__thisFFIModuleNapiEnv;
 #define TagValueNull             (OtherTag)
 #define NotCellMask  (int64_t)(NumberTag | OtherTag)
 
-#define MAX_INT32 2147483648
+#define MAX_INT32 2147483647
 #define MAX_INT52 9007199254740991
 
 // If all bits in the mask are set, this indicates an integer number,
@@ -174,6 +174,7 @@ static EncodedJSValue PTR_TO_JSVALUE(void* ptr) __attribute__((__always_inline__
 
 static void* JSVALUE_TO_PTR(EncodedJSValue val) __attribute__((__always_inline__));
 static int32_t JSVALUE_TO_INT32(EncodedJSValue val) __attribute__((__always_inline__));
+static uint32_t JSVALUE_TO_UINT32(EncodedJSValue val) __attribute__((__always_inline__));
 static float JSVALUE_TO_FLOAT(EncodedJSValue val) __attribute__((__always_inline__));
 static double JSVALUE_TO_DOUBLE(EncodedJSValue val) __attribute__((__always_inline__));
 static bool JSVALUE_TO_BOOL(EncodedJSValue val) __attribute__((__always_inline__));
@@ -260,6 +261,16 @@ static int32_t JSVALUE_TO_INT32(EncodedJSValue val) {
   return val.asInt64;
 }
 
+static uint32_t JSVALUE_TO_UINT32(EncodedJSValue val) {
+  if (JSVALUE_IS_INT32(val)) {
+    return (uint32_t)JSVALUE_TO_INT32(val);
+  }
+  if (JSVALUE_IS_NUMBER(val)) {
+    return (uint32_t)JSVALUE_TO_DOUBLE(val);
+  }
+  return 0;
+}
+
 static EncodedJSValue INT32_TO_JSVALUE(int32_t val) {
    EncodedJSValue res;
    res.asInt64 = NumberTag | (uint32_t)val;
@@ -306,7 +317,7 @@ static bool JSVALUE_TO_BOOL(EncodedJSValue val) {
 
 static uint64_t JSVALUE_TO_UINT64(EncodedJSValue value) {
   if (JSVALUE_IS_INT32(value)) {
-    return (uint64_t)JSVALUE_TO_INT32(value);
+    return (uint64_t)(uint32_t)JSVALUE_TO_INT32(value);
   }
 
   if (JSVALUE_IS_NUMBER(value)) {
@@ -332,11 +343,11 @@ static int64_t JSVALUE_TO_INT64(EncodedJSValue value) {
 }
 
 static EncodedJSValue UINT64_TO_JSVALUE(void* jsGlobalObject, uint64_t val) {
-  if (val < MAX_INT32) {
+  if (val <= MAX_INT32) {
     return INT32_TO_JSVALUE((int32_t)val);
   }
 
-  if (val < MAX_INT52) {
+  if (val <= MAX_INT52) {
     return DOUBLE_TO_JSVALUE((double)val);
   }
 

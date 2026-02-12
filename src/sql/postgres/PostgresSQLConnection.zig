@@ -684,7 +684,7 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
     // message parameter injection (null bytes act as field terminators in the
     // wire protocol's key\0value\0 format).
     inline for (.{ .{ username, "username" }, .{ password, "password" }, .{ database, "database" }, .{ path, "path" } }) |entry| {
-        if (std.mem.indexOfScalar(u8, entry[0], 0) != null) {
+        if (entry[0].len > 0 and std.mem.indexOfScalar(u8, entry[0], 0) != null) {
             bun.default_allocator.free(options_buf);
             tls_config.deinit();
             if (tls_ctx) |tls| {

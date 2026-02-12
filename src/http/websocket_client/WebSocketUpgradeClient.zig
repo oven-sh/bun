@@ -1179,6 +1179,21 @@ const BuildRequestResult = struct {
     expected_accept: [28]u8,
 };
 
+/// Compute the expected Sec-WebSocket-Accept value per RFC 6455 Section 4.2.2:
+/// Base64(SHA-1(Sec-WebSocket-Key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))
+fn computeExpectedAccept(key: []const u8) [28]u8 {
+    const websocket_guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+    var hasher = bun.sha.SHA1.init();
+    defer hasher.deinit();
+    hasher.update(key);
+    hasher.update(websocket_guid);
+    var sha1_digest: bun.sha.SHA1.Digest = .{0} ** bun.sha.SHA1.digest;
+    hasher.final(&sha1_digest);
+    var result: [28]u8 = .{0} ** 28;
+    _ = bun.base64.encode(&result, &sha1_digest);
+    return result;
+}
+
 fn buildRequestBody(
     vm: *jsc.VirtualMachine,
     pathname: *const jsc.ZigString,
@@ -1324,20 +1339,6 @@ fn buildRequestBody(
         ),
         .expected_accept = expected_accept,
     };
-}
-
-/// Compute the expected Sec-WebSocket-Accept value per RFC 6455 Section 4.2.2:
-/// Base64(SHA-1(Sec-WebSocket-Key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))
-fn computeExpectedAccept(key: []const u8) [28]u8 {
-    const websocket_guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
-    var sha1 = bun.sha.SHA1.init();
-    sha1.update(key);
-    sha1.update(websocket_guid);
-    var sha1_digest: bun.sha.SHA1.Digest = undefined;
-    sha1.final(&sha1_digest);
-    var expected_accept: [28]u8 = undefined;
-    _ = bun.base64.encode(&expected_accept, &sha1_digest);
-    return expected_accept;
 }
 
 const log = Output.scoped(.WebSocketUpgradeClient, .visible);

@@ -156,7 +156,6 @@ export default [
       slice: { fn: "getSlice", length: 2 },
       stream: { fn: "getStream", length: 1 },
       formData: { fn: "getFormData", async: true },
-      exists: { fn: "getExists", length: 0 },
 
       // Non-standard, but consistent!
       bytes: { fn: "getBytes", async: true },
@@ -165,33 +164,8 @@ export default [
         getter: "getType",
       },
 
-      // TODO: Move this to a separate `File` object or BunFile
-      // This is *not* spec-compliant.
-      name: {
-        this: true,
-        cache: true,
-        getter: "getName",
-        setter: "setName",
-      },
-
-      // TODO: Move this to a separate `File` object or BunFile
-      // This is *not* spec-compliant.
-      lastModified: {
-        getter: "getLastModified",
-      },
-
-      // Non-standard, s3 + BunFile support
-      unlink: { fn: "doUnlink", length: 0 },
-      delete: { fn: "doUnlink", length: 0 },
-      write: { fn: "doWrite", length: 2 },
       size: {
         getter: "getSize",
-      },
-      stat: { fn: "getStat", length: 0 },
-
-      writer: {
-        fn: "getWriter",
-        length: 1,
       },
     },
   }),

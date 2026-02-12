@@ -514,6 +514,8 @@ public:
                                                                                                              \
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_processEnvObject)                                      \
                                                                                                              \
+    V(public, LazyPropertyOfGlobalObject<Structure>, m_JSBunFileStructure)                                    \
+    V(public, LazyPropertyOfGlobalObject<Structure>, m_JSDOMFileStructure)                                    \
     V(public, LazyPropertyOfGlobalObject<Structure>, m_JSS3FileStructure)                                    \
     V(public, LazyPropertyOfGlobalObject<Structure>, m_S3ErrorStructure)                                     \
                                                                                                              \

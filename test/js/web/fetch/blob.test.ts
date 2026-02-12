@@ -204,10 +204,11 @@ test("blob: can set name property #10178", () => {
   blob.name = "logo.svg";
   // @ts-expect-error
   expect(blob.name).toBe("logo.svg");
+  // name is now a plain data property on Blob (not a typed setter), so any value is accepted
   // @ts-expect-error
   blob.name = 10;
   // @ts-expect-error
-  expect(blob.name).toBe("logo.svg");
+  expect(blob.name).toBe(10);
   Object.defineProperty(blob, "name", {
     value: 42,
     writable: false,
@@ -226,10 +227,11 @@ test("blob: can set name property #10178", () => {
   const myBlob = new MyBlob([Buffer.from("Hello, World")]);
   // @ts-expect-error
   expect(myBlob.name).toBe("logo.svg");
+  // name is now a plain data property on Blob (not a typed setter), so any value is accepted
   // @ts-expect-error
   myBlob.name = 10;
   // @ts-expect-error
-  expect(myBlob.name).toBe("logo.svg");
+  expect(myBlob.name).toBe(10);
   Object.defineProperty(myBlob, "name", {
     value: 42,
     writable: false,

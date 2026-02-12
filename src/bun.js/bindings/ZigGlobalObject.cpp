@@ -186,6 +186,7 @@
 #include "webcore/JSMIMEParams.h"
 #include "JSNodePerformanceHooksHistogram.h"
 #include "JSS3File.h"
+#include "JSBunFile.h"
 #include "S3Error.h"
 #include "ProcessBindingBuffer.h"
 #include "NodeValidator.h"
@@ -1836,6 +1837,16 @@ void GlobalObject::finishCreation(VM& vm)
         [](const Initializer<JSObject>& init) {
             JSValue result = JSValue::decode(ExpectMatcherUtils_createSigleton(init.owner));
             init.set(result.toObject(init.owner));
+        });
+
+    m_JSBunFileStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            init.set(Bun::createJSBunFileStructure(init.vm, init.owner));
+        });
+
+    m_JSDOMFileStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            init.set(Bun::createJSDOMFileInstanceStructure(init.vm, init.owner));
         });
 
     m_JSS3FileStructure.initLater(

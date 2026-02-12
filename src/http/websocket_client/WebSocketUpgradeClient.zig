@@ -45,7 +45,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
         /// Expected Sec-WebSocket-Accept value for RFC 6455 handshake validation.
         /// This is SHA-1(Sec-WebSocket-Key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11") base64-encoded (always 28 bytes).
-        expected_accept: [28]u8 = undefined,
+        expected_accept: [28]u8,
 
         /// Proxy state (null when not using proxy)
         proxy: ?WebSocketProxy = null,
@@ -1236,15 +1236,7 @@ fn buildRequestBody(
         break :blk std.base64.standard.Encoder.encode(&encoded_buf, &vm.rareData().nextUUID().bytes);
     };
 
-    // Compute the expected Sec-WebSocket-Accept value per RFC 6455 Section 4.2.2:
-    // Base64(SHA-1(Sec-WebSocket-Key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))
-    const websocket_guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
-    var sha1 = std.crypto.hash.Sha1.init(.{});
-    sha1.update(key);
-    sha1.update(websocket_guid);
-    const sha1_digest = sha1.finalResult();
-    var expected_accept: [28]u8 = undefined;
-    _ = std.base64.standard.Encoder.encode(&expected_accept, &sha1_digest);
+    const expected_accept = computeExpectedAccept(key);
 
     const protocol = if (user_protocol) |p| p.slice() else client_protocol.slice();
 
@@ -1332,6 +1324,20 @@ fn buildRequestBody(
         ),
         .expected_accept = expected_accept,
     };
+}
+
+/// Compute the expected Sec-WebSocket-Accept value per RFC 6455 Section 4.2.2:
+/// Base64(SHA-1(Sec-WebSocket-Key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))
+fn computeExpectedAccept(key: []const u8) [28]u8 {
+    const websocket_guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+    var sha1 = bun.sha.SHA1.init();
+    sha1.update(key);
+    sha1.update(websocket_guid);
+    var sha1_digest: bun.sha.SHA1.Digest = undefined;
+    sha1.final(&sha1_digest);
+    var expected_accept: [28]u8 = undefined;
+    _ = bun.base64.encode(&expected_accept, &sha1_digest);
+    return expected_accept;
 }
 
 const log = Output.scoped(.WebSocketUpgradeClient, .visible);

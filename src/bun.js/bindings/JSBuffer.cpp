@@ -1513,22 +1513,31 @@ static int64_t indexOf(JSC::JSGlobalObject* lexicalGlobalObject, ThrowScope& sco
         if (byteOffsetD < -0x80000000p0f) byteOffsetD = -0x80000000p0f;
     }
 
-    // Re-fetch pointer and length after potential JS execution in toNumber().
-    // The buffer may have been detached by a valueOf callback.
-    if (buffer->isDetached()) [[unlikely]] {
-        throwVMTypeError(lexicalGlobalObject, scope, "Buffer is detached"_s);
-        return -1;
-    }
-    const uint8_t* typedVector = buffer->typedVector();
-    byteLength = buffer->byteLength();
+    // After any call that can trigger JS execution (toNumber, toWTFString,
+    // toStringOrNull), the buffer may have been detached. We must re-fetch
+    // typedVector and byteLength from the buffer right before use, and check
+    // for detachment after all JS calls in each code path are complete.
 
-    if (byteLength == 0) return -1;
+    // Helper: re-fetch buffer state after JS calls, checking for detachment.
+    // Returns false if the buffer was detached (after throwing a TypeError).
+    auto refetchBufferState = [&](const uint8_t*& typedVector, size_t& len) -> bool {
+        if (buffer->isDetached()) [[unlikely]] {
+            throwVMTypeError(lexicalGlobalObject, scope, "Buffer is detached"_s);
+            return false;
+        }
+        typedVector = buffer->typedVector();
+        len = buffer->byteLength();
+        return true;
+    };
 
     if (std::isnan(byteOffsetD)) byteOffsetD = dir ? 0 : byteLength;
 
     if (valueValue.isNumber()) {
         auto byteValue = static_cast<uint8_t>((valueValue.toInt32(lexicalGlobalObject)) % 256);
         RETURN_IF_EXCEPTION(scope, -1);
+        const uint8_t* typedVector;
+        if (!refetchBufferState(typedVector, byteLength)) return -1;
+        if (byteLength == 0) return -1;
         return indexOfNumber(lexicalGlobalObject, last, typedVector, byteLength, byteOffsetD, byteValue);
     }
 
@@ -1547,11 +1556,17 @@ static int64_t indexOf(JSC::JSGlobalObject* lexicalGlobalObject, ThrowScope& sco
         }
         auto* str = valueValue.toStringOrNull(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(scope, -1);
+        const uint8_t* typedVector;
+        if (!refetchBufferState(typedVector, byteLength)) return -1;
+        if (byteLength == 0) return -1;
         return indexOfString(lexicalGlobalObject, last, typedVector, byteLength, byteOffsetD, str, encoding.value());
     }
 
     if (auto* array = JSC::jsDynamicCast<JSC::JSUint8Array*>(valueValue)) {
         if (!encoding.has_value()) encoding = BufferEncodingType::utf8;
+        const uint8_t* typedVector;
+        if (!refetchBufferState(typedVector, byteLength)) return -1;
+        if (byteLength == 0) return -1;
         return indexOfBuffer(lexicalGlobalObject, last, typedVector, byteLength, byteOffsetD, array, encoding.value());
     }
 

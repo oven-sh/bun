@@ -6,23 +6,25 @@ import { itBundled } from "./expectBundled";
 // The key insight from the code change:
 // - `input_module_type` is set based on the RESOLVER's module type determination
 //   (file extension .mjs/.mts and package.json "type" field), NOT on syntax detection.
-// - When the importing file is in Node ESM mode (.mjs/.mts or "type": "module"), isNodeMode = 1
-// - When the importing file is NOT in Node ESM mode (regular .js), isNodeMode = 0
+// - The isNodeMode flag is ONLY set when BOTH conditions are true:
+//   1. The target is Node.js (not browser/bun)
+//   2. The importing file is in Node ESM mode (.mjs/.mts or "type": "module")
 //
 // This means:
-// - Regular .js files RESPECT __esModule markers and extract exports.default
-// - .mjs files IGNORE __esModule markers and wrap the entire module as default
+// - For browser/bun targets: __esModule is ALWAYS respected
+// - For Node.js target with Node ESM files: __esModule is ignored (matches Node.js behavior)
+// - For Node.js target with regular .js files: __esModule is respected
 //
-// This matches the correct Node.js behavior where __esModule is a Babel/TypeScript
-// interop convention that only applies in non-Node-ESM contexts.
+// This matches both Babel/TypeScript interop expectations for browser bundles
+// and Node.js native ESM behavior when targeting Node.js.
 
 describe("bundler", () => {
   // ============================================================================
-  // Tests with regular .js entry file (NOT Node ESM mode)
-  // These use isNodeMode=0, which RESPECTS __esModule
+  // Tests with regular .js entry file (default browser target)
+  // __esModule is ALWAYS respected for browser targets
   // ============================================================================
 
-  // Test 1: import with __esModule marker - RESPECTED in .js files
+  // Test 1: import with __esModule marker - RESPECTED
   itBundled("cjs/__toESM_import_syntax_with_esModule", {
     files: {
       "/entry.js": /* js */ `
@@ -36,7 +38,7 @@ describe("bundler", () => {
       `,
     },
     run: {
-      // With .js file (NOT Node ESM), isNodeMode=0, so __esModule IS RESPECTED
+      // Browser target: __esModule IS RESPECTED
       // The default import gets exports.default
       stdout: '{"value":"default export"}',
     },
@@ -150,10 +152,10 @@ describe("bundler", () => {
 
   // ============================================================================
   // Tests with different targets
-  // Target doesn't affect isNodeMode - it's based on resolver module type
+  // Only Node.js target + Node ESM files ignore __esModule
   // ============================================================================
 
-  // Test 7: target=node
+  // Test 7: target=node with .js entry - __esModule RESPECTED
   itBundled("cjs/__toESM_target_node", {
     files: {
       "/entry.js": /* js */ `
@@ -167,11 +169,13 @@ describe("bundler", () => {
     },
     target: "node",
     run: {
+      // .js file is NOT Node ESM, so __esModule would be respected if present
+      // No __esModule here, so entire module wrapped as default
       stdout: '{"x":1,"y":2}',
     },
   });
 
-  // Test 8: target=browser
+  // Test 8: target=browser - __esModule ALWAYS RESPECTED
   itBundled("cjs/__toESM_target_browser", {
     files: {
       "/entry.js": /* js */ `
@@ -189,7 +193,7 @@ describe("bundler", () => {
     },
   });
 
-  // Test 9: target=bun
+  // Test 9: target=bun - __esModule ALWAYS RESPECTED
   itBundled("cjs/__toESM_target_bun", {
     files: {
       "/entry.js": /* js */ `
@@ -209,10 +213,10 @@ describe("bundler", () => {
 
   // ============================================================================
   // Tests with different output formats
-  // Output format doesn't affect isNodeMode either
+  // Output format doesn't affect isNodeMode
   // ============================================================================
 
-  // Test 10: format=esm with __esModule (should be respected in .js entry)
+  // Test 10: format=esm with __esModule (should be respected for browser target)
   itBundled("cjs/__toESM_format_esm", {
     files: {
       "/entry.js": /* js */ `
@@ -227,7 +231,7 @@ describe("bundler", () => {
     },
     format: "esm",
     run: {
-      // __esModule respected because entry is .js (not Node ESM)
+      // __esModule respected for browser target
       stdout: '"the default"',
     },
   });
@@ -247,17 +251,17 @@ describe("bundler", () => {
     },
     format: "cjs",
     run: {
-      // __esModule respected because entry is .js (not Node ESM)
+      // __esModule respected for browser target
       stdout: '"the default"',
     },
   });
 
   // ============================================================================
-  // Tests for .mjs files re-exporting from .cjs
-  // .mjs files ARE in Node ESM mode, so __esModule is IGNORED
+  // Tests for .mjs files re-exporting from .cjs (browser target)
+  // For browser target, __esModule is ALWAYS respected, even for .mjs files
   // ============================================================================
 
-  // Test 12: .mjs re-exporting default from CJS
+  // Test 12: .mjs re-exporting default from CJS (browser target)
   itBundled("cjs/__toESM_mjs_reexport", {
     files: {
       "/entry.js": /* js */ `
@@ -273,12 +277,12 @@ describe("bundler", () => {
       `,
     },
     run: {
-      // .mjs wraps entire module as default
+      // Browser target: entire module wrapped as default (no __esModule)
       stdout: '{"foo":"foo","bar":"bar"}',
     },
   });
 
-  // Test 13: .mjs re-exporting with __esModule (IGNORED in .mjs)
+  // Test 13: .mjs re-exporting with __esModule (browser target - RESPECTED)
   itBundled("cjs/__toESM_mjs_reexport_with_esModule", {
     files: {
       "/entry.js": /* js */ `
@@ -295,12 +299,12 @@ describe("bundler", () => {
       `,
     },
     run: {
-      // __esModule IGNORED in .mjs - entire module wrapped as default
-      stdout: '{"__esModule":true,"default":{"value":"from cjs"},"other":"other"}',
+      // Browser target: __esModule IS RESPECTED, default gets exports.default
+      stdout: '{"value":"from cjs"}',
     },
   });
 
-  // Test 14: Deep re-export chain through .mjs files
+  // Test 14: Deep re-export chain through .mjs files (browser target)
   itBundled("cjs/__toESM_deep_reexport_chain", {
     files: {
       "/entry.js": /* js */ `
@@ -322,7 +326,7 @@ describe("bundler", () => {
     },
   });
 
-  // Test 15: Re-export with rename from .mjs
+  // Test 15: Re-export with rename from .mjs (browser target)
   itBundled("cjs/__toESM_reexport_with_rename", {
     files: {
       "/entry.js": /* js */ `
@@ -471,7 +475,7 @@ describe("bundler", () => {
       `,
     },
     run: {
-      // __esModule respected in .js entry, default gets the default property
+      // __esModule respected, default gets the default property
       stdout: '{"value":"nested"}',
     },
   });
@@ -539,10 +543,10 @@ describe("bundler", () => {
   });
 
   // ============================================================================
-  // Tests for the original issue #26901 - .js file importing CJS with __esModule
+  // Tests for the original issue #26901 - browser target scenarios
   // ============================================================================
 
-  // Test 24: Original issue case - .js importing from CJS with __esModule
+  // Test 24: .js importing from CJS with __esModule (browser target)
   itBundled("cjs/__toESM_issue_26901_js_file", {
     files: {
       "/entry.js": /* js */ `
@@ -555,12 +559,12 @@ describe("bundler", () => {
       `,
     },
     run: {
-      // .js file: __esModule is RESPECTED, so default import gets exports.default
+      // Browser target: __esModule is RESPECTED
       stdout: '{"msg":"hello"}',
     },
   });
 
-  // Test 25: Same case but with .mjs entry - __esModule is IGNORED
+  // Test 25: .mjs importing from CJS with __esModule (browser target)
   itBundled("cjs/__toESM_issue_26901_mjs_file", {
     files: {
       "/entry.mjs": /* js */ `
@@ -573,13 +577,13 @@ describe("bundler", () => {
       `,
     },
     run: {
-      // .mjs file: __esModule is IGNORED, so default import gets entire module
-      stdout: '{"__esModule":true,"default":{"msg":"hello"}}',
+      // Browser target: __esModule is RESPECTED even for .mjs entry
+      stdout: '{"msg":"hello"}',
     },
   });
 
-  // Test 26: package.json "type": "module" - __esModule is IGNORED
-  itBundled("cjs/__toESM_issue_26901_type_module", {
+  // Test 26: "type": "module" with browser target - __esModule is RESPECTED
+  itBundled("cjs/__toESM_issue_26901_type_module_browser", {
     files: {
       "/entry.js": /* js */ `
         import lib from './lib.cjs';
@@ -593,10 +597,75 @@ describe("bundler", () => {
         exports.default = { msg: 'hello' };
       `,
     },
+    // Default target is browser
     run: {
-      // "type": "module" makes .js files Node ESM mode
-      // __esModule is IGNORED, so default import gets entire module
+      // Browser target: __esModule is RESPECTED even with "type": "module"
+      stdout: '{"msg":"hello"}',
+    },
+  });
+
+  // ============================================================================
+  // Tests for Node.js target with Node ESM files
+  // Only this combination ignores __esModule
+  // ============================================================================
+
+  // Test 27: target=node with .mjs entry - __esModule is IGNORED
+  itBundled("cjs/__toESM_node_target_mjs_entry", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import lib from './lib.cjs';
+        console.log(JSON.stringify(lib));
+      `,
+      "/lib.cjs": /* js */ `
+        exports.__esModule = true;
+        exports.default = { msg: 'hello' };
+      `,
+    },
+    target: "node",
+    run: {
+      // Node.js target + .mjs entry: __esModule is IGNORED (Node.js behavior)
       stdout: '{"__esModule":true,"default":{"msg":"hello"}}',
+    },
+  });
+
+  // Test 28: target=node with "type": "module" - __esModule is IGNORED
+  itBundled("cjs/__toESM_node_target_type_module", {
+    files: {
+      "/entry.js": /* js */ `
+        import lib from './lib.cjs';
+        console.log(JSON.stringify(lib));
+      `,
+      "/package.json": /* json */ `
+        { "type": "module" }
+      `,
+      "/lib.cjs": /* js */ `
+        exports.__esModule = true;
+        exports.default = { msg: 'hello' };
+      `,
+    },
+    target: "node",
+    run: {
+      // Node.js target + "type": "module": __esModule is IGNORED (Node.js behavior)
+      stdout: '{"__esModule":true,"default":{"msg":"hello"}}',
+    },
+  });
+
+  // Test 29: target=node with regular .js entry - __esModule is RESPECTED
+  itBundled("cjs/__toESM_node_target_js_entry", {
+    files: {
+      "/entry.js": /* js */ `
+        import lib from './lib.cjs';
+        console.log(JSON.stringify(lib));
+      `,
+      "/lib.cjs": /* js */ `
+        exports.__esModule = true;
+        exports.default = { msg: 'hello' };
+      `,
+    },
+    target: "node",
+    run: {
+      // Node.js target + .js entry (NOT Node ESM): __esModule is RESPECTED
+      stdout: '{"msg":"hello"}',
     },
   });
 });

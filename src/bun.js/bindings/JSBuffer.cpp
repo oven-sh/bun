@@ -1489,7 +1489,6 @@ static int64_t indexOfBuffer(JSC::JSGlobalObject* lexicalGlobalObject, bool last
 static int64_t indexOf(JSC::JSGlobalObject* lexicalGlobalObject, ThrowScope& scope, JSC::CallFrame* callFrame, typename IDLOperation<JSArrayBufferView>::ClassParameter buffer, bool last)
 {
     bool dir = !last;
-    const uint8_t* typedVector = buffer->typedVector();
     size_t byteLength = buffer->byteLength();
     std::optional<BufferEncodingType> encoding = std::nullopt;
     double byteOffsetD = 0;
@@ -1505,11 +1504,25 @@ static int64_t indexOf(JSC::JSGlobalObject* lexicalGlobalObject, ThrowScope& sco
         byteOffsetValue = jsUndefined();
         byteOffsetD = 0;
     } else {
+        // toNumber() can trigger JavaScript execution (valueOf/Symbol.toPrimitive),
+        // which could detach the underlying ArrayBuffer. We must re-fetch the
+        // pointer and length after this call.
         byteOffsetD = byteOffsetValue.toNumber(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(scope, -1);
         if (byteOffsetD > 0x7fffffffp0f) byteOffsetD = 0x7fffffffp0f;
         if (byteOffsetD < -0x80000000p0f) byteOffsetD = -0x80000000p0f;
     }
+
+    // Re-fetch pointer and length after potential JS execution in toNumber().
+    // The buffer may have been detached by a valueOf callback.
+    if (buffer->isDetached()) [[unlikely]] {
+        throwVMTypeError(lexicalGlobalObject, scope, "Buffer is detached"_s);
+        return -1;
+    }
+    const uint8_t* typedVector = buffer->typedVector();
+    byteLength = buffer->byteLength();
+
+    if (byteLength == 0) return -1;
 
     if (std::isnan(byteOffsetD)) byteOffsetD = dir ? 0 : byteLength;
 

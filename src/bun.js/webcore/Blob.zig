@@ -2681,6 +2681,9 @@ pub fn getWriter(
                         return globalThis.throwInvalidArgumentType("write", "options.contentDisposition", "string");
                     }
                     content_disposition_str = try content_disposition.toSlice(globalThis, bun.default_allocator);
+                    if (!bun.S3.S3Credentials.isValidHTTPHeaderValue(content_disposition_str.?.slice())) {
+                        return globalThis.throwInvalidArgumentType("write", "options.contentDisposition", "a valid HTTP header value (cannot contain \\r, \\n, or null bytes)");
+                    }
                 }
                 var content_encoding_str: ?ZigString.Slice = null;
                 defer if (content_encoding_str) |ce| ce.deinit();
@@ -2689,6 +2692,9 @@ pub fn getWriter(
                         return globalThis.throwInvalidArgumentType("write", "options.contentEncoding", "string");
                     }
                     content_encoding_str = try content_encoding.toSlice(globalThis, bun.default_allocator);
+                    if (!bun.S3.S3Credentials.isValidHTTPHeaderValue(content_encoding_str.?.slice())) {
+                        return globalThis.throwInvalidArgumentType("write", "options.contentEncoding", "a valid HTTP header value (cannot contain \\r, \\n, or null bytes)");
+                    }
                 }
                 var credentialsWithOptions = try s3.getCredentialsWithOptions(options, globalThis);
                 defer credentialsWithOptions.deinit();

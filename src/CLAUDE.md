@@ -15,16 +15,16 @@ Conventions:
 
 **Always use `bun.*` APIs instead of `std.*`.** The `bun` namespace (`@import("bun")`) provides cross-platform wrappers that preserve OS error info and never use `unreachable`. Using `std.fs`, `std.posix`, or `std.os` directly is wrong in this codebase.
 
-| Instead of | Use |
-|-----------|-----|
-| `std.fs.File` | `bun.sys.File` |
-| `std.fs.cwd()` | `bun.FD.cwd()` |
-| `std.posix.open/read/write/stat/mkdir/unlink/rename/symlink` | `bun.sys.*` equivalents |
-| `std.fs.path.join/dirname/basename` | `bun.path.join/dirname/basename` |
-| `std.mem.eql/indexOf/startsWith` (for strings) | `bun.strings.eql/indexOf/startsWith` |
-| `std.posix.O` / `std.posix.mode_t` / `std.posix.fd_t` | `bun.O` / `bun.Mode` / `bun.FD` |
-| `std.process.Child` | `bun.spawnSync` |
-| `catch bun.outOfMemory()` | `bun.handleOom(...)` |
+| Instead of                                                   | Use                                  |
+| ------------------------------------------------------------ | ------------------------------------ |
+| `std.fs.File`                                                | `bun.sys.File`                       |
+| `std.fs.cwd()`                                               | `bun.FD.cwd()`                       |
+| `std.posix.open/read/write/stat/mkdir/unlink/rename/symlink` | `bun.sys.*` equivalents              |
+| `std.fs.path.join/dirname/basename`                          | `bun.path.join/dirname/basename`     |
+| `std.mem.eql/indexOf/startsWith` (for strings)               | `bun.strings.eql/indexOf/startsWith` |
+| `std.posix.O` / `std.posix.mode_t` / `std.posix.fd_t`        | `bun.O` / `bun.Mode` / `bun.FD`      |
+| `std.process.Child`                                          | `bun.spawnSync`                      |
+| `catch bun.outOfMemory()`                                    | `bun.handleOom(...)`                 |
 
 ## `bun.sys` — System Calls (`src/sys.zig`)
 
@@ -39,6 +39,7 @@ const fd = switch (bun.sys.open(path, bun.O.RDONLY, 0)) {
 ```
 
 Key functions (all take `bun.FileDescriptor`, not `std.posix.fd_t`):
+
 - `open`, `openat`, `openA` (non-sentinel) → `Maybe(bun.FileDescriptor)`
 - `read`, `readAll`, `pread` → `Maybe(usize)`
 - `write`, `pwrite`, `writev` → `Maybe(usize)`
@@ -68,6 +69,7 @@ switch (bun.sys.File.writeFile(bun.FD.cwd(), path, data)) {
 ```
 
 Key methods:
+
 - `File.open/openat/makeOpen` → `Maybe(File)` (`makeOpen` creates parent dirs)
 - `file.read/readAll/write/writeAll` — single or looped I/O
 - `file.readToEnd(allocator)` — read entire file into allocated buffer
@@ -169,6 +171,7 @@ bun.path.z(path, &buf)  // returns [:0]const u8
 Use `bun.PathBuffer` for path buffers: `var buf: bun.PathBuffer = undefined;`
 
 For pooled path buffers (avoids 64KB stack allocations on Windows):
+
 ```zig
 const buf = bun.path_buffer_pool.get();
 defer bun.path_buffer_pool.put(buf);

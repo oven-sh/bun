@@ -52,13 +52,19 @@ const Flags = packed struct {
     esc_pending: bool = false,
     /// Set when we're accumulating an SGR mouse event sequence.
     in_mouse: bool = false,
-    _padding: u1 = 0,
+    /// Mode sequences enabled via constructor options.
+    bracketed_paste: bool = false,
+    focus_events: bool = false,
+    kitty_keyboard: bool = false,
+    _padding: u6 = 0,
 };
 
-pub fn constructor(globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!*TuiKeyReader {
+pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!*TuiKeyReader {
     if (comptime bun.Environment.isWindows) {
         return globalThis.throw("TUIKeyReader is not supported on Windows", .{});
     }
+
+    const arguments = callframe.arguments();
 
     const stdin_fd = bun.FD.fromNative(0);
 
@@ -69,12 +75,34 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSErr
             return globalThis.throw("Failed to set raw mode on stdin", .{});
     }
 
+    // Parse optional constructor options.
+    var want_bracketed_paste = false;
+    var want_focus_events = false;
+    var want_kitty_keyboard = false;
+    if (arguments.len > 0 and arguments[0].isObject()) {
+        const opts = arguments[0];
+        if (try opts.getTruthy(globalThis, "bracketedPaste")) |v| {
+            if (v.isBoolean()) want_bracketed_paste = v.asBoolean();
+        }
+        if (try opts.getTruthy(globalThis, "focusEvents")) |v| {
+            if (v.isBoolean()) want_focus_events = v.asBoolean();
+        }
+        if (try opts.getTruthy(globalThis, "kittyKeyboard")) |v| {
+            if (v.isBoolean()) want_kitty_keyboard = v.asBoolean();
+        }
+    }
+
     const this = bun.new(TuiKeyReader, .{
         .ref_count = .init(),
         .event_loop_handle = jsc.EventLoopHandle.init(globalThis.bunVM().eventLoop()),
         .globalThis = globalThis,
         .stdin_fd = stdin_fd,
-        .flags = .{ .is_tty = is_tty },
+        .flags = .{
+            .is_tty = is_tty,
+            .bracketed_paste = want_bracketed_paste,
+            .focus_events = want_focus_events,
+            .kitty_keyboard = want_kitty_keyboard,
+        },
     });
     this.reader.setParent(this);
 
@@ -91,6 +119,9 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSErr
     // otherwise the initial read may consume data before JS has a chance to
     // set up its callback handler.
 
+    // Write mode-enabling sequences to stdout.
+    this.enableModes();
+
     return this;
 }
 
@@ -101,6 +132,7 @@ fn deinit(this: *TuiKeyReader) void {
     this.onfocus_callback.deinit();
     this.onblur_callback.deinit();
     if (!this.flags.closed) {
+        this.disableModes();
         if (this.flags.is_tty) _ = Bun__ttySetMode(0, 0);
         this.flags.closed = true;
         this.reader.deinit();
@@ -112,6 +144,7 @@ fn deinit(this: *TuiKeyReader) void {
 
 pub fn finalize(this: *TuiKeyReader) callconv(.c) void {
     if (!this.flags.closed) {
+        this.disableModes();
         if (this.flags.is_tty) _ = Bun__ttySetMode(0, 0);
         this.flags.closed = true;
         this.reader.close();
@@ -154,6 +187,7 @@ pub fn onReaderError(this: *TuiKeyReader, _: bun.sys.Error) void {
 
 pub fn close(this: *TuiKeyReader, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     if (!this.flags.closed) {
+        this.disableModes();
         if (this.flags.is_tty) _ = Bun__ttySetMode(0, 0);
         this.flags.closed = true;
         this.reader.close();
@@ -228,6 +262,62 @@ pub fn setOnBlur(this: *TuiKeyReader, globalThis: *jsc.JSGlobalObject, value: js
 
 pub fn getOnBlur(this: *TuiKeyReader, _: *jsc.JSGlobalObject) callconv(.c) jsc.JSValue {
     return this.onblur_callback.get() orelse .js_undefined;
+}
+
+// --- Terminal mode sequences ---
+
+/// Write mode-enabling escape sequences to stdout for modes requested
+/// in the constructor options. Written to stdout (fd 1) regardless of
+/// whether stdin is a TTY, since the user explicitly requested them.
+fn enableModes(this: *const TuiKeyReader) void {
+    var buf: [64]u8 = undefined;
+    var pos: usize = 0;
+    if (this.flags.bracketed_paste) {
+        const seq = "\x1b[?2004h";
+        @memcpy(buf[pos..][0..seq.len], seq);
+        pos += seq.len;
+    }
+    if (this.flags.focus_events) {
+        const seq = "\x1b[?1004h";
+        @memcpy(buf[pos..][0..seq.len], seq);
+        pos += seq.len;
+    }
+    if (this.flags.kitty_keyboard) {
+        const seq = "\x1b[>1u";
+        @memcpy(buf[pos..][0..seq.len], seq);
+        pos += seq.len;
+    }
+    if (pos > 0) {
+        _ = bun.sys.write(bun.FD.fromNative(1), buf[0..pos]);
+    }
+}
+
+/// Write mode-disabling escape sequences to stdout. Called from close/deinit.
+fn disableModes(this: *TuiKeyReader) void {
+    var buf: [64]u8 = undefined;
+    var pos: usize = 0;
+    // Disable in reverse order of enabling.
+    if (this.flags.kitty_keyboard) {
+        const seq = "\x1b[<u";
+        @memcpy(buf[pos..][0..seq.len], seq);
+        pos += seq.len;
+        this.flags.kitty_keyboard = false;
+    }
+    if (this.flags.focus_events) {
+        const seq = "\x1b[?1004l";
+        @memcpy(buf[pos..][0..seq.len], seq);
+        pos += seq.len;
+        this.flags.focus_events = false;
+    }
+    if (this.flags.bracketed_paste) {
+        const seq = "\x1b[?2004l";
+        @memcpy(buf[pos..][0..seq.len], seq);
+        pos += seq.len;
+        this.flags.bracketed_paste = false;
+    }
+    if (pos > 0) {
+        _ = bun.sys.write(bun.FD.fromNative(1), buf[0..pos]);
+    }
 }
 
 // --- Input processing via Ghostty parser ---
@@ -568,6 +658,7 @@ fn emitMouse(this: *TuiKeyReader, button_code: u16, px: u16, py: u16, is_release
     event.put(globalThis, bun.String.static("shift"), jsc.JSValue.jsBoolean(mod_shift));
     event.put(globalThis, bun.String.static("alt"), jsc.JSValue.jsBoolean(mod_alt));
     event.put(globalThis, bun.String.static("ctrl"), jsc.JSValue.jsBoolean(mod_ctrl));
+    event.put(globalThis, bun.String.static("option"), jsc.JSValue.jsBoolean(mod_alt));
 
     globalThis.bunVM().eventLoop().runCallback(callback, globalThis, .js_undefined, &.{event});
 }
@@ -588,7 +679,7 @@ fn emitKeypress(this: *TuiKeyReader, name: []const u8, sequence: []const u8, ctr
     const callback = this.onkeypress_callback.get() orelse return;
     const globalThis = this.globalThis;
 
-    const event = jsc.JSValue.createEmptyObject(globalThis, 5);
+    const event = jsc.JSValue.createEmptyObject(globalThis, 6);
     const name_js = bun.String.createUTF8ForJS(globalThis, name) catch return;
     const seq_js = bun.String.createUTF8ForJS(globalThis, sequence) catch return;
     event.put(globalThis, bun.String.static("name"), name_js);
@@ -596,6 +687,7 @@ fn emitKeypress(this: *TuiKeyReader, name: []const u8, sequence: []const u8, ctr
     event.put(globalThis, bun.String.static("ctrl"), jsc.JSValue.jsBoolean(ctrl));
     event.put(globalThis, bun.String.static("shift"), jsc.JSValue.jsBoolean(shift));
     event.put(globalThis, bun.String.static("alt"), jsc.JSValue.jsBoolean(alt));
+    event.put(globalThis, bun.String.static("option"), jsc.JSValue.jsBoolean(alt));
 
     globalThis.bunVM().eventLoop().runCallback(callback, globalThis, .js_undefined, &.{event});
 }

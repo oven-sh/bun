@@ -1036,4 +1036,214 @@ describe("Bun.TUIKeyReader", () => {
       expect(exitCode).toBe(0);
     });
   });
+
+  test("exposes option field as alias for alt on keypress events", async () => {
+    using dir = tempDir("tui-keyreader-option", {
+      "test.ts": `
+        const reader = new Bun.TUIKeyReader();
+        const events: any[] = [];
+        reader.onkeypress = (event: any) => {
+          events.push({ name: event.name, alt: event.alt, option: event.option });
+          if (events.length >= 2) {
+            reader.close();
+            console.log(JSON.stringify(events));
+            process.exit(0);
+          }
+        };
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(String(dir), "test.ts")],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    // Send 'a' (no alt) then alt+b (\x1bb)
+    proc.stdin.write("a\x1bb");
+    proc.stdin.end();
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    const events = JSON.parse(stdout.trim());
+    expect(events).toEqual([
+      { name: "a", alt: false, option: false },
+      { name: "b", alt: true, option: true },
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  // ─── Constructor options (mode sequences) ──────────────────────
+
+  describe("constructor options", () => {
+    test("accepts options object without crashing", async () => {
+      using dir = tempDir("tui-keyreader-opts", {
+        "test.ts": `
+          const reader = new Bun.TUIKeyReader({
+            bracketedPaste: true,
+            focusEvents: true,
+            kittyKeyboard: true,
+          });
+          reader.close();
+          console.log("ok");
+          process.exit(0);
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(String(dir), "test.ts")],
+        env: bunEnv,
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      proc.stdin.end();
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // stdout contains the mode sequences + "ok\n"
+      expect(stdout).toContain("ok");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("writes bracketed paste enable/disable sequences", async () => {
+      using dir = tempDir("tui-keyreader-bp", {
+        "test.ts": `
+          const reader = new Bun.TUIKeyReader({ bracketedPaste: true });
+          // Immediately close to get both enable and disable sequences
+          reader.close();
+          process.exit(0);
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(String(dir), "test.ts")],
+        env: bunEnv,
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      proc.stdin.end();
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // Enable: CSI ?2004h, Disable: CSI ?2004l
+      expect(stdout).toContain("\x1b[?2004h");
+      expect(stdout).toContain("\x1b[?2004l");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("writes focus events enable/disable sequences", async () => {
+      using dir = tempDir("tui-keyreader-fe", {
+        "test.ts": `
+          const reader = new Bun.TUIKeyReader({ focusEvents: true });
+          reader.close();
+          process.exit(0);
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(String(dir), "test.ts")],
+        env: bunEnv,
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      proc.stdin.end();
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // Enable: CSI ?1004h, Disable: CSI ?1004l
+      expect(stdout).toContain("\x1b[?1004h");
+      expect(stdout).toContain("\x1b[?1004l");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("writes kitty keyboard enable/disable sequences", async () => {
+      using dir = tempDir("tui-keyreader-kk", {
+        "test.ts": `
+          const reader = new Bun.TUIKeyReader({ kittyKeyboard: true });
+          reader.close();
+          process.exit(0);
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(String(dir), "test.ts")],
+        env: bunEnv,
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      proc.stdin.end();
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // Enable: CSI >1u, Disable: CSI <u
+      expect(stdout).toContain("\x1b[>1u");
+      expect(stdout).toContain("\x1b[<u");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("no options means no mode sequences", async () => {
+      using dir = tempDir("tui-keyreader-noopts", {
+        "test.ts": `
+          const reader = new Bun.TUIKeyReader();
+          reader.close();
+          console.log("ok");
+          process.exit(0);
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(String(dir), "test.ts")],
+        env: bunEnv,
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      proc.stdin.end();
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // Should just have "ok" and no escape sequences
+      expect(stdout.trim()).toBe("ok");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  test("exposes option field as alias for alt on mouse events", async () => {
+    using dir = tempDir("tui-keyreader-mouse-option", {
+      "test.ts": `
+        const reader = new Bun.TUIKeyReader();
+        reader.onmouse = (event: any) => {
+          reader.close();
+          console.log(JSON.stringify({ alt: event.alt, option: event.option, type: event.type }));
+          process.exit(0);
+        };
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(String(dir), "test.ts")],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    // SGR mouse: alt+click at (1,1) — button 0 with alt modifier (bit 3 = 8)
+    proc.stdin.write("\x1b[<8;1;1M");
+    proc.stdin.end();
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    const event = JSON.parse(stdout.trim());
+    expect(event).toEqual({ alt: true, option: true, type: "down" });
+    expect(exitCode).toBe(0);
+  });
 });

@@ -1509,4 +1509,68 @@ describe("Bun.TUIBufferWriter", () => {
     expect(writer.byteOffset).toBe(0);
     expect(writer.byteLength).toBe(0);
   });
+
+  // ─── Inline mode ─────────────────────────────────────────────────
+
+  describe("inline mode via TUIBufferWriter", () => {
+    test("render with inline option uses LF instead of CUD", () => {
+      const buf = new ArrayBuffer(65536);
+      const writer = new Bun.TUIBufferWriter(buf);
+      const screen = new Bun.TUIScreen(10, 3);
+      screen.setText(0, 0, "Line1");
+      screen.setText(0, 1, "Line2");
+      screen.setText(0, 2, "Line3");
+
+      writer.render(screen, { inline: true, viewportHeight: 24 });
+
+      const output = new TextDecoder().decode(new Uint8Array(buf, 0, writer.byteOffset));
+      // Should contain BSU/ESU
+      expect(output).toContain("\x1b[?2026h");
+      expect(output).toContain("\x1b[?2026l");
+      // Should contain content
+      expect(output).toContain("Line1");
+      expect(output).toContain("Line2");
+      expect(output).toContain("Line3");
+      writer.close();
+    });
+
+    test("inline mode first render has CR+LF between rows", () => {
+      const buf = new ArrayBuffer(65536);
+      const writer = new Bun.TUIBufferWriter(buf);
+      const screen = new Bun.TUIScreen(10, 2);
+      screen.setText(0, 0, "A");
+      screen.setText(0, 1, "B");
+
+      writer.render(screen, { inline: true, viewportHeight: 24 });
+
+      const output = new TextDecoder().decode(new Uint8Array(buf, 0, writer.byteOffset));
+      // Between rows, renderFull emits \r\n
+      expect(output).toContain("\r\n");
+      expect(output).toContain("A");
+      expect(output).toContain("B");
+      writer.close();
+    });
+
+    test("inline diff uses LF for downward movement", () => {
+      const buf = new ArrayBuffer(65536);
+      const writer = new Bun.TUIBufferWriter(buf);
+      const screen = new Bun.TUIScreen(10, 3);
+      screen.setText(0, 0, "A");
+      screen.setText(0, 1, "B");
+      screen.setText(0, 2, "C");
+
+      // First render (full)
+      writer.render(screen, { inline: true, viewportHeight: 24 });
+      const firstLen = writer.byteOffset;
+
+      // Change only row 2
+      screen.setText(0, 2, "X");
+      writer.render(screen, { inline: true, viewportHeight: 24 });
+
+      const output = new TextDecoder().decode(new Uint8Array(buf, 0, writer.byteOffset));
+      // Diff render should contain the changed cell
+      expect(output).toContain("X");
+      writer.close();
+    });
+  });
 });

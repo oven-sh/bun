@@ -298,6 +298,220 @@ pub fn setText(this: *TuiScreen, globalThis: *jsc.JSGlobalObject, callframe: *js
     return jsc.JSValue.jsNumber(@as(i32, @intCast(col - start_x)));
 }
 
+/// setAnsiText(x, y, text) — parse ANSI escape sequences in `text` and write styled characters.
+/// Interprets SGR (CSI … m) sequences to set the current style, writes printable characters
+/// into cells at (x, y), advancing the column after each character.
+/// CR resets column to start_x; LF advances row and resets column.
+/// Returns the column count written (on the last row).
+pub fn setAnsiText(this: *TuiScreen, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    const arguments = callframe.arguments();
+    if (arguments.len < 3) return globalThis.throw("setAnsiText requires (x, y, text)", .{});
+
+    if (!arguments[0].isNumber() or !arguments[1].isNumber())
+        return globalThis.throw("setAnsiText: x and y must be numbers", .{});
+    if (!arguments[2].isString()) return globalThis.throw("setAnsiText: text must be a string", .{});
+
+    const start_x: size.CellCountInt = @intCast(@max(0, @min((try arguments[0].coerce(i32, globalThis)), this.getCols() -| 1)));
+    var y: size.CellCountInt = @intCast(@max(0, @min((try arguments[1].coerce(i32, globalThis)), this.getRows() -| 1)));
+
+    const str = try arguments[2].toSliceClone(globalThis);
+    defer str.deinit();
+    const text = str.slice();
+
+    var parser = Parser.init();
+    defer parser.deinit();
+    var current_style = Style{};
+    var current_style_id: size.StyleCountInt = 0;
+    var col = start_x;
+    const cols = this.getCols();
+
+    // Apply clipping
+    var clip_max_col: size.CellCountInt = cols;
+    var clip_min_y: size.CellCountInt = 0;
+    var clip_max_y: size.CellCountInt = this.getRows();
+    if (this.clip_depth > 0) {
+        const cr = this.clip_stack[this.clip_depth - 1];
+        clip_max_col = cr.x2;
+        clip_min_y = cr.y1;
+        clip_max_y = cr.y2;
+    }
+
+    var i: usize = 0;
+    while (i < text.len) {
+        const byte = text[i];
+
+        // Handle UTF-8 multi-byte sequences directly (parser only handles ASCII).
+        if (byte >= 0xC0) {
+            const seq_len = bun.strings.utf8ByteSequenceLength(byte);
+            if (i + seq_len <= text.len) {
+                const seq = text[i .. i + seq_len];
+                var seq_bytes = [4]u8{ seq[0], 0, 0, 0 };
+                if (seq_len > 1) seq_bytes[1] = seq[1];
+                if (seq_len > 2) seq_bytes[2] = seq[2];
+                if (seq_len > 3) seq_bytes[3] = seq[3];
+                const cp = bun.strings.decodeWTF8RuneT(&seq_bytes, seq_len, u21, 0xFFFD);
+                if (cp != 0xFFFD) {
+                    this.writeAnsiChar(cp, &col, y, current_style_id, clip_max_col, clip_min_y, clip_max_y);
+                }
+                i += seq_len;
+            } else {
+                i += 1;
+            }
+            continue;
+        }
+
+        // Skip stray continuation bytes.
+        if (byte >= 0x80) {
+            i += 1;
+            continue;
+        }
+
+        // Feed ASCII through the VT parser.
+        const actions = parser.next(byte);
+        for (&actions) |maybe_action| {
+            const action = maybe_action orelse continue;
+            switch (action) {
+                .print => |cp| {
+                    this.writeAnsiChar(@intCast(cp), &col, y, current_style_id, clip_max_col, clip_min_y, clip_max_y);
+                },
+                .execute => |c| {
+                    switch (c) {
+                        '\r' => col = start_x,
+                        '\n' => {
+                            y +|= 1;
+                            col = start_x;
+                        },
+                        '\t' => {
+                            // Advance to next tab stop (every 8 columns).
+                            col = @min((col +| 8) & ~@as(size.CellCountInt, 7), cols);
+                        },
+                        else => {},
+                    }
+                },
+                .csi_dispatch => |csi| {
+                    if (csi.final == 'm') {
+                        // Parse SGR attributes and update current style.
+                        var sgr_parser = sgr.Parser{
+                            .params = csi.params,
+                            .params_sep = csi.params_sep,
+                        };
+                        while (sgr_parser.next()) |attr| {
+                            applyAnsiAttribute(&current_style, attr);
+                        }
+                        // Intern the updated style.
+                        if (current_style.default()) {
+                            current_style_id = 0;
+                        } else {
+                            current_style_id = this.internStyle(current_style);
+                        }
+                    }
+                },
+                else => {},
+            }
+        }
+        i += 1;
+    }
+
+    return jsc.JSValue.jsNumber(@as(i32, @intCast(col -| start_x)));
+}
+
+/// Write a single codepoint at (col, y) with the given style, advancing col.
+/// Used by setAnsiText to place characters parsed from ANSI input.
+fn writeAnsiChar(
+    this: *TuiScreen,
+    cp: u21,
+    col: *size.CellCountInt,
+    y: size.CellCountInt,
+    sid: size.StyleCountInt,
+    clip_max_col: size.CellCountInt,
+    clip_min_y: size.CellCountInt,
+    clip_max_y: size.CellCountInt,
+) void {
+    if (y < clip_min_y or y >= clip_max_y or y >= this.getRows()) return;
+
+    const effective_cols = clip_max_col;
+    const width: u2 = @intCast(@min(bun.strings.visibleCodepointWidth(@intCast(cp), false), 2));
+
+    if (width == 0) {
+        // Zero-width: append as grapheme extension to preceding cell.
+        if (col.* > 0) {
+            const rc = this.getRowCells(y);
+            const target = graphemeTarget(rc.cells, col.*, 0);
+            this.page.appendGrapheme(rc.row, &rc.cells[target], @intCast(cp)) catch {};
+            rc.row.dirty = true;
+        }
+        return;
+    }
+
+    if (col.* >= effective_cols) return;
+    if (width == 2 and col.* + 1 >= effective_cols) return;
+
+    const rc = this.getRowCells(y);
+    rc.cells[col.*] = .{
+        .content_tag = .codepoint,
+        .content = .{ .codepoint = @intCast(cp) },
+        .style_id = sid,
+        .wide = if (width == 2) .wide else .narrow,
+    };
+    rc.row.dirty = true;
+    if (sid != 0) rc.row.styled = true;
+    col.* += 1;
+
+    if (width == 2 and col.* < effective_cols) {
+        rc.cells[col.*] = .{ .content_tag = .codepoint, .content = .{ .codepoint = ' ' }, .style_id = sid, .wide = .spacer_tail };
+        col.* += 1;
+    }
+}
+
+/// Intern a Style into the page's style set, using the cache to avoid duplicates.
+fn internStyle(this: *TuiScreen, s: Style) size.StyleCountInt {
+    const key = StyleKey.fromStyle(s);
+    if (this.style_cache.get(key)) |cached_id| return cached_id;
+    const id = this.page.styles.add(this.page.memory, s) catch return 0;
+    this.style_cache.put(bun.default_allocator, key, id) catch {};
+    return id;
+}
+
+/// Apply an SGR attribute to a Style, modifying it in-place.
+fn applyAnsiAttribute(s: *Style, attr: sgr.Attribute) void {
+    switch (attr) {
+        .unset => s.* = Style{},
+        .bold => s.flags.bold = true,
+        .reset_bold => {
+            s.flags.bold = false;
+            s.flags.faint = false;
+        },
+        .italic => s.flags.italic = true,
+        .reset_italic => s.flags.italic = false,
+        .faint => s.flags.faint = true,
+        .underline => |ul| s.flags.underline = ul,
+        .blink => s.flags.blink = true,
+        .reset_blink => s.flags.blink = false,
+        .inverse => s.flags.inverse = true,
+        .reset_inverse => s.flags.inverse = false,
+        .invisible => s.flags.invisible = true,
+        .reset_invisible => s.flags.invisible = false,
+        .strikethrough => s.flags.strikethrough = true,
+        .reset_strikethrough => s.flags.strikethrough = false,
+        .overline => s.flags.overline = true,
+        .reset_overline => s.flags.overline = false,
+        .direct_color_fg => |rgb| s.fg_color = .{ .rgb = rgb },
+        .direct_color_bg => |rgb| s.bg_color = .{ .rgb = rgb },
+        .@"8_fg" => |name| s.fg_color = .{ .palette = @intFromEnum(name) },
+        .@"8_bg" => |name| s.bg_color = .{ .palette = @intFromEnum(name) },
+        .@"8_bright_fg" => |name| s.fg_color = .{ .palette = @intFromEnum(name) },
+        .@"8_bright_bg" => |name| s.bg_color = .{ .palette = @intFromEnum(name) },
+        .@"256_fg" => |idx| s.fg_color = .{ .palette = idx },
+        .@"256_bg" => |idx| s.bg_color = .{ .palette = idx },
+        .reset_fg => s.fg_color = .none,
+        .reset_bg => s.bg_color = .none,
+        .underline_color => |rgb| s.underline_color = .{ .rgb = rgb },
+        .@"256_underline_color" => |idx| s.underline_color = .{ .palette = idx },
+        .reset_underline_color => s.underline_color = .none,
+        .unknown => {},
+    }
+}
+
 /// style({ fg, bg, bold, italic, underline, ... }) → styleId
 pub fn style(this: *TuiScreen, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const arguments = callframe.arguments();
@@ -868,6 +1082,9 @@ fn parseColor(globalThis: *jsc.JSGlobalObject, val: jsc.JSValue) bun.JSError!Sty
     }
     return .none;
 }
+
+const Parser = ghostty.Parser;
+const color = ghostty.color;
 
 const bun = @import("bun");
 const std = @import("std");

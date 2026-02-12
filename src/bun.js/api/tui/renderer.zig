@@ -41,6 +41,16 @@ current_cursor_style: CursorStyle = .default,
 current_cursor_blinking: bool = false,
 /// Set during render() to the target buffer. Not valid outside render().
 buf: *std.ArrayList(u8) = undefined,
+/// Inline mode state: number of content rows that have scrolled into
+/// the terminal's scrollback buffer and are unreachable via cursor movement.
+scrollback_rows: size.CellCountInt = 0,
+/// The highest content row index that has been reached via LF emission.
+/// Rows beyond this require LF (which scrolls) rather than CUD (which doesn't).
+max_row_reached: size.CellCountInt = 0,
+/// Terminal viewport height, used for inline mode scrollback tracking.
+viewport_height: u16 = 0,
+/// True when rendering in inline mode for this frame.
+inline_mode: bool = false,
 
 pub fn render(
     this: *TuiRenderer,
@@ -52,12 +62,51 @@ pub fn render(
     cursor_style: ?CursorStyle,
     cursor_blinking: ?bool,
 ) void {
+    this.renderInner(buf, screen, cursor_x, cursor_y, cursor_visible, cursor_style, cursor_blinking, false, 0);
+}
+
+pub fn renderInline(
+    this: *TuiRenderer,
+    buf: *std.ArrayList(u8),
+    screen: *const TuiScreen,
+    cursor_x: ?size.CellCountInt,
+    cursor_y: ?size.CellCountInt,
+    cursor_visible: ?bool,
+    cursor_style: ?CursorStyle,
+    cursor_blinking: ?bool,
+    viewport_height: u16,
+) void {
+    this.renderInner(buf, screen, cursor_x, cursor_y, cursor_visible, cursor_style, cursor_blinking, true, viewport_height);
+}
+
+fn renderInner(
+    this: *TuiRenderer,
+    buf: *std.ArrayList(u8),
+    screen: *const TuiScreen,
+    cursor_x: ?size.CellCountInt,
+    cursor_y: ?size.CellCountInt,
+    cursor_visible: ?bool,
+    cursor_style: ?CursorStyle,
+    cursor_blinking: ?bool,
+    inline_mode: bool,
+    viewport_height: u16,
+) void {
     this.buf = buf;
+    this.inline_mode = inline_mode;
+    if (inline_mode and viewport_height > 0) {
+        this.viewport_height = viewport_height;
+    }
 
     this.emit(BSU);
 
-    const need_full = !this.has_rendered or this.prev_page == null or
+    var need_full = !this.has_rendered or this.prev_page == null or
         (if (this.prev_page) |p| p.size.cols != screen.page.size.cols or p.size.rows != screen.page.size.rows else true);
+
+    // In inline mode, check if any dirty rows are in scrollback (unreachable).
+    // If so, force a full redraw of the visible portion.
+    if (!need_full and inline_mode and this.scrollback_rows > 0) {
+        need_full = this.hasScrollbackChanges(screen);
+    }
 
     if (need_full) this.renderFull(screen) else this.renderDiff(screen);
 
@@ -102,6 +151,8 @@ pub fn clear(this: *TuiRenderer) void {
     this.current_hyperlink_id = 0;
     this.has_rendered = false;
     this.prev_rows = 0;
+    this.scrollback_rows = 0;
+    this.max_row_reached = 0;
     if (this.prev_hyperlink_ids) |ids| {
         bun.default_allocator.free(ids);
         this.prev_hyperlink_ids = null;
@@ -113,23 +164,56 @@ pub fn deinit(this: *TuiRenderer) void {
     if (this.prev_hyperlink_ids) |ids| bun.default_allocator.free(ids);
 }
 
+/// Check if any cells in the scrollback region (unreachable rows) have changed.
+fn hasScrollbackChanges(this: *const TuiRenderer, screen: *const TuiScreen) bool {
+    const prev = &(this.prev_page orelse return true);
+    var y: size.CellCountInt = 0;
+    while (y < this.scrollback_rows and y < screen.page.size.rows) : (y += 1) {
+        const row = screen.page.getRow(y);
+        if (!row.dirty) continue;
+        const cells = row.cells.ptr(screen.page.memory)[0..screen.page.size.cols];
+        const prev_cells = prev.getRow(y).cells.ptr(prev.memory)[0..prev.size.cols];
+        var x: size.CellCountInt = 0;
+        while (x < screen.page.size.cols) : (x += 1) {
+            if (@as(u64, @bitCast(cells[x])) != @as(u64, @bitCast(prev_cells[x]))) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 // --- Rendering internals ---
 
 fn renderFull(this: *TuiRenderer, screen: *const TuiScreen) void {
     this.emit("\x1b[?25l");
+
+    // In inline mode, we can only move up to the first visible row.
+    // scrollback_rows tracks how many content rows are unreachable.
+    const start_y: size.CellCountInt = if (this.inline_mode) this.scrollback_rows else 0;
+
     if (this.has_rendered) {
-        if (this.cursor_y > 0) {
-            this.emitCSI(this.cursor_y, 'A');
+        // Move cursor back to the start of our content region.
+        const reachable_top = if (this.inline_mode) start_y else 0;
+        if (this.cursor_y > reachable_top) {
+            this.emitCSI(this.cursor_y - reachable_top, 'A');
         }
         this.emit("\r");
         this.cursor_x = 0;
-        this.cursor_y = 0;
+        this.cursor_y = reachable_top;
     }
     this.current_style_id = 0;
 
-    var y: size.CellCountInt = 0;
+    var first_visible = true;
+    var y: size.CellCountInt = start_y;
     while (y < screen.page.size.rows) : (y += 1) {
-        if (y > 0) this.emit("\r\n");
+        if (!first_visible) {
+            // In inline mode, use LF to create new lines (scrolls viewport).
+            // In fullscreen mode, \r\n also works since we don't use alt screen here.
+            this.emit("\r\n");
+        }
+        first_visible = false;
+
         const cells = screen.page.getRow(y).cells.ptr(screen.page.memory)[0..screen.page.size.cols];
 
         var blank_cells: usize = 0;
@@ -165,6 +249,7 @@ fn renderFull(this: *TuiRenderer, screen: *const TuiScreen) void {
         this.emit("\x1b[K");
     }
 
+    // Clear extra rows from previous render if content shrank.
     if (this.prev_rows > screen.page.size.rows) {
         var extra = this.prev_rows - screen.page.size.rows;
         while (extra > 0) : (extra -= 1) {
@@ -177,6 +262,18 @@ fn renderFull(this: *TuiRenderer, screen: *const TuiScreen) void {
     this.current_style_id = 0;
     this.cursor_x = screen.page.size.cols;
     this.cursor_y = screen.page.size.rows -| 1;
+
+    // Update inline mode scrollback tracking.
+    if (this.inline_mode and this.viewport_height > 0) {
+        if (this.cursor_y >= this.max_row_reached) {
+            this.max_row_reached = this.cursor_y;
+        }
+        // Total content rows that have been pushed through the viewport.
+        // Rows beyond viewport_height are in scrollback.
+        if (this.max_row_reached +| 1 > this.viewport_height) {
+            this.scrollback_rows = (this.max_row_reached +| 1) - this.viewport_height;
+        }
+    }
 }
 
 fn renderDiff(this: *TuiRenderer, screen: *const TuiScreen) void {
@@ -260,7 +357,26 @@ fn swapScreens(this: *TuiRenderer, screen: *const TuiScreen) void {
 
 fn moveTo(this: *TuiRenderer, x: size.CellCountInt, y: size.CellCountInt) void {
     if (y > this.cursor_y) {
-        this.emitCSI(y - this.cursor_y, 'B');
+        if (this.inline_mode) {
+            // In inline mode, use LF for downward movement.
+            // LF scrolls the viewport when at the bottom, CUD does not.
+            var n = y - this.cursor_y;
+            while (n > 0) : (n -= 1) {
+                this.emit("\n");
+            }
+            // After LF, cursor is at column 0. We need to account for this
+            // when positioning X below.
+            this.cursor_x = 0;
+            // Update max_row_reached for scrollback tracking.
+            if (y > this.max_row_reached) {
+                this.max_row_reached = y;
+                if (this.viewport_height > 0 and this.max_row_reached +| 1 > this.viewport_height) {
+                    this.scrollback_rows = (this.max_row_reached +| 1) - this.viewport_height;
+                }
+            }
+        } else {
+            this.emitCSI(y - this.cursor_y, 'B');
+        }
     } else if (y < this.cursor_y) {
         this.emitCSI(this.cursor_y - y, 'A');
     }

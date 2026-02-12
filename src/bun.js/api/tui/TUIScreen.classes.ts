@@ -14,6 +14,10 @@ export default [
         fn: "setText",
         length: 4,
       },
+      setAnsiText: {
+        fn: "setAnsiText",
+        length: 3,
+      },
       style: {
         fn: "style",
         length: 1,

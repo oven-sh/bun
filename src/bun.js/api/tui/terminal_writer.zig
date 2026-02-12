@@ -230,6 +230,7 @@ pub fn render(this: *TuiTerminalWriter, globalThis: *jsc.JSGlobalObject, callfra
     var cursor_visible: ?bool = null;
     var cursor_style: ?CursorStyle = null;
     var cursor_blinking: ?bool = null;
+    var use_inline = false;
     if (arguments.len > 1 and arguments[1].isObject()) {
         const opts = arguments[1];
         if (try opts.getTruthy(globalThis, "cursorX")) |v| {
@@ -249,15 +250,34 @@ pub fn render(this: *TuiTerminalWriter, globalThis: *jsc.JSGlobalObject, callfra
         if (try opts.getTruthy(globalThis, "cursorBlinking")) |v| {
             if (v.isBoolean()) cursor_blinking = v.asBoolean();
         }
+        if (try opts.getTruthy(globalThis, "inline")) |v| {
+            if (v.isBoolean()) use_inline = v.asBoolean();
+        }
     }
+
+    // Get viewport height for inline mode.
+    const viewport_h: u16 = if (use_inline) blk: {
+        break :blk switch (bun.sys.getWinsize(this.fd)) {
+            .result => |ws| ws.row,
+            .err => 24,
+        };
+    } else 0;
 
     // Async double-buffered write.
     if (this.write_pending) {
         this.next_output.clearRetainingCapacity();
-        this.renderer.render(&this.next_output, screen, cursor_x, cursor_y, cursor_visible, cursor_style, cursor_blinking);
+        if (use_inline) {
+            this.renderer.renderInline(&this.next_output, screen, cursor_x, cursor_y, cursor_visible, cursor_style, cursor_blinking, viewport_h);
+        } else {
+            this.renderer.render(&this.next_output, screen, cursor_x, cursor_y, cursor_visible, cursor_style, cursor_blinking);
+        }
     } else {
         this.output.clearRetainingCapacity();
-        this.renderer.render(&this.output, screen, cursor_x, cursor_y, cursor_visible, cursor_style, cursor_blinking);
+        if (use_inline) {
+            this.renderer.renderInline(&this.output, screen, cursor_x, cursor_y, cursor_visible, cursor_style, cursor_blinking, viewport_h);
+        } else {
+            this.renderer.render(&this.output, screen, cursor_x, cursor_y, cursor_visible, cursor_style, cursor_blinking);
+        }
         if (this.output.items.len > 0) {
             this.write_offset = 0;
             this.write_pending = true;

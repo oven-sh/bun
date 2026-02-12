@@ -78,6 +78,8 @@ pub fn render(this: *TuiBufferWriter, globalThis: *jsc.JSGlobalObject, callframe
     var cursor_visible: ?bool = null;
     var cursor_style: ?CursorStyle = null;
     var cursor_blinking: ?bool = null;
+    var use_inline = false;
+    var viewport_h: u16 = 0;
     if (arguments.len > 1 and arguments[1].isObject()) {
         const opts = arguments[1];
         if (try opts.getTruthy(globalThis, "cursorX")) |v| {
@@ -97,6 +99,12 @@ pub fn render(this: *TuiBufferWriter, globalThis: *jsc.JSGlobalObject, callframe
         if (try opts.getTruthy(globalThis, "cursorBlinking")) |v| {
             if (v.isBoolean()) cursor_blinking = v.asBoolean();
         }
+        if (try opts.getTruthy(globalThis, "inline")) |v| {
+            if (v.isBoolean()) use_inline = v.asBoolean();
+        }
+        if (try opts.getTruthy(globalThis, "viewportHeight")) |v| {
+            if (v.isNumber()) viewport_h = @intCast(@max(1, @min((try v.coerce(i32, globalThis)), 4096)));
+        }
     }
 
     const ab_val = js.gc.get(.buffer, callframe.this()) orelse
@@ -108,7 +116,11 @@ pub fn render(this: *TuiBufferWriter, globalThis: *jsc.JSGlobalObject, callframe
         return globalThis.throw("render: ArrayBuffer is empty", .{});
 
     this.output.clearRetainingCapacity();
-    this.renderer.render(&this.output, screen, cursor_x, cursor_y, cursor_visible, cursor_style, cursor_blinking);
+    if (use_inline and viewport_h > 0) {
+        this.renderer.renderInline(&this.output, screen, cursor_x, cursor_y, cursor_visible, cursor_style, cursor_blinking, viewport_h);
+    } else {
+        this.renderer.render(&this.output, screen, cursor_x, cursor_y, cursor_visible, cursor_style, cursor_blinking);
+    }
 
     const total_len = this.output.items.len;
     const copy_len = @min(total_len, dest.len);

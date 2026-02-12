@@ -153,15 +153,7 @@ pub fn processNamesArray(
         ) catch |err| {
             bun.handleErrorReturnTrace(err, @errorReturnTrace());
             switch (err) {
-                error.EISNOTDIR, error.EISDIR, error.EACCESS, error.EPERM, error.ENOENT, error.FileNotFound => {
-                    log.addErrorFmt(
-                        source,
-                        item.loc,
-                        allocator,
-                        "Workspace not found \"{s}\"",
-                        .{input_path},
-                    ) catch {};
-                },
+                error.EISNOTDIR, error.EISDIR, error.EACCESS, error.EPERM, error.ENOENT, error.FileNotFound => {},
                 error.MissingPackageName => {
                     log.addErrorFmt(
                         source,

@@ -1552,6 +1552,15 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
                     }
                     debug("SASLContinue", .{});
 
+                    // RFC 5802 Section 5: The client MUST verify that the server nonce
+                    // starts with the client's original nonce. This prevents MITM attacks
+                    // where an attacker replaces the server nonce entirely.
+                    const client_nonce = sasl.nonce();
+                    if (!bun.strings.hasPrefix(cont.r, client_nonce)) {
+                        debug("SASL server nonce does not start with client nonce", .{});
+                        return error.SASL_NONCE_MISMATCH;
+                    }
+
                     const iteration_count = try cont.iterationCount();
 
                     const server_salt_decoded_base64 = bun.base64.decodeAlloc(bun.z_allocator, cont.s) catch |err| {

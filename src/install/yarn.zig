@@ -997,10 +997,14 @@ pub fn migrateYarnLockfile(
                 } else .all,
                 .man_dir = String{},
                 .has_install_script = .false,
-                .integrity = if (entry.integrity) |integrity|
-                    Integrity.parse(integrity)
-                else
-                    Integrity{},
+                .integrity = if (entry.integrity) |integrity| blk: {
+                    const parsed = Integrity.parse(integrity);
+                    if (integrity.len > 0 and !parsed.tag.isSupported()) {
+                        try log.addError(null, logger.Loc.Empty, "Unsupported integrity hash algorithm in yarn.lock");
+                        return error.InvalidYarnLock;
+                    }
+                    break :blk parsed;
+                } else Integrity{},
             },
             .bin = Bin.init(),
             .scripts = .{},

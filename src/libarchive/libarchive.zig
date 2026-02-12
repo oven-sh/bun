@@ -460,13 +460,13 @@ pub const Archiver = struct {
                             if (comptime Environment.isWindows) {
                                 try bun.MakePath.makePath(u16, dir, path);
                             } else {
-                                std.posix.mkdiratZ(dir_fd, pathname, @intCast(mode)) catch |err| {
+                                std.posix.mkdiratZ(dir_fd, path, @intCast(mode)) catch |err| {
                                     // It's possible for some tarballs to return a directory twice, with and
                                     // without `./` in the beginning. So if it already exists, continue to the
                                     // next entry.
                                     if (err == error.PathAlreadyExists or err == error.NotDir) continue;
                                     bun.makePath(dir, std.fs.path.dirname(path_slice) orelse return err) catch {};
-                                    std.posix.mkdiratZ(dir_fd, pathname, 0o777) catch {};
+                                    std.posix.mkdiratZ(dir_fd, path, 0o777) catch {};
                                 };
                             }
                         },

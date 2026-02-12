@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { tempDir } from "harness";
 
 test("Content-Disposition header injection via CRLF in File name", async () => {
   await using server = Bun.serve({
@@ -57,12 +58,10 @@ test("Content-Disposition header injection via quotes in File name", async () =>
 });
 
 test("Content-Disposition header injection via Bun.file with crafted path", async () => {
-  // Create a file with CRLF in the name on the filesystem (Linux allows this)
-  const fs = await import("fs");
-  const os = await import("os");
-  const tmpDir = fs.mkdtempSync(os.tmpdir() + "/bun-test-crlf-");
+  // Create a temp dir, then add a file with CRLF in its name (Linux allows this)
+  using dir = tempDir("crlf-filename", {});
   const maliciousFilename = "evil.bin\r\nX-Injected: true";
-  const filePath = tmpDir + "/" + maliciousFilename;
+  const filePath = `${dir}/${maliciousFilename}`;
 
   let fileCreated = false;
   try {

@@ -326,16 +326,28 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
     /* Emit pre callback */
     us_internal_loop_pre(loop);
 
-
-    if (loop->data.jsc_vm) 
+    const unsigned int had_wakeups = __atomic_exchange_n(&loop->pending_wakeups, 0, __ATOMIC_ACQUIRE);
+    const int will_idle_inside_event_loop = had_wakeups == 0 && (!timeout || (timeout->tv_nsec != 0 || timeout->tv_sec != 0));
+    if (will_idle_inside_event_loop && loop->data.jsc_vm)
         Bun__JSC_onBeforeWait(loop->data.jsc_vm);
 
     /* Fetch ready polls */
 #ifdef LIBUS_USE_EPOLL
+    /* A zero timespec already has a fast path in ep_poll (fs/eventpoll.c):
+     * it sets timed_out=1 (line 1952) and returns before any scheduler
+     * interaction (line 1975). No equivalent of KEVENT_FLAG_IMMEDIATE needed. */
     loop->num_ready_polls = bun_epoll_pwait2(loop->fd, loop->ready_polls, 1024, timeout);
 #else
     do {
-        loop->num_ready_polls = kevent64(loop->fd, NULL, 0, loop->ready_polls, 1024, 0, timeout);
+        loop->num_ready_polls = kevent64(loop->fd, NULL, 0, loop->ready_polls, 1024,
+            /* When we won't idle (pending wakeups or zero timeout), use KEVENT_FLAG_IMMEDIATE.
+             * In XNU's kqueue_scan (bsd/kern/kern_event.c):
+             *  - KEVENT_FLAG_IMMEDIATE: returns immediately after kqueue_process() (line 8031)
+             *  - Zero timespec without the flag: falls through to assert_wait_deadline (line 8039)
+             *    and thread_block (line 8048), doing a full context switch cycle (~14us) even
+             *    though the deadline is already in the past. */
+            will_idle_inside_event_loop ? 0 : KEVENT_FLAG_IMMEDIATE,
+            timeout);
     } while (IS_EINTR(loop->num_ready_polls));
 #endif
 

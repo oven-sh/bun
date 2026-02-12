@@ -71,6 +71,14 @@ public:
     Value value;
 };
 
+// A flat object whose property values are only primitives or strings (no nesting).
+struct SimpleCloneableObject {
+    WTF::FixedVector<SimpleInMemoryPropertyTableEntry> properties;
+};
+
+// Array element: primitive (JSValue), string, or a flat object.
+using DenseArrayElement = std::variant<JSC::JSValue, WTF::String, SimpleCloneableObject>;
+
 enum class FastPath : uint8_t {
     None,
     String,
@@ -78,6 +86,7 @@ enum class FastPath : uint8_t {
     SimpleArray,
     Int32Array,
     DoubleArray,
+    DenseArray,
 };
 
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
@@ -135,6 +144,9 @@ public:
     // Fast path for postMessage with dense Int32/Double arrays (butterfly memcpy)
     static Ref<SerializedScriptValue> createInt32ArrayFastPath(Vector<uint8_t>&& butterflyData, uint32_t length);
     static Ref<SerializedScriptValue> createDoubleArrayFastPath(Vector<uint8_t>&& butterflyData, uint32_t length);
+
+    // Fast path for postMessage with dense arrays containing simple objects
+    static Ref<SerializedScriptValue> createDenseArrayFastPath(WTF::FixedVector<DenseArrayElement>&& elements);
 
     static Ref<SerializedScriptValue> nullValue();
 
@@ -241,6 +253,8 @@ private:
     explicit SerializedScriptValue(WTF::FixedVector<SimpleCloneableValue>&& elements);
     // Constructor for Int32Array/DoubleArray butterfly memcpy fast path
     SerializedScriptValue(Vector<uint8_t>&& butterflyData, uint32_t length, FastPath fastPath);
+    // Constructor for DenseArray fast path
+    explicit SerializedScriptValue(WTF::FixedVector<DenseArrayElement>&& denseElements);
 
     size_t computeMemoryCost() const;
 
@@ -277,6 +291,9 @@ private:
     // Int32Array / DoubleArray fast path: raw butterfly data
     Vector<uint8_t> m_arrayButterflyData {};
     uint32_t m_arrayLength { 0 };
+
+    // DenseArray fast path: array of primitives/strings/simple objects
+    FixedVector<DenseArrayElement> m_denseArrayElements {};
 };
 
 template<class Encoder>

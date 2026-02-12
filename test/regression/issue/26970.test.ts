@@ -1,34 +1,18 @@
 import { spawnSync } from "bun";
-import { beforeAll, beforeEach, expect, setDefaultTimeout, test } from "bun:test";
-import { writeFileSync } from "fs";
-import { bunEnv, bunExe, tmpdirSync } from "harness";
-
-let cwd: string;
-
-beforeAll(() => {
-  setDefaultTimeout(1000 * 60 * 5);
-});
-
-beforeEach(() => {
-  cwd = tmpdirSync();
-});
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 test("missing literal workspace path should not error", () => {
-  writeFileSync(
-    `${cwd}/package.json`,
-    JSON.stringify(
-      {
-        name: "test",
-        workspaces: ["terraform"],
-      },
-      null,
-      2,
-    ),
-  );
+  using dir = tempDir("issue-26970", {
+    "package.json": JSON.stringify({
+      name: "test",
+      workspaces: ["terraform"],
+    }),
+  });
 
   const { stderr, exitCode } = spawnSync({
     cmd: [bunExe(), "install"],
-    cwd,
+    cwd: String(dir),
     env: bunEnv,
     stderr: "pipe",
     stdout: "pipe",
@@ -40,21 +24,16 @@ test("missing literal workspace path should not error", () => {
 });
 
 test("missing glob workspace pattern should not error", () => {
-  writeFileSync(
-    `${cwd}/package.json`,
-    JSON.stringify(
-      {
-        name: "test",
-        workspaces: ["terraform*"],
-      },
-      null,
-      2,
-    ),
-  );
+  using dir = tempDir("issue-26970", {
+    "package.json": JSON.stringify({
+      name: "test",
+      workspaces: ["terraform*"],
+    }),
+  });
 
   const { stderr, exitCode } = spawnSync({
     cmd: [bunExe(), "install"],
-    cwd,
+    cwd: String(dir),
     env: bunEnv,
     stderr: "pipe",
     stdout: "pipe",
@@ -66,43 +45,31 @@ test("missing glob workspace pattern should not error", () => {
 });
 
 test("literal and glob missing workspaces behave the same", () => {
-  // Test literal path
-  writeFileSync(
-    `${cwd}/package.json`,
-    JSON.stringify(
-      {
-        name: "test",
-        workspaces: ["nonexistent"],
-      },
-      null,
-      2,
-    ),
-  );
+  using literalDir = tempDir("issue-26970", {
+    "package.json": JSON.stringify({
+      name: "test",
+      workspaces: ["nonexistent"],
+    }),
+  });
 
   const literalResult = spawnSync({
     cmd: [bunExe(), "install"],
-    cwd,
+    cwd: String(literalDir),
     env: bunEnv,
     stderr: "pipe",
     stdout: "pipe",
   });
 
-  // Test glob pattern
-  writeFileSync(
-    `${cwd}/package.json`,
-    JSON.stringify(
-      {
-        name: "test",
-        workspaces: ["nonexistent*"],
-      },
-      null,
-      2,
-    ),
-  );
+  using globDir = tempDir("issue-26970", {
+    "package.json": JSON.stringify({
+      name: "test",
+      workspaces: ["nonexistent*"],
+    }),
+  });
 
   const globResult = spawnSync({
     cmd: [bunExe(), "install"],
-    cwd,
+    cwd: String(globDir),
     env: bunEnv,
     stderr: "pipe",
     stdout: "pipe",

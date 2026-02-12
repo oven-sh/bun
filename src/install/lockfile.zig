@@ -945,6 +945,7 @@ pub fn hoist(
         .workspace_filters = workspace_filters,
         .packages_to_install = packages_to_install,
         .pending_optional_peers = .init(allocator),
+        .logged_disabled_pkgs = if (method == .filter) try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(allocator, lockfile.packages.len) else {},
     };
 
     try (Tree{}).processSubtree(

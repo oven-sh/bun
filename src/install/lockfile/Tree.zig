@@ -257,6 +257,9 @@ pub fn Builder(comptime method: BuilderMethod) type {
         workspace_filters: if (method == .filter) []const WorkspaceFilter else void = if (method == .filter) &.{},
         install_root_dependencies: if (method == .filter) bool else void,
         packages_to_install: if (method == .filter) ?[]const PackageID else void,
+        /// Tracks which packages have already had their "Skip installing" message
+        /// printed, to avoid duplicate verbose messages for the same package.
+        logged_disabled_pkgs: if (method == .filter) Bitset else void = if (method == .filter) .{} else {},
 
         pub fn maybeReportError(this: *@This(), comptime fmt: string, args: anytype) void {
             this.log.addErrorFmt(null, logger.Loc.Empty, this.allocator, fmt, args) catch {};
@@ -321,6 +324,7 @@ pub fn Builder(comptime method: BuilderMethod) type {
             this.queue.deinit();
             this.sort_buf.deinit(this.allocator);
             this.pending_optional_peers.deinit();
+            if (method == .filter) this.logged_disabled_pkgs.deinit(this.allocator);
 
             // take over the `builder.list` pointer for only trees
             if (@intFromPtr(trees.ptr) != @intFromPtr(list_ptr)) {
@@ -344,6 +348,7 @@ pub fn isFilteredDependencyOrWorkspace(
     install_root_dependencies: bool,
     manager: *const PackageManager,
     lockfile: *const Lockfile,
+    logged_disabled_pkgs: *Bitset,
 ) bool {
     const pkg_id = lockfile.buffers.resolutions.items[dep_id];
     if (pkg_id >= lockfile.packages.len) {
@@ -365,14 +370,17 @@ pub fn isFilteredDependencyOrWorkspace(
 
     if (pkg_metas[pkg_id].isDisabled(manager.options.cpu, manager.options.os)) {
         if (manager.options.log_level.isVerbose()) {
-            const meta = &pkg_metas[pkg_id];
-            const name = lockfile.str(&pkg_names[pkg_id]);
-            if (!meta.os.isMatch(manager.options.os) and !meta.arch.isMatch(manager.options.cpu)) {
-                Output.prettyErrorln("<d>Skip installing<r> <b>{s}<r> <d>- cpu & os mismatch<r>", .{name});
-            } else if (!meta.os.isMatch(manager.options.os)) {
-                Output.prettyErrorln("<d>Skip installing<r> <b>{s}<r> <d>- os mismatch<r>", .{name});
-            } else if (!meta.arch.isMatch(manager.options.cpu)) {
-                Output.prettyErrorln("<d>Skip installing<r> <b>{s}<r> <d>- cpu mismatch<r>", .{name});
+            if (!logged_disabled_pkgs.isSet(pkg_id)) {
+                logged_disabled_pkgs.set(pkg_id);
+                const meta = &pkg_metas[pkg_id];
+                const name = lockfile.str(&pkg_names[pkg_id]);
+                if (!meta.os.isMatch(manager.options.os) and !meta.arch.isMatch(manager.options.cpu)) {
+                    Output.prettyErrorln("<d>Skip installing<r> <b>{s}<r> <d>- cpu & os mismatch<r>", .{name});
+                } else if (!meta.os.isMatch(manager.options.os)) {
+                    Output.prettyErrorln("<d>Skip installing<r> <b>{s}<r> <d>- os mismatch<r>", .{name});
+                } else if (!meta.arch.isMatch(manager.options.cpu)) {
+                    Output.prettyErrorln("<d>Skip installing<r> <b>{s}<r> <d>- cpu mismatch<r>", .{name});
+                }
             }
         }
         return true;
@@ -509,6 +517,7 @@ pub fn processSubtree(
                 builder.install_root_dependencies,
                 builder.manager,
                 builder.lockfile,
+                &builder.logged_disabled_pkgs,
             )) {
                 continue;
             }

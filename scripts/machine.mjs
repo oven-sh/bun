@@ -1240,9 +1240,7 @@ async function main() {
     bootstrapPath = resolve(
       import.meta.dirname,
       os === "windows"
-        ? arch === "aarch64"
-          ? "bootstrap-arm64.ps1"
-          : "bootstrap.ps1"
+        ? "bootstrap.ps1"
         : features?.includes("docker")
           ? "../.buildkite/Dockerfile-bootstrap.sh"
           : "bootstrap.sh",
@@ -1343,7 +1341,7 @@ async function main() {
       });
     }
 
-    await startGroup("Connecting with SSH...", async () => {
+    await startGroup(`Connecting${options.cloud === "azure" ? "" : " with SSH"}...`, async () => {
       const command = os === "windows" ? ["cmd", "/c", "ver"] : ["uname", "-a"];
       await machine.spawnSafe(command, { stdio: "inherit" });
     });

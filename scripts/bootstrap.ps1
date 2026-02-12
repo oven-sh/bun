@@ -1,6 +1,7 @@
-# Version: 12
-# A script that installs the dependencies needed to build and test Bun.
-# This should work on Windows 10 or newer with PowerShell.
+# Version: 13
+# A script that installs the dependencies needed to build and test Bun on Windows.
+# Supports both x64 and ARM64 using Scoop for package management.
+# Used by Azure [build images] pipeline.
 
 # If this script does not work on your machine, please open an issue:
 # https://github.com/oven-sh/bun/issues
@@ -19,8 +20,11 @@ param (
 $ErrorActionPreference = "Stop"
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
 
-# Detect ARM64 architecture for installing native ARM64 packages
 $script:IsARM64 = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq [System.Runtime.InteropServices.Architecture]::Arm64
+
+# ============================================================================
+# Utility functions
+# ============================================================================
 
 function Execute-Command {
   $command = $args -join ' '
@@ -47,16 +51,6 @@ function Which {
     $commands = $args -join ', '
     throw "Command not found: $commands"
   }
-}
-
-function Execute-Script {
-  param (
-    [Parameter(Mandatory = $true, Position = 0)]
-    [string]$Path
-  )
-
-  $pwsh = Which pwsh powershell -Required
-  Execute-Command $pwsh $Path
 }
 
 function Download-File {
@@ -90,18 +84,6 @@ function Download-File {
   return $Path
 }
 
-function Install-Chocolatey {
-  if (Which choco) {
-    return
-  }
-
-  Write-Output "Installing Chocolatey..."
-  [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
-  $installScript = Download-File "https://community.chocolatey.org/install.ps1"
-  Execute-Script $installScript
-  Refresh-Path
-}
-
 function Refresh-Path {
   $paths = @(
     [System.Environment]::GetEnvironmentVariable("Path", "Machine"),
@@ -114,15 +96,19 @@ function Refresh-Path {
     Where-Object { $_ -and (Test-Path $_) } |
     Select-Object -Unique
   $env:Path = ($uniquePaths -join ';').TrimEnd(';')
-
-  if ($env:ChocolateyInstall) {
-    Import-Module $env:ChocolateyInstall\helpers\chocolateyProfile.psm1 -ErrorAction SilentlyContinue
-  }
 }
 
 function Add-To-Path {
-  $absolutePath = Resolve-Path $args[0]
-  $currentPath = [Environment]::GetEnvironmentVariable("Path", "Machine")
+  param (
+    [Parameter(Mandatory = $true, Position = 0)]
+    [string]$PathToAdd,
+    [Parameter(Mandatory = $false)]
+    [ValidateSet("Machine", "User")]
+    [string]$Scope = "Machine"
+  )
+
+  $absolutePath = Resolve-Path $PathToAdd
+  $currentPath = [Environment]::GetEnvironmentVariable("Path", $Scope)
   if ($currentPath -like "*$absolutePath*") {
     return
   }
@@ -143,8 +129,8 @@ function Add-To-Path {
     }
   }
 
-  Write-Output "Adding $absolutePath to PATH..."
-  [Environment]::SetEnvironmentVariable("Path", "$newPath", "Machine")
+  Write-Output "Adding $absolutePath to PATH ($Scope)..."
+  [Environment]::SetEnvironmentVariable("Path", "$newPath", $Scope)
   Refresh-Path
 }
 
@@ -161,64 +147,124 @@ function Set-Env {
   [System.Environment]::SetEnvironmentVariable("$Name", "$Value", "Process")
 }
 
-function Install-Package {
+# ============================================================================
+# Scoop — ARM64-native package manager
+# ============================================================================
+
+function Install-Scoop {
+  if (Which scoop) {
+    return
+  }
+
+  Write-Output "Installing Scoop..."
+  # Scoop blocks admin installs unless -RunAsAdmin is passed.
+  # Install to a known global location so all users can access it.
+  $env:SCOOP = "C:\Scoop"
+  [Environment]::SetEnvironmentVariable("SCOOP", $env:SCOOP, "Machine")
+  iex "& {$(irm get.scoop.sh)} -RunAsAdmin -ScoopDir C:\Scoop"
+  Add-To-Path "C:\Scoop\shims"
+  Refresh-Path
+  Write-Output "Scoop version: $(scoop --version)"
+}
+
+function Install-Scoop-Package {
   param (
     [Parameter(Mandatory = $true, Position = 0)]
     [string]$Name,
     [Parameter(Mandatory = $false)]
-    [string]$Command = $Name,
-    [Parameter(Mandatory = $false)]
-    [string]$Version,
-    [Parameter(Mandatory = $false)]
-    [switch]$Force = $false,
-    [Parameter(Mandatory = $false)]
-    [string[]]$ExtraArgs = @()
+    [string]$Command = $Name
   )
 
-  if (-not $Force `
-    -and (Which $Command) `
-    -and (-not $Version -or (& $Command --version) -like "*$Version*")) {
+  if (Which $Command) {
     return
   }
 
-  Write-Output "Installing $Name..."
-  $flags = @(
-    "--yes",
-    "--accept-license",
-    "--no-progress",
-    "--force"
-  )
-  if ($Version) {
-    $flags += "--version=$Version"
-  }
-
-  Execute-Command choco install $Name @flags @ExtraArgs
+  Write-Output "Installing $Name (via Scoop)..."
+  Execute-Command scoop install $Name
   Refresh-Path
 }
 
-function Install-Packages {
-  foreach ($package in $args) {
-    Install-Package $package
+# ============================================================================
+# Scoop packages (native ARM64 binaries)
+# ============================================================================
+
+function Install-Git {
+  Install-Scoop-Package git
+
+  if ($CI) {
+    Execute-Command git config --system --add safe.directory "*"
+    Execute-Command git config --system core.autocrlf false
+    Execute-Command git config --system core.eol lf
+    Execute-Command git config --system core.longpaths true
   }
 }
 
-function Install-Common-Software {
-  Install-Chocolatey
-  Install-Pwsh
-  Install-Git
-  Install-Packages curl 7zip nssm
-  Install-NodeJs
-  Install-Bun
-  Install-Cygwin
-  if ($CI) {
-    # FIXME: Installing tailscale causes the AWS metadata server to become unreachable
-    # Install-Tailscale
-    Install-Buildkite
+function Install-NodeJs {
+  Install-Scoop-Package nodejs -Command node
+}
+
+function Install-CMake {
+  Install-Scoop-Package cmake
+}
+
+function Install-Llvm {
+  if ($script:IsARM64) {
+    Install-Scoop-Package llvm-arm64 -Command clang-cl
+  } else {
+    Install-Scoop-Package llvm -Command clang-cl
   }
 }
+
+function Install-Ninja {
+  Install-Scoop-Package ninja
+}
+
+function Install-Python {
+  Install-Scoop-Package python
+}
+
+function Install-Go {
+  Install-Scoop-Package go
+}
+
+function Install-Ruby {
+  Install-Scoop-Package ruby
+}
+
+function Install-7zip {
+  Install-Scoop-Package 7zip -Command 7z
+}
+
+function Install-Make {
+  Install-Scoop-Package make
+}
+
+function Install-Cygwin {
+  Install-Scoop-Package cygwin
+  # Scoop installs to ~/scoop/apps/cygwin/current
+  $cygwinBin = Join-Path $env:USERPROFILE "scoop\apps\cygwin\current\bin"
+  if (Test-Path $cygwinBin) {
+    Add-To-Path $cygwinBin -Scope User
+  }
+}
+
+# ============================================================================
+# Manual installs (not available or not ideal via Scoop)
+# ============================================================================
 
 function Install-Pwsh {
-  Install-Package powershell-core -Command pwsh
+  if (Which pwsh) {
+    return
+  }
+
+  Write-Output "Installing PowerShell Core (ARM64)..."
+  $msi = Download-File "https://github.com/PowerShell/PowerShell/releases/download/v7.5.2/PowerShell-7.5.2-win-arm64.msi" -Name "pwsh-arm64.msi"
+  $process = Start-Process msiexec -ArgumentList "/i `"$msi`" /quiet /norestart ADD_PATH=1" -Wait -PassThru -NoNewWindow
+  if ($process.ExitCode -ne 0) {
+    throw "Failed to install PowerShell: code $($process.ExitCode)"
+  }
+  Remove-Item $msi -ErrorAction SilentlyContinue
+  Refresh-Path
 
   if ($CI) {
     $shellPath = (Which pwsh -Required)
@@ -231,65 +277,98 @@ function Install-Pwsh {
   }
 }
 
-function Install-Git {
-  Install-Packages git
-
-  if ($CI) {
-    Execute-Command git config --system --add safe.directory "*"
-    Execute-Command git config --system core.autocrlf false
-    Execute-Command git config --system core.eol lf
-    Execute-Command git config --system core.longpaths true
+function Install-Ccache {
+  if (Which ccache) {
+    return
   }
-}
 
-function Install-NodeJs {
-  $version = "24.3.0"
-  if ($script:IsARM64) {
-    if ((Which node) -and (& node --version) -like "*$version*") {
-      return
-    }
-    # Chocolatey nodejs package only installs x64; install ARM64 natively.
-    # x64 Node.js causes postinstall scripts to misdetect architecture.
-    Write-Output "Installing Node.js $version (ARM64)..."
-    $url = "https://nodejs.org/dist/v$version/node-v$version-arm64.msi"
-    $msi = Download-File $url -Name "node-arm64.msi"
-    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
-    $startInfo.FileName = "msiexec"
-    $startInfo.Arguments = "/i `"$msi`" /quiet /norestart"
-    $startInfo.CreateNoWindow = $true
-    $process = New-Object System.Diagnostics.Process
-    $process.StartInfo = $startInfo
-    $process.Start()
-    $process.WaitForExit()
-    if ($process.ExitCode -ne 0) {
-      throw "Failed to install Node.js: code $($process.ExitCode)"
-    }
-    Remove-Item $msi -ErrorAction SilentlyContinue
-    Refresh-Path
-  } else {
-    Install-Package nodejs -Command node -Version $version
-  }
+  $version = "4.12.2"
+  $archSuffix = if ($script:IsARM64) { "aarch64" } else { "x86_64" }
+  Write-Output "Installing ccache $version ($archSuffix)..."
+  $zip = Download-File "https://github.com/ccache/ccache/releases/download/v$version/ccache-$version-windows-$archSuffix.zip" -Name "ccache-$archSuffix.zip"
+  $extractDir = "$env:TEMP\ccache-extract"
+  Expand-Archive $zip $extractDir -Force
+  $installDir = "$env:ProgramFiles\ccache"
+  New-Item -Path $installDir -ItemType Directory -Force | Out-Null
+  Copy-Item "$extractDir\ccache-$version-windows-$archSuffix\*" $installDir -Recurse -Force
+  Remove-Item $zip -ErrorAction SilentlyContinue
+  Remove-Item $extractDir -Recurse -ErrorAction SilentlyContinue
+  Add-To-Path $installDir
 }
 
 function Install-Bun {
-  if ($script:IsARM64) {
-    if (Which bun) {
-      return
-    }
-    Write-Warning "Bun ARM64 for Windows is not yet available via Chocolatey."
-    Write-Warning "Install bun manually or it will run under x64 emulation."
+  if (Which bun) {
+    return
   }
-  Install-Package bun -Version "1.3.1"
+
+  Write-Output "Installing Bun..."
+  $installScript = Download-File "https://bun.sh/install.ps1" -Name "bun-install.ps1"
+  $pwsh = Which pwsh powershell -Required
+  Execute-Command $pwsh $installScript
 }
 
-function Install-Cygwin {
-  Install-Package cygwin
-  Add-To-Path "C:\tools\cygwin\bin"
+function Install-Rust {
+  if (Which rustc) {
+    return
+  }
+
+  Write-Output "Installing Rustup..."
+  $rustupInit = Download-File "https://win.rustup.rs/" -Name "rustup-init.exe"
+
+  Write-Output "Installing Rust..."
+  Execute-Command $rustupInit -y
+
+  Write-Output "Moving Rust to $env:ProgramFiles..."
+  $rustPath = Join-Path $env:ProgramFiles "Rust"
+  if (-not (Test-Path $rustPath)) {
+    New-Item -Path $rustPath -ItemType Directory
+  }
+  Move-Item "$env:UserProfile\.cargo" "$rustPath\cargo" -Force
+  Move-Item "$env:UserProfile\.rustup" "$rustPath\rustup" -Force
+
+  Write-Output "Setting environment variables for Rust..."
+  Set-Env "CARGO_HOME" "$rustPath\cargo"
+  Set-Env "RUSTUP_HOME" "$rustPath\rustup"
+  Add-To-Path "$rustPath\cargo\bin"
 }
 
-function Install-Tailscale {
-  Install-Package tailscale
+function Install-Visual-Studio {
+  param (
+    [Parameter(Mandatory = $false)]
+    [string]$Edition = "community"
+  )
+
+  Write-Output "Downloading Visual Studio installer..."
+  $vsInstaller = Download-File "https://aka.ms/vs/17/release/vs_$Edition.exe"
+
+  Write-Output "Installing Visual Studio..."
+  $vsInstallArgs = @(
+    "--passive",
+    "--norestart",
+    "--wait",
+    "--force",
+    "--locale en-US",
+    "--add Microsoft.VisualStudio.Workload.NativeDesktop",
+    "--includeRecommended"
+  )
+  $process = Start-Process $vsInstaller -ArgumentList ($vsInstallArgs -join ' ') -Wait -PassThru -NoNewWindow
+  if ($process.ExitCode -ne 0) {
+    throw "Failed to install Visual Studio: code $($process.ExitCode)"
+  }
 }
+
+function Install-PdbAddr2line {
+  Execute-Command cargo install --examples "pdb-addr2line@0.11.2"
+}
+
+function Install-Nssm {
+  # nssm has no ARM64 build; x64 runs under emulation
+  Install-Scoop-Package nssm
+}
+
+# ============================================================================
+# Buildkite
+# ============================================================================
 
 function Create-Buildkite-Environment-Hooks {
   param (
@@ -323,7 +402,8 @@ function Install-Buildkite {
   Write-Output "Installing Buildkite agent..."
   $env:buildkiteAgentToken = "xxx"
   $installScript = Download-File "https://raw.githubusercontent.com/buildkite/agent/main/install.ps1"
-  Execute-Script $installScript
+  $pwsh = Which pwsh powershell -Required
+  Execute-Command $pwsh $installScript
   Refresh-Path
 
   if ($CI) {
@@ -335,145 +415,9 @@ function Install-Buildkite {
   }
 }
 
-function Install-Build-Essentials {
-  Install-Visual-Studio
-  Install-CMake
-  Install-Packages make ninja python golang ruby strawberryperl
-  if (-not $script:IsARM64) {
-    # nasm is an x86 assembler, not needed on ARM64
-    # mingw is not needed for ARM64 Windows builds
-    Install-Packages nasm mingw
-  }
-  Install-Rust
-  Install-Ccache
-  # Needed to remap stack traces
-  Install-PdbAddr2line
-  Install-Llvm
-}
-
-function Install-CMake {
-  if ($script:IsARM64) {
-    if (Which cmake) {
-      return
-    }
-    # Chocolatey cmake package only downloads x64; install ARM64 natively
-    # to ensure CMAKE_SYSTEM_PROCESSOR is detected as ARM64.
-    # Update this version as needed.
-    $version = "3.31.2"
-    Write-Output "Installing CMake $version (ARM64)..."
-    $url = "https://github.com/Kitware/CMake/releases/download/v$version/cmake-$version-windows-arm64.msi"
-    $msi = Download-File $url -Name "cmake-arm64.msi"
-    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
-    $startInfo.FileName = "msiexec"
-    $startInfo.Arguments = "/i `"$msi`" /quiet /norestart ADD_CMAKE_TO_PATH=System"
-    $startInfo.CreateNoWindow = $true
-    $process = New-Object System.Diagnostics.Process
-    $process.StartInfo = $startInfo
-    $process.Start()
-    $process.WaitForExit()
-    if ($process.ExitCode -ne 0) {
-      throw "Failed to install CMake: code $($process.ExitCode)"
-    }
-    Remove-Item $msi -ErrorAction SilentlyContinue
-    Refresh-Path
-  } else {
-    Install-Package cmake
-  }
-}
-
-function Install-Visual-Studio {
-  param (
-    [Parameter(Mandatory = $false)]
-    [string]$Edition = "community"
-  )
-
-  Write-Output "Downloading Visual Studio installer..."
-  $vsInstaller = Download-File "https://aka.ms/vs/17/release/vs_$Edition.exe"
-
-  Write-Output "Installing Visual Studio..."
-  $vsInstallArgs = @(
-    "--passive",
-    "--norestart",
-    "--wait",
-    "--force",
-    "--locale en-US",
-    "--add Microsoft.VisualStudio.Workload.NativeDesktop",
-    "--includeRecommended"
-  )
-  $startInfo = New-Object System.Diagnostics.ProcessStartInfo
-  $startInfo.FileName = $vsInstaller
-  $startInfo.Arguments = $vsInstallArgs -join ' '
-  $startInfo.CreateNoWindow = $true
-  $process = New-Object System.Diagnostics.Process
-  $process.StartInfo = $startInfo
-  $process.Start()
-  $process.WaitForExit()
-  if ($process.ExitCode -ne 0) {
-    throw "Failed to install Visual Studio: code $($process.ExitCode)"
-  }
-}
-
-function Install-Rust {
-  if (Which rustc) {
-    return
-  }
-
-  Write-Output "Installing Rustup..."
-  $rustupInit = Download-File "https://win.rustup.rs/" -Name "rustup-init.exe"
-
-  Write-Output "Installing Rust..."
-  Execute-Command $rustupInit -y
-
-  Write-Output "Moving Rust to $env:ProgramFiles..."
-  $rustPath = Join-Path $env:ProgramFiles "Rust"
-  if (-not (Test-Path $rustPath)) {
-    New-Item -Path $rustPath -ItemType Directory
-  }
-  Move-Item "$env:UserProfile\.cargo" "$rustPath\cargo" -Force
-  Move-Item "$env:UserProfile\.rustup" "$rustPath\rustup" -Force
-
-  Write-Output "Setting environment variables for Rust..."
-  Set-Env "CARGO_HOME" "$rustPath\cargo"
-  Set-Env "RUSTUP_HOME" "$rustPath\rustup"
-  Add-To-Path "$rustPath\cargo\bin"
-}
-
-function Install-Ccache {
-  Install-Package ccache
-}
-
-function Install-PdbAddr2line {
-  Execute-Command cargo install --examples "pdb-addr2line@0.11.2"
-}
-
-function Install-Llvm {
-  $version = "21.1.8"
-  if ($script:IsARM64) {
-    if (Which clang-cl) {
-      return
-    }
-    # Chocolatey LLVM package only downloads x64; install ARM64 natively.
-    Write-Output "Installing LLVM $version (ARM64)..."
-    $url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-$version/LLVM-$version-woa64.exe"
-    $installer = Download-File $url -Name "llvm-arm64.exe"
-    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
-    $startInfo.FileName = $installer
-    $startInfo.Arguments = "/S"
-    $startInfo.CreateNoWindow = $true
-    $process = New-Object System.Diagnostics.Process
-    $process.StartInfo = $startInfo
-    $process.Start()
-    $process.WaitForExit()
-    if ($process.ExitCode -ne 0) {
-      throw "Failed to install LLVM: code $($process.ExitCode)"
-    }
-    Remove-Item $installer -ErrorAction SilentlyContinue
-    Refresh-Path
-  } else {
-    Install-Package llvm -Command clang-cl -Version $version
-  }
-  Add-To-Path "$env:ProgramFiles\LLVM\bin"
-}
+# ============================================================================
+# System optimization
+# ============================================================================
 
 function Optimize-System {
   Disable-Windows-Defender
@@ -538,12 +482,49 @@ function Disable-Power-Management {
   powercfg /change hibernate-timeout-dc 0
 }
 
+# ============================================================================
+# Main
+# ============================================================================
+
 if ($Optimize) {
   Optimize-System
 }
 
-Install-Common-Software
-Install-Build-Essentials
+# Scoop package manager
+Install-Scoop
+
+# Packages via Scoop (native ARM64 or x64 depending on architecture)
+Install-Git
+Install-NodeJs
+Install-7zip
+Install-CMake
+Install-Ninja
+Install-Python
+Install-Go
+Install-Ruby
+Install-Make
+Install-Llvm
+Install-Cygwin
+Install-Nssm
+Install-Scoop-Package perl
+
+# x64-only packages (not needed on ARM64)
+if (-not $script:IsARM64) {
+  Install-Scoop-Package nasm
+  Install-Scoop-Package mingw
+}
+
+# Manual installs (not in Scoop or need special handling)
+Install-Pwsh
+Install-Bun
+Install-Ccache
+Install-Rust
+Install-Visual-Studio
+Install-PdbAddr2line
+
+if ($CI) {
+  Install-Buildkite
+}
 
 if ($Optimize) {
   Optimize-System-Needs-Reboot

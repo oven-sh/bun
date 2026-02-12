@@ -145,12 +145,25 @@ async function azureFetch(method, path, body, apiVersion = "2024-07-01") {
 
 async function waitForOperation(operationUrl, maxWaitMs = 600_000) {
   const start = Date.now();
+  let fetchErrors = 0;
 
   while (Date.now() - start < maxWaitMs) {
     const token = await getAccessToken();
-    const response = await fetch(operationUrl, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+
+    let response;
+    try {
+      response = await fetch(operationUrl, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    } catch (err) {
+      fetchErrors++;
+      if (fetchErrors > 10) {
+        throw new Error(`[azure] Operation poll failed after ${fetchErrors} fetch errors`, { cause: err });
+      }
+      console.warn(`[azure] Operation poll fetch error (${fetchErrors}), retrying...`);
+      await new Promise(r => setTimeout(r, 10_000));
+      continue;
+    }
 
     if (!response.ok) {
       throw new Error(`[azure] Operation poll failed: ${response.status} ${await response.text()}`);
@@ -203,10 +216,64 @@ async function deletePublicIp(name) {
 }
 
 // ============================================================================
+// Network Security Group
+// ============================================================================
+
+async function ensureNsg(name) {
+  const { location } = config();
+  const path = `${rgPath()}/providers/Microsoft.Network/networkSecurityGroups/${name}`;
+
+  try {
+    const existing = await azureFetch("GET", path);
+    if (existing) return path;
+  } catch {}
+
+  console.log(`[azure] Creating NSG: ${name}`);
+  await azureFetch("PUT", path, {
+    location,
+    properties: {
+      securityRules: [
+        {
+          name: "AllowSSH",
+          properties: {
+            priority: 100,
+            protocol: "Tcp",
+            access: "Allow",
+            direction: "Inbound",
+            sourceAddressPrefix: "*",
+            sourcePortRange: "*",
+            destinationAddressPrefix: "*",
+            destinationPortRange: "22",
+          },
+        },
+        {
+          name: "AllowRDP",
+          properties: {
+            priority: 110,
+            protocol: "Tcp",
+            access: "Allow",
+            direction: "Inbound",
+            sourceAddressPrefix: "*",
+            sourcePortRange: "*",
+            destinationAddressPrefix: "*",
+            destinationPortRange: "3389",
+          },
+        },
+      ],
+    },
+  });
+  return path;
+}
+
+async function deleteNsg(name) {
+  await azureFetch("DELETE", `${rgPath()}/providers/Microsoft.Network/networkSecurityGroups/${name}`).catch(() => {});
+}
+
+// ============================================================================
 // Network Interface
 // ============================================================================
 
-async function createNic(name, publicIpName, subnetId) {
+async function createNic(name, publicIpName, subnetId, nsgId) {
   const { location } = config();
   console.log(`[azure] Creating NIC: ${name}`);
   const publicIpId = `${rgPath()}/providers/Microsoft.Network/publicIPAddresses/${publicIpName}`;
@@ -223,6 +290,7 @@ async function createNic(name, publicIpName, subnetId) {
           },
         },
       ],
+      ...(nsgId ? { networkSecurityGroup: { id: nsgId } } : {}),
     },
   });
   return `${rgPath()}/providers/Microsoft.Network/networkInterfaces/${name}`;
@@ -330,39 +398,7 @@ async function runCommand(vmName, script) {
 /**
  * Install OpenSSH server and configure authorized keys on a Windows VM.
  */
-async function installSsh(vmName, authorizedKeys) {
-  const script = `
-    $ErrorActionPreference = "Stop"
-
-    # Install OpenSSH Server
-    Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
-    Start-Service sshd
-    Set-Service -Name sshd -StartupType Automatic
-
-    # Set PowerShell as default shell
-    $pwshPath = (Get-Command powershell).Source
-    New-ItemProperty -Path "HKLM:\\SOFTWARE\\OpenSSH" -Name DefaultShell -Value $pwshPath -PropertyType String -Force
-
-    # Firewall rule
-    $rule = Get-NetFirewallRule -Name "OpenSSH-Server" -ErrorAction SilentlyContinue
-    if (-not $rule) {
-      New-NetFirewallRule -Profile Any -Name "OpenSSH-Server" -DisplayName "OpenSSH Server (sshd)" -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22
-    }
-
-    # Authorized keys
-    $sshPath = "C:\\ProgramData\\ssh"
-    if (-not (Test-Path $sshPath)) { New-Item -Path $sshPath -ItemType Directory }
-    $keysPath = Join-Path $sshPath "administrators_authorized_keys"
-    Set-Content -Path $keysPath -Value @"
-${authorizedKeys.join("\n")}
-"@
-    icacls.exe $keysPath /inheritance:r /grant "Administrators:F" /grant "SYSTEM:F"
-
-    Restart-Service sshd
-    Write-Host "OpenSSH installed and configured"
-  `;
-  return runCommand(vmName, script);
-}
+// SSH is not used — all remote operations go through Azure Run Command API.
 
 // ============================================================================
 // Virtual Network
@@ -403,17 +439,19 @@ async function ensureVNet(vnetName, subnetName) {
 // Compute Gallery
 // ============================================================================
 
+const GALLERY_API_VERSION = "2024-03-03";
+
 async function ensureGallery() {
   const { location, galleryName } = config();
   const path = `${rgPath()}/providers/Microsoft.Compute/galleries/${galleryName}`;
 
   try {
-    const gallery = await azureFetch("GET", path);
+    const gallery = await azureFetch("GET", path, undefined, GALLERY_API_VERSION);
     if (gallery) return;
   } catch {}
 
   console.log(`[azure] Creating gallery: ${galleryName}`);
-  await azureFetch("PUT", path, { location });
+  await azureFetch("PUT", path, { location }, GALLERY_API_VERSION);
 }
 
 async function ensureImageDefinition(name, os, arch) {
@@ -421,25 +459,30 @@ async function ensureImageDefinition(name, os, arch) {
   const path = `${rgPath()}/providers/Microsoft.Compute/galleries/${galleryName}/images/${name}`;
 
   try {
-    const def = await azureFetch("GET", path);
+    const def = await azureFetch("GET", path, undefined, GALLERY_API_VERSION);
     if (def) return;
   } catch {}
 
   console.log(`[azure] Creating image definition: ${name}`);
-  await azureFetch("PUT", path, {
-    location,
-    properties: {
-      osType: os === "windows" ? "Windows" : "Linux",
-      osState: "Generalized",
-      hyperVGeneration: "V2",
-      architecture: arch === "aarch64" ? "Arm64" : "x64",
-      identifier: {
-        publisher: "bun",
-        offer: `${os}-${arch}-ci`,
-        sku: "buildkite-agent",
+  await azureFetch(
+    "PUT",
+    path,
+    {
+      location,
+      properties: {
+        osType: os === "windows" ? "Windows" : "Linux",
+        osState: "Generalized",
+        hyperVGeneration: "V2",
+        architecture: arch === "aarch64" ? "Arm64" : "x64",
+        identifier: {
+          publisher: "bun",
+          offer: `${os}-${arch}-ci`,
+          sku: "buildkite-agent",
+        },
       },
     },
-  });
+    GALLERY_API_VERSION,
+  );
 }
 
 async function createImageVersion(imageDefName, version, vmId) {
@@ -447,14 +490,19 @@ async function createImageVersion(imageDefName, version, vmId) {
   const path = `${rgPath()}/providers/Microsoft.Compute/galleries/${galleryName}/images/${imageDefName}/versions/${version}`;
 
   console.log(`[azure] Creating image version: ${imageDefName}/${version}`);
-  const result = await azureFetch("PUT", path, {
-    location,
-    properties: {
-      storageProfile: {
-        source: { id: vmId },
+  const result = await azureFetch(
+    "PUT",
+    path,
+    {
+      location,
+      properties: {
+        storageProfile: {
+          source: { virtualMachineId: vmId },
+        },
       },
     },
-  });
+    GALLERY_API_VERSION,
+  );
   return result;
 }
 
@@ -463,15 +511,20 @@ async function createImageVersionWithLabel(imageDefName, version, vmId, label) {
   const path = `${rgPath()}/providers/Microsoft.Compute/galleries/${galleryName}/images/${imageDefName}/versions/${version}`;
 
   console.log(`[azure] Creating image version: ${imageDefName}/${version} (label: ${label})`);
-  const result = await azureFetch("PUT", path, {
-    location,
-    tags: { "image-name": label },
-    properties: {
-      storageProfile: {
-        source: { id: vmId },
+  const result = await azureFetch(
+    "PUT",
+    path,
+    {
+      location,
+      tags: { "image-name": label },
+      properties: {
+        storageProfile: {
+          source: { virtualMachineId: vmId },
+        },
       },
     },
-  });
+    GALLERY_API_VERSION,
+  );
   return result;
 }
 
@@ -501,7 +554,7 @@ function getBaseImageReference(os, arch) {
 }
 
 function getVmSize(arch) {
-  return arch === "aarch64" ? "Standard_D4ps_v6" : "Standard_D4ds_v6";
+  return arch === "aarch64" ? "Standard_D8ps_v6" : "Standard_D8ds_v6";
 }
 
 // ============================================================================
@@ -533,11 +586,11 @@ export const azure = {
     // Ensure VNet exists
     const subnetId = await ensureVNet("bun-ci-vnet", "default");
 
-    // Create public IP
+    // Create public IP (needed for outbound internet during bootstrap)
     await createPublicIp(publicIpName);
 
-    // Create NIC
-    const nicId = await createNic(nicName, publicIpName, subnetId);
+    // Create NIC (no NSG needed — all operations go through Azure Run Command, not SSH)
+    const nicId = await createNic(nicName, publicIpName, subnetId, null);
 
     // Create VM
     const imageReference = options.imageId ? { id: options.imageId } : getBaseImageReference(os, arch);
@@ -573,62 +626,50 @@ export const azure = {
 
     console.log(`[azure] VM created: ${vmName} at ${publicIp}`);
 
-    // Install SSH on Windows VMs so machine.mjs can upload bootstrap scripts
-    if (os === "windows") {
-      const authorizedKeys = sshKeys?.filter(k => k.publicKey)?.map(k => k.publicKey) ?? [];
-      await installSsh(vmName, authorizedKeys);
-    }
-
-    const sshKey = sshKeys?.find(({ privatePath }) => {
-      try {
-        return require("fs").existsSync(privatePath);
-      } catch {
-        return false;
-      }
-    });
-
-    const connect = async () => ({
-      hostname: publicIp,
-      username: "bunadmin",
-      password: adminPassword,
-      identityPaths: sshKey ? [sshKey.privatePath] : undefined,
-    });
-
-    const { spawnSsh: spawnSshFn, spawnSshSafe: spawnSshSafeFn } = await import("./utils.mjs");
+    // Use Azure Run Command for all remote operations instead of SSH.
+    // This avoids the sshd startup issues on Azure Windows VMs.
 
     const spawnFn = async (command, opts) => {
-      const conn = await connect();
-      return spawnSshFn({ ...conn, command }, opts);
+      // Convert command array to a single PowerShell command string
+      const script = command.join(" ");
+      console.log(`[azure] Run: ${script}`);
+      const result = await runCommand(vmName, [script]);
+      const stdout = typeof result === "string" ? result : (result?.value?.[0]?.message ?? "");
+      if (opts?.stdio === "inherit") {
+        if (stdout) process.stdout.write(stdout);
+      }
+      return { exitCode: 0, stdout, stderr: "" };
     };
 
-    const spawnSafeFn = async (command, opts) => {
-      const conn = await connect();
-      return spawnSshSafeFn({ ...conn, command }, opts);
-    };
-
-    const { spawnScp } = await import("./utils.mjs");
+    const spawnSafeFn = spawnFn;
 
     const upload = async (source, destination) => {
-      const conn = await connect();
-      return spawnScp({ ...conn, source, destination });
+      // Read the file locally and write it on the VM via Run Command
+      const { readFileSync } = await import("node:fs");
+      const content = readFileSync(source, "utf-8");
+      // Escape for PowerShell — use base64 to avoid escaping issues
+      const b64 = Buffer.from(content).toString("base64");
+      const script = [
+        `$bytes = [Convert]::FromBase64String('${b64}')`,
+        `$dir = Split-Path '${destination}' -Parent`,
+        `if (-not (Test-Path $dir)) { New-Item -Path $dir -ItemType Directory -Force | Out-Null }`,
+        `[IO.File]::WriteAllBytes('${destination}', $bytes)`,
+        `Write-Host "Uploaded to ${destination} ($($bytes.Length) bytes)"`,
+      ];
+      console.log(`[azure] Uploading ${source} -> ${destination}`);
+      await runCommand(vmName, script);
     };
 
     const attach = async () => {
-      const conn = await connect();
-      await spawnSshSafeFn({ ...conn });
+      console.log(`[azure] Attach not supported via Run Command (VM: ${vmName}, IP: ${publicIp})`);
     };
 
     const waitForSsh = async () => {
-      const conn = await connect();
-      for (let i = 0; i < 60; i++) {
-        try {
-          await spawnSshSafeFn({ ...conn, command: ["echo", "ok"] });
-          return;
-        } catch {
-          await new Promise(r => setTimeout(r, 10_000));
-        }
-      }
-      throw new Error(`[azure] SSH timeout for ${vmName}`);
+      // No SSH needed — Run Command works immediately after VM is provisioned
+      // Just verify the VM is responsive
+      console.log(`[azure] Verifying VM is responsive...`);
+      await runCommand(vmName, ["Write-Host 'VM is ready'"]);
+      console.log(`[azure] VM is responsive`);
     };
 
     const snapshot = async label => {
@@ -660,6 +701,24 @@ export const azure = {
       const now = new Date();
       const version = `${now.getFullYear() % 100}.${now.getMonth() * 100 + now.getDate()}.${now.getHours() * 10000 + now.getMinutes() * 100 + now.getSeconds()}`;
       await createImageVersionWithLabel(imageDefName, version, vmId, label);
+
+      // Wait for image version to finish provisioning before deleting the source VM
+      const { galleryName } = config();
+      const versionPath = `${rgPath()}/providers/Microsoft.Compute/galleries/${galleryName}/images/${imageDefName}/versions/${version}`;
+      console.log(`[azure] Waiting for image to replicate...`);
+      for (let i = 0; i < 120; i++) {
+        const ver = await azureFetch("GET", versionPath, undefined, GALLERY_API_VERSION);
+        const state = ver?.properties?.provisioningState;
+        if (state === "Succeeded") {
+          console.log(`[azure] Image replicated successfully`);
+          break;
+        }
+        if (state === "Failed") {
+          throw new Error(`[azure] Image replication failed: ${JSON.stringify(ver?.properties?.provisioningProfile)}`);
+        }
+        console.log(`[azure] Image state: ${state}, waiting...`);
+        await new Promise(r => setTimeout(r, 15_000));
+      }
 
       console.log(`[azure] Image created: ${imageDefName}/${version} (label: ${label})`);
       return label;

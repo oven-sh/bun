@@ -561,7 +561,7 @@ function getBaseImageReference(os, arch) {
 }
 
 function getVmSize(arch) {
-  return arch === "aarch64" ? "Standard_D8ps_v6" : "Standard_D8ds_v6";
+  return arch === "aarch64" ? "Standard_D4ps_v6" : "Standard_D4ds_v6";
 }
 
 // ============================================================================
@@ -683,9 +683,23 @@ export const azure = {
     const snapshot = async label => {
       const vmId = `${rgPath()}/providers/Microsoft.Compute/virtualMachines/${vmName}`;
 
-      // Stop and generalize
-      await stopVm(vmName);
+      // Run sysprep inside the VM before deallocating.
+      // This prepares Windows for generalization so the gallery image
+      // can be used to create new VMs with OS provisioning.
+      console.log(`[azure] Running sysprep on ${vmName}...`);
+      await runCommand(vmName, [
+        "C:\\Windows\\System32\\Sysprep\\sysprep.exe /generalize /oobe /shutdown /quiet",
+      ]);
 
+      // Wait for VM to shut down after sysprep (sysprep triggers shutdown)
+      for (let i = 0; i < 60; i++) {
+        const state = await getVmPowerState(vmName);
+        if (state === "PowerState/stopped" || state === "PowerState/deallocated") break;
+        await new Promise(r => setTimeout(r, 10000));
+      }
+
+      // Deallocate the VM
+      await stopVm(vmName);
       // Wait for VM to be deallocated
       for (let i = 0; i < 60; i++) {
         const state = await getVmPowerState(vmName);

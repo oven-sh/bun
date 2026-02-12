@@ -591,7 +591,7 @@ function parseUrl(input: string): URL {
 }
 
 function randomId() {
-  return Math.random().toString(36).slice(2);
+  return crypto.randomUUID();
 }
 
 const { enableANSIColors } = Bun;

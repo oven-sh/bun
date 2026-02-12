@@ -1,7 +1,11 @@
 // Hardcoded module "node:_http_server"
 const EventEmitter: typeof import("node:events").EventEmitter = require("node:events");
 const { Duplex, Stream } = require("node:stream");
-const { _checkInvalidHeaderChar: checkInvalidHeaderChar } = require("node:_http_common");
+const {
+  _checkInvalidHeaderChar: checkInvalidHeaderChar,
+  validateHeaderName,
+  validateHeaderValue,
+} = require("node:_http_common");
 const { validateObject, validateLinkHeaderValue, validateBoolean, validateInteger } = require("internal/validators");
 const { ConnResetException } = require("internal/shared");
 
@@ -1284,7 +1288,10 @@ ServerResponse.prototype.writeEarlyHints = function (hints, cb) {
 
   for (const key of ObjectKeys(hints)) {
     if (key !== "link") {
-      head += key + ": " + hints[key] + "\r\n";
+      const value = hints[key];
+      validateHeaderName(key);
+      validateHeaderValue(key, value);
+      head += key + ": " + value + "\r\n";
     }
   }
 

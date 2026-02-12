@@ -179,18 +179,14 @@ public:
         // where the event loop may not be running (e.g., while(true){}).
         // For --inspect, the event loop delivers doConnect via ensureOnContextThread above.
         //
-        // Two requestStopAll calls (belt-and-suspenders): The synchronous call works when
-        // the SIGUSR1 STW has already completed (world is in RunAll mode). But if it arrives
-        // while the first STW is still in progress (worldMode >= Stopping), the pending bit
-        // gets set then cleared by the first STW's cleanup — an ABA race. The deferred call
-        // via postTaskConcurrently runs after the debugger VM participates in the first STW
-        // and resumes, guaranteeing RunAll mode. Empirically: both → 200/200, deferred only
-        // → 99/100, synchronous only → ~95/100.
+        // Fire STW to interrupt busy JS (e.g., while(true){}) and process
+        // this connection via the Bun__jsDebuggerCallback.
+        // Note: do NOT fire a deferred requestStopAll here — if the target VM
+        // enters the pause loop before the deferred STW fires, the deferred STW
+        // deadlocks (target is in C++ pause loop, can't reach JS safe point,
+        // debugger thread blocks in STW and can't deliver messages).
         if (runtimeInspectorActivated.load()) {
             VMManager::requestStopAll(VMManager::StopReason::JSDebugger);
-            debuggerScriptExecutionContext->postTaskConcurrently([](ScriptExecutionContext&) {
-                VMManager::requestStopAll(VMManager::StopReason::JSDebugger);
-            });
         }
     }
 
@@ -259,6 +255,8 @@ public:
                 isBootstrapPause = true;
         }
 
+        WTFLogAlways("[runWhilePaused] enter: bootstrap=%d connections=%zu isDone=%d", isBootstrapPause, connections.size(), isDoneProcessingEvents);
+
         for (auto* connection : connections) {
             if (connection->status == ConnectionStatus::Pending) {
                 connection->connect();
@@ -271,17 +269,13 @@ public:
         }
 
         if (isBootstrapPause) {
-            // Bootstrap pause: send a synthetic Debugger.paused event to the frontend.
-            // The agent was registered after breakProgram's didPause was dispatched
-            // (Debugger.enable was received during the initial message drain above),
-            // so we need to manually notify the frontend that we're paused.
-            // Then fall through to the normal pause loop to wait for Debugger.resume.
-            for (auto* connection : connections) {
-                if (connection->status == ConnectionStatus::Connected) {
-                    connection->sendMessageToFrontend(
-                        "{\"method\":\"Debugger.paused\",\"params\":{\"callFrames\":[],\"reason\":\"other\"}}"_s);
-                }
-            }
+            // Bootstrap pause: breakProgram() fired from VMTraps before the
+            // InspectorDebuggerAgent was registered. The message drain above
+            // processed Debugger.enable → addObserver, which retroactively
+            // called didPause on the agent (setting m_pausedGlobalObject and
+            // sending a real Debugger.paused event with call frames).
+            // Fall through to the normal pause loop.
+            WTFLogAlways("[runWhilePaused] bootstrap: agent registered, entering pause loop");
         }
 
         // Mark all connections as being in the pause loop so that
@@ -291,17 +285,25 @@ public:
         for (auto* connection : connections)
             connection->pauseFlags.store(BunInspectorConnection::kInPauseLoop);
 
+        WTFLogAlways("[runWhilePaused] entering pause loop");
+
         if (connections.size() == 1) {
+            unsigned pollCount = 0;
             while (!isDoneProcessingEvents) {
                 auto* connection = connections[0];
                 if (connection->status == ConnectionStatus::Disconnected || connection->status == ConnectionStatus::Disconnecting) {
+                    WTFLogAlways("[runWhilePaused] connection disconnected, breaking");
                     if (global->debugger() && global->debugger()->isPaused()) {
                         global->debugger()->continueProgram();
                     }
                     break;
                 }
                 connection->receiveMessagesOnInspectorThread(*global->scriptExecutionContext(), global, true);
+                pollCount++;
+                if (pollCount % 50000000 == 0)
+                    WTFLogAlways("[runWhilePaused] poll #%u, isDone=%d", pollCount, isDoneProcessingEvents);
             }
+            WTFLogAlways("[runWhilePaused] exited loop after %u polls, isDone=%d", pollCount, isDoneProcessingEvents);
         } else {
             while (!isDoneProcessingEvents) {
                 size_t closedCount = 0;
@@ -342,6 +344,14 @@ public:
         {
             Locker<Lock> locker(jsThreadMessagesLock);
             this->jsThreadMessages.swap(messages);
+        }
+
+        if (messages.size() > 0) {
+            WTFLogAlways("[receiveMessages] %zu messages, inPauseLoop=%d, connectIfNeeded=%d, status=%d", messages.size(), !!(this->pauseFlags.load() & kInPauseLoop), connectIfNeeded, static_cast<int>(this->status.load()));
+            for (auto& msg : messages) {
+                if (msg.contains("resume"_s) || msg.contains("pause"_s))
+                    WTFLogAlways("[receiveMessages]   -> %s", msg.utf8().data());
+            }
         }
 
         auto& dispatcher = globalObject->inspectorDebuggable();
@@ -400,6 +410,9 @@ public:
 
     void sendMessageToDebuggerThread(WTF::String&& inputMessage)
     {
+        if (inputMessage.contains("Debugger.paused"_s) || inputMessage.contains("Debugger.resumed"_s))
+            WTFLogAlways("[sendToDebugger] %s", inputMessage.utf8().data());
+
         {
             Locker<Lock> locker(debuggerThreadMessagesLock);
             debuggerThreadMessages.append(inputMessage);
@@ -454,14 +467,19 @@ public:
     // delivers messages via postTaskTo.
     void interruptForMessageDelivery()
     {
-        if (!runtimeInspectorActivated.load())
+        if (!runtimeInspectorActivated.load()) {
+            WTFLogAlways("[interruptForMessageDelivery] skipped: runtimeInspectorActivated=false");
             return;
+        }
         // If kInPauseLoop is set, the target VM is already in the runWhilePaused
         // message pump (busy-polling receiveMessagesOnInspectorThread). Skip the
         // STW request to avoid deadlock.
         uint8_t flags = this->pauseFlags.load();
-        if (flags & kInPauseLoop)
+        if (flags & kInPauseLoop) {
+            WTFLogAlways("[interruptForMessageDelivery] skipped: kInPauseLoop");
             return;
+        }
+        WTFLogAlways("[interruptForMessageDelivery] firing requestStopAll, flags=%u", flags);
         this->pauseFlags.fetch_or(kMessageDeliveryPause);
         VMManager::requestStopAll(VMManager::StopReason::JSDebugger);
     }
@@ -911,12 +929,15 @@ JSC::StopTheWorldStatus Bun__jsDebuggerCallback(JSC::VM& vm, JSC::StopTheWorldEv
         return STW_CONTINUE();
 
     // Phase 1: Activate inspector if requested (SIGUSR1 handler sets a flag)
-    if (Bun__activateInspector())
+    bool activated = Bun__activateInspector();
+    if (activated)
         Bun::runtimeInspectorActivated.store(true);
 
     // Phase 2: Process pending connections for THIS VM.
     // doConnect must run on the connection's owning VM thread.
     bool connected = Bun::processPendingConnections(vm);
+
+    WTFLogAlways("[STW callback] activated=%d connected=%d", activated, connected);
 
     // If pending connections or pauses exist on a DIFFERENT VM, switch to it.
     if (!connected) {
@@ -930,6 +951,7 @@ JSC::StopTheWorldStatus Bun__jsDebuggerCallback(JSC::VM& vm, JSC::StopTheWorldEv
     // in runWhilePaused after STW resumes.
     uint8_t pendingFlags = Bun::getPendingPauseFlags();
     bool isBootstrap = connected || (pendingFlags & Bun::BunInspectorConnection::kBootstrapPause);
+    WTFLogAlways("[STW callback] pendingFlags=%u isBootstrap=%d", pendingFlags, isBootstrap);
     if (isBootstrap || (pendingFlags & Bun::BunInspectorConnection::kMessageDeliveryPause)) {
         Bun::schedulePauseForConnectedSessions(vm, isBootstrap);
     }
@@ -946,4 +968,12 @@ extern "C" void VMManager__requestStopAll(uint32_t reason)
 extern "C" void VMManager__requestResumeAll(uint32_t reason)
 {
     JSC::VMManager::requestResumeAll(static_cast<JSC::VMManager::StopReason>(reason));
+}
+
+// Called from Zig when the event loop path activates the inspector.
+// Ensures runtimeInspectorActivated is set so that connect() and
+// interruptForMessageDelivery() use STW-based message delivery.
+extern "C" void Bun__setRuntimeInspectorActivated()
+{
+    Bun::runtimeInspectorActivated.store(true);
 }

@@ -38,9 +38,7 @@ var inspector_activation_requested: std.atomic.Value(bool) = std.atomic.Value(bo
 /// Called from the dedicated SignalInspector thread (POSIX) or remote thread (Windows).
 /// This runs in normal thread context, so it's safe to call JSC APIs.
 fn requestInspectorActivation() void {
-    // Avoid redundant STW requests if already requested but not yet consumed.
-    if (inspector_activation_requested.swap(true, .acq_rel))
-        return;
+    const already_requested = inspector_activation_requested.swap(true, .acq_rel);
 
     // Two mechanisms work together to handle all cases:
     //
@@ -55,8 +53,16 @@ fn requestInspectorActivation() void {
     // Both mechanisms check inspector_activation_requested and clear it atomically,
     // so only one will actually activate the inspector.
 
-    jsc.VMManager.requestStopAll(.JSDebugger);
+    if (!already_requested) {
+        // First request: start the StopTheWorld mechanism.
+        // On re-entry (retry), skip this — STW is already pending with its
+        // own SignalSender retry loop.
+        jsc.VMManager.requestStopAll(.JSDebugger);
+    }
 
+    // Always fire event loop wakeup, even on retries. This is cheap and
+    // handles cases where the first wakeup arrived before the event loop
+    // was in its blocking wait.
     if (VirtualMachine.getMainThreadVM()) |vm| {
         vm.eventLoop().wakeup();
     }
@@ -71,7 +77,18 @@ pub fn checkAndActivateInspector() void {
     }
 
     defer jsc.VMManager.requestResumeAll(.JSDebugger);
-    _ = tryActivateInspector();
+    if (tryActivateInspector()) {
+        // Set the C++ runtimeInspectorActivated flag so that connect() and
+        // interruptForMessageDelivery() use STW-based message delivery,
+        // same as when activated via the StopTheWorld callback path.
+        setRuntimeInspectorActivated();
+    }
+}
+
+extern fn Bun__setRuntimeInspectorActivated() void;
+
+fn setRuntimeInspectorActivated() void {
+    Bun__setRuntimeInspectorActivated();
 }
 
 /// Tries to activate the inspector. Returns true if activated, false otherwise.

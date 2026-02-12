@@ -6,7 +6,7 @@ option(WEBKIT_LOCAL "If a local version of WebKit should be used instead of down
 option(WEBKIT_BUILD_TYPE "The build type for local WebKit (defaults to CMAKE_BUILD_TYPE)")
 
 if(NOT WEBKIT_VERSION)
-  set(WEBKIT_VERSION f03492d0636fc38e6696e1719e3994b20ccae3f4)
+  set(WEBKIT_VERSION 2b0822aee577b4da18cd2b5b20c9f2b63614a6f3)
 endif()
 
 # Use preview build URL for Windows ARM64 until the fix is merged to main

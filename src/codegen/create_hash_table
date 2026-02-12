@@ -24,7 +24,7 @@
  
 use strict;
 use warnings;
-use Math::BigInt;
+use bigint;
 use Getopt::Long qw(:config pass_through);
 
 my $file = shift @ARGV or die("Must provide source file as final argument.");

@@ -219,12 +219,12 @@ fn alignUp(value: u64, alignment: u64) u64 {
     return (value + mask) & ~mask;
 }
 
+const bun = @import("bun");
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+const elf = std.elf;
 const Elf64_Ehdr = elf.Elf64_Ehdr;
 const Elf64_Phdr = elf.Elf64_Phdr;
 const Elf64_Shdr = elf.Elf64_Shdr;
-
-const std = @import("std");
-const elf = std.elf;
-const Allocator = std.mem.Allocator;
-
-const bun = @import("bun");

@@ -40,7 +40,8 @@ static size_t wtfStringWidth(const WTF::String& str)
 // All ANSI escape sequences are always passed through.
 // ============================================================================
 
-// Map an SGR open code to its close code.
+// Map an SGR code to its close code. Returns the close code for open codes,
+// or the code itself if it IS a close code. Returns 0 for unknown/reset.
 static uint32_t sgrCloseCode(uint32_t code)
 {
     if (code == 0) return 0; // reset
@@ -52,6 +53,9 @@ static uint32_t sgrCloseCode(uint32_t code)
     if (code == 9) return 29;
     if ((code >= 30 && code <= 38) || (code >= 90 && code <= 97)) return 39;
     if ((code >= 40 && code <= 48) || (code >= 100 && code <= 107)) return 49;
+    // Close codes map to themselves
+    if (code == 22 || code == 23 || code == 24 || code == 27 || code == 28 || code == 29 || code == 39 || code == 49)
+        return code;
     return 0;
 }
 
@@ -73,8 +77,13 @@ static int32_t parseSingleSgr(const Char* start, const Char* seqEnd)
     return val;
 }
 
-// Tracks active SGR styles as a map: closeCode → full escape sequence string.
-using SgrMap = HashMap<uint32_t, WTF::String>;
+// Tracks active SGR styles as an ordered list of (closeCode, openSequence) pairs.
+// Preserves insertion order to match cli-truncate's Map behavior.
+struct SgrEntry {
+    uint32_t closeCode;
+    WTF::String openSeq;
+};
+using SgrMap = Vector<SgrEntry>;
 
 // Process a block of possibly-chained ANSI sequences, updating SGR state for each.
 template<typename Char>
@@ -99,14 +108,17 @@ static void updateSgrState(SgrMap& active, const Char* start, const Char* blockE
                     } else {
                         uint32_t closeCode = sgrCloseCode(static_cast<uint32_t>(code));
                         if (closeCode != 0) {
-                            if (static_cast<uint32_t>(code) == closeCode) {
-                                active.remove(closeCode);
-                            } else {
+                            // Remove existing entry with this closeCode
+                            active.removeAllMatching([closeCode](const SgrEntry& e) { return e.closeCode == closeCode; });
+                            // If this is an open code (not a close), re-add at end
+                            if (static_cast<uint32_t>(code) != closeCode) {
                                 size_t len = p - seqStart;
+                                WTF::String seq;
                                 if constexpr (sizeof(Char) == 1)
-                                    active.set(closeCode, WTF::String(std::span<const Latin1Character>(reinterpret_cast<const Latin1Character*>(seqStart), len)));
+                                    seq = WTF::String(std::span<const Latin1Character>(reinterpret_cast<const Latin1Character*>(seqStart), len));
                                 else
-                                    active.set(closeCode, WTF::String(std::span<const UChar>(reinterpret_cast<const UChar*>(seqStart), len)));
+                                    seq = WTF::String(std::span<const UChar>(reinterpret_cast<const UChar*>(seqStart), len));
+                                active.append(SgrEntry { closeCode, std::move(seq) });
                             }
                         }
                     }
@@ -118,27 +130,29 @@ static void updateSgrState(SgrMap& active, const Char* start, const Char* blockE
     }
 }
 
+static void emitSgrCode(StringBuilder& out, uint32_t code)
+{
+    UChar buf[8];
+    buf[0] = 0x1b; buf[1] = '[';
+    size_t pos = 2;
+    uint32_t c = code;
+    if (c >= 100) { buf[pos++] = '0' + (c / 100); c %= 100; buf[pos++] = '0' + (c / 10); c %= 10; }
+    else if (c >= 10) { buf[pos++] = '0' + (c / 10); c %= 10; }
+    buf[pos++] = '0' + c;
+    buf[pos++] = 'm';
+    out.append(std::span<const UChar>(buf, pos));
+}
+
 static void emitSgrCloses(SgrMap& active, StringBuilder& out)
 {
-    // Emit close codes in reverse order for proper nesting
-    Vector<uint32_t> keys;
-    for (auto& kv : active) keys.append(kv.key);
-    for (size_t i = keys.size(); i > 0; i--) {
-        UChar buf[8];
-        buf[0] = 0x1b; buf[1] = '[';
-        size_t pos = 2;
-        uint32_t code = keys[i - 1];
-        if (code >= 100) { buf[pos++] = '0' + (code / 100); code %= 100; buf[pos++] = '0' + (code / 10); code %= 10; }
-        else if (code >= 10) { buf[pos++] = '0' + (code / 10); code %= 10; }
-        buf[pos++] = '0' + code;
-        buf[pos++] = 'm';
-        out.append(std::span<const UChar>(buf, pos));
-    }
+    // Emit close codes in reverse insertion order (matching cli-truncate's [...keys].reverse())
+    for (size_t i = active.size(); i > 0; i--)
+        emitSgrCode(out, active[i - 1].closeCode);
 }
 
 static void emitSgrOpens(SgrMap& active, StringBuilder& out)
 {
-    for (auto& kv : active) out.append(kv.value);
+    for (auto& entry : active) out.append(entry.openSeq);
 }
 
 template<typename Char>
@@ -155,12 +169,10 @@ static void sliceAnsi(const Char* input, size_t inputLen,
     SgrMap activeStyles;
 
     while (it < end) {
-        // ANSI escape sequences
+        // ANSI escape sequences: always track SGR state
         if (ANSI::isEscapeCharacter(*it)) {
             const Char* seqEnd = ANSI::consumeANSI(it, end);
-            // Track SGR state regardless
             updateSgrState(activeStyles, it, seqEnd);
-            // Only emit if we're currently including
             if (include)
                 out.append(std::span { it, seqEnd });
             it = seqEnd;
@@ -179,23 +191,22 @@ static void sliceAnsi(const Char* input, size_t inputLen,
             continue;
         }
 
-        // Past end: stop
+        // Past end: stop (don't track SGR past this point)
         if (col >= endCol)
             break;
 
-        // Entering range: emit active styles then start including
-        if (!include && col + w > beginCol) {
+        // Entering range
+        if (!include && col >= beginCol) {
             include = true;
             emitSgrOpens(activeStyles, out);
         }
 
-        if (include && col + w <= endCol)
+        if (include)
             out.append(std::span { it, it + charLen });
 
         col += w;
         it += charLen;
 
-        // Past end: stop processing visible characters
         if (col >= endCol)
             break;
     }
@@ -396,6 +407,28 @@ static WTF::String truncMiddle(const Char* in, size_t inLen, size_t totalW,
     StringBuilder left;  sliceAnsi(in, inLen, 0, half, left);
     StringBuilder right; sliceAnsi(in, inLen, totalW - (cols - half) + tcW, totalW, right);
     StringBuilder r; r.append(left); r.append(tc); r.append(right);
+
+    // For middle position, cli-truncate emits close codes for styles active at the
+    // end of the full string. The right slice already does this if non-empty, but
+    // when it's empty (cols is very small), we need to scan the full string.
+    if (right.isEmpty()) {
+        // Scan full string for final SGR state
+        const Char* it = in;
+        const Char* end = in + inLen;
+        SgrMap finalStyles;
+        while (it < end) {
+            if (ANSI::isEscapeCharacter(*it)) {
+                const Char* seqEnd = ANSI::consumeANSI(it, end);
+                updateSgrState(finalStyles, it, seqEnd);
+                it = seqEnd;
+            } else {
+                it += ANSI::charLength(it, end);
+            }
+        }
+        if (!finalStyles.isEmpty())
+            emitSgrCloses(finalStyles, r);
+    }
+
     return r.toString();
 }
 
@@ -410,10 +443,16 @@ static WTF::String truncateAnsiImpl(const Char* input, size_t inputLen,
     size_t totalWidth = ANSI::stringWidth(input, inputLen);
     if (totalWidth <= columns) return WTF::String(); // null = no truncation
 
+    if (columns == 1) {
+        // columns=1: return just the base truncation character (no space applied)
+        static constexpr UChar ellipsis = 0x2026;
+        return opts.truncationCharacter.isNull()
+            ? WTF::String(std::span<const UChar>(&ellipsis, 1))
+            : opts.truncationCharacter;
+    }
+
     WTF::String tc = buildTruncChar(opts);
     size_t tcW = wtfStringWidth(tc);
-
-    if (columns == 1) return tc;
 
     switch (opts.position) {
     case TruncatePosition::End:    return truncEnd(input, inputLen, totalWidth, columns, opts, tc, tcW);

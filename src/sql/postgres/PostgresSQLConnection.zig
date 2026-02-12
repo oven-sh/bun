@@ -680,6 +680,20 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
         break :brk b.allocatedSlice();
     };
 
+    // Reject null bytes in connection parameters to prevent Postgres startup
+    // message parameter injection (null bytes act as field terminators in the
+    // wire protocol's key\0value\0 format).
+    inline for (.{ .{ username, "username" }, .{ password, "password" }, .{ database, "database" }, .{ path, "path" } }) |entry| {
+        if (std.mem.indexOfScalar(u8, entry[0], 0) != null) {
+            bun.default_allocator.free(options_buf);
+            tls_config.deinit();
+            if (tls_ctx) |tls| {
+                tls.deinit(true);
+            }
+            return globalObject.throwInvalidArguments(entry[1] ++ " must not contain null bytes", .{});
+        }
+    }
+
     const on_connect = arguments[9];
     const on_close = arguments[10];
     const idle_timeout = arguments[11].toInt32();

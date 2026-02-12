@@ -20,6 +20,16 @@ pub const S3Credentials = struct {
         return @sizeOf(S3Credentials) + this.accessKeyId.len + this.region.len + this.secretAccessKey.len + this.endpoint.len + this.bucket.len;
     }
 
+    /// Validates that a string intended for use as an HTTP header value does not
+    /// contain characters that could enable header injection (CRLF injection).
+    /// Rejects carriage return (0x0D), line feed (0x0A), and null bytes (0x00).
+    pub fn isValidHTTPHeaderValue(value: []const u8) bool {
+        for (value) |c| {
+            if (c == '\r' or c == '\n' or c == 0) return false;
+        }
+        return true;
+    }
+
     fn hashConst(acl: []const u8) u64 {
         var hasher = std.hash.Wyhash.init(0);
         var remain = acl;
@@ -221,7 +231,11 @@ pub const S3Credentials = struct {
                             defer str.deref();
                             if (str.tag != .Empty and str.tag != .Dead) {
                                 new_credentials._contentDispositionSlice = str.toUTF8(bun.default_allocator);
-                                new_credentials.content_disposition = new_credentials._contentDispositionSlice.?.slice();
+                                const slice = new_credentials._contentDispositionSlice.?.slice();
+                                if (!isValidHTTPHeaderValue(slice)) {
+                                    return globalObject.throwInvalidArgumentTypeValue("contentDisposition", "a valid HTTP header value (cannot contain \\r, \\n, or null bytes)", js_value);
+                                }
+                                new_credentials.content_disposition = slice;
                             }
                         } else {
                             return globalObject.throwInvalidArgumentTypeValue("contentDisposition", "string", js_value);
@@ -236,7 +250,11 @@ pub const S3Credentials = struct {
                             defer str.deref();
                             if (str.tag != .Empty and str.tag != .Dead) {
                                 new_credentials._contentTypeSlice = str.toUTF8(bun.default_allocator);
-                                new_credentials.content_type = new_credentials._contentTypeSlice.?.slice();
+                                const slice = new_credentials._contentTypeSlice.?.slice();
+                                if (!isValidHTTPHeaderValue(slice)) {
+                                    return globalObject.throwInvalidArgumentTypeValue("type", "a valid HTTP header value (cannot contain \\r, \\n, or null bytes)", js_value);
+                                }
+                                new_credentials.content_type = slice;
                             }
                         } else {
                             return globalObject.throwInvalidArgumentTypeValue("type", "string", js_value);
@@ -251,7 +269,11 @@ pub const S3Credentials = struct {
                             defer str.deref();
                             if (str.tag != .Empty and str.tag != .Dead) {
                                 new_credentials._contentEncodingSlice = str.toUTF8(bun.default_allocator);
-                                new_credentials.content_encoding = new_credentials._contentEncodingSlice.?.slice();
+                                const slice = new_credentials._contentEncodingSlice.?.slice();
+                                if (!isValidHTTPHeaderValue(slice)) {
+                                    return globalObject.throwInvalidArgumentTypeValue("contentEncoding", "a valid HTTP header value (cannot contain \\r, \\n, or null bytes)", js_value);
+                                }
+                                new_credentials.content_encoding = slice;
                             }
                         } else {
                             return globalObject.throwInvalidArgumentTypeValue("contentEncoding", "string", js_value);

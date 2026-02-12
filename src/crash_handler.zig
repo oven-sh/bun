@@ -827,12 +827,131 @@ const metadata_version_line = std.fmt.comptimePrint(
     },
 );
 
-fn handleSegfaultPosix(sig: i32, info: *const std.posix.siginfo_t, _: ?*const anyopaque) callconv(.c) noreturn {
+/// Minimal ucontext_t for extracting the faulting instruction pointer from a
+/// POSIX signal context. Layout matches kernel headers; verified against Zig
+/// std lib's signal_ucontext_t in lib/std/debug/cpu_context.zig.
+const SignalUcontext = switch (bun.Environment.os) {
+    .linux => if (comptime bun.Environment.isAarch64)
+        // https://github.com/torvalds/linux/blob/master/arch/arm64/include/uapi/asm/sigcontext.h
+        extern struct {
+            _flags: usize,
+            _link: ?*anyopaque,
+            _stack: std.os.linux.stack_t,
+            _sigmask: std.os.linux.sigset_t,
+            _pad: [120]u8,
+            mcontext: extern struct {
+                _fault_address: u64 align(16),
+                _x: [30]u64,
+                _lr: u64,
+                _sp: u64,
+                pc: u64,
+            },
+        }
+    else
+        // https://github.com/torvalds/linux/blob/master/arch/x86/include/uapi/asm/sigcontext.h
+        extern struct {
+            _flags: usize,
+            _link: ?*anyopaque,
+            _stack: std.os.linux.stack_t,
+            mcontext: extern struct {
+                _r8: u64,
+                _r9: u64,
+                _r10: u64,
+                _r11: u64,
+                _r12: u64,
+                _r13: u64,
+                _r14: u64,
+                _r15: u64,
+                _rdi: u64,
+                _rsi: u64,
+                _rbp: u64,
+                _rbx: u64,
+                _rdx: u64,
+                _rax: u64,
+                _rcx: u64,
+                _rsp: u64,
+                rip: u64,
+            },
+        },
+    .mac => if (comptime bun.Environment.isAarch64)
+        // https://github.com/apple-oss-distributions/xnu/blob/main/bsd/arm/_mcontext.h
+        extern struct {
+            _onstack: i32,
+            _sigmask: std.c.sigset_t,
+            _stack: std.c.stack_t,
+            _link: ?*anyopaque,
+            _mcsize: u64,
+            mcontext: *const extern struct {
+                _far: u64 align(16),
+                _esr: u64,
+                _x: [30]u64,
+                _lr: u64,
+                _sp: u64,
+                pc: u64,
+            },
+        }
+    else
+        // https://github.com/apple-oss-distributions/xnu/blob/main/bsd/i386/_mcontext.h
+        extern struct {
+            _onstack: i32,
+            _sigmask: std.c.sigset_t,
+            _stack: std.c.stack_t,
+            _link: ?*anyopaque,
+            _mcsize: u64,
+            mcontext: *const extern struct {
+                _trapno: u16,
+                _cpu: u16,
+                _err: u32,
+                _faultvaddr: u64,
+                _rax: u64,
+                _rbx: u64,
+                _rcx: u64,
+                _rdx: u64,
+                _rdi: u64,
+                _rsi: u64,
+                _rbp: u64,
+                _rsp: u64,
+                _r8: u64,
+                _r9: u64,
+                _r10: u64,
+                _r11: u64,
+                _r12: u64,
+                _r13: u64,
+                _r14: u64,
+                _r15: u64,
+                rip: u64,
+            },
+        },
+    .windows, .wasm => @compileError("not applicable"),
+};
+
+fn handleSegfaultPosix(sig: i32, info: *const std.posix.siginfo_t, ctx_ptr: ?*const anyopaque) callconv(.c) noreturn {
     const addr = switch (bun.Environment.os) {
         .linux => @intFromPtr(info.fields.sigfault.addr),
         .mac => @intFromPtr(info.addr),
         .windows, .wasm => @compileError("unreachable"),
     };
+
+    // Extract the faulting instruction pointer from the signal context.
+    // Without this, @returnAddress() only gives the signal handler's own
+    // return address, and the actual crash location is permanently lost
+    // (especially after the crash handler calls @trap() / ud2).
+    const fault_ip: ?usize = if (ctx_ptr) |ctx| blk: {
+        const uc: *const SignalUcontext = @ptrCast(@alignCast(ctx));
+        break :blk if (comptime bun.Environment.isAarch64) uc.mcontext.pc else uc.mcontext.rip;
+    } else null;
+
+    // Print fault IP to stderr immediately, before crashHandler runs.
+    // If crashHandler itself crashes (which is the bug motivating this fix),
+    // we at least get the faulting address in the output.
+    if (fault_ip) |ip| {
+        nosuspend {
+            var buf: [128]u8 = undefined;
+            const msg = std.fmt.bufPrint(&buf, "Fault address: 0x{x}, IP: 0x{x}\n", .{ addr, ip }) catch &[0]u8{};
+            var stderr = std.io.getStdErr();
+            stderr.writeAll(msg) catch {};
+        }
+    }
 
     crashHandler(
         switch (sig) {
@@ -845,7 +964,7 @@ fn handleSegfaultPosix(sig: i32, info: *const std.posix.siginfo_t, _: ?*const an
             else => unreachable,
         },
         null,
-        @returnAddress(),
+        fault_ip orelse @returnAddress(),
     );
 }
 

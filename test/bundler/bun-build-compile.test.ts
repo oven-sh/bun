@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { chmodSync } from "node:fs";
 import { isArm64, isLinux, isMacOS, isMusl, isWindows, tempDir } from "harness";
 import { join } from "path";
 
@@ -205,7 +206,6 @@ if (isLinux) {
 
       expect(result.success).toBe(true);
 
-      const { chmodSync } = require("fs");
       chmodSync(result.outputs[0].path, 0o111);
 
       await using proc = Bun.spawn({
@@ -268,7 +268,6 @@ if (isLinux) {
 
       expect(result.success).toBe(true);
 
-      const { chmodSync } = require("fs");
       chmodSync(result.outputs[0].path, 0o111);
 
       await using proc = Bun.spawn({

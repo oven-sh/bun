@@ -551,6 +551,19 @@ pub fn Package(comptime SemverIntType: type) type {
                         this.removed_trusted_dependencies.count() > 0 or
                         this.patched_dependencies_changed;
                 }
+
+                /// Returns true when the only difference is removed dependencies
+                /// (no additions, updates, or other changes). This is the case when
+                /// workspaces have been pruned (e.g., by `turbo prune`) — the lockfile
+                /// is a superset of what's needed and should be accepted by --frozen-lockfile.
+                pub inline fn hasOnlyRemovals(this: Summary) bool {
+                    return this.remove > 0 and
+                        this.add == 0 and this.update == 0 and
+                        !this.overrides_changed and !this.catalogs_changed and
+                        this.added_trusted_dependencies.count() == 0 and
+                        this.removed_trusted_dependencies.count() == 0 and
+                        !this.patched_dependencies_changed;
+                }
             };
 
             pub fn generate(

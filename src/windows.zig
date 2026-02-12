@@ -86,6 +86,9 @@ pub const WPathBuffer = if (Environment.isWindows) bun.WPathBuffer else void;
 pub const HANDLE = win32.HANDLE;
 pub const HMODULE = win32.HMODULE;
 
+/// https://learn.microsoft.com/en-us/windows/win32/api/timeapi/nf-timeapi-timebeginperiod
+pub extern "winmm" fn timeBeginPeriod(uPeriod: UINT) callconv(.winapi) UINT;
+
 /// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfileinformationbyhandle
 pub extern "kernel32" fn GetFileInformationByHandle(
     hFile: HANDLE,

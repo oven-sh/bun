@@ -34,6 +34,11 @@ pub fn main() void {
     // This should appear before we make any calls at all to libuv.
     // So it's safest to put it very early in the main function.
     if (Environment.isWindows) {
+        // Set the Windows timer resolution to 1ms. Without this, the default
+        // resolution is ~15.6ms which causes timers like setInterval(fn, 16)
+        // to fire at ~28ms intervals instead of ~16ms. (See #26965)
+        _ = _bun.windows.timeBeginPeriod(1);
+
         _ = _bun.windows.libuv.uv_replace_allocator(
             &_bun.mimalloc.mi_malloc,
             &_bun.mimalloc.mi_realloc,

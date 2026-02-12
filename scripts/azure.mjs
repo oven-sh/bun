@@ -687,9 +687,7 @@ export const azure = {
       // This prepares Windows for generalization so the gallery image
       // can be used to create new VMs with OS provisioning.
       console.log(`[azure] Running sysprep on ${vmName}...`);
-      await runCommand(vmName, [
-        "C:\\Windows\\System32\\Sysprep\\sysprep.exe /generalize /oobe /shutdown /quiet",
-      ]);
+      await runCommand(vmName, ["C:\\Windows\\System32\\Sysprep\\sysprep.exe /generalize /oobe /shutdown /quiet"]);
 
       // Wait for VM to shut down after sysprep (sysprep triggers shutdown)
       for (let i = 0; i < 60; i++) {

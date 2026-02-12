@@ -838,7 +838,6 @@ const SignalUcontext = switch (bun.Environment.os) {
             _link: ?*anyopaque,
             _stack: std.os.linux.stack_t,
             _sigmask: std.os.linux.sigset_t,
-            _pad: [120]u8,
             mcontext: extern struct {
                 _fault_address: u64 align(16),
                 _x: [30]u64,
@@ -938,7 +937,17 @@ fn handleSegfaultPosix(sig: i32, info: *const std.posix.siginfo_t, ctx_ptr: ?*co
     // (especially after the crash handler calls @trap() / ud2).
     const fault_ip: ?usize = if (ctx_ptr) |ctx| blk: {
         const uc: *const SignalUcontext = @ptrCast(@alignCast(ctx));
-        break :blk if (bun.Environment.isAarch64) uc.mcontext.pc else uc.mcontext.rip;
+        // On macOS, mcontext is a pointer — guard against null.
+        // On Linux, mcontext is inline so this branch compiles away.
+        const ip = switch (bun.Environment.os) {
+            .mac => if (@intFromPtr(uc.mcontext) != 0)
+                (if (bun.Environment.isAarch64) uc.mcontext.pc else uc.mcontext.rip)
+            else
+                null,
+            .linux => if (bun.Environment.isAarch64) uc.mcontext.pc else uc.mcontext.rip,
+            else => @compileError("not applicable"),
+        };
+        break :blk ip;
     } else null;
 
     // Print fault IP to stderr immediately, before crashHandler runs.

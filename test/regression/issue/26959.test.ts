@@ -47,11 +47,10 @@ test("Content-Disposition header injection via quotes in File name", async () =>
   if (contentDisposition) {
     expect(contentDisposition).not.toContain("\r");
     expect(contentDisposition).not.toContain("\n");
-    // The inner filename value should not contain unescaped double quotes
-    const match = contentDisposition.match(/^filename="(.*)"$/);
-    if (match) {
-      expect(match[1]).not.toContain('"');
-    }
+    // The filename parameter value should not contain unescaped double quotes
+    const match = contentDisposition.match(/filename="([^"]*)"/);
+    expect(match).not.toBeNull();
+    expect(match![1]).not.toContain('"');
   }
 
   expect(body).toBe("hello");

@@ -18,7 +18,12 @@ import { getSecret, isCI } from "./utils.mjs";
 function getConfig() {
   const env = (name, fallback) => {
     if (isCI) {
-      return getSecret(name, { required: !fallback }) || fallback;
+      try {
+        return getSecret(name, { required: !fallback }) || fallback;
+      } catch {
+        if (fallback) return fallback;
+        throw new Error(`Azure secret not found: ${name}`);
+      }
     }
     return process.env[name] || fallback;
   };
@@ -496,7 +501,7 @@ function getBaseImageReference(os, arch) {
 }
 
 function getVmSize(arch) {
-  return arch === "aarch64" ? "Standard_D4ps_v6" : "Standard_D4s_v5";
+  return arch === "aarch64" ? "Standard_D4ps_v6" : "Standard_D4ds_v6";
 }
 
 // ============================================================================

@@ -80,6 +80,7 @@ BUN_DECLARE_HOST_FUNCTION(Bun__randomUUIDv5);
 namespace Bun {
 JSC_DECLARE_HOST_FUNCTION(jsFunctionBunStripANSI);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionBunWrapAnsi);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionBunSliceAnsi);
 }
 
 using namespace JSC;
@@ -988,6 +989,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     serve                                          BunObject_callback_serve                                            DontDelete|Function 1
     sha                                            BunObject_callback_sha                                              DontDelete|Function 1
     shrink                                         BunObject_callback_shrink                                           DontDelete|Function 1
+    sliceAnsi                                      jsFunctionBunSliceAnsi                                              DontDelete|Function 3
     sleep                                          functionBunSleep                                                    DontDelete|Function 1
     sleepSync                                      BunObject_callback_sleepSync                                        DontDelete|Function 1
     spawn                                          BunObject_callback_spawn                                            DontDelete|Function 1

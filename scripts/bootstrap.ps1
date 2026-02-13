@@ -200,6 +200,12 @@ function Install-Scoop-Package {
 function Install-Git {
   Install-Scoop-Package git
 
+  # Git for Windows ships Unix tools (cat, head, tail, etc.) in usr\bin
+  $gitUsrBin = "C:\Scoop\apps\git\current\usr\bin"
+  if (Test-Path $gitUsrBin) {
+    Add-To-Path $gitUsrBin
+  }
+
   if ($CI) {
     git config --system --add safe.directory "*"
     git config --system core.autocrlf false
@@ -257,9 +263,10 @@ function Install-Cygwin {
   # Make this non-fatal — the build will fail later if cygwin is actually needed.
   try {
     Install-Scoop-Package cygwin
-    $cygwinBin = Join-Path $env:USERPROFILE "scoop\apps\cygwin\current\bin"
+    # Cygwin binaries are at <scoop>/apps/cygwin/current/root/bin
+    $cygwinBin = "C:\Scoop\apps\cygwin\current\root\bin"
     if (Test-Path $cygwinBin) {
-      Add-To-Path $cygwinBin -Scope User
+      Add-To-Path $cygwinBin  # Machine scope (default) — survives Sysprep
     }
   } catch {
     Write-Warning "Cygwin installation failed (non-fatal): $_"

@@ -1391,7 +1391,10 @@ async function main() {
           if (cloud.name === "docker" || features?.includes("docker")) {
             return;
           }
-          await machine.spawnSafe(["C:\\Scoop\\apps\\nodejs\\current\\node.exe", remotePath, "install"], {
+          // Refresh PATH from registry before running agent.mjs — bootstrap added
+          // buildkite-agent to PATH but Azure Run Command sessions have stale PATH.
+          const cmd = `$env:PATH = [Environment]::GetEnvironmentVariable('PATH', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('PATH', 'User'); C:\\Scoop\\apps\\nodejs\\current\\node.exe ${remotePath} install`;
+          await machine.spawnSafe(["powershell", "-NoProfile", "-Command", cmd], {
             stdio: "inherit",
           });
         });

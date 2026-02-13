@@ -41,7 +41,7 @@ source "azure-arm" "windows-x64" {
     subscription         = var.subscription_id
     resource_group       = var.gallery_resource_group
     gallery_name         = var.gallery_name
-    image_name           = "windows-x64-2019-build-${var.build_number}"
+    image_name           = var.image_name != "" ? var.image_name : "windows-x64-2019-build-${var.build_number}"
     image_version        = "1.0.0"
     storage_account_type = "Standard_LRS"
     target_region {

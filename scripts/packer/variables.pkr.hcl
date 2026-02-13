@@ -50,6 +50,12 @@ variable "build_number" {
   default = "0"
 }
 
+variable "image_name" {
+  type        = string
+  default     = ""
+  description = "Gallery image definition name. If empty, derived from build_number."
+}
+
 variable "bootstrap_script" {
   type    = string
   default = "scripts/bootstrap.ps1"

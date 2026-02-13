@@ -1164,13 +1164,16 @@ async function buildWindowsImageWithPacker({ os, arch, release, command, ci, age
   const location = (await getSecret("AZURE_LOCATION")) || "eastus2";
   const galleryName = (await getSecret("AZURE_GALLERY_NAME")) || "bunCIGallery2";
 
-  // Build number for image naming
-  const buildNumber =
-    command === "publish-image" ? `v${getBootstrapVersion(os)}` : ci ? `${getBuildNumber()}` : `draft-${Date.now()}`;
-
-  // Ensure gallery image definition exists (Packer requires it)
+  // Image naming must match getImageName() in ci.mjs:
+  //   [publish images] / normal CI: "windows-x64-2019-v13"
+  //   [build images]:               "windows-x64-2019-build-37194"
+  const imageKey = arch === "aarch64" ? "windows-aarch64-11" : "windows-x64-2019";
   const imageDefName =
-    arch === "aarch64" ? `windows-aarch64-11-build-${buildNumber}` : `windows-x64-2019-build-${buildNumber}`;
+    command === "publish-image"
+      ? `${imageKey}-v${getBootstrapVersion(os)}`
+      : ci
+        ? `${imageKey}-build-${getBuildNumber()}`
+        : `${imageKey}-build-draft-${Date.now()}`;
   const galleryArch = arch === "aarch64" ? "Arm64" : "x64";
   console.log(`[packer] Ensuring gallery image definition: ${imageDefName}`);
   const galleryPath = `/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.Compute/galleries/${galleryName}/images/${imageDefName}`;
@@ -1205,7 +1208,7 @@ async function buildWindowsImageWithPacker({ os, arch, release, command, ci, age
   await spawnSafe([packerBin, "init", templateDir], { stdio: "inherit" });
 
   // Build the image
-  console.log(`[packer] Building ${templateName} image (build ${buildNumber})...`);
+  console.log(`[packer] Building ${templateName} image: ${imageDefName}`);
   const packerArgs = [
     packerBin,
     "build",
@@ -1228,7 +1231,7 @@ async function buildWindowsImageWithPacker({ os, arch, release, command, ci, age
     "-var",
     `gallery_name=${galleryName}`,
     "-var",
-    `build_number=${buildNumber}`,
+    `image_name=${imageDefName}`,
     "-var",
     `bootstrap_script=${bootstrapPath}`,
     "-var",
@@ -1248,7 +1251,7 @@ async function buildWindowsImageWithPacker({ os, arch, release, command, ci, age
     },
   });
 
-  console.log(`[packer] Image built successfully: ${templateName} (build ${buildNumber})`);
+  console.log(`[packer] Image built successfully: ${imageDefName}`);
 }
 
 /**

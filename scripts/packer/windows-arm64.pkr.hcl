@@ -82,16 +82,30 @@ build {
   // Step 4: Sysprep — MUST be last provisioner
   provisioner "powershell" {
     inline = [
+      "Remove-Item -Recurse -Force C:\\Windows\\Panther -ErrorAction SilentlyContinue",
       "Write-Output '>>> Waiting for Azure Guest Agent...'",
       "while ((Get-Service RdAgent).Status -ne 'Running') { Start-Sleep -s 5 }",
       "while ((Get-Service WindowsAzureGuestAgent).Status -ne 'Running') { Start-Sleep -s 5 }",
       "Write-Output '>>> Running Sysprep...'",
       "& $env:SystemRoot\\System32\\Sysprep\\Sysprep.exe /oobe /generalize /quiet /quit /mode:vm",
+      "if ($LASTEXITCODE -ne 0) {",
+      "  Write-Error \"Sysprep failed with exit code $LASTEXITCODE\"",
+      "  Get-Content \"$env:SystemRoot\\System32\\Sysprep\\Panther\\setupact.log\" -Tail 100 -ErrorAction SilentlyContinue",
+      "  Get-Content \"$env:SystemRoot\\System32\\Sysprep\\Panther\\setuperr.log\" -Tail 50 -ErrorAction SilentlyContinue",
+      "  exit 1",
+      "}",
+      "$timeout = 300; $elapsed = 0",
       "while ($true) {",
       "  $imageState = (Get-ItemProperty HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Setup\\State).ImageState",
-      "  Write-Output $imageState",
+      "  Write-Output \"ImageState: $imageState (${elapsed}s)\"",
       "  if ($imageState -eq 'IMAGE_STATE_GENERALIZE_RESEAL_TO_OOBE') { break }",
+      "  if ($elapsed -ge $timeout) {",
+      "    Write-Error \"Timed out after ${timeout}s -- stuck at $imageState\"",
+      "    Get-Content \"$env:SystemRoot\\System32\\Sysprep\\Panther\\setupact.log\" -Tail 100 -ErrorAction SilentlyContinue",
+      "    exit 1",
+      "  }",
       "  Start-Sleep -s 10",
+      "  $elapsed += 10",
       "}",
       "Write-Output '>>> Sysprep complete.'"
     ]

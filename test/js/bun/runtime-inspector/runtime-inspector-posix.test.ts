@@ -3,9 +3,6 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
 import { join } from "path";
 
-// ASAN builds have issues with signal handling reliability for SIGUSR1-based inspector activation
-const skipASAN = isASAN;
-
 // Timeout for waiting on stream reader loops (30s matches runtime-inspector.test.ts)
 const STREAM_TIMEOUT_MS = 30_000;
 
@@ -37,7 +34,7 @@ function hasBanner(stderr: string): boolean {
 
 // POSIX-specific tests (SIGUSR1 mechanism) - macOS and Linux only
 describe.skipIf(isWindows)("Runtime inspector SIGUSR1 activation", () => {
-  test.skipIf(skipASAN)("activates inspector when no user listener", async () => {
+  test.skipIf(isASAN)("activates inspector when no user listener", async () => {
     using dir = tempDir("sigusr1-activate-test", {
       "test.js": `
         const fs = require("fs");
@@ -201,7 +198,7 @@ SIGNAL_3
     expect(exitCode).toBe(0);
   });
 
-  test.skipIf(skipASAN)("inspector does not activate twice via SIGUSR1", async () => {
+  test.skipIf(isASAN)("inspector does not activate twice via SIGUSR1", async () => {
     using dir = tempDir("sigusr1-twice-test", {
       "test.js": `
         const fs = require("fs");
@@ -260,7 +257,7 @@ SIGNAL_3
     expect(matches?.length ?? 0).toBe(2);
   });
 
-  test.skipIf(skipASAN)("SIGUSR1 to self activates inspector", async () => {
+  test.skipIf(isASAN)("SIGUSR1 to self activates inspector", async () => {
     // Use a PID file approach instead of setTimeout to avoid timing-dependent self-signal
     using dir = tempDir("sigusr1-self-test", {
       "test.js": `

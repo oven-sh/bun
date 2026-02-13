@@ -1027,6 +1027,11 @@ extern "C" void VMManager__requestResumeAll(uint32_t reason)
     JSC::VMManager::requestResumeAll(static_cast<JSC::VMManager::StopReason>(reason));
 }
 
+extern "C" void VM__cancelStop(JSC::VM* vm)
+{
+    vm->cancelStop();
+}
+
 // Called from Zig when the event loop path activates the inspector.
 // Ensures runtimeInspectorActivated is set so that connect() and
 // interruptForMessageDelivery() use STW-based message delivery.

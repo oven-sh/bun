@@ -76,7 +76,18 @@ pub fn checkAndActivateInspector() void {
         return;
     }
 
-    defer jsc.VMManager.requestResumeAll(.JSDebugger);
+    // Cancel the pending STW on this VM. requestStopAll() poisons the stack
+    // limit and sets NeedStopTheWorld trap bits. If the event loop path wins
+    // the race (activates the inspector before handleTraps fires), these must
+    // be cleared. Otherwise when JS next enters a function, the poisoned stack
+    // limit triggers handleTraps → notifyVMStop on a VMManager that already
+    // had its request bits cleared by requestResumeAll, causing inconsistent
+    // state (crashes on some Linux aarch64 kernels).
+    if (VirtualMachine.getMainThreadVM()) |vm| {
+        vm.jsc_vm.cancelStop();
+    }
+    jsc.VMManager.requestResumeAll(.JSDebugger);
+
     if (tryActivateInspector()) {
         // Set the C++ runtimeInspectorActivated flag so that connect() and
         // interruptForMessageDelivery() use STW-based message delivery,

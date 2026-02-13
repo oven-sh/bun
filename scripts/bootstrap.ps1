@@ -12,7 +12,7 @@
 
 param (
   [Parameter(Mandatory = $false)]
-  [switch]$CI = $false,
+  [switch]$CI = ($env:CI -eq "true"),
   [Parameter(Mandatory = $false)]
   [switch]$Optimize = $CI
 )

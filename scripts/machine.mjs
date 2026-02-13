@@ -1126,6 +1126,17 @@ function getCloud(name) {
  * @property {SshKey[]} sshKeys
  */
 
+async function getAzureToken(tenantId, clientId, clientSecret) {
+  const response = await fetch(`https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: `grant_type=client_credentials&client_id=${clientId}&client_secret=${encodeURIComponent(clientSecret)}&scope=https://management.azure.com/.default`,
+  });
+  if (!response.ok) throw new Error(`Azure auth failed: ${response.status}`);
+  const data = await response.json();
+  return data.access_token;
+}
+
 /**
  * Build a Windows image using Packer (Azure only).
  * Packer handles VM creation, bootstrap, sysprep, and gallery capture via WinRM.
@@ -1157,6 +1168,35 @@ async function buildWindowsImageWithPacker({ os, arch, release, command, ci, age
   const buildNumber =
     command === "publish-image" ? `v${getBootstrapVersion(os)}` : ci ? `${getBuildNumber()}` : `draft-${Date.now()}`;
 
+  // Ensure gallery image definition exists (Packer requires it)
+  const imageDefName =
+    arch === "aarch64" ? `windows-aarch64-11-build-${buildNumber}` : `windows-x64-2019-build-${buildNumber}`;
+  const galleryArch = arch === "aarch64" ? "Arm64" : "x64";
+  console.log(`[packer] Ensuring gallery image definition: ${imageDefName}`);
+  const galleryPath = `/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.Compute/galleries/${galleryName}/images/${imageDefName}`;
+  const token = await getAzureToken(tenantId, clientId, clientSecret);
+  const defResponse = await fetch(`https://management.azure.com${galleryPath}?api-version=2024-03-03`, {
+    method: "PUT",
+    headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      location: location,
+      properties: {
+        osType: "Windows",
+        osState: "Generalized",
+        hyperVGeneration: "V2",
+        architecture: galleryArch,
+        identifier: { publisher: "bun", offer: `${os}-${arch}-ci`, sku: imageDefName },
+        features: [
+          { name: "DiskControllerTypes", value: "SCSI, NVMe" },
+          { name: "SecurityType", value: "TrustedLaunch" },
+        ],
+      },
+    }),
+  });
+  if (!defResponse.ok && defResponse.status !== 409) {
+    throw new Error(`Failed to create gallery image definition: ${defResponse.status} ${await defResponse.text()}`);
+  }
+
   // Install Packer if not available
   const packerBin = await ensurePacker();
 
@@ -1178,7 +1218,9 @@ async function buildWindowsImageWithPacker({ os, arch, release, command, ci, age
     "-var",
     `tenant_id=${tenantId}`,
     "-var",
-    `resource_group=${resourceGroup}`,
+    `resource_group=${resourceGroup}-EASTUS2`,
+    "-var",
+    `gallery_resource_group=${resourceGroup}`,
     "-var",
     `location=${location}`,
     "-var",
@@ -1225,7 +1267,7 @@ async function ensurePacker() {
   }
 
   // Download Packer
-  const version = "1.12.0";
+  const version = "1.15.0";
   const platform = process.platform === "win32" ? "windows" : process.platform;
   const packerArch = process.arch === "arm64" ? "arm64" : "amd64";
   const url = `https://releases.hashicorp.com/packer/${version}/packer_${version}_${platform}_${packerArch}.zip`;

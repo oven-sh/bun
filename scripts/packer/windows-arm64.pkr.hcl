@@ -79,7 +79,12 @@ build {
     valid_exit_codes = [0]
   }
 
-  // Step 4: Sysprep — MUST be last provisioner
+  // Step 4: Reboot to clear pending updates (VS Build Tools, Windows Updates)
+  provisioner "windows-restart" {
+    restart_timeout = "10m"
+  }
+
+  // Step 5: Sysprep — MUST be last provisioner
   provisioner "powershell" {
     inline = [
       "Remove-Item -Recurse -Force C:\\Windows\\Panther -ErrorAction SilentlyContinue",

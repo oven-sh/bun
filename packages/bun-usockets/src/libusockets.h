@@ -399,6 +399,9 @@ void us_poll_start(us_poll_r p, us_loop_r loop, int events) nonnull_fn_decl;
 /* Returns 0 if successful */
 int us_poll_start_rc(us_poll_r p, us_loop_r loop, int events) nonnull_fn_decl;
 void us_poll_change(us_poll_r p, us_loop_r loop, int events) nonnull_fn_decl;
+/* Like us_poll_change but unconditionally restarts the poll even if events match.
+ * Needed on Windows where WSAPoll may miss writable events without explicit restart. */
+void us_poll_change_force(us_poll_r p, us_loop_r loop, int events) nonnull_fn_decl;
 void us_poll_stop(us_poll_r p, struct us_loop_t *loop) nonnull_fn_decl;
 
 /* Return what events we are polling for */

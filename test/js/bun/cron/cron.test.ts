@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
-import { writeFileSync, unlinkSync } from "node:fs";
+import { unlinkSync, writeFileSync } from "node:fs";
 
 function readCrontab(): string {
   const result = Bun.spawnSync({
@@ -17,7 +17,9 @@ function writeCrontab(content: string) {
   try {
     Bun.spawnSync({ cmd: ["/usr/bin/crontab", tmpFile] });
   } finally {
-    try { unlinkSync(tmpFile); } catch {}
+    try {
+      unlinkSync(tmpFile);
+    } catch {}
   }
 }
 

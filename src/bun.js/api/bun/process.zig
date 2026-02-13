@@ -2269,6 +2269,9 @@ const std = @import("std");
 const MultiRunProcessHandle = @import("../../../cli/multi_run.zig").ProcessHandle;
 const ProcessHandle = @import("../../../cli/filter_run.zig").ProcessHandle;
 
+const CronRegisterJob = @import("../cron.zig").CronRegisterJob;
+const CronRemoveJob = @import("../cron.zig").CronRemoveJob;
+
 const bun = @import("bun");
 const Environment = bun.Environment;
 const Output = bun.Output;
@@ -2279,8 +2282,6 @@ const uv = bun.windows.libuv;
 
 const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
 const SecurityScanSubprocess = bun.install.SecurityScanSubprocess;
-const CronRegisterJob = @import("../cron.zig").CronRegisterJob;
-const CronRemoveJob = @import("../cron.zig").CronRemoveJob;
 
 const jsc = bun.jsc;
 const Subprocess = jsc.Subprocess;

@@ -41,9 +41,6 @@ fn CronJobBase(comptime Self: type) type {
     };
 }
 
-const OutputReader = bun.io.BufferedReader;
-const Process = bun.spawn.Process;
-
 // ============================================================================
 // CronRegisterJob
 // ============================================================================
@@ -492,17 +489,14 @@ pub const CronRegisterJob = struct {
         };
 
         var argv = [_:null]?[*:0]const u8{
-            "schtasks",                  "/create",
-            "/tn",                       task_name.ptr,
-            "/tr",                       tr_cmd.ptr,
-            "/sc",                       schtasks_params.sc,
-            "/mo",                       schtasks_params.mo,
-            if (schtasks_params.start_time != null) "/st" else null,
-            schtasks_params.start_time,
-            if (schtasks_params.day_spec != null) "/d" else null,
-            schtasks_params.day_spec,
-            "/f",
-            null,
+            "schtasks",                                              "/create",
+            "/tn",                                                   task_name.ptr,
+            "/tr",                                                   tr_cmd.ptr,
+            "/sc",                                                   schtasks_params.sc,
+            "/mo",                                                   schtasks_params.mo,
+            if (schtasks_params.start_time != null) "/st" else null, schtasks_params.start_time,
+            if (schtasks_params.day_spec != null) "/d" else null,    schtasks_params.day_spec,
+            "/f",                                                    null,
         };
         this.spawnCmd(&argv, .ignore, .ignore);
     }
@@ -1130,9 +1124,10 @@ fn makeTempPath(comptime prefix: []const u8, title: []const u8) ![:0]const u8 {
     return allocPrintZ(bun.default_allocator, "/tmp/" ++ prefix ++ "{s}-{x}.tmp", .{ title, rand });
 }
 
-const CronExpression = @import("cron_parser.zig").CronExpression;
-
 const std = @import("std");
+const CronExpression = @import("./cron_parser.zig").CronExpression;
+
 const bun = @import("bun");
 const jsc = bun.jsc;
-const Output = bun.Output;
+const OutputReader = bun.io.BufferedReader;
+const Process = bun.spawn.Process;

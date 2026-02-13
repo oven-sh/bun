@@ -5967,6 +5967,7 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
                     // byteOffset == 0 (whole-buffer view), no named properties.
                     if (!view->isDetached()
                         && !view->isOutOfBounds()
+                        && !view->isShared()
                         && !view->isResizableOrGrowableShared()
                         && view->byteOffset() == 0
                         && structure->maxOffset() == invalidOffset) {

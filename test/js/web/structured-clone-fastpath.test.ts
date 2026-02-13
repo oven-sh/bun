@@ -1062,4 +1062,43 @@ describe("Structured Clone Fast Path", () => {
     port1.close();
     port2.close();
   });
+
+  test("structuredClone TypedArray backed by SharedArrayBuffer falls back to slow path", () => {
+    const sab = new SharedArrayBuffer(16);
+    const view = new Uint8Array(sab);
+    view.set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+    const cloned = structuredClone(view);
+    expect(cloned).toBeInstanceOf(Uint8Array);
+    expect(cloned).toEqual(view);
+    // The cloned view should NOT share memory with the original
+    expect(cloned.buffer).not.toBe(sab);
+    // Verify independence: modifying original doesn't affect clone
+    view[0] = 255;
+    expect(cloned[0]).toBe(1);
+  });
+
+  test("structuredClone Int32Array backed by SharedArrayBuffer preserves values", () => {
+    const sab = new SharedArrayBuffer(16);
+    const view = new Int32Array(sab);
+    view.set([100, 200, 300, 400]);
+    const cloned = structuredClone(view);
+    expect(cloned).toBeInstanceOf(Int32Array);
+    expect(cloned).toEqual(new Int32Array([100, 200, 300, 400]));
+    expect(cloned.buffer).not.toBe(sab);
+  });
+
+  test("postMessage TypedArray backed by SharedArrayBuffer via MessageChannel", async () => {
+    const { port1, port2 } = new MessageChannel();
+    const sab = new SharedArrayBuffer(8);
+    const input = new Uint8Array(sab);
+    input.set([10, 20, 30, 40, 50, 60, 70, 80]);
+    const { promise, resolve } = Promise.withResolvers();
+    port2.onmessage = (e: MessageEvent) => resolve(e.data);
+    port1.postMessage(input);
+    const result = await promise;
+    expect(result).toBeInstanceOf(Uint8Array);
+    expect(result).toEqual(input);
+    port1.close();
+    port2.close();
+  });
 });

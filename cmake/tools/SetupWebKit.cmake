@@ -6,7 +6,7 @@ option(WEBKIT_LOCAL "If a local version of WebKit should be used instead of down
 option(WEBKIT_BUILD_TYPE "The build type for local WebKit (defaults to CMAKE_BUILD_TYPE)")
 
 if(NOT WEBKIT_VERSION)
-  set(WEBKIT_VERSION autobuild-preview-pr-161-c7bcfafe)
+  set(WEBKIT_VERSION autobuild-preview-pr-161-aa4d1424)
 endif()
 
 # Use preview build URL for PR branches until merged to main

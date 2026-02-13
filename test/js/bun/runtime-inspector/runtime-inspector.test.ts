@@ -2,9 +2,6 @@ import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isWindows } from "harness";
 
-// ASAN builds have issues with signal handling reliability for SIGUSR1-based inspector activation
-const skipASAN = isASAN;
-
 /**
  * Reads from a stderr stream until the full Bun Inspector banner appears.
  * The banner has "Bun Inspector" in both header and footer lines.
@@ -51,7 +48,7 @@ async function waitForDebuggerListening(
 // Windows uses file mapping mechanism, POSIX uses SIGUSR1
 describe("Runtime inspector activation", () => {
   describe("process._debugProcess", () => {
-    test.skipIf(skipASAN)("activates inspector in target process", async () => {
+    test.skipIf(isASAN)("activates inspector in target process", async () => {
       // Start target process - prints PID to stdout then stays alive
       await using targetProc = spawn({
         cmd: [bunExe(), "--inspect-port=0", "-e", `console.log(process.pid); setInterval(() => {}, 1000);`],
@@ -105,7 +102,7 @@ describe("Runtime inspector activation", () => {
       expect(await proc.exited).not.toBe(0);
     });
 
-    test.skipIf(skipASAN)("inspector does not activate twice", async () => {
+    test.skipIf(isASAN)("inspector does not activate twice", async () => {
       // Start target process - prints PID to stdout then stays alive
       await using targetProc = spawn({
         cmd: [bunExe(), "--inspect-port=0", "-e", `console.log(process.pid); setInterval(() => {}, 1000);`],
@@ -169,7 +166,7 @@ describe("Runtime inspector activation", () => {
       expect(matches?.length ?? 0).toBe(2);
     });
 
-    test.skipIf(skipASAN)("can activate inspector in multiple processes sequentially", async () => {
+    test.skipIf(isASAN)("can activate inspector in multiple processes sequentially", async () => {
       // Test sequential activation: activate first, shut down, then activate second.
       // Each process uses a random port, so concurrent would also work, but
       // sequential tests the full lifecycle.
@@ -257,7 +254,7 @@ describe("Runtime inspector activation", () => {
       expect(await proc.exited).not.toBe(0);
     });
 
-    test.skipIf(skipASAN)("can interrupt an infinite loop", async () => {
+    test.skipIf(isASAN)("can interrupt an infinite loop", async () => {
       // Start target process with infinite loop
       await using targetProc = spawn({
         cmd: [bunExe(), "--inspect-port=0", "-e", `console.log(process.pid); while (true) {}`],
@@ -296,7 +293,7 @@ describe("Runtime inspector activation", () => {
       expect(targetStderr).toMatch(/ws:\/\/localhost:\d+\//);
     });
 
-    test.skipIf(skipASAN)("can pause execution during while(true) via CDP", async () => {
+    test.skipIf(isASAN)("can pause execution during while(true) via CDP", async () => {
       // Start target process with infinite loop
       await using targetProc = spawn({
         cmd: [bunExe(), "--inspect-port=0", "-e", `console.log(process.pid); while (true) {}`],
@@ -384,7 +381,7 @@ describe("Runtime inspector activation", () => {
       }
     });
 
-    test.skipIf(skipASAN)("CDP messages work after client reconnects", async () => {
+    test.skipIf(isASAN)("CDP messages work after client reconnects", async () => {
       // Start target process - prints PID to stdout then stays alive
       await using targetProc = spawn({
         cmd: [bunExe(), "--inspect-port=0", "-e", `console.log(process.pid); setInterval(() => {}, 1000);`],

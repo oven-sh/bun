@@ -147,6 +147,14 @@ pub const VM = opaque {
         return JSC__VM__isEntered(vm);
     }
 
+    extern fn VM__cancelStop(vm: *VM) void;
+
+    /// Clears the NeedStopTheWorld trap bit and restores the stack limit.
+    /// Thread safe. See jsc's "VMTraps.h" for explanation on traps.
+    pub fn cancelStop(vm: *VM) void {
+        VM__cancelStop(vm);
+    }
+
     pub fn isTerminationException(vm: *VM, exception: *bun.jsc.Exception) bool {
         return bun.cpp.JSC__VM__isTerminationException(vm, exception);
     }

@@ -730,6 +730,48 @@ function getTestBunStep(platform, options, testOptions = {}) {
 }
 
 /**
+ * Returns a lightweight test step that runs only the PR-modified test files.
+ * Runs with no parallelism so it finishes fast and gives early feedback.
+ *
+ * @param {Platform} platform
+ * @param {PipelineOptions} options
+ * @param {{ buildId?: string, prTestFiles: string[] }} testOptions
+ * @returns {Step}
+ */
+function getPrTestStep(platform, options, testOptions) {
+  const { os } = platform;
+  const { buildId, prTestFiles } = testOptions;
+
+  const args = [`--step=${getTargetKey(platform)}-build-bun`];
+  if (buildId) {
+    args.push(`--build-id=${buildId}`);
+  }
+  args.push(...prTestFiles.map(f => `--include=${f}`));
+
+  const depends = [];
+  if (!buildId) {
+    depends.push(`${getTargetKey(platform)}-build-bun`);
+  }
+
+  return {
+    key: `${getPlatformKey(platform)}-test-pr`,
+    label: `:dart: ${getPlatformLabel(platform)} - PR tests`,
+    depends_on: depends,
+    agents: getTestAgent(platform, options),
+    retry: getRetry(),
+    cancel_on_build_failing: isMergeQueue(),
+    timeout_in_minutes: 10,
+    env: {
+      ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
+    },
+    command:
+      os === "windows"
+        ? `node .\\scripts\\runner.node.mjs ${args.join(" ")}`
+        : `./scripts/runner.node.mjs ${args.join(" ")}`,
+  };
+}
+
+/**
  * @param {Platform} platform
  * @param {PipelineOptions} options
  * @returns {Step}
@@ -1275,14 +1317,40 @@ async function getPipeline(options = {}) {
   }
 
   if (!isMainBranch()) {
-    const { skipTests, forceTests, testFiles } = options;
+    const { skipTests, forceTests, testFiles, changedFiles = [] } = options;
     if (!skipTests || forceTests) {
+      // Detect test files added/modified in this PR for the fast-feedback step.
+      const isTestFile = f => {
+        if (!f.startsWith("test/")) return false;
+        if (/\.(?:test|spec)\./.test(f)) return true;
+        // Node.js compat tests and cluster tests don't use .test. naming.
+        const u = f.replaceAll("\\", "/");
+        return (
+          u.includes("js/node/test/parallel/") ||
+          u.includes("js/node/test/sequential/") ||
+          u.includes("js/bun/test/parallel/") ||
+          /js\/node\/cluster\/test-.*\.ts$/.test(u)
+        );
+      };
+      const prTestFiles = changedFiles.filter(isTestFile).map(f => f.slice("test/".length));
+
       steps.push(
-        ...testPlatforms.map(target => ({
-          key: getTargetKey(target),
-          group: getTargetLabel(target),
-          steps: [getTestBunStep(target, options, { testFiles, buildId })],
-        })),
+        ...testPlatforms.map(target => {
+          const groupSteps = [];
+
+          // Fast-feedback step: runs only PR-modified tests with no parallelism.
+          if (prTestFiles.length > 0) {
+            groupSteps.push(getPrTestStep(target, options, { buildId, prTestFiles }));
+          }
+
+          groupSteps.push(getTestBunStep(target, options, { testFiles, buildId }));
+
+          return {
+            key: getTargetKey(target),
+            group: getTargetLabel(target),
+            steps: groupSteps,
+          };
+        }),
       );
     }
   }

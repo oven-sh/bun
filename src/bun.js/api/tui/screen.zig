@@ -3,13 +3,6 @@
 
 const TuiScreen = @This();
 
-const ghostty = @import("ghostty").terminal;
-const Page = ghostty.page.Page;
-const Cell = ghostty.Cell;
-const Style = ghostty.Style;
-const size = ghostty.size;
-const sgr = ghostty.sgr;
-
 pub const js = jsc.Codegen.JSTuiScreen;
 pub const toJS = js.toJS;
 pub const fromJS = js.fromJS;
@@ -1083,9 +1076,16 @@ fn parseColor(globalThis: *jsc.JSGlobalObject, val: jsc.JSValue) bun.JSError!Sty
     return .none;
 }
 
-const Parser = ghostty.Parser;
-const color = ghostty.color;
+const std = @import("std");
 
 const bun = @import("bun");
-const std = @import("std");
 const jsc = bun.jsc;
+
+const ghostty = @import("ghostty").terminal;
+const Cell = ghostty.Cell;
+const Parser = ghostty.Parser;
+const Style = ghostty.Style;
+const color = ghostty.color;
+const sgr = ghostty.sgr;
+const size = ghostty.size;
+const Page = ghostty.page.Page;

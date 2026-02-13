@@ -3,10 +3,6 @@
 
 const TuiKeyReader = @This();
 
-const ghostty = @import("ghostty").terminal;
-const Parser = ghostty.Parser;
-const Action = Parser.Action;
-
 const RefCount = bun.ptr.RefCount(TuiKeyReader, "ref_count", deinit, .{});
 pub const ref = RefCount.ref;
 pub const deref = RefCount.deref;
@@ -718,6 +714,11 @@ const ascii_table: [128]u8 = blk: {
 
 extern fn Bun__ttySetMode(fd: i32, mode: i32) i32;
 
-const bun = @import("bun");
 const std = @import("std");
+const ghostty = @import("ghostty").terminal;
+
+const bun = @import("bun");
 const jsc = bun.jsc;
+
+const Parser = ghostty.Parser;
+const Action = Parser.Action;

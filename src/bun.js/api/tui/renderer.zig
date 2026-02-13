@@ -5,13 +5,6 @@
 
 const TuiRenderer = @This();
 
-const ghostty = @import("ghostty").terminal;
-const Page = ghostty.page.Page;
-const Cell = ghostty.Cell;
-const Style = ghostty.Style;
-const size = ghostty.size;
-const TuiScreen = @import("./screen.zig");
-
 pub const CursorStyle = enum {
     default,
     block,
@@ -519,5 +512,12 @@ fn emit(this: *TuiRenderer, data: []const u8) void {
 const BSU = "\x1b[?2026h";
 const ESU = "\x1b[?2026l";
 
+const TuiScreen = @import("./screen.zig");
 const bun = @import("bun");
 const std = @import("std");
+
+const ghostty = @import("ghostty").terminal;
+const Cell = ghostty.Cell;
+const Style = ghostty.Style;
+const size = ghostty.size;
+const Page = ghostty.page.Page;

@@ -15,13 +15,6 @@
 
 const TuiTerminalWriter = @This();
 
-const TuiRenderer = @import("./renderer.zig");
-const TuiScreen = @import("./screen.zig");
-const CursorStyle = TuiRenderer.CursorStyle;
-
-const ghostty = @import("ghostty").terminal;
-const size = ghostty.size;
-
 pub const IOWriter = bun.io.BufferedWriter(TuiTerminalWriter, struct {
     pub const onWritable = TuiTerminalWriter.onWritable;
     pub const getBuffer = TuiTerminalWriter.getWriterBuffer;
@@ -558,6 +551,14 @@ fn writeRaw(this: *TuiTerminalWriter, data: []const u8) void {
     }
 }
 
-const bun = @import("bun");
+const TuiScreen = @import("./screen.zig");
 const std = @import("std");
+
+const TuiRenderer = @import("./renderer.zig");
+const CursorStyle = TuiRenderer.CursorStyle;
+
+const bun = @import("bun");
 const jsc = bun.jsc;
+
+const ghostty = @import("ghostty").terminal;
+const size = ghostty.size;

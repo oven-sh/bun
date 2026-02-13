@@ -11,13 +11,6 @@
 
 const TuiBufferWriter = @This();
 
-const TuiRenderer = @import("./renderer.zig");
-const TuiScreen = @import("./screen.zig");
-const CursorStyle = TuiRenderer.CursorStyle;
-
-const ghostty = @import("ghostty").terminal;
-const size = ghostty.size;
-
 pub const js = jsc.Codegen.JSTuiBufferWriter;
 pub const toJS = js.toJS;
 pub const fromJS = js.fromJS;
@@ -184,6 +177,14 @@ fn parseCursorStyle(value: jsc.JSValue, globalThis: *jsc.JSGlobalObject) ?Cursor
 
 const cursor_style_map = bun.ComptimeEnumMap(CursorStyle);
 
-const bun = @import("bun");
+const TuiScreen = @import("./screen.zig");
 const std = @import("std");
+
+const TuiRenderer = @import("./renderer.zig");
+const CursorStyle = TuiRenderer.CursorStyle;
+
+const bun = @import("bun");
 const jsc = bun.jsc;
+
+const ghostty = @import("ghostty").terminal;
+const size = ghostty.size;

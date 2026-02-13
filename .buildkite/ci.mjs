@@ -683,6 +683,7 @@ function getBuildBunStep(platform, options) {
  * @typedef {Object} TestOptions
  * @property {string} [buildId]
  * @property {string[]} [testFiles]
+ * @property {string[]} [excludeFiles]
  * @property {boolean} [dryRun]
  */
 
@@ -694,7 +695,7 @@ function getBuildBunStep(platform, options) {
  */
 function getTestBunStep(platform, options, testOptions = {}) {
   const { os, profile } = platform;
-  const { buildId, testFiles } = testOptions;
+  const { buildId, testFiles, excludeFiles } = testOptions;
 
   const args = [`--step=${getTargetKey(platform)}-build-bun`];
   if (buildId) {
@@ -703,6 +704,10 @@ function getTestBunStep(platform, options, testOptions = {}) {
 
   if (testFiles) {
     args.push(...testFiles.map(testFile => `--include=${testFile}`));
+  }
+
+  if (excludeFiles) {
+    args.push(...excludeFiles.map(f => `--exclude=${f}`));
   }
 
   const depends = [];
@@ -730,8 +735,8 @@ function getTestBunStep(platform, options, testOptions = {}) {
 }
 
 /**
- * Returns a lightweight test step that runs only the PR-modified test files.
- * Runs with no parallelism so it finishes fast and gives early feedback.
+ * Returns a test step that runs only the PR-modified test files.
+ * No parallelism so it finishes fast and gives early feedback.
  *
  * @param {Platform} platform
  * @param {PipelineOptions} options
@@ -1338,12 +1343,14 @@ async function getPipeline(options = {}) {
         ...testPlatforms.map(target => {
           const groupSteps = [];
 
-          // Fast-feedback step: runs only PR-modified tests with no parallelism.
+          // Fast-feedback step: runs only PR-modified test files.
           if (prTestFiles.length > 0) {
             groupSteps.push(getPrTestStep(target, options, { buildId, prTestFiles }));
           }
 
-          groupSteps.push(getTestBunStep(target, options, { testFiles, buildId }));
+          // Full suite excludes PR test files since they already ran above.
+          const excludeFiles = prTestFiles.length > 0 ? prTestFiles : undefined;
+          groupSteps.push(getTestBunStep(target, options, { testFiles, buildId, excludeFiles }));
 
           return {
             key: getTargetKey(target),

@@ -138,6 +138,10 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             // Set to null FIRST to prevent re-entrancy (shutdown can trigger callbacks)
             if (this.proxy_tunnel) |tunnel| {
                 this.proxy_tunnel = null;
+                // Detach the websocket from the tunnel before shutdown so the
+                // tunnel's onClose callback doesn't dispatch a spurious 1006
+                // after we've already handled a clean close.
+                tunnel.clearConnectedWebSocket();
                 tunnel.shutdown();
                 tunnel.deref();
             }

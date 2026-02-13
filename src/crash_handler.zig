@@ -964,7 +964,7 @@ fn handleSegfaultPosix(sig: i32, info: *const std.posix.siginfo_t, ctx_ptr: ?*co
     if (fault_ip) |ip| {
         nosuspend {
             var buf: [128]u8 = undefined;
-            const msg = std.fmt.bufPrint(&buf, "Fault address: 0x{x}, IP: 0x{x}\n", .{ addr, ip }) catch &[0]u8{};
+            const msg = std.fmt.bufPrint(&buf, "Fault address: 0x{X}, IP: 0x{X}\n", .{ addr, ip }) catch &[0]u8{};
             var writer_w = std.fs.File.stderr().writerStreaming(&.{});
             const writer = &writer_w.interface;
             writer.writeAll(msg) catch {};

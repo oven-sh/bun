@@ -59,7 +59,7 @@ pub fn expand(
     out: []std.array_list.Managed(u8),
     contains_nested: bool,
 ) ExpandError!void {
-    var out_key_counter: u16 = 1;
+    var out_key_counter: u32 = 1;
     if (!contains_nested) {
         var expansions_table = try buildExpansionTableAlloc(allocator, tokens);
 
@@ -74,8 +74,8 @@ pub fn expand(
 fn expandNested(
     root: *AST.Group,
     out: []std.array_list.Managed(u8),
-    out_key: u16,
-    out_key_counter: *u16,
+    out_key: u32,
+    out_key_counter: *u32,
     start: u32,
 ) ExpandError!void {
     if (root.atoms == .single) {
@@ -157,8 +157,8 @@ fn expandFlat(
     tokens: []const Token,
     expansion_table: []const ExpansionVariant,
     out: []std.array_list.Managed(u8),
-    out_key: u16,
-    out_key_counter: *u16,
+    out_key: u32,
+    out_key_counter: *u32,
     depth_: u8,
     start: usize,
     end: usize,

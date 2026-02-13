@@ -973,6 +973,7 @@ void schedulePauseForConnectedSessions(JSC::VM& vm, bool isBootstrap)
 // For idle VMs, RuntimeInspector::checkAndActivateInspector handles it via event loop.
 
 extern "C" bool Bun__activateInspector();
+extern "C" void Bun__setRuntimeInspectorActivated();
 
 JSC::StopTheWorldStatus Bun__jsDebuggerCallback(JSC::VM& vm, JSC::StopTheWorldEvent event)
 {

@@ -246,7 +246,9 @@ describe.skipIf(!isWindows)("Runtime inspector Windows file mapping", () => {
         stderr: "pipe",
       });
 
-      expect(await debug1.exited).toBe(0);
+      const [debug1Stderr, debug1ExitCode] = await Promise.all([debug1.stderr.text(), debug1.exited]);
+      expect(debug1Stderr).toBe("");
+      expect(debug1ExitCode).toBe(0);
 
       // Wait for the full banner
       const stderrReader1 = target1.stderr.getReader();
@@ -283,7 +285,9 @@ describe.skipIf(!isWindows)("Runtime inspector Windows file mapping", () => {
         stderr: "pipe",
       });
 
-      expect(await debug2.exited).toBe(0);
+      const [debug2Stderr, debug2ExitCode] = await Promise.all([debug2.stderr.text(), debug2.exited]);
+      expect(debug2Stderr).toBe("");
+      expect(debug2ExitCode).toBe(0);
 
       // Wait for the full banner
       const stderrReader2 = target2.stderr.getReader();

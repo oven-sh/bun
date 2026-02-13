@@ -246,11 +246,16 @@ function Install-Make {
 }
 
 function Install-Cygwin {
-  Install-Scoop-Package cygwin
-  # Scoop installs to ~/scoop/apps/cygwin/current
-  $cygwinBin = Join-Path $env:USERPROFILE "scoop\apps\cygwin\current\bin"
-  if (Test-Path $cygwinBin) {
-    Add-To-Path $cygwinBin -Scope User
+  # Cygwin's default mirror (mirrors.kernel.org) can be unreachable from Azure.
+  # Make this non-fatal — the build will fail later if cygwin is actually needed.
+  try {
+    Install-Scoop-Package cygwin
+    $cygwinBin = Join-Path $env:USERPROFILE "scoop\apps\cygwin\current\bin"
+    if (Test-Path $cygwinBin) {
+      Add-To-Path $cygwinBin -Scope User
+    }
+  } catch {
+    Write-Warning "Cygwin installation failed (non-fatal): $_"
   }
 }
 

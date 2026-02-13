@@ -596,13 +596,6 @@ const VirtualMachine = jsc.VirtualMachine;
 
 const string = []const u8;
 
-const CPUProfiler = @import("./bun.js/bindings/BunCPUProfiler.zig");
-const HeapProfiler = @import("./bun.js/bindings/BunHeapProfiler.zig");
-const options = @import("./options.zig");
-const std = @import("std");
-const Command = @import("./cli.zig").Command;
-const which = @import("./which.zig").which;
-
 /// Escape a string for safe embedding in a JS double-quoted string literal.
 /// Escapes backslashes, double quotes, newlines, etc.
 fn escapeForJSString(allocator: std.mem.Allocator, input: []const u8) ![]const u8 {
@@ -628,6 +621,13 @@ fn escapeForJSString(allocator: std.mem.Allocator, input: []const u8) ![]const u
     }
     return result.toOwnedSlice();
 }
+
+const CPUProfiler = @import("./bun.js/bindings/BunCPUProfiler.zig");
+const HeapProfiler = @import("./bun.js/bindings/BunHeapProfiler.zig");
+const options = @import("./options.zig");
+const std = @import("std");
+const Command = @import("./cli.zig").Command;
+const which = @import("./which.zig").which;
 
 const bun = @import("bun");
 const Global = bun.Global;

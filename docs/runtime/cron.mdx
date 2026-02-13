@@ -34,9 +34,9 @@ console.log(next); // => next quarter-hour boundary
 
 ### Parameters
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `expression` | `string` | A 5-field cron expression or predefined nickname |
+| Parameter      | Type             | Description                                              |
+| -------------- | ---------------- | -------------------------------------------------------- |
+| `expression`   | `string`         | A 5-field cron expression or predefined nickname         |
 | `relativeDate` | `Date \| number` | Starting point for the search (defaults to `Date.now()`) |
 
 ### Returns
@@ -63,22 +63,22 @@ console.log(second); // => 2025-01-15T12:00:00.000Z
 
 Standard 5-field format: `minute hour day-of-month month day-of-week`
 
-| Field | Values | Special characters |
-|-------|--------|--------------------|
-| Minute | `0`–`59` | `*` `,` `-` `/` |
-| Hour | `0`–`23` | `*` `,` `-` `/` |
-| Day of month | `1`–`31` | `*` `,` `-` `/` |
-| Month | `1`–`12` or `JAN`–`DEC` | `*` `,` `-` `/` |
-| Day of week | `0`–`7` or `SUN`–`SAT` | `*` `,` `-` `/` |
+| Field        | Values                  | Special characters |
+| ------------ | ----------------------- | ------------------ |
+| Minute       | `0`–`59`                | `*` `,` `-` `/`    |
+| Hour         | `0`–`23`                | `*` `,` `-` `/`    |
+| Day of month | `1`–`31`                | `*` `,` `-` `/`    |
+| Month        | `1`–`12` or `JAN`–`DEC` | `*` `,` `-` `/`    |
+| Day of week  | `0`–`7` or `SUN`–`SAT`  | `*` `,` `-` `/`    |
 
 ### Special characters
 
-| Character | Description | Example |
-|-----------|-------------|---------|
-| `*` | All values | `* * * * *` — every minute |
-| `,` | List | `1,15 * * * *` — minute 1 and 15 |
-| `-` | Range | `9-17 * * * *` — minutes 9 through 17 |
-| `/` | Step | `*/15 * * * *` — every 15 minutes |
+| Character | Description | Example                               |
+| --------- | ----------- | ------------------------------------- |
+| `*`       | All values  | `* * * * *` — every minute            |
+| `,`       | List        | `1,15 * * * *` — minute 1 and 15      |
+| `-`       | Range       | `9-17 * * * *` — minutes 9 through 17 |
+| `/`       | Step        | `*/15 * * * *` — every 15 minutes     |
 
 ### Named values
 
@@ -98,13 +98,13 @@ Both `0` and `7` mean Sunday in the weekday field.
 
 ### Predefined nicknames
 
-| Nickname | Equivalent | Description |
-|----------|------------|-------------|
+| Nickname                | Equivalent  | Description               |
+| ----------------------- | ----------- | ------------------------- |
 | `@yearly` / `@annually` | `0 0 1 1 *` | Once a year (January 1st) |
-| `@monthly` | `0 0 1 * *` | Once a month (1st day) |
-| `@weekly` | `0 0 * * 0` | Once a week (Sunday) |
-| `@daily` / `@midnight` | `0 0 * * *` | Once a day (midnight) |
-| `@hourly` | `0 * * * *` | Once an hour |
+| `@monthly`              | `0 0 1 * *` | Once a month (1st day)    |
+| `@weekly`               | `0 0 * * 0` | Once a week (Sunday)      |
+| `@daily` / `@midnight`  | `0 0 * * *` | Once a day (midnight)     |
+| `@hourly`               | `0 * * * *` | Once an hour              |
 
 ```ts
 const next = Bun.cron.parse("@daily");
@@ -134,16 +134,16 @@ await Bun.cron("./worker.ts", "30 2 * * MON", "weekly-report");
 
 ### Parameters
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `path` | `string` | Path to the script (resolved relative to caller) |
-| `schedule` | `string` | Cron expression or nickname |
-| `title` | `string` | Unique job identifier (alphanumeric, hyphens, underscores) |
+| Parameter  | Type     | Description                                                |
+| ---------- | -------- | ---------------------------------------------------------- |
+| `path`     | `string` | Path to the script (resolved relative to caller)           |
+| `schedule` | `string` | Cron expression or nickname                                |
+| `title`    | `string` | Unique job identifier (alphanumeric, hyphens, underscores) |
 
 Re-registering with the same `title` overwrites the existing job in-place — the old schedule is replaced, not duplicated.
 
 ```ts
-await Bun.cron("./worker.ts", "0 * * * *", "my-job");  // every hour
+await Bun.cron("./worker.ts", "0 * * * *", "my-job"); // every hour
 await Bun.cron("./worker.ts", "*/15 * * * *", "my-job"); // replaces: every 15 min
 ```
 
@@ -154,8 +154,8 @@ The registered script must export a default object with a `scheduled()` method, 
 ```ts worker.ts
 export default {
   scheduled(controller) {
-    console.log(controller.cron);          // "30 2 * * 1"
-    console.log(controller.type);          // "scheduled"
+    console.log(controller.cron); // "30 2 * * 1"
+    console.log(controller.type); // "scheduled"
     console.log(controller.scheduledTime); // 1737340200000
   },
 };
@@ -302,10 +302,10 @@ await Bun.cron.remove("weekly-report");
 
 This reverses what `Bun.cron()` did:
 
-| Platform | What `remove()` does |
-|----------|---------------------|
-| Linux | Edits crontab to remove the entry and its marker comment |
-| macOS | Runs `launchctl bootout` and deletes the plist file |
-| Windows | Runs `schtasks /delete` to remove the scheduled task |
+| Platform | What `remove()` does                                     |
+| -------- | -------------------------------------------------------- |
+| Linux    | Edits crontab to remove the entry and its marker comment |
+| macOS    | Runs `launchctl bootout` and deletes the plist file      |
+| Windows  | Runs `schtasks /delete` to remove the scheduled task     |
 
 Removing a job that doesn't exist resolves without error.

@@ -883,4 +883,183 @@ describe("Structured Clone Fast Path", () => {
     port1.close();
     port2.close();
   });
+
+  // === TypedArray fast path tests ===
+
+  const typedArrayCtors = [
+    { name: "Uint8Array", ctor: Uint8Array, values: [0, 1, 127, 255] },
+    { name: "Int8Array", ctor: Int8Array, values: [-128, -1, 0, 1, 127] },
+    { name: "Uint8ClampedArray", ctor: Uint8ClampedArray, values: [0, 1, 127, 255] },
+    { name: "Uint16Array", ctor: Uint16Array, values: [0, 1, 256, 65535] },
+    { name: "Int16Array", ctor: Int16Array, values: [-32768, -1, 0, 1, 32767] },
+    { name: "Uint32Array", ctor: Uint32Array, values: [0, 1, 65536, 4294967295] },
+    { name: "Int32Array", ctor: Int32Array, values: [-2147483648, -1, 0, 1, 2147483647] },
+    { name: "Float32Array", ctor: Float32Array, values: [0, 1.5, -1.5, 3.4028234663852886e38] },
+    { name: "Float64Array", ctor: Float64Array, values: [0, 1.5, -1.5, Number.MAX_VALUE, Number.MIN_VALUE] },
+  ] as const;
+
+  for (const { name, ctor, values } of typedArrayCtors) {
+    test(`structuredClone(${name}) basic values`, () => {
+      const input = new ctor(values as any);
+      const cloned = structuredClone(input);
+      expect(cloned).toBeInstanceOf(ctor);
+      expect(cloned).toEqual(input);
+      expect(cloned.buffer).not.toBe(input.buffer);
+    });
+  }
+
+  test("structuredClone(BigInt64Array) basic values", () => {
+    const input = new BigInt64Array([-9223372036854775808n, -1n, 0n, 1n, 9223372036854775807n]);
+    const cloned = structuredClone(input);
+    expect(cloned).toBeInstanceOf(BigInt64Array);
+    expect(cloned).toEqual(input);
+    expect(cloned.buffer).not.toBe(input.buffer);
+  });
+
+  test("structuredClone(BigUint64Array) basic values", () => {
+    const input = new BigUint64Array([0n, 1n, 18446744073709551615n]);
+    const cloned = structuredClone(input);
+    expect(cloned).toBeInstanceOf(BigUint64Array);
+    expect(cloned).toEqual(input);
+    expect(cloned.buffer).not.toBe(input.buffer);
+  });
+
+  test("structuredClone(Float16Array) basic values", () => {
+    const input = new Float16Array([0, 1.5, -1.5, 65504]);
+    const cloned = structuredClone(input);
+    expect(cloned).toBeInstanceOf(Float16Array);
+    expect(cloned).toEqual(input);
+    expect(cloned.buffer).not.toBe(input.buffer);
+  });
+
+  test("structuredClone empty TypedArray", () => {
+    const input = new Uint8Array(0);
+    const cloned = structuredClone(input);
+    expect(cloned).toBeInstanceOf(Uint8Array);
+    expect(cloned.length).toBe(0);
+    expect(cloned.byteLength).toBe(0);
+  });
+
+  test("structuredClone large TypedArray (1MB)", () => {
+    const input = new Uint8Array(1024 * 1024);
+    for (let i = 0; i < input.length; i++) input[i] = i & 0xff;
+    const cloned = structuredClone(input);
+    expect(cloned).toBeInstanceOf(Uint8Array);
+    expect(cloned.length).toBe(input.length);
+    expect(cloned).toEqual(input);
+    expect(cloned.buffer).not.toBe(input.buffer);
+  });
+
+  test("structuredClone Float64Array with special values", () => {
+    const input = new Float64Array([NaN, Infinity, -Infinity, -0, 0]);
+    const cloned = structuredClone(input);
+    expect(cloned).toBeInstanceOf(Float64Array);
+    expect(cloned[0]).toBeNaN();
+    expect(cloned[1]).toBe(Infinity);
+    expect(cloned[2]).toBe(-Infinity);
+    expect(Object.is(cloned[3], -0)).toBe(true);
+    expect(cloned[4]).toBe(0);
+  });
+
+  test("structuredClone Float32Array with special values", () => {
+    const input = new Float32Array([NaN, Infinity, -Infinity, -0]);
+    const cloned = structuredClone(input);
+    expect(cloned).toBeInstanceOf(Float32Array);
+    expect(cloned[0]).toBeNaN();
+    expect(cloned[1]).toBe(Infinity);
+    expect(cloned[2]).toBe(-Infinity);
+    expect(Object.is(cloned[3], -0)).toBe(true);
+  });
+
+  test("structuredClone TypedArray creates independent copy", () => {
+    const input = new Uint8Array([1, 2, 3, 4, 5]);
+    const cloned = structuredClone(input);
+    cloned[0] = 255;
+    expect(input[0]).toBe(1);
+    input[1] = 200;
+    expect(cloned[1]).toBe(2);
+  });
+
+  test("structuredClone DataView falls back to slow path but works correctly", () => {
+    const buf = new ArrayBuffer(8);
+    const view = new DataView(buf);
+    view.setFloat64(0, 3.14);
+    const cloned = structuredClone(view);
+    expect(cloned).toBeInstanceOf(DataView);
+    expect(cloned.getFloat64(0)).toBe(3.14);
+    expect(cloned.buffer).not.toBe(buf);
+  });
+
+  test("structuredClone TypedArray slice view falls back to slow path", () => {
+    const buf = new ArrayBuffer(16);
+    new Uint8Array(buf).set([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+    const sliceView = new Uint8Array(buf, 4, 4);
+    const cloned = structuredClone(sliceView);
+    expect(cloned).toBeInstanceOf(Uint8Array);
+    expect(cloned).toEqual(new Uint8Array([4, 5, 6, 7]));
+    // structuredClone clones the full backing ArrayBuffer, preserving byteOffset
+    expect(cloned.byteOffset).toBe(4);
+    expect(cloned.buffer.byteLength).toBe(16);
+  });
+
+  test("structuredClone TypedArray with named properties falls back to slow path", () => {
+    const input = new Uint8Array([1, 2, 3]) as any;
+    input.customProp = "hello";
+    // Named properties on TypedArray are not cloneable via structuredClone,
+    // the slow path handles this correctly (ignores them)
+    const cloned = structuredClone(input);
+    expect(cloned).toBeInstanceOf(Uint8Array);
+    expect(cloned).toEqual(new Uint8Array([1, 2, 3]));
+  });
+
+  test("structuredClone detached TypedArray throws DataCloneError", () => {
+    const buf = new ArrayBuffer(8);
+    const input = new Uint8Array(buf);
+    // Detach the buffer by transferring it
+    structuredClone(buf, { transfer: [buf] });
+    expect(() => structuredClone(input)).toThrow();
+  });
+
+  test("postMessage TypedArray via MessageChannel", async () => {
+    const { port1, port2 } = new MessageChannel();
+    const input = new Uint8Array([10, 20, 30, 40, 50]);
+    const { promise, resolve } = Promise.withResolvers();
+    port2.onmessage = (e: MessageEvent) => resolve(e.data);
+    port1.postMessage(input);
+    const result = await promise;
+    expect(result).toBeInstanceOf(Uint8Array);
+    expect(result).toEqual(input);
+    port1.close();
+    port2.close();
+  });
+
+  test("postMessage Float64Array via MessageChannel", async () => {
+    const { port1, port2 } = new MessageChannel();
+    const input = new Float64Array([1.1, 2.2, 3.3, NaN, Infinity]);
+    const { promise, resolve } = Promise.withResolvers();
+    port2.onmessage = (e: MessageEvent) => resolve(e.data);
+    port1.postMessage(input);
+    const result = await promise;
+    expect(result).toBeInstanceOf(Float64Array);
+    expect(result[0]).toBe(1.1);
+    expect(result[1]).toBe(2.2);
+    expect(result[2]).toBe(3.3);
+    expect(result[3]).toBeNaN();
+    expect(result[4]).toBe(Infinity);
+    port1.close();
+    port2.close();
+  });
+
+  test("postMessage BigInt64Array via MessageChannel", async () => {
+    const { port1, port2 } = new MessageChannel();
+    const input = new BigInt64Array([0n, -1n, 9223372036854775807n]);
+    const { promise, resolve } = Promise.withResolvers();
+    port2.onmessage = (e: MessageEvent) => resolve(e.data);
+    port1.postMessage(input);
+    const result = await promise;
+    expect(result).toBeInstanceOf(BigInt64Array);
+    expect(result).toEqual(input);
+    port1.close();
+    port2.close();
+  });
 });

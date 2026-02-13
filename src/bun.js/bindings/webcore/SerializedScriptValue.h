@@ -87,6 +87,7 @@ enum class FastPath : uint8_t {
     Int32Array,
     DoubleArray,
     DenseArray,
+    TypedArray,
 };
 
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
@@ -147,6 +148,9 @@ public:
 
     // Fast path for postMessage with dense arrays containing simple objects
     static Ref<SerializedScriptValue> createDenseArrayFastPath(WTF::FixedVector<DenseArrayElement>&& elements);
+
+    // Fast path for postMessage with TypedArray (Uint8Array, Float64Array, etc.)
+    static Ref<SerializedScriptValue> createTypedArrayFastPath(Vector<uint8_t>&& data, uint8_t subtag);
 
     static Ref<SerializedScriptValue> nullValue();
 
@@ -255,6 +259,8 @@ private:
     SerializedScriptValue(Vector<uint8_t>&& butterflyData, uint32_t length, FastPath fastPath);
     // Constructor for DenseArray fast path
     explicit SerializedScriptValue(WTF::FixedVector<DenseArrayElement>&& denseElements);
+    // Constructor for TypedArray fast path
+    SerializedScriptValue(Vector<uint8_t>&& data, uint8_t subtag);
 
     size_t computeMemoryCost() const;
 
@@ -294,6 +300,9 @@ private:
 
     // DenseArray fast path: array of primitives/strings/simple objects
     FixedVector<DenseArrayElement> m_denseArrayElements {};
+
+    // TypedArray fast path: subtag identifying the TypedArray type (ArrayBufferViewSubtag)
+    uint8_t m_typedArraySubtag { 0 };
 };
 
 template<class Encoder>

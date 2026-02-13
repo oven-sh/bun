@@ -95,6 +95,7 @@
 #include <JavaScriptCore/RegExp.h>
 #include <JavaScriptCore/RegExpObject.h>
 #include <JavaScriptCore/TypedArrayInlines.h>
+#include <JavaScriptCore/TypedArrayType.h>
 #include <JavaScriptCore/TypedArrays.h>
 #include <JavaScriptCore/WasmModule.h>
 #include <JavaScriptCore/YarrFlags.h>
@@ -382,6 +383,25 @@ static unsigned typedArrayElementSize(ArrayBufferViewSubtag tag)
         return 8;
     default:
         return 0;
+    }
+}
+
+static ArrayBufferViewSubtag subtagForTypedArrayType(TypedArrayType type)
+{
+    switch (type) {
+    case TypeInt8: return Int8ArrayTag;
+    case TypeUint8: return Uint8ArrayTag;
+    case TypeUint8Clamped: return Uint8ClampedArrayTag;
+    case TypeInt16: return Int16ArrayTag;
+    case TypeUint16: return Uint16ArrayTag;
+    case TypeInt32: return Int32ArrayTag;
+    case TypeUint32: return Uint32ArrayTag;
+    case TypeFloat16: return Float16ArrayTag;
+    case TypeFloat32: return Float32ArrayTag;
+    case TypeFloat64: return Float64ArrayTag;
+    case TypeBigInt64: return BigInt64ArrayTag;
+    case TypeBigUint64: return BigUint64ArrayTag;
+    default: return DataViewTag;
     }
 }
 
@@ -5606,6 +5626,14 @@ SerializedScriptValue::SerializedScriptValue(WTF::FixedVector<DenseArrayElement>
     m_memoryCost = computeMemoryCost();
 }
 
+SerializedScriptValue::SerializedScriptValue(Vector<uint8_t>&& data, uint8_t subtag)
+    : m_arrayButterflyData(WTF::move(data))
+    , m_fastPath(FastPath::TypedArray)
+    , m_typedArraySubtag(subtag)
+{
+    m_memoryCost = computeMemoryCost();
+}
+
 Ref<SerializedScriptValue> SerializedScriptValue::createDenseArrayFastPath(
     WTF::FixedVector<DenseArrayElement>&& elements)
 {
@@ -5695,6 +5723,7 @@ size_t SerializedScriptValue::computeMemoryCost() const
         break;
     case FastPath::Int32Array:
     case FastPath::DoubleArray:
+    case FastPath::TypedArray:
         cost += m_arrayButterflyData.size();
         break;
     case FastPath::DenseArray:
@@ -5916,7 +5945,27 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
                 object = cell->getObject();
                 structure = object->structure();
 
-                if (auto* jsArray = jsDynamicCast<JSArray*>(object)) {
+                // TypedArray fast path: check before JSArray since TypedArray is not a JSArray
+                auto jsType = structure->typeInfo().type();
+                if (isTypedView(jsType)) {
+                    auto* view = jsCast<JSArrayBufferView*>(object);
+                    size_t byteLength = view->byteLength();
+                    // Fast path conditions: not detached, not out of bounds, not resizable/growable,
+                    // byteOffset == 0 (whole-buffer view), no named properties.
+                    if (!view->isDetached()
+                        && !view->isOutOfBounds()
+                        && !view->isResizableOrGrowableShared()
+                        && view->byteOffset() == 0
+                        && structure->maxOffset() == invalidOffset) {
+                        auto taType = typedArrayType(jsType);
+                        auto subtag = subtagForTypedArrayType(taType);
+                        auto* data = static_cast<const uint8_t*>(view->vector());
+                        // Use span constructor: single allocation + memcpy, no zero-fill
+                        Vector<uint8_t> buffer(std::span<const uint8_t> { data, byteLength });
+                        return SerializedScriptValue::createTypedArrayFastPath(WTF::move(buffer), static_cast<uint8_t>(subtag));
+                    }
+                    // Conditions not met → fall through to slow path
+                } else if (auto* jsArray = jsDynamicCast<JSArray*>(object)) {
                     canUseArrayFastPath = true;
                     array = jsArray;
                 } else if (isObjectFastPathCandidate(structure)) {
@@ -6366,6 +6415,11 @@ Ref<SerializedScriptValue> SerializedScriptValue::createDoubleArrayFastPath(Vect
     return adoptRef(*new SerializedScriptValue(WTF::move(data), length, FastPath::DoubleArray));
 }
 
+Ref<SerializedScriptValue> SerializedScriptValue::createTypedArrayFastPath(Vector<uint8_t>&& data, uint8_t subtag)
+{
+    return adoptRef(*new SerializedScriptValue(WTF::move(data), subtag));
+}
+
 RefPtr<SerializedScriptValue> SerializedScriptValue::create(JSContextRef originContext, JSValueRef apiValue, JSValueRef* exception)
 {
     JSGlobalObject* lexicalGlobalObject = toJS(originContext);
@@ -6675,6 +6729,71 @@ JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, 
         if (didFail)
             *didFail = false;
         return resultArray;
+    }
+    case FastPath::TypedArray: {
+        size_t byteLength = m_arrayButterflyData.size();
+        auto subtag = static_cast<ArrayBufferViewSubtag>(m_typedArraySubtag);
+        unsigned elemSize = typedArrayElementSize(subtag);
+        if (!elemSize) [[unlikely]]
+            break;
+
+        auto arrayBuffer = ArrayBuffer::tryCreate(m_arrayButterflyData.span());
+        if (!arrayBuffer) [[unlikely]] {
+            if (didFail)
+                *didFail = true;
+            return {};
+        }
+
+        std::optional<size_t> length = byteLength / elemSize;
+        JSValue typedArrayValue;
+
+        switch (subtag) {
+        case Int8ArrayTag:
+            typedArrayValue = toJS(&lexicalGlobalObject, globalObject, Int8Array::wrappedAs(arrayBuffer.releaseNonNull(), 0, length).get());
+            break;
+        case Uint8ArrayTag:
+            typedArrayValue = toJS(&lexicalGlobalObject, globalObject, Uint8Array::wrappedAs(arrayBuffer.releaseNonNull(), 0, length).get());
+            break;
+        case Uint8ClampedArrayTag:
+            typedArrayValue = toJS(&lexicalGlobalObject, globalObject, Uint8ClampedArray::wrappedAs(arrayBuffer.releaseNonNull(), 0, length).get());
+            break;
+        case Int16ArrayTag:
+            typedArrayValue = toJS(&lexicalGlobalObject, globalObject, Int16Array::wrappedAs(arrayBuffer.releaseNonNull(), 0, length).get());
+            break;
+        case Uint16ArrayTag:
+            typedArrayValue = toJS(&lexicalGlobalObject, globalObject, Uint16Array::wrappedAs(arrayBuffer.releaseNonNull(), 0, length).get());
+            break;
+        case Int32ArrayTag:
+            typedArrayValue = toJS(&lexicalGlobalObject, globalObject, Int32Array::wrappedAs(arrayBuffer.releaseNonNull(), 0, length).get());
+            break;
+        case Uint32ArrayTag:
+            typedArrayValue = toJS(&lexicalGlobalObject, globalObject, Uint32Array::wrappedAs(arrayBuffer.releaseNonNull(), 0, length).get());
+            break;
+        case Float16ArrayTag:
+            typedArrayValue = toJS(&lexicalGlobalObject, globalObject, Float16Array::wrappedAs(arrayBuffer.releaseNonNull(), 0, length).get());
+            break;
+        case Float32ArrayTag:
+            typedArrayValue = toJS(&lexicalGlobalObject, globalObject, Float32Array::wrappedAs(arrayBuffer.releaseNonNull(), 0, length).get());
+            break;
+        case Float64ArrayTag:
+            typedArrayValue = toJS(&lexicalGlobalObject, globalObject, Float64Array::wrappedAs(arrayBuffer.releaseNonNull(), 0, length).get());
+            break;
+        case BigInt64ArrayTag:
+            typedArrayValue = toJS(&lexicalGlobalObject, globalObject, BigInt64Array::wrappedAs(arrayBuffer.releaseNonNull(), 0, length).get());
+            break;
+        case BigUint64ArrayTag:
+            typedArrayValue = toJS(&lexicalGlobalObject, globalObject, BigUint64Array::wrappedAs(arrayBuffer.releaseNonNull(), 0, length).get());
+            break;
+        default:
+            break;
+        }
+
+        if (typedArrayValue) {
+            if (didFail)
+                *didFail = false;
+            return typedArrayValue;
+        }
+        break;
     }
     case FastPath::None: {
         break;

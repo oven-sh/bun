@@ -21,7 +21,7 @@ pub fn toHaveNthReturnedWith(this: *Expect, globalThis: *JSGlobalObject, callfra
     if (!returns.jsType().isArray()) {
         var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
         defer formatter.deinit();
-        return globalThis.throw("Expected value must be a mock function: {f}", .{value.toFmt(&formatter)});
+        return globalThis.throw("Received value must be a mock function: {f}", .{value.toFmt(&formatter)});
     }
 
     const calls_count = @as(u32, @intCast(try returns.getLength(globalThis)));

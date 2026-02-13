@@ -228,6 +228,16 @@ pub const ShellTouchTask = struct {
             break :brk ResolvePath.joinZ(parts, .auto);
         };
 
+        if (filepath.len >= bun.MAX_PATH_BYTES) {
+            this.err = bun.sys.Error.fromCode(.NAMETOOLONG, .open).withPath(bun.handleOom(bun.default_allocator.dupe(u8, filepath))).toShellSystemError();
+            if (this.event_loop == .js) {
+                this.event_loop.js.enqueueTaskConcurrent(this.concurrent_task.js.from(this, .manual_deinit));
+            } else {
+                this.event_loop.mini.enqueueTaskConcurrent(this.concurrent_task.mini.from(this, "runFromMainThreadMini"));
+            }
+            return;
+        }
+
         var node_fs = jsc.Node.fs.NodeFS{};
         const milliseconds: f64 = @floatFromInt(std.time.milliTimestamp());
         const atime: jsc.Node.TimeLike = if (bun.Environment.isWindows) milliseconds / 1000.0 else jsc.Node.TimeLike{

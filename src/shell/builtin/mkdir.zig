@@ -242,6 +242,16 @@ pub const ShellMkdirTask = struct {
             break :brk ResolvePath.joinZ(parts, .auto);
         };
 
+        if (filepath.len >= bun.MAX_PATH_BYTES) {
+            this.err = bun.sys.Error.fromCode(.NAMETOOLONG, .mkdir).withPath(bun.handleOom(bun.default_allocator.dupe(u8, filepath))).toShellSystemError();
+            if (this.event_loop == .js) {
+                this.event_loop.js.enqueueTaskConcurrent(this.concurrent_task.js.from(this, .manual_deinit));
+            } else {
+                this.event_loop.mini.enqueueTaskConcurrent(this.concurrent_task.mini.from(this, "runFromMainThreadMini"));
+            }
+            return;
+        }
+
         var node_fs = jsc.Node.fs.NodeFS{};
         // Recursive
         if (this.opts.parents) {

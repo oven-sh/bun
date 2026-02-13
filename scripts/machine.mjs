@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
-import { existsSync, mkdtempSync, readdirSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { basename, extname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { inspect, parseArgs } from "node:util";
@@ -36,7 +37,6 @@ import {
   spawnSshSafe,
   spawnSyncSafe,
   startGroup,
-  tmpdir,
   waitForPort,
   which,
   writeFile,
@@ -1126,6 +1126,126 @@ function getCloud(name) {
  * @property {SshKey[]} sshKeys
  */
 
+/**
+ * Build a Windows image using Packer (Azure only).
+ * Packer handles VM creation, bootstrap, sysprep, and gallery capture via WinRM.
+ * This eliminates all the Azure Run Command issues (output truncation, x64 emulation,
+ * PATH not refreshing, stderr false positives, quote escaping).
+ */
+async function buildWindowsImageWithPacker({ os, arch, release, command, ci, agentPath, bootstrapPath }) {
+  const { getSecret } = await import("./utils.mjs");
+
+  // Determine Packer template
+  const templateName = arch === "aarch64" ? "windows-arm64" : "windows-x64";
+  const templateDir = resolve(import.meta.dirname, "packer");
+  const templateFile = join(templateDir, `${templateName}.pkr.hcl`);
+
+  if (!existsSync(templateFile)) {
+    throw new Error(`Packer template not found: ${templateFile}`);
+  }
+
+  // Get Azure credentials from Buildkite secrets
+  const clientId = await getSecret("AZURE_CLIENT_ID");
+  const clientSecret = await getSecret("AZURE_CLIENT_SECRET");
+  const subscriptionId = await getSecret("AZURE_SUBSCRIPTION_ID");
+  const tenantId = await getSecret("AZURE_TENANT_ID");
+  const resourceGroup = await getSecret("AZURE_RESOURCE_GROUP");
+  const location = (await getSecret("AZURE_LOCATION")) || "eastus2";
+  const galleryName = (await getSecret("AZURE_GALLERY_NAME")) || "bunCIGallery2";
+
+  // Build number for image naming
+  const buildNumber =
+    command === "publish-image" ? `v${getBootstrapVersion(os)}` : ci ? `${getBuildNumber()}` : `draft-${Date.now()}`;
+
+  // Install Packer if not available
+  const packerBin = await ensurePacker();
+
+  // Initialize plugins
+  console.log("[packer] Initializing plugins...");
+  await spawnSafe([packerBin, "init", templateDir], { stdio: "inherit" });
+
+  // Build the image
+  console.log(`[packer] Building ${templateName} image (build ${buildNumber})...`);
+  const packerArgs = [
+    packerBin,
+    "build",
+    "-var",
+    `client_id=${clientId}`,
+    "-var",
+    `client_secret=${clientSecret}`,
+    "-var",
+    `subscription_id=${subscriptionId}`,
+    "-var",
+    `tenant_id=${tenantId}`,
+    "-var",
+    `resource_group=${resourceGroup}`,
+    "-var",
+    `location=${location}`,
+    "-var",
+    `gallery_name=${galleryName}`,
+    "-var",
+    `build_number=${buildNumber}`,
+    "-var",
+    `bootstrap_script=${bootstrapPath}`,
+    "-var",
+    `agent_script=${agentPath}`,
+    templateFile,
+  ];
+
+  await spawnSafe(packerArgs, {
+    stdio: "inherit",
+    env: {
+      ...process.env,
+      // Packer also reads these env vars
+      ARM_CLIENT_ID: clientId,
+      ARM_CLIENT_SECRET: clientSecret,
+      ARM_SUBSCRIPTION_ID: subscriptionId,
+      ARM_TENANT_ID: tenantId,
+    },
+  });
+
+  console.log(`[packer] Image built successfully: ${templateName} (build ${buildNumber})`);
+}
+
+/**
+ * Download and install Packer if not already available.
+ */
+async function ensurePacker() {
+  // Check if packer is already in PATH
+  const packerPath = which("packer");
+  if (packerPath) {
+    console.log("[packer] Found:", packerPath);
+    return packerPath;
+  }
+
+  // Check if we have a local copy
+  const localPacker = join(tmpdir(), "packer");
+  if (existsSync(localPacker)) {
+    return localPacker;
+  }
+
+  // Download Packer
+  const version = "1.12.0";
+  const platform = process.platform === "win32" ? "windows" : process.platform;
+  const packerArch = process.arch === "arm64" ? "arm64" : "amd64";
+  const url = `https://releases.hashicorp.com/packer/${version}/packer_${version}_${platform}_${packerArch}.zip`;
+
+  console.log(`[packer] Downloading Packer ${version}...`);
+  const zipPath = join(tmpdir(), "packer.zip");
+
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`Failed to download Packer: ${response.status}`);
+  const buffer = Buffer.from(await response.arrayBuffer());
+  writeFileSync(zipPath, buffer);
+
+  // Extract
+  await spawnSafe(["unzip", "-o", zipPath, "-d", tmpdir()], { stdio: "inherit" });
+  chmodSync(localPacker, 0o755);
+
+  console.log(`[packer] Installed Packer ${version}`);
+  return localPacker;
+}
+
 async function main() {
   const { positionals } = parseArgs({
     allowPositionals: true,
@@ -1266,6 +1386,13 @@ async function main() {
         throw new Error(`Dockerfile not found: ${dockerfilePath}`);
       }
     }
+  }
+
+  // Use Packer for Windows Azure image builds — it handles VM creation,
+  // bootstrap, sysprep, and gallery capture via WinRM (no Run Command hacks).
+  if (args["cloud"] === "azure" && os === "windows" && (command === "create-image" || command === "publish-image")) {
+    await buildWindowsImageWithPacker({ os, arch, release, command, ci, agentPath, bootstrapPath });
+    return;
   }
 
   /** @type {Machine} */

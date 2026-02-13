@@ -21,6 +21,7 @@ $ErrorActionPreference = "Stop"
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
 
 $script:IsARM64 = $env:PROCESSOR_ARCHITECTURE -eq "ARM64"
+Write-Output "PROCESSOR_ARCHITECTURE=$env:PROCESSOR_ARCHITECTURE IsARM64=$script:IsARM64"
 
 # ============================================================================
 # Utility functions
@@ -233,6 +234,7 @@ function Install-7zip {
     return
   }
 
+  Write-Output "DEBUG: PROCESSOR_ARCHITECTURE=$env:PROCESSOR_ARCHITECTURE IsARM64=$script:IsARM64"
   if ($script:IsARM64) {
     # Scoop's 7zip ARM64 post_install has a Remove-Item error that kills bootstrap.
     # Install manually instead.

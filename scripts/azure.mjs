@@ -650,8 +650,9 @@ export const azure = {
         if (stdout) process.stdout.write(stdout);
         if (stderr) process.stderr.write(stderr);
       }
-      // Detect errors: check stderr and the display status
-      const hasError = stderr.length > 0 || values.some(v => v?.displayStatus === "Provisioning failed");
+      // Only use displayStatus to detect errors — stderr often contains non-error
+      // output (rustup progress, cargo warnings, PowerShell Write-Warning, etc.)
+      const hasError = values.some(v => v?.displayStatus === "Provisioning failed");
       const exitCode = hasError ? 1 : 0;
       return { exitCode, stdout, stderr };
     };

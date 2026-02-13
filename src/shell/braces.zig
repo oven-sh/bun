@@ -380,7 +380,9 @@ pub const Parser = struct {
 };
 
 pub fn calculateExpandedAmount(tokens: []const Token) u32 {
-    var nested_brace_stack = bun.SmallList(u8, MAX_NESTED_BRACES){};
+    // Use u32 per nesting level to avoid overflow when a single brace group
+    // has more than 255 comma-separated items.
+    var nested_brace_stack = bun.SmallList(u32, MAX_NESTED_BRACES){};
     defer nested_brace_stack.deinit(bun.default_allocator);
     var variant_count: u32 = 0;
     var prev_comma: bool = false;
@@ -405,7 +407,7 @@ pub fn calculateExpandedAmount(tokens: []const Token) u32 {
                 } else if (variant_count == 0) {
                     variant_count = variants;
                 } else {
-                    variant_count *= variants;
+                    variant_count = std.math.mul(u32, variant_count, variants) catch std.math.maxInt(u32);
                 }
             },
             else => {},

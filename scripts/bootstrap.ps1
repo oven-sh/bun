@@ -333,10 +333,25 @@ function Install-Bun {
     return
   }
 
-  Write-Output "Installing Bun..."
-  $installScript = Download-File "https://bun.sh/install.ps1" -Name "bun-install.ps1"
-  $pwsh = Which pwsh powershell -Required
-  & $pwsh $installScript
+  if ($script:IsARM64) {
+    # No published ARM64 bun binary yet — download from our blob storage
+    Write-Output "Installing Bun (ARM64 from blob storage)..."
+    $zip = Download-File "https://buncistore.blob.core.windows.net/artifacts/bun-windows-aarch64.zip" -Name "bun-arm64.zip"
+    $extractDir = "$env:TEMP\bun-arm64"
+    Expand-Archive -Path $zip -DestinationPath $extractDir -Force
+    $bunExe = Get-ChildItem $extractDir -Recurse -Filter "*.exe" | Where-Object { $_.Name -match "bun" } | Select-Object -First 1
+    if ($bunExe) {
+      Copy-Item $bunExe.FullName "C:\Windows\System32\bun.exe" -Force
+      Write-Output "Bun ARM64 installed to C:\Windows\System32\bun.exe"
+    } else {
+      throw "Failed to find bun executable in ARM64 zip"
+    }
+  } else {
+    Write-Output "Installing Bun..."
+    $installScript = Download-File "https://bun.sh/install.ps1" -Name "bun-install.ps1"
+    $pwsh = Which pwsh powershell -Required
+    & $pwsh $installScript
+  }
 }
 
 function Install-Rust {

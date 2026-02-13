@@ -18,7 +18,6 @@
 #include "InspectorBunFrontendDevServerAgent.h"
 #include "InspectorHTTPServerAgent.h"
 
-extern "C" void Bun__tickWhilePaused(bool*);
 extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
 
 namespace Bun {
@@ -31,6 +30,8 @@ using namespace WebCore;
 static std::atomic<bool> runtimeInspectorActivated { false };
 
 class BunInspectorConnection;
+static void installRunWhilePausedCallback(JSC::JSGlobalObject* globalObject);
+static void makeInspectable(JSC::JSGlobalObject* globalObject);
 
 static WebCore::ScriptExecutionContext* debuggerScriptExecutionContext = nullptr;
 static WTF::Lock inspectorConnectionsLock = WTF::Lock();
@@ -68,6 +69,12 @@ public:
         }
     }
 };
+
+static void makeInspectable(JSC::JSGlobalObject* globalObject)
+{
+    globalObject->setInspectable(true);
+    globalObject->inspectorDebuggable().setInspectable(true);
+}
 
 enum class ConnectionStatus : int32_t {
     Pending = 0,
@@ -108,9 +115,7 @@ public:
         if (this->unrefOnDisconnect) {
             Bun__eventLoop__incrementRefConcurrently(static_cast<Zig::GlobalObject*>(globalObject)->bunVM(), 1);
         }
-        globalObject->setInspectable(true);
-        auto& inspector = globalObject->inspectorDebuggable();
-        inspector.setInspectable(true);
+        makeInspectable(globalObject);
 
         static bool hasConnected = false;
 
@@ -138,12 +143,7 @@ public:
                 controllerDebugger->attach(globalObject);
         }
 
-        Inspector::JSGlobalObjectDebugger* debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(globalObject->debugger());
-        if (debugger) {
-            debugger->runWhilePausedCallback = [](JSC::JSGlobalObject& globalObject, bool& isDoneProcessingEvents) -> void {
-                BunInspectorConnection::runWhilePaused(globalObject, isDoneProcessingEvents);
-            };
-        }
+        installRunWhilePausedCallback(globalObject);
 
         this->receiveMessagesOnInspectorThread(context, static_cast<Zig::GlobalObject*>(globalObject), false);
     }
@@ -180,7 +180,7 @@ public:
         // For --inspect, the event loop delivers doConnect via ensureOnContextThread above.
         //
         // Fire STW to interrupt busy JS (e.g., while(true){}) and process
-        // this connection via the Bun__jsDebuggerCallback.
+        // this connection via the Bun__stopTheWorldCallback.
         // Note: do NOT fire a deferred requestStopAll here — if the target VM
         // enters the pause loop before the deferred STW fires, the deferred STW
         // deadlocks (target is in C++ pause loop, can't reach JS safe point,
@@ -367,11 +367,8 @@ public:
 
                 if (!debugger) {
                     debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(globalObject->debugger());
-                    if (debugger) {
-                        debugger->runWhilePausedCallback = [](JSC::JSGlobalObject& globalObject, bool& isDoneProcessingEvents) -> void {
-                            runWhilePaused(globalObject, isDoneProcessingEvents);
-                        };
-                    }
+                    if (debugger)
+                        installRunWhilePausedCallback(globalObject);
                 }
             }
         } else {
@@ -379,8 +376,6 @@ public:
                 dispatcher.dispatchMessageFromRemote(WTF::move(message));
             }
         }
-
-        messages.clear();
     }
 
     void receiveMessagesOnDebuggerThread(ScriptExecutionContext& context, Zig::GlobalObject* debuggerGlobalObject)
@@ -401,8 +396,6 @@ public:
         for (auto& message : messages) {
             arguments.append(jsString(vm, message));
         }
-
-        messages.clear();
 
         JSC::call(debuggerGlobalObject, onMessageFn, arguments, "BunInspectorConnection::receiveMessagesOnDebuggerThread - onMessageFn"_s);
     }
@@ -500,7 +493,7 @@ public:
     // Pause state flags (consolidated into a single atomic).
     //
     //   kBootstrapPause       - runWhilePaused should send a synthetic Debugger.paused event
-    //   kMessageDeliveryPause - a STW pause is needed to deliver CDP messages (no synthetic event)
+    //   kMessageDeliveryPause - a notifyNeedDebuggerBreak trap is needed to deliver CDP messages (no synthetic event)
     //   kInPauseLoop          - the connection is in the runWhilePaused message pump loop;
     //                           interruptForMessageDelivery must skip requestStopAll to avoid
     //                           deadlock (debugger thread blocks in STW while target VM is in
@@ -515,6 +508,42 @@ public:
 
     bool hasEverConnected = false;
 };
+
+// This callback is invoked by JSC when the debugger enters a paused state,
+// delegating to BunInspectorConnection::runWhilePaused for CDP message pumping.
+static void installRunWhilePausedCallback(JSC::JSGlobalObject* globalObject)
+{
+    auto* debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(globalObject->debugger());
+    if (debugger) {
+        debugger->runWhilePausedCallback = [](JSC::JSGlobalObject& go, bool& done) {
+            BunInspectorConnection::runWhilePaused(go, done);
+        };
+    }
+}
+
+template<typename Func>
+static auto forEachConnection(Func&& callback) -> void
+{
+    Locker<Lock> locker(inspectorConnectionsLock);
+    if (!inspectorConnections)
+        return;
+    for (auto& entry : *inspectorConnections) {
+        for (auto* connection : entry.value) {
+            if (callback(connection))
+                return;
+        }
+    }
+}
+
+template<typename Func>
+static auto forEachConnectionForVM(JSC::VM& vm, Func&& callback) -> void
+{
+    forEachConnection([&](BunInspectorConnection* connection) -> bool {
+        if (!connection->globalObject || &connection->globalObject->vm() != &vm)
+            return false;
+        return callback(connection);
+    });
+}
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionSend);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionDisconnect);
@@ -626,7 +655,6 @@ extern "C" unsigned int Bun__createJSDebugger(Zig::GlobalObject* globalObject)
 
     return static_cast<unsigned int>(globalObject->scriptExecutionContext()->identifier());
 }
-extern "C" void Bun__tickWhilePaused(bool*);
 
 extern "C" void Bun__ensureDebugger(ScriptExecutionContextIdentifier scriptId, bool pauseOnStart)
 {
@@ -636,17 +664,9 @@ extern "C" void Bun__ensureDebugger(ScriptExecutionContextIdentifier scriptId, b
     globalObject->m_inspectorDebuggable = BunJSGlobalObjectDebuggable::create(*globalObject);
     globalObject->m_inspectorDebuggable->init();
 
-    globalObject->setInspectable(true);
+    makeInspectable(globalObject);
 
-    auto& inspector = globalObject->inspectorDebuggable();
-    inspector.setInspectable(true);
-
-    Inspector::JSGlobalObjectDebugger* debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(globalObject->debugger());
-    if (debugger) {
-        debugger->runWhilePausedCallback = [](JSC::JSGlobalObject& globalObject, bool& isDoneProcessingEvents) -> void {
-            BunInspectorConnection::runWhilePaused(globalObject, isDoneProcessingEvents);
-        };
-    }
+    installRunWhilePausedCallback(globalObject);
     if (pauseOnStart) {
         waitingForConnection = true;
     }
@@ -796,19 +816,11 @@ bool processPendingConnections(JSC::VM& callbackVM)
 {
     bool connected = false;
     Vector<BunInspectorConnection*, 8> pendingConnections;
-    {
-        Locker<Lock> locker(inspectorConnectionsLock);
-        if (inspectorConnections) {
-            for (auto& entry : *inspectorConnections) {
-                for (auto* connection : entry.value) {
-                    if (connection->status == ConnectionStatus::Pending
-                        && connection->globalObject
-                        && &connection->globalObject->vm() == &callbackVM)
-                        pendingConnections.append(connection);
-                }
-            }
-        }
-    }
+    forEachConnectionForVM(callbackVM, [&](BunInspectorConnection* connection) -> bool {
+        if (connection->status == ConnectionStatus::Pending)
+            pendingConnections.append(connection);
+        return false;
+    });
 
     for (auto* connection : pendingConnections) {
         auto* context = ScriptExecutionContext::getScriptExecutionContext(connection->scriptExecutionContextIdentifier);
@@ -820,56 +832,37 @@ bool processPendingConnections(JSC::VM& callbackVM)
     return connected;
 }
 
-// Find a VM that has pending connections (other than the given VM).
+// Find a VM (other than the given one) that has pending work:
+// either a pending connection or a pending pause (bootstrap or message delivery).
 // Used to switch the STW callback to the right VM thread.
-JSC::VM* findVMWithPendingConnections(JSC::VM& excludeVM)
+JSC::VM* findVMWithPendingWork(JSC::VM& excludeVM)
 {
-    Locker<Lock> locker(inspectorConnectionsLock);
-    if (!inspectorConnections)
-        return nullptr;
-    for (auto& entry : *inspectorConnections) {
-        for (auto* connection : entry.value) {
-            if (connection->status == ConnectionStatus::Pending
-                && connection->globalObject
-                && &connection->globalObject->vm() != &excludeVM)
-                return &connection->globalObject->vm();
+    JSC::VM* result = nullptr;
+    forEachConnection([&](BunInspectorConnection* connection) -> bool {
+        if (!connection->globalObject || &connection->globalObject->vm() == &excludeVM)
+            return false;
+        bool hasPendingConnection = (connection->status == ConnectionStatus::Pending);
+        bool hasPendingPause = (connection->pauseFlags.load()
+            & (BunInspectorConnection::kBootstrapPause | BunInspectorConnection::kMessageDeliveryPause));
+        if (hasPendingConnection || hasPendingPause) {
+            result = &connection->globalObject->vm();
+            return true;
         }
-    }
-    return nullptr;
+        return false;
+    });
+    return result;
 }
 
 // Check if any connection has pending pause flags (bootstrap or message delivery).
 uint8_t getPendingPauseFlags()
 {
     uint8_t result = 0;
-    Locker<Lock> locker(inspectorConnectionsLock);
-    if (!inspectorConnections)
-        return 0;
-    for (auto& entry : *inspectorConnections) {
-        for (auto* connection : entry.value) {
-            result |= connection->pauseFlags.load();
-        }
-    }
+    forEachConnection([&](BunInspectorConnection* connection) -> bool {
+        result |= connection->pauseFlags.load();
+        return false;
+    });
     // Mask out kInPauseLoop — that's not a "pending pause request".
     return result & (BunInspectorConnection::kBootstrapPause | BunInspectorConnection::kMessageDeliveryPause);
-}
-
-// Find a VM (other than the given one) that has a pause pending (bootstrap or message delivery).
-JSC::VM* findVMWithPendingPause(JSC::VM& excludeVM)
-{
-    constexpr uint8_t kPauseMask = BunInspectorConnection::kBootstrapPause | BunInspectorConnection::kMessageDeliveryPause;
-    Locker<Lock> locker(inspectorConnectionsLock);
-    if (!inspectorConnections)
-        return nullptr;
-    for (auto& entry : *inspectorConnections) {
-        for (auto* connection : entry.value) {
-            if ((connection->pauseFlags.load() & kPauseMask)
-                && connection->globalObject
-                && &connection->globalObject->vm() != &excludeVM)
-                return &connection->globalObject->vm();
-        }
-    }
-    return nullptr;
 }
 
 // Check if breakProgram() should be called after draining CDP messages.
@@ -877,19 +870,18 @@ JSC::VM* findVMWithPendingPause(JSC::VM& excludeVM)
 // breakpoint). Returns false for plain message delivery.
 extern "C" bool Bun__shouldBreakAfterMessageDrain(JSC::VM& vm)
 {
-    Locker<Lock> locker(inspectorConnectionsLock);
-    if (!inspectorConnections)
-        return false;
-    for (auto& entry : *inspectorConnections) {
-        for (auto* connection : entry.value) {
-            if (!connection->globalObject || &connection->globalObject->vm() != &vm)
-                continue;
-            uint8_t flags = connection->pauseFlags.load();
-            // Bootstrap pause always needs breakProgram
-            if (flags & BunInspectorConnection::kBootstrapPause)
-                return true;
+    bool hasBootstrapPause = false;
+    forEachConnectionForVM(vm, [&](BunInspectorConnection* connection) -> bool {
+        uint8_t flags = connection->pauseFlags.load();
+        // Bootstrap pause always needs breakProgram
+        if (flags & BunInspectorConnection::kBootstrapPause) {
+            hasBootstrapPause = true;
+            return true;
         }
-    }
+        return false;
+    });
+    if (hasBootstrapPause)
+        return true;
     // Check if the debugger agent scheduled a pause (e.g., Debugger.pause command
     // was dispatched during the drain).
     auto* globalObject = vm.topCallFrame ? vm.topCallFrame->lexicalGlobalObject(vm) : nullptr;
@@ -908,24 +900,18 @@ extern "C" bool Bun__shouldBreakAfterMessageDrain(JSC::VM& vm)
 // are processed first, setting the correct pause reason on the agent.
 extern "C" void Bun__drainQueuedCDPMessages(JSC::VM& vm)
 {
-    Locker<Lock> locker(inspectorConnectionsLock);
-    if (!inspectorConnections)
-        return;
-    for (auto& entry : *inspectorConnections) {
-        for (auto* connection : entry.value) {
-            if (connection->status != ConnectionStatus::Connected || !connection->globalObject)
-                continue;
-            if (&connection->globalObject->vm() != &vm)
-                continue;
-            auto* context = ScriptExecutionContext::getScriptExecutionContext(connection->scriptExecutionContextIdentifier);
-            if (!context)
-                continue;
-            // Clear the message delivery flag — messages are being drained now.
-            connection->pauseFlags.fetch_and(~BunInspectorConnection::kMessageDeliveryPause);
-            connection->receiveMessagesOnInspectorThread(
-                *context, static_cast<Zig::GlobalObject*>(connection->globalObject), false);
-        }
-    }
+    forEachConnectionForVM(vm, [&](BunInspectorConnection* connection) -> bool {
+        if (connection->status != ConnectionStatus::Connected)
+            return false;
+        auto* context = ScriptExecutionContext::getScriptExecutionContext(connection->scriptExecutionContextIdentifier);
+        if (!context)
+            return false;
+        // Clear the message delivery flag — messages are being drained now.
+        connection->pauseFlags.fetch_and(~BunInspectorConnection::kMessageDeliveryPause);
+        connection->receiveMessagesOnInspectorThread(
+            *context, static_cast<Zig::GlobalObject*>(connection->globalObject), false);
+        return false;
+    });
 }
 
 // Schedule a debugger pause for connected sessions.
@@ -936,32 +922,24 @@ extern "C" void Bun__drainQueuedCDPMessages(JSC::VM& vm)
 
 void schedulePauseForConnectedSessions(JSC::VM& vm, bool isBootstrap)
 {
-    Locker<Lock> locker(inspectorConnectionsLock);
-    if (!inspectorConnections)
-        return;
+    forEachConnectionForVM(vm, [&](BunInspectorConnection* connection) -> bool {
+        if (connection->status != ConnectionStatus::Connected)
+            return false;
 
-    for (auto& entry : *inspectorConnections) {
-        for (auto* connection : entry.value) {
-            if (connection->status != ConnectionStatus::Connected || !connection->globalObject)
-                continue;
-            if (&connection->globalObject->vm() != &vm)
-                continue;
+        if (isBootstrap)
+            connection->pauseFlags.fetch_or(BunInspectorConnection::kBootstrapPause);
 
-            if (isBootstrap)
-                connection->pauseFlags.fetch_or(BunInspectorConnection::kBootstrapPause);
+        auto* debugger = connection->globalObject->debugger();
+        if (!debugger)
+            return false;
 
-            auto* debugger = connection->globalObject->debugger();
-            if (!debugger)
-                continue;
-
-            // schedulePauseAtNextOpportunity() is NOT thread-safe in general (it calls
-            // enableStepping → recompileAllJSFunctions), but is safe here because we're
-            // inside a STW callback — all other VM threads are blocked.
-            debugger->schedulePauseAtNextOpportunity();
-            vm.notifyNeedDebuggerBreak();
-            return; // Only need once per VM
-        }
-    }
+        // schedulePauseAtNextOpportunity() is NOT thread-safe in general (it calls
+        // enableStepping → recompileAllJSFunctions), but is safe here because we're
+        // inside a STW callback — all other VM threads are blocked.
+        debugger->schedulePauseAtNextOpportunity();
+        vm.notifyNeedDebuggerBreak();
+        return true; // Only need once per VM
+    });
 }
 
 }
@@ -972,10 +950,10 @@ void schedulePauseForConnectedSessions(JSC::VM& vm, bool isBootstrap)
 // This handles the case where JS is actively executing (including infinite loops).
 // For idle VMs, RuntimeInspector::checkAndActivateInspector handles it via event loop.
 
-extern "C" bool Bun__activateInspector();
-extern "C" void Bun__setRuntimeInspectorActivated();
+extern "C" bool Bun__tryActivateInspector();
+extern "C" void Bun__activateRuntimeInspectorMode();
 
-JSC::StopTheWorldStatus Bun__jsDebuggerCallback(JSC::VM& vm, JSC::StopTheWorldEvent event)
+JSC::StopTheWorldStatus Bun__stopTheWorldCallback(JSC::VM& vm, JSC::StopTheWorldEvent event)
 {
     using namespace JSC;
 
@@ -985,9 +963,9 @@ JSC::StopTheWorldStatus Bun__jsDebuggerCallback(JSC::VM& vm, JSC::StopTheWorldEv
         return STW_CONTINUE();
 
     // Phase 1: Activate inspector if requested (SIGUSR1 handler sets a flag)
-    bool activated = Bun__activateInspector();
+    bool activated = Bun__tryActivateInspector();
     if (activated)
-        Bun__setRuntimeInspectorActivated();
+        Bun__activateRuntimeInspectorMode();
 
     // Phase 2: Process pending connections for THIS VM.
     // doConnect must run on the connection's owning VM thread.
@@ -995,9 +973,7 @@ JSC::StopTheWorldStatus Bun__jsDebuggerCallback(JSC::VM& vm, JSC::StopTheWorldEv
 
     // If pending connections or pauses exist on a DIFFERENT VM, switch to it.
     if (!connected) {
-        if (auto* targetVM = Bun::findVMWithPendingConnections(vm))
-            return STW_CONTEXT_SWITCH(targetVM);
-        if (auto* targetVM = Bun::findVMWithPendingPause(vm))
+        if (auto* targetVM = Bun::findVMWithPendingWork(vm))
             return STW_CONTEXT_SWITCH(targetVM);
     }
 
@@ -1033,7 +1009,7 @@ extern "C" void VM__cancelStop(JSC::VM* vm)
 // Also enables polling traps so that:
 // 1. The SignalSender stops its retry loop (it checks usePollingTraps)
 // 2. Future NeedDebuggerBreak traps are delivered reliably via polling
-extern "C" void Bun__setRuntimeInspectorActivated()
+extern "C" void Bun__activateRuntimeInspectorMode()
 {
     Bun::runtimeInspectorActivated.store(true);
     JSC::Options::usePollingTraps() = true;

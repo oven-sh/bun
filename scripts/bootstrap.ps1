@@ -222,13 +222,10 @@ function Install-Llvm {
     return
   }
   if ($script:IsARM64) {
-    Write-Output "Installing LLVM $LLVM_VERSION (ARM64 via Scoop)..."
-    scoop install "llvm-arm64@$LLVM_VERSION"
+    Install-Scoop-Package "llvm-arm64@$LLVM_VERSION" -Command clang-cl
   } else {
-    Write-Output "Installing LLVM $LLVM_VERSION (x64 via Scoop)..."
-    scoop install "llvm@$LLVM_VERSION"
+    Install-Scoop-Package "llvm@$LLVM_VERSION" -Command clang-cl
   }
-  Refresh-Path
 }
 
 function Install-Ninja {

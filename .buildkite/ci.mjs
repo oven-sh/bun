@@ -1325,19 +1325,8 @@ async function getPipeline(options = {}) {
     const { skipTests, forceTests, testFiles, changedFiles = [] } = options;
     if (!skipTests || forceTests) {
       // Detect test files added/modified in this PR for the fast-feedback step.
-      const isTestFile = f => {
-        if (!f.startsWith("test/")) return false;
-        if (/\.(?:test|spec)\./.test(f)) return true;
-        // Node.js compat tests and cluster tests don't use .test. naming.
-        const u = f.replaceAll("\\", "/");
-        return (
-          u.includes("js/node/test/parallel/") ||
-          u.includes("js/node/test/sequential/") ||
-          u.includes("js/bun/test/parallel/") ||
-          /js\/node\/cluster\/test-.*\.ts$/.test(u)
-        );
-      };
-      const prTestFiles = changedFiles.filter(isTestFile).map(f => f.slice("test/".length));
+      // Doesn't need to be exact — the runner filters against its own isTest().
+      const prTestFiles = changedFiles.filter(f => f.startsWith("test/")).map(f => f.slice("test/".length));
 
       steps.push(
         ...testPlatforms.map(target => {

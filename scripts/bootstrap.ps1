@@ -20,7 +20,7 @@ param (
 $ErrorActionPreference = "Stop"
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
 
-$script:IsARM64 = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq [System.Runtime.InteropServices.Architecture]::Arm64
+$script:IsARM64 = $env:PROCESSOR_ARCHITECTURE -eq "ARM64"
 
 # ============================================================================
 # Utility functions

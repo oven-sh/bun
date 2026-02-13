@@ -403,11 +403,11 @@ function Install-Nssm {
     return
   }
 
-  # Try Scoop first, fall back to our mirror if nssm.cc is down
-  try {
-    Install-Scoop-Package nssm
-  } catch {
-    Write-Output "Scoop install failed, downloading nssm from mirror..."
+  # Try Scoop first, fall back to our mirror if nssm.cc is down (503 errors)
+  Install-Scoop-Package nssm
+
+  if (-not (Which nssm)) {
+    Write-Output "Scoop install of nssm failed, downloading from mirror..."
     $zip = Download-File "https://buncistore.blob.core.windows.net/artifacts/nssm-2.24-103-gdee49fc.zip" -Name "nssm.zip"
     Expand-Archive -Path $zip -DestinationPath "C:\Windows\Temp\nssm" -Force
     $nssm = Get-ChildItem "C:\Windows\Temp\nssm" -Recurse -Filter "nssm.exe" | Where-Object { $_.DirectoryName -like "*win64*" } | Select-Object -First 1

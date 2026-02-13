@@ -233,16 +233,16 @@ function Install-7zip {
     return
   }
 
-  Write-Output "Installing 7zip (via Scoop)..."
-  # On ARM64, 7zip's post_install tries to delete 7zr.exe from TEMP which fails
-  # with access denied under SYSTEM context. Run in a child process to isolate
-  # the error, then verify 7z is actually installed.
   if ($script:IsARM64) {
-    powershell -NoProfile -Command "scoop install 7zip" 2>&1 | ForEach-Object { "$_" } | Write-Host
-    Refresh-Path
-    if (-not (Which 7z)) {
-      throw "7zip installation failed"
-    }
+    # Scoop's 7zip ARM64 post_install has a Remove-Item error that kills bootstrap.
+    # Install manually instead.
+    Write-Output "Installing 7zip (manual ARM64)..."
+    $zip = Download-File "https://www.7-zip.org/a/7z2600-arm64.exe" -Name "7z-arm64.exe"
+    $dest = "C:\Program Files\7-Zip"
+    New-Item -Path $dest -ItemType Directory -Force | Out-Null
+    # 7zip ARM64 exe is a self-extracting archive — extract with itself
+    Start-Process $zip -ArgumentList "-o`"$dest`" -y" -Wait -NoNewWindow
+    Add-To-Path $dest
   } else {
     Install-Scoop-Package 7zip -Command 7z
   }

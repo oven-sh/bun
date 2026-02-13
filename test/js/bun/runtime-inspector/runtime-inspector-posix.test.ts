@@ -6,28 +6,28 @@ import { join } from "path";
 // ASAN builds have issues with signal handling reliability for SIGUSR1-based inspector activation
 const skipASAN = isASAN;
 
-// Timeout for waiting on stderr reader loops (30s matches runtime-inspector.test.ts)
-const STDERR_TIMEOUT_MS = 30_000;
+// Timeout for waiting on stream reader loops (30s matches runtime-inspector.test.ts)
+const STREAM_TIMEOUT_MS = 30_000;
 
-// Helper: read stderr until condition is met, with a timeout to prevent hanging
-async function readStderrUntil(
+// Helper: read from a stream until condition is met, with a timeout to prevent hanging
+async function readStreamUntil(
   reader: ReadableStreamDefaultReader<Uint8Array>,
-  condition: (stderr: string) => boolean,
-  timeoutMs = STDERR_TIMEOUT_MS,
+  condition: (output: string) => boolean,
+  timeoutMs = STREAM_TIMEOUT_MS,
 ): Promise<string> {
   const decoder = new TextDecoder();
-  let stderr = "";
+  let output = "";
   const startTime = Date.now();
 
-  while (!condition(stderr)) {
+  while (!condition(output)) {
     if (Date.now() - startTime > timeoutMs) {
-      throw new Error(`Timeout after ${timeoutMs}ms waiting for stderr condition. Got: "${stderr}"`);
+      throw new Error(`Timeout after ${timeoutMs}ms waiting for stream condition. Got: "${output}"`);
     }
     const { value, done } = await reader.read();
     if (done) break;
-    stderr += decoder.decode(value, { stream: true });
+    output += decoder.decode(value, { stream: true });
   }
-  return stderr;
+  return output;
 }
 
 // Helper: wait for the full inspector banner (header + footer = 2 occurrences of "Bun Inspector")
@@ -61,14 +61,7 @@ describe.skipIf(isWindows)("Runtime inspector SIGUSR1 activation", () => {
     });
 
     const reader = proc.stdout.getReader();
-    const decoder = new TextDecoder();
-
-    let output = "";
-    while (!output.includes("READY")) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      output += decoder.decode(value, { stream: true });
-    }
+    await readStreamUntil(reader, s => s.includes("READY"));
     reader.releaseLock();
 
     const pid = parseInt(await Bun.file(join(String(dir), "pid")).text(), 10);
@@ -79,7 +72,7 @@ describe.skipIf(isWindows)("Runtime inspector SIGUSR1 activation", () => {
 
     // Wait for inspector to activate by reading stderr until the full banner appears
     const stderrReader = proc.stderr.getReader();
-    const stderr = await readStderrUntil(stderrReader, hasBanner);
+    const stderr = await readStreamUntil(stderrReader, hasBanner);
     stderrReader.releaseLock();
 
     // Kill process
@@ -119,13 +112,7 @@ describe.skipIf(isWindows)("Runtime inspector SIGUSR1 activation", () => {
 
     const reader = proc.stdout.getReader();
     const decoder = new TextDecoder();
-
-    let output = "";
-    while (!output.includes("READY")) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      output += decoder.decode(value, { stream: true });
-    }
+    let output = await readStreamUntil(reader, s => s.includes("READY"));
 
     const pid = parseInt(await Bun.file(join(String(dir), "pid")).text(), 10);
 
@@ -180,13 +167,7 @@ describe.skipIf(isWindows)("Runtime inspector SIGUSR1 activation", () => {
 
     const reader = proc.stdout.getReader();
     const decoder = new TextDecoder();
-
-    let output = "";
-    while (!output.includes("READY")) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      output += decoder.decode(value, { stream: true });
-    }
+    let output = await readStreamUntil(reader, s => s.includes("READY"));
 
     const pid = parseInt(await Bun.file(join(String(dir), "pid")).text(), 10);
 
@@ -243,14 +224,7 @@ SIGNAL_3
     });
 
     const reader = proc.stdout.getReader();
-    const decoder = new TextDecoder();
-
-    let output = "";
-    while (!output.includes("READY")) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      output += decoder.decode(value, { stream: true });
-    }
+    await readStreamUntil(reader, s => s.includes("READY"));
     reader.releaseLock();
 
     const pid = parseInt(await Bun.file(join(String(dir), "pid")).text(), 10);
@@ -259,7 +233,7 @@ SIGNAL_3
     process.kill(pid, "SIGUSR1");
 
     const stderrReader = proc.stderr.getReader();
-    let stderr = await readStderrUntil(stderrReader, hasBanner);
+    let stderr = await readStreamUntil(stderrReader, hasBanner);
 
     // Send second SIGUSR1 - inspector should not activate again
     process.kill(pid, "SIGUSR1");
@@ -311,13 +285,7 @@ SIGNAL_3
     });
 
     const stdoutReader = proc.stdout.getReader();
-    const stdoutDecoder = new TextDecoder();
-    let output = "";
-    while (!output.includes("READY")) {
-      const { value, done } = await stdoutReader.read();
-      if (done) break;
-      output += stdoutDecoder.decode(value, { stream: true });
-    }
+    await readStreamUntil(stdoutReader, s => s.includes("READY"));
     stdoutReader.releaseLock();
 
     const pid = parseInt(await Bun.file(join(String(dir), "pid")).text(), 10);
@@ -327,7 +295,7 @@ SIGNAL_3
 
     // Wait for inspector banner
     const reader = proc.stderr.getReader();
-    const stderr = await readStderrUntil(reader, hasBanner);
+    const stderr = await readStreamUntil(reader, hasBanner);
     reader.releaseLock();
 
     proc.kill();
@@ -362,21 +330,14 @@ SIGNAL_3
     });
 
     const reader = proc.stdout.getReader();
-    const decoder = new TextDecoder();
-
-    let output = "";
-    while (!output.includes("READY")) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      output += decoder.decode(value, { stream: true });
-    }
+    await readStreamUntil(reader, s => s.includes("READY"));
     reader.releaseLock();
 
     const pid = parseInt(await Bun.file(join(String(dir), "pid")).text(), 10);
 
     // Wait for the --inspect banner to appear before sending SIGUSR1
     const stderrReader = proc.stderr.getReader();
-    let stderr = await readStderrUntil(stderrReader, hasBanner);
+    let stderr = await readStreamUntil(stderrReader, hasBanner);
 
     // Send SIGUSR1 - should be ignored since RuntimeInspector is not installed
     process.kill(pid, "SIGUSR1");
@@ -409,7 +370,7 @@ SIGNAL_3
     });
 
     const reader = proc.stderr.getReader();
-    const stderr = await readStderrUntil(reader, hasBanner);
+    const stderr = await readStreamUntil(reader, hasBanner);
 
     // Send SIGUSR1 - should be ignored since debugger is already active
     process.kill(proc.pid, "SIGUSR1");
@@ -449,7 +410,7 @@ SIGNAL_3
     });
 
     const reader = proc.stderr.getReader();
-    const stderr = await readStderrUntil(reader, hasBanner);
+    const stderr = await readStreamUntil(reader, hasBanner);
 
     // Send SIGUSR1 - should be ignored since debugger is already active
     process.kill(proc.pid, "SIGUSR1");

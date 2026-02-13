@@ -5954,16 +5954,14 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
                     auto* data = array->butterfly()->contiguous().data();
                     if (!containsHole(data, length)) {
                         size_t byteSize = sizeof(JSValue) * length;
-                        Vector<uint8_t> buffer(byteSize, 0);
-                        memcpy(buffer.mutableSpan().data(), data, byteSize);
+                        Vector<uint8_t> buffer(std::span<const uint8_t> { reinterpret_cast<const uint8_t*>(data), byteSize });
                         return SerializedScriptValue::createInt32ArrayFastPath(WTF::move(buffer), length);
                     }
                 } else {
                     auto* data = array->butterfly()->contiguousDouble().data();
                     if (!containsHole(data, length)) {
                         size_t byteSize = sizeof(double) * length;
-                        Vector<uint8_t> buffer(byteSize, 0);
-                        memcpy(buffer.mutableSpan().data(), data, byteSize);
+                        Vector<uint8_t> buffer(std::span<const uint8_t> { reinterpret_cast<const uint8_t*>(data), byteSize });
                         return SerializedScriptValue::createDoubleArrayFastPath(WTF::move(buffer), length);
                     }
                 }

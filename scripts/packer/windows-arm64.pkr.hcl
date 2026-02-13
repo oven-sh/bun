@@ -13,7 +13,7 @@ source "azure-arm" "windows-arm64" {
   image_version   = "latest"
 
   // Build VM — ARM64 Cobalt 100
-  vm_size         = "Standard_D16ps_v6"
+  vm_size         = "Standard_D4ps_v6"
 
   // Use existing resource group instead of creating a temp one
   build_resource_group_name = var.resource_group

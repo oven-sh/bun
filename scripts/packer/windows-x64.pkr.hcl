@@ -13,7 +13,7 @@ source "azure-arm" "windows-x64" {
   image_version   = "latest"
 
   // Build VM
-  vm_size         = "Standard_D16ds_v6"
+  vm_size         = "Standard_D4ds_v6"
 
   // Use existing resource group instead of creating a temp one
   build_resource_group_name = var.resource_group

@@ -170,9 +170,10 @@ function Install-Scoop-Package {
   }
 
   Write-Output "Installing $Name (via Scoop)..."
-  # Run scoop in a child process so post_install errors (e.g. 7zip ARM64
-  # Remove-Item access denied) don't terminate our bootstrap script.
-  $proc = Start-Process -FilePath "powershell" -ArgumentList "-NoProfile", "-Command", "scoop install $Name" -Wait -PassThru -NoNewWindow
+  # Use powershell -Command to run scoop install in a child process.
+  # This isolates terminating errors (e.g. 7zip ARM64 Remove-Item access denied)
+  # while still allowing scoop to update PATH via the registry.
+  powershell -NoProfile -Command "scoop install $Name" 2>&1 | Out-Host
   Refresh-Path
 
   if (-not (Which $Command)) {
@@ -366,7 +367,8 @@ function Install-Visual-Studio {
     "--includeRecommended"
   )
   $process = Start-Process $vsInstaller -ArgumentList ($vsInstallArgs -join ' ') -Wait -PassThru -NoNewWindow
-  if ($process.ExitCode -ne 0) {
+  # Exit code 3010 means "reboot required" which is not a real error
+  if ($process.ExitCode -ne 0 -and $process.ExitCode -ne 3010) {
     throw "Failed to install Visual Studio: code $($process.ExitCode)"
   }
 }
@@ -544,7 +546,7 @@ Install-Scoop-Package perl
 # x64-only packages (not needed on ARM64)
 if (-not $script:IsARM64) {
   Install-Scoop-Package nasm
-  Install-Scoop-Package mingw
+  Install-Scoop-Package mingw -Command gcc
 }
 
 # Manual installs (not in Scoop or need special handling)

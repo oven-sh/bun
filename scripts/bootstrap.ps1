@@ -183,7 +183,13 @@ function Install-Scoop-Package {
   }
 
   Write-Output "Installing $Name (via Scoop)..."
-  scoop install $Name
+  # Scoop post_install scripts can have non-fatal Remove-Item errors
+  # (e.g. 7zip ARM64 7zr.exe locked, llvm-arm64 missing Uninstall.exe).
+  # Suppress all error streams so they don't kill the bootstrap or Packer.
+  $prevErrorPref = $ErrorActionPreference
+  $ErrorActionPreference = "SilentlyContinue"
+  scoop install $Name *>&1 | ForEach-Object { "$_" } | Write-Host
+  $ErrorActionPreference = $prevErrorPref
   Refresh-Path
 }
 
@@ -242,23 +248,7 @@ function Install-Ruby {
 }
 
 function Install-7zip {
-  if (Which 7z) {
-    return
-  }
-
-  Write-Output "Installing 7zip (via Scoop)..."
-  # On ARM64, scoop's 7zip post_install tries to Remove-Item 7zr.exe which is
-  # locked during extraction. This error is non-fatal (7zip installs fine).
-  # Temporarily allow errors so it doesn't kill the bootstrap.
-  $prevErrorPref = $ErrorActionPreference
-  $ErrorActionPreference = "SilentlyContinue"
-  scoop install 7zip *>&1 | ForEach-Object { "$_" } | Write-Host
-  $ErrorActionPreference = $prevErrorPref
-  Refresh-Path
-
-  if (-not (Which 7z)) {
-    throw "7zip installation failed"
-  }
+  Install-Scoop-Package 7zip -Command 7z
 }
 
 function Install-Make {

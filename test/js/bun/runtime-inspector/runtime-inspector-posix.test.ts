@@ -50,7 +50,7 @@ describe.skipIf(isWindows)("Runtime inspector SIGUSR1 activation", () => {
     });
 
     await using proc = spawn({
-      cmd: [bunExe(), "test.js"],
+      cmd: [bunExe(), "--inspect-port=0", "test.js"],
       cwd: String(dir),
       env: bunEnv,
       stdout: "pipe",
@@ -100,7 +100,7 @@ describe.skipIf(isWindows)("Runtime inspector SIGUSR1 activation", () => {
     });
 
     await using proc = spawn({
-      cmd: [bunExe(), "test.js"],
+      cmd: [bunExe(), "--inspect-port=0", "test.js"],
       cwd: String(dir),
       env: bunEnv,
       stdout: "pipe",
@@ -155,7 +155,7 @@ describe.skipIf(isWindows)("Runtime inspector SIGUSR1 activation", () => {
     });
 
     await using proc = spawn({
-      cmd: [bunExe(), "test.js"],
+      cmd: [bunExe(), "--inspect-port=0", "test.js"],
       cwd: String(dir),
       env: bunEnv,
       stdout: "pipe",
@@ -213,7 +213,7 @@ SIGNAL_3
     });
 
     await using proc = spawn({
-      cmd: [bunExe(), "test.js"],
+      cmd: [bunExe(), "--inspect-port=0", "test.js"],
       cwd: String(dir),
       env: bunEnv,
       stdout: "pipe",
@@ -274,7 +274,7 @@ SIGNAL_3
     });
 
     await using proc = spawn({
-      cmd: [bunExe(), "test.js"],
+      cmd: [bunExe(), "--inspect-port=0", "test.js"],
       cwd: String(dir),
       env: bunEnv,
       stdout: "pipe",

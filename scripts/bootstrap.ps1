@@ -229,17 +229,21 @@ function Install-Ruby {
 }
 
 function Install-7zip {
-  # Scoop 7zip post_install tries to clean up 7zr.exe in TEMP which can fail
-  # with access denied when running as SYSTEM. This is non-fatal.
-  try {
-    Install-Scoop-Package 7zip -Command 7z
-  } catch {
-    # Check if 7z is actually installed despite the error
-    if (Which 7z) {
-      Write-Output "7zip installed (ignoring post_install cleanup error)"
-    } else {
-      throw $_
-    }
+  if (Which 7z) {
+    return
+  }
+
+  # Scoop 7zip post_install tries to Remove-Item 7zr.exe in TEMP which fails
+  # with access denied when running as SYSTEM. Temporarily allow errors so
+  # the cleanup failure doesn't kill the entire bootstrap.
+  Write-Output "Installing 7zip (via Scoop)..."
+  $ErrorActionPreference = "SilentlyContinue"
+  scoop install 7zip 2>&1 | Out-Host
+  $ErrorActionPreference = "Stop"
+  Refresh-Path
+
+  if (-not (Which 7z)) {
+    throw "7zip installation failed"
   }
 }
 

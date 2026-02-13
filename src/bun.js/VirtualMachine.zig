@@ -1085,8 +1085,8 @@ pub fn initWithModuleGraph(
     vm.jsc_vm = vm.global.vm();
     uws.Loop.get().internal_loop_data.jsc_vm = vm.jsc_vm;
 
-    vm.configureDebugger(opts.debugger);
     vm.inspect_port = opts.inspect_port;
+    vm.configureDebugger(opts.debugger);
     vm.body_value_hive_allocator = Body.Value.HiveAllocator.init(bun.typedAllocator(jsc.WebCore.Body.Value));
 
     configureSigusr1Handler(vm, opts);

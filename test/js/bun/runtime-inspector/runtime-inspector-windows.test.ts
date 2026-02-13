@@ -3,28 +3,28 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 
-// Timeout for waiting on stderr reader loops (30s matches runtime-inspector.test.ts)
-const STDERR_TIMEOUT_MS = 30_000;
+// Timeout for waiting on stream reader loops (30s matches runtime-inspector.test.ts)
+const STREAM_TIMEOUT_MS = 30_000;
 
-// Helper: read stderr until condition is met, with a timeout to prevent hanging
-async function readStderrUntil(
+// Helper: read from a stream until condition is met, with a timeout to prevent hanging
+async function readStreamUntil(
   reader: ReadableStreamDefaultReader<Uint8Array>,
-  condition: (stderr: string) => boolean,
-  timeoutMs = STDERR_TIMEOUT_MS,
+  condition: (output: string) => boolean,
+  timeoutMs = STREAM_TIMEOUT_MS,
 ): Promise<string> {
   const decoder = new TextDecoder();
-  let stderr = "";
+  let output = "";
   const startTime = Date.now();
 
-  while (!condition(stderr)) {
+  while (!condition(output)) {
     if (Date.now() - startTime > timeoutMs) {
-      throw new Error(`Timeout after ${timeoutMs}ms waiting for stderr condition. Got: "${stderr}"`);
+      throw new Error(`Timeout after ${timeoutMs}ms waiting for stream condition. Got: "${output}"`);
     }
     const { value, done } = await reader.read();
     if (done) break;
-    stderr += decoder.decode(value, { stream: true });
+    output += decoder.decode(value, { stream: true });
   }
-  return stderr;
+  return output;
 }
 
 // Helper: wait for the full inspector banner (header + footer = 2 occurrences of "Bun Inspector")
@@ -58,13 +58,7 @@ describe.skipIf(!isWindows)("Runtime inspector Windows file mapping", () => {
     });
 
     const reader = targetProc.stdout.getReader();
-    const decoder = new TextDecoder();
-    let output = "";
-    while (!output.includes("READY")) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      output += decoder.decode(value, { stream: true });
-    }
+    await readStreamUntil(reader, s => s.includes("READY"));
     reader.releaseLock();
 
     const pid = parseInt(await Bun.file(join(String(dir), "pid")).text(), 10);
@@ -85,7 +79,7 @@ describe.skipIf(!isWindows)("Runtime inspector Windows file mapping", () => {
 
     // Wait for the debugger to start by reading stderr until the full banner appears
     const stderrReader = targetProc.stderr.getReader();
-    const targetStderr = await readStderrUntil(stderrReader, hasBanner);
+    const targetStderr = await readStreamUntil(stderrReader, hasBanner);
     stderrReader.releaseLock();
 
     targetProc.kill();
@@ -121,13 +115,7 @@ describe.skipIf(!isWindows)("Runtime inspector Windows file mapping", () => {
     });
 
     const reader = proc.stdout.getReader();
-    const decoder = new TextDecoder();
-    let output = "";
-    while (!output.includes("READY")) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      output += decoder.decode(value, { stream: true });
-    }
+    await readStreamUntil(reader, s => s.includes("READY"));
     reader.releaseLock();
 
     const pid = parseInt(await Bun.file(join(String(dir), "pid")).text(), 10);
@@ -143,7 +131,7 @@ describe.skipIf(!isWindows)("Runtime inspector Windows file mapping", () => {
 
     // Wait for inspector banner
     const stderrReader = proc.stderr.getReader();
-    const stderr = await readStderrUntil(stderrReader, hasBanner);
+    const stderr = await readStreamUntil(stderrReader, hasBanner);
     stderrReader.releaseLock();
 
     proc.kill();
@@ -175,13 +163,7 @@ describe.skipIf(!isWindows)("Runtime inspector Windows file mapping", () => {
     });
 
     const reader = targetProc.stdout.getReader();
-    const decoder = new TextDecoder();
-    let output = "";
-    while (!output.includes("READY")) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      output += decoder.decode(value, { stream: true });
-    }
+    await readStreamUntil(reader, s => s.includes("READY"));
     reader.releaseLock();
 
     const pid = parseInt(await Bun.file(join(String(dir), "pid")).text(), 10);
@@ -200,7 +182,7 @@ describe.skipIf(!isWindows)("Runtime inspector Windows file mapping", () => {
     await debug1.exited;
 
     // Wait for the full banner
-    let stderr = await readStderrUntil(stderrReader, hasBanner);
+    let stderr = await readStreamUntil(stderrReader, hasBanner);
 
     await using debug2 = spawn({
       cmd: [bunExe(), "-e", `process._debugProcess(${pid})`],
@@ -240,8 +222,6 @@ describe.skipIf(!isWindows)("Runtime inspector Windows file mapping", () => {
       `,
     });
 
-    const decoder = new TextDecoder();
-
     // First process: activate inspector, verify, then shut down
     {
       await using target1 = spawn({
@@ -253,12 +233,7 @@ describe.skipIf(!isWindows)("Runtime inspector Windows file mapping", () => {
       });
 
       const reader1 = target1.stdout.getReader();
-      let output1 = "";
-      while (!output1.includes("READY-1")) {
-        const { value, done } = await reader1.read();
-        if (done) break;
-        output1 += decoder.decode(value, { stream: true });
-      }
+      await readStreamUntil(reader1, s => s.includes("READY-1"));
       reader1.releaseLock();
 
       const pid1 = parseInt(await Bun.file(join(String(dir), "pid-1")).text(), 10);
@@ -275,7 +250,7 @@ describe.skipIf(!isWindows)("Runtime inspector Windows file mapping", () => {
 
       // Wait for the full banner
       const stderrReader1 = target1.stderr.getReader();
-      const stderr1 = await readStderrUntil(stderrReader1, hasBanner);
+      const stderr1 = await readStreamUntil(stderrReader1, hasBanner);
       stderrReader1.releaseLock();
 
       expect(stderr1).toContain("Bun Inspector");
@@ -295,12 +270,7 @@ describe.skipIf(!isWindows)("Runtime inspector Windows file mapping", () => {
       });
 
       const reader2 = target2.stdout.getReader();
-      let output2 = "";
-      while (!output2.includes("READY-2")) {
-        const { value, done } = await reader2.read();
-        if (done) break;
-        output2 += decoder.decode(value, { stream: true });
-      }
+      await readStreamUntil(reader2, s => s.includes("READY-2"));
       reader2.releaseLock();
 
       const pid2 = parseInt(await Bun.file(join(String(dir), "pid-2")).text(), 10);
@@ -317,7 +287,7 @@ describe.skipIf(!isWindows)("Runtime inspector Windows file mapping", () => {
 
       // Wait for the full banner
       const stderrReader2 = target2.stderr.getReader();
-      const stderr2 = await readStderrUntil(stderrReader2, hasBanner);
+      const stderr2 = await readStreamUntil(stderrReader2, hasBanner);
       stderrReader2.releaseLock();
 
       expect(stderr2).toContain("Bun Inspector");

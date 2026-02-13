@@ -3860,8 +3860,13 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDebugProcess, (JSC::JSGlobalObject * gl
 
     HANDLE hMapping = OpenFileMappingW(FILE_MAP_READ, FALSE, mappingName);
     if (!hMapping) {
-        // Match Node.js error message for compatibility
-        throwVMError(globalObject, scope, "The system cannot find the file specified."_s);
+        DWORD err = GetLastError();
+        if (err == ERROR_FILE_NOT_FOUND) {
+            // Match Node.js error message for compatibility
+            throwVMError(globalObject, scope, "The system cannot find the file specified."_s);
+        } else {
+            throwVMError(globalObject, scope, makeString("OpenFileMappingW failed with error "_s, static_cast<unsigned>(err)));
+        }
         return {};
     }
 

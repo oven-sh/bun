@@ -656,7 +656,14 @@ export const azure = {
       return { exitCode, stdout, stderr };
     };
 
-    const spawnSafeFn = spawnFn;
+    const spawnSafeFn = async (command, opts) => {
+      const result = await spawnFn(command, opts);
+      if (result.exitCode !== 0) {
+        const msg = result.stderr || result.stdout || "Unknown error";
+        throw new Error(`[azure] Command failed (exit ${result.exitCode}): ${command.join(" ")}\n${msg}`);
+      }
+      return result;
+    };
     const upload = async (source, destination) => {
       // Read the file locally and write it on the VM via Run Command
       const { readFileSync } = await import("node:fs");

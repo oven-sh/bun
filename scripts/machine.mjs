@@ -1391,7 +1391,7 @@ async function main() {
           if (cloud.name === "docker" || features?.includes("docker")) {
             return;
           }
-          await machine.spawnSafe(["node", remotePath, "install"], { stdio: "inherit" });
+          await machine.spawnSafe(["C:\\Scoop\\apps\\nodejs\\current\\node.exe", remotePath, "install"], { stdio: "inherit" });
         });
       } else {
         const tmpPath = "/tmp/agent.mjs";

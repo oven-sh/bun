@@ -229,7 +229,12 @@ function Install-Ruby {
 }
 
 function Install-7zip {
+  # Scoop 7zip post_install tries to clean up 7zr.exe in TEMP which can fail
+  # with access denied when running as SYSTEM. This is non-fatal.
+  $prevPref = $ErrorActionPreference
+  $ErrorActionPreference = "Continue"
   Install-Scoop-Package 7zip -Command 7z
+  $ErrorActionPreference = $prevPref
 }
 
 function Install-Make {
@@ -310,19 +315,21 @@ function Install-Rust {
     return
   }
 
+  $rustPath = Join-Path $env:ProgramFiles "Rust"
+  if (-not (Test-Path $rustPath)) {
+    New-Item -Path $rustPath -ItemType Directory | Out-Null
+  }
+
+  # Set install paths before running rustup so it installs directly
+  # to Program Files (avoids issues with SYSTEM user profile path)
+  $env:CARGO_HOME = "$rustPath\cargo"
+  $env:RUSTUP_HOME = "$rustPath\rustup"
+
   Write-Output "Installing Rustup..."
   $rustupInit = Download-File "https://win.rustup.rs/" -Name "rustup-init.exe"
 
   Write-Output "Installing Rust..."
   & $rustupInit -y
-
-  Write-Output "Moving Rust to $env:ProgramFiles..."
-  $rustPath = Join-Path $env:ProgramFiles "Rust"
-  if (-not (Test-Path $rustPath)) {
-    New-Item -Path $rustPath -ItemType Directory
-  }
-  Move-Item "$env:UserProfile\.cargo" "$rustPath\cargo" -Force
-  Move-Item "$env:UserProfile\.rustup" "$rustPath\rustup" -Force
 
   Write-Output "Setting environment variables for Rust..."
   Set-Env "CARGO_HOME" "$rustPath\cargo"
@@ -360,8 +367,25 @@ function Install-PdbAddr2line {
 }
 
 function Install-Nssm {
-  # nssm has no ARM64 build; x64 runs under emulation
-  Install-Scoop-Package nssm
+  if (Which nssm) {
+    return
+  }
+
+  # Try Scoop first, fall back to our mirror if nssm.cc is down
+  try {
+    Install-Scoop-Package nssm
+  } catch {
+    Write-Output "Scoop install failed, downloading nssm from mirror..."
+    $zip = Download-File "https://buncistore.blob.core.windows.net/artifacts/nssm-2.24-103-gdee49fc.zip" -Name "nssm.zip"
+    Expand-Archive -Path $zip -DestinationPath "C:\Windows\Temp\nssm" -Force
+    $nssm = Get-ChildItem "C:\Windows\Temp\nssm" -Recurse -Filter "nssm.exe" | Where-Object { $_.DirectoryName -like "*win64*" } | Select-Object -First 1
+    if ($nssm) {
+      Copy-Item $nssm.FullName "C:\Windows\System32\nssm.exe" -Force
+      Write-Output "nssm installed to C:\Windows\System32\nssm.exe"
+    } else {
+      throw "Failed to install nssm"
+    }
+  }
 }
 
 # ============================================================================

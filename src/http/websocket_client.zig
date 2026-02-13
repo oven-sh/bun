@@ -910,7 +910,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         }
 
         fn sendPong(this: *WebSocket, socket: Socket) bool {
-            if (socket.isClosed() or socket.isShutdown()) {
+            if (!this.hasTCP()) {
                 this.dispatchAbruptClose(ErrorCode.ended);
                 return false;
             }
@@ -942,14 +942,17 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             body_len: usize,
         ) void {
             log("Sending close with code {d}", .{code});
-            if (socket.isClosed() or socket.isShutdown()) {
+            if (!this.hasTCP()) {
                 this.dispatchAbruptClose(ErrorCode.ended);
                 this.clearData();
                 return;
             }
             // we dont wanna shutdownRead when SSL, because SSL handshake can happen when writting
+            // For tunnel mode, shutdownRead on the detached socket is a no-op; skip it.
             if (comptime !ssl) {
-                socket.shutdownRead();
+                if (this.proxy_tunnel == null) {
+                    socket.shutdownRead();
+                }
             }
             var final_body_bytes: [128 + 8]u8 = undefined;
             var header = @as(WebsocketHeader, @bitCast(@as(u16, 0)));

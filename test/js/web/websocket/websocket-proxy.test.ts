@@ -353,6 +353,105 @@ describe("WebSocket through HTTP CONNECT proxy", () => {
     await promise;
     gc();
   });
+
+  test("server-initiated ping is ponged correctly through proxy", async () => {
+    // Regression test: sendPong was checking socket.isClosed() on the detached
+    // socket instead of using hasTCP(), causing an immediate 1006 close when
+    // the server sent a Ping frame through a CONNECT proxy tunnel.
+    //
+    // Uses a raw TCP server to send WebSocket ping frames directly, ensuring
+    // the client's sendPong codepath is exercised through the CONNECT tunnel.
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+
+    let handshakeBuffer = new Uint8Array(0);
+    let handshakeComplete = false;
+
+    const rawServer = Bun.listen({
+      socket: {
+        data(socket, data) {
+          if (handshakeComplete) return; // ignore client frames after handshake
+
+          // Accumulate handshake data
+          const newBuf = new Uint8Array(handshakeBuffer.length + data.byteLength);
+          newBuf.set(handshakeBuffer);
+          newBuf.set(new Uint8Array(data), handshakeBuffer.length);
+          handshakeBuffer = newBuf;
+
+          const str = new TextDecoder().decode(handshakeBuffer);
+          const endOfHeaders = str.indexOf("\r\n\r\n");
+          if (endOfHeaders === -1) return;
+
+          // Complete the WebSocket handshake
+          const keyMatch = /Sec-WebSocket-Key:\s*(.*)\r\n/i.exec(str);
+          if (!keyMatch) {
+            socket.end();
+            reject(new Error("Missing Sec-WebSocket-Key"));
+            return;
+          }
+
+          const hasher = new Bun.CryptoHasher("sha1");
+          hasher.update(keyMatch[1].trim());
+          hasher.update("258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
+          const accept = hasher.digest("base64");
+
+          socket.write(
+            "HTTP/1.1 101 Switching Protocols\r\n" +
+              "Upgrade: websocket\r\n" +
+              "Connection: Upgrade\r\n" +
+              `Sec-WebSocket-Accept: ${accept}\r\n` +
+              "\r\n",
+          );
+          socket.flush();
+          handshakeComplete = true;
+
+          // Send a ping frame (opcode 0x89, FIN=1, no payload)
+          socket.write(new Uint8Array([0x89, 0x00]));
+          socket.flush();
+
+          // Then send a text frame "survived" — if the client receives this,
+          // the connection was not killed by the ping.
+          const payload = new TextEncoder().encode("survived");
+          const textFrame = new Uint8Array(2 + payload.length);
+          textFrame[0] = 0x81; // FIN + Text opcode
+          textFrame[1] = payload.length;
+          textFrame.set(payload, 2);
+          socket.write(textFrame);
+          socket.flush();
+        },
+      },
+      hostname: "127.0.0.1",
+      port: 0,
+    });
+
+    try {
+      const ws = new WebSocket(`ws://127.0.0.1:${rawServer.port}`, {
+        proxy: `http://127.0.0.1:${proxyPort}`,
+      });
+
+      ws.onmessage = event => {
+        if (String(event.data) === "survived") {
+          ws.close(1000);
+        }
+      };
+
+      ws.onclose = event => {
+        if (event.code === 1000) {
+          resolve();
+        } else {
+          reject(new Error(`Unexpected close code: ${event.code}`));
+        }
+      };
+
+      ws.onerror = event => {
+        reject(event);
+      };
+
+      await promise;
+    } finally {
+      rawServer.stop(true);
+    }
+    gc();
+  });
 });
 
 describe("WebSocket wss:// through HTTP proxy (TLS tunnel)", () => {

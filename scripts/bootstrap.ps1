@@ -215,7 +215,9 @@ function Install-Git {
 }
 
 function Install-NodeJs {
-  Install-Scoop-Package nodejs -Command node
+  # Pin to match the ABI version Bun expects (NODE_MODULE_VERSION 137).
+  # Latest Node (25.x) uses ABI 141 which breaks node-gyp tests.
+  Install-Scoop-Package "nodejs@24.3.0" -Command node
 }
 
 function Install-CMake {
@@ -513,8 +515,11 @@ function Disable-Windows-Threat-Protection {
 }
 
 function Uninstall-Windows-Defender {
-  # Skip uninstalling the feature — it requires a reboot which blocks Sysprep.
-  # Disable-Windows-Defender (called earlier) already disables real-time monitoring.
+  # Requires a reboot — run before the windows-restart Packer provisioner.
+  if (Get-Command Uninstall-WindowsFeature -ErrorAction SilentlyContinue) {
+    Write-Output "Uninstalling Windows Defender..."
+    Uninstall-WindowsFeature -Name Windows-Defender
+  }
 }
 
 function Disable-Windows-Services {

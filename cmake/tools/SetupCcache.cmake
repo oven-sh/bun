@@ -36,15 +36,10 @@ endif()
 setenv(CCACHE_FILECLONE 1)
 setenv(CCACHE_STATSLOG ${BUILD_PATH}/ccache.log)
 
-if(CI AND WIN32)
-  # Windows CI agents are persistent, so ccache can survive between builds.
-  # Use a stable location outside the build tree so git clean doesn't wipe it.
-  if(NOT DEFINED ENV{CCACHE_DIR})
-    setenv(CCACHE_DIR $ENV{USERPROFILE}/.cache/ccache)
-  endif()
-  setenv(CCACHE_MAXSIZE 10G)
-  setenv(CCACHE_SLOPPINESS "pch_defines,time_macros,locale,clang_index_store,gcno_cwd,include_file_ctime,include_file_mtime")
-elseif(NOT CI)
+if(CI)
+  # FIXME: Does not work on Ubuntu 18.04
+  # setenv(CCACHE_SLOPPINESS "pch_defines,time_macros,locale,clang_index_store,gcno_cwd,include_file_ctime,include_file_mtime")
+else()
   setenv(CCACHE_MAXSIZE 100G)
   setenv(CCACHE_SLOPPINESS "pch_defines,time_macros,locale,random_seed,clang_index_store,gcno_cwd")
 endif()

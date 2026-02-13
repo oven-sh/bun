@@ -12,7 +12,8 @@ source "azure-arm" "windows-x64" {
   image_sku       = "2019-datacenter-gensecond"
   image_version   = "latest"
 
-  // Build VM
+  // Build VM — only used during image creation, not for CI runners.
+  // CI runner VM sizes are set in ci.mjs (azureVmSizes).
   vm_size         = "Standard_D4ds_v6"
 
   // Use existing resource group instead of creating a temp one

@@ -99,13 +99,11 @@ function getTargetLabel(target) {
  * @property {string[]} [features]
  */
 
-/**
- * @type {Platform[]}
- */
-// Azure VM sizes — single source of truth for both ci.mjs and azure.mjs
+// Azure VM sizes for Windows CI runners.
+// DDSv6 = x64, DPSv6 = ARM64 (Cobalt 100). Quota: 100 cores per family in eastus2.
 const azureVmSize = {
-  "windows-aarch64": "Standard_D4ps_v6", // 4 vCPU, 16 GiB, Cobalt 100
-  "windows-x64": "Standard_D4ds_v6", // 4 vCPU, 16 GiB
+  "windows-x64": "Standard_D16ds_v6", // 16 vCPU, 64 GiB
+  "windows-aarch64": "Standard_D16ps_v6", // 16 vCPU, 64 GiB, Cobalt 100
 };
 
 function getAzureVmSize(os, arch) {
@@ -719,14 +717,14 @@ function getTestBunStep(platform, options, testOptions = {}) {
     agents: getTestAgent(platform, options),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
-    parallelism: os === "darwin" ? 2 : os === "windows" ? 4 : 20,
+    parallelism: os === "darwin" || os === "windows" ? 2 : 20,
     timeout_in_minutes: profile === "asan" || os === "windows" ? 45 : 30,
     env: {
       ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
     },
     command:
       os === "windows"
-        ? `node .\\scripts\\runner.node.mjs ${args.join(" ")}`
+        ? `pwsh -NoProfile -File .\\scripts\\vs-shell.ps1 node .\\scripts\\runner.node.mjs ${args.join(" ")}`
         : `./scripts/runner.node.mjs ${args.join(" ")}`,
   };
 }

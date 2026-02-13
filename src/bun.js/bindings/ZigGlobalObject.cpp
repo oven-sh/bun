@@ -270,7 +270,7 @@ extern "C" void Bun__REPRL__registerFuzzilliFunctions(Zig::GlobalObject*);
 
 // StopTheWorld callback for SIGUSR1 debugger activation (defined in BunDebugger.cpp).
 // Note: This is a C++ function - cannot use extern "C" because it returns std::pair.
-JSC::StopTheWorldStatus Bun__jsDebuggerCallback(JSC::VM&, JSC::StopTheWorldEvent);
+JSC::StopTheWorldStatus Bun__stopTheWorldCallback(JSC::VM&, JSC::StopTheWorldEvent);
 
 extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode)
 {
@@ -345,7 +345,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
 
         // Register the StopTheWorld callback for SIGUSR1 debugger activation.
         // This allows us to interrupt infinite loops and activate the debugger.
-        JSC::VMManager::setJSDebuggerCallback(Bun__jsDebuggerCallback);
+        JSC::VMManager::setJSDebuggerCallback(Bun__stopTheWorldCallback);
     }); // end std::call_once lambda
 
     // NOLINTEND

@@ -44,7 +44,7 @@ fn requestInspectorActivation() void {
     //
     // 1. StopTheWorld (for busy loops like `while(true){}`):
     //    requestStopAll sets a trap that fires at the next JS safe point.
-    //    Our callback (Bun__jsDebuggerCallback) then activates the inspector.
+    //    Our callback (Bun__stopTheWorldCallback) then activates the inspector.
     //
     // 2. Event loop wakeup (for idle VMs waiting on I/O):
     //    The wakeup causes checkAndActivateInspector to run, which activates
@@ -94,14 +94,14 @@ pub fn checkAndActivateInspector() void {
         // Set the C++ runtimeInspectorActivated flag so that connect() and
         // interruptForMessageDelivery() use STW-based message delivery,
         // same as when activated via the StopTheWorld callback path.
-        setRuntimeInspectorActivated();
+        activateRuntimeInspectorMode();
     }
 }
 
-extern fn Bun__setRuntimeInspectorActivated() void;
+extern fn Bun__activateRuntimeInspectorMode() void;
 
-fn setRuntimeInspectorActivated() void {
-    Bun__setRuntimeInspectorActivated();
+fn activateRuntimeInspectorMode() void {
+    Bun__activateRuntimeInspectorMode();
 }
 
 /// Tries to activate the inspector. Returns true if activated, false otherwise.
@@ -386,7 +386,7 @@ export fn Bun__Sigusr1Handler__uninstall() void {
 
 /// Called from C++ StopTheWorld callback.
 /// Returns true if inspector was activated, false if already active or not requested.
-export fn Bun__activateInspector() bool {
+export fn Bun__tryActivateInspector() bool {
     if (!inspector_activation_requested.swap(false, .acq_rel)) {
         return false;
     }
@@ -397,7 +397,7 @@ comptime {
     if (Environment.isPosix) {
         _ = Bun__Sigusr1Handler__uninstall;
     }
-    _ = Bun__activateInspector;
+    _ = Bun__tryActivateInspector;
 }
 
 const Semaphore = @import("../../sync/Semaphore.zig");

@@ -5963,13 +5963,26 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
                 if (isTypedView(jsType)) {
                     auto* view = jsCast<JSArrayBufferView*>(object);
                     size_t byteLength = view->byteLength();
-                    // Fast path conditions: not detached, not out of bounds, not resizable/growable,
-                    // byteOffset == 0 (whole-buffer view), no named properties.
+                    // Fast path conditions: not detached, not out of bounds, not shared,
+                    // not resizable/growable, byteOffset == 0, covers entire backing buffer,
+                    // no named properties.
+                    // For FastTypedArray/OversizeTypedArray (hasArrayBuffer()==false), the view
+                    // owns the data directly and always covers it entirely.
+                    // For WastefulTypedArray (hasArrayBuffer()==true), we must verify the view
+                    // covers the full ArrayBuffer; partial views (e.g. new Uint8Array(buf, 0, 8)
+                    // over a 16-byte buffer) must fall through to the slow path which preserves
+                    // the full backing buffer and byteOffset/byteLength.
+                    // possiblySharedBuffer() is safe here: hasArrayBuffer()==true means
+                    // WastefulTypedArray, which just returns existingBufferInButterfly()
+                    // without triggering slowDownAndWasteMemory().
+                    bool coversFullBuffer = !view->hasArrayBuffer()
+                        || view->byteLength() == view->possiblySharedBuffer()->byteLength();
                     if (!view->isDetached()
                         && !view->isOutOfBounds()
                         && !view->isShared()
                         && !view->isResizableOrGrowableShared()
                         && view->byteOffset() == 0
+                        && coversFullBuffer
                         && structure->maxOffset() == invalidOffset) {
                         auto taType = typedArrayType(jsType);
                         auto subtag = subtagForTypedArrayType(taType);

@@ -1101,4 +1101,35 @@ describe("Structured Clone Fast Path", () => {
     port1.close();
     port2.close();
   });
+
+  test("structuredClone partial-buffer TypedArray with byteOffset==0 preserves full buffer", () => {
+    // new Uint8Array(buf, 0, 8) over a 16-byte buffer: byteOffset is 0 but
+    // the view only covers the first half. The slow path clones the entire
+    // backing ArrayBuffer and preserves byteOffset/byteLength.
+    const buf = new ArrayBuffer(16);
+    const full = new Uint8Array(buf);
+    full.set([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+    const partial = new Uint8Array(buf, 0, 8);
+
+    const cloned = structuredClone(partial);
+    expect(cloned).toBeInstanceOf(Uint8Array);
+    expect(cloned).toEqual(new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7]));
+    expect(cloned.byteOffset).toBe(0);
+    expect(cloned.byteLength).toBe(8);
+    // The cloned buffer must preserve the full backing ArrayBuffer size
+    expect(cloned.buffer.byteLength).toBe(16);
+  });
+
+  test("structuredClone partial-buffer Int32Array with byteOffset==0 preserves full buffer", () => {
+    const buf = new ArrayBuffer(32);
+    const partial = new Int32Array(buf, 0, 4); // 16 bytes out of 32
+    partial.set([100, 200, 300, 400]);
+
+    const cloned = structuredClone(partial);
+    expect(cloned).toBeInstanceOf(Int32Array);
+    expect(cloned).toEqual(new Int32Array([100, 200, 300, 400]));
+    expect(cloned.byteOffset).toBe(0);
+    expect(cloned.byteLength).toBe(16);
+    expect(cloned.buffer.byteLength).toBe(32);
+  });
 });

@@ -1,12 +1,3 @@
-packer {
-  required_plugins {
-    azure = {
-      source  = "github.com/hashicorp/azure"
-      version = ">= 2.5.0"
-    }
-  }
-}
-
 source "azure-arm" "windows-x64" {
   // Authentication (from env vars or -var flags)
   client_id       = var.client_id
@@ -23,7 +14,9 @@ source "azure-arm" "windows-x64" {
 
   // Build VM
   vm_size         = "Standard_D16ds_v6"
-  location        = var.location
+
+  // Use existing resource group instead of creating a temp one
+  build_resource_group_name = var.resource_group
   os_disk_size_gb = 150
 
   // Security
@@ -31,10 +24,8 @@ source "azure-arm" "windows-x64" {
   secure_boot_enabled = true
   vtpm_enabled        = true
 
-  // Networking — use existing VNet for outbound internet
-  virtual_network_name                = "bun-ci-vnet"
-  virtual_network_subnet_name         = "default"
-  virtual_network_resource_group_name = var.resource_group
+  // Networking — Packer creates a temp VNet + public IP + NSG automatically.
+  // WinRM needs the public IP to connect from CI runners.
 
   // WinRM communicator — Packer auto-configures via temp Key Vault
   communicator   = "winrm"
@@ -44,13 +35,11 @@ source "azure-arm" "windows-x64" {
   winrm_username = "packer"
 
   // Output — Managed Image (x64 supports this)
-  managed_image_name                = "windows-x64-2019-build-${var.build_number}"
-  managed_image_resource_group_name = var.resource_group
 
   // Also publish to Compute Gallery
   shared_image_gallery_destination {
     subscription         = var.subscription_id
-    resource_group       = var.resource_group
+    resource_group       = var.gallery_resource_group
     gallery_name         = var.gallery_name
     image_name           = "windows-x64-2019-build-${var.build_number}"
     image_version        = "1.0.0"

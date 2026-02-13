@@ -1,3 +1,12 @@
+packer {
+  required_plugins {
+    azure = {
+      source  = "github.com/hashicorp/azure"
+      version = ">= 2.5.0"
+    }
+  }
+}
+
 // Shared variables for all Windows image builds
 
 variable "client_id" {
@@ -50,4 +59,10 @@ variable "agent_script" {
   type    = string
   default = ""
   description = "Path to bundled agent.mjs. If empty, agent install is skipped."
+}
+
+variable "gallery_resource_group" {
+  type    = string
+  default = "BUN-CI"
+  description = "Resource group containing the Compute Gallery (may differ from build RG)"
 }

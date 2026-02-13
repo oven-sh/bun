@@ -27,6 +27,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         ping_frame_bytes: [128 + 6]u8 = [_]u8{0} ** (128 + 6),
         ping_len: u8 = 0,
         ping_received: bool = false,
+        pong_received: bool = false,
         close_received: bool = false,
         close_frame_buffering: bool = false,
 
@@ -120,6 +121,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             this.clearReceiveBuffers(true);
             this.clearSendBuffers(true);
             this.ping_received = false;
+            this.pong_received = false;
             this.ping_len = 0;
             this.close_frame_buffering = false;
             this.receive_pending_chunk_len = 0;
@@ -650,14 +652,38 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                         if (data.len == 0) break;
                     },
                     .pong => {
-                        const pong_len = @min(data.len, @min(receive_body_remain, this.ping_frame_bytes.len));
+                        if (!this.pong_received) {
+                            if (receive_body_remain > 125) {
+                                this.terminate(ErrorCode.invalid_control_frame);
+                                terminated = true;
+                                break;
+                            }
+                            this.ping_len = @truncate(receive_body_remain);
+                            receive_body_remain = 0;
+                            this.pong_received = true;
+                        }
+                        const pong_len = this.ping_len;
 
-                        this.dispatchData(data[0..pong_len], .Pong);
+                        if (data.len > 0) {
+                            const total_received = @min(pong_len, receive_body_remain + data.len);
+                            const slice = this.ping_frame_bytes[6..][receive_body_remain..total_received];
+                            @memcpy(slice, data[0..slice.len]);
+                            receive_body_remain = total_received;
+                            data = data[slice.len..];
+                        }
+                        const pending_body = pong_len - receive_body_remain;
+                        if (pending_body > 0) {
+                            // wait for more data - pong payload is fragmented across TCP segments
+                            break;
+                        }
 
-                        data = data[pong_len..];
+                        const pong_data = this.ping_frame_bytes[6..][0..pong_len];
+                        this.dispatchData(pong_data, .Pong);
+
                         receive_state = .need_header;
                         receive_body_remain = 0;
                         receiving_type = last_receive_data_type;
+                        this.pong_received = false;
 
                         if (data.len == 0) break;
                     },

@@ -1209,6 +1209,8 @@ async function buildWindowsImageWithPacker({ os, arch, release, command, ci, age
   const packerArgs = [
     packerBin,
     "build",
+    "-only",
+    `azure-arm.${templateName}`,
     "-var",
     `client_id=${clientId}`,
     "-var",
@@ -1231,7 +1233,7 @@ async function buildWindowsImageWithPacker({ os, arch, release, command, ci, age
     `bootstrap_script=${bootstrapPath}`,
     "-var",
     `agent_script=${agentPath}`,
-    templateFile,
+    templateDir,
   ];
 
   await spawnSafe(packerArgs, {

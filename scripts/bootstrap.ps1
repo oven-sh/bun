@@ -170,12 +170,9 @@ function Install-Scoop-Package {
   }
 
   Write-Output "Installing $Name (via Scoop)..."
-  # SilentlyContinue: Scoop post_install scripts can fail with non-critical
-  # errors (e.g. 7zip cleanup of 7zr.exe in TEMP). Let scoop finish, then
-  # verify the command is actually available.
-  $ErrorActionPreference = "SilentlyContinue"
-  scoop install $Name 2>&1 | Out-Host
-  $ErrorActionPreference = "Stop"
+  # Run scoop in a child process so post_install errors (e.g. 7zip ARM64
+  # Remove-Item access denied) don't terminate our bootstrap script.
+  $proc = Start-Process -FilePath "powershell" -ArgumentList "-NoProfile", "-Command", "scoop install $Name" -Wait -PassThru -NoNewWindow
   Refresh-Path
 
   if (-not (Which $Command)) {

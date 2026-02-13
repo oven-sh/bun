@@ -383,6 +383,7 @@ pub const PackageInstall = struct {
             &[_]bun.OSPathSlice{},
             &[_]bun.OSPathSlice{},
         ) catch |err| return Result.fail(err, .opening_cache_dir, @errorReturnTrace());
+        walker_.resolve_unknown_entry_types = true;
         defer walker_.deinit();
 
         const FileCopier = struct {
@@ -520,6 +521,7 @@ pub const PackageInstall = struct {
             else
                 &[_]bun.OSPathSlice{},
         ) catch |err| bun.handleOom(err);
+        state.walker.resolve_unknown_entry_types = true;
 
         if (!Environment.isWindows) {
             state.subdir = destbase.makeOpenPath(bun.span(destpath), .{

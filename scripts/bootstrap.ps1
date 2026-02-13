@@ -170,15 +170,8 @@ function Install-Scoop-Package {
   }
 
   Write-Output "Installing $Name (via Scoop)..."
-  # Use powershell -Command to run scoop install in a child process.
-  # This isolates terminating errors (e.g. 7zip ARM64 Remove-Item access denied)
-  # while still allowing scoop to update PATH via the registry.
-  powershell -NoProfile -Command "scoop install $Name" 2>&1 | Out-Host
+  scoop install $Name
   Refresh-Path
-
-  if (-not (Which $Command)) {
-    throw "Failed to install $Name (command '$Command' not found)"
-  }
 }
 
 # ============================================================================
@@ -236,10 +229,23 @@ function Install-Ruby {
 }
 
 function Install-7zip {
-  # Pre-emptively remove the file that Scoop's 7zip post_install tries to clean up.
-  # On ARM64 SYSTEM context, this file gets locked and causes an access denied error.
-  Remove-Item "C:\Windows\TEMP\7zr.exe" -Force -ErrorAction SilentlyContinue
-  Install-Scoop-Package 7zip -Command 7z
+  if (Which 7z) {
+    return
+  }
+
+  Write-Output "Installing 7zip (via Scoop)..."
+  # On ARM64, 7zip's post_install tries to delete 7zr.exe from TEMP which fails
+  # with access denied under SYSTEM context. Run in a child process to isolate
+  # the error, then verify 7z is actually installed.
+  if ($script:IsARM64) {
+    powershell -NoProfile -Command "scoop install 7zip" 2>&1 | Out-Host
+    Refresh-Path
+    if (-not (Which 7z)) {
+      throw "7zip installation failed"
+    }
+  } else {
+    Install-Scoop-Package 7zip -Command 7z
+  }
 }
 
 function Install-Make {

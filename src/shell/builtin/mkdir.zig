@@ -235,22 +235,22 @@ pub const ShellMkdirTask = struct {
         // implementation for it to work with cwd
         const filepath: [:0]const u8 = brk: {
             if (ResolvePath.Platform.auto.isAbsolute(this.filepath)) break :brk this.filepath;
+            // Check combined length before joining to avoid panic in joinZ's fixed-size buffer
+            if (this.cwd_path.len + this.filepath.len + 1 >= bun.MAX_PATH_BYTES) {
+                this.err = bun.sys.Error.fromCode(.NAMETOOLONG, .mkdir).withPath(bun.handleOom(bun.default_allocator.dupe(u8, this.filepath))).toShellSystemError();
+                if (this.event_loop == .js) {
+                    this.event_loop.js.enqueueTaskConcurrent(this.concurrent_task.js.from(this, .manual_deinit));
+                } else {
+                    this.event_loop.mini.enqueueTaskConcurrent(this.concurrent_task.mini.from(this, "runFromMainThreadMini"));
+                }
+                return;
+            }
             const parts: []const []const u8 = &.{
                 this.cwd_path[0..],
                 this.filepath[0..],
             };
             break :brk ResolvePath.joinZ(parts, .auto);
         };
-
-        if (filepath.len >= bun.MAX_PATH_BYTES) {
-            this.err = bun.sys.Error.fromCode(.NAMETOOLONG, .mkdir).withPath(bun.handleOom(bun.default_allocator.dupe(u8, filepath))).toShellSystemError();
-            if (this.event_loop == .js) {
-                this.event_loop.js.enqueueTaskConcurrent(this.concurrent_task.js.from(this, .manual_deinit));
-            } else {
-                this.event_loop.mini.enqueueTaskConcurrent(this.concurrent_task.mini.from(this, "runFromMainThreadMini"));
-            }
-            return;
-        }
 
         var node_fs = jsc.Node.fs.NodeFS{};
         // Recursive

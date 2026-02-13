@@ -1235,6 +1235,7 @@ pub fn init(opts: Options) !*VirtualMachine {
     if (opts.smol)
         is_smol_mode = opts.smol;
 
+    vm.inspect_port = opts.inspect_port;
     vm.configureDebugger(opts.debugger);
     vm.body_value_hive_allocator = Body.Value.HiveAllocator.init(bun.typedAllocator(jsc.WebCore.Body.Value));
 
@@ -1494,6 +1495,7 @@ pub fn initBake(opts: Options) anyerror!*VirtualMachine {
     if (opts.smol)
         is_smol_mode = opts.smol;
 
+    vm.inspect_port = opts.inspect_port;
     vm.configureDebugger(opts.debugger);
     vm.body_value_hive_allocator = Body.Value.HiveAllocator.init(bun.typedAllocator(jsc.WebCore.Body.Value));
 

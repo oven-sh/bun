@@ -407,7 +407,9 @@ describe("Runtime inspector activation", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      expect(await debugProc.exited).toBe(0);
+      const [debugStderr, debugExitCode] = await Promise.all([debugProc.stderr.text(), debugProc.exited]);
+      expect(debugStderr).toBe("");
+      expect(debugExitCode).toBe(0);
 
       // Wait for inspector banner and extract WS URL
       const { stderr: targetStderr } = await waitForDebuggerListening(targetProc.stderr);

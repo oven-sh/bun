@@ -338,6 +338,13 @@ function Install-Bun {
     $installScript = Download-File "https://bun.sh/install.ps1" -Name "bun-install.ps1"
     $pwsh = Which pwsh powershell -Required
     & $pwsh $installScript
+    Refresh-Path
+    # Copy to System32 so it survives Sysprep (user profile PATH is lost)
+    $bunPath = Which bun
+    if ($bunPath) {
+      Copy-Item $bunPath "C:\Windows\System32\bun.exe" -Force
+      Write-Output "Bun copied to C:\Windows\System32\bun.exe"
+    }
   }
 }
 

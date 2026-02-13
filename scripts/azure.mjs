@@ -35,7 +35,7 @@ function getConfig() {
     subscriptionId: env("AZURE_SUBSCRIPTION_ID"),
     resourceGroup: env("AZURE_RESOURCE_GROUP", "BUN-CI"),
     location: env("AZURE_LOCATION", "eastus2"),
-    galleryName: env("AZURE_GALLERY_NAME", "bunCIGallery"),
+    galleryName: env("AZURE_GALLERY_NAME", "bunCIGallery2"),
   };
 }
 

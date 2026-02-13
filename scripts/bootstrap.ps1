@@ -231,10 +231,16 @@ function Install-Ruby {
 function Install-7zip {
   # Scoop 7zip post_install tries to clean up 7zr.exe in TEMP which can fail
   # with access denied when running as SYSTEM. This is non-fatal.
-  $prevPref = $ErrorActionPreference
-  $ErrorActionPreference = "Continue"
-  Install-Scoop-Package 7zip -Command 7z
-  $ErrorActionPreference = $prevPref
+  try {
+    Install-Scoop-Package 7zip -Command 7z
+  } catch {
+    # Check if 7z is actually installed despite the error
+    if (Which 7z) {
+      Write-Output "7zip installed (ignoring post_install cleanup error)"
+    } else {
+      throw $_
+    }
+  }
 }
 
 function Install-Make {

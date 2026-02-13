@@ -499,10 +499,8 @@ function Disable-Windows-Threat-Protection {
 }
 
 function Uninstall-Windows-Defender {
-  if (Get-Command Uninstall-WindowsFeature -ErrorAction SilentlyContinue) {
-    Write-Output "Uninstalling Windows Defender..."
-    Uninstall-WindowsFeature -Name Windows-Defender
-  }
+  # Skip uninstalling the feature — it requires a reboot which blocks Sysprep.
+  # Disable-Windows-Defender (called earlier) already disables real-time monitoring.
 }
 
 function Disable-Windows-Services {

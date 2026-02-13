@@ -170,8 +170,17 @@ function Install-Scoop-Package {
   }
 
   Write-Output "Installing $Name (via Scoop)..."
-  scoop install $Name
+  # SilentlyContinue: Scoop post_install scripts can fail with non-critical
+  # errors (e.g. 7zip cleanup of 7zr.exe in TEMP). Let scoop finish, then
+  # verify the command is actually available.
+  $ErrorActionPreference = "SilentlyContinue"
+  scoop install $Name 2>&1 | Out-Host
+  $ErrorActionPreference = "Stop"
   Refresh-Path
+
+  if (-not (Which $Command)) {
+    throw "Failed to install $Name (command '$Command' not found)"
+  }
 }
 
 # ============================================================================
@@ -229,22 +238,7 @@ function Install-Ruby {
 }
 
 function Install-7zip {
-  if (Which 7z) {
-    return
-  }
-
-  # Scoop 7zip post_install tries to Remove-Item 7zr.exe in TEMP which fails
-  # with access denied when running as SYSTEM. Temporarily allow errors so
-  # the cleanup failure doesn't kill the entire bootstrap.
-  Write-Output "Installing 7zip (via Scoop)..."
-  $ErrorActionPreference = "SilentlyContinue"
-  scoop install 7zip 2>&1 | Out-Host
-  $ErrorActionPreference = "Stop"
-  Refresh-Path
-
-  if (-not (Which 7z)) {
-    throw "7zip installation failed"
-  }
+  Install-Scoop-Package 7zip -Command 7z
 }
 
 function Install-Make {
@@ -526,9 +520,11 @@ if ($Optimize) {
 Install-Scoop
 
 # Packages via Scoop (native ARM64 or x64 depending on architecture)
+# 7zip must be installed before git — git depends on 7zip via Scoop,
+# and 7zip's post_install has a cleanup error on ARM64 SYSTEM context.
+Install-7zip
 Install-Git
 Install-NodeJs
-Install-7zip
 Install-CMake
 Install-Ninja
 Install-Python

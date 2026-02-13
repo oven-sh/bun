@@ -242,9 +242,23 @@ function Install-Ruby {
 }
 
 function Install-7zip {
-  # With Packer (WinRM), scoop runs as the packer user, not SYSTEM.
-  # The ARM64 Remove-Item error only happens under SYSTEM context (Azure Run Command).
-  Install-Scoop-Package 7zip -Command 7z
+  if (Which 7z) {
+    return
+  }
+
+  Write-Output "Installing 7zip (via Scoop)..."
+  # On ARM64, scoop's 7zip post_install tries to Remove-Item 7zr.exe which is
+  # locked during extraction. This error is non-fatal (7zip installs fine).
+  # Temporarily allow errors so it doesn't kill the bootstrap.
+  $prevErrorPref = $ErrorActionPreference
+  $ErrorActionPreference = "SilentlyContinue"
+  scoop install 7zip *>&1 | ForEach-Object { "$_" } | Write-Host
+  $ErrorActionPreference = $prevErrorPref
+  Refresh-Path
+
+  if (-not (Which 7z)) {
+    throw "7zip installation failed"
+  }
 }
 
 function Install-Make {

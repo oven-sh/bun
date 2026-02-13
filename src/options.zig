@@ -1442,6 +1442,7 @@ pub fn definesFromTransformOptions(
     NODE_ENV: ?string,
     drop: []const []const u8,
     omit_unused_global_calls: bool,
+    is_standalone: bool,
 ) !*defines.Define {
     const input_user_define = maybe_input_define orelse std.mem.zeroes(api.StringMap);
 
@@ -1484,38 +1485,43 @@ pub fn definesFromTransformOptions(
     }
 
     if (behavior != .load_all_without_inlining) {
-        const quoted_node_env: string = brk: {
-            if (NODE_ENV) |node_env| {
-                if (node_env.len > 0) {
-                    if ((strings.startsWithChar(node_env, '"') and strings.endsWithChar(node_env, '"')) or
-                        (strings.startsWithChar(node_env, '\'') and strings.endsWithChar(node_env, '\'')))
-                    {
-                        break :brk node_env;
-                    }
+        // Don't inline process.env.NODE_ENV/BUN_ENV for standalone executables (--compile),
+        // since the compiled binary should read these from the runtime environment.
+        // User-specified --define overrides are still respected (already in user_defines).
+        if (!is_standalone) {
+            const quoted_node_env: string = brk: {
+                if (NODE_ENV) |node_env| {
+                    if (node_env.len > 0) {
+                        if ((strings.startsWithChar(node_env, '"') and strings.endsWithChar(node_env, '"')) or
+                            (strings.startsWithChar(node_env, '\'') and strings.endsWithChar(node_env, '\'')))
+                        {
+                            break :brk node_env;
+                        }
 
-                    // avoid allocating if we can
-                    if (strings.eqlComptime(node_env, "production")) {
-                        break :brk "\"production\"";
-                    } else if (strings.eqlComptime(node_env, "development")) {
-                        break :brk "\"development\"";
-                    } else if (strings.eqlComptime(node_env, "test")) {
-                        break :brk "\"test\"";
-                    } else {
-                        break :brk try std.fmt.allocPrint(allocator, "\"{s}\"", .{node_env});
+                        // avoid allocating if we can
+                        if (strings.eqlComptime(node_env, "production")) {
+                            break :brk "\"production\"";
+                        } else if (strings.eqlComptime(node_env, "development")) {
+                            break :brk "\"development\"";
+                        } else if (strings.eqlComptime(node_env, "test")) {
+                            break :brk "\"test\"";
+                        } else {
+                            break :brk try std.fmt.allocPrint(allocator, "\"{s}\"", .{node_env});
+                        }
                     }
                 }
-            }
-            break :brk "\"development\"";
-        };
+                break :brk "\"development\"";
+            };
 
-        _ = try user_defines.getOrPutValue(
-            "process.env.NODE_ENV",
-            quoted_node_env,
-        );
-        _ = try user_defines.getOrPutValue(
-            "process.env.BUN_ENV",
-            quoted_node_env,
-        );
+            _ = try user_defines.getOrPutValue(
+                "process.env.NODE_ENV",
+                quoted_node_env,
+            );
+            _ = try user_defines.getOrPutValue(
+                "process.env.BUN_ENV",
+                quoted_node_env,
+            );
+        }
 
         // Automatically set `process.browser` to `true` for browsers and false for node+js
         // This enables some extra dead code elimination
@@ -1932,6 +1938,7 @@ pub const BundleOptions = struct {
             },
             this.drop,
             this.dead_code_elimination and this.minify_syntax,
+            this.compile,
         );
         this.defines_loaded = true;
     }

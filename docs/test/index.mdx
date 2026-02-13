@@ -201,6 +201,35 @@ test.failing.each([1, 2, 3])("chained qualifiers %d", input => {
 });
 ```
 
+## Retry failed tests
+
+Use the `--retry` flag to automatically retry failed tests up to a given number of times. If a test fails and then passes on a subsequent attempt, it is reported as passing.
+
+```sh terminal icon="terminal"
+bun test --retry 3
+```
+
+Per-test `{ retry: N }` overrides the global `--retry` value:
+
+```ts
+// Uses the global --retry value
+test("uses global retry", () => {
+  /* ... */
+});
+
+// Overrides --retry with its own value
+test("custom retry", { retry: 1 }, () => {
+  /* ... */
+});
+```
+
+You can also set this in `bunfig.toml`:
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+retry = 3
+```
+
 ## Rerun tests
 
 Use the `--rerun-each` flag to run each test multiple times. This is useful for detecting flaky or non-deterministic test failures.

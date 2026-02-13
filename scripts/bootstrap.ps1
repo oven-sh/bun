@@ -242,23 +242,9 @@ function Install-Ruby {
 }
 
 function Install-7zip {
-  if (Which 7z) {
-    return
-  }
-
-  if ($script:IsARM64) {
-    # Scoop's 7zip ARM64 post_install has a Remove-Item error that kills bootstrap.
-    # Install manually instead.
-    Write-Output "Installing 7zip (manual ARM64)..."
-    $zip = Download-File "https://www.7-zip.org/a/7z2600-arm64.exe" -Name "7z-arm64.exe"
-    $dest = "C:\Program Files\7-Zip"
-    New-Item -Path $dest -ItemType Directory -Force | Out-Null
-    # 7zip ARM64 exe is a self-extracting archive — extract with itself
-    Start-Process $zip -ArgumentList "-o`"$dest`" -y" -Wait -NoNewWindow
-    Add-To-Path $dest
-  } else {
-    Install-Scoop-Package 7zip -Command 7z
-  }
+  # With Packer (WinRM), scoop runs as the packer user, not SYSTEM.
+  # The ARM64 Remove-Item error only happens under SYSTEM context (Azure Run Command).
+  Install-Scoop-Package 7zip -Command 7z
 }
 
 function Install-Make {

@@ -389,19 +389,32 @@ static unsigned typedArrayElementSize(ArrayBufferViewSubtag tag)
 static ArrayBufferViewSubtag subtagForTypedArrayType(TypedArrayType type)
 {
     switch (type) {
-    case TypeInt8: return Int8ArrayTag;
-    case TypeUint8: return Uint8ArrayTag;
-    case TypeUint8Clamped: return Uint8ClampedArrayTag;
-    case TypeInt16: return Int16ArrayTag;
-    case TypeUint16: return Uint16ArrayTag;
-    case TypeInt32: return Int32ArrayTag;
-    case TypeUint32: return Uint32ArrayTag;
-    case TypeFloat16: return Float16ArrayTag;
-    case TypeFloat32: return Float32ArrayTag;
-    case TypeFloat64: return Float64ArrayTag;
-    case TypeBigInt64: return BigInt64ArrayTag;
-    case TypeBigUint64: return BigUint64ArrayTag;
-    default: return DataViewTag;
+    case TypeInt8:
+        return Int8ArrayTag;
+    case TypeUint8:
+        return Uint8ArrayTag;
+    case TypeUint8Clamped:
+        return Uint8ClampedArrayTag;
+    case TypeInt16:
+        return Int16ArrayTag;
+    case TypeUint16:
+        return Uint16ArrayTag;
+    case TypeInt32:
+        return Int32ArrayTag;
+    case TypeUint32:
+        return Uint32ArrayTag;
+    case TypeFloat16:
+        return Float16ArrayTag;
+    case TypeFloat32:
+        return Float32ArrayTag;
+    case TypeFloat64:
+        return Float64ArrayTag;
+    case TypeBigInt64:
+        return BigInt64ArrayTag;
+    case TypeBigUint64:
+        return BigUint64ArrayTag;
+    default:
+        return DataViewTag;
     }
 }
 

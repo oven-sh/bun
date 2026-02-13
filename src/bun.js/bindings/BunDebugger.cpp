@@ -985,14 +985,8 @@ JSC::StopTheWorldStatus Bun__jsDebuggerCallback(JSC::VM& vm, JSC::StopTheWorldEv
 
     // Phase 1: Activate inspector if requested (SIGUSR1 handler sets a flag)
     bool activated = Bun__activateInspector();
-    if (activated) {
-        Bun::runtimeInspectorActivated.store(true);
-        // Enable polling traps so that NeedDebuggerBreak is checked at every
-        // loop back-edge in all JIT tiers. The overhead is acceptable since
-        // we're now in debugging mode. recompileAllJSFunctions() (called during
-        // debugger attach) will recompile all code with the new polling trap checks.
-        JSC::Options::usePollingTraps() = true;
-    }
+    if (activated)
+        Bun__setRuntimeInspectorActivated();
 
     // Phase 2: Process pending connections for THIS VM.
     // doConnect must run on the connection's owning VM thread.

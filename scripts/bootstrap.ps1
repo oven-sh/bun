@@ -238,6 +238,9 @@ function Install-Ruby {
 }
 
 function Install-7zip {
+  # Pre-emptively remove the file that Scoop's 7zip post_install tries to clean up.
+  # On ARM64 SYSTEM context, this file gets locked and causes an access denied error.
+  Remove-Item "C:\Windows\TEMP\7zr.exe" -Force -ErrorAction SilentlyContinue
   Install-Scoop-Package 7zip -Command 7z
 }
 

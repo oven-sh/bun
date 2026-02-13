@@ -104,8 +104,8 @@ function getTargetLabel(target) {
  */
 // Azure VM sizes — single source of truth for both ci.mjs and azure.mjs
 const azureVmSize = {
-  "windows-aarch64": "Standard_D4ps_v6", // 4 vCPU, 16 GiB, Cobalt 100
-  "windows-x64": "Standard_D4ds_v6", // 4 vCPU, 16 GiB
+  "windows-aarch64": "Standard_D8ps_v6", // 8 vCPU, 32 GiB, Cobalt 100
+  "windows-x64": "Standard_D8ds_v6", // 8 vCPU, 32 GiB
 };
 
 function getAzureVmSize(os, arch) {

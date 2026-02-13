@@ -34,7 +34,7 @@ function getConfig() {
     clientSecret: env("AZURE_CLIENT_SECRET"),
     subscriptionId: env("AZURE_SUBSCRIPTION_ID"),
     resourceGroup: env("AZURE_RESOURCE_GROUP", "BUN-CI"),
-    location: env("AZURE_LOCATION", "centralus"),
+    location: env("AZURE_LOCATION", "eastus2"),
     galleryName: env("AZURE_GALLERY_NAME", "bunCIGallery"),
   };
 }
@@ -561,7 +561,7 @@ function getBaseImageReference(os, arch) {
 }
 
 function getVmSize(arch) {
-  return arch === "aarch64" ? "Standard_D4ps_v6" : "Standard_D4ds_v6";
+  return arch === "aarch64" ? "Standard_D8ps_v6" : "Standard_D8ds_v6";
 }
 
 // ============================================================================

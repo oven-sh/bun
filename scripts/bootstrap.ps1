@@ -238,7 +238,7 @@ function Install-7zip {
   # with access denied under SYSTEM context. Run in a child process to isolate
   # the error, then verify 7z is actually installed.
   if ($script:IsARM64) {
-    powershell -NoProfile -Command "scoop install 7zip" 2>&1 | Out-Host
+    powershell -NoProfile -Command "scoop install 7zip" 2>&1 | ForEach-Object { "$_" } | Write-Host
     Refresh-Path
     if (-not (Which 7z)) {
       throw "7zip installation failed"

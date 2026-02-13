@@ -20,9 +20,20 @@ param (
 $ErrorActionPreference = "Stop"
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
 
-# Use registry for ARM64 detection — $env:PROCESSOR_ARCHITECTURE reports AMD64
-# under x64 emulation (Azure Run Command uses x64 PowerShell on ARM64 VMs)
-$script:IsARM64 = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment').PROCESSOR_ARCHITECTURE -eq "ARM64"
+# Detect ARM64 from registry (works even under x64 emulation)
+$realArch = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment').PROCESSOR_ARCHITECTURE
+$script:IsARM64 = $realArch -eq "ARM64"
+
+# If we're on ARM64 but running under x64 emulation, re-launch as native ARM64.
+# Azure Run Command uses x64-emulated PowerShell which breaks package installs.
+if ($script:IsARM64 -and $env:PROCESSOR_ARCHITECTURE -ne "ARM64") {
+  $nativePS = "$env:SystemRoot\Sysnative\WindowsPowerShell\v1.0\powershell.exe"
+  if (Test-Path $nativePS) {
+    Write-Output "Re-launching bootstrap as native ARM64 PowerShell..."
+    & $nativePS -NoProfile -ExecutionPolicy Bypass -File $MyInvocation.MyCommand.Path @PSBoundParameters
+    exit $LASTEXITCODE
+  }
+}
 
 # ============================================================================
 # Utility functions

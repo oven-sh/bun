@@ -1,3 +1,5 @@
+/// S3 Canned Access Control Lists (ACLs) for bucket and object permissions.
+/// See: https://docs.aws.amazon.com/AmazonS3/latest/userguide/acl-overview.html#canned-acl
 pub const ACL = enum {
     /// Owner gets FULL_CONTROL. No one else has access rights (default).
     private,

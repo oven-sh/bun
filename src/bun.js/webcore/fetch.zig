@@ -1296,6 +1296,10 @@ fn fetchImpl(
 
             const promise_value = promise.value();
             const proxy_url = if (proxy) |p| p.href else "";
+            // Dupe metadata since multipart upload takes ownership
+            var metadata_dupe = if (credentialsWithOptions.metadata) |meta| meta.dupe(bun.default_allocator) else null;
+            errdefer if (metadata_dupe) |*meta| meta.deinit(bun.default_allocator);
+            credentialsWithOptions.metadata = null; // Prevent double-free in deinit
             _ = try bun.S3.uploadStream(
                 credentialsWithOptions.credentials.dupe(),
                 url.s3Path(),
@@ -1309,6 +1313,7 @@ fn fetchImpl(
                 if (headers) |h| h.getContentEncoding() else null,
                 proxy_url,
                 credentialsWithOptions.request_payer,
+                metadata_dupe,
                 @ptrCast(&Wrapper.resolve),
                 s3_stream,
             );
@@ -1348,7 +1353,7 @@ fn fetchImpl(
         }
 
         const content_type = if (headers) |h| (h.getContentType()) else null;
-        var header_buffer: [s3.S3Credentials.SignResult.MAX_HEADERS + 1]picohttp.Header = undefined;
+        var header_buffer: [s3.MAX_HEADERS + 1]picohttp.Header = undefined;
 
         if (range) |range_| {
             const _headers = result.mixWithHeader(&header_buffer, .{ .name = "range", .value = range_ });

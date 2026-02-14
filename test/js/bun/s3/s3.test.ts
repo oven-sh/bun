@@ -1675,3 +1675,147 @@ describe.skipIf(!minioCredentials)("Archive with S3", () => {
     await s3File.delete();
   });
 });
+
+// Metadata tests - test with MinIO only since it properly supports x-amz-meta-* headers
+describe.skipIf(!minioCredentials?.endpoint)("S3 Metadata (x-amz-meta-*)", () => {
+  // Use optional chaining with fallbacks to avoid evaluation errors when minioCredentials is undefined
+  // (the describe is skipped in that case, but the callback is still evaluated)
+  const credentials: S3Options = {
+    accessKeyId: minioCredentials?.accessKeyId ?? "",
+    secretAccessKey: minioCredentials?.secretAccessKey ?? "",
+    endpoint: minioCredentials?.endpoint ?? "",
+    bucket: minioCredentials?.bucket ?? "",
+  };
+
+  it("should upload and retrieve metadata via S3File.write() and stat()", async () => {
+    const client = new Bun.S3Client(credentials);
+    const key = randomUUIDv7() + ".txt";
+    const file = client.file(key);
+
+    // Write with metadata
+    await file.write("test content", {
+      metadata: { sku: "12345", category: "test" },
+    });
+
+    // Retrieve and verify metadata
+    const stat = await file.stat();
+    expect(stat.metadata).toBeDefined();
+    expect(stat.metadata.sku).toBe("12345");
+    expect(stat.metadata.category).toBe("test");
+
+    // Cleanup
+    await file.unlink();
+  });
+
+  it("should upload metadata via S3Client.write() static method", async () => {
+    const key = randomUUIDv7() + ".txt";
+
+    // Upload with metadata via S3Client.write()
+    await S3Client.write(key, "test content", {
+      ...credentials,
+      metadata: { "custom-key": "custom-value", author: "bun" },
+    });
+
+    // Verify metadata via S3 stat
+    const client = new Bun.S3Client(credentials);
+    const stat = await client.stat(key);
+    expect(stat.metadata["custom-key"]).toBe("custom-value");
+    expect(stat.metadata.author).toBe("bun");
+
+    // Cleanup
+    await client.delete(key);
+  });
+
+  it("should normalize metadata keys to lowercase", async () => {
+    const client = new Bun.S3Client(credentials);
+    const key = randomUUIDv7() + ".txt";
+    const file = client.file(key);
+
+    // Write with mixed-case metadata keys
+    await file.write("test content", {
+      metadata: { SKU: "12345", MyCustomKey: "value" },
+    });
+
+    // Keys should be normalized to lowercase
+    const stat = await file.stat();
+    expect(stat.metadata.sku).toBe("12345");
+    expect(stat.metadata.mycustomkey).toBe("value");
+    // Uppercase keys should not exist
+    expect(stat.metadata.SKU).toBeUndefined();
+    expect(stat.metadata.MyCustomKey).toBeUndefined();
+
+    // Cleanup
+    await file.unlink();
+  });
+
+  it("should return empty metadata object when no metadata is set", async () => {
+    const client = new Bun.S3Client(credentials);
+    const key = randomUUIDv7() + ".txt";
+    const file = client.file(key);
+
+    // Write without metadata
+    await file.write("test content");
+
+    // stat should return empty metadata object
+    const stat = await file.stat();
+    expect(stat.metadata).toBeDefined();
+    expect(typeof stat.metadata).toBe("object");
+    expect(Object.keys(stat.metadata).length).toBe(0);
+
+    // Cleanup
+    await file.unlink();
+  });
+
+  it("presigned PUT URL should include metadata in signed headers", async () => {
+    const client = new Bun.S3Client(credentials);
+    const key = randomUUIDv7() + ".txt";
+    const file = client.file(key);
+
+    // Generate presigned PUT URL with metadata
+    const url = file.presign({
+      method: "PUT",
+      expiresIn: 3600,
+      metadata: { "signed-key": "signed-value" },
+    });
+
+    // The presigned URL should contain metadata headers in the signature
+    expect(url).toContain("x-amz-meta-signed-key");
+
+    // Upload using presigned URL with matching metadata header
+    const uploadRes = await fetch(url, {
+      method: "PUT",
+      headers: { "x-amz-meta-signed-key": "signed-value" },
+      body: "presigned content",
+    });
+    expect(uploadRes.status).toBe(200);
+
+    // Verify metadata was stored
+    const stat = await file.stat();
+    expect(stat.metadata["signed-key"]).toBe("signed-value");
+
+    // Cleanup
+    await file.unlink();
+  });
+
+  it("should support metadata with writer() streaming upload", async () => {
+    const client = new Bun.S3Client(credentials);
+    const key = randomUUIDv7() + ".txt";
+    const file = client.file(key, {
+      metadata: { "stream-key": "stream-value" },
+    });
+
+    // Write using streaming writer
+    const writer = file.writer();
+    writer.write("chunk 1 ");
+    writer.write("chunk 2 ");
+    writer.write("chunk 3");
+    await writer.end();
+
+    // Verify metadata
+    const stat = await file.stat();
+    expect(stat.metadata["stream-key"]).toBe("stream-value");
+
+    // Cleanup
+    await file.unlink();
+  });
+});

@@ -1,5 +1,6 @@
 import { file } from "bun";
 import { describe, expect, test } from "bun:test";
+import { existsSync } from "fs";
 import { rm } from "fs/promises";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { homedir } from "os";
@@ -7,14 +8,14 @@ import { join } from "path";
 
 // Helper to remove GitHub packages from the global cache so tarballs must be re-downloaded.
 async function clearGitHubCache(pattern: string) {
-  const cacheDir = join(homedir(), ".bun", "install", "cache");
-  const glob = new Bun.Glob(`@GH@${pattern}*`);
-  const indexGlob = new Bun.Glob(pattern);
-  for await (const entry of glob.scan({ cwd: cacheDir, onlyFiles: false })) {
-    await rm(join(cacheDir, entry), { recursive: true, force: true });
-  }
-  for await (const entry of indexGlob.scan({ cwd: cacheDir, onlyFiles: false })) {
-    await rm(join(cacheDir, entry), { recursive: true, force: true });
+  const cacheDir = process.env.BUN_INSTALL_CACHE_DIR || join(homedir(), ".bun", "install", "cache");
+  if (!existsSync(cacheDir)) return;
+
+  for (const prefix of [`@GH@${pattern}`, pattern]) {
+    const glob = new Bun.Glob(`${prefix}*`);
+    for await (const entry of glob.scan({ cwd: cacheDir, onlyFiles: false })) {
+      await rm(join(cacheDir, entry), { recursive: true, force: true });
+    }
   }
 }
 
@@ -75,7 +76,9 @@ describe("GitHub tarball integrity", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    await proc1.exited;
+
+    const [stdout1, stderr1, exitCode1] = await Promise.all([proc1.stdout.text(), proc1.stderr.text(), proc1.exited]);
+    expect(exitCode1).toBe(0);
 
     // Read the generated lockfile and extract the integrity hash
     const lockfileContent = await file(join(String(dir), "bun.lock")).text();

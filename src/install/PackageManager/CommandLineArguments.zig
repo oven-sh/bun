@@ -119,11 +119,13 @@ pub const unlink_params: []const ParamType = &(shared_params ++ [_]ParamType{
 const patch_params: []const ParamType = &(shared_params ++ [_]ParamType{
     clap.parseParam("<POS> ...                         \"name\" of the package to patch") catch unreachable,
     clap.parseParam("--commit                         Install a package containing modifications in `dir`") catch unreachable,
+    clap.parseParam("--preview                        Print the diff without saving it (implies --commit)") catch unreachable,
     clap.parseParam("--patches-dir <dir>                    The directory to put the patch file in (only if --commit is used)") catch unreachable,
 });
 
 const patch_commit_params: []const ParamType = &(shared_params ++ [_]ParamType{
     clap.parseParam("<POS> ...                         \"dir\" containing changes to a package") catch unreachable,
+    clap.parseParam("--preview                        Print the diff without saving it") catch unreachable,
     clap.parseParam("--patches-dir <dir>                    The directory to put the patch file") catch unreachable,
 });
 
@@ -281,6 +283,7 @@ const PatchOpts = union(enum) {
     patch: struct {},
     commit: struct {
         patches_dir: []const u8 = "patches",
+        preview: bool = false,
     },
 };
 
@@ -380,6 +383,9 @@ pub fn printHelp(subcommand: Subcommand) void {
                 \\  <d>Generate a patch file for changes made to jquery<r>
                 \\  <b><green>bun patch --commit 'node_modules/jquery'<r>
                 \\
+                \\  <d>Preview a patch without saving it<r>
+                \\  <b><green>bun patch --preview 'node_modules/jquery'<r>
+                \\
                 \\  <d>Generate a patch file in a custom directory for changes made to jquery<r>
                 \\  <b><green>bun patch --patches-dir 'my-patches' 'node_modules/jquery'<r>
                 \\
@@ -407,6 +413,9 @@ pub fn printHelp(subcommand: Subcommand) void {
                 \\<b>Examples:<r>
                 \\  <d>Generate a patch in the default "./patches" directory for changes in "./node_modules/jquery"<r>
                 \\  <b><green>bun patch-commit 'node_modules/jquery'<r>
+                \\
+                \\  <d>Preview a patch without saving it<r>
+                \\  <b><green>bun patch-commit --preview 'node_modules/jquery'<r>
                 \\
                 \\  <d>Generate a patch in a custom directory ("./my-patches")<r>
                 \\  <b><green>bun patch-commit --patches-dir 'my-patches' 'node_modules/jquery'<r>
@@ -934,10 +943,12 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
 
     if (subcommand == .patch) {
         const patch_commit = args.flag("--commit");
-        if (patch_commit) {
+        const patch_preview = args.flag("--preview");
+        if (patch_commit or patch_preview) {
             cli.patch = .{
                 .commit = .{
                     .patches_dir = args.option("--patches-dir") orelse "patches",
+                    .preview = patch_preview,
                 },
             };
         } else {
@@ -950,6 +961,7 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
         cli.patch = .{
             .commit = .{
                 .patches_dir = args.option("--patches-dir") orelse "patches",
+                .preview = args.flag("--preview"),
             },
         };
     }

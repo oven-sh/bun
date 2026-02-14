@@ -294,9 +294,9 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
                 try w.beginArray();
                 defer w.endArray() catch {};
 
-                for (Npm.Architecture.NameMap.kvs) |kv| {
-                    if (pkg.meta.arch.has(kv.value)) {
-                        try w.write(kv.key);
+                for (Npm.Architecture.NameMap.keys(), Npm.Architecture.NameMap.values()) |key, value| {
+                    if (pkg.meta.arch.has(value)) {
+                        try w.write(key);
                     }
                 }
             }
@@ -306,9 +306,9 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
                 try w.beginArray();
                 defer w.endArray() catch {};
 
-                for (Npm.OperatingSystem.NameMap.kvs) |kv| {
-                    if (pkg.meta.os.has(kv.value)) {
-                        try w.write(kv.key);
+                for (Npm.OperatingSystem.NameMap.keys(), Npm.OperatingSystem.NameMap.values()) |key, value| {
+                    if (pkg.meta.os.has(value)) {
+                        try w.write(key);
                     }
                 }
             }

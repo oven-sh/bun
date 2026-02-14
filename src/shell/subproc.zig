@@ -826,14 +826,27 @@ pub const ShellSubprocess = struct {
             return .{ .err = .{ .custom = bun.handleOom(bun.default_allocator.dupe(u8, "out of memory")) } };
         };
 
+        // Track active subprocess BEFORE spawning to avoid race condition with Ctrl+C
+        if (Environment.isWindows) {
+            Bun__incrementActiveSubprocess();
+        }
+
         var spawn_result = switch (bun.spawn.spawnProcess(
             &spawn_options,
             @ptrCast(spawn_args.cmd_parent.args.items.ptr),
             @ptrCast(spawn_args.env_array.items.ptr),
         ) catch |err| {
+            if (Environment.isWindows) {
+                Bun__decrementActiveSubprocess();
+            }
             return .{ .err = .{ .custom = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "Failed to spawn process: {s}", .{@errorName(err)})) } };
         }) {
-            .err => |err| return .{ .err = .{ .sys = err.toShellSystemError() } },
+            .err => |err| {
+                if (Environment.isWindows) {
+                    Bun__decrementActiveSubprocess();
+                }
+                return .{ .err = .{ .sys = err.toShellSystemError() } };
+            },
             .result => |result| result,
         };
 
@@ -920,6 +933,7 @@ pub const ShellSubprocess = struct {
 
     pub fn onProcessExit(this: *@This(), _: *Process, status: bun.spawn.Status, _: *const bun.spawn.Rusage) void {
         log("onProcessExit({x}, {f})", .{ @intFromPtr(this), status });
+
         const exit_code: ?u8 = brk: {
             if (status == .exited) {
                 break :brk status.exited.code;
@@ -937,6 +951,27 @@ pub const ShellSubprocess = struct {
 
             break :brk null;
         };
+
+        // On Windows, handle Ctrl+C that was absorbed while subprocess was running.
+        // If we absorbed a Ctrl+C to let the child handle it, exit the parent now
+        // that the child has exited. Use the graceful shutdown path so that
+        // process.on('exit') handlers fire and cleanup hooks run.
+        if (Environment.isWindows) {
+            Bun__decrementActiveSubprocess();
+            if (Bun__hasPendingCtrlC()) {
+                Bun__clearPendingCtrlC();
+                // Graceful shutdown: matches the process.exit() path in
+                // node_process.zig — fires JS exit handlers, flushes profilers,
+                // runs cleanup hooks, then exits.
+                if (this.event_loop.bunVM()) |vm| {
+                    vm.exit_handler.exit_code = exit_code orelse 1;
+                    vm.onExit();
+                    vm.globalExit(); // noreturn
+                }
+                // Fallback if no VM (mini event loop) — hard exit
+                bun.Global.exit(exit_code orelse 1);
+            }
+        }
 
         if (exit_code) |code| {
             const cmd = this.cmd_parent;
@@ -1418,3 +1453,9 @@ const FileSink = jsc.WebCore.FileSink;
 
 const sh = bun.shell;
 const Yield = bun.shell.Yield;
+
+// Windows subprocess tracking for Ctrl+C handling
+extern "c" fn Bun__incrementActiveSubprocess() void;
+extern "c" fn Bun__decrementActiveSubprocess() void;
+extern "c" fn Bun__hasPendingCtrlC() bool;
+extern "c" fn Bun__clearPendingCtrlC() void;

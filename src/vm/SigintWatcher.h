@@ -28,6 +28,8 @@ public:
     void ref();
     /** Decrements the ref count and uninstalls the signal handler if the ref count reaches 0. */
     void deref();
+    /** Returns true if the signal handler is currently installed. Thread-safe. */
+    bool isInstalled() const { return m_installed.load(std::memory_order_acquire); }
 
     static SigintWatcher& get();
 

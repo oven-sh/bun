@@ -1867,6 +1867,19 @@ pub const sync = struct {
         }
     };
 
+    // Forward signals from parent to the child process.
+    // On POSIX, this intercepts signals and forwards them to the child.
+    // On Windows, this ignores CTRL_C_EVENT in the parent (child receives it directly).
+    extern "c" fn Bun__registerSignalsForForwarding() void;
+    extern "c" fn Bun__unregisterSignalsForForwarding() void;
+
+    // The PID to forward signals to. Set to 0 when unregistering.
+    extern "c" var Bun__currentSyncPID: i64;
+
+    // Race condition: a signal could be sent before spawnProcessPosix returns.
+    // We need to make sure to send it after the process is spawned.
+    extern "c" fn Bun__sendPendingSignalIfNecessary() void;
+
     const SyncWindowsPipeReader = struct {
         chunks: std.array_list.Managed([]u8) = .{ .items = &.{}, .allocator = bun.default_allocator, .capacity = 0 },
         pipe: *uv.Pipe,
@@ -1968,6 +1981,13 @@ pub const sync = struct {
         argv: [*:null]?[*:0]const u8,
         envp: [*:null]?[*:0]const u8,
     ) !Maybe(Result) {
+        // release: publish zero before registering signal forwarding
+        @atomicStore(i64, &Bun__currentSyncPID, 0, .release);
+        Bun__registerSignalsForForwarding();
+        defer {
+            Bun__unregisterSignalsForForwarding();
+        }
+
         var loop = options.windows.loop.platformEventLoop();
         var spawned = switch (try spawnProcessWindows(&options.toSpawnOptions(), argv, envp)) {
             .err => |err| return .{ .err = err },
@@ -1975,6 +1995,8 @@ pub const sync = struct {
         };
 
         var process = spawned.toProcess(undefined, true);
+        // release: publish PID visible to console control handler thread
+        @atomicStore(i64, &Bun__currentSyncPID, process.pid, .release);
         defer {
             process.detach();
             process.deref();
@@ -1997,6 +2019,13 @@ pub const sync = struct {
         argv: [*:null]?[*:0]const u8,
         envp: [*:null]?[*:0]const u8,
     ) !Maybe(Result) {
+        // release: publish zero before registering signal forwarding
+        @atomicStore(i64, &Bun__currentSyncPID, 0, .release);
+        Bun__registerSignalsForForwarding();
+        defer {
+            Bun__unregisterSignalsForForwarding();
+        }
+
         var loop: jsc.EventLoopHandle = options.windows.loop;
         var spawned = switch (try spawnProcessWindows(&options.toSpawnOptions(), argv, envp)) {
             .err => |err| return .{ .err = err },
@@ -2005,6 +2034,8 @@ pub const sync = struct {
         const this = SyncWindowsProcess.new(.{
             .process = spawned.toProcess(undefined, true),
         });
+        // release: publish PID visible to console control handler thread
+        @atomicStore(i64, &Bun__currentSyncPID, this.process.pid, .release);
         this.process.ref();
         this.process.setExitHandler(this);
         defer this.deinit();
@@ -2090,24 +2121,13 @@ pub const sync = struct {
         return spawnWithArgv(options, @ptrCast(args.items.ptr), @ptrCast(envp));
     }
 
-    // Forward signals from parent to the child process.
-    extern "c" fn Bun__registerSignalsForForwarding() void;
-    extern "c" fn Bun__unregisterSignalsForForwarding() void;
-
-    // The PID to forward signals to.
-    // Set to 0 when unregistering.
-    extern "c" var Bun__currentSyncPID: i64;
-
-    // Race condition: a signal could be sent before spawnProcessPosix returns.
-    // We need to make sure to send it after the process is spawned.
-    extern "c" fn Bun__sendPendingSignalIfNecessary() void;
-
     fn spawnPosix(
         options: *const Options,
         argv: [*:null]?[*:0]const u8,
         envp: [*:null]?[*:0]const u8,
     ) !Maybe(Result) {
-        Bun__currentSyncPID = 0;
+        // release: publish zero before registering signal forwarding
+        @atomicStore(i64, &Bun__currentSyncPID, 0, .release);
         Bun__registerSignalsForForwarding();
         defer {
             Bun__unregisterSignalsForForwarding();
@@ -2117,7 +2137,8 @@ pub const sync = struct {
             .err => |err| return .{ .err = err },
             .result => |proces| proces,
         };
-        Bun__currentSyncPID = @intCast(process.pid);
+        // release: publish PID visible to signal handler context
+        @atomicStore(i64, &Bun__currentSyncPID, @intCast(process.pid), .release);
 
         Bun__sendPendingSignalIfNecessary();
 

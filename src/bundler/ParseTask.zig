@@ -374,6 +374,30 @@ fn getAST(
             return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, &temp_log, root, source, "")).?);
         },
         .text => {
+            // Set unique_key_for_additional_file so the file appears in Bun.embeddedFiles
+            // when passed as an entry point in --compile mode. The exported value is still
+            // the inline text content (not a URL) for import compatibility.
+            const content_hash = ContentHasher.run(source.contents);
+            const unique_key: []const u8 = if (transpiler.options.dev_server != null)
+                try std.fmt.allocPrint(
+                    allocator,
+                    bun.bake.DevServer.asset_prefix ++ "/{s}{s}",
+                    .{
+                        &std.fmt.bytesToHex(std.mem.asBytes(&content_hash), .lower),
+                        std.fs.path.extension(source.path.text),
+                    },
+                )
+            else
+                try std.fmt.allocPrint(
+                    allocator,
+                    "{f}A{d:0>8}",
+                    .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() },
+                );
+            unique_key_for_additional_file.* = .{
+                .key = unique_key,
+                .content_hash = content_hash,
+            };
+            // Export the inline text content (not the URL) for import compatibility
             const root = Expr.init(E.String, E.String{
                 .data = source.contents,
             }, Logger.Loc{ .start = 0 });

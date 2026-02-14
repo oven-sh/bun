@@ -954,5 +954,7 @@ public:
 
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSConnectionsList;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSHTTPParser;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSYogaConfig;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSYogaNode;
 };
 } // namespace WebCore

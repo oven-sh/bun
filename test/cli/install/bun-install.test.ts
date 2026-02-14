@@ -5081,7 +5081,7 @@ describe.concurrent("bun-install", () => {
         stdout: "pipe",
         stdin: "ignore",
         stderr: "pipe",
-        env: { ...env, "GIT_ASKPASS": "echo" },
+        env: { ...env, "GIT_ASKPASS": "echo", "GIT_SSH_COMMAND": "ssh -o ConnectTimeout=5 -o BatchMode=yes" },
       });
       const err = await stderr.text();
       expect(err.split(/\r?\n/)).toContain('error: "git clone" for "private-install" failed');

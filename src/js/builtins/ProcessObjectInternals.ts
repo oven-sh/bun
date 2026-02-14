@@ -393,7 +393,9 @@ export function windowsEnv(
     set(_, p, value) {
       const k = String(p).toUpperCase();
       $assert(typeof p === "string"); // proxy is only string and symbol. the symbol would have thrown by now
-      value = String(value); // If toString() throws, we want to avoid it existing in the envMapList
+      // Use string concatenation to coerce value to string. This throws for Symbols,
+      // matching Node.js behavior, and ensures the value is always a string.
+      value = "" + value;
       if (!(k in internalEnv) && !envMapList.includes(p)) {
         envMapList.push(p);
       }
@@ -430,6 +432,42 @@ export function windowsEnv(
     ownKeys() {
       // .slice() because paranoia that there is a way to call this without the engine cloning it for us
       return envMapList.slice();
+    },
+  });
+}
+
+export function posixEnv(internalEnv: InternalEnvMap) {
+  return new Proxy(internalEnv, {
+    get(target, p) {
+      return typeof p === "string" ? target[p] : undefined;
+    },
+    set(target, p, value) {
+      const k = String(p);
+      // Coerce all values to strings to match Node.js behavior.
+      // Use string concatenation ('' + value) instead of String(value) because
+      // concatenation throws for Symbols, matching Node.js behavior.
+      value = "" + value;
+      target[k] = value;
+      return true;
+    },
+    has(target, p) {
+      return typeof p !== "symbol" ? String(p) in target : false;
+    },
+    deleteProperty(target, p) {
+      return typeof p !== "symbol" ? delete target[String(p)] : false;
+    },
+    defineProperty(target, p, attributes) {
+      const k = String(p);
+      if ("value" in attributes) {
+        attributes = { ...attributes, value: "" + attributes.value };
+      }
+      return $Object.$defineProperty(target, k, attributes);
+    },
+    getOwnPropertyDescriptor(target, p) {
+      return typeof p === "string" ? Reflect.getOwnPropertyDescriptor(target, p) : undefined;
+    },
+    ownKeys(target) {
+      return Reflect.ownKeys(target);
     },
   });
 }

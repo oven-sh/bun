@@ -314,6 +314,8 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             // The tradeoff: signal-based trap delivery for requestStopAll (used by the
             // runtime inspector via SIGUSR1) is ~94% reliable vs 100% with polling.
             // We accept this for the inspector path since speed is the priority.
+            // IMPORTANT: JSC::Options are frozen (mprotected read-only) after init.
+            // Writing to usePollingTraps later crashes on Linux with SEGV at offset 0xB34.
             JSC::Options::evalMode() = evalMode;
             JSC::Options::heapGrowthSteepnessFactor() = 1.0;
             JSC::Options::heapGrowthMaxIncrease() = 2.0;

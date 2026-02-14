@@ -13,6 +13,9 @@
 #include "BunInjectedScriptHost.h"
 #include <JavaScriptCore/JSGlobalObjectInspectorController.h>
 
+#include <sys/mman.h>
+#include <unistd.h>
+#include <JavaScriptCore/JSCConfig.h>
 #include "InspectorLifecycleAgent.h"
 #include "InspectorTestReporterAgent.h"
 #include "InspectorBunFrontendDevServerAgent.h"
@@ -1003,10 +1006,27 @@ extern "C" void VM__cancelStop(JSC::VM* vm)
     vm->cancelStop();
 }
 
-// Called from Zig when the event loop path activates the inspector.
-// Ensures runtimeInspectorActivated is set so that connect() and
+// Called from Zig and from the STW callback when the inspector activates.
+// Sets runtimeInspectorActivated so that connect() and
 // interruptForMessageDelivery() use STW-based message delivery.
+// Also enables usePollingTraps for 100% reliable trap delivery in DFG/FTL.
+// Since JSC::Options are mprotected read-only after init, we temporarily
+// unprotect the config page, write, and re-protect.
 extern "C" void Bun__activateRuntimeInspectorMode()
 {
     Bun::runtimeInspectorActivated.store(true);
+
+    // Enable polling traps so NeedDebuggerBreak is checked at every loop
+    // back-edge in DFG/FTL code. Without this, while(true){} can only be
+    // interrupted by signal-based traps (~94% reliable per attempt).
+    auto& options = g_jscConfig.options;
+    if (!options.usePollingTraps) {
+        // The config page is frozen (mprotect PROT_READ). Temporarily make it writable.
+        size_t pageSize = sysconf(_SC_PAGESIZE);
+        void* pageBase = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(&options) & ~(pageSize - 1));
+        size_t protectSize = (reinterpret_cast<uintptr_t>(&options) + sizeof(options) - reinterpret_cast<uintptr_t>(pageBase) + pageSize - 1) & ~(pageSize - 1);
+        mprotect(pageBase, protectSize, PROT_READ | PROT_WRITE);
+        options.usePollingTraps = true;
+        mprotect(pageBase, protectSize, PROT_READ);
+    }
 }

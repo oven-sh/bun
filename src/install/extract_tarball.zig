@@ -566,6 +566,7 @@ const string = []const u8;
 
 const Npm = @import("./npm.zig");
 const std = @import("std");
+const Crypto = @import("../sha.zig").Hashers;
 const FileSystem = @import("../fs.zig").FileSystem;
 const Integrity = @import("./integrity.zig").Integrity;
 const Resolution = @import("./resolution.zig").Resolution;
@@ -575,7 +576,6 @@ const DependencyID = Install.DependencyID;
 const PackageManager = Install.PackageManager;
 
 const bun = @import("bun");
-const Crypto = @import("../sha.zig").Hashers;
 const Environment = bun.Environment;
 const OOM = bun.OOM;
 const Output = bun.Output;

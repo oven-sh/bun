@@ -334,6 +334,25 @@ extern "C" void ReadableStream__cancel(JSC::EncodedJSValue possibleReadableStrea
     WebCore::ReadableStream::cancel(*globalObject, readableStream, exception);
 }
 
+extern "C" void ReadableStream__error(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject, JSC::EncodedJSValue reason)
+{
+    auto* readableStream = jsDynamicCast<WebCore::JSReadableStream*>(JSC::JSValue::decode(possibleReadableStream));
+    if (!readableStream) [[unlikely]]
+        return;
+
+    auto* clientData = static_cast<JSVMClientData*>(globalObject->vm().clientData);
+    auto& privateName = clientData->builtinFunctions().readableStreamInternalsBuiltins().readableStreamErrorPrivateName();
+
+    auto& vm = globalObject->vm();
+    JSC::JSLockHolder lock(vm);
+
+    MarkedArgumentBuffer arguments;
+    arguments.append(readableStream);
+    arguments.append(JSC::JSValue::decode(reason));
+    ASSERT(!arguments.hasOverflowed());
+    invokeReadableStreamFunction(*globalObject, privateName, JSC::jsUndefined(), arguments);
+}
+
 extern "C" void ReadableStream__detach(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject)
 {
     auto value = JSC::JSValue::decode(possibleReadableStream);

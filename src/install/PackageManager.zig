@@ -789,7 +789,7 @@ pub fn init(
     };
 
     try env.loadProcess();
-    try env.load(entries_option.entries, &[_][]u8{}, .production, false);
+    try env.loadRuntime(entries_option.entries, &[_][]u8{}, env.getSuffixFromEnv(), false);
 
     initializeStore();
 

@@ -1556,7 +1556,7 @@ pub const TestCommand = struct {
                 else => {},
             }
 
-            runAllTests(reporter, vm, test_files, ctx.allocator);
+            runAllTests(reporter, vm, test_files, ctx.allocator, ctx.runtime_options.preserve_symlinks_main or bun.env_var.NODE_PRESERVE_SYMLINKS_MAIN.get());
         }
 
         const write_snapshots_success = try jest.Jest.runner.?.snapshots.writeInlineSnapshots();
@@ -1822,12 +1822,14 @@ pub const TestCommand = struct {
         vm_: *jsc.VirtualMachine,
         files_: []const PathString,
         allocator_: std.mem.Allocator,
+        preserve_symlinks_main: bool,
     ) void {
         const Context = struct {
             reporter: *CommandLineReporter,
             vm: *jsc.VirtualMachine,
             files: []const PathString,
             allocator: std.mem.Allocator,
+            preserve_symlinks_main: bool,
             pub fn begin(this: *@This()) void {
                 const reporter = this.reporter;
                 const vm = this.vm;
@@ -1836,13 +1838,13 @@ pub const TestCommand = struct {
 
                 if (files.len > 1) {
                     for (files[0 .. files.len - 1], 0..) |file_name, i| {
-                        TestCommand.run(reporter, vm, file_name.slice(), .{ .first = i == 0, .last = false }) catch |err| handleTopLevelTestErrorBeforeJavaScriptStart(err);
+                        TestCommand.run(reporter, vm, file_name.slice(), .{ .first = i == 0, .last = false }, this.preserve_symlinks_main) catch |err| handleTopLevelTestErrorBeforeJavaScriptStart(err);
                         reporter.jest.default_timeout_override = std.math.maxInt(u32);
                         Global.mimalloc_cleanup(false);
                     }
                 }
 
-                TestCommand.run(reporter, vm, files[files.len - 1].slice(), .{ .first = files.len == 1, .last = true }) catch |err| handleTopLevelTestErrorBeforeJavaScriptStart(err);
+                TestCommand.run(reporter, vm, files[files.len - 1].slice(), .{ .first = files.len == 1, .last = true }, this.preserve_symlinks_main) catch |err| handleTopLevelTestErrorBeforeJavaScriptStart(err);
             }
         };
 
@@ -1850,7 +1852,7 @@ pub const TestCommand = struct {
         vm_.eventLoop().ensureWaker();
         vm_.arena = &arena;
         vm_.allocator = arena.allocator();
-        var ctx = Context{ .reporter = reporter_, .vm = vm_, .files = files_, .allocator = allocator_ };
+        var ctx = Context{ .reporter = reporter_, .vm = vm_, .files = files_, .allocator = allocator_, .preserve_symlinks_main = preserve_symlinks_main };
         vm_.runWithAPILock(Context, &ctx, Context.begin);
     }
 
@@ -1861,6 +1863,7 @@ pub const TestCommand = struct {
         vm: *jsc.VirtualMachine,
         file_name: string,
         first_last: bun_test.BunTestRoot.FirstLast,
+        preserve_symlinks_main: bool,
     ) !void {
         defer {
             js_ast.Expr.Data.Store.reset();
@@ -1878,6 +1881,13 @@ pub const TestCommand = struct {
         // Restore test.only state after each module.
         const prev_only = reporter.jest.only;
         defer reporter.jest.only = prev_only;
+
+        // Apply preserve_symlinks_main for the entire test file execution. This affects
+        // resolveEntryPoint (which determines the test file path used for snapshot lookups)
+        // and any other resolver operations during the test run. Restored when run() returns.
+        const prev_preserve_symlinks = vm.transpiler.resolver.opts.preserve_symlinks;
+        defer vm.transpiler.resolver.opts.preserve_symlinks = prev_preserve_symlinks;
+        vm.transpiler.resolver.opts.preserve_symlinks = preserve_symlinks_main;
 
         const resolution = try vm.transpiler.resolveEntryPoint(file_name);
         try vm.clearEntryPoint();

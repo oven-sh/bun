@@ -369,8 +369,17 @@ function getZigPlatform() {
  * @param {PipelineOptions} options
  * @returns {Agent}
  */
-function getZigAgent(_platform, options) {
-  // Zig cross-compiles for all platforms from Linux aarch64
+function getZigAgent(platform, options) {
+  const { os, arch } = platform;
+
+  // Windows builds Zig natively on Azure
+  if (os === "windows") {
+    return getEc2Agent(platform, options, {
+      instanceType: getAzureVmSize(os, arch),
+    });
+  }
+
+  // Everything else cross-compiles from Linux aarch64
   return getEc2Agent(getZigPlatform(), options, {
     instanceType: "r8g.large",
   });
@@ -519,7 +528,10 @@ function getBuildToolchain(target) {
  * @returns {Step}
  */
 function getBuildZigStep(platform, options) {
+  const { os, arch } = platform;
   const toolchain = getBuildToolchain(platform);
+  // Native Windows builds don't need a cross-compilation toolchain
+  const toolchainArg = os === "windows" ? "" : ` --toolchain ${toolchain}`;
   return {
     key: `${getTargetKey(platform)}-build-zig`,
     retry: getRetry(),
@@ -527,7 +539,7 @@ function getBuildZigStep(platform, options) {
     agents: getZigAgent(platform, options),
     cancel_on_build_failing: isMergeQueue(),
     env: getBuildEnv(platform, options),
-    command: `${getBuildCommand(platform, options)} --target bun-zig --toolchain ${toolchain}`,
+    command: `${getBuildCommand(platform, options)} --target bun-zig${toolchainArg}`,
     timeout_in_minutes: 35,
   };
 }

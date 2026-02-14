@@ -1006,11 +1006,7 @@ extern "C" void VM__cancelStop(JSC::VM* vm)
 // Called from Zig when the event loop path activates the inspector.
 // Ensures runtimeInspectorActivated is set so that connect() and
 // interruptForMessageDelivery() use STW-based message delivery.
-// Also enables polling traps so that:
-// 1. The SignalSender stops its retry loop (it checks usePollingTraps)
-// 2. Future NeedDebuggerBreak traps are delivered reliably via polling
 extern "C" void Bun__activateRuntimeInspectorMode()
 {
     Bun::runtimeInspectorActivated.store(true);
-    JSC::Options::usePollingTraps() = true;
 }

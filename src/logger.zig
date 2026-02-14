@@ -927,7 +927,9 @@ pub const Log = struct {
         err: anyerror,
     ) OOM!void {
         @branchHint(.cold);
-        return try addResolveErrorWithLevel(log, source, r, allocator, fmt, args, import_kind, false, .err, err);
+        // Always dupe the line_text from the source to ensure the Location data
+        // outlives the source's backing memory (which may be arena-allocated).
+        return try addResolveErrorWithLevel(log, source, r, allocator, fmt, args, import_kind, true, .err, err);
     }
 
     pub fn addResolveErrorWithTextDupe(

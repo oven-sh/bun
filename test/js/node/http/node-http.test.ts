@@ -1081,9 +1081,20 @@ describe("node:http", () => {
   });
 
   test("should not decompress gzip, issue#4397", async () => {
+    const { tls: tlsCert } = await import("harness");
+    using server = Bun.serve({
+      port: 0,
+      tls: tlsCert,
+      fetch() {
+        const body = Bun.gzipSync(Buffer.from("<html>Hello</html>"));
+        return new Response(body, {
+          headers: { "content-encoding": "gzip" },
+        });
+      },
+    });
     const { promise, resolve } = Promise.withResolvers();
     https
-      .request("https://bun.sh/", { headers: { "accept-encoding": "gzip" } }, res => {
+      .request(server.url, { ca: tlsCert.cert, headers: { "accept-encoding": "gzip" } }, res => {
         res.on("data", function cb(chunk) {
           resolve(chunk);
           res.off("data", cb);

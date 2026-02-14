@@ -734,8 +734,16 @@ it.concurrent("simultaneous HTTPS fetch", async () => {
 });
 
 it.concurrent("website with tlsextname", async () => {
-  // irony
-  await fetch("https://bun.sh", { method: "HEAD" });
+  const { tls: tlsCert } = await import("harness");
+  using server = Bun.serve({
+    port: 0,
+    tls: tlsCert,
+    fetch() {
+      return new Response("OK");
+    },
+  });
+  const resp = await fetch(server.url, { method: "HEAD", tls: { ca: tlsCert.cert } });
+  expect(resp.status).toBe(200);
 });
 
 function testBlobInterface(blobbyConstructor: { (..._: any[]): any }, hasBlobFn?: boolean) {

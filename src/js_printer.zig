@@ -3229,6 +3229,10 @@ fn NewPrinter(
                 // Translate any non-ASCII to unicode escape sequences
                 var ascii_start: usize = 0;
                 var is_ascii = false;
+                // Track if the previous character was a backslash to avoid doubling
+                // backslashes when converting escaped non-ASCII chars to \uXXXX.
+                // Example: /[\⁄]/ should become /[\u2044]/ not /[\\u2044]/
+                var prev_was_backslash = false;
                 var iter = CodepointIterator.init(e.value);
                 var cursor = CodepointIterator.Cursor{};
                 while (iter.next(&cursor)) {
@@ -3238,6 +3242,7 @@ fn NewPrinter(
                                 ascii_start = cursor.i;
                                 is_ascii = true;
                             }
+                            prev_was_backslash = (cursor.c == '\\' and !prev_was_backslash);
                         },
                         else => {
                             if (is_ascii) {
@@ -3247,14 +3252,26 @@ fn NewPrinter(
 
                             switch (cursor.c) {
                                 0...0xFFFF => {
-                                    p.print([_]u8{
-                                        '\\',
-                                        'u',
-                                        hex_chars[cursor.c >> 12],
-                                        hex_chars[(cursor.c >> 8) & 15],
-                                        hex_chars[(cursor.c >> 4) & 15],
-                                        hex_chars[cursor.c & 15],
-                                    });
+                                    // If the previous char was a backslash, it's escaping
+                                    // this non-ASCII char, so we only need uXXXX (not \uXXXX).
+                                    if (prev_was_backslash) {
+                                        p.print(&[_]u8{
+                                            'u',
+                                            hex_chars[cursor.c >> 12],
+                                            hex_chars[(cursor.c >> 8) & 15],
+                                            hex_chars[(cursor.c >> 4) & 15],
+                                            hex_chars[cursor.c & 15],
+                                        });
+                                    } else {
+                                        p.print(&[_]u8{
+                                            '\\',
+                                            'u',
+                                            hex_chars[cursor.c >> 12],
+                                            hex_chars[(cursor.c >> 8) & 15],
+                                            hex_chars[(cursor.c >> 4) & 15],
+                                            hex_chars[cursor.c & 15],
+                                        });
+                                    }
                                 },
 
                                 else => |c| {
@@ -3262,22 +3279,41 @@ fn NewPrinter(
                                     const lo = @as(usize, @intCast(first_high_surrogate + ((k >> 10) & 0x3FF)));
                                     const hi = @as(usize, @intCast(first_low_surrogate + (k & 0x3FF)));
 
-                                    p.print(&[_]u8{
-                                        '\\',
-                                        'u',
-                                        hex_chars[lo >> 12],
-                                        hex_chars[(lo >> 8) & 15],
-                                        hex_chars[(lo >> 4) & 15],
-                                        hex_chars[lo & 15],
-                                        '\\',
-                                        'u',
-                                        hex_chars[hi >> 12],
-                                        hex_chars[(hi >> 8) & 15],
-                                        hex_chars[(hi >> 4) & 15],
-                                        hex_chars[hi & 15],
-                                    });
+                                    // If the previous char was a backslash, it's escaping
+                                    // this non-ASCII char, so we only need uXXXX (not \uXXXX).
+                                    if (prev_was_backslash) {
+                                        p.print(&[_]u8{
+                                            'u',
+                                            hex_chars[lo >> 12],
+                                            hex_chars[(lo >> 8) & 15],
+                                            hex_chars[(lo >> 4) & 15],
+                                            hex_chars[lo & 15],
+                                            '\\',
+                                            'u',
+                                            hex_chars[hi >> 12],
+                                            hex_chars[(hi >> 8) & 15],
+                                            hex_chars[(hi >> 4) & 15],
+                                            hex_chars[hi & 15],
+                                        });
+                                    } else {
+                                        p.print(&[_]u8{
+                                            '\\',
+                                            'u',
+                                            hex_chars[lo >> 12],
+                                            hex_chars[(lo >> 8) & 15],
+                                            hex_chars[(lo >> 4) & 15],
+                                            hex_chars[lo & 15],
+                                            '\\',
+                                            'u',
+                                            hex_chars[hi >> 12],
+                                            hex_chars[(hi >> 8) & 15],
+                                            hex_chars[(hi >> 4) & 15],
+                                            hex_chars[hi & 15],
+                                        });
+                                    }
                                 },
                             }
+                            prev_was_backslash = false;
                         },
                     }
                 }

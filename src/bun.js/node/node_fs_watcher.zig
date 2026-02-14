@@ -634,7 +634,7 @@ pub const FSWatcher = struct {
             defer bun.path_buffer_pool.put(buf);
             var slice = args.path.slice();
             if (bun.strings.startsWith(slice, "file://")) {
-                slice = slice[6..];
+                slice = slice["file://".len..];
             }
 
             const cwd = switch (bun.sys.getcwd(buf)) {

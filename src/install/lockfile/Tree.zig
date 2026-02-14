@@ -277,6 +277,7 @@ pub fn Builder(comptime method: BuilderMethod) type {
         pub const Entry = struct {
             tree: Tree,
             dependencies: Lockfile.DependencyIDList,
+            name_hash_map: NameHashMap,
         };
 
         pub const CleanResult = struct {
@@ -299,8 +300,11 @@ pub fn Builder(comptime method: BuilderMethod) type {
 
             var dep_ids = try DependencyIDList.initCapacity(this.allocator, total);
 
-            for (trees, dependencies) |*tree, *child| {
+            const name_hash_maps = slice.items(.name_hash_map);
+
+            for (trees, dependencies, name_hash_maps) |*tree, *child, *name_map| {
                 defer child.deinit(this.allocator);
+                defer name_map.deinit(this.allocator);
 
                 const off: u32 = @intCast(dep_ids.items.len);
                 for (child.items) |dep_id| {
@@ -471,11 +475,13 @@ pub fn processSubtree(
             .dependency_id = dependency_id,
         },
         .dependencies = .{},
+        .name_hash_map = .{},
     });
 
     const list_slice = builder.list.slice();
     const trees = list_slice.items(.tree);
     const dependency_lists = list_slice.items(.dependencies);
+    const name_hash_maps = list_slice.items(.name_hash_map);
     const next: *Tree = &trees[builder.list.len - 1];
 
     const pkgs = builder.lockfile.packages.slice();
@@ -553,6 +559,7 @@ pub fn processSubtree(
                         pkg_id,
                         &dependency,
                         dependency_lists,
+                        name_hash_maps,
                         trees,
                         method,
                         builder,
@@ -573,6 +580,7 @@ pub fn processSubtree(
                 pkg_id,
                 &dependency,
                 dependency_lists,
+                name_hash_maps,
                 trees,
                 method,
                 builder,
@@ -617,6 +625,8 @@ pub fn processSubtree(
                         placed_dep_id.* = dep_id;
                     }
                 }
+                // Update the name_hash_map to point to the new dep_id
+                name_hash_maps[replace.id].put(builder.allocator, dependency.name_hash, dep_id) catch bun.outOfMemory();
                 if (pkg_id != invalid_package_id and builder.resolution_lists[pkg_id].len > 0) {
                     try builder.queue.writeItem(.{
                         .tree_id = replace.id,
@@ -638,6 +648,7 @@ pub fn processSubtree(
             },
             .placement => |dest| {
                 bun.handleOom(dependency_lists[dest.id].append(builder.allocator, dep_id));
+                name_hash_maps[dest.id].put(builder.allocator, dependency.name_hash, dep_id) catch bun.outOfMemory();
                 trees[dest.id].dependencies.len += 1;
                 if (pkg_id != invalid_package_id and builder.resolution_lists[pkg_id].len > 0) {
                     try builder.queue.writeItem(.{
@@ -669,16 +680,13 @@ fn hoistDependency(
     package_id: PackageID,
     dependency: *const Dependency,
     dependency_lists: []Lockfile.DependencyIDList,
+    name_hash_maps: []NameHashMap,
     trees: []Tree,
     comptime method: BuilderMethod,
     builder: *Builder(method),
 ) !HoistDependencyResult {
-    const this_dependencies = this.dependencies.get(dependency_lists[this.id].items);
-    for (0..this_dependencies.len) |i| {
-        const dep_id = this_dependencies[i];
+    if (name_hash_maps[this.id].get(dependency.name_hash)) |dep_id| {
         const dep = builder.dependencies[dep_id];
-        if (dep.name_hash != dependency.name_hash) continue;
-
         const res_id = builder.resolutions[dep_id];
 
         if (res_id == invalid_package_id and package_id == invalid_package_id) {
@@ -758,6 +766,7 @@ fn hoistDependency(
             package_id,
             dependency,
             dependency_lists,
+            name_hash_maps,
             trees,
             method,
             builder,
@@ -768,6 +777,8 @@ fn hoistDependency(
     // place the dependency in the current tree
     return .{ .placement = .{ .id = this.id } }; // 2
 }
+
+pub const NameHashMap = std.AutoHashMapUnmanaged(PackageNameHash, DependencyID);
 
 pub const FillItem = struct {
     tree_id: Tree.Id,

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 
 // Regression test for use-after-poison in builtin OutputTask callbacks
 // inside command substitution $().
@@ -14,7 +14,7 @@ import { bunEnv, bunExe } from "harness";
 // with many /tmp entries and some permission-denied dirs reliably
 // triggers the ASAN use-after-poison.
 
-describe("builtins in command substitution with errors should not crash", () => {
+describe.skipIf(isWindows)("builtins in command substitution with errors should not crash", () => {
   test("ls /tmp/* in command substitution", async () => {
     await using proc = Bun.spawn({
       cmd: [

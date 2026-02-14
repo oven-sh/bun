@@ -54,6 +54,10 @@ int main_using_file_directory_information(int argc, char *argv[]) {
   // open the current working directory using NT API
   HANDLE hFile = CreateFile(argv[1], GENERIC_READ, FILE_SHARE_READ, NULL,
                             OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
+  if (hFile == INVALID_HANDLE_VALUE) {
+    printf("Error opening directory: %lu\n", GetLastError());
+    return 1;
+  }
 
   // use NtQueryDirectoryFile
   char buffer[64096];
@@ -64,12 +68,13 @@ int main_using_file_directory_information(int argc, char *argv[]) {
       FileDirectoryInformation, FALSE, NULL, FALSE);
   if (status != STATUS_SUCCESS) {
     printf("Error querying directory\n");
+    CloseHandle(hFile);
     return 1;
   }
 
   PFILE_DIRECTORY_INFORMATION pDirInfo = (PFILE_DIRECTORY_INFORMATION)buffer;
   while (TRUE) {
-    printf("%S\n", pDirInfo->FileName);
+    printf("%.*S\n", (int)pDirInfo->FileNameLength / sizeof(WCHAR), pDirInfo->FileName);
     if (pDirInfo->NextEntryOffset == 0) {
       // if no more entries, continue to next query directory call
       status = NtQueryDirectoryFile(
@@ -81,6 +86,7 @@ int main_using_file_directory_information(int argc, char *argv[]) {
         break;
       } else if (status != STATUS_SUCCESS) {
         printf("Error querying directory: %x\n", status);
+        CloseHandle(hFile);
         return 1;
       } else {
         continue;
@@ -116,7 +122,10 @@ int main_using_file_both_information(int argc, char *argv[]) {
   // open the current working directory using NT API
   HANDLE hFile = CreateFile(argv[1], GENERIC_READ, FILE_SHARE_READ, NULL,
                             OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
-
+  if (hFile == INVALID_HANDLE_VALUE) {
+    printf("Error opening directory: %lu\n", GetLastError());
+    return 1;
+  }
   // use NtQueryDirectoryFile
   char buffer[64096];
 
@@ -126,12 +135,13 @@ int main_using_file_both_information(int argc, char *argv[]) {
       FileBothDirectoryInformation, FALSE, NULL, FALSE);
   if (status != STATUS_SUCCESS) {
     printf("Error querying directory\n");
+    CloseHandle(hFile);
     return 1;
   }
 
   PFILE_BOTH_DIR_INFORMATION pDirInfo = (PFILE_BOTH_DIR_INFORMATION)buffer;
   while (TRUE) {
-    printf("%S\n", pDirInfo->FileName);
+    printf("%.*S\n", (int)pDirInfo->FileNameLength / sizeof(WCHAR), pDirInfo->FileName);
     if (pDirInfo->NextEntryOffset == 0) {
       // if no more entries, continue to next query directory call
       status = NtQueryDirectoryFile(
@@ -143,6 +153,7 @@ int main_using_file_both_information(int argc, char *argv[]) {
         break;
       } else if (status != STATUS_SUCCESS) {
         printf("Error querying directory: %x\n", status);
+        CloseHandle(hFile);
         return 1;
       } else {
         continue;
@@ -163,12 +174,6 @@ int main_using_findfirstfile_ex(int argc, char *argv[]) {
     return 1;
   }
 
-  // open the current working directory using NT API
-  HANDLE hFile = CreateFile(argv[1], GENERIC_READ, FILE_SHARE_READ, NULL,
-                            OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
-
-  char buffer[64096];
-
   WIN32_FIND_DATA findData;
   HANDLE hFind = FindFirstFileEx(argv[1], FindExInfoBasic, &findData,
                                  FindExSearchNameMatch, NULL, 0);
@@ -178,8 +183,6 @@ int main_using_findfirstfile_ex(int argc, char *argv[]) {
   }
 
   do {
-    char szPath[MAX_PATH];
-
     printf("%s\n", findData.cFileName);
   } while (FindNextFile(hFind, &findData));
 

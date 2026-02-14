@@ -55,7 +55,9 @@ pub fn checkServerIdentity(
                     const result_size = BoringSSL.i2d_X509(x509, &cert_ptr);
                     assert(result_size == cert_size);
 
-                    var hostname = client.hostname orelse client.url.hostname;
+                    // Always use url.hostname for certificate verification, not the user-provided
+                    // Host header. TLS certificate must match the actual server hostname.
+                    var hostname = client.url.hostname;
                     if (allowProxyUrl) {
                         if (client.http_proxy) |proxy| {
                             hostname = proxy.hostname;
@@ -79,8 +81,9 @@ pub fn checkServerIdentity(
                 } else {
                     // we check with native code if the cert is valid
                     // fast path
-
-                    var hostname = client.hostname orelse client.url.hostname;
+                    // Always use url.hostname for certificate verification, not the user-provided
+                    // Host header. TLS certificate must match the actual server hostname.
+                    var hostname = client.url.hostname;
                     if (allowProxyUrl) {
                         if (client.http_proxy) |proxy| {
                             hostname = proxy.hostname;
@@ -148,7 +151,10 @@ pub fn onOpen(
     if (comptime is_ssl) {
         var ssl_ptr: *BoringSSL.SSL = @ptrCast(socket.getNativeHandle());
         if (!ssl_ptr.isInitFinished()) {
-            var _hostname = client.hostname orelse client.url.hostname;
+            // Always use url.hostname for TLS SNI, not the user-provided Host header.
+            // The Host header may differ from the URL hostname, but TLS SNI must match
+            // the actual server we're connecting to.
+            var _hostname = client.url.hostname;
             if (client.http_proxy) |proxy| {
                 _hostname = proxy.hostname;
             }

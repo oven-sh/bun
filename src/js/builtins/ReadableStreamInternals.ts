@@ -258,6 +258,9 @@ export function readableStreamPipeToWritableStream(
 
   if (signal !== undefined) {
     const algorithm = reason => {
+      // Resolve the pending read promise to unblock any pending read operation.
+      // This allows the shutdown to proceed without waiting for the read to complete.
+      pipeState.pendingReadPromiseCapability.resolve.$call(undefined, false);
       $pipeToShutdownWithAction(
         pipeState,
         () => {

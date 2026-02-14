@@ -169,11 +169,13 @@ pub fn setOnClose(_: *PostgresSQLConnection, thisValue: jsc.JSValue, globalObjec
 }
 
 pub fn setupTLS(this: *PostgresSQLConnection) void {
-    debug("setupTLS", .{});
+    debug("setupTLS: upgrading socket...", .{});
     const new_socket = this.socket.SocketTCP.socket.connected.upgrade(this.tls_ctx.?, this.tls_config.server_name) orelse {
+        debug("setupTLS: upgrade failed", .{});
         this.fail("Failed to upgrade to TLS", error.TLSUpgradeFailed);
         return;
     };
+    debug("setupTLS: upgrade success", .{});
     this.socket = .{
         .SocketTLS = .{
             .socket = .{
@@ -181,9 +183,8 @@ pub fn setupTLS(this: *PostgresSQLConnection) void {
             },
         },
     };
-
-    this.start();
 }
+
 fn setupMaxLifetimeTimerIfNecessary(this: *PostgresSQLConnection) void {
     if (this.max_lifetime_interval_ms == 0) return;
     if (this.max_lifetime_timer.state == .ACTIVE) return;
@@ -409,6 +410,15 @@ pub fn onOpen(this: *PostgresSQLConnection, socket: uws.AnySocket) void {
     this.poll_ref.ref(this.vm);
     this.updateHasPendingActivity();
 
+    // Protect against re-entrant onData calls during writes in onOpen (Windows/IOCP)
+    this.flags.is_processing_data = true;
+    defer {
+        this.flags.is_processing_data = false;
+        if (this.read_buffer.remaining().len > 0) {
+            this.onData("");
+        }
+    }
+
     if (this.tls_status == .message_sent or this.tls_status == .pending) {
         this.startTLS(socket);
         return;
@@ -418,31 +428,46 @@ pub fn onOpen(this: *PostgresSQLConnection, socket: uws.AnySocket) void {
 }
 
 pub fn onHandshake(this: *PostgresSQLConnection, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
-    debug("onHandshake: {d} {d}", .{ success, ssl_error.error_no });
+    debug("onHandshake: success={d} error={d} mode={s}", .{ success, ssl_error.error_no, @tagName(this.ssl_mode) });
     const handshake_success = if (success == 1) true else false;
     if (handshake_success) {
-        if (this.tls_config.reject_unauthorized != 0) {
-            // only reject the connection if reject_unauthorized == true
-            switch (this.ssl_mode) {
-                // https://github.com/porsager/postgres/blob/6ec85a432b17661ccacbdf7f765c651e88969d36/src/connection.js#L272-L279
+        switch (this.ssl_mode) {
+            // https://github.com/porsager/postgres/blob/6ec85a432b17661ccacbdf7f765c651e88969d36/src/connection.js#L272-L279
 
-                .verify_ca, .verify_full => {
+            .verify_ca => {
+                if (ssl_error.error_no != 0) {
+                    this.failWithJSValue(ssl_error.toJS(this.globalObject) catch return);
+                    return;
+                }
+            },
+            .verify_full => {
+                if (ssl_error.error_no != 0) {
+                    this.failWithJSValue(ssl_error.toJS(this.globalObject) catch return);
+                    return;
+                }
+
+                const ssl_ptr: *BoringSSL.c.SSL = @ptrCast(this.socket.getNativeHandle());
+                if (BoringSSL.c.SSL_get_servername(ssl_ptr, 0)) |servername| {
+                    const hostname = servername[0..bun.len(servername)];
+                    if (!BoringSSL.checkServerIdentity(ssl_ptr, hostname)) {
+                        this.failFmt("ERR_TLS_CERT_ALTNAME_INVALID", "Hostname/IP does not match certificate's altnames: Host: {s} is not in the cert's list.", .{hostname});
+                        return;
+                    }
+                } else {
+                    this.fail("Unable to verify server identity: server name missing", error.TLSUpgradeFailed);
+                    return;
+                }
+            },
+            // require is the same as prefer in terms of "if handshake succeeded, we are good"
+            // unless reject_unauthorized is strictly set in tls config
+            .require, .prefer, .disable => {
+                if (this.tls_config.reject_unauthorized != 0) {
                     if (ssl_error.error_no != 0) {
                         this.failWithJSValue(ssl_error.toJS(this.globalObject) catch return);
                         return;
                     }
-
-                    const ssl_ptr: *BoringSSL.c.SSL = @ptrCast(this.socket.getNativeHandle());
-                    if (BoringSSL.c.SSL_get_servername(ssl_ptr, 0)) |servername| {
-                        const hostname = servername[0..bun.len(servername)];
-                        if (!BoringSSL.checkServerIdentity(ssl_ptr, hostname)) {
-                            this.failWithJSValue(ssl_error.toJS(this.globalObject) catch return);
-                        }
-                    }
-                },
-                // require is the same as prefer
-                .require, .prefer, .disable => {},
-            }
+                }
+            },
         }
     } else {
         // if we are here is because server rejected us, and the error_no is the cause of this
@@ -489,9 +514,61 @@ fn drainInternal(this: *PostgresSQLConnection) void {
 }
 
 pub fn onData(this: *PostgresSQLConnection, data: []const u8) void {
+    if (this.flags.is_processing_data) {
+        this.read_buffer.write(bun.default_allocator, data) catch @panic("failed to buffer data");
+        return;
+    }
+
     this.ref();
     this.flags.is_processing_data = true;
     const vm = this.vm;
+
+    debug("onData: len={d} tls_status={s}", .{ data.len, @tagName(this.tls_status) });
+    if (data.len > 0) debug("onData: first_byte='{c}' (0x{x})", .{ data[0], data[0] });
+
+    if (this.tls_status == .message_sent) {
+        defer {
+            this.flags.is_processing_data = false;
+            if (this.read_buffer.remaining().len > 0) {
+                this.onData("");
+            }
+            this.deref();
+        }
+
+        var input = data;
+        if (input.len == 0 and this.read_buffer.remaining().len > 0) {
+            input = this.read_buffer.remaining();
+            // consume the byte we are about to check
+            this.read_buffer.head += 1;
+            this.last_message_start = this.read_buffer.head;
+        }
+
+        if (input.len == 0) return;
+
+        switch (input[0]) {
+            'S' => {
+                debug("onData: Server accepted SSL. Upgrading...", .{});
+                this.tls_status = .none;
+                this.setupTLS();
+                return;
+            },
+            'N' => {
+                debug("onData: Server rejected SSL.", .{});
+                if (this.ssl_mode != .prefer) {
+                    this.fail("The server does not support SSL connections", error.TLSUpgradeFailed);
+                    return;
+                }
+                this.tls_status = .none;
+                this.start();
+                return;
+            },
+            else => {
+                debug("onData: Unexpected response during SSL handshake.", .{});
+                this.fail("Failed to upgrade to SSL", error.TLSUpgradeFailed);
+                return;
+            },
+        }
+    }
 
     this.disableConnectionTimeout();
     defer {
@@ -516,6 +593,7 @@ pub fn onData(this: *PostgresSQLConnection, data: []const u8) void {
     // reset the head to the last message so remaining reflects the right amount of bytes
     this.read_buffer.head = this.last_message_start;
 
+    var processed_via_stack = false;
     if (this.read_buffer.remaining().len == 0) {
         var consumed: usize = 0;
         var offset: usize = 0;
@@ -534,33 +612,38 @@ pub fn onData(this: *PostgresSQLConnection, data: []const u8) void {
                 this.last_message_start = 0;
                 this.read_buffer.byte_list.len = 0;
                 this.read_buffer.write(bun.default_allocator, data[offset..]) catch @panic("failed to write to read buffer");
-            } else {
-                bun.handleErrorReturnTrace(err, @errorReturnTrace());
-
-                this.fail("Failed to read data", err);
+                return;
             }
-        };
-        // no need to reset anything, its already empty
-        return;
-    }
-    // read buffer is not empty, so we need to write the data to the buffer and then read it
-    this.read_buffer.write(bun.default_allocator, data) catch @panic("failed to write to read buffer");
-    PostgresRequest.onData(this, Reader, this.bufferedReader()) catch |err| {
-        if (err != error.ShortRead) {
+
             bun.handleErrorReturnTrace(err, @errorReturnTrace());
             this.fail("Failed to read data", err);
-            return;
-        }
+        };
+        processed_via_stack = true;
+    }
 
-        if (comptime bun.Environment.allow_assert) {
-            debug("read_buffer: not empty and received short read: last_message_start: {d}, head: {d}, len: {d}", .{
-                this.last_message_start,
-                this.read_buffer.head,
-                this.read_buffer.byte_list.len,
-            });
-        }
-        return;
-    };
+    if (!processed_via_stack) {
+        // read buffer is not empty, so we need to write the data to the buffer and then read it
+        this.read_buffer.write(bun.default_allocator, data) catch @panic("failed to write to read buffer");
+    }
+
+    if (this.read_buffer.remaining().len > 0) {
+        PostgresRequest.onData(this, Reader, this.bufferedReader()) catch |err| {
+            if (err != error.ShortRead) {
+                bun.handleErrorReturnTrace(err, @errorReturnTrace());
+                this.fail("Failed to read data", err);
+                return;
+            }
+
+            if (comptime bun.Environment.allow_assert) {
+                debug("read_buffer: not empty and received short read: last_message_start: {d}, head: {d}, len: {d}", .{
+                    this.last_message_start,
+                    this.read_buffer.head,
+                    this.read_buffer.byte_list.len,
+                });
+            }
+            return;
+        };
+    }
 
     debug("clean read_buffer", .{});
     // success, we read everything! let's reset the last message start and the head
@@ -1620,7 +1703,7 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
                 },
                 .SASLFinal => |final| {
                     if (this.authentication_state != .SASL) {
-                        debug("SASLFinal - Unexpected SASLContinue for authentiation state: {s}", .{@tagName(std.meta.activeTag(this.authentication_state))});
+                        debug("SASLFinal - Unexpected SASLContinue for authentication state: {s}", .{@tagName(std.meta.activeTag(this.authentication_state))});
                         return error.UnexpectedMessage;
                     }
                     var sasl = &this.authentication_state.SASL;

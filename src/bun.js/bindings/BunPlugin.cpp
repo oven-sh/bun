@@ -407,6 +407,12 @@ public:
     mutable WriteBarrier<JSObject> callbackFunctionOrCachedResult;
     bool hasCalledModuleMock = false;
 
+    // Original export values snapshot (a plain JS object with properties = original exports).
+    // Used by mock.restore() to reverse overrideExportValue patches.
+    WriteBarrier<JSObject> originalExportsSnapshot;
+    // The target to restore to: JSModuleNamespaceObject (ESM) or JSCommonJSModule (CJS).
+    WriteBarrier<JSObject> restoreTarget;
+
     static JSModuleMock* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSObject* callback);
     static Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
 
@@ -586,6 +592,20 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
 
     JSModuleMock* mock = JSModuleMock::create(vm, globalObject->mockModule.mockModuleStructure.getInitializedOnMainThread(globalObject), callback);
 
+    // If this specifier was already mocked, carry over the original snapshot
+    // so we preserve the true originals across re-mocks.
+    if (globalObject->onLoadPlugins.virtualModules) {
+        auto it = globalObject->onLoadPlugins.virtualModules->find(specifier);
+        if (it != globalObject->onLoadPlugins.virtualModules->end()) {
+            if (auto* existingMock = jsDynamicCast<JSModuleMock*>(it->value.get())) {
+                if (existingMock->originalExportsSnapshot) {
+                    mock->originalExportsSnapshot.set(vm, mock, existingMock->originalExportsSnapshot.get());
+                    mock->restoreTarget.set(vm, mock, existingMock->restoreTarget.get());
+                }
+            }
+        }
+    }
+
     auto* esm = globalObject->esmRegistryMap();
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -639,6 +659,31 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
                         auto* object = exportsValue.getObject();
                         removeFromESM = false;
 
+                        // Snapshot original export values before patching,
+                        // so mock.restore() can reverse the overrideExportValue calls.
+                        // We use the mock result's property names to know which exports
+                        // to snapshot, since synthetic namespace objects may have empty m_names.
+                        if (!mock->originalExportsSnapshot) {
+                            mock->restoreTarget.set(vm, mock, moduleNamespaceObject);
+
+                            JSObject* snapshot = constructEmptyObject(globalObject);
+                            if (object) {
+                                JSC::PropertyNameArrayBuilder mockNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+                                JSObject::getOwnPropertyNames(object, globalObject, mockNames, DontEnumPropertiesMode::Exclude);
+                                RETURN_IF_EXCEPTION(scope, {});
+                                for (auto& name : mockNames) {
+                                    JSValue originalValue = moduleNamespaceObject->get(globalObject, name);
+                                    RETURN_IF_EXCEPTION(scope, {});
+                                    snapshot->putDirect(vm, name, originalValue);
+                                }
+                            } else {
+                                JSValue originalDefault = moduleNamespaceObject->get(globalObject, vm.propertyNames->defaultKeyword);
+                                RETURN_IF_EXCEPTION(scope, {});
+                                snapshot->putDirect(vm, vm.propertyNames->defaultKeyword, originalDefault);
+                            }
+                            mock->originalExportsSnapshot.set(vm, mock, snapshot);
+                        }
+
                         if (object) {
                             JSC::PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
                             JSObject::getOwnPropertyNames(object, globalObject, names, DontEnumPropertiesMode::Exclude);
@@ -676,6 +721,18 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
     if (entryValue) {
         removeFromCJS = true;
         if (auto* moduleObject = entryValue ? jsDynamicCast<Bun::JSCommonJSModule*>(entryValue) : nullptr) {
+            // Snapshot original CJS exports before patching.
+            if (!mock->originalExportsSnapshot) {
+                JSValue currentExports = moduleObject->getIfPropertyExists(globalObject, Bun::builtinNames(vm).exportsPublicName());
+                RETURN_IF_EXCEPTION(scope, {});
+                if (currentExports) {
+                    JSObject* snapshot = constructEmptyObject(globalObject);
+                    snapshot->putDirect(vm, vm.propertyNames->defaultKeyword, currentExports);
+                    mock->originalExportsSnapshot.set(vm, mock, snapshot);
+                    mock->restoreTarget.set(vm, mock, moduleObject);
+                }
+            }
+
             JSValue exportsValue = getJSValue();
             RETURN_IF_EXCEPTION(scope, {});
 
@@ -708,9 +765,62 @@ void JSModuleMock::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(mock, visitor);
 
     visitor.append(mock->callbackFunctionOrCachedResult);
+    visitor.append(mock->originalExportsSnapshot);
+    visitor.append(mock->restoreTarget);
 }
 
 DEFINE_VISIT_CHILDREN(JSModuleMock);
+
+void BunPlugin::OnLoad::restoreModuleMocks(JSC::JSGlobalObject* lexicalGlobalObject)
+{
+    if (!virtualModules)
+        return;
+
+    auto& vm = lexicalGlobalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Collect specifiers to remove (can't mutate map while iterating).
+    Vector<String> toRemove;
+
+    for (auto& entry : *virtualModules) {
+        auto* moduleMock = jsDynamicCast<JSModuleMock*>(entry.value.get());
+        if (!moduleMock) {
+    
+            continue;
+        }
+
+        toRemove.append(entry.key);
+
+        if (!moduleMock->originalExportsSnapshot || !moduleMock->restoreTarget)
+            continue;
+
+        auto* snapshot = moduleMock->originalExportsSnapshot.get();
+        auto* target = moduleMock->restoreTarget.get();
+
+        if (auto* ns = jsDynamicCast<JSC::JSModuleNamespaceObject*>(target)) {
+            // ESM: restore each export value on the namespace object.
+            JSC::PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+            JSObject::getOwnPropertyNames(snapshot, lexicalGlobalObject, names, DontEnumPropertiesMode::Exclude);
+            RETURN_IF_EXCEPTION(scope, );
+
+            for (auto& name : names) {
+                JSValue originalValue = snapshot->get(lexicalGlobalObject, name);
+                RETURN_IF_EXCEPTION(scope, );
+                ns->overrideExportValue(lexicalGlobalObject, name, originalValue);
+                RETURN_IF_EXCEPTION(scope, );
+            }
+        } else if (auto* cjsModule = jsDynamicCast<Bun::JSCommonJSModule*>(target)) {
+            // CJS: restore original exports on the module object.
+            JSValue originalExports = snapshot->get(lexicalGlobalObject, vm.propertyNames->defaultKeyword);
+            RETURN_IF_EXCEPTION(scope, );
+            cjsModule->putDirect(vm, Bun::builtinNames(vm).exportsPublicName(), originalExports, 0);
+        }
+    }
+
+    for (auto& key : toRemove) {
+        virtualModules->remove(key);
+    }
+}
 
 EncodedJSValue BunPlugin::OnLoad::run(JSC::JSGlobalObject* globalObject, BunString* namespaceString, BunString* path)
 {

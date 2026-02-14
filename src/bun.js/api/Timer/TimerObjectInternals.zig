@@ -84,12 +84,14 @@ pub fn runImmediateTask(this: *TimerObjectInternals, vm: *VirtualMachine) bool {
         if (Environment.isDebug) {
             @panic("TimerObjectInternals.runImmediateTask: this_object is null");
         }
+        this.deref();
         return false;
     };
     const globalThis = vm.global;
     this.strong_this.deinit();
     this.eventLoopTimer().state = .FIRED;
     this.setEnableKeepingEventLoopAlive(vm, false);
+    timer.ensureStillAlive();
 
     vm.eventLoop().enter();
     const callback = ImmediateObject.js.callbackGetCached(timer).?;
@@ -350,7 +352,13 @@ pub fn cancel(this: *TimerObjectInternals, vm: *VirtualMachine) void {
     this.setEnableKeepingEventLoopAlive(vm, false);
     this.flags.has_cleared_timer = true;
 
-    if (this.flags.kind == .setImmediate) return;
+    if (this.flags.kind == .setImmediate) {
+        // Release the strong reference so the GC can collect the JS object.
+        // The immediate task is still in the event loop queue and will be skipped
+        // by runImmediateTask when it sees has_cleared_timer == true.
+        this.strong_this.deinit();
+        return;
+    }
 
     const was_active = this.eventLoopTimer().state == .ACTIVE;
 

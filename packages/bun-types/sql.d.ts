@@ -693,6 +693,51 @@ declare module "bun" {
     reserve(): Promise<ReservedSQL>;
 
     /**
+     * Listen for PostgreSQL NOTIFY events on a channel.
+     *
+     * Returns an unlisten function that stops listening when called.
+     * Only available for PostgreSQL connections.
+     *
+     * @param channel - The channel name to listen on
+     * @param callback - Called when a notification is received with the payload
+     * @returns A function that unsubscribes from the channel when called
+     *
+     * @example
+     * ```ts
+     * const unlisten = await sql.listen("my_channel", (payload) => {
+     *   console.log("Received:", payload);
+     * });
+     *
+     * // Send notification
+     * await sql`NOTIFY my_channel, 'hello world'`;
+     *
+     * // Stop listening
+     * await unlisten();
+     * ```
+     */
+    listen(channel: string, callback: (payload: string) => void): Promise<() => Promise<void>>;
+
+    /**
+     * Stop listening for PostgreSQL NOTIFY events on a channel.
+     *
+     * This removes all listeners for the specified channel.
+     * Only available for PostgreSQL connections.
+     *
+     * @param channel - The channel name to stop listening on
+     *
+     * @example
+     * ```ts
+     * await sql.listen("my_channel", (payload) => {
+     *   console.log("Received:", payload);
+     * });
+     *
+     * // Stop listening by channel name
+     * await sql.unlisten("my_channel");
+     * ```
+     */
+    unlisten(channel: string): Promise<void>;
+
+    /**
      * Creates a new SQL array parameter
      * @param values - The values to create the array parameter from
      * @param typeNameOrTypeID - The type name or type ID to create the array parameter from, if omitted it will default to JSON

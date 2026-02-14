@@ -168,6 +168,19 @@ pub fn setOnClose(_: *PostgresSQLConnection, thisValue: jsc.JSValue, globalObjec
     js.oncloseSetCached(thisValue, globalObject, value);
 }
 
+pub fn getOnNotification(_: *PostgresSQLConnection, thisValue: jsc.JSValue, _: *jsc.JSGlobalObject) jsc.JSValue {
+    if (js.onnotificationGetCached(thisValue)) |value| {
+        return value;
+    }
+    return .js_undefined;
+}
+
+pub fn setOnNotification(this: *PostgresSQLConnection, thisValue: jsc.JSValue, globalObject: *jsc.JSGlobalObject, value: jsc.JSValue) void {
+    js.onnotificationSetCached(thisValue, globalObject, value);
+    // Update poll ref state since notification listener status changed
+    this.updateRef();
+}
+
 pub fn setupTLS(this: *PostgresSQLConnection) void {
     debug("setupTLS", .{});
     const new_socket = this.socket.SocketTCP.socket.connected.upgrade(this.tls_ctx.?, this.tls_config.server_name) orelse {
@@ -495,11 +508,14 @@ pub fn onData(this: *PostgresSQLConnection, data: []const u8) void {
 
     this.disableConnectionTimeout();
     defer {
-        if (this.status == .connected and !this.hasQueryRunning() and this.write_buffer.remaining().len == 0) {
+        // Check if there's a notification listener - if so, keep polling for async notifications
+        const has_notification_listener = js.onnotificationGetCached(this.js_value) != null;
+
+        if (this.status == .connected and !this.hasQueryRunning() and this.write_buffer.remaining().len == 0 and !has_notification_listener) {
             // Don't keep the process alive when there's nothing to do.
             this.poll_ref.unref(vm);
         } else if (this.status == .connected) {
-            // Keep the process alive if there's something to do.
+            // Keep the process alive if there's something to do (queries or notification listener).
             this.poll_ref.ref(vm);
         }
         this.flags.is_processing_data = false;
@@ -1803,13 +1819,33 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
         .CopyBothResponse => {
             debug("TODO CopyBothResponse", .{});
         },
+        .NotificationResponse => {
+            var notification: protocol.NotificationResponse = undefined;
+            try notification.decodeInternal(Context, reader);
+            defer notification.deinit();
+
+            // Get the onnotification callback (don't consume - it persists)
+            const on_notification = js.onnotificationGetCached(this.js_value) orelse return;
+
+            // Create JS strings for channel and payload
+            const channel_js = jsc.ZigString.init(notification.channel.slice()).toJS(this.globalObject);
+            const payload_js = jsc.ZigString.init(notification.payload.slice()).toJS(this.globalObject);
+
+            // Call the callback and report any unhandled exceptions
+            _ = on_notification.call(this.globalObject, .js_undefined, &[_]JSValue{
+                channel_js,
+                payload_js,
+            }) catch |e| this.globalObject.reportActiveExceptionAsUnhandled(e);
+        },
         else => @compileError("Unknown message type: " ++ @tagName(MessageType)),
     }
 }
 
 pub fn updateRef(this: *PostgresSQLConnection) void {
     this.updateHasPendingActivity();
-    if (this.pending_activity_count.raw > 0) {
+    // Keep poll ref active if there's a notification listener
+    const has_notification_listener = js.onnotificationGetCached(this.js_value) != null;
+    if (this.pending_activity_count.raw > 0 or has_notification_listener) {
         this.poll_ref.ref(this.vm);
     } else {
         this.poll_ref.unref(this.vm);

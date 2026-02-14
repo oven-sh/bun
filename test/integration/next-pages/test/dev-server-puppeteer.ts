@@ -21,11 +21,9 @@ if (!browserPath) {
 const b = await launch({
   // On macOS, there are issues using the new headless mode.
   // "TargetCloseError: Protocol error (Target.setAutoAttach): Target closed"
-  headless: process.platform === "darwin" ? "shell" : true,
+  headless: true, // new headless mode works fine in modern Chrome
   // Inherit the stdout and stderr of the browser process.
   dumpio: true,
-  // Prefer to use a pipe to connect to the browser, instead of a WebSocket.
-  pipe: true,
   // Disable timeouts.
   timeout: 0,
   protocolTimeout: 0,
@@ -45,6 +43,8 @@ const b = await launch({
 
     // Fixes: "Navigating frame was detached"
     "--disable-features=site-per-process",
+
+    "--disable-gpu", // improves stability on CI
   ],
 });
 

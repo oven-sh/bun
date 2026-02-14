@@ -322,7 +322,10 @@ pub noinline fn computeChunks(
             const remapped_css_indexes = try temp_allocator.alloc(u32, css_chunks.count());
 
             const css_chunk_values = css_chunks.values();
-            for (sorted_css_keys, js_chunks.count()..) |key, sorted_index| {
+            // Use sorted_chunks.len as the starting index because HTML chunks
+            // may be interleaved with JS chunks, so js_chunks.count() would be
+            // incorrect when HTML entry points are present.
+            for (sorted_css_keys, sorted_chunks.len..) |key, sorted_index| {
                 const index = css_chunks.getIndex(key) orelse unreachable;
                 sorted_chunks.appendAssumeCapacity(css_chunk_values[index]);
                 remapped_css_indexes[index] = @intCast(sorted_index);

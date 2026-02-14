@@ -38,7 +38,7 @@ pub inline fn run(this: *const ExtractTarball, log: *logger.Log, bytes: []const 
         } else {
             // First install (no integrity in the lockfile yet): compute it.
             result.integrity = .{ .tag = .sha512 };
-            std.crypto.hash.sha2.Sha512.hash(bytes, result.integrity.value[0..std.crypto.hash.sha2.Sha512.digest_length], .{});
+            Crypto.SHA512.hash(bytes, result.integrity.value[0..Crypto.SHA512.digest]);
         }
     }
 
@@ -575,6 +575,7 @@ const DependencyID = Install.DependencyID;
 const PackageManager = Install.PackageManager;
 
 const bun = @import("bun");
+const Crypto = @import("../sha.zig").Hashers;
 const Environment = bun.Environment;
 const OOM = bun.OOM;
 const Output = bun.Output;

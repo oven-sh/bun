@@ -8,7 +8,7 @@ test("Bun.stripANSI does not hang on non-ANSI control characters", () => {
 });
 
 test("Bun.stripANSI does not hang on large control-heavy strings", () => {
-  const s = "\x1c".repeat(200_000);
+  const s = Buffer.alloc(200_000, 0x1c).toString();
   const result = Bun.stripANSI(s);
   expect(result).toBe(s);
 });

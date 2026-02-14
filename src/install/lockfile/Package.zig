@@ -1121,6 +1121,24 @@ pub fn Package(comptime SemverIntType: type) type {
                         }
                     }
                 },
+                .dist_tag => {
+                    if (workspace_path != null and pm.options.link_workspace_packages) {
+                        const path = workspace_path.?.sliced(buf);
+                        if (Dependency.parseWithTag(
+                            allocator,
+                            external_alias.value,
+                            external_alias.hash,
+                            path.slice,
+                            .workspace,
+                            &path,
+                            log,
+                            pm,
+                        )) |dep| {
+                            dependency_version.tag = dep.tag;
+                            dependency_version.value = dep.value;
+                        }
+                    }
+                },
                 .workspace => workspace: {
                     if (workspace_path) |path| {
                         if (workspace_range) |range| {

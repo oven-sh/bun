@@ -1497,9 +1497,10 @@ void WebSocket::didClose(unsigned unhandledBufferedAmount, unsigned short code, 
     this->disablePendingActivity();
 }
 
-void WebSocket::didConnect(us_socket_t* socket, char* bufferedData, size_t bufferedDataSize, const PerMessageDeflateParams* deflate_params, void* customSSLCtx)
+void WebSocket::didConnect(us_socket_t* socket, char* bufferedData, size_t bufferedDataSize, const PerMessageDeflateParams* deflate_params, void* customSSLCtx, uint16_t upgradeStatusCode)
 {
     this->m_upgradeClient = nullptr;
+    this->m_upgradeStatusCode = upgradeStatusCode;
     setExtensionsFromDeflateParams(deflate_params);
 
     // Use TLS WebSocket client if connection type is TLS or ProxyTLS.
@@ -1711,9 +1712,10 @@ void WebSocket::updateHasPendingActivity()
 extern "C" void* Bun__WebSocketClient__initWithTunnel(CppWebSocket* ws, void* tunnel, JSC::JSGlobalObject* globalObject, unsigned char* bufferedData, size_t bufferedDataSize, const PerMessageDeflateParams* deflate_params);
 extern "C" void WebSocketProxyTunnel__setConnectedWebSocket(void* tunnel, void* websocket);
 
-void WebSocket::didConnectWithTunnel(void* tunnel, char* bufferedData, size_t bufferedDataSize, const PerMessageDeflateParams* deflate_params)
+void WebSocket::didConnectWithTunnel(void* tunnel, char* bufferedData, size_t bufferedDataSize, const PerMessageDeflateParams* deflate_params, uint16_t upgradeStatusCode)
 {
     this->m_upgradeClient = nullptr;
+    this->m_upgradeStatusCode = upgradeStatusCode;
     setExtensionsFromDeflateParams(deflate_params);
 
     // For wss:// through HTTP proxy, we use a plain (non-TLS) WebSocket client
@@ -1739,14 +1741,14 @@ void WebSocket::didConnectWithTunnel(void* tunnel, char* bufferedData, size_t bu
 
 } // namespace WebCore
 
-extern "C" void WebSocket__didConnect(WebCore::WebSocket* webSocket, us_socket_t* socket, char* bufferedData, size_t len, const PerMessageDeflateParams* deflate_params, void* customSSLCtx)
+extern "C" void WebSocket__didConnect(WebCore::WebSocket* webSocket, us_socket_t* socket, char* bufferedData, size_t len, const PerMessageDeflateParams* deflate_params, void* customSSLCtx, uint16_t upgradeStatusCode)
 {
-    webSocket->didConnect(socket, bufferedData, len, deflate_params, customSSLCtx);
+    webSocket->didConnect(socket, bufferedData, len, deflate_params, customSSLCtx, upgradeStatusCode);
 }
 
-extern "C" void WebSocket__didConnectWithTunnel(WebCore::WebSocket* webSocket, void* tunnel, char* bufferedData, size_t len, const PerMessageDeflateParams* deflate_params)
+extern "C" void WebSocket__didConnectWithTunnel(WebCore::WebSocket* webSocket, void* tunnel, char* bufferedData, size_t len, const PerMessageDeflateParams* deflate_params, uint16_t upgradeStatusCode)
 {
-    webSocket->didConnectWithTunnel(tunnel, bufferedData, len, deflate_params);
+    webSocket->didConnectWithTunnel(tunnel, bufferedData, len, deflate_params, upgradeStatusCode);
 }
 
 extern "C" void WebSocket__didAbruptClose(WebCore::WebSocket* webSocket, Bun::WebSocketErrorCode errorCode)

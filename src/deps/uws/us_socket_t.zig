@@ -232,6 +232,7 @@ pub const c = struct {
         list_cap: usize = 0,
         list_len: usize = 0,
         total_bytes_written: usize = 0,
+        total_bytes_read: usize = 0,
         cursor: usize = 0,
 
         pub fn update(this: *us_socket_stream_buffer_t, stream_buffer: bun.io.StreamBuffer) void {

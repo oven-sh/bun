@@ -601,6 +601,18 @@ pub const Bunfig = struct {
                         }
                     }
 
+                    if (install_obj.get("offline")) |offline| {
+                        if (offline.asBool()) |value| {
+                            install.offline = value;
+                        }
+                    }
+
+                    if (install_obj.get("preferOffline")) |prefer_offline| {
+                        if (prefer_offline.asBool()) |value| {
+                            install.prefer_offline = value;
+                        }
+                    }
+
                     if (install_obj.get("saveTextLockfile")) |save_text_lockfile| {
                         if (save_text_lockfile.asBool()) |value| {
                             install.save_text_lockfile = value;

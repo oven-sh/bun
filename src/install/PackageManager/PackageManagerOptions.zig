@@ -313,6 +313,14 @@ pub fn load(
             this.enable.force_install = true;
         }
 
+        if (config.offline orelse false) {
+            this.enable.offline = true;
+        }
+
+        if (config.prefer_offline orelse false) {
+            this.enable.prefer_offline = true;
+        }
+
         if (config.save_yarn_lockfile orelse false) {
             this.do.save_yarn_lock = true;
         }
@@ -483,6 +491,14 @@ pub fn load(
         this.do.verify_integrity = !strings.eqlComptime(check_bool, "0");
     }
 
+    if (env.get("BUN_CONFIG_OFFLINE")) |check_bool| {
+        this.enable.offline = !strings.eqlComptime(check_bool, "0");
+    }
+
+    if (env.get("BUN_CONFIG_PREFER_OFFLINE")) |check_bool| {
+        this.enable.prefer_offline = !strings.eqlComptime(check_bool, "0");
+    }
+
     // Update should never read from manifest cache
     if (subcommand == .update) {
         this.enable.manifest_cache = false;
@@ -635,6 +651,14 @@ pub fn load(
             this.enable.force_save_lockfile = true;
         }
 
+        if (cli.offline) {
+            this.enable.offline = true;
+        }
+
+        if (cli.prefer_offline) {
+            this.enable.prefer_offline = true;
+        }
+
         if (cli.development) {
             this.update.development = cli.development;
         } else if (cli.optional) {
@@ -733,7 +757,12 @@ pub const Enable = packed struct(u16) {
 
     exact_versions: bool = false,
     only_missing: bool = false,
-    _: u7 = 0,
+
+    // Run without network access, using only cached packages
+    offline: bool = false,
+    // Prefer cached packages, fall back to network if not available
+    prefer_offline: bool = false,
+    _: u5 = 0,
 };
 
 const string = []const u8;

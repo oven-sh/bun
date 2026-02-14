@@ -760,7 +760,7 @@ pub const WindowsBufferedReader = struct {
                 return Type.onReaderError(@as(*Type, @ptrCast(@alignCast(this))), err);
             }
             fn loop(this: *anyopaque) *Async.Loop {
-                return Type.loop(@as(*Type, @alignCast(@ptrCast(this))));
+                return Type.loop(@as(*Type, @ptrCast(@alignCast(this))));
             }
         };
         return .{
@@ -955,14 +955,21 @@ pub const WindowsBufferedReader = struct {
     }
 
     fn onStreamAlloc(handle: *uv.Handle, suggested_size: usize, buf: *uv.uv_buf_t) callconv(.c) void {
-        var this = bun.cast(*WindowsBufferedReader, handle.data);
+        // handle.data may be null if the handle was closed (set to self-pointer then deallocated)
+        // or during race conditions in Windows libuv event processing
+        const this: *WindowsBufferedReader = @ptrCast(@alignCast(handle.data orelse {
+            buf.* = uv.uv_buf_t.init("");
+            return;
+        }));
         const result = this.getReadBufferWithStableMemoryAddress(suggested_size);
         buf.* = uv.uv_buf_t.init(result);
     }
 
     fn onStreamRead(handle: *uv.uv_handle_t, nread: uv.ReturnCodeI64, buf: *const uv.uv_buf_t) callconv(.c) void {
-        const stream = bun.cast(*uv.uv_stream_t, handle);
-        var this = bun.cast(*WindowsBufferedReader, stream.data);
+        const stream: *uv.uv_stream_t = @ptrCast(handle);
+        // stream.data may be null if the handle was closed (set to self-pointer then deallocated)
+        // or during race conditions in Windows libuv event processing
+        const this: *WindowsBufferedReader = @ptrCast(@alignCast(stream.data orelse return));
 
         const nread_int = nread.int();
 
@@ -1199,12 +1206,16 @@ pub const WindowsBufferedReader = struct {
     }
 
     fn onPipeClose(handle: *uv.Pipe) callconv(.c) void {
-        const this = bun.cast(*uv.Pipe, handle.data);
+        // handle.data was set to point to the pipe itself before close was called
+        // If null, the handle was already cleaned up or there was a race condition
+        const this: *uv.Pipe = @ptrCast(@alignCast(handle.data orelse return));
         bun.default_allocator.destroy(this);
     }
 
     fn onTTYClose(handle: *uv.uv_tty_t) callconv(.c) void {
-        const this = bun.cast(*uv.uv_tty_t, handle.data);
+        // handle.data was set to point to the tty itself before close was called
+        // If null, the handle was already cleaned up or there was a race condition
+        const this: *uv.uv_tty_t = @ptrCast(@alignCast(handle.data orelse return));
         bun.default_allocator.destroy(this);
     }
 

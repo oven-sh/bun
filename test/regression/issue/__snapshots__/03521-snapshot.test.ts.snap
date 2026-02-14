@@ -1,0 +1,9 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`issue #3521: toMatchSnapshot should also not mutate the original object 1`] = `
+{
+  "createdAt": 2024-01-01T00:00:00.000Z,
+  "id": 123,
+  "name": "Test User",
+}
+`;

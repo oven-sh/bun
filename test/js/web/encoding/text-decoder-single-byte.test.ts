@@ -70,6 +70,16 @@ test("TextDecoder - windows-874 encoding", () => {
   expect(result).toBe("สวัสดี");
 });
 
+test("TextDecoder - windows-1251 encoding", () => {
+  const decoder = new TextDecoder("windows-1251");
+  expect(decoder.encoding).toBe("windows-1251");
+
+  // Russian "Привет" in windows-1251
+  const bytes = new Uint8Array([0xcf, 0xf0, 0xe8, 0xe2, 0xe5, 0xf2]);
+  const result = decoder.decode(bytes);
+  expect(result).toBe("Привет");
+});
+
 test("TextDecoder - windows-1253 encoding", () => {
   const decoder = new TextDecoder("windows-1253");
   expect(decoder.encoding).toBe("windows-1253");

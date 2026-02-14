@@ -1,0 +1,202 @@
+---
+title: Deploy a Bun application on Encore Cloud
+description: Deploy Bun applications to Encore Cloud with automatic infrastructure provisioning, built-in observability, and zero DevOps configuration.
+sidebarTitle: Deploy on Encore Cloud
+mode: center
+---
+
+[Encore Cloud](https://encore.cloud) is a development platform that automatically provisions infrastructure for your backend applications. Deploy to Encore's free cloud hosting, or connect your own AWS/GCP account for production workloads.
+
+This guide walks through deploying a Bun application with Encore Cloud.
+
+<Note>Bun support in Encore is currently experimental. Enable it by adding `"experiments": ["bun-runtime"]` to your `encore.app` file.</Note>
+
+---
+
+**Prerequisites**:
+
+- An [Encore account](https://app.encore.dev)
+- Encore CLI installed
+
+---
+
+## Step 1: Install Encore CLI
+
+```bash terminal icon="terminal"
+# macOS
+brew install encoredev/tap/encore
+
+# Linux
+curl -L https://encore.dev/install.sh | bash
+
+# Windows
+iwr https://encore.dev/install.ps1 | iex
+```
+
+---
+
+## Step 2: Create your app
+
+Create a new Encore app:
+
+```bash terminal icon="terminal"
+encore app create my-app --example=ts/hello-world
+cd my-app
+```
+
+---
+
+## Step 3: Enable Bun runtime
+
+Add the Bun experiment to your `encore.app` file:
+
+```json encore.app icon="file-json"
+{
+  "id": "my-app",
+  "experiments": ["bun-runtime"]
+}
+```
+
+---
+
+## Step 4: Define your API
+
+Create a service with an API endpoint:
+
+```ts hello/hello.ts icon="/icons/typescript.svg"
+import { api } from "encore.dev/api";
+
+export const world = api(
+  { expose: true, method: "GET", path: "/hello/:name" },
+  async ({ name }: { name: string }) => {
+    return { message: `Hello, ${name}!` };
+  }
+);
+```
+
+---
+
+## Step 5: Run locally
+
+Start the local development server:
+
+```bash terminal icon="terminal"
+encore run
+```
+
+Open [localhost:4000/hello/world](http://localhost:4000/hello/world) to see your API.
+
+The local dashboard at [localhost:9400](http://localhost:9400) shows traces, logs, and auto-generated API docs.
+
+---
+
+## Step 6: Deploy
+
+Deploy to Encore Cloud:
+
+```bash terminal icon="terminal"
+git add -A .
+git commit -m "Initial commit"
+git push encore
+```
+
+By default, your app deploys to Encore Cloud's free hosting. For production workloads, connect your AWS or GCP account in the Encore dashboard and Encore provisions infrastructure there instead.
+
+---
+
+## Infrastructure primitives
+
+Encore provides type-safe infrastructure primitives. You write the same code for all environments, and Encore provisions the appropriate services depending on where you deploy.
+
+### Databases
+
+```ts icon="/icons/typescript.svg"
+import { SQLDatabase } from "encore.dev/storage/sqldb";
+
+const db = new SQLDatabase("mydb", { migrations: "./migrations" });
+```
+
+| Local  | AWS        | GCP       |
+| ------ | ---------- | --------- |
+| Docker | Amazon RDS | Cloud SQL |
+
+### Pub/Sub
+
+```ts icon="/icons/typescript.svg"
+import { Topic, Subscription } from "encore.dev/pubsub";
+
+const signups = new Topic<SignupEvent>("signups");
+
+const _ = new Subscription(signups, "send-welcome", {
+  handler: sendWelcomeEmail,
+});
+```
+
+| Local     | AWS       | GCP         |
+| --------- | --------- | ----------- |
+| In-memory | SNS + SQS | GCP Pub/Sub |
+
+### Object storage
+
+```ts icon="/icons/typescript.svg"
+import { Bucket } from "encore.dev/storage/objects";
+
+const uploads = new Bucket("uploads", { versioned: false });
+```
+
+| Local      | AWS             | GCP             |
+| ---------- | --------------- | --------------- |
+| Local disk | S3 + CloudFront | GCS + Cloud CDN |
+
+### Caches
+
+```ts icon="/icons/typescript.svg"
+import { CacheCluster } from "encore.dev/storage/cache";
+
+const cluster = new CacheCluster("my-cache", { evictionPolicy: "allkeys-lru" });
+```
+
+| Local     | AWS         | GCP         |
+| --------- | ----------- | ----------- |
+| In-memory | ElastiCache | Memorystore |
+
+### Cron jobs
+
+```ts icon="/icons/typescript.svg"
+import { Cron } from "encore.dev/cron";
+
+const _ = new Cron("daily-cleanup", {
+  title: "Daily cleanup",
+  schedule: "0 0 * * *",
+  endpoint: cleanup,
+});
+```
+
+| Local    | AWS     | GCP     |
+| -------- | ------- | ------- |
+| Disabled | Managed | Managed |
+
+### Secrets
+
+```bash terminal icon="terminal"
+encore secret set --type prod MySecretKey
+```
+
+```ts icon="/icons/typescript.svg"
+import { secret } from "encore.dev/config";
+
+const mySecret = secret("MySecretKey");
+```
+
+| Local         | AWS             | GCP            |
+| ------------- | --------------- | -------------- |
+| .secrets file | Secrets Manager | Secret Manager |
+
+---
+
+## Learn more
+
+- [Encore Cloud](https://encore.cloud)
+- [Encore Documentation](https://encore.dev/docs)
+- [Encore Templates](https://encore.dev/templates)
+- [Encore Discord](https://encore.dev/discord)

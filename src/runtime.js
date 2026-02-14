@@ -55,7 +55,8 @@ var __toESMCache_esm;
 // in the CommonJS file is falsy or missing), the "default" property is
 // overridden to point to the original CommonJS exports object instead.
 export var __toESM = (mod, isNodeMode, target) => {
-  if (mod != null) {
+  var canCache = mod != null && typeof mod === "object";
+  if (canCache) {
     var cache = isNodeMode ? (__toESMCache_node ??= new WeakMap()) : (__toESMCache_esm ??= new WeakMap());
     var cached = cache.get(mod);
     if (cached) return cached;
@@ -75,7 +76,7 @@ export var __toESM = (mod, isNodeMode, target) => {
         enumerable: true,
       });
 
-  if (mod != null) cache.set(mod, to);
+  if (canCache) cache.set(mod, to);
   return to;
 };
 

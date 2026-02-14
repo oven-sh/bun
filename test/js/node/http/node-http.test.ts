@@ -5,7 +5,7 @@
  *
  * A handful of older tests do not run in Node in this file. These tests should be updated to run in Node, or deleted.
  */
-import { bunEnv, bunExe, exampleSite, randomPort } from "harness";
+import { bunEnv, bunExe, exampleSite, randomPort, tls as tlsCert } from "harness";
 import { createTest } from "node-harness";
 import { EventEmitter, once } from "node:events";
 import nodefs, { unlinkSync } from "node:fs";
@@ -1081,7 +1081,6 @@ describe("node:http", () => {
   });
 
   test("should not decompress gzip, issue#4397", async () => {
-    const { tls: tlsCert } = await import("harness");
     using server = Bun.serve({
       port: 0,
       tls: tlsCert,

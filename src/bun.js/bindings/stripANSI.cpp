@@ -42,6 +42,13 @@ static std::optional<WTF::String> stripANSI(const std::span<const Char> input)
         // Append everything before the escape sequence
         result.append(std::span { start, escPos });
         const auto newPos = ANSI::consumeANSI(escPos, end);
+        if (newPos == escPos) {
+            // No ANSI found
+            result.append(std::span { escPos, escPos + 1 });
+            start = escPos + 1;
+            continue;
+        }
+
         ASSERT(newPos > start);
         ASSERT(newPos <= end);
         foundANSI = true;

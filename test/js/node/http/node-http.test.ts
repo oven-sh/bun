@@ -5,7 +5,7 @@
  *
  * A handful of older tests do not run in Node in this file. These tests should be updated to run in Node, or deleted.
  */
-import { bunEnv, bunExe, exampleSite, randomPort } from "harness";
+import { bunEnv, bunExe, exampleSite, randomPort, tls as tlsCert } from "harness";
 import { createTest } from "node-harness";
 import { EventEmitter, once } from "node:events";
 import nodefs, { unlinkSync } from "node:fs";
@@ -1081,9 +1081,19 @@ describe("node:http", () => {
   });
 
   test("should not decompress gzip, issue#4397", async () => {
+    using server = Bun.serve({
+      port: 0,
+      tls: tlsCert,
+      fetch() {
+        const body = Bun.gzipSync(Buffer.from("<html>Hello</html>"));
+        return new Response(body, {
+          headers: { "content-encoding": "gzip" },
+        });
+      },
+    });
     const { promise, resolve } = Promise.withResolvers();
     https
-      .request("https://bun.sh/", { headers: { "accept-encoding": "gzip" } }, res => {
+      .request(server.url, { ca: tlsCert.cert, headers: { "accept-encoding": "gzip" } }, res => {
         res.on("data", function cb(chunk) {
           resolve(chunk);
           res.off("data", cb);

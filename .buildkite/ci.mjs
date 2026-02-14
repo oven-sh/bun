@@ -101,13 +101,19 @@ function getTargetLabel(target) {
 
 // Azure VM sizes for Windows CI runners.
 // DDSv6 = x64, DPSv6 = ARM64 (Cobalt 100). Quota: 100 cores per family in eastus2.
-const azureVmSize = {
-  "windows-x64": "Standard_D16ds_v6", // 16 vCPU, 64 GiB
-  "windows-aarch64": "Standard_D16ps_v6", // 16 vCPU, 64 GiB, Cobalt 100
+const azureVmSizes = {
+  "windows-x64": {
+    build: "Standard_D16ds_v6", // 16 vCPU, 64 GiB — C++ build, link
+    test: "Standard_D4ds_v6", // 4 vCPU, 16 GiB — test shards
+  },
+  "windows-aarch64": {
+    build: "Standard_D16ps_v6", // 16 vCPU, 64 GiB — C++ build, link
+    test: "Standard_D4ps_v6", // 4 vCPU, 16 GiB — test shards
+  },
 };
 
-function getAzureVmSize(os, arch) {
-  return azureVmSize[`${os}-${arch}`];
+function getAzureVmSize(os, arch, tier = "build") {
+  return azureVmSizes[`${os}-${arch}`]?.[tier];
 }
 
 /**
@@ -363,16 +369,8 @@ function getZigPlatform() {
  * @param {PipelineOptions} options
  * @returns {Agent}
  */
-function getZigAgent(platform, options) {
-  const { os, arch } = platform;
-
-  // Windows Zig builds on Azure runners
-  if (os === "windows") {
-    return getEc2Agent(platform, options, {
-      instanceType: getAzureVmSize(os, arch),
-    });
-  }
-
+function getZigAgent(_platform, options) {
+  // Zig cross-compiles for all platforms from Linux aarch64
   return getEc2Agent(getZigPlatform(), options, {
     instanceType: "r8g.large",
   });
@@ -397,7 +395,7 @@ function getTestAgent(platform, options) {
   // TODO: delete this block when we upgrade to mimalloc v3
   if (os === "windows") {
     return getEc2Agent(platform, options, {
-      instanceType: getAzureVmSize(os, arch),
+      instanceType: getAzureVmSize(os, arch, "test"),
       cpuCount: 2,
       threadsPerCore: 1,
     });
@@ -521,10 +519,7 @@ function getBuildToolchain(target) {
  * @returns {Step}
  */
 function getBuildZigStep(platform, options) {
-  const { os, arch } = platform;
   const toolchain = getBuildToolchain(platform);
-  // Native Windows ARM64 builds don't need a cross-compilation toolchain
-  const toolchainArg = os === "windows" && arch === "aarch64" ? "" : ` --toolchain ${toolchain}`;
   return {
     key: `${getTargetKey(platform)}-build-zig`,
     retry: getRetry(),
@@ -532,7 +527,7 @@ function getBuildZigStep(platform, options) {
     agents: getZigAgent(platform, options),
     cancel_on_build_failing: isMergeQueue(),
     env: getBuildEnv(platform, options),
-    command: `${getBuildCommand(platform, options)} --target bun-zig${toolchainArg}`,
+    command: `${getBuildCommand(platform, options)} --target bun-zig --toolchain ${toolchain}`,
     timeout_in_minutes: 35,
   };
 }
@@ -717,7 +712,7 @@ function getTestBunStep(platform, options, testOptions = {}) {
     agents: getTestAgent(platform, options),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
-    parallelism: os === "darwin" || os === "windows" ? 2 : 20,
+    parallelism: os === "darwin" ? 2 : os === "windows" ? 8 : 20,
     timeout_in_minutes: profile === "asan" || os === "windows" ? 45 : 30,
     env: {
       ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",

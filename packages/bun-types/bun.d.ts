@@ -610,6 +610,129 @@ declare module "bun" {
    */
   function stripANSI(input: string): string;
 
+  /**
+   * Converts a string to camelCase.
+   *
+   * @param input The string to convert.
+   * @returns The camelCase version of the string.
+   * @example
+   * ```ts
+   * Bun.camelCase("foo bar") // "fooBar"
+   * Bun.camelCase("XMLParser") // "xmlParser"
+   * ```
+   */
+  function camelCase(input: string): string;
+  /**
+   * Converts a string to PascalCase.
+   *
+   * @param input The string to convert.
+   * @returns The PascalCase version of the string.
+   * @example
+   * ```ts
+   * Bun.pascalCase("foo bar") // "FooBar"
+   * ```
+   */
+  function pascalCase(input: string): string;
+  /**
+   * Converts a string to snake_case.
+   *
+   * @param input The string to convert.
+   * @returns The snake_case version of the string.
+   * @example
+   * ```ts
+   * Bun.snakeCase("fooBar") // "foo_bar"
+   * ```
+   */
+  function snakeCase(input: string): string;
+  /**
+   * Converts a string to kebab-case.
+   *
+   * @param input The string to convert.
+   * @returns The kebab-case version of the string.
+   * @example
+   * ```ts
+   * Bun.kebabCase("fooBar") // "foo-bar"
+   * ```
+   */
+  function kebabCase(input: string): string;
+  /**
+   * Converts a string to CONSTANT_CASE.
+   *
+   * @param input The string to convert.
+   * @returns The CONSTANT_CASE version of the string.
+   * @example
+   * ```ts
+   * Bun.constantCase("fooBar") // "FOO_BAR"
+   * ```
+   */
+  function constantCase(input: string): string;
+  /**
+   * Converts a string to dot.case.
+   *
+   * @param input The string to convert.
+   * @returns The dot.case version of the string.
+   * @example
+   * ```ts
+   * Bun.dotCase("fooBar") // "foo.bar"
+   * ```
+   */
+  function dotCase(input: string): string;
+  /**
+   * Converts a string to Capital Case.
+   *
+   * @param input The string to convert.
+   * @returns The Capital Case version of the string.
+   * @example
+   * ```ts
+   * Bun.capitalCase("fooBar") // "Foo Bar"
+   * ```
+   */
+  function capitalCase(input: string): string;
+  /**
+   * Converts a string to Train-Case.
+   *
+   * @param input The string to convert.
+   * @returns The Train-Case version of the string.
+   * @example
+   * ```ts
+   * Bun.trainCase("fooBar") // "Foo-Bar"
+   * ```
+   */
+  function trainCase(input: string): string;
+  /**
+   * Converts a string to path/case.
+   *
+   * @param input The string to convert.
+   * @returns The path/case version of the string.
+   * @example
+   * ```ts
+   * Bun.pathCase("fooBar") // "foo/bar"
+   * ```
+   */
+  function pathCase(input: string): string;
+  /**
+   * Converts a string to Sentence case.
+   *
+   * @param input The string to convert.
+   * @returns The Sentence case version of the string.
+   * @example
+   * ```ts
+   * Bun.sentenceCase("fooBar") // "Foo bar"
+   * ```
+   */
+  function sentenceCase(input: string): string;
+  /**
+   * Converts a string to no case (lowercased words separated by spaces).
+   *
+   * @param input The string to convert.
+   * @returns The no case version of the string.
+   * @example
+   * ```ts
+   * Bun.noCase("fooBar") // "foo bar"
+   * ```
+   */
+  function noCase(input: string): string;
+
   interface WrapAnsiOptions {
     /**
      * If `true`, break words in the middle if they don't fit on a line.

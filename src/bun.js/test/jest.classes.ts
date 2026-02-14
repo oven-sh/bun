@@ -455,6 +455,22 @@ export default [
         fn: "toContainAnyValues",
         length: 1,
       },
+      toContainEntry: {
+        fn: "toContainEntry",
+        length: 1,
+      },
+      toContainEntries: {
+        fn: "toContainEntries",
+        length: 1,
+      },
+      toContainAllEntries: {
+        fn: "toContainAllEntries",
+        length: 1,
+      },
+      toContainAnyEntries: {
+        fn: "toContainAnyEntries",
+        length: 1,
+      },
       toContainKeys: {
         fn: "toContainKeys",
         length: 1,

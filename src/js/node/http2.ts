@@ -2628,9 +2628,25 @@ class ServerHttp2Session extends Http2Session {
       if (state === 7) {
         markStreamClosed(stream);
         self.#connections--;
-        stream.destroy();
-        if (self.#connections === 0 && self.#closed) {
-          self.destroy();
+
+        const rState = stream._readableState;
+
+        // Safe to destroy immediately if:
+        // 1. Consumer already received 'end' event (endEmitted), OR
+        // 2. We never pushed EOF (stream wasn't readable, so ended is false)
+        if (rState?.endEmitted || !rState?.ended) {
+          stream.destroy();
+          if (self.#connections === 0 && self.#closed) {
+            self.destroy();
+          }
+        } else {
+          // Data still buffered - wait for consumer to read everything
+          stream.once("end", () => {
+            stream.destroy();
+            if (self.#connections === 0 && self.#closed) {
+              self.destroy();
+            }
+          });
         }
       } else if (state === 5) {
         // 5 = local closed aka write is closed
@@ -3111,9 +3127,25 @@ class ClientHttp2Session extends Http2Session {
       if (state === 7) {
         markStreamClosed(stream);
         self.#connections--;
-        stream.destroy();
-        if (self.#connections === 0 && self.#closed) {
-          self.destroy();
+
+        const rState = stream._readableState;
+
+        // Safe to destroy immediately if:
+        // 1. Consumer already received 'end' event (endEmitted), OR
+        // 2. We never pushed EOF (stream wasn't readable, so ended is false)
+        if (rState?.endEmitted || !rState?.ended) {
+          stream.destroy();
+          if (self.#connections === 0 && self.#closed) {
+            self.destroy();
+          }
+        } else {
+          // Data still buffered - wait for consumer to read everything
+          stream.once("end", () => {
+            stream.destroy();
+            if (self.#connections === 0 && self.#closed) {
+              self.destroy();
+            }
+          });
         }
       } else if (state === 5) {
         // 5 = local closed aka write is closed

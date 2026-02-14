@@ -473,19 +473,25 @@ extern "C" void bun_initialize_process()
             } while (devNullFd_ < 0 and errno == EINTR);
         };
 
+        if (devNullFd_ < 0) {
+            // open("/dev/null") failed (e.g., in macOS App Sandbox).
+            // Continue without redirecting; this is best-effort.
+            return;
+        }
+
         if (devNullFd_ == target_fd) {
             devNullFd_ = -1;
             return;
         }
 
-        ASSERT(devNullFd_ != -1);
         int err;
         do {
             err = dup2(devNullFd_, target_fd);
         } while (err < 0 && errno == EINTR);
 
-        if (err != 0) [[unlikely]] {
-            abort();
+        // dup2 returns the new fd on success (not 0), or -1 on error.
+        if (err < 0) [[unlikely]] {
+            bun_is_stdio_null[target_fd] = 0;
         }
     };
 
@@ -497,7 +503,6 @@ extern "C" void bun_initialize_process()
                 setDevNullFd(fd);
             }
         } else {
-            bun_stdio_tty[fd] = 1;
             int err = 0;
 
             do {
@@ -505,6 +510,11 @@ extern "C" void bun_initialize_process()
             } while (err == -1 && errno == EINTR);
 
             if (err == 0) [[likely]] {
+                // Only mark as TTY if we successfully captured termios state.
+                // In macOS App Sandbox, tcgetattr fails with EPERM even though
+                // isatty() returns true. We must not try to restore state we
+                // never captured.
+                bun_stdio_tty[fd] = 1;
                 anyTTYs = true;
             }
         }

@@ -136,7 +136,7 @@ it("bun add --only-missing should not install existing package", async () => {
     }),
   );
 
-  // First time: install succesfully.
+  // First time: install successfully.
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "add", "--only-missing", "bar"],
     cwd: package_dir,

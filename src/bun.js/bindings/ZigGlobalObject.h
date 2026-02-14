@@ -58,6 +58,7 @@ struct node_module;
 #include "headers-handwritten.h"
 #include "BunCommonStrings.h"
 #include "BunHttp2CommonStrings.h"
+#include "BunMarkdownTagStrings.h"
 #include "BunGlobalScope.h"
 #include <js_native_api.h>
 #include <node_api.h>
@@ -526,6 +527,7 @@ public:
     V(private, std::unique_ptr<WebCore::DOMConstructors>, m_constructors)                                    \
     V(private, Bun::CommonStrings, m_commonStrings)                                                          \
     V(private, Bun::Http2CommonStrings, m_http2CommonStrings)                                                \
+    V(private, Bun::MarkdownTagStrings, m_markdownTagStrings)                                                \
                                                                                                              \
     /* JSC's hashtable code-generator tries to access these properties, so we make them public. */           \
     /* However, we'd like it better if they could be protected. */                                           \
@@ -565,6 +567,7 @@ public:
     V(public, LazyClassStructure, m_JSHTTPParserClassStructure)                                              \
                                                                                                              \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_jsonlParseResultStructure)                           \
+    V(private, LazyPropertyOfGlobalObject<Structure>, m_pathParsedObjectStructure)                           \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_pendingVirtualModuleResultStructure)                 \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_performMicrotaskFunction)                           \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_nativeMicrotaskTrampoline)                          \
@@ -700,6 +703,7 @@ public:
     void reload();
 
     JSC::Structure* jsonlParseResultStructure() { return m_jsonlParseResultStructure.get(this); }
+    JSC::Structure* pathParsedObjectStructure() { return m_pathParsedObjectStructure.get(this); }
     JSC::Structure* pendingVirtualModuleResultStructure() { return m_pendingVirtualModuleResultStructure.get(this); }
 
     // We need to know if the napi module registered itself or we registered it.
@@ -716,6 +720,7 @@ public:
 
     Bun::CommonStrings& commonStrings() { return m_commonStrings; }
     Bun::Http2CommonStrings& http2CommonStrings() { return m_http2CommonStrings; }
+    Bun::MarkdownTagStrings& markdownTagStrings() { return m_markdownTagStrings; }
 #include "ZigGeneratedClasses+lazyStructureHeader.h"
 
     void finishCreation(JSC::VM&);

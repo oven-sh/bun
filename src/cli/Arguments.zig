@@ -220,6 +220,7 @@ pub const test_only_params = [_]ParamType{
     clap.parseParam("--timeout <NUMBER>               Set the per-test timeout in milliseconds, default is 5000.") catch unreachable,
     clap.parseParam("-u, --update-snapshots           Update snapshot files") catch unreachable,
     clap.parseParam("--rerun-each <NUMBER>            Re-run each test file <NUMBER> times, helps catch certain bugs") catch unreachable,
+    clap.parseParam("--retry <NUMBER>                 Default retry count for all tests, overridden by per-test { retry: N }") catch unreachable,
     clap.parseParam("--todo                           Include tests that are marked with \"test.todo()\"") catch unreachable,
     clap.parseParam("--only                           Run only tests that are marked with \"test.only()\" or \"describe.only()\"") catch unreachable,
     clap.parseParam("--pass-with-no-tests             Exit with code 0 when no tests are found") catch unreachable,
@@ -566,6 +567,18 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                     Global.exit(1);
                 };
             }
+        }
+        if (args.option("--retry")) |retry_count| {
+            if (retry_count.len > 0) {
+                ctx.test_options.retry = std.fmt.parseInt(u32, retry_count, 10) catch |e| {
+                    Output.prettyErrorln("<r><red>error<r>: --retry expects a number: {s}", .{@errorName(e)});
+                    Global.exit(1);
+                };
+            }
+        }
+        if (ctx.test_options.retry != 0 and ctx.test_options.repeat_count != 0) {
+            Output.prettyErrorln("<r><red>error<r>: --retry cannot be used with --rerun-each", .{});
+            Global.exit(1);
         }
         if (args.option("--test-name-pattern")) |namePattern| {
             ctx.test_options.test_filter_pattern = namePattern;

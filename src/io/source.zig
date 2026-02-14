@@ -222,7 +222,11 @@ pub const Source = union(enum) {
 
         switch (pipe.open(fd)) {
             .err => |err| {
-                bun.default_allocator.destroy(pipe);
+                // The pipe was already registered in the event loop's handle_queue
+                // by uv_pipe_init above. We must call uv_close to properly remove
+                // it from the queue before freeing the memory, otherwise the
+                // handle_queue linked list becomes corrupted (dangling pointers).
+                pipe.close(&onPipeOpenFailClose);
                 return .{
                     .err = err,
                 };
@@ -231,6 +235,10 @@ pub const Source = union(enum) {
         }
 
         return .{ .result = pipe };
+    }
+
+    fn onPipeOpenFailClose(pipe: *Pipe) callconv(.c) void {
+        bun.default_allocator.destroy(pipe);
     }
 
     pub const StdinTTY = struct {

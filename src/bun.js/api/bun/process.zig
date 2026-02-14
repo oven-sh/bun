@@ -1087,9 +1087,29 @@ pub const WindowsSpawnOptions = struct {
         dup2: struct { out: bun.jsc.Subprocess.StdioKind, to: bun.jsc.Subprocess.StdioKind },
 
         pub fn deinit(this: *const Stdio) void {
-            if (this.* == .buffer) {
-                bun.default_allocator.destroy(this.buffer);
+            switch (this.*) {
+                .buffer => |pipe| closePipeAndDestroy(pipe),
+                .ipc => |pipe| closePipeAndDestroy(pipe),
+                else => {},
             }
+        }
+
+        /// Properly close a libuv pipe handle before freeing its memory.
+        /// After uv_pipe_init, the pipe is registered in the event loop's
+        /// handle_queue. Freeing it without uv_close corrupts the queue's
+        /// linked list, causing segfaults on subsequent handle insertions.
+        pub fn closePipeAndDestroy(pipe_handle: *bun.windows.libuv.Pipe) void {
+            if (pipe_handle.loop != null) {
+                // Pipe was initialized with uv_pipe_init - must close properly.
+                pipe_handle.close(&onSpawnPipeCleanupClose);
+            } else {
+                // Pipe was allocated but never initialized - safe to free directly.
+                bun.default_allocator.destroy(pipe_handle);
+            }
+        }
+
+        fn onSpawnPipeCleanupClose(pipe_handle: *bun.windows.libuv.Pipe) callconv(.c) void {
+            bun.default_allocator.destroy(pipe_handle);
         }
     };
 
@@ -1631,7 +1651,7 @@ pub fn spawnProcessWindows(
             },
             .ipc => |my_pipe| {
                 // ipc option inside stdin, stderr or stdout are not supported
-                bun.default_allocator.destroy(my_pipe);
+                WindowsSpawnOptions.Stdio.closePipeAndDestroy(my_pipe);
                 stdio.flags = uv.UV_IGNORE;
             },
             .ignore => {

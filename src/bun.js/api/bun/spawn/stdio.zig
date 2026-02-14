@@ -196,6 +196,16 @@ pub const Stdio = union(enum) {
         };
     }
 
+    /// Allocate a zeroed Pipe so that `loop` is null before `uv_pipe_init`.
+    /// This allows `WindowsSpawnOptions.Stdio.deinit` to detect whether the
+    /// pipe was registered with the event loop and must be closed via
+    /// `uv_close` before the memory can be freed.
+    fn createZeroedPipe() *uv.Pipe {
+        const pipe = bun.default_allocator.create(uv.Pipe) catch |err| bun.handleOom(err);
+        pipe.* = std.mem.zeroes(uv.Pipe);
+        return pipe;
+    }
+
     fn toWindows(
         stdio: *@This(),
         i: i32,
@@ -235,10 +245,10 @@ pub const Stdio = union(enum) {
                         return .{ .err = .blob_used_as_out };
                     }
 
-                    break :brk .{ .buffer = bun.handleOom(bun.default_allocator.create(uv.Pipe)) };
+                    break :brk .{ .buffer = createZeroedPipe() };
                 },
-                .ipc => .{ .ipc = bun.handleOom(bun.default_allocator.create(uv.Pipe)) },
-                .capture, .pipe, .array_buffer, .readable_stream => .{ .buffer = bun.handleOom(bun.default_allocator.create(uv.Pipe)) },
+                .ipc => .{ .ipc = createZeroedPipe() },
+                .capture, .pipe, .array_buffer, .readable_stream => .{ .buffer = createZeroedPipe() },
                 .fd => |fd| .{ .pipe = fd },
                 .dup2 => .{ .dup2 = .{ .out = stdio.dup2.out, .to = stdio.dup2.to } },
                 .path => |pathlike| .{ .path = pathlike.slice() },

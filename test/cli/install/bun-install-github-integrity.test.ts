@@ -68,6 +68,7 @@ describe("GitHub tarball integrity", () => {
     });
 
     const [stdout1, stderr1, exitCode1] = await Promise.all([proc1.stdout.text(), proc1.stderr.text(), proc1.exited]);
+    expect(stderr1).not.toContain("error:");
     expect(exitCode1).toBe(0);
 
     // Read the generated lockfile and extract the integrity hash adjacent to
@@ -223,6 +224,7 @@ describe("GitHub tarball integrity", () => {
     });
 
     const [stdout1, stderr1, exitCode1] = await Promise.all([proc1.stdout.text(), proc1.stderr.text(), proc1.exited]);
+    expect(stderr1).not.toContain("error:");
     expect(exitCode1).toBe(0);
 
     // Remove node_modules but keep the cache

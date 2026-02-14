@@ -976,11 +976,20 @@ pub const FormData = struct {
     }
 
     pub const Field = struct {
-        value: bun.Semver.String = .{},
+        /// Offset into the input buffer for the value (binary-safe, no null-termination).
+        value_off: u32 = 0,
+        /// Length of the value (binary-safe, no null-termination).
+        value_len: u32 = 0,
         filename: bun.Semver.String = .{},
         content_type: bun.Semver.String = .{},
         is_file: bool = false,
         zero_count: u8 = 0,
+
+        /// Get the value slice from the buffer.
+        pub fn valueSlice(self: Field, buf: []const u8) []const u8 {
+            if (self.value_len == 0) return "";
+            return buf[self.value_off..][0..self.value_len];
+        }
 
         pub const Entry = union(enum) {
             field: Field,
@@ -1088,7 +1097,7 @@ pub const FormData = struct {
             form: *jsc.DOMFormData,
 
             pub fn onEntry(wrap: *@This(), name: bun.Semver.String, field: Field, buf: []const u8) void {
-                const value_str = field.value.slice(buf);
+                const value_str = field.valueSlice(buf);
                 var key = jsc.ZigString.initUTF8(name.slice(buf));
 
                 if (field.is_file) {
@@ -1278,7 +1287,9 @@ pub const FormData = struct {
             if (strings.endsWithComptime(body, "\r\n")) {
                 body = body[0 .. body.len - 2];
             }
-            field.value = subslicer.sub(body).value();
+            // Store offset and length directly to preserve binary data with null bytes
+            field.value_off = @truncate(@intFromPtr(body.ptr) - @intFromPtr(input.ptr));
+            field.value_len = @truncate(body.len);
             field.filename = filename orelse .{};
             field.is_file = is_file;
 

@@ -1967,15 +1967,21 @@ function formatNumber(fn, number, numericSeparator) {
     return fn(`${number}`, "number");
   }
   const integer = MathTrunc(number);
-  const string = String(integer);
+  // Handle -0 specially to preserve the negative sign
+  const string = ObjectIs(integer, -0) ? "-0" : String(integer);
   if (integer === number) {
-    if (!NumberIsFinite(number) || StringPrototypeIncludes(string, "e")) {
-      return fn(string, "number");
+    // Check the original number string for scientific notation, not the integer string
+    if (!NumberIsFinite(number) || StringPrototypeIncludes(String(number), "e")) {
+      return fn(`${number}`, "number");
     }
     return fn(`${addNumericSeparator(string)}`, "number");
   }
   if (NumberIsNaN(number)) {
     return fn(string, "number");
+  }
+  // Check the original number string for scientific notation before applying separators
+  if (StringPrototypeIncludes(String(number), "e")) {
+    return fn(`${number}`, "number");
   }
   return fn(
     `${addNumericSeparator(string)}.${addNumericSeparatorEnd(StringPrototypeSlice(String(number), string.length + 1))}`,

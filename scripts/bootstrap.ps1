@@ -412,6 +412,12 @@ function Install-Visual-Studio {
 
 function Install-PdbAddr2line {
   cargo install --examples "pdb-addr2line@0.11.2"
+  # Also copy to System32 so it's always on PATH (like bun.exe)
+  $src = Join-Path $env:CARGO_HOME "bin\pdb-addr2line.exe"
+  if (Test-Path $src) {
+    Copy-Item $src "C:\Windows\System32\pdb-addr2line.exe" -Force
+    Write-Output "pdb-addr2line copied to C:\Windows\System32"
+  }
 }
 
 function Install-Nssm {

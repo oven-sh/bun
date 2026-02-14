@@ -1165,9 +1165,10 @@ async function getPipelineOptions() {
     skipBuilds: parseOption(/\[(skip builds?|no builds?|only tests?)\]/i),
     forceBuilds: parseOption(/\[(force builds?)\]/i),
     skipTests: parseOption(/\[(skip tests?|no tests?|only builds?)\]/i),
-    buildImages: parseOption(/\[(build images?)\]/i),
+    buildImages: parseOption(/\[(build (?:(?:windows|linux) )?images?)\]/i),
     dryRun: parseOption(/\[(dry run)\]/i),
-    publishImages: parseOption(/\[(publish images?)\]/i),
+    publishImages: parseOption(/\[(publish (?:(?:windows|linux) )?images?)\]/i),
+    imageFilter: (commitMessage.match(/\[(?:build|publish) (windows|linux) images?\]/i) || [])[1]?.toLowerCase(),
     buildPlatforms: Array.from(buildPlatformsMap.values()),
     testPlatforms: Array.from(testPlatformsMap.values()),
   };
@@ -1192,11 +1193,12 @@ async function getPipeline(options = {}) {
     return;
   }
 
-  const { buildPlatforms = [], testPlatforms = [], buildImages, publishImages } = options;
+  const { buildPlatforms = [], testPlatforms = [], buildImages, publishImages, imageFilter } = options;
   const imagePlatforms = new Map(
     buildImages || publishImages
       ? [...buildPlatforms, ...testPlatforms]
           .filter(({ os }) => os !== "darwin")
+          .filter(({ os, distro }) => !imageFilter || os === imageFilter || distro === imageFilter)
           .map(platform => [getImageKey(platform), platform])
       : [],
   );

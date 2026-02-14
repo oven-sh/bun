@@ -3653,6 +3653,62 @@ pub fn toJSONWithBytes(this: *Blob, global: *JSGlobalObject, raw_bytes: []const 
     return ZigString.init(buf).toJSONObject(global);
 }
 
+// ===== JSONL Support =====
+
+pub fn getJSONL(
+    this: *Blob,
+    globalThis: *jsc.JSGlobalObject,
+    _: *jsc.CallFrame,
+) bun.JSError!jsc.JSValue {
+    return this.getJSONLShare(globalThis);
+}
+
+pub fn getJSONLShare(
+    this: *Blob,
+    globalObject: *jsc.JSGlobalObject,
+) bun.JSTerminated!jsc.JSValue {
+    const store = this.store;
+    if (store) |st| st.ref();
+    defer if (store) |st| st.deref();
+    return jsc.JSPromise.wrap(globalObject, lifetimeWrap(toJSONL, .share), .{ this, globalObject });
+}
+
+pub fn toJSONL(this: *Blob, global: *JSGlobalObject, comptime lifetime: Lifetime) bun.JSError!JSValue {
+    if (this.needsToReadFile()) {
+        return this.doReadFile(toJSONLWithBytes, global);
+    }
+    if (this.isS3()) {
+        return this.doReadFromS3(toJSONLWithBytes, global);
+    }
+    const view_ = this.sharedView();
+    return toJSONLWithBytes(this, global, view_, lifetime);
+}
+
+// Pure C++ JSONL parsing - all processing happens in C++ for efficiency
+extern fn Bun__parseJSONLFromBlob(
+    globalObject: *JSGlobalObject,
+    data: [*]const u8,
+    size: usize,
+) JSValue;
+
+pub fn toJSONLWithBytes(_: *Blob, global: *JSGlobalObject, raw_bytes: []const u8, comptime lifetime: Lifetime) bun.JSError!JSValue {
+    defer if (comptime lifetime == .temporary) bun.default_allocator.free(@constCast(raw_bytes));
+
+    if (raw_bytes.len == 0) {
+        return jsc.JSArray.createEmpty(global, 0);
+    }
+
+    // All processing (BOM handling, line scanning, JSON parsing) happens in C++
+    const result = Bun__parseJSONLFromBlob(global, raw_bytes.ptr, raw_bytes.len);
+
+    // C++ returns .zero on exception
+    if (result == .zero) {
+        return error.JSError;
+    }
+
+    return result;
+}
+
 pub fn toFormDataWithBytes(this: *Blob, global: *JSGlobalObject, buf: []u8, comptime _: Lifetime) JSValue {
     var encoder = this.getFormDataEncoding() orelse return {
         return ZigString.init("Invalid encoding").toErrorInstance(global);

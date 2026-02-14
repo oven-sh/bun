@@ -427,7 +427,7 @@ pub const S3 = struct {
             .store = store, // store is needed in case of not found error
             .resolvedlistOptions = options,
             .global = globalThis,
-        }), proxy);
+        }), proxy, aws_options.request_payer);
 
         return value;
     }

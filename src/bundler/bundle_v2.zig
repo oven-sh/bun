@@ -210,9 +210,11 @@ pub const BundleV2 = struct {
             client_transpiler.options.chunk_naming = bun.options.PathTemplate.chunk.data;
             client_transpiler.options.entry_naming = "./[name]-[hash].[ext]";
 
-            // Avoid setting a public path for --compile since all the assets
-            // will be served relative to the server root.
-            client_transpiler.options.public_path = "";
+            // Use "/" as the public path for --compile since all the browser
+            // assets are served from the server root. This ensures HTML chunks
+            // reference JS/CSS with absolute paths (e.g. "/chunk-xyz.js") so
+            // they resolve correctly regardless of the current URL path.
+            client_transpiler.options.public_path = "/";
         }
 
         client_transpiler.setLog(this_transpiler.log);

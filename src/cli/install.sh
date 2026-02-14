@@ -53,8 +53,14 @@ success() {
     echo -e "${Green}$@ ${Color_Off}"
 }
 
-command -v unzip >/dev/null ||
+unzip_cmd=
+if command -v unzip >/dev/null; then
+    unzip_cmd=unzip
+elif command -v busybox >/dev/null; then
+    unzip_cmd="busybox unzip"
+else
     error 'unzip is required to install bun'
+fi
 
 if [[ $# -gt 2 ]]; then
     error 'Too many arguments, only 2 are allowed. The first can be a specific tag of bun to install. (e.g. "bun-v0.1.4") The second can be a build variant of bun to install. (e.g. "debug-info")'
@@ -146,7 +152,7 @@ fi
 curl --fail --location --progress-bar --output "$exe.zip" "$bun_uri" ||
     error "Failed to download bun from \"$bun_uri\""
 
-unzip -oqd "$bin_dir" "$exe.zip" ||
+$unzip_cmd -oqd "$bin_dir" "$exe.zip" ||
     error 'Failed to extract bun'
 
 mv "$bin_dir/bun-$target/$exe_name" "$exe" ||

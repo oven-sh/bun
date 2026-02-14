@@ -87,6 +87,14 @@ pub fn forManifest(
     needs_extended: bool,
 ) ForManifestError!void {
     this.url_buf = blk: {
+        const is_gitlab_registry = registry_utils.isGitLabRegistry(scope.url.href);
+
+        if (is_gitlab_registry) {
+            // For GitLab registries, construct URL as: {registry}/{package_name}
+            // Don't URL-encode the package name for GitLab
+            const gitlab_url = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ strings.withoutTrailingSlash(scope.url.href), name });
+            break :blk gitlab_url;
+        }
 
         // Not all registries support scoped package names when fetching the manifest.
         // registry.npmjs.org supports both "@storybook%2Faddons" and "@storybook/addons"
@@ -342,3 +350,5 @@ const FileSystem = Fs.FileSystem;
 const HTTP = bun.http;
 const AsyncHTTP = HTTP.AsyncHTTP;
 const HeaderBuilder = HTTP.HeaderBuilder;
+
+const registry_utils = @import("./registry_utils.zig");

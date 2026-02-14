@@ -28,6 +28,7 @@
 #include "ActiveDOMObject.h"
 #include "EventTarget.h"
 #include "WorkerOptions.h"
+#include "MessagePort.h"
 #include <JavaScriptCore/RuntimeFlags.h>
 #include <wtf/Deque.h>
 #include <wtf/MonotonicTime.h>
@@ -120,6 +121,9 @@ private:
     std::atomic<uint8_t> m_terminationFlags { 0 };
     const ScriptExecutionContextIdentifier m_clientIdentifier;
     void* impl_ { nullptr };
+
+    // For Node workers: the parent-side MessagePort for communicating with the worker's parentPort
+    RefPtr<MessagePort> m_parentPort;
 };
 
 JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject);

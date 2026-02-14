@@ -755,6 +755,75 @@ JSC_DEFINE_HOST_FUNCTION(functionBunDeepMatch, (JSGlobalObject * globalObject, J
     return JSValue::encode(jsBoolean(match));
 }
 
+extern "C" size_t highway_index_of_first_difference(const uint8_t*, const uint8_t*, size_t);
+
+JSC_DECLARE_HOST_FUNCTION(functionBunIndexOfFirstDifference);
+JSC_DEFINE_HOST_FUNCTION(functionBunIndexOfFirstDifference, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    if (callFrame->argumentCount() < 2) {
+        throwTypeError(globalObject, throwScope, "indexOfFirstDifference requires 2 arguments"_s);
+        return {};
+    }
+
+    auto arg0 = callFrame->uncheckedArgument(0);
+    auto arg1 = callFrame->uncheckedArgument(1);
+
+    if (!arg0.isCell() || !isTypedArrayType(arg0.asCell()->type())) {
+        throwTypeError(globalObject, throwScope, "First argument must be a TypedArray"_s);
+        return {};
+    }
+
+    auto arrayType = arg0.asCell()->type();
+
+    if (!arg1.isCell()) {
+        throwTypeError(globalObject, throwScope, "Second argument must be a TypedArray"_s);
+        return {};
+    }
+
+    auto arrayType1 = arg1.asCell()->type();
+
+    if (!isTypedArrayType(arrayType1)) {
+        throwTypeError(globalObject, throwScope, "Second argument must be a TypedArray"_s);
+        return {};
+    }
+
+    // Must be same typed array type
+    if (arrayType != arrayType1) {
+        throwTypeError(globalObject, throwScope, "Both arguments must be the same TypedArray type"_s);
+        return {};
+    }
+
+    // Reject float arrays — NaN has multiple bit patterns and NaN !== NaN,
+    // so byte-level comparison would give wrong results
+    if (arrayType == JSC::Float32ArrayType || arrayType == JSC::Float64ArrayType || arrayType == JSC::Float16ArrayType) {
+        throwTypeError(globalObject, throwScope, "Float typed arrays are not supported"_s);
+        return {};
+    }
+
+    auto* viewA = jsCast<JSArrayBufferView*>(arg0.asCell());
+    auto* viewB = jsCast<JSArrayBufferView*>(arg1.asCell());
+
+    if (viewA->isDetached() || viewB->isDetached()) {
+        throwTypeError(globalObject, throwScope, "Cannot compare detached ArrayBuffers"_s);
+        return {};
+    }
+
+    auto spanA = viewA->span();
+    auto spanB = viewB->span();
+    size_t minByteLen = std::min(spanA.size(), spanB.size());
+
+    size_t firstDiffByte = highway_index_of_first_difference(spanA.data(), spanB.data(), minByteLen);
+
+    // Convert byte offset to element index
+    unsigned elemSize = JSC::elementSize(JSC::typedArrayType(arrayType));
+    size_t elementIndex = firstDiffByte / elemSize;
+
+    return JSValue::encode(jsNumber(static_cast<double>(elementIndex)));
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionBunNanoseconds, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     uint64_t time = Bun__readOriginTimer(bunVM(globalObject));
@@ -951,6 +1020,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     gunzipSync                                     BunObject_callback_gunzipSync                                       DontDelete|Function 1
     gzipSync                                       BunObject_callback_gzipSync                                         DontDelete|Function 1
     hash                                           BunObject_lazyPropCb_wrap_hash                                      DontDelete|PropertyCallback
+    indexOfFirstDifference                         functionBunIndexOfFirstDifference                                   DontDelete|Function 2
     indexOfLine                                    BunObject_callback_indexOfLine                                      DontDelete|Function 1
     inflateSync                                    BunObject_callback_inflateSync                                      DontDelete|Function 1
     inspect                                        BunObject_lazyPropCb_wrap_inspect                                   DontDelete|PropertyCallback

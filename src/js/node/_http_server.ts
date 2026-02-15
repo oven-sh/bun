@@ -1105,6 +1105,13 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   get [kInternalSocketData]() {
     return this[kHandle]?.response;
   }
+
+  // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/net.js#L785
+  destroySoon() {
+    if (this.writable) this.end();
+    if (this.writableFinished) this.destroy();
+    else this.once("finish", this.destroy);
+  }
 } as unknown as typeof import("node:net").Socket;
 
 function _writeHead(statusCode, reason, obj, response) {

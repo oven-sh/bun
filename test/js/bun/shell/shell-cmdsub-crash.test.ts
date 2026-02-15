@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir, isWindows } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
 // Regression test for use-after-poison in builtin OutputTask callbacks
 // inside command substitution $().

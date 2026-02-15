@@ -86,7 +86,7 @@
     _realloc;
     _posix_memalign;
     _aligned_alloc;
-    _malloc_usable_size;
+    _malloc_size;
     _napi_acquire_threadsafe_function;
     _napi_add_async_cleanup_hook;
     _napi_add_env_cleanup_hook;

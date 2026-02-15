@@ -28,6 +28,13 @@ pub const SliceIterator = struct {
         }
         return null;
     }
+
+    pub fn peek(iter: *const SliceIterator) ?[]const u8 {
+        if (iter.remain.len > 0) {
+            return iter.remain[0];
+        }
+        return null;
+    }
 };
 
 test "SliceIterator" {
@@ -74,6 +81,13 @@ pub const OsIterator = struct {
             return res;
         }
 
+        return null;
+    }
+
+    pub fn peek(iter: *const OsIterator) ?[:0]const u8 {
+        if (iter.remain.len > 0) {
+            return iter.remain[0];
+        }
         return null;
     }
 };

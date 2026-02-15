@@ -394,6 +394,21 @@ pub fn isFilteredDependencyOrWorkspace(
     // Filtering only applies to the root package dependencies. Also
     // --filter has a different meaning if a new package is being installed.
     if (manager.subcommand != .install or parent_pkg_id != 0) {
+        // Optional peer dependencies can get resolved against root dev
+        // dependencies during the `.resolvable` phase. In `--prod` mode
+        // (dev_dependencies disabled), these optional peers should not
+        // pull in packages that would otherwise only exist as dev deps.
+        if (parent_pkg_id != 0 and dep.behavior.isOptionalPeer() and
+            !manager.options.local_package_features.dev_dependencies)
+        {
+            const root_dep_list = pkgs.items(.dependencies)[0];
+            const root_deps = lockfile.buffers.dependencies.items[root_dep_list.begin()..root_dep_list.end()];
+            for (root_deps) |root_dep| {
+                if (root_dep.name_hash == dep.name_hash and root_dep.behavior.isDev()) {
+                    return true;
+                }
+            }
+        }
         return false;
     }
 

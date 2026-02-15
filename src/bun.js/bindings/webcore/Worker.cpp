@@ -126,10 +126,16 @@ extern "C" void* WebWorker__create(
     StringImpl** execArgvPtr,
     size_t execArgvLen,
     BunString* preloadModulesPtr,
-    size_t preloadModulesLen);
+    size_t preloadModulesLen,
+    bool captureStdout,
+    bool captureStderr,
+    bool captureStdin);
 extern "C" void WebWorker__setRef(
     void* worker,
     bool ref);
+extern "C" JSC::EncodedJSValue WebWorker__getStdoutStream(void* worker, JSC::JSGlobalObject* globalObject);
+extern "C" JSC::EncodedJSValue WebWorker__getStderrStream(void* worker, JSC::JSGlobalObject* globalObject);
+extern "C" int32_t WebWorker__getStdinWriteFd(void* worker);
 
 void Worker::setKeepAlive(bool keepAlive)
 {
@@ -206,7 +212,10 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
         execArgv.data(),
         execArgv.size(),
         preloadModules.begin(),
-        preloadModules.size());
+        preloadModules.size(),
+        worker->m_options.captureStdout,
+        worker->m_options.captureStderr,
+        worker->m_options.captureStdin);
     // now referenced by Zig
     worker->ref();
 
@@ -220,6 +229,27 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
     worker->m_workerCreationTime = MonotonicTime::now();
 
     return worker;
+}
+
+JSC::JSValue Worker::getStdoutStream(JSC::JSGlobalObject* globalObject) const
+{
+    if (m_terminationFlags & TerminatedFlag)
+        return JSC::jsUndefined();
+    return JSC::JSValue::decode(WebWorker__getStdoutStream(impl_, globalObject));
+}
+
+JSC::JSValue Worker::getStderrStream(JSC::JSGlobalObject* globalObject) const
+{
+    if (m_terminationFlags & TerminatedFlag)
+        return JSC::jsUndefined();
+    return JSC::JSValue::decode(WebWorker__getStderrStream(impl_, globalObject));
+}
+
+int32_t Worker::getStdinWriteFd() const
+{
+    if (m_terminationFlags & TerminatedFlag)
+        return -1;
+    return WebWorker__getStdinWriteFd(impl_);
 }
 
 Worker::~Worker()

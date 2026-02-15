@@ -1291,7 +1291,19 @@ pub fn initWorker(
 
     VMHolder.vm = try allocator.create(VirtualMachine);
     const console = try allocator.create(ConsoleObject);
-    console.init(Output.rawErrorWriter(), Output.rawWriter());
+
+    // Use pipe writers if stdio capture is enabled, otherwise use default writers
+    const stdout_writer: bun.sys.File = if (worker.getStdoutWritePipe()) |write_fd|
+        bun.sys.File.from(write_fd) // Write end of stdout pipe
+    else
+        Output.rawWriter();
+
+    const stderr_writer: bun.sys.File = if (worker.getStderrWritePipe()) |write_fd|
+        bun.sys.File.from(write_fd) // Write end of stderr pipe
+    else
+        Output.rawErrorWriter();
+
+    console.init(stderr_writer, stdout_writer);
     const transpiler = try Transpiler.init(
         allocator,
         log,

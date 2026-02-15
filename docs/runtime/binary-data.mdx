@@ -174,7 +174,7 @@ const arr = new Uint32Array(buf);
 
 A `Uint32` value requires four bytes (16 bits). Because the `ArrayBuffer` is 10 bytes long, there's no way to cleanly divide its contents into 4-byte chunks.
 
-To fix this, we can create a typed array over a particular "slice" of an `ArrayBuffer`. The `Uint16Array` below only "views" the _first_ 8 bytes of the underlying `ArrayBuffer`. To achieve these, we specify a `byteOffset` of `0` and a `length` of `2`, which indicates the number of `Uint32` numbers we want our array to hold.
+To fix this, we can create a typed array over a particular "slice" of an `ArrayBuffer`. The `Uint32Array` below only "views" the _first_ 8 bytes of the underlying `ArrayBuffer`. To achieve these, we specify a `byteOffset` of `0` and a `length` of `2`, which indicates the number of `Uint32` numbers we want our array to hold.
 
 ```ts
 // create typed array from ArrayBuffer slice

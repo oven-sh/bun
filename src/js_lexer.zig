@@ -1820,8 +1820,23 @@ fn NewLexer_(
 
         pub fn expectedString(self: *LexerType, text: string) !void {
             if (self.prev_token_was_await_keyword) {
-                var notes: [1]logger.Data = undefined;
-                if (!self.fn_or_arrow_start_loc.isEmpty()) {
+                // Use fn_or_arrow_start_loc as a signal:
+                // - If it equals await_keyword_loc, we're at module scope (sentinel value)
+                // - If it's not empty and different, we're in a function with a location for "async"
+                // - If it's empty, we're in a function without a clear location (e.g., arrow function)
+                const is_at_module_scope = self.fn_or_arrow_start_loc.start == self.await_keyword_loc.start;
+
+                if (is_at_module_scope) {
+                    // Top-level await - provide better error message
+                    try self.addRangeErrorWithNotes(
+                        self.range(),
+                        "Top-level await can only be used when output format is ESM",
+                        .{},
+                        &.{},
+                    );
+                } else if (!self.fn_or_arrow_start_loc.isEmpty()) {
+                    // Inside a non-async function with a clear location for adding "async"
+                    var notes: [1]logger.Data = undefined;
                     notes[0] = logger.rangeData(
                         &self.source,
                         rangeOfIdentifier(
@@ -1830,19 +1845,22 @@ fn NewLexer_(
                         ),
                         "Consider adding the \"async\" keyword here",
                     );
+
+                    try self.addRangeErrorWithNotes(
+                        self.range(),
+                        "\"await\" can only be used inside an \"async\" function",
+                        .{},
+                        &notes,
+                    );
+                } else {
+                    // Inside a function (e.g., arrow function) but no clear location for "async"
+                    try self.addRangeErrorWithNotes(
+                        self.range(),
+                        "\"await\" can only be used inside an \"async\" function",
+                        .{},
+                        &.{},
+                    );
                 }
-
-                const notes_ptr: []const logger.Data = notes[0..@as(
-                    usize,
-                    @intFromBool(!self.fn_or_arrow_start_loc.isEmpty()),
-                )];
-
-                try self.addRangeErrorWithNotes(
-                    self.range(),
-                    "\"await\" can only be used inside an \"async\" function",
-                    .{},
-                    notes_ptr,
-                );
                 return;
             }
             if (self.source.contents.len != self.start) {

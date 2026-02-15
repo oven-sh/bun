@@ -185,6 +185,11 @@ pub noinline fn next(this: *Rm) Yield {
 
                                     for (filepath_args) |filepath| {
                                         const path = filepath[0..bun.len(filepath)];
+                                        // Skip root check if combined path exceeds buffer size —
+                                        // a path that long can't be root, and the join would panic.
+                                        // The actual rm operation will return ENAMETOOLONG.
+                                        if (!ResolvePath.Platform.auto.isAbsolute(path) and cwd.len + path.len + 1 >= bun.MAX_PATH_BYTES)
+                                            continue;
                                         const resolved_path = if (ResolvePath.Platform.auto.isAbsolute(path)) path else bun.path.join(&[_][]const u8{ cwd, path }, .auto);
                                         const is_root = brk: {
                                             const normalized = bun.path.normalizeString(resolved_path, false, .auto);

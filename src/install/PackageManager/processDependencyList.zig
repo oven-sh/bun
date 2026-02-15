@@ -133,6 +133,12 @@ pub fn processExtractedTarballPackage(
                 break :package pkg;
             };
 
+            // Store the tarball integrity hash so the lockfile can pin the
+            // exact content downloaded from the remote (GitHub) server.
+            if (data.integrity.tag.isSupported()) {
+                package.meta.integrity = data.integrity;
+            }
+
             package = manager.lockfile.appendPackage(package) catch unreachable;
             package_id.* = package.meta.id;
 

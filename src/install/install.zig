@@ -209,6 +209,7 @@ pub const ExtractData = struct {
         path: string = "",
         buf: []u8 = "",
     } = null,
+    integrity: Integrity = .{},
 };
 
 pub const DependencyInstallContext = struct {
@@ -271,6 +272,7 @@ pub const VersionSlice = external.VersionSlice;
 
 pub const Dependency = @import("./dependency.zig");
 pub const Behavior = @import("./dependency.zig").Behavior;
+pub const Integrity = @import("./integrity.zig").Integrity;
 
 pub const Lockfile = @import("./lockfile.zig");
 pub const PatchedDep = Lockfile.PatchedDep;

@@ -56,6 +56,7 @@ pub const DeferredError = @import("./bindings/DeferredError.zig").DeferredError;
 pub const GetterSetter = @import("./bindings/GetterSetter.zig").GetterSetter;
 pub const JSArray = @import("./bindings/JSArray.zig").JSArray;
 pub const JSArrayIterator = @import("./bindings/JSArrayIterator.zig").JSArrayIterator;
+pub const ContiguousArrayView = @import("./bindings/ContiguousArrayView.zig").ContiguousArrayView;
 pub const JSCell = @import("./bindings/JSCell.zig").JSCell;
 pub const JSFunction = @import("./bindings/JSFunction.zig").JSFunction;
 pub const JSGlobalObject = @import("./bindings/JSGlobalObject.zig").JSGlobalObject;

@@ -683,6 +683,7 @@ function getBuildBunStep(platform, options) {
  * @typedef {Object} TestOptions
  * @property {string} [buildId]
  * @property {string[]} [testFiles]
+ * @property {string[]} [excludeFiles]
  * @property {boolean} [dryRun]
  */
 
@@ -694,7 +695,7 @@ function getBuildBunStep(platform, options) {
  */
 function getTestBunStep(platform, options, testOptions = {}) {
   const { os, profile } = platform;
-  const { buildId, testFiles } = testOptions;
+  const { buildId, testFiles, excludeFiles } = testOptions;
 
   const args = [`--step=${getTargetKey(platform)}-build-bun`];
   if (buildId) {
@@ -703,6 +704,10 @@ function getTestBunStep(platform, options, testOptions = {}) {
 
   if (testFiles) {
     args.push(...testFiles.map(testFile => `--include=${testFile}`));
+  }
+
+  if (excludeFiles) {
+    args.push(...excludeFiles.map(f => `--exclude=${f}`));
   }
 
   const depends = [];
@@ -719,6 +724,48 @@ function getTestBunStep(platform, options, testOptions = {}) {
     cancel_on_build_failing: isMergeQueue(),
     parallelism: os === "darwin" ? 2 : 20,
     timeout_in_minutes: profile === "asan" || os === "windows" ? 45 : 30,
+    env: {
+      ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
+    },
+    command:
+      os === "windows"
+        ? `node .\\scripts\\runner.node.mjs ${args.join(" ")}`
+        : `./scripts/runner.node.mjs ${args.join(" ")}`,
+  };
+}
+
+/**
+ * Returns a test step that runs only the PR-modified test files.
+ * No parallelism so it finishes fast and gives early feedback.
+ *
+ * @param {Platform} platform
+ * @param {PipelineOptions} options
+ * @param {{ buildId?: string, prTestFiles: string[] }} testOptions
+ * @returns {Step}
+ */
+function getPrTestStep(platform, options, testOptions) {
+  const { os } = platform;
+  const { buildId, prTestFiles } = testOptions;
+
+  const args = [`--step=${getTargetKey(platform)}-build-bun`];
+  if (buildId) {
+    args.push(`--build-id=${buildId}`);
+  }
+  args.push(...prTestFiles.map(f => `--include=${f}`));
+
+  const depends = [];
+  if (!buildId) {
+    depends.push(`${getTargetKey(platform)}-build-bun`);
+  }
+
+  return {
+    key: `${getPlatformKey(platform)}-test-pr`,
+    label: `:dart: ${getPlatformLabel(platform)} - PR tests`,
+    depends_on: depends,
+    agents: getTestAgent(platform, options),
+    retry: getRetry(),
+    cancel_on_build_failing: isMergeQueue(),
+    timeout_in_minutes: 10,
     env: {
       ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
     },
@@ -1275,14 +1322,31 @@ async function getPipeline(options = {}) {
   }
 
   if (!isMainBranch()) {
-    const { skipTests, forceTests, testFiles } = options;
+    const { skipTests, forceTests, testFiles, changedFiles = [] } = options;
     if (!skipTests || forceTests) {
+      // Detect test files added/modified in this PR for the fast-feedback step.
+      // Doesn't need to be exact — the runner filters against its own isTest().
+      const prTestFiles = changedFiles.filter(f => f.startsWith("test/")).map(f => f.slice("test/".length));
+
       steps.push(
-        ...testPlatforms.map(target => ({
-          key: getTargetKey(target),
-          group: getTargetLabel(target),
-          steps: [getTestBunStep(target, options, { testFiles, buildId })],
-        })),
+        ...testPlatforms.map(target => {
+          const groupSteps = [];
+
+          // Fast-feedback step: runs only PR-modified test files.
+          if (prTestFiles.length > 0) {
+            groupSteps.push(getPrTestStep(target, options, { buildId, prTestFiles }));
+          }
+
+          // Full suite excludes PR test files since they already ran above.
+          const excludeFiles = prTestFiles.length > 0 ? prTestFiles : undefined;
+          groupSteps.push(getTestBunStep(target, options, { testFiles, buildId, excludeFiles }));
+
+          return {
+            key: getTargetKey(target),
+            group: getTargetLabel(target),
+            steps: groupSteps,
+          };
+        }),
       );
     }
   }

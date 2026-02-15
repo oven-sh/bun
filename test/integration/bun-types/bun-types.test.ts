@@ -512,6 +512,84 @@ describe("@types/bun integration test", () => {
     });
   });
 
+  describe("core-js type compatibility", () => {
+    // See: https://github.com/oven-sh/bun/issues/26868
+    // Clones the core-js v4-types branch, builds @core-js/types, packs it
+    // into a tarball, and installs it as a real package — exactly as a user
+    // would. Clone is cached in /tmp so subsequent runs are fast.
+    const CORE_JS_CLONE_DIR = join(tmpdir(), "bun-types-test-core-js");
+    const CORE_JS_TYPES_PKG_DIR = join(CORE_JS_CLONE_DIR, "packages", "core-js-types");
+    const CORE_JS_SCRIPTS_DIR = join(CORE_JS_CLONE_DIR, "scripts", "build-entries-and-types");
+    let coreJsTarball: string;
+
+    beforeAll(async () => {
+      try {
+        if (await Bun.file(join(CORE_JS_CLONE_DIR, ".git", "HEAD")).exists()) {
+          await $`cd ${CORE_JS_CLONE_DIR} && git fetch origin v4-types && git reset --hard origin/v4-types`.quiet();
+        } else {
+          await $`git clone --depth 1 --branch v4-types --single-branch https://github.com/zloirock/core-js.git ${CORE_JS_CLONE_DIR}`.quiet();
+        }
+        // npm for root install (workspace resolution for @core-js/* packages).
+        // --ignore-scripts avoids the prepare hook which would fail.
+        await $`cd ${CORE_JS_CLONE_DIR} && npm install --ignore-scripts`.quiet();
+        // Install build script deps separately (just dedent, no workspace needed)
+        await $`cd ${CORE_JS_SCRIPTS_DIR} && npm install --ignore-scripts`.quiet();
+        // Run the build via zx directly, bypassing zxi.mjs (which runs npm
+        // install through bash and fails on Windows).
+        const zx = join(CORE_JS_CLONE_DIR, "node_modules", ".bin", "zx");
+        await $`cd ${CORE_JS_CLONE_DIR} && ${zx} ${CORE_JS_SCRIPTS_DIR}/build-types.mjs`.quiet();
+        await $`cd ${CORE_JS_TYPES_PKG_DIR} && bun pm pack --destination ${TEMP_DIR}`.quiet();
+        const pkg = await Bun.file(join(CORE_JS_TYPES_PKG_DIR, "package.json")).json();
+        coreJsTarball = join(TEMP_DIR, `core-js-types-${pkg.version}.tgz`);
+      } catch (e) {
+        if (e instanceof Bun.$.ShellError) {
+          console.log(e.stderr.toString());
+        }
+        throw e;
+      }
+    });
+
+    test("no conflicts with built @core-js/types", async () => {
+      const fixtureDir = await createIsolatedFixture();
+
+      // Install the built @core-js/types package just like a user would
+      await $`cd ${fixtureDir} && bun add ${coreJsTarball}`.quiet();
+
+      const { diagnostics, emptyInterfaces } = await diagnose(fixtureDir, {
+        options: {
+          // bun-types is designed to provide all type declarations without
+          // needing TypeScript's standard lib. Using lib: [] ensures we test
+          // bun-types' own signatures without TypeScript's lib.es2024 masking
+          // bugs via duplicate overloads.
+          lib: [],
+        },
+        files: {
+          "core-js-compat.ts": `
+            /// <reference types="@core-js/types/pure" />
+
+            // Verify usage works with both bun-types and core-js-types loaded
+            const buf = new ArrayBuffer(1024, { maxByteLength: 2048 });
+            buf.resize(2048);
+
+            const { promise, resolve, reject } = Promise.withResolvers<string>();
+            resolve("hello");
+          `,
+        },
+      });
+
+      // core-js declares some DOM interfaces (Element, Node, etc.) for
+      // iterable-dom-collections — these are empty without lib.dom.d.ts.
+      for (const name of expectedEmptyInterfacesWhenNoDOM) {
+        expect(emptyInterfaces).toContain(name);
+      }
+
+      const relevantDiagnostics = diagnostics.filter(
+        d => d.line === null || d.line.startsWith("core-js-compat.ts") || d.line?.includes("@core-js/types"),
+      );
+      expect(relevantDiagnostics).toEqual([]);
+    });
+  });
+
   describe("lib configuration", () => {
     typeTest("checks with no lib at all", {
       options: {

@@ -180,6 +180,15 @@ pub const Integrity = extern struct {
         }
     }
 
+    /// Compute an integrity hash from bytes using SHA-512 (the standard for npm packages).
+    pub fn compute(bytes: []const u8) Integrity {
+        var integrity = Integrity{ .tag = Tag.sha512 };
+        const len = std.crypto.hash.sha2.Sha512.digest_length;
+        const ptr: *[len]u8 = integrity.value[0..len];
+        Crypto.SHA512.hash(bytes, ptr);
+        return integrity;
+    }
+
     pub fn verify(this: *const Integrity, bytes: []const u8) bool {
         return @call(bun.callmod_inline, verifyByTag, .{ this.tag, bytes, &this.value });
     }

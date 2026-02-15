@@ -11,6 +11,13 @@ url: strings.StringOrTinyString,
 package_manager: *PackageManager,
 
 pub inline fn run(this: *const ExtractTarball, log: *logger.Log, bytes: []const u8) !Install.ExtractData {
+    // Compute integrity for tarballs that don't have one (remote/local tarballs).
+    // For npm packages, the integrity is provided by the registry.
+    const computed_integrity: Integrity = if (!this.integrity.tag.isSupported())
+        Integrity.compute(bytes)
+    else
+        this.integrity;
+
     if (!this.skip_verify and this.integrity.tag.isSupported()) {
         if (!this.integrity.verify(bytes)) {
             log.addErrorFmt(
@@ -23,7 +30,9 @@ pub inline fn run(this: *const ExtractTarball, log: *logger.Log, bytes: []const 
             return error.IntegrityCheckFailed;
         }
     }
-    return this.extract(log, bytes);
+    var result = try this.extract(log, bytes);
+    result.computed_integrity = computed_integrity;
+    return result;
 }
 
 pub fn buildURL(

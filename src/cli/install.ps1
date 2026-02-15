@@ -260,7 +260,7 @@ function Install-Bun {
   $C_RESET = [char]27 + "[0m"
   $C_GREEN = [char]27 + "[1;32m"
 
-  Write-Output "${C_GREEN}Bun ${DisplayVersion} was installed successfully!${C_RESET}"
+  Write-Output "${C_GREEN}Bun v${DisplayVersion} was installed successfully!${C_RESET}"
   Write-Output "The binary is located at ${BunBin}\bun.exe`n"
 
   $hasExistingOther = $false;

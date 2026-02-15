@@ -15,7 +15,7 @@ BUN_1.2 {
 	aligned_alloc;
 	malloc_usable_size;
 
-	uv_accept;
+  uv_accept;
   uv_async_init;
   uv_async_send;
   uv_available_parallelism;

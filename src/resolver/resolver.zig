@@ -1016,7 +1016,10 @@ pub const Resolver = struct {
                     const symlink_path = query.entry.symlink(&r.fs.fs, r.store_fd);
                     if (symlink_path.len > 0) {
                         path.setRealpath(symlink_path);
-                        if (!result.file_fd.isValid()) result.file_fd = query.entry.cache.fd;
+                        // Non-owning resolvers must not borrow cached FDs (see store_fd).
+                        if (!result.file_fd.isValid() and r.store_fd) {
+                            result.file_fd = query.entry.cache.fd;
+                        }
 
                         if (r.debug_logs) |*debug| {
                             debug.addNoteFmt("Resolved symlink \"{s}\" to \"{s}\"", .{ path.text, symlink_path });
@@ -1053,7 +1056,10 @@ pub const Resolver = struct {
                             debug.addNoteFmt("Resolved symlink \"{s}\" to \"{s}\"", .{ symlink, path.text });
                         }
                         query.entry.cache.symlink = PathString.init(symlink);
-                        if (!result.file_fd.isValid() and store_fd) result.file_fd = query.entry.cache.fd;
+                        // Non-owning resolvers must not borrow cached FDs (see store_fd).
+                        if (!result.file_fd.isValid() and store_fd) {
+                            result.file_fd = query.entry.cache.fd;
+                        }
 
                         path.setRealpath(symlink);
                     }
@@ -2493,7 +2499,7 @@ pub const Resolver = struct {
                         .primary = Path.initWithNamespace(absolute_out_path, "file"),
                     },
                     .dirname_fd = entries.fd,
-                    .file_fd = entry_query.entry.cache.fd,
+                    .file_fd = if (r.store_fd) entry_query.entry.cache.fd else bun.invalid_fd,
                     .dir_info = resolved_dir_info,
                     .diff_case = entry_query.diff_case,
                     .is_node_module = true,
@@ -3843,7 +3849,7 @@ pub const Resolver = struct {
                     .path = abs_path,
                     .diff_case = query.diff_case,
                     .dirname_fd = entries.fd,
-                    .file_fd = query.entry.cache.fd,
+                    .file_fd = if (r.store_fd) query.entry.cache.fd else bun.invalid_fd,
                 };
             }
         }
@@ -3918,7 +3924,7 @@ pub const Resolver = struct {
                                 },
                                 .diff_case = query.diff_case,
                                 .dirname_fd = entries.fd,
-                                .file_fd = query.entry.cache.fd,
+                                .file_fd = if (r.store_fd) query.entry.cache.fd else bun.invalid_fd,
                             };
                         }
                     }
@@ -3971,7 +3977,7 @@ pub const Resolver = struct {
                     },
                     .diff_case = query.diff_case,
                     .dirname_fd = entries.fd,
-                    .file_fd = query.entry.cache.fd,
+                    .file_fd = if (r.store_fd) query.entry.cache.fd else bun.invalid_fd,
                 };
             }
         }

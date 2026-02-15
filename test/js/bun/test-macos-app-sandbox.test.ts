@@ -84,11 +84,7 @@ describe.skipIf(!isMacOS)("macOS App Sandbox", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stdout.trim()).toBe("hello sandbox");
     expect(exitCode).toBe(0);
@@ -106,11 +102,7 @@ describe.skipIf(!isMacOS)("macOS App Sandbox", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stdout.trim()).toContain("Library/Containers/dev.bun.test.bun_sandboxed");
     expect(exitCode).toBe(0);

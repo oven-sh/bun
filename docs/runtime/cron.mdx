@@ -1,0 +1,311 @@
+---
+title: Cron
+description: Schedule and parse cron jobs with Bun
+---
+
+Bun has built-in support for registering OS-level cron jobs and parsing cron expressions.
+
+## Quickstart
+
+**Parse a cron expression to find the next matching time:**
+
+```ts
+// Next weekday at 9:30 AM UTC
+const next = Bun.cron.parse("30 9 * * MON-FRI");
+console.log(next); // => 2025-01-20T09:30:00.000Z
+```
+
+**Register a cron job that runs a script on a schedule:**
+
+```ts
+await Bun.cron("./worker.ts", "30 2 * * MON", "weekly-report");
+```
+
+---
+
+## `Bun.cron.parse()`
+
+Parse a cron expression and return the next matching UTC `Date`.
+
+```ts
+const next = Bun.cron.parse("*/15 * * * *");
+console.log(next); // => next quarter-hour boundary
+```
+
+### Parameters
+
+| Parameter      | Type             | Description                                              |
+| -------------- | ---------------- | -------------------------------------------------------- |
+| `expression`   | `string`         | A 5-field cron expression or predefined nickname         |
+| `relativeDate` | `Date \| number` | Starting point for the search (defaults to `Date.now()`) |
+
+### Returns
+
+`Date | null` — the next matching UTC time, or `null` if no match exists within ~4 years (e.g. February 30th).
+
+### Chaining calls
+
+Call `parse()` repeatedly to get a sequence of upcoming times:
+
+```ts
+const from = Date.UTC(2025, 0, 15, 10, 0, 0);
+
+const first = Bun.cron.parse("0 * * * *", from);
+console.log(first); // => 2025-01-15T11:00:00.000Z
+
+const second = Bun.cron.parse("0 * * * *", first);
+console.log(second); // => 2025-01-15T12:00:00.000Z
+```
+
+---
+
+## Cron expression syntax
+
+Standard 5-field format: `minute hour day-of-month month day-of-week`
+
+| Field        | Values                  | Special characters |
+| ------------ | ----------------------- | ------------------ |
+| Minute       | `0`–`59`                | `*` `,` `-` `/`    |
+| Hour         | `0`–`23`                | `*` `,` `-` `/`    |
+| Day of month | `1`–`31`                | `*` `,` `-` `/`    |
+| Month        | `1`–`12` or `JAN`–`DEC` | `*` `,` `-` `/`    |
+| Day of week  | `0`–`7` or `SUN`–`SAT`  | `*` `,` `-` `/`    |
+
+### Special characters
+
+| Character | Description | Example                               |
+| --------- | ----------- | ------------------------------------- |
+| `*`       | All values  | `* * * * *` — every minute            |
+| `,`       | List        | `1,15 * * * *` — minute 1 and 15      |
+| `-`       | Range       | `9-17 * * * *` — minutes 9 through 17 |
+| `/`       | Step        | `*/15 * * * *` — every 15 minutes     |
+
+### Named values
+
+Month and weekday fields accept case-insensitive names:
+
+```ts
+// 3-letter abbreviations
+Bun.cron.parse("0 9 * * MON-FRI"); // weekdays
+Bun.cron.parse("0 0 1 JAN,JUN *"); // January and June
+
+// Full names
+Bun.cron.parse("0 9 * * Monday-Friday");
+Bun.cron.parse("0 0 1 January *");
+```
+
+Both `0` and `7` mean Sunday in the weekday field.
+
+### Predefined nicknames
+
+| Nickname                | Equivalent  | Description               |
+| ----------------------- | ----------- | ------------------------- |
+| `@yearly` / `@annually` | `0 0 1 1 *` | Once a year (January 1st) |
+| `@monthly`              | `0 0 1 * *` | Once a month (1st day)    |
+| `@weekly`               | `0 0 * * 0` | Once a week (Sunday)      |
+| `@daily` / `@midnight`  | `0 0 * * *` | Once a day (midnight)     |
+| `@hourly`               | `0 * * * *` | Once an hour              |
+
+```ts
+const next = Bun.cron.parse("@daily");
+console.log(next); // => next midnight UTC
+```
+
+### Day-of-month and day-of-week interaction
+
+When **both** day-of-month and day-of-week are specified (neither is `*`), the expression matches when **either** condition is true. This follows the [POSIX cron](https://pubs.opengroup.org/onlinepubs/9699919799/utilities/crontab.html) standard.
+
+```ts
+// Fires on the 15th of every month OR every Friday
+Bun.cron.parse("0 0 15 * FRI");
+```
+
+When only one is specified (the other is `*`), only that field is used for matching.
+
+---
+
+## `Bun.cron()`
+
+Register an OS-level cron job that runs a JavaScript/TypeScript module on a schedule.
+
+```ts
+await Bun.cron("./worker.ts", "30 2 * * MON", "weekly-report");
+```
+
+### Parameters
+
+| Parameter  | Type     | Description                                                |
+| ---------- | -------- | ---------------------------------------------------------- |
+| `path`     | `string` | Path to the script (resolved relative to caller)           |
+| `schedule` | `string` | Cron expression or nickname                                |
+| `title`    | `string` | Unique job identifier (alphanumeric, hyphens, underscores) |
+
+Re-registering with the same `title` overwrites the existing job in-place — the old schedule is replaced, not duplicated.
+
+```ts
+await Bun.cron("./worker.ts", "0 * * * *", "my-job"); // every hour
+await Bun.cron("./worker.ts", "*/15 * * * *", "my-job"); // replaces: every 15 min
+```
+
+### The `scheduled()` handler
+
+The registered script must export a default object with a `scheduled()` method, following the [Cloudflare Workers Cron Triggers API](https://developers.cloudflare.com/workers/runtime-apis/handlers/scheduled/):
+
+```ts worker.ts
+export default {
+  scheduled(controller) {
+    console.log(controller.cron); // "30 2 * * 1"
+    console.log(controller.type); // "scheduled"
+    console.log(controller.scheduledTime); // 1737340200000
+  },
+};
+```
+
+The handler can be `async`. Bun waits for the returned promise to settle before exiting.
+
+---
+
+## How it works per platform
+
+### Linux
+
+Bun uses [crontab](https://man7.org/linux/man-pages/man5/crontab.5.html) to register jobs. Each job is stored as a line in your user's crontab with a `# bun-cron: <title>` marker comment above it.
+
+The crontab entry looks like:
+
+```
+<schedule> '<bun-path>' run --cron-title=<title> --cron-period='<schedule>' '<script-path>'
+```
+
+When the cron daemon fires the job, Bun imports your module and calls the `scheduled()` handler.
+
+**Viewing registered jobs:**
+
+```sh
+crontab -l
+```
+
+**Logs:** On Linux, cron output goes to the system log. Check with:
+
+```sh
+# systemd-based (Ubuntu, Fedora, Arch, etc.)
+journalctl -u cron       # or crond on some distros
+journalctl -u cron --since "1 hour ago"
+
+# syslog-based (older systems)
+grep CRON /var/log/syslog
+```
+
+To capture stdout/stderr to a file, redirect output in the crontab entry directly, or add logging inside your `scheduled()` handler.
+
+**Manually uninstalling without code:**
+
+```sh
+# Edit your crontab and remove the "# bun-cron: <title>" comment
+# and the command line below it
+crontab -e
+
+# Or remove ALL bun cron jobs at once by filtering them out:
+crontab -l | grep -v "# bun-cron:" | grep -v "\-\-cron-title=" | crontab -
+```
+
+### macOS
+
+Bun uses [launchd](https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/CreatingLaunchdJobs.html) to register jobs. Each job is installed as a plist file at:
+
+```
+~/Library/LaunchAgents/bun.cron.<title>.plist
+```
+
+The plist uses `StartCalendarInterval` to define the schedule. Only simple expressions (single values and `*`) are supported on macOS — complex patterns with ranges, lists, or steps will be rejected.
+
+**Viewing registered jobs:**
+
+```sh
+launchctl list | grep sh.bun.cron
+```
+
+**Logs:** stdout and stderr are written to:
+
+```
+/tmp/bun.cron.<title>.stdout.log
+/tmp/bun.cron.<title>.stderr.log
+```
+
+For example, a job titled `weekly-report`:
+
+```sh
+cat /tmp/bun.cron.weekly-report.stdout.log
+tail -f /tmp/bun.cron.weekly-report.stderr.log
+```
+
+**Manually uninstalling without code:**
+
+```sh
+# Unload the job from launchd
+launchctl bootout gui/$(id -u)/bun.cron.<title>
+
+# Delete the plist file
+rm ~/Library/LaunchAgents/bun.cron.<title>.plist
+
+# Example for a job titled "weekly-report":
+launchctl bootout gui/$(id -u)/bun.cron.weekly-report
+rm ~/Library/LaunchAgents/bun.cron.weekly-report.plist
+```
+
+### Windows
+
+Bun uses [Task Scheduler](https://learn.microsoft.com/en-us/windows/win32/taskschd/task-scheduler-start-page) via `schtasks`. Each job is registered as a scheduled task named `bun-cron-<title>`.
+
+Only simple schedule patterns are supported — `*/N` (every N minutes), `N * * * *` (hourly), `N N * * *` (daily), and `N N * * N` (weekly).
+
+**Viewing registered jobs:**
+
+```powershell
+schtasks /query /tn "bun-cron-<title>"
+
+# List all bun cron tasks
+schtasks /query | findstr "bun-cron-"
+```
+
+**Logs:** Task Scheduler logs events to the Windows Event Log. View them with:
+
+```powershell
+# In PowerShell
+Get-WinEvent -LogName Microsoft-Windows-TaskScheduler/Operational | Where-Object { $_.Message -like "*bun-cron*" }
+```
+
+Or open **Event Viewer** → **Applications and Services Logs** → **Microsoft** → **Windows** → **TaskScheduler** → **Operational**.
+
+To capture stdout/stderr to a file, add logging inside your `scheduled()` handler.
+
+**Manually uninstalling without code:**
+
+```powershell
+schtasks /delete /tn "bun-cron-<title>" /f
+
+# Example:
+schtasks /delete /tn "bun-cron-weekly-report" /f
+```
+
+Or open **Task Scheduler** (taskschd.msc), find the task named `bun-cron-<title>`, right-click, and delete it.
+
+---
+
+## `Bun.cron.remove()`
+
+Remove a previously registered cron job by its title. Works on all platforms.
+
+```ts
+await Bun.cron.remove("weekly-report");
+```
+
+This reverses what `Bun.cron()` did:
+
+| Platform | What `remove()` does                                     |
+| -------- | -------------------------------------------------------- |
+| Linux    | Edits crontab to remove the entry and its marker comment |
+| macOS    | Runs `launchctl bootout` and deletes the plist file      |
+| Windows  | Runs `schtasks /delete` to remove the scheduled task     |
+
+Removing a job that doesn't exist resolves without error.

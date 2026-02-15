@@ -45,6 +45,12 @@ const kOwnerSymbol = Symbol("owner symbol");
 const async_id_symbol = Symbol("async_id_symbol");
 
 const { throwNotImplemented } = require("internal/shared");
+
+// Lazy load cluster to avoid circular dependency
+let _cluster = null;
+function lazyLoadCluster() {
+  return (_cluster ??= require("node:cluster"));
+}
 const {
   validateString,
   validateNumber,
@@ -275,12 +281,15 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
   }
 
   let address;
+  let exclusive;
 
   if (port !== null && typeof port === "object") {
     address = port.address || "";
+    exclusive = !!port.exclusive;
     port = port.port;
   } else {
     address = typeof address_ === "function" ? "" : address_;
+    exclusive = false;
   }
 
   // Defaulting address for bind to all interfaces
@@ -299,6 +308,34 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
       return;
     }
 
+    // In Node.js, cluster workers share UDP sockets with the primary process through
+    // file descriptor passing. Bun's cluster doesn't support file descriptor passing yet,
+    // so UDP socket sharing in cluster mode is not supported.
+    // If not exclusive, the socket would need to be shared via cluster._getServer().
+    const cluster = lazyLoadCluster();
+    if (cluster.isWorker && !exclusive) {
+      if (state.reusePort) {
+        // With reusePort, Node.js sets exclusive=true automatically
+        exclusive = true;
+      } else {
+        state.bindState = BIND_STATE_UNBOUND;
+        this.emit(
+          "error",
+          Object.assign(
+            new Error(
+              "UDP socket sharing in cluster mode is not yet supported in Bun. " +
+                "Use { exclusive: true } option in bind() or { reusePort: true } in createSocket() " +
+                "to create independent sockets per worker.",
+            ),
+            {
+              code: "ERR_SOCKET_DGRAM_NOT_RUNNING",
+            },
+          ),
+        );
+        return;
+      }
+    }
+
     let flags = uSockets.LISTEN_DISALLOW_REUSE_PORT_FAILURE;
 
     if (state.reuseAddr) {
@@ -313,7 +350,6 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
       flags |= uSockets.LISTEN_REUSE_PORT;
     }
 
-    // TODO flags
     const family = this.type === "udp4" ? "IPv4" : "IPv6";
     try {
       Bun.udpSocket({

@@ -306,7 +306,7 @@ Internally, this calls [`sqlite3_reset`](https://www.sqlite.org/capi3ref.html#sq
 Use `.run()` to run a query and get back an object with execution metadata. This is useful for schema-modifying queries (e.g. `CREATE TABLE`) or bulk write operations.
 
 ```ts db.ts icon="/icons/typescript.svg" highlight={2}
-const query = db.query(`create table foo;`);
+const query = db.query(`create table foo (bar);`);
 query.run();
 ```
 

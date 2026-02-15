@@ -72,6 +72,9 @@ pub const InputFile = struct {
     secondary_path: []const u8 = "",
     loader: options.Loader = options.Loader.file,
     side_effects: _resolver.SideEffects,
+    /// The module type as determined by the resolver (file extension and package.json "type" field),
+    /// NOT by syntax detection. Used to determine Node.js ESM semantics for __toESM calls.
+    module_type: options.ModuleType = .unknown,
     allocator: std.mem.Allocator = bun.default_allocator,
     additional_files: BabyList(AdditionalFile) = .{},
     unique_key_for_additional_file: string = "",

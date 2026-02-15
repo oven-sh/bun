@@ -3925,6 +3925,8 @@ pub const BundleV2 = struct {
 
                 // Record which loader we used for this file
                 graph.input_files.items(.loader)[result.source.index.get()] = result.loader;
+                // Record the resolver-determined module type (from file extension / package.json "type")
+                graph.input_files.items(.module_type)[result.source.index.get()] = result.module_type;
 
                 debug("onParse({d}, {s}) = {d} imports, {d} exports", .{
                     result.source.index.get(),

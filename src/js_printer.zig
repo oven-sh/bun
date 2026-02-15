@@ -1771,7 +1771,10 @@ fn NewPrinter(
                 }
 
                 if (wrap_with_to_esm) {
-                    if (p.options.input_module_type == .esm) {
+                    // Only use Node ESM semantics (ignore __esModule) when targeting Node.js
+                    // AND the importing file is in Node ESM mode (.mjs/.mts or "type": "module").
+                    // For browser/bun targets, always respect __esModule markers.
+                    if (p.options.target == .node and p.options.input_module_type == .esm) {
                         p.print(",");
                         p.printSpace();
                         p.print("1");
@@ -1872,7 +1875,10 @@ fn NewPrinter(
                 p.print(".then((m)=>");
                 p.printSymbol(p.options.to_esm_ref);
                 p.print("(m.default");
-                if (p.options.input_module_type == .esm) {
+                // Only use Node ESM semantics (ignore __esModule) when targeting Node.js
+                // AND the importing file is in Node ESM mode (.mjs/.mts or "type": "module").
+                // For browser/bun targets, always respect __esModule markers.
+                if (p.options.target == .node and p.options.input_module_type == .esm) {
                     p.print(",1");
                 }
                 p.print("))");

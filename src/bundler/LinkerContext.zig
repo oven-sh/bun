@@ -1331,7 +1331,7 @@ pub const LinkerContext = struct {
 
             .minify_whitespace = c.options.minify_whitespace,
             .minify_syntax = c.options.minify_syntax,
-            .input_module_type = ast.exports_kind.toModuleType(),
+            .input_module_type = c.parse_graph.input_files.items(.module_type)[source_index.get()],
             .module_type = c.options.output_format,
             .print_dce_annotations = c.options.emit_dce_annotations,
             .has_run_symbol_renamer = true,

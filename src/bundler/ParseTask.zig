@@ -84,6 +84,9 @@ pub const Result = struct {
         content_hash_for_additional_file: u64 = 0,
 
         loader: Loader,
+
+        /// The module type as determined by the resolver (file extension and package.json "type" field).
+        module_type: options.ModuleType = .unknown,
     };
 
     pub const Error = struct {
@@ -1294,6 +1297,7 @@ fn runWithSourceCode(
         .unique_key_for_additional_file = unique_key_for_additional_file.key,
         .side_effects = task.side_effects,
         .loader = loader,
+        .module_type = task.module_type,
 
         // Hash the files in here so that we do it in parallel.
         .content_hash_for_additional_file = if (loader.shouldCopyForBundling())

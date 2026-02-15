@@ -403,6 +403,10 @@ pub const Command = struct {
             name: []const u8 = "",
             dir: []const u8 = "",
         } = .{},
+        /// Disable SIGUSR1 handler for runtime debugger activation
+        disable_sigusr1: bool = false,
+        /// Pre-configure inspector port for runtime activation (SIGUSR1/process._debugProcess)
+        inspect_port: ?[]const u8 = null,
     };
 
     var global_cli_ctx: Context = undefined;

@@ -290,6 +290,10 @@ pub fn runImminentGCTimer(this: *EventLoop) void {
 pub fn tickConcurrentWithCount(this: *EventLoop) usize {
     this.updateCounts();
 
+    if (this.virtual_machine.is_main_thread) {
+        RuntimeInspector.checkAndActivateInspector();
+    }
+
     if (comptime Environment.isPosix) {
         if (this.signal_handler) |signal_handler| {
             signal_handler.drain(this);
@@ -691,6 +695,7 @@ pub const DeferredTaskQueue = @import("./event_loop/DeferredTaskQueue.zig");
 pub const DeferredRepeatingTask = DeferredTaskQueue.DeferredRepeatingTask;
 pub const PosixSignalHandle = @import("./event_loop/PosixSignalHandle.zig");
 pub const PosixSignalTask = PosixSignalHandle.PosixSignalTask;
+pub const RuntimeInspector = @import("./event_loop/RuntimeInspector.zig");
 pub const MiniEventLoop = @import("./event_loop/MiniEventLoop.zig");
 pub const MiniVM = MiniEventLoop.MiniVM;
 pub const JsVM = MiniEventLoop.JsVM;

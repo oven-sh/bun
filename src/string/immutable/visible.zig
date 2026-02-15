@@ -1174,6 +1174,25 @@ export fn Bun__codepointWidth(cp: u32, ambiguous_as_wide: bool) u8 {
     return @intCast(visibleCodepointWidth(cp, ambiguous_as_wide));
 }
 
+/// Grapheme break detection for C++ callers.
+/// Returns true if there should be a grapheme break between cp1 and cp2.
+/// `state` is an opaque u8 that must be initialized to 0 and passed between calls.
+export fn Bun__graphemeBreak(cp1: u32, cp2: u32, state_ptr: *u8) bool {
+    var state: grapheme.BreakState = @enumFromInt(state_ptr.*);
+    const result = grapheme.graphemeBreak(@truncate(cp1), @truncate(cp2), &state);
+    state_ptr.* = @intFromEnum(state);
+    return result;
+}
+
+/// Check if a codepoint has the Emoji property (using ICU).
+export fn Bun__isEmojiPresentation(cp: u32) bool {
+    if (cp < 0x203C) return false;
+    if (cp >= 0x2C00 and cp < 0x1F000) return false;
+    if (cp == 0xFE0E or cp == 0xFE0F or cp == 0x200D) return false;
+    // UCHAR_EMOJI = 57
+    return icu_hasBinaryProperty(cp, 57);
+}
+
 const bun = @import("bun");
 const std = @import("std");
 

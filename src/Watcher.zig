@@ -709,6 +709,17 @@ pub fn addFile(
     defer this.mutex.unlock();
 
     if (this.indexOf(hash)) |index| {
+        // Check if this entry is pending eviction (was removed by a previous
+        // watcher close but not yet flushed). If so, revive it by removing
+        // from the eviction list and updating in-place with the new fd and
+        // path. This happens when fs.watch() is called on a file that was
+        // previously watched and then closed -- the old watchlist entry is
+        // still present pending eviction, so indexOf finds it, but it has
+        // a stale fd and its inotify/kqueue watch may no longer be valid.
+        if (this.reviveEvictedEntry(@truncate(index), fd, file_path)) {
+            return .success;
+        }
+
         if (comptime FeatureFlags.atomic_file_watcher) {
             // On Linux, the file descriptor might be out of date.
             if (fd.isValid()) {
@@ -737,6 +748,52 @@ pub fn remove(this: *Watcher, hash: HashType) void {
     if (this.indexOf(hash)) |index| {
         this.removeAtIndex(@truncate(index), hash, &[_]HashType{}, .file);
     }
+}
+
+/// If the entry at `index` is pending eviction, revive it by removing it from
+/// the eviction list and updating its fd, file_path, and platform watch
+/// registration in-place. Returns true if the entry was revived.
+/// Caller must hold the mutex.
+fn reviveEvictedEntry(this: *Watcher, index: WatchItemIndex, new_fd: bun.FileDescriptor, new_file_path: string) bool {
+    // Check if this index is in the eviction list
+    var found = false;
+    var write: WatchItemIndex = 0;
+    for (this.evict_list[0..this.evict_list_i]) |item| {
+        if (item == index) {
+            found = true;
+            continue; // remove from eviction list
+        }
+        this.evict_list[write] = item;
+        write += 1;
+    }
+    if (!found) return false;
+    this.evict_list_i = write;
+
+    // Close the old fd (it's stale since the previous watcher was closed)
+    var slice = this.watchlist.slice();
+    const fds = slice.items(.fd);
+    if (!Environment.isWindows) {
+        if (index < fds.len and fds[index].isValid()) {
+            fds[index].close();
+        }
+    }
+
+    // Update the entry in-place with new fd and file_path
+    fds[index] = new_fd;
+    slice.items(.file_path)[index] = new_file_path;
+
+    // Re-register with the platform watcher (inotify/kqueue)
+    if (comptime Environment.isMac) {
+        this.addFileDescriptorToKQueueWithoutChecks(new_fd, index);
+    } else if (comptime Environment.isLinux) {
+        const path_z: [:0]const u8 = new_file_path.ptr[0..new_file_path.len :0];
+        slice.items(.eventlist_index)[index] = switch (this.platform.watchPath(path_z)) {
+            .err => return false,
+            .result => |r| r,
+        };
+    }
+
+    return true;
 }
 
 pub fn removeAtIndex(this: *Watcher, index: WatchItemIndex, hash: HashType, parents: []HashType, comptime kind: WatchItem.Kind) void {

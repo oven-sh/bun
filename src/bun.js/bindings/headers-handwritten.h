@@ -255,9 +255,9 @@ const BunLoaderType BunLoaderTypeJSONC = 8;
 const BunLoaderType BunLoaderTypeTOML = 9;
 const BunLoaderType BunLoaderTypeWASM = 10;
 const BunLoaderType BunLoaderTypeNAPI = 11;
-const BunLoaderType BunLoaderTypeYAML = 18;
-const BunLoaderType BunLoaderTypeMD = 20;
-const BunLoaderType BunLoaderTypeMDX = 21;
+const BunLoaderType BunLoaderTypeYAML = 19;
+const BunLoaderType BunLoaderTypeMD = 21;
+const BunLoaderType BunLoaderTypeMDX = 22;
 
 #pragma mark - Stream
 

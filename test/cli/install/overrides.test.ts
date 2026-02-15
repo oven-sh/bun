@@ -247,3 +247,61 @@ test("overrides do not apply to workspaces", async () => {
   expect(await exited).toBe(0);
   expect(await stderr.text()).not.toContain("Saved lockfile");
 });
+
+test("resolutions with github dependency override (monorepo)", async () => {
+  // This test verifies that using "resolutions" to override a semver dependency
+  // with a GitHub dependency works correctly, even when the GitHub repo's
+  // root package.json has a DIFFERENT name than the requested package.
+  // This is the case for monorepos like discord.js where:
+  // - The user requests "discord.js" (the npm package name)
+  // - The GitHub repo's root package.json has name "@discordjs/discord.js"
+  const tmp = tmpdirSync();
+  writeFileSync(
+    join(tmp, "package.json"),
+    JSON.stringify({
+      dependencies: {
+        // Use a semver version that would normally resolve from npm
+        "discord.js": "^14.14.1",
+      },
+      resolutions: {
+        // Override with a GitHub commit from the monorepo
+        // The root package.json in this repo has name "@discordjs/discord.js"
+        "discord.js": "github:discordjs/discord.js#8dd69cf2811d86ed8da2a7b1e9a6a94022554e96",
+      },
+    }),
+  );
+
+  // Install should succeed (previously this would fail with "discord.js@^14.14.1 failed to resolve")
+  install(tmp, ["install"]);
+
+  // Verify the package was installed from GitHub
+  // Note: The installed package will have the name from the root package.json
+  const discordPkg = JSON.parse(readFileSync(join(tmp, "node_modules/discord.js/package.json"), "utf-8"));
+  expect(discordPkg.name).toBe("@discordjs/discord.js");
+
+  // Verify the lockfile is stable
+  ensureLockfileDoesntChangeOnBunI(tmp);
+});
+
+test("overrides with github dependency (using overrides field, monorepo)", async () => {
+  // Same as above but using the npm-style "overrides" field instead of "resolutions"
+  const tmp = tmpdirSync();
+  writeFileSync(
+    join(tmp, "package.json"),
+    JSON.stringify({
+      dependencies: {
+        "discord.js": "^14.14.1",
+      },
+      overrides: {
+        "discord.js": "github:discordjs/discord.js#8dd69cf2811d86ed8da2a7b1e9a6a94022554e96",
+      },
+    }),
+  );
+
+  install(tmp, ["install"]);
+
+  const discordPkg = JSON.parse(readFileSync(join(tmp, "node_modules/discord.js/package.json"), "utf-8"));
+  expect(discordPkg.name).toBe("@discordjs/discord.js");
+
+  ensureLockfileDoesntChangeOnBunI(tmp);
+});

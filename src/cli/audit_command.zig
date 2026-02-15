@@ -220,7 +220,9 @@ fn buildProductionPackageSet(allocator: std.mem.Allocator, pm: *PackageManager, 
         const current_dep_slice = current_deps.get(dependencies);
         const current_res_slice = current_resolutions.get(resolutions);
 
-        for (current_dep_slice, current_res_slice) |_, resolved_pkg_id| {
+        for (current_dep_slice, current_res_slice) |dep, resolved_pkg_id| {
+            // Skip devDependencies - they should not be included in production audit
+            if (dep.behavior.isDev()) continue;
             if (resolved_pkg_id >= pkg_names.len) continue;
 
             const pkg_name = pkg_names[resolved_pkg_id].slice(buf);

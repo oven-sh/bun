@@ -233,6 +233,7 @@ pub fn transpileSourceCode(
                 .macro_remappings = macro_remappings,
                 .jsx = jsc_vm.transpiler.options.jsx,
                 .emit_decorator_metadata = jsc_vm.transpiler.options.emit_decorator_metadata,
+                .experimental_decorators = jsc_vm.transpiler.options.experimental_decorators,
                 .virtual_source = virtual_source,
                 .dont_bundle_twice = true,
                 .allow_commonjs = true,
@@ -1139,14 +1140,14 @@ export fn Bun__runVirtualModule(globalObject: *JSGlobalObject, specifier_ptr: *c
 fn getHardcodedModule(jsc_vm: *VirtualMachine, specifier: bun.String, hardcoded: HardcodedModule) ?ResolvedSource {
     analytics.Features.builtin_modules.insert(hardcoded);
     return switch (hardcoded) {
-        .@"bun:main" => .{
+        .@"bun:main" => if (jsc_vm.entry_point.generated) .{
             .allocator = null,
             .source_code = bun.String.cloneUTF8(jsc_vm.entry_point.source.contents),
             .specifier = specifier,
             .source_url = specifier,
             .tag = .esm,
             .source_code_needs_deref = true,
-        },
+        } else null,
         .@"bun:internal-for-testing" => {
             if (!Environment.isDebug) {
                 if (!is_allowed_to_use_internal_testing_apis)

@@ -1,3 +1,4 @@
+import { pathToFileURL } from "bun";
 import { isWindows, tempDirWithFiles } from "harness";
 import fs from "node:fs";
 import path from "path";
@@ -16,6 +17,9 @@ beforeEach(() => {
   testDir = tempDirWithFiles("watch", {
     "watch.txt": "hello",
     [encodingFileName]: "hello",
+    "space dir": {
+      "space file.txt": "hello",
+    },
   });
 });
 
@@ -123,6 +127,34 @@ describe("fs.watchFile", () => {
     await Bun.sleep(100);
     fs.unwatchFile(file);
     expect(called).toBe(false);
+  });
+
+  test("should work with file: URL string containing percent-encoded spaces", async () => {
+    const filepath = path.join(testDir, "space dir", "space file.txt");
+    const fileUrl = pathToFileURL(filepath).href; // e.g. file:///tmp/.../space%20dir/space%20file.txt
+    expect(fileUrl).toContain("%20");
+
+    let { promise, resolve } = Promise.withResolvers<void>();
+    let entries: any = [];
+    fs.watchFile(fileUrl, { interval: 50 }, (curr, prev) => {
+      entries.push([curr, prev]);
+      resolve();
+      resolve = () => {};
+    });
+    let increment = 0;
+    const interval = repeat(() => {
+      increment++;
+      fs.writeFileSync(filepath, "hello" + increment);
+    });
+    await promise;
+    clearInterval(interval);
+
+    fs.unwatchFile(fileUrl);
+
+    expect(entries.length).toBeGreaterThan(0);
+    expect(entries[0][0].size).toBeGreaterThan(5);
+    expect(entries[0][1].size).toBe(5);
+    expect(entries[0][0].mtimeMs).toBeGreaterThan(entries[0][1].mtimeMs);
   });
 
   test("StatWatcherScheduler stress test (1000 watchers with random times)", async () => {

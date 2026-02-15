@@ -291,25 +291,32 @@ pub const Parser = struct {
                             }
                         },
                         else => {
-                            try unesc.appendSlice(switch (bun.strings.utf8ByteSequenceLength(c)) {
-                                1 => brk: {
-                                    break :brk &[_]u8{ '\\', c };
+                            switch (bun.strings.utf8ByteSequenceLength(c)) {
+                                0, 1 => try unesc.appendSlice(&[_]u8{ '\\', c }),
+                                2 => if (val.len - i >= 2) {
+                                    try unesc.appendSlice(&[_]u8{ '\\', c, val[i + 1] });
+                                    i += 1;
+                                } else {
+                                    try unesc.appendSlice(&[_]u8{ '\\', c });
                                 },
-                                2 => brk: {
-                                    defer i += 1;
-                                    break :brk &[_]u8{ '\\', c, val[i + 1] };
+                                3 => if (val.len - i >= 3) {
+                                    try unesc.appendSlice(&[_]u8{ '\\', c, val[i + 1], val[i + 2] });
+                                    i += 2;
+                                } else {
+                                    try unesc.append('\\');
+                                    try unesc.appendSlice(val[i..val.len]);
+                                    i = val.len - 1;
                                 },
-                                3 => brk: {
-                                    defer i += 2;
-                                    break :brk &[_]u8{ '\\', c, val[i + 1], val[i + 2] };
+                                4 => if (val.len - i >= 4) {
+                                    try unesc.appendSlice(&[_]u8{ '\\', c, val[i + 1], val[i + 2], val[i + 3] });
+                                    i += 3;
+                                } else {
+                                    try unesc.append('\\');
+                                    try unesc.appendSlice(val[i..val.len]);
+                                    i = val.len - 1;
                                 },
-                                4 => brk: {
-                                    defer i += 3;
-                                    break :brk &[_]u8{ '\\', c, val[i + 1], val[i + 2], val[i + 3] };
-                                },
-                                // this means invalid utf8
                                 else => unreachable,
-                            });
+                            }
                         },
                     }
 
@@ -342,25 +349,30 @@ pub const Parser = struct {
                             try unesc.append('.');
                         }
                     },
-                    else => try unesc.appendSlice(switch (bun.strings.utf8ByteSequenceLength(c)) {
-                        1 => brk: {
-                            break :brk &[_]u8{c};
+                    else => switch (bun.strings.utf8ByteSequenceLength(c)) {
+                        0, 1 => try unesc.append(c),
+                        2 => if (val.len - i >= 2) {
+                            try unesc.appendSlice(&[_]u8{ c, val[i + 1] });
+                            i += 1;
+                        } else {
+                            try unesc.append(c);
                         },
-                        2 => brk: {
-                            defer i += 1;
-                            break :brk &[_]u8{ c, val[i + 1] };
+                        3 => if (val.len - i >= 3) {
+                            try unesc.appendSlice(&[_]u8{ c, val[i + 1], val[i + 2] });
+                            i += 2;
+                        } else {
+                            try unesc.appendSlice(val[i..val.len]);
+                            i = val.len - 1;
                         },
-                        3 => brk: {
-                            defer i += 2;
-                            break :brk &[_]u8{ c, val[i + 1], val[i + 2] };
+                        4 => if (val.len - i >= 4) {
+                            try unesc.appendSlice(&[_]u8{ c, val[i + 1], val[i + 2], val[i + 3] });
+                            i += 3;
+                        } else {
+                            try unesc.appendSlice(val[i..val.len]);
+                            i = val.len - 1;
                         },
-                        4 => brk: {
-                            defer i += 3;
-                            break :brk &[_]u8{ c, val[i + 1], val[i + 2], val[i + 3] };
-                        },
-                        // this means invalid utf8
                         else => unreachable,
-                    }),
+                    },
                 }
             }
 

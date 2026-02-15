@@ -68,18 +68,22 @@ test("ServerResponse.setHeaders should not throw before headers are sent", async
     res.end("ok");
   });
 
-  server.listen(0, () => {
-    const port = (server.address() as any).port;
-    const req = http.request(`http://localhost:${port}/test`, res => {
-      resolve(res.headers["x-custom"] as string);
-      server.close();
+  try {
+    server.listen(0, () => {
+      const port = (server.address() as any).port;
+      try {
+        const req = http.request(`http://localhost:${port}/test`, res => {
+          resolve(res.headers["x-custom"] as string);
+        });
+        req.on("error", reject);
+        req.end();
+      } catch (e) {
+        reject(e);
+      }
     });
-    req.on("error", e => {
-      server.close();
-      reject(e);
-    });
-    req.end();
-  });
 
-  expect(await promise).toBe("server-value");
+    expect(await promise).toBe("server-value");
+  } finally {
+    server.close();
+  }
 });

@@ -69,7 +69,7 @@ ENV BUN_INSTALL_BIN=${BUN_INSTALL_BIN}
 COPY docker-entrypoint.sh /usr/local/bin
 COPY --from=build /usr/local/bin/bun /usr/local/bin/bun
 RUN mkdir -p /usr/local/bun-node-fallback-bin && ln -s /usr/local/bin/bun /usr/local/bun-node-fallback-bin/node
-ENV PATH "${PATH}:/usr/local/bun-node-fallback-bin"
+ENV PATH="${PATH}:/usr/local/bun-node-fallback-bin"
 
 RUN groupadd bun \
       --gid 1000 \

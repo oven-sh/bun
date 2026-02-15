@@ -2,7 +2,7 @@ pub fn create(globalThis: *jsc.JSGlobalObject) jsc.JSValue {
     const object = JSValue.createEmptyObject(globalThis, 1);
     object.put(
         globalThis,
-        ZigString.static("compile"),
+        bun.String.static("compile"),
         jsc.JSFunction.create(globalThis, "compile", compile, 2, .{}),
     );
     return object;
@@ -51,15 +51,11 @@ fn parseOptions(globalThis: *jsc.JSGlobalObject, allocator: std.mem.Allocator, o
             }
         }
 
-        if (try opts_value.get(globalThis, "jsxImportSource")) |import_source_value| {
-            if (!import_source_value.isString()) {
-                return globalThis.throwInvalidArguments("jsxImportSource must be a string", .{});
-            }
-            var zig_str = jsc.ZigString.init("");
-            try import_source_value.toZigString(&zig_str, globalThis);
-            if (zig_str.len > 0) {
-                options.jsx_import_source = try allocator.dupe(u8, zig_str.slice());
-            }
+        if (try opts_value.getStringish(globalThis, "jsxImportSource")) |str| {
+            defer str.deref();
+            const utf8 = str.toUTF8(allocator);
+            defer utf8.deinit();
+            options.jsx_import_source = try allocator.dupe(u8, utf8.slice());
         }
     }
 
@@ -97,4 +93,3 @@ const md = bun.md;
 const mdx = bun.md.mdx;
 const std = @import("std");
 const JSValue = jsc.JSValue;
-const ZigString = jsc.ZigString;

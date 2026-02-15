@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import fs from "node:fs";
 import path from "node:path";
@@ -212,13 +212,6 @@ async function readUntil(proc: Bun.Subprocess, predicate: (text: string) => bool
   return output;
 }
 
-const running: Bun.Subprocess[] = [];
-afterEach(() => {
-  for (const proc of running.splice(0)) {
-    proc.kill();
-  }
-});
-
 describe("MDX direct serve mode", () => {
   test("bun file.mdx serves HTML shell", async () => {
     using dir = tempDir("mdx-serve", {
@@ -235,7 +228,6 @@ describe("MDX direct serve mode", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    running.push(proc);
 
     const output = await readUntil(proc, text => URL_REGEX.test(text));
     const urlMatch = output.match(URL_REGEX);
@@ -264,7 +256,6 @@ describe("MDX direct serve mode", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    running.push(proc);
 
     const output = await readUntil(proc, text => text.includes(LAST_ROUTE_ENTRY));
     expect(output).toContain("/docs");
@@ -284,7 +275,6 @@ describe("MDX direct serve mode", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    running.push(proc);
 
     const output = await readUntil(proc, text => URL_REGEX.test(text));
     const urlMatch = output.match(URL_REGEX);
@@ -324,7 +314,6 @@ describe("MDX direct serve mode", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    running.push(proc);
 
     const output = await readUntil(proc, text => text.includes(LAST_ROUTE_ENTRY));
     const routes = [...output.matchAll(ROUTE_ENTRY_REGEX)].map(m => m[1]);
@@ -346,7 +335,6 @@ describe("MDX direct serve mode", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    running.push(proc);
 
     const output = await readUntil(proc, text => URL_REGEX.test(text));
     const urlMatch = output.match(URL_REGEX);

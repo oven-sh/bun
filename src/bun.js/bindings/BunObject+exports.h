@@ -12,8 +12,8 @@
     macro(JSON5) \
     macro(JSONC) \
     macro(MD4) \
-    macro(mdx) \
     macro(markdown) \
+    macro(mdx) \
     macro(MD5) \
     macro(S3Client) \
     macro(SHA1) \

@@ -10,6 +10,7 @@ for (const type of types) {
       finalize: true,
       configurable: false,
       hasPendingActivity: type === "PostgresSQL",
+      trackOrphans: type === "PostgresSQL",
       klass: {
         //   escapeString: {
         //     fn: "escapeString",

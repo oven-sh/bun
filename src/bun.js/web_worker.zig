@@ -402,10 +402,7 @@ fn onUnhandledRejection(vm: *jsc.VirtualMachine, globalObject: *jsc.JSGlobalObje
     vm.onUnhandledRejection = &jsc.VirtualMachine.onQuietUnhandledRejectionHandlerCaptureValue;
 
     var error_instance = error_instance_or_exception.toError() orelse error_instance_or_exception;
-
     var array = std.Io.Writer.Allocating.init(bun.default_allocator);
-    defer array.deinit();
-
     var worker = vm.worker orelse @panic("Assertion failure: no worker");
 
     const writer = &array.writer;
@@ -436,6 +433,7 @@ fn onUnhandledRejection(vm: *jsc.VirtualMachine, globalObject: *jsc.JSGlobalObje
     };
     jsc.markBinding(@src());
     WebWorker__dispatchError(globalObject, worker.cpp_worker, bun.String.cloneUTF8(array.written()), error_instance);
+    array.deinit(); // worker_.exitAndDeinit() is noreturn meaning this function can't use defer.
     if (vm.worker) |worker_| {
         _ = worker.setRequestedTerminate();
         worker.parent_poll_ref.unrefConcurrently(worker.parent);

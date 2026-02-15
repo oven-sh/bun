@@ -1,40 +1,78 @@
-// This is the file that loads when you pass a '.html' entry point to Bun.
-// It imports the entry points and initializes a server.
+// This is the file that loads when you pass a '.mdx' entry point to Bun.
+// It generates temporary HTML entry points that mount MDX modules and serves them.
 import type { HTMLBundle, Server } from "bun";
 const initial = performance.now();
 const argv = process.argv;
 
-// `import` cannot be used in this file and only Bun builtin modules can be used.
 const path = require("node:path");
+const fs = require("node:fs");
 
 const env = Bun.env;
-const mdxInternal = require("internal/mdx");
 
-function shouldUseMdxMode(args: string[]) {
-  for (let i = 1, length = args.length; i < length; i++) {
-    const arg = args[i];
-    if (arg.endsWith(".mdx")) return true;
-    if ((arg.includes("*") || arg.includes("{")) && arg.includes(".mdx")) return true;
-  }
-  return false;
+function ensureDir(dir: string) {
+  fs.mkdirSync(dir, { recursive: true });
 }
 
-// This function is called at startup.
-async function start() {
-  if (shouldUseMdxMode(argv)) {
-    return mdxInternal();
-  }
+function emitMdxWrapperScript(compiledTsxName: string) {
+  // Use string concatenation to avoid the build preprocessor's import-extraction regex
+  // from matching import statements inside this template literal.
+  const imp = "import";
+  return [
+    imp + ' React from "react";',
+    imp + ' { createRoot } from "react-dom/client";',
+    imp + " MDXContent from './" + compiledTsxName + "';",
+    "",
+    'const rootEl = document.getElementById("root");',
+    "if (!rootEl) {",
+    '  throw new Error("Missing #root mount element for MDX page");',
+    "}",
+    "",
+    "const root = createRoot(rootEl);",
+    "root.render(React.createElement(MDXContent, {}));",
+  ].join("\n");
+}
 
+function emitMdxHtmlShell(wrapperScriptName: string, title: string) {
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>${title}</title>
+    <style>
+      html, body {
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+        line-height: 1.5;
+        padding: 2rem;
+      }
+      img {
+        max-width: 100%;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./${wrapperScriptName}"></script>
+  </body>
+</html>
+`;
+}
+
+async function start() {
   let args: string[] = [];
   const cwd = process.cwd();
   let hostname = "localhost";
   let port: number | undefined = undefined;
   let enableConsoleLog = false;
-  // Step 1. Resolve all HTML entry points
+
   for (let i = 1, argvLength = argv.length; i < argvLength; i++) {
     const arg = argv[i];
 
-    if (!arg.endsWith(".html")) {
+    if (!arg.endsWith(".mdx")) {
       if (arg.startsWith("--hostname=")) {
         hostname = arg.slice("--hostname=".length);
         if (hostname.includes(":")) {
@@ -59,10 +97,10 @@ async function start() {
 
       if (arg === "--help") {
         console.log(`
-Bun v${Bun.version} (html)
+Bun v${Bun.version} (mdx)
 
 Usage:
-  bun [...html-files] [options]
+  bun [...mdx-files] [options]
 
 Options:
 
@@ -72,17 +110,12 @@ Options:
   --no-console # don't print console logs from browser
 Examples:
 
-  bun index.html
-  bun ./index.html ./about.html --port=3000
-  bun index.html --host=localhost:3000
-  bun index.html --hostname=localhost:3000
-  bun ./*.html
-  bun index.html --console
-
-This is a small wrapper around Bun.serve() that automatically serves the HTML files you pass in without
-having to manually call Bun.serve() or write the boilerplate yourself. This runs Bun's bundler on
-the HTML files, their JavaScript, and CSS, and serves them up. This doesn't do anything you can't do
-yourself with Bun.serve().
+  bun index.mdx
+  bun ./index.mdx ./docs/getting-started.mdx --port=3000
+  bun index.mdx --host=localhost:3000
+  bun index.mdx --hostname=localhost:3000
+  bun ./*.mdx
+  bun index.mdx --console
 `);
         process.exit(0);
       }
@@ -131,22 +164,17 @@ yourself with Bun.serve().
   }
 
   if (args.length === 0) {
-    throw new Error("No HTML files found matching " + JSON.stringify(Bun.main));
+    throw new Error("No MDX files found matching " + JSON.stringify(Bun.main));
   }
 
-  args.sort((a, b) => {
-    return a.localeCompare(b);
-  });
+  args.sort((a, b) => a.localeCompare(b));
 
-  // Add cwd to find longest common path
   let needsPop = false;
   if (args.length === 1) {
     args.push(process.cwd());
     needsPop = true;
   }
 
-  // Find longest common path prefix to use as the base path when there are
-  // multiple entry points
   let longestCommonPath = args.reduce((acc, curr) => {
     if (!acc) return curr;
     let i = 0;
@@ -154,26 +182,20 @@ yourself with Bun.serve().
     return acc.slice(0, i);
   });
 
-  if (process.platform === "win32") {
+  if (path.platform === "win32") {
     longestCommonPath = longestCommonPath.replaceAll("\\", "/");
   }
 
   if (needsPop) {
-    // Remove cwd from args
     args.pop();
   }
 
-  // Transform file paths into friendly URL paths
-  // - "index.html" -> "/"
-  // - "about/index.html" -> "/about"
-  // - "about/foo.html" -> "/about/foo"
-  // - "foo.html" -> "/foo"
   const servePaths = args.map(arg => {
     if (process.platform === "win32") {
       arg = arg.replaceAll("\\", "/");
     }
     const basename = path.basename(arg);
-    const isIndexHtml = basename === "index.html";
+    const isIndexMdx = basename === "index.mdx";
 
     let servePath = arg;
     if (servePath.startsWith(longestCommonPath)) {
@@ -185,14 +207,14 @@ yourself with Bun.serve().
       }
     }
 
-    if (isIndexHtml && servePath.length === 0) {
+    if (isIndexMdx && servePath.length === 0) {
       servePath = "/";
-    } else if (isIndexHtml) {
-      servePath = servePath.slice(0, -"index.html".length);
+    } else if (isIndexMdx) {
+      servePath = servePath.slice(0, -"index.mdx".length);
     }
 
-    if (servePath.endsWith(".html")) {
-      servePath = servePath.slice(0, -".html".length);
+    if (servePath.endsWith(".mdx")) {
+      servePath = servePath.slice(0, -".mdx".length);
     }
 
     if (servePath.endsWith("/")) {
@@ -208,29 +230,58 @@ yourself with Bun.serve().
     return servePath;
   });
 
+  const tmpRoot = path.join(cwd, `.bun-mdx-${process.pid}`);
+  ensureDir(tmpRoot);
+
+  // Clean up temp directory on exit
+  process.on("exit", () => {
+    try {
+      fs.rmSync(tmpRoot, { recursive: true, force: true });
+    } catch {}
+  });
+
+  const Mdx = (Bun as any).mdx as { compile(input: string): string };
+
+  const htmlEntryPaths = args.map((mdxPath, index) => {
+    const entryDir = path.join(tmpRoot, String(index));
+    ensureDir(entryDir);
+
+    // Pre-compile MDX → TSX so the dev server bundler only sees standard TSX.
+    // The dev server's incremental graph can't handle .mdx files directly.
+    const mdxSource = fs.readFileSync(mdxPath, "utf8");
+    const compiledTsx = Mdx.compile(mdxSource);
+    const compiledTsxName = "mdx-compiled.tsx";
+    fs.writeFileSync(path.join(entryDir, compiledTsxName), compiledTsx, "utf8");
+
+    const wrapperScriptName = "entry.js";
+    const wrapperScriptPath = path.join(entryDir, wrapperScriptName);
+    const htmlPath = path.join(entryDir, "index.html");
+
+    fs.writeFileSync(wrapperScriptPath, emitMdxWrapperScript(compiledTsxName), "utf8");
+    fs.writeFileSync(htmlPath, emitMdxHtmlShell(wrapperScriptName, path.basename(mdxPath)), "utf8");
+    return htmlPath;
+  });
+
   const htmlImports = await Promise.all(
-    args.map(arg => {
-      return import(arg).then(m => m.default);
+    htmlEntryPaths.map(arg => {
+      return import(arg).then(m => m.default as HTMLBundle);
     }),
   );
 
-  // If you're only providing one entry point, then match everything to it.
-  // (except for assets, which have higher precedence)
   if (htmlImports.length === 1) {
     servePaths[0] = "*";
   }
 
   const staticRoutes = htmlImports.reduce(
     (acc, htmlImport, index) => {
-      const html = htmlImport;
       const servePath = servePaths[index];
-
-      acc["/" + servePath] = html;
+      acc["/" + servePath] = htmlImport;
       return acc;
     },
     {} as Record<string, HTMLBundle>,
   );
-  var server: Server;
+
+  let server: Server;
   getServer: {
     try {
       server = Bun.serve({
@@ -242,14 +293,9 @@ yourself with Bun.serve().
                 hmr: undefined,
               }
             : false,
-
         hostname,
         port,
-
-        // use the default port via existing port detection code.
-        // port: 3000,
-
-        fetch(_req: Request) {
+        fetch() {
           return new Response("Not found", { status: 404 });
         },
       });
@@ -268,39 +314,34 @@ yourself with Bun.serve().
                       hmr: undefined,
                     }
                   : false,
-
               hostname,
-
-              // Retry with a different port up to 4 times.
               port: defaultPort++,
-
-              fetch(_req: Request) {
+              fetch() {
                 return new Response("Not found", { status: 404 });
               },
             });
             break getServer;
-          } catch (error: any) {
-            if (error?.code === "EADDRINUSE") {
+          } catch (retryError: any) {
+            if (retryError?.code === "EADDRINUSE") {
               continue;
             }
-            throw error;
+            throw retryError;
           }
         }
       }
-
       throw error;
     }
   }
+
   const elapsed = (performance.now() - initial).toFixed(2);
   const enableANSIColors = Bun.enableANSIColors;
+
   function printInitialMessage(isFirst: boolean) {
     let pathnameToPrint;
     if (servePaths.length === 1) {
       pathnameToPrint = servePaths[0];
     } else {
-      const indexRoute = servePaths.find(a => {
-        return a === "index" || a === "" || a === "/";
-      });
+      const indexRoute = servePaths.find(a => a === "index" || a === "" || a === "/");
       pathnameToPrint = indexRoute !== undefined ? indexRoute : servePaths[0];
     }
 
@@ -313,9 +354,6 @@ yourself with Bun.serve().
       let topLine = `${server.development ? "\x1b[34;7m DEV \x1b[0m " : ""}\x1b[1;34m\x1b[5mBun\x1b[0m \x1b[1;34mv${Bun.version}\x1b[0m`;
       if (isFirst) {
         topLine += ` \x1b[2mready in\x1b[0m \x1b[1m${elapsed}\x1b[0m ms`;
-      }
-      if (IS_BUN_DEVELOPMENT && process.env.BUN_DEBUG_DevServer) {
-        topLine += `\x1b[2m (PID ${process.pid})\x1b[0m`;
       }
       console.log(topLine + "\n");
       console.log(`\x1b[1;34m➜\x1b[0m \x1b[36m${new URL(pathnameToPrint, server!.url)}\x1b[0m`);
@@ -330,15 +368,12 @@ yourself with Bun.serve().
       console.log(topLine + "\n");
       console.log(`url: ${new URL(pathnameToPrint, server!.url)}`);
     }
+
     if (htmlImports.length > 1 || (servePaths[0] !== "" && servePaths[0] !== "*")) {
       console.log("\nRoutes:");
-
       const pairs: { route: string; importPath: string }[] = [];
-
       for (let i = 0, length = servePaths.length; i < length; i++) {
-        const route = servePaths[i];
-        const importPath = args[i];
-        pairs.push({ route, importPath });
+        pairs.push({ route: servePaths[i], importPath: args[i] });
       }
       pairs.sort((a, b) => {
         if (b.route === "") return 1;
@@ -356,64 +391,9 @@ yourself with Bun.serve().
         }
       }
     }
-
-    if (isFirst && process.stdin.isTTY) {
-      if (enableANSIColors) {
-        console.log();
-        console.log("\x1b[2mPress \x1b[2;36mh + Enter\x1b[39;2m to show shortcuts\x1b[0m");
-      } else {
-        console.log();
-        console.log("Press h + Enter to show shortcuts");
-      }
-    }
   }
 
   printInitialMessage(true);
-
-  // Keyboard shortcuts
-  if (process.stdin.isTTY) {
-    // Handle Ctrl+C and other termination signals
-    process.on("SIGINT", () => process.exit());
-    process.on("SIGHUP", () => process.exit());
-    process.on("SIGTERM", () => process.exit());
-    process.stdin.on("data", data => {
-      const key = data.toString().toLowerCase().replaceAll("\r\n", "\n");
-
-      switch (key) {
-        case "\x03": // Ctrl+C
-        case "q\n":
-          process.exit();
-          break;
-
-        case "c\n":
-          console.clear();
-          printInitialMessage(false);
-          break;
-
-        case "o\n":
-          const url = server.url.toString();
-
-          if (process.platform === "darwin") {
-            // TODO: copy the AppleScript from create-react-app or Vite.
-            Bun.spawn(["open", url]).exited.catch(() => {});
-          } else if (process.platform === "win32") {
-            Bun.spawn(["start", url]).exited.catch(() => {});
-          } else {
-            Bun.spawn(["xdg-open", url]).exited.catch(() => {});
-          }
-          break;
-
-        case "h\n":
-          console.clear();
-          printInitialMessage(false);
-          console.log("\n  Shortcuts\x1b[2m:\x1b[0m\n");
-          console.log("  \x1b[2m→\x1b[0m   \x1b[36mc + Enter\x1b[0m   clear screen");
-          console.log("  \x1b[2m→\x1b[0m   \x1b[36mo + Enter\x1b[0m   open in browser");
-          console.log("  \x1b[2m→\x1b[0m   \x1b[36mq + Enter\x1b[0m   quit (or Ctrl+C)\n");
-          break;
-      }
-    });
-  }
 }
 
 export default start;

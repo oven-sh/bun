@@ -26,7 +26,7 @@ pub fn toHaveBeenLastCalledWith(this: *Expect, globalThis: *JSGlobalObject, call
         if (!lastCallValue.jsType().isArray()) {
             var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
             defer formatter.deinit();
-            return globalThis.throw("Expected value must be a mock function with calls: {f}", .{value.toFmt(&formatter)});
+            return globalThis.throw("Received value must be a mock function with calls: {f}", .{value.toFmt(&formatter)});
         }
 
         if (try lastCallValue.getLength(globalThis) != arguments.len) {

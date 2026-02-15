@@ -15,7 +15,7 @@ pub fn toHaveBeenCalled(this: *Expect, globalThis: *JSGlobalObject, callframe: *
     if (!calls.jsType().isArray()) {
         var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
         defer formatter.deinit();
-        return globalThis.throw("Expected value must be a mock function: {f}", .{value.toFmt(&formatter)});
+        return globalThis.throw("Received value must be a mock function: {f}", .{value.toFmt(&formatter)});
     }
 
     const calls_length = try calls.getLength(globalThis);

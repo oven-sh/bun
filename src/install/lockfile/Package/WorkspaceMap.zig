@@ -118,7 +118,7 @@ pub fn processNamesArray(
 
     for (arr.slice()) |item| {
         // TODO: when does this get deallocated?
-        const input_path = try item.asStringZ(allocator) orelse {
+        const input_path_raw = try item.asStringZ(allocator) orelse {
             log.addErrorFmt(source, item.loc, allocator,
                 \\Workspaces expects an array of strings, like:
                 \\  <r><green>"workspaces"<r>: [
@@ -127,6 +127,9 @@ pub fn processNamesArray(
             , .{}) catch {};
             return error.InvalidPackageJSON;
         };
+
+        // Strip leading slashes to treat workspace patterns as relative paths (npm compatibility)
+        const input_path = strings.withoutLeadingSlash(input_path_raw);
 
         if (input_path.len == 0 or input_path.len == 1 and input_path[0] == '.' or strings.eqlComptime(input_path, "./") or strings.eqlComptime(input_path, ".\\")) continue;
 

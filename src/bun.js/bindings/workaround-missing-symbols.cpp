@@ -1,3 +1,6 @@
+#include <iostream>
+#include <cstdlib>
+
 #if defined(WIN32)
 
 #include <cstdint>
@@ -7,7 +10,6 @@
 #include <fcntl.h>
 #include <windows.h>
 #include <string.h>
-#include <cstdlib>
 
 #undef _environ
 #undef environ
@@ -41,12 +43,6 @@ extern "C" int kill(int pid, int sig)
     return uv_kill(pid, sig);
 }
 
-#endif
-
-#if !defined(WIN32)
-#ifndef UNLIKELY
-#define UNLIKELY(x) __builtin_expect(!!(x), 0)
-#endif
 #endif
 
 // if linux
@@ -189,14 +185,20 @@ extern "C" int __wrap_fcntl64(int fd, int cmd, ...)
     va_list ap;
     enum arg_type type = get_arg_type(cmd);
 
-    static fcntl64_func real_fcntl64;
-    static std::once_flag real_fcntl64_initialized;
-    std::call_once(real_fcntl64_initialized, []() {
-        real_fcntl64 = (fcntl64_func)dlsym(RTLD_NEXT, "fcntl64");
-        if (!real_fcntl64) {
-            real_fcntl64 = (fcntl64_func)dlsym(RTLD_NEXT, "fcntl");
+    static fcntl64_func real_fcntl64 = []() {
+        auto func = reinterpret_cast<fcntl64_func>(dlsym(RTLD_NEXT, "fcntl64"));
+        if (func) {
+            return func;
         }
-    });
+
+        func = reinterpret_cast<fcntl64_func>(dlsym(RTLD_NEXT, "fcntl"));
+        if (func) {
+            return func;
+        }
+
+        std::cerr << "Error: Failed to locate real fcntl64 or fcntl\n";
+        std::abort();
+    }();
 
     switch (type) {
     case NO_ARG:

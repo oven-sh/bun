@@ -160,16 +160,15 @@ void TextCodecCJK::registerCodecs(TextCodecRegistrar registrar)
 using JIS0208EncodeIndex = std::array<std::pair<char16_t, uint16_t>, sizeof(jis0208()) / sizeof(jis0208()[0])>;
 static const JIS0208EncodeIndex& jis0208EncodeIndex()
 {
-    // Allocate this at runtime because building it at compile time would make the binary much larger and this is often not used.
-    static JIS0208EncodeIndex* table;
-    static std::once_flag once;
-    std::call_once(once, [&] {
-        table = new JIS0208EncodeIndex;
+    // Heap-allocated to avoid bloating BSS segment (~30KB)
+    static std::unique_ptr<JIS0208EncodeIndex> table = [] {
+        auto result = std::make_unique<JIS0208EncodeIndex>();
         auto& index = jis0208();
         for (size_t i = 0; i < index.size(); i++)
-            (*table)[i] = { index[i].second, index[i].first };
-        stableSortByFirst(*table);
-    });
+            (*result)[i] = { index[i].second, index[i].first };
+        stableSortByFirst(*result);
+        return result;
+    }();
     return *table;
 }
 
@@ -688,17 +687,16 @@ static Vector<uint8_t> shiftJISEncode(StringView string, Function<void(char32_t,
 using EUCKREncodingIndex = std::array<std::pair<char16_t, uint16_t>, sizeof(eucKR()) / sizeof(eucKR()[0])>;
 static const EUCKREncodingIndex& eucKREncodingIndex()
 {
-    // Allocate this at runtime because building it at compile time would make the binary much larger and this is often not used.
-    static EUCKREncodingIndex* table;
-    static std::once_flag once;
-    std::call_once(once, [&] {
-        table = new EUCKREncodingIndex;
+    // Heap-allocated to avoid bloating BSS segment (~67KB)
+    static std::unique_ptr<EUCKREncodingIndex> table = [] {
+        auto result = std::make_unique<EUCKREncodingIndex>();
         auto& index = eucKR();
         for (size_t i = 0; i < index.size(); i++)
-            (*table)[i] = { index[i].second, index[i].first };
-        sortByFirst(*table);
-        ASSERT(sortedFirstsAreUnique(*table));
-    });
+            (*result)[i] = { index[i].second, index[i].first };
+        sortByFirst(*result);
+        ASSERT(sortedFirstsAreUnique(*result));
+        return result;
+    }();
     return *table;
 }
 
@@ -757,19 +755,18 @@ String TextCodecCJK::eucKRDecode(std::span<const uint8_t> bytes, bool flush, boo
 using Big5EncodeIndex = std::array<std::pair<char32_t, uint16_t>, sizeof(big5()) / sizeof(big5()[0]) - 3904>;
 static const Big5EncodeIndex& big5EncodeIndex()
 {
-    // Allocate this at runtime because building it at compile time would make the binary much larger and this is often not used.
-    static Big5EncodeIndex* table;
-    static std::once_flag once;
-    std::call_once(once, [&] {
-        table = new Big5EncodeIndex;
+    // Heap-allocated to avoid bloating BSS segment (~86KB)
+    static std::unique_ptr<Big5EncodeIndex> table = [] {
+        auto result = std::make_unique<Big5EncodeIndex>();
         auto& index = big5();
         // Remove the first 3094 elements because of https://encoding.spec.whatwg.org/#index-big5-pointer
         ASSERT(index[3903].first == (0xA1 - 0x81) * 157 - 1);
         ASSERT(index[3904].first == (0xA1 - 0x81) * 157);
         for (size_t i = 3904; i < index.size(); i++)
-            (*table)[i - 3904] = { index[i].second, index[i].first };
-        stableSortByFirst(*table);
-    });
+            (*result)[i - 3904] = { index[i].second, index[i].first };
+        stableSortByFirst(*result);
+        return result;
+    }();
     return *table;
 }
 
@@ -874,16 +871,15 @@ static uint32_t gb18030RangesPointer(char32_t codePoint)
 using GB18030EncodeIndex = std::array<std::pair<char16_t, uint16_t>, 23940>;
 static const GB18030EncodeIndex& gb18030EncodeIndex()
 {
-    // Allocate this at runtime because building it at compile time would make the binary much larger and this is often not used.
-    static GB18030EncodeIndex* table;
-    static std::once_flag once;
-    std::call_once(once, [&] {
-        table = new GB18030EncodeIndex;
+    // Heap-allocated to avoid bloating BSS segment (~94KB)
+    static std::unique_ptr<GB18030EncodeIndex> table = [] {
+        auto result = std::make_unique<GB18030EncodeIndex>();
         auto& index = gb18030();
         for (uint16_t i = 0; i < index.size(); i++)
-            (*table)[i] = { index[i], i };
-        stableSortByFirst(*table);
-    });
+            (*result)[i] = { index[i], i };
+        stableSortByFirst(*result);
+        return result;
+    }();
     return *table;
 }
 

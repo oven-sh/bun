@@ -1149,6 +1149,7 @@ pub fn zero(comptime Type: type) Type {
 pub const c_ares = @import("./deps/c_ares.zig");
 pub const URL = @import("./url.zig").URL;
 pub const FormData = @import("./url.zig").FormData;
+pub const PercentEncoding = @import("./url.zig").PercentEncoding;
 
 var needs_proc_self_workaround: bool = false;
 

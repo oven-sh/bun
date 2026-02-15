@@ -103,19 +103,17 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             header_names: ?[*]const jsc.ZigString,
             header_values: ?[*]const jsc.ZigString,
             header_count: usize,
-            // Proxy parameters
             proxy_host: ?*const jsc.ZigString,
             proxy_port: u16,
             proxy_authorization: ?*const jsc.ZigString,
             proxy_header_names: ?[*]const jsc.ZigString,
             proxy_header_values: ?[*]const jsc.ZigString,
             proxy_header_count: usize,
-            // TLS options (full SSLConfig for complete TLS customization)
             ssl_config: ?*SSLConfig,
-            // Whether the target URL is wss:// (separate from ssl template parameter)
             target_is_secure: bool,
             // Target URL authorization (Basic auth from ws://user:pass@host)
             target_authorization: ?*const jsc.ZigString,
+            is_unix: bool,
         ) callconv(.c) ?*HTTPClient {
             const vm = global.bunVM();
 
@@ -123,6 +121,12 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
             const extra_headers = NonUTF8Headers.init(header_names, header_values, header_count);
             const using_proxy = proxy_host != null;
+
+            // Proxies are not supported with Unix sockets
+            if (using_proxy and is_unix) {
+                log("Cannot use proxy with Unix socket", .{});
+                return null;
+            }
 
             // Check if user provided a custom protocol for subprotocols validation
             var protocol_for_subprotocols = client_protocol.*;
@@ -142,6 +146,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 client_protocol,
                 extra_headers,
                 if (target_authorization) |auth| auth.slice() else null,
+                is_unix,
             ) catch return null;
 
             // Build proxy state if using proxy
@@ -229,7 +234,10 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
             client.poll_ref.ref(vm);
             const display_host_ = host_.slice();
-            const display_host = if (bun.FeatureFlags.hardcode_localhost_to_127_0_0_1 and strings.eqlComptime(display_host_, "localhost"))
+            // For Unix sockets, keep the original socket path; don't rewrite localhost
+            const display_host = if (is_unix)
+                display_host_
+            else if (bun.FeatureFlags.hardcode_localhost_to_127_0_0_1 and strings.eqlComptime(display_host_, "localhost"))
                 "127.0.0.1"
             else
                 display_host_;
@@ -241,7 +249,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             // - This applies to both direct wss:// and HTTPS proxy connections
             var connect_ctx: *uws.SocketContext = socket_ctx;
 
-            log("connect: ssl={}, has_ssl_config={}, using_proxy={}", .{ ssl, ssl_config != null, using_proxy });
+            log("connect: ssl={}, has_ssl_config={}, using_proxy={}, is_unix={}", .{ ssl, ssl_config != null, using_proxy, is_unix });
 
             if (comptime ssl) {
                 if (ssl_config) |config| {
@@ -284,37 +292,50 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 }
             }
 
-            if (Socket.connectPtr(
-                display_host,
-                connect_port,
-                connect_ctx,
-                HTTPClient,
-                client,
-                "tcp",
-                false,
-            )) |out| {
-                // I don't think this case gets reached.
-                if (out.state == .failed) {
+            if (!is_unix) {
+                if (Socket.connectPtr(
+                    display_host,
+                    connect_port,
+                    connect_ctx,
+                    HTTPClient,
+                    client,
+                    "tcp",
+                    false,
+                )) |out| {
+                    // I don't think this case gets reached.
+                    if (out.state == .failed) {
+                        client.deref();
+                        return null;
+                    }
+                    bun.analytics.Features.WebSocket += 1;
+
+                    if (comptime ssl) {
+                        if (!strings.isIPAddress(host_.slice())) {
+                            out.hostname = bun.default_allocator.dupeZ(u8, host_.slice()) catch "";
+                        }
+                    }
+
+                    out.tcp.timeout(120);
+                    out.state = .reading;
+                    // +1 for cpp_websocket
+                    out.ref();
+                    return out;
+                } else |_| {
                     client.deref();
                     return null;
                 }
-                bun.analytics.Features.WebSocket += 1;
+            } else {
+                if (Socket.connectUnixPtr(display_host, connect_ctx, HTTPClient, client, "tcp", false) catch null) |out| {
+                    bun.analytics.Features.WebSocket += 1;
 
-                if (comptime ssl) {
-                    if (!strings.isIPAddress(host_.slice())) {
-                        out.hostname = bun.default_allocator.dupeZ(u8, host_.slice()) catch "";
-                    }
+                    out.tcp.timeout(120);
+                    out.state = .reading;
+                    out.ref();
+                    return out;
                 }
-
-                out.tcp.timeout(120);
-                out.state = .reading;
-                // +1 for cpp_websocket
-                out.ref();
-                return out;
-            } else |_| {
-                client.deref();
             }
 
+            client.deref();
             return null;
         }
 
@@ -1174,6 +1195,7 @@ fn buildRequestBody(
     client_protocol: *const jsc.ZigString,
     extra_headers: NonUTF8Headers,
     target_authorization: ?[]const u8,
+    is_unix: bool,
 ) std.mem.Allocator.Error![]u8 {
     const allocator = vm.allocator;
 
@@ -1232,8 +1254,10 @@ fn buildRequestBody(
 
     const host_fmt = bun.fmt.HostFormatter{
         .is_https = is_https,
-        .host = host_.slice(),
-        .port = port,
+        // For Unix sockets, use "localhost" as the Host header instead of the socket path
+        .host = if (is_unix) "localhost" else host_.slice(),
+        // For Unix sockets, omit the port to avoid "localhost:0"
+        .port = if (is_unix) null else port,
     };
 
     var static_headers = [_]PicoHTTP.Header{

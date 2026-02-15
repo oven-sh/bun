@@ -78,6 +78,7 @@ pub const BuildCommand = struct {
         this_transpiler.options.keep_names = ctx.bundler_options.keep_names;
         this_transpiler.options.emit_dce_annotations = ctx.bundler_options.emit_dce_annotations;
         this_transpiler.options.ignore_dce_annotations = ctx.bundler_options.ignore_dce_annotations;
+        this_transpiler.options.jsx_optimization_inline = ctx.bundler_options.jsx_inline;
 
         this_transpiler.options.banner = ctx.bundler_options.banner;
         this_transpiler.options.footer = ctx.bundler_options.footer;

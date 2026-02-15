@@ -72,6 +72,8 @@ pub const Flags = struct {
     pub const JSXElement = enum {
         is_key_after_spread,
         has_any_dynamic,
+        /// The element can be inlined to an object literal (no spread props, no ref prop)
+        can_be_inlined,
         pub const Bitset = std.enums.EnumSet(JSXElement);
     };
 

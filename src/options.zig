@@ -1827,6 +1827,7 @@ pub const BundleOptions = struct {
 
     ignore_dce_annotations: bool = false,
     emit_dce_annotations: bool = false,
+    jsx_optimization_inline: Runtime.Features.JsxInlineMode = .none,
     bytecode: bool = false,
 
     code_coverage: bool = false,

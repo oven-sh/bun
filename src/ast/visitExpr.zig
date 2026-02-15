@@ -323,6 +323,84 @@ pub fn VisitExpr(
                                 }) catch |err| bun.handleOom(err);
                             }
 
+                            // JSX inlining optimization: transform jsx() calls into inline object literals
+                            // This avoids the overhead of calling jsx() and merging props at runtime
+                            // The output object looks like:
+                            // { $$typeof: Symbol.for("react.element"), type: "div", key: null, ref: null, props: {}, _owner: null }
+                            if (p.options.jsx_optimization_inline.isEnabled() and e_.flags.contains(.can_be_inlined)) {
+                                const key_expr = if (maybe_key_value) |key_value| brk: {
+                                    // key: void 0 === key ? null : "" + key
+                                    break :brk switch (key_value.data) {
+                                        .e_string => key_value,
+                                        .e_undefined, .e_null => p.newExpr(E.Null{}, key_value.loc),
+                                        else => p.newExpr(E.If{
+                                            .test_ = p.newExpr(E.Binary{
+                                                .left = p.newExpr(E.Undefined{}, key_value.loc),
+                                                .op = Op.Code.bin_strict_eq,
+                                                .right = key_value,
+                                            }, key_value.loc),
+                                            .yes = p.newExpr(E.Null{}, key_value.loc),
+                                            .no = p.newExpr(E.Binary{
+                                                .op = Op.Code.bin_add,
+                                                .left = p.newExpr(&E.String.empty, key_value.loc),
+                                                .right = key_value,
+                                            }, key_value.loc),
+                                        }, key_value.loc),
+                                    };
+                                } else p.newExpr(E.Null{}, expr.loc);
+
+                                const props_object = p.newExpr(E.Object{
+                                    .properties = props.*,
+                                    .close_brace_loc = e_.close_tag_loc,
+                                }, expr.loc);
+
+                                // For component tags (not strings), we need to handle defaultProps
+                                const props_expression = brk: {
+                                    if (tag.data != .e_string) {
+                                        // We assume defaultProps is supposed to _not_ have side effects
+                                        const defaultProps = p.newExpr(E.Dot{
+                                            .name = "defaultProps",
+                                            .name_loc = tag.loc,
+                                            .target = tag,
+                                            .can_be_removed_if_unused = true,
+                                            .call_can_be_unwrapped_if_unused = .if_unused,
+                                        }, tag.loc);
+                                        // props: MyComponent.defaultProps || {}
+                                        if (props.len == 0) {
+                                            break :brk p.newExpr(E.Binary{ .op = Op.Code.bin_logical_or, .left = defaultProps, .right = props_object }, defaultProps.loc);
+                                        } else {
+                                            var call_args = p.allocator.alloc(Expr, 2) catch bun.outOfMemory();
+                                            call_args[0..2].* = .{ props_object, defaultProps };
+                                            // __merge(props, MyComponent.defaultProps)
+                                            break :brk p.callRuntime(tag.loc, "__merge", call_args);
+                                        }
+                                    }
+                                    break :brk props_object;
+                                };
+
+                                // Select the right $$typeof based on React version
+                                const typeof_expr = switch (p.options.jsx_optimization_inline) {
+                                    .react_18 => p.runtimeIdentifier(tag.loc, "$$typeof_18"),
+                                    .react_19 => p.runtimeIdentifier(tag.loc, "$$typeof_19"),
+                                    .none => unreachable,
+                                };
+
+                                var jsx_element = p.allocator.alloc(G.Property, 6) catch bun.outOfMemory();
+                                jsx_element[0..6].* = .{
+                                    G.Property{ .key = Expr{ .data = Prefill.Data.@"$$typeof", .loc = tag.loc }, .value = typeof_expr },
+                                    G.Property{ .key = Expr{ .data = Prefill.Data.type, .loc = tag.loc }, .value = tag },
+                                    G.Property{ .key = Expr{ .data = Prefill.Data.key, .loc = key_expr.loc }, .value = key_expr },
+                                    G.Property{ .key = Expr{ .data = Prefill.Data.ref, .loc = expr.loc }, .value = p.newExpr(E.Null{}, expr.loc) },
+                                    G.Property{ .key = Expr{ .data = Prefill.Data.props, .loc = expr.loc }, .value = props_expression },
+                                    G.Property{ .key = Expr{ .data = Prefill.Data._owner, .loc = key_expr.loc }, .value = p.newExpr(E.Null{}, expr.loc) },
+                                };
+
+                                return p.newExpr(E.Object{
+                                    .properties = G.Property.List.fromOwnedSlice(jsx_element),
+                                    .close_brace_loc = e_.close_tag_loc,
+                                }, expr.loc);
+                            }
+
                             // Either:
                             // jsxDEV(type, arguments, key, isStaticChildren, source, self)
                             // jsx(type, arguments, key)
@@ -1764,6 +1842,7 @@ const E = js_ast.E;
 const Expr = js_ast.Expr;
 const ExprNodeIndex = js_ast.ExprNodeIndex;
 const ExprNodeList = js_ast.ExprNodeList;
+const Op = js_ast.Op;
 const Scope = js_ast.Scope;
 const Stmt = js_ast.Stmt;
 const Symbol = js_ast.Symbol;

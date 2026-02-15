@@ -541,13 +541,15 @@ pub fn migrateNPMLockfile(
                         .false;
                 } else .false,
 
-                .integrity = if (pkg.get("integrity")) |integrity|
-                    Integrity.parse(
-                        integrity.asString(this.allocator) orelse
-                            return error.InvalidNPMLockfile,
-                    )
-                else
-                    Integrity{},
+                .integrity = if (pkg.get("integrity")) |integrity| blk: {
+                    const integrity_str = integrity.asString(this.allocator) orelse
+                        return error.InvalidNPMLockfile;
+                    const parsed = Integrity.parse(integrity_str);
+                    if (integrity_str.len > 0 and !parsed.tag.isSupported()) {
+                        return error.InvalidNPMLockfile;
+                    }
+                    break :blk parsed;
+                } else Integrity{},
             },
             .bin = if (pkg.get("bin")) |bin| bin: {
                 // we already check these conditions during counting

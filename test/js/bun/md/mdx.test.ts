@@ -1,7 +1,16 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import fs from "node:fs";
+import path from "node:path";
 
-const Mdx = (Bun as any).mdx as { compile(input: string): string };
+const fixtureDir = path.join(import.meta.dir, "fixtures", "mdx");
+
+const Mdx = (Bun as any).mdx as {
+  compile(
+    input: string | Uint8Array,
+    options?: { jsxImportSource?: string; hardSoftBreaks?: boolean; hard_soft_breaks?: boolean },
+  ): string;
+};
 
 describe("Bun.mdx.compile", () => {
   test("compiles markdown to JSX module", () => {
@@ -23,6 +32,58 @@ describe("Bun.mdx.compile", () => {
   test("preserves inline expressions", () => {
     const output = Mdx.compile("Count: {props.count}");
     expect(output).toContain("{props.count}");
+  });
+
+  test("typed array input accepted", () => {
+    const buf = new TextEncoder().encode("# Hello\n\nTypedArray");
+    const output = Mdx.compile(buf);
+    expect(output).toContain("export default function MDXContent");
+    expect(output).toContain("Hello");
+    expect(output).toContain("TypedArray");
+  });
+
+  test("jsxImportSource and option aliases hardSoftBreaks and hard_soft_breaks", () => {
+    const src = "# Hi\n\nLine2";
+    const outReact = Mdx.compile(src, { jsxImportSource: "react" });
+    expect(outReact).not.toContain("@jsxImportSource react");
+
+    const outPreact = Mdx.compile(src, { jsxImportSource: "preact" });
+    expect(outPreact).toContain("@jsxImportSource preact");
+
+    const outHardCamel = Mdx.compile("a\nb", { hardSoftBreaks: true });
+    const outHardSnake = Mdx.compile("a\nb", { hard_soft_breaks: true });
+    expect(outHardCamel).toBe(outHardSnake);
+  });
+
+  test("invalid arguments throw", () => {
+    expect(() => Mdx.compile(undefined as any)).toThrow();
+    expect(() => Mdx.compile(null as any)).toThrow();
+    expect(() => Mdx.compile("ok", { jsxImportSource: 123 as any })).toThrow();
+  });
+
+  test("malformed mdx throws syntax-like error", () => {
+    expect(() => Mdx.compile("---\n\n{unclosed")).toThrow();
+  });
+
+  test("compiles real fixture documents", () => {
+    const expectByFile: Record<string, string[]> = {
+      "frontmatter-and-exports.mdx": ["export const frontmatter", 'export const version = "1.0.0"'],
+      "components-and-expressions.mdx": ["Box", "Button"],
+      "gfm-mixed-content.mdx": ["_components.table", "_components.code"],
+      "nested-structure.mdx": ["_components.blockquote", "_components.ol"],
+    };
+    const files = fs.readdirSync(fixtureDir).filter(f => f.endsWith(".mdx") && !f.startsWith("invalid-"));
+    expect(files.length).toBeGreaterThan(0);
+    for (const file of files) {
+      const fullPath = path.join(fixtureDir, file);
+      const src = fs.readFileSync(fullPath, "utf8");
+      const output = Mdx.compile(src);
+      expect(output).toContain("export default function MDXContent");
+      const expectations = expectByFile[file];
+      if (expectations) {
+        for (const substr of expectations) expect(output).toContain(substr);
+      }
+    }
   });
 });
 
@@ -55,6 +116,66 @@ title: Integration
     expect(stdout.trim()).toBe("function\nIntegration");
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
+  });
+
+  test("import/export heavy mdx entrypoint runtime test", async () => {
+    using dir = tempDir("mdx-heavy", {
+      "entry.tsx": `
+        import Page, { frontmatter, meta } from "./page.mdx";
+        console.log(typeof Page);
+        console.log(frontmatter.title);
+        console.log(meta.version);
+      `,
+      "page.mdx": `
+---
+title: Heavy
+---
+import { Box } from "./Box";
+export const meta = { version: "2.0" };
+
+# {frontmatter.title}
+<Box />
+      `,
+      "Box.tsx": "export function Box() { return <div>Box</div>; }",
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.tsx"],
+      cwd: String(dir),
+      env: bunEnv,
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("function\nHeavy\n2.0");
+    expect(exitCode).toBe(0);
+  });
+
+  test("malformed mdx import reports compile failure", async () => {
+    using dir = tempDir("mdx-bad", {
+      "entry.tsx": 'import Bad from "./bad.mdx"; console.log(Bad);',
+      "bad.mdx": "---\n---\n\n{unclosed expression",
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.tsx"],
+      cwd: String(dir),
+      env: bunEnv,
+      stderr: "pipe",
+    });
+
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(exitCode).not.toBe(0);
+    expect(stderr).toMatch(/Failed to compile MDX|MDX compile error/);
+  });
+});
+
+describe("MDX transpiler integration", () => {
+  test("Bun.Transpiler with loader mdx transformSync", () => {
+    const transpiler = new Bun.Transpiler({ loader: "mdx" });
+    const result = transpiler.transformSync("# Hello MDX");
+    expect(result).toContain("export default function MDXContent");
+    expect(result).toContain("Hello");
   });
 });
 
@@ -136,7 +257,94 @@ describe("MDX direct serve mode", () => {
     });
     running.push(proc);
 
-    const output = await readUntil(proc, text => text.includes("Routes:"));
+    const output = await readUntil(proc, text => text.includes("\u2514\u2500\u2500"));
     expect(output).toContain("/docs");
+  });
+
+  test("route matrix index/docs/guides", async () => {
+    using dir = tempDir("mdx-matrix", {
+      "index.mdx": `# Home`,
+      "docs/index.mdx": `# Docs`,
+      "docs/guides/index.mdx": `# Guides`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "./*.mdx", "./docs/*.mdx", "./docs/guides/*.mdx", "--port=0"],
+      cwd: String(dir),
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    running.push(proc);
+
+    const output = await readUntil(proc, text => text.includes("\u2514\u2500\u2500"));
+    const urlMatch = output.match(/url:\s*(\S+)/);
+    expect(urlMatch).not.toBeNull();
+    const baseUrl = urlMatch![1];
+
+    const [homeRes, docsRes, guidesRes] = await Promise.all([
+      fetch(baseUrl),
+      fetch(baseUrl + "/docs"),
+      fetch(baseUrl + "/docs/guides"),
+    ]);
+    for (const res of [homeRes, docsRes, guidesRes]) expect(res.status).toBe(200);
+    const home = await homeRes.text();
+    const docs = await docsRes.text();
+    const guides = await guidesRes.text();
+    for (const html of [home, docs, guides]) {
+      expect(html).toContain(`<div id="root"></div>`);
+      expect(html).toContain(`<script type="module"`);
+    }
+    if (output.includes("Routes:")) {
+      expect(output).toContain("/docs");
+      expect(output).toContain("/docs/guides");
+    }
+  });
+
+  test("overlapping glob dedupe check", async () => {
+    using dir = tempDir("mdx-dedupe", {
+      "index.mdx": `# Root`,
+      "docs/index.mdx": `# Docs`,
+      "docs/guide.mdx": `# Guide`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "./**/*.mdx", "./docs/*.mdx", "--port=0"],
+      cwd: String(dir),
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    running.push(proc);
+
+    const output = await readUntil(proc, text => text.includes("\u2514\u2500\u2500"));
+    const routeSection = output.includes("Routes:") ? (output.split("Routes:")[1] ?? "") : output;
+    const docsIndexCount = (routeSection.match(/\n\s*[├└]──\s*\/docs\s+→/g) ?? []).length;
+    const docsGuideCount = (routeSection.match(/\n\s*[├└]──\s*\/docs\/guide\s+→/g) ?? []).length;
+    expect(docsIndexCount).toBe(1);
+    expect(docsGuideCount).toBe(1);
+  });
+
+  test("--hostname=127.0.0.1 reachable URL", async () => {
+    using dir = tempDir("mdx-host", {
+      "index.mdx": `# Hello`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.mdx", "--port=0", "--hostname=127.0.0.1"],
+      cwd: String(dir),
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    running.push(proc);
+
+    const output = await readUntil(proc, text => text.includes("url: "));
+    const urlMatch = output.match(/url:\s*(\S+)/);
+    expect(urlMatch).not.toBeNull();
+    expect(urlMatch![1]).toContain("127.0.0.1");
+
+    const res = await fetch(urlMatch![1]);
+    expect(res.status).toBe(200);
   });
 });

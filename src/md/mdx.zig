@@ -157,6 +157,10 @@ pub fn replaceExpressions(
         try output.append(allocator, c);
     }
 
+    if (expr_start != null) {
+        return error.UnclosedExpression;
+    }
+
     return .{
         .text = try output.toOwnedSlice(allocator),
         .slots = try slots.toOwnedSlice(allocator),

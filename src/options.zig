@@ -927,7 +927,7 @@ pub const Loader = enum(u8) {
 
     pub fn isJavaScriptLike(loader: Loader) bool {
         return switch (loader) {
-            .jsx, .js, .ts, .tsx => true,
+            .jsx, .js, .ts, .tsx, .mdx => true,
             else => false,
         };
     }

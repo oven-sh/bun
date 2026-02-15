@@ -69,7 +69,8 @@ pub fn VisitExpr(
                 if (p.define.dots.get("meta")) |meta| {
                     for (meta) |define| {
                         // TODO: clean up how we do define matches
-                        if (p.isDotDefineMatch(expr, define.parts)) {
+                        // Allow optional chains since we're substituting a value
+                        if (p.isDotDefineMatch(expr, define.parts, true)) {
                             // Substitute user-specified defines
                             return p.valueForDefine(expr.loc, in.assign_target, is_delete_target, &define.data);
                         }
@@ -518,6 +519,26 @@ pub fn VisitExpr(
                 const is_call_target = p.call_target == .e_index and expr.data.e_index == p.call_target.e_index;
                 const is_delete_target = p.delete_target == .e_index and expr.data.e_index == p.delete_target.e_index;
 
+                // Check for defines with bracket notation (e.g., process.env["VAR"])
+                // This is checked first before any transformations, similar to e_dot handling
+                if (e_.index.data == .e_string and e_.index.data.e_string.isUTF8()) {
+                    const index_str = e_.index.data.e_string.slice(p.allocator);
+                    if (p.define.dots.get(index_str)) |parts| {
+                        for (parts) |*define| {
+                            // Allow optional chains since we're substituting a value
+                            if (p.isDotDefineMatch(expr, define.parts, true)) {
+                                if (in.assign_target == .none) {
+                                    // Substitute user-specified defines
+                                    if (!define.data.valueless()) {
+                                        return p.valueForDefine(expr.loc, in.assign_target, is_delete_target, &define.data);
+                                    }
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+
                 // "a['b']" => "a.b"
                 if (p.options.features.minify_syntax and
                     e_.index.data == .e_string and
@@ -832,10 +853,15 @@ pub fn VisitExpr(
 
                 if (p.define.dots.get(e_.name)) |parts| {
                     for (parts) |*define| {
-                        if (p.isDotDefineMatch(expr, define.parts)) {
+                        // When substituting a value, allow optional chains (e.g. process?.env?.NODE_ENV)
+                        // because the substitution makes the chain irrelevant.
+                        // When just setting flags, don't allow optional chains because the chain
+                        // itself has observable behavior (checking if the object exists).
+                        const has_value = !define.data.valueless();
+                        if (p.isDotDefineMatch(expr, define.parts, has_value)) {
                             if (in.assign_target == .none) {
                                 // Substitute user-specified defines
-                                if (!define.data.valueless()) {
+                                if (has_value) {
                                     return p.valueForDefine(expr.loc, in.assign_target, is_delete_target, &define.data);
                                 }
 

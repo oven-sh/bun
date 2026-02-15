@@ -1,0 +1,6 @@
+{
+  "name": "test-settings-trusted",
+  "dependencies": {
+    "no-deps": "~1.0.0"
+  }
+}

@@ -462,7 +462,7 @@ function getHostname(self, rest, hostname: string, url) {
 
 // format a parsed object into a url string
 declare function urlFormat(urlObject: string | URL | Url): string;
-function urlFormat(urlObject: unknown) {
+function urlFormat(urlObject: unknown, options?: unknown) {
   /*
    * ensure it's an object, and not a string url.
    * If it's an obj, this is a no-op.
@@ -477,13 +477,48 @@ function urlFormat(urlObject: unknown) {
   }
 
   if (!(urlObject instanceof Url)) {
-    return Url.prototype.format.$call(urlObject);
+    // Handle WHATWG URL objects that have username/password instead of auth
+    if (urlObject instanceof URL) {
+      // Extract username and password from WHATWG URL
+      const username = urlObject.username;
+      const password = urlObject.password;
+
+      // Create a temporary object with auth property for formatting
+      const tempObj = {
+        protocol: urlObject.protocol,
+        hostname: urlObject.hostname,
+        port: urlObject.port,
+        pathname: urlObject.pathname,
+        search: urlObject.search,
+        hash: urlObject.hash,
+        host: urlObject.host,
+        // Construct auth from username and password if they exist
+        // WHATWG URL objects store username and password already percent-encoded,
+        // so we need to decode them before passing to Url.prototype.format which will re-encode them
+        auth:
+          username || password
+            ? decodeURIComponent(username) + (password ? ":" + decodeURIComponent(password) : "")
+            : null,
+      };
+
+      return Url.prototype.format.$call(tempObj, options);
+    }
+    return Url.prototype.format.$call(urlObject, options);
   }
-  return urlObject.format();
+  return urlObject.format(options);
 }
 
-Url.prototype.format = function format() {
-  var auth: string = this.auth || "";
+Url.prototype.format = function format(options?: unknown) {
+  // Handle options parameter
+  var includeAuth = true;
+  if (options !== undefined && options !== null && typeof options === "object") {
+    // Check if auth option is explicitly set to a falsy value
+    if ("auth" in options && !options.auth) {
+      includeAuth = false;
+    }
+  }
+
+  var auth: string = (includeAuth && this.auth) || "";
   if (auth) {
     auth = encodeURIComponent(auth);
     auth = auth.replace(/%3A/i, ":");

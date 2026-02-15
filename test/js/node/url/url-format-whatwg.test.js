@@ -6,11 +6,10 @@ describe("url.format", () => {
   test("WHATWG", () => {
     const myURL = new URL("http://user:pass@xn--lck1c3crb1723bpq4a.com/a?a=b#c");
 
-    // TODO: Support these.
-    //
-    // assert.strictEqual(url.format(myURL), "http://user:pass@xn--lck1c3crb1723bpq4a.com/a?a=b#c");
+    // Test default behavior - should include auth
+    assert.strictEqual(url.format(myURL), "http://user:pass@xn--lck1c3crb1723bpq4a.com/a?a=b#c");
 
-    // assert.strictEqual(url.format(myURL, {}), "http://user:pass@xn--lck1c3crb1723bpq4a.com/a?a=b#c");
+    assert.strictEqual(url.format(myURL, {}), "http://user:pass@xn--lck1c3crb1723bpq4a.com/a?a=b#c");
 
     // TODO: Support this kind of assert.throws.
     // {
@@ -32,11 +31,10 @@ describe("url.format", () => {
 
     assert.strictEqual(url.format(myURL, { auth: 0 }), "http://xn--lck1c3crb1723bpq4a.com/a?a=b#c");
 
-    // TODO: Support these.
-    //
-    // assert.strictEqual(url.format(myURL, { auth: 1 }), "http://user:pass@xn--lck1c3crb1723bpq4a.com/a?a=b#c");
+    // Truthy values should include auth
+    assert.strictEqual(url.format(myURL, { auth: 1 }), "http://user:pass@xn--lck1c3crb1723bpq4a.com/a?a=b#c");
 
-    // assert.strictEqual(url.format(myURL, { auth: {} }), "http://user:pass@xn--lck1c3crb1723bpq4a.com/a?a=b#c");
+    assert.strictEqual(url.format(myURL, { auth: {} }), "http://user:pass@xn--lck1c3crb1723bpq4a.com/a?a=b#c");
 
     // assert.strictEqual(url.format(myURL, { fragment: false }), "http://user:pass@xn--lck1c3crb1723bpq4a.com/a?a=b");
 
@@ -74,5 +72,30 @@ describe("url.format", () => {
     // );
 
     assert.strictEqual(url.format(new URL("tel:123")), url.format(new URL("tel:123"), { unicode: true }));
+  });
+
+  test("Issue #24343 - username and password preserved by default", () => {
+    // The bug: url.format removes username and password from WHATWG URL objects
+    assert.strictEqual(url.format(new URL("https://a:b@example.org/")), "https://a:b@example.org/");
+
+    // Test with only username
+    assert.strictEqual(url.format(new URL("https://user@example.org/")), "https://user@example.org/");
+
+    // Test with only password (username is empty)
+    assert.strictEqual(url.format(new URL("https://:pass@example.org/")), "https://:pass@example.org/");
+
+    // Test with no auth
+    assert.strictEqual(url.format(new URL("https://example.org/")), "https://example.org/");
+
+    // Test that auth can be disabled with options
+    assert.strictEqual(url.format(new URL("https://a:b@example.org/"), { auth: false }), "https://example.org/");
+
+    // Test with special characters in auth (should not double-encode)
+    // WHATWG URL stores "user name" as "user%20name" and "p@ss" as "p%40ss"
+    // url.format should output the same encoded form, not double-encode to "user%2520name:p%2540ss"
+    assert.strictEqual(
+      url.format(new URL("https://user%20name:p%40ss@example.org/")),
+      "https://user%20name:p%40ss@example.org/",
+    );
   });
 });

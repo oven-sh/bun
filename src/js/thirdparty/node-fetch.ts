@@ -169,6 +169,68 @@ async function fetch(
       init = { ...init, body: Readable.toWeb(readable) };
     }
   }
+  if (init) {
+    let agent = (init as any).agent;
+    if (agent) {
+      if ($isCallable(agent)) {
+        const parsedUrl = new URL(typeof url === "string" ? url : url instanceof URL ? url.href : url.url);
+        agent = agent.$call(undefined, parsedUrl);
+      }
+      if ($isObject(agent)) {
+        const connectOpts = agent.connectOpts;
+        const agentOpts = agent.options;
+        const opts =
+          $isObject(connectOpts) && $isObject(agentOpts)
+            ? { __proto__: null, ...connectOpts, ...agentOpts }
+            : $isObject(agentOpts)
+              ? agentOpts
+              : connectOpts;
+        if ($isObject(opts)) {
+          const tls: any = {};
+          let hasTls = false;
+          if (opts.rejectUnauthorized !== undefined) {
+            tls.rejectUnauthorized = opts.rejectUnauthorized;
+            hasTls = true;
+          }
+          if (opts.ca !== undefined) {
+            tls.ca = opts.ca;
+            hasTls = true;
+          }
+          if (opts.cert !== undefined) {
+            tls.cert = opts.cert;
+            hasTls = true;
+          }
+          if (opts.key !== undefined) {
+            tls.key = opts.key;
+            hasTls = true;
+          }
+          if (opts.passphrase !== undefined) {
+            tls.passphrase = opts.passphrase;
+            hasTls = true;
+          }
+          if (opts.pfx !== undefined) {
+            tls.pfx = opts.pfx;
+            hasTls = true;
+          }
+          if (opts.servername !== undefined) {
+            tls.serverName = opts.servername;
+            hasTls = true;
+          }
+          if (opts.ciphers !== undefined) {
+            tls.ciphers = opts.ciphers;
+            hasTls = true;
+          }
+          if (opts.secureOptions !== undefined) {
+            tls.secureOptions = opts.secureOptions;
+            hasTls = true;
+          }
+          if (hasTls && !(init as any).tls) {
+            init = { ...init, tls } as any;
+          }
+        }
+      }
+    }
+  }
   const response = await nativeFetch.$call(undefined, url, init);
   Object.setPrototypeOf(response, ResponsePrototype);
   return response;

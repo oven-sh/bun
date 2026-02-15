@@ -418,9 +418,11 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 if (!s->flags.last_write_failed || us_socket_is_shut_down(0, s)) {
                     us_poll_change(&s->p, loop, us_poll_events(&s->p) & LIBUS_SOCKET_READABLE);
                 } else {
-                    #ifdef LIBUS_USE_KQUEUE
-                    /* Kqueue one-shot writable needs to be re-registered */
-                    us_poll_change(&s->p, loop, us_poll_events(&s->p) | LIBUS_SOCKET_WRITABLE);
+                    #if defined(LIBUS_USE_KQUEUE) || defined(LIBUS_USE_LIBUV)
+                    /* Kqueue: one-shot writable needs to be re-registered.
+                     * Libuv/Windows: WSAPoll may not reliably deliver writable events
+                     * after a partial write without re-registration. Force it. */
+                    us_poll_change_force(&s->p, loop, us_poll_events(&s->p) | LIBUS_SOCKET_WRITABLE);
                     #endif
                 }
             }
@@ -509,8 +511,8 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         if(s && s->flags.adopted && s->prev) {
                             s = s->prev;
                         }
-                        // loop->num_ready_polls isn't accessible on Windows.
                         #ifndef WIN32
+                        // loop->num_ready_polls isn't accessible on Windows.
                         // rare case: we're reading a lot of data, there's more to be read, and either:
                         // - the socket has hung up, so we will never get more data from it (only applies to macOS, as macOS will send the event the same tick but Linux will not.)
                         // - the event loop isn't very busy, so we can read multiple times in a row
@@ -529,6 +531,20 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                             }
                         }
                         #undef LOOP_ISNT_VERY_BUSY_THRESHOLD
+                        #else
+                        // On Windows, we don't have num_ready_polls but we still need to
+                        // drain available data to avoid requiring a full event loop iteration
+                        // for each recv. This is critical for streaming performance.
+                        if (
+                            s && length >= (LIBUS_RECV_BUFFER_LENGTH - 24 * 1024) && length <= LIBUS_RECV_BUFFER_LENGTH &&
+                            !us_socket_is_closed(0, s)
+                        ) {
+                            repeat_recv_count++;
+                            // Limit to 10 iterations to avoid starving other sockets
+                            if (repeat_recv_count <= 10) {
+                                continue;
+                            }
+                        }
                         #endif
                     } else if (!length) {
                         eof = 1; // lets handle EOF in the same place

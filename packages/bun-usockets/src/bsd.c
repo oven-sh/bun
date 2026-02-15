@@ -810,11 +810,19 @@ ssize_t bsd_write2(LIBUS_SOCKET_DESCRIPTOR fd, const char *header, int header_le
 #else
 ssize_t bsd_write2(LIBUS_SOCKET_DESCRIPTOR fd, const char *header, int header_length, const char *payload, int payload_length) {
     ssize_t written = bsd_send(fd, header, header_length);
+    if (written < 0) {
+        return written;
+    }
     if (written == header_length) {
         ssize_t second_write = bsd_send(fd, payload, payload_length);
         if (second_write > 0) {
             written += second_write;
+        } else if (second_write < 0) {
+            /* First write succeeded but second failed with error.
+             * Return the header bytes written so the caller knows
+             * partial progress was made. */
         }
+        /* If second_write == 0 (would-block), also just return header_length */
     }
     return written;
 }

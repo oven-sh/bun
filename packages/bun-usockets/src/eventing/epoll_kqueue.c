@@ -495,6 +495,12 @@ void us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
     }
 }
 
+/* On epoll/kqueue, force is the same as regular change since the kernel
+ * handles level/edge triggering correctly. */
+void us_poll_change_force(struct us_poll_t *p, struct us_loop_t *loop, int events) {
+    us_poll_change(p, loop, events);
+}
+
 void us_poll_stop(struct us_poll_t *p, struct us_loop_t *loop) {
     int old_events = us_poll_events(p);
     int new_events = 0;

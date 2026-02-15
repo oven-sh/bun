@@ -87,7 +87,8 @@ pub fn openForWritingImpl(
                 }
 
                 if (isatty) {
-                    pollable.* = true;
+                    // macOS doesn't allow polling ttys and end up with EINVAL on kqueue.
+                    pollable.* = !comptime bun.Environment.isMac;
                 }
 
                 is_socket.* = std.posix.S.ISSOCK(stat.mode);

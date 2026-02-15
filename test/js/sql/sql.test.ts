@@ -2775,8 +2775,35 @@ if (isDockerEnabled()) {
     //   return ['select 1', result]
     // })
 
-    test("bigint is returned as String", async () => {
+    test("bigint outside safe integer range is returned as String", async () => {
       expect(typeof (await sql`select 9223372036854777 as x`)[0].x).toBe("string");
+      expect((await sql`select 9223372036854777 as x`)[0].x).toBe("9223372036854777");
+    });
+
+    test("bigint within safe integer range is returned as Number", async () => {
+      // Values within Number.MAX_SAFE_INTEGER should be numbers, not strings
+      const result = (await sql`select 9007199254740991::int8 as x`)[0].x;
+      expect(typeof result).toBe("number");
+      expect(result).toBe(9007199254740991);
+
+      // Negative safe integer boundary
+      const result2 = (await sql`select (-9007199254740991)::int8 as x`)[0].x;
+      expect(typeof result2).toBe("number");
+      expect(result2).toBe(-9007199254740991);
+
+      // COUNT(*) returns bigint - should be a number for typical counts
+      const result3 = (await sql`select count(*) from information_schema.tables`)[0].count;
+      expect(typeof result3).toBe("number");
+    });
+
+    test("bigint just outside safe integer range is returned as String", async () => {
+      const result = (await sql`select 9007199254740992::int8 as x`)[0].x;
+      expect(typeof result).toBe("string");
+      expect(result).toBe("9007199254740992");
+
+      const result2 = (await sql`select (-9007199254740992)::int8 as x`)[0].x;
+      expect(typeof result2).toBe("string");
+      expect(result2).toBe("-9007199254740992");
     });
 
     test("bigint is returned as BigInt", async () => {

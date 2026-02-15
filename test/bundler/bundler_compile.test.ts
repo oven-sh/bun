@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
+import { pathToFileURL } from "url";
 import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
@@ -935,5 +936,66 @@ const server = serve({
 
     const result = await Bun.$`./app`.cwd(dir).env(bunEnv).nothrow();
     expect(result.stdout.toString().trim()).toBe("IT WORKS");
+  });
+
+  // Regression test for https://github.com/oven-sh/bun/issues/26653
+  // When a plugin transforms a file's content, transitive dependencies should
+  // still have correct import.meta.url pointing to the virtual /$bunfs/ path,
+  // not the original filesystem path.
+  itBundled("compile/PluginTransformPreservesTransitiveImportMetaUrl", {
+    compile: true,
+    backend: "api",
+    outfile: "dist/out",
+    files: {
+      "/entry.ts": /* js */ `
+        import { processData } from "./model.ts";
+        const result = processData();
+        console.log("Result:", result);
+      `,
+      "/model.ts": /* js */ `
+        // This file is transformed by a plugin - it uses a placeholder
+        // that gets replaced with the actual filesystem path
+        import { helper } from "./utils.ts";
+        const MODEL_URL = "MODEL_URL_PLACEHOLDER";
+        export function processData() {
+          console.log("Model URL:", MODEL_URL);
+          return helper();
+        }
+      `,
+      "/utils.ts": /* js */ `
+        // This transitive dependency is NOT transformed by the plugin.
+        // Its import.meta.url should point to the virtual /$bunfs/ path,
+        // not the original filesystem path.
+        export function helper() {
+          const url = import.meta.url;
+          console.log("Utils URL:", url);
+          // Verify the URL is the virtual path by parsing it with URL API
+          const pathname = new URL(url).pathname;
+          if (pathname.includes("/$bunfs/")) {
+            return "success";
+          } else {
+            return "FAIL: import.meta.url pathname is not virtual path: " + pathname;
+          }
+        }
+      `,
+    },
+    plugins: [
+      {
+        name: "transform-model",
+        setup(api) {
+          api.onLoad({ filter: /model\.ts$/ }, async args => {
+            const contents = await Bun.file(args.path).text();
+            // Replace placeholder with actual filesystem path
+            const fileUrl = pathToFileURL(args.path).href;
+            const transformed = contents.replace("MODEL_URL_PLACEHOLDER", fileUrl);
+            return { contents: transformed, loader: "ts" };
+          });
+        },
+      },
+    ],
+    run: {
+      // The output should show success from utils.ts, verifying import.meta.url is correct
+      stdout: /Result: success/,
+    },
   });
 });

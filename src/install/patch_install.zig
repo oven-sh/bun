@@ -236,10 +236,15 @@ pub const PatchTask = struct {
 
         var absolute_patchfile_path_buf: bun.PathBuffer = undefined;
         // 1. Parse the patch file
-        const absolute_patchfile_path = bun.path.joinZBuf(&absolute_patchfile_path_buf, &[_][]const u8{
-            dir,
-            patchfile_path,
-        }, .auto);
+        // If the patchfile_path is already absolute (e.g., from a folder dependency),
+        // use it directly. Otherwise, join with the project directory.
+        const absolute_patchfile_path = if (std.fs.path.isAbsolute(patchfile_path))
+            bun.path.joinZBuf(&absolute_patchfile_path_buf, &[_][]const u8{patchfile_path}, .auto)
+        else
+            bun.path.joinZBuf(&absolute_patchfile_path_buf, &[_][]const u8{
+                dir,
+                patchfile_path,
+            }, .auto);
         // TODO: can the patch file be anything other than utf-8?
 
         const patchfile_txt = switch (bun.sys.File.readFrom(
@@ -407,14 +412,19 @@ pub const PatchTask = struct {
 
         var absolute_patchfile_path_buf: bun.PathBuffer = undefined;
         // parse the patch file
-        const absolute_patchfile_path = bun.path.joinZBuf(
-            &absolute_patchfile_path_buf,
-            &[_][]const u8{
-                dir,
-                patchfile_path,
-            },
-            .auto,
-        );
+        // If the patchfile_path is already absolute (e.g., from a folder dependency),
+        // use it directly. Otherwise, join with the project directory.
+        const absolute_patchfile_path = if (std.fs.path.isAbsolute(patchfile_path))
+            bun.path.joinZBuf(&absolute_patchfile_path_buf, &[_][]const u8{patchfile_path}, .auto)
+        else
+            bun.path.joinZBuf(
+                &absolute_patchfile_path_buf,
+                &[_][]const u8{
+                    dir,
+                    patchfile_path,
+                },
+                .auto,
+            );
 
         const stat: bun.Stat = switch (bun.sys.stat(absolute_patchfile_path)) {
             .err => |e| {

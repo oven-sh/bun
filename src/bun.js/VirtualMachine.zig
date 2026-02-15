@@ -1754,7 +1754,9 @@ pub fn resolveMaybeNeedsTrailingSlash(
     comptime is_a_file_path: bool,
     is_user_require_resolve: bool,
 ) bun.JSError!void {
-    if (is_a_file_path and specifier.length() > comptime @as(u32, @intFromFloat(@trunc(@as(f64, @floatFromInt(bun.MAX_PATH_BYTES)) * 1.5)))) {
+    // Data URLs can be very long (e.g. zip.js embeds ~25KB worker code in data URIs),
+    // so don't apply the path length check to them.
+    if (is_a_file_path and (specifier.length() > comptime @as(u32, @intFromFloat(@trunc(@as(f64, @floatFromInt(bun.MAX_PATH_BYTES)) * 1.5)))) and !specifier.hasPrefixComptime("data:")) {
         const specifier_utf8 = specifier.toUTF8(bun.default_allocator);
         defer specifier_utf8.deinit();
         const source_utf8 = source.toUTF8(bun.default_allocator);

@@ -22,6 +22,7 @@
 #include <wtf/IterationStatus.h>
 #include <JavaScriptCore/CodeBlock.h>
 #include <JavaScriptCore/FunctionCodeBlock.h>
+#include <JavaScriptCore/Interpreter.h>
 
 #include "ErrorStackFrame.h"
 
@@ -114,9 +115,9 @@ JSCStackTrace JSCStackTrace::fromExisting(JSC::VM& vm, const WTF::Vector<JSC::St
 
 void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, JSC::JSCell* owner, JSC::JSValue caller, WTF::Vector<JSC::StackFrame>& stackTrace, size_t stackTraceLimit)
 {
-    size_t framesCount = 0;
-
-    bool belowCaller = false;
+    // Compute the number of frames to skip by walking the stack to find the caller.
+    // We need this first pass because Interpreter::getStackTrace uses framesToSkip
+    // as a count of visible (non-private) frames to skip.
     int32_t skipFrames = 0;
 
     WTF::String callerName {};
@@ -129,29 +130,15 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
         callerName = callerFunctionInternal->name();
     }
 
-    size_t totalFrames = 0;
-
     if (!callerName.isEmpty()) {
         JSC::StackVisitor::visit(callFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
             if (isImplementationVisibilityPrivate(visitor)) {
                 return WTF::IterationStatus::Continue;
             }
 
-            framesCount += 1;
+            skipFrames += 1;
 
-            // skip caller frame and all frames above it
-            if (!belowCaller) {
-                skipFrames += 1;
-
-                if (visitor->functionName() == callerName) {
-                    belowCaller = true;
-                    return WTF::IterationStatus::Continue;
-                }
-            }
-
-            totalFrames += 1;
-
-            if (totalFrames > stackTraceLimit) {
+            if (visitor->functionName() == callerName) {
                 return WTF::IterationStatus::Done;
             }
 
@@ -163,95 +150,34 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
                 return WTF::IterationStatus::Continue;
             }
 
-            framesCount += 1;
-
-            // skip caller frame and all frames above it
-            if (!belowCaller) {
-                auto callee = visitor->callee();
-                skipFrames += 1;
-                if (callee.isCell() && callee.asCell() == caller) {
-                    belowCaller = true;
-                    return WTF::IterationStatus::Continue;
-                }
-            }
-
-            totalFrames += 1;
-
-            if (totalFrames > stackTraceLimit) {
+            skipFrames += 1;
+            auto callee = visitor->callee();
+            if (callee.isCell() && callee.asCell() == caller) {
                 return WTF::IterationStatus::Done;
             }
 
             return WTF::IterationStatus::Continue;
         });
     } else if (caller.isEmpty() || caller.isUndefined()) {
-        // Skip the first frame.
-        JSC::StackVisitor::visit(callFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
-            if (isImplementationVisibilityPrivate(visitor)) {
-                return WTF::IterationStatus::Continue;
-            }
-
-            framesCount += 1;
-
-            if (!belowCaller) {
-                skipFrames += 1;
-                belowCaller = true;
-            }
-
-            totalFrames += 1;
-
-            if (totalFrames > stackTraceLimit) {
-                return WTF::IterationStatus::Done;
-            }
-
-            return WTF::IterationStatus::Continue;
-        });
+        // Skip the first frame (captureStackTrace itself).
+        skipFrames = 1;
     }
-    size_t i = 0;
-    totalFrames = 0;
-    stackTrace.reserveInitialCapacity(framesCount);
-    JSC::StackVisitor::visit(callFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
-        // Skip native frames
-        if (isImplementationVisibilityPrivate(visitor)) {
-            return WTF::IterationStatus::Continue;
+
+    // Use Interpreter::getStackTrace which handles async continuation frames
+    // (frames from functions suspended at await points higher up the async call chain).
+    // This is critical for compatibility with V8's behavior where Error.captureStackTrace
+    // includes suspended async frames in the CallSite array.
+    WTF::Vector<JSC::StackFrame> rawStackTrace;
+    vm.interpreter.getStackTrace(owner, rawStackTrace, skipFrames, stackTraceLimit);
+
+    // Filter out private/internal implementation frames to match the behavior
+    // of the previous StackVisitor-based approach.
+    stackTrace.reserveInitialCapacity(rawStackTrace.size());
+    for (auto& frame : rawStackTrace) {
+        if (!isImplementationVisibilityPrivate(frame)) {
+            stackTrace.append(frame);
         }
-
-        // Skip frames if needed
-        if (skipFrames > 0) {
-            skipFrames--;
-            return WTF::IterationStatus::Continue;
-        }
-
-        totalFrames += 1;
-
-        if (totalFrames > stackTraceLimit) {
-            return WTF::IterationStatus::Done;
-        }
-
-        if (visitor->isNativeCalleeFrame()) {
-
-            auto* nativeCallee = visitor->callee().asNativeCallee();
-            switch (nativeCallee->category()) {
-            case NativeCallee::Category::Wasm: {
-                stackTrace.append(StackFrame(visitor->wasmFunctionIndexOrName()));
-                break;
-            }
-            case NativeCallee::Category::InlineCache: {
-                break;
-            }
-            }
-#if USE(ALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS)
-        } else if (!!visitor->codeBlock())
-#else
-            } else if (!!visitor->codeBlock() && !visitor->codeBlock()->unlinkedCodeBlock()->isBuiltinFunction())
-#endif
-            stackTrace.append(StackFrame(vm, owner, visitor->callee().asCell(), visitor->codeBlock(), visitor->bytecodeIndex()));
-        else
-            stackTrace.append(StackFrame(vm, owner, visitor->callee().asCell()));
-
-        i++;
-
-        return (i == framesCount) ? WTF::IterationStatus::Done : WTF::IterationStatus::Continue;
-    });
+    }
 }
 
 JSCStackTrace JSCStackTrace::getStackTraceForThrownValue(JSC::VM& vm, JSC::JSValue thrownValue)

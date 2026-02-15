@@ -87,7 +87,7 @@ describe("bun patch <pkg>", async () => {
 
           expect(
             (await $`cat package.json`.cwd(tempdir).env(bunEnv).json()).patchedDependencies["@types/ws@8.5.4"],
-          ).toEqual("patches/@types%2Fws@8.5.4.patch");
+          ).toEqual("patches/@types+ws@8.5.4.patch");
         });
       }
     });
@@ -165,7 +165,7 @@ describe("bun patch <pkg>", async () => {
 
           expect(
             (await $`cat package.json`.cwd(tempdir).env(bunEnv).json()).patchedDependencies["@types/ws@8.5.4"],
-          ).toEqual("patches/@types%2Fws@8.5.4.patch");
+          ).toEqual("patches/@types+ws@8.5.4.patch");
         });
       }
     });
@@ -240,7 +240,7 @@ describe("bun patch <pkg>", async () => {
 
           expect(
             (await $`cat package.json`.cwd(tempdir).env(bunEnv).json()).patchedDependencies["@types/ws@8.5.4"],
-          ).toEqual("patches/@types%2Fws@8.5.4.patch");
+          ).toEqual("patches/@types+ws@8.5.4.patch");
         });
       }
     });
@@ -251,15 +251,15 @@ describe("bun patch <pkg>", async () => {
           "packages/eslint-config/node_modules/@types/ws",
           "packages/eslint-config/node_modules/@types/ws",
           "@types/ws@8.5.4",
-          "patches/@types%2Fws@8.5.4.patch",
+          "patches/@types+ws@8.5.4.patch",
         ],
         [
           "@types/ws@8.5.4",
           "node_modules/@repo/eslint-config/node_modules/@types/ws",
           "@types/ws@8.5.4",
-          "patches/@types%2Fws@8.5.4.patch",
+          "patches/@types+ws@8.5.4.patch",
         ],
-        ["@types/ws@7.4.7", "node_modules/@types/ws", "@types/ws@7.4.7", "patches/@types%2Fws@7.4.7.patch"],
+        ["@types/ws@7.4.7", "node_modules/@types/ws", "@types/ws@7.4.7", "patches/@types+ws@7.4.7.patch"],
       ];
       for (const [arg, path, version, patch_path] of args) {
         test(arg, async () => {

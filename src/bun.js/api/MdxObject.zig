@@ -29,6 +29,8 @@ pub fn compile(
     const options = try parseOptions(globalThis, arena.allocator(), opts_value);
     const result = mdx.compile(input, arena.allocator(), options) catch |err| return switch (err) {
         error.OutOfMemory => globalThis.throwOutOfMemory(),
+        error.JSError, error.JSTerminated => |e| e,
+        error.StackOverflow => globalThis.throwStackOverflow(),
         else => globalThis.throwValue(globalThis.createSyntaxErrorInstance("MDX compile error: {s}", .{@errorName(err)})),
     };
 
@@ -51,11 +53,19 @@ fn parseOptions(globalThis: *jsc.JSGlobalObject, allocator: std.mem.Allocator, o
             }
         }
 
-        if (try opts_value.getStringish(globalThis, "jsxImportSource")) |str| {
-            defer str.deref();
-            const utf8 = str.toUTF8(allocator);
-            defer utf8.deinit();
-            options.jsx_import_source = try allocator.dupe(u8, utf8.slice());
+        if (try opts_value.get(globalThis, "jsxImportSource")) |import_source_value| {
+            if (!import_source_value.isUndefinedOrNull()) {
+                if (!import_source_value.isString()) {
+                    return globalThis.throwInvalidArguments("jsxImportSource must be a string", .{});
+                }
+                const str = try import_source_value.toBunString(globalThis);
+                defer str.deref();
+                if (!str.isEmpty()) {
+                    const utf8 = str.toUTF8(allocator);
+                    defer utf8.deinit();
+                    options.jsx_import_source = try allocator.dupe(u8, utf8.slice());
+                }
+            }
         }
     }
 
@@ -77,7 +87,7 @@ fn camelCaseOf(comptime snake: []const u8) []const u8 {
             if (c == '_') {
                 cap_next = true;
             } else {
-                buf[i] = if (cap_next and c >= 'a' and c <= 'z') c - 32 else c;
+                buf[i] = if (cap_next and i != 0 and c >= 'a' and c <= 'z') c - 32 else c;
                 i += 1;
                 cap_next = false;
             }

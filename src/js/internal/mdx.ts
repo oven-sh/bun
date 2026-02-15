@@ -182,7 +182,7 @@ Examples:
     return acc.slice(0, i);
   });
 
-  if (path.platform === "win32") {
+  if (process.platform === "win32") {
     longestCommonPath = longestCommonPath.replaceAll("\\", "/");
   }
 
@@ -242,6 +242,8 @@ Examples:
 
   const Mdx = (Bun as any).mdx as { compile(input: string): string };
 
+  const compiledTsxName = "mdx-compiled.tsx";
+
   const htmlEntryPaths = args.map((mdxPath, index) => {
     const entryDir = path.join(tmpRoot, String(index));
     ensureDir(entryDir);
@@ -250,7 +252,6 @@ Examples:
     // The dev server's incremental graph can't handle .mdx files directly.
     const mdxSource = fs.readFileSync(mdxPath, "utf8");
     const compiledTsx = Mdx.compile(mdxSource);
-    const compiledTsxName = "mdx-compiled.tsx";
     fs.writeFileSync(path.join(entryDir, compiledTsxName), compiledTsx, "utf8");
 
     const wrapperScriptName = "entry.js";
@@ -330,6 +331,37 @@ Examples:
         }
       }
       throw error;
+    }
+  }
+
+  // Watch original .mdx source files and re-compile on change so the dev
+  // server's HMR picks up the updated TSX in the temp directory.
+  if (server!.development) {
+    for (let i = 0, length = args.length; i < length; i++) {
+      const mdxPath = args[i];
+      const compiledTsxPath = path.join(tmpRoot, String(i), compiledTsxName);
+      let pending = false;
+      fs.watch(mdxPath, (_event: string) => {
+        if (pending) return;
+        pending = true;
+        // Coalesce rapid successive events (editors often emit multiple writes)
+        setTimeout(() => {
+          pending = false;
+          try {
+            const source = fs.readFileSync(mdxPath, "utf8");
+            const compiled = Mdx.compile(source);
+            fs.writeFileSync(compiledTsxPath, compiled, "utf8");
+          } catch (err: any) {
+            if (Bun.enableANSIColors) {
+              console.error(
+                `\x1b[31m[mdx]\x1b[0m compile error in \x1b[36m${path.relative(cwd, mdxPath)}\x1b[0m: ${err?.message ?? err}`,
+              );
+            } else {
+              console.error(`[mdx] compile error in ${path.relative(cwd, mdxPath)}: ${err?.message ?? err}`);
+            }
+          }
+        }, 50);
+      });
     }
   }
 

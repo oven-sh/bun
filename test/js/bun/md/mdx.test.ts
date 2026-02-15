@@ -116,6 +116,7 @@ title: Integration
       cmd: [bunExe(), "entry.tsx"],
       cwd: String(dir),
       env: bunEnv,
+      stdout: "pipe",
       stderr: "pipe",
     });
 
@@ -151,6 +152,7 @@ export const meta = { version: "2.0" };
       cmd: [bunExe(), "entry.tsx"],
       cwd: String(dir),
       env: bunEnv,
+      stdout: "pipe",
       stderr: "pipe",
     });
 

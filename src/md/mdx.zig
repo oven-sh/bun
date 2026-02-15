@@ -118,22 +118,6 @@ pub fn replaceExpressions(
             continue;
         }
 
-        if (c == '`') {
-            in_inline_code = !in_inline_code;
-            try output.append(allocator, c);
-            continue;
-        }
-        if (in_inline_code) {
-            try output.append(allocator, c);
-            continue;
-        }
-
-        if (c == '{' and expr_start == null) {
-            expr_start = i;
-            depth = 1;
-            continue;
-        }
-
         if (expr_start != null) {
             if (c == '{') depth += 1;
             if (c == '}') {
@@ -151,6 +135,22 @@ pub fn replaceExpressions(
                     continue;
                 }
             }
+            continue;
+        }
+
+        if (c == '`') {
+            in_inline_code = !in_inline_code;
+            try output.append(allocator, c);
+            continue;
+        }
+        if (in_inline_code) {
+            try output.append(allocator, c);
+            continue;
+        }
+
+        if (c == '{' and expr_start == null) {
+            expr_start = i;
+            depth = 1;
             continue;
         }
 

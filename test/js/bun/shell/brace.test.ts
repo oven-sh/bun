@@ -54,4 +54,20 @@ describe("$.braces", () => {
     const result = $.braces(`lol {😂,🫵,🤣}`);
     expect(result).toEqual(["lol 😂", "lol 🫵", "lol 🤣"]);
   });
+
+  test("257 elements does not crash (u8 overflow regression)", () => {
+    // Regression test: calculateExpandedAmount used a u8 counter that would
+    // wrap at 256 elements, causing a heap buffer overflow in release builds.
+    const elements = Array.from({ length: 257 }, (_, i) => String(i)).join(",");
+    const result = $.braces(`{${elements}}`);
+    expect(result.length).toBe(257);
+    expect(result[0]).toBe("0");
+    expect(result[256]).toBe("256");
+  });
+
+  test("256 elements does not crash", () => {
+    const elements = Array.from({ length: 256 }, (_, i) => String(i)).join(",");
+    const result = $.braces(`{${elements}}`);
+    expect(result.length).toBe(256);
+  });
 });

@@ -33,6 +33,30 @@ const log = Output.scoped(.fetch, .visible);
 
 pub var temp_hostname: [8192]u8 = undefined;
 
+/// Strips the port from a hostname if present.
+/// Handles both IPv4/IPv6 addresses and regular hostnames:
+/// - "example.com:9002" -> "example.com"
+/// - "[::1]:9002" -> "[::1]"
+/// - "example.com" -> "example.com"
+fn stripPortFromHostname(hostname: []const u8) []const u8 {
+    // For IPv6 addresses like "[::1]:9002", the port comes after the closing bracket
+    if (hostname.len > 0 and hostname[0] == '[') {
+        if (std.mem.indexOfScalar(u8, hostname, ']')) |bracket_pos| {
+            // Return hostname including the closing bracket, but not the port
+            return hostname[0 .. bracket_pos + 1];
+        }
+        // Malformed IPv6 (no closing bracket), return as-is
+        return hostname;
+    }
+
+    // For regular hostnames, find the first colon which indicates the port
+    if (std.mem.indexOfScalar(u8, hostname, ':')) |colon_pos| {
+        return hostname[0..colon_pos];
+    }
+
+    return hostname;
+}
+
 pub fn checkServerIdentity(
     client: *HTTPClient,
     comptime is_ssl: bool,
@@ -55,12 +79,14 @@ pub fn checkServerIdentity(
                     const result_size = BoringSSL.i2d_X509(x509, &cert_ptr);
                     assert(result_size == cert_size);
 
-                    var hostname = client.hostname orelse client.url.hostname;
+                    var raw_hostname = client.hostname orelse client.url.hostname;
                     if (allowProxyUrl) {
                         if (client.http_proxy) |proxy| {
-                            hostname = proxy.hostname;
+                            raw_hostname = proxy.hostname;
                         }
                     }
+                    // Strip port from hostname for TLS certificate validation
+                    const hostname = stripPortFromHostname(raw_hostname);
 
                     client.state.certificate_info = .{
                         .cert = cert,
@@ -80,12 +106,14 @@ pub fn checkServerIdentity(
                     // we check with native code if the cert is valid
                     // fast path
 
-                    var hostname = client.hostname orelse client.url.hostname;
+                    var raw_hostname = client.hostname orelse client.url.hostname;
                     if (allowProxyUrl) {
                         if (client.http_proxy) |proxy| {
-                            hostname = proxy.hostname;
+                            raw_hostname = proxy.hostname;
                         }
                     }
+                    // Strip port from hostname for TLS certificate validation
+                    const hostname = stripPortFromHostname(raw_hostname);
 
                     if (bun.BoringSSL.checkX509ServerIdentity(x509, hostname)) {
                         return true;
@@ -148,10 +176,12 @@ pub fn onOpen(
     if (comptime is_ssl) {
         var ssl_ptr: *BoringSSL.SSL = @ptrCast(socket.getNativeHandle());
         if (!ssl_ptr.isInitFinished()) {
-            var _hostname = client.hostname orelse client.url.hostname;
+            var _raw_hostname = client.hostname orelse client.url.hostname;
             if (client.http_proxy) |proxy| {
-                _hostname = proxy.hostname;
+                _raw_hostname = proxy.hostname;
             }
+            // Strip port from hostname for TLS SNI extension (e.g., "host:9002" -> "host")
+            const _hostname = stripPortFromHostname(_raw_hostname);
 
             var hostname: [:0]const u8 = "";
             var hostname_needs_free = false;

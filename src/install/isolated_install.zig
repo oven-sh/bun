@@ -119,13 +119,7 @@ pub fn installIsolatedPackages(
 
             if (entry.dep_id != invalid_dependency_id) {
                 const entry_dep = dependencies[entry.dep_id];
-                const has_peer_deps = has_peer_deps: {
-                    for (pkg_deps.begin()..pkg_deps.end()) |_did| {
-                        if (dependencies[_did].behavior.isPeer()) break :has_peer_deps true;
-                    }
-                    break :has_peer_deps false;
-                };
-                if (pkg_deps.len == 0 or entry_dep.version.tag == .workspace or !has_peer_deps) dont_dedupe: {
+                if (pkg_deps.len == 0 or entry_dep.version.tag == .workspace) dont_dedupe: {
                     const dedupe_entry = try early_dedupe.getOrPut(entry.pkg_id);
                     if (dedupe_entry.found_existing) {
                         const dedupe_node_id = dedupe_entry.value_ptr.*;

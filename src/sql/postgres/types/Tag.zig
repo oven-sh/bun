@@ -356,6 +356,16 @@ pub const Tag = enum(short) {
                 return globalObject.ERR(.INVALID_ARG_TYPE, "Boolean object is ambiguous and cannot be used as a PostgreSQL type", .{}).throw();
             }
 
+            // Set and Map (including WeakSet/WeakMap) are not directly supported because JSON.stringify converts them to empty objects.
+            // Provide a helpful error message guiding users to use Array.from() or Object.fromEntries().
+            if (tag == .Set or tag == .WeakSet) {
+                return globalObject.ERR(.INVALID_ARG_TYPE, "Set is not a valid PostgreSQL type. Use Array.from(set) or [...set] to convert it to an array first.", .{}).throw();
+            }
+
+            if (tag == .Map or tag == .WeakMap) {
+                return globalObject.ERR(.INVALID_ARG_TYPE, "Map is not a valid PostgreSQL type. Use Object.fromEntries(map) to convert it to an object or Array.from(map) for an array of entries.", .{}).throw();
+            }
+
             // It's something internal
             if (!tag.isIndexable()) {
                 return globalObject.ERR(.INVALID_ARG_TYPE, "Unknown object is not a valid PostgreSQL type", .{}).throw();

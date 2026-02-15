@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isMacOSVersionAtLeast } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOSVersionAtLeast } from "harness";
 
 /**
  * This test prevents startup performance regressions by ensuring that Bun has
@@ -69,5 +69,49 @@ describe("static initializers", () => {
       bunInitializers.length,
       `Do not add static initializers to Bun. Static initializers are called when Bun starts up, regardless of whether you use the variables or not. This makes Bun slower.`,
     ).toBe(process.arch === "arm64" ? 1 : 2);
+  });
+});
+
+describe("mimalloc symbol exports", () => {
+  // MI_OVERRIDE=ON is Linux-only; macOS uses MI_OVERRIDE=OFF and
+  // two-level namespaces, so allocator symbol exports have no effect there.
+  it.skipIf(!isLinux)("should export allocator symbols for NAPI modules", () => {
+    const result = Bun.spawnSync({
+      cmd: ["nm", "-D", bunExe()],
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const stdout = result.stdout.toString();
+
+    // nm -D format: "addr T symbol" for defined, "     U symbol" for imports.
+    // Filter to defined symbols only (any type letter except U).
+    const definedSymbols = new Set(
+      stdout
+        .split("\n")
+        .filter(line => / [A-TV-Z] /.test(line))
+        .map(line => line.trim().split(/\s+/).pop()),
+    );
+
+    const expected = [
+      "malloc",
+      "free",
+      "calloc",
+      "realloc",
+      "memalign",
+      "posix_memalign",
+      "aligned_alloc",
+      "malloc_usable_size",
+    ];
+
+    const missing = expected.filter(sym => !definedSymbols.has(sym));
+    expect(
+      missing,
+      `Missing allocator symbols in dynamic symbol table: ${missing.join(", ")}. ` +
+        `NAPI modules loaded via dlopen() need these symbols exported so they resolve ` +
+        `to mimalloc instead of falling back to glibc's allocator.`,
+    ).toEqual([]);
+
+    expect(result.exitCode).toBe(0);
   });
 });

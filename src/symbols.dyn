@@ -80,13 +80,6 @@
     __ZNK2v88External5ValueEv;
     __ZNK2v88Function7GetNameEv;
     _dumpBtjsTrace;
-    _malloc;
-    _free;
-    _calloc;
-    _realloc;
-    _posix_memalign;
-    _aligned_alloc;
-    _malloc_size;
     _napi_acquire_threadsafe_function;
     _napi_add_async_cleanup_hook;
     _napi_add_env_cleanup_hook;

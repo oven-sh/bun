@@ -30,94 +30,110 @@ async function createServer(cert: TLSOptions, callback: (port: number) => Promis
 
 describe.concurrent("fetch-tls", () => {
   it("can handle multiple requests with non native checkServerIdentity", async () => {
-    async function request() {
-      let called = false;
-      const result = await fetch("https://www.example.com", {
-        keepalive: false,
-        tls: {
-          checkServerIdentity(hostname: string, cert: tls.PeerCertificate) {
-            called = true;
-            return tls.checkServerIdentity(hostname, cert);
-          },
-        },
-      }).then((res: Response) => res.blob());
-      expect(result?.size).toBeGreaterThan(0);
-      expect(called).toBe(true);
-    }
-    const promises = [];
-    for (let i = 0; i < 5; i++) {
-      promises.push(request());
-    }
-    await Promise.all(promises);
-  });
-
-  it("fetch with valid tls should not throw", async () => {
-    const promises = [`https://example.com`, `https://www.example.com`].map(async url => {
-      const result = await fetch(url, { keepalive: false }).then((res: Response) => res.blob());
-      expect(result?.size).toBeGreaterThan(0);
-    });
-
-    await Promise.all(promises);
-  });
-
-  it("fetch with valid tls and non-native checkServerIdentity should work", async () => {
-    for (const isBusy of [true, false]) {
-      let count = 0;
-      const promises = [`https://example.com`, `https://www.example.com`].map(async url => {
-        await fetch(url, {
+    await createServer(CERT_LOCALHOST_IP, async port => {
+      async function request() {
+        let called = false;
+        const result = await fetch(`https://localhost:${port}`, {
           keepalive: false,
           tls: {
+            ca: validTls.cert,
             checkServerIdentity(hostname: string, cert: tls.PeerCertificate) {
-              count++;
-              expect(url).toContain(hostname);
+              called = true;
               return tls.checkServerIdentity(hostname, cert);
             },
           },
         }).then((res: Response) => res.blob());
-      });
-      if (isBusy) {
-        const start = performance.now();
-        while (performance.now() - start < 500) {}
+        expect(result?.size).toBeGreaterThan(0);
+        expect(called).toBe(true);
+      }
+      const promises = [];
+      for (let i = 0; i < 5; i++) {
+        promises.push(request());
       }
       await Promise.all(promises);
-      expect(count).toBe(2);
-    }
+    });
+  });
+
+  it("fetch with valid tls should not throw", async () => {
+    await createServer(CERT_LOCALHOST_IP, async port => {
+      const urls = [`https://localhost:${port}`, `https://127.0.0.1:${port}`];
+      const promises = urls.map(async url => {
+        const result = await fetch(url, { keepalive: false, tls: { ca: validTls.cert } }).then((res: Response) =>
+          res.blob(),
+        );
+        expect(result?.size).toBeGreaterThan(0);
+      });
+
+      await Promise.all(promises);
+    });
   });
 
   it("fetch with valid tls and non-native checkServerIdentity should work", async () => {
-    let count = 0;
-    const promises = [`https://example.com`, `https://www.example.com`].map(async url => {
-      await fetch(url, {
-        keepalive: false,
-        tls: {
-          checkServerIdentity(hostname: string, cert: tls.PeerCertificate) {
-            count++;
-            expect(url).toContain(hostname);
-            throw new Error("CustomError");
-          },
-        },
-      });
+    await createServer(CERT_LOCALHOST_IP, async port => {
+      for (const isBusy of [true, false]) {
+        let count = 0;
+        const urls = [`https://localhost:${port}`, `https://127.0.0.1:${port}`];
+        const promises = urls.map(async url => {
+          await fetch(url, {
+            keepalive: false,
+            tls: {
+              ca: validTls.cert,
+              checkServerIdentity(hostname: string, cert: tls.PeerCertificate) {
+                count++;
+                return tls.checkServerIdentity(hostname, cert);
+              },
+            },
+          }).then((res: Response) => res.blob());
+        });
+        if (isBusy) {
+          const start = performance.now();
+          while (performance.now() - start < 500) {}
+        }
+        await Promise.all(promises);
+        expect(count).toBe(2);
+      }
     });
-    const start = performance.now();
-    while (performance.now() - start < 1000) {}
-    expect((await Promise.allSettled(promises)).every(p => p.status === "rejected")).toBe(true);
-    expect(count).toBe(2);
+  });
+
+  it("fetch with valid tls and non-native checkServerIdentity that throws should reject", async () => {
+    await createServer(CERT_LOCALHOST_IP, async port => {
+      let count = 0;
+      const urls = [`https://localhost:${port}`, `https://127.0.0.1:${port}`];
+      const promises = urls.map(async url => {
+        await fetch(url, {
+          keepalive: false,
+          tls: {
+            ca: validTls.cert,
+            checkServerIdentity(hostname: string, cert: tls.PeerCertificate) {
+              count++;
+              throw new Error("CustomError");
+            },
+          },
+        });
+      });
+      const start = performance.now();
+      while (performance.now() - start < 1000) {}
+      expect((await Promise.allSettled(promises)).every(p => p.status === "rejected")).toBe(true);
+      expect(count).toBe(2);
+    });
   });
 
   it("fetch with rejectUnauthorized: false should not call checkServerIdentity", async () => {
-    let count = 0;
+    await createServer(CERT_LOCALHOST_IP, async port => {
+      let count = 0;
 
-    await fetch("https://example.com", {
-      keepalive: false,
-      tls: {
-        rejectUnauthorized: false,
-        checkServerIdentity(hostname: string, cert: tls.PeerCertificate) {
-          count++;
-          return tls.checkServerIdentity(hostname, cert);
+      await fetch(`https://localhost:${port}`, {
+        keepalive: false,
+        tls: {
+          rejectUnauthorized: false,
+          checkServerIdentity(hostname: string, cert: tls.PeerCertificate) {
+            count++;
+            return tls.checkServerIdentity(hostname, cert);
+          },
         },
-      },
-    }).then((res: Response) => res.blob());
-    expect(count).toBe(0);
+      }).then((res: Response) => res.blob());
+      expect(count).toBe(0);
+    });
   });
 
   it("fetch with self-sign tls should throw", async () => {
@@ -152,20 +168,23 @@ describe.concurrent("fetch-tls", () => {
   });
 
   it("fetch with checkServerIdentity failing should throw", async () => {
-    try {
-      await fetch(`https://example.com`, {
-        keepalive: false,
-        tls: {
-          checkServerIdentity() {
-            return new Error("CustomError");
+    await createServer(CERT_LOCALHOST_IP, async port => {
+      try {
+        await fetch(`https://localhost:${port}`, {
+          keepalive: false,
+          tls: {
+            ca: validTls.cert,
+            checkServerIdentity() {
+              return new Error("CustomError");
+            },
           },
-        },
-      }).then((res: Response) => res.blob());
+        }).then((res: Response) => res.blob());
 
-      expect.unreachable();
-    } catch (e: any) {
-      expect(e.message).toBe("CustomError");
-    }
+        expect.unreachable();
+      } catch (e: any) {
+        expect(e.message).toBe("CustomError");
+      }
+    });
   });
 
   it("fetch with self-sign certificate tls + rejectUnauthorized: false should not throw", async () => {

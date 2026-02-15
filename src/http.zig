@@ -594,6 +594,17 @@ fn getUserAgentHeader() picohttp.Header {
         Global.user_agent };
 }
 
+fn connectionHeaderIsKeepAlive(connection_value: string) ?bool {
+    // > Connection options are case-insensitive.
+    // https://datatracker.ietf.org/doc/html/rfc7230#section-6.1
+    return if (std.ascii.eqlIgnoreCase(connection_value, "close"))
+        false
+    else if (std.ascii.eqlIgnoreCase(connection_value, "keep-alive"))
+        true
+    else
+        null;
+}
+
 pub fn headerStr(this: *const HTTPClient, ptr: api.StringPointer) string {
     return this.header_buf[ptr.offset..][0..ptr.length];
 }
@@ -631,10 +642,8 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
             hashHeaderConst("Connection") => {
                 override_connection_header = true;
                 const connection_value = this.headerStr(header_values[i]);
-                if (std.ascii.eqlIgnoreCase(connection_value, "close")) {
-                    this.flags.disable_keepalive = true;
-                } else if (std.ascii.eqlIgnoreCase(connection_value, "keep-alive")) {
-                    this.flags.disable_keepalive = false;
+                if (connectionHeaderIsKeepAlive(connection_value)) |conn_mod| {
+                    this.state.flags.allow_keepalive = conn_mod;
                 }
             },
             hashHeaderConst("if-modified-since") => {
@@ -2231,7 +2240,7 @@ pub fn handleResponseMetadata(
                 }
             },
             hashHeaderConst("Content-Type") => {
-                if (strings.contains(header.value, "text/event-stream")) {
+                if (strings.containsCaseInsensitiveASCII(header.value, "text/event-stream")) {
                     is_server_sent_events = true;
                 }
             },
@@ -2253,25 +2262,27 @@ pub fn handleResponseMetadata(
                 }
             },
             hashHeaderConst("Transfer-Encoding") => {
-                if (strings.eqlComptime(header.value, "gzip")) {
+                // > All transfer-coding names are case-insensitive
+                // https://datatracker.ietf.org/doc/html/rfc7230#section-4
+                if (strings.eqlCaseInsensitiveASCII(header.value, "gzip", true)) {
                     if (!this.flags.disable_decompression) {
                         this.state.transfer_encoding = Encoding.gzip;
                     }
-                } else if (strings.eqlComptime(header.value, "deflate")) {
+                } else if (strings.eqlCaseInsensitiveASCII(header.value, "deflate", true)) {
                     if (!this.flags.disable_decompression) {
                         this.state.transfer_encoding = Encoding.deflate;
                     }
-                } else if (strings.eqlComptime(header.value, "br")) {
+                } else if (strings.eqlCaseInsensitiveASCII(header.value, "br", true)) {
                     if (!this.flags.disable_decompression) {
                         this.state.transfer_encoding = .brotli;
                     }
-                } else if (strings.eqlComptime(header.value, "zstd")) {
+                } else if (strings.eqlCaseInsensitiveASCII(header.value, "zstd", true)) {
                     if (!this.flags.disable_decompression) {
                         this.state.transfer_encoding = .zstd;
                     }
-                } else if (strings.eqlComptime(header.value, "identity")) {
+                } else if (strings.eqlCaseInsensitiveASCII(header.value, "identity", true)) {
                     this.state.transfer_encoding = Encoding.identity;
-                } else if (strings.eqlComptime(header.value, "chunked")) {
+                } else if (strings.eqlCaseInsensitiveASCII(header.value, "chunked", true)) {
                     this.state.transfer_encoding = Encoding.chunked;
                 } else {
                     return error.UnsupportedTransferEncoding;
@@ -2282,11 +2293,8 @@ pub fn handleResponseMetadata(
             },
             hashHeaderConst("Connection") => {
                 if (response.status_code >= 200 and response.status_code <= 299) {
-                    // HTTP headers are case-insensitive (RFC 7230)
-                    if (std.ascii.eqlIgnoreCase(header.value, "close")) {
-                        this.state.flags.allow_keepalive = false;
-                    } else if (std.ascii.eqlIgnoreCase(header.value, "keep-alive")) {
-                        this.state.flags.allow_keepalive = true;
+                    if (connectionHeaderIsKeepAlive(header.value)) |conn_mod| {
+                        this.state.flags.allow_keepalive = conn_mod;
                     }
                 }
             },

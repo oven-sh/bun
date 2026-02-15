@@ -20,7 +20,7 @@ const input_preprocessed = to_preprocess.replace(to_remove, "");
 
 console.log("Generating " + output + " from " + input);
 const proc = spawn({
-  cmd: ["perl", create_hash_table, "-"],
+  cmd: [process.env.BUN_PERL || "perl", create_hash_table, "-"],
   stdin: "pipe",
   stdout: "pipe",
   stderr: "inherit",

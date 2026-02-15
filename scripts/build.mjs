@@ -23,6 +23,9 @@ const isWindowsARM64 =
     (process.env.PROCESSOR_IDENTIFIER || "").includes("ARMv8") ||
     process.arch === "arm64");
 
+// If bun is x64 on Windows ARM64, it may be running under emulation.
+const isEmulatedWindowsARM64 = isWindowsARM64 && process.arch !== "arm64";
+
 if (globalThis.Bun) {
   await import("./glob-sources.mjs");
 }
@@ -90,15 +93,34 @@ async function build(args) {
     generateOptions["-DCACHE_STRATEGY"] = parseBoolean(getEnv("RELEASE", false) || "false") ? "none" : "auto";
   }
 
+  // On Windows ARM64, default to the ARM64 toolchain so CMake sets the correct /machine flags.
+  if (isWindowsARM64 && !generateOptions["--toolchain"] && !generateOptions["-DCMAKE_TOOLCHAIN_FILE"]) {
+    generateOptions["--toolchain"] = "windows-aarch64";
+  }
+
   const toolchain = generateOptions["--toolchain"];
+  const isWindowsAarch64Toolchain =
+    isWindows &&
+    (toolchain === "windows-aarch64" ||
+      (typeof generateOptions["-DCMAKE_TOOLCHAIN_FILE"] === "string" &&
+        generateOptions["-DCMAKE_TOOLCHAIN_FILE"].includes("windows-aarch64")));
   if (toolchain) {
     const toolchainPath = resolve(import.meta.dirname, "..", "cmake", "toolchains", `${toolchain}.cmake`);
     generateOptions["--toolchain"] = toolchainPath;
   }
 
-  // Windows ARM64: log detection (compiler is selected by CMake/toolchain)
-  if (isWindowsARM64) {
-    console.log("Windows ARM64 detected");
+  // Windows ARM64 target: automatically set required options (native or cross-compiling)
+  if (isWindowsARM64 || isWindowsAarch64Toolchain) {
+    // Use clang-cl instead of MSVC cl.exe for proper ARM64 flag support
+    if (!generateOptions["-DCMAKE_C_COMPILER"]) {
+      generateOptions["-DCMAKE_C_COMPILER"] = "clang-cl";
+    }
+    if (!generateOptions["-DCMAKE_CXX_COMPILER"]) {
+      generateOptions["-DCMAKE_CXX_COMPILER"] = "clang-cl";
+    }
+    console.log(
+      `Windows ARM64 target: using clang-cl${isEmulatedWindowsARM64 ? " (bun is running under emulation)" : ""}`,
+    );
   }
 
   const generateArgs = Object.entries(generateOptions).flatMap(([flag, value]) =>

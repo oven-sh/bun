@@ -44,6 +44,7 @@ After Visual Studio, you need the following:
 - Node.js
 
 <Note>The Zig compiler is automatically downloaded, installed, and updated by the building process.</Note>
+<Note>If `perl.exe` is not in your `PATH`, the build will download a portable Perl into the build cache.</Note>
 
 [Scoop](https://scoop.sh) can be used to install these remaining tools easily.
 
@@ -101,6 +102,18 @@ bun run build
 # after the initial `bun run build` you can use the following to build
 ninja -Cbuild/debug
 ```
+
+### Windows ARM64
+
+On Windows ARM64 devices, `bun run build` produces an ARM64 build.
+
+If you're on Windows x64 and want to build an ARM64 binary (cross-compile), use the ARM64 toolchain:
+
+```ps1
+bun run build:debug:windows-arm64
+```
+
+This produces `bun-debug.exe` under `build/debug-windows-arm64/`.
 
 If this was successful, you should have a `bun-debug.exe` in the `build/debug` folder.
 

@@ -63,6 +63,16 @@ endif()
 if(WIN32 AND ARCH STREQUAL "aarch64")
   set(CMAKE_POLICY_DEFAULT_CMP0197 NEW)
   set(CMAKE_MSVC_CMP0197 NEW)
+  # Some toolchains/CMake versions may inject a default /machine:x64 when using
+  # clang-cl host tools. Strip it so we don't end up with conflicting machine types.
+  foreach(_flag_var CMAKE_EXE_LINKER_FLAGS CMAKE_SHARED_LINKER_FLAGS CMAKE_MODULE_LINKER_FLAGS CMAKE_STATIC_LINKER_FLAGS)
+    if(DEFINED ${_flag_var} AND NOT "${${_flag_var}}" STREQUAL "")
+      string(REGEX REPLACE "(^|[ \t])(/machine:([xX]64|[aA][mM][dD]64))([ \t]|$)" " " _cleaned "${${_flag_var}}")
+      string(REGEX REPLACE "[ \t][ \t]+" " " _cleaned "${_cleaned}")
+      string(STRIP "${_cleaned}" _cleaned)
+      set(${_flag_var} "${_cleaned}")
+    endif()
+  endforeach()
   # Set linker flags for exe/shared linking
   set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /machine:ARM64")
   set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} /machine:ARM64")

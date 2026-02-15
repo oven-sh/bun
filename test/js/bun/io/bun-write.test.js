@@ -542,4 +542,97 @@ const IS_UV_FS_COPYFILE_DISABLED =
       expect(await exited).toBe(0);
     }, 10000);
   }
+
+  describe("writing a file to itself", () => {
+    test("should work with its own Bun.file", async () => {
+      using tmpbase = tempDir("bun-write-self-1", {});
+      const tempFilePath = join(tmpbase, `bun-write-self-test.txt`);
+      const content = "Hello, world!";
+
+      const file = Bun.file(tempFilePath);
+      await Bun.write(file, content);
+
+      const fileContent1 = await file.text();
+      expect(fileContent1).toBe(content);
+
+      const size = await Bun.write(file, file);
+      expect(size).toBe(content.length);
+
+      const fileContent2 = await file.text();
+      expect(fileContent2).toBe(content);
+    });
+
+    test("should work with a different reference", async () => {
+      using tmpbase = tempDir("bun-write-self-2", {});
+      const tempFilePath = join(tmpbase, `bun-write-self-test.txt`);
+      const content = "Hello, world!";
+
+      const file1 = Bun.file(tempFilePath);
+      await Bun.write(file1, content);
+
+      const file2 = Bun.file(tempFilePath);
+
+      const size = await Bun.write(file1, file2);
+      expect(size).toBe(content.length);
+
+      const fileContent = await file1.text();
+      expect(fileContent).toBe(content);
+    });
+
+    test("even with just a string path", async () => {
+      using tmpbase = tempDir("bun-write-self-3", {});
+      const tempFilePath = join(tmpbase, `bun-write-self-test.txt`);
+      const content = "Hello, world!";
+
+      const file1 = Bun.file(tempFilePath);
+      await file1.write(content);
+
+      const size = await Bun.write(tempFilePath, file1);
+      expect(size).toBe(content.length);
+
+      const fileContent = await file1.text();
+      expect(fileContent).toBe(content);
+    });
+
+    test("should handle same file descriptor", async () => {
+      using tmpbase = tempDir("bun-write-self-4", {});
+      const tempFilePath = join(tmpbase, `bun-write-self-test.txt`);
+      const content = "Hello, world!";
+
+      const file = Bun.file(tempFilePath);
+      await Bun.write(file, content);
+
+      const fd = fs.openSync(tempFilePath, "r+");
+      const fdFile = Bun.file(fd);
+
+      const size = await Bun.write(fdFile, fdFile);
+      expect(size).toBe(content.length);
+
+      const fileContent = await fdFile.text();
+      expect(fileContent).toBe(content);
+
+      fs.closeSync(fd);
+    });
+
+    // right now it doesn't handle this case
+    test.todo("should handle same file descriptor (2)", async () => {
+      using tmpbase = tempDir("bun-write-self-5", {});
+      const tempFilePath = join(tmpbase, `bun-write-self-test.txt`);
+      const content = "Hello, world!";
+
+      const file = Bun.file(tempFilePath);
+      await Bun.write(file, content);
+
+      const fd = fs.openSync(tempFilePath, "r+");
+      const fdFile = Bun.file(fd);
+
+      const size = await Bun.write(fdFile, file);
+      expect(size).toBe(content.length);
+
+      const fileContent = await fdFile.text();
+      expect(fileContent).toBe(content);
+
+      fs.closeSync(fd);
+    });
+  });
 });

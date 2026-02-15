@@ -165,6 +165,19 @@ pub fn write(index: u32, graph: *const Graph, linker_graph: *const LinkerGraph, 
     var already_visited_output_file = try bun.bit_set.AutoBitSet.initEmpty(bun.default_allocator, additional_output_files.len);
     defer already_visited_output_file.deinit(bun.default_allocator);
 
+    // Build a set of source indices directly referenced by the HTML file's import records.
+    // Assets referenced only via HTML tags (e.g. <img src>, <link rel="icon">) use .url
+    // import records which don't propagate entry_bits through the linker's code splitting
+    // graph. We need to include these files in the manifest so they are served correctly.
+    const import_records = graph.ast.items(.import_records);
+    var html_referenced_sources = try bun.bit_set.AutoBitSet.initEmpty(bun.default_allocator, graph.input_files.len);
+    defer html_referenced_sources.deinit(bun.default_allocator);
+    for (import_records[browser_source_index].slice()) |*record| {
+        if (record.source_index.isValid()) {
+            html_referenced_sources.set(record.source_index.get());
+        }
+    }
+
     // Write all chunks that have files associated with this entry point.
     // Also include browser chunks from server builds (lazy-loaded chunks from dynamic imports).
     // When there's only one HTML import, all browser chunks belong to that manifest.
@@ -219,7 +232,7 @@ pub fn write(index: u32, graph: *const Graph, linker_graph: *const LinkerGraph, 
             if (source_index.get() == server_source_index) continue;
             const bits: *const AutoBitSet = &file_entry_bits[source_index.get()];
 
-            if (bits.hasIntersection(&entry_point_bits)) {
+            if (bits.hasIntersection(&entry_point_bits) or html_referenced_sources.isSet(source_index.get())) {
                 already_visited_output_file.set(i);
                 if (!first) try writer.writeAll(",");
                 first = false;

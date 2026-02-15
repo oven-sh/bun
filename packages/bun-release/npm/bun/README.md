@@ -24,6 +24,7 @@ bun upgrade
 - [Linux, x64 (without AVX2 instructions)](https://www.npmjs.com/package/@oven/bun-linux-x64-baseline)
 - [Windows](https://www.npmjs.com/package/@oven/bun-windows-x64)
 - [Windows (without AVX2 instructions)](https://www.npmjs.com/package/@oven/bun-windows-x64-baseline)
+- [Windows ARM64](https://www.npmjs.com/package/@oven/bun-windows-aarch64)
 
 ### Future Platforms
 

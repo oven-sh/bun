@@ -20,6 +20,7 @@
 .vscode/clang*
 .vscode/cpp*
 .zig-cache
+.ccls-cache
 .bake-debug
 *.a
 *.bc

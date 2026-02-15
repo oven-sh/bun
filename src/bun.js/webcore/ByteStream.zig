@@ -61,7 +61,7 @@ pub fn onStart(this: *@This()) streams.Start {
 
 pub fn value(this: *@This()) JSValue {
     const result = this.pending_value.get() orelse {
-        return .zero;
+        return .js_undefined;
     };
     this.pending_value.clearWithoutDeallocation();
     return result;
@@ -287,7 +287,7 @@ pub fn onPull(this: *@This(), buffer: []u8, view: jsc.JSValue) streams.Result {
     bun.debugAssert(this.buffer_action == null);
 
     if (this.buffer.items.len > 0) {
-        bun.assert(this.value() == .zero);
+        bun.assert(!this.pending_value.has());
         const to_write = @min(
             this.buffer.items.len - this.offset,
             buffer.len,
@@ -339,12 +339,12 @@ pub fn onPull(this: *@This(), buffer: []u8, view: jsc.JSValue) streams.Result {
 
 pub fn onCancel(this: *@This()) void {
     jsc.markBinding(@src());
-    const view = this.value();
+
     if (this.buffer.capacity > 0) this.buffer.clearAndFree();
     this.done = true;
     this.pending_value.deinit();
 
-    if (view != .zero) {
+    if (this.pending_value.has()) {
         this.pending_buffer = &.{};
         this.pending.result.deinit();
         this.pending.result = .{ .done = {} };

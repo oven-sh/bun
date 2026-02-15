@@ -1549,6 +1549,7 @@ pub const TestCommand = struct {
             }
 
             vm.hot_reload = ctx.debug.hot_reload;
+            vm.watch_excludes = ctx.debug.watch_excludes;
 
             switch (vm.hot_reload) {
                 .hot => jsc.hot_reloader.HotReloader.enableHotModuleReloading(vm, null),

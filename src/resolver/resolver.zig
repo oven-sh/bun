@@ -1807,6 +1807,41 @@ pub const Resolver = struct {
 
                                 // The condition set is determined by the kind of import
                                 var module_type = package_json.module_type;
+
+                                // File existence check context for falling back to next condition
+                                // when a conditional export target file doesn't exist.
+                                // This handles cases like Next.js standalone builds where the "bun"
+                                // condition points to a file that wasn't copied (e.g., server.bun.js),
+                                // but the "node" fallback exists (e.g., server.node.js).
+                                const FileExistsContext = struct {
+                                    resolver: *ThisResolver,
+                                    abs_package_path: string,
+                                    gen: bun.Generation,
+
+                                    fn check(ctx_ptr: *anyopaque, resolved_path: string) bool {
+                                        const ctx: *@This() = @ptrCast(@alignCast(ctx_ptr));
+                                        // Build absolute path by joining package path with resolved path
+                                        var parts = [_]string{
+                                            ctx.abs_package_path,
+                                            strings.withoutLeadingPathSeparator(resolved_path),
+                                        };
+                                        const abs_esm_path = ctx.resolver.fs.absBuf(&parts, bufs(.esm_absolute_package_path_joined));
+                                        const esm_dir_path = std.fs.path.dirname(abs_esm_path) orelse return false;
+                                        const base = std.fs.path.basename(abs_esm_path);
+
+                                        // Check if the directory and file exist
+                                        const esm_dir_info = ctx.resolver.dirInfoCached(esm_dir_path) catch return false;
+                                        if (esm_dir_info == null) return false;
+                                        const entries = esm_dir_info.?.getEntries(ctx.gen) orelse return false;
+                                        return entries.get(base) != null;
+                                    }
+                                };
+                                var file_exists_ctx = FileExistsContext{
+                                    .resolver = r,
+                                    .abs_package_path = abs_package_path,
+                                    .gen = r.generation,
+                                };
+
                                 const esmodule = ESModule{
                                     .conditions = switch (kind) {
                                         ast.ImportKind.require, ast.ImportKind.require_resolve => r.opts.conditions.require,
@@ -1816,6 +1851,10 @@ pub const Resolver = struct {
                                     .allocator = r.allocator,
                                     .debug_logs = if (r.debug_logs) |*debug| debug else null,
                                     .module_type = &module_type,
+                                    .file_exists_check = .{
+                                        .context = @ptrCast(&file_exists_ctx),
+                                        .call = FileExistsContext.check,
+                                    },
                                 };
 
                                 // Resolve against the path "/", then join it with the absolute
@@ -2084,6 +2123,34 @@ pub const Resolver = struct {
                         var module_type = options.ModuleType.unknown;
                         if (pkg_dir_info.package_json) |package_json| {
                             if (package_json.exports) |exports_map| {
+                                // File existence check context for falling back to next condition
+                                const FileExistsContext = struct {
+                                    resolver: *ThisResolver,
+                                    abs_package_path: string,
+                                    gen: bun.Generation,
+
+                                    fn check(ctx_ptr: *anyopaque, resolved_path: string) bool {
+                                        const ctx: *@This() = @ptrCast(@alignCast(ctx_ptr));
+                                        var parts = [_]string{
+                                            ctx.abs_package_path,
+                                            strings.withoutLeadingPathSeparator(resolved_path),
+                                        };
+                                        const abs_esm_path = ctx.resolver.fs.absBuf(&parts, bufs(.esm_absolute_package_path_joined));
+                                        const esm_dir_path = std.fs.path.dirname(abs_esm_path) orelse return false;
+                                        const base = std.fs.path.basename(abs_esm_path);
+
+                                        const esm_dir_info = ctx.resolver.dirInfoCached(esm_dir_path) catch return false;
+                                        if (esm_dir_info == null) return false;
+                                        const entries = esm_dir_info.?.getEntries(ctx.gen) orelse return false;
+                                        return entries.get(base) != null;
+                                    }
+                                };
+                                var file_exists_ctx = FileExistsContext{
+                                    .resolver = r,
+                                    .abs_package_path = abs_package_path,
+                                    .gen = r.generation,
+                                };
+
                                 // The condition set is determined by the kind of import
                                 const esmodule = ESModule{
                                     .conditions = switch (kind) {
@@ -2098,6 +2165,10 @@ pub const Resolver = struct {
                                         debug
                                     else
                                         null,
+                                    .file_exists_check = .{
+                                        .context = @ptrCast(&file_exists_ctx),
+                                        .call = FileExistsContext.check,
+                                    },
                                 };
 
                                 // Resolve against the path "/", then join it with the absolute
@@ -3124,6 +3195,34 @@ pub const Resolver = struct {
         }
         var module_type = options.ModuleType.unknown;
 
+        // File existence check context for imports map
+        const FileExistsContext = struct {
+            resolver: *ThisResolver,
+            abs_package_path: string,
+            gen: bun.Generation,
+
+            fn check(ctx_ptr: *anyopaque, resolved_path: string) bool {
+                const ctx: *@This() = @ptrCast(@alignCast(ctx_ptr));
+                var parts = [_]string{
+                    ctx.abs_package_path,
+                    strings.withoutLeadingPathSeparator(resolved_path),
+                };
+                const abs_esm_path = ctx.resolver.fs.absBuf(&parts, bufs(.esm_absolute_package_path_joined));
+                const dir_path = std.fs.path.dirname(abs_esm_path) orelse return false;
+                const base = std.fs.path.basename(abs_esm_path);
+
+                const dir_info_result = ctx.resolver.dirInfoCached(dir_path) catch return false;
+                if (dir_info_result == null) return false;
+                const entries = dir_info_result.?.getEntries(ctx.gen) orelse return false;
+                return entries.get(base) != null;
+            }
+        };
+        var file_exists_ctx = FileExistsContext{
+            .resolver = r,
+            .abs_package_path = package_json.source.path.name.dir,
+            .gen = r.generation,
+        };
+
         const esmodule = ESModule{
             .conditions = switch (kind) {
                 ast.ImportKind.require,
@@ -3134,6 +3233,10 @@ pub const Resolver = struct {
             .allocator = r.allocator,
             .debug_logs = if (r.debug_logs) |*debug| debug else null,
             .module_type = &module_type,
+            .file_exists_check = .{
+                .context = @ptrCast(&file_exists_ctx),
+                .call = FileExistsContext.check,
+            },
         };
 
         const esm_resolution = esmodule.resolveImports(import_path, imports_map.root);

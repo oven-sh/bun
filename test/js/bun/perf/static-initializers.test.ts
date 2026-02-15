@@ -83,6 +83,7 @@ describe("mimalloc symbol exports", () => {
     });
 
     const stdout = result.stdout.toString();
+    const stderr = result.stderr.toString();
 
     // nm -D format: "addr T symbol" for defined, "     U symbol" for imports.
     // Filter to defined symbols only (any type letter except U).

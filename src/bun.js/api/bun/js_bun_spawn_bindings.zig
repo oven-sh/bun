@@ -128,6 +128,15 @@ pub fn spawnMaybeSync(
         .{ .pipe = {} },
         .{ .inherit = {} },
     };
+    defer {
+        // Clean up any GC-preventing Strong references in the stdio array.
+        // This is important for readable_stream which holds a Strong JSC
+        // reference. For successful paths, the Strong has already been
+        // consumed (deinited) by Writable.init, so this is a no-op.
+        for (&stdio) |*s| {
+            if (s.* == .readable_stream) s.deinit();
+        }
+    }
 
     if (comptime is_sync) {
         stdio[1] = .{ .pipe = {} };
@@ -812,7 +821,9 @@ pub fn spawnMaybeSync(
         }
 
         if (stdio[0] == .readable_stream) {
-            jsc.Codegen.JSSubprocess.stdinSetCached(out, globalThis, stdio[0].readable_stream.value);
+            if (stdio[0].readable_stream.held.get()) |stream_value| {
+                jsc.Codegen.JSSubprocess.stdinSetCached(out, globalThis, stream_value);
+            }
         }
 
         // Cache the terminal JS value if a terminal was created

@@ -13,7 +13,7 @@ pub const Stdio = union(enum) {
     memfd: bun.FileDescriptor,
     pipe,
     ipc,
-    readable_stream: jsc.WebCore.ReadableStream,
+    readable_stream: jsc.WebCore.ReadableStream.Strong,
 
     const log = bun.sys.syslog;
 
@@ -69,8 +69,8 @@ pub const Stdio = union(enum) {
             .memfd => |fd| {
                 fd.close();
             },
-            .readable_stream => {
-                // ReadableStream cleanup is handled by the subprocess
+            .readable_stream => |*strong| {
+                strong.deinit();
             },
             else => {},
         }
@@ -321,7 +321,7 @@ pub const Stdio = union(enum) {
                     return globalThis.ERR(.BODY_ALREADY_USED, "ReadableStream has already been used", .{}).throw();
                 }
 
-                out_stdio.* = .{ .readable_stream = stream };
+                out_stdio.* = .{ .readable_stream = .init(stream, globalThis) };
             },
         }
 
@@ -416,7 +416,7 @@ pub const Stdio = union(enum) {
             if (stream.isDisturbed(globalThis)) {
                 return globalThis.ERR(.INVALID_STATE, "'{s}' ReadableStream has already been used", .{name}).throw();
             }
-            out_stdio.* = .{ .readable_stream = stream };
+            out_stdio.* = .{ .readable_stream = .init(stream, globalThis) };
             return;
         }
 

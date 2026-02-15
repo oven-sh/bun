@@ -132,8 +132,8 @@ pub const ShellTouchOutputTask = OutputTask(Touch, .{
 
 const ShellTouchOutputTaskVTable = struct {
     pub fn writeErr(this: *Touch, childptr: anytype, errbuf: []const u8) ?Yield {
+        this.state.exec.output_waiting += 1;
         if (this.bltn().stderr.needsIO()) |safeguard| {
-            this.state.exec.output_waiting += 1;
             return this.bltn().stderr.enqueue(childptr, errbuf, safeguard);
         }
         _ = this.bltn().writeNoIO(.stderr, errbuf);
@@ -145,8 +145,8 @@ const ShellTouchOutputTaskVTable = struct {
     }
 
     pub fn writeOut(this: *Touch, childptr: anytype, output: *OutputSrc) ?Yield {
+        this.state.exec.output_waiting += 1;
         if (this.bltn().stdout.needsIO()) |safeguard| {
-            this.state.exec.output_waiting += 1;
             const slice = output.slice();
             log("THE SLICE: {d} {s}", .{ slice.len, slice });
             return this.bltn().stdout.enqueue(childptr, slice, safeguard);

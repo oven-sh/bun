@@ -43,8 +43,20 @@ static const Char* findEscapeCharacter(const Char* start, const Char* end)
         const auto chunk = SIMD::load(reinterpret_cast<const SIMDType*>(it));
         const auto chunkMasked = SIMD::bitAnd(chunk, escMask);
         const auto chunkIsEsc = SIMD::equal(chunkMasked, escVector);
-        if (const auto index = SIMD::findFirstNonZeroIndex(chunkIsEsc))
-            return it + *index;
+        if (const auto index = SIMD::findFirstNonZeroIndex(chunkIsEsc)) {
+            // The SIMD mask intentionally matches more values than the true set of
+            // escape introducers. Validate candidates to avoid pathological behavior
+            // on control-heavy input (for example 0x1c repeated).
+            const auto candidate = it + *index;
+            if (isEscapeCharacter(*candidate))
+                return candidate;
+
+            const auto chunkEnd = it + stride;
+            for (auto jt = candidate + 1; jt != chunkEnd; ++jt) {
+                if (isEscapeCharacter(*jt))
+                    return jt;
+            }
+        }
     }
 
     // Check remaining characters

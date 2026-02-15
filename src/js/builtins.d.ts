@@ -103,6 +103,7 @@ interface ReadableStream<R = any> extends _ReadableStream<R> {
 declare var ReadableStream: {
   prototype: ReadableStream;
   new (): ReadableStream;
+  from<R>(asyncIterable: AsyncIterable<R> | Iterable<R | Promise<R>> | ReadableStream<R>): ReadableStream<R>;
 };
 
 interface Console {

@@ -9,9 +9,6 @@ if(NOT WEBKIT_VERSION)
   set(WEBKIT_VERSION 8af7958ff0e2a4787569edf64641a1ae7cfe074a)
 endif()
 
-# Use preview build URL for Windows ARM64 until the fix is merged to main
-set(WEBKIT_PREVIEW_PR 140)
-
 string(SUBSTRING ${WEBKIT_VERSION} 0 16 WEBKIT_VERSION_PREFIX)
 string(SUBSTRING ${WEBKIT_VERSION} 0 8 WEBKIT_VERSION_SHORT)
 
@@ -207,6 +204,12 @@ endif()
 
 if(LINUX AND ABI STREQUAL "musl")
   set(WEBKIT_SUFFIX "-musl")
+endif()
+
+# Baseline builds target older CPUs without AVX/AVX2 (e.g. Nehalem).
+# They require a WebKit library also compiled without AVX/AVX2 instructions.
+if(ENABLE_BASELINE AND WEBKIT_ARCH STREQUAL "amd64")
+  set(WEBKIT_SUFFIX "${WEBKIT_SUFFIX}-baseline")
 endif()
 
 if(DEBUG)

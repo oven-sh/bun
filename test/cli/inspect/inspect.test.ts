@@ -9,7 +9,7 @@ import { InspectorSession, JUnitReporter, connect } from "./junit-reporter";
 import { SocketFramer } from "./socket-framer";
 let inspectee: Subprocess;
 const anyPort = expect.stringMatching(/^\d+$/);
-const anyPathname = expect.stringMatching(/^\/[a-z0-9]+$/);
+const anyPathname = expect.stringMatching(/^\/[a-f0-9-]+$/);
 
 /**
  * Get a function that creates a random `.sock` file in the specified temporary directory.

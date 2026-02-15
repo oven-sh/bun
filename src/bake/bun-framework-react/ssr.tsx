@@ -338,22 +338,21 @@ function writeManyFlightScriptData(
 ) {
   if (chunks.length === 1) return writeSingleFlightScriptData(chunks[0], decoder, controller);
 
-  let i = 0;
   try {
-    // Combine all chunks into a single string if possible.
-    for (; i < chunks.length; i++) {
+    // Decode all chunks into a single combined string first, then escape.
+    // This prevents cross-chunk splitting attacks where patterns like
+    // `</script>` are split across chunk boundaries to bypass escaping.
+    let combined = "";
+    for (let i = 0; i < chunks.length; i++) {
       // `decode()` will throw on invalid UTF-8 sequences.
-      const str = toSingleQuote(decoder.decode(chunks[i], { stream: true }));
-      if (i === 0) controller.write("'");
-      controller.write(str);
+      combined += decoder.decode(chunks[i], { stream: true });
     }
-    controller.write("')</script>");
+    controller.write("'" + toSingleQuote(combined) + "')</script>");
   } catch {
     // The chunk cannot be embedded as a UTF-8 string in the script tag.
     // Since this is rare, just make the rest of the chunks base64.
-    if (i > 0) controller.write("');__bun_f.push(");
     controller.write('Uint8Array.from(atob("');
-    for (; i < chunks.length; i++) {
+    for (let i = 0; i < chunks.length; i++) {
       const chunk = chunks[i];
       const base64 = btoa(String.fromCodePoint(...chunk));
       controller.write(base64.slice(1, -1));

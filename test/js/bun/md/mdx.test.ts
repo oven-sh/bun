@@ -5,6 +5,13 @@ import path from "node:path";
 
 const fixtureDir = path.join(import.meta.dir, "fixtures", "mdx");
 
+/** Matches the "url: http://..." line printed by the dev server. */
+const URL_REGEX = /url:\s*(\S+)/;
+/** The last-route marker (└──) used to wait until the full route tree is printed. */
+const LAST_ROUTE_ENTRY = "\u2514\u2500\u2500";
+/** Matches a single route entry like "  ├── /docs  → docs/index.mdx". */
+const ROUTE_ENTRY_REGEX = /[├└]──\s+(\/\S*)\s+→\s+(\S+)/g;
+
 const Mdx = (Bun as any).mdx as {
   compile(
     input: string | Uint8Array,
@@ -50,19 +57,21 @@ describe("Bun.mdx.compile", () => {
     const outPreact = Mdx.compile(src, { jsxImportSource: "preact" });
     expect(outPreact).toContain("@jsxImportSource preact");
 
+    const baseline = Mdx.compile("a\nb");
     const outHardCamel = Mdx.compile("a\nb", { hardSoftBreaks: true });
     const outHardSnake = Mdx.compile("a\nb", { hard_soft_breaks: true });
     expect(outHardCamel).toBe(outHardSnake);
+    expect(outHardCamel).not.toBe(baseline);
   });
 
   test("invalid arguments throw", () => {
-    expect(() => Mdx.compile(undefined as any)).toThrow();
-    expect(() => Mdx.compile(null as any)).toThrow();
-    expect(() => Mdx.compile("ok", { jsxImportSource: 123 as any })).toThrow();
+    expect(() => Mdx.compile(undefined as any)).toThrow("Expected a string or buffer to compile");
+    expect(() => Mdx.compile(null as any)).toThrow("Expected a string or buffer to compile");
+    expect(() => Mdx.compile("ok", { jsxImportSource: 123 as any })).toThrow("jsxImportSource must be a string");
   });
 
   test("malformed mdx throws syntax-like error", () => {
-    expect(() => Mdx.compile("---\n\n{unclosed")).toThrow();
+    expect(() => Mdx.compile("---\n\n{unclosed")).toThrow(/compile error|syntax|unexpected|parse/i);
   });
 
   test("compiles real fixture documents", () => {
@@ -80,9 +89,8 @@ describe("Bun.mdx.compile", () => {
       const output = Mdx.compile(src);
       expect(output).toContain("export default function MDXContent");
       const expectations = expectByFile[file];
-      if (expectations) {
-        for (const substr of expectations) expect(output).toContain(substr);
-      }
+      expect(expectations).toBeDefined();
+      for (const substr of expectations!) expect(output).toContain(substr);
     }
   });
 });
@@ -148,6 +156,7 @@ export const meta = { version: "2.0" };
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout.trim()).toBe("function\nHeavy\n2.0");
+    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
 
@@ -228,8 +237,8 @@ describe("MDX direct serve mode", () => {
     });
     running.push(proc);
 
-    const output = await readUntil(proc, text => text.includes("url: "));
-    const urlMatch = output.match(/url:\s*(\S+)/);
+    const output = await readUntil(proc, text => URL_REGEX.test(text));
+    const urlMatch = output.match(URL_REGEX);
     expect(urlMatch).not.toBeNull();
 
     const response = await fetch(urlMatch![1]);
@@ -257,7 +266,7 @@ describe("MDX direct serve mode", () => {
     });
     running.push(proc);
 
-    const output = await readUntil(proc, text => text.includes("\u2514\u2500\u2500"));
+    const output = await readUntil(proc, text => text.includes(LAST_ROUTE_ENTRY));
     expect(output).toContain("/docs");
   });
 
@@ -277,28 +286,28 @@ describe("MDX direct serve mode", () => {
     });
     running.push(proc);
 
-    const output = await readUntil(proc, text => text.includes("\u2514\u2500\u2500"));
-    const urlMatch = output.match(/url:\s*(\S+)/);
+    const output = await readUntil(proc, text => URL_REGEX.test(text));
+    const urlMatch = output.match(URL_REGEX);
     expect(urlMatch).not.toBeNull();
     const baseUrl = urlMatch![1];
 
-    const [homeRes, docsRes, guidesRes] = await Promise.all([
-      fetch(baseUrl),
-      fetch(baseUrl + "/docs"),
-      fetch(baseUrl + "/docs/guides"),
-    ]);
-    for (const res of [homeRes, docsRes, guidesRes]) expect(res.status).toBe(200);
-    const home = await homeRes.text();
-    const docs = await docsRes.text();
-    const guides = await guidesRes.text();
-    for (const html of [home, docs, guides]) {
-      expect(html).toContain(`<div id="root"></div>`);
-      expect(html).toContain(`<script type="module"`);
-    }
-    if (output.includes("Routes:")) {
-      expect(output).toContain("/docs");
-      expect(output).toContain("/docs/guides");
-    }
+    const homeRes = await fetch(baseUrl);
+    expect(homeRes.status).toBe(200);
+    const homeHtml = await homeRes.text();
+    expect(homeHtml).toContain(`<div id="root"></div>`);
+    expect(homeHtml).toContain(`<script type="module"`);
+
+    const docsRes = await fetch(baseUrl + "/docs");
+    expect(docsRes.status).toBe(200);
+    const docsHtml = await docsRes.text();
+    expect(docsHtml).toContain(`<div id="root"></div>`);
+    expect(docsHtml).toContain(`<script type="module"`);
+
+    const guidesRes = await fetch(baseUrl + "/docs/guides");
+    expect(guidesRes.status).toBe(200);
+    const guidesHtml = await guidesRes.text();
+    expect(guidesHtml).toContain(`<div id="root"></div>`);
+    expect(guidesHtml).toContain(`<script type="module"`);
   });
 
   test("overlapping glob dedupe check", async () => {
@@ -317,10 +326,10 @@ describe("MDX direct serve mode", () => {
     });
     running.push(proc);
 
-    const output = await readUntil(proc, text => text.includes("\u2514\u2500\u2500"));
-    const routeSection = output.includes("Routes:") ? (output.split("Routes:")[1] ?? "") : output;
-    const docsIndexCount = (routeSection.match(/\n\s*[├└]──\s*\/docs\s+→/g) ?? []).length;
-    const docsGuideCount = (routeSection.match(/\n\s*[├└]──\s*\/docs\/guide\s+→/g) ?? []).length;
+    const output = await readUntil(proc, text => text.includes(LAST_ROUTE_ENTRY));
+    const routes = [...output.matchAll(ROUTE_ENTRY_REGEX)].map(m => m[1]);
+    const docsIndexCount = routes.filter(r => r === "/docs").length;
+    const docsGuideCount = routes.filter(r => r === "/docs/guide").length;
     expect(docsIndexCount).toBe(1);
     expect(docsGuideCount).toBe(1);
   });
@@ -339,8 +348,8 @@ describe("MDX direct serve mode", () => {
     });
     running.push(proc);
 
-    const output = await readUntil(proc, text => text.includes("url: "));
-    const urlMatch = output.match(/url:\s*(\S+)/);
+    const output = await readUntil(proc, text => URL_REGEX.test(text));
+    const urlMatch = output.match(URL_REGEX);
     expect(urlMatch).not.toBeNull();
     expect(urlMatch![1]).toContain("127.0.0.1");
 

@@ -22,7 +22,6 @@ pub noinline fn computeChunks(
 
     const entry_source_indices = this.graph.entry_points.items(.source_index);
     const css_asts = this.graph.ast.items(.css);
-    const css_chunking = this.options.css_chunking;
     var html_chunks = bun.StringArrayHashMap(Chunk).init(temp_allocator);
     const loaders = this.parse_graph.input_files.items(.loader);
     const ast_targets = this.graph.ast.items(.target);
@@ -39,9 +38,18 @@ pub noinline fn computeChunks(
         entry_bits.set(entry_bit);
 
         const has_html_chunk = loaders[source_index] == .html;
+
+        // For code splitting, entry point chunks should be keyed by ONLY the entry point's
+        // own bit, not the full entry_bits. This ensures that if an entry point file is
+        // reachable from other entry points (e.g., via re-exports), its content goes into
+        // a shared chunk rather than staying in the entry point's chunk.
+        // https://github.com/evanw/esbuild/blob/cd832972927f1f67b6d2cc895c06a8759c1cf309/internal/linker/linker.go#L3882
+        var entry_point_chunk_bits = try AutoBitSet.initEmpty(this.allocator(), this.graph.entry_points.len);
+        entry_point_chunk_bits.set(entry_bit);
+
         const js_chunk_key = brk: {
             if (code_splitting) {
-                break :brk try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len));
+                break :brk try temp_allocator.dupe(u8, entry_point_chunk_bits.bytes(this.graph.entry_points.len));
             } else {
                 // Force HTML chunks to always be generated, even if there's an identical JS file.
                 break :brk try std.fmt.allocPrint(temp_allocator, "{f}", .{JSChunkKeyFormatter{
@@ -61,7 +69,7 @@ pub noinline fn computeChunks(
                         .source_index = source_index,
                         .is_entry_point = true,
                     },
-                    .entry_bits = entry_bits.*,
+                    .entry_bits = entry_point_chunk_bits,
                     .content = .html,
                     .output_source_map = SourceMap.SourceMapPieces.init(this.allocator()),
                     .flags = .{ .is_browser_chunk_from_server_build = could_be_browser_target_from_server_build and ast_targets[source_index] == .browser },
@@ -90,7 +98,7 @@ pub noinline fn computeChunks(
                         .source_index = source_index,
                         .is_entry_point = true,
                     },
-                    .entry_bits = entry_bits.*,
+                    .entry_bits = entry_point_chunk_bits,
                     .content = .{
                         .css = .{
                             .imports_in_chunk_in_order = order,
@@ -117,7 +125,7 @@ pub noinline fn computeChunks(
                 .source_index = source_index,
                 .is_entry_point = true,
             },
-            .entry_bits = entry_bits.*,
+            .entry_bits = entry_point_chunk_bits,
             .content = .{
                 .javascript = .{},
             },
@@ -139,10 +147,11 @@ pub noinline fn computeChunks(
             if (css_source_indices.len > 0) {
                 const order = this.findImportedFilesInCSSOrder(temp_allocator, css_source_indices.slice());
 
-                const use_content_based_key = css_chunking or has_server_html_imports;
-                const hash_to_use = if (!use_content_based_key)
-                    bun.hash(try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len)))
-                else brk: {
+                // Always use content-based hashing for CSS chunk deduplication.
+                // This ensures that when multiple JS entry points import the
+                // same CSS files, they share a single CSS output chunk rather
+                // than producing duplicates that collide on hash-based naming.
+                const hash_to_use = brk: {
                     var hasher = std.hash.Wyhash.init(5);
                     bun.writeAnyToHasher(&hasher, order.len);
                     for (order.slice()) |x| x.hash(&hasher);
@@ -229,6 +238,16 @@ pub noinline fn computeChunks(
                                 .output_source_map = SourceMap.SourceMapPieces.init(this.allocator()),
                                 .flags = .{ .is_browser_chunk_from_server_build = is_browser_chunk_from_server_build },
                             };
+                        } else if (could_be_browser_target_from_server_build and
+                            !js_chunk_entry.value_ptr.entry_point.is_entry_point and
+                            !js_chunk_entry.value_ptr.flags.is_browser_chunk_from_server_build and
+                            ast_targets[source_index.get()] == .browser)
+                        {
+                            // If any file in the chunk has browser target, mark the whole chunk as browser.
+                            // This handles the case where a lazy-loaded chunk (code splitting chunk, not entry point)
+                            // contains browser-targeted files but was first created by a non-browser file.
+                            // We only apply this to non-entry-point chunks to preserve the correct side for server entry points.
+                            js_chunk_entry.value_ptr.flags.is_browser_chunk_from_server_build = true;
                         }
 
                         const entry = js_chunk_entry.value_ptr.files_with_parts_in_chunk.getOrPut(this.allocator(), @as(u32, @truncate(source_index.get()))) catch unreachable;
@@ -303,7 +322,10 @@ pub noinline fn computeChunks(
             const remapped_css_indexes = try temp_allocator.alloc(u32, css_chunks.count());
 
             const css_chunk_values = css_chunks.values();
-            for (sorted_css_keys, js_chunks.count()..) |key, sorted_index| {
+            // Use sorted_chunks.len as the starting index because HTML chunks
+            // may be interleaved with JS chunks, so js_chunks.count() would be
+            // incorrect when HTML entry points are present.
+            for (sorted_css_keys, sorted_chunks.len..) |key, sorted_index| {
                 const index = css_chunks.getIndex(key) orelse unreachable;
                 sorted_chunks.appendAssumeCapacity(css_chunk_values[index]);
                 remapped_css_indexes[index] = @intCast(sorted_index);

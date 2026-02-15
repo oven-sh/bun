@@ -890,7 +890,7 @@ static const GB18030EncodeIndex& gb18030EncodeIndex()
 // https://unicode-org.atlassian.net/browse/ICU-22357
 // The 2-byte values are handled correctly by values from gb18030()
 // but these need to be exceptions from gb18030Ranges().
-static std::optional<uint16_t> gb18030AsymmetricEncode(char16_t codePoint)
+static std::optional<uint16_t> gb18030AsymmetricEncode(char32_t codePoint)
 {
     switch (codePoint) {
     case 0xE81E:

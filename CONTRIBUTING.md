@@ -35,7 +35,7 @@ $ sudo pacman -S base-devel cmake git go libiconv libtool make ninja pkg-config 
 ```
 
 ```bash#Fedora
-$ sudo dnf install cargo clang19 llvm19 lld19 cmake git golang libtool ninja-build pkg-config rustc ruby libatomic-static libstdc++-static sed unzip which libicu-devel 'perl(Math::BigInt)'
+$ sudo dnf install cargo clang21 llvm21 lld21 cmake git golang libtool ninja-build pkg-config rustc ruby libatomic-static libstdc++-static sed unzip which libicu-devel 'perl(Math::BigInt)'
 ```
 
 ```bash#openSUSE Tumbleweed
@@ -90,17 +90,17 @@ Our build scripts will automatically detect and use `ccache` if available. You c
 
 ## Install LLVM
 
-Bun requires LLVM 19 (`clang` is part of LLVM). This version requirement is to match WebKit (precompiled), as mismatching versions will cause memory allocation failures at runtime. In most cases, you can install LLVM through your system package manager:
+Bun requires LLVM 21.1.8 (`clang` is part of LLVM). This version is enforced by the build system — mismatching versions will cause memory allocation failures at runtime. In most cases, you can install LLVM through your system package manager:
 
 {% codetabs group="os" %}
 
 ```bash#macOS (Homebrew)
-$ brew install llvm@19
+$ brew install llvm@21
 ```
 
 ```bash#Ubuntu/Debian
 $ # LLVM has an automatic installation script that is compatible with all versions of Ubuntu
-$ wget https://apt.llvm.org/llvm.sh -O - | sudo bash -s -- 19 all
+$ wget https://apt.llvm.org/llvm.sh -O - | sudo bash -s -- 21 all
 ```
 
 ```bash#Arch
@@ -112,17 +112,17 @@ $ sudo dnf install llvm clang lld-devel
 ```
 
 ```bash#openSUSE Tumbleweed
-$ sudo zypper install clang19 lld19 llvm19
+$ sudo zypper install clang21 lld21 llvm21
 ```
 
 {% /codetabs %}
 
-If none of the above solutions apply, you will have to install it [manually](https://github.com/llvm/llvm-project/releases/tag/llvmorg-19.1.7).
+If none of the above solutions apply, you will have to install it [manually](https://github.com/llvm/llvm-project/releases/tag/llvmorg-21.1.8).
 
-Make sure Clang/LLVM 19 is in your path:
+Make sure Clang/LLVM 21 is in your path:
 
 ```bash
-$ which clang-19
+$ which clang-21
 ```
 
 If not, run this to manually add it:
@@ -131,13 +131,13 @@ If not, run this to manually add it:
 
 ```bash#macOS (Homebrew)
 # use fish_add_path if you're using fish
-# use path+="$(brew --prefix llvm@19)/bin" if you are using zsh
-$ export PATH="$(brew --prefix llvm@19)/bin:$PATH"
+# use path+="$(brew --prefix llvm@21)/bin" if you are using zsh
+$ export PATH="$(brew --prefix llvm@21)/bin:$PATH"
 ```
 
 ```bash#Arch
 # use fish_add_path if you're using fish
-$ export PATH="$PATH:/usr/lib/llvm19/bin"
+$ export PATH="$PATH:/usr/lib/llvm21/bin"
 ```
 
 {% /codetabs %}
@@ -259,18 +259,13 @@ $ git clone https://github.com/oven-sh/WebKit vendor/WebKit
 # Check out the commit hash specified in `set(WEBKIT_VERSION <commit_hash>)` in cmake/tools/SetupWebKit.cmake
 $ git -C vendor/WebKit checkout <commit_hash>
 
-# Make a debug build of JSC. This will output build artifacts in ./vendor/WebKit/WebKitBuild/Debug
-# Optionally, you can use `bun run jsc:build` for a release build
-$ bun run jsc:build:debug && rm vendor/WebKit/WebKitBuild/Debug/JavaScriptCore/DerivedSources/inspector/InspectorProtocolObjects.h
-
-# After an initial run of `make jsc-debug`, you can rebuild JSC with:
-$ cmake --build vendor/WebKit/WebKitBuild/Debug --target jsc && rm vendor/WebKit/WebKitBuild/Debug/JavaScriptCore/DerivedSources/inspector/InspectorProtocolObjects.h
-
-# Build bun with the local JSC build
+# Build bun with the local JSC build — this automatically configures and builds JSC
 $ bun run build:local
 ```
 
-Using `bun run build:local` will build Bun in the `./build/debug-local` directory (instead of `./build/debug`), you'll have to change a couple of places to use this new directory:
+`bun run build:local` handles everything: configuring JSC, building JSC, and building Bun. On subsequent runs, JSC will incrementally rebuild if any WebKit sources changed. `ninja -Cbuild/debug-local` also works after the first build, and will build Bun+JSC.
+
+The build output goes to `./build/debug-local` (instead of `./build/debug`), so you'll need to update a couple of places:
 
 - The first line in [`src/js/builtins.d.ts`](/src/js/builtins.d.ts)
 - The `CompilationDatabase` line in [`.clangd` config](/.clangd) should be `CompilationDatabase: build/debug-local`
@@ -281,7 +276,7 @@ Note that the WebKit folder, including build artifacts, is 8GB+ in size.
 
 If you are using a JSC debug build and using VScode, make sure to run the `C/C++: Select a Configuration` command to configure intellisense to find the debug headers.
 
-Note that if you change make changes to our [WebKit fork](https://github.com/oven-sh/WebKit), you will also have to change [`SetupWebKit.cmake`](/cmake/tools/SetupWebKit.cmake) to point to the commit hash.
+Note that if you make changes to our [WebKit fork](https://github.com/oven-sh/WebKit), you will also have to change [`SetupWebKit.cmake`](/cmake/tools/SetupWebKit.cmake) to point to the commit hash.
 
 ## Troubleshooting
 
@@ -304,7 +299,7 @@ The issue may manifest when initially running `bun setup` as Clang being unable 
 ```
 The C++ compiler
 
-  "/usr/bin/clang++-19"
+  "/usr/bin/clang++-21"
 
 is not able to compile a simple test program.
 ```

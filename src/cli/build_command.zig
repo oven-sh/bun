@@ -85,7 +85,7 @@ pub const BuildCommand = struct {
         this_transpiler.options.bundler_feature_flags = Runtime.Features.initBundlerFeatureFlags(allocator, ctx.args.feature_flags);
 
         this_transpiler.options.css_chunking = ctx.bundler_options.css_chunking;
-        this_transpiler.options.metafile = ctx.bundler_options.metafile.len > 0;
+        this_transpiler.options.metafile = ctx.bundler_options.metafile.len > 0 or ctx.bundler_options.metafile_md.len > 0;
 
         this_transpiler.options.output_dir = ctx.bundler_options.outdir;
         this_transpiler.options.output_format = ctx.bundler_options.output_format;
@@ -352,6 +352,35 @@ pub const BuildCommand = struct {
                         },
                     }
                 }
+
+                // Write markdown metafile if requested
+                if (ctx.bundler_options.metafile_md.len > 0) {
+                    const metafile_md = MetafileBuilder.generateMarkdown(allocator, metafile_json) catch |err| blk: {
+                        Output.warn("Failed to generate markdown metafile: {s}", .{@errorName(err)});
+                        break :blk null;
+                    };
+                    if (metafile_md) |md_content| {
+                        defer allocator.free(md_content);
+                        const file = switch (bun.sys.File.makeOpen(ctx.bundler_options.metafile_md, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o664)) {
+                            .result => |f| f,
+                            .err => |err| {
+                                Output.err(err, "could not open metafile-md {f}", .{bun.fmt.quote(ctx.bundler_options.metafile_md)});
+                                exitOrWatch(1, ctx.debug.hot_reload == .watch);
+                                unreachable;
+                            },
+                        };
+                        defer file.close();
+
+                        switch (file.writeAll(md_content)) {
+                            .result => {},
+                            .err => |err| {
+                                Output.err(err, "could not write metafile-md {f}", .{bun.fmt.quote(ctx.bundler_options.metafile_md)});
+                                exitOrWatch(1, ctx.debug.hot_reload == .watch);
+                                unreachable;
+                            },
+                        }
+                    }
+                }
             }
 
             break :brk build_result.output_files.items;
@@ -554,6 +583,8 @@ pub const BuildCommand = struct {
                     .asset => Output.prettyFmt("<magenta>", true),
                     .sourcemap => Output.prettyFmt("<d>", true),
                     .bytecode => Output.prettyFmt("<d>", true),
+                    .module_info => Output.prettyFmt("<d>", true),
+                    .@"metafile-json", .@"metafile-markdown" => Output.prettyFmt("<green>", true),
                 });
 
                 try writer.writeAll(rel_path);
@@ -584,6 +615,9 @@ pub const BuildCommand = struct {
                     .asset => "asset",
                     .sourcemap => "source map",
                     .bytecode => "bytecode",
+                    .module_info => "module info",
+                    .@"metafile-json" => "metafile json",
+                    .@"metafile-markdown" => "metafile markdown",
                 }});
                 if (Output.enable_ansi_colors_stdout)
                     try writer.writeAll("\x1b[0m");
@@ -678,6 +712,7 @@ fn printSummary(bundled_end: i128, minify_duration: u64, minified: bool, input_c
 
 const string = []const u8;
 
+const MetafileBuilder = @import("../bundler/linker_context/MetafileBuilder.zig");
 const fs = @import("../fs.zig");
 const options = @import("../options.zig");
 const resolve_path = @import("../resolver/resolve_path.zig");

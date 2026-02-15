@@ -253,6 +253,13 @@ pub fn setConnectedWebSocket(this: *WebSocketProxyTunnel, ws: *WebSocketClient) 
     this.#upgrade_client = .{ .none = {} };
 }
 
+/// Clear the connected WebSocket reference. Called before tunnel shutdown during
+/// a clean close so the tunnel's onClose callback doesn't dispatch a spurious
+/// abrupt close (1006) after the WebSocket has already sent a clean close frame.
+pub fn clearConnectedWebSocket(this: *WebSocketProxyTunnel) void {
+    this.#connected_websocket = null;
+}
+
 /// SSLWrapper callback: Called with encrypted data to send to network
 fn writeEncrypted(this: *WebSocketProxyTunnel, encrypted_data: []const u8) void {
     log("writeEncrypted: {} bytes", .{encrypted_data.len});

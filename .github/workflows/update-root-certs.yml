@@ -74,7 +74,7 @@ jobs:
             ```
             ${{ env.changed_files }}
             ```
-          branch: certs/update-root-certs-${{ github.run_number }}
+          branch: certs/update-root-certs
           base: main
           delete-branch: true
           labels:

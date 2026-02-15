@@ -7,6 +7,7 @@ const VirtualMachine = @This();
 
 export var has_bun_garbage_collector_flag_enabled = false;
 pub export var isBunTest: bool = false;
+pub export var Bun__defaultRemainingRunsUntilSkipReleaseAccess: c_int = 10;
 
 // TODO: evaluate if this has any measurable performance impact.
 pub var synthetic_allocation_limit: usize = std.math.maxInt(u32);
@@ -49,6 +50,7 @@ standalone_module_graph: ?*bun.StandaloneModuleGraph = null,
 smol: bool = false,
 dns_result_order: DNSResolver.Order = .verbatim,
 cpu_profiler_config: ?CPUProfilerConfig = null,
+heap_profiler_config: ?HeapProfilerConfig = null,
 counters: Counters = .{},
 
 hot_reload: bun.cli.Command.HotReload = .none,
@@ -542,7 +544,7 @@ fn wrapUnhandledRejectionErrorForUncaughtException(globalObject: *JSGlobalObject
         break :blk false;
     }) return reason;
     const reasonStr = blk: {
-        var scope: jsc.CatchScope = undefined;
+        var scope: jsc.TopExceptionScope = undefined;
         scope.init(globalObject, @src());
         defer scope.deinit();
         defer if (scope.exception()) |_| scope.clearException();
@@ -840,6 +842,15 @@ pub fn onExit(this: *VirtualMachine) void {
         this.cpu_profiler_config = null;
         CPUProfiler.stopAndWriteProfile(this.jsc_vm, config) catch |err| {
             Output.err(err, "Failed to write CPU profile", .{});
+        };
+    }
+
+    // Write heap profile if profiling was enabled - do this after CPU profile but before shutdown
+    // Grab the config and null it out to make this idempotent
+    if (this.heap_profiler_config) |config| {
+        this.heap_profiler_config = null;
+        HeapProfiler.generateAndWriteProfile(this.jsc_vm, config) catch |err| {
+            Output.err(err, "Failed to write heap profile", .{});
         };
     }
 
@@ -1605,7 +1616,7 @@ fn _resolve(
     if (strings.eqlComptime(std.fs.path.basename(specifier), Runtime.Runtime.Imports.alt_name)) {
         ret.path = Runtime.Runtime.Imports.Name;
         return;
-    } else if (strings.eqlComptime(specifier, main_file_name)) {
+    } else if (strings.eqlComptime(specifier, main_file_name) and jsc_vm.entry_point.generated) {
         ret.result = null;
         ret.path = jsc_vm.entry_point.source.path.text;
         return;
@@ -3714,6 +3725,9 @@ const Allocator = std.mem.Allocator;
 
 const CPUProfiler = @import("./bindings/BunCPUProfiler.zig");
 const CPUProfilerConfig = CPUProfiler.CPUProfilerConfig;
+
+const HeapProfiler = @import("./bindings/BunHeapProfiler.zig");
+const HeapProfilerConfig = HeapProfiler.HeapProfilerConfig;
 
 const bun = @import("bun");
 const Async = bun.Async;

@@ -13,6 +13,8 @@ const { HttpsProxyAgent } = require("https-proxy-agent") as {
 // Use docker-compose infrastructure for squid proxy
 
 const gc = harness.gc;
+const bunExe = harness.bunExe;
+const bunEnv = harness.bunEnv;
 const isDockerEnabled = harness.isDockerEnabled;
 
 // HTTP CONNECT proxy server for WebSocket tunneling
@@ -396,6 +398,71 @@ describe("WebSocket wss:// through HTTP proxy (TLS tunnel)", () => {
     expect(messages).toContain("hello via tls tunnel");
     gc();
   });
+
+  test("server-initiated ping survives through TLS tunnel proxy", async () => {
+    // Regression test: sendPong checked socket.isClosed() on the detached tcp
+    // field instead of using hasTCP(). For wss:// through HTTP proxy, the
+    // WebSocket uses initWithTunnel which sets tcp = detached (all I/O goes
+    // through proxy_tunnel). Detached sockets return true for isClosed(), so
+    // sendPong would immediately dispatch a 1006 close instead of sending the
+    // pong through the tunnel.
+    using pingServer = Bun.serve({
+      port: 0,
+      tls: {
+        key: tlsCerts.key,
+        cert: tlsCerts.cert,
+      },
+      fetch(req, server) {
+        if (server.upgrade(req)) return;
+        return new Response("Expected WebSocket", { status: 400 });
+      },
+      websocket: {
+        message(ws, message) {
+          if (String(message) === "ready") {
+            // Send a ping after the client confirms it's connected.
+            // On the buggy code path, this triggers sendPong on the detached
+            // socket → dispatchAbruptClose → 1006.
+            ws.ping();
+            // Follow up with a text message. If the client receives this,
+            // the connection survived the ping/pong exchange.
+            ws.send("after-ping");
+          }
+        },
+      },
+    });
+
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+
+    const ws = new WebSocket(`wss://127.0.0.1:${pingServer.port}`, {
+      proxy: `http://127.0.0.1:${proxyPort}`,
+      tls: { rejectUnauthorized: false },
+    });
+
+    ws.onopen = () => {
+      ws.send("ready");
+    };
+
+    ws.onmessage = event => {
+      if (String(event.data) === "after-ping") {
+        ws.close(1000);
+      }
+    };
+
+    ws.onclose = event => {
+      if (event.code === 1000) {
+        resolve();
+      } else {
+        reject(new Error(`Unexpected close code: ${event.code}`));
+      }
+    };
+
+    ws.onerror = event => {
+      reject(event);
+    };
+
+    await promise;
+    gc();
+  });
 });
 
 describe("WebSocket through HTTPS proxy (TLS proxy)", () => {
@@ -654,5 +721,88 @@ describe("ws module with HttpsProxyAgent", () => {
     expect(messages).toContain("connected");
     expect(messages).toContain("hello from ws module via agent");
     gc();
+  });
+});
+
+describe.concurrent("WebSocket NO_PROXY bypass", () => {
+  test("NO_PROXY matching hostname bypasses explicit proxy for ws://", async () => {
+    // authProxy requires credentials; if NO_PROXY works, the WebSocket bypasses
+    // the proxy and connects directly. If NO_PROXY doesn't work, the proxy
+    // rejects with 407 and the WebSocket errors.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const ws = new WebSocket("ws://127.0.0.1:${wsPort}", { proxy: "http://127.0.0.1:${authProxyPort}" });
+         ws.onopen = () => { ws.close(); process.exit(0); };
+         ws.onerror = () => { process.exit(1); };`,
+      ],
+      env: { ...bunEnv, NO_PROXY: "127.0.0.1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) console.error("stderr:", stderr);
+    expect(exitCode).toBe(0);
+  });
+
+  test("NO_PROXY matching host:port bypasses proxy for ws://", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const ws = new WebSocket("ws://127.0.0.1:${wsPort}", { proxy: "http://127.0.0.1:${authProxyPort}" });
+         ws.onopen = () => { ws.close(); process.exit(0); };
+         ws.onerror = () => { process.exit(1); };`,
+      ],
+      env: { ...bunEnv, NO_PROXY: `127.0.0.1:${wsPort}` },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) console.error("stderr:", stderr);
+    expect(exitCode).toBe(0);
+  });
+
+  test("NO_PROXY not matching still uses proxy (auth fails)", async () => {
+    // NO_PROXY doesn't match the target, so the WebSocket should go through
+    // the auth proxy without credentials, which rejects with 407.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const ws = new WebSocket("ws://127.0.0.1:${wsPort}", { proxy: "http://127.0.0.1:${authProxyPort}" });
+         ws.onopen = () => { process.exit(1); };
+         ws.onerror = () => { process.exit(0); };`,
+      ],
+      env: { ...bunEnv, NO_PROXY: "other.host.com" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const exitCode = await proc.exited;
+    // exit(0) means onerror fired, proving the proxy was used (and auth failed)
+    expect(exitCode).toBe(0);
+  });
+
+  test("NO_PROXY=* bypasses all proxies", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const ws = new WebSocket("ws://127.0.0.1:${wsPort}", { proxy: "http://127.0.0.1:${authProxyPort}" });
+         ws.onopen = () => { ws.close(); process.exit(0); };
+         ws.onerror = () => { process.exit(1); };`,
+      ],
+      env: { ...bunEnv, NO_PROXY: "*" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) console.error("stderr:", stderr);
+    expect(exitCode).toBe(0);
   });
 });

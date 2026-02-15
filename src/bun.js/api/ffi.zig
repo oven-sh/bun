@@ -2032,7 +2032,8 @@ pub const FFI = struct {
         /// Types that we can directly pass through as an `int64_t`
         pub fn needsACastInC(this: ABIType) bool {
             return switch (this) {
-                .char, .int8_t, .uint8_t, .int16_t, .uint16_t, .int32_t, .uint32_t => false,
+                .char, .int8_t, .uint8_t, .int16_t, .uint16_t, .int32_t => false,
+                .uint32_t => true,
                 else => true,
             };
         }
@@ -2143,11 +2144,17 @@ pub const FFI = struct {
                             try writer.writeAll("(bool)");
                         try writer.writeAll("JSVALUE_TO_BOOL(");
                     },
-                    .char, .int8_t, .uint8_t, .int16_t, .uint16_t, .int32_t, .uint32_t => {
+                    .char, .int8_t, .uint8_t, .int16_t, .uint16_t, .int32_t => {
                         if (self.exact)
                             try writer.print("({s})", .{bun.asByteSlice(@tagName(self.tag))});
 
                         try writer.writeAll("JSVALUE_TO_INT32(");
+                    },
+                    .uint32_t => {
+                        if (self.exact)
+                            try writer.writeAll("(uint32_t)");
+
+                        try writer.writeAll("JSVALUE_TO_UINT32(");
                     },
                     .i64_fast, .int64_t => {
                         if (self.exact)
@@ -2297,10 +2304,8 @@ pub const FFI = struct {
                 .uint8_t => "uint8_t",
                 .int16_t => "int16_t",
                 .uint16_t => "uint16_t",
-                // see the comment in ffi.ts about why `uint32_t` acts as `int32_t`
-                .int32_t,
-                .uint32_t,
-                => "int32_t",
+                .int32_t => "int32_t",
+                .uint32_t => "uint32_t",
                 .i64_fast, .int64_t => "int64_t",
                 .u64_fast, .uint64_t => "uint64_t",
                 .double => "double",

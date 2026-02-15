@@ -17,6 +17,11 @@
 
 #define ZIG_REPR_TYPE int64_t
 
+#ifdef _WIN32
+#define BUN_FFI_IMPORT __declspec(dllimport)
+#else
+#define BUN_FFI_IMPORT
+#endif
 
 // /* 7.18.1.1  Exact-width integer types */
 typedef unsigned char uint8_t;
@@ -36,7 +41,7 @@ typedef _Bool bool;
 #define false 0
 
 #ifndef SRC_JS_NATIVE_API_TYPES_H_
-typedef struct napi_env__ *napi_env;
+typedef struct NapiEnv *napi_env;
 typedef int64_t napi_value;
 typedef enum {
   napi_ok,
@@ -62,9 +67,9 @@ typedef enum {
   napi_detachable_arraybuffer_expected,
   napi_would_deadlock // unused
 } napi_status;
-void* NapiHandleScope__open(void* napi_env, bool detached);
-void NapiHandleScope__close(void* napi_env, void* handleScope);
-extern struct napi_env__ Bun__thisFFIModuleNapiEnv;
+BUN_FFI_IMPORT void* NapiHandleScope__open(void* napi_env, bool detached);
+BUN_FFI_IMPORT void NapiHandleScope__close(void* napi_env, void* handleScope);
+BUN_FFI_IMPORT extern struct NapiEnv Bun__thisFFIModuleNapiEnv;
 #endif
 
 
@@ -86,7 +91,7 @@ extern struct napi_env__ Bun__thisFFIModuleNapiEnv;
 #define TagValueNull             (OtherTag)
 #define NotCellMask  (int64_t)(NumberTag | OtherTag)
 
-#define MAX_INT32 2147483648
+#define MAX_INT32 2147483647
 #define MAX_INT52 9007199254740991
 
 // If all bits in the mask are set, this indicates an integer number,
@@ -138,7 +143,7 @@ typedef void* JSContext;
 
 #ifdef IS_CALLBACK
 void* callback_ctx;
-ZIG_REPR_TYPE FFI_Callback_call(void* ctx, size_t argCount, ZIG_REPR_TYPE* args);
+BUN_FFI_IMPORT ZIG_REPR_TYPE FFI_Callback_call(void* ctx, size_t argCount, ZIG_REPR_TYPE* args);
 // We wrap 
 static EncodedJSValue _FFI_Callback_call(void* ctx, size_t argCount, ZIG_REPR_TYPE* args)  __attribute__((__always_inline__));
 static EncodedJSValue _FFI_Callback_call(void* ctx, size_t argCount, ZIG_REPR_TYPE* args) {
@@ -171,6 +176,7 @@ static EncodedJSValue PTR_TO_JSVALUE(void* ptr) __attribute__((__always_inline__
 
 static void* JSVALUE_TO_PTR(EncodedJSValue val) __attribute__((__always_inline__));
 static int32_t JSVALUE_TO_INT32(EncodedJSValue val) __attribute__((__always_inline__));
+static uint32_t JSVALUE_TO_UINT32(EncodedJSValue val) __attribute__((__always_inline__));
 static float JSVALUE_TO_FLOAT(EncodedJSValue val) __attribute__((__always_inline__));
 static double JSVALUE_TO_DOUBLE(EncodedJSValue val) __attribute__((__always_inline__));
 static bool JSVALUE_TO_BOOL(EncodedJSValue val) __attribute__((__always_inline__));
@@ -222,23 +228,26 @@ static void* JSVALUE_TO_PTR(EncodedJSValue val) {
     return 0;
 
   if (JSCELL_IS_TYPED_ARRAY(val)) {
-      return JSVALUE_TO_TYPED_ARRAY_VECTOR(val);
+    return JSVALUE_TO_TYPED_ARRAY_VECTOR(val);
   }
 
+  if (JSVALUE_IS_INT32(val)) {
+    return (void*)(uintptr_t)JSVALUE_TO_INT32(val);
+  }
+
+  // Assume the JSValue is a double
   val.asInt64 -= DoubleEncodeOffset;
-  size_t ptr = (size_t)val.asDouble;
-  return (void*)ptr;
+  return (void*)(uintptr_t)val.asDouble;
 }
 
 static EncodedJSValue PTR_TO_JSVALUE(void* ptr) {
   EncodedJSValue val;
-  if (ptr == 0)
-  {
-      val.asInt64 = TagValueNull;
-      return val;
+  if (ptr == 0) {
+    val.asInt64 = TagValueNull;
+    return val;
   }
 
-  val.asDouble = (double)(size_t)ptr;
+  val.asDouble = (double)(uintptr_t)ptr;
   val.asInt64 += DoubleEncodeOffset;
   return val;
 }
@@ -252,6 +261,16 @@ static EncodedJSValue DOUBLE_TO_JSVALUE(double val) {
 
 static int32_t JSVALUE_TO_INT32(EncodedJSValue val) {
   return val.asInt64;
+}
+
+static uint32_t JSVALUE_TO_UINT32(EncodedJSValue val) {
+  if (JSVALUE_IS_INT32(val)) {
+    return (uint32_t)JSVALUE_TO_INT32(val);
+  }
+  if (JSVALUE_IS_NUMBER(val)) {
+    return (uint32_t)JSVALUE_TO_DOUBLE(val);
+  }
+  return 0;
 }
 
 static EncodedJSValue INT32_TO_JSVALUE(int32_t val) {
@@ -300,7 +319,7 @@ static bool JSVALUE_TO_BOOL(EncodedJSValue val) {
 
 static uint64_t JSVALUE_TO_UINT64(EncodedJSValue value) {
   if (JSVALUE_IS_INT32(value)) {
-    return (uint64_t)JSVALUE_TO_INT32(value);
+    return (uint64_t)(uint32_t)JSVALUE_TO_INT32(value);
   }
 
   if (JSVALUE_IS_NUMBER(value)) {
@@ -326,11 +345,11 @@ static int64_t JSVALUE_TO_INT64(EncodedJSValue value) {
 }
 
 static EncodedJSValue UINT64_TO_JSVALUE(void* jsGlobalObject, uint64_t val) {
-  if (val < MAX_INT32) {
+  if (val <= MAX_INT32) {
     return INT32_TO_JSVALUE((int32_t)val);
   }
 
-  if (val < MAX_INT52) {
+  if (val <= MAX_INT52) {
     return DOUBLE_TO_JSVALUE((double)val);
   }
 
@@ -350,7 +369,7 @@ static EncodedJSValue INT64_TO_JSVALUE(void* jsGlobalObject, int64_t val) {
 }
 
 #ifndef IS_CALLBACK
-ZIG_REPR_TYPE JSFunctionCall(void* jsGlobalObject, void* callFrame);
+BUN_FFI_IMPORT ZIG_REPR_TYPE JSFunctionCall(void* jsGlobalObject, void* callFrame);
 
 #endif
 

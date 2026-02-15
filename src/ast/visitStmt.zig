@@ -704,7 +704,19 @@ pub fn VisitStmt(
                     else => {},
                 }
 
-                data.stmt = p.visitSingleStmt(data.stmt, StmtsKind.none);
+                // For function declarations inside labels in sloppy mode, we need special handling.
+                // Per ECMAScript Annex B, they should hoist like regular function declarations,
+                // not like block-scoped functions. We can't use visitSingleStmt because it would
+                // wrap the function in a block via stmtsToSingleStmt.
+                if (data.stmt.data == .s_function and p.current_scope.strict_mode == .sloppy_mode) {
+                    var inner_stmts = ListManaged(Stmt).initCapacity(p.allocator, 1) catch unreachable;
+                    inner_stmts.append(data.stmt) catch unreachable;
+                    p.visitStmts(&inner_stmts, StmtsKind.none) catch unreachable;
+                    // The function should remain as a single statement without block wrapping
+                    data.stmt = if (inner_stmts.items.len == 1) inner_stmts.items[0] else p.stmtsToSingleStmt(data.stmt.loc, inner_stmts.items);
+                } else {
+                    data.stmt = p.visitSingleStmt(data.stmt, StmtsKind.none);
+                }
                 p.popScope();
 
                 try stmts.append(stmt.*);

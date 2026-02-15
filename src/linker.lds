@@ -4,6 +4,16 @@ BUN_1.2 {
 	node_api_*;
 	node_module_register;
 
+  /* Export mimalloc allocator symbols so that dlopened shared libraries
+     (e.g. NAPI .node modules) resolve malloc/free to mimalloc instead of
+     falling back to glibc's allocator, which fragments via brk(). */
+  malloc;
+  free;
+  calloc;
+  realloc;
+  posix_memalign;
+  aligned_alloc;
+  malloc_usable_size;
 
   uv_accept;
   uv_async_init;

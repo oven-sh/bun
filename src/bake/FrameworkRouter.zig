@@ -1011,7 +1011,7 @@ fn scanInner(
     ctx: InsertionContext,
 ) bun.OOM!void {
     const fs = r.fs;
-    const fs_impl = &fs.fs;
+    const fs_impl = fs;
 
     if (dir_info.getEntriesConst()) |entries| {
         var it = entries.data.iterator();

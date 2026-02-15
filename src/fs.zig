@@ -17,7 +17,12 @@ pub const FileSystem = struct {
     // used on subsequent updates
     top_level_dir_buf: bun.PathBuffer = undefined,
 
-    fs: Implementation,
+    // Fields moved from RealFS
+    entries_mutex: Mutex = .{},
+    entries: *EntriesOption.Map,
+    cwd: string,
+    file_limit: usize = 32,
+    file_quota: usize = 32,
 
     dirname_store: *DirnameStore,
     filename_store: *FilenameStore,
@@ -34,7 +39,7 @@ pub const FileSystem = struct {
 
     pub fn tmpdir(fs: *FileSystem) !std.fs.Dir {
         if (tmpdir_handle == null) {
-            tmpdir_handle = try fs.fs.openTmpDir();
+            tmpdir_handle = try fs.openTmpDir();
         }
 
         return tmpdir_handle.?;
@@ -93,9 +98,20 @@ pub const FileSystem = struct {
         _ = &top_level_dir;
 
         if (!instance_loaded or force) {
+            const file_limit = adjustUlimit() catch unreachable;
+
+            if (!_entries_option_map_loaded) {
+                _entries_option_map = EntriesOption.Map.init(bun.default_allocator);
+                _entries_option_map_loaded = true;
+            }
+
             instance = FileSystem{
                 .top_level_dir = top_level_dir,
-                .fs = Implementation.init(top_level_dir),
+                .entries_mutex = .{},
+                .entries = _entries_option_map,
+                .cwd = top_level_dir,
+                .file_limit = file_limit,
+                .file_quota = file_limit,
                 // must always use default_allocator since the other allocators may not be threadsafe when an element resizes
                 .dirname_store = DirnameStore.init(bun.default_allocator),
                 .filename_store = FilenameStore.init(bun.default_allocator),
@@ -380,7 +396,7 @@ pub const FileSystem = struct {
             file,
         };
 
-        pub fn kind(entry: *Entry, fs: *Implementation, store_fd: bool) Kind {
+        pub fn kind(entry: *Entry, fs: *FileSystem, store_fd: bool) Kind {
             if (entry.need_stat) {
                 entry.need_stat = false;
                 // This is technically incorrect, but we are choosing not to handle errors here
@@ -389,7 +405,7 @@ pub const FileSystem = struct {
             return entry.cache.kind;
         }
 
-        pub fn symlink(entry: *Entry, fs: *Implementation, store_fd: bool) string {
+        pub fn symlink(entry: *Entry, fs: *FileSystem, store_fd: bool) string {
             if (entry.need_stat) {
                 entry.need_stat = false;
                 // This is technically incorrect, but we are choosing not to handle errors here
@@ -523,953 +539,913 @@ pub const FileSystem = struct {
         Output.flush();
     }
 
-    pub const RealFS = struct {
-        entries_mutex: Mutex = .{},
-        entries: *EntriesOption.Map,
-        cwd: string,
-        file_limit: usize = 32,
-        file_quota: usize = 32,
+    // Types and static variables moved from RealFS
+    var _entries_option_map: *EntriesOption.Map = undefined;
+    var _entries_option_map_loaded: bool = false;
 
-        fn #platformTempDir() []const u8 {
-            // Try TMPDIR, TMP, and TEMP in that order, matching Node.js.
-            // https://github.com/nodejs/node/blob/e172be269890702bf2ad06252f2f152e7604d76c/src/node_credentials.cc#L132
-            if (bun.env_var.TMPDIR.getNotEmpty() orelse
-                bun.env_var.TMP.getNotEmpty() orelse
-                bun.env_var.TEMP.getNotEmpty()) |dir|
-            {
-                if (dir.len > 1 and dir[dir.len - 1] == std.fs.path.sep) {
-                    return dir[0 .. dir.len - 1];
-                }
+    pub const EntriesOption = union(Tag) {
+        entries: *DirEntry,
+        err: DirEntry.Err,
 
-                return dir;
-            }
+        pub const Tag = enum {
+            entries,
+            err,
+        };
 
-            return switch (Environment.os) {
-                // https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-gettemppathw#remarks
-                .windows => {
-                    if (bun.env_var.SYSTEMROOT.get() orelse bun.env_var.WINDIR.get()) |windir| {
-                        return std.fmt.allocPrint(
-                            bun.default_allocator,
-                            "{s}\\Temp",
-                            .{strings.withoutTrailingSlash(windir)},
-                        ) catch |err| bun.handleOom(err);
-                    }
+        // This custom map implementation:
+        // - Preallocates a fixed amount of directory name space
+        // - Doesn't store directory names which don't exist.
+        pub const Map = allocators.BSSMap(EntriesOption, Preallocate.Counts.dir_entry, false, 256, true);
+    };
 
-                    if (bun.env_var.HOME.get()) |profile| {
-                        var buf: bun.PathBuffer = undefined;
-                        var parts = [_]string{"AppData\\Local\\Temp"};
-                        const out = bun.path.joinAbsStringBuf(profile, &buf, &parts, .loose);
-                        return bun.handleOom(bun.default_allocator.dupe(u8, out));
-                    }
+    pub const ModKey = struct {
+        inode: std.fs.File.INode = 0,
+        size: u64 = 0,
+        mtime: i128 = 0,
+        mode: std.fs.File.Mode = 0,
 
-                    var tmp_buf: bun.PathBuffer = undefined;
-                    const cwd = std.posix.getcwd(&tmp_buf) catch @panic("Failed to get cwd for platformTempDir");
-                    const root = bun.path.windowsFilesystemRoot(cwd);
-                    return std.fmt.allocPrint(
-                        bun.default_allocator,
-                        "{s}\\Windows\\Temp",
-                        .{strings.withoutTrailingSlash(root)},
-                    ) catch |err| bun.handleOom(err);
+        threadlocal var hash_name_buf: [1024]u8 = undefined;
+
+        pub fn hashName(
+            this: *const ModKey,
+            basename: string,
+        ) !string {
+            const hex_int = this.hash();
+
+            return try std.fmt.bufPrint(
+                &hash_name_buf,
+                "{s}-{f}",
+                .{
+                    basename,
+                    bun.fmt.hexIntLower(hex_int),
                 },
-                .mac => "/private/tmp",
-                else => "/tmp",
+            );
+        }
+
+        pub fn hash(
+            this: *const ModKey,
+        ) u64 {
+            var hash_bytes: [32]u8 = undefined;
+            // We shouldn't just read the contents of the ModKey into memory
+            // The hash should be deterministic across computers and operating systems.
+            // inode is non-deterministic across volumes within the same compuiter
+            // so if we're not going to do a full content hash, we should use mtime and size.
+            // even mtime is debatable.
+            var hash_bytes_remain: []u8 = hash_bytes[0..];
+            std.mem.writeInt(@TypeOf(this.size), hash_bytes_remain[0..@sizeOf(@TypeOf(this.size))], this.size, .little);
+            hash_bytes_remain = hash_bytes_remain[@sizeOf(@TypeOf(this.size))..];
+            std.mem.writeInt(@TypeOf(this.mtime), hash_bytes_remain[0..@sizeOf(@TypeOf(this.mtime))], this.mtime, .little);
+            hash_bytes_remain = hash_bytes_remain[@sizeOf(@TypeOf(this.mtime))..];
+            bun.assert(hash_bytes_remain.len == 8);
+            hash_bytes_remain[0..8].* = @as([8]u8, @bitCast(@as(u64, 0)));
+            return bun.hash(&hash_bytes);
+        }
+
+        pub fn generate(_: *FileSystem, _: string, file: std.fs.File) anyerror!ModKey {
+            const stat = try file.stat();
+
+            const seconds = @divTrunc(stat.mtime, @as(@TypeOf(stat.mtime), std.time.ns_per_s));
+
+            // We can't detect changes if the file system zeros out the modification time
+            if (seconds == 0 and std.time.ns_per_s == 0) {
+                return error.Unusable;
+            }
+
+            // Don't generate a modification key if the file is too new
+            const now = std.time.nanoTimestamp();
+            const now_seconds = @divTrunc(now, std.time.ns_per_s);
+            if (seconds > seconds or (seconds == now_seconds and stat.mtime > now)) {
+                return error.Unusable;
+            }
+
+            return ModKey{
+                .inode = stat.inode,
+                .size = stat.size,
+                .mtime = stat.mtime,
+                .mode = stat.mode,
+                // .uid = stat.
             };
         }
+        pub const SafetyGap = 3;
+    };
 
-        var get_platform_tempdir = bun.once(#platformTempDir);
-        pub fn platformTempDir() []const u8 {
-            return get_platform_tempdir.call(.{});
+    pub const Tmpfile = switch (Environment.os) {
+        .windows => TmpfileWindows,
+        else => TmpfilePosix,
+    };
+
+    pub const TmpfilePosix = struct {
+        fd: bun.FileDescriptor = bun.invalid_fd,
+        dir_fd: bun.FileDescriptor = bun.invalid_fd,
+
+        pub inline fn dir(this: *TmpfilePosix) std.fs.Dir {
+            return this.dir_fd.stdDir();
         }
 
-        pub const Tmpfile = switch (Environment.os) {
-            .windows => TmpfileWindows,
-            else => TmpfilePosix,
-        };
-
-        pub fn tmpdirPath() []const u8 {
-            return bun.env_var.BUN_TMPDIR.getNotEmpty() orelse platformTempDir();
+        pub inline fn file(this: *TmpfilePosix) std.fs.File {
+            return this.fd.stdFile();
         }
 
-        pub fn openTmpDir(_: *const RealFS) !std.fs.Dir {
-            if (comptime Environment.isWindows) {
-                return (try bun.sys.openDirAtWindowsA(bun.invalid_fd, tmpdirPath(), .{
-                    .iterable = true,
-                    // we will not delete the temp directory
-                    .can_rename_or_delete = false,
-                    .read_only = true,
-                }).unwrap()).stdDir();
-            }
-
-            return try bun.openDirAbsolute(tmpdirPath());
+        pub fn close(this: *TmpfilePosix) void {
+            if (this.fd.isValid()) this.fd.close();
         }
 
-        pub fn entriesAt(this: *RealFS, index: allocators.IndexType, generation: bun.Generation) ?*EntriesOption {
-            var existing = this.entries.atIndex(index) orelse return null;
-            if (existing.* == .entries) {
-                if (existing.entries.generation < generation) {
-                    var handle = bun.openDirForIteration(FD.cwd(), existing.entries.dir).unwrap() catch |err| {
-                        existing.entries.data.clearAndFree(bun.default_allocator);
+        pub fn create(this: *TmpfilePosix, _: *FileSystem, name: [:0]const u8) !void {
+            // We originally used a temporary directory, but it caused EXDEV.
+            const dir_fd = bun.FD.cwd();
+            this.dir_fd = dir_fd;
 
-                        return this.readDirectoryError(existing.entries.dir, err) catch unreachable;
-                    };
-                    defer handle.close();
-
-                    const new_entry = this.readdir(
-                        false,
-                        &existing.entries.data,
-                        existing.entries.dir,
-                        generation,
-                        handle.stdDir(),
-
-                        void,
-                        void{},
-                    ) catch |err| {
-                        existing.entries.data.clearAndFree(bun.default_allocator);
-                        return this.readDirectoryError(existing.entries.dir, err) catch unreachable;
-                    };
-                    existing.entries.data.clearAndFree(bun.default_allocator);
-                    existing.entries.* = new_entry;
-                }
-            }
-
-            return existing;
+            const flags = bun.O.CREAT | bun.O.RDWR | bun.O.CLOEXEC;
+            this.fd = try bun.sys.openat(dir_fd, name, flags, std.posix.S.IRWXU).unwrap();
         }
 
-        pub fn getDefaultTempDir() string {
-            return bun.env_var.BUN_TMPDIR.get() orelse platformTempDir();
+        pub fn promoteToCWD(this: *TmpfilePosix, from_name: [*:0]const u8, name: [*:0]const u8) !void {
+            bun.assert(this.fd != bun.invalid_fd);
+            bun.assert(this.dir_fd != bun.invalid_fd);
+
+            try bun.sys.moveFileZWithHandle(this.fd, this.dir_fd, bun.sliceTo(from_name, 0), bun.FD.cwd(), bun.sliceTo(name, 0));
+            this.close();
         }
 
-        pub const TmpfilePosix = struct {
-            fd: bun.FileDescriptor = bun.invalid_fd,
-            dir_fd: bun.FileDescriptor = bun.invalid_fd,
+        pub fn closeAndDelete(this: *TmpfilePosix, name: [*:0]const u8) void {
+            this.close();
 
-            pub inline fn dir(this: *TmpfilePosix) std.fs.Dir {
-                return this.dir_fd.stdDir();
+            if (comptime !Environment.isLinux) {
+                if (this.dir_fd == bun.invalid_fd) return;
+
+                this.dir().deleteFileZ(name) catch {};
             }
+        }
+    };
 
-            pub inline fn file(this: *TmpfilePosix) std.fs.File {
-                return this.fd.stdFile();
-            }
+    pub const TmpfileWindows = struct {
+        fd: bun.FileDescriptor = bun.invalid_fd,
+        existing_path: []const u8 = "",
 
-            pub fn close(this: *TmpfilePosix) void {
-                if (this.fd.isValid()) this.fd.close();
-            }
-
-            pub fn create(this: *TmpfilePosix, _: *RealFS, name: [:0]const u8) !void {
-                // We originally used a temporary directory, but it caused EXDEV.
-                const dir_fd = bun.FD.cwd();
-                this.dir_fd = dir_fd;
-
-                const flags = bun.O.CREAT | bun.O.RDWR | bun.O.CLOEXEC;
-                this.fd = try bun.sys.openat(dir_fd, name, flags, std.posix.S.IRWXU).unwrap();
-            }
-
-            pub fn promoteToCWD(this: *TmpfilePosix, from_name: [*:0]const u8, name: [*:0]const u8) !void {
-                bun.assert(this.fd != bun.invalid_fd);
-                bun.assert(this.dir_fd != bun.invalid_fd);
-
-                try bun.sys.moveFileZWithHandle(this.fd, this.dir_fd, bun.sliceTo(from_name, 0), bun.FD.cwd(), bun.sliceTo(name, 0));
-                this.close();
-            }
-
-            pub fn closeAndDelete(this: *TmpfilePosix, name: [*:0]const u8) void {
-                this.close();
-
-                if (comptime !Environment.isLinux) {
-                    if (this.dir_fd == bun.invalid_fd) return;
-
-                    this.dir().deleteFileZ(name) catch {};
-                }
-            }
-        };
-
-        pub const TmpfileWindows = struct {
-            fd: bun.FileDescriptor = bun.invalid_fd,
-            existing_path: []const u8 = "",
-
-            pub inline fn dir(_: *TmpfileWindows) std.fs.Dir {
-                return Fs.FileSystem.instance.tmpdir();
-            }
-
-            pub inline fn file(this: *TmpfileWindows) std.fs.File {
-                return this.fd.stdFile();
-            }
-
-            pub fn close(this: *TmpfileWindows) void {
-                if (this.fd.isValid()) this.fd.close();
-            }
-
-            pub fn create(this: *TmpfileWindows, rfs: *RealFS, name: [:0]const u8) !void {
-                const tmp_dir = try rfs.openTmpDir();
-
-                const flags = bun.O.CREAT | bun.O.WRONLY | bun.O.CLOEXEC;
-
-                this.fd = try bun.sys.openat(.fromStdDir(tmp_dir), name, flags, 0).unwrap();
-                var buf: bun.PathBuffer = undefined;
-                const existing_path = try bun.getFdPath(this.fd, &buf);
-                this.existing_path = try bun.default_allocator.dupe(u8, existing_path);
-            }
-
-            pub fn promoteToCWD(this: *TmpfileWindows, from_name: [*:0]const u8, name: [:0]const u8) !void {
-                _ = from_name;
-                var existing_buf: bun.WPathBuffer = undefined;
-                var new_buf: bun.WPathBuffer = undefined;
-                this.close();
-                const existing = bun.strings.toExtendedPathNormalized(&new_buf, this.existing_path);
-                const new = if (std.fs.path.isAbsoluteWindows(name))
-                    bun.strings.toExtendedPathNormalized(&existing_buf, name)
-                else
-                    bun.strings.toWPathNormalized(&existing_buf, name);
-                if (comptime Environment.allow_assert) {
-                    debug("moveFileExW({f}, {f})", .{ bun.fmt.utf16(existing), bun.fmt.utf16(new) });
-                }
-
-                if (bun.windows.kernel32.MoveFileExW(existing.ptr, new.ptr, bun.windows.MOVEFILE_COPY_ALLOWED | bun.windows.MOVEFILE_REPLACE_EXISTING | bun.windows.MOVEFILE_WRITE_THROUGH) == bun.windows.FALSE) {
-                    try bun.windows.Win32Error.get().unwrap();
-                }
-            }
-
-            pub fn closeAndDelete(this: *TmpfileWindows, name: [*:0]const u8) void {
-                _ = name;
-                this.close();
-            }
-        };
-
-        pub fn needToCloseFiles(rfs: *const RealFS) bool {
-            if (!FeatureFlags.store_file_descriptors) {
-                return true;
-            }
-
-            if (Environment.isWindows) {
-                // 'false' is okay here because windows gives you a seemingly unlimited number of open
-                // file handles, while posix has a lower limit.
-                //
-                // This limit does not extend to the C-Runtime which is only 512 to 8196 or so,
-                // but we know that all resolver-related handles are not C-Runtime handles because
-                // `setMaxFd` on Windows (besides being a no-op) only takes in `HANDLE`.
-                //
-                // Handles are automatically closed when the process exits as stated here:
-                // https://learn.microsoft.com/en-us/windows/win32/procthread/terminating-a-process
-                // But in a crazy experiment to find the upper-bound of the number of open handles,
-                // I found that opening upwards of 500k to a million handles in a single process
-                // would cause the process to hang while closing. This might just be Windows slowly
-                // closing the handles, not sure. This is likely not something to worry about.
-                //
-                // If it is decided that not closing files ever is a bad idea. This should be
-                // replaced with some form of intelligent count of how many files we opened.
-                // On POSIX we can get away with measuring how high `fd` gets because it typically
-                // assigns these descriptors in ascending order (1 2 3 ...). Windows does not
-                // guarantee this.
-                return false;
-            }
-
-            // If we're not near the max amount of open files, don't worry about it.
-            return !(rfs.file_limit > 254 and rfs.file_limit > (FileSystem.max_fd + 1) * 2);
+        pub inline fn dir(_: *TmpfileWindows) std.fs.Dir {
+            return Fs.FileSystem.instance.tmpdir();
         }
 
-        /// Returns `true` if an entry was removed
-        pub fn bustEntriesCache(rfs: *RealFS, file_path: string) bool {
-            return rfs.entries.remove(file_path);
+        pub inline fn file(this: *TmpfileWindows) std.fs.File {
+            return this.fd.stdFile();
         }
 
-        pub const Limit = struct {
-            pub var handles: usize = 0;
-            pub var handles_before = std.mem.zeroes(if (Environment.isPosix) std.posix.rlimit else struct {});
-        };
-
-        // Always try to max out how many files we can keep open
-        pub fn adjustUlimit() !usize {
-            if (comptime !Environment.isPosix) {
-                return std.math.maxInt(usize);
-            }
-
-            var file_limit: usize = 0;
-            blk: {
-                const resource = std.posix.rlimit_resource.NOFILE;
-                const limit = try std.posix.getrlimit(resource);
-                Limit.handles_before = limit;
-                file_limit = limit.max;
-                Limit.handles = file_limit;
-                const max_to_use: @TypeOf(limit.max) = if (Environment.isMusl)
-                    // musl has extremely low defaults here, so we really want
-                    // to enable this on musl or tests will start failing.
-                    @max(limit.max, 163840)
-                else
-                    // apparently, requesting too high of a number can cause other processes to not start.
-                    // https://discord.com/channels/876711213126520882/1316342194176790609/1318175562367242271
-                    // https://github.com/postgres/postgres/blob/fee2b3ea2ecd0da0c88832b37ac0d9f6b3bfb9a9/src/backend/storage/file/fd.c#L1072
-                    limit.max;
-                if (limit.cur < max_to_use) {
-                    var new_limit = std.mem.zeroes(std.posix.rlimit);
-                    new_limit.cur = max_to_use;
-                    new_limit.max = max_to_use;
-
-                    std.posix.setrlimit(resource, new_limit) catch break :blk;
-                    file_limit = new_limit.max;
-                    Limit.handles = file_limit;
-                }
-            }
-            return file_limit;
+        pub fn close(this: *TmpfileWindows) void {
+            if (this.fd.isValid()) this.fd.close();
         }
 
-        var _entries_option_map: *EntriesOption.Map = undefined;
-        var _entries_option_map_loaded: bool = false;
-        pub fn init(
-            cwd: string,
-        ) RealFS {
-            const file_limit = adjustUlimit() catch unreachable;
+        pub fn create(this: *TmpfileWindows, rfs: *FileSystem, name: [:0]const u8) !void {
+            const tmp_dir = try rfs.openTmpDir();
 
-            if (!_entries_option_map_loaded) {
-                _entries_option_map = EntriesOption.Map.init(bun.default_allocator);
-                _entries_option_map_loaded = true;
-            }
+            const flags = bun.O.CREAT | bun.O.WRONLY | bun.O.CLOEXEC;
 
-            return RealFS{
-                .entries = _entries_option_map,
-                .cwd = cwd,
-                .file_limit = file_limit,
-                .file_quota = file_limit,
-            };
+            this.fd = try bun.sys.openat(.fromStdDir(tmp_dir), name, flags, 0).unwrap();
+            var buf: bun.PathBuffer = undefined;
+            const existing_path = try bun.getFdPath(this.fd, &buf);
+            this.existing_path = try bun.default_allocator.dupe(u8, existing_path);
         }
 
-        pub const ModKeyError = error{
-            Unusable,
-        };
-        pub const ModKey = struct {
-            inode: std.fs.File.INode = 0,
-            size: u64 = 0,
-            mtime: i128 = 0,
-            mode: std.fs.File.Mode = 0,
-
-            threadlocal var hash_name_buf: [1024]u8 = undefined;
-
-            pub fn hashName(
-                this: *const ModKey,
-                basename: string,
-            ) !string {
-                const hex_int = this.hash();
-
-                return try std.fmt.bufPrint(
-                    &hash_name_buf,
-                    "{s}-{f}",
-                    .{
-                        basename,
-                        bun.fmt.hexIntLower(hex_int),
-                    },
-                );
-            }
-
-            pub fn hash(
-                this: *const ModKey,
-            ) u64 {
-                var hash_bytes: [32]u8 = undefined;
-                // We shouldn't just read the contents of the ModKey into memory
-                // The hash should be deterministic across computers and operating systems.
-                // inode is non-deterministic across volumes within the same compuiter
-                // so if we're not going to do a full content hash, we should use mtime and size.
-                // even mtime is debatable.
-                var hash_bytes_remain: []u8 = hash_bytes[0..];
-                std.mem.writeInt(@TypeOf(this.size), hash_bytes_remain[0..@sizeOf(@TypeOf(this.size))], this.size, .little);
-                hash_bytes_remain = hash_bytes_remain[@sizeOf(@TypeOf(this.size))..];
-                std.mem.writeInt(@TypeOf(this.mtime), hash_bytes_remain[0..@sizeOf(@TypeOf(this.mtime))], this.mtime, .little);
-                hash_bytes_remain = hash_bytes_remain[@sizeOf(@TypeOf(this.mtime))..];
-                bun.assert(hash_bytes_remain.len == 8);
-                hash_bytes_remain[0..8].* = @as([8]u8, @bitCast(@as(u64, 0)));
-                return bun.hash(&hash_bytes);
-            }
-
-            pub fn generate(_: *RealFS, _: string, file: std.fs.File) anyerror!ModKey {
-                const stat = try file.stat();
-
-                const seconds = @divTrunc(stat.mtime, @as(@TypeOf(stat.mtime), std.time.ns_per_s));
-
-                // We can't detect changes if the file system zeros out the modification time
-                if (seconds == 0 and std.time.ns_per_s == 0) {
-                    return error.Unusable;
-                }
-
-                // Don't generate a modification key if the file is too new
-                const now = std.time.nanoTimestamp();
-                const now_seconds = @divTrunc(now, std.time.ns_per_s);
-                if (seconds > seconds or (seconds == now_seconds and stat.mtime > now)) {
-                    return error.Unusable;
-                }
-
-                return ModKey{
-                    .inode = stat.inode,
-                    .size = stat.size,
-                    .mtime = stat.mtime,
-                    .mode = stat.mode,
-                    // .uid = stat.
-                };
-            }
-            pub const SafetyGap = 3;
-        };
-
-        pub fn modKeyWithFile(fs: *RealFS, path: string, file: anytype) anyerror!ModKey {
-            return try ModKey.generate(fs, path, file);
-        }
-
-        pub fn modKey(fs: *RealFS, path: string) anyerror!ModKey {
-            var file = try std.fs.cwd().openFile(path, std.fs.File.OpenFlags{ .mode = .read_only });
-            defer {
-                if (fs.needToCloseFiles()) {
-                    file.close();
-                }
-            }
-            return try fs.modKeyWithFile(path, file);
-        }
-
-        pub const EntriesOption = union(Tag) {
-            entries: *DirEntry,
-            err: DirEntry.Err,
-
-            pub const Tag = enum {
-                entries,
-                err,
-            };
-
-            // This custom map implementation:
-            // - Preallocates a fixed amount of directory name space
-            // - Doesn't store directory names which don't exist.
-            pub const Map = allocators.BSSMap(EntriesOption, Preallocate.Counts.dir_entry, false, 256, true);
-        };
-
-        pub fn openDir(_: *RealFS, unsafe_dir_string: string) !std.fs.Dir {
-            const dirfd = if (Environment.isWindows)
-                bun.sys.openDirAtWindowsA(bun.invalid_fd, unsafe_dir_string, .{ .iterable = true, .no_follow = false, .read_only = true })
+        pub fn promoteToCWD(this: *TmpfileWindows, from_name: [*:0]const u8, name: [:0]const u8) !void {
+            _ = from_name;
+            var existing_buf: bun.WPathBuffer = undefined;
+            var new_buf: bun.WPathBuffer = undefined;
+            this.close();
+            const existing = bun.strings.toExtendedPathNormalized(&new_buf, this.existing_path);
+            const new = if (std.fs.path.isAbsoluteWindows(name))
+                bun.strings.toExtendedPathNormalized(&existing_buf, name)
             else
-                bun.sys.openA(
-                    unsafe_dir_string,
-                    bun.O.DIRECTORY,
-                    0,
-                );
-            const fd = try dirfd.unwrap();
-            return fd.stdDir();
+                bun.strings.toWPathNormalized(&existing_buf, name);
+            if (comptime Environment.allow_assert) {
+                debug("moveFileExW({f}, {f})", .{ bun.fmt.utf16(existing), bun.fmt.utf16(new) });
+            }
+
+            if (bun.windows.kernel32.MoveFileExW(existing.ptr, new.ptr, bun.windows.MOVEFILE_COPY_ALLOWED | bun.windows.MOVEFILE_REPLACE_EXISTING | bun.windows.MOVEFILE_WRITE_THROUGH) == bun.windows.FALSE) {
+                try bun.windows.Win32Error.get().unwrap();
+            }
         }
 
-        fn readdir(
-            fs: *RealFS,
-            store_fd: bool,
-            prev_map: ?*DirEntry.EntryMap,
-            _dir: string,
-            generation: bun.Generation,
-            handle: std.fs.Dir,
-            comptime Iterator: type,
-            iterator: Iterator,
-        ) !DirEntry {
-            _ = fs;
+        pub fn closeAndDelete(this: *TmpfileWindows, name: [*:0]const u8) void {
+            _ = name;
+            this.close();
+        }
+    };
 
-            var iter = bun.iterateDir(.fromStdDir(handle));
-            var dir = DirEntry.init(_dir, generation);
-            const allocator = bun.default_allocator;
-            errdefer dir.deinit(allocator);
+    pub const Limit = struct {
+        pub var handles: usize = 0;
+        pub var handles_before = std.mem.zeroes(if (Environment.isPosix) std.posix.rlimit else struct {});
+    };
 
-            if (store_fd) {
-                FileSystem.setMaxFd(handle.fd);
-                dir.fd = .fromStdDir(handle);
+    // Always try to max out how many files we can keep open
+    pub fn adjustUlimit() !usize {
+        if (comptime !Environment.isPosix) {
+            return std.math.maxInt(usize);
+        }
+
+        var file_limit: usize = 0;
+        blk: {
+            const resource = std.posix.rlimit_resource.NOFILE;
+            const limit = try std.posix.getrlimit(resource);
+            Limit.handles_before = limit;
+            file_limit = limit.max;
+            Limit.handles = file_limit;
+            const max_to_use: @TypeOf(limit.max) = if (Environment.isMusl)
+                // musl has extremely low defaults here, so we really want
+                // to enable this on musl or tests will start failing.
+                @max(limit.max, 163840)
+            else
+                // apparently, requesting too high of a number can cause other processes to not start.
+                // https://discord.com/channels/876711213126520882/1316342194176790609/1318175562367242271
+                // https://github.com/postgres/postgres/blob/fee2b3ea2ecd0da0c88832b37ac0d9f6b3bfb9a9/src/backend/storage/file/fd.c#L1072
+                limit.max;
+            if (limit.cur < max_to_use) {
+                var new_limit = std.mem.zeroes(std.posix.rlimit);
+                new_limit.cur = max_to_use;
+                new_limit.max = max_to_use;
+
+                std.posix.setrlimit(resource, new_limit) catch break :blk;
+                file_limit = new_limit.max;
+                Limit.handles = file_limit;
             }
+        }
+        return file_limit;
+    }
 
-            while (try iter.next().unwrap()) |*_entry| {
-                debug("readdir entry {s}", .{_entry.name.slice()});
-
-                try dir.addEntry(prev_map, _entry, allocator, Iterator, iterator);
+    fn #platformTempDir() []const u8 {
+        // Try TMPDIR, TMP, and TEMP in that order, matching Node.js.
+        // https://github.com/nodejs/node/blob/e172be269890702bf2ad06252f2f152e7604d76c/src/node_credentials.cc#L132
+        if (bun.env_var.TMPDIR.getNotEmpty() orelse
+            bun.env_var.TMP.getNotEmpty() orelse
+            bun.env_var.TEMP.getNotEmpty()) |dir|
+        {
+            if (dir.len > 1 and dir[dir.len - 1] == std.fs.path.sep) {
+                return dir[0 .. dir.len - 1];
             }
-
-            debug("readdir({f}, {s}) = {d}", .{ printHandle(handle.fd), _dir, dir.data.count() });
 
             return dir;
         }
 
-        fn readDirectoryError(fs: *RealFS, dir: string, err: anyerror) OOM!*EntriesOption {
-            if (comptime FeatureFlags.enable_entry_cache) {
-                var get_or_put_result = try fs.entries.getOrPut(dir);
-                switch (err) {
-                    error.ENOENT, error.FileNotFound => {
-                        fs.entries.markNotFound(get_or_put_result);
-                        temp_entries_option = EntriesOption{
-                            .err = DirEntry.Err{ .original_err = err, .canonical_error = err },
-                        };
-                        return &temp_entries_option;
-                    },
-                    else => {
-                        const opt = try fs.entries.put(&get_or_put_result, EntriesOption{
-                            .err = DirEntry.Err{ .original_err = err, .canonical_error = err },
-                        });
-
-                        return opt;
-                    },
+        return switch (Environment.os) {
+            // https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-gettemppathw#remarks
+            .windows => {
+                if (bun.env_var.SYSTEMROOT.get() orelse bun.env_var.WINDIR.get()) |windir| {
+                    return std.fmt.allocPrint(
+                        bun.default_allocator,
+                        "{s}\\Temp",
+                        .{strings.withoutTrailingSlash(windir)},
+                    ) catch |err| bun.handleOom(err);
                 }
-            }
 
-            temp_entries_option = EntriesOption{
-                .err = DirEntry.Err{ .original_err = err, .canonical_error = err },
-            };
-            return &temp_entries_option;
+                if (bun.env_var.HOME.get()) |profile| {
+                    var buf: bun.PathBuffer = undefined;
+                    var parts = [_]string{"AppData\\Local\\Temp"};
+                    const out = bun.path.joinAbsStringBuf(profile, &buf, &parts, .loose);
+                    return bun.handleOom(bun.default_allocator.dupe(u8, out));
+                }
+
+                var tmp_buf: bun.PathBuffer = undefined;
+                const cwd = std.posix.getcwd(&tmp_buf) catch @panic("Failed to get cwd for platformTempDir");
+                const root = bun.path.windowsFilesystemRoot(cwd);
+                return std.fmt.allocPrint(
+                    bun.default_allocator,
+                    "{s}\\Windows\\Temp",
+                    .{strings.withoutTrailingSlash(root)},
+                ) catch |err| bun.handleOom(err);
+            },
+            .mac => "/private/tmp",
+            else => "/tmp",
+        };
+    }
+
+    var get_platform_tempdir = bun.once(#platformTempDir);
+    pub fn platformTempDir() []const u8 {
+        return get_platform_tempdir.call(.{});
+    }
+
+    pub fn tmpdirPath() []const u8 {
+        return bun.env_var.BUN_TMPDIR.getNotEmpty() orelse platformTempDir();
+    }
+
+    pub fn getDefaultTempDir() string {
+        return bun.env_var.BUN_TMPDIR.get() orelse platformTempDir();
+    }
+
+    pub fn openTmpDir(_: *const FileSystem) !std.fs.Dir {
+        if (comptime Environment.isWindows) {
+            return (try bun.sys.openDirAtWindowsA(bun.invalid_fd, tmpdirPath(), .{
+                .iterable = true,
+                // we will not delete the temp directory
+                .can_rename_or_delete = false,
+                .read_only = true,
+            }).unwrap()).stdDir();
         }
 
-        threadlocal var temp_entries_option: EntriesOption = undefined;
+        return try bun.openDirAbsolute(tmpdirPath());
+    }
 
-        pub fn readDirectory(
-            fs: *RealFS,
-            _dir: string,
-            _handle: ?std.fs.Dir,
-            generation: bun.Generation,
-            store_fd: bool,
-        ) !*EntriesOption {
-            return fs.readDirectoryWithIterator(_dir, _handle, generation, store_fd, void, {});
-        }
+    pub fn entriesAt(this: *FileSystem, index: allocators.IndexType, generation: bun.Generation) ?*EntriesOption {
+        var existing = this.entries.atIndex(index) orelse return null;
+        if (existing.* == .entries) {
+            if (existing.entries.generation < generation) {
+                var handle = bun.openDirForIteration(FD.cwd(), existing.entries.dir).unwrap() catch |err| {
+                    existing.entries.data.clearAndFree(bun.default_allocator);
 
-        // One of the learnings here
-        //
-        //   Closing file descriptors yields significant performance benefits on Linux
-        //
-        // It was literally a 300% performance improvement to bundling.
-        // https://twitter.com/jarredsumner/status/1655787337027309568
-        // https://twitter.com/jarredsumner/status/1655714084569120770
-        // https://twitter.com/jarredsumner/status/1655464485245845506
-        /// Caller borrows the returned EntriesOption. When `FeatureFlags.enable_entry_cache` is `false`,
-        /// it is not safe to store this pointer past the current function call.
-        pub fn readDirectoryWithIterator(
-            fs: *RealFS,
-            dir_maybe_trail_slash: string,
-            maybe_handle: ?std.fs.Dir,
-            generation: bun.Generation,
-            store_fd: bool,
-            comptime Iterator: type,
-            iterator: Iterator,
-        ) !*EntriesOption {
-            var dir = bun.strings.withoutTrailingSlashWindowsPath(dir_maybe_trail_slash);
-
-            bun.resolver.Resolver.assertValidCacheKey(dir);
-            var cache_result: ?allocators.Result = null;
-            if (comptime FeatureFlags.enable_entry_cache) {
-                fs.entries_mutex.lock();
-            }
-            defer {
-                if (comptime FeatureFlags.enable_entry_cache) {
-                    fs.entries_mutex.unlock();
-                }
-            }
-            var in_place: ?*DirEntry = null;
-
-            if (comptime FeatureFlags.enable_entry_cache) {
-                cache_result = try fs.entries.getOrPut(dir);
-
-                if (cache_result.?.hasCheckedIfExists()) {
-                    if (fs.entries.atIndex(cache_result.?.index)) |cached_result| {
-                        if (cached_result.* != .entries or (cached_result.* == .entries and cached_result.entries.generation >= generation)) {
-                            return cached_result;
-                        }
-
-                        in_place = cached_result.entries;
-                    } else if (cache_result.?.status == .not_found and generation == 0) {
-                        temp_entries_option = EntriesOption{
-                            .err = DirEntry.Err{ .original_err = error.ENOENT, .canonical_error = error.ENOENT },
-                        };
-                        return &temp_entries_option;
-                    }
-                }
-            }
-
-            var handle = maybe_handle orelse (fs.openDir(dir) catch |err| {
-                return try fs.readDirectoryError(dir, err);
-            });
-
-            defer {
-                if (maybe_handle == null and (!store_fd or fs.needToCloseFiles())) {
-                    handle.close();
-                }
-            }
-
-            // if we get this far, it's a real directory, so we can just store the dir name.
-            if (maybe_handle == null) {
-                dir = try if (in_place) |existing|
-                    existing.dir
-                else
-                    DirnameStore.instance.append(string, dir_maybe_trail_slash);
-            }
-
-            // Cache miss: read the directory entries
-            var entries = fs.readdir(
-                store_fd,
-                if (in_place) |existing| &existing.data else null,
-                dir,
-                generation,
-                handle,
-
-                Iterator,
-                iterator,
-            ) catch |err| {
-                if (in_place) |existing| existing.data.clearAndFree(bun.default_allocator);
-                return try fs.readDirectoryError(dir, err);
-            };
-
-            if (comptime FeatureFlags.enable_entry_cache) {
-                const entries_ptr = in_place orelse bun.handleOom(bun.default_allocator.create(DirEntry));
-                if (in_place) |original| {
-                    original.data.clearAndFree(bun.default_allocator);
-                }
-                if (store_fd and !entries.fd.isValid())
-                    entries.fd = .fromStdDir(handle);
-
-                entries_ptr.* = entries;
-                const result = EntriesOption{
-                    .entries = entries_ptr,
+                    return this.readDirectoryError(existing.entries.dir, err) catch unreachable;
                 };
+                defer handle.close();
 
-                const out = try fs.entries.put(&cache_result.?, result);
+                const new_entry = this.readdir(
+                    false,
+                    &existing.entries.data,
+                    existing.entries.dir,
+                    generation,
+                    handle.stdDir(),
 
-                return out;
+                    void,
+                    void{},
+                ) catch |err| {
+                    existing.entries.data.clearAndFree(bun.default_allocator);
+                    return this.readDirectoryError(existing.entries.dir, err) catch unreachable;
+                };
+                existing.entries.data.clearAndFree(bun.default_allocator);
+                existing.entries.* = new_entry;
             }
-
-            temp_entries_option = EntriesOption{ .entries = entries };
-
-            return &temp_entries_option;
         }
 
-        fn readFileError(_: *RealFS, _: string, _: anyerror) void {}
+        return existing;
+    }
 
-        pub fn readFileWithHandle(
-            fs: *RealFS,
-            path: string,
-            _size: ?usize,
-            file: std.fs.File,
-            comptime use_shared_buffer: bool,
-            shared_buffer: *MutableString,
-            comptime stream: bool,
-        ) !PathContentsPair {
-            return readFileWithHandleAndAllocator(
-                fs,
-                bun.default_allocator,
-                path,
-                _size,
-                file,
-                use_shared_buffer,
-                shared_buffer,
-                stream,
+    pub fn needToCloseFiles(this: *const FileSystem) bool {
+        if (!FeatureFlags.store_file_descriptors) {
+            return true;
+        }
+
+        if (Environment.isWindows) {
+            // 'false' is okay here because windows gives you a seemingly unlimited number of open
+            // file handles, while posix has a lower limit.
+            //
+            // This limit does not extend to the C-Runtime which is only 512 to 8196 or so,
+            // but we know that all resolver-related handles are not C-Runtime handles because
+            // `setMaxFd` on Windows (besides being a no-op) only takes in `HANDLE`.
+            //
+            // Handles are automatically closed when the process exits as stated here:
+            // https://learn.microsoft.com/en-us/windows/win32/procthread/terminating-a-process
+            // But in a crazy experiment to find the upper-bound of the number of open handles,
+            // I found that opening upwards of 500k to a million handles in a single process
+            // would cause the process to hang while closing. This might just be Windows slowly
+            // closing the handles, not sure. This is likely not something to worry about.
+            //
+            // If it is decided that not closing files ever is a bad idea. This should be
+            // replaced with some form of intelligent count of how many files we opened.
+            // On POSIX we can get away with measuring how high `fd` gets because it typically
+            // assigns these descriptors in ascending order (1 2 3 ...). Windows does not
+            // guarantee this.
+            return false;
+        }
+
+        // If we're not near the max amount of open files, don't worry about it.
+        return !(this.file_limit > 254 and this.file_limit > (FileSystem.max_fd + 1) * 2);
+    }
+
+    /// Returns `true` if an entry was removed
+    pub fn bustEntriesCache(this: *FileSystem, file_path: string) bool {
+        return this.entries.remove(file_path);
+    }
+
+    pub fn modKeyWithFile(fs: *FileSystem, path: string, file: anytype) anyerror!ModKey {
+        return try ModKey.generate(fs, path, file);
+    }
+
+    pub fn modKey(fs: *FileSystem, path: string) anyerror!ModKey {
+        var file = try std.fs.cwd().openFile(path, std.fs.File.OpenFlags{ .mode = .read_only });
+        defer {
+            if (fs.needToCloseFiles()) {
+                file.close();
+            }
+        }
+        return try fs.modKeyWithFile(path, file);
+    }
+
+    pub fn openDir(_: *FileSystem, unsafe_dir_string: string) !std.fs.Dir {
+        const dirfd = if (Environment.isWindows)
+            bun.sys.openDirAtWindowsA(bun.invalid_fd, unsafe_dir_string, .{ .iterable = true, .no_follow = false, .read_only = true })
+        else
+            bun.sys.openA(
+                unsafe_dir_string,
+                bun.O.DIRECTORY,
+                0,
             );
+        const fd = try dirfd.unwrap();
+        return fd.stdDir();
+    }
+
+    fn readdir(
+        fs: *FileSystem,
+        store_fd: bool,
+        prev_map: ?*DirEntry.EntryMap,
+        _dir: string,
+        generation: bun.Generation,
+        handle: std.fs.Dir,
+        comptime Iterator: type,
+        iterator: Iterator,
+    ) !DirEntry {
+        _ = fs;
+
+        var iter = bun.iterateDir(.fromStdDir(handle));
+        var dir = DirEntry.init(_dir, generation);
+        const allocator = bun.default_allocator;
+        errdefer dir.deinit(allocator);
+
+        if (store_fd) {
+            FileSystem.setMaxFd(handle.fd);
+            dir.fd = .fromStdDir(handle);
         }
 
-        pub fn readFileWithHandleAndAllocator(
-            fs: *RealFS,
-            allocator: std.mem.Allocator,
-            path: string,
-            size_hint: ?usize,
-            std_file: std.fs.File,
-            comptime use_shared_buffer: bool,
-            shared_buffer: *MutableString,
-            comptime stream: bool,
-        ) !PathContentsPair {
-            FileSystem.setMaxFd(std_file.handle);
-            const file = bun.sys.File.from(std_file);
+        while (try iter.next().unwrap()) |*_entry| {
+            debug("readdir entry {s}", .{_entry.name.slice()});
 
-            var file_contents: []u8 = "";
-            // When we're serving a JavaScript-like file over HTTP, we do not want to cache the contents in memory
-            // This imposes a performance hit because not reading from disk is faster than reading from disk
-            // Part of that hit is allocating a temporary buffer to store the file contents in
-            // As a mitigation, we can just keep one buffer forever and re-use it for the parsed files
-            if (use_shared_buffer) {
-                shared_buffer.reset();
+            try dir.addEntry(prev_map, _entry, allocator, Iterator, iterator);
+        }
 
-                // Skip the extra file.stat() call when possible
-                var size = size_hint orelse (file.getEndPos() catch |err| {
-                    fs.readFileError(path, err);
-                    return err;
-                });
-                debug("stat({d}) = {d}", .{ file.handle, size });
+        debug("readdir({f}, {s}) = {d}", .{ printHandle(handle.fd), _dir, dir.data.count() });
 
-                // Skip the pread call for empty files
-                // Otherwise will get out of bounds errors
-                // plus it's an unnecessary syscall
-                if (size == 0) {
-                    if (comptime use_shared_buffer) {
-                        shared_buffer.reset();
-                        return PathContentsPair{ .path = Path.init(path), .contents = shared_buffer.list.items };
-                    } else {
-                        return PathContentsPair{ .path = Path.init(path), .contents = "" };
-                    }
-                }
+        return dir;
+    }
 
-                var bytes_read: u64 = 0;
-                try shared_buffer.growBy(size + 1);
-                shared_buffer.list.expandToCapacity();
+    threadlocal var temp_entries_option: EntriesOption = undefined;
 
-                // if you press save on a large file we might not read all the
-                // bytes in the first few pread() calls. we only handle this on
-                // stream because we assume that this only realistically happens
-                // during HMR
-                while (true) {
-                    // We use pread to ensure if the file handle was open, it doesn't seek from the last position
-                    const read_count = file.readAll(shared_buffer.list.items[bytes_read..]) catch |err| {
-                        fs.readFileError(path, err);
-                        return err;
+    fn readDirectoryError(fs: *FileSystem, dir: string, err: anyerror) OOM!*EntriesOption {
+        if (comptime FeatureFlags.enable_entry_cache) {
+            var get_or_put_result = try fs.entries.getOrPut(dir);
+            switch (err) {
+                error.ENOENT, error.FileNotFound => {
+                    fs.entries.markNotFound(get_or_put_result);
+                    temp_entries_option = EntriesOption{
+                        .err = DirEntry.Err{ .original_err = err, .canonical_error = err },
                     };
-                    shared_buffer.list.items = shared_buffer.list.items[0 .. read_count + bytes_read];
-                    file_contents = shared_buffer.list.items;
-                    debug("read({d}, {d}) = {d}", .{ file.handle, size, read_count });
+                    return &temp_entries_option;
+                },
+                else => {
+                    const opt = try fs.entries.put(&get_or_put_result, EntriesOption{
+                        .err = DirEntry.Err{ .original_err = err, .canonical_error = err },
+                    });
 
-                    if (comptime stream) {
-                        // check again that stat() didn't change the file size
-                        // another reason to only do this when stream
-                        const new_size = file.getEndPos() catch |err| {
-                            fs.readFileError(path, err);
-                            return err;
-                        };
+                    return opt;
+                },
+            }
+        }
 
-                        bytes_read += read_count;
+        temp_entries_option = EntriesOption{
+            .err = DirEntry.Err{ .original_err = err, .canonical_error = err },
+        };
+        return &temp_entries_option;
+    }
 
-                        // don't infinite loop is we're still not reading more
-                        if (read_count == 0) break;
+    pub fn readDirectory(
+        fs: *FileSystem,
+        _dir: string,
+        _handle: ?std.fs.Dir,
+        generation: bun.Generation,
+        store_fd: bool,
+    ) !*EntriesOption {
+        return fs.readDirectoryWithIterator(_dir, _handle, generation, store_fd, void, {});
+    }
 
-                        if (bytes_read < new_size) {
-                            try shared_buffer.growBy(new_size - size);
-                            shared_buffer.list.expandToCapacity();
-                            size = new_size;
-                            continue;
-                        }
+    // One of the learnings here
+    //
+    //   Closing file descriptors yields significant performance benefits on Linux
+    //
+    // It was literally a 300% performance improvement to bundling.
+    // https://twitter.com/jarredsumner/status/1655787337027309568
+    // https://twitter.com/jarredsumner/status/1655714084569120770
+    // https://twitter.com/jarredsumner/status/1655464485245845506
+    /// Caller borrows the returned EntriesOption. When `FeatureFlags.enable_entry_cache` is `false`,
+    /// it is not safe to store this pointer past the current function call.
+    pub fn readDirectoryWithIterator(
+        fs: *FileSystem,
+        dir_maybe_trail_slash: string,
+        maybe_handle: ?std.fs.Dir,
+        generation: bun.Generation,
+        store_fd: bool,
+        comptime Iterator: type,
+        iterator: Iterator,
+    ) !*EntriesOption {
+        var dir = bun.strings.withoutTrailingSlashWindowsPath(dir_maybe_trail_slash);
+
+        bun.resolver.Resolver.assertValidCacheKey(dir);
+        var cache_result: ?allocators.Result = null;
+        if (comptime FeatureFlags.enable_entry_cache) {
+            fs.entries_mutex.lock();
+        }
+        defer {
+            if (comptime FeatureFlags.enable_entry_cache) {
+                fs.entries_mutex.unlock();
+            }
+        }
+        var in_place: ?*DirEntry = null;
+
+        if (comptime FeatureFlags.enable_entry_cache) {
+            cache_result = try fs.entries.getOrPut(dir);
+
+            if (cache_result.?.hasCheckedIfExists()) {
+                if (fs.entries.atIndex(cache_result.?.index)) |cached_result| {
+                    if (cached_result.* != .entries or (cached_result.* == .entries and cached_result.entries.generation >= generation)) {
+                        return cached_result;
                     }
-                    break;
-                }
 
-                if (shared_buffer.list.capacity > file_contents.len) {
-                    file_contents.ptr[file_contents.len] = 0;
-                }
-
-                if (strings.BOM.detect(file_contents)) |bom| {
-                    debug("Convert {s} BOM", .{@tagName(bom)});
-                    file_contents = try bom.removeAndConvertToUTF8WithoutDealloc(allocator, &shared_buffer.list);
-                }
-            } else {
-                var initial_buf: [16384]u8 = undefined;
-
-                // Optimization: don't call stat() unless the file is big enough
-                // that we need to dynamically allocate memory to read it.
-                const initial_read = if (size_hint == null) brk: {
-                    const buf: []u8 = &initial_buf;
-                    const read_count = file.readAll(buf).unwrap() catch |err| {
-                        fs.readFileError(path, err);
-                        return err;
+                    in_place = cached_result.entries;
+                } else if (cache_result.?.status == .not_found and generation == 0) {
+                    temp_entries_option = EntriesOption{
+                        .err = DirEntry.Err{ .original_err = error.ENOENT, .canonical_error = error.ENOENT },
                     };
-                    if (read_count + 1 < buf.len) {
-                        const allocation = try allocator.dupeZ(u8, buf[0..read_count]);
-                        file_contents = allocation[0..read_count];
+                    return &temp_entries_option;
+                }
+            }
+        }
 
-                        if (strings.BOM.detect(file_contents)) |bom| {
-                            debug("Convert {s} BOM", .{@tagName(bom)});
-                            file_contents = try bom.removeAndConvertToUTF8AndFree(allocator, file_contents);
-                        }
+        var handle = maybe_handle orelse (fs.openDir(dir) catch |err| {
+            return try fs.readDirectoryError(dir, err);
+        });
 
-                        return PathContentsPair{ .path = Path.init(path), .contents = file_contents };
-                    }
+        defer {
+            if (maybe_handle == null and (!store_fd or fs.needToCloseFiles())) {
+                handle.close();
+            }
+        }
 
-                    break :brk buf[0..read_count];
-                } else initial_buf[0..0];
+        // if we get this far, it's a real directory, so we can just store the dir name.
+        if (maybe_handle == null) {
+            dir = try if (in_place) |existing|
+                existing.dir
+            else
+                DirnameStore.instance.append(string, dir_maybe_trail_slash);
+        }
 
-                // Skip the extra file.stat() call when possible
-                const size = size_hint orelse (file.getEndPos().unwrap() catch |err| {
-                    fs.readFileError(path, err);
-                    return err;
-                });
-                debug("stat({f}) = {d}", .{ file.handle, size });
+        // Cache miss: read the directory entries
+        var entries = fs.readdir(
+            store_fd,
+            if (in_place) |existing| &existing.data else null,
+            dir,
+            generation,
+            handle,
 
-                var buf = try allocator.alloc(u8, size + 1);
-                @memcpy(buf[0..initial_read.len], initial_read);
+            Iterator,
+            iterator,
+        ) catch |err| {
+            if (in_place) |existing| existing.data.clearAndFree(bun.default_allocator);
+            return try fs.readDirectoryError(dir, err);
+        };
 
-                if (size == 0) {
+        if (comptime FeatureFlags.enable_entry_cache) {
+            const entries_ptr = in_place orelse bun.handleOom(bun.default_allocator.create(DirEntry));
+            if (in_place) |original| {
+                original.data.clearAndFree(bun.default_allocator);
+            }
+            if (store_fd and !entries.fd.isValid())
+                entries.fd = .fromStdDir(handle);
+
+            entries_ptr.* = entries;
+            const result = EntriesOption{
+                .entries = entries_ptr,
+            };
+
+            const out = try fs.entries.put(&cache_result.?, result);
+
+            return out;
+        }
+
+        temp_entries_option = EntriesOption{ .entries = entries };
+
+        return &temp_entries_option;
+    }
+
+    fn readFileError(_: *FileSystem, _: string, _: anyerror) void {}
+
+    pub fn readFileWithHandle(
+        fs: *FileSystem,
+        path: string,
+        _size: ?usize,
+        file: std.fs.File,
+        comptime use_shared_buffer: bool,
+        shared_buffer: *MutableString,
+        comptime stream: bool,
+    ) !PathContentsPair {
+        return readFileWithHandleAndAllocator(
+            fs,
+            bun.default_allocator,
+            path,
+            _size,
+            file,
+            use_shared_buffer,
+            shared_buffer,
+            stream,
+        );
+    }
+
+    pub fn readFileWithHandleAndAllocator(
+        fs: *FileSystem,
+        allocator: std.mem.Allocator,
+        path: string,
+        size_hint: ?usize,
+        std_file: std.fs.File,
+        comptime use_shared_buffer: bool,
+        shared_buffer: *MutableString,
+        comptime stream: bool,
+    ) !PathContentsPair {
+        FileSystem.setMaxFd(std_file.handle);
+        const file = bun.sys.File.from(std_file);
+
+        var file_contents: []u8 = "";
+        // When we're serving a JavaScript-like file over HTTP, we do not want to cache the contents in memory
+        // This imposes a performance hit because not reading from disk is faster than reading from disk
+        // Part of that hit is allocating a temporary buffer to store the file contents in
+        // As a mitigation, we can just keep one buffer forever and re-use it for the parsed files
+        if (use_shared_buffer) {
+            shared_buffer.reset();
+
+            // Skip the extra file.stat() call when possible
+            var size = size_hint orelse (file.getEndPos() catch |err| {
+                fs.readFileError(path, err);
+                return err;
+            });
+            debug("stat({d}) = {d}", .{ file.handle, size });
+
+            // Skip the pread call for empty files
+            // Otherwise will get out of bounds errors
+            // plus it's an unnecessary syscall
+            if (size == 0) {
+                if (comptime use_shared_buffer) {
+                    shared_buffer.reset();
+                    return PathContentsPair{ .path = Path.init(path), .contents = shared_buffer.list.items };
+                } else {
                     return PathContentsPair{ .path = Path.init(path), .contents = "" };
                 }
+            }
 
-                // stick a zero at the end
-                buf[size] = 0;
+            var bytes_read: u64 = 0;
+            try shared_buffer.growBy(size + 1);
+            shared_buffer.list.expandToCapacity();
 
-                const read_count = file.readAll(buf[initial_read.len..]).unwrap() catch |err| {
+            // if you press save on a large file we might not read all the
+            // bytes in the first few pread() calls. we only handle this on
+            // stream because we assume that this only realistically happens
+            // during HMR
+            while (true) {
+                // We use pread to ensure if the file handle was open, it doesn't seek from the last position
+                const read_count = file.readAll(shared_buffer.list.items[bytes_read..]) catch |err| {
                     fs.readFileError(path, err);
                     return err;
                 };
-                file_contents = buf[0 .. read_count + initial_read.len];
-                debug("read({f}, {d}) = {d}", .{ file.handle, size, read_count });
+                shared_buffer.list.items = shared_buffer.list.items[0 .. read_count + bytes_read];
+                file_contents = shared_buffer.list.items;
+                debug("read({d}, {d}) = {d}", .{ file.handle, size, read_count });
 
-                if (strings.BOM.detect(file_contents)) |bom| {
-                    debug("Convert {s} BOM", .{@tagName(bom)});
-                    file_contents = try bom.removeAndConvertToUTF8AndFree(allocator, file_contents);
+                if (comptime stream) {
+                    // check again that stat() didn't change the file size
+                    // another reason to only do this when stream
+                    const new_size = file.getEndPos() catch |err| {
+                        fs.readFileError(path, err);
+                        return err;
+                    };
+
+                    bytes_read += read_count;
+
+                    // don't infinite loop is we're still not reading more
+                    if (read_count == 0) break;
+
+                    if (bytes_read < new_size) {
+                        try shared_buffer.growBy(new_size - size);
+                        shared_buffer.list.expandToCapacity();
+                        size = new_size;
+                        continue;
+                    }
                 }
+                break;
             }
 
-            return PathContentsPair{ .path = Path.init(path), .contents = file_contents };
+            if (shared_buffer.list.capacity > file_contents.len) {
+                file_contents.ptr[file_contents.len] = 0;
+            }
+
+            if (strings.BOM.detect(file_contents)) |bom| {
+                debug("Convert {s} BOM", .{@tagName(bom)});
+                file_contents = try bom.removeAndConvertToUTF8WithoutDealloc(allocator, &shared_buffer.list);
+            }
+        } else {
+            var initial_buf: [16384]u8 = undefined;
+
+            // Optimization: don't call stat() unless the file is big enough
+            // that we need to dynamically allocate memory to read it.
+            const initial_read = if (size_hint == null) brk: {
+                const buf: []u8 = &initial_buf;
+                const read_count = file.readAll(buf).unwrap() catch |err| {
+                    fs.readFileError(path, err);
+                    return err;
+                };
+                if (read_count + 1 < buf.len) {
+                    const allocation = try allocator.dupeZ(u8, buf[0..read_count]);
+                    file_contents = allocation[0..read_count];
+
+                    if (strings.BOM.detect(file_contents)) |bom| {
+                        debug("Convert {s} BOM", .{@tagName(bom)});
+                        file_contents = try bom.removeAndConvertToUTF8AndFree(allocator, file_contents);
+                    }
+
+                    return PathContentsPair{ .path = Path.init(path), .contents = file_contents };
+                }
+
+                break :brk buf[0..read_count];
+            } else initial_buf[0..0];
+
+            // Skip the extra file.stat() call when possible
+            const size = size_hint orelse (file.getEndPos().unwrap() catch |err| {
+                fs.readFileError(path, err);
+                return err;
+            });
+            debug("stat({f}) = {d}", .{ file.handle, size });
+
+            var buf = try allocator.alloc(u8, size + 1);
+            @memcpy(buf[0..initial_read.len], initial_read);
+
+            if (size == 0) {
+                return PathContentsPair{ .path = Path.init(path), .contents = "" };
+            }
+
+            // stick a zero at the end
+            buf[size] = 0;
+
+            const read_count = file.readAll(buf[initial_read.len..]).unwrap() catch |err| {
+                fs.readFileError(path, err);
+                return err;
+            };
+            file_contents = buf[0 .. read_count + initial_read.len];
+            debug("read({f}, {d}) = {d}", .{ file.handle, size, read_count });
+
+            if (strings.BOM.detect(file_contents)) |bom| {
+                debug("Convert {s} BOM", .{@tagName(bom)});
+                file_contents = try bom.removeAndConvertToUTF8AndFree(allocator, file_contents);
+            }
         }
 
-        pub fn kindFromAbsolute(
-            fs: *RealFS,
-            absolute_path: [:0]const u8,
-            existing_fd: StoredFileDescriptorType,
-            store_fd: bool,
-        ) !Entry.Cache {
-            var outpath: bun.PathBuffer = undefined;
+        return PathContentsPair{ .path = Path.init(path), .contents = file_contents };
+    }
 
-            const stat = try bun.sys.lstat_absolute(absolute_path);
-            const is_symlink = stat.kind == std.fs.File.Kind.SymLink;
-            var _kind = stat.kind;
-            var cache = Entry.Cache{
-                .kind = Entry.Kind.file,
-                .symlink = PathString.empty,
-            };
-            var symlink: []const u8 = "";
+    pub fn kindFromAbsolute(
+        fs: *FileSystem,
+        absolute_path: [:0]const u8,
+        existing_fd: StoredFileDescriptorType,
+        store_fd: bool,
+    ) !Entry.Cache {
+        var outpath: bun.PathBuffer = undefined;
 
-            if (is_symlink) {
-                var file = try if (existing_fd != 0)
-                    std.fs.File{ .handle = existing_fd }
-                else if (store_fd)
-                    std.fs.openFileAbsoluteZ(absolute_path, .{ .mode = .read_only })
-                else
-                    bun.openFileForPath(absolute_path);
-                setMaxFd(file.handle);
+        const stat = try bun.sys.lstat_absolute(absolute_path);
+        const is_symlink = stat.kind == std.fs.File.Kind.SymLink;
+        var _kind = stat.kind;
+        var cache = Entry.Cache{
+            .kind = Entry.Kind.file,
+            .symlink = PathString.empty,
+        };
+        var symlink: []const u8 = "";
 
-                defer {
-                    if ((!store_fd or fs.needToCloseFiles()) and existing_fd == 0) {
-                        file.close();
-                    } else if (comptime FeatureFlags.store_file_descriptors) {
-                        cache.fd = file.handle;
-                    }
+        if (is_symlink) {
+            var file = try if (existing_fd != 0)
+                std.fs.File{ .handle = existing_fd }
+            else if (store_fd)
+                std.fs.openFileAbsoluteZ(absolute_path, .{ .mode = .read_only })
+            else
+                bun.openFileForPath(absolute_path);
+            setMaxFd(file.handle);
+
+            defer {
+                if ((!store_fd or fs.needToCloseFiles()) and existing_fd == 0) {
+                    file.close();
+                } else if (comptime FeatureFlags.store_file_descriptors) {
+                    cache.fd = file.handle;
                 }
-                const _stat = try file.stat();
-
-                symlink = try bun.getFdPath(file.handle, &outpath);
-
-                _kind = _stat.kind;
             }
+            const _stat = try file.stat();
 
-            bun.assert(_kind != .SymLink);
+            symlink = try bun.getFdPath(file.handle, &outpath);
 
-            if (_kind == .Directory) {
-                cache.kind = .dir;
-            } else {
-                cache.kind = .file;
-            }
-            if (symlink.len > 0) {
-                cache.symlink = PathString.init(try FilenameStore.instance.append([]const u8, symlink));
-            }
-
-            return cache;
+            _kind = _stat.kind;
         }
 
-        pub fn kind(
-            fs: *RealFS,
-            _dir: string,
-            base: string,
-            existing_fd: StoredFileDescriptorType,
-            store_fd: bool,
-        ) !Entry.Cache {
-            var cache = Entry.Cache{
-                .kind = Entry.Kind.file,
-                .symlink = PathString.empty,
-            };
+        bun.assert(_kind != .SymLink);
 
-            const dir = _dir;
-            var combo = [2]string{ dir, base };
-            var outpath: bun.PathBuffer = undefined;
-            const entry_path = path_handler.joinAbsStringBuf(fs.cwd, &outpath, &combo, .auto);
+        if (_kind == .Directory) {
+            cache.kind = .dir;
+        } else {
+            cache.kind = .file;
+        }
+        if (symlink.len > 0) {
+            cache.symlink = PathString.init(try FilenameStore.instance.append([]const u8, symlink));
+        }
 
-            outpath[entry_path.len + 1] = 0;
-            outpath[entry_path.len] = 0;
+        return cache;
+    }
 
-            var absolute_path_c: [:0]const u8 = outpath[0..entry_path.len :0];
+    pub fn kind(
+        fs: *FileSystem,
+        _dir: string,
+        base: string,
+        existing_fd: StoredFileDescriptorType,
+        store_fd: bool,
+    ) !Entry.Cache {
+        var cache = Entry.Cache{
+            .kind = Entry.Kind.file,
+            .symlink = PathString.empty,
+        };
 
-            if (comptime bun.Environment.isWindows) {
-                var file = bun.sys.getFileAttributes(absolute_path_c) orelse return error.FileNotFound;
-                var depth: usize = 0;
-                const buf2: *bun.PathBuffer = bun.path_buffer_pool.get();
-                defer bun.path_buffer_pool.put(buf2);
-                const buf3: *bun.PathBuffer = bun.path_buffer_pool.get();
-                defer bun.path_buffer_pool.put(buf3);
+        const dir = _dir;
+        var combo = [2]string{ dir, base };
+        var outpath: bun.PathBuffer = undefined;
+        const entry_path = path_handler.joinAbsStringBuf(fs.cwd, &outpath, &combo, .auto);
 
-                var current_buf: *bun.PathBuffer = buf2;
-                var other_buf: *bun.PathBuffer = &outpath;
-                var joining_buf: *bun.PathBuffer = buf3;
+        outpath[entry_path.len + 1] = 0;
+        outpath[entry_path.len] = 0;
 
-                while (file.is_reparse_point) : (depth += 1) {
-                    var read: [:0]const u8 = try bun.sys.readlink(absolute_path_c, current_buf).unwrap();
-                    if (std.fs.path.isAbsolute(read)) {
-                        std.mem.swap(*bun.PathBuffer, &current_buf, &other_buf);
-                    } else {
-                        read = bun.path.joinAbsStringBufZ(std.fs.path.dirname(absolute_path_c) orelse absolute_path_c, joining_buf, &.{read}, .windows);
-                        std.mem.swap(*bun.PathBuffer, &joining_buf, &other_buf);
-                    }
-                    file = bun.sys.getFileAttributes(read) orelse return error.FileNotFound;
-                    absolute_path_c = read;
+        var absolute_path_c: [:0]const u8 = outpath[0..entry_path.len :0];
 
-                    if (depth > 20) {
-                        return error.TooManySymlinks;
-                    }
-                }
+        if (comptime bun.Environment.isWindows) {
+            var file = bun.sys.getFileAttributes(absolute_path_c) orelse return error.FileNotFound;
+            var depth: usize = 0;
+            const buf2: *bun.PathBuffer = bun.path_buffer_pool.get();
+            defer bun.path_buffer_pool.put(buf2);
+            const buf3: *bun.PathBuffer = bun.path_buffer_pool.get();
+            defer bun.path_buffer_pool.put(buf3);
 
-                if (depth > 0) {
-                    cache.symlink = PathString.init(try FilenameStore.instance.append([]const u8, absolute_path_c));
-                }
+            var current_buf: *bun.PathBuffer = buf2;
+            var other_buf: *bun.PathBuffer = &outpath;
+            var joining_buf: *bun.PathBuffer = buf3;
 
-                if (file.is_directory) {
-                    cache.kind = .dir;
+            while (file.is_reparse_point) : (depth += 1) {
+                var read: [:0]const u8 = try bun.sys.readlink(absolute_path_c, current_buf).unwrap();
+                if (std.fs.path.isAbsolute(read)) {
+                    std.mem.swap(*bun.PathBuffer, &current_buf, &other_buf);
                 } else {
-                    cache.kind = .file;
+                    read = bun.path.joinAbsStringBufZ(std.fs.path.dirname(absolute_path_c) orelse absolute_path_c, joining_buf, &.{read}, .windows);
+                    std.mem.swap(*bun.PathBuffer, &joining_buf, &other_buf);
                 }
+                file = bun.sys.getFileAttributes(read) orelse return error.FileNotFound;
+                absolute_path_c = read;
 
-                return cache;
+                if (depth > 20) {
+                    return error.TooManySymlinks;
+                }
             }
 
-            const stat = try bun.sys.lstat_absolute(absolute_path_c);
-            const is_symlink = stat.kind == std.fs.File.Kind.sym_link;
-            var file_kind = stat.kind;
-
-            var symlink: []const u8 = "";
-
-            if (is_symlink) {
-                var file: bun.FD = if (existing_fd.unwrapValid()) |valid|
-                    valid
-                else if (store_fd)
-                    .fromStdFile(try std.fs.openFileAbsoluteZ(absolute_path_c, .{ .mode = .read_only }))
-                else
-                    .fromStdFile(try bun.openFileForPath(absolute_path_c));
-                setMaxFd(file.native());
-
-                defer {
-                    if ((!store_fd or fs.needToCloseFiles()) and !existing_fd.isValid()) {
-                        file.close();
-                    } else if (comptime FeatureFlags.store_file_descriptors) {
-                        cache.fd = file;
-                    }
-                }
-                const file_stat = try file.stdFile().stat();
-                symlink = try file.getFdPath(&outpath);
-                file_kind = file_stat.kind;
+            if (depth > 0) {
+                cache.symlink = PathString.init(try FilenameStore.instance.append([]const u8, absolute_path_c));
             }
 
-            bun.assert(file_kind != .sym_link);
-
-            if (file_kind == .directory) {
+            if (file.is_directory) {
                 cache.kind = .dir;
             } else {
                 cache.kind = .file;
-            }
-            if (symlink.len > 0) {
-                cache.symlink = PathString.init(try FilenameStore.instance.append([]const u8, symlink));
             }
 
             return cache;
         }
 
-        //         // Stores the file entries for directories we've listed before
-        // entries_mutex: std.Mutex
-        // entries      map[string]entriesOrErr
+        const stat = try bun.sys.lstat_absolute(absolute_path_c);
+        const is_symlink = stat.kind == std.fs.File.Kind.sym_link;
+        var file_kind = stat.kind;
 
-        // // If true, do not use the "entries" cache
-        // doNotCacheEntries bool
-    };
+        var symlink: []const u8 = "";
 
-    pub const Implementation = RealFS;
-    // pub const Implementation = switch (build_target) {
-    // .wasi, .native => RealFS,
-    //     .wasm => WasmFS,
-    // };
+        if (is_symlink) {
+            var file: bun.FD = if (existing_fd.unwrapValid()) |valid|
+                valid
+            else if (store_fd)
+                .fromStdFile(try std.fs.openFileAbsoluteZ(absolute_path_c, .{ .mode = .read_only }))
+            else
+                .fromStdFile(try bun.openFileForPath(absolute_path_c));
+            setMaxFd(file.native());
+
+            defer {
+                if ((!store_fd or fs.needToCloseFiles()) and !existing_fd.isValid()) {
+                    file.close();
+                } else if (comptime FeatureFlags.store_file_descriptors) {
+                    cache.fd = file;
+                }
+            }
+            const file_stat = try file.stdFile().stat();
+            symlink = try file.getFdPath(&outpath);
+            file_kind = file_stat.kind;
+        }
+
+        bun.assert(file_kind != .sym_link);
+
+        if (file_kind == .directory) {
+            cache.kind = .dir;
+        } else {
+            cache.kind = .file;
+        }
+        if (symlink.len > 0) {
+            cache.symlink = PathString.init(try FilenameStore.instance.append([]const u8, symlink));
+        }
+
+        return cache;
+    }
 };
 
 pub const PathContentsPair = struct { path: Path, contents: string };

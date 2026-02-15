@@ -97,7 +97,7 @@ pub const Fs = struct {
         cached_file_descriptor: ?StoredFileDescriptorType,
         shared: *MutableString,
     ) !Entry {
-        var rfs = _fs.fs;
+        var rfs = _fs;
 
         const file_handle: std.fs.File = if (cached_file_descriptor) |fd| handle: {
             const handle = std.fs.File{ .handle = fd };
@@ -152,7 +152,7 @@ pub const Fs = struct {
         comptime use_shared_buffer: bool,
         _file_handle: ?StoredFileDescriptorType,
     ) !Entry {
-        var rfs = _fs.fs;
+        var rfs = _fs;
 
         var file_handle: std.fs.File = if (_file_handle) |__file| __file.stdFile() else undefined;
 

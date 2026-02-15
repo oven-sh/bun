@@ -1839,8 +1839,41 @@ pub const Example = struct {
         }
     };
 
-    const examples_url: string = "https://registry.npmjs.org/bun-examples-all/latest";
     var url: URL = undefined;
+
+    /// Gets the registry URL from configuration, environment variables, or falls back to default.
+    /// Priority: bunfig.toml > BUN_CONFIG_REGISTRY > NPM_CONFIG_REGISTRY > npm_config_registry > default
+    fn getRegistryUrl(ctx: Command.Context, env_loader: *DotEnv.Loader) string {
+        // First check bunfig configuration
+        if (ctx.install) |install| {
+            if (install.default_registry) |registry| {
+                if (registry.url.len > 0) {
+                    return registry.url;
+                }
+            }
+        }
+
+        // Then check environment variables
+        const registry_keys = [_]string{
+            "BUN_CONFIG_REGISTRY",
+            "NPM_CONFIG_REGISTRY",
+            "npm_config_registry",
+        };
+
+        inline for (registry_keys) |key| {
+            if (env_loader.map.get(key)) |registry_url| {
+                if (registry_url.len > 0 and
+                    (strings.startsWith(registry_url, "https://") or
+                        strings.startsWith(registry_url, "http://")))
+                {
+                    return registry_url;
+                }
+            }
+        }
+
+        // Fall back to default npm registry
+        return Npm.Registry.default_url;
+    }
 
     var app_name_buf: [512]u8 = undefined;
     pub fn print(examples: []const Example, default_app_name: ?string) void {
@@ -2069,7 +2102,9 @@ pub const Example = struct {
         var mutable = try ctx.allocator.create(MutableString);
         mutable.* = try MutableString.init(ctx.allocator, 2048);
 
-        url = URL.parse(try std.fmt.bufPrint(&url_buf, "https://registry.npmjs.org/@bun-examples/{s}/latest", .{name}));
+        const registry_url = getRegistryUrl(ctx, env_loader);
+        const registry_without_trailing_slash = strings.withoutTrailingSlash(registry_url);
+        url = URL.parse(try std.fmt.bufPrint(&url_buf, "{s}/@bun-examples/{s}/latest", .{ registry_without_trailing_slash, name }));
 
         var http_proxy: ?URL = env_loader.getHttpProxyFor(url);
 
@@ -2190,7 +2225,10 @@ pub const Example = struct {
     }
 
     pub fn fetchAll(ctx: Command.Context, env_loader: *DotEnv.Loader, progress_node: ?*Progress.Node) ![]Example {
-        url = URL.parse(examples_url);
+        var url_buf: [1024]u8 = undefined;
+        const registry_url = getRegistryUrl(ctx, env_loader);
+        const registry_without_trailing_slash = strings.withoutTrailingSlash(registry_url);
+        url = URL.parse(std.fmt.bufPrint(&url_buf, "{s}/bun-examples-all/latest", .{registry_without_trailing_slash}) catch unreachable);
 
         const http_proxy: ?URL = env_loader.getHttpProxyFor(url);
 
@@ -2455,6 +2493,7 @@ const js_ast = bun.ast;
 const logger = bun.logger;
 const strings = bun.strings;
 const Archiver = bun.libarchive.Archiver;
+const Npm = bun.install.Npm;
 
 const HTTP = bun.http;
 const Headers = bun.http.Headers;

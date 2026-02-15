@@ -57,6 +57,12 @@ pub fn installIsolatedPackages(
         var visited_parent_node_ids: std.array_list.Managed(Store.Node.Id) = .init(lockfile.allocator);
         defer visited_parent_node_ids.deinit();
 
+        // Cache for isFilteredDependencyOrWorkspace results per dep_id.
+        // The result only depends on the dep_id itself (package metadata, behavior flags),
+        // not on the position in the tree, so it can be safely cached.
+        var filtered_dep_cache: std.AutoHashMapUnmanaged(DependencyID, bool) = .empty;
+        defer filtered_dep_cache.deinit(lockfile.allocator);
+
         // First pass: create full dependency tree with resolved peers
         next_node: while (node_queue.readItem()) |entry| {
             check_cycle: {
@@ -113,7 +119,13 @@ pub fn installIsolatedPackages(
 
             if (entry.dep_id != invalid_dependency_id) {
                 const entry_dep = dependencies[entry.dep_id];
-                if (pkg_deps.len == 0 or entry_dep.version.tag == .workspace) dont_dedupe: {
+                const has_peer_deps = has_peer_deps: {
+                    for (pkg_deps.begin()..pkg_deps.end()) |_did| {
+                        if (dependencies[_did].behavior.isPeer()) break :has_peer_deps true;
+                    }
+                    break :has_peer_deps false;
+                };
+                if (pkg_deps.len == 0 or entry_dep.version.tag == .workspace or !has_peer_deps) dont_dedupe: {
                     const dedupe_entry = try early_dedupe.getOrPut(entry.pkg_id);
                     if (dedupe_entry.found_existing) {
                         const dedupe_node_id = dedupe_entry.value_ptr.*;
@@ -216,14 +228,20 @@ pub fn installIsolatedPackages(
                 }
 
                 for (dep_ids_sort_buf.items) |dep_id| {
-                    if (Tree.isFilteredDependencyOrWorkspace(
-                        dep_id,
-                        entry.pkg_id,
-                        workspace_filters,
-                        install_root_dependencies,
-                        manager,
-                        lockfile,
-                    )) {
+                    const is_filtered = is_filtered: {
+                        if (filtered_dep_cache.get(dep_id)) |cached| break :is_filtered cached;
+                        const result = Tree.isFilteredDependencyOrWorkspace(
+                            dep_id,
+                            entry.pkg_id,
+                            workspace_filters,
+                            install_root_dependencies,
+                            manager,
+                            lockfile,
+                        );
+                        try filtered_dep_cache.put(lockfile.allocator, dep_id, result);
+                        break :is_filtered result;
+                    };
+                    if (is_filtered) {
                         continue;
                     }
 

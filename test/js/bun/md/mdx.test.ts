@@ -7,6 +7,10 @@ const fixtureDir = path.join(import.meta.dir, "fixtures", "mdx");
 const repoRoot = path.resolve(import.meta.dir, "../../../..");
 const repoNodeModules = path.join(repoRoot, "node_modules");
 
+function linkNodeModules(dir: string) {
+  fs.symlinkSync(repoNodeModules, path.join(dir, "node_modules"), "junction");
+}
+
 /** Matches the "url: http://..." line printed by the dev server. */
 const URL_REGEX = /url:\s*(\S+)/;
 /** The last-route marker (└──) used to wait until the full route tree is printed. */
@@ -94,6 +98,8 @@ describe("Bun.mdx.compile", () => {
       expect(expectations).toBeDefined();
       for (const substr of expectations!) expect(output).toContain(substr);
     }
+    const staleKeys = Object.keys(expectByFile).filter(k => !files.includes(k));
+    expect(staleKeys).toEqual([]);
   });
 });
 
@@ -113,7 +119,7 @@ title: Integration
 # Hello from MDX
       `,
     });
-    fs.symlinkSync(repoNodeModules, path.join(String(dir), "node_modules"), "junction");
+    linkNodeModules(String(dir));
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "entry.tsx"],
@@ -150,7 +156,7 @@ export const meta = { version: "2.0" };
       `,
       "Box.tsx": "export function Box() { return <div>Box</div>; }",
     });
-    fs.symlinkSync(repoNodeModules, path.join(String(dir), "node_modules"), "junction");
+    linkNodeModules(String(dir));
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "entry.tsx"],
@@ -215,7 +221,7 @@ async function readUntil(proc: Bun.Subprocess, predicate: (text: string) => bool
   } finally {
     reader.releaseLock();
   }
-  return output;
+  throw new Error(`readUntil: stream ended without predicate match.\nAccumulated output:\n${output}`);
 }
 
 describe("MDX direct serve mode", () => {
@@ -223,7 +229,7 @@ describe("MDX direct serve mode", () => {
     using dir = tempDir("mdx-serve", {
       "index.mdx": `# Hello`,
     });
-    fs.symlinkSync(repoNodeModules, path.join(String(dir), "node_modules"), "junction");
+    linkNodeModules(String(dir));
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "index.mdx", "--port=0"],
@@ -252,7 +258,7 @@ describe("MDX direct serve mode", () => {
       "index.mdx": `# Home`,
       "docs/index.mdx": `# Docs`,
     });
-    fs.symlinkSync(repoNodeModules, path.join(String(dir), "node_modules"), "junction");
+    linkNodeModules(String(dir));
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "./*.mdx", "./docs/*.mdx", "--port=0"],
@@ -275,7 +281,7 @@ describe("MDX direct serve mode", () => {
       "docs/index.mdx": `# Docs`,
       "docs/guides/index.mdx": `# Guides`,
     });
-    fs.symlinkSync(repoNodeModules, path.join(String(dir), "node_modules"), "junction");
+    linkNodeModules(String(dir));
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "./*.mdx", "./docs/*.mdx", "./docs/guides/*.mdx", "--port=0"],
@@ -285,7 +291,7 @@ describe("MDX direct serve mode", () => {
       stderr: "pipe",
     });
 
-    const output = await readUntil(proc, text => URL_REGEX.test(text));
+    const output = await readUntil(proc, text => URL_REGEX.test(text) && text.includes(LAST_ROUTE_ENTRY));
     const urlMatch = output.match(URL_REGEX);
     expect(urlMatch).not.toBeNull();
     const baseUrl = urlMatch![1];
@@ -315,7 +321,7 @@ describe("MDX direct serve mode", () => {
       "docs/index.mdx": `# Docs`,
       "docs/guide.mdx": `# Guide`,
     });
-    fs.symlinkSync(repoNodeModules, path.join(String(dir), "node_modules"), "junction");
+    linkNodeModules(String(dir));
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "./**/*.mdx", "./docs/*.mdx", "--port=0"],
@@ -337,7 +343,7 @@ describe("MDX direct serve mode", () => {
     using dir = tempDir("mdx-host", {
       "index.mdx": `# Hello`,
     });
-    fs.symlinkSync(repoNodeModules, path.join(String(dir), "node_modules"), "junction");
+    linkNodeModules(String(dir));
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "index.mdx", "--port=0", "--hostname=127.0.0.1"],

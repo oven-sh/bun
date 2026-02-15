@@ -99,6 +99,8 @@ const Flags = types.Flags;
 
 pub const entity = @import("./entity.zig");
 pub const helpers = @import("./helpers.zig");
+pub const jsx_renderer = @import("./jsx_renderer.zig");
+pub const mdx = @import("./mdx.zig");
 
 const parser = @import("./parser.zig");
 const std = @import("std");

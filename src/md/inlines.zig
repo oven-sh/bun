@@ -94,7 +94,7 @@ pub fn processInlineContent(self: *Parser, content: []const u8, base_off: OFF) P
                 }
             }
             if (emit_end > text_start) try self.emitText(.normal, content[text_start..emit_end]);
-            if (is_hard) try self.emitText(.br, "") else try self.emitText(.softbr, "");
+            if (is_hard or self.flags.hard_soft_breaks) try self.emitText(.br, "") else try self.emitText(.softbr, "");
             i += 1;
             text_start = i;
             continue;

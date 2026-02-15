@@ -1317,6 +1317,31 @@ declare module "bun" {
   }
 
   /**
+   * MDX related APIs.
+   */
+  namespace mdx {
+    interface Options extends markdown.Options {
+      /**
+       * Sets the `@jsxImportSource` pragma in the generated JSX.
+       * Default: `"react"`.
+       */
+      jsxImportSource?: string;
+    }
+
+    /**
+     * Compile MDX source into a JSX module source string.
+     *
+     * @param input MDX source text
+     * @param options MDX and markdown parser options
+     * @returns Generated JSX source code
+     */
+    export function compile(
+      input: string | NodeJS.TypedArray | DataView<ArrayBuffer> | ArrayBufferLike,
+      options?: Options,
+    ): string;
+  }
+
+  /**
    * JSON5 related APIs
    */
   namespace JSON5 {

@@ -100,7 +100,7 @@ pub fn transpileSourceCode(
     const disable_transpilying = comptime flags.disableTranspiling();
 
     if (comptime disable_transpilying) {
-        if (!(loader.isJavaScriptLike() or loader == .toml or loader == .yaml or loader == .json5 or loader == .text or loader == .json or loader == .jsonc)) {
+        if (!(loader.isJavaScriptLike() or loader == .toml or loader == .yaml or loader == .json5 or loader == .text or loader == .json or loader == .jsonc or loader == .mdx)) {
             // Don't print "export default <file path>"
             return ResolvedSource{
                 .allocator = null,
@@ -112,7 +112,7 @@ pub fn transpileSourceCode(
     }
 
     switch (loader) {
-        .js, .jsx, .ts, .tsx, .json, .jsonc, .toml, .yaml, .json5, .text, .md => {
+        .js, .jsx, .ts, .tsx, .json, .jsonc, .toml, .yaml, .json5, .text, .md, .mdx => {
             // Ensure that if there was an ASTMemoryAllocator in use, it's not used anymore.
             var ast_scope = js_ast.ASTMemoryAllocator.Scope{};
             ast_scope.enter();

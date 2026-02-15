@@ -28,6 +28,7 @@ pub const Terminal = @import("./api/bun/Terminal.zig");
 pub const HashObject = @import("./api/HashObject.zig");
 pub const JSONCObject = @import("./api/JSONCObject.zig");
 pub const MarkdownObject = @import("./api/MarkdownObject.zig");
+pub const MdxObject = @import("./api/MdxObject.zig");
 pub const TOMLObject = @import("./api/TOMLObject.zig");
 pub const UnsafeObject = @import("./api/UnsafeObject.zig");
 pub const JSON5Object = @import("./api/JSON5Object.zig");

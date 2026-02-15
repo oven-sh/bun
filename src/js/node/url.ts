@@ -56,6 +56,10 @@ var protocolPattern = /^([a-z0-9.+-]+:)/i,
   portPattern = /:[0-9]*$/,
   // Special case for a simple path URL
   simplePathPattern = /^(\/\/?(?!\/)[^?\s]*)(\?[^\s]*)?$/,
+  // Forbidden host code points for IPv6 hostnames from WHATWG URL spec
+  // https://url.spec.whatwg.org/#forbidden-host-code-point
+  // For IPv6, we permit '[', ']', and ':'
+  forbiddenHostCharsIpv6 = /[\0\t\n\r #%/<>?@\\^|]/,
   /*
    * RFC 2396: characters reserved for delimiting URLs.
    * We actually just auto-escape these.
@@ -343,7 +347,39 @@ Url.prototype.parse = function parse(url: string, parseQueryString?: boolean, sl
      * you call it with a domain that already is ASCII-only.
      */
     if (this.hostname) {
-      this.hostname = new URL("http://" + this.hostname).hostname;
+      if (ipv6Hostname) {
+        // For IPv6 hostnames, check for forbidden characters
+        // (null, tab, newline, CR, space, #, %, /, <, >, ?, @, \, ^, |)
+        if (forbiddenHostCharsIpv6.test(this.hostname)) {
+          const err = $ERR_INVALID_URL(url);
+          $putByIdDirect(err, "input", url);
+          throw err;
+        }
+      } else {
+        // Use domainToASCII for IDNA conversion (only for non-IPv6 hostnames)
+        // domainToASCII returns empty string for hostnames with forbidden characters
+        // or throws for invalid IDNA conversions
+        let normalized: string;
+        try {
+          normalized = domainToASCII(this.hostname);
+        } catch {
+          // If domainToASCII throws (e.g., for invalid IDNA like soft hyphen),
+          // convert to ERR_INVALID_URL to match Node.js behavior
+          const err = $ERR_INVALID_URL(url);
+          $putByIdDirect(err, "input", url);
+          throw err;
+        }
+
+        // If domainToASCII returns empty string, throw ERR_INVALID_URL
+        // This matches Node.js behavior for security (prevents hostname spoofing)
+        if (!normalized) {
+          const err = $ERR_INVALID_URL(url);
+          $putByIdDirect(err, "input", url);
+          throw err;
+        }
+
+        this.hostname = normalized;
+      }
     }
 
     var p = this.port ? ":" + this.port : "";

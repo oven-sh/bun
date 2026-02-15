@@ -3211,7 +3211,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionThreadCpuUsage, (JSC::JSGlobalObject * 
 #if OS(DARWIN)
     thread_basic_info_data_t info;
     mach_msg_type_number_t count = THREAD_BASIC_INFO_COUNT;
-    kern_return_t kr = thread_info(mach_thread_self(), THREAD_BASIC_INFO, (thread_info_t)&info, &count);
+    mach_port_t thread_port = mach_thread_self();
+    kern_return_t kr = thread_info(thread_port, THREAD_BASIC_INFO, (thread_info_t)&info, &count);
+    mach_port_deallocate(mach_task_self(), thread_port);
     if (kr != KERN_SUCCESS) {
         throwSystemError(throwScope, globalObject, "Failed to get thread CPU usage"_s, "thread_info"_s, kr);
         return {};

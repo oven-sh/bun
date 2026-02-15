@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { copyFileSync, rmSync } from "fs";
-import { homedir } from "os";
 import { bunEnv, bunExe, isMacOS, tempDir } from "harness";
+import { homedir } from "os";
 import { join } from "path";
 
 const entitlementsPlist = `<?xml version="1.0" encoding="UTF-8"?>

@@ -1231,6 +1231,18 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
         return LIBUS_SOCKET_ERROR;
     }
 
+#ifdef _WIN32
+    /* Disable WSAECONNRESET errors from ICMP "Port Unreachable" messages.
+     * Without this, sending to a closed port causes subsequent recv calls to fail,
+     * which would close the entire UDP socket. This matches Node.js/libuv behavior. */
+    {
+        BOOL bNewBehavior = FALSE;
+        DWORD dwBytesReturned = 0;
+        WSAIoctl(listenFd, SIO_UDP_CONNRESET, &bNewBehavior, sizeof(bNewBehavior),
+                 NULL, 0, &dwBytesReturned, NULL, NULL);
+    }
+#endif
+
     if (port != 0) {
         /* Should this also go for UDP? */
         int enabled = 1;

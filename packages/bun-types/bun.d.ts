@@ -2645,6 +2645,25 @@ declare module "bun" {
     features?: string[];
 
     /**
+     * List of package names whose barrel files (re-export index files) should
+     * be optimized. When a named import comes from one of these packages,
+     * only the submodules actually used are parsed — unused re-exports are
+     * skipped entirely.
+     *
+     * This is also enabled automatically for any package with
+     * `"sideEffects": false` in its `package.json`.
+     *
+     * @example
+     * ```ts
+     * await Bun.build({
+     *   entrypoints: ['./app.ts'],
+     *   optimizeImports: ['antd', '@mui/material', 'lodash-es'],
+     * });
+     * ```
+     */
+    optimizeImports?: string[];
+
+    /**
      * - When set to `true`, the returned promise rejects with an AggregateError when a build failure happens.
      * - When set to `false`, returns a {@link BuildOutput} with `{success: false}`
      *

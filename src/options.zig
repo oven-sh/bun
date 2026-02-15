@@ -510,6 +510,7 @@ pub const Target = enum {
 
         array.set(Target.node, &.{
             "node",
+            "module-sync",
         });
         array.set(Target.browser, &.{
             "browser",
@@ -518,15 +519,18 @@ pub const Target = enum {
         array.set(Target.bun, &.{
             "bun",
             "node",
+            "module-sync",
         });
         array.set(Target.bake_server_components_ssr, &.{
             "bun",
             "node",
+            "module-sync",
         });
         array.set(Target.bun_macro, &.{
             "macro",
             "bun",
             "node",
+            "module-sync",
         });
 
         break :brk array;
@@ -1148,9 +1152,10 @@ pub const ESMConditions = struct {
         var require_condition_map = ConditionsMap.init(allocator);
         var style_condition_map = ConditionsMap.init(allocator);
 
-        try default_condition_amp.ensureTotalCapacity(defaults.len + 2 + if (allow_addons) 1 else 0 + conditions.len);
-        try import_condition_map.ensureTotalCapacity(defaults.len + 2 + if (allow_addons) 1 else 0 + conditions.len);
-        try require_condition_map.ensureTotalCapacity(defaults.len + 2 + if (allow_addons) 1 else 0 + conditions.len);
+        const addon_count: usize = if (allow_addons) 1 else 0;
+        try default_condition_amp.ensureTotalCapacity(defaults.len + 2 + addon_count + conditions.len);
+        try import_condition_map.ensureTotalCapacity(defaults.len + 2 + addon_count + conditions.len);
+        try require_condition_map.ensureTotalCapacity(defaults.len + 2 + addon_count + conditions.len);
         try style_condition_map.ensureTotalCapacity(defaults.len + 2 + conditions.len);
 
         import_condition_map.putAssumeCapacity("import", {});

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, tempDir, isWindows } from "harness";
 
 // Regression test for use-after-poison in builtin OutputTask callbacks
 // inside command substitution $().
@@ -10,12 +10,20 @@ import { bunEnv, bunExe, isWindows } from "harness";
 // prematurely, calling done() and freeing the builtin while IOWriter
 // callbacks are still pending.
 //
-// Repro requires many ls tasks with errors — `ls /tmp/*` on a system
-// with many /tmp entries and some permission-denied dirs reliably
-// triggers the ASAN use-after-poison.
+// Repro requires many ls tasks with errors — listing many entries
+// alongside non-existent paths reliably triggers the ASAN
+// use-after-poison.
 
 describe.skipIf(isWindows)("builtins in command substitution with errors should not crash", () => {
-  test("ls /tmp/* in command substitution", async () => {
+  test("ls with errors in command substitution", async () => {
+    // Create a temp directory with many files to produce output,
+    // and include non-existent paths to produce errors.
+    const files: Record<string, string> = {};
+    for (let i = 0; i < 50; i++) {
+      files[`file${i}.txt`] = `content${i}`;
+    }
+    using dir = tempDir("shell-cmdsub", files);
+
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -23,11 +31,11 @@ describe.skipIf(isWindows)("builtins in command substitution with errors should 
         `
         import { $ } from "bun";
         $.throws(false);
-        await $\`echo $(ls /tmp/*)\`;
+        await $\`echo $(ls $TEST_DIR/* /nonexistent_path_1 /nonexistent_path_2)\`;
         console.log("done");
       `,
       ],
-      env: bunEnv,
+      env: { ...bunEnv, TEST_DIR: String(dir) },
       stderr: "pipe",
       stdout: "pipe",
     });

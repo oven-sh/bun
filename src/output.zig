@@ -806,6 +806,7 @@ fn ScopedLogger(comptime tagname: []const u8, comptime visibility: Visibility) t
                 return false;
             }
             pub fn log(comptime _: string, _: anytype) callconv(bun.callconv_inline) void {}
+            pub fn logWithSource(comptime _: string, _: anytype, _: std.builtin.SourceLocation) callconv(bun.callconv_inline) void {}
         };
     }
 
@@ -815,10 +816,14 @@ fn ScopedLogger(comptime tagname: []const u8, comptime visibility: Visibility) t
         var out: *std.Io.Writer = undefined;
         var out_set = false;
         var really_disable = std.atomic.Value(bool).init(visibility == .hidden);
+        var show_timestamps = std.atomic.Value(?bool).init(null);
+        var show_source_location = std.atomic.Value(?bool).init(null);
 
         var lock = bun.Mutex{};
 
         var is_visible_once = std.once(evaluateIsVisible);
+        var timestamp_config_once = std.once(evaluateTimestampConfig);
+        var source_location_config_once = std.once(evaluateSourceLocationConfig);
 
         fn evaluateIsVisible() void {
             if (bun.getenvZAnyCase("BUN_DEBUG_" ++ tagname)) |val| {
@@ -840,6 +845,69 @@ fn ScopedLogger(comptime tagname: []const u8, comptime visibility: Visibility) t
             }
         }
 
+        fn evaluateTimestampConfig() void {
+            if (bun.getenvZAnyCase("BUN_DEBUG_" ++ tagname ++ "_TIMESTAMP")) |val| {
+                show_timestamps.store(strings.eqlComptime(val, "1") or strings.eqlComptime(val, "true"), .monotonic);
+            } else if (bun.getenvZAnyCase("BUN_DEBUG_TIMESTAMP")) |val| {
+                show_timestamps.store(strings.eqlComptime(val, "1") or strings.eqlComptime(val, "true"), .monotonic);
+            } else {
+                show_timestamps.store(false, .monotonic);
+            }
+        }
+
+        fn evaluateSourceLocationConfig() void {
+            if (bun.getenvZAnyCase("BUN_DEBUG_" ++ tagname ++ "_SOURCE")) |val| {
+                show_source_location.store(strings.eqlComptime(val, "1") or strings.eqlComptime(val, "true"), .monotonic);
+            } else if (bun.getenvZAnyCase("BUN_DEBUG_SOURCE")) |val| {
+                show_source_location.store(strings.eqlComptime(val, "1") or strings.eqlComptime(val, "true"), .monotonic);
+            } else {
+                show_source_location.store(false, .monotonic);
+            }
+        }
+
+        fn shouldShowTimestamp() bool {
+            timestamp_config_once.call();
+            return show_timestamps.load(.monotonic) orelse false;
+        }
+
+        fn shouldShowSourceLocation() bool {
+            source_location_config_once.call();
+            return show_source_location.load(.monotonic) orelse false;
+        }
+
+        fn formatTimestamp(writer: *std.Io.Writer, use_ansi: bool) !void {
+            const now_ns = std.time.nanoTimestamp();
+            const seconds_total = @divTrunc(now_ns, std.time.ns_per_s);
+            const nanos = @mod(now_ns, std.time.ns_per_s);
+            const millis = @divTrunc(nanos, std.time.ns_per_ms);
+            
+            const hours = @divTrunc(seconds_total, 3600);
+            const minutes = @divTrunc(@mod(seconds_total, 3600), 60);
+            const secs = @mod(seconds_total, 60);
+
+            if (use_ansi) {
+                try writer.print(comptime prettyFmt("<d>{d:0>2}:{d:0>2}:{d:0>2}.{d:0>3}<r> ", true), .{ hours, minutes, secs, millis });
+            } else {
+                try writer.print("{d:0>2}:{d:0>2}:{d:0>2}.{d:0>3} ", .{ hours, minutes, secs, millis });
+            }
+        }
+
+        fn formatSourceLocation(writer: *std.Io.Writer, src: std.builtin.SourceLocation, use_ansi: bool) !void {
+            const file_path = src.file;
+            const file_name = if (std.mem.lastIndexOfScalar(u8, file_path, '/')) |idx|
+                file_path[idx + 1..]
+            else if (std.mem.lastIndexOfScalar(u8, file_path, '\\')) |idx|
+                file_path[idx + 1..]
+            else
+                file_path;
+
+            if (use_ansi) {
+                try writer.print(comptime prettyFmt("<d>{s}:{d}:{d}<r> ", true), .{ file_name, src.line, src.column });
+            } else {
+                try writer.print("{s}:{d}:{d} ", .{ file_name, src.line, src.column });
+            }
+        }
+
         pub fn isVisible() bool {
             is_visible_once.call();
             return !really_disable.load(.monotonic);
@@ -852,10 +920,20 @@ fn ScopedLogger(comptime tagname: []const u8, comptime visibility: Visibility) t
         ///   BUN_DEBUG_foo=1
         /// To enable all logs, set the environment variable
         ///   BUN_DEBUG_ALL=1
+        /// 
+        /// To enable timestamps, set BUN_DEBUG_TIMESTAMP=1 (or "true") or BUN_DEBUG_${TAG}_TIMESTAMP=1 (or "true").
+        /// Any other value disables timestamps.
+        /// To enable source location, set BUN_DEBUG_SOURCE=1 (or "true") or BUN_DEBUG_${TAG}_SOURCE=1 (or "true").
+        /// Any other value disables source location.
         pub fn log(comptime fmt: string, args: anytype) void {
+            logWithSource(fmt, args, @src());
+        }
+
+        /// Same as log() but allows explicit source location
+        pub fn logWithSource(comptime fmt: string, args: anytype, src: std.builtin.SourceLocation) void {
             if (!source_set) return;
             if (fmt.len == 0 or fmt[fmt.len - 1] != '\n') {
-                return log(fmt ++ "\n", args);
+                return logWithSource(fmt ++ "\n", args, src);
             }
 
             if (ScopedDebugWriter.disable_inside_log > 0) {
@@ -881,9 +959,27 @@ fn ScopedLogger(comptime tagname: []const u8, comptime visibility: Visibility) t
             lock.lock();
             defer lock.unlock();
 
-            switch (enable_ansi_colors_stdout and source_set and scopedWriter().context.handle == rawWriter().handle) {
-                inline else => |use_ansi| {
-                    out.print(comptime prettyFmt("<r><d>[" ++ tagname ++ "]<r> " ++ fmt, use_ansi), args) catch {
+            const use_ansi = enable_ansi_colors_stdout and source_set and scopedWriter().context.handle == rawWriter().handle;
+            const show_ts = shouldShowTimestamp();
+            const show_src = shouldShowSourceLocation();
+
+            switch (use_ansi) {
+                inline else => |ansi| {
+                    if (show_ts) {
+                        formatTimestamp(out, ansi) catch {
+                            really_disable.store(true, .monotonic);
+                            return;
+                        };
+                    }
+
+                    if (show_src) {
+                        formatSourceLocation(out, src, ansi) catch {
+                            really_disable.store(true, .monotonic);
+                            return;
+                        };
+                    }
+
+                    out.print(comptime prettyFmt("<r><d>[" ++ tagname ++ "]<r> " ++ fmt, ansi), args) catch {
                         really_disable.store(true, .monotonic);
                         return;
                     };

@@ -589,3 +589,189 @@ Ran 1 test across 1 file."
 `);
   expect(result.exitCode).toBe(0);
 });
+
+test("--coverage-ignore CLI option - single pattern", () => {
+  const dir = tempDirWithFiles("cov", {
+    "bunfig.toml": `
+[test]
+coverageSkipTestFiles = false
+`,
+    "include-me.ts": `
+export function includeMe() {
+  return "included";
+}
+`,
+    "ignore-me.ts": `
+export function ignoreMe() {
+  return "ignored";
+}
+`,
+    "test.test.ts": `
+import { test, expect } from "bun:test";
+import { includeMe } from "./include-me";
+import { ignoreMe } from "./ignore-me";
+
+test("should call both functions", () => {
+  expect(includeMe()).toBe("included");
+  expect(ignoreMe()).toBe("ignored");
+});
+`,
+  });
+
+  const result = Bun.spawnSync([bunExe(), "test", "--coverage", "--coverage-ignore", "ignore-me.ts"], {
+    cwd: dir,
+    env: {
+      ...bunEnv,
+    },
+    stdio: [null, null, "pipe"],
+  });
+
+  let stderr = result.stderr.toString("utf-8");
+  // Normalize output for cross-platform consistency
+  stderr = normalizeBunSnapshot(stderr, dir);
+
+  expect(stderr).toMatchInlineSnapshot(`
+"test.test.ts:
+(pass) should call both functions
+---------------|---------|---------|-------------------
+File           | % Funcs | % Lines | Uncovered Line #s
+---------------|---------|---------|-------------------
+All files      |  100.00 |  100.00 |
+ include-me.ts |  100.00 |  100.00 | 
+ test.test.ts  |  100.00 |  100.00 | 
+---------------|---------|---------|-------------------
+
+ 1 pass
+ 0 fail
+ 2 expect() calls
+Ran 1 test across 1 file."
+`);
+  expect(result.exitCode).toBe(0);
+});
+
+test("--coverage-ignore CLI option - multiple patterns", () => {
+  const dir = tempDirWithFiles("cov", {
+    "bunfig.toml": `
+[test]
+coverageSkipTestFiles = false
+`,
+    "src/main.ts": `
+export function main() {
+  return "main";
+}
+`,
+    "utils/helper.ts": `
+export function helper() {
+  return "helper";
+}
+`,
+    "build.config.ts": `
+export const config = { build: true };
+`,
+    "test.test.ts": `
+import { test, expect } from "bun:test";
+import { main } from "./src/main";
+import { helper } from "./utils/helper";
+import { config } from "./build.config";
+
+test("should call all functions", () => {
+  expect(main()).toBe("main");
+  expect(helper()).toBe("helper");
+  expect(config.build).toBe(true);
+});
+`,
+  });
+
+  const result = Bun.spawnSync(
+    [bunExe(), "test", "--coverage", "--coverage-ignore", "utils/**", "--coverage-ignore", "*.config.ts"],
+    {
+      cwd: dir,
+      env: {
+        ...bunEnv,
+      },
+      stdio: [null, null, "pipe"],
+    },
+  );
+
+  let stderr = result.stderr.toString("utf-8");
+  // Normalize output for cross-platform consistency
+  stderr = normalizeBunSnapshot(stderr, dir);
+
+  expect(stderr).toMatchInlineSnapshot(`
+"test.test.ts:
+(pass) should call all functions
+-------------|---------|---------|-------------------
+File         | % Funcs | % Lines | Uncovered Line #s
+-------------|---------|---------|-------------------
+All files    |  100.00 |  100.00 |
+ src/main.ts |  100.00 |  100.00 | 
+ test.test.ts |  100.00 |  100.00 | 
+-------------|---------|---------|-------------------
+
+ 1 pass
+ 0 fail
+ 3 expect() calls
+Ran 1 test across 1 file."
+`);
+  expect(result.exitCode).toBe(0);
+});
+
+test("--coverage-ignore CLI option - overrides bunfig.toml", () => {
+  const dir = tempDirWithFiles("cov", {
+    "bunfig.toml": `
+[test]
+coveragePathIgnorePatterns = "include-me.ts"
+coverageSkipTestFiles = false
+`,
+    "include-me.ts": `
+export function includeMe() {
+  return "included";
+}
+`,
+    "ignore-me.ts": `
+export function ignoreMe() {
+  return "ignored";
+}
+`,
+    "test.test.ts": `
+import { test, expect } from "bun:test";
+import { includeMe } from "./include-me";
+import { ignoreMe } from "./ignore-me";
+
+test("should call both functions", () => {
+  expect(includeMe()).toBe("included");
+  expect(ignoreMe()).toBe("ignored");
+});
+`,
+  });
+
+  const result = Bun.spawnSync([bunExe(), "test", "--coverage", "--coverage-ignore", "ignore-me.ts"], {
+    cwd: dir,
+    env: {
+      ...bunEnv,
+    },
+    stdio: [null, null, "pipe"],
+  });
+
+  let stderr = result.stderr.toString("utf-8");
+  // Normalize output for cross-platform consistency
+  stderr = normalizeBunSnapshot(stderr, dir);
+
+  expect(stderr).toMatchInlineSnapshot(`
+"test.test.ts:
+(pass) should call both functions
+---------------|---------|---------|-------------------
+File           | % Funcs | % Lines | Uncovered Line #s
+---------------|---------|---------|-------------------
+All files      |  100.00 |  100.00 |
+ include-me.ts |  100.00 |  100.00 | 
+ test.test.ts  |  100.00 |  100.00 | 
+---------------|---------|---------|-------------------
+
+ 1 pass
+ 0 fail
+ 2 expect() calls
+Ran 1 test across 1 file."
+`);
+  expect(result.exitCode).toBe(0);
+});

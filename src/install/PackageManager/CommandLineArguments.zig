@@ -65,6 +65,7 @@ pub const install_params: []const ParamType = &(shared_params ++ [_]ParamType{
     clap.parseParam("--filter <STR>...                 Install packages for the matching workspaces") catch unreachable,
     clap.parseParam("-a, --analyze                   Analyze & install all dependencies of files passed as arguments recursively (using Bun's bundler)") catch unreachable,
     clap.parseParam("--only-missing                  Only add dependencies to package.json if they are not already present") catch unreachable,
+    clap.parseParam("--catalog <STR>?                Use catalog for version (optionally specify catalog name)") catch unreachable,
     clap.parseParam("<POS> ...                         ") catch unreachable,
 });
 
@@ -101,6 +102,7 @@ pub const add_params: []const ParamType = &(shared_params ++ [_]ParamType{
     clap.parseParam("-E, --exact                  Add the exact version instead of the ^range") catch unreachable,
     clap.parseParam("-a, --analyze                   Recursively analyze & install dependencies of files passed as arguments (using Bun's bundler)") catch unreachable,
     clap.parseParam("--only-missing                  Only add dependencies to package.json if they are not already present") catch unreachable,
+    clap.parseParam("--catalog <STR>?                Use catalog for version (optionally specify catalog name)") catch unreachable,
     clap.parseParam("<POS> ...                         \"name\" or \"name@version\" of package(s) to install") catch unreachable,
 });
 
@@ -213,6 +215,8 @@ peer: bool = false,
 omit: ?Omit = null,
 
 exact: bool = false,
+
+catalog_name: ?string = null,
 
 concurrent_scripts: ?usize = null,
 
@@ -445,6 +449,10 @@ pub fn printHelp(subcommand: Subcommand) void {
                 \\  <b><green>bun add<r> <cyan>-d<r> <blue>typescript<r>
                 \\  <b><green>bun add<r> <cyan>--optional<r> <blue>lodash<r>
                 \\  <b><green>bun add<r> <cyan>--peer<r> <blue>esbuild<r>
+                \\
+                \\  <d>Add with catalog reference (monorepo version management)<r>
+                \\  <b><green>bun add<r> <cyan>--catalog<r> <blue>react<r>
+                \\  <b><green>bun add<r> <cyan>--catalog=dev<r> <blue>typescript<r>
                 \\
                 \\Full documentation is available at <magenta>https://bun.com/docs/cli/add<r>.
                 \\
@@ -1024,6 +1032,9 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
         cli.exact = args.flag("--exact");
         cli.analyze = args.flag("--analyze");
         cli.only_missing = args.flag("--only-missing");
+        if (comptime subcommand == .add or subcommand == .install) {
+            cli.catalog_name = args.option("--catalog");
+        }
     }
 
     if (args.option("--concurrent-scripts")) |concurrency| {

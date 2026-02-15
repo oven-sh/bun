@@ -1,3 +1,9 @@
+fn writePackageJSONToDisk(path: [:0]const u8, content: []const u8) !void {
+    const file = try bun.sys.File.openat(bun.FD.cwd(), path, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o664).unwrap();
+    defer file.close();
+    try file.writeAll(content).unwrap();
+}
+
 pub fn updatePackageJSONAndInstallWithManager(
     manager: *PackageManager,
     ctx: Command.Context,
@@ -339,6 +345,83 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
 
     try manager.installWithManager(ctx, root_package_json_path, original_cwd);
 
+    if (manager.options.catalog_name != null and (subcommand == .add or subcommand == .install)) {
+        const is_workspace = !strings.eql(manager.original_package_json_path, root_package_json_path);
+
+        if (is_workspace) {
+            const root_package_json_entry = manager.workspace_package_json_cache.getWithPath(
+                manager.allocator,
+                manager.log,
+                root_package_json_path,
+                .{},
+            ).unwrap() catch |err| {
+                Output.err(err, "failed to read/parse root package.json at '{s}'", .{root_package_json_path});
+                Global.exit(1);
+            };
+
+            try PackageJSONEditor.editCatalog(
+                manager,
+                &root_package_json_entry.root,
+                updates.*,
+                manager.options.catalog_name,
+            );
+
+            var root_buffer_writer = JSPrinter.BufferWriter.init(manager.allocator);
+            try root_buffer_writer.buffer.list.ensureTotalCapacity(manager.allocator, root_package_json_entry.source.contents.len + 256);
+            root_buffer_writer.append_newline = root_package_json_entry.source.contents.len > 0 and
+                root_package_json_entry.source.contents[root_package_json_entry.source.contents.len - 1] == '\n';
+            var root_package_json_writer = JSPrinter.BufferPrinter.init(root_buffer_writer);
+
+            _ = JSPrinter.printJSON(
+                @TypeOf(&root_package_json_writer),
+                &root_package_json_writer,
+                root_package_json_entry.root,
+                &root_package_json_entry.source,
+                .{
+                    .indent = root_package_json_entry.indentation,
+                    .mangled_props = null,
+                },
+            ) catch |err| {
+                Output.prettyErrorln("root package.json failed to write due to error {s}", .{@errorName(err)});
+                Global.crash();
+            };
+
+            if (manager.options.do.write_package_json) {
+                try writePackageJSONToDisk(root_package_json_path, root_package_json_writer.ctx.writtenWithoutTrailingZero());
+            }
+        } else {
+            try PackageJSONEditor.editCatalog(
+                manager,
+                &current_package_json.root,
+                updates.*,
+                manager.options.catalog_name,
+            );
+
+            var catalog_buffer_writer = JSPrinter.BufferWriter.init(manager.allocator);
+            try catalog_buffer_writer.buffer.list.ensureTotalCapacity(manager.allocator, current_package_json.source.contents.len + 256);
+            catalog_buffer_writer.append_newline = current_package_json.source.contents.len > 0 and
+                current_package_json.source.contents[current_package_json.source.contents.len - 1] == '\n';
+            var catalog_package_json_writer = JSPrinter.BufferPrinter.init(catalog_buffer_writer);
+
+            _ = JSPrinter.printJSON(
+                @TypeOf(&catalog_package_json_writer),
+                &catalog_package_json_writer,
+                current_package_json.root,
+                &current_package_json.source,
+                .{
+                    .indent = current_package_json.indentation,
+                    .mangled_props = null,
+                },
+            ) catch |err| {
+                Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
+                Global.crash();
+            };
+
+            new_package_json_source = try manager.allocator.dupe(u8, catalog_package_json_writer.ctx.writtenWithoutTrailingZero());
+            current_package_json.source.contents = new_package_json_source;
+        }
+    }
+
     if (subcommand == .update or subcommand == .add or subcommand == .link) {
         for (updates.*) |request| {
             if (request.failed) {
@@ -373,6 +456,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                 .{
                     .exact_versions = manager.options.enable.exact_versions,
                     .add_trusted_dependencies = manager.options.do.trust_dependencies_from_args,
+                    .catalog_name = manager.options.catalog_name,
                 },
             );
         }
@@ -416,16 +500,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
 
         // Now that we've run the install step
         // We can save our in-memory package.json to disk
-        const workspace_package_json_file = (try bun.sys.File.openat(
-            .cwd(),
-            path,
-            bun.O.RDWR,
-            0,
-        ).unwrap()).handle.stdFile();
-
-        try workspace_package_json_file.pwriteAll(source, 0);
-        std.posix.ftruncate(workspace_package_json_file.handle, source.len) catch {};
-        workspace_package_json_file.close();
+        try writePackageJSONToDisk(path, source);
 
         if (subcommand == .remove) {
             if (!any_changes) {

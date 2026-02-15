@@ -1051,7 +1051,6 @@ const Parser = struct {
 
     fn parseValue(this: *Parser, comptime is_process: bool) OOM!string {
         const start = this.pos;
-        this.skipWhitespaces();
         var end = this.pos;
         if (end >= this.src.len) return this.src[this.src.len..];
         switch (this.src[end]) {
@@ -1137,6 +1136,8 @@ const Parser = struct {
                 this.skipLine();
                 continue;
             };
+            this.skipWhitespaces();
+            const should_expand = expand and this.pos < this.src.len and this.src[this.pos] == '`';
             const value = try this.parseValue(is_process);
             const entry = try map.map.getOrPut(key);
             if (entry.found_existing) {
@@ -1150,7 +1151,7 @@ const Parser = struct {
             }
             entry.value_ptr.* = .{
                 .value = try allocator.dupe(u8, value),
-                .conditional = false,
+                .conditional = should_expand,
             };
         }
         if (comptime !is_process and expand) {
@@ -1158,12 +1159,12 @@ const Parser = struct {
             while (it.next()) |entry| {
                 if (count > 0) {
                     count -= 1;
-                } else if (try this.expandValue(map, entry.value_ptr.value)) |value| {
-                    allocator.free(entry.value_ptr.value);
-                    entry.value_ptr.* = .{
-                        .value = try allocator.dupe(u8, value),
-                        .conditional = false,
-                    };
+                } else if (entry.value_ptr.conditional) {
+                    if (try this.expandValue(map, entry.value_ptr.value)) |value| {
+                        allocator.free(entry.value_ptr.value);
+                        entry.value_ptr.value = try allocator.dupe(u8, value);
+                    }
+                    entry.value_ptr.conditional = false;
                 }
             }
         }
@@ -1394,6 +1395,170 @@ pub const Map = struct {
 };
 
 pub var instance: ?*Loader = null;
+
+test "loadFromString with template expansion" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var map = Map.init(allocator);
+    var loader = Loader.init(&map, allocator);
+
+    // First set a variable that will be used in expansion
+    try loader.map.put("VAR", "world");
+
+    // Test string with backtick expansion
+    const test_content = "KEY=`hello$VAR`\n";
+
+    // Load with expansion enabled (expand = true)
+    try loader.loadFromString(test_content, true, true);
+
+    // Verify that expansion occurred
+    const result = loader.get("KEY");
+    try std.testing.expect(result != null);
+    try std.testing.expectEqualStrings("helloworld", result.?);
+}
+
+test "loadFromString without backtick or quotes expansion" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var map = Map.init(allocator);
+    var loader = Loader.init(&map, allocator);
+
+    // First set a variable that will be used in expansion
+    try loader.map.put("VAR", "world");
+
+    // Test string with no backticks, quotes, or anything (should NOT expand)
+    const test_content = "KEY=hello$VAR\n";
+
+    // Load with expansion enabled (expand = true)
+    try loader.loadFromString(test_content, true, true);
+
+    // Verify that NO expansion occurred (no backticks = no expansion)
+    const result = loader.get("KEY");
+    try std.testing.expect(result != null);
+    try std.testing.expectEqualStrings("hello$VAR", result.?);
+}
+
+test "loadFromString with double-quoted value (no expansion without backticks)" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var map = Map.init(allocator);
+    var loader = Loader.init(&map, allocator);
+
+    // First set a variable that will be used in expansion
+    try loader.map.put("VAR", "world");
+
+    // Test string with double-quoted value (should NOT expand without backticks)
+    const test_content = "KEY=\"hello $VAR\"\n";
+
+    // Load with expansion enabled (expand = true)
+    try loader.loadFromString(test_content, true, true);
+
+    // Verify that NO expansion occurred (double quotes don't trigger expansion)
+    const result = loader.get("KEY");
+    try std.testing.expect(result != null);
+    try std.testing.expectEqualStrings("hello $VAR", result.?);
+}
+
+test "loadFromString with single quoted value" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var map = Map.init(allocator);
+    var loader = Loader.init(&map, allocator);
+
+    // First set a variable that will be used in expansion
+    try loader.map.put("VAR", "world");
+
+    // Test string with single quoted value and spaces
+    const test_content = "KEY='hello $VAR'\n";
+
+    // Load with expansion enabled (expand = true)
+    try loader.loadFromString(test_content, true, true);
+
+    // Verify that NO expansion occurred (only backticks trigger expansion)
+    const result = loader.get("KEY");
+    try std.testing.expect(result != null);
+    try std.testing.expectEqualStrings("hello $VAR", result.?);
+}
+
+test "loadFromString with random string containing a dollar sign" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var map = Map.init(allocator);
+    var loader = Loader.init(&map, allocator);
+
+    // Test string with random characters and a dollar sign
+    // that represent a typical password
+    const test_content = "RANDOM_STRING=abc$123!@#\n";
+
+    // Load with expansion enabled (expand = true)
+    try loader.loadFromString(test_content, true, true);
+
+    // Verify that the value is stored correctly without expansion
+    const result = loader.get("RANDOM_STRING");
+    try std.testing.expect(result != null);
+    try std.testing.expectEqualStrings("abc$123!@#", result.?);
+}
+
+test "loadFromString prevents expansion without backticks" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var map = Map.init(allocator);
+    var loader = Loader.init(&map, allocator);
+
+    // Set a variable that could be expanded
+    // that appears in the password
+    try loader.map.put("DZ6Pz", "EXPANDED");
+
+    // Test the PR's example: password with $ should NOT expand
+    const test_content = "DB_PASSWORD=uiA$DZ6Pz@YGBU\n";
+
+    // Load with expansion enabled but NO backticks
+    try loader.loadFromString(test_content, true, true);
+
+    // Verify that expansion did NOT occur (no backticks = no expansion)
+    const result = loader.get("DB_PASSWORD");
+    try std.testing.expect(result != null);
+    try std.testing.expectEqualStrings("uiA$DZ6Pz@YGBU", result.?);
+}
+
+test "loadFromString prevents expansion if expand is false" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var map = Map.init(allocator);
+    var loader = Loader.init(&map, allocator);
+
+    // First set a variable that will be used in expansion
+    try loader.map.put("VAR", "world");
+
+    // Test string with backtick expansion
+    const test_content = "KEY=`hello$VAR`\n";
+
+    // Load with expansion disabled (expand = false)
+    // This wont usually be done in practice, but we want to test it
+    // to ensure that the expand flag works as intended
+    try loader.loadFromString(test_content, true, false);
+
+    // Verify that expansion did NOT occur (expand = false)
+    const result = loader.get("KEY");
+    try std.testing.expect(result != null);
+
+    // The newline is trimmed, so we expect "hello$VAR" exactly
+    try std.testing.expectEqualStrings("hello$VAR", result.?);
+}
 
 const string = []const u8;
 

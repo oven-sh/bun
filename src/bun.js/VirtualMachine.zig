@@ -735,6 +735,11 @@ pub fn reload(this: *VirtualMachine, _: *HotReloader.Task) void {
         );
     }
 
+    // Close all listening sockets to avoid EADDRINUSE on hot reload
+    if (this.rare_data) |rare| {
+        rare.closeAllListenSocketsForWatchMode();
+    }
+
     if (should_clear_terminal) {
         Output.flush();
         Output.disableBuffering();
@@ -2313,14 +2318,14 @@ pub fn loadEntryPoint(this: *VirtualMachine, entry_path: string) anyerror!*JSInt
 }
 
 pub fn addListeningSocketForWatchMode(this: *VirtualMachine, socket: bun.FileDescriptor) void {
-    if (this.hot_reload != .watch) {
+    if (this.hot_reload == .none) {
         return;
     }
 
     this.rareData().addListeningSocketForWatchMode(socket);
 }
 pub fn removeListeningSocketForWatchMode(this: *VirtualMachine, socket: bun.FileDescriptor) void {
-    if (this.hot_reload != .watch) {
+    if (this.hot_reload == .none) {
         return;
     }
 

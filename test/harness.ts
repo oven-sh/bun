@@ -152,7 +152,6 @@ export async function expectMaxObjectTypeCount(
 // so that the reference-counting logic is exercised
 export function gcTick(trace = false) {
   trace && console.trace("");
-  // console.trace("hello");
   gc();
   return Bun.sleep(0);
 }

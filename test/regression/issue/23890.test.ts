@@ -56,4 +56,8 @@ describe("process.threadCpuUsage", () => {
     expect(typeof result.user).toBe("number");
     expect(typeof result.system).toBe("number");
   });
+
+  test("throws TypeError when previousValue is null", () => {
+    expect(() => process.threadCpuUsage(null as unknown as NodeJS.CpuUsage)).toThrow();
+  });
 });

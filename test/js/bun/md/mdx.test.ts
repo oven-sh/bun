@@ -186,8 +186,8 @@ export const meta = { version: "2.0" };
     });
 
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    expect(exitCode).not.toBe(0);
     expect(stderr).toMatch(/Failed to compile MDX|MDX compile error/);
+    expect(exitCode).not.toBe(0);
   });
 });
 

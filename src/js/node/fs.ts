@@ -560,6 +560,28 @@ var access = function access(path, mode, callback) {
   lstatSync = fs.lstatSync.bind(fs) as unknown as typeof import("node:fs").lstatSync,
   mkdirSync = fs.mkdirSync.bind(fs) as unknown as typeof import("node:fs").mkdirSync,
   mkdtempSync = fs.mkdtempSync.bind(fs) as unknown as typeof import("node:fs").mkdtempSync,
+  mkdtempDisposableSync = function mkdtempDisposableSync(prefix, options) {
+    const cwd = process.cwd();
+    const path = fs.mkdtempSync(prefix, options);
+    // Stash the full path in case of process.chdir()
+    const fullPath = require("node:path").resolve(cwd, path);
+
+    const remove = () => {
+      fs.rmSync(fullPath, {
+        maxRetries: 0,
+        recursive: true,
+        retryDelay: 0,
+      });
+    };
+    return {
+      __proto__: null,
+      path,
+      remove,
+      [Symbol.dispose]() {
+        remove();
+      },
+    };
+  },
   openSync = fs.openSync.bind(fs) as unknown as typeof import("node:fs").openSync,
   readSync = function readSync(fd, buffer, offsetOrOptions, length, position) {
     let offset = offsetOrOptions;
@@ -1200,6 +1222,7 @@ var exports = {
   mkdirSync,
   mkdtemp,
   mkdtempSync,
+  mkdtempDisposableSync,
   open,
   openSync,
   read,
@@ -1350,6 +1373,7 @@ setName(mkdir, "mkdir");
 setName(mkdirSync, "mkdirSync");
 setName(mkdtemp, "mkdtemp");
 setName(mkdtempSync, "mkdtempSync");
+setName(mkdtempDisposableSync, "mkdtempDisposableSync");
 setName(open, "open");
 setName(openSync, "openSync");
 setName(read, "read");

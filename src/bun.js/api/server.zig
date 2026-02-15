@@ -1935,7 +1935,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
                     switch (promise.status()) {
                         .fulfilled => {
-                            globalThis.handleRejectedPromises();
+                            globalThis.handleRejectedPromises() catch {};
                             break :brk .{ .success = {} };
                         },
                         .rejected => {
@@ -1943,7 +1943,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                             break :brk .{ .rejection = promise.result(globalThis.vm()) };
                         },
                         .pending => {
-                            globalThis.handleRejectedPromises();
+                            globalThis.handleRejectedPromises() catch {};
                             if (node_http_response) |node_response| {
                                 if (node_response.flags.request_has_completed or node_response.flags.socket_closed or node_response.flags.upgraded) {
                                     strong_promise.deinit();

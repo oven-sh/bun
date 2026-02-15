@@ -601,8 +601,13 @@ pub const JSGlobalObject = opaque {
     }
 
     extern fn JSC__JSGlobalObject__handleRejectedPromises(*JSGlobalObject) void;
-    pub fn handleRejectedPromises(this: *JSGlobalObject) void {
-        return bun.jsc.fromJSHostCallGeneric(this, @src(), JSC__JSGlobalObject__handleRejectedPromises, .{this}) catch @panic("unreachable");
+    pub fn handleRejectedPromises(this: *JSGlobalObject) bun.JSTerminated!void {
+        var scope: jsc.CatchScope = undefined;
+        scope.init(this, @src());
+        defer scope.deinit();
+
+        JSC__JSGlobalObject__handleRejectedPromises(this);
+        try scope.assertNoExceptionExceptTermination();
     }
 
     extern fn ZigGlobalObject__readableStreamToArrayBuffer(*JSGlobalObject, JSValue) JSValue;

@@ -356,6 +356,30 @@ describe("worker_threads", () => {
     expect(code).toBe(1);
   });
 
+  test("worker terminate with unhandled promise rejections", async () => {
+    // This test verifies that terminating a worker while it has unhandled promise
+    // rejections does not cause a panic in handleRejectedPromises
+    const workerCode = `
+      // Create unhandled promise rejections
+      Promise.reject(new Error("unhandled 1"));
+      Promise.reject(new Error("unhandled 2"));
+      Promise.reject(new Error("unhandled 3"));
+      setTimeout(() => Promise.reject(new Error("delayed unhandled")), 10);
+      setTimeout(() => process.exit(2), 1000000);
+    `;
+    const worker = new wt.Worker(workerCode, { eval: true });
+
+    // Ignore error events from unhandled rejections - we expect them
+    worker.on("error", () => {});
+
+    // Give the worker time to start and create unhandled rejections
+    await Bun.sleep(100);
+
+    // Terminate should not panic even with pending unhandled rejections
+    const code = await worker.terminate();
+    expect(code === 0 || code === 1).toBeTrue();
+  });
+
   test("worker without argv/execArgv", async () => {
     const worker = new wt.Worker(new URL("worker-fixture-argv.js", import.meta.url), {});
     const promise = new Promise<any>(resolve => worker.on("message", resolve));

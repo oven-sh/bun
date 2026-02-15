@@ -4,6 +4,8 @@ import fs from "node:fs";
 import path from "node:path";
 
 const fixtureDir = path.join(import.meta.dir, "fixtures", "mdx");
+const repoRoot = path.resolve(import.meta.dir, "../../../..");
+const repoNodeModules = path.join(repoRoot, "node_modules");
 
 /** Matches the "url: http://..." line printed by the dev server. */
 const URL_REGEX = /url:\s*(\S+)/;
@@ -111,6 +113,7 @@ title: Integration
 # Hello from MDX
       `,
     });
+    fs.symlinkSync(repoNodeModules, path.join(String(dir), "node_modules"), "junction");
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "entry.tsx"],
@@ -147,6 +150,7 @@ export const meta = { version: "2.0" };
       `,
       "Box.tsx": "export function Box() { return <div>Box</div>; }",
     });
+    fs.symlinkSync(repoNodeModules, path.join(String(dir), "node_modules"), "junction");
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "entry.tsx"],
@@ -219,6 +223,7 @@ describe("MDX direct serve mode", () => {
     using dir = tempDir("mdx-serve", {
       "index.mdx": `# Hello`,
     });
+    fs.symlinkSync(repoNodeModules, path.join(String(dir), "node_modules"), "junction");
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "index.mdx", "--port=0"],
@@ -247,6 +252,7 @@ describe("MDX direct serve mode", () => {
       "index.mdx": `# Home`,
       "docs/index.mdx": `# Docs`,
     });
+    fs.symlinkSync(repoNodeModules, path.join(String(dir), "node_modules"), "junction");
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "./*.mdx", "./docs/*.mdx", "--port=0"],
@@ -269,6 +275,7 @@ describe("MDX direct serve mode", () => {
       "docs/index.mdx": `# Docs`,
       "docs/guides/index.mdx": `# Guides`,
     });
+    fs.symlinkSync(repoNodeModules, path.join(String(dir), "node_modules"), "junction");
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "./*.mdx", "./docs/*.mdx", "./docs/guides/*.mdx", "--port=0"],
@@ -308,6 +315,7 @@ describe("MDX direct serve mode", () => {
       "docs/index.mdx": `# Docs`,
       "docs/guide.mdx": `# Guide`,
     });
+    fs.symlinkSync(repoNodeModules, path.join(String(dir), "node_modules"), "junction");
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "./**/*.mdx", "./docs/*.mdx", "--port=0"],
@@ -329,6 +337,7 @@ describe("MDX direct serve mode", () => {
     using dir = tempDir("mdx-host", {
       "index.mdx": `# Hello`,
     });
+    fs.symlinkSync(repoNodeModules, path.join(String(dir), "node_modules"), "junction");
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "index.mdx", "--port=0", "--hostname=127.0.0.1"],

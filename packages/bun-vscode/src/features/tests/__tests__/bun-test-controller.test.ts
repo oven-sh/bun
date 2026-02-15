@@ -573,6 +573,95 @@ describe("BunTestController - Test Discovery and Management", () => {
     });
   });
 
+  describe("matchesGlobPattern", () => {
+    test("should match default test file patterns", () => {
+      const defaultPattern = "**/*{.test.,.spec.,_test_,_spec_}{js,ts,tsx,jsx,mts,cts,cjs,mjs}";
+
+      // Should match .test. files
+      expect(internal.matchesGlobPattern("/path/to/file.test.ts", defaultPattern)).toBe(true);
+      expect(internal.matchesGlobPattern("/path/to/file.test.js", defaultPattern)).toBe(true);
+      expect(internal.matchesGlobPattern("/path/to/file.test.tsx", defaultPattern)).toBe(true);
+      expect(internal.matchesGlobPattern("/path/to/file.test.jsx", defaultPattern)).toBe(true);
+
+      // Should match .spec. files
+      expect(internal.matchesGlobPattern("/path/to/file.spec.ts", defaultPattern)).toBe(true);
+      expect(internal.matchesGlobPattern("/path/to/component.spec.js", defaultPattern)).toBe(true);
+
+      // Should match _test_ files (pattern is _test_{extension} with no dot before extension)
+      expect(internal.matchesGlobPattern("/path/to/file_test_ts", defaultPattern)).toBe(true);
+
+      // Should match _spec_ files (pattern is _spec_{extension} with no dot before extension)
+      expect(internal.matchesGlobPattern("/path/to/file_spec_js", defaultPattern)).toBe(true);
+    });
+
+    test("should not match non-test files", () => {
+      const defaultPattern = "**/*{.test.,.spec.,_test_,_spec_}{js,ts,tsx,jsx,mts,cts,cjs,mjs}";
+
+      // Regular source files should not match
+      expect(internal.matchesGlobPattern("/path/to/component.ts", defaultPattern)).toBe(false);
+      expect(internal.matchesGlobPattern("/path/to/index.js", defaultPattern)).toBe(false);
+      expect(internal.matchesGlobPattern("/path/to/utils.tsx", defaultPattern)).toBe(false);
+
+      // Files without proper extension should not match
+      expect(internal.matchesGlobPattern("/path/to/test.txt", defaultPattern)).toBe(false);
+      expect(internal.matchesGlobPattern("/path/to/test", defaultPattern)).toBe(false);
+    });
+
+    test("should match custom bun test patterns (fixes #26067)", () => {
+      // Custom pattern for Bun-specific tests to avoid conflicts with Vitest
+      const bunPattern = "**/*.bun.test.{js,ts,tsx,jsx}";
+
+      // Should match Bun-specific test files
+      expect(internal.matchesGlobPattern("/backend/user.bun.test.ts", bunPattern)).toBe(true);
+      expect(internal.matchesGlobPattern("/src/api.bun.test.js", bunPattern)).toBe(true);
+      expect(internal.matchesGlobPattern("/components/Button.bun.test.tsx", bunPattern)).toBe(true);
+
+      // Should NOT match regular test files (Vitest files)
+      expect(internal.matchesGlobPattern("/frontend/component.test.ts", bunPattern)).toBe(false);
+      expect(internal.matchesGlobPattern("/src/utils.spec.js", bunPattern)).toBe(false);
+    });
+
+    test("should handle patterns with single wildcard", () => {
+      const pattern = "*.test.ts";
+
+      expect(internal.matchesGlobPattern("file.test.ts", pattern)).toBe(true);
+      expect(internal.matchesGlobPattern("/path/to/file.test.ts", pattern)).toBe(true);
+      expect(internal.matchesGlobPattern("file.spec.ts", pattern)).toBe(false);
+    });
+
+    test("should handle patterns with double wildcard for nested paths", () => {
+      const pattern = "**/tests/**/*.test.ts";
+
+      expect(internal.matchesGlobPattern("/project/tests/unit/file.test.ts", pattern)).toBe(true);
+      expect(internal.matchesGlobPattern("/project/tests/integration/deep/file.test.ts", pattern)).toBe(true);
+      expect(internal.matchesGlobPattern("/project/src/file.test.ts", pattern)).toBe(false);
+    });
+
+    test("should handle patterns with question mark wildcard", () => {
+      const pattern = "**/*.test?.ts";
+
+      expect(internal.matchesGlobPattern("/path/file.test1.ts", pattern)).toBe(true);
+      expect(internal.matchesGlobPattern("/path/file.testA.ts", pattern)).toBe(true);
+      expect(internal.matchesGlobPattern("/path/file.test.ts", pattern)).toBe(false);
+    });
+
+    test("should handle case-insensitive matching", () => {
+      const pattern = "**/*.TEST.ts";
+
+      // Pattern matching should be case-insensitive
+      expect(internal.matchesGlobPattern("/path/file.test.ts", pattern)).toBe(true);
+      expect(internal.matchesGlobPattern("/path/file.TEST.ts", pattern)).toBe(true);
+      expect(internal.matchesGlobPattern("/path/file.Test.ts", pattern)).toBe(true);
+    });
+
+    test("should handle Windows-style paths", () => {
+      const pattern = "**/*.test.ts";
+
+      expect(internal.matchesGlobPattern("C:\\project\\src\\file.test.ts", pattern)).toBe(true);
+      expect(internal.matchesGlobPattern("C:\\Users\\dev\\tests\\unit.test.ts", pattern)).toBe(true);
+    });
+  });
+
   describe("getBunExecutionConfig", () => {
     test("should return bun execution configuration", () => {
       const config = internal.getBunExecutionConfig();
@@ -1004,6 +1093,7 @@ describe("BunTestController - Integration and Coverage", () => {
 
       expect(internal).toHaveProperty("isTestFile");
       expect(internal).toHaveProperty("customFilePattern");
+      expect(internal).toHaveProperty("matchesGlobPattern");
       expect(internal).toHaveProperty("getBunExecutionConfig");
 
       expect(internal).toHaveProperty("findTestByPath");
@@ -1026,6 +1116,7 @@ describe("BunTestController - Integration and Coverage", () => {
       expect(typeof internal.shouldUseTestNamePattern).toBe("function");
       expect(typeof internal.isTestFile).toBe("function");
       expect(typeof internal.customFilePattern).toBe("function");
+      expect(typeof internal.matchesGlobPattern).toBe("function");
       expect(typeof internal.getBunExecutionConfig).toBe("function");
       expect(typeof internal.findTestByPath).toBe("function");
       expect(typeof internal.findTestByName).toBe("function");
@@ -1039,7 +1130,7 @@ describe("BunTestController - Integration and Coverage", () => {
       const functionCount = methodNames.filter(name => typeof internal[name] === "function").length;
 
       expect(functionCount).toBe(methodNames.length);
-      expect(methodNames.length).toBeGreaterThanOrEqual(16);
+      expect(methodNames.length).toBeGreaterThanOrEqual(17);
     });
   });
 
@@ -1057,6 +1148,7 @@ describe("BunTestController - Integration and Coverage", () => {
       expect(typeof internal.shouldUseTestNamePattern).toBe("function");
       expect(typeof internal.isTestFile).toBe("function");
       expect(typeof internal.customFilePattern).toBe("function");
+      expect(typeof internal.matchesGlobPattern).toBe("function");
       expect(typeof internal.getBunExecutionConfig).toBe("function");
       expect(typeof internal.findTestByPath).toBe("function");
       expect(typeof internal.findTestByName).toBe("function");
@@ -1068,7 +1160,7 @@ describe("BunTestController - Integration and Coverage", () => {
       expect(controller._internal).toBeDefined();
 
       const internalMethods = Object.keys(internal);
-      expect(internalMethods.length).toBeGreaterThanOrEqual(16);
+      expect(internalMethods.length).toBeGreaterThanOrEqual(17);
     });
 
     test("should handle controller disposal", () => {

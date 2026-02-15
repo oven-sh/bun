@@ -337,6 +337,11 @@ pub const Command = struct {
         watch,
     };
 
+    pub const TestProject = struct {
+        include: []const []const u8, // Glob patterns to match test files
+        preload: []const []const u8, // Preload paths for this project
+    };
+
     pub const TestOptions = struct {
         default_timeout_ms: u32 = 5 * std.time.ms_per_s,
         update_snapshots: bool = false,
@@ -354,6 +359,7 @@ pub const Command = struct {
         test_filter_pattern: ?[]const u8 = null,
         test_filter_regex: ?*RegularExpression = null,
         max_concurrency: u32 = 20,
+        projects: ?[]const TestProject = null, // Per-file preload configurations
 
         reporters: struct {
             dots: bool = false,

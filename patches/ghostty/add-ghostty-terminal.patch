@@ -1,0 +1,4 @@
+--- /dev/null
++++ b/src/ghostty_terminal.zig
+@@ -0,0 +1 @@
++pub const terminal = @import("terminal/main.zig");

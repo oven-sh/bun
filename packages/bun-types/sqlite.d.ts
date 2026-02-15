@@ -563,6 +563,46 @@ declare module "bun:sqlite" {
      * @link https://www.sqlite.org/c3ref/file_control.html
      */
     fileControl(zDbName: string, op: number, arg?: ArrayBufferView | number): number;
+
+    /**
+     * Back up this database to another location.
+     *
+     * Uses the SQLite Online Backup API to safely copy this database.
+     * The backup completes synchronously before returning.
+     *
+     * @param destination File path or Database instance to back up to
+     * @returns A `DatabaseBackup` handle
+     * @throws {TypeError} If destination is not a string or Database instance
+     * @throws {Error} If the source or destination database is closed
+     *
+     * @example
+     * ```ts
+     * using backup = db.backupTo("backup.db");
+     * // backup is already complete
+     * ```
+     *
+     * @link https://www.sqlite.org/backup.html
+     */
+    backupTo(destination: string | Database): DatabaseBackup;
+  }
+
+  /**
+   * Result of a completed backup operation.
+   *
+   * Returned by {@link Database.backupTo}. The backup is already complete
+   * when this object is returned.
+   *
+   * @link https://www.sqlite.org/backup.html
+   */
+  export interface DatabaseBackup {
+    /** Always `0` for a completed one-shot backup. */
+    readonly pageCount: number;
+    /** Always `0` for a completed one-shot backup. */
+    readonly remaining: number;
+    /** Returns a JSON-friendly representation of the backup state. */
+    toJSON(): { finished: boolean; success: boolean; pageCount: number; remaining: number };
+    /** Returns a string representation of the backup state. */
+    toString(): string;
   }
 
   /**

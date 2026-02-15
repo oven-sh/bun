@@ -287,6 +287,8 @@ JSC_DECLARE_CUSTOM_GETTER(jsSqlStatementGetColumnCount);
 JSC_DECLARE_HOST_FUNCTION(jsSQLStatementSerialize);
 JSC_DECLARE_HOST_FUNCTION(jsSQLStatementDeserialize);
 
+JSC_DECLARE_HOST_FUNCTION(jsSQLStatementBackupToFunction);
+
 JSC_DECLARE_HOST_FUNCTION(jsSQLStatementSetPrototypeFunction);
 JSC_DECLARE_HOST_FUNCTION(jsSQLStatementFunctionFinalize);
 JSC_DECLARE_HOST_FUNCTION(jsSQLStatementToStringFunction);
@@ -330,6 +332,38 @@ static JSValue createSQLiteError(JSC::JSGlobalObject* globalObject, sqlite3* db)
 
     object->putDirect(vm, builtinNames.errnoPublicName(), jsNumber(code), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | 0);
     object->putDirect(vm, vm.propertyNames->byteOffset, jsNumber(byteOffset), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | 0);
+
+    return object;
+}
+
+// Overload for when the error code is known (e.g. from sqlite3_backup_step return value)
+// but NOT set on the connection — SQLite doesn't set errmsg for transient BUSY/LOCKED.
+static JSValue createSQLiteError(JSC::JSGlobalObject* globalObject, int rc)
+{
+    auto& vm = JSC::getVM(globalObject);
+    const char* msg = sqlite3_errstr(rc);
+    WTF::String str = WTF::String::fromUTF8(msg);
+    JSC::JSObject* object = JSC::createError(globalObject, str);
+    auto& builtinNames = WebCore::builtinNames(vm);
+    object->putDirect(vm, vm.propertyNames->name, jsString(vm, String("SQLiteError"_s)), JSC::PropertyAttribute::DontEnum | 0);
+
+    String codeStr;
+
+    switch (rc) {
+#define MACRO(SQLITE_DEF)          \
+    case SQLITE_DEF: {             \
+        codeStr = #SQLITE_DEF##_s; \
+        break;                     \
+    }
+        FOR_EACH_SQLITE_ERROR(MACRO)
+
+#undef MACRO
+    }
+    if (!codeStr.isEmpty())
+        object->putDirect(vm, builtinNames.codePublicName(), jsString(vm, codeStr), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | 0);
+
+    object->putDirect(vm, builtinNames.errnoPublicName(), jsNumber(rc), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | 0);
+    object->putDirect(vm, vm.propertyNames->byteOffset, jsNumber(-1), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | 0);
 
     return object;
 }
@@ -1843,6 +1877,114 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFcntlFunction, (JSC::JSGlobalObject * lex
     return JSValue::encode(jsNumber(statusCode));
 }
 
+/* ******************************************************************************** */
+// SQLite Backup API
+/* ******************************************************************************** */
+
+// backupTo(sourceDbIndex, destination)
+// One-shot backup: init + step(-1) + finish. Throws on error.
+JSC_DEFINE_HOST_FUNCTION(jsSQLStatementBackupToFunction, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (!jsDynamicCast<JSSQLStatementConstructor*>(callFrame->thisValue().getObject())) [[unlikely]] {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected SQLStatement"_s));
+        return {};
+    }
+
+#if LAZY_LOAD_SQLITE
+    if (!sqlite3_backup_init || !sqlite3_backup_step || !sqlite3_backup_finish) [[unlikely]] {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "SQLite backup API is unavailable in this build"_s));
+        return {};
+    }
+#endif
+
+    int32_t srcIndex = callFrame->argument(0).toInt32(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (srcIndex < 0 || static_cast<size_t>(srcIndex) >= databases().size()) [[unlikely]] {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Invalid source database handle"_s));
+        return {};
+    }
+
+    VersionSqlite3* sourceDb = databases()[srcIndex];
+    if (!sourceDb->db) [[unlikely]] {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Can't backup a closed database"_s));
+        return {};
+    }
+
+    // Get destination — string path opens a new connection, number reuses existing handle
+    JSValue destValue = callFrame->argument(1);
+    sqlite3* destSqlite = nullptr;
+    bool ownsDest = false;
+
+    if (destValue.isString()) {
+        WTF::String destPath = destValue.toWTFString(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        int rc = sqlite3_open_v2(destPath.utf8().data(), &destSqlite, DEFAULT_SQLITE_FLAGS, nullptr);
+        if (rc != SQLITE_OK) [[unlikely]] {
+            if (destSqlite) {
+                JSValue err = createSQLiteError(lexicalGlobalObject, destSqlite);
+                sqlite3_close_v2(destSqlite);
+                throwException(lexicalGlobalObject, scope, err);
+            } else {
+                throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Failed to open destination database"_s));
+            }
+            return {};
+        }
+        ownsDest = true;
+    } else if (destValue.isNumber()) {
+        int32_t destIndex = destValue.toInt32(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        if (destIndex < 0 || static_cast<size_t>(destIndex) >= databases().size()) [[unlikely]] {
+            throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Invalid destination database handle"_s));
+            return {};
+        }
+        VersionSqlite3* destDb = databases()[destIndex];
+        if (!destDb->db) [[unlikely]] {
+            throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Destination database is closed"_s));
+            return {};
+        }
+        if (destDb == sourceDb) [[unlikely]] {
+            throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Cannot backup a database to itself"_s));
+            return {};
+        }
+        destSqlite = destDb->db;
+    } else {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected destination to be a string path or database handle"_s));
+        return {};
+    }
+
+    sqlite3_backup* backup = sqlite3_backup_init(destSqlite, "main", sourceDb->db, "main");
+    if (!backup) [[unlikely]] {
+        JSValue err = createSQLiteError(lexicalGlobalObject, destSqlite);
+        if (ownsDest) sqlite3_close_v2(destSqlite);
+        throwException(lexicalGlobalObject, scope, err);
+        return {};
+    }
+
+    int rc = sqlite3_backup_step(backup, -1);
+    int totalPages = sqlite3_backup_pagecount(backup);
+    sqlite3_backup_finish(backup);
+
+    if (ownsDest)
+        sqlite3_close_v2(destSqlite);
+
+    if (rc != SQLITE_DONE) [[unlikely]] {
+        if (rc == SQLITE_BUSY || rc == SQLITE_LOCKED) {
+            throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, rc));
+        } else {
+            throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, destSqlite));
+        }
+        return {};
+    }
+
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsNumber(totalPages)));
+}
+
 /* Hash table for constructor */
 static const HashTableValue JSSQLStatementConstructorTableValues[] = {
     { "open"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementOpenStatementFunction, 2 } },
@@ -1855,6 +1997,7 @@ static const HashTableValue JSSQLStatementConstructorTableValues[] = {
     { "serialize"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementSerialize, 1 } },
     { "deserialize"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementDeserialize, 2 } },
     { "fcntl"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementFcntlFunction, 2 } },
+    { "backupTo"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementBackupToFunction, 2 } },
 };
 
 const ClassInfo JSSQLStatementConstructor::s_info = { "SQLStatement"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSSQLStatementConstructor) };

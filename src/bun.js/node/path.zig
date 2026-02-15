@@ -2962,3 +2962,75 @@ const typeBaseNameT = bun.meta.typeBaseNameT;
 
 const strings = bun.strings;
 const L = strings.literal;
+
+/// Find the nearest package.json file starting from a given path using the resolver cache
+/// Returns the absolute path to the package.json, or an empty string if not found
+export fn Bun__findPackageJSON(globalObject: *jsc.JSGlobalObject, input_path: *bun.String, result: *bun.String) void {
+    var slice = input_path.toUTF8(bun.default_allocator);
+    defer slice.deinit();
+
+    var current_dir = slice.slice();
+    if (current_dir.len == 0) {
+        result.* = bun.String.empty;
+        return;
+    }
+
+    // If the input is a file, start from its directory
+    // Check if it's a regular file by trying to get parent directory
+    var path_buf_z: [bun.MAX_PATH_BYTES:0]u8 = undefined;
+    if (current_dir.len >= path_buf_z.len) {
+        // Path too long to process
+        result.* = bun.String.empty;
+        return;
+    } else {
+        @memcpy(path_buf_z[0..current_dir.len], current_dir);
+        path_buf_z[current_dir.len] = 0;
+        const current_dir_z = path_buf_z[0..current_dir.len :0];
+
+        const stat_result = bun.sys.stat(current_dir_z);
+        if (stat_result == .result) {
+            const mode = stat_result.result.mode;
+            const S = bun.S;
+            // Check if it's a regular file (not a directory)
+            if ((mode & S.IFMT) == S.IFREG) {
+                current_dir = if (Environment.isWindows)
+                    dirnameWindowsT(u8, current_dir)
+                else
+                    dirnamePosixT(u8, current_dir);
+            }
+        } else {
+            // Heuristic: if path doesn't exist and doesn't end with a separator,
+            // treat it as a file path and start from its dirname.
+            if (current_dir.len > 0) {
+                const last = current_dir[current_dir.len - 1];
+                if ((Environment.isWindows and (last != CHAR_BACKWARD_SLASH and last != CHAR_FORWARD_SLASH)) or
+                    (!Environment.isWindows and last != CHAR_FORWARD_SLASH))
+                {
+                    current_dir = if (Environment.isWindows)
+                        dirnameWindowsT(u8, current_dir)
+                    else
+                        dirnamePosixT(u8, current_dir);
+                }
+            }
+        }
+    }
+
+    // Use the resolver's DirInfo cache to find package.json
+    const bun_vm = globalObject.bunVM();
+    const resolver = &bun_vm.transpiler.resolver;
+
+    // Walk up the directory tree using the resolver cache
+    // Use std.fs.path.dirname to get null once we reach the root
+    var search_dir: ?[]const u8 = current_dir;
+    while (search_dir) |dir| : (search_dir = std.fs.path.dirname(dir)) {
+        if (resolver.dirInfoCached(dir) catch null) |dir_info| {
+            if (dir_info.package_json) |pkg_json| {
+                result.* = bun.String.cloneUTF8(pkg_json.source.path.text);
+                return;
+            }
+        }
+    }
+
+    // Not found
+    result.* = bun.String.empty;
+}

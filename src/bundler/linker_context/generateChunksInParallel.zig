@@ -418,7 +418,16 @@ pub fn generateChunksInParallel(
                 false,
                 false,
             ) catch |err| bun.handleOom(err);
-            scc[ci] = code_res.buffer;
+
+            // Escape closing tags that would break inline HTML:
+            // </script → <\/script (for JS chunks)
+            // </style → <\/style (for CSS chunks)
+            const close_tag = switch (chunk_item.content) {
+                .javascript => "</script",
+                .css => "</style",
+                .html => unreachable,
+            };
+            scc[ci] = escapeClosingTags(code_res.buffer, close_tag);
         }
     }
 
@@ -751,6 +760,42 @@ pub fn generateChunksInParallel(
             }
         }
         result.items.len = write_idx;
+
+        // Write standalone HTML files to disk if outdir is specified
+        if (root_path.len > 0) {
+            var root_dir = std.fs.cwd().makeOpenPath(root_path, .{}) catch |err| {
+                try c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Failed to create output directory: {s} {f}", .{
+                    @errorName(err),
+                    bun.fmt.quote(root_path),
+                });
+                return err;
+            };
+            defer root_dir.close();
+
+            for (result.items) |*item| {
+                if (item.value == .buffer) {
+                    const dest = item.dest_path;
+                    if (std.fs.path.dirname(dest)) |dir| {
+                        root_dir.makePath(dir) catch {};
+                    }
+                    const file = root_dir.createFile(dest, .{}) catch |err| {
+                        try c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Failed to write {f}: {s}", .{
+                            bun.fmt.quote(dest),
+                            @errorName(err),
+                        });
+                        continue;
+                    };
+                    defer file.close();
+                    file.writeAll(item.value.buffer.bytes) catch |err| {
+                        try c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Failed to write {f}: {s}", .{
+                            bun.fmt.quote(dest),
+                            @errorName(err),
+                        });
+                    };
+                }
+            }
+        }
+
         return result;
     }
 
@@ -783,6 +828,54 @@ const cheapPrefixNormalizer = bun.bundle_v2.cheapPrefixNormalizer;
 const LinkerContext = bun.bundle_v2.LinkerContext;
 const CompileResult = LinkerContext.CompileResult;
 const GenerateChunkCtx = LinkerContext.GenerateChunkCtx;
+/// Escape closing HTML tags in inline content to prevent breaking the HTML structure.
+/// For JS chunks, replaces `</script` (case-insensitive) with `<\/script`.
+/// For CSS chunks, replaces `</style` (case-insensitive) with `<\/style`.
+fn escapeClosingTags(content: []const u8, close_tag: []const u8) []const u8 {
+    // Count occurrences to determine new buffer size
+    var count: usize = 0;
+    var i: usize = 0;
+    while (i + close_tag.len <= content.len) {
+        if (content[i] == '<' and i + 1 < content.len and content[i + 1] == '/') {
+            if (bun.strings.eqlCaseInsensitiveASCIIIgnoreLength(content[i .. i + close_tag.len], close_tag)) {
+                count += 1;
+                i += close_tag.len;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    if (count == 0) return content;
+
+    // Allocate new buffer with space for the extra backslash characters
+    const new_len = content.len + count; // Each replacement adds 1 byte: `</` → `<\/`
+    const result = bun.handleOom(bun.default_allocator.alloc(u8, new_len));
+    var src: usize = 0;
+    var dst: usize = 0;
+    while (src + close_tag.len <= content.len) {
+        if (content[src] == '<' and src + 1 < content.len and content[src + 1] == '/') {
+            if (bun.strings.eqlCaseInsensitiveASCIIIgnoreLength(content[src .. src + close_tag.len], close_tag)) {
+                result[dst] = '<';
+                result[dst + 1] = '\\';
+                result[dst + 2] = '/';
+                dst += 3;
+                src += 2; // Skip past `</`
+                continue;
+            }
+        }
+        result[dst] = content[src];
+        dst += 1;
+        src += 1;
+    }
+    // Copy remaining bytes
+    while (src < content.len) {
+        result[dst] = content[src];
+        dst += 1;
+        src += 1;
+    }
+    return result[0..dst];
+}
+
 const OutputFileListBuilder = bun.bundle_v2.LinkerContext.OutputFileListBuilder;
 const PendingPartRange = LinkerContext.PendingPartRange;
 const StaticRouteVisitor = bun.bundle_v2.LinkerContext.StaticRouteVisitor;

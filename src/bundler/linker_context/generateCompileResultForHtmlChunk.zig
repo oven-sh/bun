@@ -165,8 +165,8 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
                     array.appendAssumeCapacity(style_tag);
                 }
                 if (this.chunk.getJSChunkForHTML(this.chunks)) |js_chunk| {
-                    // Emit <script>UNIQUE_KEY</script> - the unique key will be replaced with actual JS content
-                    const script = bun.handleOom(std.fmt.allocPrintSentinel(allocator, "<script>{s}</script>", .{js_chunk.unique_key}, 0));
+                    // Emit <script type="module">UNIQUE_KEY</script> - the unique key will be replaced with actual JS content
+                    const script = bun.handleOom(std.fmt.allocPrintSentinel(allocator, "<script type=\"module\">{s}</script>", .{js_chunk.unique_key}, 0));
                     array.appendAssumeCapacity(script);
                 }
             } else {

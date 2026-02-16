@@ -396,7 +396,15 @@ pub fn generateChunksInParallel(
 
     // For standalone mode, resolve JS/CSS chunks first so we can inline their content into HTML
     var standalone_chunk_contents: ?[]?[]const u8 = null;
-    defer if (standalone_chunk_contents) |scc| bun.default_allocator.free(scc);
+    defer if (standalone_chunk_contents) |scc| {
+        for (scc) |maybe_buf| {
+            if (maybe_buf) |buf| {
+                if (buf.len > 0)
+                    Chunk.IntermediateOutput.allocatorForSize(buf.len).free(@constCast(buf));
+            }
+        }
+        bun.default_allocator.free(scc);
+    };
 
     if (is_standalone) {
         const scc = bun.handleOom(bun.default_allocator.alloc(?[]const u8, chunks.len));

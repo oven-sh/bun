@@ -170,7 +170,7 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
                     array.appendAssumeCapacity(script);
                 }
             } else {
-                // Put CSS before JS to reduce changes of flash of unstyled content
+                // Put CSS before JS to reduce chances of flash of unstyled content
                 if (this.chunk.getCSSChunkForHTML(this.chunks)) |css_chunk| {
                     const link_tag = bun.handleOom(std.fmt.allocPrintSentinel(allocator, "<link rel=\"stylesheet\" crossorigin href=\"{s}\">", .{css_chunk.unique_key}, 0));
                     array.appendAssumeCapacity(link_tag);

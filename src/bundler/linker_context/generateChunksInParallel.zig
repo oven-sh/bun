@@ -417,7 +417,7 @@ pub fn generateChunksInParallel(
                 &ds,
                 false,
                 false,
-            ) catch @panic("Failed to allocate memory for standalone chunk");
+            ) catch |err| bun.handleOom(err);
             scc[ci] = code_res.buffer;
         }
     }
@@ -485,7 +485,7 @@ pub fn generateChunksInParallel(
                     c.resolver.opts.compile and !chunk.flags.is_browser_chunk_from_server_build,
                     chunk.content.sourcemap(c.options.source_maps) != .none,
                 );
-            var code_result = _code_result catch @panic("Failed to allocate memory for output file");
+            var code_result = _code_result catch |err| bun.handleOom(err);
 
             var sourcemap_output_file: ?options.OutputFile = null;
             const input_path = try bun.default_allocator.dupe(

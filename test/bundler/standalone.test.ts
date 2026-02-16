@@ -177,8 +177,6 @@ describe("compile --target=browser", () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(exitCode).toBe(0);
-
     // Check only HTML file exists in output
     const glob = new Bun.Glob("**/*");
     const files = Array.from(glob.scanSync({ cwd: outdir }));
@@ -190,6 +188,10 @@ describe("compile --target=browser", () => {
     expect(html).toContain("font-weight: bold");
     expect(html).toContain("<script>");
     expect(html).toContain('console.log("cli test")');
+
+    // Assert exit code last for better error messages on failure
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
   });
 
   test("handles CSS url() references", async () => {

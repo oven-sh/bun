@@ -42,7 +42,7 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
         chunk: *Chunk,
         chunks: []Chunk,
         minify_whitespace: bool,
-        standalone: bool,
+        compile_to_standalone_html: bool,
         output: std.array_list.Managed(u8),
         end_tag_indices: struct {
             head: ?u32 = 0,
@@ -106,8 +106,8 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
                 return;
             }
 
-            if (this.standalone and import_record.source_index.isValid()) {
-                // In standalone mode, inline assets as data: URIs
+            if (this.compile_to_standalone_html and import_record.source_index.isValid()) {
+                // In standalone HTML mode, inline assets as data: URIs
                 const url_for_css = this.linker.parse_graph.ast.items(.url_for_css)[import_record.source_index.get()];
                 if (url_for_css.len > 0) {
                     element.setAttribute(url_attribute, url_for_css) catch {
@@ -157,8 +157,8 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
 
         fn getHeadTags(this: *@This(), allocator: std.mem.Allocator) bun.BoundedArray([]const u8, 2) {
             var array: bun.BoundedArray([]const u8, 2) = .{};
-            if (this.standalone) {
-                // In standalone mode, inline CSS and JS directly into the HTML
+            if (this.compile_to_standalone_html) {
+                // In standalone HTML mode, inline CSS and JS directly into the HTML
                 if (this.chunk.getCSSChunkForHTML(this.chunks)) |css_chunk| {
                     // Emit <style>UNIQUE_KEY</style> - the unique key will be replaced with actual CSS content
                     const style_tag = bun.handleOom(std.fmt.allocPrintSentinel(allocator, "<style>{s}</style>", .{css_chunk.unique_key}, 0));
@@ -226,7 +226,7 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
         .log = c.log,
         .allocator = worker.allocator,
         .minify_whitespace = c.options.minify_whitespace,
-        .standalone = c.options.standalone,
+        .compile_to_standalone_html = c.options.compile_to_standalone_html,
         .chunk = chunk,
         .chunks = chunks,
         .output = std.array_list.Managed(u8).init(output_allocator),

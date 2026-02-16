@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
-describe("standalone", () => {
+describe("compile --target=browser", () => {
   test("inlines JS and CSS into HTML", async () => {
-    using dir = tempDir("standalone-basic", {
+    using dir = tempDir("compile-browser-basic", {
       "index.html": `<!DOCTYPE html>
 <html>
 <head><link rel="stylesheet" href="./style.css"></head>
@@ -15,7 +15,8 @@ describe("standalone", () => {
 
     const result = await Bun.build({
       entrypoints: [`${dir}/index.html`],
-      standalone: true,
+      compile: true,
+      target: "browser",
     });
 
     expect(result.success).toBe(true);
@@ -43,7 +44,7 @@ describe("standalone", () => {
       "base64",
     );
 
-    using dir = tempDir("standalone-image", {
+    using dir = tempDir("compile-browser-image", {
       "index.html": `<!DOCTYPE html>
 <html><body><img src="./pixel.png"><script src="./app.js"></script></body></html>`,
       "pixel.png": pixel,
@@ -52,7 +53,8 @@ describe("standalone", () => {
 
     const result = await Bun.build({
       entrypoints: [`${dir}/index.html`],
-      standalone: true,
+      compile: true,
+      target: "browser",
     });
 
     expect(result.success).toBe(true);
@@ -65,21 +67,37 @@ describe("standalone", () => {
     expect(html).toContain('console.log("with image")');
   });
 
-  test("fails without HTML entrypoints", async () => {
-    using dir = tempDir("standalone-no-html", {
+  test("fails with non-HTML entrypoints", async () => {
+    using dir = tempDir("compile-browser-no-html", {
       "app.js": `console.log("no html");`,
     });
 
     expect(() =>
       Bun.build({
         entrypoints: [`${dir}/app.js`],
-        standalone: true,
+        compile: true,
+        target: "browser",
+      }),
+    ).toThrow();
+  });
+
+  test("fails with mixed HTML and non-HTML entrypoints", async () => {
+    using dir = tempDir("compile-browser-mixed", {
+      "index.html": `<!DOCTYPE html><html><body><script src="./app.js"></script></body></html>`,
+      "app.js": `console.log("test");`,
+    });
+
+    expect(() =>
+      Bun.build({
+        entrypoints: [`${dir}/index.html`, `${dir}/app.js`],
+        compile: true,
+        target: "browser",
       }),
     ).toThrow();
   });
 
   test("fails with splitting", async () => {
-    using dir = tempDir("standalone-splitting", {
+    using dir = tempDir("compile-browser-splitting", {
       "index.html": `<!DOCTYPE html><html><body><script src="./app.js"></script></body></html>`,
       "app.js": `console.log("test");`,
     });
@@ -87,29 +105,15 @@ describe("standalone", () => {
     expect(() =>
       Bun.build({
         entrypoints: [`${dir}/index.html`],
-        standalone: true,
+        compile: true,
+        target: "browser",
         splitting: true,
       }),
     ).toThrow();
   });
 
-  test("fails with non-browser target", async () => {
-    using dir = tempDir("standalone-target", {
-      "index.html": `<!DOCTYPE html><html><body><script src="./app.js"></script></body></html>`,
-      "app.js": `console.log("test");`,
-    });
-
-    expect(() =>
-      Bun.build({
-        entrypoints: [`${dir}/index.html`],
-        standalone: true,
-        target: "node",
-      }),
-    ).toThrow();
-  });
-
-  test("JS-only HTML standalone works", async () => {
-    using dir = tempDir("standalone-js-only", {
+  test("JS-only HTML works", async () => {
+    using dir = tempDir("compile-browser-js-only", {
       "index.html": `<!DOCTYPE html>
 <html><body><h1>Hello</h1><script src="./app.js"></script></body></html>`,
       "app.js": `document.querySelector("h1").textContent = "World";`,
@@ -117,7 +121,8 @@ describe("standalone", () => {
 
     const result = await Bun.build({
       entrypoints: [`${dir}/index.html`],
-      standalone: true,
+      compile: true,
+      target: "browser",
     });
 
     expect(result.success).toBe(true);
@@ -129,8 +134,8 @@ describe("standalone", () => {
     expect(html).not.toContain('src="');
   });
 
-  test("CSS-only HTML standalone works", async () => {
-    using dir = tempDir("standalone-css-only", {
+  test("CSS-only HTML works", async () => {
+    using dir = tempDir("compile-browser-css-only", {
       "index.html": `<!DOCTYPE html>
 <html><head><link rel="stylesheet" href="./style.css"></head><body></body></html>`,
       "style.css": `body { margin: 0; padding: 10px; }`,
@@ -138,7 +143,8 @@ describe("standalone", () => {
 
     const result = await Bun.build({
       entrypoints: [`${dir}/index.html`],
-      standalone: true,
+      compile: true,
+      target: "browser",
     });
 
     expect(result.success).toBe(true);
@@ -151,8 +157,8 @@ describe("standalone", () => {
     expect(html).not.toContain('href="');
   });
 
-  test("CLI --standalone produces single file", async () => {
-    using dir = tempDir("standalone-cli", {
+  test("CLI --compile --target=browser produces single file", async () => {
+    using dir = tempDir("compile-browser-cli", {
       "index.html": `<!DOCTYPE html>
 <html><head><link rel="stylesheet" href="./style.css"></head>
 <body><script src="./app.js"></script></body></html>`,
@@ -163,7 +169,7 @@ describe("standalone", () => {
     const outdir = `${dir}/out`;
 
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "--standalone", `${dir}/index.html`, "--outdir", outdir],
+      cmd: [bunExe(), "build", "--compile", "--target=browser", `${dir}/index.html`, "--outdir", outdir],
       env: bunEnv,
       stderr: "pipe",
       stdout: "pipe",
@@ -186,14 +192,14 @@ describe("standalone", () => {
     expect(html).toContain('console.log("cli test")');
   });
 
-  test("handles CSS url() references in standalone", async () => {
+  test("handles CSS url() references", async () => {
     // Tiny 1x1 PNG
     const pixel = Buffer.from(
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4DwAAAQEABRjYTgAAAABJRU5ErkJggg==",
       "base64",
     );
 
-    using dir = tempDir("standalone-css-url", {
+    using dir = tempDir("compile-browser-css-url", {
       "index.html": `<!DOCTYPE html>
 <html><head><link rel="stylesheet" href="./style.css"></head><body></body></html>`,
       "style.css": `body { background: url("./bg.png") no-repeat; }`,
@@ -202,7 +208,8 @@ describe("standalone", () => {
 
     const result = await Bun.build({
       entrypoints: [`${dir}/index.html`],
-      standalone: true,
+      compile: true,
+      target: "browser",
     });
 
     expect(result.success).toBe(true);
@@ -213,8 +220,8 @@ describe("standalone", () => {
     expect(html).toContain("<style>");
   });
 
-  test("minification works with standalone", async () => {
-    using dir = tempDir("standalone-minify", {
+  test("minification works", async () => {
+    using dir = tempDir("compile-browser-minify", {
       "index.html": `<!DOCTYPE html>
 <html><head><link rel="stylesheet" href="./style.css"></head>
 <body><script src="./app.js"></script></body></html>`,
@@ -228,7 +235,8 @@ console.log(message);`,
 
     const result = await Bun.build({
       entrypoints: [`${dir}/index.html`],
-      standalone: true,
+      compile: true,
+      target: "browser",
       minify: true,
     });
 

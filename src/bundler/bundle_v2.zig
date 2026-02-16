@@ -965,7 +965,7 @@ pub const BundleV2 = struct {
         this.linker.options.banner = transpiler.options.banner;
         this.linker.options.footer = transpiler.options.footer;
         this.linker.options.css_chunking = transpiler.options.css_chunking;
-        this.linker.options.standalone = transpiler.options.standalone;
+        this.linker.options.compile_to_standalone_html = transpiler.options.compile_to_standalone_html;
         this.linker.options.source_maps = transpiler.options.source_map;
         this.linker.options.tree_shaking = transpiler.options.tree_shaking;
         this.linker.options.public_path = transpiler.options.public_path;
@@ -1993,7 +1993,12 @@ pub const BundleV2 = struct {
             transpiler.options.emit_dce_annotations = config.emit_dce_annotations orelse !config.minify.whitespace;
             transpiler.options.ignore_dce_annotations = config.ignore_dce_annotations;
             transpiler.options.css_chunking = config.css_chunking;
-            transpiler.options.standalone = config.standalone;
+            transpiler.options.compile_to_standalone_html = config.compile != null and config.target == .browser;
+            // When compiling to standalone HTML, don't use the bun executable compile path
+            if (transpiler.options.compile_to_standalone_html) {
+                transpiler.options.compile = false;
+                config.compile = null;
+            }
             transpiler.options.banner = config.banner.slice();
             transpiler.options.footer = config.footer.slice();
             transpiler.options.react_fast_refresh = config.react_fast_refresh;

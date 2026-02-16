@@ -2610,22 +2610,6 @@ declare module "bun" {
     bytecode?: boolean;
 
     /**
-     * Produce self-contained HTML files with all scripts, styles, and assets
-     * inlined. All `<script>` tags become inline `<script>` with bundled code,
-     * all `<link rel="stylesheet">` tags become inline `<style>` tags, and all
-     * asset references become `data:` URIs.
-     *
-     * Requires HTML entrypoints and `target: "browser"` (the default).
-     * Cannot be used with `splitting` or `compile`.
-     *
-     * Useful for distributing `.html` files that work via `file://` URLs
-     * without needing a web server or worrying about CORS.
-     *
-     * @default false
-     */
-    standalone?: boolean;
-
-    /**
      * Add a banner to the bundled code such as "use client";
      */
     banner?: string;
@@ -2797,10 +2781,16 @@ declare module "bun" {
     outdir?: string;
 
     /**
-     * Create a standalone executable
+     * Create a standalone executable or self-contained HTML.
      *
      * When `true`, creates an executable for the current platform.
      * When a target string, creates an executable for that platform.
+     *
+     * When used with `target: "browser"`, produces self-contained HTML files
+     * with all scripts, styles, and assets inlined. All `<script>` tags become
+     * inline `<script>` with bundled code, all `<link rel="stylesheet">` tags
+     * become inline `<style>` tags, and all asset references become `data:` URIs.
+     * All entrypoints must be HTML files. Cannot be used with `splitting`.
      *
      * @example
      * ```ts
@@ -2818,6 +2808,13 @@ declare module "bun" {
      *   entrypoints: ['./app.js'],
      *   compile: 'linux-x64',
      *   outfile: './my-app'
+     * });
+     *
+     * // Produce self-contained HTML
+     * await Bun.build({
+     *   entrypoints: ['./index.html'],
+     *   target: 'browser',
+     *   compile: true,
      * });
      * ```
      */

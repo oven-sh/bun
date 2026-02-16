@@ -382,7 +382,7 @@ pub fn generateChunksInParallel(
     var output_files = try OutputFileListBuilder.init(bun.default_allocator, c, chunks, c.parse_graph.additional_output_files.items.len);
 
     const root_path = c.resolver.opts.output_dir;
-    const is_standalone = c.options.standalone;
+    const is_standalone = c.options.compile_to_standalone_html;
     const more_than_one_output = !is_standalone and (c.parse_graph.additional_output_files.items.len > 0 or c.options.generate_bytecode_cache or (has_css_chunk and has_js_chunk) or (has_html_chunk and (has_js_chunk or has_css_chunk)));
 
     if (!c.resolver.opts.compile and more_than_one_output and !c.resolver.opts.supports_multiple_outputs) {

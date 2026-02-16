@@ -5,7 +5,12 @@ pub const BuildCommand = struct {
         var log = ctx.log;
         if (ctx.bundler_options.compile or ctx.bundler_options.bytecode) {
             // set this early so that externals are set up correctly and define is right
-            ctx.args.target = .bun;
+            // When --compile --target=browser is used, keep browser target for standalone HTML
+            if (ctx.args.target != null and ctx.args.target.? == .browser) {
+                // Keep browser target
+            } else {
+                ctx.args.target = .bun;
+            }
         }
 
         if (ctx.bundler_options.bake) {
@@ -85,7 +90,6 @@ pub const BuildCommand = struct {
         this_transpiler.options.bundler_feature_flags = Runtime.Features.initBundlerFeatureFlags(allocator, ctx.args.feature_flags);
 
         this_transpiler.options.css_chunking = ctx.bundler_options.css_chunking;
-        this_transpiler.options.standalone = ctx.bundler_options.standalone;
         this_transpiler.options.metafile = ctx.bundler_options.metafile.len > 0 or ctx.bundler_options.metafile_md.len > 0;
 
         this_transpiler.options.output_dir = ctx.bundler_options.outdir;
@@ -98,96 +102,75 @@ pub const BuildCommand = struct {
         this_transpiler.options.bytecode = ctx.bundler_options.bytecode;
         var was_renamed_from_index = false;
 
-        if (ctx.bundler_options.standalone) {
-            if (ctx.bundler_options.compile) {
-                Output.prettyErrorln("<r><red>error<r><d>:<r> cannot use --standalone with --compile", .{});
-                Global.exit(1);
-                return;
-            }
-
-            if (ctx.bundler_options.code_splitting) {
-                Output.prettyErrorln("<r><red>error<r><d>:<r> cannot use --standalone with --splitting", .{});
-                Global.exit(1);
-                return;
-            }
-
-            if (ctx.args.target) |target| {
-                if (target != .browser) {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> --standalone requires --target browser", .{});
-                    Global.exit(1);
-                    return;
-                }
-            }
-
-            // Verify at least one HTML entrypoint
-            var has_html_entry = false;
-            for (this_transpiler.options.entry_points) |entry_point| {
-                if (strings.hasSuffixComptime(entry_point, ".html")) {
-                    has_html_entry = true;
-                    break;
-                }
-            }
-            if (!has_html_entry) {
-                Output.prettyErrorln("<r><red>error<r><d>:<r> --standalone requires at least one HTML entrypoint", .{});
-                Global.exit(1);
-                return;
-            }
-
-            if (ctx.bundler_options.transform_only) {
-                Output.prettyErrorln("<r><red>error<r><d>:<r> --standalone does not support --no-bundle", .{});
-                Global.exit(1);
-                return;
-            }
-
-            // Standalone needs an outdir or outfile, similar to --compile
-            if (ctx.bundler_options.outdir.len == 0 and outfile.len == 0) {
-                // Default outfile from entry point name
-                outfile = std.fs.path.basename(this_transpiler.options.entry_points[0]);
-            }
-
-            // Standalone always outputs to a file, supports multiple outputs (one per HTML entry)
-            this_transpiler.options.supports_multiple_outputs = ctx.bundler_options.outdir.len > 0;
-        }
-
         if (ctx.bundler_options.compile) {
-            if (ctx.bundler_options.outdir.len > 0) {
-                Output.prettyErrorln("<r><red>error<r><d>:<r> cannot use --compile with --outdir", .{});
-                Global.exit(1);
-                return;
-            }
-
-            const base_public_path = bun.StandaloneModuleGraph.targetBasePublicPath(compile_target.os, "root/");
-
-            this_transpiler.options.public_path = base_public_path;
-
-            if (outfile.len == 0) {
-                outfile = std.fs.path.basename(this_transpiler.options.entry_points[0]);
-                const ext = std.fs.path.extension(outfile);
-                if (ext.len > 0) {
-                    outfile = outfile[0 .. outfile.len - ext.len];
-                }
-
-                if (strings.eqlComptime(outfile, "index")) {
-                    outfile = std.fs.path.basename(std.fs.path.dirname(this_transpiler.options.entry_points[0]) orelse "index");
-                    was_renamed_from_index = !strings.eqlComptime(outfile, "index");
-                }
-
-                if (strings.eqlComptime(outfile, "bun")) {
-                    outfile = std.fs.path.basename(std.fs.path.dirname(this_transpiler.options.entry_points[0]) orelse "bun");
-                }
-            }
-
-            // If argv[0] is "bun" or "bunx", we don't check if the binary is standalone
-            if (strings.eqlComptime(outfile, "bun") or strings.eqlComptime(outfile, "bunx")) {
-                Output.prettyErrorln("<r><red>error<r><d>:<r> cannot use --compile with an output file named 'bun' because bun won't realize it's a standalone executable. Please choose a different name for --outfile", .{});
-                Global.exit(1);
-                return;
-            }
-
             if (ctx.bundler_options.transform_only) {
                 Output.prettyErrorln("<r><red>error<r><d>:<r> --compile does not support --no-bundle", .{});
                 Global.exit(1);
                 return;
+            }
+
+            if (ctx.args.target != null and ctx.args.target.? == .browser) {
+                // --compile --target=browser: produce self-contained HTML with all assets inlined
+                if (ctx.bundler_options.code_splitting) {
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> cannot use --compile --target browser with --splitting", .{});
+                    Global.exit(1);
+                    return;
+                }
+
+                // All entrypoints must be HTML files
+                for (this_transpiler.options.entry_points) |entry_point| {
+                    if (!strings.hasSuffixComptime(entry_point, ".html")) {
+                        Output.prettyErrorln("<r><red>error<r><d>:<r> --compile --target browser requires all entrypoints to be HTML files, but got: {s}", .{entry_point});
+                        Global.exit(1);
+                        return;
+                    }
+                }
+
+                this_transpiler.options.compile_to_standalone_html = true;
+                // This is not a bun executable compile - clear compile flags
+                this_transpiler.options.compile = false;
+                ctx.bundler_options.compile = false;
+
+                if (ctx.bundler_options.outdir.len == 0 and outfile.len == 0) {
+                    outfile = std.fs.path.basename(this_transpiler.options.entry_points[0]);
+                }
+
+                this_transpiler.options.supports_multiple_outputs = ctx.bundler_options.outdir.len > 0;
+            } else {
+                // Standard --compile: produce standalone bun executable
+                if (ctx.bundler_options.outdir.len > 0) {
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> cannot use --compile with --outdir", .{});
+                    Global.exit(1);
+                    return;
+                }
+
+                const base_public_path = bun.StandaloneModuleGraph.targetBasePublicPath(compile_target.os, "root/");
+
+                this_transpiler.options.public_path = base_public_path;
+
+                if (outfile.len == 0) {
+                    outfile = std.fs.path.basename(this_transpiler.options.entry_points[0]);
+                    const ext = std.fs.path.extension(outfile);
+                    if (ext.len > 0) {
+                        outfile = outfile[0 .. outfile.len - ext.len];
+                    }
+
+                    if (strings.eqlComptime(outfile, "index")) {
+                        outfile = std.fs.path.basename(std.fs.path.dirname(this_transpiler.options.entry_points[0]) orelse "index");
+                        was_renamed_from_index = !strings.eqlComptime(outfile, "index");
+                    }
+
+                    if (strings.eqlComptime(outfile, "bun")) {
+                        outfile = std.fs.path.basename(std.fs.path.dirname(this_transpiler.options.entry_points[0]) orelse "bun");
+                    }
+                }
+
+                // If argv[0] is "bun" or "bunx", we don't check if the binary is standalone
+                if (strings.eqlComptime(outfile, "bun") or strings.eqlComptime(outfile, "bunx")) {
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> cannot use --compile with an output file named 'bun' because bun won't realize it's a standalone executable. Please choose a different name for --outfile", .{});
+                    Global.exit(1);
+                    return;
+                }
             }
         }
 

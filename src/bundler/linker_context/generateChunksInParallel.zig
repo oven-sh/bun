@@ -396,20 +396,30 @@ pub fn generateChunksInParallel(
 
     // For standalone mode, resolve JS/CSS chunks first so we can inline their content into HTML
     var standalone_chunk_contents: ?[]?[]const u8 = null;
+    // Track which buffers were escaped (allocated with bun.default_allocator)
+    // vs original code buffers (allocated with allocatorForSize).
+    var standalone_chunk_escaped: ?[]bool = null;
     defer if (standalone_chunk_contents) |scc| {
-        for (scc) |maybe_buf| {
+        const escaped = standalone_chunk_escaped.?;
+        for (scc, 0..) |maybe_buf, i| {
             if (maybe_buf) |buf| {
-                if (buf.len > 0)
-                    Chunk.IntermediateOutput.allocatorForSize(buf.len).free(@constCast(buf));
+                if (buf.len > 0) {
+                    const alloc = if (escaped[i]) bun.default_allocator else Chunk.IntermediateOutput.allocatorForSize(buf.len);
+                    alloc.free(@constCast(buf));
+                }
             }
         }
         bun.default_allocator.free(scc);
+        bun.default_allocator.free(escaped);
     };
 
     if (is_standalone) {
         const scc = bun.handleOom(bun.default_allocator.alloc(?[]const u8, chunks.len));
         @memset(scc, null);
         standalone_chunk_contents = scc;
+        const escaped = bun.handleOom(bun.default_allocator.alloc(bool, chunks.len));
+        @memset(escaped, false);
+        standalone_chunk_escaped = escaped;
 
         // First pass: resolve JS and CSS chunks
         for (chunks, 0..) |*chunk_item, ci| {
@@ -435,7 +445,13 @@ pub fn generateChunksInParallel(
                 .css => "</style",
                 .html => unreachable,
             };
-            scc[ci] = escapeClosingTags(code_res.buffer, close_tag);
+            const escaped_buf = escapeClosingTags(code_res.buffer, close_tag);
+            if (escaped_buf.ptr != code_res.buffer.ptr) {
+                // escapeClosingTags allocated a new buffer; free the original
+                Chunk.IntermediateOutput.allocatorForSize(code_res.buffer.len).free(@constCast(code_res.buffer));
+                escaped[ci] = true;
+            }
+            scc[ci] = escaped_buf;
         }
     }
 

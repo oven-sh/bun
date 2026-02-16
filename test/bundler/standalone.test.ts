@@ -430,6 +430,33 @@ body { color: blue; }`,
     expect(exitCode).toBe(0);
   });
 
+  test("malformed HTML without closing tags still inlines JS and CSS", async () => {
+    // This tests the cold fallback path when no </head>, </body>, or </html> tags exist.
+    // The document is just a fragment - the loader must still inject both CSS and JS.
+    using dir = tempDir("compile-browser-malformed", {
+      "index.html": `<div id="app"></div><link rel="stylesheet" href="./style.css"><script src="./app.js"></script>`,
+      "style.css": `#app { color: green; }`,
+      "app.js": `console.log("malformed html");`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/index.html`],
+      compile: true,
+      target: "browser",
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.outputs.length).toBe(1);
+
+    const html = await result.outputs[0].text();
+    // CSS should be inlined
+    expect(html).toContain("<style>");
+    expect(html).toContain("color: green");
+    // JS should also be inlined (this was the bug - JS was dropped in fallback path)
+    expect(html).toContain('<script type="module">');
+    expect(html).toContain('console.log("malformed html")');
+  });
+
   test("minification works", async () => {
     using dir = tempDir("compile-browser-minify", {
       "index.html": `<!DOCTYPE html>

@@ -282,14 +282,27 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
             break :brk html;
         break :brk @intCast(html_loader.output.items.len); // inject at end of file.
     } else brk: {
-        if (!html_loader.added_head_tags) {
+        if (!html_loader.added_head_tags or !html_loader.added_body_script) {
             @branchHint(.cold); // this is if the document is missing all head, body, and html elements.
             var html_appender = std.heap.stackFallback(256, bun.default_allocator);
             const allocator = html_appender.get();
-            const slices = html_loader.getHeadTags(allocator);
-            for (slices.slice()) |slice| {
-                bun.handleOom(html_loader.output.appendSlice(slice));
-                allocator.free(slice);
+            if (!html_loader.added_head_tags) {
+                const slices = html_loader.getHeadTags(allocator);
+                for (slices.slice()) |slice| {
+                    bun.handleOom(html_loader.output.appendSlice(slice));
+                    allocator.free(slice);
+                }
+                html_loader.added_head_tags = true;
+            }
+            if (!html_loader.added_body_script) {
+                if (html_loader.compile_to_standalone_html) {
+                    if (html_loader.chunk.getJSChunkForHTML(html_loader.chunks)) |js_chunk| {
+                        const script = bun.handleOom(std.fmt.allocPrintSentinel(allocator, "<script type=\"module\">{s}</script>", .{js_chunk.unique_key}, 0));
+                        defer allocator.free(script);
+                        bun.handleOom(html_loader.output.appendSlice(script));
+                    }
+                }
+                html_loader.added_body_script = true;
             }
         }
         break :brk if (Environment.isDebug) undefined else 0; // value is ignored. fail loud if hit in debug

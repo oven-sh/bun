@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { copyFileSync, rmSync } from "fs";
+import { copyFileSync } from "fs";
 import { bunEnv, bunExe, isMacOS, tempDir } from "harness";
-import { homedir } from "os";
 import { join } from "path";
 
+// Match Bun's own entitlements from entitlements.plist, plus app-sandbox.
 const entitlementsPlist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -16,7 +16,11 @@ const entitlementsPlist = `<?xml version="1.0" encoding="UTF-8"?>
 	<true/>
 	<key>com.apple.security.cs.disable-executable-page-protection</key>
 	<true/>
+	<key>com.apple.security.cs.allow-dyld-environment-variables</key>
+	<true/>
 	<key>com.apple.security.cs.disable-library-validation</key>
+	<true/>
+	<key>com.apple.security.network.client</key>
 	<true/>
 </dict>
 </plist>`;
@@ -48,7 +52,7 @@ function makeInfoPlist(bundleId: string) {
 </plist>`;
 }
 
-async function createSandboxedApp(prefix: string, bundleId: string) {
+function createSandboxedApp(prefix: string, bundleId: string) {
   const dir = tempDir(prefix, {
     "entitlements.plist": entitlementsPlist,
     "bun_sandboxed.app": {
@@ -65,63 +69,54 @@ async function createSandboxedApp(prefix: string, bundleId: string) {
 
   copyFileSync(bunExe(), bunPath);
 
-  await using codesign = Bun.spawn({
+  const codesignResult = Bun.spawnSync({
     cmd: ["/usr/bin/codesign", "--entitlements", entitlementsPath, "--force", "-s", "-", appBundlePath],
     env: bunEnv,
-    stdout: "pipe",
     stderr: "inherit",
   });
-  expect(await codesign.exited).toBe(0);
+  expect(codesignResult.exitCode).toBe(0);
 
-  return { dir, bunPath, bundleId, containerPath: join(homedir(), "Library", "Containers", bundleId) };
+  return { dir, bunPath, bundleId };
 }
 
 // Modeled after Node.js's test/parallel/test-macos-app-sandbox.js
 describe.skipIf(!isMacOS)("macOS App Sandbox", () => {
-  test.concurrent("bun can execute JavaScript inside the app sandbox", async () => {
-    const { dir, bunPath, containerPath } = await createSandboxedApp("macos-sandbox-test", "dev.bun.test.sandbox_exec");
+  test("bun can execute JavaScript inside the app sandbox", async () => {
+    const { dir, bunPath } = createSandboxedApp("macos-sandbox-test", "dev.bun.test.sandbox_exec");
     using _dir = dir;
 
-    try {
-      await using proc = Bun.spawn({
-        cmd: [bunPath, "-e", "console.log('hello sandbox')"],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "inherit",
-      });
+    await using proc = Bun.spawn({
+      cmd: [bunPath, "-e", "console.log('hello sandbox')"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
 
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
-      expect(stdout.trim()).toBe("hello sandbox");
-      expect(exitCode).toBe(0);
-    } finally {
-      rmSync(containerPath, { recursive: true, force: true });
-    }
+    expect(stdout.trim()).toBe("hello sandbox");
+    expect(exitCode).toBe(0);
   });
 
-  test.concurrent("sandboxed bun runs inside the sandbox container", async () => {
-    const { dir, bunPath, bundleId, containerPath } = await createSandboxedApp(
+  test("sandboxed bun runs inside the sandbox container", async () => {
+    const { dir, bunPath, bundleId } = createSandboxedApp(
       "macos-sandbox-test-container",
       "dev.bun.test.sandbox_container",
     );
     using _dir = dir;
 
-    try {
-      // When running inside a macOS App Sandbox, os.homedir() should return
-      // the sandbox container path, not the real home directory.
-      await using proc = Bun.spawn({
-        cmd: [bunPath, "-e", "console.log(require('os').homedir())"],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "inherit",
-      });
+    // When running inside a macOS App Sandbox, os.homedir() should return
+    // the sandbox container path, not the real home directory.
+    await using proc = Bun.spawn({
+      cmd: [bunPath, "-e", "console.log(require('os').homedir())"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
 
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
-      expect(stdout.trim()).toContain(`Library/Containers/${bundleId}`);
-      expect(exitCode).toBe(0);
-    } finally {
-      rmSync(containerPath, { recursive: true, force: true });
-    }
+    expect(stdout.trim()).toContain(`Library/Containers/${bundleId}`);
+    expect(exitCode).toBe(0);
   });
 });

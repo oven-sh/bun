@@ -457,10 +457,9 @@ pub const Flags = packed struct(u16) {
     reject_unauthorized: bool = true,
     is_preconnect_only: bool = false,
     is_streaming_request_body: bool = false,
-    is_streaming_request_body_with_content_length: bool = false,
     defer_fail_until_connecting_is_complete: bool = false,
     upgrade_state: HTTPUpgradeState = .none,
-    _padding: u2 = 0,
+    _padding: u3 = 0,
 };
 
 // TODO: reduce the size of this struct
@@ -616,9 +615,6 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
     var add_transfer_encoding = true;
     var original_content_length: ?string = null;
 
-    // Reset on each request (buildRequest is also called on redirects).
-    this.flags.is_streaming_request_body_with_content_length = false;
-
     for (header_names, 0..) |head, i| {
         const name = this.headerStr(head);
         // Hash it as lowercase
@@ -733,7 +729,6 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
                         .value = content_length,
                     };
                     header_count += 1;
-                    this.flags.is_streaming_request_body_with_content_length = true;
                 }
                 // If !add_transfer_encoding, the user explicitly set Transfer-Encoding,
                 // which was already added to request_headers_buf. We respect that and

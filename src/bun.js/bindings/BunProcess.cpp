@@ -3215,7 +3215,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionThreadCpuUsage, (JSC::JSGlobalObject * 
     kern_return_t kr = thread_info(thread_port, THREAD_BASIC_INFO, (thread_info_t)&info, &count);
     mach_port_deallocate(mach_task_self(), thread_port);
     if (kr != KERN_SUCCESS) {
-        throwSystemError(throwScope, globalObject, "Failed to get thread CPU usage"_s, "thread_info"_s, kr);
+        // mach_error_string returns a string like "(os/kern) invalid argument"
+        auto message = makeString("Failed to get thread CPU usage: "_s, String::fromLatin1(mach_error_string(kr)));
+        throwScope.throwException(globalObject, createError(globalObject, message));
         return {};
     }
     user = std::chrono::microseconds::period::den * info.user_time.seconds + info.user_time.microseconds;
@@ -3238,7 +3240,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionThreadCpuUsage, (JSC::JSGlobalObject * 
     user = std::chrono::microseconds::period::den * rusage.ru_utime.tv_sec + rusage.ru_utime.tv_usec;
     system = std::chrono::microseconds::period::den * rusage.ru_stime.tv_sec + rusage.ru_stime.tv_usec;
 #else
-    return Bun::ERR::INVALID_ARG_VALUE_RangeError(throwScope, globalObject, "threadCpuUsage"_s, jsUndefined(), "is not supported on this platform"_s);
+    return Bun::ERR::METHOD_NOT_IMPLEMENTED(throwScope, globalObject, "process.threadCpuUsage"_s);
 #endif
 
     auto* process = getProcessObject(globalObject, callFrame->thisValue());

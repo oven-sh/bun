@@ -88,6 +88,12 @@ declare global {
       _exiting: boolean;
       noDeprecation?: boolean | undefined;
 
+      /**
+       * Returns the CPU usage for the current thread.
+       * @param prevValue A previous result from threadCpuUsage() to calculate a diff
+       */
+      threadCpuUsage(prevValue?: NodeJS.CpuUsage): NodeJS.CpuUsage;
+
       binding(m: "constants"): {
         os: typeof import("node:os").constants;
         fs: typeof import("node:fs").constants;

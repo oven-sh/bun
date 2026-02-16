@@ -396,30 +396,20 @@ pub fn generateChunksInParallel(
 
     // For standalone mode, resolve JS/CSS chunks first so we can inline their content into HTML
     var standalone_chunk_contents: ?[]?[]const u8 = null;
-    // Track which buffers were escaped (allocated with bun.default_allocator)
-    // vs original code buffers (allocated with allocatorForSize).
-    var standalone_chunk_escaped: ?[]bool = null;
     defer if (standalone_chunk_contents) |scc| {
-        const escaped = standalone_chunk_escaped.?;
-        for (scc, 0..) |maybe_buf, i| {
+        for (scc) |maybe_buf| {
             if (maybe_buf) |buf| {
-                if (buf.len > 0) {
-                    const alloc = if (escaped[i]) bun.default_allocator else Chunk.IntermediateOutput.allocatorForSize(buf.len);
-                    alloc.free(@constCast(buf));
-                }
+                if (buf.len > 0)
+                    Chunk.IntermediateOutput.allocatorForSize(buf.len).free(@constCast(buf));
             }
         }
         bun.default_allocator.free(scc);
-        bun.default_allocator.free(escaped);
     };
 
     if (is_standalone) {
         const scc = bun.handleOom(bun.default_allocator.alloc(?[]const u8, chunks.len));
         @memset(scc, null);
         standalone_chunk_contents = scc;
-        const escaped = bun.handleOom(bun.default_allocator.alloc(bool, chunks.len));
-        @memset(escaped, false);
-        standalone_chunk_escaped = escaped;
 
         // First pass: resolve JS and CSS chunks
         for (chunks, 0..) |*chunk_item, ci| {
@@ -440,18 +430,12 @@ pub fn generateChunksInParallel(
             // Escape closing tags that would break inline HTML:
             // </script → <\/script (for JS chunks)
             // </style → <\/style (for CSS chunks)
-            const close_tag = switch (chunk_item.content) {
+            const close_tag: []const u8 = switch (chunk_item.content) {
                 .javascript => "</script",
                 .css => "</style",
                 .html => unreachable,
             };
-            const escaped_buf = escapeClosingTags(code_res.buffer, close_tag);
-            if (escaped_buf.ptr != code_res.buffer.ptr) {
-                // escapeClosingTags allocated a new buffer; free the original
-                Chunk.IntermediateOutput.allocatorForSize(code_res.buffer.len).free(@constCast(code_res.buffer));
-                escaped[ci] = true;
-            }
-            scc[ci] = escaped_buf;
+            scc[ci] = escapeClosingTags(code_res.buffer, close_tag);
         }
     }
 
@@ -831,48 +815,55 @@ const debugPartRanges = Output.scoped(.PartRanges, .hidden);
 /// Escape closing HTML tags in inline content to prevent breaking the HTML structure.
 /// For JS chunks, replaces `</script` (case-insensitive) with `<\/script`.
 /// For CSS chunks, replaces `</style` (case-insensitive) with `<\/style`.
-fn escapeClosingTags(content: []const u8, close_tag: []const u8) []const u8 {
-    // Count occurrences to determine new buffer size
+///
+/// Uses `Chunk.IntermediateOutput.allocatorForSize` for both freeing the original buffer
+/// and allocating the replacement, so the returned buffer can always be freed with
+/// `allocatorForSize(buf.len)`. Returns `content` unchanged when no escaping is needed.
+fn escapeClosingTags(content: []u8, close_tag: []const u8) []u8 {
+    const tag_suffix = close_tag[2..]; // e.g. "script" or "style" (skip "</")
+
+    // Count occurrences to determine new buffer size.
     var count: usize = 0;
-    var i: usize = 0;
-    while (i + close_tag.len <= content.len) {
-        if (content[i] == '<' and i + 1 < content.len and content[i + 1] == '/') {
-            if (bun.strings.eqlCaseInsensitiveASCIIIgnoreLength(content[i .. i + close_tag.len], close_tag)) {
-                count += 1;
-                i += close_tag.len;
-                continue;
-            }
+    var remaining: []const u8 = content;
+    while (strings.indexOf(remaining, "</")) |idx| {
+        remaining = remaining[idx + 2 ..];
+        if (remaining.len >= tag_suffix.len and
+            strings.eqlCaseInsensitiveASCIIIgnoreLength(remaining[0..tag_suffix.len], tag_suffix))
+        {
+            count += 1;
+            remaining = remaining[tag_suffix.len..];
         }
-        i += 1;
     }
     if (count == 0) return content;
 
-    // Allocate new buffer with space for the extra backslash characters
-    const new_len = content.len + count; // Each replacement adds 1 byte: `</` → `<\/`
-    const result = bun.handleOom(bun.default_allocator.alloc(u8, new_len));
-    var src: usize = 0;
+    // Allocate new buffer: each `</` → `<\/` adds 1 byte.
+    const new_len = content.len + count;
+    const result = bun.handleOom(Chunk.IntermediateOutput.allocatorForSize(new_len).alloc(u8, new_len));
+
+    remaining = content;
     var dst: usize = 0;
-    while (src + close_tag.len <= content.len) {
-        if (content[src] == '<' and src + 1 < content.len and content[src + 1] == '/') {
-            if (bun.strings.eqlCaseInsensitiveASCIIIgnoreLength(content[src .. src + close_tag.len], close_tag)) {
-                result[dst] = '<';
-                result[dst + 1] = '\\';
-                result[dst + 2] = '/';
-                dst += 3;
-                src += 2; // Skip past `</`
-                continue;
-            }
+    while (strings.indexOf(remaining, "</")) |idx| {
+        @memcpy(result[dst..][0..idx], remaining[0..idx]);
+        dst += idx;
+        remaining = remaining[idx + 2 ..];
+
+        if (remaining.len >= tag_suffix.len and
+            strings.eqlCaseInsensitiveASCIIIgnoreLength(remaining[0..tag_suffix.len], tag_suffix))
+        {
+            result[dst] = '<';
+            result[dst + 1] = '\\';
+            result[dst + 2] = '/';
+            dst += 3;
+        } else {
+            result[dst] = '<';
+            result[dst + 1] = '/';
+            dst += 2;
         }
-        result[dst] = content[src];
-        dst += 1;
-        src += 1;
     }
-    // Copy remaining bytes
-    while (src < content.len) {
-        result[dst] = content[src];
-        dst += 1;
-        src += 1;
-    }
+    @memcpy(result[dst..][0..remaining.len], remaining);
+    dst += remaining.len;
+
+    Chunk.IntermediateOutput.allocatorForSize(content.len).free(content);
     return result[0..dst];
 }
 

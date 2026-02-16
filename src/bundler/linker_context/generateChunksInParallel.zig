@@ -382,7 +382,8 @@ pub fn generateChunksInParallel(
     var output_files = try OutputFileListBuilder.init(bun.default_allocator, c, chunks, c.parse_graph.additional_output_files.items.len);
 
     const root_path = c.resolver.opts.output_dir;
-    const more_than_one_output = c.parse_graph.additional_output_files.items.len > 0 or c.options.generate_bytecode_cache or (has_css_chunk and has_js_chunk) or (has_html_chunk and (has_js_chunk or has_css_chunk));
+    const is_standalone = c.options.standalone;
+    const more_than_one_output = !is_standalone and (c.parse_graph.additional_output_files.items.len > 0 or c.options.generate_bytecode_cache or (has_css_chunk and has_js_chunk) or (has_html_chunk and (has_js_chunk or has_css_chunk)));
 
     if (!c.resolver.opts.compile and more_than_one_output and !c.resolver.opts.supports_multiple_outputs) {
         try c.log.addError(null, Logger.Loc.Empty, "cannot write multiple output files without an output directory");
@@ -393,13 +394,65 @@ pub fn generateChunksInParallel(
     var static_route_visitor = StaticRouteVisitor{ .c = c, .visited = bun.handleOom(bun.bit_set.AutoBitSet.initEmpty(bun.default_allocator, c.graph.files.len)) };
     defer static_route_visitor.deinit();
 
+    // For standalone mode, resolve JS/CSS chunks first so we can inline their content into HTML
+    var standalone_chunk_contents: ?[]?[]const u8 = null;
+    defer if (standalone_chunk_contents) |scc| bun.default_allocator.free(scc);
+
+    if (is_standalone) {
+        const scc = bun.handleOom(bun.default_allocator.alloc(?[]const u8, chunks.len));
+        @memset(scc, null);
+        standalone_chunk_contents = scc;
+
+        // First pass: resolve JS and CSS chunks
+        for (chunks, 0..) |*chunk_item, ci| {
+            if (chunk_item.content == .html) continue; // Skip HTML chunks for now
+            var ds: usize = 0;
+            const code_res = chunk_item.intermediate_output.code(
+                null,
+                c.parse_graph,
+                &c.graph,
+                c.options.public_path,
+                chunk_item,
+                chunks,
+                &ds,
+                false,
+                false,
+            ) catch @panic("Failed to allocate memory for standalone chunk");
+            scc[ci] = code_res.buffer;
+        }
+    }
+
     // Don't write to disk if compile mode is enabled - we need buffer values for compilation
     const is_compile = bundler.transpiler.options.compile;
-    if (root_path.len > 0 and !is_compile) {
+    if (root_path.len > 0 and !is_compile and !is_standalone) {
         try c.writeOutputFilesToDisk(root_path, chunks, &output_files);
     } else {
-        // In-memory build
+        // In-memory build (also used for standalone mode)
         for (chunks, 0..) |*chunk, chunk_index_in_chunks_list| {
+            // In standalone mode, non-HTML chunks were already resolved in the first pass.
+            // Insert a placeholder output file to keep chunk indices aligned.
+            if (is_standalone and chunk.content != .html) {
+                _ = output_files.insertForChunk(options.OutputFile.init(.{
+                    .data = .{ .buffer = .{ .data = &.{}, .allocator = bun.default_allocator } },
+                    .hash = null,
+                    .loader = chunk.content.loader(),
+                    .input_path = "",
+                    .display_size = 0,
+                    .output_kind = .chunk,
+                    .input_loader = .js,
+                    .output_path = "",
+                    .is_executable = false,
+                    .source_map_index = null,
+                    .bytecode_index = null,
+                    .module_info_index = null,
+                    .side = .client,
+                    .entry_point_index = null,
+                    .referenced_css_chunks = &.{},
+                    .bake_extra = .{},
+                }));
+                continue;
+            }
+
             var display_size: usize = 0;
 
             const public_path = if (chunk.flags.is_browser_chunk_from_server_build)
@@ -407,17 +460,31 @@ pub fn generateChunksInParallel(
             else
                 c.options.public_path;
 
-            const _code_result = chunk.intermediate_output.code(
-                null,
-                c.parse_graph,
-                &c.graph,
-                public_path,
-                chunk,
-                chunks,
-                &display_size,
-                c.resolver.opts.compile and !chunk.flags.is_browser_chunk_from_server_build,
-                chunk.content.sourcemap(c.options.source_maps) != .none,
-            );
+            const _code_result = if (is_standalone and chunk.content == .html)
+                chunk.intermediate_output.codeStandalone(
+                    null,
+                    c.parse_graph,
+                    &c.graph,
+                    public_path,
+                    chunk,
+                    chunks,
+                    &display_size,
+                    false,
+                    false,
+                    standalone_chunk_contents.?,
+                )
+            else
+                chunk.intermediate_output.code(
+                    null,
+                    c.parse_graph,
+                    &c.graph,
+                    public_path,
+                    chunk,
+                    chunks,
+                    &display_size,
+                    c.resolver.opts.compile and !chunk.flags.is_browser_chunk_from_server_build,
+                    chunk.content.sourcemap(c.options.source_maps) != .none,
+                );
             var code_result = _code_result catch @panic("Failed to allocate memory for output file");
 
             var sourcemap_output_file: ?options.OutputFile = null;
@@ -671,6 +738,20 @@ pub fn generateChunksInParallel(
         }
 
         output_files.insertAdditionalOutputFiles(c.parse_graph.additional_output_files.items);
+    }
+
+    if (is_standalone) {
+        // For standalone mode, filter to only HTML output files
+        var result = output_files.take();
+        var write_idx: usize = 0;
+        for (result.items) |item| {
+            if (item.loader == .html) {
+                result.items[write_idx] = item;
+                write_idx += 1;
+            }
+        }
+        result.items.len = write_idx;
+        return result;
     }
 
     return output_files.take();

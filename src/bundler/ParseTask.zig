@@ -378,7 +378,7 @@ fn getAST(
                 .data = source.contents,
             }, Logger.Loc{ .start = 0 });
             var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, source, "")).?);
-            ast.addUrlForCss(allocator, source, "text/plain", null);
+            ast.addUrlForCss(allocator, source, "text/plain", null, transpiler.options.standalone);
             return ast;
         },
         .md => {
@@ -394,7 +394,7 @@ fn getAST(
                 .data = html,
             }, Logger.Loc{ .start = 0 });
             var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, source, "")).?);
-            ast.addUrlForCss(allocator, source, "text/html", null);
+            ast.addUrlForCss(allocator, source, "text/html", null, transpiler.options.standalone);
             return ast;
         },
 
@@ -645,7 +645,7 @@ fn getAST(
                 .content_hash = content_hash,
             };
             var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, source, "")).?);
-            ast.addUrlForCss(allocator, source, null, unique_key);
+            ast.addUrlForCss(allocator, source, null, unique_key, transpiler.options.standalone);
             return ast;
         },
     }

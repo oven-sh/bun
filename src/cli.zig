@@ -460,6 +460,7 @@ pub const Command = struct {
             banner: []const u8 = "",
             footer: []const u8 = "",
             css_chunking: bool = false,
+            standalone: bool = false,
 
             bake: bool = false,
             bake_debug_dump_server: bool = false,

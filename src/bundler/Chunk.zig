@@ -179,6 +179,40 @@ pub const Chunk = struct {
                     display_size,
                     force_absolute_path,
                     source_map_shifts,
+                    null,
+                ),
+            };
+        }
+
+        /// Like `code()` but with standalone HTML support.
+        /// When `standalone_chunk_contents` is provided, chunk piece references are
+        /// resolved to inline code content instead of file paths. Asset references
+        /// are resolved to data: URIs from url_for_css.
+        pub fn codeStandalone(
+            this: *IntermediateOutput,
+            allocator_to_use: ?std.mem.Allocator,
+            parse_graph: *const Graph,
+            linker_graph: *const LinkerGraph,
+            import_prefix: []const u8,
+            chunk: *Chunk,
+            chunks: []Chunk,
+            display_size: ?*usize,
+            force_absolute_path: bool,
+            enable_source_map_shifts: bool,
+            standalone_chunk_contents: []const ?[]const u8,
+        ) bun.OOM!CodeResult {
+            return switch (enable_source_map_shifts) {
+                inline else => |source_map_shifts| this.codeWithSourceMapShifts(
+                    allocator_to_use,
+                    parse_graph,
+                    linker_graph,
+                    import_prefix,
+                    chunk,
+                    chunks,
+                    display_size,
+                    force_absolute_path,
+                    source_map_shifts,
+                    standalone_chunk_contents,
                 ),
             };
         }
@@ -194,6 +228,7 @@ pub const Chunk = struct {
             display_size: ?*usize,
             force_absolute_path: bool,
             comptime enable_source_map_shifts: bool,
+            standalone_chunk_contents: ?[]const ?[]const u8,
         ) bun.OOM!CodeResult {
             const additional_files = graph.input_files.items(.additional_files);
             const unique_key_for_additional_files = graph.input_files.items(.unique_key_for_additional_file);
@@ -219,12 +254,35 @@ pub const Chunk = struct {
                     if (strings.eqlComptime(from_chunk_dir, "."))
                         from_chunk_dir = "";
 
+                    const urls_for_css = if (standalone_chunk_contents != null) graph.ast.items(.url_for_css) else &[_][]const u8{};
+
                     for (pieces.slice()) |piece| {
                         count += piece.data_len;
 
                         switch (piece.query.kind) {
                             .chunk, .asset, .scb, .html_import => {
                                 const index = piece.query.index;
+
+                                // In standalone mode, inline chunk content and asset data URIs
+                                if (standalone_chunk_contents) |scc| {
+                                    switch (piece.query.kind) {
+                                        .chunk => {
+                                            if (scc[index]) |content| {
+                                                count += content.len;
+                                                continue;
+                                            }
+                                        },
+                                        .asset => {
+                                            // Use data: URI from url_for_css if available
+                                            if (index < urls_for_css.len and urls_for_css[index].len > 0) {
+                                                count += urls_for_css[index].len;
+                                                continue;
+                                            }
+                                        },
+                                        else => {},
+                                    }
+                                }
+
                                 const file_path = switch (piece.query.kind) {
                                     .asset => brk: {
                                         const files = additional_files[index];
@@ -293,6 +351,30 @@ pub const Chunk = struct {
                         switch (piece.query.kind) {
                             .asset, .chunk, .scb, .html_import => {
                                 const index = piece.query.index;
+
+                                // In standalone mode, inline chunk content and asset data URIs
+                                if (standalone_chunk_contents) |scc| {
+                                    const inline_content: ?[]const u8 = switch (piece.query.kind) {
+                                        .chunk => scc[index],
+                                        .asset => if (index < urls_for_css.len and urls_for_css[index].len > 0) urls_for_css[index] else null,
+                                        else => null,
+                                    };
+                                    if (inline_content) |content| {
+                                        if (enable_source_map_shifts) {
+                                            switch (piece.query.kind) {
+                                                .chunk => shift.before.advance(chunks[index].unique_key),
+                                                .asset => shift.before.advance(unique_key_for_additional_files[index]),
+                                                else => {},
+                                            }
+                                            shift.after.advance(content);
+                                            shifts.appendAssumeCapacity(shift);
+                                        }
+                                        @memcpy(remain[0..content.len], content);
+                                        remain = remain[content.len..];
+                                        continue;
+                                    }
+                                }
+
                                 const file_path = switch (piece.query.kind) {
                                     .asset => brk: {
                                         const files = additional_files[index];

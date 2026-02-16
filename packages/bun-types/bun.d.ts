@@ -2610,6 +2610,22 @@ declare module "bun" {
     bytecode?: boolean;
 
     /**
+     * Produce self-contained HTML files with all scripts, styles, and assets
+     * inlined. All `<script>` tags become inline `<script>` with bundled code,
+     * all `<link rel="stylesheet">` tags become inline `<style>` tags, and all
+     * asset references become `data:` URIs.
+     *
+     * Requires HTML entrypoints and `target: "browser"` (the default).
+     * Cannot be used with `splitting` or `compile`.
+     *
+     * Useful for distributing `.html` files that work via `file://` URLs
+     * without needing a web server or worrying about CORS.
+     *
+     * @default false
+     */
+    standalone?: boolean;
+
+    /**
      * Add a banner to the bundled code such as "use client";
      */
     banner?: string;

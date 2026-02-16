@@ -247,6 +247,7 @@ pub const JSBundler = struct {
         /// Path to write markdown metafile (if specified via metafile object) - TEST: moved here
         metafile_markdown_path: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         css_chunking: bool = false,
+        standalone: bool = false,
         drop: bun.StringSet = bun.StringSet.init(bun.default_allocator),
         features: bun.StringSet = bun.StringSet.init(bun.default_allocator),
         has_any_on_before_parse: bool = false,
@@ -684,6 +685,10 @@ pub const JSBundler = struct {
                 this.code_splitting = hot;
             }
 
+            if (try config.getBooleanLoose(globalThis, "standalone")) |standalone| {
+                this.standalone = standalone;
+            }
+
             if (try config.getTruthy(globalThis, "minify")) |minify| {
                 if (minify.isBoolean()) {
                     const value = minify.toBoolean();
@@ -1024,6 +1029,29 @@ pub const JSBundler = struct {
             // twice (once for module analysis, once for bytecode), which is a deopt.
             if (this.bytecode and this.format == .esm and this.compile == null) {
                 return globalThis.throwInvalidArguments("ESM bytecode requires compile: true. Use format: 'cjs' for bytecode without compile.", .{});
+            }
+
+            if (this.standalone) {
+                if (this.compile != null) {
+                    return globalThis.throwInvalidArguments("Cannot use standalone with compile", .{});
+                }
+                if (this.code_splitting) {
+                    return globalThis.throwInvalidArguments("Cannot use standalone with splitting", .{});
+                }
+                if (did_set_target and this.target != .browser) {
+                    return globalThis.throwInvalidArguments("standalone requires target to be 'browser'", .{});
+                }
+                // Verify at least one HTML entrypoint
+                var has_html_entry = false;
+                for (this.entry_points.keys()) |ep| {
+                    if (strings.hasSuffixComptime(ep, ".html")) {
+                        has_html_entry = true;
+                        break;
+                    }
+                }
+                if (!has_html_entry) {
+                    return globalThis.throwInvalidArguments("standalone requires at least one HTML entrypoint", .{});
+                }
             }
 
             return this;

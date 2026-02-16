@@ -1833,6 +1833,7 @@ pub const BundleOptions = struct {
     debugger: bool = false,
 
     compile: bool = false,
+    standalone: bool = false,
     metafile: bool = false,
     /// Path to write JSON metafile (for Bun.build API)
     metafile_json_path: []const u8 = "",

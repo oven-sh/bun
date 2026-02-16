@@ -42,6 +42,7 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
         chunk: *Chunk,
         chunks: []Chunk,
         minify_whitespace: bool,
+        standalone: bool,
         output: std.array_list.Managed(u8),
         end_tag_indices: struct {
             head: ?u32 = 0,
@@ -104,6 +105,18 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
                 element.remove();
                 return;
             }
+
+            if (this.standalone and import_record.source_index.isValid()) {
+                // In standalone mode, inline assets as data: URIs
+                const url_for_css = this.linker.parse_graph.ast.items(.url_for_css)[import_record.source_index.get()];
+                if (url_for_css.len > 0) {
+                    element.setAttribute(url_attribute, url_for_css) catch {
+                        std.debug.panic("unexpected error from Element.setAttribute", .{});
+                    };
+                    return;
+                }
+            }
+
             if (unique_key_for_additional_files.len > 0) {
                 // Replace the external href/src with the unique key so that we later will rewrite it to the final URL or pathname
                 element.setAttribute(url_attribute, unique_key_for_additional_files) catch {
@@ -144,15 +157,29 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
 
         fn getHeadTags(this: *@This(), allocator: std.mem.Allocator) bun.BoundedArray([]const u8, 2) {
             var array: bun.BoundedArray([]const u8, 2) = .{};
-            // Put CSS before JS to reduce changes of flash of unstyled content
-            if (this.chunk.getCSSChunkForHTML(this.chunks)) |css_chunk| {
-                const link_tag = bun.handleOom(std.fmt.allocPrintSentinel(allocator, "<link rel=\"stylesheet\" crossorigin href=\"{s}\">", .{css_chunk.unique_key}, 0));
-                array.appendAssumeCapacity(link_tag);
-            }
-            if (this.chunk.getJSChunkForHTML(this.chunks)) |js_chunk| {
-                // type="module" scripts do not block rendering, so it is okay to put them in head
-                const script = bun.handleOom(std.fmt.allocPrintSentinel(allocator, "<script type=\"module\" crossorigin src=\"{s}\"></script>", .{js_chunk.unique_key}, 0));
-                array.appendAssumeCapacity(script);
+            if (this.standalone) {
+                // In standalone mode, inline CSS and JS directly into the HTML
+                if (this.chunk.getCSSChunkForHTML(this.chunks)) |css_chunk| {
+                    // Emit <style>UNIQUE_KEY</style> - the unique key will be replaced with actual CSS content
+                    const style_tag = bun.handleOom(std.fmt.allocPrintSentinel(allocator, "<style>{s}</style>", .{css_chunk.unique_key}, 0));
+                    array.appendAssumeCapacity(style_tag);
+                }
+                if (this.chunk.getJSChunkForHTML(this.chunks)) |js_chunk| {
+                    // Emit <script>UNIQUE_KEY</script> - the unique key will be replaced with actual JS content
+                    const script = bun.handleOom(std.fmt.allocPrintSentinel(allocator, "<script>{s}</script>", .{js_chunk.unique_key}, 0));
+                    array.appendAssumeCapacity(script);
+                }
+            } else {
+                // Put CSS before JS to reduce changes of flash of unstyled content
+                if (this.chunk.getCSSChunkForHTML(this.chunks)) |css_chunk| {
+                    const link_tag = bun.handleOom(std.fmt.allocPrintSentinel(allocator, "<link rel=\"stylesheet\" crossorigin href=\"{s}\">", .{css_chunk.unique_key}, 0));
+                    array.appendAssumeCapacity(link_tag);
+                }
+                if (this.chunk.getJSChunkForHTML(this.chunks)) |js_chunk| {
+                    // type="module" scripts do not block rendering, so it is okay to put them in head
+                    const script = bun.handleOom(std.fmt.allocPrintSentinel(allocator, "<script type=\"module\" crossorigin src=\"{s}\"></script>", .{js_chunk.unique_key}, 0));
+                    array.appendAssumeCapacity(script);
+                }
             }
             return array;
         }
@@ -199,6 +226,7 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
         .log = c.log,
         .allocator = worker.allocator,
         .minify_whitespace = c.options.minify_whitespace,
+        .standalone = c.options.standalone,
         .chunk = chunk,
         .chunks = chunks,
         .output = std.array_list.Managed(u8).init(output_allocator),

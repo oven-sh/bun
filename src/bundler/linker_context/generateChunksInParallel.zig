@@ -758,13 +758,16 @@ pub fn generateChunksInParallel(
     }
 
     if (is_standalone) {
-        // For standalone mode, filter to only HTML output files
+        // For standalone mode, filter to only HTML output files.
+        // Deinit dropped items to free their heap allocations (paths, buffers).
         var result = output_files.take();
         var write_idx: usize = 0;
-        for (result.items) |item| {
+        for (result.items) |*item| {
             if (item.loader == .html) {
-                result.items[write_idx] = item;
+                result.items[write_idx] = item.*;
                 write_idx += 1;
+            } else {
+                item.deinit();
             }
         }
         result.items.len = write_idx;

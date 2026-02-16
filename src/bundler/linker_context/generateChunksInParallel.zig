@@ -806,28 +806,6 @@ pub const ThreadPool = bun.bundle_v2.ThreadPool;
 
 const debugPartRanges = Output.scoped(.PartRanges, .hidden);
 
-const analyze_transpiled_module = @import("../../analyze_transpiled_module.zig");
-const std = @import("std");
-
-const bun = @import("bun");
-const Environment = bun.Environment;
-const Loader = bun.Loader;
-const Output = bun.Output;
-const ThreadPoolLib = bun.ThreadPool;
-const base64 = bun.base64;
-const jsc = bun.jsc;
-const strings = bun.strings;
-const AutoBitSet = bun.bit_set.AutoBitSet;
-
-const Chunk = bun.bundle_v2.Chunk;
-const ContentHasher = bun.bundle_v2.ContentHasher;
-const Index = bun.bundle_v2.Index;
-const Part = bun.bundle_v2.Part;
-const cheapPrefixNormalizer = bun.bundle_v2.cheapPrefixNormalizer;
-
-const LinkerContext = bun.bundle_v2.LinkerContext;
-const CompileResult = LinkerContext.CompileResult;
-const GenerateChunkCtx = LinkerContext.GenerateChunkCtx;
 /// Escape closing HTML tags in inline content to prevent breaking the HTML structure.
 /// For JS chunks, replaces `</script` (case-insensitive) with `<\/script`.
 /// For CSS chunks, replaces `</style` (case-insensitive) with `<\/style`.
@@ -876,6 +854,28 @@ fn escapeClosingTags(content: []const u8, close_tag: []const u8) []const u8 {
     return result[0..dst];
 }
 
+const analyze_transpiled_module = @import("../../analyze_transpiled_module.zig");
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Loader = bun.Loader;
+const Output = bun.Output;
+const ThreadPoolLib = bun.ThreadPool;
+const base64 = bun.base64;
+const jsc = bun.jsc;
+const strings = bun.strings;
+const AutoBitSet = bun.bit_set.AutoBitSet;
+
+const Chunk = bun.bundle_v2.Chunk;
+const ContentHasher = bun.bundle_v2.ContentHasher;
+const Index = bun.bundle_v2.Index;
+const Part = bun.bundle_v2.Part;
+const cheapPrefixNormalizer = bun.bundle_v2.cheapPrefixNormalizer;
+
+const LinkerContext = bun.bundle_v2.LinkerContext;
+const CompileResult = LinkerContext.CompileResult;
+const GenerateChunkCtx = LinkerContext.GenerateChunkCtx;
 const OutputFileListBuilder = bun.bundle_v2.LinkerContext.OutputFileListBuilder;
 const PendingPartRange = LinkerContext.PendingPartRange;
 const StaticRouteVisitor = bun.bundle_v2.LinkerContext.StaticRouteVisitor;

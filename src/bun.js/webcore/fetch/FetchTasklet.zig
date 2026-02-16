@@ -1154,6 +1154,14 @@ pub const FetchTasklet = struct {
         }
     }
 
+    /// Whether the request body should skip chunked transfer encoding framing.
+    /// True for upgraded connections (e.g. WebSocket) or when the user explicitly
+    /// set Content-Length without setting Transfer-Encoding.
+    fn skipChunkedFraming(this: *const FetchTasklet) bool {
+        return this.upgraded_connection or
+            (this.request_headers.get("content-length") != null and this.request_headers.get("transfer-encoding") == null);
+    }
+
     pub fn writeRequestData(this: *FetchTasklet, data: []const u8) ResumableSinkBackpressure {
         log("writeRequestData {}", .{data.len});
         if (this.signal) |signal| {
@@ -1175,9 +1183,7 @@ pub const FetchTasklet = struct {
         // dont have backpressure so we will schedule the data to be written
         // if we have backpressure the onWritable will drain the buffer
         needs_schedule = stream_buffer.isEmpty();
-        if (this.upgraded_connection or
-            (this.request_headers.get("content-length") != null and this.request_headers.get("transfer-encoding") == null))
-        {
+        if (this.skipChunkedFraming()) {
             bun.handleOom(stream_buffer.write(data));
         } else {
             //16 is the max size of a hex number size that represents 64 bits + 2 for the \r\n
@@ -1211,10 +1217,8 @@ pub const FetchTasklet = struct {
             }
             this.abortTask();
         } else {
-            if (!this.upgraded_connection and
-                !(this.request_headers.get("content-length") != null and this.request_headers.get("transfer-encoding") == null))
-            {
-                // Not an upgraded connection and not using explicit Content-Length, send the terminating chunk
+            if (!this.skipChunkedFraming()) {
+                // Using chunked transfer encoding, send the terminating chunk
                 const thread_safe_stream_buffer = this.request_body_streaming_buffer orelse return;
                 const stream_buffer = thread_safe_stream_buffer.acquire();
                 defer thread_safe_stream_buffer.release();

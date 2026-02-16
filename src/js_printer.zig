@@ -341,7 +341,7 @@ pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: 
 pub fn quoteForJSON(text: []const u8, bytes: *MutableString, comptime ascii_only: bool) !void {
     const writer = bytes.writer();
 
-    try bytes.growIfNeeded(estimateLengthForUTF8(text, ascii_only, '"'));
+    try bytes.growIfNeeded(2 + text.len);
     try bytes.appendChar('"');
     try writePreQuotedString(text, @TypeOf(writer), writer, '"', ascii_only, true, .utf8);
     bytes.appendChar('"') catch unreachable;

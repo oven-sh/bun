@@ -27,11 +27,12 @@ ALWAYS_INLINE bool isAbsolutePath(WTF::String input)
         if (len < 1)
             return false;
         const auto bytes = input.span8().data();
-        if (IS_SLASH(bytes[0]))
+        // On Windows, paths starting with / are not absolute paths
+        // They need to be resolved relative to the current drive
+        // Only paths with drive letters (C:\) or UNC paths (\\) are absolute
+        if (len >= 3 && IS_LETTER(bytes[0]) && bytes[1] == ':' && IS_SLASH(bytes[2]))
             return true;
-        if (len < 2)
-            return false;
-        if (IS_LETTER(bytes[0]) && bytes[1] == ':' && IS_SLASH(bytes[2]))
+        if (len >= 2 && IS_SLASH(bytes[0]) && IS_SLASH(bytes[1]))
             return true;
         return false;
     } else {
@@ -39,11 +40,12 @@ ALWAYS_INLINE bool isAbsolutePath(WTF::String input)
         if (len < 1)
             return false;
         const auto bytes = input.span16().data();
-        if (IS_SLASH(bytes[0]))
+        // On Windows, paths starting with / are not absolute paths
+        // They need to be resolved relative to the current drive
+        // Only paths with drive letters (C:\) or UNC paths (\\) are absolute
+        if (len >= 3 && IS_LETTER(bytes[0]) && bytes[1] == ':' && IS_SLASH(bytes[2]))
             return true;
-        if (len < 2)
-            return false;
-        if (IS_LETTER(bytes[0]) && bytes[1] == ':' && IS_SLASH(bytes[2]))
+        if (len >= 2 && IS_SLASH(bytes[0]) && IS_SLASH(bytes[1]))
             return true;
         return false;
     }

@@ -3389,14 +3389,19 @@ pub const NodeFS = struct {
     }
 
     pub fn close(_: *NodeFS, args: Arguments.Close, _: Flavor) Maybe(Return.Close) {
-        return if (args.fd.closeAllowingBadFileDescriptor(null)) |err|
-            .{ .err = err }
-        else
-            .success;
+        const result = args.fd.closeAllowingBadFileDescriptor(null);
+        if (result) |err| {
+            traceFS(.{ .call = "close", .fd = args.fd.cast(), .errno = err.errno });
+            return .{ .err = err };
+        } else {
+            traceFS(.{ .call = "close", .fd = args.fd.cast() });
+            return .success;
+        }
     }
 
     pub fn uv_close(_: *NodeFS, args: Arguments.Close, rc: i64) Maybe(Return.Close) {
         if (rc < 0) {
+            traceFS(.{ .call = "close", .fd = args.fd.cast(), .errno = @as(bun.sys.Error.Int, @intCast(-rc)) });
             return Maybe(Return.Close){ .err = .{
                 .errno = @intCast(-rc),
                 .syscall = .close,
@@ -3404,6 +3409,7 @@ pub const NodeFS = struct {
                 .from_libuv = true,
             } };
         }
+        traceFS(.{ .call = "close", .fd = args.fd.cast() });
         return .success;
     }
 
@@ -3809,15 +3815,29 @@ pub const NodeFS = struct {
     }
 
     pub fn fstat(_: *NodeFS, args: Arguments.Fstat, _: Flavor) Maybe(Return.Fstat) {
+        traceFS(.{ .call = "fstat", .fd = args.fd.cast() });
+
         if (Environment.isLinux and Syscall.supports_statx_on_linux.load(.monotonic)) {
             return switch (Syscall.fstatx(args.fd, &.{ .type, .mode, .nlink, .uid, .gid, .atime, .mtime, .ctime, .btime, .ino, .size, .blocks })) {
-                .result => |result| .{ .result = .init(&result, args.big_int) },
-                .err => |err| .{ .err = err },
+                .result => |result| {
+                    traceFS(.{ .call = "fstat", .fd = args.fd.cast(), .size = result.size, .mode = result.mode });
+                    return .{ .result = .init(&result, args.big_int) };
+                },
+                .err => |err| {
+                    traceFS(.{ .call = "fstat", .fd = args.fd.cast(), .errno = err.errno });
+                    return .{ .err = err };
+                },
             };
         } else {
             return switch (Syscall.fstat(args.fd)) {
-                .result => |result| .{ .result = .init(&Syscall.PosixStat.init(&result), args.big_int) },
-                .err => |err| .{ .err = err },
+                .result => |result| {
+                    traceFS(.{ .call = "fstat", .fd = args.fd.cast(), .size = result.size, .mode = result.mode });
+                    return .{ .result = .init(&Syscall.PosixStat.init(&result), args.big_int) };
+                },
+                .err => |err| {
+                    traceFS(.{ .call = "fstat", .fd = args.fd.cast(), .errno = err.errno });
+                    return .{ .err = err };
+                },
             };
         }
     }
@@ -3893,10 +3913,17 @@ pub const NodeFS = struct {
     }
 
     pub fn lstat(this: *NodeFS, args: Arguments.Lstat, _: Flavor) Maybe(Return.Lstat) {
+        const path = args.path.sliceZ(&this.sync_error_buf);
+        traceFS(.{ .call = "lstat", .path = path });
+
         if (Environment.isLinux and Syscall.supports_statx_on_linux.load(.monotonic)) {
-            return switch (Syscall.lstatx(args.path.sliceZ(&this.sync_error_buf), &.{ .type, .mode, .nlink, .uid, .gid, .atime, .mtime, .ctime, .btime, .ino, .size, .blocks })) {
-                .result => |result| Maybe(Return.Lstat){ .result = .{ .stats = .init(&result, args.big_int) } },
+            return switch (Syscall.lstatx(path, &.{ .type, .mode, .nlink, .uid, .gid, .atime, .mtime, .ctime, .btime, .ino, .size, .blocks })) {
+                .result => |result| {
+                    traceFS(.{ .call = "lstat", .path = path, .size = result.size, .mode = result.mode });
+                    return Maybe(Return.Lstat){ .result = .{ .stats = .init(&result, args.big_int) } };
+                },
                 .err => |err| brk: {
+                    traceFS(.{ .call = "lstat", .path = path, .errno = err.errno });
                     if (!args.throw_if_no_entry and err.getErrno() == .NOENT) {
                         return Maybe(Return.Lstat){ .result = .{ .not_found = {} } };
                     }
@@ -3904,9 +3931,13 @@ pub const NodeFS = struct {
                 },
             };
         } else {
-            return switch (Syscall.lstat(args.path.sliceZ(&this.sync_error_buf))) {
-                .result => |result| Maybe(Return.Lstat){ .result = .{ .stats = .init(&Syscall.PosixStat.init(&result), args.big_int) } },
+            return switch (Syscall.lstat(path)) {
+                .result => |result| {
+                    traceFS(.{ .call = "lstat", .path = path, .size = result.size, .mode = result.mode });
+                    return Maybe(Return.Lstat){ .result = .{ .stats = .init(&Syscall.PosixStat.init(&result), args.big_int) } };
+                },
                 .err => |err| brk: {
+                    traceFS(.{ .call = "lstat", .path = path, .errno = err.errno });
                     if (!args.throw_if_no_entry and err.getErrno() == .NOENT) {
                         return Maybe(Return.Lstat){ .result = .{ .not_found = {} } };
                     }
@@ -3928,9 +3959,16 @@ pub const NodeFS = struct {
     // Node doesn't absolute the path so we don't have to either
     pub fn mkdirNonRecursive(this: *NodeFS, args: Arguments.Mkdir) Maybe(Return.Mkdir) {
         const path = args.path.sliceZ(&this.sync_error_buf);
+        traceFS(.{ .call = "mkdir", .path = path, .mode = args.mode, .recursive = false });
         return switch (Syscall.mkdir(path, args.mode)) {
-            .result => Maybe(Return.Mkdir){ .result = .{ .none = {} } },
-            .err => |err| Maybe(Return.Mkdir){ .err = err.withPath(args.path.slice()) },
+            .result => {
+                traceFS(.{ .call = "mkdir", .path = path, .success = true });
+                return Maybe(Return.Mkdir){ .result = .{ .none = {} } };
+            },
+            .err => |err| {
+                traceFS(.{ .call = "mkdir", .path = path, .errno = err.errno });
+                return Maybe(Return.Mkdir){ .err = err.withPath(args.path.slice()) };
+            },
         };
     }
 
@@ -3942,6 +3980,7 @@ pub const NodeFS = struct {
         const buf = bun.path_buffer_pool.get();
         defer bun.path_buffer_pool.put(buf);
         const path = args.path.osPathKernel32(buf);
+        traceFS(.{ .call = "mkdir", .path = bun.sliceTo(path, 0), .mode = args.mode, .recursive = true });
 
         return switch (args.always_return_none) {
             inline else => |always_return_none| this.mkdirRecursiveOSPathImpl(Ctx, ctx, path, args.mode, !always_return_none),
@@ -4182,17 +4221,24 @@ pub const NodeFS = struct {
         else
             args.path.sliceZ(&this.sync_error_buf);
 
-        return switch (Syscall.open(path, args.flags.asInt(), args.mode)) {
-            .err => |err| .{
-                .err = err.withPath(args.path.slice()),
+        const result = Syscall.open(path, args.flags.asInt(), args.mode);
+
+        switch (result) {
+            .result => |fd| {
+                traceFS(.{ .call = "open", .path = args.path.slice(), .flags = args.flags.asInt(), .mode = args.mode, .fd = fd.cast() });
+                return .{ .result = fd };
             },
-            .result => |fd| .{ .result = fd },
-        };
+            .err => |err| {
+                traceFS(.{ .call = "open", .path = args.path.slice(), .flags = args.flags.asInt(), .mode = args.mode, .errno = err.errno });
+                return .{ .err = err.withPath(args.path.slice()) };
+            },
+        }
     }
 
     pub fn uv_open(this: *NodeFS, args: Arguments.Open, rc: i64) Maybe(Return.Open) {
         _ = this;
         if (rc < 0) {
+            traceFS(.{ .call = "open", .path = args.path.slice(), .flags = args.flags.asInt(), .mode = args.mode, .errno = @as(bun.sys.Error.Int, @intCast(-rc)) });
             return Maybe(Return.Open){ .err = .{
                 .errno = @intCast(-rc),
                 .syscall = .open,
@@ -4200,7 +4246,9 @@ pub const NodeFS = struct {
                 .from_libuv = true,
             } };
         }
-        return Maybe(Return.Open).initResult(.fromUV(@intCast(rc)));
+        const fd = bun.FileDescriptor.fromUV(@intCast(rc));
+        traceFS(.{ .call = "open", .path = args.path.slice(), .flags = args.flags.asInt(), .mode = args.mode, .fd = fd.cast() });
+        return Maybe(Return.Open).initResult(fd);
     }
 
     pub fn uv_statfs(_: *NodeFS, args: Arguments.StatFS, req: *uv.fs_t, rc: i64) Maybe(Return.StatFS) {
@@ -4226,12 +4274,19 @@ pub const NodeFS = struct {
         buf = buf[@min(args.offset, buf.len)..];
         buf = buf[0..@min(buf.len, args.length)];
 
-        return switch (Syscall.read(args.fd, buf)) {
-            .err => |err| .{ .err = err },
-            .result => |amt| .{ .result = .{
-                .bytes_read = @as(u52, @truncate(amt)),
-            } },
-        };
+        const result = Syscall.read(args.fd, buf);
+
+        switch (result) {
+            .result => |amt| {
+                const bytes_read = @as(u52, @truncate(amt));
+                traceFS(.{ .call = "read", .fd = args.fd.cast(), .offset = args.offset, .length = args.length, .bytes_read = bytes_read });
+                return .{ .result = .{ .bytes_read = bytes_read } };
+            },
+            .err => |err| {
+                traceFS(.{ .call = "read", .fd = args.fd.cast(), .offset = args.offset, .length = args.length, .errno = err.errno });
+                return .{ .err = err };
+            },
+        }
     }
 
     fn preadInner(_: *NodeFS, args: Arguments.Read) Maybe(Return.Read) {
@@ -4239,16 +4294,23 @@ pub const NodeFS = struct {
         buf = buf[@min(args.offset, buf.len)..];
         buf = buf[0..@min(buf.len, args.length)];
 
-        return switch (Syscall.pread(args.fd, buf, args.position.?)) {
-            .err => |err| .{ .err = .{
-                .errno = err.errno,
-                .fd = args.fd,
-                .syscall = .read,
-            } },
-            .result => |amt| .{ .result = .{
-                .bytes_read = @as(u52, @truncate(amt)),
-            } },
-        };
+        const result = Syscall.pread(args.fd, buf, args.position.?);
+
+        switch (result) {
+            .result => |amt| {
+                const bytes_read = @as(u52, @truncate(amt));
+                traceFS(.{ .call = "read", .fd = args.fd.cast(), .offset = args.offset, .length = args.length, .position = args.position.?, .bytes_read = bytes_read });
+                return .{ .result = .{ .bytes_read = bytes_read } };
+            },
+            .err => |err| {
+                traceFS(.{ .call = "read", .fd = args.fd.cast(), .offset = args.offset, .length = args.length, .position = args.position.?, .errno = err.errno });
+                return .{ .err = .{
+                    .errno = err.errno,
+                    .fd = args.fd,
+                    .syscall = .read,
+                } };
+            },
+        }
     }
 
     pub fn read(this: *NodeFS, args: Arguments.Read, _: Flavor) Maybe(Return.Read) {
@@ -4266,6 +4328,7 @@ pub const NodeFS = struct {
     pub fn uv_read(this: *NodeFS, args: Arguments.Read, rc: i64) Maybe(Return.Read) {
         _ = this;
         if (rc < 0) {
+            traceFS(.{ .call = "read", .fd = args.fd.cast(), .offset = args.offset, .length = args.length, .errno = @as(bun.sys.Error.Int, @intCast(-rc)) });
             return Maybe(Return.Read){ .err = .{
                 .errno = @intCast(-rc),
                 .syscall = .read,
@@ -4273,7 +4336,9 @@ pub const NodeFS = struct {
                 .from_libuv = true,
             } };
         }
-        return Maybe(Return.Read).initResult(.{ .bytes_read = @intCast(rc) });
+        const bytes_read: u52 = @intCast(rc);
+        traceFS(.{ .call = "read", .fd = args.fd.cast(), .offset = args.offset, .length = args.length, .bytes_read = bytes_read });
+        return Maybe(Return.Read).initResult(.{ .bytes_read = bytes_read });
     }
 
     pub fn uv_readv(this: *NodeFS, args: Arguments.Readv, rc: i64) Maybe(Return.Readv) {
@@ -4310,6 +4375,7 @@ pub const NodeFS = struct {
     pub fn uv_write(this: *NodeFS, args: Arguments.Write, rc: i64) Maybe(Return.Write) {
         _ = this;
         if (rc < 0) {
+            traceFS(.{ .call = "write", .fd = args.fd.cast(), .offset = args.offset, .length = args.length, .errno = @as(bun.sys.Error.Int, @intCast(-rc)) });
             return Maybe(Return.Write){ .err = .{
                 .errno = @intCast(-rc),
                 .syscall = .write,
@@ -4317,7 +4383,9 @@ pub const NodeFS = struct {
                 .from_libuv = true,
             } };
         }
-        return Maybe(Return.Write).initResult(.{ .bytes_written = @intCast(rc) });
+        const bytes_written: u52 = @intCast(rc);
+        traceFS(.{ .call = "write", .fd = args.fd.cast(), .offset = args.offset, .length = args.length, .bytes_written = bytes_written });
+        return Maybe(Return.Write).initResult(.{ .bytes_written = bytes_written });
     }
 
     pub fn uv_writev(this: *NodeFS, args: Arguments.Writev, rc: i64) Maybe(Return.Writev) {
@@ -4338,16 +4406,19 @@ pub const NodeFS = struct {
         buf = buf[@min(args.offset, buf.len)..];
         buf = buf[0..@min(buf.len, args.length)];
 
-        return switch (Syscall.write(args.fd, buf)) {
-            .err => |err| .{
-                .err = err,
+        const result = Syscall.write(args.fd, buf);
+
+        switch (result) {
+            .result => |amt| {
+                const bytes_written = @as(u52, @truncate(amt));
+                traceFS(.{ .call = "write", .fd = args.fd.cast(), .offset = args.offset, .length = args.length, .bytes_written = bytes_written });
+                return .{ .result = .{ .bytes_written = bytes_written } };
             },
-            .result => |amt| .{
-                .result = .{
-                    .bytes_written = @as(u52, @truncate(amt)),
-                },
+            .err => |err| {
+                traceFS(.{ .call = "write", .fd = args.fd.cast(), .offset = args.offset, .length = args.length, .errno = err.errno });
+                return .{ .err = err };
             },
-        };
+        }
     }
 
     fn pwriteInner(_: *NodeFS, args: Arguments.Write) Maybe(Return.Write) {
@@ -4357,16 +4428,23 @@ pub const NodeFS = struct {
         buf = buf[@min(args.offset, buf.len)..];
         buf = buf[0..@min(args.length, buf.len)];
 
-        return switch (Syscall.pwrite(args.fd, buf, position)) {
-            .err => |err| .{ .err = .{
-                .errno = err.errno,
-                .fd = args.fd,
-                .syscall = .write,
-            } },
-            .result => |amt| .{ .result = .{
-                .bytes_written = @as(u52, @truncate(amt)),
-            } },
-        };
+        const result = Syscall.pwrite(args.fd, buf, position);
+
+        switch (result) {
+            .result => |amt| {
+                const bytes_written = @as(u52, @truncate(amt));
+                traceFS(.{ .call = "write", .fd = args.fd.cast(), .offset = args.offset, .length = args.length, .position = position, .bytes_written = bytes_written });
+                return .{ .result = .{ .bytes_written = bytes_written } };
+            },
+            .err => |err| {
+                traceFS(.{ .call = "write", .fd = args.fd.cast(), .offset = args.offset, .length = args.length, .position = position, .errno = err.errno });
+                return .{ .err = .{
+                    .errno = err.errno,
+                    .fd = args.fd,
+                    .syscall = .write,
+                } };
+            },
+        }
     }
 
     fn preadvInner(_: *NodeFS, args: Arguments.Readv) Maybe(Return.Readv) {
@@ -4417,6 +4495,8 @@ pub const NodeFS = struct {
     }
 
     pub fn readdir(this: *NodeFS, args: Arguments.Readdir, comptime flavor: Flavor) Maybe(Return.Readdir) {
+        traceFS(.{ .call = "readdir", .path = args.path.slice(), .recursive = args.recursive });
+
         if (comptime flavor != .sync) {
             if (args.recursive) {
                 @panic("Assertion failure: this code path should never be reached.");
@@ -4431,12 +4511,23 @@ pub const NodeFS = struct {
             },
         };
         return switch (maybe) {
-            .err => |err| .{ .err = .{
-                .syscall = .scandir,
-                .errno = err.errno,
-                .path = args.path.slice(),
-            } },
-            .result => |result| .{ .result = result },
+            .err => |err| {
+                traceFS(.{ .call = "readdir", .path = args.path.slice(), .errno = err.errno });
+                return .{ .err = .{
+                    .syscall = .scandir,
+                    .errno = err.errno,
+                    .path = args.path.slice(),
+                } };
+            },
+            .result => |result| {
+                const count = switch (result) {
+                    .buffers => |buffers| buffers.len,
+                    .with_file_types => |dirents| dirents.len,
+                    .files => |files| files.len,
+                };
+                traceFS(.{ .call = "readdir", .path = args.path.slice(), .entries = count });
+                return .{ .result = result };
+            },
         };
     }
 
@@ -5005,9 +5096,11 @@ pub const NodeFS = struct {
         const fd_maybe_windows: FileDescriptor = switch (args.path) {
             .path => brk: {
                 path = args.path.path.sliceZ(&this.sync_error_buf);
+                traceFS(.{ .call = "readFile", .path = path, .encoding = @tagName(args.encoding) });
 
                 if (bun.StandaloneModuleGraph.get()) |graph| {
                     if (graph.find(path)) |file| {
+                        traceFS(.{ .call = "readFile", .path = path, .bytes_read = file.contents.len, .source = "standalone" });
                         if (args.encoding == .buffer) {
                             return .{
                                 .result = .{
@@ -5105,6 +5198,7 @@ pub const NodeFS = struct {
             };
 
             if (did_succeed) {
+                traceFS(.{ .call = "readFile", .path = if (args.path == .path) args.path.path.slice() else "<fd>", .bytes_read = temporary_read_buffer.len, .fast_path = true });
                 switch (args.encoding) {
                     .buffer => {
                         if (comptime flavor == .sync and string_type == .default) {
@@ -5280,6 +5374,7 @@ pub const NodeFS = struct {
         buf.items.len = if (comptime string_type == .null_terminated) total + 1 else total;
         if (total == 0) {
             buf.clearAndFree();
+            traceFS(.{ .call = "readFile", .path = if (args.path == .path) args.path.path.slice() else "<fd>", .bytes_read = 0 });
             return switch (args.encoding) {
                 .buffer => .{
                     .result = .{
@@ -5304,6 +5399,7 @@ pub const NodeFS = struct {
             };
         }
 
+        traceFS(.{ .call = "readFile", .path = if (args.path == .path) args.path.path.slice() else "<fd>", .bytes_read = total });
         return switch (args.encoding) {
             .buffer => .{
                 .result = .{
@@ -5335,6 +5431,7 @@ pub const NodeFS = struct {
         const fd = switch (args.file) {
             .path => brk: {
                 const path = args.file.path.sliceZWithForceCopy(pathbuf, true);
+                traceFS(.{ .call = "writeFile", .path = path, .length = args.data.slice().len });
 
                 const open_result = bun.sys.openat(
                     args.dirfd,
@@ -5344,13 +5441,19 @@ pub const NodeFS = struct {
                 );
 
                 break :brk switch (open_result) {
-                    .err => |err| return .{
-                        .err = err.withPath(args.file.path.slice()),
+                    .err => |err| {
+                        traceFS(.{ .call = "writeFile", .path = path, .errno = err.errno });
+                        return .{
+                            .err = err.withPath(args.file.path.slice()),
+                        };
                     },
                     .result => |fd| fd,
                 };
             },
-            .fd => |fd| fd,
+            .fd => |fd| brk: {
+                traceFS(.{ .call = "writeFile", .fd = fd.cast(), .length = args.data.slice().len });
+                break :brk fd;
+            },
         };
 
         defer {
@@ -5425,6 +5528,7 @@ pub const NodeFS = struct {
             }
         }
 
+        traceFS(.{ .call = "writeFile", .path = if (args.file == .path) args.file.path.slice() else "<fd>", .bytes_written = written });
         return .success;
     }
 
@@ -5597,13 +5701,22 @@ pub const NodeFS = struct {
 
         const from = args.old_path.sliceZ(from_buf);
         const to = args.new_path.sliceZ(&to_buf);
+        traceFS(.{ .call = "rename", .from = from, .to = to });
         return switch (Syscall.rename(from, to)) {
-            .result => |result| .{ .result = result },
-            .err => |err| .{ .err = err.withPathDest(args.old_path.slice(), args.new_path.slice()) },
+            .result => |result| {
+                traceFS(.{ .call = "rename", .from = from, .to = to, .success = true });
+                return .{ .result = result };
+            },
+            .err => |err| {
+                traceFS(.{ .call = "rename", .from = from, .to = to, .errno = err.errno });
+                return .{ .err = err.withPathDest(args.old_path.slice(), args.new_path.slice()) };
+            },
         };
     }
 
     pub fn rmdir(this: *NodeFS, args: Arguments.RmDir, _: Flavor) Maybe(Return.Rmdir) {
+        traceFS(.{ .call = "rmdir", .path = args.path.slice(), .recursive = args.recursive });
+
         if (args.recursive) {
             zigDeleteTree(std.fs.cwd(), args.path.slice(), .directory) catch |err| {
                 var errno: bun.sys.E = switch (@as(anyerror, err)) {
@@ -5638,23 +5751,35 @@ pub const NodeFS = struct {
                 if (Environment.isWindows and errno == .NOTDIR) {
                     errno = .NOENT;
                 }
+                traceFS(.{ .call = "rmdir", .path = args.path.slice(), .errno = @intFromEnum(errno) });
                 return Maybe(Return.Rm){
                     .err = bun.sys.Error.fromCode(errno, .rmdir),
                 };
             };
 
+            traceFS(.{ .call = "rmdir", .path = args.path.slice(), .success = true });
             return .success;
         }
 
         if (comptime Environment.isWindows) {
             return switch (Syscall.rmdir(args.path.sliceZ(&this.sync_error_buf))) {
-                .err => |err| .{ .err = err.withPath(args.path.slice()) },
-                .result => |result| .{ .result = result },
+                .err => |err| {
+                    traceFS(.{ .call = "rmdir", .path = args.path.slice(), .errno = err.errno });
+                    return .{ .err = err.withPath(args.path.slice()) };
+                },
+                .result => |result| {
+                    traceFS(.{ .call = "rmdir", .path = args.path.slice(), .success = true });
+                    return .{ .result = result };
+                },
             };
         }
 
-        return Maybe(Return.Rmdir).errnoSysP(system.rmdir(args.path.sliceZ(&this.sync_error_buf)), .rmdir, args.path.slice()) orelse
-            .success;
+        if (Maybe(Return.Rmdir).errnoSysP(system.rmdir(args.path.sliceZ(&this.sync_error_buf)), .rmdir, args.path.slice())) |err| {
+            traceFS(.{ .call = "rmdir", .path = args.path.slice(), .errno = err.err.errno });
+            return err;
+        }
+        traceFS(.{ .call = "rmdir", .path = args.path.slice(), .success = true });
+        return .success;
     }
 
     pub fn rm(this: *NodeFS, args: Arguments.Rm, _: Flavor) Maybe(Return.Rm) {
@@ -5781,18 +5906,25 @@ pub const NodeFS = struct {
 
     pub fn stat(this: *NodeFS, args: Arguments.Stat, _: Flavor) Maybe(Return.Stat) {
         const path = args.path.sliceZ(&this.sync_error_buf);
+        traceFS(.{ .call = "stat", .path = path });
+
         if (bun.StandaloneModuleGraph.get()) |graph| {
             if (graph.stat(path)) |*result| {
+                traceFS(.{ .call = "stat", .path = path, .size = result.size, .source = "standalone" });
                 return .{ .result = .{ .stats = .init(&Syscall.PosixStat.init(result), args.big_int) } };
             }
         }
 
         if (Environment.isLinux and Syscall.supports_statx_on_linux.load(.monotonic)) {
             return switch (Syscall.statx(path, &.{ .type, .mode, .nlink, .uid, .gid, .atime, .mtime, .ctime, .btime, .ino, .size, .blocks })) {
-                .result => |result| .{
-                    .result = .{ .stats = .init(&result, args.big_int) },
+                .result => |result| {
+                    traceFS(.{ .call = "stat", .path = path, .size = result.size, .mode = result.mode });
+                    return .{
+                        .result = .{ .stats = .init(&result, args.big_int) },
+                    };
                 },
                 .err => |err| brk: {
+                    traceFS(.{ .call = "stat", .path = path, .errno = err.errno });
                     if (!args.throw_if_no_entry and err.getErrno() == .NOENT) {
                         return .{ .result = .{ .not_found = {} } };
                     }
@@ -5801,10 +5933,14 @@ pub const NodeFS = struct {
             };
         } else {
             return switch (Syscall.stat(path)) {
-                .result => |result| .{
-                    .result = .{ .stats = .init(&Syscall.PosixStat.init(&result), args.big_int) },
+                .result => |result| {
+                    traceFS(.{ .call = "stat", .path = path, .size = result.size, .mode = result.mode });
+                    return .{
+                        .result = .{ .stats = .init(&Syscall.PosixStat.init(&result), args.big_int) },
+                    };
                 },
                 .err => |err| brk: {
+                    traceFS(.{ .call = "stat", .path = path, .errno = err.errno });
                     if (!args.throw_if_no_entry and err.getErrno() == .NOENT) {
                         return .{ .result = .{ .not_found = {} } };
                     }
@@ -5938,14 +6074,26 @@ pub const NodeFS = struct {
     }
 
     pub fn unlink(this: *NodeFS, args: Arguments.Unlink, _: Flavor) Maybe(Return.Unlink) {
+        traceFS(.{ .call = "unlink", .path = args.path.slice() });
+
         if (Environment.isWindows) {
             return switch (Syscall.unlink(args.path.sliceZ(&this.sync_error_buf))) {
-                .err => |err| .{ .err = err.withPath(args.path.slice()) },
-                .result => |result| .{ .result = result },
+                .err => |err| {
+                    traceFS(.{ .call = "unlink", .path = args.path.slice(), .errno = err.errno });
+                    return .{ .err = err.withPath(args.path.slice()) };
+                },
+                .result => |result| {
+                    traceFS(.{ .call = "unlink", .path = args.path.slice(), .success = true });
+                    return .{ .result = result };
+                },
             };
         }
-        return Maybe(Return.Unlink).errnoSysP(system.unlink(args.path.sliceZ(&this.sync_error_buf)), .unlink, args.path.slice()) orelse
-            .success;
+        if (Maybe(Return.Unlink).errnoSysP(system.unlink(args.path.sliceZ(&this.sync_error_buf)), .unlink, args.path.slice())) |err| {
+            traceFS(.{ .call = "unlink", .path = args.path.slice(), .errno = err.err.errno });
+            return err;
+        }
+        traceFS(.{ .call = "unlink", .path = args.path.slice(), .success = true });
+        return .success;
     }
 
     pub fn watchFile(_: *NodeFS, args: Arguments.WatchFile, comptime flavor: Flavor) Maybe(Return.WatchFile) {
@@ -7011,6 +7159,14 @@ const NodeFSFunctionEnum = std.meta.DeclEnum(NodeFS);
 
 const string = []const u8;
 
+// Tracing helper
+inline fn traceFS(args: anytype) void {
+    if (Output.trace_enabled) {
+        const tracer = Output.tracer("fs");
+        tracer.trace(args);
+    }
+}
+
 const DirIterator = @import("./dir_iterator.zig");
 const FileSystem = @import("../../fs.zig").FileSystem;
 
@@ -7019,6 +7175,7 @@ const Environment = bun.Environment;
 const FD = bun.FD;
 const FileDescriptor = bun.FileDescriptor;
 const Mode = bun.Mode;
+const Output = bun.Output;
 const PathString = bun.PathString;
 const c = bun.c;
 const strings = bun.strings;

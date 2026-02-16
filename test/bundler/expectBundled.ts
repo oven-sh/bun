@@ -414,7 +414,7 @@ function expectBundled(
   dryRun = false,
   ignoreFilter = false,
 ): Promise<BundlerTestRef> | BundlerTestRef {
-  if (!new Error().stack!.includes("test/bundler/")) {
+  if (!new Error().stack!.replaceAll("\\", "/").includes("test/bundler/")) {
     throw new Error(
       `All bundler tests must be placed in ./test/bundler/ so that regressions can be quickly detected locally via the 'bun test bundler' command`,
     );

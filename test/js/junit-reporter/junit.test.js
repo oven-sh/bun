@@ -314,6 +314,53 @@ describe("junit reporter", () => {
     expect(xmlContent1).toContain("line=");
     expect(xmlContent2).toContain("line=");
   });
+
+  it("should emit separate testcase entries for each retry attempt", async () => {
+    const tmpDir = tempDirWithFiles("junit-retry", {
+      "package.json": "{}",
+      "flaky.test.js": `
+        import { test, expect } from "bun:test";
+        let attempt = 0;
+        test("flaky test", { retry: 3 }, () => {
+          attempt++;
+          if (attempt < 3) {
+            throw new Error("flaky failure attempt " + attempt);
+          }
+          expect(true).toBe(true);
+        });
+
+        test("stable test", () => {
+          expect(1 + 1).toBe(2);
+        });
+      `,
+    });
+
+    const junitPath = `${tmpDir}/junit.xml`;
+    await using proc = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile", junitPath], {
+      cwd: tmpDir,
+      env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    await proc.exited;
+
+    const xmlContent = await file(junitPath).text();
+
+    // Each retry attempt should be a separate testcase with the same name
+    const flakyTestCases = [...xmlContent.matchAll(/<testcase[^>]*name="flaky test"[^>]*>/g)];
+    expect(flakyTestCases).toHaveLength(3);
+
+    // The first two should have <failure> elements, the last should be self-closing
+    const flakyEntries = [...xmlContent.matchAll(/<testcase[^>]*name="flaky test"[^/]*(?:\/>|>[\s\S]*?<\/testcase>)/g)];
+    expect(flakyEntries).toHaveLength(3);
+    expect(flakyEntries[0][0]).toContain("<failure");
+    expect(flakyEntries[1][0]).toContain("<failure");
+    expect(flakyEntries[2][0]).not.toContain("<failure");
+
+    expect(xmlContent).toContain('name="stable test"');
+
+    expect(proc.exitCode).toBe(0);
+  });
 });
 
 function filterJunitXmlOutput(xmlContent) {

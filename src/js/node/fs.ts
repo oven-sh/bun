@@ -44,6 +44,12 @@ class FSWatcher extends EventEmitter {
   constructor(path, options, listener) {
     super();
 
+    if (path instanceof URL) {
+      path = Bun.fileURLToPath(path);
+    } else if (typeof path === "string" && path.startsWith("file:")) {
+      path = Bun.fileURLToPath(path);
+    }
+
     if (typeof options === "function") {
       listener = options;
       options = {};
@@ -646,6 +652,7 @@ const statWatchers = new Map();
 function getValidatedPath(p: any) {
   if (p instanceof URL) return Bun.fileURLToPath(p as URL);
   if (typeof p !== "string") throw $ERR_INVALID_ARG_TYPE("path", "string or URL", p);
+  if (p.startsWith("file:")) return Bun.fileURLToPath(p);
   return require("node:path").resolve(p);
 }
 function watchFile(filename, options, listener) {

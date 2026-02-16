@@ -249,7 +249,7 @@ fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *bun_test.BunTe
             _ = try bunTest.collection.active_scope.appendTest(bunTest.gpa, description, if (matches_filter) callback else null, .{
                 .has_done_parameter = has_done_parameter,
                 .timeout = options.timeout,
-                .retry_count = options.retry,
+                .retry_count = options.retry orelse 0,
                 .repeat_count = options.repeats,
             }, base, .collection);
         },
@@ -295,7 +295,7 @@ const ParseArgumentsResult = struct {
 };
 const ParseArgumentsOptions = struct {
     timeout: u32 = 0,
-    retry: u32 = 0,
+    retry: ?u32 = null,
     repeats: u32 = 0,
 };
 pub const CallbackMode = enum { require, allow };
@@ -391,7 +391,7 @@ pub fn parseArguments(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame
             if (!repeats.isNumber()) {
                 return globalThis.throwPretty("{f}() expects repeats to be a number", .{signature});
             }
-            if (result.options.retry != 0) {
+            if (result.options.retry != null and result.options.retry.? != 0) {
                 return globalThis.throwPretty("{f}(): Cannot set both retry and repeats", .{signature});
             }
             result.options.repeats = std.math.lossyCast(u32, repeats.asNumber());
@@ -403,6 +403,15 @@ pub fn parseArguments(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame
     }
 
     result.description = if (description.isUndefinedOrNull()) null else try getDescription(gpa, globalThis, description, signature);
+
+    if (result.options.retry == null) {
+        if (bun.jsc.Jest.Jest.runner) |runner| {
+            result.options.retry = runner.test_options.retry;
+        }
+    }
+    if ((result.options.retry orelse 0) != 0 and result.options.repeats != 0) {
+        return globalThis.throwPretty("{f}(): Cannot set both retry and repeats", .{signature});
+    }
 
     const default_timeout_ms: ?u32 = if (bun.jsc.Jest.Jest.runner) |runner| if (runner.default_timeout_ms != 0) runner.default_timeout_ms else null else null;
     const override_timeout_ms: ?u32 = if (bun.jsc.Jest.Jest.runner) |runner| if (runner.default_timeout_override != std.math.maxInt(u32)) runner.default_timeout_override else null else null;

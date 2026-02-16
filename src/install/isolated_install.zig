@@ -18,6 +18,7 @@ pub fn installIsolatedPackages(
         const pkg_dependency_slices = pkgs.items(.dependencies);
         const pkg_resolutions = pkgs.items(.resolution);
         const pkg_names = pkgs.items(.name);
+        const pkg_metas = pkgs.items(.meta);
 
         const resolutions = lockfile.buffers.resolutions.items;
         const dependencies = lockfile.buffers.dependencies.items;
@@ -222,7 +223,12 @@ pub fn installIsolatedPackages(
                         workspace_filters,
                         install_root_dependencies,
                         manager,
-                        lockfile,
+                        pkg_names,
+                        pkg_metas,
+                        pkg_resolutions,
+                        resolutions,
+                        dependencies,
+                        string_buf,
                     )) {
                         continue;
                     }

@@ -790,35 +790,30 @@ pub fn generateChunksInParallel(
 
         // Write standalone HTML files to disk if outdir is specified
         if (root_path.len > 0) {
-            var root_dir = std.fs.cwd().makeOpenPath(root_path, .{}) catch |err| {
-                try c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Failed to create output directory: {s} {f}", .{
-                    @errorName(err),
-                    bun.fmt.quote(root_path),
-                });
-                return err;
-            };
-            defer root_dir.close();
-
             for (result.items) |*item| {
                 if (item.value == .buffer) {
-                    const dest = item.dest_path;
-                    if (std.fs.path.dirname(dest)) |dir| {
-                        root_dir.makePath(dir) catch {};
-                    }
-                    const file = root_dir.createFile(dest, .{}) catch |err| {
-                        try c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Failed to write {f}: {s}", .{
-                            bun.fmt.quote(dest),
-                            @errorName(err),
-                        });
-                        continue;
+                    var buf: bun.PathBuffer = undefined;
+                    const abs_path = bun.path.joinAbsStringBufZ(root_path, &buf, &.{item.dest_path}, .auto);
+                    const file = switch (bun.sys.File.makeOpen(abs_path, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o644)) {
+                        .result => |f| f,
+                        .err => |err| {
+                            try c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Failed to write {f}: {s}", .{
+                                bun.fmt.quote(item.dest_path),
+                                @tagName(err.getErrno()),
+                            });
+                            continue;
+                        },
                     };
                     defer file.close();
-                    file.writeAll(item.value.buffer.bytes) catch |err| {
-                        try c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Failed to write {f}: {s}", .{
-                            bun.fmt.quote(dest),
-                            @errorName(err),
-                        });
-                    };
+                    switch (file.writeAll(item.value.buffer.bytes)) {
+                        .result => {},
+                        .err => |err| {
+                            try c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Failed to write {f}: {s}", .{
+                                bun.fmt.quote(item.dest_path),
+                                @tagName(err.getErrno()),
+                            });
+                        },
+                    }
                 }
             }
         }

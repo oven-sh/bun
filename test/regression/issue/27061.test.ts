@@ -276,4 +276,61 @@ describe("node:http ClientRequest preserves explicit Content-Length", () => {
       server.close();
     }
   });
+
+  test("explicit Transfer-Encoding takes precedence over Content-Length", async () => {
+    const { promise, resolve } = Promise.withResolvers<{
+      contentLength: string | undefined;
+      transferEncoding: string | undefined;
+      bodyLength: number;
+    }>();
+
+    const server = http.createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on("data", (chunk: Buffer) => chunks.push(chunk));
+      req.on("end", () => {
+        resolve({
+          contentLength: req.headers["content-length"],
+          transferEncoding: req.headers["transfer-encoding"],
+          bodyLength: Buffer.concat(chunks).length,
+        });
+        res.writeHead(200);
+        res.end("ok");
+      });
+    });
+
+    await new Promise<void>(res => server.listen(0, "127.0.0.1", res));
+    const port = (server.address() as any).port;
+
+    try {
+      const chunk1 = Buffer.alloc(100, "a");
+      const chunk2 = Buffer.alloc(100, "b");
+
+      const req = http.request({
+        hostname: "127.0.0.1",
+        port,
+        method: "POST",
+        headers: {
+          "Content-Length": "200",
+          "Transfer-Encoding": "chunked",
+        },
+      });
+
+      await new Promise<void>((res, rej) => {
+        req.on("error", rej);
+        req.on("response", () => res());
+        req.write(chunk1);
+        req.write(chunk2);
+        req.end();
+      });
+
+      const result = await promise;
+      // When user explicitly sets Transfer-Encoding, it should be used
+      // and Content-Length should not be added
+      expect(result.transferEncoding).toBe("chunked");
+      expect(result.contentLength).toBeUndefined();
+      expect(result.bodyLength).toBe(200);
+    } finally {
+      server.close();
+    }
+  });
 });

@@ -222,7 +222,7 @@ pub const Linker = struct {
 
         if (comptime is_bun) {
             // make these happen at runtime
-            if (import_record.kind == .require or import_record.kind == .require_resolve) {
+            if (import_record.kind == .require or import_record.kind == .require_resolve or import_record.kind == .dynamic) {
                 return false;
             }
         }

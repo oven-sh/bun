@@ -843,4 +843,60 @@ body {
       api.expectFile("out/" + jsFile).toContain("sourceMappingURL");
     },
   });
+
+  // Test that multiple HTML entrypoints sharing the same CSS file both get
+  // the CSS link tag in production mode (css_chunking deduplication).
+  // Regression test for https://github.com/oven-sh/bun/issues/23668
+  itBundled("html/SharedCSSProductionMultipleEntries", {
+    outdir: "out/",
+    production: true,
+    files: {
+      "/entry1.html": `<!doctype html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./global.css" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script src="./main1.tsx"></script>
+  </body>
+</html>`,
+      "/entry2.html": `<!doctype html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./global.css" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script src="./main2.tsx"></script>
+  </body>
+</html>`,
+      "/global.css": `h1 { font-size: 24px; }`,
+      "/main1.tsx": `console.log("entry1");`,
+      "/main2.tsx": `console.log("entry2");`,
+    },
+    entryPoints: ["/entry1.html", "/entry2.html"],
+    onAfterBundle(api) {
+      const entry1Html = api.readFile("out/entry1.html");
+      const entry2Html = api.readFile("out/entry2.html");
+
+      // Both HTML files must contain a CSS link tag
+      const cssMatch1 = entry1Html.match(/href="(.*\.css)"/);
+      const cssMatch2 = entry2Html.match(/href="(.*\.css)"/);
+
+      expect(cssMatch1).not.toBeNull();
+      expect(cssMatch2).not.toBeNull();
+
+      // Both should reference the same deduplicated CSS chunk
+      expect(cssMatch1![1]).toBe(cssMatch2![1]);
+
+      // The CSS file should contain the shared styles
+      const cssContent = api.readFile("out/" + cssMatch1![1]);
+      expect(cssContent).toContain("font-size");
+
+      // Both HTML files should also have their respective JS bundles
+      expect(entry1Html).toMatch(/src=".*\.js"/);
+      expect(entry2Html).toMatch(/src=".*\.js"/);
+    },
+  });
 });

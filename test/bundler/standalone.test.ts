@@ -116,14 +116,53 @@ console.log(x);`,
     expect(styleCloseCount).toBe(1);
   });
 
-  test("bundles multiple nested imports into single inline script", async () => {
-    using dir = tempDir("compile-browser-nested", {
+  test("deep import chain with re-exports and multiple files", async () => {
+    using dir = tempDir("compile-browser-deep-chain", {
       "index.html": `<!DOCTYPE html><html><body><script src="./app.js"></script></body></html>`,
-      "app.js": `import { greet } from "./utils.js";
-import { format } from "./format.js";
-console.log(format(greet("world")));`,
-      "utils.js": `export function greet(name) { return "Hello, " + name; }`,
-      "format.js": `export function format(msg) { return "[" + msg + "]"; }`,
+      "app.js": `import { renderApp } from "./components/App.js";
+import { initRouter } from "./router/index.js";
+import { createStore } from "./store/index.js";
+
+const store = createStore({ count: 0 });
+initRouter(store);
+renderApp(store);`,
+      "components/App.js": `import { Header } from "./Header.js";
+import { Footer } from "./Footer.js";
+import { Counter } from "./Counter.js";
+
+export function renderApp(store) {
+  document.body.innerHTML = Header() + Counter(store) + Footer();
+}`,
+      "components/Header.js": `import { APP_NAME } from "../config.js";
+export function Header() { return "<header>" + APP_NAME + "</header>"; }`,
+      "components/Footer.js": `import { APP_VERSION } from "../config.js";
+export function Footer() { return "<footer>v" + APP_VERSION + "</footer>"; }`,
+      "components/Counter.js": `import { formatNumber } from "../utils/format.js";
+export function Counter(store) {
+  return "<div>Count: " + formatNumber(store.count) + "</div>";
+}`,
+      "router/index.js": `import { parseRoute } from "./parser.js";
+import { matchRoute } from "./matcher.js";
+export function initRouter(store) {
+  const route = parseRoute(window.location.pathname);
+  matchRoute(route, store);
+}`,
+      "router/parser.js": `export function parseRoute(path) {
+  return path.split("/").filter(Boolean);
+}`,
+      "router/matcher.js": `import { log } from "../utils/logger.js";
+export function matchRoute(route, store) {
+  log("Matching route: " + route.join("/"));
+}`,
+      "store/index.js": `import { log } from "../utils/logger.js";
+export function createStore(initial) {
+  log("Store created");
+  return { ...initial };
+}`,
+      "utils/format.js": `export function formatNumber(n) { return n.toLocaleString(); }`,
+      "utils/logger.js": `export function log(msg) { console.log("[LOG] " + msg); }`,
+      "config.js": `export const APP_NAME = "MyApp";
+export const APP_VERSION = "1.0.0";`,
     });
 
     const result = await Bun.build({
@@ -136,20 +175,34 @@ console.log(format(greet("world")));`,
     expect(result.outputs.length).toBe(1);
 
     const html = await result.outputs[0].text();
-    // All modules should be bundled and inlined
-    expect(html).toContain("Hello, ");
-    expect(html).toContain("greet");
-    expect(html).toContain("format");
-    // Only one script tag
+    // All modules from the deep chain should be bundled
+    expect(html).toContain("MyApp");
+    expect(html).toContain("1.0.0");
+    expect(html).toContain("renderApp");
+    expect(html).toContain("initRouter");
+    expect(html).toContain("createStore");
+    expect(html).toContain("formatNumber");
+    expect(html).toContain("[LOG]");
+    // Single output, no external refs
     expect(html).not.toContain('src="');
+    expect(html).toContain('<script type="module">');
   });
 
-  test("CSS imported from JS is inlined", async () => {
-    using dir = tempDir("compile-browser-css-from-js", {
-      "index.html": `<!DOCTYPE html><html><body><script src="./app.js"></script></body></html>`,
-      "app.js": `import "./style.css";
-console.log("styled");`,
-      "style.css": `body { background: green; }`,
+  test("CSS imported from JS and via link tag (deduplicated)", async () => {
+    using dir = tempDir("compile-browser-css-dedup", {
+      "index.html": `<!DOCTYPE html>
+<html>
+<head><link rel="stylesheet" href="./shared.css"></head>
+<body><script src="./app.js"></script></body>
+</html>`,
+      "app.js": `import "./shared.css";
+import "./components.css";
+console.log("app with css");`,
+      "shared.css": `body { margin: 0; font-family: sans-serif; }`,
+      "components.css": `@import "./buttons.css";
+.card { border: 1px solid #ccc; padding: 16px; }`,
+      "buttons.css": `.btn { padding: 8px 16px; cursor: pointer; }
+.btn-primary { background: #007bff; color: white; }`,
     });
 
     const result = await Bun.build({
@@ -163,19 +216,33 @@ console.log("styled");`,
 
     const html = await result.outputs[0].text();
     expect(html).toContain("<style>");
-    expect(html).toContain("background:");
-    expect(html).toContain("green");
     expect(html).toContain("</style>");
-    expect(html).toContain('console.log("styled")');
+    // shared.css content
+    expect(html).toContain("font-family:");
+    expect(html).toContain("sans-serif");
+    // components.css content
+    expect(html).toContain(".card");
+    expect(html).toContain("padding:");
+    // nested buttons.css content
+    expect(html).toContain(".btn");
+    expect(html).toContain(".btn-primary");
+    expect(html).toContain("cursor: pointer");
+    // JS should be inlined
+    expect(html).toContain('console.log("app with css")');
+    // No external refs
+    expect(html).not.toContain('href="');
+    expect(html).not.toContain("@import");
   });
 
-  test("nested CSS @import is inlined", async () => {
-    using dir = tempDir("compile-browser-css-import", {
+  test("nested CSS @import chain", async () => {
+    using dir = tempDir("compile-browser-css-chain", {
       "index.html": `<!DOCTYPE html>
 <html><head><link rel="stylesheet" href="./main.css"></head><body></body></html>`,
       "main.css": `@import "./base.css";
 body { color: blue; }`,
-      "base.css": `* { margin: 0; box-sizing: border-box; }`,
+      "base.css": `@import "./reset.css";
+* { box-sizing: border-box; }`,
+      "reset.css": `html, body { margin: 0; padding: 0; }`,
     });
 
     const result = await Bun.build({
@@ -187,10 +254,10 @@ body { color: blue; }`,
     expect(result.success).toBe(true);
     const html = await result.outputs[0].text();
     expect(html).toContain("<style>");
-    // Both CSS files should be bundled together
+    // All three CSS files bundled together
     expect(html).toContain("margin: 0");
+    expect(html).toContain("padding: 0");
     expect(html).toContain("box-sizing: border-box");
-    // CSS bundler may normalize color values (e.g., blue -> #00f)
     expect(html).toMatch(/color:?\s*(blue|#00f)/);
     expect(html).not.toContain("@import");
   });

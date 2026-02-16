@@ -402,7 +402,9 @@ pub fn reschedule(this: *TimerObjectInternals, timer: JSValue, vm: *VirtualMachi
     // https://github.com/nodejs/node/blob/a7cbb904745591c9a9d047a364c2c188e5470047/lib/internal/timers.js#L612
     if (!this.shouldRescheduleTimer(repeat, idle_timeout)) return;
 
-    const now = timespec.now(.allow_mocked_time);
+    // Use cached time so that multiple timers scheduled in the same event loop
+    // tick get the same base time (matching Node.js's uv_update_time behavior).
+    const now = vm.timer.getCachedNow();
     const scheduled_time = now.addMs(this.interval);
     const was_active = this.eventLoopTimer().state == .ACTIVE;
     if (was_active) {

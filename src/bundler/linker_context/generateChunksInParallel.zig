@@ -394,7 +394,9 @@ pub fn generateChunksInParallel(
     var static_route_visitor = StaticRouteVisitor{ .c = c, .visited = bun.handleOom(bun.bit_set.AutoBitSet.initEmpty(bun.default_allocator, c.graph.files.len)) };
     defer static_route_visitor.deinit();
 
-    // For standalone mode, resolve JS/CSS chunks first so we can inline their content into HTML
+    // For standalone mode, resolve JS/CSS chunks so we can inline their content into HTML.
+    // Closing tag escaping (</script → <\\/script, </style → <\\/style) is handled during
+    // the HTML assembly step in codeWithSourceMapShifts, not here.
     var standalone_chunk_contents: ?[]?[]const u8 = null;
     defer if (standalone_chunk_contents) |scc| {
         for (scc) |maybe_buf| {
@@ -411,11 +413,10 @@ pub fn generateChunksInParallel(
         @memset(scc, null);
         standalone_chunk_contents = scc;
 
-        // First pass: resolve JS and CSS chunks
         for (chunks, 0..) |*chunk_item, ci| {
-            if (chunk_item.content == .html) continue; // Skip HTML chunks for now
+            if (chunk_item.content == .html) continue;
             var ds: usize = 0;
-            const code_res = chunk_item.intermediate_output.code(
+            scc[ci] = (chunk_item.intermediate_output.code(
                 null,
                 c.parse_graph,
                 &c.graph,
@@ -425,17 +426,7 @@ pub fn generateChunksInParallel(
                 &ds,
                 false,
                 false,
-            ) catch |err| bun.handleOom(err);
-
-            // Escape closing tags that would break inline HTML:
-            // </script → <\/script (for JS chunks)
-            // </style → <\/style (for CSS chunks)
-            const close_tag: []const u8 = switch (chunk_item.content) {
-                .javascript => "</script",
-                .css => "</style",
-                .html => unreachable,
-            };
-            scc[ci] = escapeClosingTags(code_res.buffer, close_tag);
+            ) catch |err| bun.handleOom(err)).buffer;
         }
     }
 
@@ -811,61 +802,6 @@ pub fn generateChunksInParallel(
 pub const ThreadPool = bun.bundle_v2.ThreadPool;
 
 const debugPartRanges = Output.scoped(.PartRanges, .hidden);
-
-/// Escape closing HTML tags in inline content to prevent breaking the HTML structure.
-/// For JS chunks, replaces `</script` (case-insensitive) with `<\/script`.
-/// For CSS chunks, replaces `</style` (case-insensitive) with `<\/style`.
-///
-/// Uses `Chunk.IntermediateOutput.allocatorForSize` for both freeing the original buffer
-/// and allocating the replacement, so the returned buffer can always be freed with
-/// `allocatorForSize(buf.len)`. Returns `content` unchanged when no escaping is needed.
-fn escapeClosingTags(content: []u8, close_tag: []const u8) []u8 {
-    const tag_suffix = close_tag[2..]; // e.g. "script" or "style" (skip "</")
-
-    // Count occurrences to determine new buffer size.
-    var count: usize = 0;
-    var remaining: []const u8 = content;
-    while (strings.indexOf(remaining, "</")) |idx| {
-        remaining = remaining[idx + 2 ..];
-        if (remaining.len >= tag_suffix.len and
-            strings.eqlCaseInsensitiveASCIIIgnoreLength(remaining[0..tag_suffix.len], tag_suffix))
-        {
-            count += 1;
-            remaining = remaining[tag_suffix.len..];
-        }
-    }
-    if (count == 0) return content;
-
-    // Allocate new buffer: each `</` → `<\/` adds 1 byte.
-    const new_len = content.len + count;
-    const result = bun.handleOom(Chunk.IntermediateOutput.allocatorForSize(new_len).alloc(u8, new_len));
-
-    remaining = content;
-    var dst: usize = 0;
-    while (strings.indexOf(remaining, "</")) |idx| {
-        @memcpy(result[dst..][0..idx], remaining[0..idx]);
-        dst += idx;
-        remaining = remaining[idx + 2 ..];
-
-        if (remaining.len >= tag_suffix.len and
-            strings.eqlCaseInsensitiveASCIIIgnoreLength(remaining[0..tag_suffix.len], tag_suffix))
-        {
-            result[dst] = '<';
-            result[dst + 1] = '\\';
-            result[dst + 2] = '/';
-            dst += 3;
-        } else {
-            result[dst] = '<';
-            result[dst + 1] = '/';
-            dst += 2;
-        }
-    }
-    @memcpy(result[dst..][0..remaining.len], remaining);
-    dst += remaining.len;
-
-    Chunk.IntermediateOutput.allocatorForSize(content.len).free(content);
-    return result[0..dst];
-}
 
 const analyze_transpiled_module = @import("../../analyze_transpiled_module.zig");
 const std = @import("std");

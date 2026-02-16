@@ -55,6 +55,16 @@ pub const Chunk = struct {
         return this.entry_point.is_entry_point;
     }
 
+    /// Returns the HTML closing tag that must be escaped when this chunk's content
+    /// is inlined into a standalone HTML file (e.g. "</script" for JS, "</style" for CSS).
+    pub fn closingTagForContent(this: *const Chunk) []const u8 {
+        return switch (this.content) {
+            .javascript => "</script",
+            .css => "</style",
+            .html => unreachable,
+        };
+    }
+
     pub fn getJSChunkForHTML(this: *const Chunk, chunks: []Chunk) ?*Chunk {
         const entry_point_id = this.entry_point.entry_point_id;
         for (chunks) |*other| {
@@ -135,6 +145,54 @@ pub const Chunk = struct {
                 return std.heap.page_allocator
             else
                 return bun.default_allocator;
+        }
+
+        /// Count occurrences of a closing HTML tag (e.g. `</script`, `</style`) in content.
+        /// Used to calculate the extra bytes needed when escaping `</` → `<\/`.
+        fn countClosingTags(content: []const u8, close_tag: []const u8) usize {
+            const tag_suffix = close_tag[2..];
+            var count: usize = 0;
+            var remaining = content;
+            while (strings.indexOf(remaining, "</")) |idx| {
+                remaining = remaining[idx + 2 ..];
+                if (remaining.len >= tag_suffix.len and
+                    strings.eqlCaseInsensitiveASCIIIgnoreLength(remaining[0..tag_suffix.len], tag_suffix))
+                {
+                    count += 1;
+                    remaining = remaining[tag_suffix.len..];
+                }
+            }
+            return count;
+        }
+
+        /// Copy `content` into `dest`, escaping occurrences of `close_tag` by
+        /// replacing `</` with `<\/`. Returns the number of bytes written.
+        /// Caller must ensure `dest` has room for `content.len + countClosingTags(...)` bytes.
+        fn memcpyEscapingClosingTags(dest: []u8, content: []const u8, close_tag: []const u8) usize {
+            const tag_suffix = close_tag[2..];
+            var remaining = content;
+            var dst: usize = 0;
+            while (strings.indexOf(remaining, "</")) |idx| {
+                @memcpy(dest[dst..][0..idx], remaining[0..idx]);
+                dst += idx;
+                remaining = remaining[idx + 2 ..];
+
+                if (remaining.len >= tag_suffix.len and
+                    strings.eqlCaseInsensitiveASCIIIgnoreLength(remaining[0..tag_suffix.len], tag_suffix))
+                {
+                    dest[dst] = '<';
+                    dest[dst + 1] = '\\';
+                    dest[dst + 2] = '/';
+                    dst += 3;
+                } else {
+                    dest[dst] = '<';
+                    dest[dst + 1] = '/';
+                    dst += 2;
+                }
+            }
+            @memcpy(dest[dst..][0..remaining.len], remaining);
+            dst += remaining.len;
+            return dst;
         }
 
         pub const CodeResult = struct {
@@ -268,7 +326,9 @@ pub const Chunk = struct {
                                     switch (piece.query.kind) {
                                         .chunk => {
                                             if (scc[index]) |content| {
-                                                count += content.len;
+                                                // Account for escaping </script or </style inside inline content.
+                                                // Each occurrence of the closing tag adds 1 byte (`</` → `<\/`).
+                                                count += content.len + countClosingTags(content, chunks[index].closingTagForContent());
                                                 continue;
                                             }
                                         },
@@ -369,8 +429,15 @@ pub const Chunk = struct {
                                             shift.after.advance(content);
                                             shifts.appendAssumeCapacity(shift);
                                         }
-                                        @memcpy(remain[0..content.len], content);
-                                        remain = remain[content.len..];
+                                        // For chunk content, escape closing tags (</script, </style)
+                                        // that would prematurely terminate the inline tag.
+                                        if (piece.query.kind == .chunk) {
+                                            const written = memcpyEscapingClosingTags(remain, content, chunks[index].closingTagForContent());
+                                            remain = remain[written..];
+                                        } else {
+                                            @memcpy(remain[0..content.len], content);
+                                            remain = remain[content.len..];
+                                        }
                                         continue;
                                     }
                                 }

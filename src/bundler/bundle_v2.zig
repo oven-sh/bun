@@ -690,6 +690,10 @@ pub const BundleV2 = struct {
             // TODO: outbase
             const rel = bun.path.relativePlatform(transpiler.fs.top_level_dir, path.text, .loose, false);
             path.pretty = bun.handleOom(this.allocator().dupe(u8, rel));
+        } else if (Environment.isWindows and !path.isPrettyPathPosix()) {
+            const pretty = bun.handleOom(this.allocator().dupe(u8, path.pretty));
+            bun.path.platformToPosixInPlace(u8, pretty);
+            path.pretty = pretty;
         }
         path.assertPrettyIsValid();
 

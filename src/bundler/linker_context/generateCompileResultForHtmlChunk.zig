@@ -50,6 +50,7 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
             html: ?u32 = 0,
         },
         added_head_tags: bool,
+        added_body_script: bool,
 
         pub fn onWriteHTML(this: *@This(), bytes: []const u8) void {
             bun.handleOom(this.output.appendSlice(bytes));
@@ -155,19 +156,27 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
                 try endTag.before(slice, true);
         }
 
+        /// Insert inline script before </body> so DOM elements are available.
+        fn addBodyTags(this: *@This(), endTag: *lol.EndTag) !void {
+            if (this.added_body_script) return;
+            this.added_body_script = true;
+
+            var html_appender = std.heap.stackFallback(256, bun.default_allocator);
+            const allocator = html_appender.get();
+            if (this.chunk.getJSChunkForHTML(this.chunks)) |js_chunk| {
+                const script = bun.handleOom(std.fmt.allocPrintSentinel(allocator, "<script type=\"module\">{s}</script>", .{js_chunk.unique_key}, 0));
+                defer allocator.free(script);
+                try endTag.before(script, true);
+            }
+        }
+
         fn getHeadTags(this: *@This(), allocator: std.mem.Allocator) bun.BoundedArray([]const u8, 2) {
             var array: bun.BoundedArray([]const u8, 2) = .{};
             if (this.compile_to_standalone_html) {
-                // In standalone HTML mode, inline CSS and JS directly into the HTML
+                // In standalone HTML mode, only put CSS in <head>; JS goes before </body>
                 if (this.chunk.getCSSChunkForHTML(this.chunks)) |css_chunk| {
-                    // Emit <style>UNIQUE_KEY</style> - the unique key will be replaced with actual CSS content
                     const style_tag = bun.handleOom(std.fmt.allocPrintSentinel(allocator, "<style>{s}</style>", .{css_chunk.unique_key}, 0));
                     array.appendAssumeCapacity(style_tag);
-                }
-                if (this.chunk.getJSChunkForHTML(this.chunks)) |js_chunk| {
-                    // Emit <script type="module">UNIQUE_KEY</script> - the unique key will be replaced with actual JS content
-                    const script = bun.handleOom(std.fmt.allocPrintSentinel(allocator, "<script type=\"module\">{s}</script>", .{js_chunk.unique_key}, 0));
-                    array.appendAssumeCapacity(script);
                 }
             } else {
                 // Put CSS before JS to reduce chances of flash of unstyled content
@@ -197,7 +206,12 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
         fn endBodyTagHandler(end: *lol.EndTag, opaque_this: ?*anyopaque) callconv(.c) lol.Directive {
             const this: *@This() = @ptrCast(@alignCast(opaque_this.?));
             if (this.linker.dev_server == null) {
-                this.addHeadTags(end) catch return .stop;
+                if (this.compile_to_standalone_html) {
+                    // In standalone mode, insert JS before </body> so DOM is available
+                    this.addBodyTags(end) catch return .stop;
+                } else {
+                    this.addHeadTags(end) catch return .stop;
+                }
             } else {
                 this.end_tag_indices.body = @intCast(this.output.items.len);
             }
@@ -207,7 +221,13 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
         fn endHtmlTagHandler(end: *lol.EndTag, opaque_this: ?*anyopaque) callconv(.c) lol.Directive {
             const this: *@This() = @ptrCast(@alignCast(opaque_this.?));
             if (this.linker.dev_server == null) {
-                this.addHeadTags(end) catch return .stop;
+                if (this.compile_to_standalone_html) {
+                    // Fallback: if no </body> was found, insert both CSS and JS before </html>
+                    this.addHeadTags(end) catch return .stop;
+                    this.addBodyTags(end) catch return .stop;
+                } else {
+                    this.addHeadTags(end) catch return .stop;
+                }
             } else {
                 this.end_tag_indices.html = @intCast(this.output.items.len);
             }
@@ -237,6 +257,7 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
             .head = null,
         },
         .added_head_tags = false,
+        .added_body_script = false,
     };
 
     HTMLScanner.HTMLProcessor(HTMLLoader, true).run(

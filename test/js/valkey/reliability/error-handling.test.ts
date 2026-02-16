@@ -103,7 +103,7 @@ describe.skipIf(!isEnabled)("Valkey: Error Handling", () => {
       // Undefined command
       // @ts-expect-error: Testing runtime behavior with invalid types
       expect(async () => await client.send(undefined, [])).toThrowErrorMatchingInlineSnapshot(
-        `"ERR unknown command 'undefined', with args beginning with: "`,
+        `"ERR unknown command 'undefined'"`,
       );
 
       // Invalid args type
@@ -114,9 +114,7 @@ describe.skipIf(!isEnabled)("Valkey: Error Handling", () => {
 
       // Non-string command
       // @ts-expect-error: Testing runtime behavior with invalid types
-      expect(async () => await client.send(123, [])).toThrowErrorMatchingInlineSnapshot(
-        `"ERR unknown command '123', with args beginning with: "`,
-      );
+      expect(async () => await client.send(123, [])).toThrowErrorMatchingInlineSnapshot(`"ERR unknown command '123'"`);
     });
   });
 

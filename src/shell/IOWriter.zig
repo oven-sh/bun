@@ -70,7 +70,7 @@ pub const Poll = WriterImpl;
 // pub fn __onClose(_: *IOWriter) void {}
 // pub fn __flush(_: *IOWriter) void {}
 
-pub fn refSelf(this: *IOWriter) *IOWriter {
+pub fn dupeRef(this: *IOWriter) *IOWriter {
     this.ref();
     return this;
 }
@@ -459,6 +459,10 @@ pub fn onError(this: *IOWriter, err__: bun.sys.Error) void {
     this.setWriting(false);
     const ee = err__.toShellSystemError();
     this.err = ee;
+    // Track broken pipe state for future enqueue calls
+    if (err__.getErrno() == .PIPE) {
+        this.flags.broken_pipe = true;
+    }
     log("IOWriter(0x{x}, fd={f}) onError errno={s} errmsg={f} errsyscall={f}", .{ @intFromPtr(this), this.fd, @tagName(ee.getErrno()), ee.message, ee.syscall });
     var seen_alloc = std.heap.stackFallback(@sizeOf(usize) * 64, bun.default_allocator);
     var seen = bun.handleOom(std.array_list.Managed(usize).initCapacity(seen_alloc.get(), 64));
@@ -779,10 +783,7 @@ fn tryWriteWithWriteFn(fd: bun.FileDescriptor, buf: []const u8, comptime write_f
                     return .{ .pending = offset };
                 }
 
-                if (err.getErrno() == .PIPE) {
-                    return .{ .done = offset };
-                }
-
+                // Return EPIPE as an error so it propagates properly.
                 return .{ .err = err };
             },
 

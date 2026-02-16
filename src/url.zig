@@ -815,6 +815,20 @@ pub const PercentEncoding = struct {
         return @call(bun.callmod_inline, decodeFaultTolerant, .{ Writer, writer, input, null, false });
     }
 
+    /// Decode percent-encoded input into allocated memory.
+    /// Caller owns the returned slice and must free it with the same allocator.
+    pub fn decodeAlloc(allocator: std.mem.Allocator, input: string) ![]u8 {
+        // Allocate enough space - decoded will be at most input.len bytes
+        const buf = try allocator.alloc(u8, input.len);
+        errdefer allocator.free(buf);
+
+        var stream = std.io.fixedBufferStream(buf);
+        const writer = stream.writer();
+        const len = try decode(@TypeOf(writer), writer, input);
+
+        return buf[0..len];
+    }
+
     pub fn decodeFaultTolerant(
         comptime Writer: type,
         writer: Writer,

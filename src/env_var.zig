@@ -65,6 +65,12 @@ pub const BUN_RUNTIME_TRANSPILER_CACHE_PATH = New(kind.string, "BUN_RUNTIME_TRAN
 pub const BUN_SKIP_SHELL_CONFIG = New(kind.boolean, "BUN_SKIP_SHELL_CONFIG", .{ .default = false });
 pub const BUN_SSG_DISABLE_STATIC_ROUTE_VISITOR = New(kind.boolean, "BUN_SSG_DISABLE_STATIC_ROUTE_VISITOR", .{ .default = false });
 pub const BUN_TCC_OPTIONS = New(kind.string, "BUN_TCC_OPTIONS", .{});
+/// Standard C compiler environment variable for include paths (colon-separated).
+/// Used by bun:ffi's TinyCC integration for systems like NixOS.
+pub const C_INCLUDE_PATH = PlatformSpecificNew(kind.string, "C_INCLUDE_PATH", null, .{});
+/// Standard C compiler environment variable for library paths (colon-separated).
+/// Used by bun:ffi's TinyCC integration for systems like NixOS.
+pub const LIBRARY_PATH = PlatformSpecificNew(kind.string, "LIBRARY_PATH", null, .{});
 pub const BUN_TMPDIR = New(kind.string, "BUN_TMPDIR", .{});
 pub const BUN_TRACK_LAST_FN_NAME = New(kind.boolean, "BUN_TRACK_LAST_FN_NAME", .{ .default = false });
 pub const BUN_TRACY_PATH = New(kind.string, "BUN_TRACY_PATH", .{});
@@ -110,11 +116,11 @@ pub const SHELL = PlatformSpecificNew(kind.string, "SHELL", null, .{});
 /// C:\Windows, for example.
 /// Note: Do not use this variable directly -- use os.zig's implementation instead.
 pub const SYSTEMROOT = PlatformSpecificNew(kind.string, null, "SYSTEMROOT", .{});
-pub const TEMP = PlatformSpecificNew(kind.string, null, "TEMP", .{});
+pub const TEMP = PlatformSpecificNew(kind.string, "TEMP", "TEMP", .{});
 pub const TERM = New(kind.string, "TERM", .{});
 pub const TERM_PROGRAM = New(kind.string, "TERM_PROGRAM", .{});
-pub const TMP = PlatformSpecificNew(kind.string, null, "TMP", .{});
-pub const TMPDIR = PlatformSpecificNew(kind.string, "TMPDIR", null, .{});
+pub const TMP = PlatformSpecificNew(kind.string, "TMP", "TMP", .{});
+pub const TMPDIR = PlatformSpecificNew(kind.string, "TMPDIR", "TMPDIR", .{});
 pub const TMUX = New(kind.string, "TMUX", .{});
 pub const TODIUM = New(kind.string, "TODIUM", .{});
 pub const USER = PlatformSpecificNew(kind.string, "USER", "USERNAME", .{});
@@ -599,6 +605,16 @@ fn PlatformSpecificNew(
                 return windows_key;
             }
 
+            return null;
+        }
+
+        pub fn getNotEmpty() ReturnType {
+            if (Self.get()) |v| {
+                if (v.len == 0) {
+                    return null;
+                }
+                return v;
+            }
             return null;
         }
 

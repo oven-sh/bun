@@ -295,9 +295,9 @@ pub const Async = struct {
                 var promise_value = this.promise.value();
                 var promise = this.promise.get();
                 const result = switch (this.result) {
-                    .err => |err| err.toJS(globalObject),
+                    .err => |err| err.toJS(globalObject) catch |e| return promise.reject(globalObject, globalObject.takeException(e)),
                     .result => |*res| brk: {
-                        break :brk globalObject.toJS(res) catch return promise.reject(globalObject, error.JSError);
+                        break :brk globalObject.toJS(res) catch |e| return promise.reject(globalObject, globalObject.takeException(e));
                     },
                 };
                 promise_value.ensureStillAlive();
@@ -399,9 +399,9 @@ pub const Async = struct {
                 var promise_value = this.promise.value();
                 var promise = this.promise.get();
                 const result = switch (this.result) {
-                    .err => |err| err.toJS(globalObject),
+                    .err => |err| err.toJS(globalObject) catch |e| return promise.reject(globalObject, globalObject.takeException(e)),
                     .result => |*res| brk: {
-                        break :brk globalObject.toJS(res) catch return promise.reject(globalObject, error.JSError);
+                        break :brk globalObject.toJS(res) catch |e| return promise.reject(globalObject, globalObject.takeException(e));
                     },
                 };
                 promise_value.ensureStillAlive();
@@ -667,9 +667,9 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             var promise_value = this.promise.value();
             var promise = this.promise.get();
             const result = switch (this.result) {
-                .err => |err| err.toJS(globalObject),
+                .err => |err| err.toJS(globalObject) catch |e| return promise.reject(globalObject, globalObject.takeException(e)),
                 .result => |*res| brk: {
-                    break :brk globalObject.toJS(res) catch return promise.reject(globalObject, error.JSError);
+                    break :brk globalObject.toJS(res) catch |e| return promise.reject(globalObject, globalObject.takeException(e));
                 },
             };
             promise_value.ensureStillAlive();
@@ -1217,13 +1217,13 @@ pub const AsyncReaddirRecursiveTask = struct {
         const success = this.pending_err == null;
         var promise_value = this.promise.value();
         var promise = this.promise.get();
-        const result = if (this.pending_err) |*err| err.toJS(globalObject) else brk: {
+        const result = if (this.pending_err) |*err| (err.toJS(globalObject) catch |e| return promise.reject(globalObject, globalObject.takeException(e))) else brk: {
             const res = switch (this.result_list) {
                 .with_file_types => |*res| Return.Readdir{ .with_file_types = res.moveToUnmanaged().items },
                 .buffers => |*res| Return.Readdir{ .buffers = res.moveToUnmanaged().items },
                 .files => |*res| Return.Readdir{ .files = res.moveToUnmanaged().items },
             };
-            break :brk res.toJS(globalObject) catch return promise.reject(globalObject, error.JSError);
+            break :brk res.toJS(globalObject) catch |e| return promise.reject(globalObject, globalObject.takeException(e));
         };
         promise_value.ensureStillAlive();
 
@@ -2829,7 +2829,9 @@ pub const Arguments = struct {
             // String objects not allowed (typeof new String("hi") === "object")
             // https://github.com/nodejs/node/blob/6f946c95b9da75c70e868637de8161bc8d048379/lib/internal/fs/utils.js#L916
             const allow_string_object = false;
-            const data = try StringOrBuffer.fromJSWithEncodingMaybeAsync(ctx, bun.default_allocator, data_value, encoding, arguments.will_be_async, allow_string_object) orelse {
+            // the pattern in node_fs.zig is to call toThreadSafe after Arguments.*.fromJS
+            const is_async = false;
+            const data = try StringOrBuffer.fromJSWithEncodingMaybeAsync(ctx, bun.default_allocator, data_value, encoding, is_async, allow_string_object) orelse {
                 return ctx.ERR(.INVALID_ARG_TYPE, "The \"data\" argument must be of type string or an instance of Buffer, TypedArray, or DataView", .{}).throw();
             };
 
@@ -3157,9 +3159,9 @@ pub const StringOrUndefined = union(enum) {
     string: bun.String,
     none: void,
 
-    pub fn toJS(this: *StringOrUndefined, globalObject: *jsc.JSGlobalObject) jsc.JSValue {
+    pub fn toJS(this: *StringOrUndefined, globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
         return switch (this.*) {
-            .string => this.string.transferToJS(globalObject),
+            .string => try this.string.transferToJS(globalObject),
             .none => .js_undefined,
         };
     }
@@ -3678,8 +3680,12 @@ pub const NodeFS = struct {
                     if (ret.errnoSysP(written, .copy_file_range, dest)) |err| {
                         return switch (err.getErrno()) {
                             .INTR => continue,
-                            inline .XDEV, .NOSYS => |errno| brk: {
-                                if (comptime errno == .NOSYS) {
+                            // EINVAL: eCryptfs and other filesystems may not support copy_file_range
+                            // XDEV: cross-device copy not supported
+                            // NOSYS: syscall not available
+                            // OPNOTSUPP: filesystem doesn't support this operation
+                            inline .XDEV, .NOSYS, .INVAL, .OPNOTSUPP => |errno| brk: {
+                                if (comptime errno == .NOSYS or errno == .OPNOTSUPP) {
                                     bun.disableCopyFileRangeSyscall();
                                 }
                                 break :brk copyFileUsingSendfileOnLinuxWithReadWriteFallback(src, dest, src_fd, dest_fd, size, &wrote);
@@ -3699,8 +3705,12 @@ pub const NodeFS = struct {
                     if (ret.errnoSysP(written, .copy_file_range, dest)) |err| {
                         return switch (err.getErrno()) {
                             .INTR => continue,
-                            inline .XDEV, .NOSYS => |errno| brk: {
-                                if (comptime errno == .NOSYS) {
+                            // EINVAL: eCryptfs and other filesystems may not support copy_file_range
+                            // XDEV: cross-device copy not supported
+                            // NOSYS: syscall not available
+                            // OPNOTSUPP: filesystem doesn't support this operation
+                            inline .XDEV, .NOSYS, .INVAL, .OPNOTSUPP => |errno| brk: {
+                                if (comptime errno == .NOSYS or errno == .OPNOTSUPP) {
                                     bun.disableCopyFileRangeSyscall();
                                 }
                                 break :brk copyFileUsingSendfileOnLinuxWithReadWriteFallback(src, dest, src_fd, dest_fd, size, &wrote);
@@ -4489,10 +4499,19 @@ pub const NodeFS = struct {
                 switch (ExpectedType) {
                     jsc.Node.Dirent => {
                         dirent_path.ref();
+                        // On filesystems that return DT_UNKNOWN (e.g. FUSE, bind mounts),
+                        // fall back to lstat to determine the real file kind.
+                        const kind = if (current.kind == .unknown)
+                            switch (Syscall.lstatat(fd, current.name.sliceAssumeZ())) {
+                                .result => |st| bun.sys.kindFromMode(@intCast(st.mode)),
+                                .err => current.kind,
+                            }
+                        else
+                            current.kind;
                         entries.append(.{
                             .name = jsc.WebCore.encoding.toBunString(utf8_name, args.encoding),
                             .path = dirent_path,
-                            .kind = current.kind,
+                            .kind = kind,
                         }) catch |err| bun.handleOom(err);
                     },
                     Buffer => {
@@ -4617,6 +4636,9 @@ pub const NodeFS = struct {
                 break :brk bun.path.joinZBuf(buf, &path_parts, .auto);
             };
 
+            // Track effective kind - may be resolved from .unknown via stat
+            var effective_kind = current.kind;
+
             enqueue: {
                 switch (current.kind) {
                     // a symlink might be a directory or might not be
@@ -4636,6 +4658,24 @@ pub const NodeFS = struct {
 
                         async_task.enqueue(name_to_copy);
                     },
+                    // Some filesystems (e.g., Docker bind mounts, FUSE, NFS) return
+                    // DT_UNKNOWN for d_type. Use lstatat to determine the actual type.
+                    .unknown => {
+                        if (current.name.len + 1 + name_to_copy.len > bun.MAX_PATH_BYTES) break :enqueue;
+
+                        // Lazy stat to determine the actual kind (lstatat to not follow symlinks)
+                        const stat_result = bun.sys.lstatat(fd, current.name.sliceAssumeZ());
+                        switch (stat_result) {
+                            .result => |st| {
+                                const real_kind = bun.sys.kindFromMode(@intCast(st.mode));
+                                effective_kind = real_kind;
+                                if (real_kind == .directory or real_kind == .sym_link) {
+                                    async_task.enqueue(name_to_copy);
+                                }
+                            },
+                            .err => {}, // Skip entries we can't stat
+                        }
+                    },
                     else => {},
                 }
             }
@@ -4652,7 +4692,7 @@ pub const NodeFS = struct {
                     entries.append(.{
                         .name = bun.String.cloneUTF8(utf8_name),
                         .path = dirent_path_prev,
-                        .kind = current.kind,
+                        .kind = effective_kind,
                     }) catch |err| bun.handleOom(err);
                 },
                 Buffer => {
@@ -4764,6 +4804,9 @@ pub const NodeFS = struct {
                     break :brk bun.path.joinZBuf(buf, &path_parts, .auto);
                 };
 
+                // Track effective kind - may be resolved from .unknown via stat
+                var effective_kind = current.kind;
+
                 enqueue: {
                     switch (current.kind) {
                         // a symlink might be a directory or might not be
@@ -4775,6 +4818,24 @@ pub const NodeFS = struct {
                         => {
                             if (current.name.len + 1 + name_to_copy.len > bun.MAX_PATH_BYTES) break :enqueue;
                             stack.writeItem(basename_allocator.dupeZ(u8, name_to_copy) catch break :enqueue) catch break :enqueue;
+                        },
+                        // Some filesystems (e.g., Docker bind mounts, FUSE, NFS) return
+                        // DT_UNKNOWN for d_type. Use lstatat to determine the actual type.
+                        .unknown => {
+                            if (current.name.len + 1 + name_to_copy.len > bun.MAX_PATH_BYTES) break :enqueue;
+
+                            // Lazy stat to determine the actual kind (lstatat to not follow symlinks)
+                            const stat_result = bun.sys.lstatat(fd, current.name.sliceAssumeZ());
+                            switch (stat_result) {
+                                .result => |st| {
+                                    const real_kind = bun.sys.kindFromMode(@intCast(st.mode));
+                                    effective_kind = real_kind;
+                                    if (real_kind == .directory or real_kind == .sym_link) {
+                                        stack.writeItem(basename_allocator.dupeZ(u8, name_to_copy) catch break :enqueue) catch break :enqueue;
+                                    }
+                                },
+                                .err => {}, // Skip entries we can't stat
+                            }
                         },
                         else => {},
                     }
@@ -4791,7 +4852,7 @@ pub const NodeFS = struct {
                         entries.append(.{
                             .name = jsc.WebCore.encoding.toBunString(utf8_name, args.encoding),
                             .path = dirent_path_prev,
-                            .kind = current.kind,
+                            .kind = effective_kind,
                         }) catch |err| bun.handleOom(err);
                     },
                     Buffer => {
@@ -5489,7 +5550,9 @@ pub const NodeFS = struct {
             // O_PATH is faster
             bun.O.PATH
         else
-            bun.O.RDONLY;
+            // O_NONBLOCK prevents blocking on a FIFO.
+            // O_NOCTTY prevents acquiring a controlling terminal.
+            bun.O.RDONLY | bun.O.NONBLOCK | bun.O.NOCTTY;
 
         const fd = switch (bun.sys.open(path, flags, 0)) {
             .err => |err| return .{ .err = err.withPath(path) },
@@ -6431,8 +6494,12 @@ pub const NodeFS = struct {
                     const written = linux.copy_file_range(src_fd.cast(), &off_in_copy, dest_fd.cast(), &off_out_copy, std.heap.pageSize(), 0);
                     if (ret.errnoSysP(written, .copy_file_range, dest)) |err| {
                         return switch (err.getErrno()) {
-                            inline .XDEV, .NOSYS => |errno| brk: {
-                                if (comptime errno == .NOSYS) {
+                            // EINVAL: eCryptfs and other filesystems may not support copy_file_range
+                            // XDEV: cross-device copy not supported
+                            // NOSYS: syscall not available
+                            // OPNOTSUPP: filesystem doesn't support this operation
+                            inline .XDEV, .NOSYS, .INVAL, .OPNOTSUPP => |errno| brk: {
+                                if (comptime errno == .NOSYS or errno == .OPNOTSUPP) {
                                     bun.disableCopyFileRangeSyscall();
                                 }
                                 break :brk copyFileUsingSendfileOnLinuxWithReadWriteFallback(src, dest, src_fd, dest_fd, size, &wrote);
@@ -6451,8 +6518,12 @@ pub const NodeFS = struct {
                     const written = linux.copy_file_range(src_fd.cast(), &off_in_copy, dest_fd.cast(), &off_out_copy, size, 0);
                     if (ret.errnoSysP(written, .copy_file_range, dest)) |err| {
                         return switch (err.getErrno()) {
-                            inline .XDEV, .NOSYS => |errno| brk: {
-                                if (comptime errno == .NOSYS) {
+                            // EINVAL: eCryptfs and other filesystems may not support copy_file_range
+                            // XDEV: cross-device copy not supported
+                            // NOSYS: syscall not available
+                            // OPNOTSUPP: filesystem doesn't support this operation
+                            inline .XDEV, .NOSYS, .INVAL, .OPNOTSUPP => |errno| brk: {
+                                if (comptime errno == .NOSYS or errno == .OPNOTSUPP) {
                                     bun.disableCopyFileRangeSyscall();
                                 }
                                 break :brk copyFileUsingSendfileOnLinuxWithReadWriteFallback(src, dest, src_fd, dest_fd, size, &wrote);

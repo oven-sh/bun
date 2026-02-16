@@ -754,12 +754,13 @@ function emitConvertEnumFunction(w: CodeWriter, type: TypeImpl) {
   w.line();
   w.line(`template<> std::optional<${name}> parseEnumerationFromString<${name}>(const String& stringValue)`);
   w.line(`{`);
-  w.line(`    static constexpr std::pair<ComparableASCIILiteral, ${name}> mappings[] = {`);
+  w.line(
+    `    static constexpr SortedArrayMap enumerationMapping { std::to_array<std::pair<ComparableASCIILiteral, ${name}>>({`,
+  );
   for (const value of type.data) {
     w.line(`        { ${str(value)}_s, ${name}::${pascal(value)} },`);
   }
-  w.line(`    };`);
-  w.line(`    static constexpr SortedArrayMap enumerationMapping { mappings };`);
+  w.line(`    }) };`);
   w.line(`    if (auto* enumerationValue = enumerationMapping.tryGet(stringValue); enumerationValue) [[likely]]`);
   w.line(`        return *enumerationValue;`);
   w.line(`    return std::nullopt;`);

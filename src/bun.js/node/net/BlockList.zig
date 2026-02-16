@@ -46,7 +46,7 @@ pub fn isBlockList(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
 pub fn addAddress(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const arguments = callframe.argumentsAsArray(2);
     const address_js, var family_js = arguments;
-    if (family_js.isUndefined()) family_js = bun.String.static("ipv4").toJS(globalThis);
+    if (family_js.isUndefined()) family_js = try bun.String.static("ipv4").toJS(globalThis);
     const address = if (address_js.as(SocketAddress)) |sa| sa._addr else blk: {
         try validators.validateString(globalThis, address_js, "address", .{});
         try validators.validateString(globalThis, family_js, "family", .{});
@@ -63,7 +63,7 @@ pub fn addAddress(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *j
 pub fn addRange(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const arguments = callframe.argumentsAsArray(3);
     const start_js, const end_js, var family_js = arguments;
-    if (family_js.isUndefined()) family_js = bun.String.static("ipv4").toJS(globalThis);
+    if (family_js.isUndefined()) family_js = try bun.String.static("ipv4").toJS(globalThis);
     const start = if (start_js.as(SocketAddress)) |sa| sa._addr else blk: {
         try validators.validateString(globalThis, start_js, "start", .{});
         try validators.validateString(globalThis, family_js, "family", .{});
@@ -89,7 +89,7 @@ pub fn addRange(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc
 pub fn addSubnet(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const arguments = callframe.argumentsAsArray(3);
     const network_js, const prefix_js, var family_js = arguments;
-    if (family_js.isUndefined()) family_js = bun.String.static("ipv4").toJS(globalThis);
+    if (family_js.isUndefined()) family_js = try bun.String.static("ipv4").toJS(globalThis);
     const network = if (network_js.as(SocketAddress)) |sa| sa._addr else blk: {
         try validators.validateString(globalThis, network_js, "network", .{});
         try validators.validateString(globalThis, family_js, "family", .{});
@@ -111,7 +111,7 @@ pub fn addSubnet(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *js
 pub fn check(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const arguments = callframe.argumentsAsArray(2);
     const address_js, var family_js = arguments;
-    if (family_js.isUndefined()) family_js = bun.String.static("ipv4").toJS(globalThis);
+    if (family_js.isUndefined()) family_js = try bun.String.static("ipv4").toJS(globalThis);
     const address = &(if (address_js.as(SocketAddress)) |sa| sa._addr else blk: {
         try validators.validateString(globalThis, address_js, "address", .{});
         try validators.validateString(globalThis, family_js, "family", .{});

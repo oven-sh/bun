@@ -69,6 +69,7 @@ static uint8_t x86_cpu_features()
 #if CPU(ARM64)
 
 #if OS(WINDOWS)
+#include <windows.h>
 #elif OS(MACOS)
 #include <sys/sysctl.h>
 #elif OS(LINUX)
@@ -81,7 +82,18 @@ static uint8_t aarch64_cpu_features()
     uint8_t features = 0;
 
 #if OS(WINDOWS)
-#pragma error "TODO: Implement AArch64 CPU features for Windows"
+    // FP is mandatory on AArch64 — no separate PF_ constant exists for it
+    features |= 1 << static_cast<uint8_t>(AArch64CPUFeature::fp);
+    if (IsProcessorFeaturePresent(PF_ARM_NEON_INSTRUCTIONS_AVAILABLE))
+        features |= 1 << static_cast<uint8_t>(AArch64CPUFeature::neon);
+    if (IsProcessorFeaturePresent(PF_ARM_V8_CRYPTO_INSTRUCTIONS_AVAILABLE))
+        features |= 1 << static_cast<uint8_t>(AArch64CPUFeature::aes);
+    if (IsProcessorFeaturePresent(PF_ARM_V8_CRC32_INSTRUCTIONS_AVAILABLE))
+        features |= 1 << static_cast<uint8_t>(AArch64CPUFeature::crc32);
+    if (IsProcessorFeaturePresent(PF_ARM_V81_ATOMIC_INSTRUCTIONS_AVAILABLE))
+        features |= 1 << static_cast<uint8_t>(AArch64CPUFeature::atomics);
+    if (IsProcessorFeaturePresent(PF_ARM_SVE_INSTRUCTIONS_AVAILABLE))
+        features |= 1 << static_cast<uint8_t>(AArch64CPUFeature::sve);
 #elif OS(MACOS)
     int value = 0;
     size_t size = sizeof(value);

@@ -634,6 +634,8 @@ pub const Loader = enum(u8) {
     sqlite_embedded = 16,
     html = 17,
     yaml = 18,
+    json5 = 19,
+    md = 20,
 
     pub const Optional = enum(u8) {
         none = 254,
@@ -702,9 +704,9 @@ pub const Loader = enum(u8) {
         return switch (this) {
             .jsx, .js, .ts, .tsx => bun.http.MimeType.javascript,
             .css => bun.http.MimeType.css,
-            .toml, .yaml, .json, .jsonc => bun.http.MimeType.json,
+            .toml, .yaml, .json, .jsonc, .json5 => bun.http.MimeType.json,
             .wasm => bun.http.MimeType.wasm,
-            .html => bun.http.MimeType.html,
+            .html, .md => bun.http.MimeType.html,
             else => {
                 for (paths) |path| {
                     var extname = std.fs.path.extension(path);
@@ -751,11 +753,13 @@ pub const Loader = enum(u8) {
         map.set(.json, "input.json");
         map.set(.toml, "input.toml");
         map.set(.yaml, "input.yaml");
+        map.set(.json5, "input.json5");
         map.set(.wasm, "input.wasm");
         map.set(.napi, "input.node");
         map.set(.text, "input.txt");
         map.set(.bunsh, "input.sh");
         map.set(.html, "input.html");
+        map.set(.md, "input.md");
         break :brk map;
     };
 
@@ -775,7 +779,7 @@ pub const Loader = enum(u8) {
         if (zig_str.len == 0) return null;
 
         return fromString(zig_str.slice()) orelse {
-            return global.throwInvalidArguments("invalid loader - must be js, jsx, tsx, ts, css, file, toml, yaml, wasm, bunsh, or json", .{});
+            return global.throwInvalidArguments("invalid loader - must be js, jsx, tsx, ts, css, file, toml, yaml, wasm, bunsh, json, or md", .{});
         };
     }
 
@@ -794,6 +798,7 @@ pub const Loader = enum(u8) {
         .{ "jsonc", .jsonc },
         .{ "toml", .toml },
         .{ "yaml", .yaml },
+        .{ "json5", .json5 },
         .{ "wasm", .wasm },
         .{ "napi", .napi },
         .{ "node", .napi },
@@ -805,6 +810,8 @@ pub const Loader = enum(u8) {
         .{ "sqlite", .sqlite },
         .{ "sqlite_embedded", .sqlite_embedded },
         .{ "html", .html },
+        .{ "md", .md },
+        .{ "markdown", .md },
     });
 
     pub const api_names = bun.ComptimeStringMap(api.Loader, .{
@@ -822,6 +829,7 @@ pub const Loader = enum(u8) {
         .{ "jsonc", .json },
         .{ "toml", .toml },
         .{ "yaml", .yaml },
+        .{ "json5", .json5 },
         .{ "wasm", .wasm },
         .{ "node", .napi },
         .{ "dataurl", .dataurl },
@@ -831,6 +839,8 @@ pub const Loader = enum(u8) {
         .{ "sh", .file },
         .{ "sqlite", .sqlite },
         .{ "html", .html },
+        .{ "md", .md },
+        .{ "markdown", .md },
     });
 
     pub fn fromString(slice_: string) ?Loader {
@@ -862,12 +872,14 @@ pub const Loader = enum(u8) {
             .jsonc => .json,
             .toml => .toml,
             .yaml => .yaml,
+            .json5 => .json5,
             .wasm => .wasm,
             .napi => .napi,
             .base64 => .base64,
             .dataurl => .dataurl,
             .text => .text,
             .sqlite_embedded, .sqlite => .sqlite,
+            .md => .md,
         };
     }
 
@@ -884,6 +896,7 @@ pub const Loader = enum(u8) {
             .jsonc => .jsonc,
             .toml => .toml,
             .yaml => .yaml,
+            .json5 => .json5,
             .wasm => .wasm,
             .napi => .napi,
             .base64 => .base64,
@@ -893,6 +906,7 @@ pub const Loader = enum(u8) {
             .html => .html,
             .sqlite => .sqlite,
             .sqlite_embedded => .sqlite_embedded,
+            .md => .md,
             _ => .file,
         };
     }
@@ -916,8 +930,8 @@ pub const Loader = enum(u8) {
         return switch (loader) {
             .jsx, .js, .ts, .tsx, .json, .jsonc => true,
 
-            // toml and yaml are included because we can serialize to the same AST as JSON
-            .toml, .yaml => true,
+            // toml, yaml, and json5 are included because we can serialize to the same AST as JSON
+            .toml, .yaml, .json5 => true,
 
             else => false,
         };
@@ -932,7 +946,7 @@ pub const Loader = enum(u8) {
 
     pub fn sideEffects(this: Loader) bun.resolver.SideEffects {
         return switch (this) {
-            .text, .json, .jsonc, .toml, .yaml, .file => bun.resolver.SideEffects.no_side_effects__pure_data,
+            .text, .json, .jsonc, .toml, .yaml, .json5, .file, .md => bun.resolver.SideEffects.no_side_effects__pure_data,
             else => bun.resolver.SideEffects.has_side_effects,
         };
     }
@@ -947,7 +961,7 @@ pub const Loader = enum(u8) {
         } else if (strings.hasPrefixComptime(mime_type.value, "application/typescript")) {
             return .ts;
         } else if (strings.hasPrefixComptime(mime_type.value, "application/json5")) {
-            return .jsonc;
+            return .json5;
         } else if (strings.hasPrefixComptime(mime_type.value, "application/jsonc")) {
             return .jsonc;
         } else if (strings.hasPrefixComptime(mime_type.value, "application/json")) {
@@ -1111,6 +1125,7 @@ const default_loaders_posix = .{
     .{ ".text", .text },
     .{ ".html", .html },
     .{ ".jsonc", .jsonc },
+    .{ ".json5", .json5 },
 };
 const default_loaders_win32 = default_loaders_posix ++ .{
     .{ ".sh", .bunsh },
@@ -1548,7 +1563,7 @@ const default_loader_ext = [_]string{
     ".yml",   ".wasm",
     ".txt",   ".text",
 
-    ".jsonc",
+    ".jsonc", ".json5",
 };
 
 // Only set it for browsers by default.
@@ -1569,6 +1584,7 @@ const node_modules_default_loader_ext = [_]string{
     ".txt",
     ".json",
     ".jsonc",
+    ".json5",
     ".css",
     ".tsx",
     ".cts",
@@ -1724,6 +1740,7 @@ pub const BundleOptions = struct {
     resolve_dir: string = "/",
     jsx: JSX.Pragma = JSX.Pragma{},
     emit_decorator_metadata: bool = false,
+    experimental_decorators: bool = false,
     auto_import_jsx: bool = true,
     allow_runtime: bool = true,
 
@@ -1802,6 +1819,10 @@ pub const BundleOptions = struct {
     minify_identifiers: bool = false,
     keep_names: bool = false,
     dead_code_elimination: bool = true,
+    /// REPL mode: transforms code for interactive evaluation with vm.runInContext.
+    /// Hoists declarations as var for persistence, wraps code in IIFE, and
+    /// captures the last expression in { value: expr } for result extraction.
+    repl_mode: bool = false,
     css_chunking: bool,
 
     ignore_dce_annotations: bool = false,
@@ -1812,6 +1833,11 @@ pub const BundleOptions = struct {
     debugger: bool = false,
 
     compile: bool = false,
+    metafile: bool = false,
+    /// Path to write JSON metafile (for Bun.build API)
+    metafile_json_path: []const u8 = "",
+    /// Path to write markdown metafile (for Bun.build API)
+    metafile_markdown_path: []const u8 = "",
 
     /// Set when bake.DevServer is bundling.
     dev_server: ?*bun.bake.DevServer = null,

@@ -301,7 +301,6 @@ pub const WriteFile = struct {
             if (remain.len > 0 and this.errno == null) {
                 var wrote: usize = 0;
                 const continue_writing = this.doWrite(remain, &wrote);
-                this.bytes_blob.offset += @truncate(wrote);
                 if (!continue_writing) {
                     // Stop writing, we errored
                     if (this.errno != null) {

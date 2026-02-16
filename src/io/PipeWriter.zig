@@ -44,9 +44,9 @@ pub fn PosixPipeWriter(
                             return .{ .pending = offset };
                         }
 
-                        if (err.getErrno() == .PIPE) {
-                            return .{ .done = offset };
-                        }
+                        // Return EPIPE as an error so it propagates to JavaScript.
+                        // This ensures process.stdout.write() properly emits an error
+                        // when writing to a broken pipe, matching Node.js behavior.
 
                         return .{ .err = err };
                     },
@@ -998,7 +998,7 @@ pub fn WindowsBufferedWriter(Parent: type, function_table: anytype) type {
                 return;
             }
             const pending = this.getBufferInternal();
-            const has_pending_data = (pending.len - written) == 0;
+            const has_pending_data = (pending.len - written) != 0;
             onWrite(this.parent, @intCast(written), if (this.is_done and !has_pending_data) .drained else .pending);
             // is_done can be changed inside onWrite
             if (this.is_done and !has_pending_data) {

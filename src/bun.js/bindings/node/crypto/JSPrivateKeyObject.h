@@ -24,7 +24,7 @@ public:
 
     static JSPrivateKeyObject* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* globalObject, KeyObject&& keyObject)
     {
-        JSPrivateKeyObject* instance = new (NotNull, JSC::allocateCell<JSPrivateKeyObject>(vm)) JSPrivateKeyObject(vm, structure, WTFMove(keyObject));
+        JSPrivateKeyObject* instance = new (NotNull, JSC::allocateCell<JSPrivateKeyObject>(vm)) JSPrivateKeyObject(vm, structure, WTF::move(keyObject));
         instance->finishCreation(vm, globalObject);
         return instance;
     }
@@ -50,7 +50,7 @@ public:
     void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
 
     JSPrivateKeyObject(JSC::VM& vm, JSC::Structure* structure, KeyObject&& keyObject)
-        : Base(vm, structure, WTFMove(keyObject))
+        : Base(vm, structure, WTF::move(keyObject))
     {
     }
 };

@@ -138,7 +138,10 @@ pub const InstallCompletionsCommand = struct {
             // don't fail on this if we don't actually need to
             if (fail_exit_code == 1) {
                 if (!stdout.isTty()) {
-                    try stdout.writeAll(shell.completions());
+                    stdout.writeAll(shell.completions()) catch |err| switch (err) {
+                        error.BrokenPipe => Global.exit(0),
+                        else => return err,
+                    };
                     Global.exit(0);
                 }
             }
@@ -171,7 +174,10 @@ pub const InstallCompletionsCommand = struct {
 
         if (!bun.env_var.IS_BUN_AUTO_UPDATE.get()) {
             if (!stdout.isTty()) {
-                try stdout.writeAll(shell.completions());
+                stdout.writeAll(shell.completions()) catch |err| switch (err) {
+                    error.BrokenPipe => Global.exit(0),
+                    else => return err,
+                };
                 Global.exit(0);
             }
         }

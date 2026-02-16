@@ -977,9 +977,17 @@ pub const JSBundler = struct {
             }
 
             if (this.compile) |*compile| {
-                // When compile + target=browser, skip the bun executable compile setup.
-                // The standalone HTML compilation is handled in the bundler instead.
-                if (this.target != .browser) {
+                // When compile + target=browser + all HTML entrypoints, produce standalone HTML.
+                // Otherwise, default to bun executable compile.
+                const has_all_html_entrypoints = brk: {
+                    if (this.entry_points.count() == 0) break :brk false;
+                    for (this.entry_points.keys()) |ep| {
+                        if (!strings.hasSuffixComptime(ep, ".html")) break :brk false;
+                    }
+                    break :brk true;
+                };
+                const is_standalone_html = this.target == .browser and has_all_html_entrypoints;
+                if (!is_standalone_html) {
                     this.target = .bun;
 
                     const define_keys = compile.compile_target.defineKeys();
@@ -1030,16 +1038,17 @@ pub const JSBundler = struct {
                 return globalThis.throwInvalidArguments("ESM bytecode requires compile: true. Use format: 'cjs' for bytecode without compile.", .{});
             }
 
-            // --compile --target=browser: produce self-contained HTML
+            // Validate standalone HTML mode: compile + browser target + all HTML entrypoints
             if (this.compile != null and this.target == .browser) {
-                if (this.code_splitting) {
-                    return globalThis.throwInvalidArguments("Cannot use compile with target 'browser' and splitting", .{});
-                }
-                // All entrypoints must be HTML files
-                for (this.entry_points.keys()) |ep| {
-                    if (!strings.hasSuffixComptime(ep, ".html")) {
-                        return globalThis.throwInvalidArguments("compile with target 'browser' requires all entrypoints to be HTML files", .{});
+                const has_all_html = brk: {
+                    if (this.entry_points.count() == 0) break :brk false;
+                    for (this.entry_points.keys()) |ep| {
+                        if (!strings.hasSuffixComptime(ep, ".html")) break :brk false;
                     }
+                    break :brk true;
+                };
+                if (has_all_html and this.code_splitting) {
+                    return globalThis.throwInvalidArguments("Cannot use compile with target 'browser' and splitting for standalone HTML", .{});
                 }
             }
 

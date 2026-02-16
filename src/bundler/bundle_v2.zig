@@ -1993,7 +1993,14 @@ pub const BundleV2 = struct {
             transpiler.options.emit_dce_annotations = config.emit_dce_annotations orelse !config.minify.whitespace;
             transpiler.options.ignore_dce_annotations = config.ignore_dce_annotations;
             transpiler.options.css_chunking = config.css_chunking;
-            transpiler.options.compile_to_standalone_html = config.compile != null and config.target == .browser;
+            transpiler.options.compile_to_standalone_html = brk: {
+                if (config.compile == null or config.target != .browser) break :brk false;
+                // Only activate standalone HTML when all entrypoints are HTML files
+                for (config.entry_points.keys()) |ep| {
+                    if (!bun.strings.hasSuffixComptime(ep, ".html")) break :brk false;
+                }
+                break :brk config.entry_points.count() > 0;
+            };
             // When compiling to standalone HTML, don't use the bun executable compile path
             if (transpiler.options.compile_to_standalone_html) {
                 transpiler.options.compile = false;

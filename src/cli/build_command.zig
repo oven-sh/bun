@@ -3,14 +3,10 @@ pub const BuildCommand = struct {
         Global.configureAllocator(.{ .long_running = true });
         const allocator = ctx.allocator;
         var log = ctx.log;
+        const user_requested_browser_target = ctx.args.target != null and ctx.args.target.? == .browser;
         if (ctx.bundler_options.compile or ctx.bundler_options.bytecode) {
             // set this early so that externals are set up correctly and define is right
-            // When --compile --target=browser is used, keep browser target for standalone HTML
-            if (ctx.args.target != null and ctx.args.target.? == .browser) {
-                // Keep browser target
-            } else {
-                ctx.args.target = .bun;
-            }
+            ctx.args.target = .bun;
         }
 
         if (ctx.bundler_options.bake) {
@@ -109,21 +105,22 @@ pub const BuildCommand = struct {
                 return;
             }
 
-            if (ctx.args.target != null and ctx.args.target.? == .browser) {
-                // --compile --target=browser: produce self-contained HTML with all assets inlined
+            // Check if all entrypoints are HTML files for standalone HTML mode
+            const has_all_html_entrypoints = brk: {
+                if (this_transpiler.options.entry_points.len == 0) break :brk false;
+                for (this_transpiler.options.entry_points) |entry_point| {
+                    if (!strings.hasSuffixComptime(entry_point, ".html")) break :brk false;
+                }
+                break :brk true;
+            };
+
+            if (user_requested_browser_target and has_all_html_entrypoints) {
+                // --compile --target=browser with all HTML entrypoints: produce self-contained HTML
+                ctx.args.target = .browser;
                 if (ctx.bundler_options.code_splitting) {
                     Output.prettyErrorln("<r><red>error<r><d>:<r> cannot use --compile --target browser with --splitting", .{});
                     Global.exit(1);
                     return;
-                }
-
-                // All entrypoints must be HTML files
-                for (this_transpiler.options.entry_points) |entry_point| {
-                    if (!strings.hasSuffixComptime(entry_point, ".html")) {
-                        Output.prettyErrorln("<r><red>error<r><d>:<r> --compile --target browser requires all entrypoints to be HTML files, but got: {s}", .{entry_point});
-                        Global.exit(1);
-                        return;
-                    }
                 }
 
                 this_transpiler.options.compile_to_standalone_html = true;

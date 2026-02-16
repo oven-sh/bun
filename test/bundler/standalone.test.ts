@@ -278,33 +278,37 @@ body { color: blue; }`,
     expect(html).toContain("<style>");
   });
 
-  test("fails with non-HTML entrypoints", async () => {
+  test("non-HTML entrypoints with compile+browser falls back to normal compile", async () => {
     using dir = tempDir("compile-browser-no-html", {
       "app.js": `console.log("no html");`,
     });
 
-    expect(() =>
-      Bun.build({
-        entrypoints: [`${dir}/app.js`],
-        compile: true,
-        target: "browser",
-      }),
-    ).toThrow();
+    // compile: true + target: "browser" with non-HTML entrypoints should
+    // fall back to normal bun executable compile (not standalone HTML)
+    const result = await Bun.build({
+      entrypoints: [`${dir}/app.js`],
+      compile: true,
+      target: "browser",
+    });
+
+    expect(result.success).toBe(true);
   });
 
-  test("fails with mixed HTML and non-HTML entrypoints", async () => {
-    using dir = tempDir("compile-browser-mixed", {
-      "index.html": `<!DOCTYPE html><html><body><script src="./app.js"></script></body></html>`,
+  test("CLI --compile --target=browser with non-HTML falls back to normal compile", async () => {
+    using dir = tempDir("compile-browser-cli-no-html", {
       "app.js": `console.log("test");`,
     });
 
-    expect(() =>
-      Bun.build({
-        entrypoints: [`${dir}/index.html`, `${dir}/app.js`],
-        compile: true,
-        target: "browser",
-      }),
-    ).toThrow();
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "--target=browser", `${dir}/app.js`],
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [_stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Non-HTML entrypoints with --compile --target=browser should fall back to normal bun compile
+    expect(exitCode).toBe(0);
   });
 
   test("fails with splitting", async () => {

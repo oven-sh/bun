@@ -1175,7 +1175,9 @@ pub const FetchTasklet = struct {
         // dont have backpressure so we will schedule the data to be written
         // if we have backpressure the onWritable will drain the buffer
         needs_schedule = stream_buffer.isEmpty();
-        if (this.upgraded_connection) {
+        const skip_chunked_framing = this.upgraded_connection or
+            (if (this.http) |h| h.client.flags.is_streaming_request_body_with_content_length else false);
+        if (skip_chunked_framing) {
             bun.handleOom(stream_buffer.write(data));
         } else {
             //16 is the max size of a hex number size that represents 64 bits + 2 for the \r\n
@@ -1209,15 +1211,16 @@ pub const FetchTasklet = struct {
             }
             this.abortTask();
         } else {
-            if (!this.upgraded_connection) {
-                // If is not upgraded we need to send the terminating chunk
+            const skip_chunked_framing = this.upgraded_connection or
+                (if (this.http) |h| h.client.flags.is_streaming_request_body_with_content_length else false);
+            if (!skip_chunked_framing) {
+                // If not upgraded and not using explicit Content-Length, send the terminating chunk
                 const thread_safe_stream_buffer = this.request_body_streaming_buffer orelse return;
                 const stream_buffer = thread_safe_stream_buffer.acquire();
                 defer thread_safe_stream_buffer.release();
                 bun.handleOom(stream_buffer.write(http.end_of_chunked_http1_1_encoding_response_body));
             }
             if (this.http) |http_| {
-                // just tell to write the end of the chunked encoding aka 0\r\n\r\n
                 http.http_thread.scheduleRequestWrite(http_, .end);
             }
         }

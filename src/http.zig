@@ -457,9 +457,10 @@ pub const Flags = packed struct(u16) {
     reject_unauthorized: bool = true,
     is_preconnect_only: bool = false,
     is_streaming_request_body: bool = false,
+    is_streaming_request_body_with_content_length: bool = false,
     defer_fail_until_connecting_is_complete: bool = false,
     upgrade_state: HTTPUpgradeState = .none,
-    _padding: u3 = 0,
+    _padding: u2 = 0,
 };
 
 // TODO: reduce the size of this struct
@@ -719,7 +720,16 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
 
     if (body_len > 0 or this.method.hasRequestBody()) {
         if (this.flags.is_streaming_request_body) {
-            if (add_transfer_encoding and this.flags.upgrade_state == .none) {
+            if (original_content_length) |content_length| {
+                // User explicitly set Content-Length; preserve it instead of using chunked encoding.
+                // This matches Node.js behavior where an explicit Content-Length is always honored.
+                request_headers_buf[header_count] = .{
+                    .name = content_length_header_name,
+                    .value = content_length,
+                };
+                header_count += 1;
+                this.flags.is_streaming_request_body_with_content_length = true;
+            } else if (add_transfer_encoding and this.flags.upgrade_state == .none) {
                 request_headers_buf[header_count] = chunked_encoded_header;
                 header_count += 1;
             }

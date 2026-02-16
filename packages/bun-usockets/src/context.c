@@ -20,6 +20,7 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 #ifndef _WIN32
 #include <arpa/inet.h>
 #endif
@@ -828,7 +829,7 @@ struct us_socket_t *us_socket_context_adopt_socket(int ssl, struct us_socket_con
     struct us_socket_t *new_s = s;
     if (ext_size != -1) {
         struct us_poll_t *pool_ref = &s->p;
-        new_s = (struct us_socket_t *) us_poll_resize(pool_ref, loop, sizeof(struct us_socket_t) + old_ext_size, sizeof(struct us_socket_t) + ext_size);
+        new_s = (struct us_socket_t *) us_poll_resize(pool_ref, loop, sizeof(struct us_socket_t) - sizeof(struct us_poll_t) + old_ext_size, sizeof(struct us_socket_t) - sizeof(struct us_poll_t) + ext_size);
         if(new_s != s) {
             /* Mark the old socket as closed */
             s->flags.is_closed = 1;

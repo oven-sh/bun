@@ -564,6 +564,54 @@ describe("bundler", () => {
     },
     compile: true,
   });
+  // https://github.com/oven-sh/bun/issues/27058
+  itBundled("compile/DynamicRequireWithPackageJsonMain", {
+    files: {
+      "/entry.tsx": /* tsx */ `
+        const req = (x) => require(x);
+        const result = req('pkg-with-main');
+        console.log(JSON.stringify(result));
+      `,
+      "/node_modules/pkg-with-main/package.json": JSON.stringify({ name: "pkg-with-main", main: "lib/index.js" }),
+      "/node_modules/pkg-with-main/lib/index.js": "throw new Error('Must be runtime import.')",
+    },
+    runtimeFiles: {
+      "/node_modules/pkg-with-main/package.json": JSON.stringify({ name: "pkg-with-main", main: "lib/index.js" }),
+      "/node_modules/pkg-with-main/lib/index.js": `module.exports = { hello: "world" };`,
+    },
+    run: {
+      stdout: '{"hello":"world"}',
+      setCwd: true,
+    },
+    compile: true,
+  });
+  // https://github.com/oven-sh/bun/issues/27058
+  itBundled("compile/DynamicRequireWithPackageJsonExports", {
+    files: {
+      "/entry.tsx": /* tsx */ `
+        const req = (x) => require(x);
+        const result = req('pkg-with-exports');
+        console.log(JSON.stringify(result));
+      `,
+      "/node_modules/pkg-with-exports/package.json": JSON.stringify({
+        name: "pkg-with-exports",
+        exports: { ".": "./src/entry.js" },
+      }),
+      "/node_modules/pkg-with-exports/src/entry.js": "throw new Error('Must be runtime import.')",
+    },
+    runtimeFiles: {
+      "/node_modules/pkg-with-exports/package.json": JSON.stringify({
+        name: "pkg-with-exports",
+        exports: { ".": "./src/entry.js" },
+      }),
+      "/node_modules/pkg-with-exports/src/entry.js": `module.exports = { status: "ok" };`,
+    },
+    run: {
+      stdout: '{"status":"ok"}',
+      setCwd: true,
+    },
+    compile: true,
+  });
   // see comment in `usePackageManager` for why this is a test
   itBundled("compile/NoAutoInstall", {
     files: {

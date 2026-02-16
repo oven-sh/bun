@@ -276,7 +276,7 @@ pub const JSBundler = struct {
             autoload_dotenv: bool = true,
             autoload_bunfig: bool = true,
             autoload_tsconfig: bool = false,
-            autoload_package_json: bool = false,
+            autoload_package_json: bool = true,
 
             pub fn fromJS(globalThis: *jsc.JSGlobalObject, config: jsc.JSValue, allocator: std.mem.Allocator, compile_target: ?CompileTarget) JSError!?CompileOptions {
                 var this = CompileOptions{

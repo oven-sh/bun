@@ -1848,7 +1848,7 @@ fn getOrPutResolvedPackage(
 fn resolutionSatisfiesDependency(this: *PackageManager, resolution: Resolution, dependency: Dependency.Version) bool {
     const buf = this.lockfile.buffers.string_bytes.items;
     if (resolution.tag == .npm and dependency.tag == .npm) {
-        return dependency.value.npm.version.satisfies(resolution.value.npm.version, buf, buf);
+        return dependency.value.npm.version.satisfiesIncludePrerelease(resolution.value.npm.version, buf, buf);
     }
 
     if (resolution.tag == .git and dependency.tag == .git) {

@@ -23,3 +23,16 @@ export async function ireturnapromise() {
   setTimeout(() => resolve("aaa"), 100);
   return promise;
 }
+
+export function simpleTag(strings: TemplateStringsArray, ..._values: any[]) {
+  return `Hello ${strings[0]}!`;
+}
+
+export function interpolateTag(strings: TemplateStringsArray, ...values: any[]) {
+  return `User ${strings[0]} has ${values[0]} points`;
+}
+
+export function objectTag(_strings: TemplateStringsArray, ...values: any[]) {
+  const obj = values[0];
+  return `Name: ${obj.name}, Age: ${obj.age}`;
+}

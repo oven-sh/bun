@@ -54,9 +54,9 @@ function onError(msg, err, callback) {
 function isHTTPHeaderStateSentOrAssigned(state) {
   return state === NodeHTTPHeaderState.sent || state === NodeHTTPHeaderState.assigned;
 }
-function throwHeadersSentIfNecessary(self) {
+function throwHeadersSentIfNecessary(self, action) {
   if (self._header != null || isHTTPHeaderStateSentOrAssigned(self[headerStateSymbol])) {
-    throw $ERR_HTTP_HEADERS_SENT("set");
+    throw $ERR_HTTP_HEADERS_SENT(action);
   }
 }
 
@@ -261,14 +261,14 @@ const OutgoingMessagePrototype = {
 
   removeHeader(name) {
     validateString(name, "name");
-    throwHeadersSentIfNecessary(this);
+    throwHeadersSentIfNecessary(this, "remove");
     const headers = this[headersSymbol];
     if (!headers) return;
     headers.delete(name);
   },
 
   setHeader(name, value) {
-    throwHeadersSentIfNecessary(this);
+    throwHeadersSentIfNecessary(this, "set");
     validateHeaderName(name);
     validateHeaderValue(name, value);
     const headers = (this[headersSymbol] ??= new Headers());
@@ -276,7 +276,7 @@ const OutgoingMessagePrototype = {
     return this;
   },
   setHeaders(headers) {
-    throwHeadersSentIfNecessary(this);
+    throwHeadersSentIfNecessary(this, "set");
 
     if (!headers || $isArray(headers) || typeof headers.keys !== "function" || typeof headers.get !== "function") {
       throw $ERR_INVALID_ARG_TYPE("headers", ["Headers", "Map"], headers);

@@ -271,7 +271,7 @@ const OutgoingMessagePrototype = {
     return this;
   },
   setHeaders(headers) {
-    if ((this._header != null) || this[headerStateSymbol] == NodeHTTPHeaderState.sent) {
+    if ((this._header != null) || this[headerStateSymbol] === NodeHTTPHeaderState.sent) {
       throw $ERR_HTTP_HEADERS_SENT("set");
     }
 

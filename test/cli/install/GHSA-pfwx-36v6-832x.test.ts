@@ -10,7 +10,7 @@ function envWithCache(dir: string) {
   return { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") };
 }
 
-describe("GitHub tarball integrity", () => {
+describe.concurrent("GitHub tarball integrity", () => {
   test("should store integrity hash in lockfile for GitHub dependencies", async () => {
     using dir = tempDir("github-integrity", {
       "package.json": JSON.stringify({

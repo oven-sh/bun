@@ -31,6 +31,10 @@ pub fn installIsolatedPackages(
             pkg_id: PackageID,
         };
 
+        // Types for flat pooled reverse_deps structure
+        const ReverseDepEdge = struct { child: PackageID, parent: PackageID };
+        const ReverseDepOffset = struct { child: PackageID, start: u32, len: u32 };
+
         var node_queue: bun.LinearFifo(QueuedNode, .Dynamic) = .init(lockfile.allocator);
         defer node_queue.deinit();
 
@@ -51,6 +55,157 @@ pub fn installIsolatedPackages(
         var early_dedupe: std.AutoHashMap(PackageID, Store.Node.Id) = .init(lockfile.allocator);
         defer early_dedupe.deinit();
 
+        // Pre-compute which packages have peer dependencies anywhere in their
+        // transitive dependency closure. Packages without transitive peers
+        // resolve identically regardless of tree position and can be
+        // early-deduped (extending early_dedupe beyond just leaves).
+        const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
+        const pkg_count = lockfile.packages.len;
+        var pkg_has_transitive_peers = try Bitset.initEmpty(lockfile.allocator, pkg_count);
+        defer pkg_has_transitive_peers.deinit(lockfile.allocator);
+        {
+            var worklist: std.ArrayListUnmanaged(PackageID) = .empty;
+            defer worklist.deinit(lockfile.allocator);
+            for (0..pkg_count) |pkg_idx| {
+                const deps_slice = pkg_dependency_slices[pkg_idx];
+                for (deps_slice.begin()..deps_slice.end()) |d| {
+                    if (dependencies[d].behavior.isPeer()) {
+                        pkg_has_transitive_peers.set(pkg_idx);
+                        try worklist.append(lockfile.allocator, @intCast(pkg_idx));
+                        break;
+                    }
+                }
+            }
+            // Build reverse dep map for upward propagation using flat pooled structure.
+            // Stores (child, parent) pairs sorted by child for efficient lookup.
+            var reverse_deps_edges: std.ArrayListUnmanaged(ReverseDepEdge) = .empty;
+            defer reverse_deps_edges.deinit(lockfile.allocator);
+            var reverse_deps_offsets: std.ArrayListUnmanaged(ReverseDepOffset) = .empty;
+            defer reverse_deps_offsets.deinit(lockfile.allocator);
+
+            // First pass: collect all edges
+            for (0..pkg_count) |pkg_idx| {
+                const deps_slice = pkg_dependency_slices[pkg_idx];
+                for (deps_slice.begin()..deps_slice.end()) |d| {
+                    if (dependencies[d].behavior.isPeer()) continue;
+                    const resolved_id = resolutions[d];
+                    if (resolved_id < pkg_count) {
+                        try reverse_deps_edges.append(lockfile.allocator, .{
+                            .child = @intCast(resolved_id),
+                            .parent = @intCast(pkg_idx),
+                        });
+                    }
+                }
+            }
+
+            // Sort edges by child, then build offset index
+            if (reverse_deps_edges.items.len > 0) {
+                std.sort.pdq(ReverseDepEdge, reverse_deps_edges.items, {}, struct {
+                    fn lessThan(_: void, a: ReverseDepEdge, b: ReverseDepEdge) bool {
+                        return a.child < b.child;
+                    }
+                }.lessThan);
+
+                // Build offset index: child -> (start, len)
+                var current_child: PackageID = reverse_deps_edges.items[0].child;
+                var current_start: u32 = 0;
+                for (reverse_deps_edges.items, 0..) |edge, i| {
+                    if (edge.child != current_child) {
+                        try reverse_deps_offsets.append(lockfile.allocator, .{
+                            .child = current_child,
+                            .start = current_start,
+                            .len = @intCast(i - current_start),
+                        });
+                        current_child = edge.child;
+                        current_start = @intCast(i);
+                    }
+                }
+                // Add final entry
+                try reverse_deps_offsets.append(lockfile.allocator, .{
+                    .child = current_child,
+                    .start = current_start,
+                    .len = @intCast(reverse_deps_edges.items.len - current_start),
+                });
+            }
+
+            // Helper to get parents for a given child
+            const ReverseDepsSlice = struct {
+                edges: []const ReverseDepEdge,
+                offsets: []const ReverseDepOffset,
+
+                fn getParents(self: @This(), child: PackageID) []const ReverseDepEdge {
+                    // Binary search for the child in offsets
+                    var left: usize = 0;
+                    var right: usize = self.offsets.len;
+                    while (left < right) {
+                        const mid = (left + right) / 2;
+                        if (self.offsets[mid].child < child) {
+                            left = mid + 1;
+                        } else {
+                            right = mid;
+                        }
+                    }
+                    if (left < self.offsets.len and self.offsets[left].child == child) {
+                        const off = self.offsets[left];
+                        return self.edges[off.start..][0..off.len];
+                    }
+                    return &[_]ReverseDepEdge{};
+                }
+            };
+            const reverse_deps = ReverseDepsSlice{
+                .edges = reverse_deps_edges.items,
+                .offsets = reverse_deps_offsets.items,
+            };
+
+            while (worklist.pop()) |pid| {
+                const parents = reverse_deps.getParents(pid);
+                for (parents) |edge| {
+                    const parent_id = edge.parent;
+                    if (!pkg_has_transitive_peers.isSet(parent_id)) {
+                        pkg_has_transitive_peers.set(parent_id);
+                        try worklist.append(lockfile.allocator, parent_id);
+                    }
+                }
+            }
+        }
+
+        // Peer-aware dedup: for packages WITH transitive peers, after all their
+        // non-peer deps are recorded and peers resolved, check if a node with the
+        // same (pkg_id, peer_set) already exists. Reuse its children to avoid
+        // exponential subtree re-expansion.
+        //
+        // Uses flat pooled structure with linked list: single ArrayList for all
+        // entries, each entry stores the index of the next entry for the same
+        // package. Hash map stores the head index for each PackageID. This avoids
+        // many small heap allocations while maintaining O(K) iteration where K
+        // is the number of entries for a package.
+        const PeerDedupeEntry = struct {
+            pkg_id: PackageID,
+            node_id: Store.Node.Id,
+            peers: Store.Node.Peers,
+            next: u32, // index of next entry for same package, or std.math.maxInt(u32) for end
+        };
+        var peer_dedupe_entries: std.ArrayListUnmanaged(PeerDedupeEntry) = .empty;
+        defer {
+            for (peer_dedupe_entries.items) |*entry| entry.peers.deinit(lockfile.allocator);
+            peer_dedupe_entries.deinit(lockfile.allocator);
+        }
+        // Maps PackageID to head index (first entry) in peer_dedupe_entries
+        var peer_dedupe_heads: std.AutoHashMapUnmanaged(PackageID, u32) = .empty;
+        defer peer_dedupe_heads.deinit(lockfile.allocator);
+
+        // Temporary buffer for non-peer deps to queue after peer dedup check.
+        var deferred_deps: std.ArrayListUnmanaged(QueuedNode) = .empty;
+        defer deferred_deps.deinit(lockfile.allocator);
+
+        // Delayed child copies: (target_node_id, source_node_id). After the
+        // BFS completes, copy source's children into target. We can't do this
+        // eagerly because source's children may not be linked yet (BFS is
+        // in-progress).
+        const DelayedCopy = struct { target: Store.Node.Id, source: Store.Node.Id };
+        var delayed_copies: std.ArrayListUnmanaged(DelayedCopy) = .empty;
+        defer delayed_copies.deinit(lockfile.allocator);
+
         var peer_dep_ids: std.array_list.Managed(DependencyID) = .init(lockfile.allocator);
         defer peer_dep_ids.deinit();
 
@@ -59,6 +214,10 @@ pub fn installIsolatedPackages(
 
         // First pass: create full dependency tree with resolved peers
         next_node: while (node_queue.readItem()) |entry| {
+            // Clear deferred_deps at the start of each iteration to ensure no stale
+            // items leak into the peer-dedup check, regardless of early exits.
+            deferred_deps.clearRetainingCapacity();
+
             check_cycle: {
                 // check for cycles
                 const nodes_slice = nodes.slice();
@@ -75,7 +234,7 @@ pub fn installIsolatedPackages(
 
                         const dep_id = node_dep_ids[curr_id.get()];
                         if (dep_id == invalid_dependency_id and entry.dep_id == invalid_dependency_id) {
-                            node_nodes[entry.parent_id.get()].appendAssumeCapacity(curr_id);
+                            try node_nodes[entry.parent_id.get()].append(lockfile.allocator, curr_id);
                             continue :next_node;
                         }
 
@@ -95,7 +254,7 @@ pub fn installIsolatedPackages(
                             // implicit workspace dep != explicit workspace dep
                             curr_dep.behavior.workspace == entry_dep.behavior.workspace)
                         {
-                            node_nodes[entry.parent_id.get()].appendAssumeCapacity(curr_id);
+                            try node_nodes[entry.parent_id.get()].append(lockfile.allocator, curr_id);
                             continue :next_node;
                         }
                     }
@@ -113,7 +272,9 @@ pub fn installIsolatedPackages(
 
             if (entry.dep_id != invalid_dependency_id) {
                 const entry_dep = dependencies[entry.dep_id];
-                if (pkg_deps.len == 0 or entry_dep.version.tag == .workspace) dont_dedupe: {
+                if (pkg_deps.len == 0 or entry_dep.version.tag == .workspace or
+                    !pkg_has_transitive_peers.isSet(entry.pkg_id))
+                dont_dedupe: {
                     const dedupe_entry = try early_dedupe.getOrPut(entry.pkg_id);
                     if (dedupe_entry.found_existing) {
                         const dedupe_node_id = dedupe_entry.value_ptr.*;
@@ -140,7 +301,7 @@ pub fn installIsolatedPackages(
                             }
                         }
 
-                        node_nodes[entry.parent_id.get()].appendAssumeCapacity(dedupe_node_id);
+                        try node_nodes[entry.parent_id.get()].append(lockfile.allocator, dedupe_node_id);
                         continue;
                     }
 
@@ -163,7 +324,7 @@ pub fn installIsolatedPackages(
             const node_nodes = nodes_slice.items(.nodes);
 
             if (entry.parent_id.tryGet()) |parent_id| {
-                node_nodes[parent_id].appendAssumeCapacity(node_id);
+                try node_nodes[parent_id].append(lockfile.allocator, node_id);
             }
 
             if (skip_dependencies) {
@@ -215,6 +376,11 @@ pub fn installIsolatedPackages(
                     }
                 }
 
+                // For packages with transitive peers, defer queuing non-peer
+                // children until after peer resolution so we can check a
+                // (pkg_id, peer_set) dedup map before expanding subtrees.
+                const should_defer = pkg_has_transitive_peers.isSet(entry.pkg_id);
+
                 for (dep_ids_sort_buf.items) |dep_id| {
                     if (Tree.isFilteredDependencyOrWorkspace(
                         dep_id,
@@ -234,15 +400,22 @@ pub fn installIsolatedPackages(
                     // like we have for dev dependencies in `hoistDependency`
 
                     if (!dep.behavior.isPeer()) {
-                        // simple case:
-                        // - add it as a dependency
-                        // - queue it
+                        // Record as dependency (needed for peer resolution walk)
                         node_dependencies[node_id.get()].appendAssumeCapacity(.{ .dep_id = dep_id, .pkg_id = pkg_id });
-                        try node_queue.writeItem(.{
-                            .parent_id = node_id,
-                            .dep_id = dep_id,
-                            .pkg_id = pkg_id,
-                        });
+                        if (should_defer) {
+                            // Defer queuing until after peer dedup check
+                            try deferred_deps.append(lockfile.allocator, .{
+                                .parent_id = node_id,
+                                .dep_id = dep_id,
+                                .pkg_id = pkg_id,
+                            });
+                        } else {
+                            try node_queue.writeItem(.{
+                                .parent_id = node_id,
+                                .dep_id = dep_id,
+                                .pkg_id = pkg_id,
+                            });
+                        }
                         continue;
                     }
 
@@ -375,6 +548,79 @@ pub fn installIsolatedPackages(
                         .dep_id = peer_dep_id,
                         .pkg_id = resolved_pkg_id,
                     });
+                }
+            }
+
+            // Flush deferred non-peer deps. For packages with transitive peers,
+            // check if a node with the same (pkg_id, peer_set) was already fully
+            // expanded. If so, copy its child node list (which will cause the
+            // second pass to dedup them) instead of re-expanding the subtree.
+            if (deferred_deps.items.len > 0) {
+                const curr_peers = nodes.items(.peers)[node_id.get()];
+                const eql_ctx: Store.Node.TransitivePeer.OrderedArraySetCtx = .{
+                    .string_buf = string_buf,
+                    .pkg_names = pkg_names,
+                };
+
+                var matched_node: ?Store.Node.Id = null;
+                // Check for existing entries for this package using linked list traversal
+                if (peer_dedupe_heads.get(entry.pkg_id)) |head| {
+                    var curr_idx = head;
+                    while (curr_idx != std.math.maxInt(u32)) {
+                        const info = peer_dedupe_entries.items[curr_idx];
+                        if (info.peers.eql(&curr_peers, &eql_ctx)) {
+                            matched_node = info.node_id;
+                            break;
+                        }
+                        curr_idx = info.next;
+                    }
+                }
+
+                if (matched_node) |existing_id| {
+                    // Defer copying: source's children may not be linked yet
+                    // (BFS in-progress). We'll copy after the loop completes.
+                    //
+                    // NOTE: The copied child nodes retain their original .parent_id
+                    // pointing to the source node. This is intentional - parent_id is
+                    // only valid during the first-pass BFS and should not be used after
+                    // the delayed copies are applied. The second pass uses entry-level
+                    // parentage (entry_parent_id) for correct dependency tracking.
+                    try delayed_copies.append(lockfile.allocator, .{
+                        .target = node_id,
+                        .source = existing_id,
+                    });
+                    // Don't queue deferred deps — subtree already exists.
+                } else {
+                    // First time seeing this (pkg_id, peer_set). Record it and
+                    // queue the deferred deps for normal expansion. Clone the
+                    // peer list because the node's peers will be mutated later
+                    // when child nodes insert transitive peers into ancestors.
+                    const new_idx: u32 = @intCast(peer_dedupe_entries.items.len);
+                    const prev_head = peer_dedupe_heads.get(entry.pkg_id) orelse std.math.maxInt(u32);
+                    try peer_dedupe_entries.append(lockfile.allocator, .{
+                        .pkg_id = entry.pkg_id,
+                        .node_id = node_id,
+                        .peers = .{ .list = try curr_peers.list.clone(lockfile.allocator) },
+                        .next = prev_head,
+                    });
+                    try peer_dedupe_heads.put(lockfile.allocator, entry.pkg_id, new_idx);
+
+                    for (deferred_deps.items) |queued| {
+                        try node_queue.writeItem(queued);
+                    }
+                }
+            }
+        }
+
+        // Apply delayed child copies now that all nodes are fully linked.
+        // NOTE: Copied children retain their original parent_id (pointing to the
+        // source node). This is fine because parent_id is only used during the
+        // first-pass BFS. The second pass uses entry-level parentage.
+        {
+            const node_nodes = nodes.slice().items(.nodes);
+            for (delayed_copies.items) |copy| {
+                for (node_nodes[copy.source.get()].items) |child_id| {
+                    try node_nodes[copy.target.get()].append(lockfile.allocator, child_id);
                 }
             }
         }

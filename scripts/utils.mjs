@@ -1837,6 +1837,13 @@ export function getTailscale() {
     }
   }
 
+  if (isWindows) {
+    const tailscaleExe = "C:\\Program Files\\Tailscale\\tailscale.exe";
+    if (existsSync(tailscaleExe)) {
+      return tailscaleExe;
+    }
+  }
+
   return "tailscale";
 }
 

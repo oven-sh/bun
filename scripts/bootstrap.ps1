@@ -1,4 +1,4 @@
-# Version: 13
+# Version: 14
 # A script that installs the dependencies needed to build and test Bun on Windows.
 # Supports both x64 and ARM64 using Scoop for package management.
 # Used by Azure [build images] pipeline.
@@ -293,16 +293,88 @@ function Install-Pwsh {
   }
   Remove-Item $msi -ErrorAction SilentlyContinue
   Refresh-Path
+}
 
-  if ($CI) {
-    $shellPath = (Which pwsh -Required)
-    New-ItemProperty `
-      -Path "HKLM:\\SOFTWARE\\OpenSSH" `
-      -Name DefaultShell `
-      -Value $shellPath `
-      -PropertyType String `
-      -Force
+function Install-OpenSSH {
+  $sshdService = Get-Service -Name sshd -ErrorAction SilentlyContinue
+  if ($sshdService) {
+    return
   }
+
+  Write-Output "Installing OpenSSH Server..."
+  # Add-WindowsCapability requires DISM elevation which isn't available in Packer's
+  # WinRM session. Download and install from GitHub releases instead.
+  $arch = if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq "Arm64") { "Arm64" } else { "Win64" }
+  $url = "https://github.com/PowerShell/Win32-OpenSSH/releases/download/v9.8.1.0p1-Preview/OpenSSH-${arch}.zip"
+  $zip = "$env:TEMP\OpenSSH.zip"
+  $dest = "$env:ProgramFiles\OpenSSH"
+  Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
+  Expand-Archive -Path $zip -DestinationPath "$env:TEMP\OpenSSH" -Force
+  New-Item -Path $dest -ItemType Directory -Force | Out-Null
+  $extractedDir = Get-ChildItem -Path "$env:TEMP\OpenSSH" -Directory | Select-Object -First 1
+  Get-ChildItem -Path $extractedDir.FullName -Recurse | Move-Item -Destination $dest -Force
+  & "$dest\install-sshd.ps1"
+  & "$dest\FixHostFilePermissions.ps1" -Confirm:$false
+  Remove-Item $zip, "$env:TEMP\OpenSSH" -Recurse -Force -ErrorAction SilentlyContinue
+
+  # Configure sshd to start on boot (don't start now — host keys may not exist yet during image build)
+  Set-Service -Name sshd -StartupType Automatic
+
+  # Set default shell to pwsh
+  $pwshPath = (Which pwsh -ErrorAction SilentlyContinue)
+  if (-not $pwshPath) { $pwshPath = (Which powershell) }
+  if ($pwshPath) {
+    New-ItemProperty -Path "HKLM:\SOFTWARE\OpenSSH" -Name DefaultShell `
+      -Value $pwshPath -PropertyType String -Force
+  }
+
+  # Firewall rule for port 22
+  $rule = Get-NetFirewallRule -Name "OpenSSH-Server" -ErrorAction SilentlyContinue
+  if (-not $rule) {
+    New-NetFirewallRule -Profile Any -Name "OpenSSH-Server" `
+      -DisplayName "OpenSSH Server (sshd)" -Enabled True `
+      -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22
+  }
+
+  # Configure sshd_config for key-based auth
+  $sshdConfigPath = "C:\ProgramData\ssh\sshd_config"
+  if (Test-Path $sshdConfigPath) {
+    $config = Get-Content $sshdConfigPath
+    $config = $config -replace '#PubkeyAuthentication yes', 'PubkeyAuthentication yes'
+    $config = $config -replace 'PasswordAuthentication yes', 'PasswordAuthentication no'
+    Set-Content -Path $sshdConfigPath -Value $config
+  }
+
+  Write-Output "OpenSSH Server installed and configured"
+
+  # Register a startup task that fetches oven-sh GitHub org members' SSH keys
+  # on every boot so any bun dev can SSH in.
+  $fetchScript = @'
+try {
+  $members = Invoke-RestMethod -Uri "https://api.github.com/orgs/oven-sh/members" -Headers @{ "User-Agent" = "bun-ci" }
+  $keys = @()
+  foreach ($member in $members) {
+    if ($member.type -ne "User" -or -not $member.login) { continue }
+    try {
+      $userKeys = (Invoke-WebRequest -Uri "https://github.com/$($member.login).keys" -UseBasicParsing).Content
+      if ($userKeys) { $keys += $userKeys.Trim() }
+    } catch { }
+  }
+  if ($keys.Count -gt 0) {
+    $keysPath = "C:\ProgramData\ssh\administrators_authorized_keys"
+    Set-Content -Path $keysPath -Value ($keys -join "`n") -Force
+    icacls $keysPath /inheritance:r /grant "SYSTEM:(F)" /grant "Administrators:(R)" | Out-Null
+  }
+} catch { }
+'@
+  $scriptPath = "C:\ProgramData\ssh\fetch-ssh-keys.ps1"
+  Set-Content -Path $scriptPath -Value $fetchScript -Force
+  $action = New-ScheduledTaskAction -Execute "pwsh.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`""
+  $trigger = New-ScheduledTaskTrigger -AtStartup
+  $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+  Register-ScheduledTask -TaskName "FetchSshKeys" -Action $action -Trigger $trigger `
+    -Settings $settings -User "SYSTEM" -RunLevel Highest -Force
+  Write-Output "Registered FetchSshKeys startup task"
 }
 
 function Install-Ccache {
@@ -468,6 +540,17 @@ function Create-Buildkite-Environment-Hooks {
 "@ | Set-Content -Path $environmentHook -Encoding UTF8
 
   Write-Output "Environment hook created at $environmentHook"
+
+  # pre-exit hook: logout from Tailscale so ephemeral nodes are removed
+  # instantly instead of waiting 30-60 minutes. This runs after the job
+  # finishes, which is after the SSH user wait loop in runner.node.mjs.
+  $preExitHook = Join-Path $hooksDir "pre-exit.ps1"
+  @"
+if (Test-Path "C:\Program Files\Tailscale\tailscale.exe") {
+  & "C:\Program Files\Tailscale\tailscale.exe" logout 2>`$null
+}
+"@ | Set-Content -Path $preExitHook -Encoding UTF8
+  Write-Output "Pre-exit hook created at $preExitHook"
 }
 
 function Install-Buildkite {
@@ -593,8 +676,54 @@ if (-not $script:IsARM64) {
   Install-Scoop-Package mingw -Command gcc
 }
 
+function Install-Tailscale {
+  if (Which tailscale -ErrorAction SilentlyContinue) {
+    return
+  }
+
+  Write-Output "Installing Tailscale..."
+  $msi = "$env:TEMP\tailscale-setup.msi"
+  $arch = if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq "Arm64") { "arm64" } else { "amd64" }
+  Invoke-WebRequest -Uri "https://pkgs.tailscale.com/stable/tailscale-setup-latest-${arch}.msi" -OutFile $msi -UseBasicParsing
+  Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /quiet /norestart" -Wait
+  Remove-Item $msi -ErrorAction SilentlyContinue
+  Refresh-Path
+  Write-Output "Tailscale installed"
+
+  # Register a startup task that reads the tailscale authkey from Azure IMDS
+  # tags and joins the tailnet. The key is set by robobun as a VM tag.
+  $joinScript = @'
+try {
+  $headers = @{ "Metadata" = "true" }
+  $response = Invoke-RestMethod -Uri "http://169.254.169.254/metadata/instance/compute/tagsList?api-version=2021-02-01" -Headers $headers
+  $authkey = ($response | Where-Object { $_.name -eq "tailscale:authkey" }).value
+  if ($authkey) {
+    $stepKey = ($response | Where-Object { $_.name -eq "buildkite:step-key" }).value
+    $buildNumber = ($response | Where-Object { $_.name -eq "buildkite:build-number" }).value
+    if ($stepKey) {
+      $hostname = "azure-${stepKey}"
+      if ($buildNumber) { $hostname += "-${buildNumber}" }
+    } else {
+      $hostname = (Invoke-RestMethod -Uri "http://169.254.169.254/metadata/instance/compute/name?api-version=2021-02-01&format=text" -Headers $headers)
+    }
+    & "C:\Program Files\Tailscale\tailscale.exe" up --authkey=$authkey --hostname=$hostname --unattended
+  }
+} catch { }
+'@
+  $scriptPath = "C:\ProgramData\tailscale-join.ps1"
+  Set-Content -Path $scriptPath -Value $joinScript -Force
+  $action = New-ScheduledTaskAction -Execute "pwsh.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`""
+  $trigger = New-ScheduledTaskTrigger -AtStartup
+  $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+  Register-ScheduledTask -TaskName "TailscaleJoin" -Action $action -Trigger $trigger `
+    -Settings $settings -User "SYSTEM" -RunLevel Highest -Force
+  Write-Output "Registered TailscaleJoin startup task"
+}
+
 # Manual installs (not in Scoop or need special handling)
 Install-Pwsh
+Install-OpenSSH
+#Install-Tailscale  # Disabled — Tailscale adapter interferes with IPv6 multicast tests (node-dgram)
 Install-Bun
 Install-Ccache
 Install-Rust

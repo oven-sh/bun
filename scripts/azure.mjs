@@ -219,56 +219,6 @@ async function deletePublicIp(name) {
 // Network Security Group
 // ============================================================================
 
-async function ensureNsg(name) {
-  const { location } = config();
-  const path = `${rgPath()}/providers/Microsoft.Network/networkSecurityGroups/${name}`;
-
-  try {
-    const existing = await azureFetch("GET", path);
-    if (existing) return path;
-  } catch {}
-
-  console.log(`[azure] Creating NSG: ${name}`);
-  await azureFetch("PUT", path, {
-    location,
-    properties: {
-      securityRules: [
-        {
-          name: "AllowSSH",
-          properties: {
-            priority: 100,
-            protocol: "Tcp",
-            access: "Allow",
-            direction: "Inbound",
-            sourceAddressPrefix: "*",
-            sourcePortRange: "*",
-            destinationAddressPrefix: "*",
-            destinationPortRange: "22",
-          },
-        },
-        {
-          name: "AllowRDP",
-          properties: {
-            priority: 110,
-            protocol: "Tcp",
-            access: "Allow",
-            direction: "Inbound",
-            sourceAddressPrefix: "*",
-            sourcePortRange: "*",
-            destinationAddressPrefix: "*",
-            destinationPortRange: "3389",
-          },
-        },
-      ],
-    },
-  });
-  return path;
-}
-
-async function deleteNsg(name) {
-  await azureFetch("DELETE", `${rgPath()}/providers/Microsoft.Network/networkSecurityGroups/${name}`).catch(() => {});
-}
-
 // ============================================================================
 // Network Interface
 // ============================================================================
@@ -407,55 +357,11 @@ async function runCommand(vmName, script) {
 // Virtual Network
 // ============================================================================
 
-async function ensureVNet(vnetName, subnetName) {
-  const { location } = config();
-  const path = `${rgPath()}/providers/Microsoft.Network/virtualNetworks/${vnetName}`;
-
-  // Check if VNet exists
-  try {
-    const vnet = await azureFetch("GET", path);
-    if (vnet) {
-      const subnet = vnet.properties?.subnets?.find(s => s.name === subnetName);
-      if (subnet) return subnet.id;
-    }
-  } catch {}
-
-  console.log(`[azure] Creating VNet: ${vnetName} with subnet: ${subnetName}`);
-  await azureFetch("PUT", path, {
-    location,
-    properties: {
-      addressSpace: { addressPrefixes: ["10.0.0.0/16"] },
-      subnets: [
-        {
-          name: subnetName,
-          properties: { addressPrefix: "10.0.0.0/24" },
-        },
-      ],
-    },
-  });
-
-  const vnet = await azureFetch("GET", path);
-  return vnet.properties.subnets.find(s => s.name === subnetName).id;
-}
-
 // ============================================================================
 // Compute Gallery
 // ============================================================================
 
 const GALLERY_API_VERSION = "2024-03-03";
-
-async function ensureGallery() {
-  const { location, galleryName } = config();
-  const path = `${rgPath()}/providers/Microsoft.Compute/galleries/${galleryName}`;
-
-  try {
-    const gallery = await azureFetch("GET", path, undefined, GALLERY_API_VERSION);
-    if (gallery) return;
-  } catch {}
-
-  console.log(`[azure] Creating gallery: ${galleryName}`);
-  await azureFetch("PUT", path, { location }, GALLERY_API_VERSION);
-}
 
 async function ensureImageDefinition(name, os, arch) {
   const { location, galleryName } = config();
@@ -502,28 +408,6 @@ async function createImageVersion(imageDefName, version, vmId) {
     path,
     {
       location,
-      properties: {
-        storageProfile: {
-          source: { virtualMachineId: vmId },
-        },
-      },
-    },
-    GALLERY_API_VERSION,
-  );
-  return result;
-}
-
-async function createImageVersionWithLabel(imageDefName, version, vmId, label) {
-  const { location, galleryName } = config();
-  const path = `${rgPath()}/providers/Microsoft.Compute/galleries/${galleryName}/images/${imageDefName}/versions/${version}`;
-
-  console.log(`[azure] Creating image version: ${imageDefName}/${version} (label: ${label})`);
-  const result = await azureFetch(
-    "PUT",
-    path,
-    {
-      location,
-      tags: { "image-name": label },
       properties: {
         storageProfile: {
           source: { virtualMachineId: vmId },
@@ -590,14 +474,11 @@ export const azure = {
     // Generate a random password for the admin account
     const adminPassword = `P@${crypto.randomUUID().replace(/-/g, "").substring(0, 20)}!`;
 
-    // Ensure VNet exists
-    const subnetId = await ensureVNet("bun-ci-vnet", "default");
+    const subnetId = `${rgPath()}/providers/Microsoft.Network/virtualNetworks/bun-ci-vnet/subnets/default`;
+    const nsgId = `${rgPath()}/providers/Microsoft.Network/networkSecurityGroups/bun-ci-ssh-nsg`;
 
-    // Create public IP (needed for outbound internet during bootstrap)
     await createPublicIp(publicIpName);
-
-    // Create NIC (no NSG needed — all operations go through Azure Run Command, not SSH)
-    const nicId = await createNic(nicName, publicIpName, subnetId, null);
+    const nicId = await createNic(nicName, publicIpName, subnetId, nsgId);
 
     // Create VM
     const imageReference = options.imageId ? { id: options.imageId } : getBaseImageReference(os, arch);
@@ -724,7 +605,6 @@ export const azure = {
       // Ensure gallery and image definition exist.
       // Use the label as the image definition name — this matches what ci.mjs
       // emits as the image-name agent tag, so robobun can look it up directly.
-      await ensureGallery();
       const imageDefName = label;
       await ensureImageDefinition(imageDefName, os, arch);
 

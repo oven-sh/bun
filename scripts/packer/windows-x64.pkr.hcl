@@ -45,9 +45,33 @@ source "azure-arm" "windows-x64" {
     image_name           = var.image_name != "" ? var.image_name : "windows-x64-2019-build-${var.build_number}"
     image_version        = "1.0.0"
     storage_account_type = "Standard_LRS"
-    target_region {
-      name = var.location
-    }
+    target_region { name = var.location }
+    target_region { name = "australiaeast" }
+    target_region { name = "brazilsouth" }
+    target_region { name = "canadacentral" }
+    target_region { name = "canadaeast" }
+    target_region { name = "centralindia" }
+    target_region { name = "centralus" }
+    target_region { name = "francecentral" }
+    target_region { name = "germanywestcentral" }
+    target_region { name = "italynorth" }
+    target_region { name = "japaneast" }
+    target_region { name = "japanwest" }
+    target_region { name = "koreacentral" }
+    target_region { name = "mexicocentral" }
+    target_region { name = "northcentralus" }
+    target_region { name = "northeurope" }
+    target_region { name = "southcentralus" }
+    target_region { name = "southeastasia" }
+    target_region { name = "spaincentral" }
+    target_region { name = "swedencentral" }
+    target_region { name = "switzerlandnorth" }
+    target_region { name = "uaenorth" }
+    target_region { name = "ukwest" }
+    target_region { name = "westeurope" }
+    target_region { name = "westus" }
+    target_region { name = "westus2" }
+    target_region { name = "westus3" }
   }
 
   azure_tags = {

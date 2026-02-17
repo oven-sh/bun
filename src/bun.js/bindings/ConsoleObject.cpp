@@ -35,7 +35,7 @@ void ConsoleObject::messageWithTypeAndLevel(MessageType type, MessageLevel level
     Ref<ScriptArguments>&& arguments)
 {
     if (globalObject->inspectable()) {
-        if (auto* client = globalObject->inspectorController().consoleClient().get()) {
+        if (auto client = globalObject->inspectorController().consoleClient()) {
             client->messageWithTypeAndLevel(type, level, globalObject, arguments.copyRef());
         }
     }
@@ -113,7 +113,7 @@ void ConsoleObject::warnUnimplemented(const String& method) {}
 void ConsoleObject::profile(JSC::JSGlobalObject* globalObject, const String& title)
 {
     if (globalObject->inspectable()) {
-        if (auto* client = globalObject->inspectorController().consoleClient().get()) {
+        if (auto client = globalObject->inspectorController().consoleClient()) {
             client->profile(globalObject, title);
         }
     }
@@ -122,7 +122,7 @@ void ConsoleObject::profile(JSC::JSGlobalObject* globalObject, const String& tit
 void ConsoleObject::profileEnd(JSC::JSGlobalObject* globalObject, const String& title)
 {
     if (globalObject->inspectable()) {
-        if (auto* client = globalObject->inspectorController().consoleClient().get()) {
+        if (auto client = globalObject->inspectorController().consoleClient()) {
             client->profileEnd(globalObject, title);
         }
     }

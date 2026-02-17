@@ -744,6 +744,29 @@ pub fn fstatat(fd: bun.FileDescriptor, path: [:0]const u8) Maybe(bun.Stat) {
     return Maybe(bun.Stat){ .result = stat_buf };
 }
 
+/// Like fstatat but does not follow symlinks (uses AT.SYMLINK_NOFOLLOW).
+/// This is the "at" equivalent of lstat.
+pub fn lstatat(fd: bun.FileDescriptor, path: [:0]const u8) Maybe(bun.Stat) {
+    if (Environment.isWindows) {
+        // Use O.NOFOLLOW to not follow symlinks (FILE_OPEN_REPARSE_POINT on Windows)
+        return switch (openatWindowsA(fd, path, O.NOFOLLOW, 0)) {
+            .result => |file| {
+                defer file.close();
+                return fstat(file);
+            },
+            .err => |err| Maybe(bun.Stat){ .err = err },
+        };
+    }
+    var stat_buf = mem.zeroes(bun.Stat);
+    const fd_valid = if (fd == bun.invalid_fd) std.posix.AT.FDCWD else fd.native();
+    if (Maybe(bun.Stat).errnoSysFP(syscall.fstatat(fd_valid, path, &stat_buf, std.posix.AT.SYMLINK_NOFOLLOW), .fstatat, fd, path)) |err| {
+        log("lstatat({f}, {s}) = {s}", .{ fd, path, @tagName(err.getErrno()) });
+        return err;
+    }
+    log("lstatat({f}, {s}) = 0", .{ fd, path });
+    return Maybe(bun.Stat){ .result = stat_buf };
+}
+
 pub fn mkdir(file_path: [:0]const u8, flags: mode_t) Maybe(void) {
     return switch (Environment.os) {
         .mac => Maybe(void).errnoSysP(syscall.mkdir(file_path, flags), .mkdir, file_path) orelse .success,
@@ -2146,13 +2169,13 @@ pub fn pidfd_open(pid: std.os.linux.pid_t, flags: u32) Maybe(i32) {
 
 pub fn lseek(fd: bun.FileDescriptor, offset: i64, whence: usize) Maybe(usize) {
     while (true) {
-        const rc = syscall.lseek(fd.cast(), offset, whence);
+        const rc = syscall.lseek(fd.cast(), offset, @intCast(whence));
         if (Maybe(usize).errnoSysFd(rc, .lseek, fd)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
 
-        return Maybe(usize){ .result = rc };
+        return Maybe(usize){ .result = @intCast(rc) };
     }
 }
 
@@ -2971,15 +2994,52 @@ pub fn munmap(memory: []align(page_size_min) const u8) Maybe(void) {
     } else return .success;
 }
 
-pub fn memfd_create(name: [:0]const u8, flags: u32) Maybe(bun.FileDescriptor) {
+pub const MemfdFlags = enum(u32) {
+    // Recent Linux kernel versions require MFD_EXEC.
+    executable = MFD_EXEC | MFD_ALLOW_SEALING | MFD_CLOEXEC,
+    non_executable = MFD_NOEXEC_SEAL | MFD_ALLOW_SEALING | MFD_CLOEXEC,
+    cross_process = MFD_NOEXEC_SEAL,
+
+    pub fn olderKernelFlag(this: MemfdFlags) u32 {
+        return switch (this) {
+            .non_executable, .executable => MFD_CLOEXEC,
+            .cross_process => 0,
+        };
+    }
+
+    const MFD_NOEXEC_SEAL: u32 = 0x0008;
+    const MFD_EXEC: u32 = 0x0010;
+    const MFD_CLOEXEC: u32 = std.os.linux.MFD.CLOEXEC;
+    const MFD_ALLOW_SEALING: u32 = std.os.linux.MFD.ALLOW_SEALING;
+};
+
+pub fn memfd_create(name: [:0]const u8, flags_: MemfdFlags) Maybe(bun.FileDescriptor) {
     if (comptime !Environment.isLinux) @compileError("linux only!");
+    var flags: u32 = @intFromEnum(flags_);
+    while (true) {
+        const rc = std.os.linux.memfd_create(name, flags);
+        log("memfd_create({s}, {s}) = {d}", .{ name, @tagName(flags_), rc });
 
-    const rc = std.os.linux.memfd_create(name, flags);
+        if (Maybe(bun.FileDescriptor).errnoSys(rc, .memfd_create)) |err| {
+            switch (err.getErrno()) {
+                .INTR => continue,
+                .INVAL => {
+                    // MFD_EXEC / MFD_NOEXEC_SEAL require Linux 6.3.
+                    if (@intFromEnum(flags_) == flags) {
+                        flags = flags_.olderKernelFlag();
+                        log("memfd_create retrying without exec/noexec flag, using {d}", .{flags});
+                        continue;
+                    }
+                },
+                else => {},
+            }
 
-    log("memfd_create({s}, {d}) = {d}", .{ name, flags, rc });
+            return err;
+        }
 
-    return Maybe(bun.FileDescriptor).errnoSys(rc, .memfd_create) orelse
-        .{ .result = .fromNative(@intCast(rc)) };
+        return .{ .result = .fromNative(@intCast(rc)) };
+    }
+    unreachable;
 }
 
 pub fn setPipeCapacityOnLinux(fd: bun.FileDescriptor, capacity: usize) Maybe(usize) {
@@ -4031,6 +4091,12 @@ pub fn copyFileZSlowWithHandle(in_handle: bun.FileDescriptor, to_dir: bun.FileDe
         if (comptime Environment.isLinux) {
             _ = std.os.linux.fallocate(out_handle.cast(), 0, 0, @intCast(stat_.size));
         }
+
+        // Seek input to beginning — the caller may have written to this fd,
+        // leaving the file offset at EOF. copy_file_range / sendfile / read
+        // all use the current offset when called with null offsets.
+        // Ignore errors: the fd may be non-seekable (e.g. a pipe).
+        _ = setFileOffset(in_handle, 0);
 
         switch (bun.copyFile(in_handle, out_handle)) {
             .err => |e| return .{ .err = e },

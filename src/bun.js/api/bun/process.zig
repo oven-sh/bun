@@ -84,6 +84,7 @@ pub const ProcessExitHandler = struct {
             LifecycleScriptSubprocess,
             ShellSubprocess,
             ProcessHandle,
+            MultiRunProcessHandle,
             SecurityScanSubprocess,
             SyncProcess,
         },
@@ -109,6 +110,10 @@ pub const ProcessExitHandler = struct {
             },
             @field(TaggedPointer.Tag, @typeName(ProcessHandle)) => {
                 const subprocess = this.ptr.as(ProcessHandle);
+                subprocess.onProcessExit(process, status, rusage);
+            },
+            @field(TaggedPointer.Tag, @typeName(MultiRunProcessHandle)) => {
+                const subprocess = this.ptr.as(MultiRunProcessHandle);
                 subprocess.onProcessExit(process, status, rusage);
             },
             @field(TaggedPointer.Tag, @typeName(ShellSubprocess)) => {
@@ -1346,7 +1351,7 @@ pub fn spawnProcessPosix(
                             else => "spawn_stdio_generic",
                         };
 
-                        const fd = bun.sys.memfd_create(label, 0).unwrap() catch break :use_memfd;
+                        const fd = bun.sys.memfd_create(label, .cross_process).unwrap() catch break :use_memfd;
 
                         to_close_on_error.append(fd) catch {};
                         to_set_cloexec.append(fd) catch {};
@@ -2251,6 +2256,7 @@ pub const sync = struct {
 };
 
 const std = @import("std");
+const MultiRunProcessHandle = @import("../../../cli/multi_run.zig").ProcessHandle;
 const ProcessHandle = @import("../../../cli/filter_run.zig").ProcessHandle;
 
 const bun = @import("bun");

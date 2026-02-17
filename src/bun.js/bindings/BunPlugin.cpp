@@ -7,7 +7,7 @@
 #include "helpers.h"
 #include "ZigGlobalObject.h"
 
-#include <JavaScriptCore/CatchScope.h>
+#include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/JSMap.h>
@@ -371,7 +371,7 @@ void BunPlugin::Base::append(JSC::VM& vm, JSC::RegExp* filter, JSC::JSObject* fu
     } else {
         Group newGroup;
         newGroup.append(vm, filter, func);
-        this->groups.append(WTFMove(newGroup));
+        this->groups.append(WTF::move(newGroup));
         this->namespaces.append(namespaceString);
     }
 }
@@ -543,10 +543,10 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
         if (url.isValid() && url.protocolIsFile()) {
             auto fromString = url.fileSystemPath();
             BunString from = Bun::toString(fromString);
-            auto catchScope = DECLARE_CATCH_SCOPE(vm);
+            auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
             auto result = JSValue::decode(Bun__resolveSyncWithSource(globalObject, JSValue::encode(specifierString), &from, true, false));
-            if (catchScope.exception()) {
-                catchScope.clearException();
+            if (topExceptionScope.exception()) {
+                (void)topExceptionScope.tryClearException();
             }
 
             if (result && result.isString()) {
@@ -596,15 +596,15 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
 
         if (result && result.isObject()) {
             while (JSC::JSPromise* promise = jsDynamicCast<JSC::JSPromise*>(result)) {
-                switch (promise->status(vm)) {
+                switch (promise->status()) {
                 case JSC::JSPromise::Status::Rejected: {
-                    result = promise->result(vm);
+                    result = promise->result();
                     scope.throwException(globalObject, result);
                     return {};
                     break;
                 }
                 case JSC::JSPromise::Status::Fulfilled: {
-                    result = promise->result(vm);
+                    result = promise->result();
                     break;
                 }
                 // TODO: blocking wait for promise
@@ -640,16 +640,16 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
                         removeFromESM = false;
 
                         if (object) {
-                            JSC::PropertyNameArray names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+                            JSC::PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
                             JSObject::getOwnPropertyNames(object, globalObject, names, DontEnumPropertiesMode::Exclude);
                             RETURN_IF_EXCEPTION(scope, {});
 
                             for (auto& name : names) {
                                 // consistent with regular esm handling code
-                                auto catchScope = DECLARE_CATCH_SCOPE(vm);
+                                auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
                                 JSValue value = object->get(globalObject, name);
                                 if (scope.exception()) [[unlikely]] {
-                                    scope.clearException();
+                                    (void)scope.tryClearException();
                                     value = jsUndefined();
                                 }
                                 moduleNamespaceObject->overrideExportValue(globalObject, name, value);
@@ -743,13 +743,13 @@ EncodedJSValue BunPlugin::OnLoad::run(JSC::JSGlobalObject* globalObject, BunStri
     RETURN_IF_EXCEPTION(scope, {});
 
     if (auto* promise = JSC::jsDynamicCast<JSPromise*>(result)) {
-        switch (promise->status(vm)) {
+        switch (promise->status()) {
         case JSPromise::Status::Rejected:
         case JSPromise::Status::Pending: {
             return JSValue::encode(promise);
         }
         case JSPromise::Status::Fulfilled: {
-            result = promise->result(vm);
+            result = promise->result();
             break;
         }
         }
@@ -813,12 +813,16 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, BunS
 
         JSC::JSObject* paramsObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
         const auto& builtinNames = WebCore::builtinNames(vm);
+        auto* pathJS = Bun::toJS(globalObject, *path);
+        RETURN_IF_EXCEPTION(scope, {});
         paramsObject->putDirect(
             vm, builtinNames.pathPublicName(),
-            Bun::toJS(globalObject, *path));
+            pathJS);
+        auto* importerJS = Bun::toJS(globalObject, *importer);
+        RETURN_IF_EXCEPTION(scope, {});
         paramsObject->putDirect(
             vm, builtinNames.importerPublicName(),
-            Bun::toJS(globalObject, *importer));
+            importerJS);
         arguments.append(paramsObject);
 
         auto result = AsyncContextFrame::call(globalObject, function, JSC::jsUndefined(), arguments);
@@ -829,18 +833,18 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, BunS
         }
 
         if (auto* promise = JSC::jsDynamicCast<JSPromise*>(result)) {
-            switch (promise->status(vm)) {
+            switch (promise->status()) {
             case JSPromise::Status::Pending: {
                 JSC::throwTypeError(globalObject, scope, "onResolve() doesn't support pending promises yet"_s);
                 return {};
             }
             case JSPromise::Status::Rejected: {
                 promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, jsNumber(static_cast<unsigned>(JSC::JSPromise::Status::Fulfilled)));
-                result = promise->result(vm);
+                result = promise->result();
                 return JSValue::encode(result);
             }
             case JSPromise::Status::Fulfilled: {
-                result = promise->result(vm);
+                result = promise->result();
                 break;
             }
             }
@@ -916,13 +920,13 @@ JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specif
         RETURN_IF_EXCEPTION(throwScope, JSC::jsUndefined());
 
         if (auto* promise = JSC::jsDynamicCast<JSPromise*>(result)) {
-            switch (promise->status(vm)) {
+            switch (promise->status()) {
             case JSPromise::Status::Rejected:
             case JSPromise::Status::Pending: {
                 return promise;
             }
             case JSPromise::Status::Fulfilled: {
-                result = promise->result(vm);
+                result = promise->result();
                 break;
             }
             }
@@ -950,6 +954,7 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionBunPluginClear, (JSC::JSGlobalObject * global
     global->onResolvePlugins.namespaces.clear();
 
     delete global->onLoadPlugins.virtualModules;
+    global->onLoadPlugins.virtualModules = nullptr;
 
     return JSC::JSValue::encode(JSC::jsUndefined());
 }

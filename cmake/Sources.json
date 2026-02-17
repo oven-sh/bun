@@ -13,10 +13,7 @@
   },
   {
     "output": "JavaScriptSources.txt",
-    "paths": [
-      "src/js/**/*.{js,ts}",
-      "src/install/PackageManager/scanner-entry.ts"
-    ]
+    "paths": ["src/js/**/*.{js,ts}", "src/install/PackageManager/scanner-entry.ts"]
   },
   {
     "output": "JavaScriptCodegenSources.txt",

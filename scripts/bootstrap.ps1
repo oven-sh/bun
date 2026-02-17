@@ -1,4 +1,4 @@
-# Version: 11
+# Version: 12
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on Windows 10 or newer with PowerShell.
 
@@ -313,7 +313,7 @@ function Install-Build-Essentials {
     strawberryperl `
     mingw
   Install-Rust
-  Install-Sccache
+  Install-Ccache
   # Needed to remap stack traces
   Install-PdbAddr2line
   Install-Llvm
@@ -376,8 +376,8 @@ function Install-Rust {
   Add-To-Path "$rustPath\cargo\bin"
 }
 
-function Install-Sccache {
-  Install-Package sccache -Version "0.12.0"
+function Install-Ccache {
+  Install-Package ccache
 }
 
 function Install-PdbAddr2line {
@@ -387,7 +387,7 @@ function Install-PdbAddr2line {
 function Install-Llvm {
   Install-Package llvm `
     -Command clang-cl `
-    -Version "19.1.7"
+    -Version "21.1.8"
   Add-To-Path "$env:ProgramFiles\LLVM\bin"
 }
 

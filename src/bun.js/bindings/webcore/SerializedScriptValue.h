@@ -60,24 +60,33 @@ class MemoryHandle;
 
 namespace WebCore {
 
+// Shared value type for fast path cloning: primitives (JSValue) or strings.
+using SimpleCloneableValue = std::variant<JSC::JSValue, WTF::String>;
+
 class SimpleInMemoryPropertyTableEntry {
 public:
-    // Only:
-    // - String
-    // - Number
-    // - Boolean
-    // - Null
-    // - Undefined
-    using Value = std::variant<JSC::JSValue, WTF::String>;
+    using Value = SimpleCloneableValue;
 
     WTF::String propertyName;
     Value value;
 };
 
+// A flat object whose property values are only primitives or strings (no nesting).
+struct SimpleCloneableObject {
+    WTF::FixedVector<SimpleInMemoryPropertyTableEntry> properties;
+};
+
+// Array element: primitive (JSValue), string, or a flat object.
+using DenseArrayElement = std::variant<JSC::JSValue, WTF::String, SimpleCloneableObject>;
+
 enum class FastPath : uint8_t {
     None,
     String,
     SimpleObject,
+    SimpleArray,
+    Int32Array,
+    DoubleArray,
+    DenseArray,
 };
 
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
@@ -129,6 +138,16 @@ public:
     // Fast path for postMessage with simple objects
     static Ref<SerializedScriptValue> createObjectFastPath(WTF::FixedVector<SimpleInMemoryPropertyTableEntry>&& object);
 
+    // Fast path for postMessage with dense arrays of primitives/strings
+    static Ref<SerializedScriptValue> createArrayFastPath(WTF::FixedVector<SimpleCloneableValue>&& elements);
+
+    // Fast path for postMessage with dense Int32/Double arrays (butterfly memcpy)
+    static Ref<SerializedScriptValue> createInt32ArrayFastPath(Vector<uint8_t>&& butterflyData, uint32_t length);
+    static Ref<SerializedScriptValue> createDoubleArrayFastPath(Vector<uint8_t>&& butterflyData, uint32_t length);
+
+    // Fast path for postMessage with dense arrays containing simple objects
+    static Ref<SerializedScriptValue> createDenseArrayFastPath(WTF::FixedVector<DenseArrayElement>&& elements);
+
     static Ref<SerializedScriptValue> nullValue();
 
     WEBCORE_EXPORT JSC::JSValue deserialize(JSC::JSGlobalObject&, JSC::JSGlobalObject*, SerializationErrorMode = SerializationErrorMode::Throwing, bool* didFail = nullptr);
@@ -156,7 +175,7 @@ public:
     // IDBValue writeBlobsToDiskForIndexedDBSynchronously();
     static Ref<SerializedScriptValue> createFromWireBytes(Vector<uint8_t>&& data)
     {
-        return adoptRef(*new SerializedScriptValue(WTFMove(data)));
+        return adoptRef(*new SerializedScriptValue(WTF::move(data)));
     }
     const Vector<uint8_t>& wireBytes() const { return m_data; }
 
@@ -231,6 +250,11 @@ private:
     // Constructor for string fast path
     explicit SerializedScriptValue(const String& fastPathString);
     explicit SerializedScriptValue(WTF::FixedVector<SimpleInMemoryPropertyTableEntry>&& object);
+    explicit SerializedScriptValue(WTF::FixedVector<SimpleCloneableValue>&& elements);
+    // Constructor for Int32Array/DoubleArray butterfly memcpy fast path
+    SerializedScriptValue(Vector<uint8_t>&& butterflyData, uint32_t length, FastPath fastPath);
+    // Constructor for DenseArray fast path
+    explicit SerializedScriptValue(WTF::FixedVector<DenseArrayElement>&& denseElements);
 
     size_t computeMemoryCost() const;
 
@@ -260,6 +284,16 @@ private:
     size_t m_memoryCost { 0 };
 
     FixedVector<SimpleInMemoryPropertyTableEntry> m_simpleInMemoryPropertyTable {};
+    // m_simpleArrayElements and m_arrayButterflyData/m_arrayLength are used exclusively:
+    // SimpleArray uses m_simpleArrayElements; Int32Array/DoubleArray use m_arrayButterflyData + m_arrayLength.
+    FixedVector<SimpleCloneableValue> m_simpleArrayElements {};
+
+    // Int32Array / DoubleArray fast path: raw butterfly data
+    Vector<uint8_t> m_arrayButterflyData {};
+    uint32_t m_arrayLength { 0 };
+
+    // DenseArray fast path: array of primitives/strings/simple objects
+    FixedVector<DenseArrayElement> m_denseArrayElements {};
 };
 
 template<class Encoder>
@@ -322,7 +356,7 @@ RefPtr<SerializedScriptValue> SerializedScriptValue::decode(Decoder& decoder)
             static_assert(sizeof(std::span<const uint8_t>::element_type) == 1);
             memcpy(buffer, data.data(), data.size_bytes());
             JSC::ArrayBufferDestructorFunction destructor = ArrayBuffer::primitiveGigacageDestructor();
-            arrayBufferContentsArray->append({ buffer, data.size_bytes(), std::nullopt, WTFMove(destructor) });
+            arrayBufferContentsArray->append({ buffer, data.size_bytes(), std::nullopt, WTF::move(destructor) });
         }
     }
 
@@ -337,7 +371,7 @@ RefPtr<SerializedScriptValue> SerializedScriptValue::decode(Decoder& decoder)
         decoder >> detachedRTCDataChannel;
         if (!detachedRTCDataChannel)
             return nullptr;
-        detachedRTCDataChannels.append(makeUnique<DetachedRTCDataChannel>(WTFMove(*detachedRTCDataChannel)));
+        detachedRTCDataChannels.append(makeUnique<DetachedRTCDataChannel>(WTF::move(*detachedRTCDataChannel)));
     }
 #endif
 #if ENABLE(WEB_CODECS)
@@ -351,24 +385,24 @@ RefPtr<SerializedScriptValue> SerializedScriptValue::decode(Decoder& decoder)
         decoder >> videoChunkData;
         if (!videoChunkData)
             return nullptr;
-        serializedVideoChunks.append(WebCodecsEncodedVideoChunkStorage::create(WTFMove(*videoChunkData)));
+        serializedVideoChunks.append(WebCodecsEncodedVideoChunkStorage::create(WTF::move(*videoChunkData)));
     }
     // FIXME: decode video frames
     Vector<WebCodecsVideoFrameData> serializedVideoFrames;
 #endif
 
-    return adoptRef(*new SerializedScriptValue(WTFMove(data), WTFMove(arrayBufferContentsArray)
+    return adoptRef(*new SerializedScriptValue(WTF::move(data), WTF::move(arrayBufferContentsArray)
 #if ENABLE(WEB_RTC)
-                                                                  ,
-        WTFMove(detachedRTCDataChannels)
+                                                                    ,
+        WTF::move(detachedRTCDataChannels)
 #endif
 #if ENABLE(WEB_CODECS)
             ,
-        WTFMove(serializedVideoChunks)
+        WTF::move(serializedVideoChunks)
 #endif
 #if ENABLE(WEB_CODECS)
             ,
-        WTFMove(serializedVideoFrames)
+        WTF::move(serializedVideoFrames)
 #endif
             ));
 }

@@ -95,6 +95,26 @@ pub fn readAll(self: File, buf: []u8) Maybe(usize) {
     return sys.readAll(self.handle, buf);
 }
 
+pub fn pwriteAll(self: File, buf: []const u8, initial_offset: i64) Maybe(void) {
+    var remain = buf;
+    var offset = initial_offset;
+    while (remain.len > 0) {
+        const rc = sys.pwrite(self.handle, remain, offset);
+        switch (rc) {
+            .err => |err| return .{ .err = err },
+            .result => |amt| {
+                if (amt == 0) {
+                    return .success;
+                }
+                remain = remain[amt..];
+                offset += @intCast(amt);
+            },
+        }
+    }
+
+    return .success;
+}
+
 pub fn writeAll(self: File, buf: []const u8) Maybe(void) {
     var remain = buf;
     while (remain.len > 0) {

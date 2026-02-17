@@ -1024,6 +1024,33 @@ config:
       expect(YAML.stringify([])).toBe("[]");
     });
 
+    test("space parameter with Infinity/NaN/large numbers", () => {
+      expect(YAML.stringify({ a: 1 }, null, Infinity)).toEqual(YAML.stringify({ a: 1 }, null, 10));
+      expect(YAML.stringify({ a: 1 }, null, -Infinity)).toEqual(YAML.stringify({ a: 1 }));
+      expect(YAML.stringify({ a: 1 }, null, NaN)).toEqual(YAML.stringify({ a: 1 }));
+      expect(YAML.stringify({ a: 1 }, null, 100)).toEqual(YAML.stringify({ a: 1 }, null, 10));
+      expect(YAML.stringify({ a: 1 }, null, 2147483648)).toEqual(YAML.stringify({ a: 1 }, null, 10));
+      expect(YAML.stringify({ a: 1 }, null, 3e9)).toEqual(YAML.stringify({ a: 1 }, null, 10));
+    });
+
+    test("space parameter with boxed Number", () => {
+      expect(YAML.stringify({ a: 1 }, null, new Number(2) as any)).toEqual(YAML.stringify({ a: 1 }, null, 2));
+      expect(YAML.stringify({ a: 1 }, null, new Number(0) as any)).toEqual(YAML.stringify({ a: 1 }, null, 0));
+      expect(YAML.stringify({ a: 1 }, null, new Number(-1) as any)).toEqual(YAML.stringify({ a: 1 }, null, -1));
+      expect(YAML.stringify({ a: 1 }, null, new Number(Infinity) as any)).toEqual(YAML.stringify({ a: 1 }, null, 10));
+      expect(YAML.stringify({ a: 1 }, null, new Number(NaN) as any)).toEqual(YAML.stringify({ a: 1 }, null, 0));
+    });
+
+    test("space parameter with boxed String", () => {
+      expect(YAML.stringify({ a: 1 }, null, new String("\t") as any)).toEqual(YAML.stringify({ a: 1 }, null, "\t"));
+      expect(YAML.stringify({ a: 1 }, null, new String("") as any)).toEqual(YAML.stringify({ a: 1 }, null, ""));
+    });
+
+    test("all-undefined properties produces empty object", () => {
+      expect(YAML.stringify({ a: undefined, b: undefined }, null, 2)).toBe("{}");
+      expect(YAML.stringify({ a: () => {}, b: () => {} }, null, 2)).toBe("{}");
+    });
+
     test("stringifies simple arrays", () => {
       expect(YAML.stringify([1, 2, 3], null, 2)).toBe("- 1\n- 2\n- 3");
       expect(YAML.stringify(["a", "b", "c"], null, 2)).toBe("- a\n- b\n- c");

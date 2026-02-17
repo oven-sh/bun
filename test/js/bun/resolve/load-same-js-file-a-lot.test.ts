@@ -1,8 +1,11 @@
 import { expect, test } from "bun:test";
-import { isDebug } from "harness";
+import { isASAN, isDebug } from "harness";
+
+const asanIsSlowMultiplier = isASAN ? 0.2 : 1;
+const count = Math.floor(10000 * asanIsSlowMultiplier);
 
 test(
-  "load the same file 10,000 times",
+  `load the same file ${count} times`,
   async () => {
     const meta = {
       url: import.meta.url.toLocaleLowerCase().replace(".test.ts", ".js"),
@@ -14,7 +17,7 @@ test(
     };
     const prev = Bun.unsafe.gcAggressionLevel();
     Bun.unsafe.gcAggressionLevel(0);
-    for (let i = 0; i < 10000; i++) {
+    for (let i = 0; i < count; i++) {
       const {
         default: { url, dir, file, path, dirname, filename },
       } = await import("./load-same-js-file-a-lot.js?i=" + i);
@@ -28,13 +31,13 @@ test(
     Bun.gc(true);
     Bun.unsafe.gcAggressionLevel(prev);
   },
-  isDebug ? 20_000 : 5000,
+  isDebug || isASAN ? 20_000 : 5000,
 );
 
-test("load the same empty JS file 10,000 times", async () => {
+test(`load the same empty JS file ${count} times`, async () => {
   const prev = Bun.unsafe.gcAggressionLevel();
   Bun.unsafe.gcAggressionLevel(0);
-  for (let i = 0; i < 10000; i++) {
+  for (let i = 0; i < count; i++) {
     const { default: obj } = await import("./load-same-empty-js-file-a-lot.js?i=" + i);
     expect(obj).toEqual({});
   }

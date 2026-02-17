@@ -39,7 +39,7 @@ static WebCore::ExceptionOr<void> encode(VM& vm, const WTF::BitSet<256>& doNotEs
         // 4-d-ii-1. Let V be the code unit value of C.
         char32_t codePoint;
         if (!U16_IS_LEAD(character))
-            codePoint = character;
+            codePoint = static_cast<char32_t>(character);
         else {
             // 4-d-iii. Else,
             // 4-d-iii-1. Increase k by 1.

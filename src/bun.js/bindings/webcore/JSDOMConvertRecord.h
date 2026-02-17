@@ -146,7 +146,7 @@ private:
                         auto addResult = resultMap.add(typedKey, result.size());
                         if (!addResult.isNewEntry) {
                             ASSERT(result[addResult.iterator->value].key == typedKey);
-                            result[addResult.iterator->value].value = WTFMove(typedValue);
+                            result[addResult.iterator->value].value = WTF::move(typedValue);
                             return true;
                         }
                     }
@@ -154,7 +154,7 @@ private:
                     UNUSED_VARIABLE(resultMap);
 
                 // 5. Otherwise, append to result a mapping (typedKey, typedValue).
-                result.append({ WTFMove(typedKey), WTFMove(typedValue) });
+                result.append({ WTF::move(typedKey), WTF::move(typedValue) });
                 return true;
             });
 
@@ -164,7 +164,7 @@ private:
         }
 
         // 4. Let keys be ? O.[[OwnPropertyKeys]]().
-        JSC::PropertyNameArray keys(vm, JSC::PropertyNameMode::StringsAndSymbols, JSC::PrivateSymbolMode::Exclude);
+        JSC::PropertyNameArrayBuilder keys(vm, JSC::PropertyNameMode::StringsAndSymbols, JSC::PrivateSymbolMode::Exclude);
         object->methodTable()->getOwnPropertyNames(object, &lexicalGlobalObject, keys, JSC::DontEnumPropertiesMode::Include);
         RETURN_IF_EXCEPTION(scope, {});
 
@@ -203,7 +203,7 @@ private:
                         auto addResult = resultMap.add(typedKey, result.size());
                         if (!addResult.isNewEntry) {
                             ASSERT(result[addResult.iterator->value].key == typedKey);
-                            result[addResult.iterator->value].value = WTFMove(typedValue);
+                            result[addResult.iterator->value].value = WTF::move(typedValue);
                             continue;
                         }
                     }
@@ -211,7 +211,7 @@ private:
                     UNUSED_VARIABLE(resultMap);
 
                 // 5. Otherwise, append to result a mapping (typedKey, typedValue).
-                result.append({ WTFMove(typedKey), WTFMove(typedValue) });
+                result.append({ WTF::move(typedKey), WTF::move(typedValue) });
             }
         }
 

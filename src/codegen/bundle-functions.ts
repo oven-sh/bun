@@ -325,7 +325,9 @@ $$capture_start$$(${fn.async ? "async " : ""}${
       directives: fn.directives,
       source: finalReplacement,
       params: fn.params,
-      visibility: fn.directives.visibility ?? (fn.directives.linkTimeConstant ? "Private" : "Public"),
+      // Async functions automatically get Private visibility because the parser
+      // upgrades them when they use await (see Parser.cpp parseFunctionBody)
+      visibility: fn.directives.visibility ?? (fn.directives.linkTimeConstant || fn.async ? "Private" : "Public"),
       isGetter: !!fn.directives.getter,
       constructAbility: fn.directives.ConstructAbility ?? "CannotConstruct",
       constructKind: fn.directives.ConstructKind ?? "None",

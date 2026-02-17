@@ -644,9 +644,16 @@ pub const Stringifier = struct {
                                 &path_buf,
                             );
 
-                            try writer.print(", {f}]", .{
-                                repo.resolved.fmtJson(buf, .{}),
-                            });
+                            if (pkg_meta.integrity.tag.isSupported()) {
+                                try writer.print(", {f}, \"{f}\"]", .{
+                                    repo.resolved.fmtJson(buf, .{}),
+                                    pkg_meta.integrity,
+                                });
+                            } else {
+                                try writer.print(", {f}]", .{
+                                    repo.resolved.fmtJson(buf, .{}),
+                                });
+                            }
                         },
                         else => unreachable,
                     }
@@ -1708,8 +1715,14 @@ pub fn parseIntoBinaryLockfile(
                 };
 
                 if (registry_str.len == 0) {
+                    // Use scope-specific registry if available, otherwise fall back to default
+                    const registry_url = if (manager) |mgr|
+                        mgr.scopeForPackageName(name_str).url.href
+                    else
+                        Npm.Registry.default_url;
+
                     const url = try ExtractTarball.buildURL(
-                        Npm.Registry.default_url,
+                        registry_url,
                         strings.StringOrTinyString.init(name.slice(string_buf.bytes.items)),
                         res.value.npm.version,
                         string_buf.bytes.items,
@@ -1879,6 +1892,15 @@ pub fn parseIntoBinaryLockfile(
                     };
 
                     @field(res.value, @tagName(tag)).resolved = try string_buf.append(bun_tag_str);
+
+                    // Optional integrity hash (added to pin tarball content)
+                    if (i < pkg_info.len) {
+                        const integrity_expr = pkg_info.at(i);
+                        if (integrity_expr.asString(allocator)) |integrity_str| {
+                            pkg.meta.integrity = Integrity.parse(integrity_str);
+                            i += 1;
+                        }
+                    }
                 },
                 else => {},
             }

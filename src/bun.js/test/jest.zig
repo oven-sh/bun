@@ -386,7 +386,7 @@ pub fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []
                 }
 
                 const var_path = label[var_start..var_end];
-                const value = try function_args[0].getIfPropertyExistsFromPath(globalThis, bun.String.init(var_path).toJS(globalThis));
+                const value = try function_args[0].getIfPropertyExistsFromPath(globalThis, try bun.String.init(var_path).toJS(globalThis));
                 if (!value.isEmptyOrUndefinedOrNull()) {
                     // For primitive strings, use toString() to avoid adding quotes
                     // This matches Jest's behavior (https://github.com/jestjs/jest/issues/7689)
@@ -430,7 +430,8 @@ pub fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []
                 'j', 'o' => {
                     var str = bun.String.empty;
                     defer str.deref();
-                    try current_arg.jsonStringify(globalThis, 0, &str);
+                    // Use jsonStringifyFast for SIMD-optimized serialization
+                    try current_arg.jsonStringifyFast(globalThis, &str);
                     const owned_slice = bun.handleOom(str.toOwnedSlice(allocator));
                     defer allocator.free(owned_slice);
                     bun.handleOom(list.appendSlice(owned_slice));

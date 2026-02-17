@@ -118,6 +118,9 @@ pub const BundleV2 = struct {
     bun_watcher: ?*bun.Watcher,
     plugins: ?*jsc.API.JSBundler.Plugin,
     completion: ?*JSBundleCompletionTask,
+    /// In-memory files that can be used as entrypoints or imported.
+    /// This is a pointer to the FileMap in the completion config.
+    file_map: ?*const jsc.API.JSBundler.FileMap,
     source_code_length: usize,
 
     /// There is a race condition where an onResolve plugin may schedule a task on the bundle thread before it's parsing task completes
@@ -534,9 +537,47 @@ pub const BundleV2 = struct {
         target: options.Target,
     ) void {
         const transpiler = this.transpilerForTarget(target);
+        const source_dir = Fs.PathName.init(import_record.source_file).dirWithTrailingSlash();
+
+        // Check the FileMap first for in-memory files
+        if (this.file_map) |file_map| {
+            if (file_map.resolve(import_record.source_file, import_record.specifier)) |_file_map_result| {
+                var file_map_result = _file_map_result;
+                var path_primary = file_map_result.path_pair.primary;
+                const entry = bun.handleOom(this.pathToSourceIndexMap(target).getOrPut(this.allocator(), path_primary.text));
+                if (!entry.found_existing) {
+                    const loader: Loader = brk: {
+                        const record: *ImportRecord = &this.graph.ast.items(.import_records)[import_record.importer_source_index].slice()[import_record.import_record_index];
+                        if (record.loader) |out_loader| {
+                            break :brk out_loader;
+                        }
+                        break :brk Fs.Path.init(path_primary.text).loader(&transpiler.options.loaders) orelse options.Loader.file;
+                    };
+                    // For virtual files, use the path text as-is (no relative path computation needed).
+                    path_primary.pretty = bun.handleOom(this.allocator().dupe(u8, path_primary.text));
+                    const idx = this.enqueueParseTask(
+                        &file_map_result,
+                        &.{
+                            .path = path_primary,
+                            .contents = "",
+                        },
+                        loader,
+                        import_record.original_target,
+                    ) catch |err| bun.handleOom(err);
+                    entry.value_ptr.* = idx;
+                    const record: *ImportRecord = &this.graph.ast.items(.import_records)[import_record.importer_source_index].slice()[import_record.import_record_index];
+                    record.source_index = Index.init(idx);
+                } else {
+                    const record: *ImportRecord = &this.graph.ast.items(.import_records)[import_record.importer_source_index].slice()[import_record.import_record_index];
+                    record.source_index = Index.init(entry.value_ptr.*);
+                }
+                return;
+            }
+        }
+
         var had_busted_dir_cache: bool = false;
         var resolve_result: _resolver.Result = while (true) break transpiler.resolver.resolve(
-            Fs.PathName.init(import_record.source_file).dirWithTrailingSlash(),
+            source_dir,
             import_record.specifier,
             import_record.kind,
         ) catch |err| {
@@ -570,7 +611,7 @@ pub const BundleV2 = struct {
 
             var record: *ImportRecord = &this.graph.ast.items(.import_records)[import_record.importer_source_index].slice()[import_record.import_record_index];
             source = &this.graph.input_files.items(.source)[import_record.importer_source_index];
-            handles_import_errors = record.handles_import_errors;
+            handles_import_errors = record.flags.handles_import_errors;
 
             // Disable failing packages from being printed.
             // This may cause broken code to write.
@@ -641,7 +682,7 @@ pub const BundleV2 = struct {
             return;
         };
 
-        if (resolve_result.is_external) {
+        if (resolve_result.flags.is_external) {
             return;
         }
 
@@ -880,6 +921,7 @@ pub const BundleV2 = struct {
             .bun_watcher = null,
             .plugins = null,
             .completion = null,
+            .file_map = null,
             .source_code_length = 0,
             .thread_lock = .initLocked(),
         };
@@ -929,6 +971,10 @@ pub const BundleV2 = struct {
         this.linker.options.target = transpiler.options.target;
         this.linker.options.output_format = transpiler.options.output_format;
         this.linker.options.generate_bytecode_cache = transpiler.options.bytecode;
+        this.linker.options.compile = transpiler.options.compile;
+        this.linker.options.metafile = transpiler.options.metafile;
+        this.linker.options.metafile_json_path = transpiler.options.metafile_json_path;
+        this.linker.options.metafile_markdown_path = transpiler.options.metafile_markdown_path;
 
         this.linker.dev_server = transpiler.options.dev_server;
 
@@ -1031,6 +1077,18 @@ pub const BundleV2 = struct {
                     for (data) |entry_point| {
                         if (this.enqueueEntryPointOnResolvePluginIfNeeded(entry_point, this.transpiler.options.target)) {
                             continue;
+                        }
+
+                        // Check FileMap first for in-memory entry points
+                        if (this.file_map) |file_map| {
+                            if (file_map.resolve("", entry_point)) |file_map_result| {
+                                _ = try this.enqueueEntryItem(
+                                    file_map_result,
+                                    true,
+                                    this.transpiler.options.target,
+                                );
+                                continue;
+                            }
                         }
 
                         // no plugins were matched
@@ -1481,7 +1539,7 @@ pub const BundleV2 = struct {
         minify_duration: *u64,
         source_code_size: *u64,
         fetcher: ?*DependenciesScanner,
-    ) !std.array_list.Managed(options.OutputFile) {
+    ) !BuildResult {
         var this = try BundleV2.init(
             transpiler,
             null,
@@ -1535,10 +1593,30 @@ pub const BundleV2 = struct {
         // Do this at the very end, after processing all the imports/exports so that we can follow exports as needed.
         if (fetcher) |fetch| {
             try this.getAllDependencies(reachable_files, fetch);
-            return std.array_list.Managed(options.OutputFile).init(alloc);
+            return .{
+                .output_files = std.array_list.Managed(options.OutputFile).init(alloc),
+                .metafile = null,
+                .metafile_markdown = null,
+            };
         }
 
-        return try this.linker.generateChunksInParallel(chunks, false);
+        const output_files = try this.linker.generateChunksInParallel(chunks, false);
+
+        // Generate metafile if requested (CLI writes files in build_command.zig)
+        const metafile: ?[]const u8 = if (this.linker.options.metafile)
+            LinkerContext.MetafileBuilder.generate(bun.default_allocator, &this.linker, chunks) catch |err| blk: {
+                bun.Output.warn("Failed to generate metafile: {s}", .{@errorName(err)});
+                break :blk null;
+            }
+        else
+            null;
+
+        // Markdown is generated later in build_command.zig for CLI
+        return .{
+            .output_files = output_files,
+            .metafile = metafile,
+            .metafile_markdown = null,
+        };
     }
 
     pub fn generateFromBakeProductionCLI(
@@ -1750,6 +1828,8 @@ pub const BundleV2 = struct {
 
     pub const BuildResult = struct {
         output_files: std.array_list.Managed(options.OutputFile),
+        metafile: ?[]const u8 = null,
+        metafile_markdown: ?[]const u8 = null,
 
         pub fn deinit(this: *BuildResult) void {
             for (this.output_files.items) |*output_file| {
@@ -1757,6 +1837,16 @@ pub const BundleV2 = struct {
             }
 
             this.output_files.clearAndFree();
+
+            if (this.metafile) |mf| {
+                bun.default_allocator.free(mf);
+                this.metafile = null;
+            }
+
+            if (this.metafile_markdown) |md| {
+                bun.default_allocator.free(md);
+                this.metafile_markdown = null;
+            }
         }
     };
 
@@ -1904,6 +1994,10 @@ pub const BundleV2 = struct {
             transpiler.options.css_chunking = config.css_chunking;
             transpiler.options.banner = config.banner.slice();
             transpiler.options.footer = config.footer.slice();
+            transpiler.options.react_fast_refresh = config.react_fast_refresh;
+            transpiler.options.metafile = config.metafile;
+            transpiler.options.metafile_json_path = config.metafile_json_path.slice();
+            transpiler.options.metafile_markdown_path = config.metafile_markdown_path.slice();
 
             if (transpiler.options.compile) {
                 // Emitting DCE annotations is nonsensical in --compile.
@@ -2204,7 +2298,7 @@ pub const BundleV2 = struct {
                             return promise.reject(globalThis, err);
                         };
                     }
-                    const build_output = jsc.JSValue.createEmptyObject(globalThis, 3);
+                    const build_output = jsc.JSValue.createEmptyObject(globalThis, 4);
                     build_output.put(globalThis, jsc.ZigString.static("outputs"), output_files_js);
                     build_output.put(globalThis, jsc.ZigString.static("success"), .true);
                     build_output.put(
@@ -2214,6 +2308,22 @@ pub const BundleV2 = struct {
                             return promise.reject(globalThis, err);
                         },
                     );
+
+                    // Add metafile if it was generated
+                    // metafile: { json: <lazy parsed>, markdown?: string }
+                    if (build.metafile) |metafile| {
+                        const metafile_js_str = bun.String.createUTF8ForJS(globalThis, metafile) catch |err| {
+                            return promise.reject(globalThis, err);
+                        };
+                        const metafile_md_str: jsc.JSValue = if (build.metafile_markdown) |md|
+                            (bun.String.createUTF8ForJS(globalThis, md) catch |err| {
+                                return promise.reject(globalThis, err);
+                            })
+                        else
+                            .js_undefined;
+                        // Set up metafile object with json (lazy) and markdown (if present)
+                        Bun__setupLazyMetafile(globalThis, build_output, metafile_js_str, metafile_md_str);
+                    }
 
                     const didHandleCallbacks = if (this.plugins) |plugin| runOnEndCallbacks(globalThis, plugin, promise, build_output, .js_undefined) catch |err| {
                         return promise.reject(globalThis, err);
@@ -2602,7 +2712,7 @@ pub const BundleV2 = struct {
     pub fn runFromJSInNewThread(
         this: *BundleV2,
         entry_points: []const []const u8,
-    ) !std.array_list.Managed(options.OutputFile) {
+    ) !BuildResult {
         this.unique_key = generateUniqueKey();
 
         if (this.transpiler.log.errors > 0) {
@@ -2649,7 +2759,105 @@ pub const BundleV2 = struct {
             return error.BuildFailed;
         }
 
-        return try this.linker.generateChunksInParallel(chunks, false);
+        var output_files = try this.linker.generateChunksInParallel(chunks, false);
+
+        // Generate metafile if requested
+        const metafile: ?[]const u8 = if (this.linker.options.metafile)
+            LinkerContext.MetafileBuilder.generate(bun.default_allocator, &this.linker, chunks) catch |err| blk: {
+                bun.Output.warn("Failed to generate metafile: {s}", .{@errorName(err)});
+                break :blk null;
+            }
+        else
+            null;
+
+        // Generate markdown if metafile was generated and path specified
+        const metafile_markdown: ?[]const u8 = if (this.linker.options.metafile_markdown_path.len > 0 and metafile != null)
+            LinkerContext.MetafileBuilder.generateMarkdown(bun.default_allocator, metafile.?) catch |err| blk: {
+                bun.Output.warn("Failed to generate metafile markdown: {s}", .{@errorName(err)});
+                break :blk null;
+            }
+        else
+            null;
+
+        // Write metafile outputs to disk and add them as OutputFiles.
+        // Metafile paths are relative to outdir, like all other output files.
+        const outdir = this.linker.resolver.opts.output_dir;
+        if (this.linker.options.metafile_json_path.len > 0) {
+            if (metafile) |mf| {
+                try writeMetafileOutput(&output_files, outdir, this.linker.options.metafile_json_path, mf, .@"metafile-json");
+            }
+        }
+        if (this.linker.options.metafile_markdown_path.len > 0) {
+            if (metafile_markdown) |md| {
+                try writeMetafileOutput(&output_files, outdir, this.linker.options.metafile_markdown_path, md, .@"metafile-markdown");
+            }
+        }
+
+        return .{
+            .output_files = output_files,
+            .metafile = metafile,
+            .metafile_markdown = metafile_markdown,
+        };
+    }
+
+    /// Writes a metafile (JSON or markdown) to disk and appends it to the output_files list.
+    /// Metafile paths are relative to outdir, like all other output files.
+    fn writeMetafileOutput(
+        output_files: *std.array_list.Managed(options.OutputFile),
+        outdir: []const u8,
+        file_path: []const u8,
+        content: []const u8,
+        output_kind: jsc.API.BuildArtifact.OutputKind,
+    ) !void {
+        if (outdir.len > 0) {
+            // Open the output directory
+            var root_dir = bun.FD.cwd().stdDir().makeOpenPath(outdir, .{}) catch |err| {
+                bun.Output.warn("Failed to open output directory '{s}': {s}", .{ outdir, @errorName(err) });
+                return;
+            };
+            defer root_dir.close();
+
+            // Create parent directories if needed (relative to outdir)
+            if (std.fs.path.dirname(file_path)) |parent| {
+                if (parent.len > 0) {
+                    root_dir.makePath(parent) catch {};
+                }
+            }
+
+            // Write to disk relative to outdir
+            var path_buf: bun.PathBuffer = undefined;
+            _ = jsc.Node.fs.NodeFS.writeFileWithPathBuffer(&path_buf, .{
+                .data = .{ .buffer = .{
+                    .buffer = .{
+                        .ptr = @constCast(content.ptr),
+                        .len = @as(u32, @truncate(content.len)),
+                        .byte_len = @as(u32, @truncate(content.len)),
+                    },
+                } },
+                .encoding = .buffer,
+                .mode = 0o644,
+                .dirfd = bun.FD.fromStdDir(root_dir),
+                .file = .{ .path = .{
+                    .string = bun.PathString.init(file_path),
+                } },
+            }).unwrap() catch |err| {
+                bun.Output.warn("Failed to write metafile to '{s}': {s}", .{ file_path, @errorName(err) });
+            };
+        }
+
+        // Add as OutputFile so it appears in result.outputs
+        const is_json = output_kind == .@"metafile-json";
+        try output_files.append(options.OutputFile.init(.{
+            .loader = if (is_json) .json else .file,
+            .input_loader = if (is_json) .json else .file,
+            .input_path = bun.handleOom(bun.default_allocator.dupe(u8, if (is_json) "metafile.json" else "metafile.md")),
+            .output_path = bun.handleOom(bun.default_allocator.dupe(u8, file_path)),
+            .data = .{ .saved = content.len },
+            .output_kind = output_kind,
+            .is_executable = false,
+            .side = null,
+            .entry_point_index = null,
+        }));
     }
 
     fn shouldAddWatcherPlugin(bv2: *BundleV2, namespace: []const u8, path: []const u8) bool {
@@ -3083,16 +3291,16 @@ pub const BundleV2 = struct {
         const source_dir = source.path.sourceDir();
         var estimated_resolve_queue_count: usize = 0;
         for (ast.import_records.slice()) |*import_record| {
-            if (import_record.is_internal) {
+            if (import_record.flags.is_internal) {
                 import_record.tag = .runtime;
                 import_record.source_index = Index.runtime;
             }
 
-            if (import_record.is_unused) {
+            if (import_record.flags.is_unused) {
                 import_record.source_index = Index.invalid;
             }
 
-            estimated_resolve_queue_count += @as(usize, @intFromBool(!(import_record.is_internal or import_record.is_unused or import_record.source_index.isValid())));
+            estimated_resolve_queue_count += @as(usize, @intFromBool(!(import_record.flags.is_internal or import_record.flags.is_unused or import_record.source_index.isValid())));
         }
         var resolve_queue = ResolveQueue.init(this.allocator());
         bun.handleOom(resolve_queue.ensureTotalCapacity(@intCast(estimated_resolve_queue_count)));
@@ -3100,12 +3308,17 @@ pub const BundleV2 = struct {
         var last_error: ?anyerror = null;
 
         outer: for (ast.import_records.slice(), 0..) |*import_record, i| {
+            // Preserve original import specifier before resolution modifies path
+            if (import_record.original_path.len == 0) {
+                import_record.original_path = import_record.path.text;
+            }
+
             if (
             // Don't resolve TypeScript types
-            import_record.is_unused or
+            import_record.flags.is_unused or
 
                 // Don't resolve the runtime
-                import_record.is_internal or
+                import_record.flags.is_internal or
 
                 // Don't resolve pre-resolved imports
                 import_record.source_index.isValid())
@@ -3119,7 +3332,7 @@ pub const BundleV2 = struct {
                         const src = if (is_server) bake.server_virtual_source else bake.client_virtual_source;
                         if (strings.eqlComptime(import_record.path.text, src.path.pretty)) {
                             if (this.transpiler.options.dev_server != null) {
-                                import_record.is_external_without_side_effects = true;
+                                import_record.flags.is_external_without_side_effects = true;
                                 import_record.source_index = Index.invalid;
                             } else {
                                 if (is_server) {
@@ -3156,7 +3369,7 @@ pub const BundleV2 = struct {
                         replacement.path;
                     import_record.tag = replacement.tag;
                     import_record.source_index = Index.invalid;
-                    import_record.is_external_without_side_effects = true;
+                    import_record.flags.is_external_without_side_effects = true;
                     continue;
                 }
 
@@ -3164,7 +3377,7 @@ pub const BundleV2 = struct {
                     import_record.path = Fs.Path.init(import_record.path.text["bun:".len..]);
                     import_record.path.namespace = "bun";
                     import_record.source_index = Index.invalid;
-                    import_record.is_external_without_side_effects = true;
+                    import_record.flags.is_external_without_side_effects = true;
 
                     // don't link bun
                     continue;
@@ -3173,12 +3386,12 @@ pub const BundleV2 = struct {
 
             // By default, we treat .sqlite files as external.
             if (import_record.loader != null and import_record.loader.? == .sqlite) {
-                import_record.is_external_without_side_effects = true;
+                import_record.flags.is_external_without_side_effects = true;
                 continue;
             }
 
             if (import_record.loader != null and import_record.loader.? == .sqlite_embedded) {
-                import_record.is_external_without_side_effects = true;
+                import_record.flags.is_external_without_side_effects = true;
             }
 
             if (this.enqueueOnResolvePluginIfNeeded(source.index.get(), import_record, source.path.text, @as(u32, @truncate(i)), ast.target)) {
@@ -3221,6 +3434,49 @@ pub const BundleV2 = struct {
                     ast.target.bakeGraph(),
                     ast.target,
                 };
+
+            // Check the FileMap first for in-memory files
+            if (this.file_map) |file_map| {
+                if (file_map.resolve(source.path.text, import_record.path.text)) |_file_map_result| {
+                    var file_map_result = _file_map_result;
+                    var path_primary = file_map_result.path_pair.primary;
+                    const import_record_loader = import_record.loader orelse Fs.Path.init(path_primary.text).loader(&transpiler.options.loaders) orelse .file;
+                    import_record.loader = import_record_loader;
+
+                    if (this.pathToSourceIndexMap(target).get(path_primary.text)) |id| {
+                        import_record.source_index = .init(id);
+                        continue;
+                    }
+
+                    const resolve_entry = resolve_queue.getOrPut(path_primary.text) catch |err| bun.handleOom(err);
+                    if (resolve_entry.found_existing) {
+                        import_record.path = resolve_entry.value_ptr.*.path;
+                        continue;
+                    }
+
+                    // For virtual files, use the path text as-is (no relative path computation needed).
+                    path_primary.pretty = bun.handleOom(this.allocator().dupe(u8, path_primary.text));
+                    import_record.path = path_primary;
+                    resolve_entry.key_ptr.* = path_primary.text;
+                    debug("created ParseTask from FileMap: {s}", .{path_primary.text});
+                    const resolve_task = bun.handleOom(bun.default_allocator.create(ParseTask));
+                    file_map_result.path_pair.primary = path_primary;
+                    resolve_task.* = ParseTask.init(&file_map_result, Index.invalid, this);
+                    resolve_task.known_target = target;
+                    // Use transpiler JSX options, applying force_node_env like the disk path does
+                    resolve_task.jsx = transpiler.options.jsx;
+                    resolve_task.jsx.development = switch (transpiler.options.force_node_env) {
+                        .development => true,
+                        .production => false,
+                        .unspecified => transpiler.options.jsx.development,
+                    };
+                    resolve_task.loader = import_record_loader;
+                    resolve_task.tree_shaking = transpiler.options.tree_shaking;
+                    resolve_task.side_effects = .has_side_effects;
+                    resolve_entry.value_ptr.* = resolve_task;
+                    continue;
+                }
+            }
 
             var had_busted_dir_cache = false;
             var resolve_result: _resolver.Result = inner: while (true) break transpiler.resolver.resolveWithFramework(
@@ -3266,7 +3522,7 @@ pub const BundleV2 = struct {
                     error.ModuleNotFound => {
                         const addError = Logger.Log.addResolveErrorWithTextDupe;
 
-                        if (!import_record.handles_import_errors and !this.transpiler.options.ignore_module_resolution_errors) {
+                        if (!import_record.flags.handles_import_errors and !this.transpiler.options.ignore_module_resolution_errors) {
                             last_error = err;
                             if (isPackagePath(import_record.path.text)) {
                                 if (ast.target == .browser and options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
@@ -3370,11 +3626,11 @@ pub const BundleV2 = struct {
                 continue;
             };
 
-            if (resolve_result.is_external) {
-                if (resolve_result.is_external_and_rewrite_import_path and !strings.eqlLong(resolve_result.path_pair.primary.text, import_record.path.text, true)) {
+            if (resolve_result.flags.is_external) {
+                if (resolve_result.flags.is_external_and_rewrite_import_path and !strings.eqlLong(resolve_result.path_pair.primary.text, import_record.path.text, true)) {
                     import_record.path = resolve_result.path_pair.primary;
                 }
-                import_record.is_external_without_side_effects = resolve_result.primary_side_effects_data != .has_side_effects;
+                import_record.flags.is_external_without_side_effects = resolve_result.primary_side_effects_data != .has_side_effects;
                 continue;
             }
 
@@ -3427,7 +3683,20 @@ pub const BundleV2 = struct {
                 }
             }
 
-            const import_record_loader = import_record.loader orelse path.loader(&transpiler.options.loaders) orelse .file;
+            const import_record_loader = brk: {
+                const resolved_loader = import_record.loader orelse path.loader(&transpiler.options.loaders) orelse .file;
+                // When an HTML file references a URL asset (e.g. <link rel="manifest" href="./manifest.json" />),
+                // the file must be copied to the output directory as-is. If the resolved loader would
+                // parse/transform the file (e.g. .json, .toml) rather than copy it, force the .file loader
+                // so that `shouldCopyForBundling()` returns true and the asset is emitted.
+                // Only do this for HTML sources — CSS url() imports should retain their original behavior.
+                if (loader == .html and import_record.kind == .url and !resolved_loader.shouldCopyForBundling() and
+                    !resolved_loader.isJavaScriptLike() and !resolved_loader.isCSS() and resolved_loader != .html)
+                {
+                    break :brk Loader.file;
+                }
+                break :brk resolved_loader;
+            };
             import_record.loader = import_record_loader;
 
             const is_html_entrypoint = import_record_loader == .html and target.isServerSide() and this.transpiler.options.dev_server == null;
@@ -4253,9 +4522,19 @@ pub const CrossChunkImport = struct {
 };
 
 pub const CompileResult = union(enum) {
+    pub const DeclInfo = struct {
+        pub const Kind = enum(u1) { declared, lexical };
+        name: []const u8,
+        kind: Kind,
+    };
+
     javascript: struct {
         source_index: Index.Int,
         result: js_printer.PrintResult,
+        /// Top-level declarations collected from converted statements during
+        /// parallel printing. Used by postProcessJSChunk to populate ModuleInfo
+        /// without re-scanning the original (unconverted) AST.
+        decls: []const DeclInfo = &.{},
 
         pub fn code(this: @This()) []const u8 {
             return switch (this.result) {
@@ -4567,6 +4846,11 @@ pub const LinkerGraph = @import("./LinkerGraph.zig").LinkerGraph;
 pub const Graph = @import("./Graph.zig");
 
 const string = []const u8;
+
+// C++ binding for lazy metafile getter (defined in BundlerMetafile.cpp)
+// Uses jsc.conv (SYSV_ABI on Windows x64) for proper calling convention
+// Sets up metafile object with { json: <lazy parsed>, markdown?: string }
+extern "C" fn Bun__setupLazyMetafile(globalThis: *jsc.JSGlobalObject, buildOutput: jsc.JSValue, metafileJsonString: jsc.JSValue, metafileMarkdownString: jsc.JSValue) callconv(jsc.conv) void;
 
 const options = @import("../options.zig");
 

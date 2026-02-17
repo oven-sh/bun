@@ -33,15 +33,15 @@ namespace WebCore {
 NetworkLoadMetrics::NetworkLoadMetrics() = default;
 
 NetworkLoadMetrics::NetworkLoadMetrics(MonotonicTime&& redirectStart, MonotonicTime&& fetchStart, MonotonicTime&& domainLookupStart, MonotonicTime&& domainLookupEnd, MonotonicTime&& connectStart, MonotonicTime&& secureConnectionStart, MonotonicTime&& connectEnd, MonotonicTime&& requestStart, MonotonicTime&& responseStart, MonotonicTime&& responseEnd, MonotonicTime&& workerStart, String&& protocol, uint16_t redirectCount, bool complete, bool cellular, bool expensive, bool constrained, bool multipath, bool isReusedConnection, bool failsTAOCheck, bool hasCrossOriginRedirect, PrivacyStance privacyStance, uint64_t responseBodyBytesReceived, uint64_t responseBodyDecodedSize, RefPtr<AdditionalNetworkLoadMetricsForWebInspector>&& additionalNetworkLoadMetricsForWebInspector)
-    : redirectStart(WTFMove(redirectStart))
-    , fetchStart(WTFMove(fetchStart))
-    , domainLookupStart(WTFMove(domainLookupStart))
-    , domainLookupEnd(WTFMove(domainLookupEnd))
-    , connectStart(WTFMove(connectStart))
-    , secureConnectionStart(WTFMove(secureConnectionStart))
-    , connectEnd(WTFMove(connectEnd))
-    , requestStart(WTFMove(requestStart))
-    , responseStart(WTFMove(responseStart))
+    : redirectStart(WTF::move(redirectStart))
+    , fetchStart(WTF::move(fetchStart))
+    , domainLookupStart(WTF::move(domainLookupStart))
+    , domainLookupEnd(WTF::move(domainLookupEnd))
+    , connectStart(WTF::move(connectStart))
+    , secureConnectionStart(WTF::move(secureConnectionStart))
+    , connectEnd(WTF::move(connectEnd))
+    , requestStart(WTF::move(requestStart))
+    , responseStart(WTF::move(responseStart))
     , responseEnd(responseEnd)
     , workerStart(workerStart)
     , protocol(protocol)
@@ -57,7 +57,7 @@ NetworkLoadMetrics::NetworkLoadMetrics(MonotonicTime&& redirectStart, MonotonicT
     , privacyStance(privacyStance)
     , responseBodyBytesReceived(responseBodyBytesReceived)
     , responseBodyDecodedSize(responseBodyDecodedSize)
-    , additionalNetworkLoadMetricsForWebInspector(WTFMove(additionalNetworkLoadMetricsForWebInspector))
+    , additionalNetworkLoadMetricsForWebInspector(WTF::move(additionalNetworkLoadMetricsForWebInspector))
 {
 }
 
@@ -169,16 +169,16 @@ NetworkLoadMetrics NetworkLoadMetrics::isolatedCopy() const
 
 Ref<AdditionalNetworkLoadMetricsForWebInspector> AdditionalNetworkLoadMetricsForWebInspector::create(NetworkLoadPriority&& priority, String&& remoteAddress, String&& connectionIdentifier, String&& tlsProtocol, String&& tlsCipher, HTTPHeaderMap&& requestHeaders, uint64_t requestHeaderBytesSent, uint64_t responseHeaderBytesReceived, uint64_t requestBodyBytesSent, bool isProxyConnection)
 {
-    return adoptRef(*new AdditionalNetworkLoadMetricsForWebInspector(WTFMove(priority), WTFMove(remoteAddress), WTFMove(connectionIdentifier), WTFMove(tlsProtocol), WTFMove(tlsCipher), WTFMove(requestHeaders), requestHeaderBytesSent, responseHeaderBytesReceived, requestBodyBytesSent, isProxyConnection));
+    return adoptRef(*new AdditionalNetworkLoadMetricsForWebInspector(WTF::move(priority), WTF::move(remoteAddress), WTF::move(connectionIdentifier), WTF::move(tlsProtocol), WTF::move(tlsCipher), WTF::move(requestHeaders), requestHeaderBytesSent, responseHeaderBytesReceived, requestBodyBytesSent, isProxyConnection));
 }
 
 AdditionalNetworkLoadMetricsForWebInspector::AdditionalNetworkLoadMetricsForWebInspector(NetworkLoadPriority&& priority, String&& remoteAddress, String&& connectionIdentifier, String&& tlsProtocol, String&& tlsCipher, HTTPHeaderMap&& requestHeaders, uint64_t requestHeaderBytesSent, uint64_t responseHeaderBytesReceived, uint64_t requestBodyBytesSent, bool isProxyConnection)
-    : priority(WTFMove(priority))
-    , remoteAddress(WTFMove(remoteAddress))
-    , connectionIdentifier(WTFMove(connectionIdentifier))
-    , tlsProtocol(WTFMove(tlsProtocol))
-    , tlsCipher(WTFMove(tlsCipher))
-    , requestHeaders(WTFMove(requestHeaders))
+    : priority(WTF::move(priority))
+    , remoteAddress(WTF::move(remoteAddress))
+    , connectionIdentifier(WTF::move(connectionIdentifier))
+    , tlsProtocol(WTF::move(tlsProtocol))
+    , tlsCipher(WTF::move(tlsCipher))
+    , requestHeaders(WTF::move(requestHeaders))
     , requestHeaderBytesSent(requestHeaderBytesSent)
     , responseHeaderBytesReceived(responseHeaderBytesReceived)
     , requestBodyBytesSent(requestBodyBytesSent)

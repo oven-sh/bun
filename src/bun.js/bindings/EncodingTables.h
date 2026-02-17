@@ -55,6 +55,10 @@ template<typename CollectionType, typename KeyType> static auto findInSortedPair
 inline void checkEncodingTableInvariants() {}
 #endif
 
+// LLVM 21+ -Wcharacter-conversion flags intentional char32_t/char16_t comparisons
+// used for Unicode code point range checks in findFirstInSortedPairs.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wcharacter-conversion"
 struct CompareFirst {
     template<typename TypeA, typename TypeB> bool operator()(const TypeA& a, const TypeB& b)
     {
@@ -132,5 +136,6 @@ template<typename CollectionType, typename KeyType> static auto findInSortedPair
     }
     return std::ranges::equal_range(collection, makeFirstAdapter(key), CompareFirst {});
 }
+#pragma clang diagnostic pop
 
 }

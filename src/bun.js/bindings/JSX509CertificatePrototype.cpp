@@ -560,6 +560,8 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_infoAccess, (JSGlobalObject * g
         return JSValue::encode(jsUndefined());
 
     BUF_MEM* bptr = bio;
+    if (!bptr)
+        return JSValue::encode(jsUndefined());
     return JSValue::encode(undefinedIfEmpty(jsString(vm, String::fromUTF8(std::span(bptr->data, bptr->length)))));
 }
 
@@ -602,20 +604,10 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_issuerCertificate, (JSGlobalObj
         return {};
     }
 
-    auto issuerCert = thisObject->view().getIssuer();
-    if (!issuerCert)
-        return JSValue::encode(jsUndefined());
-
-    auto bio = issuerCert.get();
-
-    BUF_MEM* bptr = nullptr;
-    BIO_get_mem_ptr(bio, &bptr);
-    std::span<const uint8_t> span(reinterpret_cast<const uint8_t*>(bptr->data), bptr->length);
-    auto* zigGlobalObject = defaultGlobalObject(globalObject);
-    auto* structure = zigGlobalObject->m_JSX509CertificateClassStructure.get(zigGlobalObject);
-    auto jsIssuerCert = JSX509Certificate::create(vm, structure, globalObject, span);
-    RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(jsIssuerCert);
+    // issuerCertificate is only available when the certificate was obtained from
+    // a TLS connection with a peer certificate chain. For certificates parsed
+    // directly from PEM/DER data, it is always undefined (matching Node.js behavior).
+    return JSValue::encode(jsUndefined());
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_publicKey, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))

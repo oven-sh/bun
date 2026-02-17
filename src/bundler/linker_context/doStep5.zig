@@ -7,7 +7,7 @@ pub fn doStep5(c: *LinkerContext, source_index_: Index, _: usize) void {
     defer trace.end();
 
     const id = source_index;
-    if (id > c.graph.meta.len) return;
+    if (id >= c.graph.meta.len) return;
 
     const worker: *ThreadPool.Worker = ThreadPool.Worker.get(@fieldParentPtr("linker", c));
     defer worker.unget();

@@ -185,7 +185,7 @@ pub const Tag = enum(short) {
     }
 
     fn PostgresBinarySingleDimensionArray(comptime T: type) type {
-        return extern struct {
+        return struct {
             // struct array_int4 {
             //   int4_t ndim; /* Number of dimensions */
             //   int4_t _ign; /* offset for data, removed by libpq */
@@ -197,44 +197,47 @@ pub const Tag = enum(short) {
             //   int4_t first_value; /* Beginning of integer data */
             // };
 
-            ndim: i32,
-            offset_for_data: i32,
-            element_type: i32,
+            // Header is 5 x i32 = 20 bytes (ndim, offset_for_data, element_type, len, index)
+            const header_size = 20;
+            // Each array element is preceded by a 4-byte length prefix
+            const elem_stride = @sizeOf(T) + 4;
+
+            const Int = std.meta.Int(.unsigned, @bitSizeOf(T));
 
             len: i32,
-            index: i32,
-            first_value: T,
+            bytes: []const u8,
 
-            pub fn slice(this: *@This()) []T {
-                if (this.len == 0) return &.{};
-
-                var head = @as([*]T, @ptrCast(&this.first_value));
-                var current = head;
-                const len: usize = @intCast(this.len);
-                for (0..len) |i| {
-                    // Skip every other value as it contains the size of the element
-                    current = current[1..];
-
-                    const val = current[0];
-                    const Int = std.meta.Int(.unsigned, @bitSizeOf(T));
-                    const swapped = @byteSwap(@as(Int, @bitCast(val)));
-
-                    head[i] = @bitCast(swapped);
-
-                    current = current[1..];
-                }
-
-                return head[0..len];
+            /// Parses the binary array header from a raw (potentially unaligned) byte slice.
+            /// Uses std.mem.readInt to safely handle unaligned network data.
+            pub fn init(bytes: []const u8) @This() {
+                // Read the len field at offset 12 (after ndim + offset_for_data + element_type)
+                const len: i32 = @bitCast(std.mem.readInt(u32, bytes[12..16], .big));
+                return .{
+                    .len = len,
+                    .bytes = bytes,
+                };
             }
 
-            pub fn init(bytes: []const u8) *@This() {
-                const this: *@This() = @ptrCast(@alignCast(@constCast(bytes.ptr)));
-                this.ndim = @byteSwap(this.ndim);
-                this.offset_for_data = @byteSwap(this.offset_for_data);
-                this.element_type = @byteSwap(this.element_type);
-                this.len = @byteSwap(this.len);
-                this.index = @byteSwap(this.index);
-                return this;
+            /// Reads array elements from the data portion, byte-swapping each value.
+            /// Returns a slice backed by a mutable view of the original buffer.
+            pub fn slice(this: @This()) []align(1) T {
+                if (this.len <= 0) return &.{};
+
+                const len: usize = @intCast(this.len);
+                const data = @constCast(this.bytes);
+
+                // Data starts after the 20-byte header. Each element has a 4-byte
+                // length prefix followed by the element bytes.
+                // We write the decoded elements densely starting at the data region.
+                const out: [*]align(1) T = @ptrCast(data.ptr + header_size);
+
+                for (0..len) |i| {
+                    const elem_offset = header_size + i * elem_stride + 4;
+                    const val = std.mem.readInt(Int, data[elem_offset..][0..@sizeOf(T)], .big);
+                    out[i] = @bitCast(val);
+                }
+
+                return out[0..len];
             }
         };
     }

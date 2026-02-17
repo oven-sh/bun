@@ -1000,6 +1000,7 @@ pub const PackageInstaller = struct {
                     .local_tarball => {
                         this.manager.enqueueTarballForReading(
                             dependency_id,
+                            package_id,
                             alias.slice(this.lockfile.buffers.string_bytes.items),
                             resolution,
                             context,

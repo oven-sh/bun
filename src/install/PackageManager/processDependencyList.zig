@@ -187,6 +187,7 @@ pub fn processExtractedTarballPackage(
             };
 
             package.meta.setHasInstallScript(has_scripts);
+            package.meta.integrity = data.integrity;
 
             package = manager.lockfile.appendPackage(package) catch unreachable;
             package_id.* = package.meta.id;

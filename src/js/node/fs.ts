@@ -1049,6 +1049,10 @@ function _toUnixTimestamp(time: any, name = "time") {
 function opendirSync(path, options) {
   // TODO: validatePath
   // validateString(path, "path");
+  if (!fs.existsSync(path)) {
+    throw new Error("ENOENT");
+  }
+
   return new Dir(1, path, options);
 }
 

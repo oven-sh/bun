@@ -644,9 +644,16 @@ pub const Stringifier = struct {
                                 &path_buf,
                             );
 
-                            try writer.print(", {f}]", .{
-                                repo.resolved.fmtJson(buf, .{}),
-                            });
+                            if (pkg_meta.integrity.tag.isSupported()) {
+                                try writer.print(", {f}, \"{f}\"]", .{
+                                    repo.resolved.fmtJson(buf, .{}),
+                                    pkg_meta.integrity,
+                                });
+                            } else {
+                                try writer.print(", {f}]", .{
+                                    repo.resolved.fmtJson(buf, .{}),
+                                });
+                            }
                         },
                         else => unreachable,
                     }
@@ -1885,6 +1892,15 @@ pub fn parseIntoBinaryLockfile(
                     };
 
                     @field(res.value, @tagName(tag)).resolved = try string_buf.append(bun_tag_str);
+
+                    // Optional integrity hash (added to pin tarball content)
+                    if (i < pkg_info.len) {
+                        const integrity_expr = pkg_info.at(i);
+                        if (integrity_expr.asString(allocator)) |integrity_str| {
+                            pkg.meta.integrity = Integrity.parse(integrity_str);
+                            i += 1;
+                        }
+                    }
                 },
                 else => {},
             }

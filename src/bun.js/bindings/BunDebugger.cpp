@@ -368,6 +368,7 @@ public:
             this->jsThreadMessages.swap(messages);
         }
 
+
         if (!debugger) {
             for (auto message : messages) {
                 dispatcher.dispatchMessageFromRemote(WTF::move(message));
@@ -395,6 +396,7 @@ public:
             this->debuggerThreadMessages.swap(messages);
         }
 
+
         JSFunction* onMessageFn = jsCast<JSFunction*>(jsBunDebuggerOnMessageFunction.get());
         MarkedArgumentBuffer arguments;
         arguments.ensureCapacity(messages.size());
@@ -409,12 +411,14 @@ public:
 
     void sendMessageToDebuggerThread(WTF::String&& inputMessage)
     {
+        bool wasScheduled;
         {
             Locker<Lock> locker(debuggerThreadMessagesLock);
             debuggerThreadMessages.append(inputMessage);
         }
 
-        if (!this->debuggerThreadMessageScheduled.exchange(true)) {
+        wasScheduled = this->debuggerThreadMessageScheduled.exchange(true);
+        if (!wasScheduled) {
             debuggerScriptExecutionContext->postTaskConcurrently([connection = this](ScriptExecutionContext& context) {
                 connection->receiveMessagesOnDebuggerThread(context, static_cast<Zig::GlobalObject*>(context.jsGlobalObject()));
             });
@@ -453,6 +457,7 @@ private:
             // where runWhilePaused will dispatch the queued messages.
             // If the debugger is not attached, the event loop delivery (above) is the fallback.
             this->interruptForMessageDelivery();
+        } else {
         }
     }
 
@@ -985,8 +990,15 @@ JSC::StopTheWorldStatus Bun__stopTheWorldCallback(JSC::VM& vm, JSC::StopTheWorld
     }
 
     // Phase 3: Handle pending pause/message flags.
+    // Only trigger a bootstrap pause on the FIRST activation (not reconnections).
+    // On reconnect, the debugger is already attached and agents are enabled.
+    // A bootstrap pause on reconnect is dangerous because it sets kBootstrapPause
+    // which can interfere with CDP message dispatch: dispatchMessageFromRemote
+    // re-enters JS (e.g., Runtime.evaluate), which hits the poisoned stack limit,
+    // fires handleTraps again, sees kBootstrapPause, enters breakProgram() →
+    // sustained pause loop, blocking the evaluation forever.
     uint8_t pendingFlags = Bun::getPendingPauseFlags();
-    bool isBootstrap = connected || (pendingFlags & Bun::BunInspectorConnection::kBootstrapPause);
+    bool isBootstrap = activated || (pendingFlags & Bun::BunInspectorConnection::kBootstrapPause);
     if (isBootstrap || (pendingFlags & Bun::BunInspectorConnection::kMessageDeliveryPause)) {
         Bun::schedulePauseForConnectedSessions(vm, isBootstrap);
     }

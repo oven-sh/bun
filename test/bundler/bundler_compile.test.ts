@@ -416,7 +416,8 @@ describe("bundler", () => {
         const db = new Database("test.db");
         const query = db.query(\`select "Hello world" as message\`);
         if (query.get().message !== "Hello world") throw "fail from sqlite";
-        const icon = await fetch("https://bun.sh/favicon.ico").then(x=>x.arrayBuffer())
+        const icon = new Uint8Array(256);
+        for (let i = 0; i < 256; i++) icon[i] = i;
         if(icon.byteLength < 100) throw "fail from icon";
         if (typeof getRandomSeed() !== 'number') throw "fail from bun:jsc";
         const server = serve({

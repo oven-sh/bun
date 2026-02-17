@@ -150,6 +150,7 @@ pub const ClientEntryPoint = struct {
 
 pub const ServerEntryPoint = struct {
     source: logger.Source = undefined,
+    generated: bool = false,
 
     pub fn generate(
         entry: *ServerEntryPoint,
@@ -230,6 +231,7 @@ pub const ServerEntryPoint = struct {
         entry.source = logger.Source.initPathString(name, code);
         entry.source.path.text = name;
         entry.source.path.namespace = "server-entry";
+        entry.generated = true;
     }
 };
 

@@ -51,6 +51,15 @@ function onError(msg, err, callback) {
   process.nextTick(emitErrorNt, msg, err, callback);
 }
 
+function isHTTPHeaderStateSentOrAssigned(state) {
+  return state === NodeHTTPHeaderState.sent || state === NodeHTTPHeaderState.assigned;
+}
+function throwHeadersSentIfNecessary(self, action) {
+  if (self._header != null || isHTTPHeaderStateSentOrAssigned(self[headerStateSymbol])) {
+    throw $ERR_HTTP_HEADERS_SENT(action);
+  }
+}
+
 function write_(msg, chunk, encoding, callback, fromEnd) {
   if (typeof callback !== "function") callback = nop;
 
@@ -252,18 +261,14 @@ const OutgoingMessagePrototype = {
 
   removeHeader(name) {
     validateString(name, "name");
-    if ((this._header !== undefined && this._header !== null) || this[headerStateSymbol] === NodeHTTPHeaderState.sent) {
-      throw $ERR_HTTP_HEADERS_SENT("remove");
-    }
+    throwHeadersSentIfNecessary(this, "remove");
     const headers = this[headersSymbol];
     if (!headers) return;
     headers.delete(name);
   },
 
   setHeader(name, value) {
-    if ((this._header !== undefined && this._header !== null) || this[headerStateSymbol] == NodeHTTPHeaderState.sent) {
-      throw $ERR_HTTP_HEADERS_SENT("set");
-    }
+    throwHeadersSentIfNecessary(this, "set");
     validateHeaderName(name);
     validateHeaderValue(name, value);
     const headers = (this[headersSymbol] ??= new Headers());
@@ -271,9 +276,7 @@ const OutgoingMessagePrototype = {
     return this;
   },
   setHeaders(headers) {
-    if ((this._header != null) || this[headerStateSymbol] === NodeHTTPHeaderState.sent) {
-      throw $ERR_HTTP_HEADERS_SENT("set");
-    }
+    throwHeadersSentIfNecessary(this, "set");
 
     if (!headers || $isArray(headers) || typeof headers.keys !== "function" || typeof headers.get !== "function") {
       throw $ERR_INVALID_ARG_TYPE("headers", ["Headers", "Map"], headers);

@@ -68,6 +68,16 @@ pub const Chunk = struct {
     }
 
     pub fn getCSSChunkForHTML(this: *const Chunk, chunks: []Chunk) ?*Chunk {
+        // Look up the CSS chunk via the JS chunk's css_chunks indices.
+        // This correctly handles deduplicated CSS chunks that are shared
+        // across multiple HTML entry points (see issue #23668).
+        if (this.getJSChunkForHTML(chunks)) |js_chunk| {
+            const css_chunk_indices = js_chunk.content.javascript.css_chunks;
+            if (css_chunk_indices.len > 0) {
+                return &chunks[css_chunk_indices[0]];
+            }
+        }
+        // Fallback: match by entry_point_id for cases without a JS chunk.
         const entry_point_id = this.entry_point.entry_point_id;
         for (chunks) |*other| {
             if (other.content == .css) {

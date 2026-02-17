@@ -1707,6 +1707,15 @@ pub fn NewWrappedHandler(comptime tls: bool) type {
 
         pub fn onClose(this: WrappedSocket, socket: Socket, err: c_int, data: ?*anyopaque) bun.JSError!void {
             if (comptime tls) {
+                // Clean up the raw TCP socket from upgradeTLS() — its onClose
+                // never fires because uws closes through the TLS context only.
+                defer {
+                    if (!this.tcp.socket.isDetached()) {
+                        this.tcp.socket.detach();
+                        this.tcp.has_pending_activity.store(false, .release);
+                        this.tcp.deref();
+                    }
+                }
                 try TLSSocket.onClose(this.tls, socket, err, data);
             } else {
                 try TLSSocket.onClose(this.tcp, socket, err, data);

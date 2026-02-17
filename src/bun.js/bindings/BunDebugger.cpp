@@ -990,15 +990,9 @@ JSC::StopTheWorldStatus Bun__stopTheWorldCallback(JSC::VM& vm, JSC::StopTheWorld
     }
 
     // Phase 3: Handle pending pause/message flags.
-    // Only trigger a bootstrap pause on the FIRST activation (not reconnections).
-    // On reconnect, the debugger is already attached and agents are enabled.
-    // A bootstrap pause on reconnect is dangerous because it sets kBootstrapPause
-    // which can interfere with CDP message dispatch: dispatchMessageFromRemote
-    // re-enters JS (e.g., Runtime.evaluate), which hits the poisoned stack limit,
-    // fires handleTraps again, sees kBootstrapPause, enters breakProgram() →
-    // sustained pause loop, blocking the evaluation forever.
+    // Phase 3: Handle pending pause/message flags.
     uint8_t pendingFlags = Bun::getPendingPauseFlags();
-    bool isBootstrap = activated || (pendingFlags & Bun::BunInspectorConnection::kBootstrapPause);
+    bool isBootstrap = connected || (pendingFlags & Bun::BunInspectorConnection::kBootstrapPause);
     if (isBootstrap || (pendingFlags & Bun::BunInspectorConnection::kMessageDeliveryPause)) {
         Bun::schedulePauseForConnectedSessions(vm, isBootstrap);
     }

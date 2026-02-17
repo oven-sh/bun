@@ -292,6 +292,37 @@ body { color: blue; }`,
     expect(html).toContain('console.log("outdir test")');
   });
 
+  test("Bun.build() with outdir and image assets", async () => {
+    const pixel = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4DwAAAQEABRjYTgAAAABJRU5ErkJggg==",
+      "base64",
+    );
+
+    using dir = tempDir("compile-browser-outdir-assets", {
+      "index.html": `<!DOCTYPE html>
+<html><body><img src="./logo.png"><script src="./app.js"></script></body></html>`,
+      "logo.png": pixel,
+      "app.js": `console.log("outdir with assets");`,
+    });
+
+    const outdir = `${dir}/dist`;
+    const result = await Bun.build({
+      entrypoints: [`${dir}/index.html`],
+      compile: true,
+      target: "browser",
+      outdir,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.outputs.length).toBe(1);
+
+    expect(existsSync(`${outdir}/index.html`)).toBe(true);
+
+    const html = await Bun.file(`${outdir}/index.html`).text();
+    expect(html).toContain('src="data:image/png;base64,');
+    expect(html).toContain('console.log("outdir with assets")');
+  });
+
   test("inlines images as data: URIs", async () => {
     // 1x1 red PNG
     const pixel = Buffer.from(

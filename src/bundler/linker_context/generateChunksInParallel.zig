@@ -745,7 +745,9 @@ pub fn generateChunksInParallel(
             bun.assertf(chunk_index == chunk_index_in_chunks_list, "chunk_index ({d}) != chunk_index_in_chunks_list ({d})", .{ chunk_index, chunk_index_in_chunks_list });
         }
 
-        output_files.insertAdditionalOutputFiles(c.parse_graph.additional_output_files.items);
+        if (!is_standalone) {
+            output_files.insertAdditionalOutputFiles(c.parse_graph.additional_output_files.items);
+        }
     }
 
     if (is_standalone) {

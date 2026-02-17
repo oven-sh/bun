@@ -19,7 +19,7 @@ describe("zlib native handle bounds checking", () => {
     // in_len=65536 far exceeds the 16-byte input buffer
     expect(() => {
       handle.writeSync(0, inBuf, 0, 65536, outBuf, 0, 1024);
-    }).toThrow();
+    }).toThrow(/exceeds input buffer length/);
   });
 
   test("writeSync rejects out_len exceeding output buffer", () => {
@@ -30,7 +30,7 @@ describe("zlib native handle bounds checking", () => {
     // out_len=65536 far exceeds the 16-byte output buffer
     expect(() => {
       handle.writeSync(0, inBuf, 0, 16, outBuf, 0, 65536);
-    }).toThrow();
+    }).toThrow(/exceeds output buffer length/);
   });
 
   test("writeSync rejects in_off + in_len exceeding input buffer", () => {
@@ -41,7 +41,7 @@ describe("zlib native handle bounds checking", () => {
     // in_off=10 + in_len=16 = 26 > 16
     expect(() => {
       handle.writeSync(0, inBuf, 10, 16, outBuf, 0, 1024);
-    }).toThrow();
+    }).toThrow(/exceeds input buffer length/);
   });
 
   test("writeSync rejects out_off + out_len exceeding output buffer", () => {
@@ -52,7 +52,7 @@ describe("zlib native handle bounds checking", () => {
     // out_off=10 + out_len=16 = 26 > 16
     expect(() => {
       handle.writeSync(0, inBuf, 0, 16, outBuf, 10, 16);
-    }).toThrow();
+    }).toThrow(/exceeds output buffer length/);
   });
 
   test("writeSync allows valid bounds", () => {

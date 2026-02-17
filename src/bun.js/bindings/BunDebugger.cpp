@@ -346,6 +346,21 @@ public:
         // tasks pile up for after the loop exits).
         if (!(this->pauseFlags.load() & kInPauseLoop))
             this->jsThreadMessageScheduled.store(false);
+
+        // Connect pending connections BEFORE draining messages.
+        // If we drain first and then doConnect returns early, the drained
+        // messages would be lost (dropped on stack unwind).
+        auto& dispatcher = globalObject->inspectorDebuggable();
+        Inspector::JSGlobalObjectDebugger* debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(globalObject->debugger());
+
+        if (!debugger && connectIfNeeded && this->status == ConnectionStatus::Pending) {
+            this->doConnect(context);
+            // doConnect calls receiveMessagesOnInspectorThread recursively,
+            // but jsThreadMessages may have been empty at that point.
+            // Fall through to drain any messages that arrived during doConnect.
+            debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(globalObject->debugger());
+        }
+
         WTF::Vector<WTF::String, 12> messages;
 
         {
@@ -353,15 +368,7 @@ public:
             this->jsThreadMessages.swap(messages);
         }
 
-        auto& dispatcher = globalObject->inspectorDebuggable();
-        Inspector::JSGlobalObjectDebugger* debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(globalObject->debugger());
-
         if (!debugger) {
-            if (connectIfNeeded && this->status == ConnectionStatus::Pending) {
-                this->doConnect(context);
-                return;
-            }
-
             for (auto message : messages) {
                 dispatcher.dispatchMessageFromRemote(WTF::move(message));
 

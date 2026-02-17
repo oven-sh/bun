@@ -432,8 +432,8 @@ pub fn generateChunksInParallel(
 
     // Don't write to disk if compile mode is enabled - we need buffer values for compilation
     const is_compile = bundler.transpiler.options.compile;
-    if (root_path.len > 0 and !is_compile and !is_standalone) {
-        try c.writeOutputFilesToDisk(root_path, chunks, &output_files);
+    if (root_path.len > 0 and !is_compile) {
+        try c.writeOutputFilesToDisk(root_path, chunks, &output_files, standalone_chunk_contents);
     } else {
         // In-memory build (also used for standalone mode)
         for (chunks, 0..) |*chunk, chunk_index_in_chunks_list| {
@@ -762,37 +762,6 @@ pub fn generateChunksInParallel(
             }
         }
         result.items.len = write_idx;
-
-        // Write standalone HTML files to disk if outdir is specified
-        if (root_path.len > 0) {
-            for (result.items) |*item| {
-                if (item.value == .buffer) {
-                    var buf: bun.PathBuffer = undefined;
-                    const abs_path = bun.path.joinAbsStringBufZ(root_path, &buf, &.{item.dest_path}, .auto);
-                    const file = switch (bun.sys.File.makeOpen(abs_path, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o644)) {
-                        .result => |f| f,
-                        .err => |err| {
-                            try c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Failed to write {f}: {s}", .{
-                                bun.fmt.quote(item.dest_path),
-                                @tagName(err.getErrno()),
-                            });
-                            continue;
-                        },
-                    };
-                    defer file.close();
-                    switch (file.writeAll(item.value.buffer.bytes)) {
-                        .result => {},
-                        .err => |err| {
-                            try c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Failed to write {f}: {s}", .{
-                                bun.fmt.quote(item.dest_path),
-                                @tagName(err.getErrno()),
-                            });
-                        },
-                    }
-                }
-            }
-        }
-
         return result;
     }
 

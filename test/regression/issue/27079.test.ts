@@ -103,13 +103,13 @@ test("PostgreSQL binary int4_array should not crash on unaligned data", async ()
   await new Promise<void>(r => server.listen(0, "127.0.0.1", () => r()));
   const port = (server.address() as net.AddressInfo).port;
 
-  try {
-    const sql = new SQL({
-      url: `postgres://test@127.0.0.1:${port}/test`,
-      max: 1,
-      idle_timeout: 1,
-    });
+  const sql = new SQL({
+    url: `postgres://test@127.0.0.1:${port}/test`,
+    max: 1,
+    idle_timeout: 1,
+  });
 
+  try {
     const rows = await sql`SELECT 1`;
     // The query should succeed without an alignment panic.
     // Verify we got an Int32Array with the correct values.
@@ -117,9 +117,8 @@ test("PostgreSQL binary int4_array should not crash on unaligned data", async ()
     const arr = rows[0].arr;
     expect(arr).toBeInstanceOf(Int32Array);
     expect(Array.from(arr)).toEqual([10, 20, 30]);
-
-    await sql.close();
   } finally {
+    await sql.close();
     server.close();
   }
 });
@@ -181,21 +180,20 @@ test("PostgreSQL binary float4_array should not crash on unaligned data", async 
   await new Promise<void>(r => server.listen(0, "127.0.0.1", () => r()));
   const port = (server.address() as net.AddressInfo).port;
 
-  try {
-    const sql = new SQL({
-      url: `postgres://test@127.0.0.1:${port}/test`,
-      max: 1,
-      idle_timeout: 1,
-    });
+  const sql = new SQL({
+    url: `postgres://test@127.0.0.1:${port}/test`,
+    max: 1,
+    idle_timeout: 1,
+  });
 
+  try {
     const rows = await sql`SELECT 1`;
     expect(rows.length).toBe(1);
     const arr = rows[0].arr;
     expect(arr).toBeInstanceOf(Float32Array);
     expect(Array.from(arr)).toEqual([1.5, 2.5]);
-
-    await sql.close();
   } finally {
+    await sql.close();
     server.close();
   }
 });

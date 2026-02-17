@@ -219,7 +219,11 @@ pub const Tag = enum(short) {
             }
 
             /// Reads array elements from the data portion, byte-swapping each value.
-            /// Returns a slice backed by a mutable view of the original buffer.
+            /// WARNING: This destructively mutates `this.bytes` (via `@constCast`) by
+            /// writing decoded elements densely into the header region starting at
+            /// offset `header_size`. Each element is read from its original position
+            /// (at `header_size + i * elem_stride + 4`) and written to `header_size +
+            /// i * @sizeOf(T)`. The returned slice points into this modified buffer.
             pub fn slice(this: @This()) []align(1) T {
                 if (this.len <= 0) return &.{};
 

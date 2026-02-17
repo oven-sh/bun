@@ -58,9 +58,9 @@ set(BUN_DEPENDENCIES
   Lshpack
   Mimalloc
   Zlib
+  Zstd
   LibArchive # must be loaded after zlib
   HdrHistogram # must be loaded after zlib
-  Zstd
 )
 
 # TinyCC is optional - disabled on Windows ARM64 where it's not supported

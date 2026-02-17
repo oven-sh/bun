@@ -149,11 +149,9 @@ pub fn callback(task: *ThreadPool.Task) void {
             const buffer = &this.request.extract.network.response_buffer;
             defer buffer.deinit();
 
-            const bytes = buffer.slice();
-
-            var result = this.request.extract.tarball.run(
+            const result = this.request.extract.tarball.run(
                 &this.log,
-                bytes,
+                buffer.slice(),
             ) catch |err| {
                 bun.handleErrorReturnTrace(err, @errorReturnTrace());
 
@@ -162,12 +160,6 @@ pub fn callback(task: *ThreadPool.Task) void {
                 this.data = .{ .extract = .{} };
                 return;
             };
-
-            // Compute integrity hash from the raw tarball bytes for tarball URL
-            // dependencies that don't have a registry-provided hash.
-            if (!this.request.extract.tarball.integrity.tag.isSupported()) {
-                result.integrity = Integrity.forBytes(bytes);
-            }
 
             this.data = .{ .extract = result };
             this.status = Status.success;
@@ -311,13 +303,7 @@ fn readAndExtract(
     else
         try File.readFrom(bun.FD.cwd(), tarball_path, allocator).unwrap();
     defer allocator.free(bytes);
-    var result = try tarball.run(log, bytes);
-    // Compute integrity hash from the raw tarball bytes for local tarball
-    // dependencies that don't have a registry-provided hash.
-    if (!tarball.integrity.tag.isSupported()) {
-        result.integrity = Integrity.forBytes(bytes);
-    }
-    return result;
+    return tarball.run(log, bytes);
 }
 
 pub const Tag = enum(u3) {
@@ -381,7 +367,6 @@ const install = @import("./install.zig");
 const DependencyID = install.DependencyID;
 const ExtractData = install.ExtractData;
 const ExtractTarball = install.ExtractTarball;
-const Integrity = install.Integrity;
 const NetworkTask = install.NetworkTask;
 const Npm = install.Npm;
 const PackageID = install.PackageID;

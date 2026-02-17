@@ -159,6 +159,13 @@ pub const RunCommand = struct {
                             continue;
                         }
 
+                        if (strings.hasPrefixComptime(script[start..], "node --run ")) {
+                            try copy_script.appendSlice(BUN_RUN ++ " ");
+                            entry_i += "node --run ".len;
+                            delimiter = 0;
+                            continue;
+                        }
+
                         if (strings.hasPrefixComptime(script[start..], "npx ")) {
                             try copy_script.appendSlice(BUN_BIN_NAME ++ " x ");
                             entry_i += "npx ".len;

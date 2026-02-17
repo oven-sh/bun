@@ -3683,7 +3683,20 @@ pub const BundleV2 = struct {
                 }
             }
 
-            const import_record_loader = import_record.loader orelse path.loader(&transpiler.options.loaders) orelse .file;
+            const import_record_loader = brk: {
+                const resolved_loader = import_record.loader orelse path.loader(&transpiler.options.loaders) orelse .file;
+                // When an HTML file references a URL asset (e.g. <link rel="manifest" href="./manifest.json" />),
+                // the file must be copied to the output directory as-is. If the resolved loader would
+                // parse/transform the file (e.g. .json, .toml) rather than copy it, force the .file loader
+                // so that `shouldCopyForBundling()` returns true and the asset is emitted.
+                // Only do this for HTML sources — CSS url() imports should retain their original behavior.
+                if (loader == .html and import_record.kind == .url and !resolved_loader.shouldCopyForBundling() and
+                    !resolved_loader.isJavaScriptLike() and !resolved_loader.isCSS() and resolved_loader != .html)
+                {
+                    break :brk Loader.file;
+                }
+                break :brk resolved_loader;
+            };
             import_record.loader = import_record_loader;
 
             const is_html_entrypoint = import_record_loader == .html and target.isServerSide() and this.transpiler.options.dev_server == null;

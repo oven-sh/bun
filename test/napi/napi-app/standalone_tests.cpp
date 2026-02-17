@@ -2129,8 +2129,11 @@ static napi_value test_napi_typeof_invalid_pointer(const Napi::CallbackInfo &inf
   // Simulate the exact crash scenario: a C string pointer reinterpreted as napi_value.
   // The crash address 0x6F20726F736E6554 decoded to ASCII is "Tensor o",
   // meaning a string pointer was being used as a JSValue.
-  const char *fake_string = "Tensor operation test string";
-  napi_value bad_value = reinterpret_cast<napi_value>(const_cast<char *>(fake_string));
+  // Use aligned_alloc to ensure 16-byte alignment (bit 3 = 0), so the pointer
+  // goes through the MarkedBlock validation path (not the PreciseAllocation path).
+  char *fake_string = static_cast<char *>(aligned_alloc(16, 64));
+  memcpy(fake_string, "Tensor operation test string", 29);
+  napi_value bad_value = reinterpret_cast<napi_value>(fake_string);
 
   napi_valuetype type;
   napi_status status = napi_typeof(env, bad_value, &type);
@@ -2141,6 +2144,7 @@ static napi_value test_napi_typeof_invalid_pointer(const Napi::CallbackInfo &inf
     printf("PASS: napi_typeof did not crash for invalid pointer (returned type %d)\n", type);
   }
 
+  free(fake_string);
   return ok(env);
 }
 

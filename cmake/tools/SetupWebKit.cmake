@@ -209,6 +209,10 @@ if(LINUX AND ABI STREQUAL "musl")
   set(WEBKIT_SUFFIX "-musl")
 endif()
 
+if(ENABLE_BASELINE AND WEBKIT_ARCH STREQUAL "amd64")
+  set(WEBKIT_SUFFIX "${WEBKIT_SUFFIX}-baseline")
+endif()
+
 if(DEBUG)
   set(WEBKIT_SUFFIX "${WEBKIT_SUFFIX}-debug")
 elseif(ENABLE_LTO)

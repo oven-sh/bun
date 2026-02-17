@@ -754,3 +754,39 @@ test("CallFrame.p.isAsync", async () => {
 
   expect(prepare).toHaveBeenCalledTimes(1);
 });
+
+test("captureStackTrace with constructor function not in stack returns error string", () => {
+  // When the second argument to captureStackTrace is a function that isn't in
+  // the call stack, all frames are filtered out and .stack should still return
+  // the error name and message (matching Node.js behavior).
+  function notInStack() {}
+
+  // Case 1: stack not accessed before captureStackTrace
+  {
+    const e = new Error("test");
+    Error.captureStackTrace(e, notInStack);
+    expect(e.stack).toBe("Error: test");
+  }
+
+  // Case 2: stack accessed before captureStackTrace
+  {
+    const e = new Error("test");
+    void e.stack;
+    Error.captureStackTrace(e, notInStack);
+    expect(e.stack).toBe("Error: test");
+  }
+
+  // Case 3: empty message
+  {
+    const e = new Error();
+    Error.captureStackTrace(e, notInStack);
+    expect(e.stack).toBe("Error");
+  }
+
+  // Case 4: custom error name
+  {
+    const e = new TypeError("bad type");
+    Error.captureStackTrace(e, notInStack);
+    expect(e.stack).toBe("TypeError: bad type");
+  }
+});

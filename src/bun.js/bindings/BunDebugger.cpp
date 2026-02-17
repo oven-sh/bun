@@ -368,7 +368,6 @@ public:
             this->jsThreadMessages.swap(messages);
         }
 
-
         if (!debugger) {
             for (auto message : messages) {
                 dispatcher.dispatchMessageFromRemote(WTF::move(message));
@@ -395,7 +394,6 @@ public:
             Locker<Lock> locker(debuggerThreadMessagesLock);
             this->debuggerThreadMessages.swap(messages);
         }
-
 
         JSFunction* onMessageFn = jsCast<JSFunction*>(jsBunDebuggerOnMessageFunction.get());
         MarkedArgumentBuffer arguments;

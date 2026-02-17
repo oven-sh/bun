@@ -168,10 +168,10 @@ yourself with Bun.serve().
       const relative = path.relative(longestCommonPath, servePath);
       if (!relative.startsWith("..")) {
         servePath = relative;
-      }
-      // On Windows, path.relative() returns a path string using backslashes as separators
-      if (process.platform === "win32") {
-        servePath = servePath.replaceAll("\\", "/");
+        // On Windows, path.relative() returns a path string using backslashes as separators
+        if (process.platform === "win32") {
+          servePath = servePath.replaceAll("\\", "/");
+        }
       }
     }
 

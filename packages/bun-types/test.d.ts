@@ -1214,7 +1214,61 @@ declare module "bun:test" {
      * expect(o).not.toContainAnyValues(['qux']);
      * @param expected the expected value
      */
-    toContainAnyValues(expected: Array<unknown>): void;
+    toContainAnyValues(expected: unknown): void;
+    /**
+     * Asserts that an `object` contain provided key value.
+     *
+     * The value must be an object
+     *
+     * @example
+     * const o = { a: 'foo', b: 'bar', c: 'baz' };
+  `  * expect(o).toContainEntry(['a', 'foo']);
+     * expect(o).toContainEntry(['b', 'bar']);
+     * expect(o).toContainEntry(['c', 'baz']);
+     * expect(o).not.toContainEntry(['a','random']);
+     * @param expected the expected value
+     */
+    toContainEntry(expected: unknown): void;
+
+    /**
+     * Asserts that an `object` contain array of provided key value.
+     *
+     * The value must be an object
+     *
+     * @example
+     * const o = { a: 'foo', b: 'bar', c: 'baz' };
+     * expect(o).toContainEntries([['a', 'foo']]);
+     * expect(o).toContainEntries([['c', 'baz'],['a', 'foo']]);
+     * expect(o).not.toContainEntries([['b', 'qux'],['a', 'foo'],]);
+     * @param expected the expected value
+     */
+    toContainEntries(expected: unknown): void;
+
+    /**
+     * Asserts that an `object` contain array of all key value.
+     *
+     * The value must be an object
+     *
+     * @example
+     * const o = { a: 'foo', b: 'bar', c: 'baz' };
+     * expect(o).toContainAllEntries([['c', 'baz'],['a', 'foo'],['b','bar']]);
+     * expect(o).not.toContainAllEntries([['b', 'qux'],['a', 'foo'],]);
+     * @param expected the expected value
+     */
+    toContainAllEntries(expected: unknown): void;
+
+    /**
+     * Asserts that an `object` contain array of any one or more key value.
+     *
+     * The value must be an object
+     *
+     * @example
+     * const o = { a: 'foo', b: 'bar', c: 'baz' };
+     * expect(o).toContainAnyEntries([['c', 'baz'],['a', 'invalid'],['b','one']]);
+     * expect(o).not.toContainAnyEntries([['b', 'qux'],['a', 'nil'],]);
+     * @param expected the expected value
+     */
+    toContainAnyEntries(expected: unknown): void;
 
     /**
      * Asserts that an `object` contains all the provided keys.

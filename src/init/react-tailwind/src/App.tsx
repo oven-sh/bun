@@ -16,7 +16,7 @@ export function App() {
         <img
           src={reactLogo}
           alt="React Logo"
-          className="h-24 p-6 transition-all duration-300 hover:drop-shadow-[0_0_2em_#61dafbaa] animate-[spin_20s_linear_infinite]"
+          className="h-24 p-6 transition-all hover:drop-shadow-[0_0_2em_#61dafbaa] animate-[spin_20s_linear_infinite]"
         />
       </div>
 

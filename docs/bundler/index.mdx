@@ -623,7 +623,6 @@ Inlines environment variables matching the given prefix (the part before the `*`
     await Bun.build({
       entrypoints: ['./index.tsx'],
       outdir: './out',
-
       // Inline all env vars that start with "ACME_PUBLIC_"
       env: "ACME_PUBLIC_*",
     })

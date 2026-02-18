@@ -1087,9 +1087,32 @@ pub const WindowsSpawnOptions = struct {
         dup2: struct { out: bun.jsc.Subprocess.StdioKind, to: bun.jsc.Subprocess.StdioKind },
 
         pub fn deinit(this: *const Stdio) void {
-            if (this.* == .buffer) {
-                bun.default_allocator.destroy(this.buffer);
+            switch (this.*) {
+                .buffer => |pipe| closePipeAndDestroy(pipe),
+                .ipc => |pipe| closePipeAndDestroy(pipe),
+                else => {},
             }
+        }
+
+        /// Close a pipe that may have been initialized with uv_pipe_init.
+        /// If the pipe was initialized, we must call uv_close before freeing
+        /// to properly remove it from the loop's handle queue; otherwise
+        /// the handle queue linked list becomes corrupted.
+        fn closePipeAndDestroy(pipe: *bun.windows.libuv.Pipe) void {
+            if (pipe.loop == null or pipe.isClosed()) {
+                // Never initialized or already fully closed — safe to free directly.
+                bun.default_allocator.destroy(pipe);
+            } else if (!pipe.isClosing()) {
+                // Initialized and not yet closing — must uv_close to remove from handle queue.
+                pipe.close(&onPipeCloseForDeinit);
+            }
+            // else: isClosing — uv_close was already called, the pending close
+            // callback owns the lifetime. This shouldn't happen in practice since
+            // deinit is only called on the error path before any close is initiated.
+        }
+
+        fn onPipeCloseForDeinit(pipe: *bun.windows.libuv.Pipe) callconv(.c) void {
+            bun.default_allocator.destroy(pipe);
         }
     };
 
@@ -1629,9 +1652,10 @@ pub fn spawnProcessWindows(
                 stdio.flags = uv.UV_INHERIT_FD;
                 stdio.data.fd = fd_i;
             },
-            .ipc => |my_pipe| {
-                // ipc option inside stdin, stderr or stdout are not supported
-                bun.default_allocator.destroy(my_pipe);
+            .ipc => {
+                // ipc option inside stdin, stderr or stdout are not supported.
+                // Don't destroy the pipe here — the caller's deinit() will handle it
+                // (the pipe was never uv_pipe_init'd so it can be freed directly).
                 stdio.flags = uv.UV_IGNORE;
             },
             .ignore => {

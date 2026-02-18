@@ -965,6 +965,7 @@ pub const BundleV2 = struct {
         this.linker.options.banner = transpiler.options.banner;
         this.linker.options.footer = transpiler.options.footer;
         this.linker.options.css_chunking = transpiler.options.css_chunking;
+        this.linker.options.compile_to_standalone_html = transpiler.options.compile_to_standalone_html;
         this.linker.options.source_maps = transpiler.options.source_map;
         this.linker.options.tree_shaking = transpiler.options.tree_shaking;
         this.linker.options.public_path = transpiler.options.public_path;
@@ -1992,6 +1993,19 @@ pub const BundleV2 = struct {
             transpiler.options.emit_dce_annotations = config.emit_dce_annotations orelse !config.minify.whitespace;
             transpiler.options.ignore_dce_annotations = config.ignore_dce_annotations;
             transpiler.options.css_chunking = config.css_chunking;
+            transpiler.options.compile_to_standalone_html = brk: {
+                if (config.compile == null or config.target != .browser) break :brk false;
+                // Only activate standalone HTML when all entrypoints are HTML files
+                for (config.entry_points.keys()) |ep| {
+                    if (!bun.strings.hasSuffixComptime(ep, ".html")) break :brk false;
+                }
+                break :brk config.entry_points.count() > 0;
+            };
+            // When compiling to standalone HTML, don't use the bun executable compile path
+            if (transpiler.options.compile_to_standalone_html) {
+                transpiler.options.compile = false;
+                config.compile = null;
+            }
             transpiler.options.banner = config.banner.slice();
             transpiler.options.footer = config.footer.slice();
             transpiler.options.react_fast_refresh = config.react_fast_refresh;

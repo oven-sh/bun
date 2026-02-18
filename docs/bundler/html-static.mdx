@@ -481,6 +481,16 @@ All paths are resolved relative to your HTML file, making it easy to organize yo
 
 This is a small wrapper around Bun's support for HTML imports in JavaScript.
 
+## Standalone HTML
+
+You can bundle your entire frontend into a **single self-contained `.html` file** with no external dependencies using `--compile --target=browser`. All JavaScript, CSS, and images are inlined directly into the HTML.
+
+```bash terminal icon="terminal"
+bun build --compile --target=browser ./index.html --outdir=dist
+```
+
+Learn more in the [Standalone HTML docs](/bundler/standalone-html).
+
 ## Adding a backend to your frontend
 
 To add a backend to your frontend, you can use the "routes" option in `Bun.serve`.

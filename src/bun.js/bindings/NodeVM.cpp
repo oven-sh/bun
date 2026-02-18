@@ -515,6 +515,23 @@ std::optional<JSC::EncodedJSValue> getNodeVMContextOptions(JSGlobalObject* globa
     JSValue codeGenerationValue = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, codeGenerationKey));
     RETURN_IF_EXCEPTION(scope, {});
 
+    auto microtaskModeValue = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "microtaskMode"_s));
+    RETURN_IF_EXCEPTION(scope, {});
+    if (microtaskModeValue) {
+        if (microtaskModeValue.isUndefined()) {
+            // ignore unset
+        } else if (!microtaskModeValue.isString()) {
+            return ERR::INVALID_ARG_TYPE(scope, globalObject, "options.microtaskMode"_s, "string"_s, microtaskModeValue);
+        } else {
+            StringView str = microtaskModeValue.toWTFString(globalObject);
+            if (str == "afterEvaluate") {
+                outOptions.microtaskMode = NodeVMContextOptions::MicrotaskMode::AfterEvaluate;
+            } else {
+                return INVALID_ARG_VALUE_VM_VARIATION(scope, globalObject, "options.microtaskMode must be 'afterEvaluate'"_s, microtaskModeValue);
+            }
+        }
+    }
+
     if (codeGenerationValue) {
         if (codeGenerationValue.isUndefined()) {
             return std::nullopt;
@@ -1107,6 +1124,10 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInNewContext, (JSGlobalObject * globalObject
         defaultGlobalObject(globalObject)->NodeVMGlobalObjectStructure(),
         contextOptions, globalObjectDynamicImportCallback);
 
+    if (contextOptions.microtaskMode == NodeVMContextOptions::MicrotaskMode::AfterEvaluate) {
+        context->createContextMicrotaskQueue();
+    }
+
     context->setContextifiedObject(sandbox);
 
     JSValue optionsArg = callFrame->argument(2);
@@ -1134,6 +1155,9 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInNewContext, (JSGlobalObject * globalObject
 
     NakedPtr<JSC::Exception> exception;
     JSValue result = JSC::evaluate(context, sourceCode, context, exception);
+    if (context->microtaskMode() == NodeVMContextOptions::MicrotaskMode::AfterEvaluate) {
+        context->drainMicrotasks();
+    }
 
     if (exception) [[unlikely]] {
         if (handleException(globalObject, vm, exception, scope)) {
@@ -1349,6 +1373,10 @@ JSC_DEFINE_HOST_FUNCTION(vmModule_createContext, (JSGlobalObject * globalObject,
     auto* targetContext = NodeVMGlobalObject::create(vm,
         zigGlobalObject->NodeVMGlobalObjectStructure(),
         contextOptions, importer);
+
+    if (contextOptions.microtaskMode == NodeVMContextOptions::MicrotaskMode::AfterEvaluate) {
+        targetContext->createContextMicrotaskQueue();
+    }
 
     RETURN_IF_EXCEPTION(scope, {});
 

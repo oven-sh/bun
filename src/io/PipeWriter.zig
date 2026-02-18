@@ -816,6 +816,12 @@ fn BaseWindowsPipeWriter(
         pub fn close(this: *WindowsPipeWriter) void {
             this.is_done = true;
             if (this.source) |source| {
+                // Check if there's a pending async write before closing.
+                // If so, we must defer the onCloseSource notification to
+                // onWriteComplete, because the parent's onClose handler may
+                // free the writer's StreamBuffer resources, and the pending
+                // write callback would then access freed memory.
+                const has_pending_async_write = this.hasPendingAsyncWrite();
                 switch (source) {
                     .sync_file, .file => |file| {
                         // Use state machine to handle close after operation completes
@@ -837,7 +843,12 @@ fn BaseWindowsPipeWriter(
                     },
                 }
                 this.source = null;
-                this.onCloseSource();
+                if (!has_pending_async_write) {
+                    this.onCloseSource();
+                }
+                // When has_pending_async_write is true, onCloseSource() will
+                // be called from onWriteComplete/onFsWriteComplete after the
+                // pending write callback completes.
             }
         }
 
@@ -989,7 +1000,22 @@ pub fn WindowsBufferedWriter(Parent: type, function_table: anytype) type {
             return .success;
         }
 
+        /// Returns true if there is an outstanding async write request
+        /// (uv_write or uv_fs_write) that hasn't completed yet.
+        pub fn hasPendingAsyncWrite(this: *const WindowsWriter) bool {
+            return this.pending_payload_size > 0;
+        }
+
         fn onWriteComplete(this: *WindowsWriter, status: uv.ReturnCode) void {
+            // If the source was closed (e.g. close() was called while a write
+            // was in-flight), clean up and notify the parent via onCloseSource
+            // (which was deferred by close()).
+            if (this.source == null) {
+                this.pending_payload_size = 0;
+                this.onCloseSource();
+                return;
+            }
+
             const written = this.pending_payload_size;
             this.pending_payload_size = 0;
             if (status.toError(.write)) |err| {
@@ -1292,12 +1318,28 @@ pub fn WindowsStreamingWriter(comptime Parent: type, function_table: anytype) ty
             return (this.outgoing.isNotEmpty() or this.current_payload.isNotEmpty());
         }
 
+        /// Returns true if there is an outstanding async write request
+        /// (uv_write or uv_fs_write) that hasn't completed yet.
+        pub fn hasPendingAsyncWrite(this: *const WindowsWriter) bool {
+            return this.current_payload.isNotEmpty();
+        }
+
         fn isDone(this: *WindowsWriter) bool {
             // done is flags andd no more data queued? so we are done!
             return this.is_done and !this.hasPendingData();
         }
 
         fn onWriteComplete(this: *WindowsWriter, status: uv.ReturnCode) void {
+            // If the source was closed (e.g. close() was called while a write
+            // was in-flight), clean up buffers and notify the parent via
+            // onCloseSource (which was deferred by close()).
+            if (this.source == null) {
+                this.current_payload.reset();
+                this.outgoing.reset();
+                this.onCloseSource();
+                return;
+            }
+
             if (status.toError(.write)) |err| {
                 this.last_write_result = .{ .err = err };
                 log("onWrite() = {s}", .{err.name()});

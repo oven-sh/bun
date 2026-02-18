@@ -7192,6 +7192,27 @@ declare module "bun" {
   ): SyncSubprocess<Out, Err>;
 
   /**
+   * A cron schedule: a 5-field expression (`minute hour day month weekday`) or a nickname.
+   *
+   * Nicknames: `@yearly`, `@annually`, `@monthly`, `@weekly`, `@daily`, `@midnight`, `@hourly`.
+   *
+   * Fields support `*`, numbers, ranges (`1-5`), steps (`1-30/2`),
+   * comma lists (`1,5,10`), and month/weekday names (`JAN`-`DEC`, `SUN`-`SAT`).
+   *
+   * Validated at runtime by the cron parser.
+   */
+  type CronWithAutocomplete =
+    | "* * * * *"
+    | "@yearly"
+    | "@annually"
+    | "@monthly"
+    | "@weekly"
+    | "@daily"
+    | "@midnight"
+    | "@hourly"
+    | (string & {});
+
+  /**
    * Register an OS-level cron job that runs a JavaScript/TypeScript module on a schedule.
    *
    * The module must export a `default` object with a `scheduled(controller)` method,
@@ -7233,7 +7254,7 @@ declare module "bun" {
    * ```
    */
   const cron: {
-    (path: string, schedule: string, title: string): Promise<void>;
+    (path: string, schedule: CronWithAutocomplete, title: string): Promise<void>;
     /**
      * Remove a previously registered cron job by its title.
      *
@@ -7274,7 +7295,7 @@ declare module "bun" {
      * const nextJan1 = Bun.cron.parse("0 0 1 JAN *", Date.UTC(2025, 0, 1));
      * ```
      */
-    parse(expression: string, relativeDate?: Date | number): Date | null;
+    parse(expression: CronWithAutocomplete, relativeDate?: Date | number): Date | null;
   };
 
   /** Utility type for any process from {@link Bun.spawn()} with both stdout and stderr set to `"pipe"` */

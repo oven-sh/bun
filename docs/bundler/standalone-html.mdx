@@ -15,15 +15,13 @@ The output is a completely self-contained HTML document. No relative paths. No e
 
 The output is a single `.html` file you can put anywhere:
 
-- **Drop it into Slack** or Discord as a file upload — teammates open it directly in their browser
 - **Upload it to S3** or any static file host — no directory structure to maintain, just one file
-- **Attach it to an email** — send interactive dashboards, reports, or demos as an attachment
-- **Double-click it from your desktop** — it opens in the browser and works offline, no server needed
-- **Paste it into a GitHub Gist** — share a fully interactive web app as a single file
-- **Embed it in an `<iframe>`** — embed interactive content in another page with a single file URL
+- **Double-click it from your desktop** — it opens in the browser and works offline, no localhost server needed
+- **Embed it in your webview** — No need to deal with relative files
+- **Insert it in an `<iframe>`** — embed interactive content in another page with a single file URL
 - **Serve it from anywhere** — any HTTP server, CDN, or file share. One file, zero configuration.
 
-There's nothing to install, no `node_modules` to deploy, no build artifacts to coordinate. The entire app — framework code, stylesheets, images, everything — lives in that one file.
+There's nothing to install, no `node_modules` to deploy, no build artifacts to coordinate, no relative paths to think about. The entire app — framework code, stylesheets, images, everything — lives in that one file.
 
 ## Truly one file
 
@@ -83,22 +81,22 @@ Bun inlines every local asset it finds in your HTML. If it has a relative path, 
 
 ### What gets inlined
 
-| In your source | In the output |
-| --- | --- |
-| `<script src="./app.tsx">` | `<script type="module">...bundled code...</script>` |
-| `<link rel="stylesheet" href="./styles.css">` | `<style>...bundled CSS...</style>` |
-| `<img src="./logo.png">` | `<img src="data:image/png;base64,...">` |
-| `<img src="./icon.svg">` | `<img src="data:image/svg+xml;base64,...">` |
-| `<video src="./demo.mp4">` | `<video src="data:video/mp4;base64,...">` |
-| `<audio src="./click.wav">` | `<audio src="data:audio/wav;base64,...">` |
-| `<source src="./clip.webm">` | `<source src="data:video/webm;base64,...">` |
-| `<video poster="./thumb.jpg">` | `<video poster="data:image/jpeg;base64,...">` |
-| `<link rel="icon" href="./favicon.ico">` | `<link rel="icon" href="data:image/x-icon;base64,...">` |
+| In your source                                   | In the output                                                            |
+| ------------------------------------------------ | ------------------------------------------------------------------------ |
+| `<script src="./app.tsx">`                       | `<script type="module">...bundled code...</script>`                      |
+| `<link rel="stylesheet" href="./styles.css">`    | `<style>...bundled CSS...</style>`                                       |
+| `<img src="./logo.png">`                         | `<img src="data:image/png;base64,...">`                                  |
+| `<img src="./icon.svg">`                         | `<img src="data:image/svg+xml;base64,...">`                              |
+| `<video src="./demo.mp4">`                       | `<video src="data:video/mp4;base64,...">`                                |
+| `<audio src="./click.wav">`                      | `<audio src="data:audio/wav;base64,...">`                                |
+| `<source src="./clip.webm">`                     | `<source src="data:video/webm;base64,...">`                              |
+| `<video poster="./thumb.jpg">`                   | `<video poster="data:image/jpeg;base64,...">`                            |
+| `<link rel="icon" href="./favicon.ico">`         | `<link rel="icon" href="data:image/x-icon;base64,...">`                  |
 | `<link rel="manifest" href="./app.webmanifest">` | `<link rel="manifest" href="data:application/manifest+json;base64,...">` |
-| CSS `url("./bg.png")` | CSS `url(data:image/png;base64,...)` |
-| CSS `@import "./reset.css"` | Flattened into the `<style>` tag |
-| CSS `url("./font.woff2")` | CSS `url(data:font/woff2;base64,...)` |
-| JS `import "./styles.css"` | Merged into the `<style>` tag |
+| CSS `url("./bg.png")`                            | CSS `url(data:image/png;base64,...)`                                     |
+| CSS `@import "./reset.css"`                      | Flattened into the `<style>` tag                                         |
+| CSS `url("./font.woff2")`                        | CSS `url(data:font/woff2;base64,...)`                                    |
+| JS `import "./styles.css"`                       | Merged into the `<style>` tag                                            |
 
 Images, fonts, WASM binaries, videos, audio files, SVGs — any file referenced by a relative path gets base64-encoded into a `data:` URI and embedded directly in the HTML. The MIME type is automatically detected from the file extension.
 

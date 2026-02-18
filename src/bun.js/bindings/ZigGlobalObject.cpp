@@ -55,6 +55,7 @@
 #include "JavaScriptCore/StackFrame.h"
 #include "JavaScriptCore/StackVisitor.h"
 #include "JavaScriptCore/VM.h"
+#include "JavaScriptCore/VMManager.h"
 #include "AddEventListenerOptions.h"
 #include "AsyncContextFrame.h"
 #include "BunClientData.h"
@@ -267,6 +268,10 @@ extern "C" unsigned getJSCBytecodeCacheVersion()
 extern "C" void Bun__REPRL__registerFuzzilliFunctions(Zig::GlobalObject*);
 #endif
 
+// StopTheWorld callback for SIGUSR1 debugger activation (defined in BunDebugger.cpp).
+// Note: This is a C++ function - cannot use extern "C" because it returns std::pair.
+JSC::StopTheWorldStatus Bun__stopTheWorldCallback(JSC::VM&, JSC::StopTheWorldEvent);
+
 extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode)
 {
     static std::once_flag jsc_init_flag;
@@ -302,6 +307,15 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             JSC::Options::useJITCage() = false;
             JSC::Options::useShadowRealm() = true;
             JSC::Options::useV8DateParser() = true;
+            // NOTE: We intentionally do NOT set usePollingTraps = true here.
+            // Signal-based traps (InvalidationPoint in DFG/FTL) have zero steady-state
+            // overhead vs polling (CheckTraps), which adds a load+branch at every loop
+            // back-edge and inhibits DFG structure-watching optimizations.
+            // The tradeoff: signal-based trap delivery for requestStopAll (used by the
+            // runtime inspector via SIGUSR1) is ~94% reliable vs 100% with polling.
+            // We accept this for the inspector path since speed is the priority.
+            // IMPORTANT: JSC::Options are frozen (mprotected read-only) after init.
+            // Writing to usePollingTraps later crashes on Linux with SEGV at offset 0xB34.
             JSC::Options::evalMode() = evalMode;
             JSC::Options::heapGrowthSteepnessFactor() = 1.0;
             JSC::Options::heapGrowthMaxIncrease() = 2.0;
@@ -330,6 +344,10 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             }
             JSC::Options::assertOptionsAreCoherent();
         }); // end JSC::initialize lambda
+
+        // Register the StopTheWorld callback for SIGUSR1 debugger activation.
+        // This allows us to interrupt infinite loops and activate the debugger.
+        JSC::VMManager::setJSDebuggerCallback(Bun__stopTheWorldCallback);
     }); // end std::call_once lambda
 
     // NOLINTEND

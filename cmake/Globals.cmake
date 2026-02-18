@@ -433,9 +433,12 @@ function(register_command)
     list(APPEND CMD_EFFECTIVE_DEPENDS ${CMD_EXECUTABLE})
   endif()
 
-  # SKIP_CODEGEN: Skip commands that use BUN_EXECUTABLE if all outputs exist
-  # This is used for Windows ARM64 builds where x64 bun crashes under emulation
-  if(SKIP_CODEGEN AND CMD_EXECUTABLE STREQUAL "${BUN_EXECUTABLE}")
+  # SKIP_CODEGEN: Skip Bun-driven codegen commands if all outputs exist.
+  # This is used for Windows ARM64 builds where x64 bun may crash under emulation.
+  #
+  # Note: only apply this to commands with an explicit TARGET. We still need Bun
+  # for non-codegen setup steps (e.g. bun install) on a fresh build.
+  if(SKIP_CODEGEN AND CMD_TARGET AND CMD_EXECUTABLE STREQUAL "${BUN_EXECUTABLE}")
     set(ALL_OUTPUTS_EXIST TRUE)
     foreach(output ${CMD_OUTPUTS})
       if(NOT EXISTS ${output})

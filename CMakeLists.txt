@@ -44,6 +44,7 @@ include(SetupGit)
 include(SetupBuildkite)
 include(SetupBun)
 include(SetupEsbuild)
+include(SetupPerl)
 include(SetupZig)
 include(SetupRust)
 

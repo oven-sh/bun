@@ -399,6 +399,14 @@ extern "C" void bun_restore_stdio()
         if (!bun_stdio_tty[fd])
             continue;
 
+        // If stdout is a pipe (not a TTY) but stdin is a TTY, we're likely in a
+        // pipeline (e.g. `bun | less`). In that case, don't restore stdin's
+        // termios because the downstream process (e.g. `less`) may have set the
+        // terminal to raw mode and is still using it. Restoring cooked mode here
+        // would break its input handling. See #27100.
+        if (fd == 0 && !bun_stdio_tty[1])
+            continue;
+
         sigset_t sa;
         int err;
 

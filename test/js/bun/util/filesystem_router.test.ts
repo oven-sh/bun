@@ -91,6 +91,30 @@ it("should find files", () => {
   expect(Object.values(routes).length).toBe(Object.values(fixture).length);
 });
 
+it("should handle routes under GC pressure", () => {
+  // Regression test for BUN-1K54: fromEntries used ObjectInitializationScope
+  // with putDirect, which could crash when GC triggers during string allocation.
+  const files = Array.from({ length: 128 }, (_, i) => `route${i}/index.tsx`);
+  const { dir } = make(files);
+
+  const router = new FileSystemRouter({
+    dir,
+    fileExtensions: [".tsx"],
+    style: "nextjs",
+  });
+
+  // Access routes repeatedly with GC pressure to exercise the fromEntries path
+  for (let i = 0; i < 10; i++) {
+    Bun.gc(true);
+    const routes = router.routes;
+    const keys = Object.keys(routes);
+    expect(keys.length).toBe(128);
+    for (let j = 0; j < 128; j++) {
+      expect(routes[`/route${j}`]).toBe(`${dir}/route${j}/index.tsx`);
+    }
+  }
+});
+
 it("should handle empty dirs", () => {
   const { dir } = make([]);
 

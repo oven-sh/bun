@@ -12,7 +12,7 @@ test("closing spawn stdin while write is pending should not crash", async () => 
   // Write data to stdin, then immediately close.
   // This creates a scenario where a pipe write may be pending when close() is called.
   for (let i = 0; i < 5; i++) {
-    const proc = Bun.spawn({
+    await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", "process.stdin.resume(); process.stdin.on('close', () => process.exit(0));"],
       env: bunEnv,
       stdin: "pipe",
@@ -43,7 +43,7 @@ test("rapid spawn and close cycles should not corrupt pipe state", async () => {
   const iterations = 10;
 
   for (let i = 0; i < iterations; i++) {
-    const proc = Bun.spawn({
+    await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", "console.log('ok');"],
       env: bunEnv,
       stdout: "pipe",
@@ -69,7 +69,7 @@ test("FileSink write and close race should not crash", async () => {
       },
     });
 
-    const proc = Bun.spawn({
+    await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
@@ -83,7 +83,7 @@ test("FileSink write and close race should not crash", async () => {
 
     const stdout = await new Response(proc.stdout).text();
     const exitCode = await proc.exited;
-    expect(exitCode).toBe(0);
     expect(Number(stdout.trim())).toBeGreaterThan(0);
+    expect(exitCode).toBe(0);
   }
 }, 30_000);

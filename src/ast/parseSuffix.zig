@@ -944,6 +944,5 @@ const T = js_lexer.T;
 const js_parser = bun.js_parser;
 const DeferredErrors = js_parser.DeferredErrors;
 const JSXTransformType = js_parser.JSXTransformType;
-const SideEffects = js_parser.SideEffects;
 const TypeScript = js_parser.TypeScript;
 const options = js_parser.options;

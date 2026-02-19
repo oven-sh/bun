@@ -17,9 +17,9 @@ pub noinline fn computeChunks(
     try js_chunks.ensureUnusedCapacity(this.graph.entry_points.len);
 
     // Maps entry point bit indices to js_chunks indices. CSS-only entry points
-    // have no JS chunk, so their slot is null.
-    const entry_bit_to_js_chunk_idx = try temp_allocator.alloc(?u32, this.graph.entry_points.len);
-    @memset(entry_bit_to_js_chunk_idx, null);
+    // have no JS chunk, so their slot is maxInt(u32) as a sentinel.
+    const entry_bit_to_js_chunk_idx = try temp_allocator.alloc(u32, this.graph.entry_points.len);
+    @memset(entry_bit_to_js_chunk_idx, std.math.maxInt(u32));
 
     // Key is the hash of the CSS order. This deduplicates identical CSS files.
     var css_chunks = std.AutoArrayHashMap(u64, Chunk).init(temp_allocator);
@@ -208,10 +208,11 @@ pub noinline fn computeChunks(
         chunks: []Chunk,
         allocator: std.mem.Allocator,
         source_id: u32,
-        entry_bit_to_js_chunk_idx: []const ?u32,
+        entry_bit_to_js_chunk_idx: []const u32,
 
         pub fn next(c: *@This(), entry_bit: usize) void {
-            const chunk_id = c.entry_bit_to_js_chunk_idx[entry_bit] orelse return;
+            const chunk_id = c.entry_bit_to_js_chunk_idx[entry_bit];
+            if (chunk_id == std.math.maxInt(u32)) return;
             const entry = c.chunks[chunk_id].files_with_parts_in_chunk.getOrPut(c.allocator, @as(u32, @truncate(c.source_id))) catch unreachable;
             if (!entry.found_existing) {
                 entry.value_ptr.* = 0; // Initialize byte count to 0

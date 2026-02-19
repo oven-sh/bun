@@ -421,9 +421,13 @@ pub fn connect(this: *WindowsNamedPipe, path: []const u8, ssl_options: ?jsc.API.
         return initResult;
     }
 
-    this.ref();
     this.connect_req.data = this;
-    return this.pipe.?.connect(&this.connect_req, path, this, onConnect);
+    const result = this.pipe.?.connect(&this.connect_req, path, this, onConnect);
+    if (result.asErr() != null) {
+        return result;
+    }
+    this.ref();
+    return result;
 }
 pub fn startTLS(this: *WindowsNamedPipe, ssl_options: jsc.API.ServerConfig.SSLConfig, is_client: bool) !void {
     this.flags.is_ssl = true;

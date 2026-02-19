@@ -593,9 +593,26 @@ function getTargetTriplet(platform) {
  */
 function needsBaselineVerification(platform) {
   const { os, arch, baseline } = platform;
-  if (os !== "linux") return false;
-  return (arch === "x64" && baseline) || arch === "aarch64";
+  if (os === "linux") return (arch === "x64" && baseline) || arch === "aarch64";
+  if (os === "windows") return arch === "x64" && baseline;
+  return false;
 }
+
+/**
+ * Returns the emulator binary name for the given platform.
+ * Linux uses QEMU user-mode; Windows uses Intel SDE.
+ * @param {Platform} platform
+ * @returns {string}
+ */
+function getEmulatorBinary(platform) {
+  const { os, arch } = platform;
+  if (os === "windows") return "sde-external/sde.exe";
+  if (arch === "aarch64") return "qemu-aarch64-static";
+  return "qemu-x86_64-static";
+}
+
+const SDE_VERSION = "9.58.0-2025-06-16";
+const SDE_URL = `https://downloadmirror.intel.com/859732/sde-external-${SDE_VERSION}-win.tar.xz`;
 
 /**
  * @param {Platform} platform
@@ -603,9 +620,27 @@ function needsBaselineVerification(platform) {
  * @returns {Step}
  */
 function getVerifyBaselineStep(platform, options) {
-  const { arch } = platform;
+  const { os } = platform;
   const targetKey = getTargetKey(platform);
-  const archArg = arch === "x64" ? "x64" : "aarch64";
+  const triplet = getTargetTriplet(platform);
+  const emulator = getEmulatorBinary(platform);
+
+  const setupCommands = [
+    `buildkite-agent artifact download '*.zip' . --step ${targetKey}-build-bun`,
+    `unzip -o '${triplet}.zip'`,
+  ];
+
+  if (os !== "windows") {
+    setupCommands.push(`chmod +x ${triplet}/bun`);
+  }
+
+  if (os === "windows") {
+    setupCommands.push(
+      `curl.exe -fsSL -o sde.tar.xz "${SDE_URL}"`,
+      `tar -xf sde.tar.xz`,
+      `ren sde-external-${SDE_VERSION}-win sde-external`,
+    );
+  }
 
   return {
     key: `${targetKey}-verify-baseline`,
@@ -614,57 +649,10 @@ function getVerifyBaselineStep(platform, options) {
     agents: getLinkBunAgent(platform, options),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
-    timeout_in_minutes: 5,
-    command: [
-      `buildkite-agent artifact download '*.zip' . --step ${targetKey}-build-bun`,
-      `unzip -o '${getTargetTriplet(platform)}.zip'`,
-      `unzip -o '${getTargetTriplet(platform)}-profile.zip'`,
-      `chmod +x ${getTargetTriplet(platform)}/bun ${getTargetTriplet(platform)}-profile/bun-profile`,
-      `./scripts/verify-baseline-cpu.sh --arch ${archArg} --binary ${getTargetTriplet(platform)}/bun`,
-      `./scripts/verify-baseline-cpu.sh --arch ${archArg} --binary ${getTargetTriplet(platform)}-profile/bun-profile`,
-    ],
-  };
-}
-
-/**
- * Returns true if the PR modifies SetupWebKit.cmake (WebKit version changes).
- * JIT stress tests under QEMU should run when WebKit is updated to catch
- * JIT-generated code that uses unsupported CPU instructions.
- * @param {PipelineOptions} options
- * @returns {boolean}
- */
-function hasWebKitChanges(options) {
-  const { changedFiles = [] } = options;
-  return changedFiles.some(file => file.includes("SetupWebKit.cmake"));
-}
-
-/**
- * Returns a step that runs JSC JIT stress tests under QEMU.
- * This verifies that JIT-compiled code doesn't use CPU instructions
- * beyond the baseline target (no AVX on x64, no LSE on aarch64).
- * @param {Platform} platform
- * @param {PipelineOptions} options
- * @returns {Step}
- */
-function getJitStressTestStep(platform, options) {
-  const { arch } = platform;
-  const targetKey = getTargetKey(platform);
-  const archArg = arch === "x64" ? "x64" : "aarch64";
-
-  return {
-    key: `${targetKey}-jit-stress-qemu`,
-    label: `${getTargetLabel(platform)} - jit-stress-qemu`,
-    depends_on: [`${targetKey}-build-bun`],
-    agents: getLinkBunAgent(platform, options),
-    retry: getRetry(),
-    cancel_on_build_failing: isMergeQueue(),
-    // JIT stress tests are slow under QEMU emulation
     timeout_in_minutes: 30,
     command: [
-      `buildkite-agent artifact download '*.zip' . --step ${targetKey}-build-bun`,
-      `unzip -o '${getTargetTriplet(platform)}.zip'`,
-      `chmod +x ${getTargetTriplet(platform)}/bun`,
-      `./scripts/verify-jit-stress-qemu.sh --arch ${archArg} --binary ${getTargetTriplet(platform)}/bun`,
+      ...setupCommands,
+      `bun scripts/verify-baseline.ts --binary ${triplet}/${os === "windows" ? "bun.exe" : "bun"} --emulator ${emulator}`,
     ],
   };
 }
@@ -1264,10 +1252,6 @@ async function getPipeline(options = {}) {
 
         if (needsBaselineVerification(target)) {
           steps.push(getVerifyBaselineStep(target, options));
-          // Run JIT stress tests under QEMU when WebKit is updated
-          if (hasWebKitChanges(options)) {
-            steps.push(getJitStressTestStep(target, options));
-          }
         }
 
         return getStepWithDependsOn(

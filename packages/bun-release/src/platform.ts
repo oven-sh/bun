@@ -95,12 +95,12 @@ export const platforms: Platform[] = [
     bin: "bun-windows-x64-baseline",
     exe: "bin/bun.exe",
   },
-  // {
-  //   os: "win32",
-  //   arch: "arm64",
-  //   bin: "bun-windows-aarch64",
-  //   exe: "bin/bun.exe",
-  // },
+  {
+    os: "win32",
+    arch: "arm64",
+    bin: "bun-windows-aarch64",
+    exe: "bin/bun.exe",
+  },
 ];
 
 export const supportedPlatforms: Platform[] = platforms

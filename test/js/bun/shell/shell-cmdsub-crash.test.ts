@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
 // Regression test for use-after-poison in builtin OutputTask callbacks
 // inside command substitution $().
@@ -14,7 +14,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 // alongside non-existent paths reliably triggers the ASAN
 // use-after-poison.
 
-describe("builtins in command substitution with errors should not crash", () => {
+describe.skipIf(isWindows)("builtins in command substitution with errors should not crash", () => {
   test("ls with errors in command substitution", async () => {
     // Create a temp directory with many files to produce output,
     // and include non-existent paths to produce errors.

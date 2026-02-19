@@ -760,7 +760,7 @@ pub const WindowsBufferedReader = struct {
                 return Type.onReaderError(@as(*Type, @ptrCast(@alignCast(this))), err);
             }
             fn loop(this: *anyopaque) *Async.Loop {
-                return Type.loop(@as(*Type, @alignCast(@ptrCast(this))));
+                return Type.loop(@as(*Type, @ptrCast(@alignCast(this))));
             }
         };
         return .{
@@ -955,14 +955,14 @@ pub const WindowsBufferedReader = struct {
     }
 
     fn onStreamAlloc(handle: *uv.Handle, suggested_size: usize, buf: *uv.uv_buf_t) callconv(.c) void {
-        var this = bun.cast(*WindowsBufferedReader, handle.data);
+        const this: *WindowsBufferedReader = @ptrCast(@alignCast(handle.data orelse return));
         const result = this.getReadBufferWithStableMemoryAddress(suggested_size);
         buf.* = uv.uv_buf_t.init(result);
     }
 
     fn onStreamRead(handle: *uv.uv_handle_t, nread: uv.ReturnCodeI64, buf: *const uv.uv_buf_t) callconv(.c) void {
         const stream = bun.cast(*uv.uv_stream_t, handle);
-        var this = bun.cast(*WindowsBufferedReader, stream.data);
+        const this: *WindowsBufferedReader = @ptrCast(@alignCast(stream.data orelse return));
 
         const nread_int = nread.int();
 
@@ -1199,13 +1199,15 @@ pub const WindowsBufferedReader = struct {
     }
 
     fn onPipeClose(handle: *uv.Pipe) callconv(.c) void {
-        const this = bun.cast(*uv.Pipe, handle.data);
-        bun.default_allocator.destroy(this);
+        // Use the handle directly for destroy, not handle.data which may be null
+        // during cleanup races.
+        bun.default_allocator.destroy(handle);
     }
 
     fn onTTYClose(handle: *uv.uv_tty_t) callconv(.c) void {
-        const this = bun.cast(*uv.uv_tty_t, handle.data);
-        bun.default_allocator.destroy(this);
+        // Use the handle directly for destroy, not handle.data which may be null
+        // during cleanup races.
+        bun.default_allocator.destroy(handle);
     }
 
     pub fn onRead(this: *WindowsBufferedReader, amount: bun.sys.Maybe(usize), slice: []u8, hasMore: ReadState) void {

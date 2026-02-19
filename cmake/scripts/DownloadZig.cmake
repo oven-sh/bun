@@ -21,12 +21,7 @@ if(NOT DEFINED CMAKE_HOST_SYSTEM_PROCESSOR)
 endif()
 
 if(CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "arm64|ARM64|aarch64|AARCH64")
-  # Windows ARM64 can run x86_64 via emulation, and no native ARM64 Zig build exists yet
-  if(CMAKE_HOST_WIN32)
-    set(ZIG_ARCH "x86_64")
-  else()
-    set(ZIG_ARCH "aarch64")
-  endif()
+  set(ZIG_ARCH "aarch64")
 elseif(CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "amd64|AMD64|x86_64|X86_64|x64|X64")
   set(ZIG_ARCH "x86_64")
 else()

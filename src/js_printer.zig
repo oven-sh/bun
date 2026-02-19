@@ -1963,62 +1963,12 @@ fn NewPrinter(
         }
 
         fn printRawTemplateLiteral(p: *Printer, bytes: []const u8) void {
-            if (comptime is_json or !ascii_only) {
-                p.print(bytes);
-                return;
-            }
-
-            // Translate any non-ASCII to unicode escape sequences
-            // Note that this does not correctly handle malformed template literal strings
-            // template literal strings can contain invalid unicode code points
-            // and pretty much anything else
-            //
-            // we use WTF-8 here, but that's still not good enough.
-            //
-            var ascii_start: usize = 0;
-            var is_ascii = false;
-            var iter = CodepointIterator.init(bytes);
-            var cursor = CodepointIterator.Cursor{};
-
-            while (iter.next(&cursor)) {
-                switch (cursor.c) {
-                    // unlike other versions, we only want to mutate > 0x7F
-                    0...last_ascii => {
-                        if (!is_ascii) {
-                            ascii_start = cursor.i;
-                            is_ascii = true;
-                        }
-                    },
-                    else => {
-                        if (is_ascii) {
-                            p.print(bytes[ascii_start..cursor.i]);
-                            is_ascii = false;
-                        }
-
-                        switch (cursor.c) {
-                            0...0xFFFF => {
-                                p.print([_]u8{
-                                    '\\',
-                                    'u',
-                                    hex_chars[cursor.c >> 12],
-                                    hex_chars[(cursor.c >> 8) & 15],
-                                    hex_chars[(cursor.c >> 4) & 15],
-                                    hex_chars[cursor.c & 15],
-                                });
-                            },
-                            else => {
-                                p.print("\\u{");
-                                p.fmt("{x}", .{cursor.c}) catch unreachable;
-                                p.print("}");
-                            },
-                        }
-                    },
-                }
-            }
-
-            if (is_ascii) {
-                p.print(bytes[ascii_start..]);
-            }
+            // Raw template literals must always be printed verbatim.
+            // Applying ascii_only escaping would convert non-ASCII characters
+            // (e.g. `弟気`) into `\uXXXX` escape sequences, which changes the
+            // observable semantics — the raw string would contain literal
+            // backslash-u characters instead of the original Unicode text.
+            p.print(bytes);
         }
 
         pub fn printExpr(p: *Printer, expr: Expr, level: Level, in_flags: ExprFlag.Set) void {

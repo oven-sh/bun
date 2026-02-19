@@ -1512,11 +1512,17 @@ fn refCountedStringWithWasNew(this: *VirtualMachine, new: *bool, input_: []const
             input_;
 
         const ref = this.allocator.create(jsc.RefString) catch unreachable;
+        // Transpiler output is normally ASCII-only, but raw template literals
+        // may contain non-ASCII UTF-8 bytes that must be decoded correctly.
+        const is_ascii = bun.strings.firstNonASCII(input) == null;
         ref.* = jsc.RefString{
             .allocator = this.allocator,
             .ptr = input.ptr,
             .len = input.len,
-            .impl = bun.String.createExternal(*jsc.RefString, input, true, ref, &freeRefString).value.WTFStringImpl,
+            .impl = if (is_ascii)
+                bun.String.createExternal(*jsc.RefString, input, true, ref, &freeRefString).value.WTFStringImpl
+            else
+                bun.String.cloneUTF8(input).value.WTFStringImpl,
             .hash = hash,
             .ctx = this,
             .onBeforeDeinit = VirtualMachine.clearRefString,

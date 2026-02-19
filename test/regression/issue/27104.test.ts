@@ -3,46 +3,70 @@ import { bunEnv, bunExe, tempDir } from "harness";
 
 // Test that Bun.serve() propagates backpressure from a slow WritableStream
 // consumer back to the HTTP socket, preventing unbounded memory growth.
-// Uses separate processes: a server that pipes req.body to a slow WritableStream,
-// and a sender that streams a large body. We measure server RSS.
+// Uses separate processes to ensure independent sender/server event loops.
+// The server tracks peak RSS from within the process (cross-platform).
 test("Bun.serve request body backpressure limits memory growth", async () => {
+  // Use 512MB payload to clearly distinguish backpressure from no-backpressure.
+  // With backpressure: RSS bounded by kernel TCP buffers (~10MB) + stream overhead.
+  // Without: server buffers the full payload.
+  const PAYLOAD_SIZE = 512 * 1024 * 1024;
+  const PAYLOAD_MB = PAYLOAD_SIZE / (1024 * 1024);
+
   using dir = tempDir("backpressure-test", {
     "server.ts": `
+let initialRss = 0;
+let peakRss = 0;
+
+function trackMemory() {
+  const rss = process.memoryUsage().rss;
+  if (rss > peakRss) peakRss = rss;
+}
+
 const server = Bun.serve({
   hostname: "127.0.0.1",
   port: 0,
   idleTimeout: 255,
   async fetch(req) {
+    initialRss = process.memoryUsage().rss;
+    peakRss = initialRss;
     let totalReceived = 0;
-    let writeCount = 0;
 
-    const writeStream = new WritableStream(
-      {
-        async write(value) {
-          writeCount++;
-          totalReceived += value.length;
-          // Simulate a slow consumer - block for 500ms per chunk
-          await new Promise(res => setTimeout(res, 500));
-        },
+    const memInterval = setInterval(trackMemory, 25);
+
+    const writeStream = new WritableStream({
+      async write(value) {
+        totalReceived += value.length;
+        trackMemory();
+        // Simulate a slow consumer - 5ms per chunk is enough to create
+        // backpressure with a fast sender.
+        await new Promise(res => setTimeout(res, 5));
+        trackMemory();
       },
-      { highWaterMark: 1 },
-    );
+    }, { highWaterMark: 1 });
 
-    await req.body!.pipeTo(writeStream).catch(() => {});
-    return new Response(JSON.stringify({ totalReceived, writeCount }));
+    await req.body!.pipeTo(writeStream).catch((e) => {
+      console.error("pipeTo error:", e);
+    });
+
+    clearInterval(memInterval);
+    trackMemory();
+
+    const rssGrowthMB = (peakRss - initialRss) / (1024 * 1024);
+    return new Response(JSON.stringify({
+      totalReceived,
+      rssGrowthMB: +rssGrowthMB.toFixed(1),
+    }));
   },
 });
 
-// Signal readiness with port
 console.log("READY:" + server.port);
 `,
     "sender.ts": `
 const port = process.argv[2];
-const url = "http://127.0.0.1:" + port;
+const PAYLOAD_SIZE = ${PAYLOAD_SIZE};
 
-const chunkSize = 64 * 1024; // 64KB
-const totalSize = 200 * 1024 * 1024; // 200MB total
-const totalChunks = totalSize / chunkSize;
+const chunkSize = 256 * 1024; // 256KB chunks for fast sending
+const totalChunks = PAYLOAD_SIZE / chunkSize;
 let chunksSent = 0;
 
 const body = new ReadableStream({
@@ -56,7 +80,7 @@ const body = new ReadableStream({
   },
 });
 
-const response = await fetch(url, {
+const response = await fetch("http://127.0.0.1:" + port, {
   method: "POST",
   body,
   // @ts-ignore
@@ -96,9 +120,6 @@ console.log("RESULT:" + JSON.stringify(result));
 
   expect(port).not.toBe("");
 
-  // Get initial RSS of the server
-  const initialRss = getRss(serverProc.pid);
-
   // Start sender
   await using senderProc = Bun.spawn({
     cmd: [bunExe(), "run", "sender.ts", port],
@@ -108,68 +129,32 @@ console.log("RESULT:" + JSON.stringify(result));
     stderr: "pipe",
   });
 
-  // Poll server RSS during the transfer
-  let peakRss = initialRss;
-  const pollInterval = setInterval(() => {
-    try {
-      const rss = getRss(serverProc.pid);
-      if (rss > peakRss) peakRss = rss;
-    } catch {
-      // Process may have exited
-    }
-  }, 200);
-
   const [senderStdout, senderStderr, senderExitCode] = await Promise.all([
     senderProc.stdout.text(),
     senderProc.stderr.text(),
     senderProc.exited,
   ]);
 
-  clearInterval(pollInterval);
-
-  // One final RSS check
-  try {
-    const finalRss = getRss(serverProc.pid);
-    if (finalRss > peakRss) peakRss = finalRss;
-  } catch {
-    // Process may have exited
-  }
-
-  expect(senderExitCode).toBe(0);
+  if (senderStderr) console.log("sender stderr:", senderStderr);
 
   // Verify the sender got a successful response
+  expect(senderStdout).toContain("RESULT:");
   const resultMatch = senderStdout.match(/RESULT:(.+)/);
-  expect(resultMatch).not.toBeNull();
   const result = JSON.parse(resultMatch![1]);
-  expect(result.totalReceived).toBe(200 * 1024 * 1024);
 
-  // Check that memory growth was bounded.
-  // Without backpressure: the server buffers all 200MB -> RSS grows by ~200MB+
-  // With backpressure: RSS growth should be bounded by TCP kernel buffers
-  // (typically ~6-10MB) plus some overhead.
-  const rssGrowthMB = (peakRss - initialRss) / (1024 * 1024);
-  console.log(
-    `RSS: initial=${(initialRss / 1024 / 1024).toFixed(1)}MB peak=${(peakRss / 1024 / 1024).toFixed(1)}MB growth=${rssGrowthMB.toFixed(1)}MB`,
-  );
+  console.log(`Server RSS growth: ${result.rssGrowthMB}MB (payload: ${PAYLOAD_MB}MB)`);
 
-  // With backpressure, RSS growth should be well under the 200MB payload.
-  // We use 120MB as the threshold - generous enough for TCP kernel buffers
-  // (~10MB), debug build overhead, and CI variability, but will catch the
-  // no-fix case where all 200MB gets buffered (which causes ~200MB+ growth).
-  expect(rssGrowthMB).toBeLessThan(120);
+  expect(result.totalReceived).toBe(PAYLOAD_SIZE);
+
+  // With backpressure: RSS growth bounded regardless of payload size (~80-120MB
+  // from kernel TCP buffers, stream overhead, and GC not immediately releasing pages).
+  // Without backpressure: RSS growth approaches or exceeds the payload size (512MB+).
+  // Threshold of 200MB catches the no-backpressure case while accommodating the
+  // fixed overhead from TCP buffers + debug build + CI variability.
+  expect(result.rssGrowthMB).toBeLessThan(200);
+
+  expect(senderExitCode).toBe(0);
 
   // Clean up server
   serverProc.kill();
 }, 120_000);
-
-function getRss(pid: number): number {
-  try {
-    const statm = require("fs").readFileSync(`/proc/${pid}/statm`, "utf-8");
-    // statm format: size resident shared text lib data dt (in pages)
-    const resident = parseInt(statm.split(" ")[1], 10);
-    const pageSize = 4096; // typical Linux page size
-    return resident * pageSize;
-  } catch {
-    return 0;
-  }
-}

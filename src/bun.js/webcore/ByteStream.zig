@@ -228,10 +228,12 @@ pub fn onData(
         const remaining = chunk[to_copy.len..];
         if (remaining.len > 0 and chunk.len > 0) {
             this.append(stream, to_copy.len, chunk, allocator) catch @panic("Out of memory while copying request body");
-            // Data overflowed into the buffer - pause the source until the
-            // consumer drains it.
-            this.backpressure.pause();
         }
+
+        // Pause the source after delivering data. The source will be resumed
+        // when the consumer's next onPull arrives, which creates a natural
+        // throttle matching the consumer's processing speed.
+        this.backpressure.pause();
 
         log("ByteStream.onData pending.run()", .{});
 
@@ -332,12 +334,12 @@ pub fn onPull(this: *@This(), buffer: []u8, view: jsc.JSValue) streams.Result {
         if (this.offset + to_write == this.buffer.items.len) {
             this.offset = 0;
             this.buffer.items.len = 0;
+            // Buffer fully drained - resume the source so more data can flow in.
+            this.backpressure.@"resume"();
         } else {
             this.offset += to_write;
+            // Buffer still has data - keep the source paused until fully drained.
         }
-
-        // Consumer is draining data - resume the source so more data can flow in.
-        this.backpressure.@"resume"();
 
         if (this.has_received_last_chunk and remaining_in_buffer.len == 0) {
             this.buffer.clearAndFree();

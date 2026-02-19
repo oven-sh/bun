@@ -28,7 +28,9 @@ describe("compile --target=browser", () => {
     expect(html).toContain("<style>");
     expect(html).toContain("color: red");
     expect(html).toContain("</style>");
-    expect(html).toContain('<script type="module">');
+    // Standalone HTML uses classic <script> (not type="module") in <head>
+    // to ensure synchronous execution before inline body scripts
+    expect(html).toContain("<script>");
     expect(html).toContain('console.log("hello")');
     expect(html).toContain("</script>");
     // Should NOT have external references
@@ -36,7 +38,7 @@ describe("compile --target=browser", () => {
     expect(html).not.toContain('href="');
   });
 
-  test("uses type=module on inline scripts", async () => {
+  test("uses classic script (not type=module) for inline scripts", async () => {
     using dir = tempDir("compile-browser-module", {
       "index.html": `<!DOCTYPE html><html><body><script src="./app.js"></script></body></html>`,
       "app.js": `console.log("module");`,
@@ -50,8 +52,9 @@ describe("compile --target=browser", () => {
 
     expect(result.success).toBe(true);
     const html = await result.outputs[0].text();
-    expect(html).toContain('<script type="module">');
-    expect(html).not.toMatch(/<script>(?!<)/);
+    // Standalone HTML uses classic <script> to preserve execution order
+    expect(html).toContain("<script>");
+    expect(html).not.toContain('<script type="module">');
   });
 
   test("top-level await works with inline scripts", async () => {
@@ -69,7 +72,7 @@ console.log(data);`,
 
     expect(result.success).toBe(true);
     const html = await result.outputs[0].text();
-    expect(html).toContain('<script type="module">');
+    expect(html).toContain("<script>");
     expect(html).toContain("await");
   });
 
@@ -185,7 +188,7 @@ export const APP_VERSION = "1.0.0";`,
     expect(html).toContain("[LOG]");
     // Single output, no external refs
     expect(html).not.toContain('src="');
-    expect(html).toContain('<script type="module">');
+    expect(html).toContain("<script>");
   });
 
   test("CSS imported from JS and via link tag (deduplicated)", async () => {
@@ -288,7 +291,7 @@ body { color: blue; }`,
     const html = await Bun.file(`${outdir}/index.html`).text();
     expect(html).toContain("<style>");
     expect(html).toContain("font-weight: bold");
-    expect(html).toContain('<script type="module">');
+    expect(html).toContain("<script>");
     expect(html).toContain('console.log("outdir test")');
   });
 
@@ -454,7 +457,7 @@ body { color: blue; }`,
     const html = await Bun.file(`${outdir}/index.html`).text();
     expect(html).toContain("<style>");
     expect(html).toContain("font-weight: bold");
-    expect(html).toContain('<script type="module">');
+    expect(html).toContain("<script>");
     expect(html).toContain('console.log("cli test")');
 
     expect(stderr).toBe("");
@@ -484,7 +487,7 @@ body { color: blue; }`,
     expect(html).toContain("<style>");
     expect(html).toContain("color: green");
     // JS should also be inlined (this was the bug - JS was dropped in fallback path)
-    expect(html).toContain('<script type="module">');
+    expect(html).toContain("<script>");
     expect(html).toContain('console.log("malformed html")');
   });
 
@@ -513,7 +516,7 @@ console.log(message);`,
     const html = await result.outputs[0].text();
     expect(html).toContain("<style>");
     expect(html).toContain("</style>");
-    expect(html).toContain('<script type="module">');
+    expect(html).toContain("<script>");
     expect(html).toContain("</script>");
   });
 });

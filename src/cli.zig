@@ -354,6 +354,7 @@ pub const Command = struct {
         test_filter_pattern: ?[]const u8 = null,
         test_filter_regex: ?*RegularExpression = null,
         max_concurrency: u32 = 20,
+        silent: bool = false,
 
         reporters: struct {
             dots: bool = false,

@@ -222,7 +222,7 @@ pub const Source = union(enum) {
 
         switch (pipe.open(fd)) {
             .err => |err| {
-                bun.default_allocator.destroy(pipe);
+                pipe.closeAndDestroy();
                 return .{
                     .err = err,
                 };

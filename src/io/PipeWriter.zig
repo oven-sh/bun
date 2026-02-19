@@ -1416,10 +1416,6 @@ pub fn WindowsStreamingWriter(comptime Parent: type, function_table: anytype) ty
             const temp = this.current_payload;
             this.current_payload = this.outgoing;
             this.outgoing = temp;
-            // Ref the parent to prevent it from being freed while an async
-            // write is in flight. The matching deref is in onWriteComplete
-            // or onFsWriteComplete.
-            this.parent.ref();
             switch (pipe) {
                 .sync_file => {
                     @panic("sync_file pipe write should not be reachable");
@@ -1434,7 +1430,6 @@ pub fn WindowsStreamingWriter(comptime Parent: type, function_table: anytype) ty
 
                     if (uv.uv_fs_write(this.parent.loop(), &file.fs, file.file, @ptrCast(&this.write_buffer), 1, -1, onFsWriteComplete).toError(.write)) |err| {
                         file.complete(false);
-                        this.parent.deref();
                         this.last_write_result = .{ .err = err };
                         onError(this.parent, err);
                         this.closeWithoutReporting();
@@ -1445,7 +1440,6 @@ pub fn WindowsStreamingWriter(comptime Parent: type, function_table: anytype) ty
                     // enqueue the write
                     this.write_buffer = uv.uv_buf_t.init(bytes);
                     if (this.write_req.write(pipe.toStream(), &this.write_buffer, this, onWriteComplete).asErr()) |err| {
-                        this.parent.deref();
                         this.last_write_result = .{ .err = err };
                         onError(this.parent, err);
                         this.closeWithoutReporting();
@@ -1453,6 +1447,10 @@ pub fn WindowsStreamingWriter(comptime Parent: type, function_table: anytype) ty
                     }
                 },
             }
+            // Ref the parent to prevent it from being freed while the async
+            // write is in flight. The matching deref is in onWriteComplete
+            // or onFsWriteComplete.
+            this.parent.ref();
             this.last_write_result = .{ .pending = 0 };
         }
 

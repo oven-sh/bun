@@ -148,6 +148,11 @@ const SocketHandlers: SocketHandler = {
     if (!self || self[kclosed]) return;
     self[kclosed] = true;
     //socket cannot be used after close
+    const callback = self[kwriteCallback];
+    if (callback) {
+      self[kwriteCallback] = null;
+      callback(err || new Error("Socket closed"));
+    }
     detachSocket(self);
     SocketEmitEndNT(self, err);
     self.data = null;
@@ -314,6 +319,11 @@ const ServerHandlers: SocketHandler<NetSocket> = {
       if (!data[kclosed]) {
         data[kclosed] = true;
         //socket cannot be used after close
+        const callback = data[kwriteCallback];
+        if (callback) {
+          data[kwriteCallback] = null;
+          callback(err || new Error("Socket closed"));
+        }
         detachSocket(data);
         SocketEmitEndNT(data, err);
         data.data = null;

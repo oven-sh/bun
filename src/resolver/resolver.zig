@@ -1011,51 +1011,54 @@ pub const Resolver = struct {
                 module_type = ModuleTypeMap.getWithLength(path.name.ext, 4) orelse .unknown;
             }
 
-            if (dir.getEntries(r.generation)) |entries| {
-                if (entries.get(path.name.filename)) |query| {
-                    const symlink_path = query.entry.symlink(&r.fs.fs, r.store_fd);
-                    if (symlink_path.len > 0) {
-                        path.setRealpath(symlink_path);
-                        if (!result.file_fd.isValid()) result.file_fd = query.entry.cache.fd;
+            // Only resolve symlinks if preserve_symlinks is not set
+            if (!r.opts.preserve_symlinks) {
+                if (dir.getEntries(r.generation)) |entries| {
+                    if (entries.get(path.name.filename)) |query| {
+                        const symlink_path = query.entry.symlink(&r.fs.fs, r.store_fd);
+                        if (symlink_path.len > 0) {
+                            path.setRealpath(symlink_path);
+                            if (!result.file_fd.isValid()) result.file_fd = query.entry.cache.fd;
 
-                        if (r.debug_logs) |*debug| {
-                            debug.addNoteFmt("Resolved symlink \"{s}\" to \"{s}\"", .{ path.text, symlink_path });
-                        }
-                    } else if (dir.abs_real_path.len > 0) {
-                        // When the directory is a symlink, we don't need to call getFdPath.
-                        var parts = [_]string{ dir.abs_real_path, query.entry.base() };
-                        var buf: bun.PathBuffer = undefined;
+                            if (r.debug_logs) |*debug| {
+                                debug.addNoteFmt("Resolved symlink \"{s}\" to \"{s}\"", .{ path.text, symlink_path });
+                            }
+                        } else if (dir.abs_real_path.len > 0) {
+                            // When the directory is a symlink, we don't need to call getFdPath.
+                            var parts = [_]string{ dir.abs_real_path, query.entry.base() };
+                            var buf: bun.PathBuffer = undefined;
 
-                        const out = r.fs.absBuf(&parts, &buf);
+                            const out = r.fs.absBuf(&parts, &buf);
 
-                        const store_fd = r.store_fd;
+                            const store_fd = r.store_fd;
 
-                        if (!query.entry.cache.fd.isValid() and store_fd) {
-                            buf[out.len] = 0;
-                            const span = buf[0..out.len :0];
-                            var file: bun.FD = .fromStdFile(try std.fs.openFileAbsoluteZ(span, .{ .mode = .read_only }));
-                            query.entry.cache.fd = file;
-                            Fs.FileSystem.setMaxFd(file.native());
-                        }
+                            if (!query.entry.cache.fd.isValid() and store_fd) {
+                                buf[out.len] = 0;
+                                const span = buf[0..out.len :0];
+                                var file: bun.FD = .fromStdFile(try std.fs.openFileAbsoluteZ(span, .{ .mode = .read_only }));
+                                query.entry.cache.fd = file;
+                                Fs.FileSystem.setMaxFd(file.native());
+                            }
 
-                        defer {
-                            if (r.fs.fs.needToCloseFiles()) {
-                                if (query.entry.cache.fd.isValid()) {
-                                    var file = query.entry.cache.fd.stdFile();
-                                    file.close();
-                                    query.entry.cache.fd = .invalid;
+                            defer {
+                                if (r.fs.fs.needToCloseFiles()) {
+                                    if (query.entry.cache.fd.isValid()) {
+                                        var file = query.entry.cache.fd.stdFile();
+                                        file.close();
+                                        query.entry.cache.fd = .invalid;
+                                    }
                                 }
                             }
-                        }
 
-                        const symlink = try Fs.FileSystem.FilenameStore.instance.append(@TypeOf(out), out);
-                        if (r.debug_logs) |*debug| {
-                            debug.addNoteFmt("Resolved symlink \"{s}\" to \"{s}\"", .{ symlink, path.text });
-                        }
-                        query.entry.cache.symlink = PathString.init(symlink);
-                        if (!result.file_fd.isValid() and store_fd) result.file_fd = query.entry.cache.fd;
+                            const symlink = try Fs.FileSystem.FilenameStore.instance.append(@TypeOf(out), out);
+                            if (r.debug_logs) |*debug| {
+                                debug.addNoteFmt("Resolved symlink \"{s}\" to \"{s}\"", .{ symlink, path.text });
+                            }
+                            query.entry.cache.symlink = PathString.init(symlink);
+                            if (!result.file_fd.isValid() and store_fd) result.file_fd = query.entry.cache.fd;
 
-                        path.setRealpath(symlink);
+                            path.setRealpath(symlink);
+                        }
                     }
                 }
             }

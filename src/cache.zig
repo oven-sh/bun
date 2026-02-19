@@ -155,6 +155,7 @@ pub const Fs = struct {
         var rfs = _fs.fs;
 
         var file_handle: std.fs.File = if (_file_handle) |__file| __file.stdFile() else undefined;
+        var opened_file = false;
 
         if (_file_handle == null) {
             if (FeatureFlags.store_file_descriptors and dirname_fd.isValid()) {
@@ -174,14 +175,20 @@ pub const Fs = struct {
             } else {
                 file_handle = try bun.openFile(path, .{ .mode = .read_only });
             }
+            opened_file = true;
         } else {
-            try file_handle.seekTo(0);
+            // The cached file descriptor may be stale (closed by a previous bundle).
+            // If seek fails, fallback to reopening the file.
+            file_handle.seekTo(0) catch {
+                file_handle = try bun.openFile(path, .{ .mode = .read_only });
+                opened_file = true;
+            };
         }
 
         if (comptime !Environment.isWindows) // skip on Windows because NTCreateFile will do it.
             debug("openat({f}, {s}) = {f}", .{ dirname_fd, path, bun.FD.fromStdFile(file_handle) });
 
-        const will_close = rfs.needToCloseFiles() and _file_handle == null;
+        const will_close = rfs.needToCloseFiles() and opened_file;
         defer {
             if (will_close) {
                 debug("readFileWithAllocator close({f})", .{bun.fs.printHandle(file_handle.handle)});

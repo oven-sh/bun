@@ -759,8 +759,6 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
 
     // Slow path:
 
-    JSC::ObjectInitializationScope initializationScope(vm);
-
     // 64 is the maximum we can preallocate here
     // see https://github.com/oven-sh/bun/issues/987
     JSObject* prototype = castedThis->userPrototype ? castedThis->userPrototype.get() : lexicalGlobalObject->objectPrototype();

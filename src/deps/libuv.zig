@@ -1414,6 +1414,17 @@ pub const Pipe = extern struct {
     pub fn asStream(this: *@This()) *uv_stream_t {
         return @ptrCast(this);
     }
+
+    /// Close the pipe handle and then free it in the close callback.
+    /// Use this when a pipe has been init'd but needs to be destroyed
+    /// (e.g. when open() fails after init() succeeded).
+    pub fn closeAndDestroy(this: *@This()) void {
+        this.close(&onCloseDestroy);
+    }
+
+    fn onCloseDestroy(handle: *@This()) callconv(.c) void {
+        bun.default_allocator.destroy(handle);
+    }
 };
 const union_unnamed_416 = extern union {
     fd: c_int,

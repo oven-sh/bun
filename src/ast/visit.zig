@@ -57,6 +57,14 @@ pub fn Visit(
             p.fn_or_arrow_data_visit = FnOrArrowDataVisit{ .is_async = func.flags.contains(.is_async) };
             p.fn_only_data_visit = FnOnlyDataVisit{ .is_this_nested = true, .arguments_ref = func.arguments_ref };
 
+            // When not bundling, don't carry over const values from the outer scope into
+            // function bodies. Inlining them would change the observable result of
+            // Function.prototype.toString(). See https://github.com/oven-sh/bun/issues/12710
+            const old_const_values = p.const_values;
+            if (!p.options.bundle) {
+                p.const_values = .{};
+            }
+
             if (func.name) |name| {
                 if (name.ref) |name_ref| {
                     p.recordDeclaredSymbol(name_ref) catch unreachable;
@@ -100,6 +108,7 @@ pub fn Visit(
 
             p.fn_or_arrow_data_visit = old_fn_or_arrow_data;
             p.fn_only_data_visit = old_fn_only_data;
+            p.const_values = old_const_values;
 
             return func;
         }

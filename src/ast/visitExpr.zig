@@ -1568,6 +1568,14 @@ pub fn VisitExpr(
                     .is_async = e_.is_async,
                 };
 
+                // When not bundling, don't carry over const values from the outer scope into
+                // arrow function bodies. Inlining them would change the observable result of
+                // Function.prototype.toString(). See https://github.com/oven-sh/bun/issues/12710
+                const old_const_values = p.const_values;
+                if (!p.options.bundle) {
+                    p.const_values = .{};
+                }
+
                 // Mark if we're inside an async arrow function. This value should be true
                 // even if we're inside multiple arrow functions and the closest inclosing
                 // arrow function isn't async, as long as at least one enclosing arrow
@@ -1600,6 +1608,7 @@ pub fn VisitExpr(
 
                 p.fn_only_data_visit.is_inside_async_arrow_fn = old_inside_async_arrow_fn;
                 p.fn_or_arrow_data_visit = std.mem.bytesToValue(@TypeOf(p.fn_or_arrow_data_visit), &old_fn_or_arrow_data);
+                p.const_values = old_const_values;
 
                 if (react_hook_data) |*hook| try_mark_hook: {
                     const stmts = p.nearest_stmt_list orelse break :try_mark_hook;

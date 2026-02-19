@@ -50,10 +50,10 @@ pub const caching_sha2_password = struct {
         bun.sha.SHA256.hash(&digest1, &digest2, jsc.VirtualMachine.get().rareData().boringEngine());
 
         // SHA256(SHA256(SHA256(password)) + nonce)
-        const combined = try bun.default_allocator.alloc(u8, nonce.len + digest2.len);
+        const combined = try bun.default_allocator.alloc(u8, digest2.len + nonce.len);
         defer bun.default_allocator.free(combined);
-        @memcpy(combined[0..nonce.len], nonce);
-        @memcpy(combined[nonce.len..], &digest2);
+        @memcpy(combined[0..digest2.len], &digest2);
+        @memcpy(combined[digest2.len..], nonce);
         bun.sha.SHA256.hash(combined, &digest3, jsc.VirtualMachine.get().rareData().boringEngine());
 
         // XOR(SHA256(password), digest3)

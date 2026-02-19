@@ -1192,11 +1192,21 @@ pub fn Parse(
                                         isDirectivePrologue = true;
 
                                         if (str.eqlComptime("use strict")) {
-                                            skip = true;
                                             // Track "use strict" directives
                                             p.current_scope.strict_mode = .explicit_strict_mode;
-                                            if (p.current_scope == p.module_scope)
+                                            if (p.current_scope == p.module_scope) {
+                                                // Module-level "use strict" is restored later
+                                                // during CJS wrapping (see P.zig), so skip it here.
+                                                skip = true;
                                                 p.module_scope_directive_loc = stmt.loc;
+                                            } else {
+                                                // Function-level "use strict" must be preserved
+                                                // in the output to maintain correct strict mode
+                                                // semantics (e.g. `this` boxing behavior).
+                                                stmt = Stmt.alloc(S.Directive, S.Directive{
+                                                    .value = str.slice(p.allocator),
+                                                }, stmt.loc);
+                                            }
                                         } else if (str.eqlComptime("use asm")) {
                                             skip = true;
                                             stmt.data = Prefill.Data.SEmpty;

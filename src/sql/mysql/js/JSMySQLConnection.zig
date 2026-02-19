@@ -477,7 +477,7 @@ pub fn createInstance(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFra
             ptr.#connection.setSocket(.{
                 .SocketTCP = uws.SocketTCP.connectUnixAnon(path, ctx, ptr, false) catch |err| {
                     ptr.deref();
-                    return globalObject.throwError(err, "failed to connect to postgresql");
+                    return globalObject.throwError(err, "failed to connect to mysql");
                 },
             });
         } else {

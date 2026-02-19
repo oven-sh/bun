@@ -78,7 +78,7 @@ pub fn scan(this: *Scanner, path_literal: []const u8) Error!void {
 
     // you typed "." and we already scanned it
     if (!this.has_iterated) {
-        if (@as(FileSystem.RealFS.EntriesOption.Tag, root.*) == .entries) {
+        if (@as(FileSystem.EntriesOption.Tag, root.*) == .entries) {
             var iter = root.entries.data.iterator();
             const fd = root.entries.fd;
             bun.assert(fd != bun.invalid_fd);
@@ -113,8 +113,8 @@ pub fn scan(this: *Scanner, path_literal: []const u8) Error!void {
     }
 }
 
-fn readDirWithName(this: *Scanner, name: []const u8, handle: ?std.fs.Dir) !*FileSystem.RealFS.EntriesOption {
-    return try this.fs.fs.readDirectoryWithIterator(name, handle, 0, true, *Scanner, this);
+fn readDirWithName(this: *Scanner, name: []const u8, handle: ?std.fs.Dir) !*FileSystem.EntriesOption {
+    return try this.fs.readDirectoryWithIterator(name, handle, 0, true, *Scanner, this);
 }
 
 pub const test_name_suffixes = [_][]const u8{
@@ -163,7 +163,7 @@ pub fn isTestFile(this: *Scanner, name: []const u8) bool {
 pub fn next(this: *Scanner, entry: *FileSystem.Entry, fd: bun.StoredFileDescriptorType) void {
     const name = entry.base_lowercase();
     this.has_iterated = true;
-    switch (entry.kind(&this.fs.fs, true)) {
+    switch (entry.kind(this.fs, true)) {
         .dir => {
             if ((name.len > 0 and name[0] == '.') or strings.eqlComptime(name, "node_modules")) {
                 return;

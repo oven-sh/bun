@@ -413,7 +413,7 @@ const RouteLoader = struct {
                     continue :outer;
                 }
 
-                switch (entry.kind(&fs.fs, false)) {
+                switch (entry.kind(fs, false)) {
                     .dir => {
                         inline for (banned_dirs) |banned_dir| {
                             if (strings.eqlComptime(entry.base(), comptime banned_dir)) {
@@ -746,7 +746,7 @@ pub const Route = struct {
                 };
                 FileSystem.setMaxFd(file.handle);
 
-                needs_close = FileSystem.instance.fs.needToCloseFiles();
+                needs_close = FileSystem.instance.needToCloseFiles();
                 if (!needs_close) entry.cache.fd = .fromStdFile(file);
             }
 

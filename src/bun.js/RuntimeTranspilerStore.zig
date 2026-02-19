@@ -28,7 +28,7 @@ pub fn dumpSourceStringFailiable(vm: *VirtualMachine, specifier: string, written
         const base_name = switch (Environment.os) {
             else => "/tmp/bun-debug-src/",
             .windows => brk: {
-                const temp = bun.fs.FileSystem.RealFS.platformTempDir();
+                const temp = bun.fs.FileSystem.platformTempDir();
                 var win_temp_buffer: bun.PathBuffer = undefined;
                 @memcpy(win_temp_buffer[0..temp.len], temp);
                 const suffix = "\\bun-debug-src";

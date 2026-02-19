@@ -1166,7 +1166,7 @@ pub const Printer = struct {
             .max_concurrent_lifecycle_scripts = 1,
         };
 
-        const entries_option = try fs.fs.readDirectory(fs.top_level_dir, null, 0, true);
+        const entries_option = try fs.readDirectory(fs.top_level_dir, null, 0, true);
         if (entries_option.* == .err) {
             return entries_option.err.canonical_error;
         }

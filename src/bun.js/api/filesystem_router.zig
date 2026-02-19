@@ -192,7 +192,7 @@ pub const FileSystemRouter = struct {
                     if (entry.base()[0] == '.') {
                         continue :outer;
                     }
-                    if (entry.kind(&vm.transpiler.fs.fs, false) == .dir) {
+                    if (entry.kind(vm.transpiler.fs, false) == .dir) {
                         inline for (Router.banned_dirs) |banned_dir| {
                             if (strings.eqlComptime(entry.base(), comptime banned_dir)) {
                                 continue :outer;

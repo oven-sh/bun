@@ -432,6 +432,7 @@ pub fn NewParser_(
         // Temporary variables used for lowering
         temp_refs_to_declare: List(TempRef) = .{},
         temp_ref_count: i32 = 0,
+        sloppy_mode_block_fn_count: u32 = 0,
 
         // When bundling, hoisted top-level local variables declared with "var" in
         // nested scopes are moved up to be declared in the top-level scope instead.
@@ -2213,7 +2214,7 @@ pub fn NewParser_(
                         var is_sloppy_mode_block_level_fn_stmt = false;
                         const original_member_ref = value.ref;
 
-                        if (p.willUseRenamer() and symbol.kind == .hoisted_function) {
+                        if (symbol.kind == .hoisted_function) {
                             // Block-level function declarations behave like "let" in strict mode
                             if (scope.strict_mode != .sloppy_mode) {
                                 continue;
@@ -2241,6 +2242,21 @@ pub fn NewParser_(
                             symbols = p.symbols.items;
                             bun.handleOom(scope.generated.append(p.allocator, hoisted_ref));
                             p.hoisted_ref_for_sloppy_mode_block_fn.put(p.allocator, value.ref, hoisted_ref) catch unreachable;
+
+                            // When not using a renamer (non-bundle, non-minify mode), the
+                            // block-scoped `let` binding and the hoisted `var` binding would
+                            // both have the same `original_name`, causing them to print
+                            // identically with the NoOpRenamer. To fix this, we rename the
+                            // block-scoped symbol so it gets a distinct printed name.
+                            if (!p.willUseRenamer()) {
+                                p.sloppy_mode_block_fn_count += 1;
+                                const orig_name = symbols[original_member_ref.innerIndex()].original_name;
+                                const buf = p.allocator.alloc(u8, orig_name.len + 12) catch unreachable;
+                                @memcpy(buf[0..orig_name.len], orig_name);
+                                const suffix = std.fmt.bufPrint(buf[orig_name.len..], "_{d}$", .{p.sloppy_mode_block_fn_count}) catch unreachable;
+                                symbols[original_member_ref.innerIndex()].original_name = buf[0 .. orig_name.len + suffix.len];
+                            }
+
                             value.ref = hoisted_ref;
                             symbol = &symbols[hoisted_ref.innerIndex()];
                             is_sloppy_mode_block_level_fn_stmt = true;

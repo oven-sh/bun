@@ -159,8 +159,12 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
         globalObject->putDirect(vm, Identifier::fromString(vm, "__filename"_s), filename, 0);
         globalObject->putDirect(vm, Identifier::fromString(vm, "__dirname"_s), dirname, 0);
 
-        JSValue result = JSC::evaluate(globalObject, code, jsUndefined());
-        RETURN_IF_EXCEPTION(scope, false);
+        NakedPtr<Exception> returnedException;
+        JSValue result = JSC::evaluate(globalObject, code, jsUndefined(), returnedException);
+        if (returnedException) {
+            scope.throwException(globalObject, returnedException.get());
+            return false;
+        }
         ASSERT(result);
 
         Bun__VM__setEntryPointEvalResultCJS(globalObject->bunVM(), JSValue::encode(result));

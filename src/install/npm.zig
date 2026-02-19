@@ -715,6 +715,10 @@ pub const Libc = enum(u8) {
     }
 
     pub fn isMatch(this: Libc, target: Libc) bool {
+        // If the package doesn't specify libc (none), it's compatible with any libc
+        if (this == .none or this == .all) return true;
+        // If the target is all (e.g., on non-Linux systems), any package libc matches
+        if (target == .all) return true;
         return (@intFromEnum(this) & @intFromEnum(target)) != 0;
     }
 
@@ -722,8 +726,53 @@ pub const Libc = enum(u8) {
         return .{ .added = this, .removed = .none };
     }
 
-    // TODO:
-    pub const current: Libc = @intFromEnum(glibc);
+    /// Returns the current system's libc type.
+    /// On Linux, this detects musl vs glibc at runtime (thread-safe, cached).
+    /// On other platforms (macOS, Windows), returns .all since libc is not relevant.
+    pub fn current() Libc {
+        // On non-Linux platforms, libc type is not relevant for package filtering
+        if (!Environment.isLinux) return .all;
+
+        // If Bun was compiled for musl, we're definitely on a musl system
+        if (Environment.isMusl) return @enumFromInt(musl);
+
+        // For glibc-compiled binaries, detect at runtime if we're actually on a musl system.
+        // This handles cases like running a glibc binary on Alpine via compatibility layers.
+        // Uses std.once for thread-safe one-time initialization.
+        cached_current_once.call();
+        return cached_current;
+    }
+
+    /// Cached result of runtime libc detection. Written by detectLibcRuntimeOnce.
+    var cached_current: Libc = @enumFromInt(glibc);
+    var cached_current_once = std.once(detectLibcRuntimeOnce);
+
+    /// Detects the system's libc at runtime by checking for musl's dynamic loader.
+    /// Musl systems have /lib/ld-musl-<arch>.so.1 as the dynamic loader.
+    /// This is called exactly once via std.once for thread safety.
+    fn detectLibcRuntimeOnce() void {
+        // Check for musl dynamic loader paths based on architecture
+        const musl_loader_paths = switch (Environment.arch) {
+            .x64 => &[_][:0]const u8{
+                "/lib/ld-musl-x86_64.so.1",
+                "/lib64/ld-musl-x86_64.so.1",
+            },
+            .arm64 => &[_][:0]const u8{
+                "/lib/ld-musl-aarch64.so.1",
+                "/lib64/ld-musl-aarch64.so.1",
+            },
+            else => &[_][:0]const u8{},
+        };
+
+        for (musl_loader_paths) |path| {
+            if (bun.sys.access(path, std.posix.F_OK).asErr() == null) {
+                cached_current = @enumFromInt(musl);
+                return;
+            }
+        }
+
+        // Default to glibc if no musl loader found (already initialized)
+    }
 
     const jsc = bun.jsc;
     pub fn jsFunctionLibcIsMatch(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
@@ -737,7 +786,7 @@ pub const Libc = enum(u8) {
             if (globalObject.hasException()) return .zero;
         }
         if (globalObject.hasException()) return .zero;
-        return jsc.JSValue.jsBoolean(libc.combine().isMatch(current));
+        return jsc.JSValue.jsBoolean(libc.combine().isMatch(current()));
     }
 };
 

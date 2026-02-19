@@ -9,7 +9,9 @@ pub const Meta = extern struct {
 
     arch: Npm.Architecture = .all,
     os: Npm.OperatingSystem = .all,
-    _padding_os: u16 = 0,
+    /// `"libc"` field in package.json, used to filter optional dependencies by libc type (musl/glibc).
+    libc: Npm.Libc = .all,
+    _padding_libc: u8 = 0,
 
     id: PackageID = invalid_package_id,
 
@@ -30,10 +32,10 @@ pub const Meta = extern struct {
 
     _padding_integrity: [2]u8 = .{0} ** 2,
 
-    /// Does the `cpu` arch and `os` match the requirements listed in the package?
+    /// Does the `cpu` arch, `os`, and `libc` match the requirements listed in the package?
     /// This is completely unrelated to "devDependencies", "peerDependencies", "optionalDependencies" etc
-    pub fn isDisabled(this: *const Meta, cpu: Npm.Architecture, os: Npm.OperatingSystem) bool {
-        return !this.arch.isMatch(cpu) or !this.os.isMatch(os);
+    pub fn isDisabled(this: *const Meta, cpu: Npm.Architecture, os: Npm.OperatingSystem, libc: Npm.Libc) bool {
+        return !this.arch.isMatch(cpu) or !this.os.isMatch(os) or !this.libc.isMatch(libc);
     }
 
     pub fn hasInstallScript(this: *const Meta) bool {
@@ -63,6 +65,7 @@ pub const Meta = extern struct {
             .integrity = this.integrity,
             .arch = this.arch,
             .os = this.os,
+            .libc = this.libc,
             .origin = this.origin,
             .has_install_script = this.has_install_script,
         };

@@ -57,8 +57,8 @@ pub fn Package(comptime SemverIntType: type) type {
             pub const workspaces = DependencyGroup{ .prop = "workspaces", .field = "workspaces", .behavior = .{ .workspace = true } };
         };
 
-        pub inline fn isDisabled(this: *const @This(), cpu: Npm.Architecture, os: Npm.OperatingSystem) bool {
-            return this.meta.isDisabled(cpu, os);
+        pub inline fn isDisabled(this: *const @This(), cpu: Npm.Architecture, os: Npm.OperatingSystem, libc: Npm.Libc) bool {
+            return this.meta.isDisabled(cpu, os, libc);
         }
 
         pub const Alphabetizer = struct {
@@ -282,6 +282,7 @@ pub fn Package(comptime SemverIntType: type) type {
 
                 package.meta.arch = package_json.arch;
                 package.meta.os = package_json.os;
+                package.meta.libc = package_json.libc;
 
                 package.dependencies.off = @as(u32, @truncate(dependencies_list.items.len));
                 package.dependencies.len = total_dependencies_count - @as(u32, @truncate(dependencies.len));
@@ -491,6 +492,7 @@ pub fn Package(comptime SemverIntType: type) type {
 
                 package.meta.arch = package_version.cpu;
                 package.meta.os = package_version.os;
+                package.meta.libc = package_version.libc;
                 package.meta.integrity = package_version.integrity;
                 package.meta.setHasInstallScript(package_version.has_install_script);
 

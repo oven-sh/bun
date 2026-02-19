@@ -765,14 +765,15 @@ pub const Stringifier = struct {
             );
         }
 
-        // TODO(dylan-conway)
-        // if (meta.libc != .all) {
-        //     try writer.writeAll(
-        //         \\"libc": [
-        //     );
-        //     try Negatable(Npm.Libc).toJson(meta.libc, writer);
-        //     try writer.writeAll("], ");
-        // }
+        if (meta.libc != .all) {
+            if (any) {
+                try writer.writeByte(',');
+            } else {
+                any = true;
+            }
+            try writer.writeAll(" \"libc\": ");
+            try Negatable(Npm.Libc).toJson(meta.libc, writer);
+        }
 
         if (meta.os != .all) {
             if (any) {
@@ -1833,10 +1834,9 @@ pub fn parseIntoBinaryLockfile(
                         if (deps_os_cpu_libc_bin_bundle_obj.get("cpu")) |arch| {
                             pkg.meta.arch = try Negatable(Npm.Architecture).fromJson(allocator, arch);
                         }
-                        // TODO(dylan-conway)
-                        // if (os_cpu_libc_obj.get("libc")) |libc| {
-                        //     pkg.meta.libc = Negatable(Npm.Libc).fromJson(allocator, libc);
-                        // }
+                        if (deps_os_cpu_libc_bin_bundle_obj.get("libc")) |libc| {
+                            pkg.meta.libc = try Negatable(Npm.Libc).fromJson(allocator, libc);
+                        }
                     }
                 },
                 .root => {

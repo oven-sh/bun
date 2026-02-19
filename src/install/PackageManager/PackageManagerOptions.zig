@@ -87,6 +87,8 @@ minimum_release_age_excludes: ?[]const []const u8 = null,
 cpu: Npm.Architecture = Npm.Architecture.current,
 /// Override OS for optional dependencies filtering
 os: Npm.OperatingSystem = Npm.OperatingSystem.current,
+/// Override libc for optional dependencies filtering (musl/glibc on Linux)
+libc: Npm.Libc = .none, // Resolved to Npm.Libc.current() when .none
 
 config_version: ?bun.ConfigVersion = null,
 
@@ -122,6 +124,11 @@ pub const AuthType = enum {
 
 pub fn shouldPrintCommandName(this: *const Options) bool {
     return this.log_level != .silent and this.do.summary;
+}
+
+/// Returns the effective libc value, resolving .none to the runtime-detected value.
+pub fn getLibc(this: *const Options) Npm.Libc {
+    return if (this.libc == .none) Npm.Libc.current() else this.libc;
 }
 
 pub const LogLevel = enum {
@@ -608,9 +615,11 @@ pub fn load(
             PackageInstall.supported_method = backend;
         }
 
-        // CPU and OS are now parsed as enums in CommandLineArguments, just copy them
+        // CPU, OS, and libc are now parsed as enums in CommandLineArguments, just copy them
         this.cpu = cli.cpu;
         this.os = cli.os;
+        // Resolve .none to the runtime-detected libc value
+        this.libc = if (cli.libc == .none) Npm.Libc.current() else cli.libc;
 
         this.do.update_to_latest = cli.latest;
         this.do.recursive = cli.recursive;

@@ -67,6 +67,30 @@ pub fn ParseStmt(
                     return p.parseStmt(opts);
                 },
 
+                // "export typeof {foo} from 'bar'" (Flow)
+                T.t_typeof => {
+                    if (!opts.is_module_scope and !(opts.is_namespace_scope or !opts.is_typescript_declare)) {
+                        try p.lexer.unexpected();
+                        return error.SyntaxError;
+                    }
+
+                    try p.lexer.next();
+                    switch (p.lexer.token) {
+                        .t_open_brace => {
+                            // "export typeof {foo} from 'bar';"
+                            _ = try p.parseExportClause();
+                            try p.lexer.expectContextualKeyword("from");
+                            _ = try p.parsePath();
+                            try p.lexer.expectOrInsertSemicolon();
+                            return p.s(S.Empty{}, loc);
+                        },
+                        else => {},
+                    }
+
+                    try p.lexer.unexpected();
+                    return error.SyntaxError;
+                },
+
                 T.t_identifier => {
                     if (p.lexer.isContextualKeyword("let")) {
                         opts.is_export = true;
@@ -986,6 +1010,52 @@ pub fn ParseStmt(
                         .is_single_line = importClause.is_single_line,
                     };
                     try p.lexer.expectContextualKeyword("from");
+                },
+                // "import typeof foo from 'path'" (Flow)
+                // "import typeof * as foo from 'path'" (Flow)
+                // "import typeof {foo} from 'path'" (Flow)
+                .t_typeof => {
+                    if (!opts.is_module_scope and (!opts.is_namespace_scope)) {
+                        try p.lexer.unexpected();
+                        return error.SyntaxError;
+                    }
+
+                    // Skip over typeof-only imports (Flow syntax, analogous to TypeScript's "import type")
+                    try p.lexer.next();
+                    switch (p.lexer.token) {
+                        .t_identifier => {
+                            // "import typeof foo from 'bar';"
+                            if (!strings.eqlComptime(p.lexer.identifier, "from")) {
+                                try p.lexer.next();
+                                try p.lexer.expectContextualKeyword("from");
+                                _ = try p.parsePath();
+                                try p.lexer.expectOrInsertSemicolon();
+                                return p.s(S.Empty{}, loc);
+                            }
+                        },
+                        .t_asterisk => {
+                            // "import typeof * as foo from 'bar';"
+                            try p.lexer.next();
+                            try p.lexer.expectContextualKeyword("as");
+                            try p.lexer.expect(.t_identifier);
+                            try p.lexer.expectContextualKeyword("from");
+                            _ = try p.parsePath();
+                            try p.lexer.expectOrInsertSemicolon();
+                            return p.s(S.Empty{}, loc);
+                        },
+                        .t_open_brace => {
+                            // "import typeof {foo} from 'bar';"
+                            _ = try p.parseImportClause();
+                            try p.lexer.expectContextualKeyword("from");
+                            _ = try p.parsePath();
+                            try p.lexer.expectOrInsertSemicolon();
+                            return p.s(S.Empty{}, loc);
+                        },
+                        else => {},
+                    }
+
+                    try p.lexer.unexpected();
+                    return error.SyntaxError;
                 },
                 .t_identifier => {
                     // "import defaultItem from 'path'"

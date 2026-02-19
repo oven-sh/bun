@@ -815,29 +815,39 @@ fn BaseWindowsPipeWriter(
 
         pub fn close(this: *WindowsPipeWriter) void {
             this.is_done = true;
-            if (this.source) |source| {
-                switch (source) {
-                    .sync_file, .file => |file| {
-                        // Use state machine to handle close after operation completes
-                        if (this.owns_fd) {
-                            file.detach();
-                        } else {
-                            // Don't own fd, just stop operations and detach parent
-                            file.stop();
-                            file.fs.data = null;
-                        }
-                    },
-                    .pipe => |pipe| {
-                        pipe.data = pipe;
-                        pipe.close(onPipeClose);
-                    },
-                    .tty => |tty| {
-                        tty.data = tty;
-                        tty.close(onTTYClose);
-                    },
-                }
-                this.source = null;
-                this.onCloseSource();
+            const source = this.source orelse return;
+            // Check for in-flight file write before detaching. detach()
+            // nulls fs.data so onFsWriteComplete can't recover the writer
+            // to call deref(). We must balance processSend's ref() here.
+            const has_inflight_write = if (@hasField(WindowsPipeWriter, "current_payload")) switch (source) {
+                .sync_file, .file => |file| file.state == .operating or file.state == .canceling,
+                else => false,
+            } else false;
+            switch (source) {
+                .sync_file, .file => |file| {
+                    // Use state machine to handle close after operation completes
+                    if (this.owns_fd) {
+                        file.detach();
+                    } else {
+                        // Don't own fd, just stop operations and detach parent
+                        file.stop();
+                        file.fs.data = null;
+                    }
+                },
+                .pipe => |pipe| {
+                    pipe.data = pipe;
+                    pipe.close(onPipeClose);
+                },
+                .tty => |tty| {
+                    tty.data = tty;
+                    tty.close(onTTYClose);
+                },
+            }
+            this.source = null;
+            this.onCloseSource();
+            // Deref last — this may free the parent and `this`.
+            if (has_inflight_write) {
+                this.parent.deref();
             }
         }
 
@@ -1351,7 +1361,8 @@ pub fn WindowsStreamingWriter(comptime Parent: type, function_table: anytype) ty
             // ALWAYS complete first
             file.complete(was_canceled);
 
-            // If detached, file may be closing (owned fd) or just stopped (non-owned fd)
+            // If detached, file may be closing (owned fd) or just stopped (non-owned fd).
+            // The deref to balance processSend's ref was already done in close().
             if (parent_ptr == null) {
                 return;
             }

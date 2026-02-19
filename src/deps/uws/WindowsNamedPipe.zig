@@ -387,6 +387,7 @@ pub fn open(this: *WindowsNamedPipe, fd: bun.FileDescriptor, ssl_options: ?jsc.A
         return openResult;
     }
 
+    this.ref();
     onConnect(this, uv.ReturnCode.zero);
     return .success;
 }

@@ -1300,6 +1300,14 @@ pub fn VisitStmt(
                     const old_is_inside_Swsitch = p.fn_or_arrow_data_visit.is_inside_switch;
                     p.fn_or_arrow_data_visit.is_inside_switch = true;
                     defer p.fn_or_arrow_data_visit.is_inside_switch = old_is_inside_Swsitch;
+
+                    // Disable const value inlining for all cases. Switch cases all
+                    // share the same scope and can be entered in any order, so a const
+                    // declared in one case may not have been initialized when another
+                    // case references it. Inlining the value would incorrectly suppress
+                    // the TDZ ReferenceError that should occur at runtime (issue #18477).
+                    p.current_scope.is_after_const_local_prefix = true;
+
                     for (data.cases, 0..) |case, i| {
                         if (case.value) |val| {
                             data.cases[i].value = p.visitExpr(val);

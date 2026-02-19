@@ -2383,6 +2383,36 @@ pub const basename = paths_.basename;
 
 pub const log = bun.Output.scoped(.STR, .hidden);
 pub const grapheme = @import("./immutable/grapheme.zig");
+
+/// Expands a leading tilde (~) in a path to the user's home directory.
+/// Always returns a newly allocated string owned by the allocator.
+/// The tilde must be followed by a path separator or be the entire string (e.g., "~" or "~/foo").
+/// Paths like "~username" are not expanded but are still duplicated.
+pub fn expandTilde(allocator: std.mem.Allocator, path: []const u8) OOM![]const u8 {
+    if (path.len == 0 or path[0] != '~') {
+        return try allocator.dupe(u8, path);
+    }
+    // Must be just "~" or "~/..." or "~\..." on Windows (not "~foo" which means another user's home)
+    if (path.len > 1) {
+        const is_separator = path[1] == '/' or (Environment.isWindows and path[1] == '\\');
+        if (!is_separator) {
+            return try allocator.dupe(u8, path);
+        }
+    }
+
+    const home_dir = bun.env_var.HOME.get() orelse return try allocator.dupe(u8, path);
+
+    if (path.len == 1) {
+        // Just "~"
+        return try allocator.dupe(u8, home_dir);
+    }
+    // "~/..." - join home with the rest
+    const rest = path[1..]; // includes the leading /
+    const result = try allocator.alloc(u8, home_dir.len + rest.len);
+    @memcpy(result[0..home_dir.len], home_dir);
+    @memcpy(result[home_dir.len..], rest);
+    return result;
+}
 pub const CodePoint = i32;
 
 const string = []const u8;

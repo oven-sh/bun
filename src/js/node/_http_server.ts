@@ -1335,8 +1335,32 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
   }
 
   if (!handle) {
-    if ($isCallable(callback)) {
-      process.nextTick(callback);
+    this.finished = true;
+    process.nextTick(self => {
+      self._ended = true;
+    }, this);
+    this.emit("prefinish");
+    this._callPendingCallbacks();
+
+    if (callback) {
+      process.nextTick(
+        function (callback, self) {
+          self.emit("finish");
+          try {
+            callback();
+          } catch (err) {
+            self.emit("error", err);
+          }
+          process.nextTick(emitCloseNT, self);
+        },
+        callback,
+        this,
+      );
+    } else {
+      process.nextTick(function (self) {
+        self.emit("finish");
+        process.nextTick(emitCloseNT, self);
+      }, this);
     }
     return this;
   }

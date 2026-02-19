@@ -3698,8 +3698,14 @@ pub const Resolver = struct {
                     // If the user did not manually configure a "main" field order, then
                     // use a special per-module automatic algorithm to decide whether to
                     // use "module" or "main" based on whether the package is imported
-                    // using "import" or "require".
-                    if (auto_main and strings.eqlComptime(key, "module")) {
+                    // using "import" or "require". The same logic applies for "jsnext:main",
+                    // which is an older equivalent of "module" - for require() calls, we
+                    // should fall back to "main" or index.js to match Node.js behavior.
+                    // Note: For "jsnext:main", we only apply this fallback logic for require()
+                    // calls, since ESM imports should always use the jsnext:main entry point.
+                    const should_check_fallback = strings.eqlComptime(key, "module") or
+                        (strings.eqlComptime(key, "jsnext:main") and kind == ast.ImportKind.require);
+                    if (auto_main and should_check_fallback) {
                         var absolute_result: ?MatchResult = null;
 
                         if (main_field_values.get("main")) |main_rel_path| {

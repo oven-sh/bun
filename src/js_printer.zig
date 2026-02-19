@@ -2970,17 +2970,29 @@ fn NewPrinter(
                             p.printSpaceBeforeIdentifier();
                             p.addSourceMapping(expr.loc);
                             p.printSymbol(namespace.namespace_ref);
-                            const alias = namespace.alias;
-                            if (js_lexer.isIdentifier(alias)) {
-                                p.print(".");
-                                // TODO: addSourceMappingForName
-                                p.printIdentifier(alias);
-                            } else {
-                                p.print("[");
-                                // TODO: addSourceMappingForName
-                                // p.addSourceMappingForName(alias);
-                                p.printStringLiteralUTF8(alias, false);
-                                p.print("]");
+
+                            // The "bun" module is replaced with "globalThis.Bun"
+                            // by the printer, which is already the namespace object
+                            // itself. For default imports, skip the ".default" property
+                            // access since globalThis.Bun IS the namespace and does
+                            // not have a "default" property.
+                            const skip_alias = is_bun_platform and
+                                strings.eqlComptime(namespace.alias, "default") and
+                                namespace.import_record_index < p.import_records.len and
+                                p.importRecord(namespace.import_record_index).tag == .bun;
+                            if (!skip_alias) {
+                                const alias = namespace.alias;
+                                if (js_lexer.isIdentifier(alias)) {
+                                    p.print(".");
+                                    // TODO: addSourceMappingForName
+                                    p.printIdentifier(alias);
+                                } else {
+                                    p.print("[");
+                                    // TODO: addSourceMappingForName
+                                    // p.addSourceMappingForName(alias);
+                                    p.printStringLiteralUTF8(alias, false);
+                                    p.print("]");
+                                }
                             }
 
                             if (wrap) {

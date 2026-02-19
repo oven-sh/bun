@@ -335,7 +335,7 @@ export interface PostgresDotZig {
     password: string,
     databae: string,
     sslmode: SSLMode,
-    tls: Bun.TLSOptions | boolean | null | Bun.BunFile, // boolean true => empty TLSOptions object `{}`, boolean false or null => nothing
+    tls: Bun.TLSOptions | boolean | null | Bun.BunFile, // boolean true => empty TLSOptions object `{}`, boolean false => force disable TLS/SSL, null => nothing
     query: string,
     path: string,
     onConnected: (err: Error | null, connection: $ZigGeneratedClasses.PostgresSQLConnection) => void,
@@ -512,6 +512,9 @@ class PooledPostgresConnection {
         // makes no sense from a security point of view, and it only promises
         // performance overhead if possible. It is only provided as the default for
         // backward compatibility, and is not recommended in secure deployments.
+        //
+        // NOTE: Defaulting to 'prefer' is handled in shared.ts/parseOptions.
+        // We use || disable (0) here to allow the falsy value 0 to pass through.
         sslMode || SSLMode.disable,
         tls || null,
         query || "",

@@ -222,7 +222,7 @@ fn SocketHandler(comptime ssl: bool) type {
             this.#connection.setSocket(socket);
 
             if (socket == .SocketTCP) {
-                // This handshake is not TLS handleshake is actually the MySQL handshake
+                // This handshake is not TLS handshake is actually the MySQL handshake
                 // When a connection is upgraded to TLS, the onOpen callback is called again and at this moment we dont wanna to change the status to handshaking
                 this.#connection.status = .handshaking;
                 this.ref(); // keep a ref for the socket
@@ -235,13 +235,45 @@ fn SocketHandler(comptime ssl: bool) type {
 
         fn onHandshake_(
             this: *JSMySQLConnection,
-            _: anytype,
+            s: SocketType,
             success: i32,
             ssl_error: uws.us_bun_verify_error_t,
         ) void {
+            // Handshake verification logic is handled inside this.#connection.doHandshake
+            // We just need to handle the result and report specific errors if it fails.
             const handshakeWasSuccessful = this.#connection.doHandshake(success, ssl_error) catch |err| return this.failFmt(err, "Failed to send handshake response", .{});
+
             if (!handshakeWasSuccessful) {
+                // If the socket handshake succeeded (error_no == 0) but doHandshake returned false,
+                // it implies a logic validation failure (like hostname mismatch in verify-full).
+                if (ssl_error.error_no == 0 and this.#connection.getSSLMode() == .verify_full) {
+                    const ssl_ptr: *bun.BoringSSL.c.SSL = @ptrCast(s.getNativeHandle());
+                    if (bun.BoringSSL.c.SSL_get_servername(ssl_ptr, 0)) |servername| {
+                        const hostname = servername[0..bun.len(servername)];
+                        if (!bun.BoringSSL.checkServerIdentity(ssl_ptr, hostname)) {
+                            this.failFmt(error.AuthenticationFailed, "Hostname/IP does not match certificate's altnames: Host: {s} is not in the cert's list.", .{hostname});
+                            return;
+                        }
+                    } else {
+                        this.fail("Unable to verify server identity: server name missing", error.AuthenticationFailed);
+                        return;
+                    }
+                }
+
+                if (ssl_error.error_no == 0) {
+                    this.fail("SSL/TLS verification failed", error.AuthenticationFailed);
+                    return;
+                }
+
+                // Fallback to standard SSL error reporting
                 this.failWithJSValue(ssl_error.toJS(this.#globalObject) catch return);
+                return;
+            }
+
+            if (!this.#connection.isProcessingData() and this.#connection.hasBufferedData()) {
+                this.#connection.readAndProcessData("") catch |err| {
+                    this.onError(null, err);
+                };
             }
         }
 
@@ -267,6 +299,13 @@ fn SocketHandler(comptime ssl: bool) type {
         }
 
         pub fn onData(this: *JSMySQLConnection, _: SocketType, data: []const u8) void {
+            if (this.#connection.isProcessingData()) {
+                this.#connection.bufferData(data) catch |err| {
+                    this.onError(null, err);
+                };
+                return;
+            }
+
             this.ref();
             defer this.deref();
             const vm = this.#vm;
@@ -557,10 +596,7 @@ pub fn doFlush(this: *@This(), _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JS
 
 pub fn doClose(this: *@This(), globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
     _ = globalObject;
-    this.stopTimers();
-
-    defer this.updateReferenceType();
-    this.#connection.cleanQueueAndClose(null, this.getQueriesArray());
+    this.close();
     return .js_undefined;
 }
 

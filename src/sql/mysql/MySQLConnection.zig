@@ -61,6 +61,9 @@ pub fn init(
     };
 }
 
+pub fn getSSLMode(this: *const @This()) SSLMode {
+    return this.#ssl_mode;
+}
 pub fn canPipeline(this: *@This()) bool {
     return this.queue.canPipeline(this.getJSConnection());
 }
@@ -113,6 +116,14 @@ pub inline fn isIdle(this: *const @This()) bool {
 
 pub inline fn enqueueRequest(this: *@This(), request: *JSMySQLQuery) void {
     this.queue.add(request);
+}
+
+pub fn bufferData(this: *MySQLConnection, data: []const u8) !void {
+    try this.#read_buffer.write(bun.default_allocator, data);
+}
+
+pub fn hasBufferedData(this: *const MySQLConnection) bool {
+    return this.#read_buffer.remaining().len > 0;
 }
 
 pub fn flushQueue(this: *@This()) error{AuthenticationFailed}!void {
@@ -229,35 +240,53 @@ pub inline fn isConnected(this: *MySQLConnection) bool {
     return this.status == .connected;
 }
 pub fn doHandshake(this: *MySQLConnection, success: i32, ssl_error: uws.us_bun_verify_error_t) !bool {
-    debug("onHandshake: {d} {d} {s}", .{ success, ssl_error.error_no, @tagName(this.#ssl_mode) });
+    // Protect against re-entrant onData calls during handshake writes
+    const was_processing = this.#flags.is_processing_data;
+    this.#flags.is_processing_data = true;
+    defer this.#flags.is_processing_data = was_processing;
+
+    debug("onHandshake: success={d} error={d} mode={s}", .{ success, ssl_error.error_no, @tagName(this.#ssl_mode) });
     const handshake_success = if (success == 1) true else false;
     this.#sequence_id = this.#sequence_id +% 1;
     if (handshake_success) {
         this.#tls_status = .ssl_ok;
-        if (this.#tls_config.reject_unauthorized != 0) {
-            // follow the same rules as postgres
-            // https://github.com/porsager/postgres/blob/6ec85a432b17661ccacbdf7f765c651e88969d36/src/connection.js#L272-L279
-            // only reject the connection if reject_unauthorized == true
-            switch (this.#ssl_mode) {
-                .verify_ca, .verify_full => {
+        // https://github.com/porsager/postgres/blob/6ec85a432b17661ccacbdf7f765c651e88969d36/src/connection.js#L272-L279
+        switch (this.#ssl_mode) {
+            .verify_ca => {
+                if (ssl_error.error_no != 0) {
+                    this.#tls_status = .ssl_failed;
+                    return false;
+                }
+            },
+            .verify_full => {
+                if (ssl_error.error_no != 0) {
+                    this.#tls_status = .ssl_failed;
+                    return false;
+                }
+
+                const ssl_ptr: *BoringSSL.c.SSL = @ptrCast(this.#socket.getNativeHandle());
+                if (BoringSSL.c.SSL_get_servername(ssl_ptr, 0)) |servername| {
+                    const hostname = servername[0..bun.len(servername)];
+                    if (!BoringSSL.checkServerIdentity(ssl_ptr, hostname)) {
+                        this.#tls_status = .ssl_failed;
+                        return false;
+                    }
+                } else {
+                    this.#tls_status = .ssl_failed;
+                    return false;
+                }
+            },
+            // require is the same as prefer unless reject_unauthorized is set
+            .require, .prefer, .disable => {
+                if (this.#tls_config.reject_unauthorized != 0) {
                     if (ssl_error.error_no != 0) {
                         this.#tls_status = .ssl_failed;
                         return false;
                     }
-
-                    const ssl_ptr: *BoringSSL.c.SSL = @ptrCast(this.#socket.getNativeHandle());
-                    if (BoringSSL.c.SSL_get_servername(ssl_ptr, 0)) |servername| {
-                        const hostname = servername[0..bun.len(servername)];
-                        if (!BoringSSL.checkServerIdentity(ssl_ptr, hostname)) {
-                            this.#tls_status = .ssl_failed;
-                            return false;
-                        }
-                    }
-                },
-                // require is the same as prefer
-                .require, .prefer, .disable => {},
-            }
+                }
+            },
         }
+
         try this.sendHandshakeResponse();
         return true;
     }
@@ -290,10 +319,16 @@ pub fn readAndProcessData(this: *MySQLConnection, data: []const u8) !void {
                     });
                 }
 
-                this.#read_buffer.head = 0;
-                this.#last_message_start = 0;
-                this.#read_buffer.byte_list.len = 0;
-                this.#read_buffer.write(bun.default_allocator, data[offset..]) catch @panic("failed to write to read buffer");
+                if (this.#read_buffer.remaining().len > 0) {
+                    const remainder = data[offset..];
+                    this.#read_buffer.byte_list.insertSlice(bun.default_allocator, this.#read_buffer.head, remainder) catch @panic("failed to write to read buffer");
+                } else {
+                    this.#read_buffer.head = 0;
+                    this.#last_message_start = 0;
+                    this.#read_buffer.byte_list.len = 0;
+                    this.#read_buffer.write(bun.default_allocator, data[offset..]) catch @panic("failed to write to read buffer");
+                }
+                return;
             } else {
                 if (comptime bun.Environment.allow_assert) {
                     bun.handleErrorReturnTrace(err, @errorReturnTrace());
@@ -301,13 +336,15 @@ pub fn readAndProcessData(this: *MySQLConnection, data: []const u8) !void {
                 return err;
             }
         };
-        return;
-    }
 
-    {
+        if (this.#read_buffer.remaining().len == 0) return;
+    } else {
         this.#read_buffer.head = this.#last_message_start;
 
         this.#read_buffer.write(bun.default_allocator, data) catch @panic("failed to write to read buffer");
+    }
+
+    {
         this.processPackets(Reader, this.bufferedReader()) catch |err| {
             debug("processPackets with buffer: {s}", .{@errorName(err)});
             if (err != error.ShortRead) {
@@ -906,7 +943,10 @@ pub fn handlePreparedStatement(this: *MySQLConnection, comptime Context: type, r
             debug("handlePreparedStatement ERROR", .{});
             var err = ErrorPacket{};
             try err.decode(reader);
-            defer err.deinit();
+            var is_error_owned = true;
+            defer {
+                if (is_error_owned) err.deinit();
+            }
             const connection = this.getJSConnection();
             defer {
                 this.queue.advance(connection);
@@ -914,6 +954,7 @@ pub fn handlePreparedStatement(this: *MySQLConnection, comptime Context: type, r
             this.#flags.is_ready_for_query = true;
             statement.status = .failed;
             statement.error_response = err;
+            is_error_owned = false;
             this.queue.markAsReadyForQuery();
             this.queue.markCurrentRequestAsFinished(request);
 

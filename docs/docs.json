@@ -306,6 +306,7 @@
               "/guides/deployment/vercel",
               "/guides/deployment/railway",
               "/guides/deployment/render",
+              "/guides/deployment/encore",
               "/guides/deployment/aws-lambda",
               "/guides/deployment/digital-ocean",
               "/guides/deployment/google-cloud-run"
@@ -361,6 +362,7 @@
               "/guides/ecosystem/drizzle",
               "/guides/ecosystem/gel",
               "/guides/ecosystem/elysia",
+              "/guides/ecosystem/encore",
               "/guides/ecosystem/express",
               "/guides/ecosystem/hono",
               "/guides/ecosystem/mongoose",

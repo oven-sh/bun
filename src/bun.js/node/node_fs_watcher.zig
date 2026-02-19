@@ -299,9 +299,23 @@ pub const FSWatcher = struct {
             return;
         }
 
+        // The event's path comes from PathWatcherManager.onFileUpdate as a
+        // []const u8 sub-slice of the watchlist's file_path storage, auto-coerced
+        // to StringOrBytesToDecode{.bytes_to_free}. We must create a properly
+        // owned copy: either a bun.String for utf8 encoding or a duped []const u8
+        // for other encodings.
+        const owned_event: Event = switch (event) {
+            inline .rename, .change => |path, t| @unionInit(Event, @tagName(t), if (this.encoding == .utf8)
+                FSWatchTaskWindows.StringOrBytesToDecode{ .string = bun.String.cloneUTF8(path.bytes_to_free) }
+            else
+                FSWatchTaskWindows.StringOrBytesToDecode{ .bytes_to_free = bun.default_allocator.dupe(u8, path.bytes_to_free) catch return }),
+            .@"error" => |err| .{ .@"error" = err.clone(bun.default_allocator) },
+            inline else => |value, t| @unionInit(Event, @tagName(t), value),
+        };
+
         const task = bun.new(FSWatchTaskWindows, .{
             .ctx = this,
-            .event = event,
+            .event = owned_event,
         });
         this.eventLoop().enqueueTask(jsc.Task.init(task));
     }

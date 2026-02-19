@@ -219,10 +219,12 @@ fn fetchImpl(
     var disable_timeout = false;
     var disable_keepalive = false;
     var disable_decompression = false;
-    var verbose: http.HTTPVerboseLevel = if (vm.log.level.atLeast(.debug)) .headers else .none;
-    if (verbose == .none) {
-        verbose = vm.getVerboseFetch();
-    }
+    // Only enable verbose fetch logging via explicit opt-in:
+    // 1. BUN_CONFIG_VERBOSE_FETCH environment variable
+    // 2. explicit `verbose: true` or `verbose: "curl"` option in fetch options
+    // Note: We no longer check vm.log.level here, as that's for compiler/transpiler
+    // logging and shouldn't affect runtime fetch verbosity.
+    var verbose: http.HTTPVerboseLevel = vm.getVerboseFetch();
 
     var proxy: ?ZigURL = null;
     var redirect_type: FetchRedirect = FetchRedirect.follow;

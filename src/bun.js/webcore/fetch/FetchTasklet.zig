@@ -969,13 +969,15 @@ pub const FetchTasklet = struct {
         log("onResponseFinalize", .{});
         if (this.native_response) |response| {
             const body = response.getBodyValue();
-            // Three scenarios:
+            // Four scenarios:
             //
             // 1. We are streaming, in which case we should not ignore the body.
             // 2. We were buffering, in which case
             //    2a. if we have no promise, we should ignore the body.
             //    2b. if we have a promise, we should keep loading the body.
             // 3. We never started buffering, in which case we should ignore the body.
+            // 4. Someone is waiting via onReceiveValue callback (e.g., Bun.write),
+            //    in which case we should keep loading the body.
             //
             // Note: We cannot call .get() on the ReadableStreamRef. This is called inside a finalizer.
             if (body.* != .Locked or this.readable_stream_ref.held.has()) {
@@ -983,11 +985,16 @@ pub const FetchTasklet = struct {
                 return;
             }
 
-            if (body.Locked.promise) |promise| {
+            const locked = &body.Locked;
+            if (locked.promise) |promise| {
                 if (promise.isEmptyOrUndefinedOrNull()) {
-                    // Scenario 2b.
+                    // Scenario 2a.
                     this.ignoreRemainingResponseBody();
                 }
+                // Scenario 2b - promise is set and valid, keep loading.
+            } else if (locked.onReceiveValue != null or locked.task != null) {
+                // Scenario 4 - someone is waiting via callback (e.g., Bun.write).
+                return;
             } else {
                 // Scenario 3.
                 this.ignoreRemainingResponseBody();

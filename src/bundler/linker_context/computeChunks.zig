@@ -16,6 +16,11 @@ pub noinline fn computeChunks(
     var js_chunks = bun.StringArrayHashMap(Chunk).init(temp_allocator);
     try js_chunks.ensureUnusedCapacity(this.graph.entry_points.len);
 
+    // Maps entry point bit indices to js_chunks indices. CSS-only entry points
+    // have no JS chunk, so their slot is null.
+    const entry_bit_to_js_chunk_idx = try temp_allocator.alloc(?u32, this.graph.entry_points.len);
+    @memset(entry_bit_to_js_chunk_idx, null);
+
     // Key is the hash of the CSS order. This deduplicates identical CSS files.
     var css_chunks = std.AutoArrayHashMap(u64, Chunk).init(temp_allocator);
     var js_chunks_with_css: usize = 0;
@@ -119,6 +124,7 @@ pub noinline fn computeChunks(
         // Create a chunk for the entry point here to ensure that the chunk is
         // always generated even if the resulting file is empty
         const js_chunk_entry = try js_chunks.getOrPut(js_chunk_key);
+        entry_bit_to_js_chunk_idx[entry_bit] = @intCast(js_chunk_entry.index);
         js_chunk_entry.value_ptr.* = .{
             .entry_point = .{
                 .entry_point_id = entry_bit,
@@ -202,8 +208,10 @@ pub noinline fn computeChunks(
         chunks: []Chunk,
         allocator: std.mem.Allocator,
         source_id: u32,
+        entry_bit_to_js_chunk_idx: []const ?u32,
 
-        pub fn next(c: *@This(), chunk_id: usize) void {
+        pub fn next(c: *@This(), entry_bit: usize) void {
+            const chunk_id = c.entry_bit_to_js_chunk_idx[entry_bit] orelse return;
             const entry = c.chunks[chunk_id].files_with_parts_in_chunk.getOrPut(c.allocator, @as(u32, @truncate(c.source_id))) catch unreachable;
             if (!entry.found_existing) {
                 entry.value_ptr.* = 0; // Initialize byte count to 0
@@ -259,6 +267,7 @@ pub noinline fn computeChunks(
                             .chunks = js_chunks.values(),
                             .allocator = this.allocator(),
                             .source_id = source_index.get(),
+                            .entry_bit_to_js_chunk_idx = entry_bit_to_js_chunk_idx,
                         };
                         entry_bits.forEach(Handler, &handler, Handler.next);
                     }

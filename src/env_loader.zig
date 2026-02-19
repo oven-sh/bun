@@ -49,10 +49,15 @@ pub const Loader = struct {
     }
 
     pub fn getNodePath(this: *Loader, fs: *Fs.FileSystem, buf: *bun.PathBuffer) ?[:0]const u8 {
+        // Check NODE or npm_node_execpath env var, but only use it if the file actually exists
         if (this.get("NODE") orelse this.get("npm_node_execpath")) |node| {
-            @memcpy(buf[0..node.len], node);
-            buf[node.len] = 0;
-            return buf[0..node.len :0];
+            if (node.len > 0 and node.len < bun.MAX_PATH_BYTES) {
+                @memcpy(buf[0..node.len], node);
+                buf[node.len] = 0;
+                if (bun.sys.isExecutableFilePath(buf[0..node.len :0])) {
+                    return buf[0..node.len :0];
+                }
+            }
         }
 
         if (which(buf, this.get("PATH") orelse return null, fs.top_level_dir, "node")) |node| {

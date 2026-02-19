@@ -1076,8 +1076,12 @@ pub const FileSystem = struct {
                 return try fs.readDirectoryError(dir, err);
             });
 
+            // Whether we will close this handle when leaving this scope.
+            // If true, we must not cache the FD because it will become stale.
+            const will_close_handle = maybe_handle == null and (!store_fd or fs.needToCloseFiles());
+
             defer {
-                if (maybe_handle == null and (!store_fd or fs.needToCloseFiles())) {
+                if (will_close_handle) {
                     handle.close();
                 }
             }
@@ -1091,8 +1095,9 @@ pub const FileSystem = struct {
             }
 
             // Cache miss: read the directory entries
+            // Only cache the directory FD if we are NOT going to close the handle.
             var entries = fs.readdir(
-                store_fd,
+                store_fd and !will_close_handle,
                 if (in_place) |existing| &existing.data else null,
                 dir,
                 generation,
@@ -1110,7 +1115,7 @@ pub const FileSystem = struct {
                 if (in_place) |original| {
                     original.data.clearAndFree(bun.default_allocator);
                 }
-                if (store_fd and !entries.fd.isValid())
+                if (store_fd and !will_close_handle and !entries.fd.isValid())
                     entries.fd = .fromStdDir(handle);
 
                 entries_ptr.* = entries;

@@ -1809,7 +1809,12 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
 
 pub fn updateRef(this: *PostgresSQLConnection) void {
     this.updateHasPendingActivity();
-    if (this.pending_activity_count.raw > 0) {
+    // Don't keep the process alive when the connection is idle (connected with no pending work).
+    // This matches Node.js behavior where idle database connections allow the process to exit.
+    if (this.status == .connected and !this.hasQueryRunning() and this.write_buffer.remaining().len == 0) {
+        this.poll_ref.unref(this.vm);
+    } else if (this.status != .disconnected) {
+        // Keep alive during connection establishment or when there's pending work
         this.poll_ref.ref(this.vm);
     } else {
         this.poll_ref.unref(this.vm);

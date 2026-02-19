@@ -934,6 +934,9 @@ pub export fn Bun__transpileFile(
     }
 
     const module_type: options.ModuleType = brk: {
+        // Eval sources (-e flag) are always ESM
+        if (jsc_vm.module_loader.eval_source != null)
+            break :brk .esm;
         const ext = lr.path.name.ext;
         // regular expression /.[cm][jt]s$/
         if (ext.len == ".cjs".len) {

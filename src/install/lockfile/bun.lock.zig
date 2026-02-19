@@ -2188,7 +2188,20 @@ fn parseAppendDependencies(
                     }
                 }
 
-                try lockfile.buffers.dependencies.append(allocator, dep);
+                // Deduplicate: if a dependency with the same name_hash was already
+                // added (e.g. from a corrupt lockfile with duplicate JSON keys),
+                // replace the existing entry instead of appending a new one.
+                var found_existing = false;
+                for (lockfile.buffers.dependencies.items[off..]) |*existing_dep| {
+                    if (existing_dep.name_hash == name_hash) {
+                        existing_dep.* = dep;
+                        found_existing = true;
+                        break;
+                    }
+                }
+                if (!found_existing) {
+                    try lockfile.buffers.dependencies.append(allocator, dep);
+                }
             }
         }
     }

@@ -372,13 +372,359 @@ const util = {
   },
 };
 
+// EventSource (Server-Sent Events) implementation
+// Follows the WHATWG HTML spec: https://html.spec.whatwg.org/multipage/server-sent-events.html
 class EventSource extends EventTarget {
   static CONNECTING = 0;
   static OPEN = 1;
   static CLOSED = 2;
 
-  constructor() {
+  #url;
+  #withCredentials;
+  #readyState = 0;
+  #lastEventId = "";
+  #reconnectionTime = 3000;
+  #abortController = null;
+  #reconnectTimer = null;
+
+  #onopen = null;
+  #onmessage = null;
+  #onerror = null;
+
+  constructor(url, options) {
     super();
+
+    // Validate and resolve URL
+    const resolvedUrl = new URL(url, typeof location !== "undefined" ? location.href : undefined);
+
+    this.#url = resolvedUrl.href;
+    this.#withCredentials = options?.withCredentials ?? false;
+    this.#readyState = EventSource.CONNECTING;
+
+    // Start connection on next tick
+    process.nextTick(() => this.#connect());
+  }
+
+  // Instance getters that delegate to static constants (not writable/enumerable own properties)
+  get CONNECTING() {
+    return EventSource.CONNECTING;
+  }
+
+  get OPEN() {
+    return EventSource.OPEN;
+  }
+
+  get CLOSED() {
+    return EventSource.CLOSED;
+  }
+
+  get url() {
+    return this.#url;
+  }
+
+  get readyState() {
+    return this.#readyState;
+  }
+
+  get withCredentials() {
+    return this.#withCredentials;
+  }
+
+  get onopen() {
+    return this.#onopen;
+  }
+
+  set onopen(value) {
+    const oldHandler = this.#onopen;
+    // Only store functions, treat non-callables as null
+    const newHandler = typeof value === "function" ? value : null;
+    this.#onopen = newHandler;
+    // Remove old handler if it was a function
+    if (typeof oldHandler === "function") {
+      this.removeEventListener("open", oldHandler);
+    }
+    // Add new handler if it's a function
+    if (typeof newHandler === "function") {
+      this.addEventListener("open", newHandler);
+    }
+  }
+
+  get onmessage() {
+    return this.#onmessage;
+  }
+
+  set onmessage(value) {
+    const oldHandler = this.#onmessage;
+    // Only store functions, treat non-callables as null
+    const newHandler = typeof value === "function" ? value : null;
+    this.#onmessage = newHandler;
+    // Remove old handler if it was a function
+    if (typeof oldHandler === "function") {
+      this.removeEventListener("message", oldHandler);
+    }
+    // Add new handler if it's a function
+    if (typeof newHandler === "function") {
+      this.addEventListener("message", newHandler);
+    }
+  }
+
+  get onerror() {
+    return this.#onerror;
+  }
+
+  set onerror(value) {
+    const oldHandler = this.#onerror;
+    // Only store functions, treat non-callables as null
+    const newHandler = typeof value === "function" ? value : null;
+    this.#onerror = newHandler;
+    // Remove old handler if it was a function
+    if (typeof oldHandler === "function") {
+      this.removeEventListener("error", oldHandler);
+    }
+    // Add new handler if it's a function
+    if (typeof newHandler === "function") {
+      this.addEventListener("error", newHandler);
+    }
+  }
+
+  close() {
+    this.#readyState = EventSource.CLOSED;
+
+    if (this.#abortController) {
+      this.#abortController.abort();
+      this.#abortController = null;
+    }
+
+    if (this.#reconnectTimer) {
+      clearTimeout(this.#reconnectTimer);
+      this.#reconnectTimer = null;
+    }
+  }
+
+  #connect() {
+    if (this.#readyState === EventSource.CLOSED) {
+      return;
+    }
+
+    const abortController = new AbortController();
+    this.#abortController = abortController;
+
+    const headers = {
+      Accept: "text/event-stream",
+      "Cache-Control": "no-cache",
+    };
+
+    if (this.#lastEventId) {
+      headers["Last-Event-ID"] = this.#lastEventId;
+    }
+
+    fetch(this.#url, {
+      method: "GET",
+      headers,
+      credentials: this.#withCredentials ? "include" : "same-origin",
+      cache: "no-store",
+      signal: abortController.signal,
+    })
+      .then(response => {
+        if (this.#readyState === EventSource.CLOSED) {
+          return;
+        }
+
+        // HTTP 204 No Content means server wants to close the connection permanently
+        if (response.status === 204) {
+          this.#fail();
+          return;
+        }
+
+        if (!response.ok) {
+          this.#fail();
+          return;
+        }
+
+        const contentType = response.headers.get("Content-Type");
+        // Parse MIME type: extract media type before any parameters, case-insensitive comparison
+        const mimeType = contentType ? contentType.split(";")[0].trim().toLowerCase() : "";
+        if (mimeType !== "text/event-stream") {
+          this.#fail();
+          return;
+        }
+
+        this.#readyState = EventSource.OPEN;
+        this.dispatchEvent(new Event("open"));
+
+        if (!response.body) {
+          this.#reconnect();
+          return;
+        }
+
+        this.#readStream(response.body);
+      })
+      .catch(error => {
+        if (this.#readyState === EventSource.CLOSED) {
+          return;
+        }
+
+        if (error.name === "AbortError") {
+          return;
+        }
+
+        this.#reconnect();
+      });
+  }
+
+  async #readStream(body) {
+    const reader = body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    let eventType = "";
+    let data = [];
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+
+        if (this.#readyState === EventSource.CLOSED) {
+          reader.cancel();
+          return;
+        }
+
+        if (done) {
+          break;
+        }
+
+        buffer += decoder.decode(value, { stream: true });
+
+        let lineEnd;
+        while ((lineEnd = this.#findLineEnd(buffer)) !== -1) {
+          const char = buffer[lineEnd];
+          const line = buffer.slice(0, lineEnd);
+          // Handle CRLF: if we see \r, check if next char is \n
+          // If \r is at end of buffer, wait for more data to check for \n
+          if (char === "\r") {
+            if (lineEnd + 1 >= buffer.length) {
+              // \r at end of buffer - need more data to know if CRLF
+              break;
+            }
+            buffer = buffer.slice(lineEnd + (buffer[lineEnd + 1] === "\n" ? 2 : 1));
+          } else {
+            buffer = buffer.slice(lineEnd + 1);
+          }
+
+          if (line === "") {
+            if (data.length > 0) {
+              const origin = new URL(this.#url).origin;
+
+              const event = new MessageEvent(eventType || "message", {
+                data: data.join("\n"),
+                origin: origin,
+                lastEventId: this.#lastEventId,
+              });
+
+              this.dispatchEvent(event);
+            }
+
+            eventType = "";
+            data = [];
+          } else if (line[0] === ":") {
+            // Comment line, ignore
+          } else {
+            const colonIndex = line.indexOf(":");
+            let field;
+            let fieldValue;
+
+            if (colonIndex === -1) {
+              field = line;
+              fieldValue = "";
+            } else {
+              field = line.slice(0, colonIndex);
+              fieldValue = line.slice(colonIndex + 1);
+              if (fieldValue[0] === " ") {
+                fieldValue = fieldValue.slice(1);
+              }
+            }
+
+            switch (field) {
+              case "event":
+                eventType = fieldValue;
+                break;
+              case "data":
+                data.push(fieldValue);
+                break;
+              case "id":
+                if (!fieldValue.includes("\0")) {
+                  this.#lastEventId = fieldValue;
+                }
+                break;
+              case "retry":
+                if (/^\d+$/.test(fieldValue)) {
+                  this.#reconnectionTime = parseInt(fieldValue, 10);
+                }
+                break;
+            }
+          }
+        }
+      }
+    } catch (error) {
+      if (this.#readyState === EventSource.CLOSED) {
+        return;
+      }
+
+      if (error.name === "AbortError") {
+        return;
+      }
+
+      this.#reconnect();
+      return;
+    }
+
+    this.#reconnect();
+  }
+
+  #findLineEnd(buffer) {
+    for (let i = 0; i < buffer.length; i++) {
+      if (buffer[i] === "\n" || buffer[i] === "\r") {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  #fail() {
+    this.#readyState = EventSource.CLOSED;
+
+    if (this.#abortController) {
+      this.#abortController.abort();
+      this.#abortController = null;
+    }
+
+    if (this.#reconnectTimer) {
+      clearTimeout(this.#reconnectTimer);
+      this.#reconnectTimer = null;
+    }
+
+    // Per spec, error events are simple Event objects, not ErrorEvent
+    this.dispatchEvent(new Event("error"));
+  }
+
+  #reconnect() {
+    if (this.#readyState === EventSource.CLOSED) {
+      return;
+    }
+
+    this.#readyState = EventSource.CONNECTING;
+
+    // Per spec, error events are simple Event objects, not ErrorEvent
+    this.dispatchEvent(new Event("error"));
+
+    // Clear any existing timer before scheduling a new one
+    if (this.#reconnectTimer) {
+      clearTimeout(this.#reconnectTimer);
+    }
+    this.#reconnectTimer = setTimeout(() => {
+      this.#reconnectTimer = null;
+      this.#connect();
+    }, this.#reconnectionTime);
   }
 }
 

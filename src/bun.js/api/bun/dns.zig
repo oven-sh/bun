@@ -370,6 +370,172 @@ pub fn ResolveInfoRequest(comptime cares_type: type, comptime type_name: []const
     };
 }
 
+/// Maximum CNAME chain depth to follow (prevents infinite loops)
+const MAX_CNAME_DEPTH = 8;
+
+/// Specialized TXT resolve request that handles CNAME following.
+/// When a TXT query returns a CNAME instead of TXT records, this request
+/// automatically follows the CNAME and issues a new query for TXT records.
+pub const TxtResolveInfoRequest = struct {
+    const request_type = @This();
+    const cares_type = c_ares.struct_ares_txt_reply;
+    const type_name = "txt";
+
+    const log = Output.scoped(.TxtResolveInfoRequest, .hidden);
+
+    resolver_for_caching: ?*Resolver = null,
+    hash: u64 = 0,
+    cache: CacheConfig = CacheConfig{},
+    head: CAresLookup(cares_type, type_name),
+    tail: *CAresLookup(cares_type, type_name) = undefined,
+    cname_depth: u8 = 0,
+    /// The current name being queried (may differ from original if following CNAMEs)
+    current_name: []const u8 = "",
+
+    /// Initialize a TXT request without using pending cache coalescing.
+    /// Used for CNAME-following TXT queries which have a different request structure.
+    pub fn initNoCaching(
+        resolver: ?*Resolver,
+        name: []const u8,
+        globalThis: *jsc.JSGlobalObject,
+    ) !*@This() {
+        var request = try globalThis.allocator().create(@This());
+        var hasher = std.hash.Wyhash.init(0);
+        hasher.update(name);
+        const hash = hasher.final();
+        var poll_ref = Async.KeepAlive.init();
+        poll_ref.ref(globalThis.bunVM());
+        if (resolver) |resolver_| resolver_.ref();
+        request.* = .{
+            .resolver_for_caching = resolver,
+            .hash = hash,
+            .head = .{
+                .resolver = resolver,
+                .poll_ref = poll_ref,
+                .globalThis = globalThis,
+                .promise = jsc.JSPromise.Strong.init(globalThis),
+                .allocated = false,
+                .name = name,
+            },
+            .current_name = name,
+        };
+        request.tail = &request.head;
+        return request;
+    }
+
+    pub const CacheConfig = packed struct(u16) {
+        pending_cache: bool = false,
+        entry_cache: bool = false,
+        pos_in_pending: u5 = 0,
+        name_len: u9 = 0,
+    };
+
+    pub const PendingCacheKey = struct {
+        hash: u64,
+        len: u16,
+        lookup: *request_type = undefined,
+
+        pub fn append(this: *PendingCacheKey, cares_lookup: *CAresLookup(cares_type, type_name)) void {
+            var tail = this.lookup.tail;
+            tail.next = cares_lookup;
+            this.lookup.tail = cares_lookup;
+        }
+
+        pub fn init(name: []const u8) PendingCacheKey {
+            var hasher = std.hash.Wyhash.init(0);
+            hasher.update(name);
+            const hash = hasher.final();
+            return PendingCacheKey{
+                .hash = hash,
+                .len = @as(u16, @truncate(name.len)),
+                .lookup = undefined,
+            };
+        }
+    };
+
+    pub fn onCaresComplete(this: *@This(), err_: ?c_ares.Error, timeout: i32, result: c_ares.struct_ares_txt_reply.TxtOrCname) void {
+        switch (result) {
+            .txt => |txt_result| {
+                // Got TXT records, process normally
+                this.completeWithResult(err_, timeout, txt_result);
+            },
+            .cname => |cname_target| {
+                // Got a CNAME, follow it if we haven't exceeded the depth limit
+                defer bun.default_allocator.free(cname_target);
+
+                if (this.cname_depth >= MAX_CNAME_DEPTH) {
+                    // Too many CNAME redirects, treat as error
+                    log("CNAME depth exceeded for {s}", .{this.head.name});
+                    this.completeWithResult(c_ares.Error.ENODATA, timeout, null);
+                    return;
+                }
+
+                // Issue a follow-up query for the CNAME target
+                const resolver = this.resolver_for_caching orelse this.head.resolver orelse {
+                    // No resolver available, can't follow CNAME
+                    this.completeWithResult(c_ares.Error.ENODATA, timeout, null);
+                    return;
+                };
+
+                var channel = switch (resolver.getChannel()) {
+                    .result => |ch| ch,
+                    .err => {
+                        this.completeWithResult(c_ares.Error.ENODATA, timeout, null);
+                        return;
+                    },
+                };
+
+                // Free the previous current_name if it was allocated for CNAME following
+                if (this.cname_depth > 0) {
+                    bun.default_allocator.free(this.current_name);
+                }
+
+                // Duplicate the CNAME target for the next query
+                this.current_name = bun.default_allocator.dupe(u8, cname_target) catch {
+                    this.completeWithResult(c_ares.Error.ENOMEM, timeout, null);
+                    return;
+                };
+                this.cname_depth += 1;
+
+                log("Following CNAME: {s} -> {s} (depth: {d})", .{ this.head.name, this.current_name, this.cname_depth });
+
+                // Issue new query with the CNAME target
+                channel.resolveTxtWithCnameHandling(
+                    this.current_name,
+                    @This(),
+                    this,
+                    @This().onCaresComplete,
+                );
+            },
+            .err => {
+                // Error occurred
+                this.completeWithResult(err_, timeout, null);
+            },
+        }
+    }
+
+    fn completeWithResult(this: *@This(), err_: ?c_ares.Error, timeout: i32, result: ?*cares_type) void {
+        // Free CNAME-allocated name if applicable
+        if (this.cname_depth > 0) {
+            bun.default_allocator.free(this.current_name);
+        }
+
+        // Note: TxtResolveInfoRequest doesn't use pending cache coalescing,
+        // so we just complete the request directly without draining cache.
+        if (this.resolver_for_caching) |resolver| {
+            resolver.requestCompleted();
+        }
+
+        var head = this.head;
+        bun.default_allocator.destroy(this);
+
+        // Free c-ares TXT result after processing (similar to drainPendingHostCares)
+        defer if (result) |txt_reply| txt_reply.deinit();
+
+        head.processResolve(err_, timeout, result);
+    }
+};
+
 pub const GetHostByAddrInfoRequest = struct {
     const request_type = @This();
 
@@ -3004,7 +3170,39 @@ pub const Resolver = struct {
         }
 
         const name = try name_str.toSliceClone(globalThis, bun.default_allocator);
-        return this.doResolveCAres(c_ares.struct_ares_txt_reply, "txt", name.slice(), globalThis);
+        return this.doResolveTxt(name.slice(), globalThis);
+    }
+
+    /// Specialized TXT resolution that handles CNAME following.
+    /// When a TXT query returns a CNAME, it automatically follows the CNAME chain
+    /// (up to MAX_CNAME_DEPTH levels) and returns the TXT records from the final target.
+    pub fn doResolveTxt(this: *Resolver, name: []const u8, globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
+        var channel: *c_ares.Channel = switch (this.getChannel()) {
+            .result => |res| res,
+            .err => |err| {
+                return globalThis.throwValue(try err.toJSWithSyscall(globalThis, "queryTxt"));
+            },
+        };
+
+        // Note: We don't use pending cache coalescing for CNAME-following TXT queries
+        // because TxtResolveInfoRequest has a different structure than the generic
+        // ResolveInfoRequest used by the caching system. This could be optimized later.
+        var request = TxtResolveInfoRequest.initNoCaching(
+            this,
+            name,
+            globalThis,
+        ) catch |err| bun.handleOom(err);
+        const promise = request.tail.promise.value();
+
+        channel.resolveTxtWithCnameHandling(
+            name,
+            TxtResolveInfoRequest,
+            request,
+            TxtResolveInfoRequest.onCaresComplete,
+        );
+
+        this.requestSent(globalThis.bunVM());
+        return promise;
     }
 
     pub fn globalResolveAny(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {

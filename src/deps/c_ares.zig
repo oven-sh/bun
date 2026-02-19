@@ -714,6 +714,33 @@ pub const Channel = opaque {
         ares_query(this, name_ptr, NSClass.ns_c_in, @field(NSType, field_name), cares_type.callbackWrapper(lookup_name, Type, callback), ctx);
     }
 
+    /// Resolve TXT records with CNAME following support.
+    /// When the response contains a CNAME instead of TXT records, the callback
+    /// receives a TxtOrCname.cname with the target domain name.
+    pub fn resolveTxtWithCnameHandling(
+        this: *Channel,
+        name: []const u8,
+        comptime Type: type,
+        ctx: *Type,
+        comptime callback: fn (*Type, status: ?Error, timeouts: i32, results: struct_ares_txt_reply.TxtOrCname) void,
+    ) void {
+        if (name.len >= 1023 or name.len == 0) {
+            callback(ctx, Error.EBADNAME, 0, .{ .err = .EBADNAME });
+            return;
+        }
+
+        var name_buf: [1024]u8 = undefined;
+        const name_ptr: [*:0]const u8 = brk: {
+            const len = @min(name.len, name_buf.len - 1);
+            @memcpy(name_buf[0..len], name[0..len]);
+
+            name_buf[len] = 0;
+            break :brk name_buf[0..len :0];
+        };
+
+        ares_query(this, name_ptr, NSClass.ns_c_in, NSType.ns_t_txt, struct_ares_txt_reply.callbackWrapperWithCnameHandling(Type, callback), ctx);
+    }
+
     pub fn getHostByAddr(this: *Channel, ip_addr: []const u8, comptime Type: type, ctx: *Type, comptime callback: struct_hostent.Callback(Type)) void {
         // "0000:0000:0000:0000:0000:ffff:192.168.100.228".length = 45
         const buf_size = 46;
@@ -1179,6 +1206,98 @@ pub const struct_ares_txt_reply = extern struct {
     pub fn deinit(this: *struct_ares_txt_reply) void {
         ares_free_data(this);
     }
+
+    /// Result type for TXT queries that may contain CNAME redirects
+    pub const TxtOrCname = union(enum) {
+        txt: ?*struct_ares_txt_reply,
+        /// Owned CNAME target - caller must free with bun.default_allocator
+        cname: []u8,
+        err: Error,
+    };
+
+    /// Extract CNAME target from a DNS response buffer.
+    /// Returns an owned copy of the CNAME target domain name if found.
+    /// Returns null if no CNAME found, or error.OutOfMemory if allocation fails.
+    /// Caller is responsible for freeing the returned slice with bun.default_allocator.
+    fn extractCnameFromBuffer(buffer: [*c]u8, buffer_length: c_int) error{OutOfMemory}!?[]u8 {
+        var dnsrec: ?*ares_dns_record_t = null;
+        const parse_result = ares_dns_parse(buffer, @intCast(buffer_length), 0, &dnsrec);
+        if (parse_result == ARES_ENOMEM) {
+            return error.OutOfMemory;
+        }
+        if (parse_result != ARES_SUCCESS) {
+            return null;
+        }
+        defer ares_dns_record_destroy(dnsrec);
+
+        const rr_cnt = ares_dns_record_rr_cnt(dnsrec, .ARES_SECTION_ANSWER);
+        var i: usize = 0;
+        while (i < rr_cnt) : (i += 1) {
+            const rr = ares_dns_record_rr_get_const(dnsrec, .ARES_SECTION_ANSWER, i);
+            if (rr == null) continue;
+
+            if (ares_dns_rr_get_type(rr) == .ARES_REC_TYPE_CNAME) {
+                const cname_ptr = ares_dns_rr_get_str(rr, ARES_RR_CNAME_CNAME);
+                if (cname_ptr) |ptr| {
+                    const cname_slice = bun.sliceTo(ptr, 0);
+                    // Return an owned copy before dnsrec is destroyed
+                    return try bun.default_allocator.dupe(u8, cname_slice);
+                }
+            }
+        }
+        return null;
+    }
+
+    /// Callback wrapper for TXT queries that handles CNAME following.
+    /// When a CNAME is found instead of TXT records, returns TxtOrCname.cname
+    /// so the caller can issue a follow-up query on the CNAME target.
+    pub fn callbackWrapperWithCnameHandling(
+        comptime Type: type,
+        comptime function: fn (*Type, status: ?Error, timeouts: i32, results: TxtOrCname) void,
+    ) ares_callback {
+        return &struct {
+            pub fn handleTxt(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.c) void {
+                const this = bun.cast(*Type, ctx.?);
+                if (status != ARES_SUCCESS) {
+                    function(this, Error.get(status), timeouts, .{ .err = Error.get(status).? });
+                    return;
+                }
+
+                var txt_start: [*c]struct_ares_txt_reply = undefined;
+                const result = ares_parse_txt_reply(buffer, buffer_length, &txt_start);
+
+                if (result == ARES_SUCCESS and txt_start != null) {
+                    // Got TXT records directly
+                    function(this, null, timeouts, .{ .txt = txt_start });
+                    return;
+                }
+
+                // Only attempt CNAME extraction for valid-but-empty cases
+                // (ARES_SUCCESS with null txt_start, or ARES_ENODATA)
+                // For other errors (e.g., ARES_EBADRESP), return the error immediately
+                if (result != ARES_SUCCESS and result != ARES_ENODATA) {
+                    function(this, Error.get(result), timeouts, .{ .err = Error.get(result).? });
+                    return;
+                }
+
+                // No TXT records found, check for CNAME
+                // extractCnameFromBuffer returns an owned copy that the caller must free
+                const cname_result = extractCnameFromBuffer(buffer, buffer_length) catch {
+                    // OOM during CNAME extraction
+                    function(this, Error.ENOMEM, timeouts, .{ .err = .ENOMEM });
+                    return;
+                };
+
+                if (cname_result) |cname| {
+                    function(this, null, timeouts, .{ .cname = cname });
+                    return;
+                }
+
+                // No CNAME either, return ENODATA
+                function(this, Error.ENODATA, timeouts, .{ .err = .ENODATA });
+            }
+        }.handleTxt;
+    }
 };
 pub const struct_ares_txt_ext = extern struct {
     next: [*c]struct_ares_txt_ext,
@@ -1567,6 +1686,52 @@ pub extern fn ares_parse_srv_reply(abuf: [*c]const u8, alen: c_int, srv_out: [*c
 pub extern fn ares_parse_mx_reply(abuf: [*c]const u8, alen: c_int, mx_out: [*c][*c]struct_ares_mx_reply) c_int;
 pub extern fn ares_parse_txt_reply(abuf: [*c]const u8, alen: c_int, txt_out: [*c][*c]struct_ares_txt_reply) c_int;
 pub extern fn ares_parse_txt_reply_ext(abuf: [*c]const u8, alen: c_int, txt_out: [*c][*c]struct_ares_txt_ext) c_int;
+
+/// DNS record types
+pub const ares_dns_rec_type_t = enum(c_int) {
+    ARES_REC_TYPE_A = 1,
+    ARES_REC_TYPE_NS = 2,
+    ARES_REC_TYPE_CNAME = 5,
+    ARES_REC_TYPE_SOA = 6,
+    ARES_REC_TYPE_PTR = 12,
+    ARES_REC_TYPE_HINFO = 13,
+    ARES_REC_TYPE_MX = 15,
+    ARES_REC_TYPE_TXT = 16,
+    ARES_REC_TYPE_SIG = 24,
+    ARES_REC_TYPE_AAAA = 28,
+    ARES_REC_TYPE_SRV = 33,
+    ARES_REC_TYPE_NAPTR = 35,
+    ARES_REC_TYPE_OPT = 41,
+    ARES_REC_TYPE_TLSA = 52,
+    ARES_REC_TYPE_SVCB = 64,
+    ARES_REC_TYPE_HTTPS = 65,
+    ARES_REC_TYPE_ANY = 255,
+    ARES_REC_TYPE_URI = 256,
+    ARES_REC_TYPE_CAA = 257,
+    _,
+};
+
+/// DNS section types
+pub const ares_dns_section_t = enum(c_int) {
+    ARES_SECTION_ANSWER = 1,
+    ARES_SECTION_AUTHORITY = 2,
+    ARES_SECTION_ADDITIONAL = 3,
+};
+
+/// DNS RR key for CNAME record
+pub const ARES_RR_CNAME_CNAME: c_int = (@intFromEnum(ares_dns_rec_type_t.ARES_REC_TYPE_CNAME) * 100) + 1;
+
+/// Opaque DNS record types
+pub const ares_dns_record_t = opaque {};
+pub const ares_dns_rr_t = opaque {};
+
+/// DNS record parsing and access functions
+pub extern fn ares_dns_parse(buf: [*c]const u8, buf_len: usize, flags: c_uint, dnsrec: *?*ares_dns_record_t) c_int;
+pub extern fn ares_dns_record_destroy(dnsrec: ?*ares_dns_record_t) void;
+pub extern fn ares_dns_record_rr_cnt(dnsrec: ?*const ares_dns_record_t, sect: ares_dns_section_t) usize;
+pub extern fn ares_dns_record_rr_get_const(dnsrec: ?*const ares_dns_record_t, sect: ares_dns_section_t, idx: usize) ?*const ares_dns_rr_t;
+pub extern fn ares_dns_rr_get_type(rr: ?*const ares_dns_rr_t) ares_dns_rec_type_t;
+pub extern fn ares_dns_rr_get_str(rr: ?*const ares_dns_rr_t, key: c_int) ?[*:0]const u8;
 pub extern fn ares_parse_naptr_reply(abuf: [*c]const u8, alen: c_int, naptr_out: [*c][*c]struct_ares_naptr_reply) c_int;
 pub extern fn ares_parse_soa_reply(abuf: [*c]const u8, alen: c_int, soa_out: [*c][*c]struct_ares_soa_reply) c_int;
 pub extern fn ares_parse_uri_reply(abuf: [*c]const u8, alen: c_int, uri_out: [*c][*c]struct_ares_uri_reply) c_int;

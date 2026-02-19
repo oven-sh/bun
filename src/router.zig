@@ -731,10 +731,11 @@ pub const Route = struct {
 
         if (abs_path_str.len == 0) {
             var file: std.fs.File = undefined;
-            var needs_close = false;
+            var needs_close = true;
             defer if (needs_close) file.close();
             if (entry.cache.fd.unwrapValid()) |valid| {
                 file = valid.stdFile();
+                needs_close = false;
             } else {
                 var parts = [_]string{ entry.dir, entry.base() };
                 abs_path_str = FileSystem.instance.absBuf(&parts, &route_file_buf);
@@ -745,9 +746,6 @@ pub const Route = struct {
                     return null;
                 };
                 FileSystem.setMaxFd(file.handle);
-
-                needs_close = FileSystem.instance.fs.needToCloseFiles();
-                if (!needs_close) entry.cache.fd = .fromStdFile(file);
             }
 
             const _abs = bun.getFdPath(.fromStdFile(file), &route_file_buf) catch |err| {

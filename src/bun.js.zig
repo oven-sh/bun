@@ -63,7 +63,10 @@ pub const Run = struct {
 
         b.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
         b.options.minify_whitespace = ctx.bundler_options.minify_whitespace;
-        b.options.ignore_dce_annotations = ctx.bundler_options.ignore_dce_annotations;
+        // @__PURE__ annotations are hints for bundlers/tree-shakers and should
+        // not cause code removal during runtime execution.
+        // See: https://github.com/oven-sh/bun/issues/19355
+        b.options.ignore_dce_annotations = true;
         b.resolver.opts.minify_identifiers = ctx.bundler_options.minify_identifiers;
         b.resolver.opts.minify_whitespace = ctx.bundler_options.minify_whitespace;
 
@@ -222,7 +225,10 @@ pub const Run = struct {
 
         b.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
         b.options.minify_whitespace = ctx.bundler_options.minify_whitespace;
-        b.options.ignore_dce_annotations = ctx.bundler_options.ignore_dce_annotations;
+        // @__PURE__ annotations are hints for bundlers/tree-shakers and should
+        // not cause code removal during runtime execution.
+        // See: https://github.com/oven-sh/bun/issues/19355
+        b.options.ignore_dce_annotations = true;
         b.resolver.opts.minify_identifiers = ctx.bundler_options.minify_identifiers;
         b.resolver.opts.minify_whitespace = ctx.bundler_options.minify_whitespace;
 

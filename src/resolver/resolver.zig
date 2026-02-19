@@ -4244,6 +4244,118 @@ pub const Resolver = struct {
                         // todo deinit these parent configs somehow?
                     }
                     info.tsconfig_json = merged_config;
+
+                    // Handle "references" - load each referenced tsconfig and merge
+                    // their paths into this config. This supports the common pattern
+                    // where a root tsconfig.json uses "references" to delegate to
+                    // sub-configs (e.g. tsconfig.app.json, tsconfig.node.json).
+                    if (merged_config.references.len > 0) {
+                        const ts_dir_name = Dirname.dirname(merged_config.abs_path);
+                        for (merged_config.references) |ref_path| {
+                            // Per the TypeScript spec, if "path" points to a directory,
+                            // look for tsconfig.json inside it. If it points to a file,
+                            // use it directly.
+                            const abs_ref_path = brk2: {
+                                if (strings.endsWithComptime(ref_path, ".json")) {
+                                    break :brk2 ResolvePath.joinAbsStringBuf(
+                                        ts_dir_name,
+                                        bufs(.tsconfig_path_abs),
+                                        &[_]string{ ts_dir_name, ref_path },
+                                        .auto,
+                                    );
+                                } else {
+                                    break :brk2 ResolvePath.joinAbsStringBuf(
+                                        ts_dir_name,
+                                        bufs(.tsconfig_path_abs),
+                                        &[_]string{ ts_dir_name, ref_path, "tsconfig.json" },
+                                        .auto,
+                                    );
+                                }
+                            };
+
+                            const ref_config_maybe = r.parseTSConfig(abs_ref_path, bun.invalid_fd) catch |err| brk2: {
+                                r.log.addDebugFmt(null, logger.Loc.Empty, r.allocator, "{s} loading tsconfig.json reference {f}", .{
+                                    @errorName(err),
+                                    bun.fmt.QuotedFormatter{
+                                        .text = abs_ref_path,
+                                    },
+                                }) catch {};
+                                break :brk2 null;
+                            };
+                            if (ref_config_maybe) |ref_config| {
+                                // Also resolve extends chains for referenced configs
+                                var ref_parent_configs = try bun.BoundedArray(*TSConfigJSON, 64).init(0);
+                                try ref_parent_configs.append(ref_config);
+                                var ref_current = ref_config;
+                                while (ref_current.extends.len > 0) {
+                                    const ref_ts_dir = Dirname.dirname(ref_current.abs_path);
+                                    const ref_extends_abs = ResolvePath.joinAbsStringBuf(ref_ts_dir, bufs(.tsconfig_path_abs), &[_]string{ ref_ts_dir, ref_current.extends }, .auto);
+                                    const ref_parent_maybe = r.parseTSConfig(ref_extends_abs, bun.invalid_fd) catch break;
+                                    if (ref_parent_maybe) |ref_parent| {
+                                        try ref_parent_configs.append(ref_parent);
+                                        ref_current = ref_parent;
+                                    } else {
+                                        break;
+                                    }
+                                }
+                                // Merge the referenced config's extends chain
+                                var ref_merged = ref_parent_configs.pop().?;
+                                while (ref_parent_configs.pop()) |ref_parent| {
+                                    if (ref_parent.base_url.len > 0) {
+                                        ref_merged.base_url = ref_parent.base_url;
+                                        ref_merged.base_url_for_paths = ref_parent.base_url_for_paths;
+                                    }
+                                    var ref_iter = ref_parent.paths.iterator();
+                                    while (ref_iter.next()) |c| {
+                                        ref_merged.paths.put(c.key_ptr.*, c.value_ptr.*) catch unreachable;
+                                    }
+                                }
+
+                                // Merge referenced config's paths into the root config.
+                                // Path values need to be made absolute using the referenced
+                                // config's base_url_for_paths, since the root config may
+                                // have a different (or no) base URL.
+                                const ref_base = if (ref_merged.hasBaseURL()) ref_merged.base_url else ref_merged.base_url_for_paths;
+                                var ref_iter = ref_merged.paths.iterator();
+                                while (ref_iter.next()) |c| {
+                                    const original_values = c.value_ptr.*;
+                                    if (ref_base.len > 0 and (merged_config.base_url_for_paths.len == 0 or
+                                        !strings.eql(ref_base, merged_config.base_url_for_paths)))
+                                    {
+                                        // Resolve each path value to absolute so it works
+                                        // regardless of the root config's baseUrl
+                                        var abs_values = bun.default_allocator.alloc(string, original_values.len) catch unreachable;
+                                        for (original_values, 0..) |orig_path, i| {
+                                            if (!std.fs.path.isAbsolute(orig_path)) {
+                                                const join_parts = [_]string{ ref_base, orig_path };
+                                                abs_values[i] = r.fs.dirname_store.append(
+                                                    string,
+                                                    r.fs.absBuf(&join_parts, bufs(.tsconfig_base_url)),
+                                                ) catch unreachable;
+                                            } else {
+                                                abs_values[i] = orig_path;
+                                            }
+                                        }
+                                        merged_config.paths.put(c.key_ptr.*, abs_values) catch unreachable;
+                                    } else {
+                                        merged_config.paths.put(c.key_ptr.*, original_values) catch unreachable;
+                                    }
+                                }
+
+                                // If the root config has no base_url_for_paths but the referenced
+                                // config has paths, we need to ensure base_url_for_paths is set
+                                if (merged_config.base_url_for_paths.len == 0 and ref_merged.paths.count() > 0) {
+                                    merged_config.base_url_for_paths = ref_merged.base_url_for_paths;
+                                }
+
+                                // Merge JSX settings from referenced configs
+                                merged_config.jsx = ref_merged.mergeJSX(merged_config.jsx);
+                                merged_config.jsx_flags.setUnion(ref_merged.jsx_flags);
+
+                                merged_config.emit_decorator_metadata = merged_config.emit_decorator_metadata or ref_merged.emit_decorator_metadata;
+                            }
+                        }
+                    }
                 }
                 info.enclosing_tsconfig_json = info.tsconfig_json;
             }

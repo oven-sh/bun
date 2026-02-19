@@ -91,6 +91,8 @@ pub const Features = struct {
     pub var yaml_parse: usize = 0;
     pub var cpu_profile: usize = 0;
     pub var heap_snapshot: usize = 0;
+    pub var fs_watch: usize = 0;
+    pub var fs_watchfile: usize = 0;
 
     comptime {
         @export(&napi_module_register, .{ .name = "Bun__napi_module_register_count" });

@@ -486,9 +486,11 @@ pub const StatWatcher = struct {
 
     /// After a restat found the file changed, this calls the listener function.
     pub fn swapAndCallListenerOnMainThread(this: *StatWatcher) void {
+        bun.analytics.Features.fs_watchfile += 1;
         defer this.deref(); // Balance the ref from restat().
         const prev_jsvalue = this.last_jsvalue.swap();
         const globalThis = this.globalThis;
+
         const current_jsvalue = statToJSStats(globalThis, &this.getLastStat(), this.bigint) catch return; // TODO: properly propagate exception upwards
         this.last_jsvalue.set(globalThis, current_jsvalue);
 

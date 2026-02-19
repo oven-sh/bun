@@ -1375,8 +1375,9 @@ fn getOrPutResolvedPackageWithFindResult(
     const should_update = this.to_update and
         // If updating, only update packages in the current workspace
         this.lockfile.isRootDependency(this, dependency_id) and
-        // no need to do a look up if update requests are empty (`bun update` with no args)
-        (this.update_requests.len == 0 or
+        // Update all packages if both update_requests and updating_packages are empty (`bun update` with no args).
+        // Otherwise, only update packages explicitly listed in updating_packages.
+        ((this.update_requests.len == 0 and this.updating_packages.count() == 0) or
             this.updating_packages.contains(dependency.name.slice(this.lockfile.buffers.string_bytes.items)));
 
     // Was this package already allocated? Let's reuse the existing one.

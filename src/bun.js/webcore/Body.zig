@@ -815,16 +815,10 @@ pub const Value = union(Tag) {
     }
 
     pub fn tryUseAsAnyBlob(this: *Value) ?AnyBlob {
-        if (this.* == .WTFStringImpl) {
-            if (this.WTFStringImpl.canUseAsUTF8()) {
-                return AnyBlob{ .WTFStringImpl = this.WTFStringImpl };
-            }
-        }
-
         const any_blob: AnyBlob = switch (this.*) {
-            .Blob => AnyBlob{ .Blob = this.Blob },
-            .InternalBlob => AnyBlob{ .InternalBlob = this.InternalBlob },
-            // .InlineBlob => AnyBlob{ .InlineBlob = this.InlineBlob },
+            .Blob => .{ .Blob = this.Blob },
+            .InternalBlob => .{ .InternalBlob = this.InternalBlob },
+            .WTFStringImpl => |str| if (str.canUseAsUTF8()) .{ .WTFStringImpl = str } else return null,
             .Locked => this.Locked.toAnyBlobAllowPromise() orelse return null,
             else => return null,
         };

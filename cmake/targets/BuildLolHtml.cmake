@@ -26,7 +26,7 @@ if(RELEASE)
   list(APPEND LOLHTML_BUILD_ARGS --release)
 endif()
 
-# Cross-compilation: tell cargo to target ARM64
+# Explicitly tell cargo to target ARM64 on Windows ARM64
 if(WIN32 AND CMAKE_SYSTEM_PROCESSOR MATCHES "ARM64|aarch64|AARCH64")
   list(APPEND LOLHTML_BUILD_ARGS --target aarch64-pc-windows-msvc)
   set(LOLHTML_LIBRARY ${LOLHTML_BUILD_PATH}/aarch64-pc-windows-msvc/${LOLHTML_BUILD_TYPE}/${CMAKE_STATIC_LIBRARY_PREFIX}lolhtml${CMAKE_STATIC_LIBRARY_SUFFIX})
@@ -57,11 +57,11 @@ if(WIN32)
   if(MSVC_VERSIONS)
     list(GET MSVC_VERSIONS -1 MSVC_LATEST)  # Get the latest version
     if(CMAKE_SYSTEM_PROCESSOR MATCHES "ARM64|aarch64")
-      # Use Hostx64/arm64 for cross-compilation from x64, fall back to native
-      if(EXISTS "${MSVC_LATEST}/bin/Hostx64/arm64/link.exe")
-        set(MSVC_LINK_PATH "${MSVC_LATEST}/bin/Hostx64/arm64/link.exe")
-      else()
+      # Prefer native HostARM64, fall back to Hostx64/arm64
+      if(EXISTS "${MSVC_LATEST}/bin/HostARM64/arm64/link.exe")
         set(MSVC_LINK_PATH "${MSVC_LATEST}/bin/HostARM64/arm64/link.exe")
+      else()
+        set(MSVC_LINK_PATH "${MSVC_LATEST}/bin/Hostx64/arm64/link.exe")
       endif()
       set(CARGO_LINKER_VAR "CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_LINKER")
       set(MSVC_LIB_ARCH "arm64")

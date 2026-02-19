@@ -260,8 +260,9 @@ pub fn VisitExpr(
                             return p.newExpr(E.Call{
                                 .target = if (runtime == .classic) target else p.jsxImport(.createElement, expr.loc),
                                 .args = args,
-                                // Enable tree shaking
-                                .can_be_unwrapped_if_unused = if (!p.options.ignore_dce_annotations and !p.options.jsx.side_effects) .if_unused else .never,
+                                // Enable tree shaking (only when bundling with tree_shaking enabled,
+                                // not during standalone transpilation where users expect faithful output)
+                                .can_be_unwrapped_if_unused = if (p.options.tree_shaking and !p.options.ignore_dce_annotations and !p.options.jsx.side_effects) .if_unused else .never,
                                 .close_paren_loc = e_.close_tag_loc,
                             }, expr.loc);
                         }
@@ -365,8 +366,9 @@ pub fn VisitExpr(
                             return p.newExpr(E.Call{
                                 .target = p.jsxImportAutomatic(expr.loc, is_static_jsx),
                                 .args = ExprNodeList.fromOwnedSlice(args),
-                                // Enable tree shaking
-                                .can_be_unwrapped_if_unused = if (!p.options.ignore_dce_annotations and !p.options.jsx.side_effects) .if_unused else .never,
+                                // Enable tree shaking (only when bundling with tree_shaking enabled,
+                                // not during standalone transpilation where users expect faithful output)
+                                .can_be_unwrapped_if_unused = if (p.options.tree_shaking and !p.options.ignore_dce_annotations and !p.options.jsx.side_effects) .if_unused else .never,
                                 .was_jsx_element = true,
                                 .close_paren_loc = e_.close_tag_loc,
                             }, expr.loc);

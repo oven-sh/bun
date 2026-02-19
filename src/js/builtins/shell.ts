@@ -299,9 +299,35 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
     }
   }
 
+  // Template literal raw strings convert non-ASCII characters to \uXXXX or \u{XXXX}
+  // escape sequences. We need to convert these back to actual Unicode characters for
+  // the shell to handle them correctly. We must use raw strings (not cooked) so that
+  // backslash sequences like \n are preserved for shell interpretation.
+  // The lookbehind ensures we only unescape \uXXXX when preceded by an even number
+  // of backslashes (including zero), so \\uXXXX (literal backslash + uXXXX) is preserved.
+  const unicodeEscapeRegex = /(?<=(?:^|[^\\])(?:\\\\)*)\\u(?:\{([0-9a-fA-F]+)\}|([0-9a-fA-F]{4}))/g;
+  function unescapeUnicodeRaw(raw: readonly string[]): readonly string[] {
+    var needsResult = false;
+    const result = new Array(raw.length);
+    for (var i = 0; i < raw.length; i++) {
+      const s = raw[i];
+      // Fast path: if no backslash, no escapes to process
+      if (s.indexOf("\\") === -1) {
+        result[i] = s;
+        continue;
+      }
+      const replaced = s.replace(unicodeEscapeRegex, function (_match, bracedHex, quadHex) {
+        return String.fromCodePoint(parseInt(bracedHex || quadHex, 16));
+      });
+      if (replaced !== s) needsResult = true;
+      result[i] = replaced;
+    }
+    return needsResult ? result : raw;
+  }
+
   var BunShell = function BunShell(first, ...rest) {
     if (first?.raw === undefined) throw new Error("Please use '$' as a tagged template function: $`cmd arg1 arg2`");
-    const parsed_shell_script = createParsedShellScript(first.raw, rest);
+    const parsed_shell_script = createParsedShellScript(unescapeUnicodeRaw(first.raw), rest);
 
     const cwd = BunShell[cwdSymbol];
     const env = BunShell[envSymbol];
@@ -321,7 +347,7 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
 
     var Shell = function Shell(first, ...rest) {
       if (first?.raw === undefined) throw new Error("Please use '$' as a tagged template function: $`cmd arg1 arg2`");
-      const parsed_shell_script = createParsedShellScript(first.raw, rest);
+      const parsed_shell_script = createParsedShellScript(unescapeUnicodeRaw(first.raw), rest);
 
       const cwd = Shell[cwdSymbol];
       const env = Shell[envSymbol];

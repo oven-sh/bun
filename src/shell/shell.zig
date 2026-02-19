@@ -3251,11 +3251,22 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                 self.chars.current = .{ .char = cur_ascii_char };
                 return;
             }
+            // For Unicode, we need to properly decode the codepoint at new_idx
+            // rather than using the ASCII char from the substitution digits.
+            // Set cursor to just before new_idx so that next() advances to new_idx.
             self.chars.src.cursor = CodepointIterator.Cursor{
                 .i = @intCast(new_idx),
-                .c = cur_ascii_char,
-                .width = 1,
+                .c = 0,
+                .width = 0,
             };
+            // next() computes pos = cursor.i + cursor.width = new_idx + 0 = new_idx,
+            // then reads the codepoint at new_idx and updates cursor.
+            if (!self.chars.src.iter.next(&self.chars.src.cursor)) {
+                // At end of input
+                self.chars.src.cursor.i = @intCast(self.chars.src.iter.bytes.len + 1);
+                self.chars.src.cursor.width = 1;
+                self.chars.src.cursor.c = CodepointIterator.ZeroValue;
+            }
             self.chars.src.next_cursor = self.chars.src.cursor;
             SrcUnicode.nextCursor(&self.chars.src.iter, &self.chars.src.next_cursor);
             if (prev_ascii_char) |pc| self.chars.prev = .{ .char = pc };
@@ -3602,13 +3613,13 @@ pub fn ShellCharIter(comptime encoding: StringEncoding) type {
                 return bytes[self.src.i..];
             }
 
-            if (self.src.iter.i >= bytes.len) return "";
-            return bytes[self.src.iter.i..];
+            if (self.src.cursor.i >= bytes.len) return "";
+            return bytes[self.src.cursor.i..];
         }
 
         pub fn cursorPos(self: *@This()) usize {
             if (comptime encoding == .ascii) return self.src.i;
-            return self.src.iter.i;
+            return self.src.cursor.i;
         }
 
         pub fn eat(self: *@This()) ?InputChar {
@@ -4104,12 +4115,6 @@ pub const ShellSrcBuilder = struct {
     }
 
     pub fn appendLatin1Impl(this: *ShellSrcBuilder, latin1: []const u8) !void {
-        const non_ascii_idx = bun.strings.firstNonASCII(latin1) orelse 0;
-
-        if (non_ascii_idx > 0) {
-            try this.appendUTF8Impl(latin1[0..non_ascii_idx]);
-        }
-
         this.outbuf.* = try bun.strings.allocateLatin1IntoUTF8WithList(this.outbuf.*, this.outbuf.items.len, latin1);
     }
 

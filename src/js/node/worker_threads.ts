@@ -1,6 +1,5 @@
 // import type { Readable, Writable } from "node:stream";
 // import type { WorkerOptions } from "node:worker_threads";
-declare const self: typeof globalThis;
 type WebWorker = InstanceType<typeof globalThis.Worker>;
 
 const EventEmitter = require("node:events");
@@ -25,11 +24,13 @@ const {
   1: _threadId,
   2: _receiveMessageOnPort,
   3: environmentData,
+  4: _parentPort,
 } = $cpp("Worker.cpp", "createNodeWorkerThreadsBinding") as [
   unknown,
   number,
   (port: unknown) => unknown,
   Map<unknown, unknown>,
+  MessagePort | null,
 ];
 
 type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
@@ -127,81 +128,15 @@ function receiveMessageOnPort(port: MessagePort) {
   };
 }
 
-// TODO: parent port emulation is not complete
-function fakeParentPort() {
-  const fake = Object.create(MessagePort.prototype);
-  Object.defineProperty(fake, "onmessage", {
-    get() {
-      return self.onmessage;
-    },
-    set(value) {
-      self.onmessage = value;
-    },
-  });
+// For Node workers, parentPort is a real MessagePort (separate from self.onmessage).
+// Messages sent via worker.postMessage() only trigger parentPort listeners,
+// not self.onmessage (which is Web Worker behavior).
+let parentPort: MessagePort | null = isMainThread ? null : _parentPort;
 
-  Object.defineProperty(fake, "onmessageerror", {
-    get() {
-      return self.onmessageerror;
-    },
-    set(value) {
-      self.onmessageerror = value;
-    },
-  });
-
-  const postMessage = $newCppFunction("ZigGlobalObject.cpp", "jsFunctionPostMessage", 1);
-  Object.defineProperty(fake, "postMessage", {
-    value(...args: [any, any]) {
-      return postMessage.$apply(null, args);
-    },
-  });
-
-  Object.defineProperty(fake, "close", {
-    value() {},
-  });
-
-  Object.defineProperty(fake, "start", {
-    value() {},
-  });
-
-  Object.defineProperty(fake, "unref", {
-    value() {},
-  });
-
-  Object.defineProperty(fake, "ref", {
-    value() {},
-  });
-
-  Object.defineProperty(fake, "hasRef", {
-    value() {
-      return false;
-    },
-  });
-
-  Object.defineProperty(fake, "setEncoding", {
-    value() {},
-  });
-
-  Object.defineProperty(fake, "addEventListener", {
-    value: self.addEventListener.bind(self),
-  });
-
-  Object.defineProperty(fake, "removeEventListener", {
-    value: self.removeEventListener.bind(self),
-  });
-
-  Object.defineProperty(fake, "removeListener", {
-    value: self.removeEventListener.bind(self),
-    enumerable: false,
-  });
-
-  Object.defineProperty(fake, "addListener", {
-    value: self.addEventListener.bind(self),
-    enumerable: false,
-  });
-
-  return fake;
+// Add setEncoding which is a Node.js-specific no-op for stream compatibility.
+if (parentPort && !("setEncoding" in parentPort)) {
+  Object.defineProperty(parentPort, "setEncoding", { value() {}, enumerable: false });
 }
-let parentPort: MessagePort | null = isMainThread ? null : fakeParentPort();
 
 function getEnvironmentData(key: unknown): unknown {
   return environmentData.get(key);

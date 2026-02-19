@@ -60,6 +60,8 @@
 #include <JavaScriptCore/JSModuleLoader.h>
 #include <JavaScriptCore/DeferredWorkTimer.h>
 #include "MessageEvent.h"
+#include "MessageChannel.h"
+#include "AddEventListenerOptions.h"
 #include "BunWorkerGlobalScope.h"
 #include "CloseEvent.h"
 #include "JSMessagePort.h"
@@ -68,6 +70,56 @@
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Worker);
+
+// Event listener that forwards messages from a MessagePort to a Worker object
+// https://github.com/nodejs/node/blob/e1fc3dc2fcf19d9278ab59c353aa1fa59290378b/lib/internal/worker.js#L331-L335
+class WorkerMessageForwarder final : public EventListener {
+public:
+    static Ref<WorkerMessageForwarder> create(Worker& worker)
+    {
+        return adoptRef(*new WorkerMessageForwarder(worker));
+    }
+
+    bool operator==(const EventListener& other) const override
+    {
+        return this == &other;
+    }
+
+    void handleEvent(ScriptExecutionContext& context, Event& event) override
+    {
+        if (!m_worker)
+            return;
+
+        if (event.type() != eventNames().messageEvent)
+            return;
+
+        auto& messageEvent = static_cast<MessageEvent&>(event);
+
+        // Get the data value from the event's cache
+        JSC::JSValue dataValue = messageEvent.cachedData().getValue(JSC::jsNull());
+
+        // Create and dispatch the message event to the Worker object synchronously.
+        // This is safe because Worker is a different EventTarget from the MessagePort,
+        // so we won't trigger "event is already being dispatched" assertions.
+        // Dispatching synchronously ensures message events are processed before exit events.
+        MessageEvent::Init init;
+        init.data = dataValue;
+        init.ports = messageEvent.ports();
+        auto newEvent = MessageEvent::create(eventNames().messageEvent, WTF::move(init), EventIsTrusted::Yes);
+        m_worker->dispatchEvent(newEvent);
+    }
+
+private:
+    explicit WorkerMessageForwarder(Worker& worker)
+        : EventListener(NativeEventListenerType)
+        , m_worker(&worker)
+    {
+    }
+
+    // Raw pointer is safe because the Worker owns the MessagePort which owns this listener.
+    // When the Worker is destroyed, the MessagePort is destroyed first.
+    Worker* m_worker;
+};
 
 extern "C" void WebWorker__notifyNeedTermination(
     void* worker);
@@ -151,6 +203,25 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
 {
     auto worker = adoptRef(*new Worker(context, WTF::move(options)));
 
+    // For Node workers, create a MessagePort pair for parent-worker communication.
+    // The parent keeps port1 (m_parentPort) and the child gets port2 (via options).
+    if (worker->m_options.kind == WorkerOptions::Kind::Node) {
+        auto channel = MessageChannel::create(context);
+        worker->m_parentPort = &channel->port1();
+        worker->m_parentPort->entangle();
+
+        // Set up a listener on the parent port that forwards messages to the Worker object
+        // This allows worker.on('message', ...) to receive messages sent via parentPort.postMessage()
+        auto forwarder = WorkerMessageForwarder::create(worker.get());
+        static_cast<EventTarget*>(worker->m_parentPort.get())->addEventListener(eventNames().messageEvent, WTF::move(forwarder), {});
+        worker->m_parentPort->start();
+
+        // Disentangle the child port from the parent context so it can be transferred to the worker
+        MessagePort& childPort = channel->port2();
+        auto disentangledPort = childPort.disentangle();
+        worker->m_options.parentPortTransferred = WTF::move(disentangledPort);
+    }
+
     WTF::String url = urlInit;
     if (url.startsWith("file://"_s)) {
         WTF::URL urlObject = WTF::URL(url);
@@ -224,6 +295,11 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
 
 Worker::~Worker()
 {
+    // Close the parent port before member destruction begins.
+    // This removes the WorkerMessageForwarder listener while Worker is still fully valid.
+    if (m_parentPort)
+        m_parentPort->close();
+
     {
         Locker locker { allWorkersLock };
         allWorkers().remove(m_clientIdentifier);
@@ -236,6 +312,14 @@ ExceptionOr<void> Worker::postMessage(JSC::JSGlobalObject& state, JSC::JSValue m
     if (m_terminationFlags & TerminatedFlag)
         return Exception { InvalidStateError, "Worker has been terminated"_s };
 
+    // For Node workers, post through the MessagePort (m_parentPort) which delivers
+    // to the worker's parentPort. This avoids triggering self.onmessage which is
+    // Web Worker behavior, not Node worker_threads behavior.
+    if (m_options.kind == WorkerOptions::Kind::Node && m_parentPort) {
+        return m_parentPort->postMessage(state, messageValue, WTF::move(options));
+    }
+
+    // For Web Workers, dispatch to globalEventScope (which triggers self.onmessage)
     Vector<RefPtr<MessagePort>> ports;
     auto serialized = SerializedScriptValue::create(state, messageValue, WTF::move(options.transfer), ports, SerializationForStorage::No, SerializationContext::WorkerPostMessage);
     if (serialized.hasException())
@@ -562,6 +646,7 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     JSValue workerData = jsNull();
     JSValue threadId = jsNumber(0);
     JSMap* environmentData = nullptr;
+    JSValue parentPortValue = jsNull();
 
     if (auto* worker = WebWorker__getParentWorker(globalObject->bunVM())) {
         auto& options = worker->options();
@@ -583,6 +668,16 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
 
         // Main thread starts at 1
         threadId = jsNumber(worker->clientIdentifier() - 1);
+
+        // Entangle the parentPort MessagePort for Node workers (transferred from parent)
+        if (options.parentPortTransferred.has_value()) {
+            auto* context = globalObject->scriptExecutionContext();
+            if (context) {
+                auto parentPort = MessagePort::entangle(*context, WTF::move(*options.parentPortTransferred));
+                parentPort->start();
+                parentPortValue = toJS(globalObject, globalObject, parentPort.get());
+            }
+        }
     }
     if (!environmentData) {
         environmentData = JSMap::create(vm, globalObject->mapStructure());
@@ -591,12 +686,13 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     ASSERT(environmentData);
     globalObject->setNodeWorkerEnvironmentData(environmentData);
 
-    JSObject* array = constructEmptyArray(globalObject, nullptr, 4);
+    JSObject* array = constructEmptyArray(globalObject, nullptr, 5);
     RETURN_IF_EXCEPTION(scope, {});
     array->putDirectIndex(globalObject, 0, workerData);
     array->putDirectIndex(globalObject, 1, threadId);
     array->putDirectIndex(globalObject, 2, JSFunction::create(vm, globalObject, 1, "receiveMessageOnPort"_s, jsReceiveMessageOnPort, ImplementationVisibility::Public, NoIntrinsic));
     array->putDirectIndex(globalObject, 3, environmentData);
+    array->putDirectIndex(globalObject, 4, parentPortValue);
     return array;
 }
 

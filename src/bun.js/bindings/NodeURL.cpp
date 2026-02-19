@@ -152,16 +152,18 @@ JSC::JSValue createNodeURLBinding(Zig::GlobalObject* globalObject)
     ASSERT(domainToAsciiFunction);
     auto domainToUnicodeFunction = JSC::JSFunction::create(vm, globalObject, 1, "domainToUnicode"_s, jsDomainToUnicode, ImplementationVisibility::Public);
     ASSERT(domainToUnicodeFunction);
-    binding->putByIndexInline(
+    binding->putDirectIndex(
         globalObject,
         (unsigned)0,
         domainToAsciiFunction,
-        false);
-    binding->putByIndexInline(
+        0,
+        JSC::PutDirectIndexMode::PutDirectIndexLikePutDirect);
+    binding->putDirectIndex(
         globalObject,
         (unsigned)1,
         domainToUnicodeFunction,
-        false);
+        0,
+        JSC::PutDirectIndexMode::PutDirectIndexLikePutDirect);
     return binding;
 }
 

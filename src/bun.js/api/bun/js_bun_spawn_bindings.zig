@@ -571,10 +571,12 @@ pub fn spawnMaybeSync(
         .extra_fds = extra_fds.items,
         .argv0 = argv0,
         .can_block_entire_thread_to_reduce_cpu_usage_in_fast_path = can_block_entire_thread_to_reduce_cpu_usage_in_fast_path,
-        // Only pass pty_slave_fd for newly created terminals (for setsid+TIOCSCTTY setup).
-        // For existing terminals, the session is already set up - child just uses the fd as stdio.
+        // Pass pty_slave_fd for setsid+TIOCSCTTY setup so child becomes session leader
+        // with the PTY as its controlling terminal. This enables proper job control
+        // and signal handling (Ctrl+C -> SIGINT, Ctrl+Z -> SIGTSTP, etc.).
         .pty_slave_fd = if (Environment.isPosix) blk: {
             if (terminal_info) |ti| break :blk ti.terminal.getSlaveFd().native();
+            if (existing_terminal) |t| break :blk t.getSlaveFd().native();
             break :blk -1;
         } else {},
 

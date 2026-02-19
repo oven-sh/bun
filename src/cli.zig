@@ -1391,6 +1391,7 @@ pub const Command = struct {
         pub fn readGlobalConfig(this: Tag) bool {
             return switch (this) {
                 .BunxCommand,
+                .CreateCommand,
                 .PackageManagerCommand,
                 .InstallCommand,
                 .AddCommand,
@@ -1409,6 +1410,7 @@ pub const Command = struct {
         pub fn isNPMRelated(this: Tag) bool {
             return switch (this) {
                 .BunxCommand,
+                .CreateCommand,
                 .LinkCommand,
                 .UnlinkCommand,
                 .PackageManagerCommand,
@@ -1444,6 +1446,7 @@ pub const Command = struct {
             .UpdateInteractiveCommand = true,
             .PublishCommand = true,
             .AuditCommand = true,
+            .CreateCommand = true,
         });
 
         pub const always_loads_config: std.EnumArray(Tag, bool) = std.EnumArray(Tag, bool).initDefault(false, .{
@@ -1461,6 +1464,7 @@ pub const Command = struct {
             .UpdateInteractiveCommand = true,
             .PublishCommand = true,
             .AuditCommand = true,
+            .CreateCommand = true,
         });
 
         pub const uses_global_options: std.EnumArray(Tag, bool) = std.EnumArray(Tag, bool).initDefault(true, .{
@@ -1612,6 +1616,9 @@ pub const Command = struct {
 
         // Create command wraps bunx
         const ctx = try Command.init(allocator, log, .CreateCommand);
+
+        // Load bunfig configuration to respect custom registry settings
+        try Arguments.loadConfig(allocator, null, ctx, .CreateCommand);
 
         var args = try std.process.argsAlloc(allocator);
 

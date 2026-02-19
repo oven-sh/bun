@@ -65,6 +65,24 @@ for (let backend of ["api", "cli"] as const) {
       },
     });
 
+    // Test disable mode - NODE_ENV is also not inlined (regression #22820)
+    itBundled("env/disable-node-env", {
+      env: {
+        NODE_ENV: "production",
+      },
+      backend: backend,
+      dotenv: "disable",
+      files: {
+        "/a.js": `
+        console.log(process.env.NODE_ENV);
+        console.log(process.env.NODE_ENV !== "production");
+      `,
+      },
+      run: {
+        stdout: "undefined\ntrue\n",
+      },
+    });
+
     // TODO: make this work as expected with process.env isntead of relying on the initial env vars.
     // Test pattern matching - only vars with prefix are inlined
     if (backend === "cli")

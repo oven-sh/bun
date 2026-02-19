@@ -944,6 +944,7 @@ pub const Jest = struct {
     xit: Ref = Ref.None,
     xtest: Ref = Ref.None,
     xdescribe: Ref = Ref.None,
+    mock: Ref = Ref.None,
 };
 
 // Doing this seems to yield a 1% performance improvement parsing larger files

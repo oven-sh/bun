@@ -700,6 +700,44 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
     return JSValue::encode(jsUndefined());
 }
 
+// Register a pending mock module with placeholder exports.
+// Called from the module loader after transpilation detects mock.module() calls
+// that target modules which are also statically imported.
+// This ensures the virtual module is registered BEFORE the module graph is built,
+// so JSC's linker finds the mock instead of the real module.
+extern "C" void Bun__registerPendingMockModule(
+    Zig::GlobalObject* globalObject,
+    const ZigString* resolvedSpecifier,
+    const ZigString* exportNames,
+    size_t exportNamesCount)
+{
+    auto& vm = globalObject->vm();
+
+    // Create a plain object with all the expected export names set to undefined.
+    // This object will be used as the module's exports when the virtual module is fetched.
+    JSC::JSObject* placeholderExports = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), exportNamesCount > 0 ? exportNamesCount : 1);
+
+    for (size_t i = 0; i < exportNamesCount; i++) {
+        auto name = Zig::toStringCopy(exportNames[i]);
+        placeholderExports->putDirect(vm, Identifier::fromString(vm, name), jsUndefined());
+    }
+
+    // If there are no specific exports, add a default export
+    if (exportNamesCount == 0) {
+        placeholderExports->putDirect(vm, vm.propertyNames->defaultKeyword, jsUndefined());
+    }
+
+    // Create a pre-executed JSModuleMock that returns the placeholder object.
+    // This avoids needing the mockModuleStructure - we construct the structure inline.
+    auto* mockStructure = JSModuleMock::createStructure(vm, globalObject, globalObject->objectPrototype());
+    JSModuleMock* mock = JSModuleMock::create(vm, mockStructure, placeholderExports);
+    // Mark as already executed so executeOnce() returns the cached result directly
+    mock->hasCalledModuleMock = true;
+
+    auto specifierString = Zig::toStringCopy(*resolvedSpecifier);
+    globalObject->onLoadPlugins.addModuleMock(vm, specifierString, mock);
+}
+
 template<typename Visitor>
 void JSModuleMock::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {

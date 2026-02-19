@@ -574,6 +574,11 @@ pub const RuntimeTranspilerStore = struct {
                 dumpSource(this.vm, specifier, &printer);
             }
 
+            // Register placeholder virtual modules for mock.module() targets.
+            if (parse_result.ast.mock_module_specifiers.count() > 0) {
+                @import("./ModuleLoader.zig").registerPendingMockModules(vm, &parse_result, path);
+            }
+
             const source_code = brk: {
                 const written = printer.ctx.getWritten();
 

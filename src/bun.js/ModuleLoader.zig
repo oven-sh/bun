@@ -536,6 +536,13 @@ pub fn transpileSourceCode(
                 dumpSource(jsc_vm, specifier, &printer);
             }
 
+            // Register placeholder virtual modules for mock.module() targets.
+            // This must happen after transpilation (we have the AST) but before
+            // JSC builds the module graph (which happens after we return the source).
+            if (parse_result.ast.mock_module_specifiers.count() > 0) {
+                registerPendingMockModules(jsc_vm, &parse_result, path);
+            }
+
             defer {
                 if (is_main) {
                     jsc_vm.has_loaded = true;
@@ -819,6 +826,93 @@ pub fn transpileSourceCode(
         },
     }
 }
+
+/// Register placeholder virtual modules for mock.module() targets detected
+/// during parsing. For each mock specifier that also has static imports in
+/// the same file, we create a placeholder virtual module with the expected
+/// export names. This prevents JSC's linker from erroring when the real
+/// module doesn't have those exports.
+pub fn registerPendingMockModules(
+    jsc_vm: *VirtualMachine,
+    parse_result: *const ParseResult,
+    source_path: bun.fs.Path,
+) void {
+    const globalObject = jsc_vm.global;
+    const mock_specifiers = &parse_result.ast.mock_module_specifiers;
+    const import_records = parse_result.ast.import_records.slice();
+
+    for (mock_specifiers.keys()) |mock_spec| {
+        // Resolve the mock specifier to an absolute path, same as mock.module() does.
+        var resolved_spec_str: []const u8 = mock_spec;
+
+        // Try to resolve using the same resolver the module loader uses
+        const source_dir = source_path.name.dir;
+        var resolve_result = jsc_vm.transpiler.resolver.resolveAndAutoInstall(
+            source_dir,
+            mock_spec,
+            .stmt,
+            .read_only,
+        );
+        switch (resolve_result) {
+            .success => |*r| {
+                if (r.path()) |p| {
+                    resolved_spec_str = p.text;
+                }
+            },
+            else => {},
+        }
+
+        var resolved_specifier = ZigString.init(resolved_spec_str);
+
+        // Collect export names from static imports of this mock specifier.
+        var export_names_buf: [64]ZigString = undefined;
+        var export_count: usize = 0;
+
+        for (import_records) |record| {
+            if (!strings.eql(record.path.text, mock_spec)) continue;
+
+            const named_imports = &parse_result.ast.named_imports;
+            var iter = named_imports.iterator();
+            while (iter.next()) |entry| {
+                const named_import = entry.value_ptr;
+                if (named_import.import_record_index < import_records.len) {
+                    const import_rec = &import_records[named_import.import_record_index];
+                    if (strings.eql(import_rec.path.text, mock_spec)) {
+                        if (named_import.alias) |alias| {
+                            if (export_count < export_names_buf.len) {
+                                export_names_buf[export_count] = ZigString.init(alias);
+                                export_count += 1;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (record.flags.contains_default_alias) {
+                if (export_count < export_names_buf.len) {
+                    export_names_buf[export_count] = ZigString.init("default");
+                    export_count += 1;
+                }
+            }
+
+            break;
+        }
+
+        Bun__registerPendingMockModule(
+            globalObject,
+            &resolved_specifier,
+            &export_names_buf,
+            export_count,
+        );
+    }
+}
+
+extern fn Bun__registerPendingMockModule(
+    globalObject: *JSGlobalObject,
+    resolvedSpecifier: *const ZigString,
+    exportNames: [*]const ZigString,
+    exportNamesCount: usize,
+) void;
 
 pub export fn Bun__resolveAndFetchBuiltinModule(
     jsc_vm: *VirtualMachine,

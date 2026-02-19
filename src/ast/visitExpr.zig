@@ -1539,6 +1539,56 @@ pub fn VisitExpr(
                     }
                 };
 
+                // Detect mock.module("specifier", fn) calls in test mode.
+                // When the test file calls mock.module() and also has static imports
+                // from the same specifier, we need to register a placeholder virtual
+                // module before the module graph is built to prevent link errors.
+                if (p.options.features.inject_jest_globals and
+                    p.fn_or_arrow_data_visit.is_outside_fn_or_arrow)
+                detect_mock_module: {
+                    const dot = e_.target.data.as(.e_dot) orelse break :detect_mock_module;
+                    if (!strings.eqlComptime(dot.name, "module")) break :detect_mock_module;
+                    if (e_.args.len < 2) break :detect_mock_module;
+
+                    // Check if the target is `mock.module` where `mock` is from bun:test
+                    const mock_ref: Ref = switch (dot.target.data) {
+                        .e_import_identifier => |id| id.ref,
+                        .e_identifier => |id| id.ref,
+                        else => break :detect_mock_module,
+                    };
+                    const original_name = p.symbols.items[mock_ref.innerIndex()].original_name;
+                    if (!strings.eqlComptime(original_name, "mock")) break :detect_mock_module;
+
+                    // Verify `mock` comes from bun:test (or jest/vitest compat modules).
+                    // We check if mock_ref is a known import item and then verify
+                    // its source module by looking at the import record associated
+                    // with the symbol's namespace ref.
+                    const is_from_test_module = is_test_import: {
+                        if (!p.is_import_item.contains(mock_ref)) break :is_test_import false;
+
+                        // Look through import records to find the one that imported `mock`
+                        for (p.import_records.items) |record| {
+                            if (strings.eqlComptime(record.path.text, "bun:test") or
+                                strings.eqlComptime(record.path.text, "@jest/globals") or
+                                strings.eqlComptime(record.path.text, "vitest"))
+                            {
+                                break :is_test_import true;
+                            }
+                        }
+
+                        break :is_test_import false;
+                    };
+                    if (!is_from_test_module) break :detect_mock_module;
+
+                    // Extract the specifier string from the first argument
+                    const first_arg = e_.args.at(0);
+                    if (first_arg.data.as(.e_string)) |str| {
+                        if (str.isUTF8()) {
+                            p.mock_module_specifiers.put(p.allocator, str.data, {}) catch {};
+                        }
+                    }
+                }
+
                 return expr;
             }
             pub fn e_new(p: *P, expr: Expr, _: ExprIn) Expr {

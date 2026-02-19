@@ -4299,12 +4299,21 @@ pub const Resolver = struct {
                                     }
                                 }
                                 // Merge the referenced config's extends chain
+                                // (same fields as the root extends merge)
                                 var ref_merged = ref_parent_configs.pop().?;
                                 while (ref_parent_configs.pop()) |ref_parent| {
+                                    ref_merged.emit_decorator_metadata = ref_merged.emit_decorator_metadata or ref_parent.emit_decorator_metadata;
                                     if (ref_parent.base_url.len > 0) {
                                         ref_merged.base_url = ref_parent.base_url;
                                         ref_merged.base_url_for_paths = ref_parent.base_url_for_paths;
                                     }
+                                    ref_merged.jsx = ref_parent.mergeJSX(ref_merged.jsx);
+                                    ref_merged.jsx_flags.setUnion(ref_parent.jsx_flags);
+
+                                    if (ref_parent.preserve_imports_not_used_as_values) |value| {
+                                        ref_merged.preserve_imports_not_used_as_values = value;
+                                    }
+
                                     var ref_iter = ref_parent.paths.iterator();
                                     while (ref_iter.next()) |c| {
                                         ref_merged.paths.put(c.key_ptr.*, c.value_ptr.*) catch unreachable;
@@ -4348,11 +4357,16 @@ pub const Resolver = struct {
                                     merged_config.base_url_for_paths = ref_merged.base_url_for_paths;
                                 }
 
-                                // Merge JSX settings from referenced configs
+                                // Merge other settings from referenced configs
                                 merged_config.jsx = ref_merged.mergeJSX(merged_config.jsx);
                                 merged_config.jsx_flags.setUnion(ref_merged.jsx_flags);
-
                                 merged_config.emit_decorator_metadata = merged_config.emit_decorator_metadata or ref_merged.emit_decorator_metadata;
+
+                                if (ref_merged.preserve_imports_not_used_as_values) |value| {
+                                    if (merged_config.preserve_imports_not_used_as_values == null) {
+                                        merged_config.preserve_imports_not_used_as_values = value;
+                                    }
+                                }
                             }
                         }
                     }

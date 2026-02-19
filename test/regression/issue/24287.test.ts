@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
 
+const domain = require("domain");
+
 test("domain.bind() returns the original function's return value", () => {
-  const domain = require("domain");
   const d = domain.create();
 
   const bound = d.bind(() => 42);
@@ -9,7 +10,6 @@ test("domain.bind() returns the original function's return value", () => {
 });
 
 test("domain.bind() returns the original async function's promise", async () => {
-  const domain = require("domain");
   const d = domain.create();
 
   const bound = d.bind(async () => "hello");
@@ -19,7 +19,6 @@ test("domain.bind() returns the original async function's promise", async () => 
 });
 
 test("domain.intercept() returns the original function's return value", () => {
-  const domain = require("domain");
   const d = domain.create();
 
   const intercepted = d.intercept((...args: any[]) => args.join(","));
@@ -27,7 +26,6 @@ test("domain.intercept() returns the original function's return value", () => {
 });
 
 test("domain.intercept() returns the original async function's promise", async () => {
-  const domain = require("domain");
   const d = domain.create();
 
   const intercepted = d.intercept(async () => "world");
@@ -37,7 +35,6 @@ test("domain.intercept() returns the original async function's promise", async (
 });
 
 test("domain.run() returns the function's return value", () => {
-  const domain = require("domain");
   const d = domain.create();
 
   const result = d.run(() => 99);
@@ -45,7 +42,6 @@ test("domain.run() returns the function's return value", () => {
 });
 
 test("domain.run() returns the async function's promise", async () => {
-  const domain = require("domain");
   const d = domain.create();
 
   const result = d.run(async () => "done");

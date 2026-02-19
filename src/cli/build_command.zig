@@ -242,8 +242,9 @@ pub const BuildCommand = struct {
         this_transpiler.resolver.opts = this_transpiler.options;
         this_transpiler.resolver.env_loader = this_transpiler.env;
 
-        // Allow tsconfig.json overriding, but always set it to false if --production is passed.
-        if (ctx.bundler_options.production) {
+        // Allow tsconfig.json overriding, but always set it to false if --production is passed
+        // or NODE_ENV=production is set.
+        if (ctx.bundler_options.production or this_transpiler.options.force_node_env == .production) {
             this_transpiler.options.jsx.development = false;
             this_transpiler.resolver.opts.jsx.development = false;
         }

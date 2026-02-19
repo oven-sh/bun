@@ -1241,7 +1241,7 @@ pub const JSX = struct {
         .{ "classic", RuntimeDevelopmentPair{ .runtime = .classic, .development = null } },
         .{ "automatic", RuntimeDevelopmentPair{ .runtime = .automatic, .development = true } },
         .{ "react", RuntimeDevelopmentPair{ .runtime = .classic, .development = null } },
-        .{ "react-jsx", RuntimeDevelopmentPair{ .runtime = .automatic, .development = true } },
+        .{ "react-jsx", RuntimeDevelopmentPair{ .runtime = .automatic, .development = false } },
         .{ "react-jsxdev", RuntimeDevelopmentPair{ .runtime = .automatic, .development = true } },
     });
 

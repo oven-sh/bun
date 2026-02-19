@@ -2420,6 +2420,22 @@ pub fn printErrorlikeObject(
     }
 
     if (value.isAggregateError(this.global)) {
+        // First, print the AggregateError itself (name, message, stack, cause)
+        this.printAggregateErrorInstance(
+            value,
+            exception,
+            exception_list,
+            formatter,
+            Writer,
+            writer,
+            allow_ansi_color,
+            allow_side_effects,
+        ) catch return;
+
+        // Print the [errors] label
+        writer.writeAll(comptime Output.prettyFmt("\n<cyan>[errors]<r>\n", allow_ansi_color)) catch return;
+
+        // Now iterate through the errors array
         const AggregateErrorIterator = struct {
             writer: Writer,
             current_exception_list: ?*ExceptionList = null,
@@ -2526,6 +2542,91 @@ fn printErrorFromMaybePrivateData(
     };
 
     return false;
+}
+
+/// Prints an AggregateError's name, message, stack trace, and cause.
+/// Does NOT print the `errors` property - that should be handled separately.
+fn printAggregateErrorInstance(
+    this: *VirtualMachine,
+    error_instance: JSValue,
+    exception: ?*Exception,
+    exception_list: ?*ExceptionList,
+    formatter: *ConsoleObject.Formatter,
+    comptime Writer: type,
+    writer: Writer,
+    comptime allow_ansi_color: bool,
+    comptime allow_side_effects: bool,
+) !void {
+    var exception_holder = ZigException.Holder.init();
+    var zig_exception = exception_holder.zigException();
+    defer exception_holder.deinit(this);
+    defer error_instance.ensureStillAlive();
+
+    var source_code_slice: ?ZigString.Slice = null;
+    defer if (source_code_slice) |slice| slice.deinit();
+
+    this.remapZigException(
+        zig_exception,
+        error_instance,
+        exception_list,
+        &exception_holder.need_to_clear_parser_arena_on_deinit,
+        &source_code_slice,
+        formatter.error_display_level != .warn,
+    );
+
+    const prev_had_errors = this.had_errors;
+    this.had_errors = true;
+    defer this.had_errors = prev_had_errors;
+
+    if (allow_side_effects) {
+        if (this.debugger) |*debugger| {
+            debugger.lifecycle_reporter_agent.reportError(zig_exception);
+        }
+    }
+
+    defer if (allow_side_effects and Output.is_github_action)
+        printGithubAnnotation(zig_exception);
+
+    // Print the error name and message
+    try this.printErrorNameAndMessage(
+        zig_exception.name,
+        zig_exception.message,
+        !zig_exception.browser_url.isEmpty(),
+        null,
+        Writer,
+        writer,
+        allow_ansi_color,
+        formatter.error_display_level,
+    );
+
+    // Print the stack trace
+    try printStackTrace(@TypeOf(writer), writer, zig_exception.stack, allow_ansi_color);
+
+    // Handle cause property (it's not enumerable, so we need to check it explicitly)
+    if (error_instance.getOwn(this.global, "cause") catch null) |cause| {
+        if (cause.jsType() == .ErrorInstance) {
+            try writer.writeAll(comptime Output.prettyFmt("\n<cyan>[cause]<r>\n", allow_ansi_color));
+            try this.printErrorInstance(.js, cause, exception_list, formatter, Writer, writer, allow_ansi_color, allow_side_effects);
+        }
+    }
+
+    // Also include any exception info from the wrapper if available
+    if (exception) |ex| {
+        if (exception_list) |list| {
+            var holder = ZigException.Holder.init();
+            var ex_exception: *ZigException = holder.zigException();
+            holder.deinit(this);
+            ex.getStackTrace(this.global, &ex_exception.stack);
+            if (ex_exception.stack.frames_len > 0) {
+                if (allow_ansi_color) {
+                    printStackTrace(Writer, writer, ex_exception.stack, true) catch {};
+                } else {
+                    printStackTrace(Writer, writer, ex_exception.stack, false) catch {};
+                }
+            }
+            ex_exception.addToErrorList(list, this.transpiler.fs.top_level_dir, &this.origin) catch {};
+        }
+    }
 }
 
 pub fn reportUncaughtException(globalObject: *JSGlobalObject, exception: *Exception) JSValue {
@@ -3123,10 +3224,11 @@ fn printErrorInstance(
     }
 
     // This is usually unsafe to do, but we are protecting them each time first
-    var errors_to_append = std.array_list.Managed(JSValue).init(this.allocator);
+    const LabeledError = struct { err: JSValue, label: ?[]const u8 };
+    var errors_to_append = std.array_list.Managed(LabeledError).init(this.allocator);
     defer {
-        for (errors_to_append.items) |err| {
-            err.unprotect();
+        for (errors_to_append.items) |item| {
+            item.err.unprotect();
         }
         errors_to_append.deinit();
     }
@@ -3162,11 +3264,12 @@ fn printErrorInstance(
                 // avoid infinite recursion
                 !prev_had_errors)
             {
-                if (field.eqlComptime("cause")) {
+                const is_cause = field.eqlComptime("cause");
+                if (is_cause) {
                     saw_cause = true;
                 }
                 value.protect();
-                try errors_to_append.append(value);
+                try errors_to_append.append(.{ .err = value, .label = if (is_cause) "cause" else null });
             } else if (kind.isObject() or kind.isArray() or value.isPrimitive() or kind.isStringLike()) {
                 var bun_str = bun.String.empty;
                 defer bun_str.deref();
@@ -3245,7 +3348,7 @@ fn printErrorInstance(
             if (try error_instance.getOwn(this.global, "cause")) |cause| {
                 if (cause.jsType() == .ErrorInstance) {
                     cause.protect();
-                    try errors_to_append.append(cause);
+                    try errors_to_append.append(.{ .err = cause, .label = "cause" });
                 }
             }
         }
@@ -3283,7 +3386,7 @@ fn printErrorInstance(
         );
     }
 
-    for (errors_to_append.items) |err| {
+    for (errors_to_append.items) |item| {
         // Check for circular references to prevent infinite recursion in cause chains
         if (formatter.map_node == null) {
             formatter.map_node = ConsoleObject.Formatter.Visited.Pool.get(default_allocator);
@@ -3291,7 +3394,7 @@ fn printErrorInstance(
             formatter.map = formatter.map_node.?.data;
         }
 
-        const entry = formatter.map.getOrPut(err) catch unreachable;
+        const entry = formatter.map.getOrPut(item.err) catch unreachable;
         if (entry.found_existing) {
             try writer.writeAll("\n");
             try writer.writeAll(comptime Output.prettyFmt("<r><cyan>[Circular]<r>", allow_ansi_color));
@@ -3299,8 +3402,11 @@ fn printErrorInstance(
         }
 
         try writer.writeAll("\n");
-        try this.printErrorInstance(.js, err, exception_list, formatter, Writer, writer, allow_ansi_color, allow_side_effects);
-        _ = formatter.map.remove(err);
+        if (item.label) |label| {
+            try writer.print(comptime Output.prettyFmt("<cyan>[{s}]<r>\n", allow_ansi_color), .{label});
+        }
+        try this.printErrorInstance(.js, item.err, exception_list, formatter, Writer, writer, allow_ansi_color, allow_side_effects);
+        _ = formatter.map.remove(item.err);
     }
 }
 

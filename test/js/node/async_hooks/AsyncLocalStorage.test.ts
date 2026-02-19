@@ -212,10 +212,16 @@ describe("async context passes through", () => {
     expect(s.getStore()).toBe(undefined);
   });
   test("fetch", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response("OK");
+      },
+    });
     const s = new AsyncLocalStorage<string>();
     await s.run("value", async () => {
       expect(s.getStore()).toBe("value");
-      const response = await fetch("https://bun.sh") //
+      const response = await fetch(server.url) //
         .then(r => {
           expect(s.getStore()).toBe("value");
           return true;

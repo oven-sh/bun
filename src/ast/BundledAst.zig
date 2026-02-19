@@ -183,13 +183,14 @@ pub fn addUrlForCss(
     source: *const logger.Source,
     mime_type_: ?[]const u8,
     unique_key: ?[]const u8,
+    force_inline: bool,
 ) void {
     {
         const mime_type = if (mime_type_) |m| m else MimeType.byExtension(bun.strings.trimLeadingChar(std.fs.path.extension(source.path.text), '.')).value;
         const contents = source.contents;
         // TODO: make this configurable
         const COPY_THRESHOLD = 128 * 1024; // 128kb
-        const should_copy = contents.len >= COPY_THRESHOLD and unique_key != null;
+        const should_copy = !force_inline and contents.len >= COPY_THRESHOLD and unique_key != null;
         if (should_copy) return;
         this.url_for_css = url_for_css: {
 

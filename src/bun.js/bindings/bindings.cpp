@@ -3026,22 +3026,20 @@ JSC::EncodedJSValue JSC__JSValue__fromEntries(JSC::JSGlobalObject* globalObject,
         return JSC::JSValue::encode(JSC::constructEmptyObject(globalObject));
     }
 
-    JSC::JSObject* object = nullptr;
-    {
-        JSC::ObjectInitializationScope initializationScope(vm);
-        object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), std::min(static_cast<unsigned int>(initialCapacity), JSFinalObject::maxInlineCapacity));
+    JSC::JSObject* object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), std::min(static_cast<unsigned int>(initialCapacity), JSFinalObject::maxInlineCapacity));
 
-        if (!clone) {
-            for (size_t i = 0; i < initialCapacity; ++i) {
-                object->putDirect(
-                    vm, JSC::PropertyName(JSC::Identifier::fromString(vm, Zig::toString(keys[i]))),
-                    Zig::toJSStringGC(values[i], globalObject), 0);
-            }
-        } else {
-            for (size_t i = 0; i < initialCapacity; ++i) {
-                object->putDirect(vm, JSC::PropertyName(Zig::toIdentifier(keys[i], globalObject)),
-                    Zig::toJSStringGC(values[i], globalObject), 0);
-            }
+    if (!clone) {
+        for (size_t i = 0; i < initialCapacity; ++i) {
+            object->putDirect(
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, Zig::toString(keys[i]))),
+                Zig::toJSStringGC(values[i], globalObject), 0);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+    } else {
+        for (size_t i = 0; i < initialCapacity; ++i) {
+            object->putDirect(vm, JSC::PropertyName(Zig::toIdentifier(keys[i], globalObject)),
+                Zig::toJSStringGC(values[i], globalObject), 0);
+            RETURN_IF_EXCEPTION(scope, {});
         }
     }
 

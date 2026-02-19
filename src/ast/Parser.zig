@@ -533,6 +533,28 @@ pub const Parser = struct {
             var preprocessed_enums: std.ArrayListUnmanaged([]js_ast.Part) = .{};
             var preprocessed_enum_i: usize = 0;
             if (p.scopes_in_order_for_enum.count() > 0) {
+                // Pre-populate const_values for simple const declarations that
+                // appear before enums. This allows const enum members to reference
+                // const variables with constant initializers, matching TypeScript
+                // behavior. Without this, the enum preprocessing (which runs before
+                // the main statement visiting loop) would not see these values.
+                for (stmts) |*stmt| {
+                    if (stmt.data == .s_local) {
+                        const local = stmt.data.s_local;
+                        if (local.kind == .k_const) {
+                            for (local.decls.slice()) |decl| {
+                                if (decl.binding.data == .b_identifier) {
+                                    if (decl.value) |val| {
+                                        if (val.data.canBeConstValue()) {
+                                            p.const_values.put(p.allocator, decl.binding.data.b_identifier.ref, val) catch unreachable;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 for (stmts) |*stmt| {
                     if (stmt.data == .s_enum) {
                         const old_scopes_in_order = p.scope_order_to_visit;

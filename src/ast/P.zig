@@ -1119,7 +1119,7 @@ pub fn NewParser_(
         pub fn handleIdentifier(noalias p: *P, loc: logger.Loc, ident: E.Identifier, original_name: ?string, opts: IdentifierOpts) Expr {
             const ref = ident.ref;
 
-            if (p.options.features.inlining) {
+            if (p.options.features.inlining or p.should_fold_typescript_constant_expressions) {
                 if (p.const_values.get(ref)) |replacement| {
                     p.ignoreUsage(ref);
                     return replacement;

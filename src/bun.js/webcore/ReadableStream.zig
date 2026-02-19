@@ -149,6 +149,13 @@ pub fn abort(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
     this.cancel(globalThis);
 }
 
+/// Error the stream with a reason, transitioning it to the errored state.
+/// This makes desiredSize return null and invokes the cancel callback on the underlying source.
+pub fn errorWithReason(this: *const ReadableStream, globalThis: *JSGlobalObject, reason: JSValue) void {
+    jsc.markBinding(@src());
+    ReadableStream__error(this.value, globalThis, reason);
+}
+
 pub fn forceDetach(this: *const ReadableStream, globalObject: *JSGlobalObject) void {
     ReadableStream__detach(this.value, globalObject);
 }
@@ -212,6 +219,7 @@ extern fn ReadableStream__used(*JSGlobalObject) jsc.JSValue;
 extern fn ReadableStream__cancel(stream: JSValue, *JSGlobalObject) void;
 extern fn ReadableStream__abort(stream: JSValue, *JSGlobalObject) void;
 extern fn ReadableStream__detach(stream: JSValue, *JSGlobalObject) void;
+extern fn ReadableStream__error(stream: JSValue, *JSGlobalObject, reason: JSValue) void;
 extern fn ReadableStream__fromBlob(
     *JSGlobalObject,
     store: *anyopaque,

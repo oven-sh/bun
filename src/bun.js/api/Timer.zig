@@ -20,6 +20,9 @@ pub const All = struct {
     thread_id: std.Thread.Id,
     timers: TimerHeap = .{ .context = {} },
     active_timer_count: i32 = 0,
+    /// Tracks only setTimeout timers (not setInterval). Used by the test runner
+    /// to know when to finish the collection phase. See #20087.
+    active_set_timeout_count: i32 = 0,
     uv_timer: if (Environment.isWindows) uv.Timer else void = if (Environment.isWindows) std.mem.zeroes(uv.Timer),
     /// Whether we have emitted a warning for passing a negative timeout duration
     warned_negative_number: bool = false,

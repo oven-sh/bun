@@ -1973,6 +1973,17 @@ pub const TestCommand = struct {
                     if (buntest.phase == .done) break;
                     vm.eventLoop().tick();
 
+                    // If still in collection phase (waiting for setTimeout callbacks
+                    // to register tests), re-trigger the run loop after each event
+                    // loop tick so we can check if collection is now complete.
+                    // See: https://github.com/oven-sh/bun/issues/20087
+                    if (buntest.phase == .collection) {
+                        if (buntest.result_queue.readableLength() == 0) {
+                            buntest.addResult(.start);
+                        }
+                        try bun.jsc.Jest.bun_test.BunTest.run(buntest_strong, vm.global);
+                    }
+
                     while (prev_unhandled_count < vm.unhandled_error_counter) {
                         vm.global.handleRejectedPromises();
                         prev_unhandled_count = vm.unhandled_error_counter;

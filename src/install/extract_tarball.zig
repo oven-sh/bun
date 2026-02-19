@@ -78,8 +78,12 @@ pub fn buildURLWithPrinter(
     const registry = std.mem.trimRight(u8, registry_, "/");
     const full_name = full_name_.slice();
 
+    // Check if this is a GitLab registry by parsing the URL and checking the hostname
+    const is_gitlab_registry = registry_utils.isGitLabRegistry(registry);
+
     var name = full_name;
-    if (name[0] == '@') {
+    // For GitLab registries, keep the full scoped name
+    if (name[0] == '@' and !is_gitlab_registry) {
         if (strings.indexOfChar(name, '/')) |i| {
             name = name[i + 1 ..];
         }
@@ -561,6 +565,8 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
         },
     };
 }
+
+const registry_utils = @import("./registry_utils.zig");
 
 const string = []const u8;
 

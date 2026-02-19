@@ -1741,6 +1741,7 @@ pub const BundleOptions = struct {
     jsx: JSX.Pragma = JSX.Pragma{},
     emit_decorator_metadata: bool = false,
     experimental_decorators: bool = false,
+    use_define_for_class_fields: ?bool = null,
     auto_import_jsx: bool = true,
     allow_runtime: bool = true,
 

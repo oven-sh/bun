@@ -472,6 +472,9 @@ pub const Transpiler = struct {
                     }
                     transpiler.options.emit_decorator_metadata = tsconfig.emit_decorator_metadata;
                     transpiler.options.experimental_decorators = tsconfig.experimental_decorators;
+                    if (tsconfig.use_define_for_class_fields) |v| {
+                        transpiler.options.use_define_for_class_fields = v;
+                    }
                 }
             }
         }
@@ -640,6 +643,7 @@ pub const Transpiler = struct {
                         .jsx = resolve_result.jsx,
                         .emit_decorator_metadata = resolve_result.flags.emit_decorator_metadata,
                         .experimental_decorators = resolve_result.flags.experimental_decorators,
+                        .use_define_for_class_fields = resolve_result.flags.use_define_for_class_fields,
                     },
                     client_entry_point_,
                 ) orelse {
@@ -963,6 +967,7 @@ pub const Transpiler = struct {
         set_breakpoint_on_first_line: bool = false,
         emit_decorator_metadata: bool = false,
         experimental_decorators: bool = false,
+        use_define_for_class_fields: bool = true,
         remove_cjs_module_wrapper: bool = false,
 
         dont_bundle_twice: bool = false,
@@ -1104,6 +1109,7 @@ pub const Transpiler = struct {
 
                 opts.features.emit_decorator_metadata = this_parse.emit_decorator_metadata;
                 opts.features.standard_decorators = !loader.isTypeScript() or !this_parse.experimental_decorators;
+                opts.use_define_for_class_fields = this_parse.use_define_for_class_fields;
                 opts.features.allow_runtime = transpiler.options.allow_runtime;
                 opts.features.set_breakpoint_on_first_line = this_parse.set_breakpoint_on_first_line;
                 opts.features.trim_unused_imports = transpiler.options.trim_unused_imports orelse loader.isTypeScript();

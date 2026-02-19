@@ -27,10 +27,10 @@ pub const Stringifier = struct {
     //     _ = this;
     // }
 
-    pub fn saveFromBinary(allocator: std.mem.Allocator, lockfile: *BinaryLockfile, load_result: *const LoadResult, options: *const PackageManager.Options, writer: *std.Io.Writer) std.Io.Writer.Error!void {
-        return bun.handleOom(saveFromBinary_inner(allocator, lockfile, load_result, options, writer));
+    pub fn saveFromBinary(allocator: std.mem.Allocator, lockfile: *BinaryLockfile, options: *const PackageManager.Options, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        return bun.handleOom(saveFromBinary_inner(allocator, lockfile, options, writer));
     }
-    pub fn saveFromBinary_inner(allocator: std.mem.Allocator, lockfile: *BinaryLockfile, load_result: *const LoadResult, options: *const PackageManager.Options, writer: *std.Io.Writer) !void {
+    pub fn saveFromBinary_inner(allocator: std.mem.Allocator, lockfile: *BinaryLockfile, options: *const PackageManager.Options, writer: *std.Io.Writer) !void {
         const buf = lockfile.buffers.string_bytes.items;
         const extern_strings = lockfile.buffers.extern_strings.items;
         const deps_buf = lockfile.buffers.dependencies.items;
@@ -60,31 +60,7 @@ pub const Stringifier = struct {
         var optional_peers_buf = std.array_list.Managed(String).init(allocator);
         defer optional_peers_buf.deinit();
 
-        var pkg_map = PkgMap(void).init(allocator);
-        defer pkg_map.deinit();
-
         var pkgs_iter = BinaryLockfile.Tree.Iterator(.pkg_path).init(lockfile);
-
-        var path_buf: bun.PathBuffer = undefined;
-
-        // if we loaded from a binary lockfile and we're migrating it to a text lockfile, ensure
-        // peer dependencies have resolutions, and mark them optional if they don't
-        if (load_result.loadedFromBinaryLockfile()) {
-            while (pkgs_iter.next({})) |node| {
-                for (node.dependencies) |dep_id| {
-                    const dep = deps_buf[dep_id];
-
-                    // clobber, there isn't data
-                    try pkg_map.put(try std.fmt.allocPrint(allocator, "{s}{s}{s}", .{
-                        node.relative_path,
-                        if (node.depth == 0) "" else "/",
-                        dep.name.slice(buf),
-                    }), {});
-                }
-            }
-
-            pkgs_iter.reset();
-        }
 
         var _indent: u32 = 0;
         const indent = &_indent;
@@ -113,11 +89,9 @@ pub const Stringifier = struct {
                     buf,
                     extern_strings,
                     deps_buf,
+                    resolution_buf,
                     lockfile.workspace_versions,
                     &optional_peers_buf,
-                    &pkg_map,
-                    "",
-                    &path_buf,
                 );
 
                 var workspace_sort_buf: std.ArrayListUnmanaged(PackageID) = .{};
@@ -164,11 +138,9 @@ pub const Stringifier = struct {
                         buf,
                         extern_strings,
                         deps_buf,
+                        resolution_buf,
                         lockfile.workspace_versions,
                         &optional_peers_buf,
-                        &pkg_map,
-                        pkg_names[workspace_pkg_id].slice(buf),
-                        &path_buf,
                     );
                 }
             }
@@ -502,14 +474,12 @@ pub const Stringifier = struct {
                                 dep.behavior,
                                 deps_buf,
                                 pkg_deps_sort_buf.items,
+                                resolution_buf,
                                 &pkg_meta,
                                 &pkg_bin,
                                 buf,
                                 &optional_peers_buf,
                                 extern_strings,
-                                &pkg_map,
-                                relative_path,
-                                &path_buf,
                             );
 
                             try writer.writeByte(']');
@@ -525,14 +495,12 @@ pub const Stringifier = struct {
                                 dep.behavior,
                                 deps_buf,
                                 pkg_deps_sort_buf.items,
+                                resolution_buf,
                                 &pkg_meta,
                                 &pkg_bin,
                                 buf,
                                 &optional_peers_buf,
                                 extern_strings,
-                                &pkg_map,
-                                relative_path,
-                                &path_buf,
                             );
 
                             try writer.writeByte(']');
@@ -548,14 +516,12 @@ pub const Stringifier = struct {
                                 dep.behavior,
                                 deps_buf,
                                 pkg_deps_sort_buf.items,
+                                resolution_buf,
                                 &pkg_meta,
                                 &pkg_bin,
                                 buf,
                                 &optional_peers_buf,
                                 extern_strings,
-                                &pkg_map,
-                                relative_path,
-                                &path_buf,
                             );
 
                             try writer.writeByte(']');
@@ -571,14 +537,12 @@ pub const Stringifier = struct {
                                 dep.behavior,
                                 deps_buf,
                                 pkg_deps_sort_buf.items,
+                                resolution_buf,
                                 &pkg_meta,
                                 &pkg_bin,
                                 buf,
                                 &optional_peers_buf,
                                 extern_strings,
-                                &pkg_map,
-                                relative_path,
-                                &path_buf,
                             );
 
                             try writer.writeByte(']');
@@ -602,14 +566,12 @@ pub const Stringifier = struct {
                                 dep.behavior,
                                 deps_buf,
                                 pkg_deps_sort_buf.items,
+                                resolution_buf,
                                 &pkg_meta,
                                 &pkg_bin,
                                 buf,
                                 &optional_peers_buf,
                                 extern_strings,
-                                &pkg_map,
-                                relative_path,
-                                &path_buf,
                             );
 
                             try writer.print(", \"{f}\"]", .{
@@ -634,14 +596,12 @@ pub const Stringifier = struct {
                                 dep.behavior,
                                 deps_buf,
                                 pkg_deps_sort_buf.items,
+                                resolution_buf,
                                 &pkg_meta,
                                 &pkg_bin,
                                 buf,
                                 &optional_peers_buf,
                                 extern_strings,
-                                &pkg_map,
-                                relative_path,
-                                &path_buf,
                             );
 
                             if (pkg_meta.integrity.tag.isSupported()) {
@@ -677,14 +637,12 @@ pub const Stringifier = struct {
         dep_behavior: Dependency.Behavior,
         deps_buf: []const Dependency,
         pkg_dep_ids: []const DependencyID,
+        resolution_buf: []const PackageID,
         meta: *const Meta,
         bin: *const Install.Bin,
         buf: string,
         optional_peers_buf: *std.array_list.Managed(String),
         extern_strings: []const ExternalString,
-        pkg_map: *const PkgMap(void),
-        relative_path: string,
-        path_buf: []u8,
     ) error{ OutOfMemory, WriteFailed }!void {
         defer optional_peers_buf.clearRetainingCapacity();
 
@@ -722,10 +680,10 @@ pub const Stringifier = struct {
                     bun.fmt.formatJSONStringUTF8(dep.version.literal.slice(buf), .{}),
                 });
 
-                if (dep.behavior.peer and !dep.behavior.optional and pkg_map.map.count() > 0) {
-                    pkg_map.findResolution(relative_path, dep, buf, path_buf) catch {
-                        try optional_peers_buf.append(dep.name);
-                    };
+                // If a required peer dependency is not resolved, add it to optionalPeers
+                // to prevent lockfile loading errors when the peer is not installed.
+                if (dep.behavior.peer and !dep.behavior.optional and resolution_buf[dep_id] == invalid_package_id) {
+                    try optional_peers_buf.append(dep.name);
                 }
             }
 
@@ -823,11 +781,9 @@ pub const Stringifier = struct {
         buf: string,
         extern_strings: []const ExternalString,
         deps_buf: []const Dependency,
+        resolution_buf: []const PackageID,
         workspace_versions: BinaryLockfile.VersionHashMap,
         optional_peers_buf: *std.array_list.Managed(String),
-        pkg_map: *const PkgMap(void),
-        relative_path: string,
-        path_buf: []u8,
     ) error{ OutOfMemory, WriteFailed }!void {
         defer optional_peers_buf.clearRetainingCapacity();
         // any - have any properties been written
@@ -885,7 +841,10 @@ pub const Stringifier = struct {
             const group_name, const group_behavior = group;
 
             var first = true;
-            for (pkg_deps[pkg_id].get(deps_buf)) |*dep| {
+            const dep_slice = pkg_deps[pkg_id];
+            for (dep_slice.begin()..dep_slice.end()) |_dep_id| {
+                const dep_id: DependencyID = @intCast(_dep_id);
+                const dep = &deps_buf[dep_id];
                 if (!dep.behavior.includes(group_behavior)) continue;
 
                 if (dep.behavior.isOptionalPeer()) {
@@ -921,12 +880,10 @@ pub const Stringifier = struct {
                     bun.fmt.formatJSONStringUTF8(version, .{}),
                 });
 
-                if (dep.behavior.peer and !dep.behavior.optional and pkg_map.map.count() > 0) {
-                    pkg_map.findResolution(relative_path, dep, buf, path_buf) catch |err| {
-                        if (err == error.Unresolvable) {
-                            try optional_peers_buf.append(dep.name);
-                        }
-                    };
+                // If a required peer dependency is not resolved, add it to optionalPeers
+                // to prevent lockfile loading errors when the peer is not installed.
+                if (dep.behavior.peer and !dep.behavior.optional and resolution_buf[dep_id] == invalid_package_id) {
+                    try optional_peers_buf.append(dep.name);
                 }
             }
 
@@ -2269,7 +2226,6 @@ const invalid_package_id = Install.invalid_package_id;
 
 const BinaryLockfile = bun.install.Lockfile;
 const DependencySlice = BinaryLockfile.DependencySlice;
-const LoadResult = BinaryLockfile.LoadResult;
 const Meta = BinaryLockfile.Package.Meta;
 
 const Npm = Install.Npm;

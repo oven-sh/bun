@@ -35,11 +35,14 @@ pub const Options = struct {
     tag_filter: bool = false,
     heading_ids: bool = false,
     autolink_headings: bool = false,
+    /// Skip YAML frontmatter at the start of the document (text between `---` markers).
+    frontmatter: bool = true,
 
     pub const commonmark: Options = .{
         .tables = false,
         .strikethrough = false,
         .tasklists = false,
+        .frontmatter = false,
     };
 
     pub const github: Options = .{
@@ -50,6 +53,7 @@ pub const Options = struct {
         .permissive_www_autolinks = true,
         .permissive_email_autolinks = true,
         .tag_filter = true,
+        .frontmatter = true,
     };
 
     pub fn toFlags(self: Options) Flags {
@@ -86,12 +90,14 @@ pub fn renderToHtml(text: []const u8, allocator: std.mem.Allocator) parser.Parse
 }
 
 pub fn renderToHtmlWithOptions(text: []const u8, allocator: std.mem.Allocator, options: Options) parser.Parser.Error![]u8 {
-    return parser.renderToHtml(text, allocator, options.toFlags(), options.toRenderOptions());
+    const input = if (options.frontmatter) helpers.skipFrontmatter(text) else text;
+    return parser.renderToHtml(input, allocator, options.toFlags(), options.toRenderOptions());
 }
 
 /// Parse and render using a custom renderer implementation.
 pub fn renderWithRenderer(text: []const u8, allocator: std.mem.Allocator, options: Options, renderer: Renderer) parser.Parser.Error!void {
-    return parser.renderWithRenderer(text, allocator, options.toFlags(), options.toRenderOptions(), renderer);
+    const input = if (options.frontmatter) helpers.skipFrontmatter(text) else text;
+    return parser.renderWithRenderer(input, allocator, options.toFlags(), options.toRenderOptions(), renderer);
 }
 
 pub const types = @import("./types.zig");

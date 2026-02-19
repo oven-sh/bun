@@ -14,9 +14,10 @@ param(
   [Switch]$DownloadWithoutCurl = $false
 );
 
-# filter out 32-bit and unsupported architectures
-$SystemType = ((Get-CimInstance Win32_ComputerSystem)).SystemType
-if (-not ($SystemType -match "x64-based" -or $SystemType -match "ARM64-based")) {
+# Detect real CPU architecture from registry — works even under x64 emulation on ARM64.
+# Win32_ComputerSystem.SystemType can be unreliable under WoW64.
+$Arch = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment').PROCESSOR_ARCHITECTURE
+if (-not ($Arch -eq "AMD64" -or $Arch -eq "ARM64")) {
   Write-Output "Install Failed:"
   Write-Output "Bun for Windows is only available for x86 64-bit and ARM64 Windows.`n"
   return 1
@@ -104,8 +105,8 @@ function Install-Bun {
     $Version = "bun-$Version"
   }
 
-  $IsARM64 = $SystemType -match "ARM64-based"
-  $Arch = if ($IsARM64) { "aarch64" } else { "x64" }
+  $IsARM64 = $Arch -eq "ARM64"
+  $BunArch = if ($IsARM64) { "aarch64" } else { "x64" }
   $IsBaseline = $false
   if (-not $IsARM64) {
     $IsBaseline = $ForceBaseline
@@ -139,9 +140,9 @@ function Install-Bun {
     return 1
   }
 
-  $Target = "bun-windows-$Arch"
+  $Target = "bun-windows-$BunArch"
   if ($IsBaseline) {
-    $Target = "bun-windows-$Arch-baseline"
+    $Target = "bun-windows-$BunArch-baseline"
   }
   $BaseURL = "https://github.com/oven-sh/bun/releases"
   $URL = "$BaseURL/$(if ($Version -eq "latest") { "latest/download" } else { "download/$Version" })/$Target.zip"

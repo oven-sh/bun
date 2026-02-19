@@ -163,7 +163,7 @@ test("(multi-file test) my feature", async () => {
 
 #### Vendored Dependencies (`vendor/`)
 
-Third-party C/C++ libraries are vendored locally and can be read from disk:
+Third-party C/C++ libraries are vendored locally and can be read from disk (these are not git submodules):
 
 - `vendor/boringssl/` - BoringSSL (TLS/crypto)
 - `vendor/brotli/` - Brotli compression

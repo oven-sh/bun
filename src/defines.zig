@@ -155,12 +155,14 @@ pub const DefineData = struct {
         // check for nested identifiers
         var valueSplitter = std.mem.splitScalar(u8, value_str, '.');
         var isIdent = true;
+        var isFirstPart = true;
 
         while (valueSplitter.next()) |part| {
-            if (!js_lexer.isIdentifier(part) or js_lexer.Keywords.has(part)) {
+            if (!js_lexer.isIdentifier(part) or (isFirstPart and js_lexer.Keywords.has(part))) {
                 isIdent = false;
                 break;
             }
+            isFirstPart = false;
         }
 
         if (isIdent) {

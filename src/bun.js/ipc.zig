@@ -929,7 +929,7 @@ pub const SendQueue = struct {
             return err;
         };
         ipc_pipe.open(pipe_fd).unwrap() catch |err| {
-            bun.default_allocator.destroy(ipc_pipe);
+            ipc_pipe.closeAndDestroy();
             return err;
         };
         ipc_pipe.unref();

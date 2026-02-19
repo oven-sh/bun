@@ -67,6 +67,7 @@ const bufs = struct {
     pub threadlocal var check_browser_map: bun.PathBuffer = undefined;
     pub threadlocal var remap_path: bun.PathBuffer = undefined;
     pub threadlocal var load_as_file: bun.PathBuffer = undefined;
+    pub threadlocal var load_as_file2: bun.PathBuffer = undefined;
     pub threadlocal var remap_path_trailing_slash: bun.PathBuffer = undefined;
     pub threadlocal var path_in_global_disk_cache: bun.PathBuffer = undefined;
     pub threadlocal var abs_to_rel: bun.PathBuffer = undefined;
@@ -3896,6 +3897,18 @@ pub const Resolver = struct {
                     @memcpy(buffer[segment.len..buffer.len][0..ext_to_replace.len], ext_to_replace);
 
                     if (entries.get(buffer)) |query| {
+                        // If the case-insensitive lookup matched a differently-cased file,
+                        // verify the stem matches to avoid confusing different files.
+                        if (query.diff_case != null) {
+                            const actual_base = query.entry.base();
+                            const actual_stem_end = std.mem.lastIndexOfScalar(u8, actual_base, '.') orelse actual_base.len;
+                            if (!bun.strings.eqlLong(segment, actual_base[0..actual_stem_end], false)) {
+                                if (r.debug_logs) |*debug| {
+                                    debug.addNoteFmt("Skipping \"{s}\" (stem case mismatch during rewrite)", .{actual_base});
+                                }
+                                continue;
+                            }
+                        }
                         if (query.entry.kind(rfs, r.store_fd) == .file) {
                             if (r.debug_logs) |*debug| {
                                 debug.addNoteFmt("Rewrote to \"{s}\" ", .{buffer});
@@ -3904,12 +3917,12 @@ pub const Resolver = struct {
                             return LoadResult{
                                 .path = brk: {
                                     if (query.entry.abs_path.isEmpty()) {
+                                        const actual_name = query.entry.base();
                                         if (query.entry.dir.len > 0 and query.entry.dir[query.entry.dir.len - 1] == std.fs.path.sep) {
-                                            const parts = [_]string{ query.entry.dir, buffer };
+                                            const parts = [_]string{ query.entry.dir, actual_name };
                                             query.entry.abs_path = PathString.init(r.fs.filename_store.append(@TypeOf(parts), parts) catch unreachable);
-                                            // the trailing path CAN be missing here
                                         } else {
-                                            const parts = [_]string{ query.entry.dir, std.fs.path.sep_str, buffer };
+                                            const parts = [_]string{ query.entry.dir, std.fs.path.sep_str, actual_name };
                                             query.entry.abs_path = PathString.init(r.fs.filename_store.append(@TypeOf(parts), parts) catch unreachable);
                                         }
                                     }
@@ -3954,18 +3967,38 @@ pub const Resolver = struct {
         }
 
         if (entries.get(file_name)) |query| {
+            if (query.diff_case != null) {
+                // The case-insensitive lookup matched a file with different casing.
+                // Check if the import stem (e.g. "todos") matches the found file's
+                // stem (e.g. "Todos"). If the stems differ, this is a different file
+                // that only matched because the directory lookup is case-insensitive.
+                // Skip it so the resolver can continue trying other extensions.
+                // (e.g. "todos" + ".tsx" should NOT match "Todos.tsx" when "todos.ts" exists)
+                const actual_base = query.entry.base();
+                const stem_end = std.mem.lastIndexOfScalar(u8, actual_base, '.') orelse actual_base.len;
+                const actual_stem = actual_base[0..stem_end];
+                if (!bun.strings.eqlLong(base, actual_stem, false)) {
+                    if (r.debug_logs) |*debug| {
+                        debug.addNoteFmt("Skipping \"{s}\" (stem case mismatch: \"{s}\" vs \"{s}\")", .{ actual_base, base, actual_stem });
+                    }
+                    return null;
+                }
+            }
             if (query.entry.kind(rfs, r.store_fd) == .file) {
                 if (r.debug_logs) |*debug| {
                     debug.addNoteFmt("Found file \"{s}\" ", .{buffer});
                 }
 
                 // now that we've found it, we allocate it.
+                // Use the entry's actual base name to build the absolute path,
+                // not the query buffer, to ensure correct casing on case-sensitive
+                // filesystems.
                 return .{
                     .path = brk: {
-                        query.entry.abs_path = if (query.entry.abs_path.isEmpty())
-                            PathString.init(r.fs.dirname_store.append(@TypeOf(buffer), buffer) catch unreachable)
-                        else
-                            query.entry.abs_path;
+                        if (query.entry.abs_path.isEmpty()) {
+                            const abs_path_parts = [_]string{ query.entry.dir, query.entry.base() };
+                            query.entry.abs_path = PathString.init(r.fs.dirname_store.append(string, r.fs.absBuf(&abs_path_parts, bufs(.load_as_file2))) catch unreachable);
+                        }
 
                         break :brk query.entry.abs_path.slice();
                     },

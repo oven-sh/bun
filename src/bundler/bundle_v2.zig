@@ -2016,6 +2016,10 @@ pub const BundleV2 = struct {
             if (transpiler.options.compile) {
                 // Emitting DCE annotations is nonsensical in --compile.
                 transpiler.options.emit_dce_annotations = false;
+                // Default to production mode for --compile builds to enable dead code elimination
+                // for conditional requires like React's process.env.NODE_ENV checks.
+                // Users can override this with define: { 'process.env.NODE_ENV': '"development"' }
+                try transpiler.env.map.put("NODE_ENV", "production");
             }
 
             transpiler.configureLinker();
@@ -2024,6 +2028,12 @@ pub const BundleV2 = struct {
             if (!transpiler.options.production) {
                 try transpiler.options.conditions.appendSlice(&.{"development"});
             }
+
+            // Allow tsconfig.json overriding, but always set it to false for --compile builds.
+            if (transpiler.options.compile) {
+                transpiler.options.jsx.development = false;
+            }
+
             transpiler.resolver.env_loader = transpiler.env;
             transpiler.resolver.opts = transpiler.options;
         }

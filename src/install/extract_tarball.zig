@@ -9,6 +9,9 @@ skip_verify: bool = false,
 integrity: Integrity = .{},
 url: strings.StringOrTinyString,
 package_manager: *PackageManager,
+/// If true, the tarball path came from a catalog entry (always defined in root package.json),
+/// so the path should be resolved relative to the workspace root, not the workspace package.
+from_catalog: bool = false,
 
 pub inline fn run(this: *const ExtractTarball, log: *logger.Log, bytes: []const u8) !Install.ExtractData {
     if (!this.skip_verify and this.integrity.tag.isSupported()) {

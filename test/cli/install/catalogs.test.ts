@@ -1,6 +1,6 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { exists } from "fs/promises";
+import { copyFile, exists, mkdir } from "fs/promises";
 import { VerdaccioRegistry, bunEnv, bunExe, runBunInstall, stderrForInstall } from "harness";
 import { join } from "path";
 
@@ -233,5 +233,47 @@ describe("errors", () => {
     const err = stderrForInstall(await stderr.text());
 
     expect(err).toContain("no-deps@catalog: failed to resolve");
+  });
+});
+
+describe("file: protocol in catalogs", () => {
+  test.concurrent("catalog with file: tarball referenced from workspace package resolves relative to root", async () => {
+    const { packageDir } = await registry.createTestDir();
+
+    await mkdir(join(packageDir, "vendored"));
+    await copyFile(join(__dirname, "bar-0.0.2.tgz"), join(packageDir, "vendored", "bar-0.0.2.tgz"));
+
+    await write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "catalog-file-tarball",
+        workspaces: {
+          packages: ["packages/*"],
+          catalogs: {
+            vendored: {
+              bar: "file:./vendored/bar-0.0.2.tgz",
+            },
+          },
+        },
+      }),
+    );
+
+    await write(
+      join(packageDir, "packages", "my-app", "package.json"),
+      JSON.stringify({
+        name: "my-app",
+        dependencies: {
+          bar: "catalog:vendored",
+        },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    expect(await exists(join(packageDir, "node_modules", "bar", "package.json"))).toBeTrue();
+    expect(await file(join(packageDir, "node_modules", "bar", "package.json")).json()).toEqual({
+      name: "bar",
+      version: "0.0.2",
+    });
   });
 });

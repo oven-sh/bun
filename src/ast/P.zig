@@ -5451,7 +5451,7 @@ pub fn NewParser_(
             };
         }
 
-        pub fn isDotDefineMatch(noalias p: *P, expr: Expr, parts: []const string) bool {
+        pub fn isDotDefineMatch(noalias p: *P, expr: Expr, parts: []const string, define_data: *const DefineData) bool {
             switch (expr.data) {
                 .e_dot => |ex| {
                     if (parts.len > 1) {
@@ -5462,7 +5462,7 @@ pub fn NewParser_(
                         // Intermediates must be dot expressions
                         const last = parts.len - 1;
                         const is_tail_match = strings.eql(parts[last], ex.name);
-                        return is_tail_match and p.isDotDefineMatch(ex.target, parts[0..last]);
+                        return is_tail_match and p.isDotDefineMatch(ex.target, parts[0..last], define_data);
                     }
                 },
                 .e_import_meta => {
@@ -5480,7 +5480,7 @@ pub fn NewParser_(
 
                         const last = parts.len - 1;
                         const is_tail_match = strings.eql(parts[last], index.index.data.e_string.slice(p.allocator));
-                        return is_tail_match and p.isDotDefineMatch(index.target, parts[0..last]);
+                        return is_tail_match and p.isDotDefineMatch(index.target, parts[0..last], define_data);
                     }
                 },
                 .e_identifier => |ex| {
@@ -5501,7 +5501,9 @@ pub fn NewParser_(
 
                         // when there's actually no symbol by that name, we return Ref.None
                         // If a symbol had already existed by that name, we return .unbound
-                        return (result.ref.isNull() or p.symbols.items[result.ref.innerIndex()].kind == .unbound);
+                        // If `replace_even_if_shadowed` is set (e.g., for --env defines), we
+                        // allow the replacement even when the symbol is shadowed by a local variable.
+                        return (result.ref.isNull() or p.symbols.items[result.ref.innerIndex()].kind == .unbound or define_data.replace_even_if_shadowed());
                     }
                 },
                 else => {},

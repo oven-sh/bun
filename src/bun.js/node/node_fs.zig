@@ -162,6 +162,15 @@ pub const Async = struct {
                         const args: Arguments.Open = task.args;
                         const path = if (bun.strings.eqlComptime(args.path.slice(), "/dev/null")) "\\\\.\\NUL" else args.path.sliceZ(&this.node_fs.sync_error_buf);
 
+                        // Check if this is a VFS (embedded file) path
+                        if (bun.StandaloneModuleGraph.get()) |graph| {
+                            if (graph.find(path)) |file| {
+                                task.result = NodeFS.openEmbeddedFile(file, args, path);
+                                task.globalObject.bunVM().eventLoop().enqueueTask(jsc.Task.init(task));
+                                return task.promise.value();
+                            }
+                        }
+
                         var flags: c_int = @intFromEnum(args.flags);
                         flags = uv.O.fromBunO(flags);
 
@@ -4182,12 +4191,127 @@ pub const NodeFS = struct {
         else
             args.path.sliceZ(&this.sync_error_buf);
 
+        // Check if this is a VFS (embedded file) path
+        if (bun.StandaloneModuleGraph.get()) |graph| {
+            if (graph.find(path)) |file| {
+                return openEmbeddedFile(file, args, path);
+            }
+        }
+
         return switch (Syscall.open(path, args.flags.asInt(), args.mode)) {
             .err => |err| .{
                 .err = err.withPath(args.path.slice()),
             },
             .result => |fd| .{ .result = fd },
         };
+    }
+
+    fn openEmbeddedFile(file: *bun.StandaloneModuleGraph.File, args: Arguments.Open, path: [:0]const u8) Maybe(Return.Open) {
+        const flags = args.flags.asInt();
+        // VFS files are read-only. If write flags are requested, return EROFS.
+        if (flags & (bun.O.WRONLY | bun.O.RDWR | bun.O.CREAT | bun.O.TRUNC | bun.O.APPEND) != 0) {
+            return .{
+                .err = .{
+                    .errno = @intFromEnum(posix.E.ROFS),
+                    .syscall = .open,
+                    .path = path,
+                },
+            };
+        }
+
+        // Create an in-memory file descriptor with the embedded file contents
+        if (comptime Environment.isLinux) {
+            // Use memfd_create on Linux for an efficient in-memory file descriptor
+            const memfd = switch (bun.sys.memfd_create("bun-vfs", .non_executable)) {
+                .err => |err| return .{ .err = err.withPath(path) },
+                .result => |fd| fd,
+            };
+
+            // Set the file size
+            switch (bun.sys.ftruncate(memfd, @intCast(file.contents.len))) {
+                .err => |err| {
+                    memfd.close();
+                    return .{ .err = err.withPath(path) };
+                },
+                .result => {},
+            }
+
+            // Write the contents to the memfd
+            switch (bun.sys.File.writeAll(.{ .handle = memfd }, file.contents)) {
+                .err => |err| {
+                    memfd.close();
+                    return .{ .err = err.withPath(path) };
+                },
+                .result => {},
+            }
+
+            // Seek back to the beginning of the file
+            switch (bun.sys.lseek(memfd, 0, std.posix.SEEK.SET)) {
+                .err => |err| {
+                    memfd.close();
+                    return .{ .err = err.withPath(path) };
+                },
+                .result => {},
+            }
+
+            return .{ .result = memfd };
+        } else {
+            // On macOS/Windows, create a temporary file with the embedded contents
+            const tmpname_buf = bun.path_buffer_pool.get();
+            defer bun.path_buffer_pool.put(tmpname_buf);
+
+            const extname = bun.strings.trimLeadingChar(std.fs.path.extension(path), '.');
+            const tmpfilename = bun.fs.FileSystem.tmpname(extname, tmpname_buf, bun.hash(file.name)) catch {
+                return .{
+                    .err = .{
+                        .errno = @intFromEnum(posix.E.IO),
+                        .syscall = .open,
+                        .path = path,
+                    },
+                };
+            };
+
+            const tmpdir: bun.FD = .fromStdDir(bun.fs.FileSystem.instance.tmpdir() catch {
+                return .{
+                    .err = .{
+                        .errno = @intFromEnum(posix.E.IO),
+                        .syscall = .open,
+                        .path = path,
+                    },
+                };
+            });
+
+            // Create the temp file and write contents
+            const tmpfile = bun.Tmpfile.create(tmpdir, tmpfilename).unwrap() catch {
+                return .{
+                    .err = .{
+                        .errno = @intFromEnum(posix.E.IO),
+                        .syscall = .open,
+                        .path = path,
+                    },
+                };
+            };
+
+            // Write the embedded file contents
+            switch (bun.sys.File.writeAll(.{ .handle = tmpfile.fd }, file.contents)) {
+                .err => |err| {
+                    tmpfile.fd.close();
+                    return .{ .err = err.withPath(path) };
+                },
+                .result => {},
+            }
+
+            // Seek back to the beginning of the file
+            switch (bun.sys.lseek(tmpfile.fd, 0, std.posix.SEEK.SET)) {
+                .err => |err| {
+                    tmpfile.fd.close();
+                    return .{ .err = err.withPath(path) };
+                },
+                .result => {},
+            }
+
+            return .{ .result = tmpfile.fd };
+        }
     }
 
     pub fn uv_open(this: *NodeFS, args: Arguments.Open, rc: i64) Maybe(Return.Open) {

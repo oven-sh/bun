@@ -191,6 +191,7 @@ comptime {
     @export(&externRunCallback1, .{ .name = "Bun__EventLoop__runCallback1" });
     @export(&externRunCallback2, .{ .name = "Bun__EventLoop__runCallback2" });
     @export(&externRunCallback3, .{ .name = "Bun__EventLoop__runCallback3" });
+    @export(&getActiveResourceCounts, .{ .name = "Bun__EventLoop__getActiveResourceCounts" });
 }
 
 /// Prefer `runCallbackWithResult` unless you really need to make sure that microtasks are drained.
@@ -667,6 +668,33 @@ pub fn getActiveTasks(globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.
     result.put(globalObject, jsc.ZigString.static("numPolls"), jsc.JSValue.jsNumber(num_polls));
 
     return result;
+}
+
+/// Returns counts of active resources for `process.getActiveResourcesInfo()`.
+/// Used by BunProcess.cpp to build the JS array.
+/// out_timers: number of active ref'd setTimeout/setInterval
+/// out_immediates: number of active ref'd setImmediate
+/// out_handles: number of other active poll handles (TCP, pipes, etc.)
+fn getActiveResourceCounts(globalObject: *jsc.JSGlobalObject, out_timers: *u32, out_immediates: *u32, out_handles: *u32) callconv(.c) void {
+    const vm = globalObject.bunVM();
+
+    const active_timer_count: u32 = @intCast(@max(0, vm.timer.active_timer_count));
+    const active_immediate_count: u32 = @intCast(@max(0, vm.timer.immediate_ref_count));
+
+    const total_active: u32 = if (Environment.isWindows)
+        @intCast(bun.windows.libuv.Loop.get().active_handles)
+    else
+        uws.Loop.get().active;
+
+    // Timers contribute a single group ref to loop.active when active_timer_count
+    // transitions from 0 to >0 (and similarly for immediates).
+    const timer_group_ref: u32 = if (active_timer_count > 0) 1 else 0;
+    const immediate_group_ref: u32 = if (active_immediate_count > 0) 1 else 0;
+    const poll_handle_count = total_active -| timer_group_ref -| immediate_group_ref;
+
+    out_timers.* = active_timer_count;
+    out_immediates.* = active_immediate_count;
+    out_handles.* = poll_handle_count;
 }
 
 pub fn deinit(this: *EventLoop) void {

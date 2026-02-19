@@ -694,8 +694,8 @@ pub fn PosixStreamingWriter(comptime Parent: type, comptime function_table: anyt
         }
 
         pub fn deinit(this: *PosixWriter) void {
-            this.outgoing.deinit();
             this.closeWithoutReporting();
+            this.outgoing.deinit();
         }
 
         pub fn hasRef(this: *PosixWriter) bool {
@@ -1298,6 +1298,10 @@ pub fn WindowsStreamingWriter(comptime Parent: type, function_table: anytype) ty
         }
 
         fn onWriteComplete(this: *WindowsWriter, status: uv.ReturnCode) void {
+            // Deref the parent at the end to balance the ref taken in
+            // processSend before submitting the async write request.
+            defer this.parent.deref();
+
             if (status.toError(.write)) |err| {
                 this.last_write_result = .{ .err = err };
                 log("onWrite() = {s}", .{err.name()});
@@ -1355,17 +1359,21 @@ pub fn WindowsStreamingWriter(comptime Parent: type, function_table: anytype) ty
             const this = bun.cast(*WindowsWriter, parent_ptr);
 
             if (was_canceled) {
-                // Canceled write - reset buffers
+                // Canceled write - reset buffers and deref to balance processSend ref
                 this.current_payload.reset();
+                this.parent.deref();
                 return;
             }
 
             if (result.toError(.write)) |err| {
+                // deref to balance processSend ref
+                defer this.parent.deref();
                 this.close();
                 onError(this.parent, err);
                 return;
             }
 
+            // onWriteComplete handles the deref
             this.onWriteComplete(.zero);
         }
 
@@ -1397,6 +1405,10 @@ pub fn WindowsStreamingWriter(comptime Parent: type, function_table: anytype) ty
             const temp = this.current_payload;
             this.current_payload = this.outgoing;
             this.outgoing = temp;
+            // Ref the parent to prevent it from being freed while an async
+            // write is in flight. The matching deref is in onWriteComplete
+            // or onFsWriteComplete.
+            this.parent.ref();
             switch (pipe) {
                 .sync_file => {
                     @panic("sync_file pipe write should not be reachable");
@@ -1411,6 +1423,7 @@ pub fn WindowsStreamingWriter(comptime Parent: type, function_table: anytype) ty
 
                     if (uv.uv_fs_write(this.parent.loop(), &file.fs, file.file, @ptrCast(&this.write_buffer), 1, -1, onFsWriteComplete).toError(.write)) |err| {
                         file.complete(false);
+                        this.parent.deref();
                         this.last_write_result = .{ .err = err };
                         onError(this.parent, err);
                         this.closeWithoutReporting();
@@ -1421,6 +1434,7 @@ pub fn WindowsStreamingWriter(comptime Parent: type, function_table: anytype) ty
                     // enqueue the write
                     this.write_buffer = uv.uv_buf_t.init(bytes);
                     if (this.write_req.write(pipe.toStream(), &this.write_buffer, this, onWriteComplete).asErr()) |err| {
+                        this.parent.deref();
                         this.last_write_result = .{ .err = err };
                         onError(this.parent, err);
                         this.closeWithoutReporting();
@@ -1442,10 +1456,11 @@ pub fn WindowsStreamingWriter(comptime Parent: type, function_table: anytype) ty
         }
 
         pub fn deinit(this: *WindowsWriter) void {
-            // clean both buffers if needed
+            // Close the pipe first to cancel any in-flight writes before
+            // freeing the buffers they reference.
+            this.closeWithoutReporting();
             this.outgoing.deinit();
             this.current_payload.deinit();
-            this.closeWithoutReporting();
         }
 
         fn writeInternal(this: *WindowsWriter, buffer: anytype, comptime writeFn: anytype) WriteResult {

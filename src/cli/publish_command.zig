@@ -352,6 +352,20 @@ pub const PublishCommand = struct {
                 Global.crash();
             };
 
+            // Build provenance statement if requested
+            const provenance_statement = if (provenance_ctx) |*pctx| blk: {
+                break :blk Provenance.buildProvenanceStatement(pctx, .{
+                    .package_name = context.package_name,
+                    .package_version = context.package_version,
+                    .sha512_hex = &std.fmt.bytesToHex(context.integrity, .lower),
+                }) catch |err| {
+                    switch (err) {
+                        error.OutOfMemory => bun.outOfMemory(),
+                    }
+                };
+            } else null;
+            _ = provenance_statement; // TODO: Phase 3-5 will use this for signing
+
             publish(false, &context) catch |err| {
                 switch (err) {
                     error.OutOfMemory => bun.outOfMemory(),
@@ -398,6 +412,20 @@ pub const PublishCommand = struct {
 
         // TODO: read this into memory
         _ = bun.sys.unlink(context.abs_tarball_path);
+
+        // Build provenance statement if requested
+        const provenance_statement = if (provenance_ctx) |*pctx| blk: {
+            break :blk Provenance.buildProvenanceStatement(pctx, .{
+                .package_name = context.package_name,
+                .package_version = context.package_version,
+                .sha512_hex = &std.fmt.bytesToHex(context.integrity, .lower),
+            }) catch |err| {
+                switch (err) {
+                    error.OutOfMemory => bun.outOfMemory(),
+                }
+            };
+        } else null;
+        _ = provenance_statement; // TODO: Phase 3-5 will use this for signing
 
         publish(true, &context) catch |err| {
             switch (err) {

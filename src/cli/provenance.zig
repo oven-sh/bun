@@ -42,6 +42,22 @@ pub const GitHubContext = struct {
 
 pub const GitLabContext = struct {
     sigstore_id_token: string,
+    project_url: string,
+    runner_id: string,
+    commit_sha: string,
+    job_name: string,
+    job_id: string,
+    job_url: string,
+    pipeline_id: string,
+    config_path: string,
+    server_url: string,
+    project_path: string,
+    runner_description: string,
+    runner_arch: string,
+
+    /// All CI_* and GITLAB_* env vars for the invocation parameters.
+    /// npm captures ~80 env vars here; we capture all CI_*/GITLAB_*/RUNNER_* vars.
+    env_params: std.StringArrayHashMapUnmanaged(string),
 };
 
 pub const ProvenanceError = error{
@@ -109,12 +125,42 @@ fn initGitLabCI(allocator: std.mem.Allocator) ProvenanceError!ProvenanceContext 
         return error.MissingOIDCToken;
     };
 
+    // Collect all CI_*, GITLAB_*, and RUNNER_* env vars for invocation parameters
+    var env_params: std.StringArrayHashMapUnmanaged(string) = .{};
+    const env_slice = std.os.environ;
+    for (env_slice) |entry| {
+        const env_entry = std.mem.sliceTo(entry, 0);
+        if (std.mem.indexOfScalar(u8, env_entry, '=')) |eq_pos| {
+            const key = env_entry[0..eq_pos];
+            const value = env_entry[eq_pos + 1 ..];
+            if (strings.hasPrefixComptime(key, "CI_") or
+                strings.hasPrefixComptime(key, "GITLAB_") or
+                strings.hasPrefixComptime(key, "RUNNER_"))
+            {
+                try env_params.put(allocator, key, value);
+            }
+        }
+    }
+
     return .{
         .ci = .gitlab_ci,
         .oidc_token = try allocator.dupe(u8, id_token),
         .allocator = allocator,
         .gitlab = .{
             .sigstore_id_token = id_token,
+            .project_url = bun.getenvZ("CI_PROJECT_URL") orelse "",
+            .runner_id = bun.getenvZ("CI_RUNNER_ID") orelse "",
+            .commit_sha = bun.getenvZ("CI_COMMIT_SHA") orelse "",
+            .job_name = bun.getenvZ("CI_JOB_NAME") orelse "",
+            .job_id = bun.getenvZ("CI_JOB_ID") orelse "",
+            .job_url = bun.getenvZ("CI_JOB_URL") orelse "",
+            .pipeline_id = bun.getenvZ("CI_PIPELINE_ID") orelse "",
+            .config_path = bun.getenvZ("CI_CONFIG_PATH") orelse "",
+            .server_url = bun.getenvZ("CI_SERVER_URL") orelse "",
+            .project_path = bun.getenvZ("CI_PROJECT_PATH") orelse "",
+            .runner_description = bun.getenvZ("CI_RUNNER_DESCRIPTION") orelse "",
+            .runner_arch = bun.getenvZ("CI_RUNNER_EXECUTABLE_ARCH") orelse "",
+            .env_params = env_params,
         },
     };
 }
@@ -208,6 +254,378 @@ fn fetchGitHubOIDCToken(
     return token;
 }
 
+/// Subject info for the in-toto statement.
+pub const Subject = struct {
+    package_name: string,
+    package_version: string,
+    sha512_hex: string,
+};
+
+/// Build the in-toto provenance statement JSON.
+/// Returns the JSON bytes that will be signed in the DSSE envelope.
+pub fn buildProvenanceStatement(
+    ctx: *const ProvenanceContext,
+    subject: Subject,
+) OOM!string {
+    return switch (ctx.ci) {
+        .github_actions => try buildGitHubStatement(ctx, subject),
+        .gitlab_ci => try buildGitLabStatement(ctx, subject),
+    };
+}
+
+fn buildGitHubStatement(
+    ctx: *const ProvenanceContext,
+    subject: Subject,
+) OOM!string {
+    const gh = ctx.github.?;
+    const allocator = ctx.allocator;
+
+    var buf = std.ArrayListUnmanaged(u8){};
+    const w = buf.writer(allocator);
+
+    // GITHUB_WORKFLOW_REF format: "owner/repo/.github/workflows/file.yml@refs/heads/main"
+    // Split on '@' to get workflow path and ref
+    const workflow_path, const workflow_ref = splitWorkflowRef(gh.workflow_ref);
+
+    const purl = try fmtPurl(allocator, subject.package_name, subject.package_version);
+
+    try w.writeAll("{");
+
+    // "_type"
+    try writeJsonString(w, "_type");
+    try w.writeByte(':');
+    try writeJsonString(w, "https://in-toto.io/Statement/v1");
+    try w.writeByte(',');
+
+    // "subject"
+    try writeJsonString(w, "subject");
+    try w.writeAll(":[{");
+    try writeJsonString(w, "name");
+    try w.writeByte(':');
+    try writeJsonString(w, purl);
+    try w.writeByte(',');
+    try writeJsonString(w, "digest");
+    try w.writeAll(":{");
+    try writeJsonString(w, "sha512");
+    try w.writeByte(':');
+    try writeJsonString(w, subject.sha512_hex);
+    try w.writeAll("}}],");
+
+    // "predicateType"
+    try writeJsonString(w, "predicateType");
+    try w.writeByte(':');
+    try writeJsonString(w, "https://slsa.dev/provenance/v1");
+    try w.writeByte(',');
+
+    // "predicate"
+    try writeJsonString(w, "predicate");
+    try w.writeAll(":{");
+
+    // "buildDefinition"
+    try writeJsonString(w, "buildDefinition");
+    try w.writeAll(":{");
+
+    try writeJsonString(w, "buildType");
+    try w.writeByte(':');
+    try writeJsonString(w, "https://slsa-framework.github.io/github-actions-buildtypes/workflow/v1");
+    try w.writeByte(',');
+
+    // "externalParameters"
+    try writeJsonString(w, "externalParameters");
+    try w.writeAll(":{");
+    try writeJsonString(w, "workflow");
+    try w.writeAll(":{");
+    try writeJsonString(w, "ref");
+    try w.writeByte(':');
+    try writeJsonString(w, workflow_ref);
+    try w.writeByte(',');
+    try writeJsonString(w, "repository");
+    try w.writeByte(':');
+    try writeJsonString(w, try std.fmt.allocPrint(allocator, "{s}/{s}", .{ gh.server_url, gh.repository }));
+    try w.writeByte(',');
+    try writeJsonString(w, "path");
+    try w.writeByte(':');
+    try writeJsonString(w, workflow_path);
+    try w.writeAll("}},");
+
+    // "internalParameters"
+    try writeJsonString(w, "internalParameters");
+    try w.writeAll(":{");
+    try writeJsonString(w, "github");
+    try w.writeAll(":{");
+    try writeJsonString(w, "event_name");
+    try w.writeByte(':');
+    try writeJsonString(w, gh.event_name);
+    try w.writeByte(',');
+    try writeJsonString(w, "repository_id");
+    try w.writeByte(':');
+    try writeJsonString(w, gh.repository_id);
+    try w.writeByte(',');
+    try writeJsonString(w, "repository_owner_id");
+    try w.writeByte(':');
+    try writeJsonString(w, gh.repository_owner_id);
+    try w.writeAll("}},");
+
+    // "resolvedDependencies"
+    try writeJsonString(w, "resolvedDependencies");
+    try w.writeAll(":[{");
+    try writeJsonString(w, "uri");
+    try w.writeByte(':');
+    try writeJsonString(w, try std.fmt.allocPrint(allocator, "git+{s}/{s}@{s}", .{ gh.server_url, gh.repository, gh.ref }));
+    try w.writeByte(',');
+    try writeJsonString(w, "digest");
+    try w.writeAll(":{");
+    try writeJsonString(w, "gitCommit");
+    try w.writeByte(':');
+    try writeJsonString(w, gh.sha);
+    try w.writeAll("}}]},");
+
+    // "runDetails"
+    try writeJsonString(w, "runDetails");
+    try w.writeAll(":{");
+    try writeJsonString(w, "builder");
+    try w.writeAll(":{");
+    try writeJsonString(w, "id");
+    try w.writeByte(':');
+    try writeJsonString(w, try std.fmt.allocPrint(allocator, "https://github.com/actions/runner/{s}", .{gh.runner_environment}));
+    try w.writeAll("},");
+    try writeJsonString(w, "metadata");
+    try w.writeAll(":{");
+    try writeJsonString(w, "invocationId");
+    try w.writeByte(':');
+    try writeJsonString(w, try std.fmt.allocPrint(allocator, "{s}/{s}/actions/runs/{s}/attempts/{s}", .{ gh.server_url, gh.repository, gh.run_id, gh.run_attempt }));
+    try w.writeAll("}}}}");
+
+    try w.writeByte('}');
+
+    return buf.items;
+}
+
+fn buildGitLabStatement(
+    ctx: *const ProvenanceContext,
+    subject: Subject,
+) OOM!string {
+    const gl = ctx.gitlab.?;
+    const allocator = ctx.allocator;
+
+    var buf = std.ArrayListUnmanaged(u8){};
+    const w = buf.writer(allocator);
+
+    const purl = try fmtPurl(allocator, subject.package_name, subject.package_version);
+
+    try w.writeAll("{");
+
+    // "_type"
+    try writeJsonString(w, "_type");
+    try w.writeByte(':');
+    try writeJsonString(w, "https://in-toto.io/Statement/v0.1");
+    try w.writeByte(',');
+
+    // "subject"
+    try writeJsonString(w, "subject");
+    try w.writeAll(":[{");
+    try writeJsonString(w, "name");
+    try w.writeByte(':');
+    try writeJsonString(w, purl);
+    try w.writeByte(',');
+    try writeJsonString(w, "digest");
+    try w.writeAll(":{");
+    try writeJsonString(w, "sha512");
+    try w.writeByte(':');
+    try writeJsonString(w, subject.sha512_hex);
+    try w.writeAll("}}],");
+
+    // "predicateType"
+    try writeJsonString(w, "predicateType");
+    try w.writeByte(':');
+    try writeJsonString(w, "https://slsa.dev/provenance/v0.2");
+    try w.writeByte(',');
+
+    // "predicate"
+    try writeJsonString(w, "predicate");
+    try w.writeAll(":{");
+
+    // "buildType"
+    try writeJsonString(w, "buildType");
+    try w.writeByte(':');
+    try writeJsonString(w, "https://github.com/npm/cli/gitlab/v0alpha1");
+    try w.writeByte(',');
+
+    // "builder"
+    try writeJsonString(w, "builder");
+    try w.writeAll(":{");
+    try writeJsonString(w, "id");
+    try w.writeByte(':');
+    try writeJsonString(w, try std.fmt.allocPrint(allocator, "{s}/-/runners/{s}", .{ gl.project_url, gl.runner_id }));
+    try w.writeAll("},");
+
+    // "invocation"
+    try writeJsonString(w, "invocation");
+    try w.writeAll(":{");
+
+    // "configSource"
+    try writeJsonString(w, "configSource");
+    try w.writeAll(":{");
+    try writeJsonString(w, "uri");
+    try w.writeByte(':');
+    try writeJsonString(w, try std.fmt.allocPrint(allocator, "git+{s}", .{gl.project_url}));
+    try w.writeByte(',');
+    try writeJsonString(w, "digest");
+    try w.writeAll(":{");
+    try writeJsonString(w, "sha1");
+    try w.writeByte(':');
+    try writeJsonString(w, gl.commit_sha);
+    try w.writeAll("},");
+    try writeJsonString(w, "entryPoint");
+    try w.writeByte(':');
+    try writeJsonString(w, gl.job_name);
+    try w.writeAll("},");
+
+    // "parameters" — all CI_*/GITLAB_*/RUNNER_* env vars
+    try writeJsonString(w, "parameters");
+    try w.writeAll(":{");
+    {
+        var first = true;
+        const keys = gl.env_params.keys();
+        const values = gl.env_params.values();
+        for (keys, values) |key, value| {
+            if (!first) try w.writeByte(',');
+            first = false;
+            try writeJsonString(w, key);
+            try w.writeByte(':');
+            try writeJsonString(w, value);
+        }
+    }
+    try w.writeAll("},");
+
+    // "environment"
+    try writeJsonString(w, "environment");
+    try w.writeAll(":{");
+    try writeJsonString(w, "name");
+    try w.writeByte(':');
+    try writeJsonString(w, gl.runner_description);
+    try w.writeByte(',');
+    try writeJsonString(w, "architecture");
+    try w.writeByte(':');
+    try writeJsonString(w, gl.runner_arch);
+    try w.writeByte(',');
+    try writeJsonString(w, "server");
+    try w.writeByte(':');
+    try writeJsonString(w, gl.server_url);
+    try w.writeByte(',');
+    try writeJsonString(w, "project");
+    try w.writeByte(':');
+    try writeJsonString(w, gl.project_path);
+    try w.writeByte(',');
+    try writeJsonString(w, "job");
+    try w.writeAll(":{");
+    try writeJsonString(w, "id");
+    try w.writeByte(':');
+    try writeJsonString(w, gl.job_id);
+    try w.writeAll("},");
+    try writeJsonString(w, "pipeline");
+    try w.writeAll(":{");
+    try writeJsonString(w, "id");
+    try w.writeByte(':');
+    try writeJsonString(w, gl.pipeline_id);
+    try w.writeByte(',');
+    try writeJsonString(w, "ref");
+    try w.writeByte(':');
+    try writeJsonString(w, gl.config_path);
+    try w.writeAll("}}},");
+
+    // "metadata"
+    try writeJsonString(w, "metadata");
+    try w.writeAll(":{");
+    try writeJsonString(w, "buildInvocationId");
+    try w.writeByte(':');
+    try writeJsonString(w, gl.job_url);
+    try w.writeByte(',');
+    try writeJsonString(w, "completeness");
+    try w.writeAll(":{");
+    try writeJsonString(w, "parameters");
+    try w.writeAll(":true,");
+    try writeJsonString(w, "environment");
+    try w.writeAll(":true,");
+    try writeJsonString(w, "materials");
+    try w.writeAll(":false},");
+    try writeJsonString(w, "reproducible");
+    try w.writeAll(":false},");
+
+    // "materials"
+    try writeJsonString(w, "materials");
+    try w.writeAll(":[{");
+    try writeJsonString(w, "uri");
+    try w.writeByte(':');
+    try writeJsonString(w, try std.fmt.allocPrint(allocator, "git+{s}", .{gl.project_url}));
+    try w.writeByte(',');
+    try writeJsonString(w, "digest");
+    try w.writeAll(":{");
+    try writeJsonString(w, "sha1");
+    try w.writeByte(':');
+    try writeJsonString(w, gl.commit_sha);
+    try w.writeAll("}}]}}");
+
+    try w.writeByte('}');
+
+    return buf.items;
+}
+
+/// Format a package name + version as a PURL.
+/// Scoped: pkg:npm/%40scope/name@version
+/// Unscoped: pkg:npm/name@version
+fn fmtPurl(allocator: std.mem.Allocator, name: string, version: string) OOM!string {
+    const version_without_build_tag = Dependency.withoutBuildTag(version);
+
+    if (name.len > 0 and name[0] == '@') {
+        // Scoped package: encode the @ as %40
+        return std.fmt.allocPrint(allocator, "pkg:npm/%40{s}@{s}", .{
+            name[1..],
+            version_without_build_tag,
+        });
+    }
+
+    return std.fmt.allocPrint(allocator, "pkg:npm/{s}@{s}", .{
+        name,
+        version_without_build_tag,
+    });
+}
+
+/// Split GITHUB_WORKFLOW_REF on '@' into (path, ref).
+/// e.g. "owner/repo/.github/workflows/publish.yml@refs/heads/main"
+///   -> ("owner/repo/.github/workflows/publish.yml", "refs/heads/main")
+fn splitWorkflowRef(workflow_ref: string) struct { string, string } {
+    if (strings.indexOfChar(workflow_ref, '@')) |at_pos| {
+        return .{ workflow_ref[0..at_pos], workflow_ref[at_pos + 1 ..] };
+    }
+    return .{ workflow_ref, "" };
+}
+
+/// Write a JSON-escaped string (with surrounding quotes).
+/// Handles the standard JSON escape sequences.
+fn writeJsonString(w: anytype, s: string) @TypeOf(w).Error!void {
+    try w.writeByte('"');
+    for (s) |c| {
+        switch (c) {
+            '"' => try w.writeAll("\\\""),
+            '\\' => try w.writeAll("\\\\"),
+            '\n' => try w.writeAll("\\n"),
+            '\r' => try w.writeAll("\\r"),
+            '\t' => try w.writeAll("\\t"),
+            0x08 => try w.writeAll("\\b"),
+            0x0C => try w.writeAll("\\f"),
+            else => {
+                if (c < 0x20) {
+                    try w.print("\\u{x:0>4}", .{@as(u16, c)});
+                } else {
+                    try w.writeByte(c);
+                }
+            },
+        }
+    }
+    try w.writeByte('"');
+}
+
 /// Print a user-friendly error message for provenance errors.
 pub fn printError(err: ProvenanceError) void {
     switch (err) {
@@ -271,3 +689,6 @@ const logger = bun.logger;
 const strings = bun.strings;
 
 const http = bun.http;
+
+const install = bun.install;
+const Dependency = install.Dependency;

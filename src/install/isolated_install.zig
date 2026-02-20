@@ -420,7 +420,11 @@ pub fn installIsolatedPackages(
         var public_hoisted: bun.StringArrayHashMap(void) = .init(manager.allocator);
         defer public_hoisted.deinit();
 
-        var hidden_hoisted: bun.StringArrayHashMap(void) = .init(manager.allocator);
+        const HoistInfo = struct {
+            entry_id: Store.Entry.Id,
+            pkg_id: PackageID,
+        };
+        var hidden_hoisted: bun.StringArrayHashMap(HoistInfo) = .init(manager.allocator);
         defer hidden_hoisted.deinit();
 
         // Second pass: Deduplicate nodes when the pkg_id and peer set match an existing entry.
@@ -516,6 +520,8 @@ pub fn installIsolatedPackages(
             var new_entry_parents: std.ArrayListUnmanaged(Store.Entry.Id) = try .initCapacity(lockfile.allocator, 1);
             new_entry_parents.appendAssumeCapacity(entry.entry_parent_id);
 
+            const new_entry_id: Store.Entry.Id = .from(@intCast(store.len));
+
             const hoisted = hoisted: {
                 if (new_entry_dep_id == invalid_dependency_id) {
                     break :hoisted false;
@@ -523,14 +529,47 @@ pub fn installIsolatedPackages(
 
                 const dep_name = dependencies[new_entry_dep_id].name.slice(string_buf);
 
-                const hoist_pattern = manager.options.hoist_pattern orelse {
-                    const hoist_entry = try hidden_hoisted.getOrPut(dep_name);
-                    break :hoisted !hoist_entry.found_existing;
-                };
+                const should_hoist = if (manager.options.hoist_pattern) |hoist_pattern|
+                    hoist_pattern.isMatch(dep_name)
+                else
+                    true;
 
-                if (hoist_pattern.isMatch(dep_name)) {
-                    const hoist_entry = try hidden_hoisted.getOrPut(dep_name);
-                    break :hoisted !hoist_entry.found_existing;
+                if (!should_hoist) {
+                    break :hoisted false;
+                }
+
+                const hoist_entry = try hidden_hoisted.getOrPut(dep_name);
+                if (!hoist_entry.found_existing) {
+                    // First time seeing this package name, hoist it
+                    hoist_entry.value_ptr.* = .{
+                        .entry_id = new_entry_id,
+                        .pkg_id = pkg_id,
+                    };
+                    break :hoisted true;
+                }
+
+                // Package with this name already hoisted - compare versions
+                // Hoist the highest version (semver comparison)
+                const existing_pkg_id = hoist_entry.value_ptr.pkg_id;
+                const existing_res = pkg_resolutions[existing_pkg_id];
+                const new_res = pkg_resolutions[pkg_id];
+
+                // Only compare npm versions; for other resolution types, keep first-seen behavior
+                if (existing_res.tag == .npm and new_res.tag == .npm) {
+                    const existing_version = existing_res.value.npm.version;
+                    const new_version = new_res.value.npm.version;
+
+                    if (new_version.order(existing_version, string_buf, string_buf) == .gt) {
+                        // New version is higher, un-hoist the old entry and hoist this one
+                        const old_entry_id = hoist_entry.value_ptr.entry_id;
+                        store.slice().items(.hoisted)[old_entry_id.get()] = false;
+
+                        hoist_entry.value_ptr.* = .{
+                            .entry_id = new_entry_id,
+                            .pkg_id = pkg_id,
+                        };
+                        break :hoisted true;
+                    }
                 }
 
                 break :hoisted false;
@@ -543,8 +582,6 @@ pub fn installIsolatedPackages(
                 .peer_hash = new_entry_peer_hash,
                 .hoisted = hoisted,
             };
-
-            const new_entry_id: Store.Entry.Id = .from(@intCast(store.len));
             try store.append(lockfile.allocator, new_entry);
 
             if (entry.entry_parent_id.tryGet()) |entry_parent_id| skip_adding_dependency: {

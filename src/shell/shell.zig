@@ -1020,6 +1020,9 @@ pub const AST = struct {
         Var: []const u8,
         VarArgv: u8,
         Text: []const u8,
+        /// An empty string from a quoted context (e.g. "", '', or ${''}). Preserved as an
+        /// explicit empty argument during expansion, unlike unquoted empty text which is dropped.
+        quoted_empty,
         asterisk,
         double_asterisk,
         brace_begin,
@@ -1042,6 +1045,7 @@ pub const AST = struct {
                 .Var => false,
                 .VarArgv => false,
                 .Text => false,
+                .quoted_empty => false,
                 .asterisk => true,
                 .double_asterisk => true,
                 .brace_begin => false,
@@ -1845,6 +1849,9 @@ pub const Parser = struct {
                             if (txt.len > 0) {
                                 try atoms.append(.{ .Text = txt });
                             }
+                        } else if (txt.len == 0 and (peeked == .SingleQuotedText or peeked == .DoubleQuotedText)) {
+                            // Preserve empty quoted strings ("", '') as explicit empty arguments
+                            try atoms.append(.quoted_empty);
                         } else {
                             try atoms.append(.{ .Text = txt });
                         }
@@ -2789,10 +2796,12 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                             comptime assertSpecialChar('\'');
 
                             if (self.chars.state == .Single) {
+                                try self.break_word(false);
                                 self.chars.state = .Normal;
                                 continue;
                             }
                             if (self.chars.state == .Normal) {
+                                try self.break_word(false);
                                 self.chars.state = .Single;
                                 continue;
                             }
@@ -2888,9 +2897,12 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
         }
 
         inline fn isImmediatelyEscapedQuote(self: *@This()) bool {
-            return (self.chars.state == .Double and
+            return ((self.chars.state == .Double and
                 (self.chars.current != null and !self.chars.current.?.escaped and self.chars.current.?.char == '"') and
-                (self.chars.prev != null and !self.chars.prev.?.escaped and self.chars.prev.?.char == '"'));
+                (self.chars.prev != null and !self.chars.prev.?.escaped and self.chars.prev.?.char == '"')) or
+                (self.chars.state == .Single and
+                    (self.chars.current != null and !self.chars.current.?.escaped and self.chars.current.?.char == '\'') and
+                    (self.chars.prev != null and !self.chars.prev.?.escaped and self.chars.prev.?.char == '\'')));
         }
 
         fn break_word_impl(self: *@This(), add_delimiter: bool, in_normal_space: bool, in_operator: bool) !void {
@@ -4059,6 +4071,14 @@ pub const ShellSrcBuilder = struct {
     ) bun.OOM!bool {
         const invalid = (bunstr.isUTF16() and !bun.simdutf.validate.utf16le(bunstr.utf16())) or (bunstr.isUTF8() and !bun.simdutf.validate.utf8(bunstr.byteSlice()));
         if (invalid) return false;
+        // Empty interpolated values must still produce an argument (e.g. `${''}` should
+        // pass "" as an arg). Write literal `""` so the lexer sees an empty quoted string.
+        // Only do this for template values (allow_escape=true), not for template string
+        // parts (allow_escape=false), which are the static parts of the template literal.
+        if (allow_escape and bunstr.length() == 0) {
+            try this.outbuf.appendSlice("\"\"");
+            return true;
+        }
         if (allow_escape) {
             if (needsEscapeBunstr(bunstr)) {
                 try this.appendJSStrRef(bunstr);

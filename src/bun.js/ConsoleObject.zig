@@ -156,6 +156,19 @@ fn messageWithTypeAndLevel_(
         return;
     }
 
+    // Print "Assertion failed: " prefix when console.assert has arguments
+    if (message_type == .Assert and len > 0) {
+        const prefix = if (Output.enable_ansi_colors_stderr)
+            Output.prettyFmt("<r><red>Assertion failed<r><d>:<r> ", true)
+        else
+            "Assertion failed: ";
+        const prefix_writer = if (level == .Warning or level == .Error)
+            console.error_writer
+        else
+            console.writer;
+        prefix_writer.writeAll(prefix) catch {};
+    }
+
     const enable_colors = if (level == .Warning or level == .Error)
         Output.enable_ansi_colors_stderr
     else

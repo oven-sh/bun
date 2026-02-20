@@ -833,7 +833,7 @@ pub const ZlibCompressorArrayList = struct {
             &zlib_reader.zlib,
             options.level,
             options.method,
-            if (!options.gzip) -options.windowBits else options.windowBits + 16,
+            options.windowBits,
             options.memLevel,
             options.strategy,
             zlibVersion(),

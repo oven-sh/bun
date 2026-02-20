@@ -15,6 +15,24 @@
 
 #if OS(LINUX)
 #include <sys/syscall.h>
+#include <sys/prctl.h>
+#include <linux/seccomp.h>
+#include <linux/filter.h>
+#endif
+
+#if OS(DARWIN)
+#include <sandbox.h>
+
+// Private function used by Chrome, Firefox, Nix, etc.
+// Apple officially deprecates sandbox_init() but continues to support it.
+extern "C" int sandbox_init_with_parameters(
+    const char* profile,
+    uint64_t flags,
+    const char* const parameters[],
+    char** errorbuf);
+
+// Sandbox flags (from sandbox.h, but not always exposed)
+#define BUN_SANDBOX_NAMED 0x0001
 #endif
 
 extern char** environ;
@@ -99,6 +117,17 @@ typedef struct bun_spawn_request_t {
     bool detached;
     bun_spawn_file_action_list_t actions;
     int pty_slave_fd; // -1 if not using PTY, otherwise the slave fd to set as controlling terminal
+    // Linux seccomp BPF filter (Linux only)
+    const void* linux_seccomp_filter; // Pointer to BPF bytecode (array of sock_filter structs)
+    size_t linux_seccomp_filter_len; // Length in bytes (must be multiple of 8)
+    uint32_t linux_seccomp_flags; // SECCOMP_FILTER_FLAG_* flags
+    // macOS sandbox profile (SBPL string or named profile)
+    const char* darwin_profile;
+    // macOS sandbox flags: 0 = SANDBOX_STRING (inline SBPL), 1 = SANDBOX_NAMED
+    uint64_t darwin_flags;
+    // macOS sandbox parameters: null-terminated array of "KEY\0VALUE\0" pairs, ending with empty string
+    // Format: ["KEY1", "VALUE1", "KEY2", "VALUE2", ..., NULL]
+    const char* const* darwin_parameters;
 } bun_spawn_request_t;
 
 // Raw exit syscall that doesn't go through libc.
@@ -283,6 +312,54 @@ extern "C" ssize_t posix_spawn_bun(
 
         // Close all fds > current_max_fd, preferring cloexec if available
         closeRangeOrLoop(current_max_fd + 1, INT_MAX, true);
+
+#if OS(LINUX)
+        // Apply seccomp filter if provided (Linux only)
+        if (request->linux_seccomp_filter && request->linux_seccomp_filter_len > 0) {
+            // Validate filter length (must be multiple of sizeof(sock_filter) = 8)
+            if (request->linux_seccomp_filter_len % sizeof(struct sock_filter) != 0) {
+                errno = EINVAL;
+                return childFailed();
+            }
+
+            // Set no_new_privs (required for seccomp without CAP_SYS_ADMIN)
+            if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) == -1) {
+                return childFailed();
+            }
+
+            // Construct sock_fprog
+            struct sock_fprog prog = {
+                .len = static_cast<unsigned short>(request->linux_seccomp_filter_len / sizeof(struct sock_filter)),
+                .filter = static_cast<struct sock_filter*>(const_cast<void*>(request->linux_seccomp_filter)),
+            };
+
+            if (syscall(SYS_seccomp, SECCOMP_SET_MODE_FILTER, request->linux_seccomp_flags, &prog) == -1) {
+                return childFailed();
+            }
+        }
+#endif
+
+#if OS(DARWIN)
+        // Apply macOS sandbox profile if provided
+        // The sandbox is applied before execve and persists across exec.
+        // Child processes inherit the sandbox - they cannot remove or weaken it.
+        if (request->darwin_profile && request->darwin_profile[0] != '\0') {
+            char* errorbuf = nullptr;
+            // darwin_flags: 0 = inline SBPL string, BUN_SANDBOX_NAMED = named profile from /usr/share/sandbox
+            // darwin_parameters: array of key-value pairs for the param() function in SBPL
+            if (sandbox_init_with_parameters(
+                    request->darwin_profile,
+                    request->darwin_flags,
+                    request->darwin_parameters,
+                    &errorbuf)
+                != 0) {
+                // sandbox_init failed - child process will exit immediately via childFailed()
+                // No need to free errorbuf since we're about to _exit()
+                errno = EINVAL;
+                return childFailed();
+            }
+        }
+#endif
 
         if (execve(path, argv, envp) == -1) {
             return childFailed();

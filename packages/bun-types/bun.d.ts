@@ -6735,6 +6735,177 @@ declare module "bun" {
        * @default undefined (no limit)
        */
       maxBuffer?: number;
+
+      /**
+       * Process sandboxing options.
+       *
+       * You can specify options for multiple sandbox technologies - options
+       * for unavailable technologies are silently ignored. This allows writing
+       * cross-platform code that sandboxes on all supported platforms.
+       *
+       * Currently supports:
+       * - **seccomp**: Linux syscall filtering via BPF
+       * - **seatbelt**: macOS sandbox via SBPL profiles
+       *
+       * @example
+       * ```ts
+       * // Cross-platform sandboxing
+       * const proc = Bun.spawn({
+       *   cmd: ["./untrusted-program"],
+       *   sandbox: {
+       *     seccomp: bpfFilter,  // Linux
+       *     seatbelt: `          // macOS
+       *       (version 1)
+       *       (allow default)
+       *       (deny network*)
+       *     `,
+       *   },
+       * });
+       * ```
+       */
+      sandbox?: {
+        /**
+         * seccomp-BPF filter (Linux only).
+         *
+         * A compiled BPF program that restricts which system calls the
+         * subprocess can make. Silently ignored on non-Linux platforms.
+         *
+         * The buffer must contain valid BPF bytecode. Each BPF instruction
+         * is 8 bytes:
+         * - 2 bytes: opcode
+         * - 1 byte: jump-true offset
+         * - 1 byte: jump-false offset
+         * - 4 bytes: k value
+         *
+         * **Important**: Your BPF program MUST check the architecture
+         * (`seccomp_data.arch`) before checking syscall numbers, as syscall
+         * numbers differ between architectures (x86_64, arm64, etc.).
+         *
+         * The filter is applied after `fork()` but before `execve()`, and
+         * persists across `execve()`. Child processes inherit the filter.
+         *
+         * Bun automatically calls `prctl(PR_SET_NO_NEW_PRIVS, 1)` before
+         * applying the filter.
+         *
+         * If the filter kills the process (via `SECCOMP_RET_KILL`), the
+         * subprocess will have `exitCode: null` and `signalCode: "SIGSYS"`.
+         *
+         * @see https://man7.org/linux/man-pages/man2/seccomp.2.html
+         * @platform linux
+         *
+         * @example
+         * ```ts
+         * // Simple format: raw BPF filter
+         * Bun.spawn({
+         *   cmd: ["program"],
+         *   sandbox: { seccomp: bpfFilter }
+         * });
+         *
+         * // Object format with flags
+         * Bun.spawn({
+         *   cmd: ["program"],
+         *   sandbox: {
+         *     seccomp: {
+         *       filter: bpfFilter,
+         *       flags: ["LOG", "SPEC_ALLOW"]
+         *     }
+         *   }
+         * });
+         * ```
+         */
+        seccomp?:
+          | ArrayBufferView
+          | ArrayBuffer
+          | {
+              /** BPF filter bytecode. Each instruction is 8 bytes. */
+              filter: ArrayBufferView | ArrayBuffer;
+              /**
+               * Seccomp filter flags. Can be a single flag or array of flags.
+               *
+               * - `"LOG"` - Log all filter actions except ALLOW to audit log
+               * - `"SPEC_ALLOW"` - Disable Speculative Store Bypass mitigation
+               */
+              flags?: "LOG" | "SPEC_ALLOW" | ("LOG" | "SPEC_ALLOW")[];
+            };
+
+        /**
+         * macOS Seatbelt sandbox profile (SBPL format).
+         *
+         * Silently ignored on non-macOS platforms.
+         *
+         * The sandbox is applied after `fork()` but before `exec()` using
+         * Apple's `sandbox_init()` API. Once applied, the sandbox cannot
+         * be removed or weakened. Child processes inherit the sandbox.
+         *
+         * Common operations to allow/deny:
+         * - `file-read*`, `file-write*` - File system access
+         * - `network-outbound`, `network-inbound` - Network access
+         * - `process-exec`, `process-fork` - Process creation
+         * - `sysctl-read`, `sysctl-write` - System information
+         *
+         * Can be specified as:
+         * - A string containing an inline SBPL profile
+         * - An object with `profile` (SBPL string) and optional `parameters`
+         * - An object with `namedProfile` referencing a system profile
+         *
+         * @example
+         * ```ts
+         * // Inline SBPL profile (string)
+         * const proc = Bun.spawn({
+         *   cmd: ["./my-script.sh"],
+         *   sandbox: {
+         *     seatbelt: `
+         *       (version 1)
+         *       (deny default)
+         *       (allow file-read*)
+         *       (allow process-exec)
+         *       (allow process-fork)
+         *     `
+         *   }
+         * });
+         *
+         * // SBPL profile with parameters
+         * const proc2 = Bun.spawn({
+         *   cmd: ["./my-script.sh"],
+         *   sandbox: {
+         *     seatbelt: {
+         *       profile: `
+         *         (version 1)
+         *         (deny default)
+         *         (allow file-read* (subpath (param "ALLOWED_PATH")))
+         *       `,
+         *       parameters: {
+         *         ALLOWED_PATH: "/tmp/safe-directory"
+         *       }
+         *     }
+         *   }
+         * });
+         *
+         * // Named system profile
+         * const proc3 = Bun.spawn({
+         *   cmd: ["./my-script.sh"],
+         *   sandbox: {
+         *     seatbelt: { namedProfile: "quicklookd" }
+         *   }
+         * });
+         * ```
+         *
+         * @see https://reverse.put.as/wp-content/uploads/2011/09/Apple-Sandbox-Guide-v1.0.pdf
+         * @platform darwin
+         */
+        seatbelt?:
+          | string
+          | {
+              /** Inline SBPL profile string */
+              profile: string;
+              /** Optional parameters passed to the SBPL profile via the `param()` function */
+              parameters?: Record<string, string>;
+            }
+          | {
+              /** Named profile (e.g., "quicklookd", "pfd") */
+              namedProfile: string;
+            };
+      };
     }
 
     interface SpawnSyncOptions<In extends Writable, Out extends Readable, Err extends Readable>

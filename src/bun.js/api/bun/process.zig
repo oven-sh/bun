@@ -1001,6 +1001,8 @@ pub const PosixSpawnOptions = struct {
     no_sigpipe: bool = true,
     /// PTY slave fd for controlling terminal setup (-1 if not using PTY).
     pty_slave_fd: i32 = -1,
+    /// Platform-specific sandbox configuration.
+    sandbox: Sandbox = .{},
 
     pub const Stdio = union(enum) {
         path: []const u8,
@@ -1016,6 +1018,56 @@ pub const PosixSpawnOptions = struct {
     pub fn deinit(_: *const PosixSpawnOptions) void {
         // no-op
     }
+
+    /// Sandbox configuration for process spawning.
+    /// Contains platform-specific sandboxing options for both Linux (seccomp) and macOS (seatbelt).
+    pub const Sandbox = struct {
+        /// Linux sandbox options.
+        linux: Linux = .{},
+        /// macOS sandbox options.
+        darwin: Darwin = .{},
+
+        pub const Linux = struct {
+            /// Seccomp BPF filter bytecode.
+            /// Must be a multiple of 8 bytes (sizeof(struct sock_filter)).
+            seccomp_filter: ?[]const u8 = null,
+            /// Seccomp filter flags (SECCOMP_FILTER_FLAG_*).
+            /// Only used when seccomp_filter is set.
+            seccomp_flags: u32 = 0,
+        };
+
+        pub const Darwin = struct {
+            /// Sandbox profile (SBPL string or named profile).
+            /// Applied after fork() but before exec() using sandbox_init().
+            profile: ?[:0]const u8 = null,
+            /// Sandbox flags: 0 = inline SBPL string, 1 = named profile from /usr/share/sandbox
+            flags: u64 = 0,
+            /// Sandbox parameters: array of key-value pairs for the param() function in SBPL.
+            /// Format: ["KEY1", "VALUE1", "KEY2", "VALUE2", ..., null]
+            parameters: ?[*:null]const ?[*:0]const u8 = null,
+        };
+
+        /// C-compatible layout for FFI with posix_spawn_bun.
+        pub const Extern = extern struct {
+            linux_seccomp_filter: ?[*]const u8 = null,
+            linux_seccomp_filter_len: usize = 0,
+            linux_seccomp_flags: u32 = 0,
+            darwin_profile: ?[*:0]const u8 = null,
+            darwin_flags: u64 = 0,
+            darwin_parameters: ?[*:null]const ?[*:0]const u8 = null,
+        };
+
+        pub fn toExtern(self: Sandbox) Extern {
+            return .{
+                .linux_seccomp_filter = if (self.linux.seccomp_filter) |s| s.ptr else null,
+                .linux_seccomp_filter_len = if (self.linux.seccomp_filter) |s| s.len else 0,
+                .linux_seccomp_flags = self.linux.seccomp_flags,
+                .darwin_profile = if (self.darwin.profile) |s| s.ptr else null,
+                .darwin_flags = self.darwin.flags,
+                .darwin_parameters = self.darwin.parameters,
+            };
+        }
+    };
 };
 
 pub const WindowsSpawnResult = struct {
@@ -1071,6 +1123,8 @@ pub const WindowsSpawnOptions = struct {
     can_block_entire_thread_to_reduce_cpu_usage_in_fast_path: bool = false,
     /// PTY not supported on Windows - this is a void placeholder for struct compatibility
     pty_slave_fd: void = {},
+    sandbox: Sandbox = .{},
+
     pub const WindowsOptions = struct {
         verbatim_arguments: bool = false,
         hide_window: bool = true,
@@ -1101,6 +1155,8 @@ pub const WindowsSpawnOptions = struct {
             stdio.deinit();
         }
     }
+
+    pub const Sandbox = struct {};
 };
 
 pub const PosixSpawnResult = struct {
@@ -1268,6 +1324,9 @@ pub fn spawnProcessPosix(
 
     // Pass PTY slave fd to attr for controlling terminal setup
     attr.pty_slave_fd = options.pty_slave_fd;
+
+    // Pass platform-specific sandbox settings to attr
+    attr.sandbox = options.sandbox;
 
     if (options.cwd.len > 0) {
         try actions.chdir(options.cwd);

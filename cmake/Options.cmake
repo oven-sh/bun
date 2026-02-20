@@ -87,6 +87,8 @@ endif()
 
 if(ARCH STREQUAL "x64")
   optionx(ENABLE_BASELINE BOOL "If baseline features should be used for older CPUs (e.g. disables AVX, AVX2)" DEFAULT OFF)
+elseif(ARCH STREQUAL "aarch64")
+  optionx(ENABLE_BASELINE BOOL "If baseline features should be used for older ARM64 CPUs (e.g. ARMv8.0-A without LSE)" DEFAULT OFF)
 endif()
 
 # Disabling logs by default for tests yields faster builds

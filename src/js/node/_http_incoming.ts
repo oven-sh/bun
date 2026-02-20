@@ -114,6 +114,8 @@ function IncomingMessage(req, options = defaultIncomingOpts) {
   this._dumped = false;
   this.complete = false;
   this._closed = false;
+  this._headersDistinct = undefined;
+  this._trailersDistinct = undefined;
 
   // (url, method, headers, rawHeaders, handle, hasBody)
   if (req === kHandle) {
@@ -394,6 +396,72 @@ const IncomingMessagePrototype = {
     return kEmptyObject;
   },
   set trailers(value) {
+    // noop
+  },
+  get headersDistinct() {
+    // Cache the result
+    const cached = this._headersDistinct;
+    if (cached !== undefined) {
+      return cached;
+    }
+
+    const rawHeaders = this.rawHeaders;
+    if (!rawHeaders || rawHeaders.length === 0) {
+      this._headersDistinct = kEmptyObject;
+      return kEmptyObject;
+    }
+
+    const distinct = Object.create(null);
+    // rawHeaders format: [name1, value1, name2, value2, ...]
+    for (let i = 0; i < rawHeaders.length; i += 2) {
+      const name = rawHeaders[i];
+      const value = rawHeaders[i + 1];
+      const key = name.toLowerCase();
+
+      if (distinct[key] === undefined) {
+        distinct[key] = [value];
+      } else {
+        distinct[key].push(value);
+      }
+    }
+
+    this._headersDistinct = distinct;
+    return distinct;
+  },
+  set headersDistinct(value) {
+    // noop
+  },
+  get trailersDistinct() {
+    // Cache the result
+    const cached = this._trailersDistinct;
+    if (cached !== undefined) {
+      return cached;
+    }
+
+    const rawTrailers = this.rawTrailers;
+    if (!rawTrailers || rawTrailers.length === 0) {
+      this._trailersDistinct = kEmptyObject;
+      return kEmptyObject;
+    }
+
+    const distinct = Object.create(null);
+    // rawTrailers format: [name1, value1, name2, value2, ...]
+    for (let i = 0; i < rawTrailers.length; i += 2) {
+      const name = rawTrailers[i];
+      const value = rawTrailers[i + 1];
+      const key = name.toLowerCase();
+
+      if (distinct[key] === undefined) {
+        distinct[key] = [value];
+      } else {
+        distinct[key].push(value);
+      }
+    }
+
+    this._trailersDistinct = distinct;
+    return distinct;
+  },
+  set trailersDistinct(value) {
     // noop
   },
   setTimeout(msecs, callback) {

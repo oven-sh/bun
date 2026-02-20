@@ -1714,8 +1714,8 @@ var require_wasi = __commonJS({
                 return r;
               }
             }
-            if (waitTimeNs > 0) {
-              waitTimeNs -= Bun.nanoseconds() - timeOrigin;
+            if (waitTimeNs > BigInt(0)) {
+              waitTimeNs -= BigInt(Bun.nanoseconds() - timeOrigin);
               if (waitTimeNs >= 1e6) {
                 if (this.sleep == null && !warnedAboutSleep) {
                   warnedAboutSleep = true;

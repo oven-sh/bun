@@ -233,6 +233,12 @@ pub fn NewParser_(
         had_commonjs_named_exports_this_visit: bool = false,
         commonjs_replacement_stmts: StmtNodeList = &.{},
 
+        /// Tracks whether we are inside a control flow construct (if/for/while/
+        /// do-while/switch/try/with/etc.). Used to deoptimize CJS named exports
+        /// that appear inside control flow, since they cannot be statically
+        /// converted to ESM export clauses (export statements must be top-level).
+        control_flow_nesting_depth: u32 = 0,
+
         parse_pass_symbol_uses: ParsePassSymbolUsageType = undefined,
 
         /// Used by commonjs_at_runtime

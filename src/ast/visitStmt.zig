@@ -820,7 +820,7 @@ pub fn VisitStmt(
                 p.stmt_expr_value = data.value.data;
                 defer p.stmt_expr_value = .{ .e_missing = .{} };
 
-                const is_top_level = p.current_scope == p.module_scope;
+                const is_top_level = p.current_scope == p.module_scope and p.control_flow_nesting_depth == 0;
                 if (p.shouldUnwrapCommonJSToESM()) {
                     p.commonjs_named_exports_needs_conversion = if (is_top_level)
                         std.math.maxInt(u32)
@@ -1024,6 +1024,9 @@ pub fn VisitStmt(
                 if (p.options.features.minify_syntax) {
                     data.test_ = SideEffects.simplifyBoolean(p, data.test_);
                 }
+
+                p.control_flow_nesting_depth += 1;
+                defer p.control_flow_nesting_depth -= 1;
 
                 const effects = SideEffects.toBoolean(p, data.test_.data);
                 if (effects.ok and !effects.value) {

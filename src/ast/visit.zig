@@ -475,7 +475,9 @@ pub fn Visit(
             const old_is_inside_loop = p.fn_or_arrow_data_visit.is_inside_loop;
             p.fn_or_arrow_data_visit.is_inside_loop = true;
             p.loop_body = stmt.data;
+            p.control_flow_nesting_depth += 1;
             const res = p.visitSingleStmt(stmt, .loop_body);
+            p.control_flow_nesting_depth -= 1;
             p.fn_or_arrow_data_visit.is_inside_loop = old_is_inside_loop;
             return res;
         }

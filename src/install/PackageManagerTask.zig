@@ -243,13 +243,31 @@ pub fn callback(task: *ThreadPool.Task) void {
             this.status = Status.success;
         },
         .local_tarball => {
-            const workspace_pkg_id = manager.lockfile.getWorkspacePkgIfWorkspaceDep(this.request.local_tarball.tarball.dependency_id);
+            const dependency_id = this.request.local_tarball.tarball.dependency_id;
+            const workspace_pkg_id = manager.lockfile.getWorkspacePkgIfWorkspaceDep(dependency_id);
 
             var abs_buf: bun.PathBuffer = undefined;
             const tarball_path, const normalize = if (workspace_pkg_id != invalid_package_id) tarball_path: {
                 const workspace_res = manager.lockfile.packages.items(.resolution)[workspace_pkg_id];
 
                 if (workspace_res.tag != .workspace) break :tarball_path .{ this.request.local_tarball.tarball.url.slice(), true };
+
+                // Check if this dependency's tarball path came from an override.
+                // Overrides are defined at the workspace root, so their file: paths should be
+                // resolved relative to the workspace root, not the workspace package.
+                const dep_name_hash = manager.lockfile.buffers.dependencies.items[dependency_id].name_hash;
+                if (manager.lockfile.overrides.get(dep_name_hash)) |override_version| {
+                    if (override_version.tag == .tarball) {
+                        if (override_version.value.tarball.uri == .local) {
+                            const override_path = manager.lockfile.str(&override_version.value.tarball.uri.local);
+                            const tarball_url = this.request.local_tarball.tarball.url.slice();
+                            if (strings.eql(override_path, tarball_url)) {
+                                // This tarball path came from an override, resolve relative to workspace root
+                                break :tarball_path .{ tarball_url, true };
+                            }
+                        }
+                    }
+                }
 
                 // Construct an absolute path to the tarball.
                 // Normally tarball paths are always relative to the root directory, but if a

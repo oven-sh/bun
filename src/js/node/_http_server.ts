@@ -286,6 +286,25 @@ Server.prototype.unref = function () {
   return this;
 };
 
+Server.prototype.getConnections = function (callback) {
+  if (typeof callback !== "function") {
+    return this;
+  }
+  const server = this[serverSymbol];
+  // If server is not running, return 0 connections (matching net.Server behavior)
+  callback(null, server ? server.pendingRequests : 0);
+  return this;
+};
+
+Object.defineProperty(Server.prototype, "connections", {
+  get() {
+    const server = this[serverSymbol];
+    return server ? server.pendingRequests : 0;
+  },
+  configurable: true,
+  enumerable: true,
+});
+
 Server.prototype.closeAllConnections = function () {
   const server = this[serverSymbol];
   if (!server) {

@@ -979,7 +979,8 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         ctx.bundler_options.transform_only = args.flag("--no-bundle");
         ctx.bundler_options.bytecode = args.flag("--bytecode");
 
-        const production = args.flag("--production");
+        const compile = args.flag("--compile");
+        const production = args.flag("--production") or compile;
 
         if (args.flag("--app")) {
             if (!bun.FeatureFlags.bake()) {
@@ -1106,7 +1107,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             }
         }
 
-        if (args.flag("--compile")) {
+        if (compile) {
             ctx.bundler_options.compile = true;
             ctx.bundler_options.inline_entrypoint_import_meta_main = true;
         }
@@ -1544,7 +1545,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             Global.exit(1);
         }
 
-        if (args.flag("--production")) {
+        if (args.flag("--production") or ctx.bundler_options.compile) {
             const any_html = for (opts.entry_points) |entry_point| {
                 if (strings.hasSuffixComptime(entry_point, ".html")) {
                     break true;

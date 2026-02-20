@@ -2645,23 +2645,15 @@ pub const PathTemplate = struct {
         });
     };
 
-    pub const chunk = PathTemplate{
-        .data = "./chunk-[hash].[ext]",
-        .placeholder = .{
-            .name = "chunk",
-            .ext = "js",
-            .dir = "",
-        },
-    };
-
-    pub const chunkWithTarget = PathTemplate{
-        .data = "[dir]/[target]/chunk-[hash].[ext]",
-        .placeholder = .{
-            .name = "chunk",
-            .ext = "js",
-            .dir = "",
-        },
-    };
+    pub const chunk = PathTemplate{  
+        .data = "./[name]-[hash].[ext]",  
+        .placeholder = .{},  
+    };  
+      
+    pub const chunkWithTarget = PathTemplate{  
+        .data = "[dir]/[target]/[name]-[hash].[ext]",  
+        .placeholder = .{},  
+    };  
 
     pub const file = PathTemplate{
         .data = "[dir]/[name].[ext]",
@@ -2673,15 +2665,9 @@ pub const PathTemplate = struct {
         .placeholder = .{},
     };
 
-    pub const asset = PathTemplate{
-        .data = "./[name]-[hash].[ext]",
-        .placeholder = .{},
-    };
-
-    pub const assetWithTarget = PathTemplate{
-        .data = "[dir]/[target]/[name]-[hash].[ext]",
-        .placeholder = .{},
-    };
+    // Reuse the same default values  
+    pub const asset = chunk;  
+    pub const assetWithTarget = chunkWithTarget;
 };
 
 const string = []const u8;

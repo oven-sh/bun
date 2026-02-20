@@ -1863,6 +1863,25 @@ var require_wasi = __commonJS({
           exports2._start();
         }
       }
+      initialize(instance, memory) {
+        const exports2 = instance.exports;
+        if (exports2 === null || typeof exports2 !== "object") {
+          throw new Error(`instance.exports must be an Object. Received ${exports2}.`);
+        }
+        if (memory == null) {
+          memory = exports2.memory;
+          if (!(memory instanceof WebAssembly.Memory)) {
+            throw new Error(`instance.exports.memory must be a WebAssembly.Memory. Received ${memory}.`);
+          }
+        }
+        this.setMemory(memory);
+        if (typeof exports2._start === "function") {
+          throw new Error("instance.exports._start must not exist for WASI reactors. Use start() for WASI commands.");
+        }
+        if (typeof exports2._initialize === "function") {
+          exports2._initialize();
+        }
+      }
       getImports(module2) {
         let namespace: string | null = null;
         const imports = WebAssembly.Module.imports(module2);
@@ -1896,6 +1915,9 @@ var require_wasi = __commonJS({
             );
           }
         }
+      }
+      getImportObject() {
+        return { wasi_snapshot_preview1: this.wasiImport };
       }
       initWasiFdInfo() {
         if (this.env["WASI_FD_INFO"] != null) {

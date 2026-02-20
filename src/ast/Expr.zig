@@ -2657,8 +2657,11 @@ pub const Data = union(Tag) {
             .e_inlined_enum,
             => true,
             .e_string => |str| str.next == null,
-            .e_array => |array| array.was_originally_macro,
-            .e_object => |object| object.was_originally_macro,
+            // Objects and arrays are NOT const values because they are mutable.
+            // Inlining them would create fresh copies at each reference site,
+            // breaking mutation semantics (e.g., obj.foo = 1 would modify a
+            // different object than a subsequent read of obj.foo).
+            // See: https://github.com/oven-sh/bun/issues/26362
             else => false,
         };
     }

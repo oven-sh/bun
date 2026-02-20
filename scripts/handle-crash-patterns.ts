@@ -57,8 +57,14 @@ bun upgrade
   };
 }
 
-// Check for WASM IPInt 32 stack traces - be very specific to avoid false positives
-else if (bodyLower.includes("wasm_trampoline_wasm_ipint_call_wide32")) {
+// Check for WASM IPInt 32 stack traces - be very specific to avoid false positives.
+// Also match by the characteristic segfault address suffix 0x46505845, which is the
+// ASLR-invariant low 32 bits unique to this crash (high bytes vary per ASLR randomization).
+// This catches reports that only include the raw crash address without decoded stack traces.
+else if (
+  bodyLower.includes("wasm_trampoline_wasm_ipint_call_wide32") ||
+  (bodyLower.includes("segmentation fault") && /segmentation fault at address 0x[0-9a-f]*46505845\b/i.test(body))
+) {
   closeAction = {
     reason: "not_planned",
     comment: `Duplicate of #17841.

@@ -185,10 +185,10 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
             }
         },
         .windows => struct {
-            const FILE_DIRECTORY_INFORMATION = std.os.windows.FILE_DIRECTORY_INFORMATION;
+            const FILE_BOTH_DIR_INFORMATION = std.os.windows.FILE_BOTH_DIR_INFORMATION;
             // While the official api docs guarantee FILE_BOTH_DIR_INFORMATION to be aligned properly
             // this may not always be the case (e.g. due to faulty VM/Sandboxing tools)
-            const FILE_DIRECTORY_INFORMATION_PTR = *align(2) FILE_DIRECTORY_INFORMATION;
+            const FILE_BOTH_DIR_INFORMATION_PTR = *align(2) FILE_BOTH_DIR_INFORMATION;
             dir: FD,
 
             // This structure must be aligned on a LONGLONG (8-byte) boundary.
@@ -228,7 +228,7 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                             &io,
                             &self.buf,
                             self.buf.len,
-                            .FileDirectoryInformation,
+                            .FileBothDirectoryInformation,
                             w.FALSE,
                             null,
                             if (self.first) @as(w.BOOLEAN, w.TRUE) else @as(w.BOOLEAN, w.FALSE),
@@ -281,7 +281,7 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                         bun.sys.syslog("NtQueryDirectoryFile({f}) = {d}", .{ self.dir, self.end_index });
                     }
 
-                    const dir_info: FILE_DIRECTORY_INFORMATION_PTR = @ptrCast(@alignCast(&self.buf[self.index]));
+                    const dir_info: FILE_BOTH_DIR_INFORMATION_PTR = @ptrCast(@alignCast(&self.buf[self.index]));
                     if (dir_info.NextEntryOffset != 0) {
                         self.index += dir_info.NextEntryOffset;
                     } else {
@@ -297,11 +297,22 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                         const attrs = dir_info.FileAttributes;
                         const isdir = attrs & w.FILE_ATTRIBUTE_DIRECTORY != 0;
                         const islink = attrs & w.FILE_ATTRIBUTE_REPARSE_POINT != 0;
-                        // on windows symlinks can be directories, too. We prioritize the
-                        // "sym_link" kind over the "directory" kind
-                        // this will coerce into either .file or .directory later
-                        // once the symlink is read
-                        if (islink) break :blk Entry.Kind.sym_link;
+                        if (islink) {
+                            // When FILE_ATTRIBUTE_REPARSE_POINT is set, the EaSize field
+                            // contains the reparse tag. Junctions (mount points) have
+                            // IO_REPARSE_TAG_MOUNT_POINT and should be treated as directories,
+                            // not symlinks, since they are directory reparse points that
+                            // cannot be unlinked as files.
+                            const reparse_tag = dir_info.EaSize;
+                            if (reparse_tag == w.IO_REPARSE_TAG_MOUNT_POINT) {
+                                break :blk Entry.Kind.directory;
+                            }
+                            // True symlinks (IO_REPARSE_TAG_SYMLINK) and other reparse
+                            // points are classified as sym_link. On Windows symlinks can
+                            // be directories too; this will coerce into either .file or
+                            // .directory later once the symlink is read.
+                            break :blk Entry.Kind.sym_link;
+                        }
                         if (isdir) break :blk Entry.Kind.directory;
                         break :blk Entry.Kind.file;
                     };

@@ -295,6 +295,38 @@ describe("tcp socket binaryType", () => {
   }
 });
 
+it("getsockname should not crash when called without an object argument", () => {
+  using server = listen({
+    socket: {
+      open() {},
+      close() {},
+      data() {},
+    },
+    hostname: "localhost",
+    port: 0,
+  });
+
+  // Calling with no arguments should return a new object
+  const result = server.getsockname();
+  expect(result).toBeObject();
+  expect(["IPv4", "IPv6"]).toContain(result.family);
+  expect(result.address).toBeDefined();
+  expect(typeof result.port).toBe("number");
+
+  // Calling with a non-object argument should return a new object
+  const result2 = server.getsockname(42 as any);
+  expect(result2).toBeObject();
+  expect(["IPv4", "IPv6"]).toContain(result2.family);
+
+  // Calling with an object should populate it
+  const obj = {} as any;
+  const result3 = server.getsockname(obj);
+  expect(result3).toBe(obj);
+  expect(["IPv4", "IPv6"]).toContain(obj.family);
+  expect(obj.address).toBeDefined();
+  expect(typeof obj.port).toBe("number");
+});
+
 it("should not leak memory", async () => {
   // assert we don't leak the sockets
   // we expect 1 or 2 because that's the prototype / structure

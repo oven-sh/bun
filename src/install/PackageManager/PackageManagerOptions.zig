@@ -33,6 +33,7 @@ patch_features: union(enum) {
     patch: struct {},
     commit: struct {
         patches_dir: string,
+        preview: bool = false,
     },
 } = .{ .nothing = .{} },
 
@@ -648,10 +649,11 @@ pub fn load(
             .patch => {
                 this.patch_features = .{ .patch = .{} };
             },
-            .commit => {
+            .commit => |commit_opts| {
                 this.patch_features = .{
                     .commit = .{
-                        .patches_dir = cli.patch.commit.patches_dir,
+                        .patches_dir = commit_opts.patches_dir,
+                        .preview = commit_opts.preview,
                     },
                 };
             },

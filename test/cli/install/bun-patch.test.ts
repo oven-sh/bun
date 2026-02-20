@@ -816,4 +816,146 @@ module.exports = function isOdd() {
       expect(stdout.toString()).toBe("true\n");
     }
   });
+
+  describe("--preview flag", async () => {
+    test("should print diff without saving patch file", async () => {
+      const tempdir = tempDirWithFiles("preview", {
+        "package.json": JSON.stringify({
+          name: "bun-patch-preview-test",
+          module: "index.ts",
+          type: "module",
+          dependencies: {
+            "is-even": "1.0.0",
+          },
+        }),
+        "index.ts": /* ts */ `import isEven from 'is-even'; console.log(isEven(420))`,
+      });
+
+      // Install dependencies
+      expectNoError(await $`${bunExe()} i`.env(bunEnv).cwd(tempdir));
+
+      // Prepare the package for patching
+      expectNoError(await $`${bunExe()} patch is-even@1.0.0`.env(bunEnv).cwd(tempdir));
+
+      // Make a change to the package
+      const patchedCode = /* ts */ `/*!
+* is-even <https://github.com/jonschlinkert/is-even>
+*
+* Copyright (c) 2015, 2017, Jon Schlinkert.
+* Released under the MIT License.
+*/
+
+'use strict';
+
+var isOdd = require('is-odd');
+
+module.exports = function isEven(i) {
+  console.log("Preview test!")
+  return !isOdd(i);
+};
+`;
+      await $`echo ${patchedCode} > node_modules/is-even/index.js`.env(bunEnv).cwd(tempdir);
+
+      // Run bun patch --preview
+      const { stdout, stderr } = await $`${bunExe()} patch --preview node_modules/is-even`.env(bunEnv).cwd(tempdir);
+      expect(stderr.toString()).not.toContain("error");
+
+      // The stdout should contain the diff
+      expect(stdout.toString()).toContain("diff --git");
+      expect(stdout.toString()).toContain("Preview test!");
+      expect(stdout.toString()).toContain("index.js");
+
+      // The patches directory should NOT exist (no file saved)
+      const { exitCode } = await $`test -d patches`.env(bunEnv).cwd(tempdir).throws(false);
+      expect(exitCode).not.toBe(0);
+
+      // package.json should NOT have patchedDependencies
+      const packageJson = await $`cat package.json`.cwd(tempdir).env(bunEnv).json();
+      expect(packageJson.patchedDependencies).toBeUndefined();
+    });
+
+    test("should work with bun patch-commit --preview", async () => {
+      const tempdir = tempDirWithFiles("preview2", {
+        "package.json": JSON.stringify({
+          name: "bun-patch-preview-test-2",
+          module: "index.ts",
+          type: "module",
+          dependencies: {
+            "is-even": "1.0.0",
+          },
+        }),
+        "index.ts": /* ts */ `import isEven from 'is-even'; console.log(isEven(420))`,
+      });
+
+      // Install dependencies
+      expectNoError(await $`${bunExe()} i`.env(bunEnv).cwd(tempdir));
+
+      // Prepare the package for patching
+      expectNoError(await $`${bunExe()} patch is-even@1.0.0`.env(bunEnv).cwd(tempdir));
+
+      // Make a change to the package
+      const patchedCode = /* ts */ `/*!
+* is-even <https://github.com/jonschlinkert/is-even>
+*
+* Copyright (c) 2015, 2017, Jon Schlinkert.
+* Released under the MIT License.
+*/
+
+'use strict';
+
+var isOdd = require('is-odd');
+
+module.exports = function isEven(i) {
+  console.log("patch-commit preview!")
+  return !isOdd(i);
+};
+`;
+      await $`echo ${patchedCode} > node_modules/is-even/index.js`.env(bunEnv).cwd(tempdir);
+
+      // Run bun patch-commit --preview
+      const { stdout, stderr } = await $`${bunExe()} patch-commit --preview node_modules/is-even`
+        .env(bunEnv)
+        .cwd(tempdir);
+      expect(stderr.toString()).not.toContain("error");
+
+      // The stdout should contain the diff
+      expect(stdout.toString()).toContain("diff --git");
+      expect(stdout.toString()).toContain("patch-commit preview!");
+
+      // The patches directory should NOT exist (no file saved)
+      const { exitCode } = await $`test -d patches`.env(bunEnv).cwd(tempdir).throws(false);
+      expect(exitCode).not.toBe(0);
+
+      // package.json should NOT have patchedDependencies
+      const packageJson = await $`cat package.json`.cwd(tempdir).env(bunEnv).json();
+      expect(packageJson.patchedDependencies).toBeUndefined();
+    });
+
+    test("--preview should show no changes when package is unmodified", async () => {
+      const tempdir = tempDirWithFiles("preview3", {
+        "package.json": JSON.stringify({
+          name: "bun-patch-preview-test-3",
+          module: "index.ts",
+          type: "module",
+          dependencies: {
+            "is-even": "1.0.0",
+          },
+        }),
+        "index.ts": /* ts */ `import isEven from 'is-even'; console.log(isEven(420))`,
+      });
+
+      // Install dependencies
+      expectNoError(await $`${bunExe()} i`.env(bunEnv).cwd(tempdir));
+
+      // Prepare the package for patching (but don't make any changes)
+      expectNoError(await $`${bunExe()} patch is-even@1.0.0`.env(bunEnv).cwd(tempdir));
+
+      // Run bun patch --preview without making changes
+      const { stdout, stderr } = await $`${bunExe()} patch --preview node_modules/is-even`.env(bunEnv).cwd(tempdir);
+      expect(stderr.toString()).not.toContain("error");
+
+      // Should indicate no changes
+      expect(stdout.toString()).toContain("No changes detected");
+    });
+  });
 });

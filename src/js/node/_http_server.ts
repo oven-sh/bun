@@ -904,6 +904,11 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
         req.destroy();
       }
     }
+
+    // Emit "close" on the ServerResponse (httpMessage) via the close callback
+    // set in assignSocketInternal. This ensures the response's "close" event
+    // fires when the underlying socket is closed (e.g. client disconnect).
+    callCloseCallback(this);
   }
   #onCloseForDestroy(closeCallback) {
     this.#onClose();

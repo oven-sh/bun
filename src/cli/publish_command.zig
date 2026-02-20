@@ -304,6 +304,24 @@ pub const PublishCommand = struct {
         };
         defer ctx.allocator.free(original_cwd);
 
+        // Initialize provenance context early to fail fast if --provenance is used
+        // outside a supported CI environment.
+        const provenance_ctx: ?Provenance.ProvenanceContext = if (manager.options.publish_config.provenance) blk: {
+            break :blk Provenance.init(ctx.allocator) catch |err| {
+                Provenance.printError(err);
+                Global.crash();
+            };
+        } else null;
+
+        if (provenance_ctx) |pctx| {
+            Output.prettyln("<b><blue>Provenance<r>: {s}", .{
+                switch (pctx.ci) {
+                    .github_actions => "GitHub Actions",
+                    .gitlab_ci => "GitLab CI",
+                },
+            });
+        }
+
         if (cli.positionals.len > 1) {
             const context = Context(false).fromTarballPath(ctx, manager, cli.positionals[1]) catch |err| {
                 switch (err) {
@@ -1454,6 +1472,7 @@ const G = bun.ast.G;
 
 const Command = bun.cli.Command;
 const Pack = bun.cli.PackCommand;
+const Provenance = bun.cli.Provenance;
 const Run = bun.cli.RunCommand;
 const prompt = bun.cli.InitCommand.prompt;
 

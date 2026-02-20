@@ -814,3 +814,174 @@ describe("glob.scan wildcard fast path", async () => {
     );
   });
 });
+
+// brace alternation without path separators (handled by normal matching)
+describe("brace alternation (basic)", () => {
+  test("braces in first segment", async () => {
+    const tempdir = tempDirWithFiles("glob-brace-first", {
+      apps: {
+        "a.txt": "content",
+      },
+      packages: {
+        "b.txt": "content",
+      },
+      other: {
+        "c.txt": "content",
+      },
+    });
+
+    const glob = new Glob("{apps,packages}/**");
+    const entries = await Array.fromAsync(glob.scan({ cwd: tempdir, onlyFiles: false }));
+
+    expect(entries.length).toBeGreaterThan(0);
+    // should find both apps and packages directories/files
+    expect(entries.some(e => e.startsWith("apps"))).toBe(true);
+    expect(entries.some(e => e.startsWith("packages"))).toBe(true);
+    // should NOT find the "other" directory
+    expect(entries.some(e => e.startsWith("other"))).toBe(false);
+  });
+
+  test("braces in first segment (sync)", () => {
+    const tempdir = tempDirWithFiles("glob-brace-first-sync", {
+      apps: {
+        "a.txt": "content",
+      },
+      packages: {
+        "b.txt": "content",
+      },
+      other: {
+        "c.txt": "content",
+      },
+    });
+
+    const glob = new Glob("{apps,packages}/**");
+    const entries = Array.from(glob.scanSync({ cwd: tempdir, onlyFiles: false }));
+
+    expect(entries.length).toBeGreaterThan(0);
+    expect(entries.some(e => e.startsWith("apps"))).toBe(true);
+    expect(entries.some(e => e.startsWith("packages"))).toBe(true);
+    expect(entries.some(e => e.startsWith("other"))).toBe(false);
+  });
+
+  test("braces with only files option", async () => {
+    const tempdir = tempDirWithFiles("glob-brace-onlyfiles", {
+      src: {
+        "index.ts": "content",
+        lib: {
+          "helper.ts": "content",
+        },
+      },
+      test: {
+        "index.test.ts": "content",
+      },
+    });
+
+    const glob = new Glob("{src,test}/**/*.ts");
+    const entries = await Array.fromAsync(glob.scan({ cwd: tempdir, onlyFiles: true }));
+
+    expect(entries.length).toBe(3);
+    expect(entries.sort()).toEqual(
+      [`src${path.sep}index.ts`, `src${path.sep}lib${path.sep}helper.ts`, `test${path.sep}index.test.ts`].sort(),
+    );
+  });
+
+  test("single alternative in braces (edge case)", async () => {
+    const tempdir = tempDirWithFiles("glob-brace-single", {
+      apps: {
+        "a.txt": "content",
+      },
+      packages: {
+        "b.txt": "content",
+      },
+    });
+
+    // single alternative should still work
+    const glob = new Glob("{apps}/**");
+    const entries = await Array.fromAsync(glob.scan({ cwd: tempdir, onlyFiles: false }));
+
+    expect(entries.length).toBeGreaterThan(0);
+    expect(entries.some(e => e.startsWith("apps"))).toBe(true);
+    expect(entries.some(e => e.startsWith("packages"))).toBe(false);
+  });
+});
+
+// brace alternation with path separators inside braces (requires expansion)
+describe("brace alternation with path separators", () => {
+  test("nested braces with path separators", async () => {
+    const tempdir = tempDirWithFiles("glob-brace-nested", {
+      apps: {
+        api: {
+          "config.yaml": "content",
+        },
+        other: {
+          "skip.txt": "content",
+        },
+      },
+      packages: {
+        utils: {
+          "index.ts": "content",
+        },
+        common: {
+          "helpers.ts": "content",
+        },
+        core: {
+          "types.ts": "content",
+        },
+        unrelated: {
+          "skip.txt": "content",
+        },
+      },
+    });
+
+    const glob = new Glob("{apps/api,packages/{utils,common,core}}/**");
+    const entries = await Array.fromAsync(glob.scan({ cwd: tempdir, onlyFiles: false }));
+
+    expect(entries.length).toBeGreaterThan(0);
+    // should find files in the specified paths
+    expect(entries.some(e => e.startsWith(`apps${path.sep}api`))).toBe(true);
+    expect(entries.some(e => e.startsWith(`packages${path.sep}utils`))).toBe(true);
+    expect(entries.some(e => e.startsWith(`packages${path.sep}common`))).toBe(true);
+    expect(entries.some(e => e.startsWith(`packages${path.sep}core`))).toBe(true);
+    // should NOT find files in unrelated paths
+    expect(entries.some(e => e.startsWith(`apps${path.sep}other`))).toBe(false);
+    expect(entries.some(e => e.startsWith(`packages${path.sep}unrelated`))).toBe(false);
+  });
+
+  test("nested braces with path separators (sync)", () => {
+    const tempdir = tempDirWithFiles("glob-brace-nested-sync", {
+      apps: {
+        api: {
+          "config.yaml": "content",
+        },
+        other: {
+          "skip.txt": "content",
+        },
+      },
+      packages: {
+        utils: {
+          "index.ts": "content",
+        },
+        common: {
+          "helpers.ts": "content",
+        },
+        core: {
+          "types.ts": "content",
+        },
+        unrelated: {
+          "skip.txt": "content",
+        },
+      },
+    });
+
+    const glob = new Glob("{apps/api,packages/{utils,common,core}}/**");
+    const entries = Array.from(glob.scanSync({ cwd: tempdir, onlyFiles: false }));
+
+    expect(entries.length).toBeGreaterThan(0);
+    expect(entries.some(e => e.startsWith(`apps${path.sep}api`))).toBe(true);
+    expect(entries.some(e => e.startsWith(`packages${path.sep}utils`))).toBe(true);
+    expect(entries.some(e => e.startsWith(`packages${path.sep}common`))).toBe(true);
+    expect(entries.some(e => e.startsWith(`packages${path.sep}core`))).toBe(true);
+    expect(entries.some(e => e.startsWith(`apps${path.sep}other`))).toBe(false);
+    expect(entries.some(e => e.startsWith(`packages${path.sep}unrelated`))).toBe(false);
+  });
+});

@@ -394,6 +394,22 @@ extern "C" void bun_restore_stdio()
 
 #if !OS(WINDOWS)
 
+    // Restore cursor visibility on TTY before exiting.
+    // Many CLI applications (like Ink) hide the cursor during operation and rely on
+    // cleanup handlers to restore it. If the process exits before the cursor-show
+    // escape sequence is flushed, the cursor remains invisible in the terminal.
+    // Writing the cursor-show sequence here ensures the cursor is always visible
+    // after Bun exits, regardless of how the process terminates.
+    // See: https://github.com/oven-sh/bun/issues/26642
+    if (bun_stdio_tty[STDOUT_FILENO]) {
+        // Show cursor: CSI ? 25 h
+        const char show_cursor[] = "\x1b[?25h";
+        ssize_t ret;
+        do {
+            ret = write(STDOUT_FILENO, show_cursor, sizeof(show_cursor) - 1);
+        } while (ret == -1 && errno == EINTR);
+    }
+
     // restore stdio
     for (int32_t fd = 0; fd < 3; fd++) {
         if (!bun_stdio_tty[fd])

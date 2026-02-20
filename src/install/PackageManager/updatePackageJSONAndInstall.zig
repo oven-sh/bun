@@ -196,6 +196,14 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                         .before_install = true,
                     },
                 );
+                // Also update any matching overrides/resolutions with the literal version
+                // This ensures the install uses the correct version
+                try PackageJSONEditor.editOverrides(
+                    manager.allocator,
+                    updates.*,
+                    &current_package_json.root,
+                    true, // before_install = use literal version
+                );
             } else if (subcommand == .update) {
                 try PackageJSONEditor.editUpdateNoArgs(
                     manager,
@@ -374,6 +382,13 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                     .exact_versions = manager.options.enable.exact_versions,
                     .add_trusted_dependencies = manager.options.do.trust_dependencies_from_args,
                 },
+            );
+            // Update any matching overrides/resolutions with the resolved versions
+            try PackageJSONEditor.editOverrides(
+                manager.allocator,
+                updates.*,
+                &new_package_json,
+                false, // before_install = use resolved version from e_string
             );
         }
         var buffer_writer_two = JSPrinter.BufferWriter.init(manager.allocator);

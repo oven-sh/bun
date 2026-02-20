@@ -775,6 +775,57 @@ pub fn edit(
     }
 }
 
+/// Updates the overrides (npm) or resolutions (yarn) section of package.json
+/// when a dependency is being added/updated. This ensures overrides don't
+/// conflict with the new dependency version.
+/// When before_install is true, uses the literal version from the CLI.
+/// When before_install is false, uses the resolved version from e_string (set by edit()).
+pub fn editOverrides(
+    allocator: std.mem.Allocator,
+    updates: []const UpdateRequest,
+    current_package_json: *Expr,
+    before_install: bool,
+) !void {
+    // Try both "overrides" (npm) and "resolutions" (yarn)
+    inline for ([_]string{ "overrides", "resolutions" }) |override_key| {
+        if (current_package_json.asProperty(override_key)) |query| {
+            if (query.expr.data == .e_object) {
+                for (query.expr.data.e_object.properties.slice()) |*prop| {
+                    const key = prop.key orelse continue;
+                    if (key.data != .e_string) continue;
+
+                    const override_name = key.data.e_string.slice(allocator);
+
+                    // Check if this override matches any of our update requests
+                    for (updates) |request| {
+                        const name = request.getName();
+                        if (!strings.eqlLong(override_name, name, true)) continue;
+
+                        // Found a matching override - update it with the new version
+                        const value = prop.value orelse continue;
+                        if (value.data != .e_string) continue;
+
+                        // Get the version - either from literal (before install) or resolved (after)
+                        const new_version = if (before_install)
+                            request.version.literal.slice(request.version_buf)
+                        else if (request.e_string) |e_string|
+                            e_string.data
+                        else
+                            continue;
+                        if (new_version.len == 0) continue;
+
+                        // Update the override value
+                        prop.value = JSAst.Expr.allocate(allocator, JSAst.E.String, .{
+                            .data = try allocator.dupe(u8, new_version),
+                        }, logger.Loc.Empty);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+}
+
 const trusted_dependencies_string = "trustedDependencies";
 
 const string = []const u8;

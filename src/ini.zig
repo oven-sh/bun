@@ -1318,7 +1318,9 @@ pub fn loadNpmrc(
         for (configs.items) |conf_item| {
             const conf_item_url = bun.URL.parse(conf_item.registry_url);
 
-            if (std.mem.eql(u8, bun.strings.withoutTrailingSlash(default_registry_url.host), bun.strings.withoutTrailingSlash(conf_item_url.host))) {
+            if (std.mem.eql(u8, bun.strings.withoutTrailingSlash(default_registry_url.host), bun.strings.withoutTrailingSlash(conf_item_url.host)) and
+                std.mem.eql(u8, bun.strings.withoutTrailingSlash(default_registry_url.pathname), bun.strings.withoutTrailingSlash(conf_item_url.pathname)))
+            {
                 // Apply config to default registry
                 const v: *bun.schema.api.NpmRegistry = brk: {
                     if (install.default_registry) |*r| break :brk r;
@@ -1355,7 +1357,9 @@ pub fn loadNpmrc(
             for (registry_map.scopes.keys(), registry_map.scopes.values()) |*k, *v| {
                 const url = url_map.get(k.*) orelse unreachable;
 
-                if (std.mem.eql(u8, bun.strings.withoutTrailingSlash(url.host), bun.strings.withoutTrailingSlash(conf_item_url.host))) {
+                if (std.mem.eql(u8, bun.strings.withoutTrailingSlash(url.host), bun.strings.withoutTrailingSlash(conf_item_url.host)) and
+                    std.mem.eql(u8, bun.strings.withoutTrailingSlash(url.pathname), bun.strings.withoutTrailingSlash(conf_item_url.pathname)))
+                {
                     if (conf_item_url.hostname.len > 0) {
                         if (!std.mem.eql(u8, bun.strings.withoutTrailingSlash(url.hostname), bun.strings.withoutTrailingSlash(conf_item_url.hostname))) {
                             continue;

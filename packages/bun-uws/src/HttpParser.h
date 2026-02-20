@@ -774,13 +774,13 @@ namespace uWS
                     /* Store this header, it is valid */
                     headers->value = std::string_view(preliminaryValue, (size_t) (postPaddedBuffer - preliminaryValue));
                     postPaddedBuffer += 2;
-                    /* Trim trailing whitespace (SP, HTAB) */
-                    while (headers->value.length() && headers->value.back() < 33) {
+                    /* Trim trailing whitespace (SP, HTAB) per RFC 9110 Section 5.5 */
+                    while (headers->value.length() && (headers->value.back() == ' ' || headers->value.back() == '\t')) {
                         headers->value.remove_suffix(1);
                     }
 
-                    /* Trim initial whitespace (SP, HTAB) */
-                    while (headers->value.length() && headers->value.front() < 33) {
+                    /* Trim initial whitespace (SP, HTAB) per RFC 9110 Section 5.5 */
+                    while (headers->value.length() && (headers->value.front() == ' ' || headers->value.front() == '\t')) {
                         headers->value.remove_prefix(1);
                     }
 

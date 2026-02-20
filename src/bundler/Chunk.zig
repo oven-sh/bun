@@ -292,6 +292,12 @@ pub const Chunk = struct {
             const unique_key_for_additional_files = graph.input_files.items(.unique_key_for_additional_file);
             const relative_platform_buf = bun.path_buffer_pool.get();
             defer bun.path_buffer_pool.put(relative_platform_buf);
+            // When publicPath is an absolute URL, use absolute paths for chunks
+            // to avoid generating malformed URLs like "http://localhost/../chunk.js"
+            const use_absolute_path = force_absolute_path or
+                strings.hasPrefixComptime(import_prefix, "https://") or
+                strings.hasPrefixComptime(import_prefix, "http://") or
+                strings.hasPrefixComptime(import_prefix, "//");
             switch (this.*) {
                 .pieces => |*pieces| {
                     const entry_point_chunks_for_scb = linker_graph.files.items(.entry_point_chunk_index);
@@ -370,7 +376,7 @@ pub const Chunk = struct {
 
                                 const cheap_normalizer = cheapPrefixNormalizer(
                                     import_prefix,
-                                    if (from_chunk_dir.len == 0 or force_absolute_path)
+                                    if (from_chunk_dir.len == 0 or use_absolute_path)
                                         file_path
                                     else
                                         bun.path.relativePlatformBuf(relative_platform_buf, from_chunk_dir, file_path, .posix, false),
@@ -493,7 +499,7 @@ pub const Chunk = struct {
                                 bun.path.platformToPosixInPlace(u8, @constCast(file_path));
                                 const cheap_normalizer = cheapPrefixNormalizer(
                                     import_prefix,
-                                    if (from_chunk_dir.len == 0 or force_absolute_path)
+                                    if (from_chunk_dir.len == 0 or use_absolute_path)
                                         file_path
                                     else
                                         bun.path.relativePlatformBuf(relative_platform_buf, from_chunk_dir, file_path, .posix, false),

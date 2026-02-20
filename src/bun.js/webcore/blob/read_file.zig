@@ -523,6 +523,7 @@ pub const ReadFileUV = struct {
     pub const doClose = FileCloser(@This()).doClose;
 
     loop: *libuv.Loop,
+    event_loop: *jsc.EventLoop,
     file_store: FileStore,
     byte_store: ByteStore = ByteStore{ .allocator = bun.default_allocator },
     store: *Store,
@@ -543,10 +544,11 @@ pub const ReadFileUV = struct {
 
     req: libuv.fs_t = std.mem.zeroes(libuv.fs_t),
 
-    pub fn start(loop: *libuv.Loop, store: *Store, off: SizeType, max_len: SizeType, comptime Handler: type, handler: *anyopaque) void {
+    pub fn start(event_loop: *jsc.EventLoop, store: *Store, off: SizeType, max_len: SizeType, comptime Handler: type, handler: *anyopaque) void {
         log("ReadFileUV.start", .{});
         var this = bun.new(ReadFileUV, .{
-            .loop = loop,
+            .loop = event_loop.virtual_machine.uvLoop(),
+            .event_loop = event_loop,
             .file_store = store.data.file,
             .store = store,
             .offset = off,
@@ -555,15 +557,20 @@ pub const ReadFileUV = struct {
             .on_complete_fn = @ptrCast(&Handler.run),
         });
         store.ref();
+        // Keep the event loop alive while the async operation is pending
+        event_loop.refConcurrently();
         this.getFd(onFileOpen);
     }
 
     pub fn finalize(this: *ReadFileUV) void {
         log("ReadFileUV.finalize", .{});
+        const event_loop = this.event_loop;
         defer {
             this.store.deref();
             this.req.deinit();
             bun.destroy(this);
+            // Release the event loop reference now that we're done
+            event_loop.unrefConcurrently();
             log("ReadFileUV.finalize destroy", .{});
         }
 

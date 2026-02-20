@@ -1,10 +1,10 @@
 import { expect, test } from "bun:test";
+import { performance, PerformanceEntry } from "node:perf_hooks";
 
 // https://github.com/oven-sh/bun/issues/23041
 // perf_hooks PerformanceNodeTiming: startTime/duration throw TypeError,
 // timing values should be relative offsets not absolute timestamps
 test("PerformanceNodeTiming startTime and duration do not throw", () => {
-  const { performance } = require("node:perf_hooks");
   const nt = performance.nodeTiming;
 
   // These should not throw - they previously threw:
@@ -21,7 +21,6 @@ test("PerformanceNodeTiming startTime and duration do not throw", () => {
 });
 
 test("PerformanceNodeTiming has correct name and entryType", () => {
-  const { performance } = require("node:perf_hooks");
   const nt = performance.nodeTiming;
 
   expect(nt.name).toBe("node");
@@ -29,7 +28,6 @@ test("PerformanceNodeTiming has correct name and entryType", () => {
 });
 
 test("PerformanceNodeTiming timing values are relative offsets, not absolute timestamps", () => {
-  const { performance } = require("node:perf_hooks");
   const nt = performance.nodeTiming;
 
   // nodeStart should be a small offset relative to timeOrigin, not an epoch timestamp.
@@ -41,17 +39,22 @@ test("PerformanceNodeTiming timing values are relative offsets, not absolute tim
   expect(nt.environment).toBeLessThan(10_000);
   expect(nt.bootstrapComplete).toBeLessThan(10_000);
   expect(nt.v8Start).toBeLessThan(10_000);
+
+  // In Bun, nodeStart and v8Start are 0 (VM start IS the time origin)
+  expect(nt.nodeStart).toBe(0);
+  expect(nt.v8Start).toBe(0);
+
+  // bootstrapComplete should be > 0 (time taken to bootstrap)
+  expect(nt.bootstrapComplete).toBeGreaterThan(0);
 });
 
 test("PerformanceNodeTiming is instanceof PerformanceEntry", () => {
-  const { performance, PerformanceEntry } = require("node:perf_hooks");
   const nt = performance.nodeTiming;
 
   expect(nt instanceof PerformanceEntry).toBe(true);
 });
 
 test("PerformanceNodeTiming toJSON returns correct shape", () => {
-  const { performance } = require("node:perf_hooks");
   const nt = performance.nodeTiming;
   const json = nt.toJSON();
 

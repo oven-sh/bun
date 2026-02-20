@@ -24,8 +24,8 @@ mode: center
     	Then install the Prisma CLI (`prisma`), Prisma Client (`@prisma/client`), and the accelerate extension as dependencies.
 
     	```bash terminal icon="terminal"
-    	bun add -d prisma
-    	bun add @prisma/client @prisma/extension-accelerate
+      bun add -d prisma @types/pg
+      bun add @prisma/client @prisma/adapter-pg pg
     	```
     </Step>
 
@@ -36,34 +36,30 @@ mode: center
     	bunx --bun prisma init --db
     	```
 
-    	This creates a basic schema. We need to update it to use the new Rust-free client with Bun optimization. Open `prisma/schema.prisma` and modify the generator block, then add a simple `User` model.
-
-    	```prisma prisma/schema.prisma icon="/icons/ecosystem/prisma.svg"
-    	generator client {
-    		provider = "prisma-client"
-    		output = "./generated" // [!code ++]
-    		engineType = "client" // [!code ++]
-    		runtime = "bun" // [!code ++]
-    	}
-
-    	datasource db {
-    		provider = "postgresql"
-    		url      = env("DATABASE_URL")
-    	}
-
-    	model User { // [!code ++]
-    		id    Int     @id @default(autoincrement()) // [!code ++]
-    		email String  @unique // [!code ++]
-    		name  String? // [!code ++]
-    	} // [!code ++]
-    	```
-    </Step>
-
-    <Step title="Configure database connection">
-    	Set up your Postgres database URL in the `.env` file.
+    	Your `DATABASE_URL` will now be set in your `.env` file.
 
     	```ini .env icon="settings"
     	DATABASE_URL="postgresql://username:password@localhost:5432/mydb?schema=public"
+    	```
+
+    	This creates a basic schema. We need to update it to use the new Rust-free client with Bun optimization. Open `prisma/schema.prisma` and modify the generator block, then add a simple `User` model.
+
+    	```prisma prisma/schema.prisma icon="/icons/ecosystem/prisma.svg"
+    	  generator client {
+    	    provider = "prisma-client"
+    	    output = "../generated/prisma"
+    	    runtime = "bun" // [!code ++]
+    	  }
+
+    	  datasource db {
+    	    provider = "postgresql"
+    	  }
+
+    	  model User { // [!code ++]
+    	    id    Int     @id @default(autoincrement()) // [!code ++]
+    	    email String  @unique // [!code ++]
+    	    name  String? // [!code ++]
+    	  } // [!code ++]
     	```
     </Step>
 
@@ -77,26 +73,25 @@ mode: center
     	```
 
     	```txt
-    	Environment variables loaded from .env
-    	Prisma schema loaded from prisma/schema.prisma
-    	Datasource "db": PostgreSQL database "mydb", schema "public" at "localhost:5432"
+      Loaded Prisma config from prisma.config.ts.
 
-    	Applying migration `20250114141233_init`
+      Prisma schema loaded from prisma/schema.prisma.
+      Datasource "db": PostgreSQL database "postgres", schema "public" at "db.prisma.io:5432"
 
-    	The following migration(s) have been created and applied from new schema changes:
+      Applying migration `20260107130032_init`
 
-    	prisma/migrations/
-    	  └─ 20250114141233_init/
-    	    └─ migration.sql
+      The following migration(s) have been created and applied from new schema changes:
 
-    	Your database is now in sync with your schema.
+      prisma/migrations/
+        └─ 20260107130032_init/
+          └─ migration.sql
 
-    	✔ Generated Prisma Client (6.17.1) to ./generated in 18ms
+      Your database is now in sync with your schema.
     	```
     </Step>
 
     <Step title="Generate Prisma Client">
-    	As indicated in the output, Prisma re-generates our _Prisma client_ whenever we execute a new migration. The client provides a fully typed API for reading and writing from our database. You can manually re-generate the client with the Prisma CLI.
+    	Next, the Prisma client needs to be generated, which provides a fully typed API for reading and writing from our database.
 
     	```sh terminal icon="terminal"
     	bunx --bun prisma generate
@@ -107,10 +102,16 @@ mode: center
     	Now we need to create a Prisma client instance. Create a new file `prisma/db.ts` to initialize the PrismaClient with the Postgres adapter.
 
     	```ts prisma/db.ts icon="/icons/typescript.svg"
-    	import { PrismaClient } from "./generated/client";
-    	import { withAccelerate } from '@prisma/extension-accelerate'
+      import { PrismaClient } from "../generated/prisma/client";
+      import { PrismaPg } from "@prisma/adapter-pg";
 
-    	export const prisma = new PrismaClient().$extends(withAccelerate())
+      const adapter = new PrismaPg({
+        connectionString: process.env.DATABASE_URL!,
+      });
+
+      export const prisma = new PrismaClient({
+        adapter,
+      });
     	```
     </Step>
 

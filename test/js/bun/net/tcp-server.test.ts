@@ -295,6 +295,43 @@ describe("tcp socket binaryType", () => {
   }
 });
 
+it("getsockname without arguments should not crash", () => {
+  using server = Bun.listen({
+    socket: {
+      open() {},
+      close() {},
+      data() {},
+    },
+    port: 0,
+    hostname: "127.0.0.1",
+  });
+
+  const result = server.getsockname();
+  expect(result).toBeObject();
+  expect(result.family).toBe("IPv4");
+  expect(result.address).toBe("127.0.0.1");
+  expect(result.port).toBe(server.port);
+});
+
+it("getsockname with object argument populates the object", () => {
+  using server = Bun.listen({
+    socket: {
+      open() {},
+      close() {},
+      data() {},
+    },
+    port: 0,
+    hostname: "127.0.0.1",
+  });
+
+  const out: Record<string, any> = {};
+  const result = server.getsockname(out);
+  expect(result).toBeUndefined();
+  expect(out.family).toBe("IPv4");
+  expect(out.address).toBe("127.0.0.1");
+  expect(out.port).toBe(server.port);
+});
+
 it("should not leak memory", async () => {
   // assert we don't leak the sockets
   // we expect 1 or 2 because that's the prototype / structure

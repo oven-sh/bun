@@ -180,6 +180,28 @@ pub const Expect = struct {
                     const vm = globalThis.vm();
                     promise.setHandled(vm);
 
+                    // If the promise is still pending, invoke the JS-level then() on the
+                    // original value. Promise subclasses (e.g. ShellPromise) may override
+                    // then() to lazily start work; calling asAnyPromise() above extracts the
+                    // internal JSC promise without going through the JS then() override, so
+                    // the lazy work would never be triggered and the promise would hang.
+                    if (promise.status() == .pending) {
+                        if (try value.get(globalThis, "then")) |then_fn| {
+                            if (then_fn.isCallable()) {
+                                // Call value.then(noop, noop) to trigger the lazy
+                                // initialization side-effect. Mark the returned promise
+                                // as handled to avoid unhandled rejection warnings.
+                                const chained_promise = then_fn.call(globalThis, value, &.{}) catch |e| {
+                                    if (comptime !silent) return @as(bun.JSError, e);
+                                    return error.JSError;
+                                };
+                                if (chained_promise.asAnyPromise()) |chained| {
+                                    chained.setHandled(vm);
+                                }
+                            }
+                        }
+                    }
+
                     globalThis.bunVM().waitForPromise(promise);
 
                     const newValue = promise.result(vm);

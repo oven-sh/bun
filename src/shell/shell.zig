@@ -2789,10 +2789,12 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                             comptime assertSpecialChar('\'');
 
                             if (self.chars.state == .Single) {
+                                try self.break_word(false);
                                 self.chars.state = .Normal;
                                 continue;
                             }
                             if (self.chars.state == .Normal) {
+                                try self.break_word(false);
                                 self.chars.state = .Single;
                                 continue;
                             }
@@ -2888,9 +2890,12 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
         }
 
         inline fn isImmediatelyEscapedQuote(self: *@This()) bool {
-            return (self.chars.state == .Double and
+            return ((self.chars.state == .Double and
                 (self.chars.current != null and !self.chars.current.?.escaped and self.chars.current.?.char == '"') and
-                (self.chars.prev != null and !self.chars.prev.?.escaped and self.chars.prev.?.char == '"'));
+                (self.chars.prev != null and !self.chars.prev.?.escaped and self.chars.prev.?.char == '"')) or
+                (self.chars.state == .Single and
+                    (self.chars.current != null and !self.chars.current.?.escaped and self.chars.current.?.char == '\'') and
+                    (self.chars.prev != null and !self.chars.prev.?.escaped and self.chars.prev.?.char == '\'')));
         }
 
         fn break_word_impl(self: *@This(), add_delimiter: bool, in_normal_space: bool, in_operator: bool) !void {

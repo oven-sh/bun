@@ -648,7 +648,16 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 if (allowHalfOpen) uws.LIBUS_SOCKET_ALLOW_HALF_OPEN else 0,
                 @sizeOf(*anyopaque),
                 &did_dns_resolve,
-            ) orelse return error.FailedToOpenSocket;
+            ) orelse {
+                // When connect() returns null for a cached DNS failure,
+                // the C code sets errno to the EAI error code (negative value).
+                // Use this to distinguish DNS lookup failures from other socket errors.
+                const c_errno = std.c._errno().*;
+                if (c_errno < 0) {
+                    return error.DNSLookupFailed;
+                }
+                return error.FailedToOpenSocket;
+            };
             const socket = if (did_dns_resolve == 1)
                 ThisSocket{
                     .socket = .{ .connected = @ptrCast(socket_ptr) },

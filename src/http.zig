@@ -265,9 +265,16 @@ pub fn onTimeout(
 }
 pub fn onConnectError(
     client: *HTTPClient,
+    errno: c_int,
 ) void {
-    log("onConnectError  {s}\n", .{client.url.href});
-    client.fail(error.ConnectionRefused);
+    log("onConnectError  {s} errno={d}\n", .{ client.url.href, errno });
+    // Negative errno values indicate EAI (DNS) errors from getaddrinfo.
+    // Positive values are system errno codes (e.g. ECONNREFUSED).
+    if (errno < 0) {
+        client.fail(error.DNSLookupFailed);
+    } else {
+        client.fail(error.ConnectionRefused);
+    }
 }
 
 pub inline fn getAllocator() std.mem.Allocator {

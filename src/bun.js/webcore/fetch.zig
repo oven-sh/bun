@@ -358,11 +358,19 @@ fn fetchImpl(
     }
 
     url = ZigURL.fromString(allocator, url_str) catch {
-        const err = ctx.toTypeError(.INVALID_URL, "fetch() URL is invalid", .{});
+        // Create cause TypeError with ERR_INVALID_URL code and input property (Node.js compat)
+        const cause = ctx.toTypeError(.INVALID_URL, "Invalid URL", .{});
+        var input_slice = url_str.toUTF8WithoutRef(allocator);
+        defer input_slice.deinit();
+        var input_zstr = jsc.ZigString.init(input_slice.slice());
+        cause.put(globalThis, "input", input_zstr.toJS(globalThis));
+        // Create outer TypeError with descriptive message
+        const outer_err = globalThis.createTypeErrorInstance("Failed to parse URL from {s}", .{input_slice.slice()});
+        outer_err.put(globalThis, "cause", cause);
         is_error = true;
         return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(
             globalThis,
-            err,
+            outer_err,
         );
     };
     if (url.isFile()) {
@@ -1071,9 +1079,13 @@ fn fetchImpl(
 
     if (url.protocol.len > 0) {
         if (!(url.isHTTP() or url.isHTTPS() or url.isS3())) {
-            const err = globalThis.toTypeError(.INVALID_ARG_VALUE, "protocol must be http:, https: or s3:", .{});
+            // Create cause Error with "unknown scheme" message (Node.js compat)
+            const cause = bun.String.static("unknown scheme").toErrorInstance(globalThis);
+            // Create outer TypeError with "fetch failed" message
+            const outer = globalThis.createTypeErrorInstance("fetch failed", .{});
+            outer.put(globalThis, "cause", cause);
             is_error = true;
-            return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
+            return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, outer);
         }
     }
 

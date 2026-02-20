@@ -638,6 +638,8 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
     }
     struct addrinfo_result *result = Bun__addrinfo_getRequestResult(c->addrinfo_req);
     if (result->error) {
+        /* Propagate the DNS error code so it can be distinguished from connection errors */
+        c->error = result->error;
         us_connecting_socket_close(c->ssl, c);
         return;
     }
@@ -681,6 +683,8 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
     #endif
     /* It is perfectly possible to come here with an error */
     if (error) {
+        /* Retrieve the actual socket error code (e.g., ECONNREFUSED) */
+        int sock_error = us_socket_get_error(0, s);
 
         /* Emit error, close without emitting on_close */
 
@@ -691,6 +695,13 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
             We differentiate between these two cases by checking if the connect_state is null.
         */
         if (c) {
+            /* Store the socket error in the connecting socket so it can be
+             * propagated to the on_connect_error callback. This allows us to
+             * distinguish ECONNREFUSED from other connection errors. */
+            if (sock_error && !c->error) {
+                c->error = sock_error;
+            }
+
             // remove this connecting socket from the list of connecting sockets
             // if it was the last one, signal the error to the user
             for (struct us_socket_t **next = &c->connecting_head; *next; next = &(*next)->connect_next) {

@@ -64,6 +64,7 @@ const bufs = struct {
     pub threadlocal var node_modules_check: bun.PathBuffer = undefined;
     pub threadlocal var field_abs_path: bun.PathBuffer = undefined;
     pub threadlocal var tsconfig_path_abs: bun.PathBuffer = undefined;
+    pub threadlocal var tsconfig_path_abs2: bun.PathBuffer = undefined;
     pub threadlocal var check_browser_map: bun.PathBuffer = undefined;
     pub threadlocal var remap_path: bun.PathBuffer = undefined;
     pub threadlocal var load_as_file: bun.PathBuffer = undefined;
@@ -4243,6 +4244,55 @@ pub const Resolver = struct {
                         }
                         // todo deinit these parent configs somehow?
                     }
+
+                    // Process "references" array - load configs and merge their paths
+                    // References are lower priority than extends, so we only add paths that don't already exist
+                    // https://www.typescriptlang.org/docs/handbook/project-references.html
+                    for (tsconfig_json.references) |ref_path| {
+                        const ts_dir_name = Dirname.dirname(tsconfig_json.abs_path);
+                        // Reference paths can point to directories or tsconfig files
+                        // If it's a directory, append tsconfig.json
+                        const resolved_ref_path = ResolvePath.joinAbsStringBuf(ts_dir_name, bufs(.tsconfig_path_abs), &[_]string{ ts_dir_name, ref_path }, .auto);
+
+                        // Try to load the referenced config (either as file or directory/tsconfig.json)
+                        const ref_config_maybe = r.parseTSConfig(resolved_ref_path, bun.invalid_fd) catch |err| blk: {
+                            // If path doesn't have .json extension, try as directory with tsconfig.json
+                            if (!strings.endsWith(ref_path, ".json")) {
+                                const dir_config_path = ResolvePath.joinAbsStringBuf(resolved_ref_path, bufs(.tsconfig_path_abs2), &[_]string{ resolved_ref_path, "tsconfig.json" }, .auto);
+                                break :blk r.parseTSConfig(dir_config_path, bun.invalid_fd) catch {
+                                    r.log.addDebugFmt(null, logger.Loc.Empty, r.allocator, "{s} loading tsconfig.json reference {f}", .{
+                                        @errorName(err),
+                                        bun.fmt.QuotedFormatter{ .text = ref_path },
+                                    }) catch {};
+                                    break :blk null;
+                                };
+                            }
+                            r.log.addDebugFmt(null, logger.Loc.Empty, r.allocator, "{s} loading tsconfig.json reference {f}", .{
+                                @errorName(err),
+                                bun.fmt.QuotedFormatter{ .text = ref_path },
+                            }) catch {};
+                            break :blk null;
+                        };
+
+                        if (ref_config_maybe) |ref_config| {
+                            // Merge paths from referenced config (lower priority - don't overwrite existing paths)
+                            var ref_iter = ref_config.paths.iterator();
+                            while (ref_iter.next()) |c| {
+                                // Only add if this path pattern doesn't already exist in the merged config
+                                if (!merged_config.paths.contains(c.key_ptr.*)) {
+                                    merged_config.paths.put(c.key_ptr.*, c.value_ptr.*) catch unreachable;
+                                }
+                            }
+
+                            // If merged config doesn't have baseUrl but ref does, we can use it
+                            // (lower priority, so only if not already set)
+                            if (merged_config.base_url.len == 0 and ref_config.base_url.len > 0) {
+                                merged_config.base_url = ref_config.base_url;
+                                merged_config.base_url_for_paths = ref_config.base_url_for_paths;
+                            }
+                        }
+                    }
+
                     info.tsconfig_json = merged_config;
                 }
                 info.enclosing_tsconfig_json = info.tsconfig_json;

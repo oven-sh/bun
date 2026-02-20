@@ -1422,6 +1422,100 @@ pub const internal = struct {
     const ResultEntry = extern struct {
         info: std.c.addrinfo,
         addr: std.c.sockaddr.storage,
+
+        /// Check if this is a link-local IPv6 address (fe80::/10).
+        /// Link-local addresses cannot route to global destinations.
+        fn isLinkLocalIPv6(this: *const ResultEntry) bool {
+            if (this.info.family != std.c.AF.INET6) return false;
+            const addr6: *const std.c.sockaddr.in6 = @ptrCast(@alignCast(&this.addr));
+            return isLinkLocalIPv6Addr(&addr6.addr);
+        }
+
+        /// Check if this is a global IPv6 address (not link-local, not loopback, not ULA).
+        fn isGlobalIPv6(this: *const ResultEntry) bool {
+            if (this.info.family != std.c.AF.INET6) return false;
+            const addr6: *const std.c.sockaddr.in6 = @ptrCast(@alignCast(&this.addr));
+            return isGlobalIPv6Addr(&addr6.addr);
+        }
+    };
+
+    /// Check if an IPv6 address is link-local (fe80::/10).
+    fn isLinkLocalIPv6Addr(addr: *const [16]u8) bool {
+        return addr[0] == 0xfe and (addr[1] & 0xc0) == 0x80;
+    }
+
+    /// Check if an IPv6 address is global scope (routable on the internet).
+    /// Global addresses are in the 2000::/3 range (first 3 bits = 001).
+    fn isGlobalIPv6Addr(addr: *const [16]u8) bool {
+        // Global unicast: 2000::/3 (first byte 0x20-0x3F)
+        return (addr[0] & 0xe0) == 0x20;
+    }
+
+    /// RFC 6724 Rule 2: Check if a global-scope IPv6 source address is available.
+    /// This determines whether we should prefer IPv6 destinations.
+    /// Returns true if there's at least one non-link-local, non-loopback IPv6 address.
+    const IPv6SourceAvailability = struct {
+        const CacheState = enum(u8) { unknown = 0, available = 1, unavailable = 2 };
+        var cached_result: std.atomic.Value(u8) = std.atomic.Value(u8).init(@intFromEnum(CacheState.unknown));
+        var cache_timestamp: std.atomic.Value(i64) = std.atomic.Value(i64).init(0);
+        const CACHE_TTL_MS: i64 = 30000; // 30 seconds
+
+        fn hasGlobalIPv6Source() bool {
+            if (comptime bun.Environment.isWindows) {
+                // TODO: Implement Windows support using GetAdaptersAddresses
+                return true; // Assume available on Windows for now
+            }
+
+            const now = std.time.milliTimestamp();
+            const current_result: CacheState = @enumFromInt(cached_result.load(.acquire));
+            const current_timestamp = cache_timestamp.load(.acquire);
+            if (current_result != .unknown and (now - current_timestamp) < CACHE_TTL_MS) {
+                return current_result == .available;
+            }
+
+            // Check network interfaces for global IPv6 addresses
+            var ifap: ?*c.ifaddrs = null;
+            if (c.getifaddrs(&ifap) != 0) {
+                // On error, assume IPv6 is available to avoid breaking things
+                return true;
+            }
+            defer c.freeifaddrs(ifap);
+
+            var has_global_ipv6 = false;
+            var ifa = ifap;
+            while (ifa) |iface| : (ifa = iface.ifa_next) {
+                // Skip interfaces that aren't up and running
+                if (iface.ifa_flags & c.IFF_UP == 0) continue;
+                if (iface.ifa_flags & c.IFF_RUNNING == 0) continue;
+                if (iface.ifa_addr == null) continue;
+
+                // Skip loopback interfaces
+                if (iface.ifa_flags & c.IFF_LOOPBACK != 0) continue;
+
+                // Check if this is an IPv6 address
+                const sa: *std.posix.sockaddr = @ptrCast(@alignCast(iface.ifa_addr));
+                if (sa.family != std.c.AF.INET6) continue;
+
+                const addr6: *const std.c.sockaddr.in6 = @ptrCast(@alignCast(iface.ifa_addr));
+                const addr_bytes = @as(*const [16]u8, @ptrCast(&addr6.addr));
+
+                // Check if this is a global IPv6 address (2000::/3)
+                if (isGlobalIPv6Addr(addr_bytes)) {
+                    has_global_ipv6 = true;
+                    break;
+                }
+            }
+
+            const new_result: CacheState = if (has_global_ipv6) .available else .unavailable;
+            cached_result.store(@intFromEnum(new_result), .release);
+            cache_timestamp.store(now, .release);
+            return has_global_ipv6;
+        }
+
+        /// Invalidate the cache (e.g., when network changes are detected)
+        pub fn invalidateCache() void {
+            cached_result.store(@intFromEnum(CacheState.unknown), .release);
+        }
     };
 
     // re-order result to interleave ipv4 and ipv6 (also pack into a single allocation)
@@ -1455,18 +1549,72 @@ pub const internal = struct {
             info_ = ai.next;
         }
 
-        // sort (interleave ipv4 and ipv6)
-        var want: usize = std.c.AF.INET6;
-        for (0..count) |idx| {
-            if (results[idx].info.family == want) continue;
-            for (idx + 1..count) |j| {
-                if (results[j].info.family == want) {
-                    std.mem.swap(ResultEntry, &results[idx], &results[j]);
-                    want = if (want == std.c.AF.INET6) std.c.AF.INET else std.c.AF.INET6;
+        // RFC 6724 compliant address sorting for optimal connection behavior.
+        // See: https://github.com/oven-sh/bun/issues/25619
+        //
+        // Key insight: If no global IPv6 source address is available (only link-local),
+        // then global IPv6 destinations will fail because link-local sources cannot
+        // route to global destinations. This commonly happens on VPN networks.
+        //
+        // Sorting strategy:
+        // 1. Check if a global IPv6 source is available (RFC 6724 Rule 2)
+        // 2. If yes: interleave global IPv6 and IPv4 (Happy Eyeballs)
+        // 3. If no: prefer IPv4 over global IPv6 (avoid scope mismatch timeouts)
+        // 4. Always move link-local IPv6 destinations to the end
+
+        const has_global_ipv6_source = IPv6SourceAvailability.hasGlobalIPv6Source();
+
+        // First pass: move link-local IPv6 destinations to the end.
+        // These can only reach link-local destinations, not internet hosts.
+        var link_local_start: usize = count;
+        for (0..link_local_start) |idx| {
+            if (results[idx].isLinkLocalIPv6()) {
+                // Find a non-link-local address to swap with from the end
+                while (link_local_start > idx + 1) {
+                    link_local_start -= 1;
+                    if (!results[link_local_start].isLinkLocalIPv6()) {
+                        std.mem.swap(ResultEntry, &results[idx], &results[link_local_start]);
+                        break;
+                    }
+                } else {
+                    // All remaining addresses are link-local
+                    link_local_start = idx;
+                    break;
                 }
-            } else {
-                // the rest of the list is all one address family
-                break;
+            }
+        }
+
+        // Second pass: sort non-link-local addresses based on IPv6 source availability.
+        if (has_global_ipv6_source) {
+            // Global IPv6 source available: interleave IPv6 and IPv4 (Happy Eyeballs)
+            // Start with IPv6 as it's generally preferred when available.
+            var want: usize = std.c.AF.INET6;
+            for (0..link_local_start) |idx| {
+                if (results[idx].info.family == want) continue;
+                for (idx + 1..link_local_start) |j| {
+                    if (results[j].info.family == want) {
+                        std.mem.swap(ResultEntry, &results[idx], &results[j]);
+                        want = if (want == std.c.AF.INET6) std.c.AF.INET else std.c.AF.INET6;
+                        break;
+                    }
+                } else {
+                    // the rest of the non-link-local list is all one address family
+                    break;
+                }
+            }
+        } else {
+            // No global IPv6 source: prefer IPv4 over global IPv6.
+            // RFC 6724 Rule 2: Prefer matching scope. Since we only have link-local
+            // IPv6 source, global IPv6 destinations will fail with scope mismatch.
+            // Put all IPv4 addresses first, then global IPv6 (as fallback).
+            var ipv4_end: usize = 0;
+            for (0..link_local_start) |idx| {
+                if (results[idx].info.family == std.c.AF.INET) {
+                    if (idx != ipv4_end) {
+                        std.mem.swap(ResultEntry, &results[idx], &results[ipv4_end]);
+                    }
+                    ipv4_end += 1;
+                }
             }
         }
 
@@ -3487,6 +3635,7 @@ const Async = bun.Async;
 const Environment = bun.Environment;
 const Global = bun.Global;
 const Output = bun.Output;
+const c = bun.c;
 const c_ares = bun.c_ares;
 const default_allocator = bun.default_allocator;
 const strings = bun.strings;

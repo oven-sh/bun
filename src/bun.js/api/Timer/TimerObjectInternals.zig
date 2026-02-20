@@ -509,7 +509,6 @@ const Debugger = @import("../../Debugger.zig");
 const std = @import("std");
 
 const bun = @import("bun");
-const Environment = bun.Environment;
 const assert = bun.assert;
 const timespec = bun.timespec;
 

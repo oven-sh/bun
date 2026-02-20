@@ -373,7 +373,15 @@ pub const PublishCommand = struct {
                     break :blk @as(?Provenance.SigningResult, null);
                 }
             } else null;
-            _ = signing_result; // TODO: Phase 4-5 will use this for Rekor + attachment
+
+            // Submit to Rekor transparency log
+            const rekor_entry = if (signing_result) |sr| blk: {
+                break :blk Provenance.submitToRekor(ctx.allocator, sr) catch |err| {
+                    Provenance.printRekorError(err);
+                    Global.crash();
+                };
+            } else null;
+            _ = rekor_entry; // TODO: Phase 5 will use this for Sigstore bundle assembly + attachment
 
             publish(false, &context) catch |err| {
                 switch (err) {
@@ -443,7 +451,15 @@ pub const PublishCommand = struct {
                 break :blk @as(?Provenance.SigningResult, null);
             }
         } else null;
-        _ = signing_result; // TODO: Phase 4-5 will use this for Rekor + attachment
+
+        // Submit to Rekor transparency log
+        const rekor_entry = if (signing_result) |sr| blk: {
+            break :blk Provenance.submitToRekor(ctx.allocator, sr) catch |err| {
+                Provenance.printRekorError(err);
+                Global.crash();
+            };
+        } else null;
+        _ = rekor_entry; // TODO: Phase 5 will use this for Sigstore bundle assembly + attachment
 
         publish(true, &context) catch |err| {
             switch (err) {

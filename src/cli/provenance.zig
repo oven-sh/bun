@@ -942,6 +942,241 @@ fn base64UrlDecode(allocator: std.mem.Allocator, input: string) SigningError!str
     return buf[0..decoded_size];
 }
 
+// ============================================================================
+// Phase 4: Rekor Transparency Log
+// ============================================================================
+
+pub const RekorError = error{
+    RekorRequestFailed,
+    RekorResponseInvalid,
+} || OOM;
+
+/// A transparency log entry returned by Rekor.
+/// Contains all fields needed to assemble the Sigstore bundle in Phase 5.
+pub const RekorEntry = struct {
+    /// UUID of the transparency log entry (the key in the response object)
+    uuid: string,
+    /// base64-encoded body of the entry
+    body: string,
+    /// Unix timestamp when the entry was integrated into the log
+    integrated_time: i64,
+    /// Hex-encoded log ID
+    log_id: string,
+    /// Numeric log index
+    log_index: i64,
+    /// base64-encoded signed entry timestamp (inclusion promise)
+    signed_entry_timestamp: string,
+    /// Inclusion proof (may be absent for pending entries)
+    inclusion_proof: ?InclusionProof,
+
+    pub const InclusionProof = struct {
+        log_index: i64,
+        root_hash: string,
+        tree_size: i64,
+        hashes: []const string,
+        checkpoint: string,
+    };
+};
+
+/// Submit a signed DSSE envelope to the Rekor transparency log.
+/// POST https://rekor.sigstore.dev/api/v1/log/entries
+///
+/// Uses the `dsse` entry kind (apiVersion 0.0.2) which accepts the
+/// DSSE envelope directly along with the Fulcio certificate as verifier.
+pub fn submitToRekor(
+    allocator: std.mem.Allocator,
+    signing_result: SigningResult,
+) RekorError!RekorEntry {
+    // Build request body:
+    // {
+    //   "apiVersion": "0.0.2",
+    //   "kind": "dsse",
+    //   "spec": {
+    //     "proposedContent": {
+    //       "envelope": "<DSSE envelope JSON>",
+    //       "verifiers": ["<PEM certificate>"]
+    //     }
+    //   }
+    // }
+    var body_buf = std.ArrayListUnmanaged(u8){};
+    defer body_buf.deinit(allocator);
+    const bw = body_buf.writer(allocator);
+
+    try bw.writeAll("{\"apiVersion\":\"0.0.2\",\"kind\":\"dsse\",\"spec\":{\"proposedContent\":{\"envelope\":");
+    try writeJsonString(bw, signing_result.dsse_envelope);
+    try bw.writeAll(",\"verifiers\":[");
+    try writeJsonString(bw, signing_result.certificate_pem);
+    try bw.writeAll("]}}}");
+
+    const rekor_url = URL.parse("https://rekor.sigstore.dev/api/v1/log/entries");
+
+    // Build headers (count → allocate → append pattern)
+    var headers: http.HeaderBuilder = .{};
+
+    {
+        headers.count("content-type", "application/json");
+        headers.count("accept", "application/json");
+    }
+
+    try headers.allocate(allocator);
+
+    {
+        headers.append("content-type", "application/json");
+        headers.append("accept", "application/json");
+    }
+
+    var response_buf = MutableString.init(allocator, 8192) catch return error.OutOfMemory;
+    defer response_buf.deinit();
+
+    var req = http.AsyncHTTP.initSync(
+        allocator,
+        .POST,
+        rekor_url,
+        headers.entries,
+        headers.content.ptr.?[0..headers.content.len],
+        &response_buf,
+        body_buf.items,
+        null,
+        null,
+        .follow,
+    );
+
+    const res = req.sendSync() catch |err| {
+        switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return error.RekorRequestFailed,
+        }
+    };
+
+    if (res.status_code != 200 and res.status_code != 201) {
+        return error.RekorRequestFailed;
+    }
+
+    if (response_buf.list.items.len == 0) return error.RekorResponseInvalid;
+
+    return parseRekorResponse(allocator, response_buf.list.items);
+}
+
+/// Parse the Rekor response JSON.
+/// The response is an object with a single key (the entry UUID) whose value
+/// contains the log entry fields:
+/// { "<uuid>": { "body": "...", "integratedTime": N, "logID": "...", "logIndex": N, "verification": { ... } } }
+fn parseRekorResponse(allocator: std.mem.Allocator, response: string) RekorError!RekorEntry {
+    const source = logger.Source.initPathString("rekor-response", response);
+    var log = logger.Log.init(allocator);
+    defer log.deinit();
+
+    const json = JSON.parseUTF8(&source, &log, allocator) catch {
+        return error.RekorResponseInvalid;
+    };
+
+    // Response is { "<uuid>": { ... } } — get the first property
+    if (json.data != .e_object) return error.RekorResponseInvalid;
+    const root_props = json.data.e_object.properties.slice();
+    if (root_props.len == 0) return error.RekorResponseInvalid;
+
+    const first_prop = root_props[0];
+    const uuid_key = first_prop.key orelse return error.RekorResponseInvalid;
+    const uuid = uuid_key.asString(allocator) orelse return error.RekorResponseInvalid;
+
+    const entry = first_prop.value orelse return error.RekorResponseInvalid;
+    if (entry.data != .e_object) return error.RekorResponseInvalid;
+
+    // Extract required fields
+    const body_str = entry.getStringCloned(allocator, "body") catch {
+        return error.OutOfMemory;
+    } orelse return error.RekorResponseInvalid;
+
+    const log_id = entry.getStringCloned(allocator, "logID") catch {
+        return error.OutOfMemory;
+    } orelse return error.RekorResponseInvalid;
+
+    const integrated_time: i64 = if (entry.getNumber("integratedTime")) |n|
+        @intFromFloat(n[0])
+    else
+        return error.RekorResponseInvalid;
+
+    const log_index: i64 = if (entry.getNumber("logIndex")) |n|
+        @intFromFloat(n[0])
+    else
+        return error.RekorResponseInvalid;
+
+    // Extract verification object
+    var signed_entry_timestamp: string = "";
+    var inclusion_proof: ?RekorEntry.InclusionProof = null;
+
+    if (entry.get("verification")) |verification| {
+        // signedEntryTimestamp (inclusion promise)
+        signed_entry_timestamp = verification.getStringCloned(allocator, "signedEntryTimestamp") catch {
+            return error.OutOfMemory;
+        } orelse "";
+
+        // inclusionProof (may be absent)
+        if (verification.get("inclusionProof")) |proof| {
+            const proof_log_index: i64 = if (proof.getNumber("logIndex")) |n|
+                @intFromFloat(n[0])
+            else
+                0;
+
+            const root_hash = proof.getStringCloned(allocator, "rootHash") catch {
+                return error.OutOfMemory;
+            } orelse "";
+
+            const tree_size: i64 = if (proof.getNumber("treeSize")) |n|
+                @intFromFloat(n[0])
+            else
+                0;
+
+            const checkpoint = proof.getStringCloned(allocator, "checkpoint") catch {
+                return error.OutOfMemory;
+            } orelse "";
+
+            // Parse hashes array
+            var hashes_list = std.ArrayListUnmanaged(string){};
+            if (proof.getArray("hashes")) |hashes_val| {
+                var iter = hashes_val;
+                while (iter.next()) |hash_expr| {
+                    const hash_str = hash_expr.asString(allocator) orelse continue;
+                    try hashes_list.append(allocator, hash_str);
+                }
+            }
+
+            inclusion_proof = .{
+                .log_index = proof_log_index,
+                .root_hash = root_hash,
+                .tree_size = tree_size,
+                .hashes = hashes_list.items,
+                .checkpoint = checkpoint,
+            };
+        }
+    }
+
+    return .{
+        .uuid = uuid,
+        .body = body_str,
+        .integrated_time = integrated_time,
+        .log_id = log_id,
+        .log_index = log_index,
+        .signed_entry_timestamp = signed_entry_timestamp,
+        .inclusion_proof = inclusion_proof,
+    };
+}
+
+/// Print a user-friendly error message for Rekor errors.
+pub fn printRekorError(err: RekorError) void {
+    switch (err) {
+        error.RekorRequestFailed => {
+            Output.errGeneric("failed to submit to Rekor transparency log (https://rekor.sigstore.dev)", .{});
+        },
+        error.RekorResponseInvalid => {
+            Output.errGeneric("invalid response from Rekor transparency log", .{});
+        },
+        error.OutOfMemory => {
+            bun.outOfMemory();
+        },
+    }
+}
+
 /// Print a user-friendly error message for provenance errors.
 pub fn printError(err: ProvenanceError) void {
     switch (err) {

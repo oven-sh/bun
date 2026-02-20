@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 test("Listener.getsockname with non-object argument does not crash", () => {
   const listener = Bun.listen({

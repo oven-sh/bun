@@ -1001,7 +1001,49 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int
     char port_string[16];
     snprintf(port_string, 16, "%d", port);
 
-    if (getaddrinfo(host, port_string, &hints, &result)) {
+    int gai_error = getaddrinfo(host, port_string, &hints, &result);
+    if (gai_error) {
+        // Map EAI_* errors to libuv-style negative error codes
+        // These match UV__EAI_* values from libuv/uv/errno.h
+        // We set both the error pointer and errno so the error can be detected
+        // by callers that check either one
+        int uv_error;
+        switch (gai_error) {
+#ifdef EAI_ADDRFAMILY
+            case EAI_ADDRFAMILY: uv_error = -3000; break;
+#endif
+            case EAI_AGAIN: uv_error = -3001; break;
+            case EAI_BADFLAGS: uv_error = -3002; break;
+#ifdef EAI_CANCELED
+            case EAI_CANCELED: uv_error = -3003; break;
+#endif
+            case EAI_FAIL: uv_error = -3004; break;
+            case EAI_FAMILY: uv_error = -3005; break;
+            case EAI_MEMORY: uv_error = -3006; break;
+#ifdef EAI_NODATA
+            case EAI_NODATA: uv_error = -3007; break;
+#endif
+            case EAI_NONAME: uv_error = -3008; break;
+#ifdef EAI_OVERFLOW
+            case EAI_OVERFLOW: uv_error = -3009; break;
+#endif
+            case EAI_SERVICE: uv_error = -3010; break;
+            case EAI_SOCKTYPE: uv_error = -3011; break;
+#ifdef EAI_SYSTEM
+            case EAI_SYSTEM: uv_error = LIBUS_ERR; break;  // Use actual errno for system errors
+#endif
+            default: uv_error = -3008; break;  // Default to EAI_NONAME
+        }
+        if (error) {
+            *error = uv_error;
+        }
+        // Store the libuv-style error code in errno so it can be retrieved
+        // by callers that don't have access to the error pointer
+#ifdef _WIN32
+        WSASetLastError(-uv_error);
+#else
+        errno = -uv_error;
+#endif
         return LIBUS_SOCKET_ERROR;
     }
 

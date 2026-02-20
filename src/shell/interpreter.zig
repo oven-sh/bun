@@ -1767,6 +1767,28 @@ pub const ShellSyscall = struct {
         return .{ .result = joined };
     }
 
+    /// Get file attributes for a path, resolving it relative to the given directory.
+    /// On Windows, this uses GetFileAttributesW which does NOT follow reparse points,
+    /// making it useful for detecting junctions and directory symlinks.
+    pub fn getAttributes(dir: anytype, path_: [:0]const u8) Maybe(Syscall.WindowsFileAttributes) {
+        if (bun.Environment.isWindows) {
+            const buf: *bun.PathBuffer = bun.path_buffer_pool.get();
+            defer bun.path_buffer_pool.put(buf);
+            const path = switch (getPath(dir, path_, buf)) {
+                .err => |e| return .{ .err = e },
+                .result => |p| p,
+            };
+            if (Syscall.getFileAttributes(path)) |attrs| {
+                return .{ .result = attrs };
+            }
+            return .{ .err = .{
+                .errno = @intFromEnum(bun.sys.E.NOENT),
+                .syscall = .lstat,
+            } };
+        }
+        @compileError("getAttributes is only available on Windows");
+    }
+
     pub fn statat(dir: bun.FileDescriptor, path_: [:0]const u8) Maybe(bun.Stat) {
         if (bun.Environment.isWindows) {
             const buf: *bun.PathBuffer = bun.path_buffer_pool.get();

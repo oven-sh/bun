@@ -1207,8 +1207,8 @@ pub const PackCommand = struct {
             // maybe otp
         }
 
-        const package_name_expr: Expr = json.root.get("name") orelse return error.MissingPackageName;
-        const package_name = try package_name_expr.asStringCloned(ctx.allocator) orelse return error.InvalidPackageName;
+        var package_name_expr: Expr = json.root.get("name") orelse return error.MissingPackageName;
+        var package_name = try package_name_expr.asStringCloned(ctx.allocator) orelse return error.InvalidPackageName;
         if (comptime for_publish) {
             const is_scoped = try Dependency.isScopedPackageName(package_name);
             if (manager.options.publish_config.access) |access| {
@@ -1220,8 +1220,8 @@ pub const PackCommand = struct {
         defer if (comptime !for_publish) ctx.allocator.free(package_name);
         if (package_name.len == 0) return error.InvalidPackageName;
 
-        const package_version_expr: Expr = json.root.get("version") orelse return error.MissingPackageVersion;
-        const package_version = try package_version_expr.asStringCloned(ctx.allocator) orelse return error.InvalidPackageVersion;
+        var package_version_expr: Expr = json.root.get("version") orelse return error.MissingPackageVersion;
+        var package_version = try package_version_expr.asStringCloned(ctx.allocator) orelse return error.InvalidPackageVersion;
         defer if (comptime !for_publish) ctx.allocator.free(package_version);
         if (package_version.len == 0) return error.InvalidPackageVersion;
 
@@ -1395,8 +1395,6 @@ pub const PackCommand = struct {
             };
 
             // Re-validate private flag after scripts may have modified it.
-            // Note: The tarball filename uses the original name/version (matching npm behavior),
-            // but we re-check private to prevent accidentally publishing a now-private package.
             if (comptime for_publish) {
                 if (json.root.get("private")) |private| {
                     if (private.asBool()) |is_private| {
@@ -1406,6 +1404,16 @@ pub const PackCommand = struct {
                     }
                 }
             }
+
+            // Re-read name and version from the updated package.json, since lifecycle
+            // scripts (e.g. prepublishOnly, prepack) may have modified them.
+            package_name_expr = json.root.get("name") orelse return error.MissingPackageName;
+            package_name = try package_name_expr.asStringCloned(ctx.allocator) orelse return error.InvalidPackageName;
+            if (package_name.len == 0) return error.InvalidPackageName;
+
+            package_version_expr = json.root.get("version") orelse return error.MissingPackageVersion;
+            package_version = try package_version_expr.asStringCloned(ctx.allocator) orelse return error.InvalidPackageVersion;
+            if (package_version.len == 0) return error.InvalidPackageVersion;
         }
 
         // Create the edited package.json content after lifecycle scripts have run

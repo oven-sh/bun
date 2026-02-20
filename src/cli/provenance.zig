@@ -403,7 +403,7 @@ fn buildGitHubStatement(
     try writeJsonString(w, "invocationId");
     try w.writeByte(':');
     try writeJsonString(w, try std.fmt.allocPrint(allocator, "{s}/{s}/actions/runs/{s}/attempts/{s}", .{ gh.server_url, gh.repository, gh.run_id, gh.run_attempt }));
-    try w.writeAll("}}}}");
+    try w.writeAll("}}}");
 
     try w.writeByte('}');
 
@@ -818,7 +818,7 @@ fn requestFulcioCertificate(
     try writeJsonString(bw, proof_b64);
     try bw.writeAll("}}");
 
-    const fulcio_url = URL.parse("https://fulcio.sigstore.dev/api/v2/signingCert");
+    const fulcio_url = URL.parse(bun.getenvZ("SIGSTORE_FULCIO_URL") orelse "https://fulcio.sigstore.dev/api/v2/signingCert");
 
     // Build headers
     var print_buf: std.ArrayListUnmanaged(u8) = .{};
@@ -1008,7 +1008,7 @@ pub fn submitToRekor(
     try writeJsonString(bw, signing_result.certificate_pem);
     try bw.writeAll("]}}}");
 
-    const rekor_url = URL.parse("https://rekor.sigstore.dev/api/v1/log/entries");
+    const rekor_url = URL.parse(bun.getenvZ("SIGSTORE_REKOR_URL") orelse "https://rekor.sigstore.dev/api/v1/log/entries");
 
     // Build headers (count → allocate → append pattern)
     var headers: http.HeaderBuilder = .{};
@@ -1077,7 +1077,7 @@ fn parseRekorResponse(allocator: std.mem.Allocator, response: string) RekorError
 
     const first_prop = root_props[0];
     const uuid_key = first_prop.key orelse return error.RekorResponseInvalid;
-    const uuid = uuid_key.asString(allocator) orelse return error.RekorResponseInvalid;
+    const uuid = (uuid_key.asStringCloned(allocator) catch return error.OutOfMemory) orelse return error.RekorResponseInvalid;
 
     const entry = first_prop.value orelse return error.RekorResponseInvalid;
     if (entry.data != .e_object) return error.RekorResponseInvalid;
@@ -1136,7 +1136,7 @@ fn parseRekorResponse(allocator: std.mem.Allocator, response: string) RekorError
             if (proof.getArray("hashes")) |hashes_val| {
                 var iter = hashes_val;
                 while (iter.next()) |hash_expr| {
-                    const hash_str = hash_expr.asString(allocator) orelse continue;
+                    const hash_str = (hash_expr.asStringCloned(allocator) catch return error.OutOfMemory) orelse continue;
                     try hashes_list.append(allocator, hash_str);
                 }
             }

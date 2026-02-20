@@ -1507,8 +1507,8 @@ pub const PublishCommand = struct {
             const count = bun.simdutf.base64.encode(ctx.tarball_bytes, buf.items[buf.items.len - encoded_tarball_len ..], false);
             bun.assertWithLocation(count == encoded_tarball_len, @src());
 
-            // Close tarball attachment value
-            try writer.print("\",\"length\":{d}}}}}", .{
+            // Close tarball attachment object
+            try writer.print("\",\"length\":{d}}}", .{
                 ctx.tarball_bytes.len,
             });
 
@@ -1520,7 +1520,7 @@ pub const PublishCommand = struct {
                 });
                 // The data field contains the bundle JSON as a string value
                 try Provenance.writeJsonString(writer, bundle);
-                try writer.print(",\"length\":{d}}}}}", .{bundle.len});
+                try writer.print(",\"length\":{d}}}", .{bundle.len});
             }
 
             // Close _attachments and root

@@ -243,13 +243,19 @@ pub fn callback(task: *ThreadPool.Task) void {
             this.status = Status.success;
         },
         .local_tarball => {
-            const workspace_pkg_id = manager.lockfile.getWorkspacePkgIfWorkspaceDep(this.request.local_tarball.tarball.dependency_id);
+            const dependency_id = this.request.local_tarball.tarball.dependency_id;
+            const workspace_pkg_id = manager.lockfile.getWorkspacePkgIfWorkspaceDep(dependency_id);
 
             var abs_buf: bun.PathBuffer = undefined;
             const tarball_path, const normalize = if (workspace_pkg_id != invalid_package_id) tarball_path: {
                 const workspace_res = manager.lockfile.packages.items(.resolution)[workspace_pkg_id];
 
                 if (workspace_res.tag != .workspace) break :tarball_path .{ this.request.local_tarball.tarball.url.slice(), true };
+
+                // If the dependency originated from a catalog entry, the tarball path should be
+                // resolved relative to the root (where catalogs are defined), not the workspace.
+                const dependency: Dependency = manager.lockfile.buffers.dependencies.items[dependency_id];
+                if (dependency.version.tag == .catalog) break :tarball_path .{ this.request.local_tarball.tarball.url.slice(), true };
 
                 // Construct an absolute path to the tarball.
                 // Normally tarball paths are always relative to the root directory, but if a
@@ -364,6 +370,7 @@ const string = []const u8;
 const std = @import("std");
 
 const install = @import("./install.zig");
+const Dependency = install.Dependency;
 const DependencyID = install.DependencyID;
 const ExtractData = install.ExtractData;
 const ExtractTarball = install.ExtractTarball;

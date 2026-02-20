@@ -784,7 +784,7 @@ function(register_cmake_command)
 
   set(MAKE_EFFECTIVE_ARGS -B${MAKE_BUILD_PATH} ${CMAKE_ARGS})
 
-  set(setFlags GENERATOR BUILD_TYPE)
+  set(setFlags GENERATOR BUILD_TYPE MAKE_PROGRAM)
   set(appendFlags C_FLAGS CXX_FLAGS LINKER_FLAGS STATIC_LINKER_FLAGS EXE_LINKER_FLAGS SHARED_LINKER_FLAGS MODULE_LINKER_FLAGS)
   set(specialFlags POSITION_INDEPENDENT_CODE)
   set(flags ${setFlags} ${appendFlags} ${specialFlags})

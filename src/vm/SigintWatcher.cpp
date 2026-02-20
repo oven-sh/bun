@@ -10,15 +10,18 @@ extern "C" void Bun__ensureSignalHandler();
 
 namespace Bun {
 
+// On Windows, the unified Ctrl+C handler lives in c-bindings.cpp (Ctrlhandler).
+// These extern "C" bridge functions allow c-bindings.cpp to call into SigintWatcher
+// without including SigintWatcher.h (avoids pulling JSC/WTF headers into c-bindings.cpp).
 #if OS(WINDOWS)
-static BOOL WindowsCtrlHandler(DWORD signal)
+extern "C" bool Bun__isSigintWatcherInstalled()
 {
-    if (signal == CTRL_C_EVENT) {
-        SigintWatcher::get().signalReceived();
-        return true;
-    }
+    return SigintWatcher::get().isInstalled();
+}
 
-    return false;
+extern "C" void Bun__sigintWatcherSignalReceived()
+{
+    SigintWatcher::get().signalReceived();
 }
 #endif
 
@@ -35,9 +38,9 @@ SigintWatcher::~SigintWatcher()
 
 void SigintWatcher::install()
 {
-#if OS(WINDOWS)
-    SetConsoleCtrlHandler(WindowsCtrlHandler, true);
-#else
+#if !OS(WINDOWS)
+    // On Windows, the unified Ctrl+C handler in c-bindings.cpp handles
+    // SigintWatcher notification. No handler registration needed here.
     Bun__ensureSignalHandler();
 
     struct sigaction action;
@@ -87,9 +90,9 @@ void SigintWatcher::uninstall()
         WTF::Thread* currentThread = WTF::Thread::currentMayBeNull();
         ASSERT(!currentThread || m_thread->uid() != currentThread->uid());
 
-#if OS(WINDOWS)
-        SetConsoleCtrlHandler(WindowsCtrlHandler, false);
-#else
+#if !OS(WINDOWS)
+        // On Windows, the unified Ctrl+C handler in c-bindings.cpp checks
+        // isInstalled() — no handler unregistration needed here.
         struct sigaction action;
         memset(&action, 0, sizeof(struct sigaction));
         action.sa_handler = Bun__onPosixSignal;

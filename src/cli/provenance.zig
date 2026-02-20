@@ -57,7 +57,7 @@ pub const GitLabContext = struct {
 
     /// All CI_* and GITLAB_* env vars for the invocation parameters.
     /// npm captures ~80 env vars here; we capture all CI_*/GITLAB_*/RUNNER_* vars.
-    env_params: std.StringArrayHashMapUnmanaged(string),
+    env_params: bun.StringArrayHashMapUnmanaged(string),
 };
 
 pub const ProvenanceError = error{
@@ -135,7 +135,7 @@ fn initGitLabCI(allocator: std.mem.Allocator) ProvenanceError!ProvenanceContext 
     };
 
     // Collect all CI_*, GITLAB_*, and RUNNER_* env vars for invocation parameters
-    var env_params: std.StringArrayHashMapUnmanaged(string) = .{};
+    var env_params: bun.StringArrayHashMapUnmanaged(string) = .{};
     const env_slice = std.os.environ;
     for (env_slice) |entry| {
         const env_entry = std.mem.sliceTo(entry, 0);
@@ -298,114 +298,79 @@ fn buildGitHubStatement(
 
     const purl = try fmtPurl(allocator, subject.package_name, subject.package_version);
 
-    try w.writeAll("{");
-
-    // "_type"
-    try writeJsonString(w, "_type");
-    try w.writeByte(':');
-    try writeJsonString(w, "https://in-toto.io/Statement/v1");
-    try w.writeByte(',');
-
-    // "subject"
-    try writeJsonString(w, "subject");
-    try w.writeAll(":[{");
-    try writeJsonString(w, "name");
-    try w.writeByte(':');
+    // Comptime keys are inlined directly since they contain no special JSON chars.
+    // Dynamic values use writeJsonStringContent to avoid intermediate allocations.
+    try w.writeAll(
+        \\{"_type":"https://in-toto.io/Statement/v1","subject":[{"name":
+    );
     try writeJsonString(w, purl);
-    try w.writeByte(',');
-    try writeJsonString(w, "digest");
-    try w.writeAll(":{");
-    try writeJsonString(w, "sha512");
-    try w.writeByte(':');
+    try w.writeAll(
+        \\,"digest":{"sha512":
+    );
     try writeJsonString(w, subject.sha512_hex);
-    try w.writeAll("}}],");
-
-    // "predicateType"
-    try writeJsonString(w, "predicateType");
-    try w.writeByte(':');
-    try writeJsonString(w, "https://slsa.dev/provenance/v1");
-    try w.writeByte(',');
-
-    // "predicate"
-    try writeJsonString(w, "predicate");
-    try w.writeAll(":{");
-
-    // "buildDefinition"
-    try writeJsonString(w, "buildDefinition");
-    try w.writeAll(":{");
-
-    try writeJsonString(w, "buildType");
-    try w.writeByte(':');
-    try writeJsonString(w, "https://slsa-framework.github.io/github-actions-buildtypes/workflow/v1");
-    try w.writeByte(',');
-
-    // "externalParameters"
-    try writeJsonString(w, "externalParameters");
-    try w.writeAll(":{");
-    try writeJsonString(w, "workflow");
-    try w.writeAll(":{");
-    try writeJsonString(w, "ref");
-    try w.writeByte(':');
+    try w.writeAll(
+        \\}}],"predicateType":"https://slsa.dev/provenance/v1","predicate":{"buildDefinition":{"buildType":"https://slsa-framework.github.io/github-actions-buildtypes/workflow/v1","externalParameters":{"workflow":{"ref":
+    );
     try writeJsonString(w, workflow_ref);
-    try w.writeByte(',');
-    try writeJsonString(w, "repository");
-    try w.writeByte(':');
-    try writeJsonString(w, try std.fmt.allocPrint(allocator, "{s}/{s}", .{ gh.server_url, gh.repository }));
-    try w.writeByte(',');
-    try writeJsonString(w, "path");
-    try w.writeByte(':');
+
+    // "repository": "{server_url}/{repository}" — write directly, no allocPrint
+    try w.writeAll(
+        \\,"repository":"
+    );
+    try writeJsonStringContent(w, gh.server_url);
+    try w.writeByte('/');
+    try writeJsonStringContent(w, gh.repository);
+    try w.writeAll(
+        \\","path":
+    );
     try writeJsonString(w, workflow_path);
-    try w.writeAll("}},");
-
-    // "internalParameters"
-    try writeJsonString(w, "internalParameters");
-    try w.writeAll(":{");
-    try writeJsonString(w, "github");
-    try w.writeAll(":{");
-    try writeJsonString(w, "event_name");
-    try w.writeByte(':');
+    try w.writeAll(
+        \\}},"internalParameters":{"github":{"event_name":
+    );
     try writeJsonString(w, gh.event_name);
-    try w.writeByte(',');
-    try writeJsonString(w, "repository_id");
-    try w.writeByte(':');
+    try w.writeAll(
+        \\,"repository_id":
+    );
     try writeJsonString(w, gh.repository_id);
-    try w.writeByte(',');
-    try writeJsonString(w, "repository_owner_id");
-    try w.writeByte(':');
+    try w.writeAll(
+        \\,"repository_owner_id":
+    );
     try writeJsonString(w, gh.repository_owner_id);
-    try w.writeAll("}},");
 
-    // "resolvedDependencies"
-    try writeJsonString(w, "resolvedDependencies");
-    try w.writeAll(":[{");
-    try writeJsonString(w, "uri");
-    try w.writeByte(':');
-    try writeJsonString(w, try std.fmt.allocPrint(allocator, "git+{s}/{s}@{s}", .{ gh.server_url, gh.repository, gh.ref }));
-    try w.writeByte(',');
-    try writeJsonString(w, "digest");
-    try w.writeAll(":{");
-    try writeJsonString(w, "gitCommit");
-    try w.writeByte(':');
+    // "resolvedDependencies" — "uri": "git+{server_url}/{repository}@{ref}"
+    try w.writeAll(
+        \\}},"resolvedDependencies":[{"uri":"git+
+    );
+    try writeJsonStringContent(w, gh.server_url);
+    try w.writeByte('/');
+    try writeJsonStringContent(w, gh.repository);
+    try w.writeByte('@');
+    try writeJsonStringContent(w, gh.ref);
+    try w.writeAll(
+        \\","digest":{"gitCommit":
+    );
     try writeJsonString(w, gh.sha);
-    try w.writeAll("}}]},");
 
-    // "runDetails"
-    try writeJsonString(w, "runDetails");
-    try w.writeAll(":{");
-    try writeJsonString(w, "builder");
-    try w.writeAll(":{");
-    try writeJsonString(w, "id");
-    try w.writeByte(':');
-    try writeJsonString(w, try std.fmt.allocPrint(allocator, "https://github.com/actions/runner/{s}", .{gh.runner_environment}));
-    try w.writeAll("},");
-    try writeJsonString(w, "metadata");
-    try w.writeAll(":{");
-    try writeJsonString(w, "invocationId");
-    try w.writeByte(':');
-    try writeJsonString(w, try std.fmt.allocPrint(allocator, "{s}/{s}/actions/runs/{s}/attempts/{s}", .{ gh.server_url, gh.repository, gh.run_id, gh.run_attempt }));
-    try w.writeAll("}}}");
+    // "runDetails" — "builder.id": "https://github.com/actions/runner/{runner_env}"
+    try w.writeAll(
+        \\}}]},"runDetails":{"builder":{"id":"https://github.com/actions/runner/
+    );
+    try writeJsonStringContent(w, gh.runner_environment);
 
-    try w.writeByte('}');
+    // "metadata.invocationId": "{server_url}/{repository}/actions/runs/{run_id}/attempts/{run_attempt}"
+    try w.writeAll(
+        \\"},"metadata":{"invocationId":"
+    );
+    try writeJsonStringContent(w, gh.server_url);
+    try w.writeByte('/');
+    try writeJsonStringContent(w, gh.repository);
+    try w.writeAll("/actions/runs/");
+    try writeJsonStringContent(w, gh.run_id);
+    try w.writeAll("/attempts/");
+    try writeJsonStringContent(w, gh.run_attempt);
+    try w.writeAll(
+        \\"}}}}
+    );
 
     return buf.items;
 }
@@ -610,10 +575,8 @@ fn splitWorkflowRef(workflow_ref: string) struct { string, string } {
     return .{ workflow_ref, "" };
 }
 
-/// Write a JSON-escaped string (with surrounding quotes).
-/// Handles the standard JSON escape sequences.
-pub fn writeJsonString(w: anytype, s: string) @TypeOf(w).Error!void {
-    try w.writeByte('"');
+/// Write the escaped content of a JSON string (without surrounding quotes).
+fn writeJsonStringContent(w: anytype, s: string) @TypeOf(w).Error!void {
     for (s) |c| {
         switch (c) {
             '"' => try w.writeAll("\\\""),
@@ -632,6 +595,13 @@ pub fn writeJsonString(w: anytype, s: string) @TypeOf(w).Error!void {
             },
         }
     }
+}
+
+/// Write a JSON-escaped string (with surrounding quotes).
+/// Handles the standard JSON escape sequences.
+pub fn writeJsonString(w: anytype, s: string) @TypeOf(w).Error!void {
+    try w.writeByte('"');
+    try writeJsonStringContent(w, s);
     try w.writeByte('"');
 }
 
@@ -819,10 +789,6 @@ fn requestFulcioCertificate(
     try bw.writeAll("}}");
 
     const fulcio_url = URL.parse(bun.getenvZ("SIGSTORE_FULCIO_URL") orelse "https://fulcio.sigstore.dev/api/v2/signingCert");
-
-    // Build headers
-    var print_buf: std.ArrayListUnmanaged(u8) = .{};
-    defer print_buf.deinit(allocator);
 
     var headers: http.HeaderBuilder = .{};
 
@@ -1181,117 +1147,88 @@ pub fn buildSigstoreBundle(
     var buf = std.ArrayListUnmanaged(u8){};
     const w = buf.writer(allocator);
 
-    try w.writeAll("{\"mediaType\":\"application/vnd.dev.sigstore.bundle.v0.3+json\"");
-
-    // "dsseEnvelope" — embed as a JSON object (the envelope is already valid JSON)
-    try w.writeAll(",\"dsseEnvelope\":");
+    try w.writeAll(
+        \\{"mediaType":"application/vnd.dev.sigstore.bundle.v0.3+json","dsseEnvelope":
+    );
     try w.writeAll(signing_result.dsse_envelope);
 
-    // "verificationMaterial"
-    try w.writeAll(",\"verificationMaterial\":{");
-
-    // "certificate" (v0.3 uses singular cert, not x509CertificateChain)
-    // rawBytes is the base64-encoded DER of the leaf certificate
-    try w.writeAll("\"certificate\":{\"rawBytes\":");
+    // certificate rawBytes: base64-encoded DER of the leaf certificate
+    try w.writeAll(
+        \\,"verificationMaterial":{"certificate":{"rawBytes":
+    );
     const der_b64 = try pemToDerBase64(allocator, signing_result.certificate_pem);
     try writeJsonString(w, der_b64);
-    try w.writeByte('}');
 
-    // "tlogEntries"
-    try w.writeAll(",\"tlogEntries\":[{");
+    // logIndex: write int directly as quoted string — no allocPrint needed
+    try w.writeAll(
+        \\},"tlogEntries":[{"logIndex":"
+    );
+    try w.print("{d}", .{rekor_entry.log_index});
 
-    // logIndex (protobuf int64 → JSON string)
-    try writeJsonString(w, "logIndex");
-    try w.writeByte(':');
-    try writeJsonString(w, try std.fmt.allocPrint(allocator, "{d}", .{rekor_entry.log_index}));
-
-    // logId.keyId (Rekor returns hex, bundle wants base64 bytes)
-    try w.writeByte(',');
-    try writeJsonString(w, "logId");
-    try w.writeAll(":{");
-    try writeJsonString(w, "keyId");
-    try w.writeByte(':');
+    // logId.keyId: hex → base64
+    try w.writeAll(
+        \\","logId":{"keyId":
+    );
     const log_id_b64 = try hexToBase64(allocator, rekor_entry.log_id);
     try writeJsonString(w, log_id_b64);
-    try w.writeByte('}');
 
-    // kindVersion
-    try w.writeByte(',');
-    try writeJsonString(w, "kindVersion");
-    try w.writeAll(":{\"kind\":\"dsse\",\"version\":\"0.0.2\"}");
-
-    // integratedTime (protobuf int64 → JSON string)
-    try w.writeByte(',');
-    try writeJsonString(w, "integratedTime");
-    try w.writeByte(':');
-    try writeJsonString(w, try std.fmt.allocPrint(allocator, "{d}", .{rekor_entry.integrated_time}));
+    // kindVersion + integratedTime (int directly as quoted string)
+    try w.writeAll(
+        \\},"kindVersion":{"kind":"dsse","version":"0.0.2"},"integratedTime":"
+    );
+    try w.print("{d}", .{rekor_entry.integrated_time});
+    try w.writeByte('"');
 
     // inclusionPromise (optional for v0.3)
     if (rekor_entry.signed_entry_timestamp.len > 0) {
-        try w.writeByte(',');
-        try writeJsonString(w, "inclusionPromise");
-        try w.writeAll(":{");
-        try writeJsonString(w, "signedEntryTimestamp");
-        try w.writeByte(':');
+        try w.writeAll(
+            \\,"inclusionPromise":{"signedEntryTimestamp":
+        );
         try writeJsonString(w, rekor_entry.signed_entry_timestamp);
         try w.writeByte('}');
     }
 
     // inclusionProof (required for v0.3)
     if (rekor_entry.inclusion_proof) |proof| {
-        try w.writeByte(',');
-        try writeJsonString(w, "inclusionProof");
-        try w.writeAll(":{");
+        try w.writeAll(
+            \\,"inclusionProof":{"logIndex":"
+        );
+        try w.print("{d}", .{proof.log_index});
 
-        try writeJsonString(w, "logIndex");
-        try w.writeByte(':');
-        try writeJsonString(w, try std.fmt.allocPrint(allocator, "{d}", .{proof.log_index}));
-
-        // rootHash: Rekor returns hex → bundle wants base64 bytes
-        try w.writeByte(',');
-        try writeJsonString(w, "rootHash");
-        try w.writeByte(':');
+        // rootHash: hex → base64
+        try w.writeAll(
+            \\","rootHash":
+        );
         const root_hash_b64 = try hexToBase64(allocator, proof.root_hash);
         try writeJsonString(w, root_hash_b64);
 
-        try w.writeByte(',');
-        try writeJsonString(w, "treeSize");
-        try w.writeByte(':');
-        try writeJsonString(w, try std.fmt.allocPrint(allocator, "{d}", .{proof.tree_size}));
+        try w.writeAll(
+            \\,"treeSize":"
+        );
+        try w.print("{d}", .{proof.tree_size});
+        try w.writeAll(
+            \\","hashes":[
+        );
 
-        // hashes: array of hex → base64
-        try w.writeByte(',');
-        try writeJsonString(w, "hashes");
-        try w.writeByte(':');
-        try w.writeByte('[');
         for (proof.hashes, 0..) |hash_hex, i| {
             if (i > 0) try w.writeByte(',');
             const hash_b64 = try hexToBase64(allocator, hash_hex);
             try writeJsonString(w, hash_b64);
         }
-        try w.writeByte(']');
 
-        // checkpoint: plain string → { "envelope": "<string>" }
-        try w.writeByte(',');
-        try writeJsonString(w, "checkpoint");
-        try w.writeAll(":{");
-        try writeJsonString(w, "envelope");
-        try w.writeByte(':');
+        try w.writeAll(
+            \\],"checkpoint":{"envelope":
+        );
         try writeJsonString(w, proof.checkpoint);
-        try w.writeByte('}');
-
-        try w.writeByte('}'); // close inclusionProof
+        try w.writeAll("}}");
     }
 
     // canonicalizedBody (already base64 from Rekor)
-    try w.writeByte(',');
-    try writeJsonString(w, "canonicalizedBody");
-    try w.writeByte(':');
+    try w.writeAll(
+        \\,"canonicalizedBody":
+    );
     try writeJsonString(w, rekor_entry.body);
-
-    try w.writeAll("}]"); // close tlogEntry + tlogEntries array
-    try w.writeByte('}'); // close verificationMaterial
-    try w.writeByte('}'); // close root bundle
+    try w.writeAll("}]}}"); // close tlogEntry, tlogEntries, verificationMaterial, root
 
     return buf.items;
 }
@@ -1315,15 +1252,17 @@ fn pemToDerBase64(allocator: std.mem.Allocator, pem: string) OOM!string {
     const end_pos = strings.indexOf(rest, end_marker) orelse return "";
     const pem_content = rest[0..end_pos];
 
-    // Strip all whitespace to get clean base64
-    var result = std.ArrayListUnmanaged(u8){};
+    // Strip all whitespace to get clean base64 — preallocate max size to avoid per-byte appends
+    const buf = try allocator.alloc(u8, pem_content.len);
+    var len: usize = 0;
     for (pem_content) |c| {
         if (c != '\n' and c != '\r' and c != ' ' and c != '\t') {
-            try result.append(allocator, c);
+            buf[len] = c;
+            len += 1;
         }
     }
 
-    return result.items;
+    return buf[0..len];
 }
 
 /// Convert a hex-encoded string to base64-encoded bytes.
@@ -1447,7 +1386,6 @@ const string = []const u8;
 const std = @import("std");
 
 const bun = @import("bun");
-const Global = bun.Global;
 const JSON = bun.json;
 const MutableString = bun.MutableString;
 const OOM = bun.OOM;

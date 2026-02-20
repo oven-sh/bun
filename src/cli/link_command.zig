@@ -21,7 +21,11 @@ fn link(ctx: Command.Context) !void {
         Output.flush();
     }
 
-    if (manager.options.positionals.len == 1) {
+    // Treat `bun link .` the same as `bun link` (register current package)
+    const is_register = manager.options.positionals.len == 1 or
+        (manager.options.positionals.len == 2 and std.mem.eql(u8, manager.options.positionals[1], "."));
+
+    if (is_register) {
         // bun link
 
         var lockfile: Lockfile = undefined;

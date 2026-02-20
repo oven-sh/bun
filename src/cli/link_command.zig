@@ -204,9 +204,6 @@ const strings = bun.strings;
 const Command = bun.cli.Command;
 const File = bun.sys.File;
 
-const Fs = bun.fs;
-const FileSystem = Fs.FileSystem;
-
 const Bin = bun.install.Bin;
 const Features = bun.install.Features;
 

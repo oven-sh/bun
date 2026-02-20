@@ -483,9 +483,7 @@ if (isDockerEnabled()) {
         test("Binary", async () => {
           const random_name = ("t_" + Bun.randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
           await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (a binary(1), b varbinary(1), c blob)`;
-          const values = [
-            { a: Buffer.from([1]), b: Buffer.from([2]), c: Buffer.from([3]) },
-          ];
+          const values = [{ a: Buffer.from([1]), b: Buffer.from([2]), c: Buffer.from([3]) }];
           await sql`INSERT INTO ${sql(random_name)} ${sql(values)}`;
           const results = await sql`select * from ${sql(random_name)}`;
           // return buffers
@@ -497,7 +495,7 @@ if (isDockerEnabled()) {
           expect(results2[0].a).toEqual(Buffer.from([1]));
           expect(results2[0].b).toEqual(Buffer.from([2]));
           expect(results2[0].c).toEqual(Buffer.from([3]));
-        })
+        });
 
         test("bulk insert nested sql()", async () => {
           await using sql = new SQL({ ...getOptions(), max: 1 });
@@ -1004,6 +1002,27 @@ if (isDockerEnabled()) {
         });
         test("Array returns rows as arrays of columns", async () => {
           return [(await sql`select CAST(1 AS SIGNED) as x`.values())[0][0], 1];
+        });
+
+        // https://github.com/oven-sh/bun/issues/24130
+        test("queries should not hang after fs.promises.readdir", async () => {
+          const fs = require("fs");
+
+          await using db = new SQL({ ...getOptions(), max: 1 });
+
+          // First query to establish connection
+          expect(await db`SELECT 1 as x`).toEqual([{ x: 1 }]);
+
+          // Run async fs operation - this was causing the poll_ref to not be
+          // re-ref'd when enqueueing the next query on an idle connection
+          await fs.promises.readdir(".");
+
+          // This query would hang before the fix because poll_ref was unref'd
+          // when connection became idle, and enqueueRequest didn't ref it again
+          expect(await db`SELECT 2 as x`).toEqual([{ x: 2 }]);
+
+          // Additional queries should also work
+          expect(await db`SELECT 3 as x`).toEqual([{ x: 3 }]);
         });
       },
     );

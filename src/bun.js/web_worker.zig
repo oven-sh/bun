@@ -495,14 +495,14 @@ fn spin(this: *WebWorker) void {
             this.exitAndDeinit();
             return;
         }
-    } else {
+    } else if (promise.status() == .fulfilled) {
         _ = promise.result();
     }
+    // If promise is still pending (top-level await), that's OK — the main
+    // event loop below will continue to tick until it settles.
 
     this.flushLogs();
     log("[{d}] event loop start", .{this.execution_context_id});
-    // TODO(@190n) call dispatchOnline earlier (basically as soon as spin() starts, before
-    // we start running JS)
     WebWorker__dispatchOnline(this.cpp_worker, vm.global);
     WebWorker__fireEarlyMessages(this.cpp_worker, vm.global);
     this.setStatus(.running);

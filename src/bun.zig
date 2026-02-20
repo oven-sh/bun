@@ -231,6 +231,7 @@ pub const bits = @import("./bits.zig");
 pub const css = @import("./css/css_parser.zig");
 pub const SmallList = css.SmallList;
 pub const csrf = @import("./csrf.zig");
+pub const string_case = @import("./string_case.zig");
 pub const validators = @import("./bun.js/node/util/validators.zig");
 
 pub const shell = @import("./shell/shell.zig");

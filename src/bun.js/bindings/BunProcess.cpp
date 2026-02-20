@@ -1127,6 +1127,23 @@ extern "C" void Bun__onSignalForJS(int signalNumber, Zig::GlobalObject* globalOb
 
     String signalName = signalNumberToNameMap->get(signalNumber);
     Identifier signalNameIdentifier = Identifier::fromString(JSC::getVM(globalObject), signalName);
+
+    // Match Node.js behavior: if no JS listeners are registered for this signal,
+    // restore SIG_DFL and re-raise so the process terminates with the correct
+    // exit code (128 + signal number). Without this, signals like SIGHUP from
+    // terminal death are silently swallowed, causing orphaned processes.
+    if (process->wrapped().listenerCount(signalNameIdentifier) == 0) {
+#if !OS(WINDOWS)
+        struct sigaction sa;
+        memset(&sa, 0, sizeof(sa));
+        sa.sa_handler = SIG_DFL;
+        sigemptyset(&sa.sa_mask);
+        sigaction(signalNumber, &sa, nullptr);
+        raise(signalNumber);
+#endif
+        return;
+    }
+
     MarkedArgumentBuffer args;
     args.append(jsString(JSC::getVM(globalObject), signalNameIdentifier.string()));
     args.append(jsNumber(signalNumber));

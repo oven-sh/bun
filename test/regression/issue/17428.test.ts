@@ -27,3 +27,26 @@ test("bun publish --dry-run works without authentication", async () => {
   expect(stdout).toContain("(dry-run)");
   expect(exitCode).toBe(0);
 });
+
+test("bun publish without --dry-run fails without authentication", async () => {
+  using dir = tempDir("publish-no-auth", {
+    "package.json": JSON.stringify({
+      name: "no-auth-test",
+      version: "1.0.0",
+    }),
+    "index.js": "module.exports = {};",
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "publish"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain("missing authentication");
+  expect(exitCode).not.toBe(0);
+});

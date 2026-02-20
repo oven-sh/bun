@@ -1236,6 +1236,7 @@ fn runWithSourceCode(
     } else .none;
 
     opts.framework = transpiler.options.framework;
+    opts.jsx_optimization_inline = transpiler.options.jsx_optimization_inline;
 
     opts.ignore_dce_annotations = transpiler.options.ignore_dce_annotations and !source.index.isRuntime();
 

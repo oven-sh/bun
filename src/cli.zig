@@ -455,6 +455,7 @@ pub const Command = struct {
             keep_names: bool = false,
             ignore_dce_annotations: bool = false,
             emit_dce_annotations: bool = true,
+            jsx_inline: Runtime.Features.JsxInlineMode = .none,
             output_format: options.Format = .esm,
             bytecode: bool = false,
             banner: []const u8 = "",
@@ -1789,6 +1790,7 @@ const Bunfig = @import("./bunfig.zig").Bunfig;
 const ColonListType = @import("./cli/colon_list_type.zig").ColonListType;
 const MacroMap = @import("./resolver/package_json.zig").MacroMap;
 const RunCommand_ = @import("./cli/run_command.zig").RunCommand;
+const Runtime = @import("./runtime.zig").Runtime;
 const TestCommand = @import("./cli/test_command.zig").TestCommand;
 
 const Install = @import("./install/install.zig");

@@ -1,5 +1,40 @@
-import { describe, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { cwdScope, isWindows, rmScope, tempDirWithFiles } from "harness";
+
+describe("getsockname", () => {
+  test("called without arguments does not crash", () => {
+    using server = Bun.listen({
+      hostname: "localhost",
+      port: 0,
+      socket: {
+        data() {},
+      },
+    });
+    const result = server.getsockname();
+    expect(result).toEqual(expect.objectContaining({
+      family: expect.any(String),
+      address: expect.any(String),
+      port: expect.any(Number),
+    }));
+    server.stop(true);
+  });
+
+  test("called with an object argument populates it", () => {
+    using server = Bun.listen({
+      hostname: "localhost",
+      port: 0,
+      socket: {
+        data() {},
+      },
+    });
+    const out: Record<string, unknown> = {};
+    server.getsockname(out);
+    expect(out.family).toBeString();
+    expect(out.address).toBeString();
+    expect(out.port).toBeNumber();
+    server.stop(true);
+  });
+});
 
 describe.if(!isWindows)("unix socket", () => {
   test("valid", () => {

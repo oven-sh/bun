@@ -256,4 +256,74 @@ function unref(this: NativeReadable) {
   }
 }
 
-export default { constructNativeReadable };
+// constructNativeSocket creates a net.Socket wrapping a native readable.
+// This is used for child_process stdout/stderr to match Node.js behavior
+// where these streams are Socket instances, not plain Readable streams.
+// See: https://github.com/oven-sh/bun/issues/26505
+function constructNativeSocket(readableStream: ReadableStream, options): NativeReadable {
+  $assert(typeof readableStream === "object" && readableStream instanceof ReadableStream, "Invalid readable stream");
+  const bunNativePtr = (readableStream as any).$bunNativePtr;
+  $assert(typeof bunNativePtr === "object", "Invalid native ptr");
+
+  // Create a Socket with readable=true, writable=false for stdout/stderr
+  // Spread options first, then enforce readable/writable to prevent overrides
+  const { Socket } = require("node:net");
+  const stream = new Socket({
+    ...options,
+    readable: true,
+    writable: false,
+  });
+
+  // Override _read with our native implementation
+  stream._read = read;
+
+  // Create a custom _destroy that cleans up native resources and then emits close
+  const originalSocketDestroy = Socket.prototype._destroy;
+  stream._destroy = function socketDestroy(error: any, cb: () => void) {
+    const ptr = this.$bunNativePtr;
+    if (ptr) {
+      ptr.cancel(error);
+    }
+    // Call the original Socket._destroy which will emit "close"
+    // Since we don't have a _handle, it will call cb and emit close via emitCloseNT
+    return originalSocketDestroy.$call(this, error, cb);
+  };
+
+  // End the writable side immediately since this is a read-only socket
+  stream._writableState.ended = true;
+  stream._writableState.finished = true;
+
+  if (!!$debug) {
+    stream.debugId = ++debugId;
+  }
+
+  stream.$bunNativePtr = bunNativePtr;
+  stream[kRefCount] = 0;
+  stream[kConstructed] = false;
+  stream[kPendingRead] = false;
+  stream[kHasResized] = !dynamicallyAdjustChunkSize();
+  stream[kCloseState] = [false];
+
+  if (typeof options.highWaterMark === "number") {
+    stream[kHighWaterMark] = options.highWaterMark;
+  } else {
+    stream[kHighWaterMark] = 256 * 1024;
+  }
+
+  // Override ref/unref to use native implementation
+  stream.ref = ref;
+  stream.unref = unref;
+
+  // https://github.com/oven-sh/bun/pull/12801
+  // https://github.com/oven-sh/bun/issues/9555
+  // There may be a ReadableStream.Strong handle to the ReadableStream.
+  // We can't update those handles to point to the NativeReadable from JS
+  // So we instead mark it as no longer usable, and create a new NativeReadable
+  transferToNativeReadable(readableStream);
+
+  $debug(`[${stream.debugId}] constructed socket!`);
+
+  return stream;
+}
+
+export default { constructNativeReadable, constructNativeSocket };

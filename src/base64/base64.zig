@@ -97,10 +97,9 @@ pub fn urlSafeEncodeLen(source: anytype) usize {
     // Copied from WebKit
     return ((source.len * 4) + 2) / 3;
 }
-extern fn WTF__base64URLEncode(input: [*]const u8, input_len: usize, output: [*]u8, output_len: usize) usize;
+
 pub fn encodeURLSafe(dest: []u8, source: []const u8) usize {
-    bun.jsc.markBinding(@src());
-    return WTF__base64URLEncode(source.ptr, source.len, dest.ptr, dest.len);
+    return bun.simdutf.base64.encode(source, dest, true);
 }
 
 const zig_base64 = struct {

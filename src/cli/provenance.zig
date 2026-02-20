@@ -612,7 +612,7 @@ fn splitWorkflowRef(workflow_ref: string) struct { string, string } {
 
 /// Write a JSON-escaped string (with surrounding quotes).
 /// Handles the standard JSON escape sequences.
-fn writeJsonString(w: anytype, s: string) @TypeOf(w).Error!void {
+pub fn writeJsonString(w: anytype, s: string) @TypeOf(w).Error!void {
     try w.writeByte('"');
     for (s) |c| {
         switch (c) {
@@ -1159,6 +1159,196 @@ fn parseRekorResponse(allocator: std.mem.Allocator, response: string) RekorError
         .log_index = log_index,
         .signed_entry_timestamp = signed_entry_timestamp,
         .inclusion_proof = inclusion_proof,
+    };
+}
+
+// ============================================================================
+// Phase 5: Sigstore Bundle Assembly
+// ============================================================================
+
+/// Build a Sigstore bundle v0.3 JSON from the signing result and Rekor entry.
+///
+/// The bundle follows the protobuf-specs format:
+/// - mediaType: "application/vnd.dev.sigstore.bundle.v0.3+json"
+/// - dsseEnvelope: the DSSE envelope as a JSON object (not string)
+/// - verificationMaterial.certificate: leaf cert as base64 DER (v0.3 uses singular)
+/// - verificationMaterial.tlogEntries: transparency log entry from Rekor
+pub fn buildSigstoreBundle(
+    allocator: std.mem.Allocator,
+    signing_result: SigningResult,
+    rekor_entry: RekorEntry,
+) OOM!string {
+    var buf = std.ArrayListUnmanaged(u8){};
+    const w = buf.writer(allocator);
+
+    try w.writeAll("{\"mediaType\":\"application/vnd.dev.sigstore.bundle.v0.3+json\"");
+
+    // "dsseEnvelope" — embed as a JSON object (the envelope is already valid JSON)
+    try w.writeAll(",\"dsseEnvelope\":");
+    try w.writeAll(signing_result.dsse_envelope);
+
+    // "verificationMaterial"
+    try w.writeAll(",\"verificationMaterial\":{");
+
+    // "certificate" (v0.3 uses singular cert, not x509CertificateChain)
+    // rawBytes is the base64-encoded DER of the leaf certificate
+    try w.writeAll("\"certificate\":{\"rawBytes\":");
+    const der_b64 = try pemToDerBase64(allocator, signing_result.certificate_pem);
+    try writeJsonString(w, der_b64);
+    try w.writeByte('}');
+
+    // "tlogEntries"
+    try w.writeAll(",\"tlogEntries\":[{");
+
+    // logIndex (protobuf int64 → JSON string)
+    try writeJsonString(w, "logIndex");
+    try w.writeByte(':');
+    try writeJsonString(w, try std.fmt.allocPrint(allocator, "{d}", .{rekor_entry.log_index}));
+
+    // logId.keyId (Rekor returns hex, bundle wants base64 bytes)
+    try w.writeByte(',');
+    try writeJsonString(w, "logId");
+    try w.writeAll(":{");
+    try writeJsonString(w, "keyId");
+    try w.writeByte(':');
+    const log_id_b64 = try hexToBase64(allocator, rekor_entry.log_id);
+    try writeJsonString(w, log_id_b64);
+    try w.writeByte('}');
+
+    // kindVersion
+    try w.writeByte(',');
+    try writeJsonString(w, "kindVersion");
+    try w.writeAll(":{\"kind\":\"dsse\",\"version\":\"0.0.2\"}");
+
+    // integratedTime (protobuf int64 → JSON string)
+    try w.writeByte(',');
+    try writeJsonString(w, "integratedTime");
+    try w.writeByte(':');
+    try writeJsonString(w, try std.fmt.allocPrint(allocator, "{d}", .{rekor_entry.integrated_time}));
+
+    // inclusionPromise (optional for v0.3)
+    if (rekor_entry.signed_entry_timestamp.len > 0) {
+        try w.writeByte(',');
+        try writeJsonString(w, "inclusionPromise");
+        try w.writeAll(":{");
+        try writeJsonString(w, "signedEntryTimestamp");
+        try w.writeByte(':');
+        try writeJsonString(w, rekor_entry.signed_entry_timestamp);
+        try w.writeByte('}');
+    }
+
+    // inclusionProof (required for v0.3)
+    if (rekor_entry.inclusion_proof) |proof| {
+        try w.writeByte(',');
+        try writeJsonString(w, "inclusionProof");
+        try w.writeAll(":{");
+
+        try writeJsonString(w, "logIndex");
+        try w.writeByte(':');
+        try writeJsonString(w, try std.fmt.allocPrint(allocator, "{d}", .{proof.log_index}));
+
+        // rootHash: Rekor returns hex → bundle wants base64 bytes
+        try w.writeByte(',');
+        try writeJsonString(w, "rootHash");
+        try w.writeByte(':');
+        const root_hash_b64 = try hexToBase64(allocator, proof.root_hash);
+        try writeJsonString(w, root_hash_b64);
+
+        try w.writeByte(',');
+        try writeJsonString(w, "treeSize");
+        try w.writeByte(':');
+        try writeJsonString(w, try std.fmt.allocPrint(allocator, "{d}", .{proof.tree_size}));
+
+        // hashes: array of hex → base64
+        try w.writeByte(',');
+        try writeJsonString(w, "hashes");
+        try w.writeByte(':');
+        try w.writeByte('[');
+        for (proof.hashes, 0..) |hash_hex, i| {
+            if (i > 0) try w.writeByte(',');
+            const hash_b64 = try hexToBase64(allocator, hash_hex);
+            try writeJsonString(w, hash_b64);
+        }
+        try w.writeByte(']');
+
+        // checkpoint: plain string → { "envelope": "<string>" }
+        try w.writeByte(',');
+        try writeJsonString(w, "checkpoint");
+        try w.writeAll(":{");
+        try writeJsonString(w, "envelope");
+        try w.writeByte(':');
+        try writeJsonString(w, proof.checkpoint);
+        try w.writeByte('}');
+
+        try w.writeByte('}'); // close inclusionProof
+    }
+
+    // canonicalizedBody (already base64 from Rekor)
+    try w.writeByte(',');
+    try writeJsonString(w, "canonicalizedBody");
+    try w.writeByte(':');
+    try writeJsonString(w, rekor_entry.body);
+
+    try w.writeAll("}]"); // close tlogEntry + tlogEntries array
+    try w.writeByte('}'); // close verificationMaterial
+    try w.writeByte('}'); // close root bundle
+
+    return buf.items;
+}
+
+/// Extract the first certificate from a PEM chain and return as base64-encoded DER.
+///
+/// PEM format wraps DER bytes in base64 with header/footer lines:
+///   -----BEGIN CERTIFICATE-----
+///   MIIBxTCCAWug...
+///   -----END CERTIFICATE-----
+///
+/// Stripping the markers and whitespace yields the base64 DER directly.
+fn pemToDerBase64(allocator: std.mem.Allocator, pem: string) OOM!string {
+    const begin_marker = "-----BEGIN CERTIFICATE-----";
+    const end_marker = "-----END CERTIFICATE-----";
+
+    const begin_pos = strings.indexOf(pem, begin_marker) orelse return "";
+    const content_start = begin_pos + begin_marker.len;
+
+    const rest = pem[content_start..];
+    const end_pos = strings.indexOf(rest, end_marker) orelse return "";
+    const pem_content = rest[0..end_pos];
+
+    // Strip all whitespace to get clean base64
+    var result = std.ArrayListUnmanaged(u8){};
+    for (pem_content) |c| {
+        if (c != '\n' and c != '\r' and c != ' ' and c != '\t') {
+            try result.append(allocator, c);
+        }
+    }
+
+    return result.items;
+}
+
+/// Convert a hex-encoded string to base64-encoded bytes.
+/// Used for Rekor fields (logID, rootHash, hashes) which come as hex
+/// but must be base64 in the Sigstore bundle protobuf JSON format.
+fn hexToBase64(allocator: std.mem.Allocator, hex_str: string) OOM!string {
+    if (hex_str.len == 0 or hex_str.len % 2 != 0) return "";
+
+    const byte_len = hex_str.len / 2;
+    const bytes = try allocator.alloc(u8, byte_len);
+    defer allocator.free(bytes);
+
+    for (bytes, 0..) |*byte, i| {
+        byte.* = (hexNibble(hex_str[i * 2]) << 4) | hexNibble(hex_str[i * 2 + 1]);
+    }
+
+    return base64Encode(allocator, bytes);
+}
+
+fn hexNibble(c: u8) u8 {
+    return switch (c) {
+        '0'...'9' => c - '0',
+        'a'...'f' => c - 'a' + 10,
+        'A'...'F' => c - 'A' + 10,
+        else => 0,
     };
 }
 

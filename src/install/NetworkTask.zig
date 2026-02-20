@@ -310,6 +310,7 @@ pub fn forTarball(
     });
     this.unsafe_http_client.client.flags.reject_unauthorized = this.package_manager.tlsRejectUnauthorized();
     if (PackageManager.verbose_install) {
+        this.unsafe_http_client.verbose = .headers;
         this.unsafe_http_client.client.verbose = .headers;
     }
 }

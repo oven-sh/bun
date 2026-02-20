@@ -1183,13 +1183,6 @@ SSL_CTX *create_ssl_context_from_bun_options(
       free_ssl_context(ssl_context);
       return NULL;
     }
-  } else if (options.cert && options.cert_count > 0) {
-    for (unsigned int i = 0; i < options.cert_count; i++) {
-      if (us_ssl_ctx_use_certificate_chain(ssl_context, options.cert[i]) != 1) {
-        free_ssl_context(ssl_context);
-        return NULL;
-      }
-    }
   }
 
   /* Same as above - we can discard this string afterwards I suppose */
@@ -1199,7 +1192,42 @@ SSL_CTX *create_ssl_context_from_bun_options(
       free_ssl_context(ssl_context);
       return NULL;
     }
-  } else if (options.key && options.key_count > 0) {
+  }
+
+  /* When loading cert/key arrays, we must interleave them: load cert[i]
+   * immediately followed by key[i]. Each SSL_CTX_use_certificate() call
+   * replaces the active certificate, and SSL_CTX_use_PrivateKey() validates
+   * the key against the currently active certificate. Loading all certs first
+   * then all keys would cause a key/cert mismatch since only the last cert
+   * would be active when the first key is validated. */
+  if (!options.cert_file_name && options.cert && options.cert_count > 0 &&
+      !options.key_file_name && options.key && options.key_count > 0) {
+    unsigned int max_count = options.cert_count > options.key_count
+                                 ? options.cert_count
+                                 : options.key_count;
+    for (unsigned int i = 0; i < max_count; i++) {
+      if (i < options.cert_count) {
+        if (us_ssl_ctx_use_certificate_chain(ssl_context, options.cert[i]) != 1) {
+          free_ssl_context(ssl_context);
+          return NULL;
+        }
+      }
+      if (i < options.key_count) {
+        if (us_ssl_ctx_use_privatekey_content(ssl_context, options.key[i],
+                                              SSL_FILETYPE_PEM) != 1) {
+          free_ssl_context(ssl_context);
+          return NULL;
+        }
+      }
+    }
+  } else if (!options.cert_file_name && options.cert && options.cert_count > 0) {
+    for (unsigned int i = 0; i < options.cert_count; i++) {
+      if (us_ssl_ctx_use_certificate_chain(ssl_context, options.cert[i]) != 1) {
+        free_ssl_context(ssl_context);
+        return NULL;
+      }
+    }
+  } else if (!options.key_file_name && options.key && options.key_count > 0) {
     for (unsigned int i = 0; i < options.key_count; i++) {
       if (us_ssl_ctx_use_privatekey_content(ssl_context, options.key[i],
                                             SSL_FILETYPE_PEM) != 1) {

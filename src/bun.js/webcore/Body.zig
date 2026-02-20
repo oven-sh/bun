@@ -1664,6 +1664,65 @@ pub const ValueBufferer = struct {
         return error.PipeFailed;
     }
 
+    /// Use the JavaScript-level readableStreamToArrayBuffer() to consume a
+    /// JavaScript or Direct ReadableStream, then deliver the result via
+    /// onFinishedBuffering.
+    fn bufferJSReadableStream(sink: *@This(), stream: jsc.WebCore.ReadableStream) !void {
+        const promise_value = sink.global.readableStreamToArrayBuffer(stream.value);
+        if (promise_value == .zero) {
+            return error.PipeFailed;
+        }
+        if (promise_value.asAnyPromise()) |promise| {
+            switch (promise.status()) {
+                .pending => {
+                    promise_value.then(
+                        sink.global,
+                        sink,
+                        onResolveStreamToArrayBuffer,
+                        onRejectStreamToArrayBuffer,
+                    ) catch return error.PipeFailed;
+                    return;
+                },
+                .fulfilled => {
+                    sink.handleResolveStreamArrayBuffer(promise.result(sink.global.vm()), false);
+                    return;
+                },
+                .rejected => {
+                    sink.handleRejectStream(promise.result(sink.global.vm()), false);
+                    return;
+                },
+            }
+        }
+        return error.PipeFailed;
+    }
+
+    fn onResolveStreamToArrayBuffer(_: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        const args = callframe.arguments_old(2);
+        var sink: *@This() = args.ptr[args.len - 1].asPromisePtr(@This());
+        const resolved_value = args.ptr[0];
+        sink.handleResolveStreamArrayBuffer(resolved_value, true);
+        return .js_undefined;
+    }
+
+    fn onRejectStreamToArrayBuffer(_: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        const args = callframe.arguments_old(2);
+        var sink: *@This() = args.ptr[args.len - 1].asPromisePtr(@This());
+        const err = args.ptr[0];
+        sink.handleRejectStream(err, true);
+        return .js_undefined;
+    }
+
+    fn handleResolveStreamArrayBuffer(sink: *@This(), resolved_value: JSValue, is_async: bool) void {
+        if (resolved_value.asArrayBuffer(sink.global)) |array_buffer| {
+            const bytes = array_buffer.slice();
+            log("handleResolveStreamArrayBuffer {}", .{bytes.len});
+            sink.onFinishedBuffering(sink.ctx, bytes, null, is_async);
+        } else {
+            log("handleResolveStreamArrayBuffer no array buffer", .{});
+            sink.onFinishedBuffering(sink.ctx, "", null, is_async);
+        }
+    }
+
     fn bufferLockedBodyValue(sink: *@This(), value: *jsc.WebCore.Body.Value, owned_readable_stream: ?jsc.WebCore.ReadableStream) !void {
         assert(value.* == .Locked);
         const locked = &value.Locked;
@@ -1694,9 +1753,7 @@ pub const ValueBufferer = struct {
                 // toBlobIfPossible should've caught this
                 .Blob, .File => unreachable,
                 .JavaScript, .Direct => {
-                    // this is broken right now
-                    // return sink.createJSSink(stream);
-                    return error.UnsupportedStreamType;
+                    return sink.bufferJSReadableStream(stream);
                 },
                 .Bytes => |byte_stream| {
                     assert(byte_stream.pipe.ctx == null);
@@ -1758,6 +1815,10 @@ pub const ValueBufferer = struct {
         @export(&jsonResolveStream, .{ .name = "Bun__BodyValueBufferer__onResolveStream" });
         const jsonRejectStream = jsc.toJSHostFn(onRejectStream);
         @export(&jsonRejectStream, .{ .name = "Bun__BodyValueBufferer__onRejectStream" });
+        const jsonResolveStreamToArrayBuffer = jsc.toJSHostFn(onResolveStreamToArrayBuffer);
+        @export(&jsonResolveStreamToArrayBuffer, .{ .name = "Bun__BodyValueBufferer__onResolveStreamToArrayBuffer" });
+        const jsonRejectStreamToArrayBuffer = jsc.toJSHostFn(onRejectStreamToArrayBuffer);
+        @export(&jsonRejectStreamToArrayBuffer, .{ .name = "Bun__BodyValueBufferer__onRejectStreamToArrayBuffer" });
     }
 };
 

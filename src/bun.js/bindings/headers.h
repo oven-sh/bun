@@ -741,6 +741,8 @@ BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugTLS__onResolveStream);
 
 BUN_DECLARE_HOST_FUNCTION(Bun__BodyValueBufferer__onRejectStream);
 BUN_DECLARE_HOST_FUNCTION(Bun__BodyValueBufferer__onResolveStream);
+BUN_DECLARE_HOST_FUNCTION(Bun__BodyValueBufferer__onResolveStreamToArrayBuffer);
+BUN_DECLARE_HOST_FUNCTION(Bun__BodyValueBufferer__onRejectStreamToArrayBuffer);
 
 #endif
 

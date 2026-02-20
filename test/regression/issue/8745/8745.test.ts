@@ -1,3 +1,4 @@
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
 const expected_stdout = new TextDecoder().decode(

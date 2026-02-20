@@ -5,6 +5,9 @@ exclusion_names: []const []const u8 = &.{},
 /// When this list is empty, no filters are applied.
 /// "test" suffixes (e.g. .spec.*) are always applied when traversing directories.
 filter_names: []const []const u8 = &.{},
+/// Glob patterns to ignore when scanning for test files.
+/// Memory is borrowed.
+ignore_patterns: []const []const u8 = &.{},
 dirs_to_scan: Fifo,
 /// Paths to test files found while scanning.
 test_files: std.ArrayListUnmanaged(bun.PathString),
@@ -156,6 +159,13 @@ pub fn doesPathMatchFilter(this: *Scanner, name: []const u8) bool {
     return false;
 }
 
+pub fn matchesIgnorePattern(this: *Scanner, rel_path: []const u8) bool {
+    for (this.ignore_patterns) |pattern| {
+        if (bun.glob.match(pattern, rel_path).matches()) return true;
+    }
+    return false;
+}
+
 pub fn isTestFile(this: *Scanner, name: []const u8) bool {
     return this.couldBeTestFile(name, false) and this.doesPathMatchFilter(name);
 }
@@ -176,6 +186,14 @@ pub fn next(this: *Scanner, entry: *FileSystem.Entry, fd: bun.StoredFileDescript
                 if (strings.eql(exclude_name, name)) return;
             }
 
+            // Check if this directory matches any ignore pattern
+            if (this.ignore_patterns.len > 0) {
+                const parts = &[_][]const u8{ entry.dir, entry.base() };
+                const path = this.fs.absBuf(parts, &this.open_dir_buf);
+                const rel_path = bun.path.relative(this.fs.top_level_dir, path);
+                if (this.matchesIgnorePattern(rel_path)) return;
+            }
+
             this.search_count += 1;
 
             this.dirs_to_scan.writeItem(.{
@@ -193,9 +211,12 @@ pub fn next(this: *Scanner, entry: *FileSystem.Entry, fd: bun.StoredFileDescript
 
             const parts = &[_][]const u8{ entry.dir, entry.base() };
             const path = this.fs.absBuf(parts, &this.open_dir_buf);
+            const rel_path = bun.path.relative(this.fs.top_level_dir, path);
+
+            // Check if this file matches any ignore pattern
+            if (this.matchesIgnorePattern(rel_path)) return;
 
             if (!this.doesAbsolutePathMatchFilter(path)) {
-                const rel_path = bun.path.relative(this.fs.top_level_dir, path);
                 if (!this.doesPathMatchFilter(rel_path)) return;
             }
 

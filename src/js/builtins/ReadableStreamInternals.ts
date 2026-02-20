@@ -683,17 +683,21 @@ export function readDirectStream(stream, sink, underlyingSource) {
   $putByIdDirectPrivate(stream, "underlyingSource", null); // doing this causes isReadableStreamDefaultController to return false
   $putByIdDirectPrivate(stream, "start", undefined);
   function close(stream, reason) {
-    const cancelFn = underlyingSource?.cancel;
-    if (cancelFn) {
-      try {
-        var prom = cancelFn.$call(underlyingSource, reason);
-        if ($isPromise(prom)) {
-          $markPromiseAsHandled(prom);
-        }
-      } catch {}
-
-      underlyingSource = undefined;
+    // Only call the user's cancel callback when there is an actual error reason.
+    // When reason is undefined, the stream completed normally (detach after response sent),
+    // so cancel should not be invoked per the ReadableStream spec.
+    if (reason) {
+      const cancelFn = underlyingSource?.cancel;
+      if (cancelFn) {
+        try {
+          var prom = cancelFn.$call(underlyingSource, reason);
+          if ($isPromise(prom)) {
+            $markPromiseAsHandled(prom);
+          }
+        } catch {}
+      }
     }
+    underlyingSource = undefined;
 
     if (stream) {
       $putByIdDirectPrivate(stream, "readableStreamController", undefined);

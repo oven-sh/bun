@@ -384,6 +384,23 @@ const IncomingMessagePrototype = {
   set httpVersionMinor(value) {
     // noop
   },
+  get headersDistinct() {
+    const src = this.rawHeaders;
+    const dst = Object.create(null);
+    for (let i = 0; i < src.length; i += 2) {
+      const key = src[i].toLowerCase();
+      const value = src[i + 1];
+      if (dst[key] !== undefined) {
+        dst[key].push(value);
+      } else {
+        dst[key] = [value];
+      }
+    }
+    return dst;
+  },
+  set headersDistinct(value) {
+    // noop
+  },
   get rawTrailers() {
     return [];
   },
@@ -394,6 +411,12 @@ const IncomingMessagePrototype = {
     return kEmptyObject;
   },
   set trailers(value) {
+    // noop
+  },
+  get trailersDistinct() {
+    return Object.create(null);
+  },
+  set trailersDistinct(value) {
     // noop
   },
   setTimeout(msecs, callback) {

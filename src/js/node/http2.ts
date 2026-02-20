@@ -388,8 +388,38 @@ class Http2ServerRequest extends Readable {
     return this[kTrailers];
   }
 
+  get headersDistinct() {
+    const src = this[kRawHeaders];
+    const dst = Object.create(null);
+    for (let i = 0; i < src.length; i += 2) {
+      const key = src[i].toLowerCase();
+      const value = src[i + 1];
+      if (dst[key] !== undefined) {
+        dst[key].push(value);
+      } else {
+        dst[key] = [value];
+      }
+    }
+    return dst;
+  }
+
   get rawTrailers() {
     return this[kRawTrailers];
+  }
+
+  get trailersDistinct() {
+    const src = this[kRawTrailers];
+    const dst = Object.create(null);
+    for (let i = 0; i < src.length; i += 2) {
+      const key = src[i].toLowerCase();
+      const value = src[i + 1];
+      if (dst[key] !== undefined) {
+        dst[key].push(value);
+      } else {
+        dst[key] = [value];
+      }
+    }
+    return dst;
   }
 
   get httpVersionMajor() {

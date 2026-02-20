@@ -3979,6 +3979,27 @@ pub const Resolver = struct {
         return null;
     }
 
+    /// Resolve a tsconfig.json "extends" value that is a bare package specifier
+    /// (e.g. "@acme/configuration/tsconfig.base.json") by walking up parent
+    /// directories to find it in node_modules.
+    /// Returns the resolved *TSConfigJSON if found.
+    fn resolvePackagePathForTSConfigExtends(r: *ThisResolver, starting_info: *const DirInfo, extends: string) ?*TSConfigJSON {
+        // Walk up the directory tree using the already-populated parent chain.
+        var cur_dir: ?*const DirInfo = starting_info;
+        while (cur_dir) |dir| {
+            if (dir.hasNodeModules()) {
+                var parts = [_]string{ dir.abs_path, "node_modules", extends };
+                const candidate = r.fs.absBuf(&parts, bufs(.tsconfig_path_abs));
+                const persistent_path = r.fs.dirname_store.append(string, candidate) catch return null;
+                if (r.parseTSConfig(persistent_path, bun.invalid_fd) catch null) |parent_config| {
+                    return parent_config;
+                }
+            }
+            cur_dir = dir.getParent();
+        }
+        return null;
+    }
+
     fn dirInfoUncached(
         r: *ThisResolver,
         info: *DirInfo,
@@ -4202,23 +4223,23 @@ pub const Resolver = struct {
                     try parent_configs.append(tsconfig_json);
                     var current = tsconfig_json;
                     while (current.extends.len > 0) {
-                        const ts_dir_name = Dirname.dirname(current.abs_path);
-                        const abs_path = ResolvePath.joinAbsStringBuf(ts_dir_name, bufs(.tsconfig_path_abs), &[_]string{ ts_dir_name, current.extends }, .auto);
-                        const parent_config_maybe = r.parseTSConfig(abs_path, bun.invalid_fd) catch |err| {
-                            r.log.addDebugFmt(null, logger.Loc.Empty, r.allocator, "{s} loading tsconfig.json extends {f}", .{
-                                @errorName(err),
-                                bun.fmt.QuotedFormatter{
-                                    .text = abs_path,
-                                },
-                            }) catch {};
-                            break;
+                        const parent_config = if (isPackagePath(current.extends))
+                            r.resolvePackagePathForTSConfigExtends(info, current.extends) orelse break
+                        else brk: {
+                            const ts_dir_name = Dirname.dirname(current.abs_path);
+                            const abs_path = ResolvePath.joinAbsStringBuf(ts_dir_name, bufs(.tsconfig_path_abs), &[_]string{ ts_dir_name, current.extends }, .auto);
+                            break :brk r.parseTSConfig(abs_path, bun.invalid_fd) catch |err| {
+                                r.log.addDebugFmt(null, logger.Loc.Empty, r.allocator, "{s} loading tsconfig.json extends {f}", .{
+                                    @errorName(err),
+                                    bun.fmt.QuotedFormatter{
+                                        .text = abs_path,
+                                    },
+                                }) catch {};
+                                break;
+                            } orelse break;
                         };
-                        if (parent_config_maybe) |parent_config| {
-                            try parent_configs.append(parent_config);
-                            current = parent_config;
-                        } else {
-                            break;
-                        }
+                        try parent_configs.append(parent_config);
+                        current = parent_config;
                     }
 
                     var merged_config = parent_configs.pop().?;
@@ -4226,6 +4247,7 @@ pub const Resolver = struct {
                     // successively apply the inheritable attributes to the next config
                     while (parent_configs.pop()) |parent_config| {
                         merged_config.emit_decorator_metadata = merged_config.emit_decorator_metadata or parent_config.emit_decorator_metadata;
+                        merged_config.experimental_decorators = merged_config.experimental_decorators or parent_config.experimental_decorators;
                         if (parent_config.base_url.len > 0) {
                             merged_config.base_url = parent_config.base_url;
                             merged_config.base_url_for_paths = parent_config.base_url_for_paths;

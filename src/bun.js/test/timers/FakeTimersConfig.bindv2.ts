@@ -11,5 +11,9 @@ export const FakeTimersConfig = b.dictionary(
       type: b.RawAny,
       internalName: "now",
     },
+    advanceTimers: {
+      type: b.RawAny,
+      internalName: "advanceTimers",
+    },
   },
 );

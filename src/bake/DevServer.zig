@@ -2864,62 +2864,65 @@ pub fn finalizeBundle(
         }
 
         const ms_elapsed = @divFloor(current_bundle.timer.read(), std.time.ns_per_ms);
-
-        Output.prettyError("<green>{s} in {d}ms<r>", .{
-            if (current_bundle.had_reload_event)
-                "Reloaded"
-            else
-                "Bundled page",
-            ms_elapsed,
-        });
-
-        // Intentionally creating a new scope here so we can limit the lifetime
-        // of the `relative_path_buf`
-        {
-            const relative_path_buf = bun.path_buffer_pool.get();
-            defer bun.path_buffer_pool.put(relative_path_buf);
-
-            // Compute a file name to display
-            const file_name: ?[]const u8 = if (current_bundle.had_reload_event)
-                if (bv2.graph.entry_points.items.len > 0)
-                    dev.relativePath(
-                        relative_path_buf,
-                        bv2.graph.input_files.items(.source)[bv2.graph.entry_points.items[0].get()].path.text,
-                    )
+        const should_print_bundle_line = current_bundle.had_reload_event or
+            !dev.vm.transpiler.env.hasSetNoBundlePageLog(false);
+        if (should_print_bundle_line) {
+            Output.prettyError("<green>{s} in {d}ms<r>", .{
+                if (current_bundle.had_reload_event)
+                    "Reloaded"
                 else
-                    null // TODO: How does this happen
-            else brk: {
-                const route_bundle_index = route_bundle_index: {
-                    if (current_bundle.requests.first != null) break :route_bundle_index current_bundle.requests.first.?.data.route_bundle_index;
-                    const route_bundle_indices = current_bundle.promise.route_bundle_indices.keys();
-                    if (route_bundle_indices.len == 0) break :brk null;
-                    break :route_bundle_index route_bundle_indices[0];
+                    "Bundled page",
+                ms_elapsed,
+            });
+
+            // Intentionally creating a new scope here so we can limit the lifetime
+            // of the `relative_path_buf`
+            {
+                const relative_path_buf = bun.path_buffer_pool.get();
+                defer bun.path_buffer_pool.put(relative_path_buf);
+
+                // Compute a file name to display
+                const file_name: ?[]const u8 = if (current_bundle.had_reload_event)
+                    if (bv2.graph.entry_points.items.len > 0)
+                        dev.relativePath(
+                            relative_path_buf,
+                            bv2.graph.input_files.items(.source)[bv2.graph.entry_points.items[0].get()].path.text,
+                        )
+                    else
+                        null // TODO: How does this happen
+                else brk: {
+                    const route_bundle_index = route_bundle_index: {
+                        if (current_bundle.requests.first != null) break :route_bundle_index current_bundle.requests.first.?.data.route_bundle_index;
+                        const route_bundle_indices = current_bundle.promise.route_bundle_indices.keys();
+                        if (route_bundle_indices.len == 0) break :brk null;
+                        break :route_bundle_index route_bundle_indices[0];
+                    };
+
+                    break :brk switch (dev.routeBundlePtr(route_bundle_index).data) {
+                        .html => |html| dev.relativePath(relative_path_buf, html.html_bundle.data.bundle.data.path),
+                        .framework => |fw| file_name: {
+                            const route = dev.router.routePtr(fw.route_index);
+                            const opaque_id = route.file_page.unwrap() orelse
+                                route.file_layout.unwrap() orelse
+                                break :file_name null;
+                            const server_index = fromOpaqueFileId(.server, opaque_id);
+                            const abs_path = dev.server_graph.bundled_files.keys()[server_index.get()];
+                            break :file_name dev.relativePath(relative_path_buf, abs_path);
+                        },
+                    };
                 };
 
-                break :brk switch (dev.routeBundlePtr(route_bundle_index).data) {
-                    .html => |html| dev.relativePath(relative_path_buf, html.html_bundle.data.bundle.data.path),
-                    .framework => |fw| file_name: {
-                        const route = dev.router.routePtr(fw.route_index);
-                        const opaque_id = route.file_page.unwrap() orelse
-                            route.file_layout.unwrap() orelse
-                            break :file_name null;
-                        const server_index = fromOpaqueFileId(.server, opaque_id);
-                        const abs_path = dev.server_graph.bundled_files.keys()[server_index.get()];
-                        break :file_name dev.relativePath(relative_path_buf, abs_path);
-                    },
-                };
-            };
-
-            const total_count = bv2.graph.entry_points.items.len;
-            if (file_name) |name| {
-                Output.prettyError("<d>:<r> {s}", .{name});
-                if (total_count > 1) {
-                    Output.prettyError(" <d>+ {d} more<r>", .{total_count - 1});
+                const total_count = bv2.graph.entry_points.items.len;
+                if (file_name) |name| {
+                    Output.prettyError("<d>:<r> {s}", .{name});
+                    if (total_count > 1) {
+                        Output.prettyError(" <d>+ {d} more<r>", .{total_count - 1});
+                    }
                 }
             }
+            Output.prettyError("\n", .{});
+            Output.flush();
         }
-        Output.prettyError("\n", .{});
-        Output.flush();
 
         if (dev.inspector()) |agent| {
             agent.notifyBundleComplete(dev.inspector_server_id, @floatFromInt(ms_elapsed));

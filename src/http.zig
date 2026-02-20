@@ -465,6 +465,11 @@ pub const Flags = packed struct(u16) {
 // TODO: reduce the size of this struct
 // Many of these fields can be moved to a packed struct and use less space
 method: Method,
+/// When non-zero length, this is an arbitrary HTTP method string that is not in the
+/// standard Method enum (e.g. a custom method like "BUN" or "CHICKEN").
+/// When set, buildRequest() uses this instead of @tagName(method).
+custom_method_len: u8 = 0,
+custom_method_buf: [24]u8 = undefined,
 header_entries: Headers.Entry.List,
 header_buf: string,
 url: URL,
@@ -599,6 +604,19 @@ pub fn headerStr(this: *const HTTPClient, ptr: api.StringPointer) string {
 }
 
 pub const HeaderBuilder = @import("./http/HeaderBuilder.zig");
+
+pub fn methodName(this: *const HTTPClient) []const u8 {
+    if (this.custom_method_len > 0) {
+        return this.custom_method_buf[0..this.custom_method_len];
+    }
+    return @tagName(this.method);
+}
+
+pub fn setCustomMethod(this: *HTTPClient, method_str: []const u8) void {
+    const len: u8 = @intCast(@min(method_str.len, this.custom_method_buf.len));
+    @memcpy(this.custom_method_buf[0..len], method_str[0..len]);
+    this.custom_method_len = len;
+}
 
 pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
     var header_count: usize = 0;
@@ -753,7 +771,7 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
     }
 
     return picohttp.Request{
-        .method = @tagName(this.method),
+        .method = this.methodName(),
         .path = this.url.pathname,
         .minor_version = 1,
         .headers = request_headers_buf[0..header_count],

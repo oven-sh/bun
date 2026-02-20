@@ -103,7 +103,10 @@ pub const Options = struct {
     disable_decompression: ?bool = null,
     reject_unauthorized: ?bool = null,
     tls_props: ?*SSLConfig = null,
+    custom_method: []const u8 = "",
 };
+
+pub const max_custom_method_len = 24;
 
 const Preconnect = struct {
     async_http: AsyncHTTP,
@@ -189,6 +192,9 @@ pub fn init(
         .proxy_headers = options.proxy_headers,
         .redirect_type = redirect_type,
     };
+    if (options.custom_method.len > 0) {
+        this.client.setCustomMethod(options.custom_method);
+    }
     if (options.unix_socket_path) |val| {
         assert(this.client.unix_socket_path.length() == 0);
         this.client.unix_socket_path = val;

@@ -105,6 +105,7 @@ pub fn processNamesArray(
     source: *const logger.Source,
     loc: logger.Loc,
     string_builder: ?*StringBuilder,
+    follow_symlinks: bool,
 ) !u32 {
     if (arr.items.len == 0) return 0;
 
@@ -226,7 +227,7 @@ pub fn processNamesArray(
             var walker: GlobWalker = .{};
             var cwd = bun.path.dirname(source.path.text, .auto);
             cwd = if (bun.strings.eql(cwd, "")) bun.fs.FileSystem.instance.top_level_dir else cwd;
-            if ((try walker.initWithCwd(&arena, glob_pattern, cwd, false, false, false, false, true)).asErr()) |e| {
+            if ((try walker.initWithCwd(&arena, glob_pattern, cwd, false, false, follow_symlinks, false, true)).asErr()) |e| {
                 log.addErrorFmt(
                     source,
                     loc,

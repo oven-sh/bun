@@ -206,9 +206,12 @@ pub const BundleV2 = struct {
 
         // We need to make sure it has [hash] in the names so we don't get conflicts.
         if (this_transpiler.options.compile) {
-            client_transpiler.options.asset_naming = bun.options.PathTemplate.asset.data;
-            client_transpiler.options.chunk_naming = bun.options.PathTemplate.chunk.data;
-            client_transpiler.options.entry_naming = "./[name]-[hash].[ext]";
+            // Use absolute paths (starting with `/`) so that assets are correctly
+            // resolved from any route, not just the root. Relative paths like
+            // `./style.css` would resolve to `/about/style.css` on the `/about` route.
+            client_transpiler.options.asset_naming = "/[name]-[hash].[ext]";
+            client_transpiler.options.chunk_naming = "/[name]-[hash].[ext]";
+            client_transpiler.options.entry_naming = "/[name]-[hash].[ext]";
 
             // Avoid setting a public path for --compile since all the assets
             // will be served relative to the server root.
@@ -4651,6 +4654,11 @@ pub const ContentHasher = struct {
 // this is just being nice
 pub fn cheapPrefixNormalizer(prefix: []const u8, suffix: []const u8) [2]string {
     if (prefix.len == 0) {
+        // If path is absolute (starts with /), don't add ./ prefix.
+        // This preserves absolute paths for compile mode where assets should be served from root.
+        if (strings.startsWithChar(suffix, '/')) {
+            return .{ "", suffix };
+        }
         const suffix_no_slash = bun.strings.removeLeadingDotSlash(suffix);
         return .{
             if (strings.hasPrefixComptime(suffix_no_slash, "../")) "" else "./",

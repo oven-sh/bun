@@ -368,9 +368,12 @@ pub const Chunk = struct {
                                     .none => unreachable,
                                 };
 
+                                // If the path is absolute (starts with `/`), use it directly without computing relative path.
+                                // This preserves absolute paths for compile mode where assets should be served from root.
+                                const is_absolute_path = strings.startsWithChar(file_path, '/');
                                 const cheap_normalizer = cheapPrefixNormalizer(
                                     import_prefix,
-                                    if (from_chunk_dir.len == 0 or force_absolute_path)
+                                    if (from_chunk_dir.len == 0 or force_absolute_path or is_absolute_path)
                                         file_path
                                     else
                                         bun.path.relativePlatformBuf(relative_platform_buf, from_chunk_dir, file_path, .posix, false),
@@ -491,12 +494,16 @@ pub const Chunk = struct {
 
                                 // normalize windows paths to '/'
                                 bun.path.platformToPosixInPlace(u8, @constCast(file_path));
+                                // If the path is absolute (starts with `/`), use it directly without computing relative path.
+                                // This preserves absolute paths for compile mode where assets should be served from root.
+                                const is_absolute_path = strings.startsWithChar(file_path, '/');
+                                const used_file_path = if (from_chunk_dir.len == 0 or force_absolute_path or is_absolute_path)
+                                    file_path
+                                else
+                                    bun.path.relativePlatformBuf(relative_platform_buf, from_chunk_dir, file_path, .posix, false);
                                 const cheap_normalizer = cheapPrefixNormalizer(
                                     import_prefix,
-                                    if (from_chunk_dir.len == 0 or force_absolute_path)
-                                        file_path
-                                    else
-                                        bun.path.relativePlatformBuf(relative_platform_buf, from_chunk_dir, file_path, .posix, false),
+                                    used_file_path,
                                 );
 
                                 if (cheap_normalizer[0].len > 0) {

@@ -782,6 +782,8 @@ export function assignStreamIntoResumableSink(stream, sink) {
       if (readableStreamController) {
         if ($getByIdDirectPrivate(readableStreamController, "underlyingSource"))
           $putByIdDirectPrivate(readableStreamController, "underlyingSource", null);
+        if ($getByIdDirectPrivate(readableStreamController, "underlyingByteSource"))
+          $putByIdDirectPrivate(readableStreamController, "underlyingByteSource", null);
         if ($getByIdDirectPrivate(readableStreamController, "controlledReadableStream"))
           $putByIdDirectPrivate(readableStreamController, "controlledReadableStream", null);
 
@@ -967,6 +969,8 @@ export async function readStreamIntoSink(stream: ReadableStream, sink, isNative)
       if (readableStreamController) {
         if ($getByIdDirectPrivate(readableStreamController, "underlyingSource"))
           $putByIdDirectPrivate(readableStreamController, "underlyingSource", null);
+        if ($getByIdDirectPrivate(readableStreamController, "underlyingByteSource"))
+          $putByIdDirectPrivate(readableStreamController, "underlyingByteSource", null);
         if ($getByIdDirectPrivate(readableStreamController, "controlledReadableStream"))
           $putByIdDirectPrivate(readableStreamController, "controlledReadableStream", null);
 
@@ -1665,6 +1669,26 @@ export function readableStreamClose(stream) {
       for (var request = requests.shift(); request; request = requests.shift())
         $fulfillPromise(request, { value: undefined, done: true });
     }
+  } else if ($isReadableStreamBYOBReader(reader)) {
+    // Per WHATWG Streams spec: when closing with a BYOB reader, resolve all
+    // pending read-into requests with done: true and empty views.
+    const readIntoRequests = $getByIdDirectPrivate(reader, "readIntoRequests");
+    if (readIntoRequests?.isNotEmpty()) {
+      const controller = $getByIdDirectPrivate(stream, "readableStreamController");
+      $putByIdDirectPrivate(reader, "readIntoRequests", $createFIFO());
+
+      for (var request = readIntoRequests.shift(); request; request = readIntoRequests.shift()) {
+        const descriptor = $getByIdDirectPrivate(controller, "pendingPullIntos")?.shift();
+        if (descriptor) {
+          $fulfillPromise(request, {
+            value: new descriptor.ctor(descriptor.buffer, descriptor.byteOffset, 0),
+            done: true,
+          });
+        } else {
+          $fulfillPromise(request, { value: undefined, done: true });
+        }
+      }
+    }
   }
 
   $getByIdDirectPrivate($getByIdDirectPrivate(stream, "reader"), "closedPromiseCapability").resolve.$call();
@@ -1761,7 +1785,11 @@ export function readableStreamReaderGenericRelease(reader) {
 
   var stream = $getByIdDirectPrivate(reader, "ownerReadableStream");
   if (stream.$bunNativePtr) {
-    $getByIdDirectPrivate($getByIdDirectPrivate(stream, "readableStreamController"), "underlyingSource").$resume(false);
+    const controller = $getByIdDirectPrivate(stream, "readableStreamController");
+    const source =
+      $getByIdDirectPrivate(controller, "underlyingSource") ??
+      $getByIdDirectPrivate(controller, "underlyingByteSource");
+    if (source) source.$resume(false);
   }
   $putByIdDirectPrivate(stream, "reader", undefined);
   $putByIdDirectPrivate(reader, "ownerReadableStream", undefined);
@@ -1937,24 +1965,20 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
     }
   }
 
-  // This was a type: "bytes" until Bun v1.1.44, but pendingPullIntos was not really
-  // compatible with how we send data to the stream, and "mode: 'byob'" wasn't
-  // supported so changing it isn't an observable change.
+  // Use type: "bytes" to create a ReadableByteStreamController, which enables
+  // BYOB reader support as required by the W3C File API and Fetch specs.
   //
-  // When we receive chunks of data from native code, we sometimes read more
-  // than what the input buffer provided. When that happens, we return a typed
-  // array instead of the number of bytes read.
-  //
-  // When that happens, the ReadableByteStreamController creates (byteLength / autoAllocateChunkSize) pending pull into descriptors.
-  // So if that number is something like 16 * 1024, and we actually read 2 MB, you're going to create 128 pending pull into descriptors.
-  //
-  // And those pendingPullIntos were often never actually drained.
+  // We intentionally do NOT set autoAllocateChunkSize on this source object.
+  // If autoAllocateChunkSize is set, the ReadableByteStreamController will
+  // create pendingPullInto descriptors for every default read, which is
+  // incompatible with our push-based model where native code may return more
+  // data than requested. Instead, we track chunk size internally via #chunkSize.
   class NativeReadableStreamSource {
-    constructor(handle, autoAllocateChunkSize, drainValue) {
+    constructor(handle, chunkSize, drainValue) {
       $putByIdDirectPrivate(this, "stream", handle);
       this.pull = this.#pull.bind(this);
       this.cancel = this.#cancel.bind(this);
-      this.autoAllocateChunkSize = autoAllocateChunkSize;
+      this.#chunkSize = chunkSize;
 
       if (drainValue !== undefined) {
         this.start = controller => {
@@ -1978,10 +2002,10 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
     #hasResized = false;
 
     #adjustHighWaterMark(result) {
-      const autoAllocateChunkSize = this.autoAllocateChunkSize;
-      if (result >= autoAllocateChunkSize && !this.#hasResized) {
+      const chunkSize = this.#chunkSize;
+      if (result >= chunkSize && !this.#hasResized) {
         this.#hasResized = true;
-        this.autoAllocateChunkSize = Math.min(autoAllocateChunkSize * 2, 1024 * 1024 * 2);
+        this.#chunkSize = Math.min(chunkSize * 2, 1024 * 1024 * 2);
       }
     }
 
@@ -1994,7 +2018,8 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
     // eslint-disable-next-line no-unused-vars
     start;
 
-    autoAllocateChunkSize = 0;
+    type = "bytes";
+    #chunkSize = 0;
     #closed = false;
 
     $data?: Uint8Array;
@@ -2101,7 +2126,7 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
         }
       }
 
-      const view = this.#getInternalBuffer(this.autoAllocateChunkSize);
+      const view = this.#getInternalBuffer(this.#chunkSize);
       const result = handle.pull(view, closer);
       if ($isPromise(result)) {
         return result.$then(
@@ -2176,6 +2201,7 @@ export function lazyLoadStream(stream, autoAllocateChunkSize) {
   if (chunkSize === 0) {
     if ((drainValue?.byteLength ?? 0) > 0) {
       return {
+        type: "bytes",
         start(controller) {
           controller.enqueue(drainValue);
           controller.close();
@@ -2187,6 +2213,7 @@ export function lazyLoadStream(stream, autoAllocateChunkSize) {
     }
 
     return {
+      type: "bytes",
       start(controller) {
         controller.close();
       },

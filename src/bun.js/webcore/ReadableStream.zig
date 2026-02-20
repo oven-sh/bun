@@ -299,7 +299,7 @@ pub fn fromOwnedSlice(globalThis: *JSGlobalObject, bytes: []u8, recommended_chun
 pub fn fromBlobCopyRef(globalThis: *JSGlobalObject, blob: *const Blob, recommended_chunk_size: Blob.SizeType) bun.JSError!jsc.JSValue {
     jsc.markBinding(@src());
     var store = blob.store orelse {
-        return ReadableStream.empty(globalThis);
+        return ReadableStream.emptyByte(globalThis);
     };
     switch (store.data) {
         .bytes => {
@@ -392,6 +392,11 @@ pub fn fromPipe(
 pub fn empty(globalThis: *JSGlobalObject) bun.JSError!jsc.JSValue {
     jsc.markBinding(@src());
     return bun.cpp.ReadableStream__empty(globalThis);
+}
+
+pub fn emptyByte(globalThis: *JSGlobalObject) bun.JSError!jsc.JSValue {
+    jsc.markBinding(@src());
+    return bun.cpp.ReadableStream__emptyByte(globalThis);
 }
 
 pub fn used(globalThis: *JSGlobalObject) bun.JSError!jsc.JSValue {

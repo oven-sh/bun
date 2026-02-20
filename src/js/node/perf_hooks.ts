@@ -44,6 +44,10 @@ var constants = {
 };
 
 // PerformanceEntry is not a valid constructor, so we have to fake it.
+// We cannot use $toClass here because it replaces the prototype object,
+// which would discard our JS getters that need to shadow the C++ getters
+// on PerformanceEntry.prototype (which perform brand checks that fail for
+// plain JS objects).
 class PerformanceNodeTiming {
   bootstrapComplete: number = 0;
   environment: number = 0;
@@ -53,7 +57,6 @@ class PerformanceNodeTiming {
   nodeStart: number = 0;
   v8Start: number = 0;
 
-  // we have to fake the properties since it's not real
   get name() {
     return "node";
   }
@@ -63,7 +66,7 @@ class PerformanceNodeTiming {
   }
 
   get startTime() {
-    return this.nodeStart;
+    return 0;
   }
 
   get duration() {
@@ -86,12 +89,18 @@ class PerformanceNodeTiming {
     };
   }
 }
-$toClass(PerformanceNodeTiming, "PerformanceNodeTiming", PerformanceEntry);
+// Set up the prototype chain manually: PerformanceNodeTiming.prototype inherits
+// from PerformanceEntry.prototype, but we keep the existing prototype object
+// (with its getters) so they properly shadow the C++ brand-checked getters.
+Object.setPrototypeOf(PerformanceNodeTiming.prototype, PerformanceEntry.prototype);
+Object.setPrototypeOf(PerformanceNodeTiming, PerformanceEntry);
 
 function createPerformanceNodeTiming() {
   const object = Object.create(PerformanceNodeTiming.prototype);
 
-  object.bootstrapComplete = object.environment = object.nodeStart = object.v8Start = performance.timeOrigin;
+  // Node.js timing values are offsets relative to performance.timeOrigin, not absolute timestamps.
+  // nodeStart is close to 0 (the offset from timeOrigin to when the node process started).
+  object.bootstrapComplete = object.environment = object.nodeStart = object.v8Start = performance.now();
   object.loopStart = object.idleTime = 1;
   object.loopExit = -1;
   return object;

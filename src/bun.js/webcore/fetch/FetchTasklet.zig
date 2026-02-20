@@ -319,6 +319,7 @@ pub const FetchTasklet = struct {
             // if we are streaming update with error
             if (this.readable_stream_ref.get(globalThis)) |readable| {
                 if (readable.ptr == .Bytes) {
+                    readable.ptr.Bytes.parent().cancel_handler = null;
                     js_err = err.toJS(globalThis);
                     js_err.ensureStillAlive();
                     try readable.ptr.Bytes.onData(
@@ -363,6 +364,10 @@ pub const FetchTasklet = struct {
                         bun.default_allocator,
                     );
                 } else {
+                    // Clear the cancel handler before sending the final chunk
+                    // to avoid aborting a naturally-completed connection.
+                    readable.ptr.Bytes.parent().cancel_handler = null;
+
                     var prev = this.readable_stream_ref;
                     this.readable_stream_ref = .{};
                     defer prev.deinit();
@@ -398,6 +403,10 @@ pub const FetchTasklet = struct {
                             bun.default_allocator,
                         );
                     } else {
+                        // Clear the cancel handler before sending the final chunk
+                        // to avoid aborting a naturally-completed connection.
+                        readable.ptr.Bytes.parent().cancel_handler = null;
+
                         readable.value.ensureStillAlive();
                         response.detachReadableStream(globalThis);
                         try readable.ptr.Bytes.onData(
@@ -809,6 +818,21 @@ pub const FetchTasklet = struct {
     pub fn onReadableStreamAvailable(ctx: *anyopaque, globalThis: *jsc.JSGlobalObject, readable: jsc.WebCore.ReadableStream) void {
         const this = bun.cast(*FetchTasklet, ctx);
         this.readable_stream_ref = jsc.WebCore.ReadableStream.Strong.init(readable, globalThis);
+
+        // Set up cancel propagation so that when the response body stream is
+        // cancelled (e.g. breaking from a `for await` loop), the underlying
+        // HTTP connection is aborted instead of waiting for the full response.
+        if (readable.ptr == .Bytes) {
+            const source = readable.ptr.Bytes.parent();
+            source.cancel_handler = &onResponseStreamCancelled;
+            source.cancel_ctx = ctx;
+        }
+    }
+
+    fn onResponseStreamCancelled(ctx: ?*anyopaque) void {
+        const this = bun.cast(*FetchTasklet, ctx.?);
+        log("onResponseStreamCancelled", .{});
+        this.abortTask();
     }
 
     pub fn onStartStreamingHTTPResponseBodyCallback(ctx: *anyopaque) jsc.WebCore.DrainResult {

@@ -356,6 +356,9 @@ pub fn onCancel(this: *@This()) void {
         action.reject(global, .{ .AbortReason = .UserAbort }) catch {}; // TODO: properly propagate exception upwards
         this.buffer_action = null;
     }
+
+    // Note: cancel propagation to the HTTP connection is handled by the
+    // Source.cancel() method via cancel_handler, not here.
 }
 
 pub fn memoryCost(this: *const @This()) usize {

@@ -11,11 +11,13 @@ describe("getsockname", () => {
       },
     });
     const result = server.getsockname();
-    expect(result).toEqual(expect.objectContaining({
-      family: expect.any(String),
-      address: expect.any(String),
-      port: expect.any(Number),
-    }));
+    expect(result).toEqual(
+      expect.objectContaining({
+        family: expect.any(String),
+        address: expect.any(String),
+        port: expect.any(Number),
+      }),
+    );
     server.stop(true);
   });
 

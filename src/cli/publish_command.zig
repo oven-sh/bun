@@ -352,9 +352,9 @@ pub const PublishCommand = struct {
                 Global.crash();
             };
 
-            // Build provenance statement if requested
-            const provenance_statement = if (provenance_ctx) |*pctx| blk: {
-                break :blk Provenance.buildProvenanceStatement(pctx, .{
+            // Build and sign provenance if requested
+            const signing_result = if (provenance_ctx) |*pctx| blk: {
+                const statement = Provenance.buildProvenanceStatement(pctx, .{
                     .package_name = context.package_name,
                     .package_version = context.package_version,
                     .sha512_hex = &std.fmt.bytesToHex(context.integrity, .lower),
@@ -363,8 +363,17 @@ pub const PublishCommand = struct {
                         error.OutOfMemory => bun.outOfMemory(),
                     }
                 };
+
+                if (!manager.options.dry_run) {
+                    break :blk Provenance.signProvenance(ctx.allocator, pctx.oidc_token, statement) catch |err| {
+                        Provenance.printSigningError(err);
+                        Global.crash();
+                    };
+                } else {
+                    break :blk @as(?Provenance.SigningResult, null);
+                }
             } else null;
-            _ = provenance_statement; // TODO: Phase 3-5 will use this for signing
+            _ = signing_result; // TODO: Phase 4-5 will use this for Rekor + attachment
 
             publish(false, &context) catch |err| {
                 switch (err) {
@@ -413,9 +422,9 @@ pub const PublishCommand = struct {
         // TODO: read this into memory
         _ = bun.sys.unlink(context.abs_tarball_path);
 
-        // Build provenance statement if requested
-        const provenance_statement = if (provenance_ctx) |*pctx| blk: {
-            break :blk Provenance.buildProvenanceStatement(pctx, .{
+        // Build and sign provenance if requested
+        const signing_result = if (provenance_ctx) |*pctx| blk: {
+            const statement = Provenance.buildProvenanceStatement(pctx, .{
                 .package_name = context.package_name,
                 .package_version = context.package_version,
                 .sha512_hex = &std.fmt.bytesToHex(context.integrity, .lower),
@@ -424,8 +433,17 @@ pub const PublishCommand = struct {
                     error.OutOfMemory => bun.outOfMemory(),
                 }
             };
+
+            if (!manager.options.dry_run) {
+                break :blk Provenance.signProvenance(ctx.allocator, pctx.oidc_token, statement) catch |err| {
+                    Provenance.printSigningError(err);
+                    Global.crash();
+                };
+            } else {
+                break :blk @as(?Provenance.SigningResult, null);
+            }
         } else null;
-        _ = provenance_statement; // TODO: Phase 3-5 will use this for signing
+        _ = signing_result; // TODO: Phase 4-5 will use this for Rekor + attachment
 
         publish(true, &context) catch |err| {
             switch (err) {

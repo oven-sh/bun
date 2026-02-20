@@ -70,6 +70,15 @@ pub const ProvenanceError = error{
     MissingGitHubEnvVars,
 } || OOM;
 
+pub const SigningError = error{
+    KeyGenFailed,
+    PEMEncodingFailed,
+    SigningFailed,
+    FulcioRequestFailed,
+    FulcioResponseInvalid,
+    JWTDecodeFailed,
+} || OOM;
+
 /// Detect CI environment and collect OIDC token + metadata.
 /// Returns error if --provenance is used outside a supported CI.
 pub fn init(allocator: std.mem.Allocator) ProvenanceError!ProvenanceContext {
@@ -626,6 +635,313 @@ fn writeJsonString(w: anytype, s: string) @TypeOf(w).Error!void {
     try w.writeByte('"');
 }
 
+// ============================================================================
+// Phase 3: Sigstore Signing
+// ============================================================================
+
+/// Result of the Sigstore signing process.
+pub const SigningResult = struct {
+    /// The DSSE envelope JSON (contains payload + signature)
+    dsse_envelope: string,
+    /// PEM-encoded certificate chain from Fulcio
+    certificate_pem: string,
+};
+
+/// Sign the provenance statement via Sigstore (Fulcio + DSSE).
+/// 1. Generate ephemeral ECDSA P-256 keypair
+/// 2. Extract OIDC `sub` claim, sign it as proof-of-possession
+/// 3. Request signing certificate from Fulcio
+/// 4. Sign the DSSE envelope with ephemeral key
+pub fn signProvenance(
+    allocator: std.mem.Allocator,
+    oidc_token: string,
+    statement_json: string,
+) SigningError!SigningResult {
+    // Ensure BoringSSL is initialized
+    bun.BoringSSL.load();
+
+    // 3a: Generate ephemeral ECDSA P-256 keypair
+    const key = try generateEphemeralKey();
+    defer BoringSSL.EVP_PKEY_free(key);
+
+    const public_key_pem = try exportPublicKeyPEM(allocator, key);
+
+    // 3b: Get signing certificate from Fulcio
+    const sub_claim = try extractJWTSubject(allocator, oidc_token);
+    const proof_signature = try signData(allocator, key, sub_claim);
+    const proof_b64 = try base64Encode(allocator, proof_signature);
+
+    const certificate_pem = try requestFulcioCertificate(
+        allocator,
+        oidc_token,
+        public_key_pem,
+        proof_b64,
+    );
+
+    // 3c: Build and sign DSSE envelope
+    const dsse_envelope = try buildDSSEEnvelope(allocator, key, statement_json);
+
+    return .{
+        .dsse_envelope = dsse_envelope,
+        .certificate_pem = certificate_pem,
+    };
+}
+
+// ── 3a: Ephemeral key generation ───────────────────────────────────────────
+
+/// Generate an ephemeral ECDSA P-256 keypair using BoringSSL.
+fn generateEphemeralKey() SigningError!*BoringSSL.EVP_PKEY {
+    // Create parameter generation context for EC
+    const param_ctx = BoringSSL.EVP_PKEY_CTX_new_id(BoringSSL.EVP_PKEY_EC, null) orelse
+        return error.KeyGenFailed;
+    defer BoringSSL.EVP_PKEY_CTX_free(param_ctx);
+
+    if (BoringSSL.EVP_PKEY_paramgen_init(param_ctx) != 1)
+        return error.KeyGenFailed;
+
+    if (BoringSSL.EVP_PKEY_CTX_set_ec_paramgen_curve_nid(param_ctx, BoringSSL.NID_X9_62_prime256v1) != 1)
+        return error.KeyGenFailed;
+
+    // Generate parameters
+    var params: ?*BoringSSL.EVP_PKEY = null;
+    if (BoringSSL.EVP_PKEY_paramgen(param_ctx, @ptrCast(&params)) != 1)
+        return error.KeyGenFailed;
+    defer if (params) |p| BoringSSL.EVP_PKEY_free(p);
+
+    const params_nonnull = params orelse return error.KeyGenFailed;
+
+    // Create keygen context from parameters
+    const key_ctx = BoringSSL.EVP_PKEY_CTX_new(params_nonnull, null) orelse
+        return error.KeyGenFailed;
+    defer BoringSSL.EVP_PKEY_CTX_free(key_ctx);
+
+    if (BoringSSL.EVP_PKEY_keygen_init(key_ctx) != 1)
+        return error.KeyGenFailed;
+
+    // Generate the key
+    var pkey: ?*BoringSSL.EVP_PKEY = null;
+    if (BoringSSL.EVP_PKEY_keygen(key_ctx, @ptrCast(&pkey)) != 1)
+        return error.KeyGenFailed;
+
+    return pkey orelse error.KeyGenFailed;
+}
+
+/// Export EVP_PKEY public key as PEM string.
+fn exportPublicKeyPEM(allocator: std.mem.Allocator, pkey: *BoringSSL.EVP_PKEY) SigningError!string {
+    const bio = BoringSSL.BIO_new(BoringSSL.BIO_s_mem()) orelse
+        return error.OutOfMemory;
+    defer _ = BoringSSL.BIO_free(bio);
+
+    if (BoringSSL.PEM_write_bio_PUBKEY(bio, pkey) != 1)
+        return error.PEMEncodingFailed;
+
+    const pending = BoringSSL.BIO_ctrl_pending(bio);
+    if (pending == 0) return error.PEMEncodingFailed;
+
+    const buf = try allocator.alloc(u8, pending);
+    const read = BoringSSL.BIO_read(bio, buf.ptr, @intCast(pending));
+    if (read <= 0) return error.PEMEncodingFailed;
+
+    return buf[0..@intCast(read)];
+}
+
+// ── 3b: Fulcio certificate request ────────────────────────────────────────
+
+/// Extract the `sub` claim from a JWT (without verifying the signature).
+/// JWT format: base64url(header).base64url(payload).base64url(signature)
+fn extractJWTSubject(allocator: std.mem.Allocator, jwt: string) SigningError!string {
+    // Find the payload section (between first and second dots)
+    const first_dot = strings.indexOfChar(jwt, '.') orelse return error.JWTDecodeFailed;
+    const rest = jwt[first_dot + 1 ..];
+    const second_dot = strings.indexOfChar(rest, '.') orelse return error.JWTDecodeFailed;
+    const payload_b64 = rest[0..second_dot];
+
+    // Base64url decode the payload
+    const decoded = try base64UrlDecode(allocator, payload_b64);
+
+    // Parse JSON and extract "sub"
+    const source = logger.Source.initPathString("jwt-payload", decoded);
+    var log = logger.Log.init(allocator);
+    defer log.deinit();
+
+    const json = JSON.parseUTF8(&source, &log, allocator) catch
+        return error.JWTDecodeFailed;
+
+    return json.getStringCloned(allocator, "sub") catch {
+        return error.OutOfMemory;
+    } orelse {
+        return error.JWTDecodeFailed;
+    };
+}
+
+/// Sign data with an EVP_PKEY using SHA-256 + ECDSA.
+fn signData(allocator: std.mem.Allocator, pkey: *BoringSSL.EVP_PKEY, data: string) SigningError!string {
+    const md_ctx = BoringSSL.EVP_MD_CTX_new();
+    if (md_ctx == null) return error.SigningFailed;
+    defer BoringSSL.EVP_MD_CTX_free(md_ctx);
+
+    if (BoringSSL.EVP_DigestSignInit(md_ctx, null, BoringSSL.EVP_sha256(), null, pkey) != 1)
+        return error.SigningFailed;
+
+    // First call to get signature length
+    var sig_len: usize = 0;
+    if (BoringSSL.EVP_DigestSign(md_ctx, null, &sig_len, data.ptr, data.len) != 1)
+        return error.SigningFailed;
+
+    const sig_buf = try allocator.alloc(u8, sig_len);
+
+    // Second call to actually sign
+    if (BoringSSL.EVP_DigestSign(md_ctx, sig_buf.ptr, &sig_len, data.ptr, data.len) != 1)
+        return error.SigningFailed;
+
+    return sig_buf[0..sig_len];
+}
+
+/// Request a signing certificate from Fulcio.
+/// POST https://fulcio.sigstore.dev/api/v2/signingCert
+fn requestFulcioCertificate(
+    allocator: std.mem.Allocator,
+    oidc_token: string,
+    public_key_pem: string,
+    proof_b64: string,
+) SigningError!string {
+    // Build request body JSON
+    var body_buf = std.ArrayListUnmanaged(u8){};
+    defer body_buf.deinit(allocator);
+    const bw = body_buf.writer(allocator);
+
+    try bw.writeAll("{\"credentials\":{\"oidcIdentityToken\":");
+    try writeJsonString(bw, oidc_token);
+    try bw.writeAll("},\"publicKeyRequest\":{\"publicKey\":{\"algorithm\":\"ECDSA\",\"content\":");
+    try writeJsonString(bw, public_key_pem);
+    try bw.writeAll("},\"proofOfPossession\":");
+    try writeJsonString(bw, proof_b64);
+    try bw.writeAll("}}");
+
+    const fulcio_url = URL.parse("https://fulcio.sigstore.dev/api/v2/signingCert");
+
+    // Build headers
+    var print_buf: std.ArrayListUnmanaged(u8) = .{};
+    defer print_buf.deinit(allocator);
+
+    var headers: http.HeaderBuilder = .{};
+
+    {
+        headers.count("content-type", "application/json");
+        headers.count("accept", "application/pem-certificate-chain");
+    }
+
+    try headers.allocate(allocator);
+
+    {
+        headers.append("content-type", "application/json");
+        headers.append("accept", "application/pem-certificate-chain");
+    }
+
+    var response_buf = MutableString.init(allocator, 4096) catch return error.OutOfMemory;
+    defer response_buf.deinit();
+
+    var req = http.AsyncHTTP.initSync(
+        allocator,
+        .POST,
+        fulcio_url,
+        headers.entries,
+        headers.content.ptr.?[0..headers.content.len],
+        &response_buf,
+        body_buf.items,
+        null,
+        null,
+        .follow,
+    );
+
+    const res = req.sendSync() catch |err| {
+        switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return error.FulcioRequestFailed,
+        }
+    };
+
+    if (res.status_code != 200 and res.status_code != 201) {
+        return error.FulcioRequestFailed;
+    }
+
+    // The response body is the PEM certificate chain
+    if (response_buf.list.items.len == 0) return error.FulcioResponseInvalid;
+
+    return try allocator.dupe(u8, response_buf.list.items);
+}
+
+// ── 3c: DSSE envelope ─────────────────────────────────────────────────────
+
+/// Build a DSSE (Dead Simple Signing Envelope) for the in-toto statement.
+/// PAE = "DSSEv1" SP len(type) SP type SP len(body) SP body
+fn buildDSSEEnvelope(allocator: std.mem.Allocator, pkey: *BoringSSL.EVP_PKEY, payload: string) SigningError!string {
+    const payload_type = "application/vnd.in-toto+json";
+
+    // Build PAE (Pre-Authentication Encoding)
+    var pae_buf = std.ArrayListUnmanaged(u8){};
+    defer pae_buf.deinit(allocator);
+    const pae_w = pae_buf.writer(allocator);
+
+    try pae_w.print("DSSEv1 {d} {s} {d} {s}", .{
+        payload_type.len,
+        payload_type,
+        payload.len,
+        payload,
+    });
+
+    // Sign the PAE
+    const signature = try signData(allocator, pkey, pae_buf.items);
+    const sig_b64 = try base64Encode(allocator, signature);
+    const payload_b64 = try base64Encode(allocator, payload);
+
+    // Build envelope JSON
+    var env_buf = std.ArrayListUnmanaged(u8){};
+    const env_w = env_buf.writer(allocator);
+
+    try env_w.writeAll("{\"payloadType\":");
+    try writeJsonString(env_w, payload_type);
+    try env_w.writeAll(",\"payload\":");
+    try writeJsonString(env_w, payload_b64);
+    try env_w.writeAll(",\"signatures\":[{\"sig\":");
+    try writeJsonString(env_w, sig_b64);
+    try env_w.writeAll("}]}");
+
+    return env_buf.items;
+}
+
+// ── Encoding helpers ──────────────────────────────────────────────────────
+
+/// Base64 standard encode (with padding).
+fn base64Encode(allocator: std.mem.Allocator, data: string) OOM!string {
+    const encoded_len = std.base64.standard.Encoder.calcSize(data.len);
+    const buf = try allocator.alloc(u8, encoded_len);
+    _ = std.base64.standard.Encoder.encode(buf, data);
+    return buf;
+}
+
+/// Base64url decode (handles missing padding).
+fn base64UrlDecode(allocator: std.mem.Allocator, input: string) SigningError!string {
+    // Add padding if needed (url_safe decoder requires it)
+    const padding_needed = (4 - (input.len % 4)) % 4;
+    const padded = if (padding_needed > 0) blk: {
+        const buf = try allocator.alloc(u8, input.len + padding_needed);
+        @memcpy(buf[0..input.len], input);
+        @memset(buf[input.len..], '=');
+        break :blk buf;
+    } else input;
+    defer if (padding_needed > 0) allocator.free(padded);
+
+    const decoded_size = std.base64.url_safe.Decoder.calcSizeForSlice(padded) catch
+        return error.JWTDecodeFailed;
+    const buf = try allocator.alloc(u8, decoded_size);
+
+    std.base64.url_safe.Decoder.decode(buf, padded) catch
+        return error.JWTDecodeFailed;
+
+    return buf[0..decoded_size];
+}
+
 /// Print a user-friendly error message for provenance errors.
 pub fn printError(err: ProvenanceError) void {
     switch (err) {
@@ -674,6 +990,33 @@ pub fn printError(err: ProvenanceError) void {
     }
 }
 
+/// Print a user-friendly error message for signing errors.
+pub fn printSigningError(err: SigningError) void {
+    switch (err) {
+        error.KeyGenFailed => {
+            Output.errGeneric("failed to generate ephemeral signing key", .{});
+        },
+        error.PEMEncodingFailed => {
+            Output.errGeneric("failed to encode public key as PEM", .{});
+        },
+        error.SigningFailed => {
+            Output.errGeneric("failed to sign provenance data", .{});
+        },
+        error.FulcioRequestFailed => {
+            Output.errGeneric("failed to obtain signing certificate from Fulcio (https://fulcio.sigstore.dev)", .{});
+        },
+        error.FulcioResponseInvalid => {
+            Output.errGeneric("invalid response from Fulcio certificate authority", .{});
+        },
+        error.JWTDecodeFailed => {
+            Output.errGeneric("failed to decode OIDC identity token", .{});
+        },
+        error.OutOfMemory => {
+            bun.outOfMemory();
+        },
+    }
+}
+
 const string = []const u8;
 
 const std = @import("std");
@@ -689,6 +1032,8 @@ const logger = bun.logger;
 const strings = bun.strings;
 
 const http = bun.http;
+
+const BoringSSL = bun.BoringSSL.c;
 
 const install = bun.install;
 const Dependency = install.Dependency;

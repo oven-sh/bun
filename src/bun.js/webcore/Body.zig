@@ -1561,7 +1561,7 @@ pub const ValueBufferer = struct {
     pub fn onResolveStream(_: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         var args = callframe.arguments_old(2);
         var sink: *@This() = args.ptr[args.len - 1].asPromisePtr(@This());
-        sink.handleResolveStream(true);
+        sink.handleResolveStream(args.ptr[0], true);
         return .js_undefined;
     }
 
@@ -1584,81 +1584,52 @@ pub const ValueBufferer = struct {
         sink.onFinishedBuffering(sink.ctx, "", .{ .JSValue = ref }, is_async);
     }
 
-    fn handleResolveStream(sink: *@This(), is_async: bool) void {
+    fn handleResolveStream(sink: *@This(), resolved_value: JSValue, is_async: bool) void {
         if (sink.js_sink) |wrapper| {
             const bytes = wrapper.sink.bytes.slice();
-            log("handleResolveStream {}", .{bytes.len});
+            log("handleResolveStream js_sink {}", .{bytes.len});
+            sink.onFinishedBuffering(sink.ctx, bytes, null, is_async);
+        } else if (resolved_value.asArrayBuffer(sink.global)) |array_buffer| {
+            const bytes = array_buffer.slice();
+            log("handleResolveStream arraybuffer {}", .{bytes.len});
             sink.onFinishedBuffering(sink.ctx, bytes, null, is_async);
         } else {
-            log("handleResolveStream no sink", .{});
+            log("handleResolveStream empty", .{});
             sink.onFinishedBuffering(sink.ctx, "", null, is_async);
         }
     }
 
-    fn createJSSink(sink: *@This(), stream: jsc.WebCore.ReadableStream) !void {
+    /// Buffer a JavaScript-created ReadableStream by using the JS runtime's
+    /// readableStreamToArrayBuffer, which returns a Promise<ArrayBuffer>.
+    fn bufferJSReadableStream(sink: *@This(), stream: jsc.WebCore.ReadableStream) !void {
         stream.value.ensureStillAlive();
-        var allocator = sink.allocator;
-        var buffer_stream = try allocator.create(ArrayBufferSink.JSSink);
-        var globalThis = sink.global;
-        buffer_stream.* = ArrayBufferSink.JSSink{
-            .sink = ArrayBufferSink{
-                .bytes = bun.ByteList.empty,
-                .allocator = allocator,
-                .next = null,
-            },
-        };
-        var signal = &buffer_stream.sink.signal;
-        sink.js_sink = buffer_stream;
+        const globalThis = sink.global;
 
-        signal.* = ArrayBufferSink.JSSink.SinkSignal.init(JSValue.zero);
+        const promise_value = globalThis.readableStreamToArrayBuffer(stream.value);
+        promise_value.ensureStillAlive();
 
-        // explicitly set it to a dead pointer
-        // we use this memory address to disable signals being sent
-        signal.clear();
-        assert(signal.isDead());
-
-        const assignment_result: JSValue = ArrayBufferSink.JSSink.assignToStream(
-            globalThis,
-            stream.value,
-            buffer_stream,
-            @as(**anyopaque, @ptrCast(&signal.ptr)),
-        );
-
-        assignment_result.ensureStillAlive();
-
-        // assert that it was updated
-        assert(!signal.isDead());
-
-        if (assignment_result.isError()) {
+        if (promise_value.toError()) |_| {
             return error.PipeFailed;
         }
 
-        if (!assignment_result.isEmptyOrUndefinedOrNull()) {
-            assignment_result.ensureStillAlive();
-            // it returns a Promise when it goes through ReadableStreamDefaultReader
-            if (assignment_result.asAnyPromise()) |promise| {
-                switch (promise.status()) {
-                    .Pending => {
-                        assignment_result.then(
-                            globalThis,
-                            sink,
-                            onResolveStream,
-                            onRejectStream,
-                        );
-                    },
-                    .Fulfilled => {
-                        defer stream.value.unprotect();
-
-                        sink.handleResolveStream(false);
-                    },
-                    .Rejected => {
-                        defer stream.value.unprotect();
-
-                        sink.handleRejectStream(promise.result(globalThis.vm()), false);
-                    },
-                }
-                return;
+        if (promise_value.asAnyPromise()) |promise| {
+            switch (promise.status()) {
+                .pending => {
+                    promise_value.then(
+                        globalThis,
+                        sink,
+                        onResolveStream,
+                        onRejectStream,
+                    ) catch {};
+                },
+                .fulfilled => {
+                    sink.handleResolveStream(promise.result(globalThis.vm()), false);
+                },
+                .rejected => {
+                    sink.handleRejectStream(promise.result(globalThis.vm()), false);
+                },
             }
+            return;
         }
 
         return error.PipeFailed;
@@ -1694,9 +1665,7 @@ pub const ValueBufferer = struct {
                 // toBlobIfPossible should've caught this
                 .Blob, .File => unreachable,
                 .JavaScript, .Direct => {
-                    // this is broken right now
-                    // return sink.createJSSink(stream);
-                    return error.UnsupportedStreamType;
+                    return sink.bufferJSReadableStream(stream);
                 },
                 .Bytes => |byte_stream| {
                     assert(byte_stream.pipe.ctx == null);

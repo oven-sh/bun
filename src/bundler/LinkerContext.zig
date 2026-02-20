@@ -1844,6 +1844,10 @@ pub const LinkerContext = struct {
         var result: MatchImport = MatchImport{};
         const named_imports = c.graph.ast.items(.named_imports);
 
+        const hash_threshold = 8;
+        var cycle_set: std.HashMapUnmanaged(ImportTracker, void, ImportTrackerHashCtx, std.hash_map.default_max_load_percentage) = .{};
+        defer cycle_set.deinit(c.allocator());
+
         loop: while (true) {
             // Make sure we avoid infinite loops trying to resolve cycles:
             //
@@ -1852,10 +1856,26 @@ pub const LinkerContext = struct {
             //   export {b as c} from './foo.js'
             //   export {c as a} from './foo.js'
             //
-            // This uses a O(n^2) array scan instead of a O(n) map because the vast
-            // majority of cases have one or two elements
-            for (c.cycle_detector.items[cycle_detector_top..]) |prev_tracker| {
-                if (std.meta.eql(tracker, prev_tracker)) {
+            // Optimization:
+            // - O(n) array scan for small sizes (< 8 elements),
+            // - O(1) hash set lookup for larger sizes
+            const cycle_slice = c.cycle_detector.items[cycle_detector_top..];
+            if (cycle_slice.len < hash_threshold) {
+                for (cycle_slice) |prev_tracker| {
+                    if (ImportTrackerHashCtx.eql(.{}, tracker, prev_tracker)) {
+                        result = .{ .kind = .cycle };
+                        break :loop;
+                    }
+                }
+            } else {
+                if (cycle_set.count() == 0) {
+                    bun.handleOom(cycle_set.ensureTotalCapacity(c.allocator(), @intCast(cycle_slice.len + 1)));
+                    for (cycle_slice) |prev_tracker| {
+                        cycle_set.putAssumeCapacity(prev_tracker, {});
+                    }
+                }
+
+                if (cycle_set.contains(tracker)) {
                     result = .{ .kind = .cycle };
                     break :loop;
                 }
@@ -1868,6 +1888,11 @@ pub const LinkerContext = struct {
 
             const prev_source_index = tracker.source_index.get();
             bun.handleOom(c.cycle_detector.append(tracker));
+
+            // If we're using the hash set, add the tracker to it as well
+            if (cycle_set.count() > 0) {
+                bun.handleOom(cycle_set.put(c.allocator(), tracker, {}));
+            }
 
             // Resolve the import by one step
             const advanced = c.advanceImportTracker(&tracker);
@@ -2667,6 +2692,22 @@ pub const ThreadPool = bun.bundle_v2.ThreadPool;
 pub const ParseTask = bun.bundle_v2.ParseTask;
 
 const string = []const u8;
+
+/// Hash context for ImportTracker used in cycle detection
+const ImportTrackerHashCtx = struct {
+    pub fn hash(_: @This(), tracker: ImportTracker) u64 {
+        // Combine source_index (u32) and import_ref hash (u64)
+        // name_loc is not included in the hash as it doesn't affect semantic equality
+        const source_hash = @as(u64, tracker.source_index.get());
+        const ref_hash = tracker.import_ref.hash64();
+        return source_hash ^ ref_hash;
+    }
+
+    pub fn eql(_: @This(), a: ImportTracker, b: ImportTracker) bool {
+        return a.source_index.get() == b.source_index.get() and
+            a.import_ref.eql(b.import_ref);
+    }
+};
 
 const NodeFallbackModules = @import("../node_fallbacks.zig");
 const js_printer = @import("../js_printer.zig");

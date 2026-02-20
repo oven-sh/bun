@@ -850,7 +850,9 @@ pub fn getsockname(this: *Listener, globalThis: *jsc.JSGlobalObject, callFrame: 
         return .js_undefined;
     }
 
-    const out = callFrame.argumentsAsArray(1)[0];
+    const arg = callFrame.argumentsAsArray(1)[0];
+    const has_out = arg.isObject();
+    const out = if (has_out) arg else JSValue.createEmptyObject(globalThis, 3);
     const socket = this.listener.uws;
 
     var buf: [64]u8 = [_]u8{0} ** 64;
@@ -872,7 +874,7 @@ pub fn getsockname(this: *Listener, globalThis: *jsc.JSGlobalObject, callFrame: 
     out.put(globalThis, bun.String.static("family"), family_js);
     out.put(globalThis, bun.String.static("address"), address_js);
     out.put(globalThis, bun.String.static("port"), port_js);
-    return .js_undefined;
+    return if (has_out) .js_undefined else out;
 }
 
 pub fn jsAddServerName(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {

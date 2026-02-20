@@ -57,6 +57,46 @@ it("remoteAddress works", async () => {
   await prom;
 });
 
+it("getsockname without arguments should not crash", () => {
+  using server = Bun.listen({
+    socket: {
+      open() {},
+      close() {},
+      data() {},
+    },
+    port: 0,
+    hostname: "127.0.0.1",
+  });
+
+  const result = server.getsockname();
+  expect(result).toEqual({
+    family: "IPv4",
+    address: "127.0.0.1",
+    port: server.port,
+  });
+});
+
+it("getsockname with an out object populates it", () => {
+  using server = Bun.listen({
+    socket: {
+      open() {},
+      close() {},
+      data() {},
+    },
+    port: 0,
+    hostname: "127.0.0.1",
+  });
+
+  const out: Record<string, unknown> = {};
+  const result = server.getsockname(out);
+  expect(result).toBeUndefined();
+  expect(out).toEqual({
+    family: "IPv4",
+    address: "127.0.0.1",
+    port: server.port,
+  });
+});
+
 it("should not allow invalid tls option", () => {
   [1, "string", Symbol("symbol")].forEach(value => {
     expect(() => {

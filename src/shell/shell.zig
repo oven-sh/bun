@@ -2704,6 +2704,11 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                             comptime for ('0'..'9') |c| assertSpecialChar(c);
 
                             if (self.chars.state != .Normal) break :escaped;
+                            // Only try to parse a fd redirect (e.g. `2>`) when the digit
+                            // is NOT part of a word already being accumulated.
+                            // Otherwise `./script1<file` would incorrectly strip the
+                            // trailing `1` from the command name. (GH-12602)
+                            if (self.word_start != self.j) break :escaped;
                             const snapshot = self.make_snapshot();
                             if (self.eat_redirect(input)) |redirect| {
                                 try self.break_word(true);

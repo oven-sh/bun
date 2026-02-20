@@ -349,6 +349,17 @@ pub const FetchTasklet = struct {
         if (this.readable_stream_ref.get(globalThis)) |readable| {
             log("onBodyReceived readable_stream_ref", .{});
             if (readable.ptr == .Bytes) {
+                // If the client cancelled the ReadableStream (e.g. reader.cancel()),
+                // the ByteStream will be marked as done. In that case, abort the HTTP
+                // connection so the server is notified and we stop receiving data.
+                if (readable.ptr.Bytes.done) {
+                    log("onBodyReceived: stream cancelled, aborting", .{});
+                    this.readable_stream_ref.deinit();
+                    this.readable_stream_ref = .{};
+                    this.abortTask();
+                    return;
+                }
+
                 readable.ptr.Bytes.size_hint = this.getSizeHint();
                 // body can be marked as used but we still need to pipe the data
                 const scheduled_response_buffer = &this.scheduled_response_buffer.list;
@@ -386,6 +397,15 @@ pub const FetchTasklet = struct {
             if (response.getBodyReadableStream(globalThis)) |readable| {
                 log("onBodyReceived CurrentResponse BodyReadableStream", .{});
                 if (readable.ptr == .Bytes) {
+                    // If the client cancelled the ReadableStream (e.g. reader.cancel()),
+                    // abort the HTTP connection so the server is notified.
+                    if (readable.ptr.Bytes.done) {
+                        log("onBodyReceived: stream cancelled (via response), aborting", .{});
+                        response.detachReadableStream(globalThis);
+                        this.abortTask();
+                        return;
+                    }
+
                     const scheduled_response_buffer = this.scheduled_response_buffer.list;
 
                     const chunk = scheduled_response_buffer.items;

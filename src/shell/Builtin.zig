@@ -640,6 +640,12 @@ pub fn done(this: *Builtin, exit_code: anytype) Yield {
     log("builtin done ({s}: exit={d}) cmd to free: ({x})", .{ @tagName(this.kind), code, @intFromPtr(cmd) });
     cmd.exit_code = this.exit_code.?;
 
+    // When the `exit` builtin runs, signal the shell to stop executing
+    // remaining statements (like bash does).
+    if (this.kind == .exit) {
+        cmd.base.shell.exit_requested = true;
+    }
+
     // Aggregate output data if shell state is piped and this cmd is piped
     if (cmd.io.stdout == .pipe and cmd.io.stdout == .pipe and this.stdout == .buf) {
         bun.handleOom(cmd.base.shell.buffered_stdout().appendSlice(

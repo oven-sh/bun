@@ -1239,9 +1239,6 @@ pub const PackageInstall = struct {
 
     pub fn installFromLink(this: *@This(), skip_delete: bool, destination_dir: std.fs.Dir) Result {
         const dest_path = this.destination_dir_subpath;
-        // If this fails, we don't care.
-        // we'll catch it the next error
-        if (!skip_delete and !strings.eqlComptime(dest_path, ".")) this.uninstallBeforeInstall(destination_dir);
 
         const subdir = std.fs.path.dirname(dest_path);
 
@@ -1249,8 +1246,16 @@ pub const PackageInstall = struct {
         // cache_dir_subpath in here is actually the full path to the symlink pointing to the linked package
         const symlinked_path = this.cache_dir_subpath;
         var to_buf: bun.PathBuffer = undefined;
+        // Resolve realpath BEFORE uninstall, because when linking a package globally
+        // (e.g. `bun link -g my-cli`), the source symlink and destination may be in
+        // the same directory (~/.bun/install/global/node_modules/). In that case,
+        // uninstallBeforeInstall would delete the symlink we need to read from.
         const to_path = this.cache_dir.realpath(symlinked_path, &to_buf) catch |err|
             return Result.fail(err, .linking_dependency, @errorReturnTrace());
+
+        // If this fails, we don't care.
+        // we'll catch it the next error
+        if (!skip_delete and !strings.eqlComptime(dest_path, ".")) this.uninstallBeforeInstall(destination_dir);
 
         const dest = std.fs.path.basename(dest_path);
         // When we're linking on Windows, we want to avoid keeping the source directory handle open

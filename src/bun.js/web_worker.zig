@@ -438,7 +438,8 @@ fn onUnhandledRejection(vm: *jsc.VirtualMachine, globalObject: *jsc.JSGlobalObje
     WebWorker__dispatchError(globalObject, worker.cpp_worker, bun.String.cloneUTF8(array.written()), error_instance);
     if (vm.worker) |worker_| {
         _ = worker.setRequestedTerminate();
-        worker.parent_poll_ref.unrefConcurrently(worker.parent);
+        // Don't unref parent here - deinit() in exitAndDeinit() handles it
+        // after dispatching exit/close events to the parent.
         worker_.exitAndDeinit();
     }
 }
@@ -574,11 +575,15 @@ pub fn notifyNeedTermination(this: *WebWorker) callconv(.c) void {
 
     if (this.vm) |vm| {
         vm.eventLoop().wakeup();
-        // TODO(@190n) notifyNeedTermination
     }
 
-    // TODO(@190n) delete
-    this.setRefInternal(false);
+    // Do NOT unref the parent event loop here. The parent must stay alive
+    // until the worker has fully terminated and dispatched its exit/close
+    // events. The unref happens later in deinit(), which runs after
+    // exitAndDeinit() has dispatched all pending events to the parent.
+    // Unreffing here caused a race condition where the parent event loop
+    // could exit before processing queued messages from postMessage()
+    // that were sent just before process.exit() (issue #14144).
 }
 
 /// This handles cleanup, emitting the "close" event, and deinit.

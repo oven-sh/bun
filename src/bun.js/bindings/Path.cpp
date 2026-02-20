@@ -114,6 +114,25 @@ static JSC::JSObject* createPath(JSGlobalObject* globalThis, bool isWindows)
 
 } // namespace Zig
 
+extern "C" JSC::EncodedJSValue PathParsedObject__create(
+    JSC::JSGlobalObject* globalObject,
+    JSC::EncodedJSValue root,
+    JSC::EncodedJSValue dir,
+    JSC::EncodedJSValue base,
+    JSC::EncodedJSValue ext,
+    JSC::EncodedJSValue name)
+{
+    auto* global = JSC::jsCast<Zig::GlobalObject*>(globalObject);
+    auto& vm = JSC::getVM(globalObject);
+    JSC::JSObject* result = JSC::constructEmptyObject(vm, global->pathParsedObjectStructure());
+    result->putDirectOffset(vm, 0, JSC::JSValue::decode(root));
+    result->putDirectOffset(vm, 1, JSC::JSValue::decode(dir));
+    result->putDirectOffset(vm, 2, JSC::JSValue::decode(base));
+    result->putDirectOffset(vm, 3, JSC::JSValue::decode(ext));
+    result->putDirectOffset(vm, 4, JSC::JSValue::decode(name));
+    return JSC::JSValue::encode(result);
+}
+
 namespace Bun {
 
 JSC::JSValue createNodePathBinding(Zig::GlobalObject* globalObject)

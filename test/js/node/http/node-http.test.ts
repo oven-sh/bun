@@ -5,7 +5,7 @@
  *
  * A handful of older tests do not run in Node in this file. These tests should be updated to run in Node, or deleted.
  */
-import { bunEnv, bunExe, exampleSite, randomPort } from "harness";
+import { bunEnv, bunExe, exampleSite, randomPort, tls as tlsCert } from "harness";
 import { createTest } from "node-harness";
 import { EventEmitter, once } from "node:events";
 import nodefs, { unlinkSync } from "node:fs";
@@ -1081,9 +1081,19 @@ describe("node:http", () => {
   });
 
   test("should not decompress gzip, issue#4397", async () => {
+    using server = Bun.serve({
+      port: 0,
+      tls: tlsCert,
+      fetch() {
+        const body = Bun.gzipSync(Buffer.from("<html>Hello</html>"));
+        return new Response(body, {
+          headers: { "content-encoding": "gzip" },
+        });
+      },
+    });
     const { promise, resolve } = Promise.withResolvers();
     https
-      .request("https://bun.sh/", { headers: { "accept-encoding": "gzip" } }, res => {
+      .request(server.url, { ca: tlsCert.cert, headers: { "accept-encoding": "gzip" } }, res => {
         res.on("data", function cb(chunk) {
           resolve(chunk);
           res.off("data", cb);
@@ -1629,6 +1639,75 @@ describe("HTTP Server Security Tests - Advanced", () => {
       expect(response).toInclude("400 Bad Request");
       await promise;
       expect(mockHandler).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("Response Splitting Protection", () => {
+    test("rejects CRLF in statusMessage set via property assignment followed by res.end()", async () => {
+      const { promise: errorPromise, resolve: resolveError } = Promise.withResolvers<Error>();
+      server.on("request", (req, res) => {
+        res.statusCode = 200;
+        res.statusMessage = "OK\r\nSet-Cookie: admin=true";
+        try {
+          res.end("body");
+        } catch (e: any) {
+          resolveError(e);
+          res.statusMessage = "OK";
+          res.end("safe");
+        }
+      });
+
+      const response = (await sendRequest("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")) as string;
+      const err = await errorPromise;
+      expect((err as any).code).toBe("ERR_INVALID_CHAR");
+      // The injected Set-Cookie header must NOT appear in the response
+      expect(response).not.toInclude("Set-Cookie: admin=true");
+    });
+
+    test("rejects CRLF in statusMessage set via property assignment followed by res.write()", async () => {
+      const { promise: errorPromise, resolve: resolveError } = Promise.withResolvers<Error>();
+      server.on("request", (req, res) => {
+        res.statusCode = 200;
+        res.statusMessage = "OK\r\nX-Injected: evil";
+        try {
+          res.write("chunk");
+        } catch (e: any) {
+          resolveError(e);
+          res.statusMessage = "OK";
+          res.end("safe");
+        }
+      });
+
+      const response = (await sendRequest("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")) as string;
+      const err = await errorPromise;
+      expect((err as any).code).toBe("ERR_INVALID_CHAR");
+      expect(response).not.toInclude("X-Injected: evil");
+    });
+
+    test("rejects CRLF in statusMessage passed to writeHead()", async () => {
+      server.on("request", (req, res) => {
+        expect(() => {
+          res.writeHead(200, "OK\r\nX-Injected: evil");
+        }).toThrow(/Invalid character in statusMessage/);
+        res.writeHead(200, "OK");
+        res.end("safe");
+      });
+
+      const response = (await sendRequest("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")) as string;
+      expect(response).not.toInclude("X-Injected");
+      expect(response).toInclude("safe");
+    });
+
+    test("allows valid statusMessage without control characters", async () => {
+      server.on("request", (req, res) => {
+        res.statusCode = 200;
+        res.statusMessage = "Everything Is Fine";
+        res.end("ok");
+      });
+
+      const response = (await sendRequest("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")) as string;
+      expect(response).toInclude("200 Everything Is Fine");
+      expect(response).toInclude("ok");
     });
   });
 

@@ -1231,12 +1231,6 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
         return LIBUS_SOCKET_ERROR;
     }
 
-    if (port != 0) {
-        /* Should this also go for UDP? */
-        int enabled = 1;
-        setsockopt(listenFd, SOL_SOCKET, SO_REUSEADDR, &enabled, sizeof(enabled));
-    }
-
     if (bsd_set_reuse(listenFd, options) != 0) {
         freeaddrinfo(result);
         return LIBUS_SOCKET_ERROR;

@@ -892,15 +892,15 @@ pub const Command = struct {
                 const ctx = try Command.init(allocator, log, .RunCommand);
                 ctx.args.target = .bun;
 
-                if (ctx.parallel or ctx.sequential) {
-                    MultiRun.run(ctx) catch |err| {
+                if (ctx.filters.len > 0 or ctx.workspaces) {
+                    FilterRun.runScriptsWithFilter(ctx) catch |err| {
                         Output.prettyErrorln("<r><red>error<r>: {s}", .{@errorName(err)});
                         Global.exit(1);
                     };
                 }
 
-                if (ctx.filters.len > 0 or ctx.workspaces) {
-                    FilterRun.runScriptsWithFilter(ctx) catch |err| {
+                if (ctx.parallel or ctx.sequential) {
+                    MultiRun.run(ctx) catch |err| {
                         Output.prettyErrorln("<r><red>error<r>: {s}", .{@errorName(err)});
                         Global.exit(1);
                     };
@@ -938,15 +938,15 @@ pub const Command = struct {
                 };
                 ctx.args.target = .bun;
 
-                if (ctx.parallel or ctx.sequential) {
-                    MultiRun.run(ctx) catch |err| {
+                if (ctx.filters.len > 0 or ctx.workspaces) {
+                    FilterRun.runScriptsWithFilter(ctx) catch |err| {
                         Output.prettyErrorln("<r><red>error<r>: {s}", .{@errorName(err)});
                         Global.exit(1);
                     };
                 }
 
-                if (ctx.filters.len > 0 or ctx.workspaces) {
-                    FilterRun.runScriptsWithFilter(ctx) catch |err| {
+                if (ctx.parallel or ctx.sequential) {
+                    MultiRun.run(ctx) catch |err| {
                         Output.prettyErrorln("<r><red>error<r>: {s}", .{@errorName(err)});
                         Global.exit(1);
                     };

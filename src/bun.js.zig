@@ -388,6 +388,20 @@ pub const Run = struct {
                 }
             }
 
+            if (promise.status() == .pending) {
+                // The promise is still pending after waitForPromise returned, which means
+                // nothing in the event loop can resolve it (unsettled top-level await).
+                // Exit with code 13, matching Node.js behavior for unsettled TLA.
+                vm.exit_handler.exit_code = 13;
+                Output.prettyErrorln(
+                    "<r><yellow>warning<r>: Detected unsettled top-level await at {s}",
+                    .{this.entry_path},
+                );
+                Output.flush();
+                vm.onExit();
+                vm.globalExit();
+            }
+
             _ = promise.result();
 
             if (vm.log.msgs.items.len > 0) {

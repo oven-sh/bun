@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 test("Listener.getsockname() works without arguments", () => {
   using listener = Bun.listen({

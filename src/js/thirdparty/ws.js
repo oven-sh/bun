@@ -102,6 +102,12 @@ function normalizeData(data, opts) {
     data = Buffer.from(data);
   } else if (isBinary === false && $isTypedArrayView(data)) {
     data = new Buffer(data.buffer, data.byteOffset, data.byteLength).toString("utf-8");
+  } else if ($isTypedArrayView(data) && data.buffer instanceof SharedArrayBuffer) {
+    // Native WebSocket.send() doesn't accept SharedArrayBuffer-backed views.
+    // v8.serialize() returns a Buffer backed by SharedArrayBuffer, so we need
+    // to copy the data to a regular ArrayBuffer-backed Uint8Array.
+    // For DataView, construct Uint8Array using buffer+offset+length, then slice to copy.
+    data = new Uint8Array(data.buffer, data.byteOffset, data.byteLength).slice();
   }
 
   return data;

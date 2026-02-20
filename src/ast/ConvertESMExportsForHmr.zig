@@ -441,16 +441,25 @@ pub fn finalize(ctx: *ConvertESMExportsForHmr, p: anytype, all_parts: []js_ast.P
             .properties = G.Property.List.moveFromList(&ctx.export_props),
         }, logger.Loc.Empty);
 
-        // `hmr.exports = ...`
+        const hmr_exports = Expr.init(E.Dot, .{
+            .target = Expr.initIdentifier(p.hmr_api_ref, logger.Loc.Empty),
+            .name = "exports",
+            .name_loc = logger.Loc.Empty,
+        }, logger.Loc.Empty);
+
+        // `Object.assign(hmr.exports, {...})`
+        // Using Object.assign ensures the pre-created namespace object is populated
+        // rather than replaced, which is required for circular dependency support.
+        const object_ref = try p.newSymbol(.unbound, "Object");
         try ctx.stmts.append(p.allocator, Stmt.alloc(S.SExpr, .{
-            .value = Expr.assign(
-                Expr.init(E.Dot, .{
-                    .target = Expr.initIdentifier(p.hmr_api_ref, logger.Loc.Empty),
-                    .name = "exports",
+            .value = Expr.init(E.Call, .{
+                .target = Expr.init(E.Dot, .{
+                    .target = Expr.init(E.Identifier, .{ .ref = object_ref }, logger.Loc.Empty),
+                    .name = "assign",
                     .name_loc = logger.Loc.Empty,
                 }, logger.Loc.Empty),
-                obj,
-            ),
+                .args = .fromOwnedSlice(try p.allocator.dupe(Expr, &.{ hmr_exports, obj })),
+            }, logger.Loc.Empty),
         }, logger.Loc.Empty));
 
         // mark a dependency on module_ref so it is renamed

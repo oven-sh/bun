@@ -156,6 +156,21 @@ extern "C" int Bun__ttySetMode(int fd, int mode)
             });
         });
         break;
+    case 3: // prompt - disable canonical mode but keep echo and signals
+        // This mode is used by prompt() to avoid deadlock when pasting large input.
+        // In canonical mode, the terminal buffers input until newline (~1024 bytes limit).
+        // When pasting more than the buffer size without newline, both read and write block.
+        // Disabling ICANON allows immediate byte-by-byte reading while keeping user-friendly echo.
+        tmp.c_lflag &= ~(ICANON);
+        tmp.c_cc[VMIN] = 1;
+        tmp.c_cc[VTIME] = 0;
+
+        std::call_once(reset_once_flag, [] {
+            Bun__atexit([] {
+                uv_tty_reset_mode();
+            });
+        });
+        break;
     }
 
     /* Apply changes after draining */

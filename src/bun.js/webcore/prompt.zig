@@ -45,6 +45,19 @@ fn alert(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSErr
     // *  Not pertinent to use their complex system in a server context.
     bun.Output.flush();
 
+    // On POSIX, switch to non-canonical TTY mode to avoid deadlock when pasting large input.
+    const stdin_is_tty = if (comptime Environment.isPosix) std.posix.isatty(std.posix.STDIN_FILENO) else false;
+    if (comptime Environment.isPosix) {
+        if (stdin_is_tty) {
+            _ = Bun__ttySetMode(std.posix.STDIN_FILENO, 3);
+        }
+    }
+    defer if (comptime Environment.isPosix) {
+        if (stdin_is_tty) {
+            _ = Bun__ttySetMode(std.posix.STDIN_FILENO, 0);
+        }
+    };
+
     // 7. Optionally, pause while waiting for the user to acknowledge the message.
     var stdin = std.fs.File.stdin();
     var stdin_buf: [1]u8 = undefined;
@@ -94,6 +107,19 @@ fn confirm(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
     // 5. Invoke WebDriver BiDi user prompt opened with this, "confirm", and message.
     // *  Not relevant in a server context.
     bun.Output.flush();
+
+    // On POSIX, switch to non-canonical TTY mode to avoid deadlock when pasting large input.
+    const stdin_is_tty = if (comptime Environment.isPosix) std.posix.isatty(std.posix.STDIN_FILENO) else false;
+    if (comptime Environment.isPosix) {
+        if (stdin_is_tty) {
+            _ = Bun__ttySetMode(std.posix.STDIN_FILENO, 3);
+        }
+    }
+    defer if (comptime Environment.isPosix) {
+        if (stdin_is_tty) {
+            _ = Bun__ttySetMode(std.posix.STDIN_FILENO, 0);
+        }
+    };
 
     // 6. Pause until the user responds either positively or negatively.
     var stdin = std.fs.File.stdin();
@@ -261,6 +287,22 @@ pub const prompt = struct {
             }
         };
 
+        // On POSIX, switch to non-canonical TTY mode to avoid deadlock when pasting large input.
+        // In canonical mode (ICANON), the terminal buffers input until newline with ~1024 byte limit.
+        // When pasting more than the buffer size without newline, both read and write block.
+        // Mode 3 disables ICANON but keeps echo and signals enabled for user-friendly behavior.
+        const stdin_is_tty = if (comptime Environment.isPosix) std.posix.isatty(std.posix.STDIN_FILENO) else false;
+        if (comptime Environment.isPosix) {
+            if (stdin_is_tty) {
+                _ = Bun__ttySetMode(std.posix.STDIN_FILENO, 3);
+            }
+        }
+        defer if (comptime Environment.isPosix) {
+            if (stdin_is_tty) {
+                _ = Bun__ttySetMode(std.posix.STDIN_FILENO, 0);
+            }
+        };
+
         // 7. Pause while waiting for the user's response.
         const reader = bun.Output.buffered_stdin.reader();
         var second_byte: ?u8 = null;
@@ -344,6 +386,8 @@ pub const prompt = struct {
         return result.toJS(globalObject);
     }
 };
+
+extern fn Bun__ttySetMode(fd: c_int, mode: c_int) c_int;
 
 const std = @import("std");
 

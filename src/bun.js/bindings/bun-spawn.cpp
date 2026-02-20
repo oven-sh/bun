@@ -190,17 +190,38 @@ extern "C" ssize_t posix_spawn_bun(
             sigaction(i, &sa, 0);
         }
 
-        // Make "detached" work, or set up PTY as controlling terminal
+        // Make "detached" work, or set up PTY as controlling terminal.
+        // setsid() creates a new session and makes this process the session leader.
+        // This is required for TIOCSCTTY to work - only a session leader can acquire
+        // a controlling terminal.
         if (request->detached || request->pty_slave_fd >= 0) {
-            setsid();
+            if (setsid() == -1) {
+                // For PTY spawns, setsid() failure is fatal since we need a new session
+                // to set the controlling terminal. For detached processes, it's also
+                // fatal since the whole point is to create a new session.
+                return childFailed();
+            }
         }
 
         // Set PTY slave as controlling terminal for proper job control.
-        // TIOCSCTTY may fail if the terminal is already the controlling terminal
-        // of another session. This is non-fatal - the process can still run,
-        // just without proper job control.
+        // TIOCSCTTY requires the calling process to be a session leader (which we
+        // established above with setsid()) and the terminal must not already be
+        // the controlling terminal of another session.
+        // After macOS sleep/wake or extended runtime, PTY allocation can become
+        // corrupted - openpty() may return FDs where the slave isn't properly
+        // linked to the master. In these cases, TIOCSCTTY will fail, and without
+        // a controlling terminal the shell will immediately exit.
         if (request->pty_slave_fd >= 0) {
-            (void)ioctl(request->pty_slave_fd, TIOCSCTTY, 0);
+            if (ioctl(request->pty_slave_fd, TIOCSCTTY, 0) == -1) {
+                // TIOCSCTTY failure means we can't establish proper terminal control.
+                // This typically happens when:
+                // 1. The PTY slave is not valid (corrupted after sleep/wake)
+                // 2. The terminal is already a controlling terminal of another session
+                // 3. We're not a session leader (shouldn't happen given setsid above)
+                // Without a controlling terminal, shells will exit immediately,
+                // so we treat this as a fatal error for PTY spawns.
+                return childFailed();
+            }
         }
 
         int current_max_fd = 0;

@@ -421,6 +421,20 @@ fn createPtyPosix(cols: u16, rows: u16) CreatePtyError!PtyResult {
     const master_fd_desc = bun.FD.fromNative(master_fd);
     const slave_fd_desc = bun.FD.fromNative(slave_fd);
 
+    // Validate PTY pair: ensure slave FD is actually a TTY.
+    // After macOS sleep/wake or extended runtime, PTY allocation can become
+    // corrupted - openpty() may return FDs where the slave isn't properly
+    // linked to the master. Detect this early rather than having the child
+    // process fail mysteriously.
+    if (!std.posix.isatty(slave_fd)) {
+        if (comptime bun.Environment.allow_assert) {
+            bun.sys.syslog("PTY validation failed: slave_fd={d} is not a TTY", .{slave_fd});
+        }
+        master_fd_desc.close();
+        slave_fd_desc.close();
+        return error.OpenPtyFailed;
+    }
+
     // Configure sensible terminal defaults matching node-pty behavior.
     // These are "cooked mode" defaults that most terminal applications expect.
     if (std.posix.tcgetattr(slave_fd)) |termios| {

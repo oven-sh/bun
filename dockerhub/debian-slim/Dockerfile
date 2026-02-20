@@ -81,7 +81,9 @@ RUN groupadd bun \
     && ln -s /usr/local/bin/bun /usr/local/bin/bunx \
     && which bun \
     && which bunx \
-    && bun --version
+    && bun --version \
+    && mkdir -p /home/bun/app \
+    && chown -R bun:bun /home/bun
 
 WORKDIR /home/bun/app
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]

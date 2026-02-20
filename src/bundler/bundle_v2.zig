@@ -689,7 +689,9 @@ pub const BundleV2 = struct {
         if (path.pretty.ptr == path.text.ptr) {
             // TODO: outbase
             const rel = bun.path.relativePlatform(transpiler.fs.top_level_dir, path.text, .loose, false);
-            path.pretty = bun.handleOom(this.allocator().dupe(u8, rel));
+            const pretty = bun.handleOom(this.allocator().dupe(u8, rel));
+            bun.path.platformToPosixInPlace(u8, pretty);
+            path.pretty = pretty;
         }
         path.assertPrettyIsValid();
 

@@ -2899,6 +2899,11 @@ declare module "bun" {
        * time, given in number of iterations.
        */
       timeCost?: number;
+      /**
+       * Number of parallel lanes/threads.
+       * @remarks Minimum 1. Defaults to 1 (single lane).
+       */
+      parallelism?: number;
     }
 
     interface BCryptAlgorithm {

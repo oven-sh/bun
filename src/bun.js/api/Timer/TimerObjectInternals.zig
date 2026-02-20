@@ -77,15 +77,18 @@ pub fn runImmediateTask(this: *TimerObjectInternals, vm: *VirtualMachine) bool {
         (!this.flags.is_keeping_event_loop_alive and !vm.isEventLoopAliveExcludingImmediates()))
     {
         this.setEnableKeepingEventLoopAlive(vm, false);
-        this.this_value.downgrade();
+        // Use deinit() instead of downgrade() because the JSRef may already be
+        // in the finalized state (GC collected the JS object after cancel/unref
+        // downgraded the reference to weak).
+        this.this_value.deinit();
         this.deref();
         return false;
     }
 
     const timer = this.this_value.tryGet() orelse {
-        if (Environment.isDebug) {
-            @panic("TimerObjectInternals.runImmediateTask: this_object is null");
-        }
+        // The JS object was garbage collected. This can happen when the GC
+        // runs after the strong reference was downgraded (e.g. by cancel or
+        // unref) but before the queued immediate task executes.
         this.setEnableKeepingEventLoopAlive(vm, false);
         this.deref();
         return false;
@@ -133,7 +136,9 @@ pub fn fire(this: *TimerObjectInternals, _: *const timespec, vm: *jsc.VirtualMac
     const this_object = this.this_value.tryGet() orelse {
         this.setEnableKeepingEventLoopAlive(vm, false);
         this.flags.has_cleared_timer = true;
-        this.this_value.downgrade();
+        // Use deinit() instead of downgrade() because tryGet() returned null,
+        // which means the JSRef is in the finalized state.
+        this.this_value.deinit();
         this.deref();
         return;
     };

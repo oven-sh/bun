@@ -516,7 +516,12 @@ pub const CAresNameInfo = struct {
         var promise = this.promise;
         const globalThis = this.globalThis;
         this.promise = .{};
-        promise.resolveTask(globalThis, result) catch {}; // TODO: properly propagate exception upwards
+        if (result == .zero) {
+            const exception = globalThis.tryTakeException() orelse .js_undefined;
+            promise.rejectTask(globalThis, exception) catch {};
+        } else {
+            promise.resolveTask(globalThis, result) catch {};
+        }
         this.deinit();
     }
 
@@ -932,7 +937,12 @@ pub const CAresReverse = struct {
         var promise = this.promise;
         const globalThis = this.globalThis;
         this.promise = .{};
-        promise.resolveTask(globalThis, result) catch {}; // TODO: properly propagate exception upwards
+        if (result == .zero) {
+            const exception = globalThis.tryTakeException() orelse .js_undefined;
+            promise.rejectTask(globalThis, exception) catch {};
+        } else {
+            promise.resolveTask(globalThis, result) catch {};
+        }
         if (this.resolver) |resolver| {
             resolver.requestCompleted();
         }
@@ -1013,7 +1023,12 @@ pub fn CAresLookup(comptime cares_type: type, comptime type_name: []const u8) ty
             var promise = this.promise;
             const globalThis = this.globalThis;
             this.promise = .{};
-            promise.resolveTask(globalThis, result) catch {}; // TODO: properly propagate exception upwards
+            if (result == .zero) {
+                const exception = globalThis.tryTakeException() orelse .js_undefined;
+                promise.rejectTask(globalThis, exception) catch {};
+            } else {
+                promise.resolveTask(globalThis, result) catch {};
+            }
             if (this.resolver) |resolver| {
                 resolver.requestCompleted();
             }
@@ -1108,7 +1123,12 @@ pub const DNSLookup = struct {
         var promise = this.promise;
         this.promise = .{};
         const globalThis = this.globalThis;
-        promise.resolveTask(globalThis, result) catch {}; // TODO: properly propagate exception upwards
+        if (result == .zero) {
+            const exception = globalThis.tryTakeException() orelse .js_undefined;
+            promise.rejectTask(globalThis, exception) catch {};
+        } else {
+            promise.resolveTask(globalThis, result) catch {};
+        }
         if (this.resolver) |resolver| {
             resolver.requestCompleted();
         }

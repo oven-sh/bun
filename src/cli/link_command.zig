@@ -90,16 +90,18 @@ fn link(ctx: Command.Context) !void {
                 }
             }
 
+            // Use original_cwd (the directory of the package being linked) rather than
+            // top_level_dir (which may be the workspace root) so that the symlink points
+            // to the correct package directory.
             if (comptime Environment.isWindows) {
                 // create the junction
-                const top_level = Fs.FileSystem.instance.topLevelDirWithoutTrailingSlash();
                 var link_path_buf: bun.PathBuffer = undefined;
                 @memcpy(
-                    link_path_buf[0..top_level.len],
-                    top_level,
+                    link_path_buf[0..original_cwd.len],
+                    original_cwd,
                 );
-                link_path_buf[top_level.len] = 0;
-                const link_path = link_path_buf[0..top_level.len :0];
+                link_path_buf[original_cwd.len] = 0;
+                const link_path = link_path_buf[0..original_cwd.len :0];
                 const global_path = manager.globalLinkDirPath();
                 const dest_path = Path.joinAbsStringZ(global_path, &.{name}, .windows);
                 switch (bun.sys.sys_uv.symlinkUV(
@@ -115,7 +117,7 @@ fn link(ctx: Command.Context) !void {
                 }
             } else {
                 // create the symlink
-                node_modules.symLink(Fs.FileSystem.instance.topLevelDirWithoutTrailingSlash(), name, .{ .is_directory = true }) catch |err| {
+                node_modules.symLink(original_cwd, name, .{ .is_directory = true }) catch |err| {
                     if (manager.options.log_level != .silent)
                         Output.prettyErrorln("<r><red>error:<r> failed to create symlink to node_modules in global dir due to error {s}", .{@errorName(err)});
                     Global.crash();

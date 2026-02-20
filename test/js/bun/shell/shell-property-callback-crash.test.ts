@@ -1,12 +1,12 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 test("accessing Bun.$ after stack overflow from recursive constructor does not crash", async () => {
-    await using proc = Bun.spawn({
-        cmd: [
-            bunExe(),
-            "-e",
-            `
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
 delete globalThis.Loader;
 Bun.generateHeapSnapshot = console.profile = console.profileEnd = process.abort = () => {};
 const v2 = { maxByteLength: 875 };
@@ -26,14 +26,14 @@ try {
 const v20 = {};
 Bun.gc(true);
 `,
-        ],
-        env: bunEnv,
-        stderr: "pipe",
-        stdout: "pipe",
-    });
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+    stdout: "pipe",
+  });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).not.toContain("runtime error");
-    expect(exitCode).toBe(0);
+  expect(stderr).not.toContain("runtime error");
+  expect(exitCode).toBe(0);
 });

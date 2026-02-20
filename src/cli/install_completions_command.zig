@@ -285,10 +285,11 @@ pub const InstallCompletionsCommand = struct {
                         }
                     }
 
-                    if (bun.env_var.BUN_INSTALL.get()) |home_dir| {
+                    if (bun.env_var.BUN_INSTALL.get()) |install_dir| {
                         outer: {
-                            completions_dir = home_dir;
-                            break :found std.fs.openDirAbsolute(home_dir, .{}) catch
+                            var paths = [_]string{ install_dir, "./completions" };
+                            completions_dir = resolve_path.joinAbsString(cwd, &paths, .auto);
+                            break :found std.fs.openDirAbsolute(completions_dir, .{}) catch
                                 break :outer;
                         }
                     }
@@ -305,7 +306,7 @@ pub const InstallCompletionsCommand = struct {
 
                         {
                             outer: {
-                                var paths = [_]string{ home_dir, "./.bun" };
+                                var paths = [_]string{ home_dir, "./.bun/completions" };
                                 completions_dir = resolve_path.joinAbsString(cwd, &paths, .auto);
                                 break :found std.fs.openDirAbsolute(completions_dir, .{}) catch
                                     break :outer;

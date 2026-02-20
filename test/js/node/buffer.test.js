@@ -2188,10 +2188,39 @@ for (let withOverridenBufferWrite of [false, true]) {
       });
 
       it("transcode", () => {
-        expect(typeof BufferModule.transcode).toBe("undefined");
+        expect(typeof BufferModule.transcode).toBe("function");
 
-        // This is a masqueradesAsUndefined function
-        expect(() => BufferModule.transcode()).toThrow("Not implemented");
+        // Basic UTF-8 to ASCII
+        const euroUtf8 = Buffer.from("€", "utf8");
+        const asciiResult = BufferModule.transcode(euroUtf8, "utf8", "ascii");
+        expect(asciiResult.toString("ascii")).toBe("?");
+
+        // UTF-8 to Latin-1
+        const orig = Buffer.from("těst ☕", "utf8");
+        const latin1 = BufferModule.transcode(orig, "utf8", "latin1");
+        expect(Array.from(latin1)).toEqual([0x74, 0x3f, 0x73, 0x74, 0x20, 0x3f]);
+
+        // UTF-8 to UCS-2
+        const ucs2 = BufferModule.transcode(orig, "utf8", "ucs2");
+        expect(Array.from(ucs2)).toEqual([0x74, 0x00, 0x1b, 0x01, 0x73, 0x00, 0x74, 0x00, 0x20, 0x00, 0x15, 0x26]);
+
+        // Round-trip UCS-2 → UTF-8
+        const backToUtf8 = BufferModule.transcode(Buffer.from(ucs2), "ucs2", "utf8");
+        expect(backToUtf8.toString()).toBe(orig.toString());
+
+        // Empty input
+        const empty = BufferModule.transcode(new Uint8Array(), "utf8", "latin1");
+        expect(empty.length).toBe(0);
+
+        // Invalid source type
+        expect(() => BufferModule.transcode(null, "utf8", "ascii")).toThrow();
+
+        // Invalid encoding
+        expect(() => BufferModule.transcode(Buffer.from("a"), "b", "utf8")).toThrow(/U_ILLEGAL_ARGUMENT_ERROR/);
+
+        // Uint8Array support
+        const uint8arr = new Uint8Array([...Buffer.from("hä", "latin1")]);
+        expect(BufferModule.transcode(uint8arr, "latin1", "utf16le")).toEqual(Buffer.from("hä", "utf16le"));
       });
 
       it("Buffer.from (Node.js test/test-buffer-from.js)", () => {

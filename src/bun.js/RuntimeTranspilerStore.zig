@@ -111,6 +111,22 @@ pub const RuntimeTranspilerStore = struct {
     store: TranspilerJob.Store,
     enabled: bool = true,
     queue: Queue = Queue{},
+    /// Number of transpiler jobs currently in-flight (dispatched to worker pool
+    /// but not yet completed on the main thread). When too many jobs are in
+    /// flight, the module loader falls back to synchronous transpilation to
+    /// prevent the event loop from stalling due to unfulfilled promises.
+    in_flight: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
+
+    /// Maximum number of concurrent transpiler jobs before falling back to sync.
+    /// When the module dependency graph is very large (e.g. zod v4 with 80+
+    /// locale files, or the OpenAI Agents SDK with 100+ modules), too many
+    /// concurrent jobs can overwhelm the event loop's ability to process all
+    /// completion notifications, causing module fetch promises to never resolve.
+    const max_in_flight: u32 = 50;
+
+    pub fn canTranspileAsync(this: *const RuntimeTranspilerStore) bool {
+        return this.enabled and this.in_flight.load(.monotonic) < max_in_flight;
+    }
 
     pub const Queue = bun.UnboundedQueue(TranspilerJob, .next);
 
@@ -243,6 +259,7 @@ pub const RuntimeTranspilerStore = struct {
 
         pub fn runFromJSThread(this: *TranspilerJob) bun.JSError!void {
             var vm = this.vm;
+            _ = vm.transpiler_store.in_flight.fetchSub(1, .monotonic);
             const promise = this.promise.swap();
             const globalThis = this.globalThis;
             this.poll_ref.unref(vm);
@@ -278,6 +295,7 @@ pub const RuntimeTranspilerStore = struct {
         }
 
         pub fn schedule(this: *TranspilerJob) void {
+            _ = this.vm.transpiler_store.in_flight.fetchAdd(1, .monotonic);
             this.poll_ref.ref(this.vm);
             jsc.WorkPool.schedule(&this.work_task);
         }

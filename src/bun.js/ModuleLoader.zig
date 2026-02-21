@@ -982,7 +982,7 @@ pub export fn Bun__transpileFile(
                 !lr.is_main and
                 // Plugins make this complicated,
                 // TODO: allow running concurrently when no onLoad handlers match a plugin.
-                jsc_vm.plugin_runner == null and jsc_vm.transpiler_store.enabled)
+                jsc_vm.plugin_runner == null and jsc_vm.transpiler_store.canTranspileAsync())
             {
                 // This absolutely disgusting hack is a workaround in cases
                 // where an async import is made to a CJS file with side

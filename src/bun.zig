@@ -3704,6 +3704,7 @@ pub fn freeSensitive(allocator: std.mem.Allocator, slice: anytype) void {
 
 pub const macho = @import("./macho.zig");
 pub const pe = @import("./pe.zig");
+pub const elf = @import("./elf.zig");
 pub const valkey = @import("./valkey/index.zig");
 pub const highway = @import("./highway.zig");
 

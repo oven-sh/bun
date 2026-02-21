@@ -237,6 +237,7 @@ pub const test_only_params = [_]ParamType{
     clap.parseParam("--dots                           Enable dots reporter. Shorthand for --reporter=dots.") catch unreachable,
     clap.parseParam("--only-failures                  Only display test failures, hiding passing tests.") catch unreachable,
     clap.parseParam("--max-concurrency <NUMBER>        Maximum number of concurrent tests to execute at once. Default is 20.") catch unreachable,
+    clap.parseParam("--silent                           Prevent tests from printing messages through the console.") catch unreachable,
 };
 pub const test_params = test_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
@@ -537,6 +538,11 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         // Handle --only-failures flag
         if (args.flag("--only-failures")) {
             ctx.test_options.reporters.only_failures = true;
+        }
+
+        // Handle --silent flag: suppress console output from tests
+        if (args.flag("--silent")) {
+            ctx.test_options.silent = true;
         }
 
         if (args.option("--coverage-dir")) |dir| {

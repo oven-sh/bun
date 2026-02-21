@@ -6050,8 +6050,24 @@ pub fn printAst(
         }
     }
 
+    // Hoist directive prologue ("use client", "use server", etc.) before
+    // all other statements so that auto-generated imports (e.g. JSX runtime)
+    // don't push directives out of the prologue position.
+    // https://github.com/oven-sh/bun/issues/6854
     for (tree.parts.slice()) |part| {
         for (part.stmts) |stmt| {
+            if (stmt.data != .s_directive) continue;
+            try printer.printStmt(stmt, PrinterType.TopLevel.init(.yes));
+            if (printer.writer.getError()) {} else |err| {
+                return err;
+            }
+            printer.printSemicolonIfNeeded();
+        }
+    }
+
+    for (tree.parts.slice()) |part| {
+        for (part.stmts) |stmt| {
+            if (stmt.data == .s_directive) continue;
             try printer.printStmt(stmt, PrinterType.TopLevel.init(.yes));
             if (printer.writer.getError()) {} else |err| {
                 return err;
@@ -6314,8 +6330,24 @@ pub fn printCommonJS(
     printer.binary_expression_stack = std.array_list.Managed(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
     defer printer.binary_expression_stack.clearAndFree();
 
+    // Hoist directive prologue ("use client", "use server", etc.) before
+    // all other statements so that auto-generated imports (e.g. JSX runtime)
+    // don't push directives out of the prologue position.
+    // https://github.com/oven-sh/bun/issues/6854
     for (tree.parts.slice()) |part| {
         for (part.stmts) |stmt| {
+            if (stmt.data != .s_directive) continue;
+            try printer.printStmt(stmt, PrinterType.TopLevel.init(.yes));
+            if (printer.writer.getError()) {} else |err| {
+                return err;
+            }
+            printer.printSemicolonIfNeeded();
+        }
+    }
+
+    for (tree.parts.slice()) |part| {
+        for (part.stmts) |stmt| {
+            if (stmt.data == .s_directive) continue;
             try printer.printStmt(stmt, PrinterType.TopLevel.init(.yes));
             if (printer.writer.getError()) {} else |err| {
                 return err;

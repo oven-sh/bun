@@ -13,12 +13,17 @@ test.skipIf(isWindows)("command name ending in digit followed by redirect is not
   });
 
   // Make script1 executable
-  await $`chmod +x ${dir}/script1`.quiet();
+  const chmodRes = await $`chmod +x ${dir}/script1`.quiet();
+  expect(chmodRes.exitCode).toBe(0);
 
   // ./script1<input.txt — the "1" must stay part of the command name
   const result = await $`cd ${dir} && ./script1<input.txt`.quiet();
   expect(result.text()).toBe("Hello from script1\n");
   expect(result.exitCode).toBe(0);
+
+  // Redirect from a missing file should fail (the command name must still be correct)
+  const bad = await $`cd ${dir} && ./script1<missing.txt`.quiet().nothrow();
+  expect(bad.exitCode).not.toBe(0);
 });
 
 test.skipIf(isWindows)("command name ending in '2' followed by redirect is not treated as fd redirect", async () => {
@@ -27,7 +32,8 @@ test.skipIf(isWindows)("command name ending in '2' followed by redirect is not t
     "input.txt": "some input",
   });
 
-  await $`chmod +x ${dir}/script2`.quiet();
+  const chmodRes = await $`chmod +x ${dir}/script2`.quiet();
+  expect(chmodRes.exitCode).toBe(0);
 
   const result = await $`cd ${dir} && ./script2<input.txt`.quiet();
   expect(result.text()).toBe("Hello from script2\n");

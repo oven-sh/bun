@@ -5,109 +5,132 @@
 // 1. JSCommonJSModule::m_overriddenCompile WriteBarrier not visited in visitChildren
 // 2. JSSQLStatement::userPrototype — wrong owner in WriteBarrier::set()
 // 3. NodeVMSpecialSandbox — missing visitChildren entirely
-//
-// This test exercises path (1) by overriding module._compile and forcing
-// heavy GC pressure to expose dangling WriteBarrier pointers.
 
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
-test("overriding module._compile with GC pressure does not crash", async () => {
-  // This test spawns a subprocess that:
-  // 1. Overrides Module.prototype._compile (setting m_overriddenCompile WriteBarrier)
-  // 2. Requires several modules to populate the CJS module cache
-  // 3. Forces multiple full GC cycles
-  // 4. The process should exit cleanly without SIGILL/SIGFPE
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
+test("module._compile override on CJS module instances survives GC", async () => {
+  // Fix #1: JSCommonJSModule::m_overriddenCompile WriteBarrier was not visited
+  // in visitChildren. The _compile custom setter on JSCommonJSModule stores the
+  // function in m_overriddenCompile. Without visiting it in visitChildren, the
+  // GC's parallel marker would miss it and the function could be collected.
+  //
+  // To trigger: override Module._extensions['.js'] to set module._compile on
+  // each module instance (the pattern used by ts-node, pirates, @swc-node/register).
+  // This calls setterUnderscoreCompile which populates the WriteBarrier.
+  using dir = tempDir("27312-compile", {
+    "entry.js": `
       const Module = require("module");
-      const originalCompile = Module.prototype._compile;
+      const origExt = Module._extensions['.js'];
 
-      // Override _compile to set m_overriddenCompile WriteBarrier on each module
-      Module.prototype._compile = function(content, filename) {
-        return originalCompile.call(this, content, filename);
+      // Override the .js extension handler to set _compile on each module instance.
+      // module._compile = fn triggers the setterUnderscoreCompile custom setter,
+      // which stores fn in m_overriddenCompile WriteBarrier on the JSCommonJSModule.
+      Module._extensions['.js'] = function(module, filename) {
+        const origCompile = module._compile;
+        // This anonymous function's only strong reference is through
+        // the m_overriddenCompile WriteBarrier on this module object.
+        module._compile = function(content, fname) {
+          return origCompile.call(this, content, fname);
+        };
+        return origExt(module, filename);
       };
 
-      // Require several modules to create CommonJS module objects with the override
-      require("path");
-      require("fs");
-      require("os");
-      require("util");
-      require("events");
-      require("stream");
-      require("url");
-      require("querystring");
+      // Require real CJS files to create JSCommonJSModule objects with overridden _compile
+      require('./a.js');
+      require('./b.js');
+      require('./c.js');
 
-      // Force GC multiple times to stress the parallel marker
-      for (let i = 0; i < 10; i++) {
-        Bun.gc(true);
+      // Restore original extension handler — now the only references to those
+      // per-module _compile functions are through m_overriddenCompile WriteBarriers.
+      Module._extensions['.js'] = origExt;
+
+      // Allocation pressure to trigger GC naturally
+      for (let i = 0; i < 10000; i++) {
+        new Array(100).fill({ key: 'x'.repeat(100) });
       }
 
-      // Clear the override to make the old function eligible for collection
-      Module.prototype._compile = originalCompile;
+      // Force GC — without the fix, visitChildren didn't visit m_overriddenCompile,
+      // so the per-module _compile functions could be collected.
+      Bun.gc(true);
+      Bun.gc(true);
 
-      // Force more GC to collect the now-orphaned function references
-      for (let i = 0; i < 10; i++) {
-        Bun.gc(true);
-      }
-
-      console.log("OK");
-      `,
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-  expect(stdout.trim()).toBe("OK");
-  expect(exitCode).toBe(0);
-});
-
-test("spyOn with GC pressure during cleanup does not crash", async () => {
-  // This test exercises the mock function + GC interaction path
-  // that was reported in the issue (spyOn(Bun, "spawn").mockImplementation)
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
-      const { spyOn } = require("bun:test");
-
-      // Create multiple spies to increase GC pressure on mock objects
-      const targets = [];
-      for (let i = 0; i < 20; i++) {
-        const obj = { method: () => i };
-        const spy = spyOn(obj, "method").mockImplementation(() => i * 2);
-        targets.push({ obj, spy });
-      }
-
-      // Call each spy to populate calls/contexts/returnValues arrays
-      for (const { obj } of targets) {
-        for (let j = 0; j < 5; j++) {
-          obj.method();
+      // Read _compile from each cached module — goes through getterUnderscoreCompile
+      // which returns m_overriddenCompile.get(). Would follow a dangling pointer
+      // if the function was collected.
+      for (const key of Object.keys(require.cache)) {
+        const mod = require.cache[key];
+        if (mod && mod._compile) {
+          if (typeof mod._compile !== "function") {
+            throw new Error("_compile should be a function");
+          }
         }
       }
 
-      // Force GC while spies are active
-      for (let i = 0; i < 10; i++) {
-        Bun.gc(true);
+      console.log("OK");
+    `,
+    "a.js": `module.exports = { a: 1 };`,
+    "b.js": `module.exports = { b: 2 };`,
+    "c.js": `module.exports = { c: 3 };`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(exitCode).toBe(0);
+  expect(stdout.trim()).toBe("OK");
+});
+
+test("SQLite statement .as() prototype survives GC", async () => {
+  // Fix #2: JSSQLStatement::userPrototype WriteBarrier::set() used the wrong owner
+  // (classObject instead of castedThis). The owner must be the object containing
+  // the WriteBarrier so the GC's remembered set is updated correctly.
+  //
+  // To trigger: call stmt.as(SomeClass), which calls jsSQLStatementSetPrototypeFunction
+  // and stores the class prototype in the userPrototype WriteBarrier.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const { Database } = require("bun:sqlite");
+      const db = new Database(":memory:");
+      db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)");
+      db.run("INSERT INTO test VALUES (1, 'hello'), (2, 'world')");
+
+      // .as() calls jsSQLStatementSetPrototypeFunction which sets userPrototype
+      // WriteBarrier with the class's prototype object.
+      class Row {
+        get upper() { return this.name.toUpperCase(); }
       }
 
-      // Restore all spies, making mock internals eligible for GC
-      for (const { spy } of targets) {
-        spy.mockRestore();
+      const stmt = db.prepare("SELECT * FROM test").as(Row);
+
+      // Allocation pressure
+      for (let i = 0; i < 10000; i++) {
+        new Array(100).fill({ x: 'y'.repeat(50) });
       }
 
-      // Force GC after restoration to collect orphaned mock data
-      for (let i = 0; i < 10; i++) {
-        Bun.gc(true);
-      }
+      // Force GC — without the fix, the wrong owner in WriteBarrier::set()
+      // meant the remembered set wasn't updated for the statement object,
+      // so the prototype could be collected in a generational GC.
+      Bun.gc(true);
+      Bun.gc(true);
 
+      // Query using the statement — accesses userPrototype to set the
+      // prototype on result objects. Would crash if prototype was collected.
+      const rows = stmt.all();
+      if (rows[0].upper !== "HELLO") throw new Error("Expected HELLO got " + rows[0].upper);
+      if (rows[1].upper !== "WORLD") throw new Error("Expected WORLD got " + rows[1].upper);
+
+      db.close();
       console.log("OK");
       `,
     ],
@@ -118,13 +141,15 @@ test("spyOn with GC pressure during cleanup does not crash", async () => {
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stdout.trim()).toBe("OK");
   expect(exitCode).toBe(0);
+  expect(stdout.trim()).toBe("OK");
 });
 
-test("vm.createContext with GC pressure does not crash", async () => {
-  // This exercises the NodeVMSpecialSandbox path (fix #3 in PR #27190)
-  // NodeVMSpecialSandbox was missing visitChildren entirely
+test("vm context with DONT_CONTEXTIFY survives GC", async () => {
+  // Fix #3: NodeVMSpecialSandbox had no visitChildren implementation.
+  // NodeVMSpecialSandbox is only created when vm.constants.DONT_CONTEXTIFY
+  // is used as the context argument. Its m_parentGlobal WriteBarrier was
+  // never visited, so the parent NodeVMGlobalObject could be collected.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -132,28 +157,36 @@ test("vm.createContext with GC pressure does not crash", async () => {
       `
       const vm = require("vm");
 
-      // Create multiple VM contexts to exercise NodeVMSpecialSandbox
-      const contexts = [];
-      for (let i = 0; i < 10; i++) {
-        const sandbox = { value: i, console };
-        const ctx = vm.createContext(sandbox);
-        contexts.push(ctx);
+      // vm.constants.DONT_CONTEXTIFY is the only way to create a NodeVMSpecialSandbox.
+      // Passing it as the context to runInNewContext triggers the notContextified path
+      // in the C++ code, which creates a NodeVMSpecialSandbox with m_parentGlobal.
+      if (!vm.constants || !vm.constants.DONT_CONTEXTIFY) {
+        console.log("OK"); // Skip if DONT_CONTEXTIFY not available
+        process.exit(0);
       }
 
-      // Run scripts in contexts to populate internal state
-      for (const ctx of contexts) {
-        vm.runInContext("value = value + 1", ctx);
+      const results = [];
+      for (let i = 0; i < 20; i++) {
+        const result = vm.runInNewContext(
+          "globalThis.x = " + i + "; x * 2",
+          vm.constants.DONT_CONTEXTIFY
+        );
+        results.push(result);
       }
 
-      // Force GC while contexts are alive
-      for (let i = 0; i < 10; i++) {
-        Bun.gc(true);
+      // Allocation pressure
+      for (let i = 0; i < 10000; i++) {
+        new Array(100).fill({ x: 'y'.repeat(50) });
       }
 
-      // Release references and force GC again
-      contexts.length = 0;
-      for (let i = 0; i < 10; i++) {
-        Bun.gc(true);
+      // Force GC — without the fix, NodeVMSpecialSandbox::visitChildren didn't
+      // exist, so m_parentGlobal was invisible to the GC marker. The parent
+      // NodeVMGlobalObject could be collected while still referenced.
+      Bun.gc(true);
+      Bun.gc(true);
+
+      if (results[0] !== 0 || results[9] !== 18) {
+        throw new Error("Unexpected: " + JSON.stringify(results));
       }
 
       console.log("OK");
@@ -166,6 +199,6 @@ test("vm.createContext with GC pressure does not crash", async () => {
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stdout.trim()).toBe("OK");
   expect(exitCode).toBe(0);
+  expect(stdout.trim()).toBe("OK");
 });

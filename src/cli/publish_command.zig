@@ -15,6 +15,9 @@ pub const PublishCommand = struct {
 
             normalized_pkg_info: string,
 
+            /// Sigstore bundle JSON (set when --provenance is used, for attachment to publish request)
+            sigstore_bundle: ?string = null,
+
             publish_script: if (directory_publish) ?[]const u8 else void = if (directory_publish) null,
             postpublish_script: if (directory_publish) ?[]const u8 else void = if (directory_publish) null,
             script_env: if (directory_publish) *DotEnv.Loader else void,
@@ -304,8 +307,26 @@ pub const PublishCommand = struct {
         };
         defer ctx.allocator.free(original_cwd);
 
+        // Initialize provenance context early to fail fast if --provenance is used
+        // outside a supported CI environment.
+        const provenance_ctx: ?Provenance.ProvenanceContext = if (manager.options.publish_config.provenance) blk: {
+            break :blk Provenance.init(ctx.allocator) catch |err| {
+                Provenance.printError(err);
+                Global.crash();
+            };
+        } else null;
+
+        if (provenance_ctx) |pctx| {
+            Output.prettyln("<b><blue>Provenance<r>: {s}", .{
+                switch (pctx.ci) {
+                    .github_actions => "GitHub Actions",
+                    .gitlab_ci => "GitLab CI",
+                },
+            });
+        }
+
         if (cli.positionals.len > 1) {
-            const context = Context(false).fromTarballPath(ctx, manager, cli.positionals[1]) catch |err| {
+            var context = Context(false).fromTarballPath(ctx, manager, cli.positionals[1]) catch |err| {
                 switch (err) {
                     error.OutOfMemory => bun.outOfMemory(),
                     error.MissingPackageName => {
@@ -334,6 +355,41 @@ pub const PublishCommand = struct {
                 Global.crash();
             };
 
+            // Build and sign provenance if requested
+            const signing_result = if (provenance_ctx) |*pctx| blk: {
+                const statement = Provenance.buildProvenanceStatement(pctx, .{
+                    .package_name = context.package_name,
+                    .package_version = context.package_version,
+                    .sha512_hex = &std.fmt.bytesToHex(context.integrity, .lower),
+                }) catch |err| {
+                    switch (err) {
+                        error.OutOfMemory => bun.outOfMemory(),
+                    }
+                };
+
+                if (!manager.options.dry_run) {
+                    break :blk Provenance.signProvenance(ctx.allocator, pctx.oidc_token, statement) catch |err| {
+                        Provenance.printSigningError(err);
+                        Global.crash();
+                    };
+                } else {
+                    break :blk @as(?Provenance.SigningResult, null);
+                }
+            } else null;
+
+            // Submit to Rekor transparency log and assemble Sigstore bundle
+            if (signing_result) |sr| {
+                const rekor_entry = Provenance.submitToRekor(ctx.allocator, sr) catch |err| {
+                    Provenance.printRekorError(err);
+                    Global.crash();
+                };
+                context.sigstore_bundle = Provenance.buildSigstoreBundle(ctx.allocator, sr, rekor_entry) catch |err| {
+                    switch (err) {
+                        error.OutOfMemory => bun.outOfMemory(),
+                    }
+                };
+            }
+
             publish(false, &context) catch |err| {
                 switch (err) {
                     error.OutOfMemory => bun.outOfMemory(),
@@ -353,7 +409,7 @@ pub const PublishCommand = struct {
             return;
         }
 
-        const context = Context(true).fromWorkspace(ctx, manager) catch |err| {
+        var context = Context(true).fromWorkspace(ctx, manager) catch |err| {
             switch (err) {
                 error.OutOfMemory => bun.outOfMemory(),
                 error.MissingPackageName => {
@@ -380,6 +436,41 @@ pub const PublishCommand = struct {
 
         // TODO: read this into memory
         _ = bun.sys.unlink(context.abs_tarball_path);
+
+        // Build and sign provenance if requested
+        const signing_result = if (provenance_ctx) |*pctx| blk: {
+            const statement = Provenance.buildProvenanceStatement(pctx, .{
+                .package_name = context.package_name,
+                .package_version = context.package_version,
+                .sha512_hex = &std.fmt.bytesToHex(context.integrity, .lower),
+            }) catch |err| {
+                switch (err) {
+                    error.OutOfMemory => bun.outOfMemory(),
+                }
+            };
+
+            if (!manager.options.dry_run) {
+                break :blk Provenance.signProvenance(ctx.allocator, pctx.oidc_token, statement) catch |err| {
+                    Provenance.printSigningError(err);
+                    Global.crash();
+                };
+            } else {
+                break :blk @as(?Provenance.SigningResult, null);
+            }
+        } else null;
+
+        // Submit to Rekor transparency log and assemble Sigstore bundle
+        if (signing_result) |sr| {
+            const rekor_entry = Provenance.submitToRekor(ctx.allocator, sr) catch |err| {
+                Provenance.printRekorError(err);
+                Global.crash();
+            };
+            context.sigstore_bundle = Provenance.buildSigstoreBundle(ctx.allocator, sr, rekor_entry) catch |err| {
+                switch (err) {
+                    error.OutOfMemory => bun.outOfMemory(),
+                }
+            };
+        }
 
         publish(true, &context) catch |err| {
             switch (err) {
@@ -1416,9 +1507,24 @@ pub const PublishCommand = struct {
             const count = bun.simdutf.base64.encode(ctx.tarball_bytes, buf.items[buf.items.len - encoded_tarball_len ..], false);
             bun.assertWithLocation(count == encoded_tarball_len, @src());
 
-            try writer.print("\",\"length\":{d}}}}}}}", .{
+            // Close tarball attachment object
+            try writer.print("\",\"length\":{d}}}", .{
                 ctx.tarball_bytes.len,
             });
+
+            // Sigstore bundle attachment (when --provenance is used)
+            if (ctx.sigstore_bundle) |bundle| {
+                try writer.print(",\"{s}-{s}.sigstore\":{{\"content_type\":\"application/vnd.dev.sigstore.bundle.v0.3+json\",\"data\":", .{
+                    ctx.package_name,
+                    version_without_build_tag,
+                });
+                // The data field contains the bundle JSON as a string value
+                try Provenance.writeJsonString(writer, bundle);
+                try writer.print(",\"length\":{d}}}", .{bundle.len});
+            }
+
+            // Close _attachments and root
+            try writer.writeAll("}}");
         }
 
         return buf.items;
@@ -1454,6 +1560,7 @@ const G = bun.ast.G;
 
 const Command = bun.cli.Command;
 const Pack = bun.cli.PackCommand;
+const Provenance = bun.cli.Provenance;
 const Run = bun.cli.RunCommand;
 const prompt = bun.cli.InitCommand.prompt;
 

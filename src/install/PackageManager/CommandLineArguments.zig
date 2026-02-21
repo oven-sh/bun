@@ -162,6 +162,7 @@ const publish_params: []const ParamType = &(shared_params ++ [_]ParamType{
     clap.parseParam("--auth-type <STR>                      Specify the type of one-time password authentication (default is 'web')") catch unreachable,
     clap.parseParam("--gzip-level <STR>                     Specify a custom compression level for gzip. Default is 9.") catch unreachable,
     clap.parseParam("--tolerate-republish                   Don't exit with code 1 when republishing over an existing version number") catch unreachable,
+    clap.parseParam("--provenance                           Generate and publish provenance statement") catch unreachable,
 });
 
 const why_params: []const ParamType = &(shared_params ++ [_]ParamType{
@@ -620,6 +621,9 @@ pub fn printHelp(subcommand: Subcommand) void {
                 \\  <d>Publish without failing when republishing over an existing version.<r>
                 \\  <b><green>bun publish<r> <cyan>--tolerate-republish<r>
                 \\
+                \\  <d>Publish with provenance from a supported CI environment.<r>
+                \\  <b><green>bun publish<r> <cyan>--provenance<r>
+                \\
                 \\Full documentation is available at <magenta>https://bun.com/docs/cli/publish<r>.
                 \\
             ;
@@ -922,6 +926,7 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
         }
 
         cli.tolerate_republish = args.flag("--tolerate-republish");
+        cli.publish_config.provenance = args.flag("--provenance");
     }
 
     // link and unlink default to not saving, all others default to

@@ -85,6 +85,7 @@ console.log();
 let instructionFailures = 0;
 let otherFailures = 0;
 let passed = 0;
+const failedTests: string[] = [];
 
 async function runTest(label: string, binaryArgs: string[], cwd?: string): Promise<boolean> {
   console.log(`+++ ${label}`);
@@ -124,6 +125,7 @@ async function runTest(label: string, binaryArgs: string[], cwd?: string): Promi
       console.log("    AVX, AVX2, and AVX512 instructions are not allowed.");
     }
     instructionFailures++;
+    failedTests.push(label);
   } else {
     if (output.trim()) console.log(output.trim());
     console.log(`    WARN: exit code ${exitCode} (${elapsed}s, not a CPU instruction issue)`);
@@ -176,6 +178,21 @@ console.log();
 
 if (instructionFailures > 0) {
   console.error("    FAILED: Code uses unsupported CPU instructions.");
+
+  // Report to Buildkite annotations tab
+  const platform = isWindows ? "Windows x64" : isAarch64 ? "Linux aarch64" : "Linux x64";
+  const annotation = [
+    `<details>`,
+    `<summary>CPU instruction violation on ${platform} — ${instructionFailures} failed</summary>`,
+    `<p>The baseline build uses instructions not available on <code>${config.cpuDesc}</code>.</p>`,
+    `<ul>${failedTests.map(t => `<li><code>${t}</code></li>`).join("")}</ul>`,
+    `</details>`,
+  ].join("\n");
+
+  Bun.spawnSync(["buildkite-agent", "annotate", "--append", "--style", "error", "--context", "verify-baseline"], {
+    stdin: new Blob([annotation]),
+  });
+
   process.exit(1);
 }
 

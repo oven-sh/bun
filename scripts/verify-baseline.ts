@@ -19,6 +19,7 @@ const { values } = parseArgs({
   options: {
     binary: { type: "string" },
     emulator: { type: "string" },
+    "jit-stress": { type: "boolean", default: false },
   },
   strict: true,
 });
@@ -134,38 +135,39 @@ async function runTest(label: string, binaryArgs: string[], cwd?: string): Promi
   return false;
 }
 
-// Phase 1: Basic binary verification
-console.log("--- Basic binary verification");
-const versionOk = await runTest("bun --version", ["--version"]);
-if (!versionOk && instructionFailures > 0) {
-  console.error("Binary immediately fails on baseline CPU. Aborting.");
-  process.exit(1);
-}
-await runTest("bun -e eval", ["-e", "console.log(JSON.stringify({ok:1+1}))"]);
+// Phase 1: SIMD code path verification (always runs)
+const simdTestPath = join(repoRoot, "test", "js", "bun", "jsc-stress", "fixtures", "simd-baseline.test.ts");
+console.log("--- SIMD baseline tests");
+await runTest("SIMD baseline tests", ["test", simdTestPath]);
 
-// Phase 2: JIT stress fixtures
-const jsFixtures = readdirSync(fixturesDir)
-  .filter(f => f.endsWith(".js"))
-  .sort();
-console.log();
-console.log(`--- JS fixtures (DFG/FTL) — ${jsFixtures.length} tests`);
-for (let i = 0; i < jsFixtures.length; i++) {
-  const fixture = jsFixtures[i];
-  await runTest(`[${i + 1}/${jsFixtures.length}] ${fixture}`, ["--preload", preloadPath, join(fixturesDir, fixture)]);
-}
+// Phase 2: JIT stress fixtures (only with --jit-stress, e.g. on WebKit changes)
+if (values["jit-stress"]) {
+  const jsFixtures = readdirSync(fixturesDir)
+    .filter(f => f.endsWith(".js"))
+    .sort();
+  console.log();
+  console.log(`--- JS fixtures (DFG/FTL) — ${jsFixtures.length} tests`);
+  for (let i = 0; i < jsFixtures.length; i++) {
+    const fixture = jsFixtures[i];
+    await runTest(`[${i + 1}/${jsFixtures.length}] ${fixture}`, ["--preload", preloadPath, join(fixturesDir, fixture)]);
+  }
 
-const wasmFixtures = readdirSync(wasmFixturesDir)
-  .filter(f => f.endsWith(".js"))
-  .sort();
-console.log();
-console.log(`--- Wasm fixtures (BBQ/OMG) — ${wasmFixtures.length} tests`);
-for (let i = 0; i < wasmFixtures.length; i++) {
-  const fixture = wasmFixtures[i];
-  await runTest(
-    `[${i + 1}/${wasmFixtures.length}] ${fixture}`,
-    ["--preload", preloadPath, join(wasmFixturesDir, fixture)],
-    wasmFixturesDir,
-  );
+  const wasmFixtures = readdirSync(wasmFixturesDir)
+    .filter(f => f.endsWith(".js"))
+    .sort();
+  console.log();
+  console.log(`--- Wasm fixtures (BBQ/OMG) — ${wasmFixtures.length} tests`);
+  for (let i = 0; i < wasmFixtures.length; i++) {
+    const fixture = wasmFixtures[i];
+    await runTest(
+      `[${i + 1}/${wasmFixtures.length}] ${fixture}`,
+      ["--preload", preloadPath, join(wasmFixturesDir, fixture)],
+      wasmFixturesDir,
+    );
+  }
+} else {
+  console.log();
+  console.log("--- Skipping JIT stress fixtures (pass --jit-stress to enable)");
 }
 
 // Summary

@@ -619,11 +619,22 @@ const SDE_URL = `https://downloadmirror.intel.com/859732/sde-external-${SDE_VERS
  * @param {PipelineOptions} options
  * @returns {Step}
  */
+function hasWebKitChanges(options) {
+  const { changedFiles = [] } = options;
+  return changedFiles.some(file => file.includes("SetupWebKit.cmake"));
+}
+
+/**
+ * @param {Platform} platform
+ * @param {PipelineOptions} options
+ * @returns {Step}
+ */
 function getVerifyBaselineStep(platform, options) {
   const { os } = platform;
   const targetKey = getTargetKey(platform);
   const triplet = getTargetTriplet(platform);
   const emulator = getEmulatorBinary(platform);
+  const jitStressFlag = hasWebKitChanges(options) ? " --jit-stress" : "";
 
   const setupCommands =
     os === "windows"
@@ -652,10 +663,10 @@ function getVerifyBaselineStep(platform, options) {
     agents: getLinkBunAgent(platform, options),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
-    timeout_in_minutes: 30,
+    timeout_in_minutes: hasWebKitChanges(options) ? 30 : 10,
     command: [
       ...setupCommands,
-      `bun scripts/verify-baseline.ts --binary ${triplet}/${os === "windows" ? "bun.exe" : "bun"} --emulator ${emulator}`,
+      `bun scripts/verify-baseline.ts --binary ${triplet}/${os === "windows" ? "bun.exe" : "bun"} --emulator ${emulator}${jitStressFlag}`,
     ],
   };
 }

@@ -674,7 +674,7 @@ pub const PathLike = union(enum) {
                 try Valid.pathBuffer(buffer, ctx);
                 try Valid.pathNullBytes(buffer.slice(), ctx);
 
-                arguments.protectEat();
+                arguments.eat();
                 return .{ .buffer = buffer };
             },
 
@@ -683,7 +683,7 @@ pub const PathLike = union(enum) {
                 try Valid.pathBuffer(buffer, ctx);
                 try Valid.pathNullBytes(buffer.slice(), ctx);
 
-                arguments.protectEat();
+                arguments.eat();
                 return .{ .buffer = buffer };
             },
 

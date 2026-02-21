@@ -144,9 +144,14 @@ static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES functionFuzzilli(JSC::JSGlob
             WTF::String output = arg1.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
 
-            FILE* f = fdopen(REPRL_DWFD, "w");
-            fprintf(f, "%s\n", output.utf8().data());
-            fflush(f);
+            static FILE* f = nullptr;
+            if (!f) {
+                f = fdopen(REPRL_DWFD, "w");
+            }
+            if (f) {
+                fprintf(f, "%s\n", output.utf8().data());
+                fflush(f);
+            }
         }
     }
 

@@ -1134,6 +1134,12 @@ extern "C" void Bun__onSignalForJS(int signalNumber, Zig::GlobalObject* globalOb
     // terminal death are silently swallowed, causing orphaned processes.
     if (process->wrapped().listenerCount(signalNameIdentifier) == 0) {
 #if !OS(WINDOWS)
+        // Node.js ignores SIGPIPE and SIGXFSZ by default (they should never
+        // terminate the process). Match that behavior here.
+        if (signalNumber == SIGPIPE || signalNumber == SIGXFSZ) {
+            return;
+        }
+
         struct sigaction sa;
         memset(&sa, 0, sizeof(sa));
         sa.sa_handler = SIG_DFL;
@@ -1141,6 +1147,9 @@ extern "C" void Bun__onSignalForJS(int signalNumber, Zig::GlobalObject* globalOb
         sigaction(signalNumber, &sa, nullptr);
         raise(signalNumber);
 #endif
+        // On Windows, signals with no listeners are a no-op (same as before).
+        // Windows signal handling uses uv_signal_t which doesn't have the
+        // orphaned-process problem that POSIX signals cause.
         return;
     }
 

@@ -382,8 +382,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_transcode,
 
     JSC::JSUint8Array* resultBuffer = nullptr;
 
-    // Same encoding → copy
-    if (from == to) {
+    // Same encoding → copy (except ASCII which needs 0x7F masking)
+    if (from == to && from != TranscodeEncoding::ASCII) {
         resultBuffer = WebCore::createBuffer(globalObject, reinterpret_cast<const uint8_t*>(sourceData), sourceLength);
         RETURN_IF_EXCEPTION(scope, {});
         return JSValue::encode(resultBuffer);
@@ -398,6 +398,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_transcode,
         const char* maskedData = masked.data();
 
         switch (to) {
+        case TranscodeEncoding::ASCII: {
+            resultBuffer = WebCore::createBuffer(globalObject, reinterpret_cast<const uint8_t*>(maskedData), sourceLength);
+            break;
+        }
         case TranscodeEncoding::UCS2: {
             auto* result = WebCore::createUninitializedBuffer(globalObject, sourceLength * 2);
             if (!result) {
@@ -418,8 +422,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_transcode,
             resultBuffer = WebCore::createBuffer(globalObject, reinterpret_cast<const uint8_t*>(maskedData), sourceLength);
             break;
         }
-        default:
-            break;
         }
         break;
     }

@@ -2639,16 +2639,18 @@ fn getContentType(headers: ?*WebCore.FetchHeaders, blob: *const WebCore.Blob.Any
             }
         }
 
-        break :brk if (blob.contentType().len > 0)
+        break :brk if (blob.hasContentTypeFromUser())
             MimeType.byName(blob.contentType())
         else if (MimeType.sniff(blob.slice())) |content|
             content
         else if (blob.wasString())
             MimeType.text
-                // TODO: should we get the mime type off of the Blob.Store if it exists?
-                // A little wary of doing this right now due to causing some breaking change
-        else
-            MimeType.other;
+        else {
+            // Per the Fetch spec, BufferSource bodies (ArrayBuffer, TypedArray, DataView)
+            // should not have a default Content-Type header set.
+            needs_content_type = false;
+            break :brk MimeType.other;
+        };
     };
 
     return .{ content_type, needs_content_type, content_type_needs_free };

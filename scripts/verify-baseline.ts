@@ -88,22 +88,36 @@ let otherFailures = 0;
 let passed = 0;
 const failedTests: string[] = [];
 
-async function runTest(label: string, binaryArgs: string[], cwd?: string): Promise<boolean> {
+interface RunTestOptions {
+  cwd?: string;
+  /** Stream output live to the console instead of buffering */
+  inherit?: boolean;
+}
+
+async function runTest(label: string, binaryArgs: string[], options?: RunTestOptions): Promise<boolean> {
   console.log(`+++ ${label}`);
 
   const start = performance.now();
+  const inherit = options?.inherit ?? false;
   const proc = Bun.spawn([...config.runnerCmd, binary, ...binaryArgs], {
-    cwd: cwd ?? config.cwd,
-    stdout: "pipe",
-    stderr: "pipe",
+    cwd: options?.cwd ?? config.cwd,
+    stdout: inherit ? "inherit" : "pipe",
+    stderr: inherit ? "inherit" : "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited,
-  ]);
+  let stdout = "";
+  let stderr = "";
+  if (inherit) {
+    await proc.exited;
+  } else {
+    [stdout, stderr] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+  }
 
+  const exitCode = proc.exitCode!;
   const elapsed = ((performance.now() - start) / 1000).toFixed(1);
   const output = stdout + "\n" + stderr;
 
@@ -138,7 +152,7 @@ async function runTest(label: string, binaryArgs: string[], cwd?: string): Promi
 // Phase 1: SIMD code path verification (always runs)
 const simdTestPath = join(repoRoot, "test", "js", "bun", "jsc-stress", "fixtures", "simd-baseline.test.ts");
 console.log("--- SIMD baseline tests");
-await runTest("SIMD baseline tests", ["test", simdTestPath]);
+await runTest("SIMD baseline tests", ["test", simdTestPath], { inherit: true });
 
 // Phase 2: JIT stress fixtures (only with --jit-stress, e.g. on WebKit changes)
 if (values["jit-stress"]) {
@@ -162,7 +176,7 @@ if (values["jit-stress"]) {
     await runTest(
       `[${i + 1}/${wasmFixtures.length}] ${fixture}`,
       ["--preload", preloadPath, join(wasmFixturesDir, fixture)],
-      wasmFixturesDir,
+      { cwd: wasmFixturesDir },
     );
   }
 } else {

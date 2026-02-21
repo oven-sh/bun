@@ -166,6 +166,22 @@ function onSignalAbort() {
   this[kAbortController]?.abort();
 }
 
+// Shared no-op function — avoids creating per-instance closures
+function noop() {}
+
+function emitErrorNT(self, err) {
+  self.emit("error", err);
+}
+
+function emitLookupError(self, message, name, code, syscall) {
+  const error = new Error(message);
+  error.name = name;
+  error.code = code;
+  error.syscall = syscall;
+  if (!!$debug) globalReportError(error);
+  process.nextTick(emitErrorNT, self, error);
+}
+
 const MAX_FAKE_BACKPRESSURE_SIZE = 1024 * 1024;
 
 function ClientRequest(input, options, cb) {
@@ -176,9 +192,9 @@ function ClientRequest(input, options, cb) {
   // Initialize state that was previously closure variables
   this[kFetching] = false;
   this[kWriteCount] = 0;
-  this[kResolveNextChunk] = _end => {};
-  this[kHandleResponse] = () => {};
-  this[kOnEnd] = () => {};
+  this[kResolveNextChunk] = noop;
+  this[kHandleResponse] = noop;
+  this[kOnEnd] = noop;
 
   if (typeof input === "string") {
     const urlStr = input;
@@ -690,23 +706,14 @@ const ClientRequestPrototype = {
       options.lookup(host, { all: true }, (err, results) => {
         if (err) {
           if (!!$debug) globalReportError(err);
-          process.nextTick((s, e) => s.emit("error", e), self, err);
+          process.nextTick(emitErrorNT, self, err);
           return;
         }
 
         let candidates = results.sort((a, b) => b.family - a.family); // prefer IPv6
 
-        const fail = (message, name, code, syscall) => {
-          const error = new Error(message);
-          error.name = name;
-          error.code = code;
-          error.syscall = syscall;
-          if (!!$debug) globalReportError(error);
-          process.nextTick((s, e) => s.emit("error", e), self, error);
-        };
-
         if (candidates.length === 0) {
-          fail("No records found", "DNSException", "ENOTFOUND", "getaddrinfo");
+          emitLookupError(self, "No records found", "DNSException", "ENOTFOUND", "getaddrinfo");
           return;
         }
 
@@ -723,7 +730,7 @@ const ClientRequestPrototype = {
         const iterate = () => {
           if (candidates.length === 0) {
             // If we get to this point, it means that none of the addresses could be connected to.
-            fail(`connect ECONNREFUSED ${host}:${port}`, "Error", "ECONNREFUSED", "connect");
+            emitLookupError(self, `connect ECONNREFUSED ${host}:${port}`, "Error", "ECONNREFUSED", "connect");
             return;
           }
 
@@ -737,7 +744,7 @@ const ClientRequestPrototype = {
       return true;
     } catch (err) {
       if (!!$debug) globalReportError(err);
-      process.nextTick((s, e) => s.emit("error", e), this, err);
+      process.nextTick(emitErrorNT, this, err);
       return false;
     }
   },

@@ -2480,6 +2480,7 @@ pub const LinkerContext = struct {
                     c.graph.symbols.get(import_ref).?.namespace_alias = js_ast.G.NamespaceAlias{
                         .namespace_ref = result.namespace_ref,
                         .alias = result.alias,
+                        .import_record_index = named_import.import_record_index,
                     };
                 },
                 .normal_and_namespace => {
@@ -2498,6 +2499,7 @@ pub const LinkerContext = struct {
                     c.graph.symbols.get(import_ref).?.namespace_alias = js_ast.G.NamespaceAlias{
                         .namespace_ref = result.namespace_ref,
                         .alias = result.alias,
+                        .import_record_index = named_import.import_record_index,
                     };
                 },
                 .cycle => {

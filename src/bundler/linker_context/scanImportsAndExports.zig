@@ -659,6 +659,10 @@ pub fn scanImportsAndExports(this: *LinkerContext) ScanImportsAndExportsError!vo
                     if (!record.source_index.isValid() or this.isExternalDynamicImport(record, source_index)) {
                         if (output_format == .internal_bake_dev) continue;
 
+                        // The "bun" module is replaced with "globalThis.Bun" by the
+                        // printer. It doesn't need CJS interop wrapping.
+                        if (record.tag == .bun) continue;
+
                         // This is an external import. Check if it will be a "require()" call.
                         if (kind == .require or !output_format.keepES6ImportExportSyntax() or kind == .dynamic) {
                             if (record.source_index.isValid() and kind == .dynamic and ast_flags[other_id].force_cjs_to_esm) {

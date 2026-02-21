@@ -367,6 +367,10 @@ pub const Interpreter = struct {
 
         async_pids: SmolList(pid_t, 4) = SmolList(pid_t, 4).zeroes,
 
+        /// Set to true when the `exit` builtin is invoked.
+        /// Checked by Stmt and Script to halt execution of remaining statements.
+        exit_requested: bool = false,
+
         __alloc_scope: if (bun.Environment.enableAllocScopes) *bun.AllocationScope else void,
 
         const pid_t = if (bun.Environment.isPosix) std.posix.pid_t else uv.uv_pid_t;

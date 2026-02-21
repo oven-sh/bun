@@ -121,6 +121,13 @@ pub fn childDone(this: *Stmt, child: ChildPtr, exit_code: ExitCode) Yield {
     log("{d} {d}", .{ data, data2 });
     child.deinit();
     this.currently_executing = null;
+
+    // If exit was requested (via the `exit` builtin), stop executing
+    // remaining statements and propagate the exit code.
+    if (this.base.shell.exit_requested) {
+        return this.parent.childDone(this, exit_code);
+    }
+
     return this.next();
 }
 

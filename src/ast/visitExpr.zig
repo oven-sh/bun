@@ -99,7 +99,9 @@ pub fn VisitExpr(
 
                 // Handle assigning to a constant
                 if (in.assign_target != .none) {
-                    if (p.symbols.items[result.ref.innerIndex()].kind == .constant) { // TODO: silence this for runtime transpiler
+                    // Skip the const assignment check inside `with` statements because
+                    // the identifier may resolve to a property of the `with` object at runtime
+                    if (p.symbols.items[result.ref.innerIndex()].kind == .constant and !result.is_inside_with_scope) {
                         const r = js_lexer.rangeOfIdentifier(p.source, expr.loc);
                         var notes = p.allocator.alloc(logger.Data, 1) catch unreachable;
                         notes[0] = logger.Data{
@@ -107,25 +109,32 @@ pub fn VisitExpr(
                             .location = logger.Location.initOrNull(p.source, js_lexer.rangeOfIdentifier(p.source, result.declare_loc.?)),
                         };
 
-                        const is_error = p.const_values.contains(result.ref) or p.options.bundle;
-                        switch (is_error) {
-                            true => p.log.addRangeErrorFmtWithNotes(
+                        // Make this an error when bundling because we may need to convert
+                        // this "const" into a "var" during bundling. Also make this an error
+                        // when the constant is inlined because we will otherwise generate code
+                        // with a syntax error.
+                        if (p.const_values.contains(result.ref) or p.options.bundle) {
+                            p.log.addRangeErrorFmtWithNotes(
                                 p.source,
                                 r,
                                 p.allocator,
                                 notes,
                                 "Cannot assign to \"{s}\" because it is a constant",
                                 .{name},
-                            ) catch unreachable,
-
-                            false => p.log.addRangeErrorFmtWithNotes(
+                            ) catch unreachable;
+                        } else {
+                            // Per the ECMAScript specification, assignment to a const binding
+                            // is a runtime TypeError, not a syntax error. Emit a warning
+                            // instead of an error so that programs with unreachable const
+                            // assignments can still run.
+                            p.log.addRangeWarningFmtWithNotes(
                                 p.source,
                                 r,
                                 p.allocator,
                                 notes,
                                 "This assignment will throw because \"{s}\" is a constant",
                                 .{name},
-                            ) catch unreachable,
+                            ) catch unreachable;
                         }
                     } else if (p.exports_ref.eql(e_.ref)) {
                         // Assigning to `exports` in a CommonJS module must be tracked to undo the

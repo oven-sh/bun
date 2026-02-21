@@ -110,7 +110,8 @@ async function runTest(label: string, binaryArgs: string[], options?: RunTestOpt
   const start = performance.now();
   const live = options?.live ?? false;
   const proc = Bun.spawn([...config.runnerCmd, binary, ...binaryArgs], {
-    cwd: options?.cwd ?? config.cwd,
+    // config.cwd takes priority — SDE on Windows must run from its own directory for Pin DLL resolution
+    cwd: config.cwd ?? options?.cwd,
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -165,7 +166,6 @@ async function runTest(label: string, binaryArgs: string[], options?: RunTestOpt
 
 // Phase 1: SIMD code path verification (always runs)
 const simdTestPath = join(repoRoot, "test", "js", "bun", "jsc-stress", "fixtures", "simd-baseline.test.ts");
-console.log("--- SIMD baseline tests");
 await runTest("SIMD baseline tests", ["test", simdTestPath], { live: true });
 
 // Phase 2: JIT stress fixtures (only with --jit-stress, e.g. on WebKit changes)

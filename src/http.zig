@@ -465,6 +465,11 @@ pub const Flags = packed struct(u16) {
 // TODO: reduce the size of this struct
 // Many of these fields can be moved to a packed struct and use less space
 method: Method,
+/// When non-zero length, this is an arbitrary HTTP method string that is not in the
+/// standard Method enum (e.g. a custom method like "BUN" or "CHICKEN").
+/// When set, buildRequest() uses this instead of @tagName(method).
+custom_method_len: u8 = 0,
+custom_method_buf: [24]u8 = undefined,
 header_entries: Headers.Entry.List,
 header_buf: string,
 url: URL,
@@ -599,6 +604,20 @@ pub fn headerStr(this: *const HTTPClient, ptr: api.StringPointer) string {
 }
 
 pub const HeaderBuilder = @import("./http/HeaderBuilder.zig");
+
+pub fn methodName(this: *const HTTPClient) []const u8 {
+    if (this.custom_method_len > 0) {
+        return this.custom_method_buf[0..this.custom_method_len];
+    }
+    return @tagName(this.method);
+}
+
+pub fn setCustomMethod(this: *HTTPClient, method_str: []const u8) void {
+    assert(method_str.len <= this.custom_method_buf.len);
+    const len: u8 = @intCast(@min(method_str.len, this.custom_method_buf.len));
+    @memcpy(this.custom_method_buf[0..len], method_str[0..len]);
+    this.custom_method_len = len;
+}
 
 pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
     var header_count: usize = 0;
@@ -753,7 +772,7 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
     }
 
     return picohttp.Request{
-        .method = @tagName(this.method),
+        .method = this.methodName(),
         .path = this.url.pathname,
         .minor_version = 1,
         .headers = request_headers_buf[0..header_count],
@@ -2496,10 +2515,11 @@ pub fn handleResponseMetadata(
                     // - internalResponse’s status is 303 and request’s method is not `GET` or `HEAD`
                     // then:
                     if (((status_code == 301 or status_code == 302) and this.method == .POST) or
-                        (status_code == 303 and this.method != .GET and this.method != .HEAD))
+                        (status_code == 303 and (this.method != .GET or this.custom_method_len > 0) and this.method != .HEAD))
                     {
                         // - Set request’s method to `GET` and request’s body to null.
                         this.method = .GET;
+                        this.custom_method_len = 0;
 
                         // https://github.com/oven-sh/bun/issues/6053
                         if (this.header_entries.len > 0) {
@@ -2582,7 +2602,7 @@ pub fn handleResponseMetadata(
                         }
                     }
                     this.state.flags.is_redirect_pending = true;
-                    if (this.method.hasRequestBody()) {
+                    if (this.method.hasRequestBody() or this.custom_method_len > 0) {
                         this.state.flags.resend_request_body_on_redirect = true;
                     }
                 },

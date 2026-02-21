@@ -177,6 +177,41 @@ pub fn nodeHttpClient(
     return fetchImpl(true, ctx, callframe);
 }
 
+/// Validates that a string is a valid HTTP method token per RFC 9110.
+/// A token is 1*tchar, where tchar is: "!" / "#" / "$" / "%" / "&" / "'" /
+/// "*" / "+" / "-" / "." / "^" / "_" / "`" / "|" / "~" / DIGIT / ALPHA
+fn isValidHTTPToken(str: []const u8) bool {
+    if (str.len == 0) return false;
+    for (str) |c| {
+        if (!isTchar(c)) return false;
+    }
+    return true;
+}
+
+fn isTchar(c: u8) bool {
+    return switch (c) {
+        '!' => true,
+        '#' => true,
+        '$' => true,
+        '%' => true,
+        '&' => true,
+        '\'' => true,
+        '*' => true,
+        '+' => true,
+        '-' => true,
+        '.' => true,
+        '^' => true,
+        '_' => true,
+        '`' => true,
+        '|' => true,
+        '~' => true,
+        '0'...'9' => true,
+        'A'...'Z' => true,
+        'a'...'z' => true,
+        else => false,
+    };
+}
+
 /// Shared implementation of fetch
 fn fetchImpl(
     comptime allow_get_body: bool,
@@ -201,6 +236,7 @@ fn fetchImpl(
 
     var headers: ?Headers = null;
     var method = Method.GET;
+    var custom_method: []const u8 = "";
 
     var args = jsc.CallFrame.ArgumentsSlice.init(vm, arguments.slice());
 
@@ -277,6 +313,11 @@ fn fetchImpl(
             ssl_config = null;
             conf.deinit();
             bun.default_allocator.destroy(conf);
+        }
+
+        if (custom_method.len > 0) {
+            allocator.free(custom_method);
+            custom_method = "";
         }
     }
 
@@ -375,25 +416,64 @@ fn fetchImpl(
     // **Start with the harmless ones.**
 
     // "method"
-    method = extract_method: {
-        if (options_object) |options| {
-            if (try options.getTruthyComptime(globalThis, "method")) |method_| {
-                break :extract_method try Method.fromJS(globalThis, method_);
+    extract_method: {
+        const method_js: ?jsc.JSValue = brk: {
+            if (options_object) |options| {
+                if (try options.getTruthyComptime(globalThis, "method")) |method_| {
+                    break :brk method_;
+                }
+            }
+
+            if (request) |req| {
+                method = req.method;
+                break :extract_method;
+            }
+
+            if (request_init_object) |req| {
+                if (try req.getTruthyComptime(globalThis, "method")) |method_| {
+                    break :brk method_;
+                }
+            }
+
+            break :brk null;
+        };
+
+        if (method_js) |method_value| {
+            if (try Method.fromJS(globalThis, method_value)) |m| {
+                method = m;
+            } else {
+                // Unknown method — extract raw string and validate as HTTP token
+                const str = try bun.String.fromJS(method_value, globalThis);
+                defer str.deref();
+                var utf8_slice = str.toUTF8(allocator);
+                defer utf8_slice.deinit();
+                const method_str = utf8_slice.slice();
+
+                if (method_str.len == 0 or !isValidHTTPToken(method_str)) {
+                    is_error = true;
+                    const err = ctx.toTypeError(.INVALID_ARG_VALUE, "fetch() method must be a valid HTTP token", .{});
+                    return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(
+                        globalThis,
+                        err,
+                    );
+                }
+
+                if (method_str.len > 24) {
+                    is_error = true;
+                    const err = ctx.toTypeError(.INVALID_ARG_VALUE, "fetch() method is too long", .{});
+                    return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(
+                        globalThis,
+                        err,
+                    );
+                }
+
+                // Store the custom method string. Use GET as the enum fallback
+                // since the custom_method string takes precedence in the HTTP client.
+                custom_method = bun.handleOom(allocator.dupe(u8, method_str));
+                method = .GET;
             }
         }
-
-        if (request) |req| {
-            break :extract_method req.method;
-        }
-
-        if (request_init_object) |req| {
-            if (try req.getTruthyComptime(globalThis, "method")) |method_| {
-                break :extract_method try Method.fromJS(globalThis, method_);
-            }
-        }
-
-        break :extract_method null;
-    } orelse .GET;
+    }
 
     // "decompress: boolean"
     disable_decompression = extract_disable_decompression: {
@@ -1077,7 +1157,7 @@ fn fetchImpl(
         }
     }
 
-    if (!allow_get_body and !method.hasRequestBody() and body.hasBody() and !upgraded_connection) {
+    if (!allow_get_body and custom_method.len == 0 and !method.hasRequestBody() and body.hasBody() and !upgraded_connection) {
         const err = globalThis.toTypeError(.INVALID_ARG_VALUE, fetch_error_unexpected_body, .{});
         is_error = true;
         return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
@@ -1407,6 +1487,7 @@ fn fetchImpl(
             .upgraded_connection = upgraded_connection,
             .check_server_identity = if (check_server_identity.isEmptyOrUndefinedOrNull()) .empty else .create(check_server_identity, globalThis),
             .unix_socket_path = unix_socket_path,
+            .custom_method = custom_method,
         },
         // Pass the Strong value instead of creating a new one, or else we
         // will leak it

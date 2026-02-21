@@ -324,7 +324,9 @@ export function initializeNextTickQueue(
               }
             }
           } catch (e) {
-            reportUncaughtException(e);
+            if (!reportUncaughtException(e)) {
+              throw e;
+            }
           } finally {
             $putInternalField($asyncContext, 0, restore);
           }

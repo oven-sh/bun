@@ -673,7 +673,15 @@ pub fn uncaughtException(this: *jsc.VirtualMachine, globalObject: *JSGlobalObjec
     defer this.is_handling_uncaught_exception = false;
     const handled = Bun__handleUncaughtException(globalObject, err.toError() orelse err, if (is_rejection) 1 else 0) > 0;
     if (!handled) {
-        // TODO maybe we want a separate code path for uncaught exceptions
+        if (!is_rejection) {
+            // For actual uncaught exceptions (not promise rejections), exit the
+            // process immediately if there is no uncaughtException handler,
+            // matching Node.js behavior.
+            this.runErrorHandler(err, null);
+            bun.api.node.process.exit(globalObject, 1);
+            @panic("made it past Bun__Process__exit");
+        }
+        // For unhandled promise rejections, just set exit code and continue.
         this.unhandled_error_counter += 1;
         this.exit_handler.exit_code = 1;
         this.onUnhandledRejection(this, globalObject, err);

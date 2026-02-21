@@ -86,9 +86,10 @@ pub export fn Bun__reportUnhandledError(globalObject: *JSGlobalObject, value: JS
     jsc.markBinding(@src());
 
     if (!value.isTerminationException()) {
-        _ = globalObject.bunVM().uncaughtException(globalObject, value, false);
+        const handled = globalObject.bunVM().uncaughtException(globalObject, value, false);
+        return if (handled) .true else .false;
     }
-    return .js_undefined;
+    return .true;
 }
 
 /// This function is called on another thread

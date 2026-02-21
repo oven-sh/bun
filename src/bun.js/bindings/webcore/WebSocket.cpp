@@ -1474,18 +1474,7 @@ void WebSocket::didClose(unsigned unhandledBufferedAmount, unsigned short code, 
     // so we just call decPendingActivityCount() after dispatching the event
     ASSERT(m_pendingActivityCount > 0);
 
-    if (this->hasEventListeners("close"_s)) {
-        this->dispatchEvent(CloseEvent::create(wasClean, code, reason));
-
-        // we deinit if possible in the next tick
-        if (auto* context = scriptExecutionContext()) {
-            context->postTask([this, protectedThis = Ref { *this }](ScriptExecutionContext& context) {
-                ASSERT(scriptExecutionContext());
-                protectedThis->disablePendingActivity();
-            });
-            return;
-        }
-    } else if (auto* context = scriptExecutionContext()) {
+    if (auto* context = scriptExecutionContext()) {
         context->postTask([this, code, wasClean, reason, protectedThis = Ref { *this }](ScriptExecutionContext& context) {
             ASSERT(scriptExecutionContext());
             protectedThis->dispatchEvent(CloseEvent::create(wasClean, code, reason));

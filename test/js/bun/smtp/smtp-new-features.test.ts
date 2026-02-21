@@ -283,7 +283,7 @@ describe("Proxy support", () => {
   });
 });
 
-describe("Sendmail transport", () => {
+describe.if(process.platform !== "win32")("Sendmail transport", () => {
   test("should send via sendmail binary", async () => {
     const { stdout, exitCode } = await run(`
       const c = new Bun.SMTPClient({ sendmail: "/bin/true" });

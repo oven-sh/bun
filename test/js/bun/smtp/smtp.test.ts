@@ -929,7 +929,7 @@ describe("SMTPClient", () => {
       const { stdout, exitCode } = await runSmtp(`
         ${MOCK_SERVER}
         // Create a temp file
-        const tmpFile = "/tmp/bun-smtp-test-" + Date.now() + ".txt";
+        const tmpFile = require("path").join(require("os").tmpdir(), "bun-smtp-test-" + Date.now() + ".txt");
         require("fs").writeFileSync(tmpFile, "file content from disk");
 
         const { server, sessions, port } = createMockSMTP();

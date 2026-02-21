@@ -39,6 +39,6 @@ export default [
         getter: "getSecure",
       },
     },
-    values: ["sendPromise", "verifyPromise"],
+    values: ["sendPromise"],
   }),
 ];

@@ -29,40 +29,33 @@ fn parseWithDepth(alloc: std.mem.Allocator, input: []const u8, depth: u32) Parse
     if (input.len == 0) return try alloc.alloc(ParsedAddress, 0);
 
     const tokens = try tokenize(alloc, input);
+    defer alloc.free(tokens);
 
     // Split by , and ; delimiters
-    var result_buf: [512]ParsedAddress = undefined;
-    var result_count: usize = 0;
+    var sfb = std.heap.stackFallback(@sizeOf(ParsedAddress) * 32, alloc);
+    const sfb_alloc = sfb.get();
+    var results = std.ArrayListUnmanaged(ParsedAddress){};
+    defer results.deinit(sfb_alloc);
 
     var group_start: usize = 0;
     for (tokens, 0..) |tok, i| {
         if (tok.kind == .operator and tok.value.len == 1 and (tok.value[0] == ',' or tok.value[0] == ';')) {
             if (i > group_start) {
                 const parsed = try handleAddress(alloc, tokens[group_start..i], depth);
-                for (parsed) |p| {
-                    if (result_count < result_buf.len) {
-                        result_buf[result_count] = p;
-                        result_count += 1;
-                    }
-                }
-                alloc.free(parsed);
+                defer alloc.free(parsed);
+                for (parsed) |p| try results.append(sfb_alloc, p);
             }
             group_start = i + 1;
         }
     }
     if (group_start < tokens.len) {
         const parsed = try handleAddress(alloc, tokens[group_start..], depth);
-        for (parsed) |p| {
-            if (result_count < result_buf.len) {
-                result_buf[result_count] = p;
-                result_count += 1;
-            }
-        }
-        alloc.free(parsed);
+        defer alloc.free(parsed);
+        for (parsed) |p| try results.append(sfb_alloc, p);
     }
 
-    const result = try alloc.alloc(ParsedAddress, result_count);
-    @memcpy(result, result_buf[0..result_count]);
+    const result = try alloc.alloc(ParsedAddress, results.items.len);
+    @memcpy(result, results.items);
     return result;
 }
 

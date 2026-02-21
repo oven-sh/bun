@@ -104,11 +104,9 @@ envelope_from: []const u8 = "",
 envelope_to: []const []const u8 = &.{},
 message_data: []const u8 = "",
 current_rcpt_index: usize = 0,
-accepted_count: usize = 0,
-rejected_count: usize = 0,
-// Track which recipients were accepted/rejected (indices into envelope_to)
-accepted_indices: [256]u16 = undefined,
-rejected_indices: [256]u16 = undefined,
+// Bitset: bit i = 1 means envelope_to[i] was accepted, 0 = rejected.
+// Only meaningful for indices < current_rcpt_index (already processed).
+rcpt_accepted: std.DynamicBitSetUnmanaged = .{},
 pending_send: bool = false,
 
 callbacks: Callbacks,
@@ -118,8 +116,8 @@ callbacks: Callbacks,
 /// Start a new send operation. Caller must have already set envelope_from, envelope_to, message_data.
 pub fn startSend(this: *SMTPConnection) void {
     this.current_rcpt_index = 0;
-    this.accepted_count = 0;
-    this.rejected_count = 0;
+    // Resize bitset to match recipient count (all bits start unset = rejected)
+    this.rcpt_accepted.resize(bun.default_allocator, this.envelope_to.len, false) catch {};
 
     if (this.state == .ready) {
         this.doStartSending();
@@ -143,7 +141,7 @@ pub fn resetCapabilities(this: *SMTPConnection) void {
 /// Close the connection gracefully.
 pub fn closeSocket(this: *SMTPConnection) void {
     if (this.state == .closed) return;
-    if (this.state == .ready and !this.socket.isClosed()) {
+    if ((this.state == .ready or this.state == .rset) and !this.socket.isClosed()) {
         this.writeAll("QUIT\r\n");
     }
     this.state = .closed;
@@ -433,28 +431,19 @@ fn handleMailFrom(this: *SMTPConnection, code: u16) void {
         return;
     }
     this.current_rcpt_index = 0;
-    this.accepted_count = 0;
-    this.rejected_count = 0;
     this.sendNextRcptTo();
 }
 
 fn handleRcptTo(this: *SMTPConnection, code: u16) void {
     if (code == 250 or code == 251) {
-        if (this.accepted_count < this.accepted_indices.len) {
-            this.accepted_indices[this.accepted_count] = @intCast(this.current_rcpt_index);
-        }
-        this.accepted_count += 1;
-    } else {
-        if (this.rejected_count < this.rejected_indices.len) {
-            this.rejected_indices[this.rejected_count] = @intCast(this.current_rcpt_index);
-        }
-        this.rejected_count += 1;
+        this.rcpt_accepted.set(this.current_rcpt_index);
     }
+    // else: bit stays 0 (rejected)
     this.current_rcpt_index += 1;
     if (this.current_rcpt_index < this.envelope_to.len) {
         this.sendNextRcptTo();
     } else {
-        if (this.accepted_count == 0) {
+        if (this.rcpt_accepted.count() == 0) {
             this.onErrorWithCode("All recipients were rejected", .EENVELOPE);
             return;
         }

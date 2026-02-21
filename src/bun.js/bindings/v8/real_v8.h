@@ -31,8 +31,17 @@
 #include <utility>
 #include <vector>
 
+#ifdef _WIN32
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wmicrosoft-include"
+#endif
+
 #define v8 real_v8
 #define private public
 #include "node/v8.h"
 #undef private
 #undef v8
+
+#ifdef _WIN32
+#pragma clang diagnostic pop
+#endif

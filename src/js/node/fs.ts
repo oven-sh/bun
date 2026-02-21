@@ -620,15 +620,33 @@ var access = function access(path, mode, callback) {
     return new FSWatcher(path, options, listener);
   },
   opendir = function opendir(path, options, callback) {
-    // TODO: validatePath
-    // validateString(path, "path");
     if (typeof options === "function") {
       callback = options;
       options = undefined;
     }
     validateFunction(callback, "callback");
-    const result = new Dir(1, path, options);
-    callback(null, result);
+    path = getValidatedPath(path);
+    fs.stat(path).$then(
+      stat => {
+        if (!stat.isDirectory()) {
+          callback(
+            Object.assign(new Error(`ENOTDIR: not a directory, opendir '${path}'`), {
+              code: "ENOTDIR",
+              errno: -20,
+              syscall: "opendir",
+              path,
+            }),
+          );
+        } else {
+          callback(null, new Dir(1, path, options));
+        }
+      },
+      err => {
+        err.syscall = "opendir";
+        err.message = err.message?.replace(/,\s*\w+\s+'/, ", opendir '");
+        callback(err);
+      },
+    );
   };
 
 const { defineCustomPromisifyArgs } = require("internal/promisify");
@@ -1047,8 +1065,23 @@ function _toUnixTimestamp(time: any, name = "time") {
 }
 
 function opendirSync(path, options) {
-  // TODO: validatePath
-  // validateString(path, "path");
+  path = getValidatedPath(path);
+  let stat;
+  try {
+    stat = fs.statSync(path, { throwIfNoEntry: true });
+  } catch (e: any) {
+    e.syscall = "opendir";
+    e.message = e.message?.replace(/,\s*\w+\s+'/, ", opendir '");
+    throw e;
+  }
+  if (!stat.isDirectory()) {
+    throw Object.assign(new Error(`ENOTDIR: not a directory, opendir '${path}'`), {
+      code: "ENOTDIR",
+      errno: -20,
+      syscall: "opendir",
+      path,
+    });
+  }
   return new Dir(1, path, options);
 }
 

@@ -499,7 +499,6 @@ const std = @import("std");
 const bun = @import("bun");
 const Environment = bun.Environment;
 const Output = bun.Output;
-const default_allocator = bun.default_allocator;
 const uv = bun.windows.libuv;
 
 const jsc = bun.jsc;

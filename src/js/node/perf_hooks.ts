@@ -44,6 +44,10 @@ var constants = {
 };
 
 // PerformanceEntry is not a valid constructor, so we have to fake it.
+// We cannot use $toClass here because it replaces the prototype object,
+// which would discard our JS getters that need to shadow the C++ getters
+// on PerformanceEntry.prototype (which perform brand checks that fail for
+// plain JS objects).
 class PerformanceNodeTiming {
   bootstrapComplete: number = 0;
   environment: number = 0;
@@ -53,7 +57,6 @@ class PerformanceNodeTiming {
   nodeStart: number = 0;
   v8Start: number = 0;
 
-  // we have to fake the properties since it's not real
   get name() {
     return "node";
   }
@@ -63,7 +66,7 @@ class PerformanceNodeTiming {
   }
 
   get startTime() {
-    return this.nodeStart;
+    return 0;
   }
 
   get duration() {
@@ -86,14 +89,29 @@ class PerformanceNodeTiming {
     };
   }
 }
-$toClass(PerformanceNodeTiming, "PerformanceNodeTiming", PerformanceEntry);
+// Set up the prototype chain manually: PerformanceNodeTiming.prototype inherits
+// from PerformanceEntry.prototype, but we keep the existing prototype object
+// (with its getters) so they properly shadow the C++ brand-checked getters.
+Object.setPrototypeOf(PerformanceNodeTiming.prototype, PerformanceEntry.prototype);
+Object.setPrototypeOf(PerformanceNodeTiming, PerformanceEntry);
+
+// Capture the bootstrap-complete timestamp once at module load time.
+// This is the earliest point we can measure; individual milestones are
+// approximated since Bun doesn't track them separately from native code.
+const _bootstrapComplete = performance.now();
 
 function createPerformanceNodeTiming() {
   const object = Object.create(PerformanceNodeTiming.prototype);
 
-  object.bootstrapComplete = object.environment = object.nodeStart = object.v8Start = performance.timeOrigin;
-  object.loopStart = object.idleTime = 1;
+  // All values are offsets (ms) relative to performance.timeOrigin.
+  // In Bun the VM start IS the time origin, so nodeStart/v8Start ≈ 0.
+  object.nodeStart = 0;
+  object.v8Start = 0;
+  object.environment = 0;
+  object.bootstrapComplete = _bootstrapComplete;
+  object.loopStart = -1;
   object.loopExit = -1;
+  object.idleTime = 0;
   return object;
 }
 

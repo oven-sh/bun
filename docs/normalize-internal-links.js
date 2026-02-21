@@ -41,3 +41,45 @@
     attributeFilter: ["target", "href"],
   });
 })();
+
+// 
+(function () {
+  function cleanCode(text) {
+    return text
+      .split("\n")
+      .map(line => line.replace(/#.*$/, "").trimEnd())
+      .filter(line => line.length > 0)
+      .join("\n")
+      .trim();
+  }
+
+  function attachCopyListeners() {
+    document.querySelectorAll('button[class*="copy"], [aria-label*="copy"], [title*="copy"]').forEach(btn => {
+      if (btn._bunCleanCopy) return; // avoid duplicate listeners
+      btn._bunCleanCopy = true;
+
+      btn.addEventListener(
+        "click",
+        e => {
+          const pre = btn.closest("pre") || btn.closest('div[class*="code"]');
+          if (!pre) return;
+          const codeBlockEle = pre.querySelectorAll('div[data-component-part="code-block-root"]')[0];
+          const cleanedText = cleanCode(codeBlockEle.textContent);
+
+          e.preventDefault();
+          e.stopImmediatePropagation();
+
+          navigator.clipboard.writeText(cleanedText);
+        },
+        true,
+      ); // capture phase to run before the site's own handler
+    });
+  }
+
+  // Run on load and watch for dynamically added code blocks
+  attachCopyListeners();
+  new MutationObserver(attachCopyListeners).observe(document.body, {
+    childList: true,
+    subtree: true,
+  });
+})();

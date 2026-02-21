@@ -5455,10 +5455,6 @@ pub fn NewParser_(
             switch (expr.data) {
                 .e_dot => |ex| {
                     if (parts.len > 1) {
-                        if (ex.optional_chain != null) {
-                            return false;
-                        }
-
                         // Intermediates must be dot expressions
                         const last = parts.len - 1;
                         const is_tail_match = strings.eql(parts[last], ex.name);
@@ -5474,10 +5470,6 @@ pub fn NewParser_(
                 // the intent is to handle people using this form instead of E.Dot. So we really only want to do this if the accessor can also be an identifier
                 .e_index => |index| {
                     if (parts.len > 1 and index.index.data == .e_string and index.index.data.e_string.isUTF8()) {
-                        if (index.optional_chain != null) {
-                            return false;
-                        }
-
                         const last = parts.len - 1;
                         const is_tail_match = strings.eql(parts[last], index.index.data.e_string.slice(p.allocator));
                         return is_tail_match and p.isDotDefineMatch(index.target, parts[0..last]);

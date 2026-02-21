@@ -582,7 +582,8 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
 
         socket[kRequest] = http_req;
         const is_upgrade = http_req.headers.upgrade;
-        if (!is_upgrade) {
+        const hasUpgradeListeners = is_upgrade && server.listenerCount("upgrade") > 0;
+        if (!hasUpgradeListeners) {
           if (canUseInternalAssignSocket) {
             // ~10% performance improvement in JavaScriptCore due to avoiding .once("close", ...) and removing a listener
             assignSocketInternal(http_res, socket);
@@ -601,7 +602,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           http_res.writeHead(503);
           http_res.end();
           socket.destroy();
-        } else if (is_upgrade) {
+        } else if (hasUpgradeListeners) {
           server.emit("upgrade", http_req, socket, kEmptyBuffer);
           if (!socket._httpMessage) {
             if (canUseInternalAssignSocket) {

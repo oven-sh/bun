@@ -42,7 +42,10 @@
   });
 })();
 
-//
+// Add Event Listener to `Copy` button
+// Capture copied text
+// remove "# <text>"
+// update the clipbard with cleaned text
 (function () {
   function cleanCode(text) {
     return text

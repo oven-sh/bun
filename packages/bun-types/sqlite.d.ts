@@ -321,6 +321,90 @@ declare module "bun:sqlite" {
     loadExtension(extension: string, entryPoint?: string): void;
 
     /**
+     * Register a user-defined function
+     *
+     * Creates a user-defined function (UDF) that can be called from SQL queries.
+     * This method is a wrapper around sqlite3_create_function_v2().
+     *
+     * @param name - The name of the SQLite function to create
+     * @param fn - The JavaScript function to call when the SQLite function is invoked
+     *
+     * @example
+     * ```ts
+     * const db = new Database(":memory:");
+     *
+     * // Simple scalar function
+     * db.function("add", (a, b) => a + b);
+     *
+     * db.query("SELECT add(2, 3)").get();
+     * // => { "add(2, 3)": 5 }
+     * ```
+     */
+    function(name: string, fn: (...args: any[]) => any): void;
+
+    /**
+     * Register a user-defined function with options
+     *
+     * Creates a user-defined function (UDF) that can be called from SQL queries.
+     * This method is a wrapper around sqlite3_create_function_v2().
+     *
+     * @param name - The name of the SQLite function to create
+     * @param options - Optional configuration settings
+     * @param fn - The JavaScript function to call when the SQLite function is invoked
+     *
+     * @example
+     * ```ts
+     * const db = new Database(":memory:");
+     *
+     * // Deterministic function (can be optimized by SQLite)
+     * db.function("multiply", { deterministic: true }, (a, b) => a * b);
+     *
+     * // Variable arguments function
+     * db.function("concat_all", { varargs: true }, (...args) => args.join(""));
+     *
+     * // Function with BigInt support
+     * db.function("bigAdd", { useBigIntArguments: true }, (a, b) => a + b);
+     *
+     * // Direct-only function (security restriction)
+     * db.function("sensitive", { directOnly: true }, () => "secret");
+     * ```
+     */
+    function(
+      name: string,
+      options: {
+        /**
+         * If true, sets the SQLITE_DETERMINISTIC flag.
+         * Deterministic functions always return the same result for the same inputs.
+         * @default false
+         */
+        deterministic?: boolean;
+
+        /**
+         * If true, sets the SQLITE_DIRECTONLY flag.
+         * The function can only be invoked from top-level SQL, and cannot be used
+         * in VIEWs, TRIGGERs, or schema structures.
+         * @default false
+         */
+        directOnly?: boolean;
+
+        /**
+         * If true, integer arguments are converted to BigInts.
+         * If false, integer arguments are passed as JavaScript numbers.
+         * @default false
+         */
+        useBigIntArguments?: boolean;
+
+        /**
+         * If true, the function can accept a variable number of arguments.
+         * If false, the function must be invoked with exactly fn.length arguments.
+         * @default false
+         */
+        varargs?: boolean;
+      },
+      fn: (...args: any[]) => any,
+    ): void;
+
+    /**
      * Change the dynamic library path to SQLite
      *
      * @note macOS-only

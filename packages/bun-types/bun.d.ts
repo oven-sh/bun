@@ -7501,6 +7501,17 @@ declare module "bun" {
    */
   function indexOfLine(buffer: ArrayBufferView | ArrayBufferLike, offset?: number): number;
 
+  /**
+   * Returns the index of the first element where `a[i] !== b[i]`,
+   * comparing up to `min(a.length, b.length)` elements.
+   * Returns that minimum length if the compared prefix is identical.
+   * Uses SIMD acceleration for fast comparison.
+   *
+   * Both arrays must be the same TypedArray type, otherwise a TypeError is thrown.
+   * Float typed arrays (Float16Array, Float32Array, Float64Array) are not supported.
+   */
+  function indexOfFirstDifference(a: NodeJS.TypedArray, b: NodeJS.TypedArray): number;
+
   interface GlobScanOptions {
     /**
      * The root directory to start matching from. Defaults to `process.cwd()`

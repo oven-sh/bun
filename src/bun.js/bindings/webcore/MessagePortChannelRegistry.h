@@ -31,6 +31,7 @@
 #include "ProcessIdentifier.h"
 #include <wtf/HashMap.h>
 #include <wtf/CheckedRef.h>
+#include <wtf/Lock.h>
 
 namespace WebCore {
 
@@ -57,7 +58,10 @@ public:
     WEBCORE_EXPORT void messagePortChannelDestroyed(MessagePortChannel&);
 
 private:
-    UncheckedKeyHashMap<MessagePortIdentifier, WeakRef<MessagePortChannel>> m_openChannels;
+    RefPtr<MessagePortChannel> channelForPort(const MessagePortIdentifier&);
+
+    Lock m_openChannelsLock;
+    UncheckedKeyHashMap<MessagePortIdentifier, WeakRef<MessagePortChannel>> m_openChannels WTF_GUARDED_BY_LOCK(m_openChannelsLock);
 };
 
 } // namespace WebCore

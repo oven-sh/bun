@@ -349,6 +349,12 @@ pub const Loader = struct {
         return (has_no_clear_screen_cli_flag orelse this.getAs(bool, "BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD")) orelse default_value;
     }
 
+    pub var has_no_bundle_page_log_cli_flag: ?bool = null;
+    /// Returns whether the `BUN_CONFIG_NO_BUNDLE_PAGE_LOG` env var is set to something truthy
+    pub fn hasSetNoBundlePageLog(this: *const Loader, default_value: bool) bool {
+        return (has_no_bundle_page_log_cli_flag orelse this.getAs(bool, "BUN_CONFIG_NO_BUNDLE_PAGE_LOG")) orelse default_value;
+    }
+
     pub fn get(this: *const Loader, key: string) ?string {
         var _key = key;
         if (_key.len > 0 and _key[0] == '$') {

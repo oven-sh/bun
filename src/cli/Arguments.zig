@@ -80,6 +80,7 @@ pub const runtime_params_ = [_]ParamType{
     clap.parseParam("--watch                           Automatically restart the process on file change") catch unreachable,
     clap.parseParam("--hot                             Enable auto reload in the Bun runtime, test runner, or bundler") catch unreachable,
     clap.parseParam("--no-clear-screen                 Disable clearing the terminal screen on reload when --hot or --watch is enabled") catch unreachable,
+    clap.parseParam("--no-bundle-page-log              Disable the \"Bundled page in ...\" dev-server log line for Bun.serve()") catch unreachable,
     clap.parseParam("--smol                            Use less memory, but run garbage collection more often") catch unreachable,
     clap.parseParam("-r, --preload <STR>...            Import a module before other modules are loaded") catch unreachable,
     clap.parseParam("--require <STR>...                Alias of --preload, for Node.js compatibility") catch unreachable,
@@ -712,6 +713,10 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             if (args.flag("--no-clear-screen")) {
                 bun.DotEnv.Loader.has_no_clear_screen_cli_flag = true;
             }
+        }
+
+        if (args.flag("--no-bundle-page-log")) {
+            bun.DotEnv.Loader.has_no_bundle_page_log_cli_flag = true;
         }
 
         if (args.option("--origin")) |origin| {

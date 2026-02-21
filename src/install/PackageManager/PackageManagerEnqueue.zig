@@ -437,6 +437,23 @@ pub fn enqueuePatchTaskPre(this: *PackageManager, task: *PatchTask) void {
 
 /// Q: "What do we do with a dependency in a package.json?"
 /// A: "We enqueue it!"
+fn shouldIgnoreExistingResolution(this: *PackageManager, name_hash: PackageNameHash) bool {
+    // If we are forcing an update, the lockfile is cleared at the start.
+    // So any package in the lockfile is one we just resolved in this run.
+    if (this.options.force) return false;
+
+    if (this.subcommand != .update) return false;
+
+    // If we are updating specific packages, we want to ignore the existing resolution for those packages
+    if (this.update_requests.len > 0) {
+        for (this.update_requests) |req| {
+            if (req.name_hash == name_hash) return true;
+        }
+    }
+
+    return false;
+}
+
 pub fn enqueueDependencyWithMainAndSuccessFn(
     this: *PackageManager,
     id: DependencyID,
@@ -815,8 +832,10 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
 
             // First: see if we already loaded the git package in-memory
             if (this.lockfile.getPackageID(name_hash, null, &res)) |pkg_id| {
-                successFn(this, id, pkg_id);
-                return;
+                if (!shouldIgnoreExistingResolution(this, name_hash)) {
+                    successFn(this, id, pkg_id);
+                    return;
+                }
             }
 
             const alias = this.lockfile.str(&dependency.name);
@@ -904,8 +923,10 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
 
             // First: see if we already loaded the github package in-memory
             if (this.lockfile.getPackageID(name_hash, null, &res)) |pkg_id| {
-                successFn(this, id, pkg_id);
-                return;
+                if (!shouldIgnoreExistingResolution(this, name_hash)) {
+                    successFn(this, id, pkg_id);
+                    return;
+                }
             }
 
             const url = this.allocGitHubURL(dep);

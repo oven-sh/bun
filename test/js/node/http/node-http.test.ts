@@ -1031,6 +1031,69 @@ describe("node:http", () => {
     expect(() => validateHeaderValue("Foo", "Bar\r")).toThrow();
   });
 
+  test("appendHeader validates header name and value like setHeader", async () => {
+    await using server = createServer((req, res) => {
+      res.end("ok");
+    });
+    server.listen({ port: 0 });
+    await once(server, "listening");
+    const port = (server.address() as AddressInfo).port;
+
+    const req = request({ port, method: "GET", path: "/" });
+
+    // Invalid header names should throw ERR_INVALID_HTTP_TOKEN
+    expect(() => req.appendHeader("invalid header", "value")).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_HTTP_TOKEN" }),
+    );
+    expect(() => req.appendHeader("x(test)", "value")).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_HTTP_TOKEN" }),
+    );
+    expect(() => req.appendHeader("", "value")).toThrow(expect.objectContaining({ code: "ERR_INVALID_HTTP_TOKEN" }));
+    expect(() => req.appendHeader("x:test", "value")).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_HTTP_TOKEN" }),
+    );
+
+    // Undefined value should throw ERR_HTTP_INVALID_HEADER_VALUE
+    expect(() => req.appendHeader("x-test", undefined as any)).toThrow(
+      expect.objectContaining({ code: "ERR_HTTP_INVALID_HEADER_VALUE" }),
+    );
+
+    // CRLF in value should throw ERR_INVALID_CHAR
+    expect(() => req.appendHeader("x-test", "value\r\ninjected: true")).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_CHAR" }),
+    );
+
+    // Null byte in value should throw ERR_INVALID_CHAR
+    expect(() => req.appendHeader("x-test", "val\x00ue")).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_CHAR" }),
+    );
+
+    // Valid headers should work
+    req.appendHeader("x-valid", "value");
+    req.appendHeader("x-valid", "another-value");
+
+    req.end();
+    await once(req, "response");
+  });
+
+  test("appendHeader throws after headers sent", async () => {
+    const { promise, resolve } = Promise.withResolvers<void>();
+    await using server = createServer((req, res) => {
+      res.write("data");
+      expect(() => res.appendHeader("x-late", "value")).toThrow(
+        expect.objectContaining({ code: "ERR_HTTP_HEADERS_SENT" }),
+      );
+      res.end();
+      resolve();
+    });
+    server.listen({ port: 0 });
+    await once(server, "listening");
+    const port = (server.address() as AddressInfo).port;
+    const res = await fetch("http://localhost:" + port);
+    await res.text();
+    await promise;
+  });
+
   test("req.req = req", done => {
     const server = createServer((req, res) => {
       req.req = req;

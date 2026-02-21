@@ -304,6 +304,11 @@ pub fn NewParser_(
 
         jest: Jest = .{},
 
+        /// When inject_jest_globals is enabled, this collects specifiers from
+        /// mock.module("specifier", fn) calls, so that placeholder virtual modules
+        /// can be registered before the module graph is built.
+        mock_module_specifiers: bun.StringArrayHashMapUnmanaged(void) = .{},
+
         // Imports (both ES6 and CommonJS) are tracked at the top level
         import_records: ImportRecordList,
         import_records_for_current_part: List(u32) = .{},
@@ -6616,6 +6621,7 @@ pub fn NewParser_(
                 .ts_enums = try p.computeTsEnumsMap(allocator),
                 .import_meta_ref = p.import_meta_ref,
 
+                .mock_module_specifiers = p.mock_module_specifiers,
                 .symbols = js_ast.Symbol.List.moveFromList(&p.symbols),
                 .parts = bun.BabyList(js_ast.Part).moveFromList(parts),
                 .import_records = ImportRecord.List.moveFromList(&p.import_records),

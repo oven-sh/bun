@@ -1419,6 +1419,10 @@ pub const TestCommand = struct {
         vm.preload = ctx.preloads;
         vm.transpiler.options.rewrite_jest_for_tests = true;
         vm.transpiler.options.env.behavior = .load_all_without_inlining;
+        // @__PURE__ annotations are hints for bundlers/tree-shakers and should
+        // not cause code removal during runtime execution (including tests).
+        // See: https://github.com/oven-sh/bun/issues/19355
+        vm.transpiler.options.ignore_dce_annotations = true;
 
         const node_env_entry = try env_loader.map.getOrPutWithoutValue("NODE_ENV");
         if (!node_env_entry.found_existing) {

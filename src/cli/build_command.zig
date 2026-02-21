@@ -78,7 +78,10 @@ pub const BuildCommand = struct {
         this_transpiler.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
         this_transpiler.options.keep_names = ctx.bundler_options.keep_names;
         this_transpiler.options.emit_dce_annotations = ctx.bundler_options.emit_dce_annotations;
-        this_transpiler.options.ignore_dce_annotations = ctx.bundler_options.ignore_dce_annotations;
+        // When not bundling (--no-bundle), @__PURE__ annotations should be
+        // ignored since they are bundler tree-shaking hints.
+        // See: https://github.com/oven-sh/bun/issues/19355
+        this_transpiler.options.ignore_dce_annotations = ctx.bundler_options.ignore_dce_annotations or ctx.bundler_options.transform_only;
 
         this_transpiler.options.banner = ctx.bundler_options.banner;
         this_transpiler.options.footer = ctx.bundler_options.footer;

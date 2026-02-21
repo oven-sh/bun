@@ -1,7 +1,7 @@
 // Add Event Listener to `Copy` button
 // Capture copied text
 // remove "# <text>"
-// update the clipbard with cleaned text
+// update the clipboard with cleaned text
 (function () {
   function cleanCode(text) {
     return text
@@ -23,8 +23,10 @@
           if (!pre) return;
 
           const codeBlockEle = pre.querySelectorAll('div[data-component-part="code-block-root"]');
-          if (codeBlockEle.length === 1) {
-            const codeBlockElement = codeBlockEle[0];
+          // prefer the visible/active tab; fall back to first element
+          const codeBlockElement =
+            Array.from(codeBlockEle).find(el => !el.hidden && el.offsetParent !== null) ?? codeBlockEle[0];
+          if (codeBlockElement) {
             const cleanedText = cleanCode(codeBlockElement.textContent);
             e.preventDefault();
             e.stopImmediatePropagation();

@@ -679,7 +679,7 @@ describe("Attachments (nodemailer mail-composer-test.js)", () => {
   test("file path attachment", async () => {
     const { stdout, exitCode } = await run(`
       ${MOCK}
-      const tmp = "/tmp/bun-smtp-test-" + Date.now() + ".txt";
+      const tmp = require("path").join(require("os").tmpdir(), "bun-smtp-test-" + Date.now() + ".txt");
       require("fs").writeFileSync(tmp, "file data");
       const { server, sessions, port } = mock();
       const c = new Bun.SMTPClient({ host: "127.0.0.1", port });

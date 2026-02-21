@@ -237,7 +237,7 @@ fn onReady(ctx: *anyopaque) void {
     if (js.sendPromiseGetCached(this_js)) |pv| {
         js.sendPromiseSetCached(this_js, go, .zero);
         if (pv.asPromise()) |p| {
-            p.resolve(go, jsc.JSValue.jsBoolean(true)) catch {};
+            p.resolve(go, jsc.JSValue.true) catch {};
         }
     }
     this.updatePollRef();
@@ -902,7 +902,7 @@ pub fn verify(this: *JSSMTPClient, globalObject: *jsc.JSGlobalObject, _: *jsc.Ca
     const promise_js = promise_ptr.toJS();
 
     if (state == .ready or state == .rset) {
-        try promise_ptr.resolve(globalObject, jsc.JSValue.jsBoolean(true));
+        try promise_ptr.resolve(globalObject, jsc.JSValue.true);
         return promise_js;
     }
 

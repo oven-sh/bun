@@ -480,7 +480,9 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
 
 const DeadSocket = struct {
     garbage: u8 = 0,
-    pub var dead_socket: DeadSocket = .{};
+    /// Must be aligned to `@alignOf(usize)` so that tagged pointer values
+    /// embedding this address pass the `@alignCast` in `bun.cast`.
+    pub var dead_socket: DeadSocket align(@alignOf(usize)) = .{};
 };
 
 var dead_socket = &DeadSocket.dead_socket;

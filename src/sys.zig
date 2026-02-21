@@ -537,6 +537,28 @@ pub fn lstat(path: [:0]const u8) Maybe(bun.Stat) {
     }
 }
 
+/// Like stat() but accepts a non-null-terminated slice and handles ENAMETOOLONG.
+pub fn statA(file_path: []const u8) Maybe(bun.Stat) {
+    const pathZ = std.posix.toPosixPath(file_path) catch return Maybe(bun.Stat){
+        .err = .{
+            .errno = @intFromEnum(E.NAMETOOLONG),
+            .syscall = .stat,
+        },
+    };
+    return stat(&pathZ);
+}
+
+/// Like lstat() but accepts a non-null-terminated slice and handles ENAMETOOLONG.
+pub fn lstatA(file_path: []const u8) Maybe(bun.Stat) {
+    const pathZ = std.posix.toPosixPath(file_path) catch return Maybe(bun.Stat){
+        .err = .{
+            .errno = @intFromEnum(E.NAMETOOLONG),
+            .syscall = .lstat,
+        },
+    };
+    return lstat(&pathZ);
+}
+
 pub fn fstat(fd: bun.FileDescriptor) Maybe(bun.Stat) {
     if (Environment.isWindows) {
         // TODO: this is a bad usage of makeLibUVOwned
@@ -678,6 +700,28 @@ pub fn lstatx(path: [*:0]const u8, comptime fields: []const StatxField) Maybe(Po
         break :brk i;
     };
     return statxImpl(bun.FD.fromNative(std.posix.AT.FDCWD), path, linux.AT.SYMLINK_NOFOLLOW, mask);
+}
+
+/// Like statx() but accepts a non-null-terminated slice and handles ENAMETOOLONG.
+pub fn statxA(file_path: []const u8, comptime fields: []const StatxField) Maybe(PosixStat) {
+    const pathZ = std.posix.toPosixPath(file_path) catch return Maybe(PosixStat){
+        .err = .{
+            .errno = @intFromEnum(E.NAMETOOLONG),
+            .syscall = .stat,
+        },
+    };
+    return statx(&pathZ, fields);
+}
+
+/// Like lstatx() but accepts a non-null-terminated slice and handles ENAMETOOLONG.
+pub fn lstatxA(file_path: []const u8, comptime fields: []const StatxField) Maybe(PosixStat) {
+    const pathZ = std.posix.toPosixPath(file_path) catch return Maybe(PosixStat){
+        .err = .{
+            .errno = @intFromEnum(E.NAMETOOLONG),
+            .syscall = .lstat,
+        },
+    };
+    return lstatx(&pathZ, fields);
 }
 
 pub fn lutimes(path: [:0]const u8, atime: jsc.Node.TimeLike, mtime: jsc.Node.TimeLike) Maybe(void) {

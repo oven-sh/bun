@@ -752,7 +752,7 @@ pub fn send(this: *JSSMTPClient, globalObject: *jsc.JSGlobalObject, callframe: *
     if (args.len < 1 or !args[0].isObject()) return globalObject.throwInvalidArguments("send() requires a message object", .{});
 
     const state = this.conn.state;
-    const is_busy = state != .disconnected and state != .closed and state != .failed and state != .ready and state != .rset;
+    const is_busy = state != .disconnected and state != .closed and state != .failed and state != .ready and state != .rset and state != .quit;
 
     // Pool mode: if busy, queue the send instead of rejecting
     if (is_busy and this.pool) {
@@ -874,6 +874,10 @@ pub fn send(this: *JSSMTPClient, globalObject: *jsc.JSGlobalObject, callframe: *
 
     // Send via SMTP
     this.conn.current_rcpt_index = 0;
+    this.conn.accepted_count = 0;
+    this.conn.rejected_count = 0;
+    this.conn.accepted_indices.clearRetainingCapacity();
+    this.conn.rejected_indices.clearRetainingCapacity();
 
     if (reuse) {
         this.conn.startSend();

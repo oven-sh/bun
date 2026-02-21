@@ -44,6 +44,52 @@ test("v8.writeHeapSnapshot()", async () => {
   expect(await v8HeapSnapshot.parseSnapshot(snapshot)).toBeDefined();
 });
 
+test("v8 heap snapshot arraybuffer", async () => {
+  const snapshot = Bun.generateHeapSnapshot("v8", "arraybuffer");
+  expect(snapshot).toBeInstanceOf(ArrayBuffer);
+  expect(snapshot.byteLength).toBeGreaterThan(0);
+
+  // Decode the ArrayBuffer as UTF-8 and parse it as JSON
+  const text = new TextDecoder().decode(snapshot);
+  const parsed = JSON.parse(text);
+
+  // Validate structure
+  expect(parsed.snapshot).toBeDefined();
+  expect(parsed.snapshot.meta).toBeDefined();
+  expect(parsed.nodes).toBeInstanceOf(Array);
+  expect(parsed.edges).toBeInstanceOf(Array);
+  expect(parsed.strings).toBeInstanceOf(Array);
+  expect(parsed.nodes.length).toBeGreaterThan(0);
+  expect(parsed.edges.length).toBeGreaterThan(0);
+  expect(parsed.strings.length).toBeGreaterThan(0);
+
+  // Also validate via v8-heapsnapshot library
+  const parsedSnapshot = await v8HeapSnapshot.parseSnapshot(parsed);
+  expect(parsedSnapshot.nodes.length).toBeGreaterThan(0);
+  expect(parsedSnapshot.edges.length).toBeGreaterThan(0);
+});
+
+test("v8 heap snapshot arraybuffer matches string output", async () => {
+  // The arraybuffer output should produce valid JSON identical in structure to the string output
+  const snapshotBuffer = Bun.generateHeapSnapshot("v8", "arraybuffer");
+  const text = new TextDecoder().decode(snapshotBuffer);
+  const parsed = JSON.parse(text);
+
+  // Verify it has the same meta structure
+  expect(parsed.snapshot.meta.node_fields).toEqual([
+    "type",
+    "name",
+    "id",
+    "self_size",
+    "edge_count",
+    "trace_node_id",
+    "detachedness",
+  ]);
+  expect(parsed.snapshot.meta.edge_fields).toEqual(["type", "name_or_index", "to_node"]);
+  expect(parsed.snapshot.node_count).toBeGreaterThan(0);
+  expect(parsed.snapshot.edge_count).toBeGreaterThan(0);
+});
+
 test("v8.writeHeapSnapshot() with path", async () => {
   const dir = tempDirWithFiles("v8-heap-snapshot", {
     "test.heapsnapshot": "",

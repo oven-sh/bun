@@ -4568,6 +4568,20 @@ declare module "bun" {
   function generateHeapSnapshot(format: "v8"): string;
 
   /**
+   * Show precise statistics about memory usage of your application
+   *
+   * Generate a V8 Heap Snapshot as an ArrayBuffer.
+   *
+   * This avoids the overhead of creating a JavaScript string for large heap snapshots.
+   * The ArrayBuffer contains the UTF-8 encoded JSON.
+   * ```ts
+   * const snapshot = Bun.generateHeapSnapshot("v8", "arraybuffer");
+   * await Bun.write("heap.heapsnapshot", snapshot);
+   * ```
+   */
+  function generateHeapSnapshot(format: "v8", encoding: "arraybuffer"): ArrayBuffer;
+
+  /**
    * The next time JavaScriptCore is idle, clear unused memory and attempt to reduce the heap size.
    *
    * @deprecated

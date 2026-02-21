@@ -1,4 +1,5 @@
 #pragma once
+#include <JavaScriptCore/TopExceptionScope.h>
 // clang-format off
 
 // --- Getters ---
@@ -91,8 +92,18 @@ FOR_EACH_GETTER(DECLARE_ZIG_BUN_OBJECT_GETTER);
 #undef DECLARE_ZIG_BUN_OBJECT_GETTER
 
 // definition of the C++ wrapper to call the Zig function
+// PropertyCallback results are passed directly to putDirect by JSC's reifyStaticProperty,
+// which calls isGetterSetter() on the value. An empty JSValue (zero) passes isCell() but
+// yields a null cell pointer, causing a null dereference. Guard against this by returning
+// jsUndefined() when the Zig side signals an error with an empty value.
 #define DEFINE_ZIG_BUN_OBJECT_GETTER_WRAPPER(name) static JSC::JSValue BunObject_lazyPropCb_wrap_##name(JSC::VM &vm, JSC::JSObject *object) { \
-    return JSC::JSValue::decode(BunObject_lazyPropCb_##name(object->globalObject(), object)); \
+    JSC::JSValue result = JSC::JSValue::decode(BunObject_lazyPropCb_##name(object->globalObject(), object)); \
+    if (!result) [[unlikely]] { \
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm); \
+        scope.clearException(); \
+        return JSC::jsUndefined(); \
+    } \
+    return result; \
 } \
 
 FOR_EACH_GETTER(DEFINE_ZIG_BUN_OBJECT_GETTER_WRAPPER);

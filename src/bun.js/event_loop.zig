@@ -540,6 +540,14 @@ pub fn waitForPromise(this: *EventLoop, promise: jsc.AnyPromise) void {
                 if (promise.status() == .pending) {
                     this.autoTick();
                 }
+
+                // If the promise is still pending but nothing in the event loop can
+                // make progress (no active handles, no pending tasks, no concurrent refs),
+                // the promise can never settle. Break to avoid busy-waiting at 100% CPU.
+                // This handles unsettled top-level await (e.g. `await new Promise(() => {})`).
+                if (promise.status() == .pending and !this.virtual_machine.isEventLoopAlive()) {
+                    break;
+                }
             }
         },
         else => {},
@@ -555,6 +563,12 @@ pub fn waitForPromiseWithTermination(this: *EventLoop, promise: jsc.AnyPromise) 
 
                 if (!worker.hasRequestedTerminate() and promise.status() == .pending) {
                     this.autoTick();
+                }
+
+                // If the promise is still pending but nothing in the event loop can
+                // make progress, the promise can never settle. Break to avoid busy-waiting.
+                if (promise.status() == .pending and !this.virtual_machine.isEventLoopAlive()) {
+                    break;
                 }
             }
         },

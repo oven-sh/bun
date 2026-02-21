@@ -24,7 +24,20 @@ const { values } = parseArgs({
 });
 
 const binary = resolve(values.binary!);
-const emulatorPath = Bun.which(values.emulator!) ?? resolve(values.emulator!);
+
+function resolveEmulator(name: string): string {
+  const found = Bun.which(name);
+  if (found) return found;
+  // Try without -static suffix (e.g. qemu-aarch64 instead of qemu-aarch64-static)
+  if (name.endsWith("-static")) {
+    const fallback = Bun.which(name.slice(0, -"-static".length));
+    if (fallback) return fallback;
+  }
+  // Last resort: resolve as a relative path (e.g. sde-external/sde.exe)
+  return resolve(name);
+}
+
+const emulatorPath = resolveEmulator(values.emulator!);
 
 const scriptDir = dirname(import.meta.path);
 const repoRoot = resolve(scriptDir, "..");
@@ -76,6 +89,7 @@ let passed = 0;
 async function runTest(label: string, binaryArgs: string[], cwd?: string): Promise<boolean> {
   console.log(`+++ ${label}`);
 
+  const start = performance.now();
   const proc = Bun.spawn([...config.runnerCmd, binary, ...binaryArgs], {
     cwd: cwd ?? config.cwd,
     stdout: "pipe",
@@ -88,11 +102,12 @@ async function runTest(label: string, binaryArgs: string[], cwd?: string): Promi
     proc.exited,
   ]);
 
+  const elapsed = ((performance.now() - start) / 1000).toFixed(1);
   const output = stdout + "\n" + stderr;
 
   if (exitCode === 0) {
     if (stdout.trim()) console.log(stdout.trim());
-    console.log("    PASS");
+    console.log(`    PASS (${elapsed}s)`);
     passed++;
     return true;
   }
@@ -100,7 +115,7 @@ async function runTest(label: string, binaryArgs: string[], cwd?: string): Promi
   if (isInstructionViolation(exitCode, output)) {
     if (output.trim()) console.log(output.trim());
     console.log();
-    console.log("    FAIL: CPU instruction violation detected");
+    console.log(`    FAIL: CPU instruction violation detected (${elapsed}s)`);
     if (isAarch64) {
       console.log("    The aarch64 build targets Cortex-A53 (ARMv8.0-A+CRC).");
       console.log("    LSE atomics, SVE, and dotprod instructions are not allowed.");
@@ -111,7 +126,7 @@ async function runTest(label: string, binaryArgs: string[], cwd?: string): Promi
     instructionFailures++;
   } else {
     if (output.trim()) console.log(output.trim());
-    console.log(`    WARN: exit code ${exitCode} (not a CPU instruction issue)`);
+    console.log(`    WARN: exit code ${exitCode} (${elapsed}s, not a CPU instruction issue)`);
     otherFailures++;
   }
   return false;
@@ -127,20 +142,28 @@ if (!versionOk && instructionFailures > 0) {
 await runTest("bun -e eval", ["-e", "console.log(JSON.stringify({ok:1+1}))"]);
 
 // Phase 2: JIT stress fixtures
-console.log();
-console.log("--- JS fixtures (DFG/FTL)");
-for (const fixture of readdirSync(fixturesDir)
+const jsFixtures = readdirSync(fixturesDir)
   .filter(f => f.endsWith(".js"))
-  .sort()) {
-  await runTest(fixture, ["--preload", preloadPath, join(fixturesDir, fixture)]);
+  .sort();
+console.log();
+console.log(`--- JS fixtures (DFG/FTL) — ${jsFixtures.length} tests`);
+for (let i = 0; i < jsFixtures.length; i++) {
+  const fixture = jsFixtures[i];
+  await runTest(`[${i + 1}/${jsFixtures.length}] ${fixture}`, ["--preload", preloadPath, join(fixturesDir, fixture)]);
 }
 
-console.log();
-console.log("--- Wasm fixtures (BBQ/OMG)");
-for (const fixture of readdirSync(wasmFixturesDir)
+const wasmFixtures = readdirSync(wasmFixturesDir)
   .filter(f => f.endsWith(".js"))
-  .sort()) {
-  await runTest(fixture, ["--preload", preloadPath, join(wasmFixturesDir, fixture)], wasmFixturesDir);
+  .sort();
+console.log();
+console.log(`--- Wasm fixtures (BBQ/OMG) — ${wasmFixtures.length} tests`);
+for (let i = 0; i < wasmFixtures.length; i++) {
+  const fixture = wasmFixtures[i];
+  await runTest(
+    `[${i + 1}/${wasmFixtures.length}] ${fixture}`,
+    ["--preload", preloadPath, join(wasmFixturesDir, fixture)],
+    wasmFixturesDir,
+  );
 }
 
 // Summary

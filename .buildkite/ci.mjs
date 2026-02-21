@@ -628,9 +628,13 @@ function getVerifyBaselineStep(platform, options) {
   const setupCommands =
     os === "windows"
       ? [
+          `echo Downloading build artifacts...`,
           `buildkite-agent artifact download ${triplet}.zip . --step ${targetKey}-build-bun`,
+          `echo Extracting ${triplet}.zip...`,
           `tar -xf ${triplet}.zip`,
+          `echo Downloading Intel SDE...`,
           `curl.exe -fsSL -o sde.tar.xz "${SDE_URL}"`,
+          `echo Extracting Intel SDE...`,
           `tar -xf sde.tar.xz`,
           `ren sde-external-${SDE_VERSION}-win sde-external`,
         ]

@@ -42,7 +42,7 @@
   });
 })();
 
-// 
+//
 (function () {
   function cleanCode(text) {
     return text
@@ -63,13 +63,16 @@
         e => {
           const pre = btn.closest("pre") || btn.closest('div[class*="code"]');
           if (!pre) return;
-          const codeBlockEle = pre.querySelectorAll('div[data-component-part="code-block-root"]')[0];
-          const cleanedText = cleanCode(codeBlockEle.textContent);
 
-          e.preventDefault();
-          e.stopImmediatePropagation();
+          const codeBlockEle = pre.querySelectorAll('div[data-component-part="code-block-root"]');
+          if (codeBlockEle.length === 1) {
+            const codeBlockElement = codeBlockEle[0];
+            const cleanedText = cleanCode(codeBlockElement.textContent);
+            e.preventDefault();
+            e.stopImmediatePropagation();
 
-          navigator.clipboard.writeText(cleanedText);
+            navigator.clipboard.writeText(cleanedText);
+          }
         },
         true,
       ); // capture phase to run before the site's own handler

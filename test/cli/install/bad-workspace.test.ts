@@ -34,9 +34,9 @@ test("bad workspace path", () => {
   });
   const text = stderr!.toString();
 
-  expect(text).toContain('Workspace not found "i-dont-exist"');
-
-  expect(exitCode).toBe(1);
+  // Missing workspace paths are silently ignored, matching npm behavior
+  expect(text).not.toContain('Workspace not found "i-dont-exist"');
+  expect(exitCode).toBe(0);
 });
 
 test("workspace with ./ should not crash", () => {

@@ -100,6 +100,20 @@ pub const List = struct {
         );
     }
 
+    pub fn satisfiesIncludePrerelease(list: *const List, version: Version, list_buf: string, version_buf: string) bool {
+        var pre_matched = false;
+        return list.head.satisfiesPre(
+            version,
+            list_buf,
+            version_buf,
+            &pre_matched,
+        ) or (list.next orelse return false).satisfiesIncludePrerelease(
+            version,
+            list_buf,
+            version_buf,
+        );
+    }
+
     pub fn eql(lhs: *const List, rhs: *const List) bool {
         if (!lhs.head.eql(&rhs.head)) return false;
 
@@ -296,6 +310,18 @@ pub const Group = struct {
     ) bool {
         return if (version.tag.hasPre())
             group.head.satisfiesPre(version, group_buf, version_buf)
+        else
+            group.head.satisfies(version, group_buf, version_buf);
+    }
+
+    pub inline fn satisfiesIncludePrerelease(
+        group: *const Group,
+        version: Version,
+        group_buf: string,
+        version_buf: string,
+    ) bool {
+        return if (version.tag.hasPre())
+            group.head.satisfiesIncludePrerelease(version, group_buf, version_buf)
         else
             group.head.satisfies(version, group_buf, version_buf);
     }

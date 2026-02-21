@@ -1,6 +1,10 @@
-import { describe } from "bun:test";
+import { $ } from "bun";
+import { describe, expect, test } from "bun:test";
+import { tempDir } from "harness";
 import { createTestBuilder } from "./test_builder";
 const TestBuilder = createTestBuilder(import.meta.path);
+
+const isWindows = process.platform === "win32";
 
 describe("IOWriter file output redirection", () => {
   describe("basic file redirection", () => {
@@ -139,6 +143,98 @@ describe("IOWriter file output redirection", () => {
       .exitCode(0)
       .fileEquals("pipe_output.txt", "pipe test\n")
       .runAsTest("pipe with file redirection");
+  });
+
+  describe("multiple redirections", () => {
+    TestBuilder.command`echo "hello" > output.txt 2>&1`
+      .exitCode(0)
+      .fileEquals("output.txt", "hello\n")
+      .runAsTest("stdout to file with stderr following");
+
+    TestBuilder.command`echo "world" 2>&1 > output2.txt`
+      .exitCode(0)
+      .fileEquals("output2.txt", "world\n")
+      .runAsTest("stderr to original stdout, then stdout to file");
+
+    // Test redirect ordering: In POSIX shells, "2>&1 > file" should redirect stderr to the
+    // ORIGINAL stdout (before stdout was redirected to the file), so only stdout goes to the file.
+    // Bun's shell currently applies all redirects simultaneously rather than left-to-right,
+    // so both streams end up going to the file. This test documents current behavior.
+    // See: https://github.com/oven-sh/bun/issues/25669 (low priority)
+    test.skipIf(isWindows)("2>&1 > file ordering (current behavior: both to file)", async () => {
+      using dir = tempDir("redir-order", {});
+      const result = await $`/bin/sh -c "echo out; echo err >&2" 2>&1 > ${dir}/out.txt`.cwd(String(dir)).quiet();
+      // Current behavior: both stdout and stderr go to the file
+      expect(result.stdout.toString()).toBe("");
+      expect(result.stderr.toString()).toBe("");
+      expect(await Bun.file(`${dir}/out.txt`).text()).toBe("out\nerr\n");
+      // POSIX behavior would be:
+      // expect(result.stdout.toString()).toBe("err\n");
+      // expect(await Bun.file(`${dir}/out.txt`).text()).toBe("out\n");
+    });
+
+    TestBuilder.command`echo "multi" > first.txt > second.txt`
+      .exitCode(0)
+      .fileEquals("second.txt", "multi\n")
+      .runAsTest("multiple stdout redirects (last wins)");
+
+    TestBuilder.command`echo "append test" > base.txt >> append_target.txt`
+      .exitCode(0)
+      .fileEquals("append_target.txt", "append test\n")
+      .runAsTest("redirect then append redirect");
+  });
+
+  describe.concurrent("fd duplication redirects", () => {
+    // Test >&2 (shorthand for 1>&2 - stdout to stderr)
+    test(">&2 redirects stdout to stderr (builtin)", async () => {
+      const result = await $`echo test >&2`.quiet();
+      expect(result.stdout.toString()).toBe("");
+      expect(result.stderr.toString()).toBe("test\n");
+    });
+
+    // Test 1>&2 (explicit stdout to stderr)
+    test("1>&2 redirects stdout to stderr (builtin)", async () => {
+      const result = await $`echo test 1>&2`.quiet();
+      expect(result.stdout.toString()).toBe("");
+      expect(result.stderr.toString()).toBe("test\n");
+    });
+
+    // Test 2>&1 (stderr to stdout)
+    test.skipIf(isWindows)("2>&1 redirects stderr to stdout", async () => {
+      const result = await $`/bin/sh -c "echo out; echo err >&2" 2>&1`.quiet();
+      expect(result.stdout.toString()).toBe("out\nerr\n");
+      expect(result.stderr.toString()).toBe("");
+    });
+
+    // Test with external command (not builtin)
+    test.skipIf(isWindows)(">&2 with external command", async () => {
+      const result = await $`/bin/echo test >&2`.quiet();
+      expect(result.stdout.toString()).toBe("");
+      expect(result.stderr.toString()).toBe("test\n");
+    });
+
+    // Combined file redirect and fd dup
+    test.skipIf(isWindows)("> file 2>&1 redirects both to file", async () => {
+      using dir = tempDir("redir", {});
+      const result = await $`/bin/sh -c "echo out; echo err >&2" > ${dir}/both.txt 2>&1`.cwd(String(dir)).quiet();
+      expect(result.stdout.toString()).toBe("");
+      expect(result.stderr.toString()).toBe("");
+      expect(await Bun.file(`${dir}/both.txt`).text()).toBe("out\nerr\n");
+    });
+
+    // Test >&1 (no-op - stdout to stdout)
+    test(">&1 is a no-op (builtin)", async () => {
+      const result = await $`echo test >&1`.quiet();
+      expect(result.stdout.toString()).toBe("test\n");
+      expect(result.stderr.toString()).toBe("");
+    });
+
+    // Test >&1 with external command
+    test.skipIf(isWindows)(">&1 is a no-op (external)", async () => {
+      const result = await $`/bin/echo test >&1`.quiet();
+      expect(result.stdout.toString()).toBe("test\n");
+      expect(result.stderr.toString()).toBe("");
+    });
   });
 
   describe("&> redirect (stdout and stderr to same file)", () => {

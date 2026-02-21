@@ -3588,6 +3588,10 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::Bun__FileSink__onResolveStream;
     } else if (handler == Bun__FileSink__onRejectStream) {
         return GlobalObject::PromiseFunctions::Bun__FileSink__onRejectStream;
+    } else if (handler == Bun__BodyValueBufferer__onResolveStreamToArrayBuffer) {
+        return GlobalObject::PromiseFunctions::Bun__BodyValueBufferer__onResolveStreamToArrayBuffer;
+    } else if (handler == Bun__BodyValueBufferer__onRejectStreamToArrayBuffer) {
+        return GlobalObject::PromiseFunctions::Bun__BodyValueBufferer__onRejectStreamToArrayBuffer;
     } else {
         RELEASE_ASSERT_NOT_REACHED();
     }

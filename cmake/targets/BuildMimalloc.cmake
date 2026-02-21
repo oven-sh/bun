@@ -79,10 +79,20 @@ endif()
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64|AARCH64" AND NOT APPLE)
   list(APPEND MIMALLOC_CMAKE_ARGS -DMI_NO_OPT_ARCH=ON)
   list(APPEND MIMALLOC_CMAKE_ARGS -DMI_OPT_SIMD=ON)
-  list(APPEND MIMALLOC_CMAKE_ARGS "-DCMAKE_C_FLAGS=-moutline-atomics")
+  if(NOT WIN32)
+    list(APPEND MIMALLOC_CMAKE_ARGS "-DCMAKE_C_FLAGS=-moutline-atomics")
+  endif()
 elseif(NOT ENABLE_BASELINE)
   list(APPEND MIMALLOC_CMAKE_ARGS -DMI_OPT_ARCH=ON)
   list(APPEND MIMALLOC_CMAKE_ARGS -DMI_OPT_SIMD=ON)
+endif()
+
+# Suppress all warnings from mimalloc on Windows — it's vendored C code compiled
+# as C++ (MI_USE_CXX=ON) which triggers many clang-cl warnings (-Wold-style-cast,
+# -Wzero-as-null-pointer-constant, -Wc++98-compat-pedantic, etc.)
+if(WIN32)
+  list(APPEND MIMALLOC_CMAKE_ARGS "-DCMAKE_C_FLAGS=-w")
+  list(APPEND MIMALLOC_CMAKE_ARGS "-DCMAKE_CXX_FLAGS=-w")
 endif()
 
 if(WIN32)

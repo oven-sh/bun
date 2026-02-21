@@ -1679,17 +1679,124 @@ pub const Resolver = struct {
             return a or b;
         }
 
-        if (!(bun.strings.startsWith(specifier, "./") or
-            bun.strings.startsWith(specifier, "../"))) return false;
-        if (!std.fs.path.isAbsolute(import_source_file))
-            return false;
+        if (bun.strings.startsWith(specifier, "./") or
+            bun.strings.startsWith(specifier, "../"))
+        {
+            if (!std.fs.path.isAbsolute(import_source_file))
+                return false;
 
-        const joined = bun.path.joinAbs(bun.path.dirname(import_source_file, .auto), .auto, specifier);
-        const dir = bun.path.dirname(joined, .auto);
+            const joined = bun.path.joinAbs(bun.path.dirname(import_source_file, .auto), .auto, specifier);
+            const dir = bun.path.dirname(joined, .auto);
 
-        const a = r.bustDirCache(dir);
-        const b = r.bustDirCache(joined);
-        return a or b;
+            const a = r.bustDirCache(dir);
+            const b = r.bustDirCache(joined);
+            return a or b;
+        }
+
+        // For non-relative, non-absolute specifiers (e.g. tsconfig path aliases
+        // like `@/components/Foo`), try to expand them through tsconfig paths
+        // to find the actual filesystem directory to bust.
+        return r.bustDirCacheFromTSConfigPaths(import_source_file, specifier);
+    }
+
+    /// Expand a specifier through tsconfig "paths" and bust the resolved directory cache.
+    fn bustDirCacheFromTSConfigPaths(r: *ThisResolver, import_source_file: []const u8, specifier: []const u8) bool {
+        if (!std.fs.path.isAbsolute(import_source_file)) return false;
+
+        const source_dir = bun.path.dirname(import_source_file, .auto);
+        const dir_info = (r.dirInfoCached(source_dir) catch return false) orelse return false;
+        const tsconfig = dir_info.enclosing_tsconfig_json orelse return false;
+        if (tsconfig.paths.count() == 0) return false;
+
+        var abs_base_url = tsconfig.base_url_for_paths;
+        if (tsconfig.hasBaseURL()) {
+            abs_base_url = tsconfig.base_url;
+        }
+
+        var busted = false;
+
+        // Check exact matches
+        {
+            var iter = tsconfig.paths.iterator();
+            while (iter.next()) |entry| {
+                const key = entry.key_ptr.*;
+                if (strings.eqlLong(key, specifier, true)) {
+                    for (entry.value_ptr.*) |original_path| {
+                        var absolute_original_path = original_path;
+                        if (!std.fs.path.isAbsolute(absolute_original_path)) {
+                            const parts = [_]string{ abs_base_url, original_path };
+                            absolute_original_path = r.fs.absBuf(&parts, bufs(.tsconfig_match_full_buf));
+                        }
+                        const dir = bun.path.dirname(absolute_original_path, .auto);
+                        if (r.bustDirCache(dir)) busted = true;
+                        if (r.bustDirCache(absolute_original_path)) busted = true;
+                    }
+                    return busted;
+                }
+            }
+        }
+
+        // Check wildcard matches (use longest prefix match like TypeScript)
+        var longest_match_prefix_length: i32 = -1;
+        var longest_match_suffix_length: i32 = -1;
+        var longest_match_original_paths: []string = undefined;
+        var longest_match_prefix: string = "";
+        var longest_match_suffix: string = "";
+
+        {
+            var iter = tsconfig.paths.iterator();
+            while (iter.next()) |entry| {
+                const key = entry.key_ptr.*;
+                if (strings.indexOfChar(key, '*')) |star| {
+                    const prefix = if (star == 0) "" else key[0..star];
+                    const suffix = if (star == key.len - 1) "" else key[star + 1 ..];
+
+                    if (strings.startsWith(specifier, prefix) and
+                        strings.endsWith(specifier, suffix) and
+                        specifier.len >= prefix.len + suffix.len and
+                        (@as(i32, @intCast(prefix.len)) > longest_match_prefix_length or
+                            (@as(i32, @intCast(prefix.len)) == longest_match_prefix_length and
+                                @as(i32, @intCast(suffix.len)) > longest_match_suffix_length)))
+                    {
+                        longest_match_prefix_length = @intCast(prefix.len);
+                        longest_match_suffix_length = @intCast(suffix.len);
+                        longest_match_original_paths = entry.value_ptr.*;
+                        longest_match_prefix = prefix;
+                        longest_match_suffix = suffix;
+                    }
+                }
+            }
+        }
+
+        if (longest_match_prefix_length != -1) {
+            const matched_text = specifier[longest_match_prefix.len .. specifier.len - longest_match_suffix.len];
+
+            for (longest_match_original_paths) |original_path| {
+                const star_index: ?u32 = strings.indexOfChar(original_path, '*');
+                var prefix_parts = [_]string{ abs_base_url, original_path[0 .. star_index orelse original_path.len] };
+
+                var matched_text_with_suffix = bufs(.tsconfig_match_full_buf3);
+                var matched_text_with_suffix_len: usize = 0;
+                if (star_index != null) {
+                    const suffix = std.mem.trimLeft(u8, original_path[star_index orelse original_path.len ..], "*");
+                    matched_text_with_suffix_len = matched_text.len + suffix.len;
+                    bun.concat(u8, matched_text_with_suffix, &.{ matched_text, suffix });
+                }
+
+                const prefix = r.fs.absBuf(&prefix_parts, bufs(.tsconfig_match_full_buf2));
+                var parts = [_]string{
+                    prefix,
+                    if (matched_text_with_suffix_len > 0) std.mem.trimLeft(u8, matched_text_with_suffix[0..matched_text_with_suffix_len], "/") else "",
+                    std.mem.trimLeft(u8, longest_match_suffix, "/"),
+                };
+                const absolute_original_path = r.fs.absBuf(&parts, bufs(.tsconfig_match_full_buf));
+                const dir = bun.path.dirname(absolute_original_path, .auto);
+                if (r.bustDirCache(dir)) busted = true;
+                if (r.bustDirCache(absolute_original_path)) busted = true;
+            }
+        }
+
+        return busted;
     }
 
     pub fn loadNodeModules(

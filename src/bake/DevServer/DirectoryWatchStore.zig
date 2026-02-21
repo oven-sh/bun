@@ -30,10 +30,17 @@ pub fn trackResolutionFailure(store: *DirectoryWatchStore, import_source: []cons
     if (specifier.len == 0) return;
     if (!std.fs.path.isAbsolute(import_source)) return;
 
+    const is_relative = bun.strings.startsWith(specifier, "./") or
+        bun.strings.startsWith(specifier, "../");
+
     switch (loader) {
         .tsx, .ts, .jsx, .js => {
-            if (!(bun.strings.startsWith(specifier, "./") or
-                bun.strings.startsWith(specifier, "../"))) return;
+            if (!is_relative) {
+                // For non-relative specifiers (e.g. tsconfig path aliases like
+                // `@/components/Foo`), try to expand through tsconfig paths to
+                // determine the directory to watch.
+                return store.trackTSConfigPathFailure(import_source, specifier, renderer);
+            }
         },
 
         // Imports in CSS can resolve to relative files without './'
@@ -81,6 +88,129 @@ pub fn trackResolutionFailure(store: *DirectoryWatchStore, import_source: []cons
         error.Ignore => {}, // ignoring watch errors.
         error.OutOfMemory => |e| return e,
     };
+}
+
+/// Track resolution failures for specifiers that may be tsconfig path aliases
+/// (e.g. `@/components/Foo`). Expands the alias through tsconfig paths to
+/// determine which filesystem directory to watch.
+fn trackTSConfigPathFailure(store: *DirectoryWatchStore, import_source: []const u8, specifier: []const u8, renderer: bake.Graph) bun.OOM!void {
+    const dev = store.owner();
+    const source_dir = bun.path.dirname(import_source, .auto);
+    const dir_info = dev.server_transpiler.resolver.readDirInfoIgnoreError(source_dir) orelse return;
+    const tsconfig = dir_info.enclosing_tsconfig_json orelse return;
+    if (tsconfig.paths.count() == 0) return;
+
+    var abs_base_url = tsconfig.base_url_for_paths;
+    if (tsconfig.hasBaseURL()) {
+        abs_base_url = tsconfig.base_url;
+    }
+
+    const buf = bun.path_buffer_pool.get();
+    defer bun.path_buffer_pool.put(buf);
+    const buf2 = bun.path_buffer_pool.get();
+    defer bun.path_buffer_pool.put(buf2);
+    const buf3 = bun.path_buffer_pool.get();
+    defer bun.path_buffer_pool.put(buf3);
+
+    // Try exact matches first
+    {
+        var iter = tsconfig.paths.iterator();
+        while (iter.next()) |entry| {
+            const key = entry.key_ptr.*;
+            if (bun.strings.eqlLong(key, specifier, true)) {
+                for (entry.value_ptr.*) |original_path| {
+                    const absolute_path = if (std.fs.path.isAbsolute(original_path))
+                        original_path
+                    else
+                        bun.path.joinAbsStringBuf(abs_base_url, buf, &.{original_path}, .auto);
+                    const dir = bun.path.dirname(absolute_path, .auto);
+
+                    dev.graph_safety_lock.lock();
+                    defer dev.graph_safety_lock.unlock();
+                    const owned_file_path = switch (renderer) {
+                        .client => (try dev.client_graph.insertEmpty(import_source, .unknown)).key,
+                        .server, .ssr => (try dev.server_graph.insertEmpty(import_source, .unknown)).key,
+                    };
+                    store.insert(dir, owned_file_path, specifier) catch |err| switch (err) {
+                        error.Ignore => {},
+                        error.OutOfMemory => |e| return e,
+                    };
+                }
+                return;
+            }
+        }
+    }
+
+    // Try wildcard matches (longest prefix)
+    const TSConfigMatch = struct {
+        prefix: []const u8,
+        suffix: []const u8,
+        original_paths: [][]const u8,
+    };
+    var longest_match: TSConfigMatch = undefined;
+    var longest_match_prefix_length: i32 = -1;
+    var longest_match_suffix_length: i32 = -1;
+
+    {
+        var iter = tsconfig.paths.iterator();
+        while (iter.next()) |entry| {
+            const key = entry.key_ptr.*;
+            if (bun.strings.indexOfChar(key, '*')) |star| {
+                const prefix = if (star == 0) "" else key[0..star];
+                const suffix = if (star == key.len - 1) "" else key[star + 1 ..];
+
+                if (bun.strings.startsWith(specifier, prefix) and
+                    bun.strings.endsWith(specifier, suffix) and
+                    specifier.len >= prefix.len + suffix.len and
+                    (@as(i32, @intCast(prefix.len)) > longest_match_prefix_length or
+                        (@as(i32, @intCast(prefix.len)) == longest_match_prefix_length and
+                            @as(i32, @intCast(suffix.len)) > longest_match_suffix_length)))
+                {
+                    longest_match_prefix_length = @intCast(prefix.len);
+                    longest_match_suffix_length = @intCast(suffix.len);
+                    longest_match = .{ .prefix = prefix, .suffix = suffix, .original_paths = entry.value_ptr.* };
+                }
+            }
+        }
+    }
+
+    if (longest_match_prefix_length == -1) return;
+
+    const matched_text = specifier[longest_match.prefix.len .. specifier.len - longest_match.suffix.len];
+
+    for (longest_match.original_paths) |original_path| {
+        const star_index = bun.strings.indexOfChar(original_path, '*');
+        const path_before_star = original_path[0 .. star_index orelse original_path.len];
+
+        // Build: abs_base_url + path_before_star
+        const prefix = bun.path.joinAbsStringBuf(abs_base_url, buf2, &.{path_before_star}, .auto);
+
+        // Build matched_text + suffix_after_star
+        var matched_with_suffix_len: usize = 0;
+        if (star_index != null) {
+            const suffix_after_star = std.mem.trimLeft(u8, original_path[star_index orelse original_path.len ..], "*");
+            matched_with_suffix_len = matched_text.len + suffix_after_star.len;
+            bun.concat(u8, buf3, &.{ matched_text, suffix_after_star });
+        }
+
+        // Join: prefix + matched_with_suffix + pattern_suffix
+        const absolute_path = bun.path.joinAbsStringBuf(prefix, buf, &.{
+            if (matched_with_suffix_len > 0) std.mem.trimLeft(u8, buf3[0..matched_with_suffix_len], "/") else "",
+            std.mem.trimLeft(u8, longest_match.suffix, "/"),
+        }, .auto);
+        const dir = bun.path.dirname(absolute_path, .auto);
+
+        dev.graph_safety_lock.lock();
+        defer dev.graph_safety_lock.unlock();
+        const owned_file_path = switch (renderer) {
+            .client => (try dev.client_graph.insertEmpty(import_source, .unknown)).key,
+            .server, .ssr => (try dev.server_graph.insertEmpty(import_source, .unknown)).key,
+        };
+        store.insert(dir, owned_file_path, specifier) catch |err| switch (err) {
+            error.Ignore => {},
+            error.OutOfMemory => |e| return e,
+        };
+    }
 }
 
 /// `dir_name_to_watch` is cloned

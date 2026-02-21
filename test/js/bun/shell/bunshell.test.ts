@@ -640,11 +640,11 @@ booga"
   });
 
   describe("glob expansion", () => {
-    // Issue #8403: https://github.com/oven-sh/bun/issues/8403
-    TestBuilder.command`ls *.sdfljsfsdf`
-      .exitCode(1)
-      .stderr("bun: no matches found: *.sdfljsfsdf\n")
-      .runAsTest("No matches should fail");
+    // When a glob pattern matches no files, the literal pattern is passed to the command (bash-like behavior)
+    TestBuilder.command`echo *.sdfljsfsdf`
+      .exitCode(0)
+      .stdout("*.sdfljsfsdf\n")
+      .runAsTest("No matches passes literal pattern to command");
 
     TestBuilder.command`FOO=*.lolwut; echo $FOO`
       .stdout("*.lolwut\n")

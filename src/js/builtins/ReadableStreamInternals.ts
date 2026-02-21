@@ -1138,6 +1138,22 @@ export function tryUseReadableStreamBufferedFastPath(stream, method) {
   }
 }
 
+export function onCancelDirectStream(controller, reason) {
+  var underlyingSource = controller.$underlyingSource;
+  if (underlyingSource) {
+    var cancelFn = underlyingSource.cancel;
+    if (typeof cancelFn === "function") {
+      try {
+        var result = cancelFn.$call(underlyingSource, reason);
+        if ($isPromise(result)) return result;
+      } catch (e) {
+        return Promise.$reject(e);
+      }
+    }
+  }
+  return Promise.$resolve();
+}
+
 export function onCloseDirectStream(reason) {
   var stream = this.$controlledReadableStream;
   if (!stream || $getByIdDirectPrivate(stream, "state") !== $streamReadable) return;
@@ -1428,6 +1444,7 @@ export function initializeArrayStream(underlyingSource, _highWaterMark: number) 
   var controller = {
     $underlyingSource: underlyingSource,
     $pull: $onPullDirectStream,
+    $cancel: $onCancelDirectStream,
     $controlledReadableStream: this,
     $sink: sink,
     close: $onCloseDirectStream,
@@ -1464,6 +1481,7 @@ export function initializeArrayBufferStream(underlyingSource, highWaterMark: num
   var controller = {
     $underlyingSource: underlyingSource,
     $pull: $onPullDirectStream,
+    $cancel: $onCancelDirectStream,
     $controlledReadableStream: this,
     $sink: sink,
     close: $onCloseDirectStream,
@@ -1598,7 +1616,24 @@ export function readableStreamCancel(stream: ReadableStream, reason: any) {
   $readableStreamClose(stream);
 
   const controller = $getByIdDirectPrivate(stream, "readableStreamController");
-  if (controller === null) return Promise.$resolve();
+  if (controller === null) {
+    // For lazy direct streams that were never read from, the controller hasn't been
+    // created yet but the underlyingSource is stored on the stream itself.
+    const underlyingSource = $getByIdDirectPrivate(stream, "underlyingSource");
+    if (underlyingSource) {
+      const cancelFn = underlyingSource.cancel;
+      if (typeof cancelFn === "function") {
+        try {
+          const result = cancelFn.$call(underlyingSource, reason);
+          if ($isPromise(result)) return result.$then(function () {});
+          return Promise.$resolve();
+        } catch (e) {
+          return Promise.$reject(e);
+        }
+      }
+    }
+    return Promise.$resolve();
+  }
 
   const cancel = controller.$cancel;
   if (cancel) return cancel(controller, reason).$then(function () {});

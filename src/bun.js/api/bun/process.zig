@@ -87,6 +87,8 @@ pub const ProcessExitHandler = struct {
             MultiRunProcessHandle,
             SecurityScanSubprocess,
             SyncProcess,
+            CronRegisterJob,
+            CronRemoveJob,
         },
     );
 
@@ -123,6 +125,14 @@ pub const ProcessExitHandler = struct {
             @field(TaggedPointer.Tag, @typeName(SecurityScanSubprocess)) => {
                 const subprocess = this.ptr.as(SecurityScanSubprocess);
                 subprocess.onProcessExit(process, status, rusage);
+            },
+            @field(TaggedPointer.Tag, @typeName(CronRegisterJob)) => {
+                const cron_job = this.ptr.as(CronRegisterJob);
+                cron_job.onProcessExit(process, status, rusage);
+            },
+            @field(TaggedPointer.Tag, @typeName(CronRemoveJob)) => {
+                const cron_job = this.ptr.as(CronRemoveJob);
+                cron_job.onProcessExit(process, status, rusage);
             },
             @field(TaggedPointer.Tag, @typeName(SyncProcess)) => {
                 const subprocess = this.ptr.as(SyncProcess);
@@ -2261,6 +2271,9 @@ pub const sync = struct {
 const std = @import("std");
 const MultiRunProcessHandle = @import("../../../cli/multi_run.zig").ProcessHandle;
 const ProcessHandle = @import("../../../cli/filter_run.zig").ProcessHandle;
+
+const CronRegisterJob = @import("../cron.zig").CronRegisterJob;
+const CronRemoveJob = @import("../cron.zig").CronRemoveJob;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

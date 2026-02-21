@@ -208,6 +208,38 @@ pub const Run = struct {
             if (ctx.runtime_options.eval.eval_and_print) {
                 b.options.dead_code_elimination = false;
             }
+        } else if (ctx.runtime_options.cron_title.len > 0 and ctx.runtime_options.cron_period.len > 0) {
+            // Cron execution mode: wrap the entry point in a script that imports the
+            // module and calls default.scheduled(controller)
+            // Escape path for embedding in JS string literal (handle backslashes on Windows)
+            const escaped_path = try escapeForJSString(bun.default_allocator, entry_path);
+            defer bun.default_allocator.free(escaped_path);
+            const escaped_period = try escapeForJSString(bun.default_allocator, ctx.runtime_options.cron_period);
+            defer bun.default_allocator.free(escaped_period);
+            const cron_script = try std.fmt.allocPrint(bun.default_allocator,
+                \\const mod = await import("{s}");
+                \\const scheduled = (mod.default || mod).scheduled;
+                \\if (typeof scheduled !== "function") throw new Error("Module does not export default.scheduled()");
+                \\const controller = {{ cron: "{s}", type: "scheduled", scheduledTime: Date.now() }};
+                \\await scheduled(controller);
+            , .{ escaped_path, escaped_period });
+            // entry_path must end with /[eval] for the transpiler to use eval_source
+            const trigger = bun.pathLiteral("/[eval]");
+            var cwd_buf: bun.PathBuffer = undefined;
+            const cwd_slice = switch (bun.sys.getcwd(&cwd_buf)) {
+                .result => |cwd| cwd,
+                .err => return error.SystemResources,
+            };
+            var eval_path_buf: [bun.MAX_PATH_BYTES + trigger.len]u8 = undefined;
+            @memcpy(eval_path_buf[0..cwd_slice.len], cwd_slice);
+            @memcpy(eval_path_buf[cwd_slice.len..][0..trigger.len], trigger);
+            const eval_entry_path = eval_path_buf[0 .. cwd_slice.len + trigger.len];
+            // Heap-allocate the path so it outlives this stack frame
+            const heap_entry_path = try bun.default_allocator.dupe(u8, eval_entry_path);
+            const script_source = try bun.default_allocator.create(logger.Source);
+            script_source.* = logger.Source.initPathString(heap_entry_path, cron_script);
+            vm.module_loader.eval_source = script_source;
+            run.entry_path = heap_entry_path;
         }
 
         b.options.install = ctx.install;
@@ -563,6 +595,32 @@ const OpaqueWrap = jsc.OpaqueWrap;
 const VirtualMachine = jsc.VirtualMachine;
 
 const string = []const u8;
+
+/// Escape a string for safe embedding in a JS double-quoted string literal.
+/// Escapes backslashes, double quotes, newlines, etc.
+fn escapeForJSString(allocator: std.mem.Allocator, input: []const u8) ![]const u8 {
+    var needs_escape = false;
+    for (input) |c| {
+        if (c == '\\' or c == '"' or c == '\n' or c == '\r' or c == '\t') {
+            needs_escape = true;
+            break;
+        }
+    }
+    if (!needs_escape) return allocator.dupe(u8, input);
+
+    var result = try std.array_list.Managed(u8).initCapacity(allocator, input.len + 16);
+    for (input) |c| {
+        switch (c) {
+            '\\' => try result.appendSlice("\\\\"),
+            '"' => try result.appendSlice("\\\""),
+            '\n' => try result.appendSlice("\\n"),
+            '\r' => try result.appendSlice("\\r"),
+            '\t' => try result.appendSlice("\\t"),
+            else => try result.append(c),
+        }
+    }
+    return result.toOwnedSlice();
+}
 
 const CPUProfiler = @import("./bun.js/bindings/BunCPUProfiler.zig");
 const HeapProfiler = @import("./bun.js/bindings/BunHeapProfiler.zig");

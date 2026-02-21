@@ -7204,6 +7204,113 @@ declare module "bun" {
     options?: SpawnOptions.SpawnSyncOptions<In, Out, Err>,
   ): SyncSubprocess<Out, Err>;
 
+  /**
+   * A cron schedule: a 5-field expression (`minute hour day month weekday`) or a nickname.
+   *
+   * Nicknames: `@yearly`, `@annually`, `@monthly`, `@weekly`, `@daily`, `@midnight`, `@hourly`.
+   *
+   * Fields support `*`, numbers, ranges (`1-5`), steps (`1-30/2`),
+   * comma lists (`1,5,10`), and month/weekday names (`JAN`-`DEC`, `SUN`-`SAT`).
+   *
+   * Validated at runtime by the cron parser.
+   */
+  type CronWithAutocomplete =
+    | "* * * * *"
+    | "@yearly"
+    | "@annually"
+    | "@monthly"
+    | "@weekly"
+    | "@daily"
+    | "@midnight"
+    | "@hourly"
+    | (string & {});
+
+  /**
+   * Register an OS-level cron job that runs a JavaScript/TypeScript module on a schedule.
+   *
+   * The module must export a `default` object with a `scheduled(controller)` method,
+   * conforming to the [Cloudflare Workers Cron Triggers API](https://developers.cloudflare.com/workers/runtime-apis/handlers/scheduled/).
+   *
+   * On Linux, registers with [crontab](https://man7.org/linux/man-pages/man5/crontab.5.html).
+   * On macOS, registers with [launchd](https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/CreatingLaunchdJobs.html).
+   * On Windows, registers with [Task Scheduler](https://learn.microsoft.com/en-us/windows/win32/taskschd/task-scheduler-start-page).
+   *
+   * **Cron expression syntax** (5 fields: `minute hour day month weekday`):
+   *
+   * | Field | Values | Special |
+   * |-------|--------|---------|
+   * | Minute | `0-59` | `*` `,` `-` `/` |
+   * | Hour | `0-23` | `*` `,` `-` `/` |
+   * | Day of month | `1-31` | `*` `,` `-` `/` |
+   * | Month | `1-12` or `JAN-DEC` | `*` `,` `-` `/` |
+   * | Day of week | `0-7` or `SUN-SAT` | `*` `,` `-` `/` |
+   *
+   * - `0` and `7` both mean Sunday in the weekday field.
+   * - Month/day names are case-insensitive (`MON`, `Mon`, `Monday` all work).
+   * - Predefined nicknames: `@yearly`, `@annually`, `@monthly`, `@weekly`, `@daily`, `@midnight`, `@hourly`.
+   * - When both day-of-month and day-of-week are specified (neither is `*`),
+   *   the job runs when **either** field matches ([POSIX cron](https://pubs.opengroup.org/onlinepubs/9699919799/utilities/crontab.html) behavior).
+   *
+   * @param path - Path to the script to run (resolved relative to caller)
+   * @param schedule - Cron expression or predefined nickname (e.g. `"30 2 * * MON"`, `"@daily"`)
+   * @param title - Unique identifier for this cron job (alphanumeric, hyphens, underscores only)
+   * @returns Promise that resolves when the cron job is registered
+   * @throws If the expression is invalid, the title contains invalid characters, or registration fails
+   *
+   * @example
+   * ```ts
+   * // Run every Monday at 2:30 AM
+   * await Bun.cron("./worker.ts", "30 2 * * MON", "weekly-report");
+   *
+   * // Run daily at midnight
+   * await Bun.cron("./cleanup.ts", "@daily", "daily-cleanup");
+   * ```
+   */
+  const cron: {
+    (path: string, schedule: CronWithAutocomplete, title: string): Promise<void>;
+    /**
+     * Remove a previously registered cron job by its title.
+     *
+     * @param title - The title of the cron job to remove
+     * @returns Promise that resolves when the cron job is removed
+     *
+     * @example
+     * ```ts
+     * await Bun.cron.remove("weekly-report");
+     * ```
+     */
+    remove(title: string): Promise<void>;
+    /**
+     * Parse a cron expression and return the next matching UTC Date.
+     *
+     * Supports the same syntax as {@link Bun.cron} — 5-field expressions, named
+     * days/months, and predefined nicknames like `@daily`.
+     *
+     * When both day-of-month and day-of-week are specified (neither is `*`),
+     * matching uses OR logic per [POSIX cron](https://pubs.opengroup.org/onlinepubs/9699919799/utilities/crontab.html):
+     * a date matches if **either** field matches.
+     *
+     * @param expression - A cron expression or nickname (e.g. `"0,15,30,45 * * * *"`, `"0 9 * * MON-FRI"`, `"@hourly"`)
+     * @param relativeDate - Starting point for the search (defaults to `Date.now()`). Accepts a `Date` or milliseconds since epoch.
+     * @returns The next `Date` matching the expression (UTC), or `null` if no match exists within ~4 years (e.g. `"0 0 30 2 *"` — Feb 30 never occurs)
+     * @throws If the expression is invalid or `relativeDate` is `NaN`/`Infinity`
+     *
+     * @example
+     * ```ts
+     * // Next weekday at 09:30 UTC
+     * const next = Bun.cron.parse("30 9 * * MON-FRI");
+     *
+     * // Chain calls to get a sequence
+     * const first = Bun.cron.parse("@hourly", from);
+     * const second = Bun.cron.parse("@hourly", first);
+     *
+     * // With a specific starting point
+     * const nextJan1 = Bun.cron.parse("0 0 1 JAN *", Date.UTC(2025, 0, 1));
+     * ```
+     */
+    parse(expression: CronWithAutocomplete, relativeDate?: Date | number): Date | null;
+  };
+
   /** Utility type for any process from {@link Bun.spawn()} with both stdout and stderr set to `"pipe"` */
   type ReadableSubprocess = Subprocess<any, "pipe", "pipe">;
   /** Utility type for any process from {@link Bun.spawn()} with stdin set to `"pipe"` */

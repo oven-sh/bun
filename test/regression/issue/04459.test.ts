@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
-test("http.Server.getConnections returns connection count", async () => {
+test.concurrent("http.Server.getConnections returns connection count", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -42,7 +42,7 @@ server.listen(0, () => {
   expect(exitCode).toBe(0);
 });
 
-test("http.Server.connections property is available", async () => {
+test.concurrent("http.Server.connections property is available", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -81,7 +81,7 @@ server.listen(0, () => {
   expect(exitCode).toBe(0);
 });
 
-test("http.Server.getConnections returns 0 when server is not listening", async () => {
+test.concurrent("http.Server.getConnections returns 0 when server is not listening", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

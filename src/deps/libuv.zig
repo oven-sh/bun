@@ -1415,15 +1415,23 @@ pub const Pipe = extern struct {
         return @ptrCast(this);
     }
 
-    /// Close the pipe handle and then free it in the close callback.
-    /// Use this when a pipe has been init'd but needs to be destroyed
-    /// (e.g. when open() fails after init() succeeded).
+    /// Close the pipe handle (if needed) and then free it.
+    /// Handles all states: never-initialized (loop == null), already closing,
+    /// or active. After uv_pipe_init the handle is in the event loop's
+    /// handle_queue; freeing without uv_close corrupts that list.
     pub fn closeAndDestroy(this: *@This()) void {
-        this.close(&onCloseDestroy);
+        if (this.loop == null) {
+            // Never initialized — safe to free directly.
+            bun.destroy(this);
+        } else if (!this.isClosing()) {
+            // Initialized and not yet closing — must uv_close first.
+            this.close(&onCloseDestroy);
+        }
+        // else: already closing — the pending close callback owns the lifetime.
     }
 
     fn onCloseDestroy(handle: *@This()) callconv(.c) void {
-        bun.default_allocator.destroy(handle);
+        bun.destroy(handle);
     }
 };
 const union_unnamed_416 = extern union {

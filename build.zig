@@ -447,6 +447,43 @@ pub fn build(b: *Build) !void {
         }
     }
 
+    // zig build url-decode-bench
+    var url_decode_options = build_options;
+
+    const url_decode_bun_mod = b.createModule(.{ .root_source_file = b.path("src/bun.zig") });
+    url_decode_bun_mod.addImport("bun", url_decode_bun_mod);
+    addInternalImports(b, url_decode_bun_mod, &url_decode_options);
+
+    const url_decode_root_mod = b.createModule(.{
+        .root_source_file = b.path("misctools/url_decode_bench.zig"),
+        .target = url_decode_options.target,
+        .optimize = url_decode_options.optimize,
+    });
+    url_decode_root_mod.addImport("bun", url_decode_bun_mod);
+
+    const url_decode_exe = b.addExecutable(.{
+        .name = "url_decode_bench",
+        .root_module = url_decode_root_mod,
+    });
+    configureObj(b, &url_decode_options, url_decode_exe);
+    url_decode_exe.no_link_obj = false;
+    // Allow unresolved symbols from unused bun code paths in this bench.
+    url_decode_exe.linker_allow_shlib_undefined = true;
+    url_decode_exe.root_module.strip = true;
+
+    {
+        const step = b.step("url-decode-bench", "Build url decode microbenchmark");
+        step.dependOn(&url_decode_exe.step);
+    }
+
+    // zig build run-url-decode-bench
+    {
+        const step = b.step("run-url-decode-bench", "Run url decode microbenchmark");
+
+        const run = b.addRunArtifact(url_decode_exe);
+        step.dependOn(&run.step);
+    }
+
     // zig build enum-extractor
     {
         // const step = b.step("enum-extractor", "Extract enum definitions (invoked by a code generator)");
@@ -758,7 +795,6 @@ fn configureObj(b: *Build, opts: *BunBuildOptions, obj: *Compile) void {
     }
 
     obj.no_link_obj = opts.os != .windows and !opts.no_llvm;
-
 
     if (opts.enable_asan and !enableFastBuild(b)) {
         if (@hasField(Build.Module, "sanitize_address")) {

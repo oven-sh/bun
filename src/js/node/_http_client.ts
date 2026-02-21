@@ -57,11 +57,26 @@ const { globalAgent } = require("node:_http_agent");
 const { IncomingMessage } = require("node:_http_incoming");
 const { OutgoingMessage } = require("node:_http_outgoing");
 
+// Symbols for internal state (closure variable replacements)
 const kFetching = Symbol("fetching");
 const kWriteCount = Symbol("writeCount");
 const kResolveNextChunk = Symbol("resolveNextChunk");
 const kHandleResponse = Symbol("handleResponse");
 const kOnEnd = Symbol("onEnd");
+
+// Symbols for internal prototype methods (non-observable)
+const kWriteInternal = Symbol("writeInternal");
+const kPushChunk = Symbol("pushChunk");
+const kEnsureTls = Symbol("ensureTls");
+const kSocketCloseListener = Symbol("socketCloseListener");
+const kOnAbort = Symbol("onAbort");
+const kMaybeEmitSocket = Symbol("maybeEmitSocket");
+const kMaybeEmitPrefinish = Symbol("maybeEmitPrefinish");
+const kMaybeEmitFinish = Symbol("maybeEmitFinish");
+const kMaybeEmitClose = Symbol("maybeEmitClose");
+const kSend = Symbol("send");
+const kStartFetch = Symbol("startFetch");
+const kDoFetch = Symbol("doFetch");
 
 const globalReportError = globalThis.reportError;
 const setTimeout = globalThis.setTimeout;
@@ -135,6 +150,20 @@ function emitResponseNT(self, res, maybeEmitCloseFn) {
       return;
     }
   }
+}
+
+function emitMaybeFinishNT(self) {
+  self[kMaybeEmitFinish]();
+}
+
+// Module-scope helper for _send's onEnd assignment — avoids creating a closure
+function onEndCallHandleResponse() {
+  this[kHandleResponse]?.();
+}
+
+// Module-scope helper for signal abort — avoids creating a closure
+function onSignalAbort() {
+  this[kAbortController]?.abort();
 }
 
 const MAX_FAKE_BACKPRESSURE_SIZE = 1024 * 1024;
@@ -221,13 +250,7 @@ function ClientRequest(input, options, cb) {
   const signal = options.signal;
   if (signal) {
     //We still want to control abort function and timeout so signal call our AbortController
-    signal.addEventListener(
-      "abort",
-      () => {
-        this[kAbortController]?.abort();
-      },
-      { once: true },
-    );
+    signal.addEventListener("abort", onSignalAbort.bind(this), { once: true });
     this[kSignal] = signal;
   }
   let method = options.method;
@@ -282,35 +305,35 @@ function ClientRequest(input, options, cb) {
   const mergedTlsOptions = { __proto__: null, ...agent?.connectOpts, ...options, ...agent?.options };
 
   if (mergedTlsOptions.rejectUnauthorized !== undefined) {
-    this._ensureTls().rejectUnauthorized = mergedTlsOptions.rejectUnauthorized;
+    this[kEnsureTls]().rejectUnauthorized = mergedTlsOptions.rejectUnauthorized;
   }
   if (mergedTlsOptions.ca) {
     throwOnInvalidTLSArray("options.ca", mergedTlsOptions.ca);
-    this._ensureTls().ca = mergedTlsOptions.ca;
+    this[kEnsureTls]().ca = mergedTlsOptions.ca;
   }
   if (mergedTlsOptions.cert) {
     throwOnInvalidTLSArray("options.cert", mergedTlsOptions.cert);
-    this._ensureTls().cert = mergedTlsOptions.cert;
+    this[kEnsureTls]().cert = mergedTlsOptions.cert;
   }
   if (mergedTlsOptions.key) {
     throwOnInvalidTLSArray("options.key", mergedTlsOptions.key);
-    this._ensureTls().key = mergedTlsOptions.key;
+    this[kEnsureTls]().key = mergedTlsOptions.key;
   }
   if (mergedTlsOptions.passphrase) {
     validateString(mergedTlsOptions.passphrase, "options.passphrase");
-    this._ensureTls().passphrase = mergedTlsOptions.passphrase;
+    this[kEnsureTls]().passphrase = mergedTlsOptions.passphrase;
   }
   if (mergedTlsOptions.ciphers) {
     validateString(mergedTlsOptions.ciphers, "options.ciphers");
-    this._ensureTls().ciphers = mergedTlsOptions.ciphers;
+    this[kEnsureTls]().ciphers = mergedTlsOptions.ciphers;
   }
   if (mergedTlsOptions.servername) {
     validateString(mergedTlsOptions.servername, "options.servername");
-    this._ensureTls().servername = mergedTlsOptions.servername;
+    this[kEnsureTls]().servername = mergedTlsOptions.servername;
   }
   if (mergedTlsOptions.secureOptions) {
     validateInteger(mergedTlsOptions.secureOptions, "options.secureOptions");
-    this._ensureTls().secureOptions = mergedTlsOptions.secureOptions;
+    this[kEnsureTls]().secureOptions = mergedTlsOptions.secureOptions;
   }
   this[kPath] = options.path || "/";
   if (cb) {
@@ -413,10 +436,10 @@ const ClientRequestPrototype = {
       callback = undefined;
     }
 
-    return this._writeInternal(chunk, encoding, callback);
+    return this[kWriteInternal](chunk, encoding, callback);
   },
 
-  _writeInternal(chunk, encoding, callback) {
+  [kWriteInternal](chunk, encoding, callback) {
     const canSkipReEncodingData =
       // UTF-8 string:
       (typeof chunk === "string" && (encoding === "utf-8" || encoding === "utf8" || !encoding)) ||
@@ -431,7 +454,7 @@ const ClientRequestPrototype = {
 
     if (!this[kBodyChunks]) {
       this[kBodyChunks] = [];
-      this._pushChunk(chunk);
+      this[kPushChunk](chunk);
 
       if (callback) callback();
       return true;
@@ -447,16 +470,16 @@ const ClientRequestPrototype = {
         break;
       }
     }
-    this._pushChunk(chunk);
+    this[kPushChunk](chunk);
 
     if (callback) callback();
     return bodySize < MAX_FAKE_BACKPRESSURE_SIZE;
   },
 
-  _pushChunk(chunk) {
+  [kPushChunk](chunk) {
     this[kBodyChunks].push(chunk);
     if (this[kWriteCount] > 1) {
-      this._startFetch();
+      this[kStartFetch]();
     }
     this[kResolveNextChunk]?.(false);
   },
@@ -479,7 +502,7 @@ const ClientRequestPrototype = {
         return this;
       }
 
-      this._writeInternal(chunk, encoding, null);
+      this[kWriteInternal](chunk, encoding, null);
     } else if (this.finished) {
       if (callback) {
         if (!this.writableFinished) {
@@ -495,7 +518,7 @@ const ClientRequestPrototype = {
     }
 
     if (!this.finished) {
-      this._send();
+      this[kSend]();
       this[kResolveNextChunk]?.(true);
     }
 
@@ -505,10 +528,10 @@ const ClientRequestPrototype = {
   flushHeaders() {
     if (!this[kFetching]) {
       this[kAbortController] ??= new AbortController();
-      this[kAbortController].signal.addEventListener("abort", this._onAbort.bind(this), {
+      this[kAbortController].signal.addEventListener("abort", this[kOnAbort].bind(this), {
         once: true,
       });
-      this._startFetch();
+      this[kStartFetch]();
     }
   },
 
@@ -536,12 +559,12 @@ const ClientRequestPrototype = {
     return this;
   },
 
-  _ensureTls() {
+  [kEnsureTls]() {
     if (this[kTls] === null) this[kTls] = {};
     return this[kTls];
   },
 
-  _socketCloseListener() {
+  [kSocketCloseListener]() {
     this.destroyed = true;
 
     const res = this.res;
@@ -567,16 +590,16 @@ const ClientRequestPrototype = {
     }
   },
 
-  _onAbort(_err?: Error) {
+  [kOnAbort](_err?: Error) {
     this[kClearTimeout]?.();
-    this._socketCloseListener();
+    this[kSocketCloseListener]();
     if (!this[abortedSymbol] && !this?.res?.complete) {
       process.nextTick(emitAbortNextTick, this);
       this[abortedSymbol] = true;
     }
   },
 
-  _maybeEmitSocket() {
+  [kMaybeEmitSocket]() {
     if (this.destroyed) return;
     if (!(this[kEmitState] & (1 << ClientRequestEmitState.socket))) {
       this[kEmitState] |= 1 << ClientRequestEmitState.socket;
@@ -584,8 +607,8 @@ const ClientRequestPrototype = {
     }
   },
 
-  _maybeEmitPrefinish() {
-    this._maybeEmitSocket();
+  [kMaybeEmitPrefinish]() {
+    this[kMaybeEmitSocket]();
 
     if (!(this[kEmitState] & (1 << ClientRequestEmitState.prefinish))) {
       this[kEmitState] |= 1 << ClientRequestEmitState.prefinish;
@@ -593,8 +616,8 @@ const ClientRequestPrototype = {
     }
   },
 
-  _maybeEmitFinish() {
-    this._maybeEmitPrefinish();
+  [kMaybeEmitFinish]() {
+    this[kMaybeEmitPrefinish]();
 
     if (!(this[kEmitState] & (1 << ClientRequestEmitState.finish))) {
       this[kEmitState] |= 1 << ClientRequestEmitState.finish;
@@ -602,8 +625,8 @@ const ClientRequestPrototype = {
     }
   },
 
-  _maybeEmitClose() {
-    this._maybeEmitPrefinish();
+  [kMaybeEmitClose]() {
+    this[kMaybeEmitPrefinish]();
 
     if (!this._closed) {
       process.nextTick(emitCloseNTAndComplete, this);
@@ -618,18 +641,16 @@ const ClientRequestPrototype = {
     this.destroy();
   },
 
-  _send() {
+  [kSend]() {
     this.finished = true;
     this[kAbortController] ??= new AbortController();
-    this[kAbortController].signal.addEventListener("abort", this._onAbort.bind(this), { once: true });
+    this[kAbortController].signal.addEventListener("abort", this[kOnAbort].bind(this), { once: true });
 
     var body = this[kBodyChunks] && this[kBodyChunks].length > 1 ? new Blob(this[kBodyChunks]) : this[kBodyChunks]?.[0];
 
     try {
-      this._startFetch(body);
-      this[kOnEnd] = () => {
-        this[kHandleResponse]?.();
-      };
+      this[kStartFetch](body);
+      this[kOnEnd] = onEndCallHandleResponse.bind(this);
     } catch (err) {
       if (!!$debug) globalReportError(err);
       this.emit("error", err);
@@ -638,7 +659,7 @@ const ClientRequestPrototype = {
     }
   },
 
-  _startFetch(customBody?) {
+  [kStartFetch](customBody?) {
     if (this[kFetching]) {
       return false;
     }
@@ -659,7 +680,7 @@ const ClientRequestPrototype = {
     if (isIP(host) || !options.lookup) {
       // Don't need to bother with lookup if it's already an IP address or no lookup function is provided.
       const [url, proxy] = getURL(this, host);
-      this._doFetch(url, proxy, false, method, keepalive, customBody);
+      this[kDoFetch](url, proxy, false, method, keepalive, customBody);
       return true;
     }
 
@@ -707,7 +728,7 @@ const ClientRequestPrototype = {
           }
 
           const [url, proxy] = getURL(self, candidates.shift().address);
-          self._doFetch(url, proxy, candidates.length > 0, method, keepalive, customBody).catch(iterate);
+          self[kDoFetch](url, proxy, candidates.length > 0, method, keepalive, customBody).catch(iterate);
         };
 
         iterate();
@@ -721,7 +742,7 @@ const ClientRequestPrototype = {
     }
   },
 
-  _doFetch(url, proxy, softFail, method, keepalive, customBody) {
+  [kDoFetch](url, proxy, softFail, method, keepalive, customBody) {
     const protocol = this[kProtocol];
     const tls = protocol === "https:" && this[kTls] ? { ...this[kTls], serverName: this[kTls].servername } : undefined;
 
@@ -809,7 +830,7 @@ const ClientRequestPrototype = {
     //@ts-ignore
     this[kFetchRequest] = nodeHttpClient(url, fetchOptions).then(response => {
       if (this.aborted) {
-        this._maybeEmitClose();
+        this[kMaybeEmitClose]();
         return;
       }
 
@@ -839,7 +860,7 @@ const ClientRequestPrototype = {
             callback?.();
           }, msecs);
         };
-        process.nextTick(emitResponseNT, this, res, this._maybeEmitClose);
+        process.nextTick(emitResponseNT, this, res, this[kMaybeEmitClose]);
       };
 
       if (!keepOpen) {
@@ -978,10 +999,6 @@ const ClientRequestPrototype = {
 
 ClientRequest.prototype = ClientRequestPrototype;
 $setPrototypeDirect.$call(ClientRequest, OutgoingMessage);
-
-function emitMaybeFinishNT(self) {
-  self._maybeEmitFinish();
-}
 
 function validateHost(host, name) {
   if (host !== null && host !== undefined && typeof host !== "string") {

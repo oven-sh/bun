@@ -850,7 +850,8 @@ pub fn getsockname(this: *Listener, globalThis: *jsc.JSGlobalObject, callFrame: 
         return .js_undefined;
     }
 
-    const out = callFrame.argumentsAsArray(1)[0];
+    const out_value = callFrame.argumentsAsArray(1)[0];
+    const out = try out_value.toObject(globalThis);
     const socket = this.listener.uws;
 
     var buf: [64]u8 = [_]u8{0} ** 64;
@@ -869,9 +870,9 @@ pub fn getsockname(this: *Listener, globalThis: *jsc.JSGlobalObject, callFrame: 
     const address_js = ZigString.init(bun.fmt.formatIp(address_zig, &text_buf) catch unreachable).toJS(globalThis);
     const port_js: JSValue = .jsNumber(socket.getLocalPort(this.ssl));
 
-    out.put(globalThis, bun.String.static("family"), family_js);
-    out.put(globalThis, bun.String.static("address"), address_js);
-    out.put(globalThis, bun.String.static("port"), port_js);
+    try out.put(globalThis, bun.String.static("family"), family_js);
+    try out.put(globalThis, bun.String.static("address"), address_js);
+    try out.put(globalThis, bun.String.static("port"), port_js);
     return .js_undefined;
 }
 

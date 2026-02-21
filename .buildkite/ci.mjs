@@ -1337,7 +1337,7 @@ async function main() {
       const baseBranch = getEnv("BUILDKITE_PULL_REQUEST_BASE_BRANCH", false) || "main";
       console.log(`fetching origin/${baseBranch} for diff...`);
       await spawnSafe(["git", "fetch", "--depth=1", "origin", baseBranch], { stdio: "inherit" });
-      const { stdout } = await spawnSafe(["git", "diff", "--name-only", `origin/${baseBranch}...HEAD`]);
+      const { stdout } = await spawnSafe(["git", "diff", "--name-only", `origin/${baseBranch}`, "HEAD"]);
       changedFiles = stdout.trim().split("\n").filter(Boolean);
       console.log(`- ${changedFiles.length} changed files vs origin/${baseBranch}`);
     } catch (e) {

@@ -12,12 +12,16 @@ pub const FileCopier = struct {
         return .{
             .src_path = src_path,
             .dest_subpath = dest_subpath,
-            .walker = try .walk(
-                src_dir,
-                bun.default_allocator,
-                &.{},
-                skip_dirnames,
-            ),
+            .walker = walker: {
+                var w = try Walker.walk(
+                    src_dir,
+                    bun.default_allocator,
+                    &.{},
+                    skip_dirnames,
+                );
+                w.resolve_unknown_entry_types = true;
+                break :walker w;
+            },
         };
     }
 

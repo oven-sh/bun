@@ -995,7 +995,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     stderr                                         BunObject_lazyPropCb_wrap_stderr                                    DontDelete|PropertyCallback
     stdin                                          BunObject_lazyPropCb_wrap_stdin                                     DontDelete|PropertyCallback
     stdout                                         BunObject_lazyPropCb_wrap_stdout                                    DontDelete|PropertyCallback
-    stringWidth                                    Generated::BunObject::jsStringWidth                                 DontDelete|Function 2
+    stringWidth                                    BunObject_callback_stringWidth                                      DontDelete|Function 2
     stripANSI                                      jsFunctionBunStripANSI                                              DontDelete|Function 1
     wrapAnsi                                       jsFunctionBunWrapAnsi                                               DontDelete|Function 3
     Terminal                                       BunObject_lazyPropCb_wrap_Terminal                                  DontDelete|PropertyCallback

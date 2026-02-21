@@ -125,6 +125,17 @@ pub fn deinit(this: *Watcher, close_descriptors: bool) void {
                 fd.close();
             }
         }
+        // Free any owned file paths before deiniting the watchlist
+        {
+            const wl_slice = this.watchlist.slice();
+            const wl_file_paths = wl_slice.items(.file_path);
+            const wl_owns = wl_slice.items(.owns_file_path);
+            for (wl_file_paths, wl_owns) |fp, owned| {
+                if (owned and fp.len > 0) {
+                    this.allocator.free(@as([*]u8, @constCast(fp.ptr))[0 .. fp.len + 1]);
+                }
+            }
+        }
         this.watchlist.deinit(this.allocator);
         const allocator = this.allocator;
         allocator.destroy(this);
@@ -218,6 +229,9 @@ pub const WatchItem = struct {
     kind: Kind,
     package_json: ?*PackageJSON,
     eventlist_index: if (Environment.isLinux) Platform.EventListIndex else u0 = 0,
+    /// Whether the Watcher owns the file_path allocation and must free it on eviction/deinit.
+    /// Set to true when clone_file_path=true was used in addFile/addDirectory.
+    owns_file_path: bool = false,
 
     pub const Kind = enum { file, directory };
 };
@@ -246,6 +260,17 @@ fn threadMain(this: *Watcher) !void {
         const fds = this.watchlist.items(.fd);
         for (fds) |fd| {
             fd.close();
+        }
+    }
+    // Free any owned file paths before deiniting the watchlist
+    {
+        const wl_slice = this.watchlist.slice();
+        const wl_file_paths = wl_slice.items(.file_path);
+        const wl_owns = wl_slice.items(.owns_file_path);
+        for (wl_file_paths, wl_owns) |fp, owned| {
+            if (owned and fp.len > 0) {
+                this.allocator.free(@as([*]u8, @constCast(fp.ptr))[0 .. fp.len + 1]);
+            }
         }
     }
     this.watchlist.deinit(this.allocator);
@@ -290,9 +315,18 @@ pub fn flushEvictions(this: *Watcher) void {
     }
 
     last_item = no_watch_item;
+    const file_paths = slice.items(.file_path);
+    const owns = slice.items(.owns_file_path);
     // This is split into two passes because reading the slice while modified is potentially unsafe.
     for (this.evict_list[0..this.evict_list_i]) |item| {
         if (item == last_item or this.watchlist.len <= item) continue;
+        // Free the cloned file_path before swapRemove overwrites it
+        if (owns[item]) {
+            const fp = file_paths[item];
+            if (fp.len > 0) {
+                this.allocator.free(@as([*]u8, @constCast(fp.ptr))[0 .. fp.len + 1]);
+            }
+        }
         this.watchlist.swapRemove(item);
         last_item = item;
     }
@@ -386,6 +420,7 @@ fn appendFileAssumeCapacity(
         .parent_hash = parent_hash,
         .package_json = package_json,
         .kind = .file,
+        .owns_file_path = clone_file_path,
     };
 
     if (comptime Environment.isMac) {
@@ -448,6 +483,7 @@ fn appendDirectoryAssumeCapacity(
         .parent_hash = parent_hash,
         .kind = .directory,
         .package_json = null,
+        .owns_file_path = clone_file_path,
     };
 
     if (Environment.isMac) {

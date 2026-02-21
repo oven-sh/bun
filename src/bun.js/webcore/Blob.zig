@@ -3836,6 +3836,33 @@ fn fromJSMovable(
     return FromJSFunction(global, arg);
 }
 
+/// Synchronously read a file-backed blob's contents and push them to the joiner.
+/// Used when constructing a new Blob from parts that include file-backed blobs.
+fn readFileIntoJoiner(blob: *Blob, global: *JSGlobalObject, joiner: *StringJoiner) bun.JSError!void {
+    const store = blob.store orelse return;
+    if (store.data != .file) return;
+    const file = store.data.file;
+    const res = jsc.Node.fs.NodeFS.readFile(
+        global.bunVM().nodeFS(),
+        .{
+            .encoding = .buffer,
+            .path = file.pathlike,
+            .offset = blob.offset,
+            .max_size = blob.size,
+        },
+        .sync,
+    );
+
+    switch (res) {
+        .err => |err| {
+            return global.throwValue(try err.toJS(global));
+        },
+        .result => |result| {
+            joiner.push(result.slice(), result.buffer.allocator);
+        },
+    }
+}
+
 fn fromJSWithoutDeferGC(
     global: *JSGlobalObject,
     arg: JSValue,
@@ -4022,7 +4049,11 @@ fn fromJSWithoutDeferGC(
                             .DOMWrapper => {
                                 if (item.as(Blob)) |blob| {
                                     could_have_non_ascii = could_have_non_ascii or blob.charset != .all_ascii;
-                                    joiner.pushStatic(blob.sharedView());
+                                    if (blob.needsToReadFile()) {
+                                        try readFileIntoJoiner(blob, global, &joiner);
+                                    } else {
+                                        joiner.pushStatic(blob.sharedView());
+                                    }
                                     continue;
                                 } else {
                                     const sliced = try current.toSliceClone(global);
@@ -4042,7 +4073,11 @@ fn fromJSWithoutDeferGC(
             .DOMWrapper => {
                 if (current.as(Blob)) |blob| {
                     could_have_non_ascii = could_have_non_ascii or blob.charset != .all_ascii;
-                    joiner.pushStatic(blob.sharedView());
+                    if (blob.needsToReadFile()) {
+                        try readFileIntoJoiner(blob, global, &joiner);
+                    } else {
+                        joiner.pushStatic(blob.sharedView());
+                    }
                 } else {
                     const sliced = try current.toSliceClone(global);
                     const allocator = sliced.allocator.get();

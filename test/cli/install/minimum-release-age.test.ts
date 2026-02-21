@@ -786,6 +786,90 @@ describe("minimum-release-age", () => {
           return Response.json(packageData);
         }
 
+        // TEST PACKAGE 14: parent-with-recent-dep (has transitive exact dep on a recent package)
+        if (url.pathname === "/parent-with-recent-dep") {
+          const packageData = {
+            name: "parent-with-recent-dep",
+            "dist-tags": { latest: "2.0.0" },
+            versions: {
+              "1.0.0": {
+                name: "parent-with-recent-dep",
+                version: "1.0.0",
+                dependencies: {
+                  "recent-child-package": "1.0.0",
+                },
+                dist: {
+                  tarball: `${mockRegistryUrl}/parent-with-recent-dep/-/parent-with-recent-dep-1.0.0.tgz`,
+                  integrity: "sha512-parent1==",
+                },
+              },
+              "2.0.0": {
+                name: "parent-with-recent-dep",
+                version: "2.0.0",
+                dependencies: {
+                  "recent-child-package": "2.0.0",
+                },
+                dist: {
+                  tarball: `${mockRegistryUrl}/parent-with-recent-dep/-/parent-with-recent-dep-2.0.0.tgz`,
+                  integrity: "sha512-parent2==",
+                },
+              },
+            },
+            time: {
+              "1.0.0": daysAgo(10),
+              "2.0.0": daysAgo(1),
+            },
+          };
+
+          if (req.headers.get("accept")?.includes("application/vnd.npm.install-v1+json")) {
+            return Response.json({
+              name: packageData.name,
+              "dist-tags": packageData["dist-tags"],
+              versions: packageData.versions,
+            });
+          }
+          return Response.json(packageData);
+        }
+
+        // TEST PACKAGE 15: recent-child-package (all versions are recent, used as transitive dep)
+        if (url.pathname === "/recent-child-package") {
+          const packageData = {
+            name: "recent-child-package",
+            "dist-tags": { latest: "2.0.0" },
+            versions: {
+              "1.0.0": {
+                name: "recent-child-package",
+                version: "1.0.0",
+                dist: {
+                  tarball: `${mockRegistryUrl}/recent-child-package/-/recent-child-package-1.0.0.tgz`,
+                  integrity: "sha512-child1==",
+                },
+              },
+              "2.0.0": {
+                name: "recent-child-package",
+                version: "2.0.0",
+                dist: {
+                  tarball: `${mockRegistryUrl}/recent-child-package/-/recent-child-package-2.0.0.tgz`,
+                  integrity: "sha512-child2==",
+                },
+              },
+            },
+            time: {
+              "1.0.0": daysAgo(2),
+              "2.0.0": daysAgo(1),
+            },
+          };
+
+          if (req.headers.get("accept")?.includes("application/vnd.npm.install-v1+json")) {
+            return Response.json({
+              name: packageData.name,
+              "dist-tags": packageData["dist-tags"],
+              versions: packageData.versions,
+            });
+          }
+          return Response.json(packageData);
+        }
+
         // Serve tarballs
         if (url.pathname.includes(".tgz")) {
           // Match both regular and scoped package tarballs
@@ -1664,21 +1748,22 @@ registry = "${mockRegistryUrl}"`,
   });
 
   describe("transitive dependencies", () => {
-    test("transitive dependencies are not filtered by minimum-release-age", async () => {
-      // Only direct dependencies should be filtered, not transitive ones
-      // This ensures we don't break the dependency tree
+    test("transitive exact-pinned dependencies are not filtered by minimum-release-age", async () => {
+      // Regression test for https://github.com/oven-sh/bun/issues/27080
+      // When a direct dependency (parent-with-recent-dep) passes the age filter and
+      // resolves to an older version, its transitive dependency (recent-child-package)
+      // with an exact version pin should NOT be rejected by minimum-release-age,
+      // even if all versions of the transitive dep are within the age window.
       using dir = tempDir("transitive-deps", {
         "package.json": JSON.stringify({
           dependencies: {
-            "regular-package": "*", // This will be filtered
-            // In a real scenario, regular-package might have its own dependencies
-            // that are newer than minimum-release-age, but they shouldn't be filtered
+            "parent-with-recent-dep": "*",
           },
         }),
         ".npmrc": `registry=${mockRegistryUrl}`,
       });
 
-      const proc = Bun.spawn({
+      await using proc = Bun.spawn({
         cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
         cwd: String(dir),
         env: bunEnv,
@@ -1686,12 +1771,14 @@ registry = "${mockRegistryUrl}"`,
         stderr: "pipe",
       });
 
-      const exitCode = await proc.exited;
-      expect(exitCode).toBe(0);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       const lockfile = await Bun.file(`${dir}/bun.lock`).text();
-      // Direct dependency should be filtered
-      expect(lockfile).toContain("regular-package@2.1.0");
+      // Direct dep should be filtered: 2.0.0 (1 day old) is too recent, so 1.0.0 (10 days old) selected
+      expect(lockfile).toContain("parent-with-recent-dep@1.0.0");
+      // Transitive dep should resolve despite being recent (2 days old < 5 day filter)
+      expect(lockfile).toContain("recent-child-package@1.0.0");
+      expect(exitCode).toBe(0);
     });
   });
 

@@ -729,7 +729,12 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                                         if (version.tag == .npm and version.value.npm.version.isExact()) {
                                             if (loaded_manifest.?.findByVersion(version.value.npm.version.head.head.range.left.version)) |find_result| {
                                                 if (this.options.minimum_release_age_ms) |min_age_ms| {
-                                                    if (!loaded_manifest.?.shouldExcludeFromAgeFilter(this.options.minimum_release_age_excludes) and Npm.PackageManifest.isPackageVersionTooRecent(find_result.package, min_age_ms)) {
+                                                    // Only apply minimum-release-age to direct workspace dependencies.
+                                                    // Transitive dependencies have their versions dictated by parent packages.
+                                                    if (this.lockfile.isWorkspaceDependency(id) and
+                                                        !loaded_manifest.?.shouldExcludeFromAgeFilter(this.options.minimum_release_age_excludes) and
+                                                        Npm.PackageManifest.isPackageVersionTooRecent(find_result.package, min_age_ms))
+                                                    {
                                                         const package_name = this.lockfile.str(&name);
                                                         const min_age_seconds = min_age_ms / std.time.ms_per_s;
                                                         this.log.addErrorFmt(null, logger.Loc.Empty, this.allocator, "Version \"{s}@{f}\" was published within minimum release age of {d} seconds", .{ package_name, find_result.version.fmt(this.lockfile.buffers.string_bytes.items), min_age_seconds }) catch {};
@@ -1632,9 +1637,14 @@ fn getOrPutResolvedPackage(
                 this.options.minimum_release_age_ms != null,
             ) orelse return null; // manifest might still be downloading. This feels unreliable.
 
+            // Only apply minimum-release-age filtering to direct workspace dependencies.
+            // Transitive dependencies have their versions dictated by parent packages.
+            const age_filter_ms = if (this.lockfile.isWorkspaceDependency(dependency_id)) this.options.minimum_release_age_ms else null;
+            const age_filter_excludes = if (age_filter_ms != null) this.options.minimum_release_age_excludes else null;
+
             const version_result: Npm.PackageManifest.FindVersionResult = switch (version.tag) {
-                .dist_tag => manifest.findByDistTagWithFilter(this.lockfile.str(&version.value.dist_tag.tag), this.options.minimum_release_age_ms, this.options.minimum_release_age_excludes),
-                .npm => manifest.findBestVersionWithFilter(version.value.npm.version, this.lockfile.buffers.string_bytes.items, this.options.minimum_release_age_ms, this.options.minimum_release_age_excludes),
+                .dist_tag => manifest.findByDistTagWithFilter(this.lockfile.str(&version.value.dist_tag.tag), age_filter_ms, age_filter_excludes),
+                .npm => manifest.findBestVersionWithFilter(version.value.npm.version, this.lockfile.buffers.string_bytes.items, age_filter_ms, age_filter_excludes),
                 else => unreachable,
             };
 

@@ -1666,7 +1666,9 @@ pub const JSZlib = struct {
     ) bun.JSError!JSValue {
         var level: ?i32 = null;
         var library: Library = .zlib;
-        var windowBits: i32 = 0;
+        var windowBits: ?i32 = null;
+        var memLevel: ?i32 = null;
+        var strategy: ?i32 = null;
 
         if (options_val_) |options_val| {
             if (try options_val.get(globalThis, "windowBits")) |window| {
@@ -1688,6 +1690,16 @@ pub const JSZlib = struct {
                 level = try level_value.coerce(i32, globalThis);
                 if (globalThis.hasException()) return .zero;
             }
+
+            if (try options_val.get(globalThis, "memLevel")) |memLevel_value| {
+                memLevel = try memLevel_value.coerce(i32, globalThis);
+                library = .zlib;
+            }
+
+            if (try options_val.get(globalThis, "strategy")) |strategy_value| {
+                strategy = try strategy_value.coerce(i32, globalThis);
+                library = .zlib;
+            }
         }
 
         if (globalThis.hasException()) return .zero;
@@ -1702,10 +1714,17 @@ pub const JSZlib = struct {
                     if (compressed.len > 512) compressed.len else 32,
                 );
 
+                // Compute the effective windowBits for deflateInit2_.
+                // zlib convention: negative = raw deflate, 8-15 = zlib-wrapped, 24-31 = gzip.
+                // When user provides explicit windowBits, use it directly.
+                // Otherwise, derive from is_gzip: deflateSync → raw (-15), gzipSync → gzip (31).
+                const effective_window_bits: i32 = windowBits orelse if (is_gzip) 15 + 16 else -15;
+
                 var reader = zlib.ZlibCompressorArrayList.init(compressed, &list, allocator, .{
-                    .windowBits = 15,
-                    .gzip = is_gzip,
+                    .windowBits = effective_window_bits,
                     .level = level orelse 6,
+                    .memLevel = memLevel orelse 8,
+                    .strategy = strategy orelse 0,
                 }) catch |err| {
                     defer list.deinit(allocator);
                     if (err == error.InvalidArgument) {

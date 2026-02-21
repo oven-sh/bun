@@ -11,7 +11,8 @@ pub export var Bun__defaultRemainingRunsUntilSkipReleaseAccess: c_int = 10;
 
 // TODO: evaluate if this has any measurable performance impact.
 pub var synthetic_allocation_limit: usize = std.math.maxInt(u32);
-pub var string_allocation_limit: usize = std.math.maxInt(u32);
+/// WebKit's String::MaxLength is std::numeric_limits<int32_t>::max() = 2^31-1
+pub var string_allocation_limit: usize = std.math.maxInt(i32);
 
 comptime {
     _ = Bun__remapStackFramePositions;
@@ -518,7 +519,10 @@ pub fn loadExtraEnvAndSourceCodePrinter(this: *VirtualMachine) void {
         if (map.get("BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT")) |value| {
             if (std.fmt.parseInt(usize, value, 10)) |limit| {
                 synthetic_allocation_limit = limit;
-                string_allocation_limit = limit;
+                // Clamp string_allocation_limit to WebKit's String::MaxLength (2^31-1)
+                // to prevent reintroducing the crash with large string allocations
+                const webkit_max: usize = std.math.maxInt(i32);
+                string_allocation_limit = @min(limit, webkit_max);
             } else |_| {
                 Output.panic("BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT must be a positive integer", .{});
             }

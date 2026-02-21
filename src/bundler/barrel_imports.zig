@@ -116,6 +116,39 @@ fn applyBarrelOptimizationImpl(this: *BundleV2, parse_result: *ParseTask.Result)
         }
     }
 
+    // When HMR is active, ConvertESMExportsForHmr deduplicates import records
+    // by path — two `export { ... } from './utils.js'` blocks get merged into
+    // one record. The surviving record might be the one barrel optimization
+    // would mark as unused (its exports not needed), while the other record
+    // (whose exports ARE needed) gets marked unused by HMR dedup. To prevent
+    // both records from ending up unused, promote needed_records to cover ALL
+    // import records that share a path with any needed record.
+    if (this.transpiler.options.dev_server != null) {
+        // Collect paths of needed records.
+        var needed_paths_stack = std.heap.stackFallback(4096, this.allocator());
+        const needed_paths_alloc = needed_paths_stack.get();
+        var needed_paths = bun.StringArrayHashMapUnmanaged(void){};
+        defer needed_paths.deinit(needed_paths_alloc);
+
+        for (needed_records.keys()) |rec_idx| {
+            if (rec_idx < ast.import_records.len) {
+                try needed_paths.put(needed_paths_alloc, ast.import_records.slice()[rec_idx].path.text, {});
+            }
+        }
+
+        // Add all records sharing a needed path to the needed set.
+        export_iter = named_exports.iterator();
+        while (export_iter.next()) |entry| {
+            if (named_imports.get(entry.value_ptr.ref)) |imp| {
+                if (imp.import_record_index < ast.import_records.len) {
+                    if (needed_paths.contains(ast.import_records.slice()[imp.import_record_index].path.text)) {
+                        try needed_records.put(needed_records_alloc, imp.import_record_index, {});
+                    }
+                }
+            }
+        }
+    }
+
     // Mark unneeded named re-export records as is_unused.
     var has_deferrals = false;
     export_iter = named_exports.iterator();

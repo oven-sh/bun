@@ -1428,4 +1428,44 @@ describe("bundler", () => {
     outdir: "/out",
     run: { stdout: "deep-leaf-value" },
   });
+
+  // --- Two separate export-from statements pointing to the same source ---
+  // This reproduces the ecma402-abstract pattern where the same file is
+  // re-exported in two separate export-from blocks, and the second block
+  // contains exports (like `invariant`) that must not be lost.
+
+  itBundled("barrel/DuplicateExportFromSameSource", {
+    files: {
+      "/entry.js": /* js */ `
+        import { invariant } from 'mylib';
+        console.log(typeof invariant);
+      `,
+      "/node_modules/mylib/package.json": JSON.stringify({ name: "mylib", main: "./index.js" }),
+      "/node_modules/mylib/index.js": /* js */ `
+        export {
+          createDataProperty,
+          defineProperty,
+        } from './utils.js';
+
+        export { unrelated } from './other.js';
+
+        export {
+          invariant,
+        } from './utils.js';
+      `,
+      "/node_modules/mylib/utils.js": /* js */ `
+        export function createDataProperty() {}
+        export function defineProperty() {}
+        export function invariant(cond, msg) {
+          if (!cond) throw new Error(msg);
+        }
+      `,
+      "/node_modules/mylib/other.js": /* js */ `
+        export const unrelated = <<<SYNTAX_ERROR>>>;
+      `,
+    },
+    optimizeImports: ["mylib"],
+    outdir: "/out",
+    run: { stdout: "function" },
+  });
 });

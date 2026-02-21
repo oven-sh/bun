@@ -549,3 +549,43 @@ devTest("barrel optimization: multi-file imports preserved across rebuilds", {
     await c.expectMessage("result: ALPHA BETA GAMMA");
   },
 });
+
+devTest("barrel optimization: two export-from blocks pointing to the same source", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { invariant } from 'barrel-lib';
+      console.log('got: ' + typeof invariant);
+    `,
+    "node_modules/barrel-lib/package.json": JSON.stringify({
+      name: "barrel-lib",
+      version: "1.0.0",
+      main: "./index.js",
+      sideEffects: false,
+    }),
+    "node_modules/barrel-lib/index.js": `
+      export {
+        createDataProperty,
+        defineProperty,
+      } from './utils.js';
+
+      export { unrelated } from './other.js';
+
+      export {
+        invariant,
+      } from './utils.js';
+    `,
+    "node_modules/barrel-lib/utils.js": `
+      export function createDataProperty() {}
+      export function defineProperty() {}
+      export function invariant(cond, msg) {
+        if (!cond) throw new Error(msg);
+      }
+    `,
+    "node_modules/barrel-lib/other.js": `export const unrelated = "OTHER";`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("got: function");
+  },
+});

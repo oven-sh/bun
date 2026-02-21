@@ -16,6 +16,7 @@ import {
   getEmoji,
   getEnv,
   getLastSuccessfulBuild,
+  getSecret,
   isBuildkite,
   isBuildManual,
   isFork,
@@ -1329,25 +1330,46 @@ async function main() {
     console.log("Generated options:", options);
   }
 
-  startGroup("Detecting changed files...");
+  startGroup("Querying GitHub for files...");
   if (options && isBuildkite && !isMainBranch()) {
     /** @type {string[]} */
-    let changedFiles = [];
+    let allFiles = [];
+    /** @type {string[]} */
+    let newFiles = [];
+    let prFileCount = 0;
     try {
-      const baseBranch = getEnv("BUILDKITE_PULL_REQUEST_BASE_BRANCH", false) || "main";
-      console.log(`fetching origin/${baseBranch} for diff...`);
-      await spawnSafe(["git", "fetch", "--depth=1", "origin", baseBranch], { stdio: "inherit" });
-      const { stdout } = await spawnSafe(["git", "diff", "--name-only", `origin/${baseBranch}`, "HEAD"]);
-      changedFiles = stdout.trim().split("\n").filter(Boolean);
-      console.log(`- ${changedFiles.length} changed files vs origin/${baseBranch}`);
+      console.log("on buildkite: collecting new files from PR");
+      const per_page = 50;
+      const { BUILDKITE_PULL_REQUEST } = process.env;
+      for (let i = 1; i <= 10; i++) {
+        const res = await fetch(
+          `https://api.github.com/repos/oven-sh/bun/pulls/${BUILDKITE_PULL_REQUEST}/files?per_page=${per_page}&page=${i}`,
+          { headers: { Authorization: `Bearer ${getSecret("GITHUB_TOKEN")}` } },
+        );
+        const doc = await res.json();
+        if (!Array.isArray(doc)) {
+          console.error(`-> page ${i}, unexpected response:`, JSON.stringify(doc));
+          break;
+        }
+        console.log(`-> page ${i}, found ${doc.length} items`);
+        if (doc.length === 0) break;
+        for (const { filename, status } of doc) {
+          prFileCount += 1;
+          allFiles.push(filename);
+          if (status !== "added") continue;
+          newFiles.push(filename);
+        }
+        if (doc.length < per_page) break;
+      }
+      console.log(`- PR ${BUILDKITE_PULL_REQUEST}, ${prFileCount} files, ${newFiles.length} new files`);
     } catch (e) {
-      console.error("Failed to detect changed files:", e);
+      console.error(e);
     }
-    if (changedFiles.length > 0 && changedFiles.every(filename => filename.startsWith("docs/"))) {
+    if (allFiles.length > 0 && allFiles.every(filename => filename.startsWith("docs/"))) {
       console.log(`- PR is only docs, skipping tests!`);
       return;
     }
-    options.changedFiles = changedFiles;
+    options.changedFiles = allFiles;
   }
 
   startGroup("Generating pipeline...");

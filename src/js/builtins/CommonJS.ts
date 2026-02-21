@@ -108,11 +108,6 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
     } catch (exception) {
       // Since the ESM code is mostly JS, we need to handle exceptions here.
       $requireMap.$delete(id);
-      // Also remove the failed module from the ESM registry so that
-      // a subsequent import() can re-evaluate it from scratch instead
-      // of finding the partially-initialized module entry.
-      // https://github.com/oven-sh/bun/issues/27287
-      Loader.registry.$delete(id);
       throw exception;
     }
 
@@ -326,11 +321,6 @@ export function requireESMFromHijackedExtension(this: JSCommonJSModule, id: stri
   } catch (exception) {
     // Since the ESM code is mostly JS, we need to handle exceptions here.
     $requireMap.$delete(id);
-    // Also remove the failed module from the ESM registry so that
-    // a subsequent import() can re-evaluate it from scratch instead
-    // of finding the partially-initialized module entry.
-    // https://github.com/oven-sh/bun/issues/27287
-    Loader.registry.$delete(id);
     throw exception;
   }
 

@@ -625,22 +625,20 @@ function getVerifyBaselineStep(platform, options) {
   const triplet = getTargetTriplet(platform);
   const emulator = getEmulatorBinary(platform);
 
-  const setupCommands = [
-    `buildkite-agent artifact download '*.zip' . --step ${targetKey}-build-bun`,
-    `unzip -o '${triplet}.zip'`,
-  ];
-
-  if (os !== "windows") {
-    setupCommands.push(`chmod +x ${triplet}/bun`);
-  }
-
-  if (os === "windows") {
-    setupCommands.push(
-      `curl.exe -fsSL -o sde.tar.xz "${SDE_URL}"`,
-      `tar -xf sde.tar.xz`,
-      `ren sde-external-${SDE_VERSION}-win sde-external`,
-    );
-  }
+  const setupCommands =
+    os === "windows"
+      ? [
+          `buildkite-agent artifact download ${triplet}.zip . --step ${targetKey}-build-bun`,
+          `tar -xf ${triplet}.zip`,
+          `curl.exe -fsSL -o sde.tar.xz "${SDE_URL}"`,
+          `tar -xf sde.tar.xz`,
+          `ren sde-external-${SDE_VERSION}-win sde-external`,
+        ]
+      : [
+          `buildkite-agent artifact download '*.zip' . --step ${targetKey}-build-bun`,
+          `unzip -o '${triplet}.zip'`,
+          `chmod +x ${triplet}/bun`,
+        ];
 
   return {
     key: `${targetKey}-verify-baseline`,

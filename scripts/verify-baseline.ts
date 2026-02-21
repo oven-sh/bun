@@ -24,7 +24,7 @@ const { values } = parseArgs({
 });
 
 const binary = resolve(values.binary!);
-const emulatorPath = resolve(values.emulator!);
+const emulatorPath = Bun.which(values.emulator!) ?? resolve(values.emulator!);
 
 const scriptDir = dirname(import.meta.path);
 const repoRoot = resolve(scriptDir, "..");

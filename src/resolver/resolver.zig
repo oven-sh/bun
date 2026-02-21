@@ -3091,7 +3091,6 @@ pub const Resolver = struct {
                 var parts = [_]string{
                     prefix,
                     if (matched_text_with_suffix_len > 0) std.mem.trimLeft(u8, matched_text_with_suffix[0..matched_text_with_suffix_len], "/") else "",
-                    std.mem.trimLeft(u8, longest_match.suffix, "/"),
                 };
                 const absolute_original_path = r.fs.absBuf(
                     &parts,

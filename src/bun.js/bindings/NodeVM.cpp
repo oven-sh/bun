@@ -930,10 +930,20 @@ bool NodeVMGlobalObject::getOwnPropertySlot(JSObject* cell, JSGlobalObject* glob
 
     bool notContextified = thisObject->isNotContextified();
 
-    if (notContextified && propertyName.uid()->utf8() == "globalThis") [[unlikely]] {
+    if (propertyName.uid()->utf8() == "globalThis") [[unlikely]] {
+        // When code inside a VM context accesses `globalThis`, we must return the VM's
+        // global object (which has JSC builtins like eval, parseInt, etc.) rather than
+        // letting the lookup fall through to the sandbox's own `globalThis` property.
+        // Without this, if the sandbox has `globalThis = sandbox` (as happy-dom does),
+        // the sandbox's own `globalThis` would shadow the VM global, causing builtins
+        // to appear undefined. See: https://github.com/oven-sh/bun/issues/16363
         slot.disableCaching();
         slot.setThisValue(thisObject);
-        slot.setValue(thisObject, slot.attributes(), thisObject->specialSandbox());
+        if (notContextified) {
+            slot.setValue(thisObject, slot.attributes(), thisObject->specialSandbox());
+        } else {
+            slot.setValue(thisObject, slot.attributes(), thisObject);
+        }
         return true;
     }
 

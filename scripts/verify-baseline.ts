@@ -94,17 +94,12 @@ interface RunTestOptions {
   live?: boolean;
 }
 
-/** Read a stream, tee it to a writer, and return the full text. */
-async function teeToWriter(stream: ReadableStream<Uint8Array>, writer: WritableStream<Uint8Array>): Promise<string> {
+/** Read a stream, write each chunk to an output fd, and return the full text. */
+async function teeStream(stream: ReadableStream<Uint8Array>, output: typeof Bun.stdout): Promise<string> {
   const chunks: Uint8Array[] = [];
-  const tee = stream.tee();
-  const [forCapture, forDisplay] = tee;
-  forDisplay.pipeTo(writer, { preventClose: true });
-  const reader = forCapture.getReader();
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(value);
+  for await (const chunk of stream) {
+    chunks.push(chunk);
+    output.write(chunk);
   }
   return Buffer.concat(chunks).toString();
 }
@@ -124,8 +119,8 @@ async function runTest(label: string, binaryArgs: string[], options?: RunTestOpt
   let stderr: string;
   if (live) {
     [stdout, stderr] = await Promise.all([
-      teeToWriter(proc.stdout as ReadableStream<Uint8Array>, Bun.stdout.writer()),
-      teeToWriter(proc.stderr as ReadableStream<Uint8Array>, Bun.stderr.writer()),
+      teeStream(proc.stdout as ReadableStream<Uint8Array>, Bun.stdout),
+      teeStream(proc.stderr as ReadableStream<Uint8Array>, Bun.stderr),
       proc.exited,
     ]);
   } else {

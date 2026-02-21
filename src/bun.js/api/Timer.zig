@@ -31,6 +31,12 @@ pub const All = struct {
     immediate_ref_count: i32 = 0,
     uv_idle: if (Environment.isWindows) uv.uv_idle_t else void = if (Environment.isWindows) std.mem.zeroes(uv.uv_idle_t),
 
+    /// Cached time for the current event loop tick, similar to Node.js's
+    /// `uv_update_time`. This ensures that timers scheduled during the same
+    /// event loop tick use the same base time, so two `setTimeout(fn, 1)` calls
+    /// in the same tick always fire together in the same drain.
+    cached_now: timespec = .epoch,
+
     // Event loop delay monitoring (not exposed to JS)
     event_loop_delay: EventLoopDelayMonitor = .{},
 
@@ -58,6 +64,21 @@ pub const All = struct {
         return .{
             .thread_id = std.Thread.getCurrentId(),
         };
+    }
+
+    /// Return the cached current time for this event loop tick.
+    /// The cache is refreshed once per tick via `updateCachedNow` or lazily
+    /// on the first call within a tick.
+    pub fn getCachedNow(this: *All) timespec {
+        if (this.cached_now.sec == 0 and this.cached_now.nsec == 0) {
+            this.cached_now = timespec.now(.allow_mocked_time);
+        }
+        return this.cached_now;
+    }
+
+    /// Invalidate the cached time so it will be refreshed on next access.
+    pub fn invalidateCachedNow(this: *All) void {
+        this.cached_now = .epoch;
     }
 
     pub fn insert(this: *All, timer: *EventLoopTimer) void {

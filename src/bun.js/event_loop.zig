@@ -394,6 +394,13 @@ pub fn autoTick(this: *EventLoop) void {
         }
     }
 
+    // Invalidate the cached timer scheduling time so that timers created
+    // during this tick get a fresh base time. This ensures timers scheduled
+    // in the same JS execution context share the same base time (like
+    // Node.js's uv_update_time), preventing two setTimeout(fn, 1) calls
+    // from getting different expiry times due to microsecond differences.
+    ctx.timer.invalidateCachedNow();
+
     if (Environment.isPosix) {
         ctx.timer.drainTimers(ctx);
     }
@@ -466,6 +473,8 @@ pub fn autoTickActive(this: *EventLoop) void {
     } else {
         loop.tickWithoutIdle();
     }
+
+    ctx.timer.invalidateCachedNow();
 
     if (Environment.isPosix) {
         ctx.timer.drainTimers(ctx);

@@ -129,8 +129,8 @@ pub const ShellMkdirOutputTask = OutputTask(Mkdir, .{
 
 const ShellMkdirOutputTaskVTable = struct {
     pub fn writeErr(this: *Mkdir, childptr: anytype, errbuf: []const u8) ?Yield {
+        this.state.exec.output_waiting += 1;
         if (this.bltn().stderr.needsIO()) |safeguard| {
-            this.state.exec.output_waiting += 1;
             return this.bltn().stderr.enqueue(childptr, errbuf, safeguard);
         }
         _ = this.bltn().writeNoIO(.stderr, errbuf);
@@ -142,8 +142,8 @@ const ShellMkdirOutputTaskVTable = struct {
     }
 
     pub fn writeOut(this: *Mkdir, childptr: anytype, output: *OutputSrc) ?Yield {
+        this.state.exec.output_waiting += 1;
         if (this.bltn().stdout.needsIO()) |safeguard| {
-            this.state.exec.output_waiting += 1;
             const slice = output.slice();
             log("THE SLICE: {d} {s}", .{ slice.len, slice });
             return this.bltn().stdout.enqueue(childptr, slice, safeguard);

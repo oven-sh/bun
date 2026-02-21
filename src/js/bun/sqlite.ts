@@ -499,6 +499,23 @@ class Database implements SqliteTypes.Database {
 
   close(throwOnError = false) {
     this.clearQueryCache();
+    // Finalize any prepared statements created by db.transaction()
+    if (controllers) {
+      const controller = controllers.get(this);
+      if (controller) {
+        controllers.delete(this);
+        const seen = new Set();
+        for (const ctrl of [controller.default, controller.deferred, controller.immediate, controller.exclusive]) {
+          if (!ctrl) continue;
+          for (const stmt of [ctrl.begin, ctrl.commit, ctrl.rollback, ctrl.savepoint, ctrl.release, ctrl.rollbackTo]) {
+            if (stmt && !seen.has(stmt)) {
+              seen.add(stmt);
+              stmt.finalize?.();
+            }
+          }
+        }
+      }
+    }
     this.#hasClosed = true;
     return SQL.close(this.#handle, throwOnError);
   }

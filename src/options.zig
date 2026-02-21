@@ -1740,6 +1740,7 @@ pub const BundleOptions = struct {
     resolve_dir: string = "/",
     jsx: JSX.Pragma = JSX.Pragma{},
     emit_decorator_metadata: bool = false,
+    experimental_decorators: bool = false,
     auto_import_jsx: bool = true,
     allow_runtime: bool = true,
 
@@ -1832,6 +1833,7 @@ pub const BundleOptions = struct {
     debugger: bool = false,
 
     compile: bool = false,
+    compile_to_standalone_html: bool = false,
     metafile: bool = false,
     /// Path to write JSON metafile (for Bun.build API)
     metafile_json_path: []const u8 = "",

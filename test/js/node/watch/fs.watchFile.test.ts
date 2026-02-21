@@ -1,3 +1,4 @@
+import { pathToFileURL } from "bun";
 import { isWindows, tempDirWithFiles } from "harness";
 import fs from "node:fs";
 import path from "path";
@@ -10,12 +11,23 @@ function repeat(fn: any) {
   const interval = setInterval(fn, 20).unref();
   return interval;
 }
+// Write to a temp file then rename, so stat never sees a 0-byte intermediate
+// state (writeFileSync uses O_TRUNC which briefly truncates the file to 0
+// bytes, visible to concurrent stat on Windows).
+function updateFile(filepath: string, data: string) {
+  const tmp = filepath + ".tmp";
+  fs.writeFileSync(tmp, data);
+  fs.renameSync(tmp, filepath);
+}
 const encodingFileName = `新建文夹件.txt`;
 let testDir = "";
 beforeEach(() => {
   testDir = tempDirWithFiles("watch", {
     "watch.txt": "hello",
     [encodingFileName]: "hello",
+    "space dir": {
+      "space file.txt": "hello",
+    },
   });
 });
 
@@ -50,7 +62,7 @@ describe("fs.watchFile", () => {
     let increment = 0;
     const interval = repeat(() => {
       increment++;
-      fs.writeFileSync(path.join(testDir, "watch.txt"), "hello" + increment);
+      updateFile(path.join(testDir, "watch.txt"), "hello" + increment);
     });
     await promise;
     clearInterval(interval);
@@ -75,7 +87,7 @@ describe("fs.watchFile", () => {
     let increment = 0;
     const interval = repeat(() => {
       increment++;
-      fs.writeFileSync(path.join(testDir, encodingFileName), "hello" + increment);
+      updateFile(path.join(testDir, encodingFileName), "hello" + increment);
     });
     await promise;
     clearInterval(interval);
@@ -101,7 +113,7 @@ describe("fs.watchFile", () => {
     let increment = 0;
     const interval = repeat(() => {
       increment++;
-      fs.writeFileSync(path.join(testDir, encodingFileName), "hello" + "a".repeat(increment));
+      updateFile(path.join(testDir, encodingFileName), "hello" + "a".repeat(increment));
     });
     await promise;
     clearInterval(interval);
@@ -123,6 +135,34 @@ describe("fs.watchFile", () => {
     await Bun.sleep(100);
     fs.unwatchFile(file);
     expect(called).toBe(false);
+  });
+
+  test("should work with file: URL string containing percent-encoded spaces", async () => {
+    const filepath = path.join(testDir, "space dir", "space file.txt");
+    const fileUrl = pathToFileURL(filepath).href; // e.g. file:///tmp/.../space%20dir/space%20file.txt
+    expect(fileUrl).toContain("%20");
+
+    let { promise, resolve } = Promise.withResolvers<void>();
+    let entries: any = [];
+    fs.watchFile(fileUrl, { interval: 50 }, (curr, prev) => {
+      entries.push([curr, prev]);
+      resolve();
+      resolve = () => {};
+    });
+    let increment = 0;
+    const interval = repeat(() => {
+      increment++;
+      updateFile(filepath, "hello" + increment);
+    });
+    await promise;
+    clearInterval(interval);
+
+    fs.unwatchFile(fileUrl);
+
+    expect(entries.length).toBeGreaterThan(0);
+    expect(entries[0][0].size).toBeGreaterThan(5);
+    expect(entries[0][1].size).toBe(5);
+    expect(entries[0][0].mtimeMs).toBeGreaterThan(entries[0][1].mtimeMs);
   });
 
   test("StatWatcherScheduler stress test (1000 watchers with random times)", async () => {

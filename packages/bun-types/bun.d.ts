@@ -2428,7 +2428,7 @@ declare module "bun" {
   }
 
   namespace Build {
-    type Architecture = "x64" | "arm64";
+    type Architecture = "x64" | "arm64" | "aarch64";
     type Libc = "glibc" | "musl";
     type SIMD = "baseline" | "modern";
     type CompileTarget =
@@ -2445,7 +2445,12 @@ declare module "bun" {
   /**
    * @see [Bun.build API docs](https://bun.com/docs/bundler#api)
    */
-  interface BuildConfigBase {
+  interface BuildConfig {
+    /**
+     * Enable code splitting
+     */
+    splitting?: boolean;
+
     /**
      * List of entrypoints, usually file paths
      */
@@ -2774,6 +2779,46 @@ declare module "bun" {
     metafile?: boolean;
 
     outdir?: string;
+
+    /**
+     * Create a standalone executable or self-contained HTML.
+     *
+     * When `true`, creates an executable for the current platform.
+     * When a target string, creates an executable for that platform.
+     *
+     * When used with `target: "browser"`, produces self-contained HTML files
+     * with all scripts, styles, and assets inlined. All `<script>` tags become
+     * inline `<script>` with bundled code, all `<link rel="stylesheet">` tags
+     * become inline `<style>` tags, and all asset references become `data:` URIs.
+     * All entrypoints must be HTML files. Cannot be used with `splitting`.
+     *
+     * @example
+     * ```ts
+     * // Create executable for current platform
+     * await Bun.build({
+     *   entrypoints: ['./app.js'],
+     *   compile: {
+     *     target: 'linux-x64',
+     *   },
+     *   outfile: './my-app'
+     * });
+     *
+     * // Cross-compile for Linux x64
+     * await Bun.build({
+     *   entrypoints: ['./app.js'],
+     *   compile: 'linux-x64',
+     *   outfile: './my-app'
+     * });
+     *
+     * // Produce self-contained HTML
+     * await Bun.build({
+     *   entrypoints: ['./index.html'],
+     *   target: 'browser',
+     *   compile: true,
+     * });
+     * ```
+     */
+    compile?: boolean | Bun.Build.CompileTarget | CompileBuildOptions;
   }
 
   interface CompileBuildOptions {
@@ -2831,57 +2876,6 @@ declare module "bun" {
       copyright?: string;
     };
   }
-
-  // Compile build config - uses outfile for executable output
-  interface CompileBuildConfig extends BuildConfigBase {
-    /**
-     * Create a standalone executable
-     *
-     * When `true`, creates an executable for the current platform.
-     * When a target string, creates an executable for that platform.
-     *
-     * @example
-     * ```ts
-     * // Create executable for current platform
-     * await Bun.build({
-     *   entrypoints: ['./app.js'],
-     *   compile: {
-     *     target: 'linux-x64',
-     *   },
-     *   outfile: './my-app'
-     * });
-     *
-     * // Cross-compile for Linux x64
-     * await Bun.build({
-     *   entrypoints: ['./app.js'],
-     *   compile: 'linux-x64',
-     *   outfile: './my-app'
-     * });
-     * ```
-     */
-    compile: boolean | Bun.Build.CompileTarget | CompileBuildOptions;
-
-    /**
-     * Splitting is not currently supported with `.compile`
-     */
-    splitting?: never;
-  }
-
-  interface NormalBuildConfig extends BuildConfigBase {
-    /**
-     * Enable code splitting
-     *
-     * This does not currently work with {@link CompileBuildConfig.compile `compile`}
-     *
-     * @default true
-     */
-    splitting?: boolean;
-  }
-
-  /**
-   * @see [Bun.build API docs](https://bun.com/docs/bundler#api)
-   */
-  type BuildConfig = CompileBuildConfig | NormalBuildConfig;
 
   /**
    * Hash and verify passwords using argon2 or bcrypt

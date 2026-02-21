@@ -341,6 +341,7 @@ pub const Command = struct {
         default_timeout_ms: u32 = 5 * std.time.ms_per_s,
         update_snapshots: bool = false,
         repeat_count: u32 = 0,
+        retry: u32 = 0,
         run_todo: bool = false,
         only: bool = false,
         pass_with_no_tests: bool = false,
@@ -459,7 +460,6 @@ pub const Command = struct {
             banner: []const u8 = "",
             footer: []const u8 = "",
             css_chunking: bool = false,
-
             bake: bool = false,
             bake_debug_dump_server: bool = false,
             bake_debug_disable_minify: bool = false,

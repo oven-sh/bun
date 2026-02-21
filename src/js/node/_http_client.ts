@@ -77,6 +77,9 @@ const kMaybeEmitClose = Symbol("maybeEmitClose");
 const kSend = Symbol("send");
 const kStartFetch = Symbol("startFetch");
 const kDoFetch = Symbol("doFetch");
+const kKeepOpen = Symbol("keepOpen");
+const kResponse = Symbol("response");
+const kResTimer = Symbol("resTimer");
 
 const globalReportError = globalThis.reportError;
 const setTimeout = globalThis.setTimeout;
@@ -180,6 +183,97 @@ function emitLookupError(self, message, name, code, syscall) {
   error.syscall = syscall;
   if (!!$debug) globalReportError(error);
   process.nextTick(emitErrorNT, self, error);
+}
+
+// Module-scope handler for fetch .then() — called with `this` bound to the ClientRequest
+function onFetchResponse(response) {
+  if (this.aborted) {
+    this[kMaybeEmitClose]();
+    return;
+  }
+
+  this[kResponse] = response;
+  this[kHandleResponse] = handleFetchResponse.bind(this);
+
+  if (!this[kKeepOpen]) {
+    this[kHandleResponse]();
+  }
+
+  this[kOnEnd]();
+}
+
+// Module-scope handler for processing a fetch response
+function handleFetchResponse() {
+  const response = this[kResponse];
+  this[kFetchRequest] = null;
+  this[kClearTimeout]();
+  this[kHandleResponse] = undefined;
+  this[kResponse] = undefined;
+
+  const prevIsHTTPS = getIsNextIncomingMessageHTTPS();
+  setIsNextIncomingMessageHTTPS(response.url.startsWith("https:"));
+  var res = (this.res = new IncomingMessage(response, {
+    [typeSymbol]: NodeHTTPIncomingRequestType.FetchResponse,
+    [reqSymbol]: this,
+  }));
+  setIsNextIncomingMessageHTTPS(prevIsHTTPS);
+  res.req = this;
+  res[kResTimer] = undefined;
+  res.setTimeout = resSetTimeout;
+  process.nextTick(emitResponseNT, this, res, this[kMaybeEmitClose]);
+}
+
+// Module-scope res.setTimeout — avoids per-response closure
+function resSetTimeout(msecs, callback) {
+  if (this[kResTimer]) {
+    clearTimeout(this[kResTimer]);
+  }
+  this[kResTimer] = setTimeout(resTimeoutFired, msecs, this, callback);
+}
+
+function resTimeoutFired(res, callback) {
+  res[kResTimer] = undefined;
+  if (res.complete) {
+    return;
+  }
+  res.emit("timeout");
+  callback?.();
+}
+
+// Module-scope handler for fetch .catch()
+function onFetchError(err) {
+  if (err.code === "ConnectionRefused") {
+    err = new Error("ECONNREFUSED");
+    err.code = "ECONNREFUSED";
+  }
+  // Node treats AbortError separately.
+  if (isAbortError(err)) {
+    return;
+  }
+
+  if (!!$debug) globalReportError(err);
+
+  try {
+    this.emit("error", err);
+  } catch (_err) {
+    void _err;
+  }
+}
+
+// Module-scope handler for fetch .finally()
+function onFetchFinally() {
+  if (!this[kKeepOpen]) {
+    this[kFetching] = false;
+    this[kFetchRequest] = null;
+    this[kClearTimeout]();
+  }
+}
+
+// Module-scope handler for prototype setTimeout timer
+function onRequestTimeout() {
+  this[kTimeoutTimer] = undefined;
+  this[kAbortController]?.abort();
+  this.emit("timeout");
 }
 
 const MAX_FAKE_BACKPRESSURE_SIZE = 1024 * 1024;
@@ -764,13 +858,13 @@ const ClientRequestPrototype = {
       decompress: false,
       keepalive,
     };
-    let keepOpen = false;
     // no body and not finished
     const isDuplex = customBody === undefined && !this.finished;
 
+    this[kKeepOpen] = false;
     if (isDuplex) {
       fetchOptions.duplex = "half";
-      keepOpen = true;
+      this[kKeepOpen] = true;
     }
 
     // Allow body for all methods when explicitly provided via req.write()/req.end()
@@ -835,78 +929,12 @@ const ClientRequestPrototype = {
     }
 
     //@ts-ignore
-    this[kFetchRequest] = nodeHttpClient(url, fetchOptions).then(response => {
-      if (this.aborted) {
-        this[kMaybeEmitClose]();
-        return;
-      }
-
-      this[kHandleResponse] = () => {
-        this[kFetchRequest] = null;
-        this[kClearTimeout]();
-        this[kHandleResponse] = undefined;
-
-        const prevIsHTTPS = getIsNextIncomingMessageHTTPS();
-        setIsNextIncomingMessageHTTPS(response.url.startsWith("https:"));
-        var res = (this.res = new IncomingMessage(response, {
-          [typeSymbol]: NodeHTTPIncomingRequestType.FetchResponse,
-          [reqSymbol]: this,
-        }));
-        setIsNextIncomingMessageHTTPS(prevIsHTTPS);
-        res.req = this;
-        let timer;
-        res.setTimeout = (msecs, callback) => {
-          if (timer) {
-            clearTimeout(timer);
-          }
-          timer = setTimeout(() => {
-            if (res.complete) {
-              return;
-            }
-            res.emit("timeout");
-            callback?.();
-          }, msecs);
-        };
-        process.nextTick(emitResponseNT, this, res, this[kMaybeEmitClose]);
-      };
-
-      if (!keepOpen) {
-        this[kHandleResponse]();
-      }
-
-      this[kOnEnd]();
-    });
+    this[kFetchRequest] = nodeHttpClient(url, fetchOptions).then(onFetchResponse.bind(this));
 
     if (!softFail) {
       // Don't emit an error if we're iterating over multiple possible addresses and we haven't reached the end yet.
       // This is for the happy eyeballs implementation.
-      this[kFetchRequest]
-        .catch(err => {
-          if (err.code === "ConnectionRefused") {
-            err = new Error("ECONNREFUSED");
-            err.code = "ECONNREFUSED";
-          }
-          // Node treats AbortError separately.
-          // The "abort" listener on the abort controller should have called this
-          if (isAbortError(err)) {
-            return;
-          }
-
-          if (!!$debug) globalReportError(err);
-
-          try {
-            this.emit("error", err);
-          } catch (_err) {
-            void _err;
-          }
-        })
-        .finally(() => {
-          if (!keepOpen) {
-            this[kFetching] = false;
-            this[kFetchRequest] = null;
-            this[kClearTimeout]();
-          }
-        });
+      this[kFetchRequest].catch(onFetchError.bind(this)).finally(onFetchFinally.bind(this));
     }
 
     return this[kFetchRequest];
@@ -944,11 +972,7 @@ const ClientRequestPrototype = {
 
       this[kTimeoutTimer] = undefined;
     } else {
-      this[kTimeoutTimer] = setTimeout(() => {
-        this[kTimeoutTimer] = undefined;
-        this[kAbortController]?.abort();
-        this.emit("timeout");
-      }, msecs).unref();
+      this[kTimeoutTimer] = setTimeout(onRequestTimeout.bind(this), msecs).unref();
 
       if (callback !== undefined) {
         validateFunction(callback, "callback");

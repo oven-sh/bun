@@ -209,7 +209,7 @@ function ClientRequest(input, options, cb) {
   }
 
   const defaultPort = options.defaultPort || this[kAgent].defaultPort;
-  const port = (this[kPort] = options.port || defaultPort || 80);
+  this[kPort] = options.port || defaultPort || 80;
   this[kUseDefaultPort] = this[kPort] === defaultPort;
   const host =
     (this[kHost] =

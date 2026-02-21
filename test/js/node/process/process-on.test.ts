@@ -105,12 +105,10 @@ describe("signal default disposition", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode, signalCode] = await Promise.all([
-      child.stdout.text(),
-      child.stderr.text(),
-      child.exited,
-      child.signalCode,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+
+    // Read signalCode after the process has exited (it's a synchronous property)
+    const signalCode = child.signalCode;
 
     // Process should be terminated by SIGHUP (exit code null, signal SIGHUP)
     // or exit with 128 + 1 = 129
@@ -138,12 +136,9 @@ describe("signal default disposition", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode, signalCode] = await Promise.all([
-      child.stdout.text(),
-      child.stderr.text(),
-      child.exited,
-      child.signalCode,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+
+    const signalCode = child.signalCode;
 
     if (signalCode) {
       expect(signalCode).toBe("SIGTERM");
@@ -203,12 +198,9 @@ describe("signal default disposition", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode, signalCode] = await Promise.all([
-      child.stdout.text(),
-      child.stderr.text(),
-      child.exited,
-      child.signalCode,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+
+    const signalCode = child.signalCode;
 
     // After removing all listeners, SIGHUP should use default disposition
     if (signalCode) {

@@ -1126,6 +1126,18 @@ extern "C" void Bun__onSignalForJS(int signalNumber, Zig::GlobalObject* globalOb
     Process* process = globalObject->processObject();
 
     String signalName = signalNumberToNameMap->get(signalNumber);
+
+    // If the signal number doesn't map to a known name, it cannot have JS
+    // listeners. Fall through to emitForBindings (which will be a no-op) to
+    // preserve the safe pre-existing behavior for unknown/unmapped signals.
+    if (signalName.isEmpty()) {
+        MarkedArgumentBuffer args;
+        args.append(jsUndefined());
+        args.append(jsNumber(signalNumber));
+        process->wrapped().emitForBindings(Identifier::fromString(JSC::getVM(globalObject), signalName), args);
+        return;
+    }
+
     Identifier signalNameIdentifier = Identifier::fromString(JSC::getVM(globalObject), signalName);
 
     // Match Node.js behavior: if no JS listeners are registered for this signal,
@@ -1136,7 +1148,11 @@ extern "C" void Bun__onSignalForJS(int signalNumber, Zig::GlobalObject* globalOb
 #if !OS(WINDOWS)
         // Node.js ignores SIGPIPE and SIGXFSZ by default (they should never
         // terminate the process). Match that behavior here.
-        if (signalNumber == SIGPIPE || signalNumber == SIGXFSZ) {
+        if (signalNumber == SIGPIPE
+#ifdef SIGXFSZ
+            || signalNumber == SIGXFSZ
+#endif
+        ) {
             return;
         }
 

@@ -1409,6 +1409,15 @@ pub const StandaloneModuleGraph = struct {
 
         switch (Environment.os) {
             .linux => {
+                // Check for override first (for Termux/explicit ld.so scenarios)
+                // When invoked via explicit dynamic linker (e.g., /lib64/ld-linux-x86-64.so.2 ./app),
+                // /proc/self/exe points to the linker, not the actual binary.
+                if (bun.env_var.BUN_SELF_EXE.get()) |path| {
+                    if (std.fs.cwd().openFile(path, .{})) |file| {
+                        return .fromStdFile(file);
+                    } else |_| {}
+                }
+
                 if (std.fs.openFileAbsoluteZ("/proc/self/exe", .{})) |easymode| {
                     return .fromStdFile(easymode);
                 } else |_| {

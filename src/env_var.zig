@@ -58,6 +58,10 @@ pub const BUN_INSTALL = New(kind.string, "BUN_INSTALL", .{});
 pub const BUN_INSTALL_BIN = New(kind.string, "BUN_INSTALL_BIN", .{});
 pub const BUN_INSTALL_GLOBAL_DIR = New(kind.string, "BUN_INSTALL_GLOBAL_DIR", .{});
 pub const BUN_NEEDS_PROC_SELF_WORKAROUND = New(kind.boolean, "BUN_NEEDS_PROC_SELF_WORKAROUND", .{ .default = false });
+/// Override path used for self-executable detection. Useful when running via explicit
+/// dynamic linker (e.g., /lib64/ld-linux-x86-64.so.2 ./my-app) where /proc/self/exe
+/// points to the linker instead of the actual binary.
+pub const BUN_SELF_EXE = PlatformSpecificNew(kind.string, "BUN_SELF_EXE", null, .{});
 pub const BUN_OPTIONS = New(kind.string, "BUN_OPTIONS", .{});
 pub const BUN_POSTGRES_SOCKET_MONITOR = New(kind.string, "BUN_POSTGRES_SOCKET_MONITOR", .{});
 pub const BUN_POSTGRES_SOCKET_MONITOR_READER = New(kind.string, "BUN_POSTGRES_SOCKET_MONITOR_READER", .{});

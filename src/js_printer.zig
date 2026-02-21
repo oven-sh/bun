@@ -4566,6 +4566,63 @@ fn NewPrinter(
                         return;
                     }
 
+                    // When rewriting ESM to CJS (e.g. for .cjs files or files detected as CommonJS),
+                    // convert `import { x, y } from "path"` to `var { x, y } = require("path")`.
+                    // This is needed because import statements are invalid inside a CJS function wrapper.
+                    if (rewrite_esm_to_cjs or p.options.module_type == .cjs) {
+                        const has_items = s.items.len > 0 or s.default_name != null or record.flags.contains_import_star;
+                        if (has_items) {
+                            p.print("var ");
+
+                            if (record.flags.contains_import_star and s.items.len == 0 and s.default_name == null) {
+                                // import * as ns from "path" → var ns = require("path")
+                                p.printSymbol(s.namespace_ref);
+                            } else {
+                                // import { a, b } from "path" → var { a, b } = require("path")
+                                // import def, { a } from "path" → var { default: def, a } = require("path")
+                                p.print("{");
+                                p.printSpace();
+
+                                var cjs_item_count: usize = 0;
+
+                                if (s.default_name) |default_name| {
+                                    p.print("default:");
+                                    p.printSpace();
+                                    p.printSymbol(default_name.ref.?);
+                                    cjs_item_count += 1;
+                                }
+
+                                for (s.items) |item| {
+                                    if (cjs_item_count > 0) {
+                                        p.print(",");
+                                        p.printSpace();
+                                    }
+                                    p.printClauseItemAs(item, .@"var");
+                                    cjs_item_count += 1;
+                                }
+
+                                if (record.flags.contains_import_star) {
+                                    // This is a rare edge case; just add it as an extra item
+                                    if (cjs_item_count > 0) {
+                                        p.print(",");
+                                        p.printSpace();
+                                    }
+                                }
+
+                                p.printSpace();
+                                p.print("}");
+                            }
+
+                            p.@"print = "();
+                        }
+
+                        p.print("require(");
+                        p.printImportRecordPath(record);
+                        p.print(")");
+                        p.printSemicolonAfterStatement();
+                        return;
+                    }
+
                     p.print("import");
 
                     var item_count: usize = 0;

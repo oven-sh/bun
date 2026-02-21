@@ -11,8 +11,11 @@ pub const BunxCommand = struct {
         package_name: string,
         /// The binary name to run (when using --package)
         binary_name: ?string = null,
-        /// The package to install (when using --package)
-        specified_package: ?string = null,
+        /// The packages to install (when using --package). Supports multiple -p flags.
+        specified_packages: std.ArrayListUnmanaged(string) = .{},
+        /// Shell command to execute (when using -c/--call). All specified packages
+        /// are installed and their binaries are made available in PATH.
+        call_command: ?string = null,
         // `--silent` and `--verbose` are not mutually exclusive. Both the
         // global CLI parser and `bun add` parser use them for different
         // purposes.
@@ -43,7 +46,7 @@ pub const BunxCommand = struct {
             while (i < argv.len) : (i += 1) {
                 const positional = argv[i];
 
-                if (maybe_package_name != null) {
+                if (maybe_package_name != null and opts.call_command == null) {
                     opts.passthrough_list.appendAssumeCapacity(positional);
                     continue;
                 }
@@ -72,21 +75,46 @@ pub const BunxCommand = struct {
                             Output.errGeneric("--package requires a non-empty package name", .{});
                             Global.exit(1);
                         }
-                        opts.specified_package = argv[i];
+                        try opts.specified_packages.append(opts.allocator, argv[i]);
                     } else if (strings.hasPrefixComptime(positional, "--package=")) {
                         const package_value = positional["--package=".len..];
                         if (package_value.len == 0) {
                             Output.errGeneric("--package requires a non-empty package name", .{});
                             Global.exit(1);
                         }
-                        opts.specified_package = package_value;
+                        try opts.specified_packages.append(opts.allocator, package_value);
                     } else if (strings.hasPrefixComptime(positional, "-p=")) {
                         const package_value = positional["-p=".len..];
                         if (package_value.len == 0) {
                             Output.errGeneric("--package requires a non-empty package name", .{});
                             Global.exit(1);
                         }
-                        opts.specified_package = package_value;
+                        try opts.specified_packages.append(opts.allocator, package_value);
+                    } else if (strings.eqlComptime(positional, "--call") or strings.eqlComptime(positional, "-c")) {
+                        i += 1;
+                        if (i >= argv.len) {
+                            Output.errGeneric("--call requires a command string", .{});
+                            Global.exit(1);
+                        }
+                        if (argv[i].len == 0) {
+                            Output.errGeneric("--call requires a non-empty command string", .{});
+                            Global.exit(1);
+                        }
+                        opts.call_command = argv[i];
+                    } else if (strings.hasPrefixComptime(positional, "--call=")) {
+                        const call_value = positional["--call=".len..];
+                        if (call_value.len == 0) {
+                            Output.errGeneric("--call requires a non-empty command string", .{});
+                            Global.exit(1);
+                        }
+                        opts.call_command = call_value;
+                    } else if (strings.hasPrefixComptime(positional, "-c=")) {
+                        const call_value = positional["-c=".len..];
+                        if (call_value.len == 0) {
+                            Output.errGeneric("--call requires a non-empty command string", .{});
+                            Global.exit(1);
+                        }
+                        opts.call_command = call_value;
                     }
                 } else {
                     if (!found_subcommand_name) {
@@ -97,8 +125,20 @@ pub const BunxCommand = struct {
                 }
             }
 
+            // Handle --call flag: requires at least one --package
+            if (opts.call_command != null) {
+                if (opts.specified_packages.items.len == 0) {
+                    Output.errGeneric("--call requires at least one --package flag", .{});
+                    Output.prettyln("  <d>usage: bunx -p \\<package\\> [-p \\<package\\> ...] -c '\\<command\\>'<r>", .{});
+                    Global.exit(1);
+                }
+                // Use the first specified package as the primary package_name for installation
+                opts.package_name = opts.specified_packages.items[0];
+                return opts;
+            }
+
             // Handle --package flag case differently
-            if (opts.specified_package != null) {
+            if (opts.specified_packages.items.len > 0) {
                 if (maybe_package_name) |package_name| {
                     if (package_name.len == 0) {
                         Output.errGeneric("When using --package, you must specify the binary to run", .{});
@@ -111,7 +151,7 @@ pub const BunxCommand = struct {
                     Global.exit(1);
                 }
                 opts.binary_name = maybe_package_name;
-                opts.package_name = opts.specified_package.?;
+                opts.package_name = opts.specified_packages.items[0];
             } else {
                 // Normal case: package_name is the first non-flag argument
                 if (maybe_package_name == null or maybe_package_name.?.len == 0) {
@@ -131,6 +171,7 @@ pub const BunxCommand = struct {
 
         fn deinit(self: *Options) void {
             self.passthrough_list.deinit(self.allocator);
+            self.specified_packages.deinit(self.allocator);
             self.* = undefined;
         }
     };
@@ -329,12 +370,317 @@ pub const BunxCommand = struct {
         Global.exit(1);
     }
 
+    /// Installs the given packages into `bunx_install_dir`, using a spawned `bun add` process.
+    /// Handles cache busting, verbose/silent flags, and exits on failure.
+    fn installPackages(
+        ctx: bun.cli.Command.Context,
+        opts: *Options,
+        install_params: []const string,
+        bunx_cache_dir: string,
+        this_transpiler: *bun.Transpiler,
+        do_cache_bust: bool,
+    ) !void {
+        var bunx_install_dir = try std.fs.cwd().makeOpenPath(bunx_cache_dir, .{});
+        defer bunx_install_dir.close();
+
+        create_package_json: {
+            var package_json = bunx_install_dir.createFileZ("package.json", .{ .truncate = true }) catch break :create_package_json;
+            defer package_json.close();
+            package_json.writeAll("{}\n") catch {};
+        }
+
+        // Build argv: bun add <pkg1> <pkg2> ... --no-summary [--no-cache] [--force] [--verbose] [--silent]
+        const bun_exe = try bun.selfExePath();
+        var args = try std.ArrayListUnmanaged(string).initCapacity(ctx.allocator, install_params.len + 8);
+        args.appendAssumeCapacity(bun_exe);
+        args.appendAssumeCapacity("add");
+        args.appendSliceAssumeCapacity(install_params);
+        args.appendAssumeCapacity("--no-summary");
+
+        if (do_cache_bust) {
+            args.appendAssumeCapacity("--no-cache");
+            args.appendAssumeCapacity("--force");
+        }
+
+        if (opts.verbose_install) {
+            args.appendAssumeCapacity("--verbose");
+        }
+
+        if (opts.silent_install) {
+            args.appendAssumeCapacity("--silent");
+        }
+
+        const argv_to_use = args.items;
+        debug("installing packages: {f}", .{bun.fmt.fmtSlice(argv_to_use, " ")});
+        bun.handleOom(this_transpiler.env.map.put("BUN_INTERNAL_BUNX_INSTALL", "true"));
+
+        const spawn_result = switch ((bun.spawnSync(&.{
+            .argv = argv_to_use,
+            .envp = try this_transpiler.env.map.createNullDelimitedEnvMap(bun.default_allocator),
+            .cwd = bunx_cache_dir,
+            .stderr = .inherit,
+            .stdout = .inherit,
+            .stdin = .inherit,
+            .windows = if (Environment.isWindows) .{
+                .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(this_transpiler.env, null)),
+            },
+        }) catch |err| {
+            Output.prettyErrorln("<r><red>error<r>: bunx failed to install packages due to error <b>{s}<r>", .{@errorName(err)});
+            Global.exit(1);
+        })) {
+            .err => {
+                Global.exit(1);
+            },
+            .result => |result| result,
+        };
+
+        switch (spawn_result.status) {
+            .exited => |exit| {
+                if (exit.signal.valid()) {
+                    if (bun.feature_flag.BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get()) {
+                        bun.crash_handler.suppressReporting();
+                    }
+                    Global.raiseIgnoringPanicHandler(exit.signal);
+                }
+                if (exit.code != 0) {
+                    Global.exit(exit.code);
+                }
+            },
+            .signaled => |signal| {
+                if (bun.feature_flag.BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get()) {
+                    bun.crash_handler.suppressReporting();
+                }
+                Global.raiseIgnoringPanicHandler(signal);
+            },
+            .err => |err| {
+                Output.prettyErrorln("<r><red>error<r>: bunx failed to install packages due to error:\n{f}", .{err});
+                Global.exit(1);
+            },
+            else => {},
+        }
+    }
+
+    /// Handle `bunx -p pkg1 -p pkg2 -c 'command'`: install all specified packages
+    /// and run the command string through the shell with their binaries in PATH.
+    fn execCallCommand(ctx: bun.cli.Command.Context, opts: *Options) !void {
+        const call_command = opts.call_command.?;
+        const packages = opts.specified_packages.items;
+        bun.assert(packages.len > 0);
+
+        debug("execCallCommand: call_command={s}, packages={f}", .{ call_command, bun.fmt.fmtSlice(packages, ", ") });
+
+        var this_transpiler: bun.Transpiler = undefined;
+        var ORIGINAL_PATH: string = "";
+
+        const root_dir_info = try Run.configureEnvForRun(
+            ctx,
+            &this_transpiler,
+            null,
+            true,
+            true,
+        );
+
+        try Run.configurePathForRun(
+            ctx,
+            root_dir_info,
+            &this_transpiler,
+            &ORIGINAL_PATH,
+            root_dir_info.abs_path,
+            ctx.debug.run_in_bun,
+        );
+        this_transpiler.env.map.put("npm_command", "exec") catch unreachable;
+        this_transpiler.env.map.put("npm_lifecycle_event", "bunx") catch unreachable;
+
+        var PATH = this_transpiler.env.get("PATH").?;
+        const temp_dir = bun.fs.FileSystem.RealFS.platformTempDir();
+        const uid = if (bun.Environment.isPosix) bun.c.getuid() else bun.windows.userUniqueId();
+
+        // Create a combined package_fmt for the cache directory name using a hash of all package names
+        var hash: u64 = 0;
+        for (packages) |pkg| {
+            hash = hash +% bun.hash(pkg);
+        }
+        const package_fmt = try std.fmt.allocPrint(ctx.allocator, "multi-{d}", .{hash});
+
+        // Build install params: "pkg1@latest", "pkg2@latest", ...
+        var install_params = try std.ArrayListUnmanaged(string).initCapacity(ctx.allocator, packages.len);
+        for (packages) |pkg| {
+            install_params.appendAssumeCapacity(try std.fmt.allocPrint(ctx.allocator, "{s}@latest", .{pkg}));
+        }
+
+        // Set up bunx cache dir and prepend to PATH
+        const bunx_cache_dir = try std.fmt.allocPrint(
+            ctx.allocator,
+            bun.pathLiteral("{s}/bunx-{d}-{s}"),
+            .{ temp_dir, uid, package_fmt },
+        );
+
+        PATH = switch (PATH.len > 0) {
+            inline else => |path_is_nonzero| try std.fmt.allocPrint(
+                ctx.allocator,
+                bun.pathLiteral("{s}/node_modules/.bin{s}{s}"),
+                .{
+                    bunx_cache_dir,
+                    if (path_is_nonzero) &[1]u8{std.fs.path.delimiter} else "",
+                    if (path_is_nonzero) PATH else "",
+                },
+            ),
+        };
+        try this_transpiler.env.map.put("PATH", PATH);
+
+        if (opts.no_install) {
+            Output.errGeneric(
+                "Could not run call command. Stopping because --no-install was passed.",
+                .{},
+            );
+            Global.exit(1);
+        }
+
+        // Install all packages into the shared cache dir
+        try installPackages(ctx, opts, install_params.items, bunx_cache_dir, &this_transpiler, true);
+
+        // Run the call command through Bun's shell interpreter
+        debug("running call command: {s}", .{call_command});
+        const cwd = this_transpiler.fs.top_level_dir;
+        const mini = bun.jsc.MiniEventLoop.initGlobal(this_transpiler.env, cwd);
+        const code = bun.shell.Interpreter.initAndRunFromSource(ctx, mini, "bunx --call", call_command, cwd) catch |err| {
+            Output.prettyErrorln("<r><red>error<r>: Failed to run call command due to error <b>{s}<r>", .{@errorName(err)});
+            Global.exit(1);
+        };
+
+        Global.exit(code);
+    }
+
+    /// Handle `bunx -p pkg1 -p pkg2 binary_name [args...]`: install all specified
+    /// packages and run the named binary.
+    fn execMultiPackage(ctx: bun.cli.Command.Context, opts: *Options) !void {
+        const packages = opts.specified_packages.items;
+        const binary_name = opts.binary_name orelse {
+            Output.errGeneric("When using multiple --package flags, you must specify the binary to run", .{});
+            Output.prettyln("  <d>usage: bunx -p \\<package\\> -p \\<package\\> \\<binary-name\\> [args...]<r>", .{});
+            Global.exit(1);
+        };
+        bun.assert(packages.len > 1);
+
+        debug("execMultiPackage: binary_name={s}, packages={f}", .{ binary_name, bun.fmt.fmtSlice(packages, ", ") });
+
+        var this_transpiler: bun.Transpiler = undefined;
+        var ORIGINAL_PATH: string = "";
+
+        const root_dir_info = try Run.configureEnvForRun(
+            ctx,
+            &this_transpiler,
+            null,
+            true,
+            true,
+        );
+
+        try Run.configurePathForRun(
+            ctx,
+            root_dir_info,
+            &this_transpiler,
+            &ORIGINAL_PATH,
+            root_dir_info.abs_path,
+            ctx.debug.run_in_bun,
+        );
+        this_transpiler.env.map.put("npm_command", "exec") catch unreachable;
+        this_transpiler.env.map.put("npm_lifecycle_event", "bunx") catch unreachable;
+
+        var PATH = this_transpiler.env.get("PATH").?;
+        const temp_dir = bun.fs.FileSystem.RealFS.platformTempDir();
+        const uid = if (bun.Environment.isPosix) bun.c.getuid() else bun.windows.userUniqueId();
+
+        // Create a combined cache directory using a hash of all package names
+        var hash: u64 = 0;
+        for (packages) |pkg| {
+            hash = hash +% bun.hash(pkg);
+        }
+        const package_fmt = try std.fmt.allocPrint(ctx.allocator, "multi-{d}", .{hash});
+
+        // Build install params
+        var install_params = try std.ArrayListUnmanaged(string).initCapacity(ctx.allocator, packages.len);
+        for (packages) |pkg| {
+            install_params.appendAssumeCapacity(try std.fmt.allocPrint(ctx.allocator, "{s}@latest", .{pkg}));
+        }
+
+        const bunx_cache_dir = try std.fmt.allocPrint(
+            ctx.allocator,
+            bun.pathLiteral("{s}/bunx-{d}-{s}"),
+            .{ temp_dir, uid, package_fmt },
+        );
+
+        PATH = switch (PATH.len > 0) {
+            inline else => |path_is_nonzero| try std.fmt.allocPrint(
+                ctx.allocator,
+                bun.pathLiteral("{s}/node_modules/.bin{s}{s}"),
+                .{
+                    bunx_cache_dir,
+                    if (path_is_nonzero) &[1]u8{std.fs.path.delimiter} else "",
+                    if (path_is_nonzero) PATH else "",
+                },
+            ),
+        };
+        try this_transpiler.env.map.put("PATH", PATH);
+
+        if (opts.no_install) {
+            Output.errGeneric(
+                "Could not find an existing '{s}' binary to run. Stopping because --no-install was passed.",
+                .{binary_name},
+            );
+            Global.exit(1);
+        }
+
+        // Install all packages
+        try installPackages(ctx, opts, install_params.items, bunx_cache_dir, &this_transpiler, true);
+
+        // Look for the binary in the cache dir
+        var absolute_in_cache_dir_buf: bun.PathBuffer = undefined;
+        const absolute_in_cache_dir = std.fmt.bufPrint(
+            &absolute_in_cache_dir_buf,
+            bun.pathLiteral("{s}/node_modules/.bin/{s}{s}"),
+            .{ bunx_cache_dir, binary_name, bun.exe_suffix },
+        ) catch return error.PathTooLong;
+
+        if (bun.which(
+            &path_buf,
+            bunx_cache_dir,
+            this_transpiler.fs.top_level_dir,
+            absolute_in_cache_dir,
+        )) |destination| {
+            const out = bun.asByteSlice(destination);
+            try Run.runBinary(
+                ctx,
+                try this_transpiler.fs.dirname_store.append(@TypeOf(out), out),
+                destination,
+                this_transpiler.fs.top_level_dir,
+                this_transpiler.env,
+                opts.passthrough_list.items,
+                null,
+            );
+            // runBinary is noreturn
+            @compileError("unreachable");
+        }
+
+        Output.errGeneric("could not find binary <b>{s}<r> after installing packages", .{binary_name});
+        Global.exit(1);
+    }
+
     pub fn exec(ctx: bun.cli.Command.Context, argv: [][:0]const u8) !void {
         // Don't log stuff
         ctx.debug.silent = true;
 
         var opts = try Options.parse(ctx, argv);
         defer opts.deinit();
+
+        // When using --call with --package flags, take the multi-package path
+        if (opts.call_command != null) {
+            return execCallCommand(ctx, &opts);
+        }
+
+        // When using multiple --package flags without --call, install all and run the binary
+        if (opts.specified_packages.items.len > 1) {
+            return execMultiPackage(ctx, &opts);
+        }
 
         var requests_buf = bun.handleOom(UpdateRequest.Array.initCapacity(ctx.allocator, 64));
         defer requests_buf.deinit(ctx.allocator);
@@ -358,7 +704,7 @@ pub const BunxCommand = struct {
         // 1. Install TypeScript
         // 2. Run tsc
         // BUT: Skip this transformation if --package was explicitly specified
-        if (opts.specified_package == null and strings.eqlComptime(update_request.name, "tsc")) {
+        if (opts.specified_packages.items.len == 0 and strings.eqlComptime(update_request.name, "tsc")) {
             update_request.name = "typescript";
         }
 
@@ -673,7 +1019,7 @@ pub const BunxCommand = struct {
                     }
                 } else |err| {
                     if (err == error.NoBinFound) {
-                        if (opts.specified_package != null and opts.binary_name != null) {
+                        if (opts.specified_packages.items.len > 0 and opts.binary_name != null) {
                             Output.errGeneric("Package <b>{s}<r> does not provide a binary named <b>{s}<r>", .{ update_request.name, opts.binary_name.? });
                             Output.prettyln("  <d>hint: try running without --package to install and run {s} directly<r>", .{opts.binary_name.?});
                         } else {
@@ -853,7 +1199,7 @@ pub const BunxCommand = struct {
             } else |_| {}
         }
 
-        if (opts.specified_package != null and opts.binary_name != null) {
+        if (opts.specified_packages.items.len > 0 and opts.binary_name != null) {
             Output.errGeneric("Package <b>{s}<r> does not provide a binary named <b>{s}<r>", .{ update_request.name, opts.binary_name.? });
             Output.prettyln("  <d>hint: try running without --package to install and run {s} directly<r>", .{opts.binary_name.?});
         } else {

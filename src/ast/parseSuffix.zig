@@ -97,15 +97,7 @@ pub fn ParseSuffix(
         }
         fn t_question_dot(p: *P, level: Level, optional_chain: *?OptionalChain, left: *Expr) anyerror!Continuation {
             try p.lexer.next();
-            var optional_start: ?OptionalChain = OptionalChain.start;
-
-            // Remove unnecessary optional chains
-            if (p.options.features.minify_syntax) {
-                const result = SideEffects.toNullOrUndefined(p, left.data);
-                if (result.ok and !result.value) {
-                    optional_start = null;
-                }
-            }
+            const optional_start: ?OptionalChain = OptionalChain.start;
 
             switch (p.lexer.token) {
                 .t_open_bracket => {
@@ -952,6 +944,5 @@ const T = js_lexer.T;
 const js_parser = bun.js_parser;
 const DeferredErrors = js_parser.DeferredErrors;
 const JSXTransformType = js_parser.JSXTransformType;
-const SideEffects = js_parser.SideEffects;
 const TypeScript = js_parser.TypeScript;
 const options = js_parser.options;

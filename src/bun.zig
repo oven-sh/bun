@@ -1937,55 +1937,54 @@ pub fn appendOptionsEnv(env: []const u8, comptime ArgType: type, args: *std.arra
         while (i < env.len and std.ascii.isWhitespace(env[i])) : (i += 1) {}
         if (i >= env.len) break;
 
-        // Handle all command-line arguments with quotes preserved
         const start = i;
-        var j = i;
 
         // Check if this is an option (starts with --)
-        const is_option = j + 2 <= env.len and env[j] == '-' and env[j + 1] == '-';
+        const is_option = i + 2 <= env.len and env[i] == '-' and env[i + 1] == '-';
 
         if (is_option) {
-            // Find the end of the option flag (--flag)
-            while (j < env.len and !std.ascii.isWhitespace(env[j]) and env[j] != '=') : (j += 1) {}
+            // For options, scan as a raw token without stripping quotes.
+            // This preserves the original form so that e.g. --print='hello'
+            // passes the literal single quotes to the JS evaluator.
+            //
+            // Scan the flag name up to whitespace or '=':
+            while (i < env.len and !std.ascii.isWhitespace(env[i]) and env[i] != '=') : (i += 1) {}
 
-            const end_of_flag = j;
-            var found_equals = false;
-
-            // Check for equals sign
-            if (j < env.len and env[j] == '=') {
-                found_equals = true;
-                j += 1; // Move past the equals sign
-            } else if (j < env.len and std.ascii.isWhitespace(env[j])) {
-                j += 1; // Move past the space
-                // Skip any additional whitespace
-                while (j < env.len and std.ascii.isWhitespace(env[j])) : (j += 1) {}
+            if (i < env.len and env[i] == '=') {
+                // --flag=value: include everything up to unquoted whitespace as one token.
+                i += 1; // skip '='
+                var in_single = false;
+                var in_double = false;
+                while (i < env.len) : (i += 1) {
+                    const ch = env[i];
+                    if (in_single) {
+                        if (ch == '\'') in_single = false;
+                        continue;
+                    }
+                    if (in_double) {
+                        if (ch == '"') in_double = false;
+                        continue;
+                    }
+                    if (ch == '\'') {
+                        in_single = true;
+                    } else if (ch == '"') {
+                        in_double = true;
+                    } else if (std.ascii.isWhitespace(ch)) {
+                        break;
+                    }
+                }
             }
+            // else: bare --flag with no '='; i already points past the flag name.
+            // Any space-separated value will become its own token in the next iteration,
+            // which is correct — the argument parser (clap) handles pairing --flag <value>.
 
-            // Handle quoted values
-            if (j < env.len and (env[j] == '\'' or env[j] == '"')) {
-                const quote_char = env[j];
-                j += 1; // Move past opening quote
-
-                // Find the closing quote
-                while (j < env.len and env[j] != quote_char) : (j += 1) {}
-                if (j < env.len) j += 1; // Move past closing quote
-            } else if (found_equals) {
-                // If we had --flag=value (no quotes), find next whitespace
-                while (j < env.len and !std.ascii.isWhitespace(env[j])) : (j += 1) {}
-            } else {
-                // No value found after flag (e.g., `--flag1 --flag2`).
-                // Reset j to end of flag name so we don't include trailing whitespace.
-                j = end_of_flag;
-            }
-
-            // Copy the entire argument including quotes
-            const arg_len = j - start;
+            const token = env[start..i];
 
             const arg = switch (ArgType) {
-                bun.String => bun.String.cloneUTF8(env[start..j]),
+                bun.String => bun.String.cloneUTF8(token),
                 [:0]const u8 => arg: {
-                    const arg = try bun.default_allocator.allocSentinel(u8, arg_len, 0);
-                    @memcpy(arg, env[start..j]);
+                    const arg = try bun.default_allocator.allocSentinel(u8, token.len, 0);
+                    @memcpy(arg, token);
                     break :arg arg;
                 },
                 else => @compileError("unexpected arg type"),
@@ -1993,12 +1992,10 @@ pub fn appendOptionsEnv(env: []const u8, comptime ArgType: type, args: *std.arra
 
             try args.insert(offset_in_args, arg);
             offset_in_args += 1;
-
-            i = j;
             continue;
         }
 
-        // Non-option arguments or standalone values
+        // Non-option arguments: shell-like tokenization with quote stripping.
         var buf = std.array_list.Managed(u8).init(bun.default_allocator);
 
         var in_single = false;
@@ -2044,6 +2041,11 @@ pub fn appendOptionsEnv(env: []const u8, comptime ArgType: type, args: *std.arra
             } else {
                 try buf.append(ch);
             }
+        }
+
+        if (buf.items.len == 0) {
+            buf.deinit();
+            continue;
         }
 
         switch (ArgType) {

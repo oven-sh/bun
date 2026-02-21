@@ -87,11 +87,11 @@ test("Bun.serve() with fetch handler receives requests with unknown methods", as
 
 test("fetch() rejects invalid HTTP method tokens", async () => {
   // Methods with spaces should be rejected
-  expect(fetch("http://localhost:1/test", { method: "INVALID METHOD" })).rejects.toThrow();
+  await expect(fetch("http://localhost:1/test", { method: "INVALID METHOD" })).rejects.toThrow();
 
   // Empty method should be rejected
-  expect(fetch("http://localhost:1/test", { method: "" })).rejects.toThrow();
+  await expect(fetch("http://localhost:1/test", { method: "" })).rejects.toThrow();
 
   // Methods with special characters should be rejected
-  expect(fetch("http://localhost:1/test", { method: "GET\r\n" })).rejects.toThrow();
+  await expect(fetch("http://localhost:1/test", { method: "GET\r\n" })).rejects.toThrow();
 });

@@ -200,6 +200,266 @@ bun install --dry-run
 
 ---
 
+## Offline mode
+
+Bun provides two offline modes for controlling network behavior during installation:
+
+| Flag | Behavior |
+|------|----------|
+| `--offline` | Strict offline - fails if package not in cache |
+| `--prefer-offline` | Prefers cache, falls back to network if needed |
+
+### Strict offline mode (`--offline`)
+
+To install packages without making any network requests, use the `--offline` flag:
+
+```bash terminal icon="terminal"
+bun install --offline
+```
+
+When offline mode is enabled, Bun will only use packages that are already in the local cache. If a required package is not cached, the installation will fail with an error message indicating that the package is not available in offline mode.
+
+### Prefer offline mode (`--prefer-offline`)
+
+To prefer cached packages but fall back to network when necessary:
+
+```bash terminal icon="terminal"
+bun install --prefer-offline
+```
+
+This mode uses cached packages whenever available, skipping network requests for packages that are already cached. If a package is not in the cache, Bun will fetch it from the registry normally. This provides faster installs when you have good cache coverage without the risk of failures when new dependencies are added.
+
+### When to use offline mode
+
+Offline mode is useful in several scenarios:
+
+- **Air-gapped environments**: Servers or build systems that have no internet access
+- **CI/CD optimization**: After an initial install populates the cache, subsequent installs can run offline for faster, more reliable builds
+- **Reproducible builds**: Ensure builds only use cached, known-good packages
+- **Network reliability**: Avoid failures caused by temporary network issues or registry outages
+
+### Cache requirements
+
+For offline mode to work, you need:
+
+1. **Caching enabled**: The default cache location is `~/.bun/install/cache`. If you've disabled caching with `cache = false` in `bunfig.toml`, offline mode won't work.
+2. **Packages already cached**: Run a normal install first to populate the cache.
+
+If you're using a custom cache directory, make sure it's configured in both the initial install and the offline install:
+
+```toml bunfig.toml icon="settings"
+[install]
+cache = "/path/to/custom/cache"
+```
+
+You can also enable these modes using environment variables:
+
+```bash terminal icon="terminal"
+BUN_CONFIG_OFFLINE=1 bun install        # Strict offline
+BUN_CONFIG_PREFER_OFFLINE=1 bun install # Prefer offline
+```
+
+Or configure them in `bunfig.toml`:
+
+```toml bunfig.toml icon="settings"
+[install]
+offline = true       # Strict offline mode
+# or
+preferOffline = true # Prefer offline mode
+# Note: These options are mutually exclusive. Using both will result in an error.
+```
+
+### Air-gapped environment workflow
+
+For environments with no internet access, you need to prepare the cache on a connected machine and transfer it to the air-gapped system.
+
+#### Step 1: Prepare the cache on a connected machine
+
+On a machine with internet access, install all dependencies to populate the cache:
+
+```bash terminal icon="terminal"
+# Clone or copy your project
+git clone https://github.com/your-org/your-project.git
+cd your-project
+
+# Install dependencies (this populates ~/.bun/install/cache)
+bun install
+
+# Verify the cache was populated
+ls ~/.bun/install/cache
+```
+
+#### Step 2: Package the cache for transfer
+
+Create a portable archive of the cache directory:
+
+```bash terminal icon="terminal"
+# Create a tarball of the cache
+tar -czvf bun-cache.tar.gz -C ~/.bun/install cache
+
+# Also include your lockfile for reproducibility
+cp bun.lock /path/to/transfer/
+```
+
+<Note>
+
+The cache directory contains both package tarballs and extracted package contents. The entire `cache` directory must be transferred to ensure offline installs work correctly.
+
+</Note>
+
+#### Step 3: Transfer to the air-gapped system
+
+Transfer the following files to your air-gapped environment:
+
+- `bun-cache.tar.gz` - The package cache
+- `bun.lock` - Your lockfile for reproducible installs
+- Your project source code
+
+Use your organization's approved method for transferring files (USB drive, secure file transfer, etc.).
+
+#### Step 4: Set up on the air-gapped system
+
+On the air-gapped machine:
+
+```bash terminal icon="terminal"
+# Extract the cache to Bun's cache directory
+mkdir -p ~/.bun/install
+tar -xzvf bun-cache.tar.gz -C ~/.bun/install
+
+# Copy your project and lockfile
+cp -r your-project /path/to/workspace/
+cd /path/to/workspace/your-project
+
+# Install using only the cache (no network requests)
+bun install --offline --frozen-lockfile
+```
+
+#### Using a custom cache location
+
+For more control, you can use a project-local cache:
+
+```bash terminal icon="terminal"
+# On the connected machine: use a local cache directory
+BUN_INSTALL_CACHE_DIR=./vendor/cache bun install
+
+# Transfer the entire project including vendor/cache
+
+# On the air-gapped machine: use the same cache location
+BUN_INSTALL_CACHE_DIR=./vendor/cache bun install --offline
+```
+
+Or configure it in `bunfig.toml`:
+
+```toml bunfig.toml icon="settings"
+[install]
+cache = "./vendor/cache"
+offline = true
+```
+
+### Docker workflow for air-gapped builds
+
+For containerized air-gapped environments, you can bake the cache into your Docker image:
+
+```dockerfile Dockerfile icon="docker"
+# Stage 1: Build with network access (on connected system)
+FROM oven/bun:1 AS deps
+WORKDIR /app
+COPY package.json bun.lock ./
+RUN bun install
+
+# Stage 2: Production image (can run air-gapped)
+FROM oven/bun:1
+WORKDIR /app
+
+# Copy the populated cache from the build stage
+COPY --from=deps /root/.bun/install/cache /root/.bun/install/cache
+
+# Copy application files
+COPY package.json bun.lock ./
+COPY src ./src
+
+# Install from cache only - no network needed
+RUN bun install --offline --frozen-lockfile
+
+CMD ["bun", "run", "start"]
+```
+
+Alternatively, pre-build a cache image that can be used across multiple projects:
+
+```dockerfile Dockerfile.cache icon="docker"
+# Cache image - build this on a connected system
+FROM oven/bun:1
+WORKDIR /cache
+
+# Copy all your organization's package.json files
+COPY projects/*/package.json projects/*/bun.lock ./
+
+# Install everything to populate the cache
+RUN for dir in */; do (cd "$dir" && bun install); done
+
+# The cache is now at /root/.bun/install/cache
+```
+
+### CI/CD with cached dependencies
+
+For CI/CD pipelines, cache the Bun install cache between runs:
+
+```yaml .github/workflows/build.yml icon="file-code"
+name: Build
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Cache Bun dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('**/bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+        # After cache is warm, add --offline for faster, network-free installs
+```
+
+### Troubleshooting offline installs
+
+**Error: Package not found in cache**
+
+If you see an error like `error: PackageName is not available in offline mode`, the package isn't in your cache. Solutions:
+
+1. On a connected machine, run `bun install` without `--offline` to fetch the missing package
+2. Transfer the updated cache to your air-gapped system
+3. Ensure your `bun.lock` matches what's in the cache
+
+**Error: Cache directory not found**
+
+Ensure the cache directory exists and is readable:
+
+```bash terminal icon="terminal"
+ls -la ~/.bun/install/cache
+# Or your custom cache location
+ls -la $BUN_INSTALL_CACHE_DIR
+```
+
+**Lockfile mismatch**
+
+When using `--frozen-lockfile` with `--offline`, ensure the `bun.lock` file was created from the same cache:
+
+```bash terminal icon="terminal"
+# On connected machine: regenerate lockfile
+rm bun.lock
+bun install
+
+# Transfer both the cache AND the new bun.lock
+```
+
+---
+
 ## Non-npm dependencies
 
 Bun supports installing dependencies from Git, GitHub, and local or remotely-hosted tarballs. For complete documentation refer to [Package manager > Git, GitHub, and tarball dependencies](/pm/cli/add).
@@ -324,6 +584,9 @@ frozenLockfile = false
 # equivalent to `--dry-run` flag
 dryRun = false
 
+# equivalent to `--offline` flag
+offline = false
+
 # equivalent to `--concurrent-scripts` flag
 concurrentScripts = 16 # (cpu count or GOMAXPROCS) x2
 
@@ -347,11 +610,13 @@ Environment variables have a higher priority than `bunfig.toml`.
 | ---------------------------------- | ------------------------------------------------------------- |
 | `BUN_CONFIG_REGISTRY`              | Set an npm registry (default: https://registry.npmjs.org)     |
 | `BUN_CONFIG_TOKEN`                 | Set an auth token (currently does nothing)                    |
+| `BUN_CONFIG_OFFLINE`               | Install packages from cache only, without making network requests |
+| `BUN_CONFIG_PREFER_OFFLINE`        | Prefer cached packages, fall back to network if not available |
 | `BUN_CONFIG_YARN_LOCKFILE`         | Save a Yarn v1-style yarn.lock                                |
 | `BUN_CONFIG_LINK_NATIVE_BINS`      | Point `bin` in package.json to a platform-specific dependency |
-| `BUN_CONFIG_SKIP_SAVE_LOCKFILE`    | Don’t save a lockfile                                         |
-| `BUN_CONFIG_SKIP_LOAD_LOCKFILE`    | Don’t load a lockfile                                         |
-| `BUN_CONFIG_SKIP_INSTALL_PACKAGES` | Don’t install any packages                                    |
+| `BUN_CONFIG_SKIP_SAVE_LOCKFILE`    | Don't save a lockfile                                         |
+| `BUN_CONFIG_SKIP_LOAD_LOCKFILE`    | Don't load a lockfile                                         |
+| `BUN_CONFIG_SKIP_INSTALL_PACKAGES` | Don't install any packages                                    |
 
 Bun always tries to use the fastest available installation method for the target platform. On macOS, that’s `clonefile` and on Linux, that’s `hardlink`. You can change which installation method is used with the `--backend` flag. When unavailable or on error, `clonefile` and `hardlink` fallsback to a platform-specific implementation of copying files.
 

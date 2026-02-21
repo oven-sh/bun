@@ -1094,9 +1094,10 @@ if(WIN32)
   endif()
 endif()
 
+option(BUN_USE_LD_NEW "Use ld_new linker on macOS (disable for Nix builds)" ON)
 if(APPLE)
   target_link_options(${bun} PUBLIC
-    -Wl,-ld_new
+    $<$<BOOL:${BUN_USE_LD_NEW}>:-Wl,-ld_new>
     -Wl,-no_compact_unwind
     -Wl,-stack_size,0x1200000
     -fno-keep-static-consts
@@ -1322,6 +1323,8 @@ list(TRANSFORM BUN_DEPENDENCIES TOLOWER OUTPUT_VARIABLE BUN_TARGETS)
 add_custom_target(dependencies DEPENDS ${BUN_TARGETS})
 
 if(APPLE)
+  # macOS uses system icucore library for ICU functionality
+  # The prebuilt WebKit is compiled against icucore and expects its non-versioned symbols
   target_link_libraries(${bun} PRIVATE icucore resolv)
   target_compile_definitions(${bun} PRIVATE U_DISABLE_RENAMING=1)
 endif()

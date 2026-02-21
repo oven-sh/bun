@@ -93,6 +93,14 @@ for (let key in bunEnv) {
 delete bunEnv.BUN_INSPECT_CONNECT_TO;
 delete bunEnv.NODE_ENV;
 
+// Delete npm/bun registry environment variables that could override bunfig.toml
+// This ensures tests use the mock registry instead of the real npm registry
+delete bunEnv.npm_config_registry;
+delete bunEnv.NPM_CONFIG_REGISTRY;
+delete bunEnv.BUN_CONFIG_REGISTRY;
+delete bunEnv.BUN_INSTALL_CACHE_DIR;
+delete bunEnv.npm_config_cache;
+
 if (isDebug) {
   // This makes debug build memory leak tests more reliable.
   // The code for dumping out the debug build transpiled source code has leaks.
@@ -1235,6 +1243,7 @@ export async function runBunInstall(
     saveTextLockfile?: boolean;
     packages?: string[];
     verbose?: boolean;
+    registry?: string;
   } = {},
 ) {
   const production = options?.production ?? false;
@@ -1254,6 +1263,9 @@ export async function runBunInstall(
   if (options?.verbose) {
     args.push("--verbose");
   }
+  if (options?.registry) {
+    args.push(`--registry=${options.registry}`);
+  }
   const { stdout, stderr, exited } = Bun.spawn({
     cmd: args,
     cwd,
@@ -1270,7 +1282,11 @@ export async function runBunInstall(
     expect(err).not.toContain("error:");
   }
   if (!options?.allowWarnings) {
-    expect(err).not.toContain("warn:");
+    // Check for warnings but exclude debug-level messages
+    const hasRealWarning = err.split("\n").some(line =>
+      line.includes("warn:") && !line.includes("debug warn:")
+    );
+    expect(hasRealWarning).toBe(false);
   }
   if ((options?.savesLockfile ?? true) && !production && !options?.frozenLockfile) {
     expect(err).toContain("Saved lockfile");

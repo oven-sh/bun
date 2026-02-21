@@ -761,6 +761,26 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                                             _ = this.network_dedupe_map.remove(task_id);
                                             continue :retry_from_manifests_ptr;
                                         }
+
+                                        // For prefer_offline: try to resolve from cached manifest first
+                                        // Only skip network if cached manifest can satisfy the request
+                                        if (this.options.enable.prefer_offline) {
+                                            if (loaded_manifest) |*manifest| {
+                                                // Try to find a matching version in the cached manifest
+                                                const can_resolve = switch (version.tag) {
+                                                    .npm => manifest.findBestMatchingVersion(version.value.npm.version) != null,
+                                                    .dist_tag => manifest.findByDistTag(this.lockfile.str(&version.value.dist_tag.tag)) != null,
+                                                    // For .folder, .workspace, .symlink, etc., these don't require network
+                                                    // fetches anyway, so we can safely proceed with cached data
+                                                    else => true,
+                                                };
+                                                if (can_resolve) {
+                                                    _ = this.network_dedupe_map.remove(task_id);
+                                                    continue :retry_from_manifests_ptr;
+                                                }
+                                                // Cache miss - fall through to network fetch
+                                            }
+                                        }
                                     }
                                 }
 

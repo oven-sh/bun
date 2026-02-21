@@ -75,6 +75,7 @@ fn countAuth(header_builder: *HeaderBuilder, scope: *const Npm.Registry.Scope) v
 
 const ForManifestError = OOM || error{
     InvalidURL,
+    OfflineMode,
 };
 
 pub fn forManifest(
@@ -86,6 +87,20 @@ pub fn forManifest(
     is_optional: bool,
     needs_extended: bool,
 ) ForManifestError!void {
+    // In offline mode, skip network requests - package must be in cache
+    if (this.package_manager.options.enable.offline) {
+        if (!is_optional) {
+            this.package_manager.log.addErrorFmt(
+                null,
+                logger.Loc.Empty,
+                allocator,
+                "Cannot fetch package {f} manifest in offline mode",
+                .{bun.fmt.QuotedFormatter{ .text = name }},
+            ) catch |err| bun.handleOom(err);
+        }
+        return error.OfflineMode;
+    }
+
     this.url_buf = blk: {
 
         // Not all registries support scoped package names when fetching the manifest.
@@ -250,6 +265,7 @@ pub fn schedule(this: *NetworkTask, batch: *ThreadPool.Batch) void {
 
 pub const ForTarballError = OOM || error{
     InvalidURL,
+    OfflineMode,
 };
 
 pub fn forTarball(
@@ -259,6 +275,18 @@ pub fn forTarball(
     scope: *const Npm.Registry.Scope,
     authorization: NetworkTask.Authorization,
 ) ForTarballError!void {
+    // In offline mode, we cannot fetch tarballs from the network
+    if (this.package_manager.options.enable.offline) {
+        this.package_manager.log.addErrorFmt(
+            null,
+            logger.Loc.Empty,
+            allocator,
+            "Cannot fetch package {f} in offline mode (tarball not cached)",
+            .{bun.fmt.QuotedFormatter{ .text = tarball_.name.slice() }},
+        ) catch |err| bun.handleOom(err);
+        return error.OfflineMode;
+    }
+
     this.callback = .{ .extract = tarball_.* };
     const tarball = &this.callback.extract;
     const tarball_url = tarball.url.slice();

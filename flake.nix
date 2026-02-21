@@ -70,6 +70,8 @@
           pkgs.zlib
           pkgs.libxml2
           pkgs.libiconv
+          pkgs.icu
+          pkgs.sqlite
 
           # Development tools
           pkgs.git
@@ -119,10 +121,10 @@
           pkgs.xorg.libxshmfence
           pkgs.gdk-pixbuf
         ] ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
-          # macOS specific dependencies
-          pkgs.darwin.apple_sdk.frameworks.CoreFoundation
-          pkgs.darwin.apple_sdk.frameworks.CoreServices
-          pkgs.darwin.apple_sdk.frameworks.Security
+          # macOS: stdenv provides apple-sdk automatically since nixpkgs 25.11
+          # No explicit framework references needed - they're part of the SDK
+          pkgs.darwin.libiconv
+          pkgs.darwin.ICU  # Provides libicucore compatibility layer for WebKit
         ];
 
       in
@@ -145,6 +147,22 @@
             export CMAKE_RANLIB="$RANLIB"
             export CMAKE_SYSTEM_PROCESSOR="$(uname -m)"
             export TMPDIR="''${TMPDIR:-/tmp}"
+
+            # Use system Xcode SDK for macOS builds (requires macOS 13.0+ SDK)
+            if [ -d "/Applications/Xcode.app/Contents/Developer" ]; then
+              export DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"
+              export SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
+              export CMAKE_OSX_SYSROOT="$SDKROOT"
+            fi
+
+            # ICU and sqlite include paths for WebKit headers and sqlite bindings
+            export CXXFLAGS="''${CXXFLAGS:+$CXXFLAGS }-I${pkgs.icu.dev}/include -I${pkgs.sqlite.dev}/include"
+            export CFLAGS="''${CFLAGS:+$CFLAGS }-I${pkgs.icu.dev}/include -I${pkgs.sqlite.dev}/include"
+            export CMAKE_CXX_FLAGS="''${CMAKE_CXX_FLAGS:+$CMAKE_CXX_FLAGS }-I${pkgs.icu.dev}/include -I${pkgs.sqlite.dev}/include"
+            export CMAKE_C_FLAGS="''${CMAKE_C_FLAGS:+$CMAKE_C_FLAGS }-I${pkgs.icu.dev}/include -I${pkgs.sqlite.dev}/include"
+          '' + pkgs.lib.optionalString pkgs.stdenv.isDarwin ''
+            # Add darwin.ICU library path for libicucore (required by WebKit)
+            export LIBRARY_PATH="${pkgs.darwin.ICU}/lib''${LIBRARY_PATH:+:$LIBRARY_PATH}"
           '' + pkgs.lib.optionalString pkgs.stdenv.isLinux ''
             export LD="${pkgs.lib.getExe' lld "ld.lld"}"
             export NIX_CFLAGS_LINK="''${NIX_CFLAGS_LINK:+$NIX_CFLAGS_LINK }-fuse-ld=lld"

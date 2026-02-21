@@ -144,11 +144,10 @@ static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES functionFuzzilli(JSC::JSGlob
             WTF::String output = arg1.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
 
-            // Cache the FILE* for the REPRL data-write fd to avoid repeated
-            // fdopen calls and the associated resource leak. If the fd is not
-            // open (e.g. running standalone outside the REPRL loop), fdopen
-            // returns NULL and we silently skip the write.
-            static FILE* f = fdopen(REPRL_DWFD, "w");
+            static FILE* f = nullptr;
+            if (!f) {
+                f = fdopen(REPRL_DWFD, "w");
+            }
             if (f) {
                 fprintf(f, "%s\n", output.utf8().data());
                 fflush(f);

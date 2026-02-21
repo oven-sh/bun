@@ -104,9 +104,11 @@ envelope_from: []const u8 = "",
 envelope_to: []const []const u8 = &.{},
 message_data: []const u8 = "",
 current_rcpt_index: usize = 0,
-// Bitset: bit i = 1 means envelope_to[i] was accepted, 0 = rejected.
-// Only meaningful for indices < current_rcpt_index (already processed).
-rcpt_accepted: std.DynamicBitSetUnmanaged = .{},
+accepted_count: usize = 0,
+rejected_count: usize = 0,
+// Dynamic arrays tracking accepted/rejected recipient indices
+accepted_indices: std.ArrayListUnmanaged(u16) = .{},
+rejected_indices: std.ArrayListUnmanaged(u16) = .{},
 pending_send: bool = false,
 
 callbacks: Callbacks,
@@ -116,8 +118,10 @@ callbacks: Callbacks,
 /// Start a new send operation. Caller must have already set envelope_from, envelope_to, message_data.
 pub fn startSend(this: *SMTPConnection) void {
     this.current_rcpt_index = 0;
-    // Resize bitset to match recipient count (all bits start unset = rejected)
-    this.rcpt_accepted.resize(bun.default_allocator, this.envelope_to.len, false) catch {};
+    this.accepted_count = 0;
+    this.rejected_count = 0;
+    this.accepted_indices.clearRetainingCapacity();
+    this.rejected_indices.clearRetainingCapacity();
 
     if (this.state == .ready) {
         this.doStartSending();
@@ -436,14 +440,17 @@ fn handleMailFrom(this: *SMTPConnection, code: u16) void {
 
 fn handleRcptTo(this: *SMTPConnection, code: u16) void {
     if (code == 250 or code == 251) {
-        this.rcpt_accepted.set(this.current_rcpt_index);
+        this.accepted_indices.append(bun.default_allocator, @intCast(this.current_rcpt_index)) catch {};
+        this.accepted_count += 1;
+    } else {
+        this.rejected_indices.append(bun.default_allocator, @intCast(this.current_rcpt_index)) catch {};
+        this.rejected_count += 1;
     }
-    // else: bit stays 0 (rejected)
     this.current_rcpt_index += 1;
     if (this.current_rcpt_index < this.envelope_to.len) {
         this.sendNextRcptTo();
     } else {
-        if (this.rcpt_accepted.count() == 0) {
+        if (this.accepted_count == 0) {
             this.onErrorWithCode("All recipients were rejected", .EENVELOPE);
             return;
         }

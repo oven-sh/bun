@@ -215,6 +215,8 @@ fn processQueuedSend(this: *JSSMTPClient, msg: jsc.JSValue) !void {
 
     this.conn.message_data = this.message_data_buf;
     this.conn.current_rcpt_index = 0;
+    this.conn.accepted_count = 0;
+    this.conn.rejected_count = 0;
 
     if (reuse) {
         this.conn.startSend();
@@ -1033,25 +1035,24 @@ fn resolveSendPromise(this: *JSSMTPClient, response: []const u8) void {
         if (pv.asPromise()) |p| {
             const r = jsc.JSValue.createEmptyObject(go, 6);
 
-            // Build accepted/rejected arrays from bitset
-            const n_accepted = this.conn.rcpt_accepted.count();
-            const n_rejected = this.conn.envelope_to.len - n_accepted;
-            const acc = jsc.JSValue.createEmptyArray(go, @intCast(n_accepted)) catch .js_undefined;
-            const rej = jsc.JSValue.createEmptyArray(go, @intCast(n_rejected)) catch .js_undefined;
-            var acc_idx: u32 = 0;
-            var rej_idx: u32 = 0;
-            for (this.conn.envelope_to, 0..) |addr, i| {
-                const addr_str = bun.String.createFormat("{s}", .{addr}) catch bun.String.empty;
-                const js_str = addr_str.toJS(go) catch .js_undefined;
-                if (this.conn.rcpt_accepted.isSet(i)) {
-                    acc.putIndex(go, acc_idx, js_str) catch {};
-                    acc_idx += 1;
-                } else {
-                    rej.putIndex(go, rej_idx, js_str) catch {};
-                    rej_idx += 1;
+            // Build accepted array from dynamic indices
+            const acc = jsc.JSValue.createEmptyArray(go, @intCast(this.conn.accepted_indices.items.len)) catch .js_undefined;
+            for (this.conn.accepted_indices.items, 0..) |idx, i| {
+                if (idx < this.conn.envelope_to.len) {
+                    const addr_str = bun.String.createFormat("{s}", .{this.conn.envelope_to[idx]}) catch bun.String.empty;
+                    acc.putIndex(go, @intCast(i), addr_str.toJS(go) catch .js_undefined) catch {};
                 }
             }
             r.put(go, bun.String.static("accepted"), acc);
+
+            // Build rejected array from dynamic indices
+            const rej = jsc.JSValue.createEmptyArray(go, @intCast(this.conn.rejected_indices.items.len)) catch .js_undefined;
+            for (this.conn.rejected_indices.items, 0..) |idx, i| {
+                if (idx < this.conn.envelope_to.len) {
+                    const addr_str = bun.String.createFormat("{s}", .{this.conn.envelope_to[idx]}) catch bun.String.empty;
+                    rej.putIndex(go, @intCast(i), addr_str.toJS(go) catch .js_undefined) catch {};
+                }
+            }
             r.put(go, bun.String.static("rejected"), rej);
 
             // Response string

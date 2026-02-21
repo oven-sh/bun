@@ -397,6 +397,43 @@ fn getAST(
             ast.addUrlForCss(allocator, source, "text/html", null, transpiler.options.compile_to_standalone_html);
             return ast;
         },
+        .mdx => {
+            const jsx_source = bun.md.mdx.compile(source.contents, allocator, .{}) catch {
+                log.addError(
+                    source,
+                    Logger.Loc.Empty,
+                    "Failed to compile MDX",
+                ) catch |err| bun.handleOom(err);
+                return error.ParserError;
+            };
+
+            var virtual_source = source.*;
+            virtual_source.contents = jsx_source;
+
+            var jsx_opts = opts;
+            jsx_opts.ts = true;
+            jsx_opts.jsx.parse = true;
+            jsx_opts.features.react_fast_refresh = transpiler.options.react_fast_refresh and !source.path.isNodeModule();
+
+            return if (try resolver.caches.js.parse(
+                transpiler.allocator,
+                jsx_opts,
+                transpiler.options.define,
+                log,
+                &virtual_source,
+            )) |res|
+                JSAst.init(res.ast)
+            else switch (jsx_opts.module_type == .esm) {
+                inline else => |as_undefined| try getEmptyAST(
+                    log,
+                    transpiler,
+                    jsx_opts,
+                    allocator,
+                    source,
+                    if (as_undefined) E.Undefined else E.Object,
+                ),
+            };
+        },
 
         .sqlite_embedded, .sqlite => {
             if (!transpiler.options.target.isBun()) {
@@ -1196,6 +1233,7 @@ fn runWithSourceCode(
 
     const output_format = transpiler.options.output_format;
 
+    task.jsx.parse = loader.isJSX() or loader == .mdx;
     var opts = js_parser.Parser.Options.init(task.jsx, loader);
     opts.bundle = true;
     opts.warn_about_unbundled_modules = false;
@@ -1252,7 +1290,7 @@ fn runWithSourceCode(
     opts.code_splitting = transpiler.options.code_splitting;
     opts.module_type = task.module_type;
 
-    task.jsx.parse = loader.isJSX();
+    task.jsx.parse = loader.isJSX() or loader == .mdx;
 
     var unique_key_for_additional_file: FileLoaderHash = .{
         .key = "",

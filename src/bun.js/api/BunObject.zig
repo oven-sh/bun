@@ -65,6 +65,7 @@ pub const BunObject = struct {
     pub const SHA512_256 = toJSLazyPropertyCallback(Crypto.SHA512_256.getter);
     pub const JSONC = toJSLazyPropertyCallback(Bun.getJSONCObject);
     pub const markdown = toJSLazyPropertyCallback(Bun.getMarkdownObject);
+    pub const mdx = toJSLazyPropertyCallback(Bun.getMdxObject);
     pub const TOML = toJSLazyPropertyCallback(Bun.getTOMLObject);
     pub const JSON5 = toJSLazyPropertyCallback(Bun.getJSON5Object);
     pub const YAML = toJSLazyPropertyCallback(Bun.getYAMLObject);
@@ -134,6 +135,7 @@ pub const BunObject = struct {
         @export(&BunObject.SHA512_256, .{ .name = lazyPropertyCallbackName("SHA512_256") });
         @export(&BunObject.JSONC, .{ .name = lazyPropertyCallbackName("JSONC") });
         @export(&BunObject.markdown, .{ .name = lazyPropertyCallbackName("markdown") });
+        @export(&BunObject.mdx, .{ .name = lazyPropertyCallbackName("mdx") });
         @export(&BunObject.TOML, .{ .name = lazyPropertyCallbackName("TOML") });
         @export(&BunObject.JSON5, .{ .name = lazyPropertyCallbackName("JSON5") });
         @export(&BunObject.YAML, .{ .name = lazyPropertyCallbackName("YAML") });
@@ -1274,6 +1276,9 @@ pub fn getJSONCObject(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSV
 pub fn getMarkdownObject(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
     return MarkdownObject.create(globalThis);
 }
+pub fn getMdxObject(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
+    return MdxObject.create(globalThis);
+}
 pub fn getTOMLObject(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
     return TOMLObject.create(globalThis);
 }
@@ -2076,6 +2081,7 @@ const HashObject = bun.api.HashObject;
 const JSON5Object = bun.api.JSON5Object;
 const JSONCObject = bun.api.JSONCObject;
 const MarkdownObject = bun.api.MarkdownObject;
+const MdxObject = bun.api.MdxObject;
 const TOMLObject = bun.api.TOMLObject;
 const UnsafeObject = bun.api.UnsafeObject;
 const YAMLObject = bun.api.YAMLObject;

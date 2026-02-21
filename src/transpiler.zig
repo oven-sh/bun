@@ -627,7 +627,7 @@ pub const Transpiler = struct {
         };
 
         switch (loader) {
-            .jsx, .tsx, .js, .ts, .json, .jsonc, .toml, .yaml, .json5, .text, .md => {
+            .jsx, .tsx, .js, .ts, .json, .jsonc, .toml, .yaml, .json5, .text, .md, .mdx => {
                 var result = transpiler.parse(
                     ParseOptions{
                         .allocator = transpiler.allocator,
@@ -1398,6 +1398,93 @@ pub const Transpiler = struct {
                     .source = source.*,
                     .loader = loader,
                     .input_fd = input_fd,
+                };
+            },
+            .mdx => {
+                const jsx_source = bun.md.mdx.compile(source.contents, allocator, .{}) catch {
+                    transpiler.log.addErrorFmt(
+                        null,
+                        logger.Loc.Empty,
+                        transpiler.allocator,
+                        "Failed to compile MDX",
+                        .{},
+                    ) catch {};
+                    return null;
+                };
+
+                const target = transpiler.options.target;
+                var jsx = this_parse.jsx;
+                jsx.parse = true;
+
+                var opts = js_parser.Parser.Options.init(jsx, .tsx);
+                opts.features.emit_decorator_metadata = this_parse.emit_decorator_metadata;
+                opts.features.standard_decorators = !this_parse.experimental_decorators;
+                opts.features.allow_runtime = transpiler.options.allow_runtime;
+                opts.features.set_breakpoint_on_first_line = this_parse.set_breakpoint_on_first_line;
+                opts.features.trim_unused_imports = transpiler.options.trim_unused_imports orelse true;
+                opts.features.no_macros = transpiler.options.no_macros;
+                opts.features.runtime_transpiler_cache = this_parse.runtime_transpiler_cache;
+                opts.transform_only = transpiler.options.transform_only;
+                opts.ignore_dce_annotations = transpiler.options.ignore_dce_annotations;
+                opts.features.dont_bundle_twice = this_parse.dont_bundle_twice;
+                opts.features.commonjs_at_runtime = this_parse.allow_commonjs;
+                opts.module_type = this_parse.module_type;
+                opts.tree_shaking = transpiler.options.tree_shaking;
+                opts.features.inlining = transpiler.options.inlining;
+                opts.filepath_hash_for_hmr = file_hash orelse 0;
+                opts.features.auto_import_jsx = transpiler.options.auto_import_jsx;
+                opts.warn_about_unbundled_modules = !target.isBun();
+                opts.features.inject_jest_globals = this_parse.inject_jest_globals;
+                opts.features.minify_syntax = transpiler.options.minify_syntax;
+                opts.features.minify_identifiers = transpiler.options.minify_identifiers;
+                opts.features.dead_code_elimination = transpiler.options.dead_code_elimination;
+                opts.features.remove_cjs_module_wrapper = this_parse.remove_cjs_module_wrapper;
+                opts.features.bundler_feature_flags = transpiler.options.bundler_feature_flags;
+                opts.features.repl_mode = transpiler.options.repl_mode;
+                opts.repl_mode = transpiler.options.repl_mode;
+
+                if (transpiler.macro_context == null) {
+                    transpiler.macro_context = js_ast.Macro.MacroContext.init(transpiler);
+                }
+                opts.features.top_level_await = true;
+                opts.macro_context = &transpiler.macro_context.?;
+                if (target != .bun_macro) {
+                    opts.macro_context.javascript_object = this_parse.macro_js_ctx;
+                }
+                opts.features.is_macro_runtime = target == .bun_macro;
+                opts.features.replace_exports = this_parse.replace_exports;
+
+                var virtual_source = source.*;
+                virtual_source.contents = jsx_source;
+
+                return switch ((transpiler.resolver.caches.js.parse(
+                    allocator,
+                    opts,
+                    transpiler.options.define,
+                    transpiler.log,
+                    &virtual_source,
+                ) catch null) orelse return null) {
+                    .ast => |value| .{
+                        .ast = value,
+                        .source = source.*,
+                        .loader = loader,
+                        .input_fd = input_fd,
+                        .runtime_transpiler_cache = this_parse.runtime_transpiler_cache,
+                    },
+                    .cached => .{
+                        .ast = undefined,
+                        .runtime_transpiler_cache = this_parse.runtime_transpiler_cache,
+                        .source = source.*,
+                        .loader = loader,
+                        .input_fd = input_fd,
+                    },
+                    .already_bundled => .{
+                        .ast = undefined,
+                        .already_bundled = .source_code,
+                        .source = source.*,
+                        .loader = loader,
+                        .input_fd = input_fd,
+                    },
                 };
             },
             .wasm => {

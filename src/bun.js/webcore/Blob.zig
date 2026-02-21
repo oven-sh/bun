@@ -1413,6 +1413,19 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                         destination_blob.detach();
                         return globalThis.throwInvalidArguments("ReadableStream has already been used", .{});
                     }
+
+                    // If the body already has a readable stream (e.g. `new Response(req.body)`),
+                    // pipe it directly to the file instead of waiting for `onReceiveValue` which
+                    // would never fire because there is no entity that will call `resolve()` on
+                    // this disconnected body value.
+                    if (response.getBodyReadableStream(globalThis) orelse bodyValue.Locked.readable.get(globalThis)) |readable| {
+                        if (readable.isDisturbed(globalThis)) {
+                            destination_blob.detach();
+                            return globalThis.throwInvalidArguments("ReadableStream has already been used", .{});
+                        }
+                        return destination_blob.pipeReadableStreamToBlob(globalThis, readable, options.extra_options);
+                    }
+
                     var task = bun.new(WriteFileWaitFromLockedValueTask, .{
                         .globalThis = globalThis,
                         .file_blob = destination_blob,
@@ -1476,6 +1489,18 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                         destination_blob.detach();
                         return globalThis.throwInvalidArguments("ReadableStream has already been used", .{});
                     }
+
+                    // If the body already has a readable stream (e.g. `new Request(url, { body: stream })`),
+                    // pipe it directly to the file instead of waiting for `onReceiveValue` which
+                    // may never fire if there is no entity that will call `resolve()` on this body.
+                    if (request.getBodyReadableStream(globalThis) orelse locked.readable.get(globalThis)) |readable| {
+                        if (readable.isDisturbed(globalThis)) {
+                            destination_blob.detach();
+                            return globalThis.throwInvalidArguments("ReadableStream has already been used", .{});
+                        }
+                        return destination_blob.pipeReadableStreamToBlob(globalThis, readable, options.extra_options);
+                    }
+
                     var task = bun.new(WriteFileWaitFromLockedValueTask, .{
                         .globalThis = globalThis,
                         .file_blob = destination_blob,

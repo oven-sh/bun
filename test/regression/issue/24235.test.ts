@@ -67,5 +67,9 @@ test("buffer.transcode empty input", () => {
 });
 
 test("buffer.transcode doesn't crash with allocUnsafeSlow", () => {
-  buffer.transcode(new buffer.Buffer.allocUnsafeSlow(1) as any, "utf16le", "ucs2");
+  // Test that allocUnsafeSlow buffers work with transcode
+  const slowBuf = buffer.Buffer.allocUnsafeSlow(4);
+  slowBuf.write("hi", "utf16le");
+  const result = buffer.transcode(slowBuf, "utf16le", "utf8");
+  expect(result.toString()).toBe("hi");
 });

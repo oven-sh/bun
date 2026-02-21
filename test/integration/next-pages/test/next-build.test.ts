@@ -88,8 +88,10 @@ async function hashAllFiles(dir: string) {
 function normalizeOutput(stdout: string) {
   return (
     stdout
-      // remove timestamps from output
+      // remove timestamps from output (e.g., "(30.7ms)" or "(30.7 ms)")
       .replace(/\(\d+(?:\.\d+)? m?s\)/gi, data => " ".repeat(data.length))
+      // remove "in Xms" timing at end of lines (e.g., "in 36.8ms")
+      .replace(/\bin \d+(?:\.\d+)?m?s\b/gi, data => " ".repeat(data.length))
       // displayed file sizes are in post-gzip compression, however
       // the gzip / node:zlib implementation is different in bun and node
       .replace(/\d+(\.\d+)? [km]?b/gi, data => " ".repeat(data.length))
@@ -181,8 +183,10 @@ test(
     const toRemove = [
       // these have timestamps and absolute paths in them
       "trace",
+      "trace-build",
       "cache",
       "required-server-files.json",
+      "required-server-files.js",
       // these have "signing keys", not sure what they are tbh
       "prerender-manifest.json",
       // these are similar but i feel like there might be something we can fix to make them the same
@@ -190,10 +194,17 @@ test(
       "next-server.js.nft.json",
       // this file is not deterministically sorted
       "server/pages-manifest.json",
+      "pages-manifest.json",
+      // non-deterministic between bun and node builds
+      "build-manifest.json",
+      "server-reference-manifest.json",
+      "server-reference-manifest.js",
+      // lock file created during build
+      "lock",
     ];
     for (const key of toRemove) {
-      rmSync(join(bunBuildDir, key), { recursive: true });
-      rmSync(join(nodeBuildDir, key), { recursive: true });
+      rmSync(join(bunBuildDir, key), { recursive: true, force: true });
+      rmSync(join(nodeBuildDir, key), { recursive: true, force: true });
     }
 
     console.log("Hashing files...");

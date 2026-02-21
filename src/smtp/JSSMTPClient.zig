@@ -1178,14 +1178,14 @@ fn sendViaSendmail(this: *JSSMTPClient, globalObject: *jsc.JSGlobalObject, promi
     cmd.putIndex(globalObject, 0, path_str.toJS(globalObject) catch .js_undefined) catch {};
     const dash_i = bun.String.static("-i");
     cmd.putIndex(globalObject, 1, dash_i.toJS(globalObject) catch .js_undefined) catch {};
-    // Add each recipient
+    // -f<from> MUST come before recipients (sendmail treats post-recipient args as recipients)
+    const env_from_str = bun.String.createFormat("-f{s}", .{this.conn.envelope_from}) catch bun.String.empty;
+    cmd.putIndex(globalObject, 2, env_from_str.toJS(globalObject) catch .js_undefined) catch {};
+    // Add each recipient after -f flag
     for (this.conn.envelope_to, 0..) |addr, i| {
         const a = bun.String.createFormat("{s}", .{addr}) catch bun.String.empty;
-        cmd.putIndex(globalObject, @intCast(2 + i), a.toJS(globalObject) catch .js_undefined) catch {};
+        cmd.putIndex(globalObject, @intCast(3 + i), a.toJS(globalObject) catch .js_undefined) catch {};
     }
-    // Terminate args
-    const env_from_str = bun.String.createFormat("-f{s}", .{this.conn.envelope_from}) catch bun.String.empty;
-    cmd.putIndex(globalObject, @intCast(2 + to_len), env_from_str.toJS(globalObject) catch .js_undefined) catch {};
 
     // Build options: { cmd, stdin: "pipe" }
     const spawn_opts = jsc.JSValue.createEmptyObject(globalObject, 2);

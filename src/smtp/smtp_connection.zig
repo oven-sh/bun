@@ -134,6 +134,8 @@ pub fn resetCapabilities(this: *SMTPConnection) void {
     this.supports_requiretls = false;
     this.supported_auth_plain = false;
     this.supported_auth_login = false;
+    this.supported_auth_cram_md5 = false;
+    this.supported_auth_xoauth2 = false;
     this.server_max_size = 0;
     this.state = .disconnected;
 }

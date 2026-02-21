@@ -450,6 +450,13 @@ const SQL: typeof Bun.SQL = function SQL(
     reserved_sql.transaction = reserved_sql.begin;
     reserved_sql.distributed = reserved_sql.beginDistributed;
     reserved_sql.end = reserved_sql.close;
+    // Expose underlying connection for LISTEN/NOTIFY support (non-enumerable)
+    Object.defineProperty(reserved_sql, "__pooledConnection", {
+      value: pooledConnection,
+      enumerable: false,
+      writable: false,
+      configurable: false,
+    });
     resolve(reserved_sql);
   }
   async function onTransactionConnected(
@@ -925,6 +932,9 @@ const SQL: typeof Bun.SQL = function SQL(
   };
 
   sql.close = async (options?: { timeout?: number }) => {
+    // Clean up listen connection before closing the pool
+    listeners.clear();
+    await releaseListenConnectionIfUnused();
     await pool.close(options);
   };
 
@@ -936,6 +946,168 @@ const SQL: typeof Bun.SQL = function SQL(
   sql.transaction = sql.begin;
   sql.distributed = sql.beginDistributed;
   sql.end = sql.close;
+
+  // LISTEN/NOTIFY support (PostgreSQL only)
+  const listeners: Map<string, Set<(payload: string) => void>> = new Map();
+  let listenConnection: any = null;
+  let listenConnectionPromise: Promise<any> | null = null;
+
+  function onNotification(channel: string, payload: string) {
+    // Use queueMicrotask to prevent reentrancy issues when callbacks issue SQL on the same connection
+    queueMicrotask(() => {
+      const callbacks = listeners.get(channel);
+      if (callbacks) {
+        for (const callback of callbacks) {
+          try {
+            callback(payload);
+          } catch (e) {
+            // Report but don't throw
+            console.error("Error in listen callback:", e);
+          }
+        }
+      }
+    });
+  }
+
+  async function releaseListenConnectionIfUnused() {
+    if (listeners.size === 0 && listenConnection) {
+      const pooledConn = (listenConnection as any)?.__pooledConnection;
+      if (pooledConn?.connection) {
+        pooledConn.connection.onnotification = undefined;
+      }
+      try {
+        await listenConnection.release();
+      } catch {
+        // Ignore errors during cleanup
+      }
+      listenConnection = null;
+      listenConnectionPromise = null;
+    }
+  }
+
+  async function ensureListenConnection() {
+    if (listenConnection) return listenConnection;
+    if (listenConnectionPromise) return listenConnectionPromise;
+
+    listenConnectionPromise = (async () => {
+      try {
+        // Reserve a connection for listening
+        const reserved = await sql.reserve();
+        listenConnection = reserved;
+
+        // Set up notification handler on the underlying connection
+        const pooledConn = (reserved as any).__pooledConnection;
+        if (pooledConn?.connection) {
+          pooledConn.connection.onnotification = onNotification;
+        }
+
+        // Handle disconnection: reset state so future listen() calls can reconnect
+        if (pooledConn?.onClose) {
+          pooledConn.onClose(() => {
+            listenConnection = null;
+            listenConnectionPromise = null;
+            // Re-establish connection and re-subscribe if there are active listeners
+            if (listeners.size > 0) {
+              ensureListenConnection().then(async (newConn) => {
+                for (const ch of listeners.keys()) {
+                  try {
+                    await newConn.unsafe(`LISTEN ${pool.escapeIdentifier(ch)}`);
+                  } catch {
+                    // If re-subscribe fails, remove the channel
+                    listeners.delete(ch);
+                  }
+                }
+              }).catch(() => {
+                // Connection re-establishment failed; listeners remain but won't fire
+              });
+            }
+          });
+        }
+
+        return reserved;
+      } catch (e) {
+        // Reset promise so future calls can retry
+        listenConnectionPromise = null;
+        throw e;
+      }
+    })();
+
+    return listenConnectionPromise;
+  }
+
+  sql.listen = async (channel: string, callback: (payload: string) => void): Promise<() => Promise<void>> => {
+    if (pool.closed) {
+      throw pool.connectionClosedError();
+    }
+
+    if (typeof channel !== "string" || !channel) {
+      throw $ERR_INVALID_ARG_VALUE("channel", channel, "must be a non-empty string");
+    }
+
+    if (!$isCallable(callback)) {
+      throw $ERR_INVALID_ARG_VALUE("callback", callback, "must be a function");
+    }
+
+    // Ensure we have a dedicated connection for listening
+    const conn = await ensureListenConnection();
+
+    // Check if this is a new channel
+    let callbacks = listeners.get(channel);
+    const isNewChannel = !callbacks;
+
+    // If this is a new channel, send LISTEN command BEFORE registering callback
+    // This ensures we don't have dangling callbacks if LISTEN fails
+    if (isNewChannel) {
+      await conn.unsafe(`LISTEN ${pool.escapeIdentifier(channel)}`);
+      // LISTEN succeeded, now create the callback set
+      callbacks = new Set();
+      listeners.set(channel, callbacks);
+    }
+
+    // Add callback to listeners (LISTEN already succeeded for new channels)
+    callbacks!.add(callback);
+
+    // Return unlisten function
+    return async () => {
+      const cbs = listeners.get(channel);
+      if (cbs) {
+        cbs.delete(callback);
+        if (cbs.size === 0) {
+          listeners.delete(channel);
+          // Send UNLISTEN command if connection is still open
+          if (listenConnection && !pool.closed) {
+            try {
+              await listenConnection.unsafe(`UNLISTEN ${pool.escapeIdentifier(channel)}`);
+            } catch {
+              // Ignore errors if connection is closed
+            }
+          }
+          await releaseListenConnectionIfUnused();
+        }
+      }
+    };
+  };
+
+  sql.unlisten = async (channel: string): Promise<void> => {
+    if (typeof channel !== "string" || !channel) {
+      throw $ERR_INVALID_ARG_VALUE("channel", channel, "must be a non-empty string");
+    }
+
+    // Remove all callbacks for this channel
+    listeners.delete(channel);
+
+    // Send UNLISTEN command if we have a connection
+    if (listenConnection && !pool.closed) {
+      try {
+        await listenConnection.unsafe(`UNLISTEN ${pool.escapeIdentifier(channel)}`);
+      } catch {
+        // Ignore errors if connection is closed
+      }
+    }
+
+    await releaseListenConnectionIfUnused();
+  };
+
   return sql;
 };
 
@@ -1014,6 +1186,14 @@ defaultSQLObject.end = defaultSQLObject.close = (...args: Parameters<typeof lazy
 defaultSQLObject.flush = (...args: Parameters<typeof lazyDefaultSQL.flush>) => {
   ensureDefaultSQL();
   return lazyDefaultSQL.flush(...args);
+};
+defaultSQLObject.listen = (...args: Parameters<typeof lazyDefaultSQL.listen>) => {
+  ensureDefaultSQL();
+  return lazyDefaultSQL.listen(...args);
+};
+defaultSQLObject.unlisten = (...args: Parameters<typeof lazyDefaultSQL.unlisten>) => {
+  ensureDefaultSQL();
+  return lazyDefaultSQL.unlisten(...args);
 };
 //define lazy properties
 defineProperties(defaultSQLObject, {

@@ -111,7 +111,7 @@ pub fn writeOutputFilesToDisk(
                 chunk,
                 chunks,
                 &display_size,
-                c.resolver.opts.compile and !chunk.flags.is_browser_chunk_from_server_build,
+                c.resolver.opts.compile,
                 chunk.content.sourcemap(c.options.source_maps) != .none,
             ) catch |err| bun.Output.panic("Failed to create output chunk: {s}", .{@errorName(err)});
 

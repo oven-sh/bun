@@ -137,6 +137,11 @@ pub fn convertStmtsForChunk(
                     // Is this export star evaluated at run time?
                     if (!record.source_index.isValid() and c.options.output_format.keepES6ImportExportSyntax()) {
                         if (record.flags.calls_runtime_re_export_fn) {
+                            // Ensure the import record is marked as containing a star import
+                            // so the printer emits "import * as ns from 'path'" instead of
+                            // just "import 'path'" (side-effect only).
+                            ast.import_records.mut(s.import_record_index).flags.contains_import_star = true;
+
                             // Turn this statement into "import * as ns from 'path'"
                             stmt = Stmt.alloc(
                                 S.Import,

@@ -1165,7 +1165,7 @@ const CanonicalRequest = struct {
 /// Returns true if the given slice contains any CR (\r) or LF (\n) characters,
 /// which would allow HTTP header injection if used in a header value.
 fn containsNewlineOrCR(value: []const u8) bool {
-    return std.mem.indexOfAny(u8, value, "\r\n") != null;
+    return strings.indexOfAny(value, "\r\n") != null;
 }
 
 const std = @import("std");

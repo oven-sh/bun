@@ -1098,7 +1098,7 @@ pub const WindowsSpawnOptions = struct {
 
         pub fn deinit(this: *const Stdio) void {
             if (this.* == .buffer) {
-                bun.default_allocator.destroy(this.buffer);
+                this.buffer.closeAndDestroy();
             }
         }
     };

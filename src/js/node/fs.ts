@@ -633,12 +633,12 @@ var access = function access(path, mode, callback) {
 
 const { defineCustomPromisifyArgs } = require("internal/promisify");
 var kCustomPromisifiedSymbol = Symbol.for("nodejs.util.promisify.custom");
-{
-  const existsCb = exists;
-  exists[kCustomPromisifiedSymbol] = function exists(path) {
+const existsCb = exists;
+exists[kCustomPromisifiedSymbol] = {
+  exists(path) {
     return new Promise(resolve => existsCb(path, resolve));
-  };
-}
+  },
+}.exists;
 defineCustomPromisifyArgs(read, ["bytesRead", "buffer"]);
 defineCustomPromisifyArgs(readv, ["bytesRead", "buffers"]);
 defineCustomPromisifyArgs(write, ["bytesWritten", "buffer"]);

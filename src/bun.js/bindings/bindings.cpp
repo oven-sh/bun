@@ -1906,12 +1906,14 @@ void WebCore__FetchHeaders__copyTo(WebCore::FetchHeaders* headers, StringPointer
 }
 void WebCore__FetchHeaders__count(WebCore::FetchHeaders* headers, uint32_t* count, uint32_t* buf_len)
 {
-    auto iter = headers->createIterator();
+    // Use lowerCaseKeys=false to match copyTo, which also uses false.
+    // This ensures the byte length computed here matches what copyTo writes.
+    // With lowerCaseKeys=true, Unicode lowercasing can change UTF-8 byte lengths
+    // (e.g. U+0130 'İ' is 2 bytes but lowercases to 'i' which is 1 byte),
+    // causing the buffer to be undersized and copyTo to write out of bounds.
+    auto iter = headers->createIterator(false);
     size_t i = 0;
     for (auto pair = iter.next(); pair; pair = iter.next()) {
-        // UTF8 byteLength is not strictly necessary here
-        // They should always be ASCII.
-        // However, we can still do this out of an abundance of caution
         i += BunString::utf8ByteLength(pair->key);
         i += BunString::utf8ByteLength(pair->value);
     }

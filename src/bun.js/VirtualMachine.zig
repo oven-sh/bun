@@ -1562,7 +1562,12 @@ pub fn fetchWithoutOnLoadPlugins(
     const lr = options.getLoaderAndVirtualSource(specifier_clone.slice(), jsc_vm, &virtual_source_to_use, &blob_to_deinit, null) catch {
         return error.ModuleNotFound;
     };
-    const module_type: options.ModuleType = if (lr.package_json) |pkg| pkg.module_type else .unknown;
+    const module_type: options.ModuleType = if (jsc_vm.module_loader.eval_source != null)
+        .esm
+    else if (lr.package_json) |pkg|
+        pkg.module_type
+    else
+        .unknown;
 
     // .print_source, which is used by exceptions avoids duplicating the entire source code
     // but that means we have to be careful of the lifetime of the source code

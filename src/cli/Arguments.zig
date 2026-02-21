@@ -44,6 +44,7 @@ pub const base_params_ = (if (Environment.show_crash_trace) debug_params else [_
     clap.parseParam("--env-file <STR>...               Load environment variables from the specified file(s)") catch unreachable,
     clap.parseParam("--no-env-file                     Disable automatic loading of .env files") catch unreachable,
     clap.parseParam("--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd.") catch unreachable,
+    clap.parseParam("--prefix <STR>                    Run the script from the specified directory (alias for --cwd, for bun run)") catch unreachable,
     clap.parseParam("-c, --config <PATH>?              Specify path to Bun config file. Default <d>$cwd<r>/bunfig.toml") catch unreachable,
     clap.parseParam("-h, --help                        Display this menu and exit") catch unreachable,
 } ++ (if (builtin.have_error_return_tracing) [_]ParamType{
@@ -440,12 +441,13 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
     }
 
     var cwd: [:0]u8 = undefined;
-    if (args.option("--cwd")) |cwd_arg| {
+    const cwd_arg = args.option("--cwd") orelse args.option("--prefix");
+    if (cwd_arg) |cwd_value| {
         cwd = brk: {
             var outbuf: bun.PathBuffer = undefined;
-            const out = bun.path.joinAbs(try bun.getcwd(&outbuf), .loose, cwd_arg);
+            const out = bun.path.joinAbs(try bun.getcwd(&outbuf), .loose, cwd_value);
             bun.sys.chdir("", out).unwrap() catch |err| {
-                Output.err(err, "Could not change directory to \"{s}\"\n", .{cwd_arg});
+                Output.err(err, "Could not change directory to \"{s}\"\n", .{cwd_value});
                 Global.exit(1);
             };
             break :brk try allocator.dupeZ(u8, out);

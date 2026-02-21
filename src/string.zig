@@ -1093,15 +1093,41 @@ pub const String = extern struct {
     extern fn JSC__createRangeError(*jsc.JSGlobalObject, str: *const String) jsc.JSValue;
 
     pub fn jsGetStringWidth(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        const argument = callFrame.argument(0);
-        const str = try argument.toJSString(globalObject);
-        const view = str.view(globalObject);
+        const args = callFrame.argumentsAsArray(2);
+        const argument = args[0];
+        const opts_val = args[1];
+
+        if (argument == .zero or argument.isUndefined()) {
+            return .jsNumber(@as(i32, 0));
+        }
+
+        const js_str = try argument.toJSString(globalObject);
+        const view = js_str.view(globalObject);
 
         if (view.isEmpty()) {
             return .jsNumber(@as(i32, 0));
         }
 
-        const width = bun.String.init(view).visibleWidth(false);
+        const str = bun.String.init(view);
+
+        // Parse options: { countAnsiEscapeCodes?: bool, ambiguousIsNarrow?: bool }
+        var count_ansi: bool = false;
+        var ambiguous_is_narrow: bool = true;
+
+        if (opts_val.isObject()) {
+            if (try opts_val.getTruthyComptime(globalObject, "countAnsiEscapeCodes")) |v| {
+                count_ansi = v.toBoolean();
+            }
+            if (try opts_val.getTruthyComptime(globalObject, "ambiguousIsNarrow")) |v| {
+                ambiguous_is_narrow = v.toBoolean();
+            }
+        }
+
+        const width = if (count_ansi)
+            str.visibleWidth(!ambiguous_is_narrow)
+        else
+            str.visibleWidthExcludeANSIColors(!ambiguous_is_narrow);
+
         return .jsNumber(width);
     }
 

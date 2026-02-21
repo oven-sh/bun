@@ -21,16 +21,3 @@ export const gc = fn({
   },
   ret: t.usize,
 });
-
-export const StringWidthOptions = t.dictionary({
-  countAnsiEscapeCodes: t.boolean.default(false),
-  ambiguousIsNarrow: t.boolean.default(true),
-});
-
-export const stringWidth = fn({
-  args: {
-    str: t.DOMString.default(""),
-    opts: StringWidthOptions.default({}),
-  },
-  ret: t.usize,
-});

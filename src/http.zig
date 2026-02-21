@@ -2513,11 +2513,12 @@ pub fn handleResponseMetadata(
                     // - internalResponse’s status is 301 or 302 and request’s method is `POST`
                     // - internalResponse’s status is 303 and request’s method is not `GET` or `HEAD`
                     // then:
-                    if (((status_code == 301 or status_code == 302) and this.method == .POST) or
-                        (status_code == 303 and this.method != .GET and this.method != .HEAD))
+                    if (((status_code == 301 or status_code == 302) and (this.method == .POST or this.custom_method_len > 0)) or
+                        (status_code == 303 and (this.method != .GET or this.custom_method_len > 0) and this.method != .HEAD))
                     {
                         // - Set request’s method to `GET` and request’s body to null.
                         this.method = .GET;
+                        this.custom_method_len = 0;
 
                         // https://github.com/oven-sh/bun/issues/6053
                         if (this.header_entries.len > 0) {

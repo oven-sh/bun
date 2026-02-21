@@ -1,13 +1,13 @@
 import { expect, test } from "bun:test";
+import { createServer } from "net";
 
 // https://github.com/oven-sh/bun/issues/18406
 // Unknown random HTTP methods should not be silently routed to GET handlers
 
 test("fetch() with unknown method sends correct method on wire", async () => {
   // Use a raw TCP server to verify what fetch actually sends
-  const net = require("net");
   const receivedMethods: string[] = [];
-  const server = net.createServer((socket: any) => {
+  const server = createServer((socket: any) => {
     socket.on("data", (data: Buffer) => {
       const line = data.toString().split("\r\n")[0];
       const method = line.split(" ")[0];

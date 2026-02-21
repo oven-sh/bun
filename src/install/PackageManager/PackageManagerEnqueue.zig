@@ -1618,6 +1618,31 @@ fn getOrPutResolvedPackage(
                             }
                         }
                     }
+                } else if (version.tag == .dist_tag) {
+                    if (this.options.link_workspace_packages) {
+                        const workspace_path = if (this.lockfile.workspace_paths.count() > 0)
+                            this.lockfile.workspace_paths.get(name_hash)
+                        else
+                            null;
+                        if (workspace_path != null) {
+                            const root_package = this.lockfile.rootPackage() orelse break :resolve_from_workspace;
+                            const root_dependencies = root_package.dependencies.get(this.lockfile.buffers.dependencies.items);
+                            const root_resolutions = root_package.resolutions.get(this.lockfile.buffers.resolutions.items);
+
+                            for (root_dependencies, root_resolutions) |root_dep, workspace_package_id| {
+                                if (workspace_package_id != invalid_package_id and
+                                    root_dep.version.tag == .workspace and
+                                    root_dep.name_hash == name_hash)
+                                {
+                                    successFn(this, dependency_id, workspace_package_id);
+                                    return .{
+                                        .package = this.lockfile.packages.get(workspace_package_id),
+                                        .is_first_time = false,
+                                    };
+                                }
+                            }
+                        }
+                    }
                 }
             }
 

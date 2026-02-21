@@ -2450,13 +2450,20 @@ void JSC__JSObject__putRecord(JSC::JSObject* object, JSC::JSGlobalObject* global
         descriptor.setValue(JSC::jsString(global->vm(), Zig::toStringCopy(values[0])));
     } else {
 
+        // Pre-convert all strings to JSValues before entering ObjectInitializationScope,
+        // since jsString() allocates GC cells which is not allowed inside the scope.
+        MarkedArgumentBuffer strings;
+        for (size_t i = 0; i < valuesLen; ++i) {
+            strings.append(JSC::jsString(global->vm(), Zig::toStringCopy(values[i])));
+        }
+
         JSC::JSArray* array = nullptr;
         {
             JSC::ObjectInitializationScope initializationScope(global->vm());
             if ((array = JSC::JSArray::tryCreateUninitializedRestricted(initializationScope, nullptr, global->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), valuesLen))) {
 
                 for (size_t i = 0; i < valuesLen; ++i) {
-                    array->initializeIndexWithoutBarrier(initializationScope, i, JSC::jsString(global->vm(), Zig::toStringCopy(values[i])));
+                    array->initializeIndexWithoutBarrier(initializationScope, i, strings.at(i));
                 }
             }
         }
@@ -2490,6 +2497,13 @@ void JSC__JSValue__putRecord(JSC::EncodedJSValue objectValue, JSC::JSGlobalObjec
         descriptor.setValue(JSC::jsString(global->vm(), Zig::toString(values[0])));
     } else {
 
+        // Pre-convert all strings to JSValues before entering ObjectInitializationScope,
+        // since jsString() allocates GC cells which is not allowed inside the scope.
+        MarkedArgumentBuffer strings;
+        for (size_t i = 0; i < valuesLen; ++i) {
+            strings.append(JSC::jsString(global->vm(), Zig::toString(values[i])));
+        }
+
         JSC::JSArray* array = nullptr;
         {
             JSC::ObjectInitializationScope initializationScope(global->vm());
@@ -2500,7 +2514,7 @@ void JSC__JSValue__putRecord(JSC::EncodedJSValue objectValue, JSC::JSGlobalObjec
 
                 for (size_t i = 0; i < valuesLen; ++i) {
                     array->initializeIndexWithoutBarrier(
-                        initializationScope, i, JSC::jsString(global->vm(), Zig::toString(values[i])));
+                        initializationScope, i, strings.at(i));
                 }
             }
         }

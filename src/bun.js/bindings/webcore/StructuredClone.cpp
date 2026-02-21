@@ -90,6 +90,11 @@ JSC_DEFINE_HOST_FUNCTION(structuredCloneForStream, (JSGlobalObject * globalObjec
         auto* bufferView = jsCast<JSArrayBufferView*>(value);
         ASSERT(bufferView);
 
+        if (bufferView->isShared()) {
+            throwDataCloneError(*globalObject, scope);
+            return {};
+        }
+
         auto* buffer = bufferView->unsharedBuffer();
         if (!buffer) {
             throwDataCloneError(*globalObject, scope);

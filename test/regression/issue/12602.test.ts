@@ -1,12 +1,12 @@
 import { $ } from "bun";
 import { expect, test } from "bun:test";
-import { tempDir } from "harness";
+import { isWindows, tempDir } from "harness";
 
 // GH-12602: Shell incorrectly strips trailing digits from command names
 // when followed by a redirect operator. e.g. `./script1<file` was parsed
 // as `./script` with `1<file` (fd redirect), instead of `./script1` with
 // `<file` (stdin redirect).
-test("command name ending in digit followed by redirect is not treated as fd redirect", async () => {
+test.skipIf(isWindows)("command name ending in digit followed by redirect is not treated as fd redirect", async () => {
   using dir = tempDir("12602", {
     "script1": "#!/bin/sh\necho Hello from script1",
     "input.txt": "some input",
@@ -21,7 +21,7 @@ test("command name ending in digit followed by redirect is not treated as fd red
   expect(result.exitCode).toBe(0);
 });
 
-test("command name ending in '2' followed by redirect is not treated as fd redirect", async () => {
+test.skipIf(isWindows)("command name ending in '2' followed by redirect is not treated as fd redirect", async () => {
   using dir = tempDir("12602-2", {
     "script2": "#!/bin/sh\necho Hello from script2",
     "input.txt": "some input",
@@ -34,7 +34,7 @@ test("command name ending in '2' followed by redirect is not treated as fd redir
   expect(result.exitCode).toBe(0);
 });
 
-test("standalone digit redirect still works", async () => {
+test.skipIf(isWindows)("standalone digit redirect still works", async () => {
   using dir = tempDir("12602-fd", {
     "input.txt": "hello from file",
   });

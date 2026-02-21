@@ -93,10 +93,12 @@ function ClientRequest(input, options, cb) {
       callback = undefined;
     }
 
+    hasExplicitWrite = true;
     return write_(chunk, encoding, callback);
   };
 
   let writeCount = 0;
+  let hasExplicitWrite = false;
   let resolveNextChunk: ((end: boolean) => void) | undefined = _end => {};
 
   const pushChunk = chunk => {
@@ -566,7 +568,22 @@ function ClientRequest(input, options, cb) {
     this[kAbortController] ??= new AbortController();
     this[kAbortController].signal.addEventListener("abort", onAbort, { once: true });
 
-    var body = this[kBodyChunks] && this[kBodyChunks].length > 1 ? new Blob(this[kBodyChunks]) : this[kBodyChunks]?.[0];
+    var body;
+    // Match Node.js behavior: when req.write() was explicitly called to send body data
+    // without an explicit Content-Length header, use a streaming body so that the HTTP
+    // layer sends Transfer-Encoding: chunked instead of Content-Length.
+    // When only req.end(data) is used (no prior req.write()), use a concrete body with
+    // Content-Length, which also matches Node.js behavior.
+    if (hasExplicitWrite && this[kBodyChunks]?.length > 0 && !this.getHeader("content-length")) {
+      const chunks = this[kBodyChunks];
+      body = async function* () {
+        for (const chunk of chunks) {
+          yield chunk;
+        }
+      };
+    } else {
+      body = this[kBodyChunks] && this[kBodyChunks].length > 1 ? new Blob(this[kBodyChunks]) : this[kBodyChunks]?.[0];
+    }
 
     try {
       startFetch(body);

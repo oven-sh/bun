@@ -465,6 +465,14 @@ pub const Archiver = struct {
                                     // without `./` in the beginning. So if it already exists, continue to the
                                     // next entry.
                                     if (err == error.PathAlreadyExists or err == error.NotDir) continue;
+                                    // Some filesystems (e.g. ecryptfs) have lower filename length limits
+                                    // than the typical 255 bytes. Skip entries that exceed the limit.
+                                    if (err == error.NameTooLong) {
+                                        Output.warn("Skipping directory with too long name: {f}\n", .{
+                                            bun.fmt.fmtOSPath(path_slice, .{}),
+                                        });
+                                        continue;
+                                    }
                                     bun.makePath(dir, std.fs.path.dirname(path_slice) orelse return err) catch {};
                                     std.posix.mkdiratZ(dir_fd, path, 0o777) catch {};
                                 };
@@ -492,6 +500,12 @@ pub const Archiver = struct {
                                             dir.makePath(std.fs.path.dirname(path_slice) orelse return err) catch {};
                                             break :brk try bun.sys.symlinkat(link_target, .fromNative(dir_fd), path).unwrap();
                                         },
+                                        error.ENAMETOOLONG => {
+                                            Output.warn("Skipping symlink with too long name: {f}\n", .{
+                                                bun.fmt.fmtOSPath(path_slice, .{}),
+                                            });
+                                            continue;
+                                        },
                                         else => return err,
                                     }
                                 };
@@ -517,6 +531,12 @@ pub const Archiver = struct {
                                             bun.MakePath.makePath(u16, dir, bun.Dirname.dirname(u16, path_slice) orelse return bun.errnoToZigErr(e.errno)) catch {};
                                             break :brk try bun.sys.openatWindows(.fromNative(dir_fd), path, flags, 0).unwrap();
                                         },
+                                        @intFromEnum(bun.sys.E.NAMETOOLONG) => {
+                                            Output.warn("Skipping file with too long name: {f}\n", .{
+                                                bun.fmt.fmtOSPath(path_slice, .{}),
+                                            });
+                                            continue;
+                                        },
                                         else => return bun.errnoToZigErr(e.errno),
                                     },
                                 }
@@ -532,6 +552,14 @@ pub const Archiver = struct {
                                                 .truncate = true,
                                                 .mode = mode,
                                             });
+                                        },
+                                        // Some filesystems (e.g. ecryptfs) have lower filename length limits
+                                        // than the typical 255 bytes. Skip entries that exceed the limit.
+                                        error.NameTooLong => {
+                                            Output.warn("Skipping file with too long name: {f}\n", .{
+                                                bun.fmt.fmtOSPath(path_slice, .{}),
+                                            });
+                                            continue;
                                         },
                                         else => return err,
                                     });

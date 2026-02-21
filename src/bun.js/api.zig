@@ -54,6 +54,7 @@ pub const ResolveMessage = @import("./ResolveMessage.zig").ResolveMessage;
 pub const Shell = @import("../shell/shell.zig");
 pub const UDPSocket = @import("./api/bun/udp_socket.zig").UDPSocket;
 pub const Valkey = @import("../valkey/js_valkey.zig").JSValkeyClient;
+pub const SMTPClient = @import("../smtp/JSSMTPClient.zig");
 pub const BlockList = @import("./node/net/BlockList.zig");
 pub const NativeZstd = @import("./node/zlib/NativeZstd.zig");
 

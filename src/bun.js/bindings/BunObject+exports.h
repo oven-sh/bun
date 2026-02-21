@@ -15,6 +15,7 @@
     macro(markdown) \
     macro(MD5) \
     macro(S3Client) \
+    macro(SMTPClient) \
     macro(SHA1) \
     macro(SHA224) \
     macro(SHA256) \

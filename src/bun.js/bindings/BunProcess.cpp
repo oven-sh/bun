@@ -1126,7 +1126,49 @@ extern "C" void Bun__onSignalForJS(int signalNumber, Zig::GlobalObject* globalOb
     Process* process = globalObject->processObject();
 
     String signalName = signalNumberToNameMap->get(signalNumber);
+
+    // If the signal number doesn't map to a known name, it cannot have JS
+    // listeners. Fall through to emitForBindings (which will be a no-op) to
+    // preserve the safe pre-existing behavior for unknown/unmapped signals.
+    if (signalName.isEmpty()) {
+        MarkedArgumentBuffer args;
+        args.append(jsUndefined());
+        args.append(jsNumber(signalNumber));
+        process->wrapped().emitForBindings(Identifier::fromString(JSC::getVM(globalObject), signalName), args);
+        return;
+    }
+
     Identifier signalNameIdentifier = Identifier::fromString(JSC::getVM(globalObject), signalName);
+
+    // Match Node.js behavior: if no JS listeners are registered for this signal,
+    // restore SIG_DFL and re-raise so the process terminates with the correct
+    // exit code (128 + signal number). Without this, signals like SIGHUP from
+    // terminal death are silently swallowed, causing orphaned processes.
+    if (process->wrapped().listenerCount(signalNameIdentifier) == 0) {
+#if !OS(WINDOWS)
+        // Node.js ignores SIGPIPE and SIGXFSZ by default (they should never
+        // terminate the process). Match that behavior here.
+        if (signalNumber == SIGPIPE
+#ifdef SIGXFSZ
+            || signalNumber == SIGXFSZ
+#endif
+        ) {
+            return;
+        }
+
+        struct sigaction sa;
+        memset(&sa, 0, sizeof(sa));
+        sa.sa_handler = SIG_DFL;
+        sigemptyset(&sa.sa_mask);
+        sigaction(signalNumber, &sa, nullptr);
+        raise(signalNumber);
+#endif
+        // On Windows, signals with no listeners are a no-op (same as before).
+        // Windows signal handling uses uv_signal_t which doesn't have the
+        // orphaned-process problem that POSIX signals cause.
+        return;
+    }
+
     MarkedArgumentBuffer args;
     args.append(jsString(JSC::getVM(globalObject), signalNameIdentifier.string()));
     args.append(jsNumber(signalNumber));

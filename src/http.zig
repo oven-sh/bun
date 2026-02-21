@@ -613,6 +613,7 @@ pub fn methodName(this: *const HTTPClient) []const u8 {
 }
 
 pub fn setCustomMethod(this: *HTTPClient, method_str: []const u8) void {
+    assert(method_str.len <= this.custom_method_buf.len);
     const len: u8 = @intCast(@min(method_str.len, this.custom_method_buf.len));
     @memcpy(this.custom_method_buf[0..len], method_str[0..len]);
     this.custom_method_len = len;
@@ -2601,7 +2602,7 @@ pub fn handleResponseMetadata(
                         }
                     }
                     this.state.flags.is_redirect_pending = true;
-                    if (this.method.hasRequestBody()) {
+                    if (this.method.hasRequestBody() or this.custom_method_len > 0) {
                         this.state.flags.resend_request_body_on_redirect = true;
                     }
                 },

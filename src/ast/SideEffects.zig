@@ -772,7 +772,7 @@ pub const SideEffects = enum(u1) {
 
     // Avoid passing through *P
     // This is a very recursive function.
-    fn toBooleanWithoutDCECheck(exp: Expr.Data) Result {
+    pub fn toBooleanWithoutDCECheck(exp: Expr.Data) Result {
         switch (exp) {
             .e_null, .e_undefined => {
                 return Result{ .ok = true, .value = false, .side_effects = .no_side_effects };

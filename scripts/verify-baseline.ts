@@ -94,8 +94,8 @@ interface RunTestOptions {
   live?: boolean;
 }
 
-/** Read a stream, write each chunk to an output fd, and return the full text. */
-async function teeStream(stream: ReadableStream<Uint8Array>, output: typeof Bun.stdout): Promise<string> {
+/** Read a stream, write each chunk to a writable, and return the full text. */
+async function teeStream(stream: ReadableStream<Uint8Array>, output: NodeJS.WriteStream): Promise<string> {
   const chunks: Uint8Array[] = [];
   for await (const chunk of stream) {
     chunks.push(chunk);
@@ -119,8 +119,8 @@ async function runTest(label: string, binaryArgs: string[], options?: RunTestOpt
   let stderr: string;
   if (live) {
     [stdout, stderr] = await Promise.all([
-      teeStream(proc.stdout as ReadableStream<Uint8Array>, Bun.stdout),
-      teeStream(proc.stderr as ReadableStream<Uint8Array>, Bun.stderr),
+      teeStream(proc.stdout as ReadableStream<Uint8Array>, process.stdout),
+      teeStream(proc.stderr as ReadableStream<Uint8Array>, process.stderr),
       proc.exited,
     ]);
   } else {

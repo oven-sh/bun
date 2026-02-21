@@ -44,6 +44,13 @@ describe("randomUUIDv7", () => {
     console.log({ uuid: Bun.randomUUIDv7("hex", new Date(customTimestamp)) });
   });
 
+  test("custom timestamp with undefined encoding", () => {
+    const customTimestamp = 1625097600000; // 2021-07-01T00:00:00.000Z
+    const uuid = Bun.randomUUIDv7(undefined, customTimestamp);
+    expect(uuid).toStartWith("017a5f5d-");
+    expect(Bun.randomUUIDv7(undefined, new Date(customTimestamp))).toStartWith("017a5f5d-");
+  });
+
   test("monotonic", () => {
     const customTimestamp = 1625097600000; // 2021-07-01T00:00:00.000Z
     let input = Array.from({ length: 100 }, () => Bun.randomUUIDv7("hex", customTimestamp));

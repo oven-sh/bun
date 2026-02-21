@@ -515,6 +515,15 @@ extern "C" void bun_initialize_process()
         close(devNullFd_);
     }
 
+    // Ignore SIGTTIN and SIGTTOU to prevent Bun from being suspended when
+    // a child process (e.g. `bash -ci`) takes foreground control of the
+    // terminal via tcsetpgrp(). Without this, Bun gets stopped by the
+    // kernel when it attempts terminal I/O while in a background process
+    // group. This matches how shells handle job control.
+    // See: https://github.com/oven-sh/bun/issues/17500
+    signal(SIGTTIN, SIG_IGN);
+    signal(SIGTTOU, SIG_IGN);
+
     // Restore TTY state on exit
     if (anyTTYs) {
         struct sigaction sa;

@@ -1349,6 +1349,10 @@ async function main() {
           { headers: { Authorization: `Bearer ${getSecret("GITHUB_TOKEN")}` } },
         );
         const doc = await res.json();
+        if (!Array.isArray(doc)) {
+          console.error(`-> page ${i}, unexpected response:`, JSON.stringify(doc));
+          break;
+        }
         console.log(`-> page ${i}, found ${doc.length} items`);
         if (doc.length === 0) break;
         for (const { filename, status } of doc) {
@@ -1363,7 +1367,7 @@ async function main() {
     } catch (e) {
       console.error(e);
     }
-    if (allFiles.every(filename => filename.startsWith("docs/"))) {
+    if (allFiles.length > 0 && allFiles.every(filename => filename.startsWith("docs/"))) {
       console.log(`- PR is only docs, skipping tests!`);
       return;
     }

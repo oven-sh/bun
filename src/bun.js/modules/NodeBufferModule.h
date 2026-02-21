@@ -155,6 +155,16 @@ static std::optional<TranscodeEncoding> parseTranscodeEncoding(JSC::JSGlobalObje
     }
 }
 
+// Validate that all continuation bytes in a multi-byte UTF-8 sequence have the 10xxxxxx pattern.
+static inline bool validateUtf8Continuations(const char* source, size_t srcIdx, size_t seqLen)
+{
+    for (size_t i = 1; i < seqLen; i++) {
+        if ((static_cast<uint8_t>(source[srcIdx + i]) & 0xC0) != 0x80)
+            return false;
+    }
+    return true;
+}
+
 // Count the number of output codepoints from UTF-8 input, handling invalid sequences safely.
 // Each valid codepoint produces one output byte; each invalid/truncated byte also produces one.
 static size_t countUtf8Codepoints(const char* source, size_t sourceLength)
@@ -182,6 +192,12 @@ static size_t countUtf8Codepoints(const char* source, size_t sourceLength)
             // Truncated sequence: each remaining byte counts as one output
             count += (sourceLength - srcIdx);
             break;
+        }
+        if (seqLen > 1 && !validateUtf8Continuations(source, srcIdx, seqLen)) {
+            // Bad continuation byte: treat start byte as one invalid output
+            count++;
+            srcIdx++;
+            continue;
         }
         count++;
         srcIdx += seqLen;
@@ -224,6 +240,11 @@ static JSC::JSUint8Array* transcodeUtf8ToSingleByte(JSC::JSGlobalObject* globalO
                 }
                 break;
             }
+            if (!validateUtf8Continuations(source, srcIdx, seqLen)) {
+                out[dstIdx++] = '?';
+                srcIdx++;
+                continue;
+            }
             codepoint = (byte & 0x1F) << 6;
             codepoint |= (static_cast<uint8_t>(source[srcIdx + 1]) & 0x3F);
         } else if ((byte & 0xF0) == 0xE0) {
@@ -234,6 +255,11 @@ static JSC::JSUint8Array* transcodeUtf8ToSingleByte(JSC::JSGlobalObject* globalO
                     srcIdx++;
                 }
                 break;
+            }
+            if (!validateUtf8Continuations(source, srcIdx, seqLen)) {
+                out[dstIdx++] = '?';
+                srcIdx++;
+                continue;
             }
             codepoint = (byte & 0x0F) << 12;
             codepoint |= (static_cast<uint8_t>(source[srcIdx + 1]) & 0x3F) << 6;
@@ -246,6 +272,11 @@ static JSC::JSUint8Array* transcodeUtf8ToSingleByte(JSC::JSGlobalObject* globalO
                     srcIdx++;
                 }
                 break;
+            }
+            if (!validateUtf8Continuations(source, srcIdx, seqLen)) {
+                out[dstIdx++] = '?';
+                srcIdx++;
+                continue;
             }
             codepoint = (byte & 0x07) << 18;
             codepoint |= (static_cast<uint8_t>(source[srcIdx + 1]) & 0x3F) << 12;

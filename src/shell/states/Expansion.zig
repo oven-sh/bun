@@ -14,6 +14,10 @@ io: IO,
 
 word_idx: u32,
 current_out: std.array_list.Managed(u8),
+/// Set when a quoted empty string ('' or "") is encountered during expansion.
+/// This ensures the empty string is preserved as an explicit empty argument
+/// rather than being dropped.
+has_quoted_empty: bool = false,
 state: union(enum) {
     normal,
     braces,
@@ -209,7 +213,12 @@ pub fn next(this: *Expansion) Yield {
                         continue;
                     }
 
-                    this.pushCurrentOut();
+                    if (this.has_quoted_empty) {
+                        this.pushCurrentOutMaybeEmpty(true);
+                        this.has_quoted_empty = false;
+                    } else {
+                        this.pushCurrentOut();
+                    }
                     this.state = .done;
                     continue;
                 }
@@ -584,6 +593,11 @@ fn onGlobWalkDone(this: *Expansion, task: *ShellGlobTask) Yield {
 pub fn expandSimpleNoIO(this: *Expansion, atom: *const ast.SimpleAtom, str_list: *std.array_list.Managed(u8), comptime expand_tilde: bool) bool {
     switch (atom.*) {
         .Text => |txt| {
+            if (txt.len == 0) {
+                // An empty Text atom can only come from a quoted empty string
+                // ('' or ""). Mark it so pushCurrentOut preserves the empty arg.
+                this.has_quoted_empty = true;
+            }
             bun.handleOom(str_list.appendSlice(txt));
         },
         .Var => |label| {
@@ -630,8 +644,20 @@ pub fn appendSlice(this: *Expansion, buf: *std.array_list.Managed(u8), slice: []
 }
 
 pub fn pushCurrentOut(this: *Expansion) void {
-    if (this.current_out.items.len == 0) return;
-    if (this.current_out.items[this.current_out.items.len - 1] != 0) bun.handleOom(this.current_out.append(0));
+    this.pushCurrentOutMaybeEmpty(false);
+}
+
+/// Push the current output buffer as an argument. When `allow_empty` is true,
+/// an empty buffer is pushed as an explicit empty string argument (needed for
+/// quoted empty strings like '' and "").
+fn pushCurrentOutMaybeEmpty(this: *Expansion, comptime allow_empty: bool) void {
+    if (this.current_out.items.len == 0) {
+        if (!allow_empty) return;
+        // Push an explicit empty string argument (null-terminated).
+        bun.handleOom(this.current_out.append(0));
+    } else {
+        if (this.current_out.items[this.current_out.items.len - 1] != 0) bun.handleOom(this.current_out.append(0));
+    }
     switch (this.out.pushResult(&this.current_out)) {
         .copied => {
             this.current_out.clearRetainingCapacity();

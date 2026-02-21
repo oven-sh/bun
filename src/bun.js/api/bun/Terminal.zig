@@ -612,6 +612,16 @@ pub fn write(
         return JSValue.jsNumber(0);
     }
 
+    // On POSIX, check for signal-generating control characters and send
+    // appropriate signals via TIOCSIG ioctl. This is needed because data
+    // written to the PTY master bypasses the slave-side line discipline
+    // that would normally process these characters and generate signals.
+    if (comptime Environment.isPosix) {
+        if (this.master_fd != bun.invalid_fd) {
+            this.processSignalCharacters(bytes);
+        }
+    }
+
     // Write using the streaming writer
     const write_result = this.writer.write(bytes);
     return switch (write_result) {
@@ -620,6 +630,51 @@ pub fn write(
         .pending => |amt| JSValue.jsNumber(@as(i32, @intCast(amt))),
         .err => |err| globalObject.throwValue(try err.toJS(globalObject)),
     };
+}
+
+/// TIOCSIG ioctl - sends a signal to the foreground process group of the PTY
+/// On macOS: _IO('t', 95) = 0x2000745f
+/// On Linux: _IOW('T', 0x36, int) = 0x40045436
+/// Note: Despite Linux using _IOW (which normally implies pointer semantics),
+/// the kernel actually expects the signal value to be passed directly as the
+/// third argument, not as a pointer. This is a quirk of the Linux PTY ioctl.
+const TIOCSIG: c_ulong = if (Environment.isMac) 0x2000745f else 0x40045436;
+
+/// Process signal-generating control characters in the input data.
+/// When ISIG is enabled in termios (cooked mode), control characters like
+/// Ctrl+C should generate signals. Since data written to the PTY master
+/// bypasses line discipline processing, we need to explicitly send signals
+/// via TIOCSIG ioctl when we detect these characters.
+fn processSignalCharacters(this: *Terminal, bytes: []const u8) void {
+    if (comptime !Environment.isPosix) return;
+
+    // Get current termios to check if ISIG is enabled and get control char mappings
+    const termios_data = getTermios(this.master_fd) orelse return;
+
+    // Check if signal generation is enabled (ISIG flag in local flags)
+    if (!termios_data.lflag.ISIG) return;
+
+    // Get the control characters from termios (they can be customized)
+    const intr_char = termios_data.cc[@intFromEnum(std.posix.V.INTR)]; // Usually Ctrl+C (0x03)
+    const quit_char = termios_data.cc[@intFromEnum(std.posix.V.QUIT)]; // Usually Ctrl+\ (0x1c)
+    const susp_char = termios_data.cc[@intFromEnum(std.posix.V.SUSP)]; // Usually Ctrl+Z (0x1a)
+
+    // Scan for signal-generating characters and send appropriate signals
+    for (bytes) |byte| {
+        const signal: c_int = if (byte == intr_char and intr_char != 0)
+            std.posix.SIG.INT
+        else if (byte == quit_char and quit_char != 0)
+            std.posix.SIG.QUIT
+        else if (byte == susp_char and susp_char != 0)
+            std.posix.SIG.TSTP
+        else
+            continue;
+
+        // Send signal to foreground process group via TIOCSIG
+        // Both macOS and Linux expect the signal value directly (not as a pointer),
+        // despite Linux's _IOW macro normally implying pointer semantics.
+        _ = std.c.ioctl(this.master_fd.cast(), TIOCSIG, signal);
+    }
 }
 
 /// Resize the terminal

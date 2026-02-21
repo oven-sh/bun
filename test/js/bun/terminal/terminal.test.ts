@@ -722,6 +722,75 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
       proc.kill();
       await proc.exited;
     });
+
+    // Regression test for https://github.com/oven-sh/bun/issues/25779
+    // Ctrl+C (0x03) written to terminal should generate SIGINT to foreground process
+    test("Ctrl+C generates SIGINT for subprocess (issue #25779)", async () => {
+      const received: Uint8Array[] = [];
+
+      await using terminal = new Bun.Terminal({
+        cols: 80,
+        rows: 24,
+        data(term, data) {
+          received.push(new Uint8Array(data));
+        },
+      });
+
+      // Spawn bash running a sleep command - sleep 60 gives us plenty of time
+      const proc = Bun.spawn({
+        cmd: ["/bin/bash", "--norc", "--noprofile", "-c", "trap 'echo SIGINT_RECEIVED; exit 130' INT; sleep 60"],
+        terminal: terminal,
+        env: { ...bunEnv, PS1: "" },
+      });
+
+      // Wait for bash to start and set up the trap
+      await Bun.sleep(200);
+
+      // Send Ctrl+C - this should generate SIGINT and trigger the trap
+      terminal.write("\x03");
+
+      // Wait for signal to be processed and the process to exit
+      const exitedWithTimeout = await Promise.race([proc.exited.then(() => true), Bun.sleep(2000).then(() => false)]);
+
+      // Process should have exited from SIGINT (not still running)
+      expect(exitedWithTimeout).toBe(true);
+
+      // Check that the trap was triggered (SIGINT was received)
+      const output = Buffer.concat(received).toString();
+      expect(output).toContain("SIGINT_RECEIVED");
+
+      // Exit code 130 = 128 + 2 (SIGINT)
+      expect(proc.exitCode).toBe(130);
+    });
+
+    // Test Ctrl+\ generates SIGQUIT for subprocess
+    test("Ctrl+\\ generates SIGQUIT for subprocess", async () => {
+      await using terminal = new Bun.Terminal({
+        cols: 80,
+        rows: 24,
+      });
+
+      // Spawn a simple sleep process (SIGQUIT will kill it)
+      const proc = Bun.spawn({
+        cmd: ["/bin/sleep", "60"],
+        terminal: terminal,
+        env: bunEnv,
+      });
+
+      // Wait for sleep to start
+      await Bun.sleep(200);
+
+      // Send Ctrl+\ (0x1c) - generates SIGQUIT
+      terminal.write("\x1c");
+
+      // Wait for signal to be processed
+      const exitedWithTimeout = await Promise.race([proc.exited.then(() => true), Bun.sleep(2000).then(() => false)]);
+
+      expect(exitedWithTimeout).toBe(true);
+
+      // Sleep should be killed by SIGQUIT
+      expect(proc.signalCode).toBe("SIGQUIT");
+    });
   });
 
   describe("ANSI escape sequences", () => {

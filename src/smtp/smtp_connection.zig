@@ -3,7 +3,6 @@
 const SMTPConnection = @This();
 
 const debug = bun.Output.scoped(.smtp, .hidden);
-const Socket = uws.AnySocket;
 
 pub const State = enum {
     disconnected,
@@ -796,6 +795,8 @@ pub fn deinit(this: *SMTPConnection) void {
     this.write_buffer.deinit(bun.default_allocator);
 }
 
-const std = @import("std");
 const bun = @import("bun");
+const std = @import("std");
+
 const uws = bun.uws;
+const Socket = uws.AnySocket;

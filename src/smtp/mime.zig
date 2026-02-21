@@ -148,7 +148,7 @@ pub fn buildMessageWithOptions(alloc: std.mem.Allocator, globalObject: *jsc.JSGl
 }
 
 /// Extract bare email address from "Display Name <email@host>" format.
-pub const extractEmail = @import("address_parser.zig").extractEmail;
+pub const extractEmail = @import("./address_parser.zig").extractEmail;
 
 // ============================================================================
 // Header helpers
@@ -971,5 +971,6 @@ pub const TestingAPIs = struct {
 };
 
 const std = @import("std");
+
 const bun = @import("bun");
 const jsc = bun.jsc;

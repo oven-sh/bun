@@ -12,12 +12,6 @@ pub const ref = RefCount.ref;
 pub const deref = RefCount.deref;
 pub const new = bun.TrivialNew(@This());
 
-const SMTPConnection = @import("smtp_connection.zig");
-const mime = @import("mime.zig");
-const well_known = @import("well_known.zig");
-const dkim = @import("dkim.zig");
-const address_parser = @import("address_parser.zig");
-
 // ---- Fields ----
 ref_count: RefCount,
 globalObject: *jsc.JSGlobalObject,
@@ -1290,9 +1284,14 @@ fn deinit(this: *JSSMTPClient) void {
     bun.destroy(this);
 }
 
-const URL = bun.URL;
-
+const SMTPConnection = @import("./smtp_connection.zig");
+const address_parser = @import("./address_parser.zig");
+const dkim = @import("./dkim.zig");
+const mime = @import("./mime.zig");
 const std = @import("std");
+const well_known = @import("./well_known.zig");
+
 const bun = @import("bun");
+const URL = bun.URL;
 const jsc = bun.jsc;
 const uws = bun.uws;

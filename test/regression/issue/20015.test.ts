@@ -105,6 +105,9 @@ test("bun link (no args) from workspace member registers member, not root", asyn
       stderr: "pipe",
       env: bunEnv,
     });
+    const stderr = stderrForInstall(await proc.stderr.text());
+    const stdout = await proc.stdout.text();
+    expect(stderr).not.toContain("error");
     expect(await proc.exited).toBe(0);
   }
 

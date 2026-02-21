@@ -90,25 +90,44 @@ const failedTests: string[] = [];
 
 interface RunTestOptions {
   cwd?: string;
-  /** Stream output live to the console instead of buffering */
-  inherit?: boolean;
+  /** Tee output live to the console while still capturing it for analysis */
+  live?: boolean;
+}
+
+/** Read a stream, tee it to a writer, and return the full text. */
+async function teeToWriter(stream: ReadableStream<Uint8Array>, writer: WritableStream<Uint8Array>): Promise<string> {
+  const chunks: Uint8Array[] = [];
+  const tee = stream.tee();
+  const [forCapture, forDisplay] = tee;
+  forDisplay.pipeTo(writer, { preventClose: true });
+  const reader = forCapture.getReader();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString();
 }
 
 async function runTest(label: string, binaryArgs: string[], options?: RunTestOptions): Promise<boolean> {
   console.log(`+++ ${label}`);
 
   const start = performance.now();
-  const inherit = options?.inherit ?? false;
+  const live = options?.live ?? false;
   const proc = Bun.spawn([...config.runnerCmd, binary, ...binaryArgs], {
     cwd: options?.cwd ?? config.cwd,
-    stdout: inherit ? "inherit" : "pipe",
-    stderr: inherit ? "inherit" : "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
   });
 
-  let stdout = "";
-  let stderr = "";
-  if (inherit) {
-    await proc.exited;
+  let stdout: string;
+  let stderr: string;
+  if (live) {
+    [stdout, stderr] = await Promise.all([
+      teeToWriter(proc.stdout as ReadableStream<Uint8Array>, Bun.stdout.writer()),
+      teeToWriter(proc.stderr as ReadableStream<Uint8Array>, Bun.stderr.writer()),
+      proc.exited,
+    ]);
   } else {
     [stdout, stderr] = await Promise.all([
       new Response(proc.stdout).text(),
@@ -122,14 +141,14 @@ async function runTest(label: string, binaryArgs: string[], options?: RunTestOpt
   const output = stdout + "\n" + stderr;
 
   if (exitCode === 0) {
-    if (stdout.trim()) console.log(stdout.trim());
+    if (!live && stdout.trim()) console.log(stdout.trim());
     console.log(`    PASS (${elapsed}s)`);
     passed++;
     return true;
   }
 
   if (isInstructionViolation(exitCode, output)) {
-    if (output.trim()) console.log(output.trim());
+    if (!live && output.trim()) console.log(output.trim());
     console.log();
     console.log(`    FAIL: CPU instruction violation detected (${elapsed}s)`);
     if (isAarch64) {
@@ -142,7 +161,7 @@ async function runTest(label: string, binaryArgs: string[], options?: RunTestOpt
     instructionFailures++;
     failedTests.push(label);
   } else {
-    if (output.trim()) console.log(output.trim());
+    if (!live && output.trim()) console.log(output.trim());
     console.log(`    WARN: exit code ${exitCode} (${elapsed}s, not a CPU instruction issue)`);
     otherFailures++;
   }
@@ -152,7 +171,7 @@ async function runTest(label: string, binaryArgs: string[], options?: RunTestOpt
 // Phase 1: SIMD code path verification (always runs)
 const simdTestPath = join(repoRoot, "test", "js", "bun", "jsc-stress", "fixtures", "simd-baseline.test.ts");
 console.log("--- SIMD baseline tests");
-await runTest("SIMD baseline tests", ["test", simdTestPath], { inherit: true });
+await runTest("SIMD baseline tests", ["test", simdTestPath], { live: true });
 
 // Phase 2: JIT stress fixtures (only with --jit-stress, e.g. on WebKit changes)
 if (values["jit-stress"]) {

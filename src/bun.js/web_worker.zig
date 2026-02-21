@@ -50,7 +50,7 @@ pub const Status = enum(u8) {
 extern fn WebWorker__dispatchExit(?*jsc.JSGlobalObject, *anyopaque, i32) void;
 extern fn WebWorker__dispatchOnline(cpp_worker: *anyopaque, *jsc.JSGlobalObject) void;
 extern fn WebWorker__fireEarlyMessages(cpp_worker: *anyopaque, *jsc.JSGlobalObject) void;
-extern fn WebWorker__dispatchError(*jsc.JSGlobalObject, *anyopaque, bun.String, JSValue) void;
+extern fn WebWorker__dispatchError(*jsc.JSGlobalObject, *anyopaque, bun.String, JSValue) bool;
 
 export fn WebWorker__getParentWorker(vm: *jsc.VirtualMachine) ?*anyopaque {
     const worker = vm.worker orelse return null;
@@ -392,8 +392,9 @@ fn flushLogs(this: *WebWorker) void {
         error.JSTerminated => @panic("unhandled exception"),
     };
     defer str.deref();
-    bun.jsc.fromJSHostCallGeneric(vm.global, @src(), WebWorker__dispatchError, .{ vm.global, this.cpp_worker, str, err }) catch |e| {
+    _ = bun.jsc.fromJSHostCallGeneric(vm.global, @src(), WebWorker__dispatchError, .{ vm.global, this.cpp_worker, str, err }) catch |e| {
         _ = vm.global.reportUncaughtException(vm.global.takeException(e).asException(vm.global.vm()).?);
+        return;
     };
 }
 
@@ -435,11 +436,22 @@ fn onUnhandledRejection(vm: *jsc.VirtualMachine, globalObject: *jsc.JSGlobalObje
         bun.outOfMemory();
     };
     jsc.markBinding(@src());
-    WebWorker__dispatchError(globalObject, worker.cpp_worker, bun.String.cloneUTF8(array.written()), error_instance);
-    if (vm.worker) |worker_| {
-        _ = worker.setRequestedTerminate();
-        worker.parent_poll_ref.unrefConcurrently(worker.parent);
-        worker_.exitAndDeinit();
+    const handled = WebWorker__dispatchError(globalObject, worker.cpp_worker, bun.String.cloneUTF8(array.written()), error_instance);
+    if (!handled) {
+        if (vm.worker) |worker_| {
+            _ = worker.setRequestedTerminate();
+            worker.parent_poll_ref.unrefConcurrently(worker.parent);
+            worker_.exitAndDeinit();
+        }
+    } else {
+        // Error was handled by self.onerror / preventDefault() — undo the
+        // unhandled_error_counter increment and exit_code set by `uncaughtException`
+        // so the event loop stays alive and the worker keeps running.
+        if (vm.unhandled_error_counter > 0)
+            vm.unhandled_error_counter -= 1;
+        vm.exit_handler.exit_code = 0;
+        // Reset the rejection handler so future errors are also dispatched.
+        vm.onUnhandledRejection = &onUnhandledRejection;
     }
 }
 

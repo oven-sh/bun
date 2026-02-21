@@ -117,10 +117,18 @@ if (existsSync(outdir)) {
 
 const start = performance.now();
 
-const entrypoints = [...new Bun.Glob("**.html").scanSync("src")]
-  .map(a => path.resolve("src", a))
-  .filter(dir => !dir.includes("node_modules"));
-console.log(`📄 Found ${entrypoints.length} HTML ${entrypoints.length === 1 ? "file" : "files"} to process\n`);
+let entrypoints: string[];
+
+const isCompileMode = "compile" in cliConfig && cliConfig.compile;
+
+if (isCompileMode) {
+  entrypoints = [path.resolve("src", "index.ts")];
+} else {
+  entrypoints = [...new Bun.Glob("**.html").scanSync("src")]
+    .map(a => path.resolve("src", a))
+    .filter(dir => !dir.includes("node_modules"));
+  console.log(`📄 Found ${entrypoints.length} HTML ${entrypoints.length === 1 ? "file" : "files"} to process\n`);
+}
 
 const result = await Bun.build({
   entrypoints,
@@ -133,6 +141,13 @@ const result = await Bun.build({
     "process.env.NODE_ENV": JSON.stringify("production"),
   },
   ...cliConfig,
+  ...(isCompileMode
+    ? {
+        compile: {
+          outfile: (cliConfig as { outfile?: string }).outfile || path.resolve("main"),
+        },
+      }
+    : {}),
 });
 
 const end = performance.now();

@@ -13,9 +13,9 @@ pub const DKIMConfig = struct {
 /// The caller should prepend this header to the message.
 pub fn sign(alloc: std.mem.Allocator, message: []const u8, config: DKIMConfig) ![]const u8 {
     // 1. Split message into headers and body
-    const header_end = findHeaderBodySeparator(message);
-    const headers_raw = message[0..header_end];
-    const body_start = if (header_end + 4 <= message.len) header_end + 4 else message.len; // skip \r\n\r\n
+    const sep = findHeaderBodySeparator(message);
+    const headers_raw = message[0..sep.pos];
+    const body_start = @min(sep.pos + sep.len, message.len);
     const body_raw = if (body_start < message.len) message[body_start..] else "";
 
     // 2. Canonicalize body (relaxed)
@@ -104,48 +104,64 @@ pub fn signMessage(alloc: std.mem.Allocator, message: []const u8, config: DKIMCo
 // Internal helpers
 // ============================================================================
 
-fn findHeaderBodySeparator(message: []const u8) usize {
-    if (std.mem.indexOf(u8, message, "\r\n\r\n")) |pos| return pos;
-    if (std.mem.indexOf(u8, message, "\n\n")) |pos| return pos;
-    return message.len;
+const SepResult = struct { pos: usize, len: usize };
+fn findHeaderBodySeparator(message: []const u8) SepResult {
+    if (std.mem.indexOf(u8, message, "\r\n\r\n")) |pos| return .{ .pos = pos, .len = 4 };
+    if (std.mem.indexOf(u8, message, "\n\n")) |pos| return .{ .pos = pos, .len = 2 };
+    return .{ .pos = message.len, .len = 0 };
 }
 
 fn findHeader(headers: []const u8, name: []const u8) ?[]const u8 {
     var pos: usize = 0;
     while (pos < headers.len) {
-        const line_end = std.mem.indexOfPos(u8, headers, pos, "\r\n") orelse headers.len;
+        // Handle both \r\n and \n line endings
+        var line_end = std.mem.indexOfPos(u8, headers, pos, "\n") orelse headers.len;
+        var skip: usize = 1; // skip \n
+        if (line_end > pos and headers[line_end - 1] == '\r') {
+            line_end -= 1; // exclude \r
+            skip = 2; // skip \r\n
+        }
         const line = headers[pos..line_end];
 
         // Check if this line starts with the header name (case-insensitive)
         if (line.len > name.len and line[name.len] == ':') {
             if (std.ascii.eqlIgnoreCase(line[0..name.len], name)) {
-                // Return value after ": "
+                // Return the full header value including any continuation lines.
+                // Continuation lines start with WSP (space or tab).
+                var val_end = @min(line_end + skip, headers.len);
+                while (val_end < headers.len and (headers[val_end] == ' ' or headers[val_end] == '\t')) {
+                    // This is a continuation line — extend val_end to its end
+                    val_end = std.mem.indexOfPos(u8, headers, val_end, "\n") orelse headers.len;
+                    if (val_end < headers.len) val_end += 1; // skip \n
+                }
                 var val_start = name.len + 1;
                 while (val_start < line.len and line[val_start] == ' ') : (val_start += 1) {}
-                return line[val_start..];
+                return headers[pos + val_start .. val_end];
             }
         }
 
-        pos = if (line_end + 2 <= headers.len) line_end + 2 else headers.len;
+        pos = @min(line_end + skip, headers.len);
     }
     return null;
 }
 
 fn writeCanonicalHeaderValue(writer: anytype, value: []const u8) !void {
-    // Relaxed header canonicalization:
+    // Relaxed header canonicalization (RFC 6376 §3.4.2):
     // - Unfold header continuation lines
     // - Reduce all sequences of WSP to a single SP
-    // - Remove trailing WSP
-    var in_wsp = false;
+    // - Remove leading and trailing WSP
+    var in_wsp = true; // Start true to skip leading WSP
+    var has_content = false;
     for (value) |c| {
         if (c == '\r' or c == '\n') continue;
         if (c == ' ' or c == '\t') {
-            in_wsp = true;
+            if (has_content) in_wsp = true;
         } else {
-            if (in_wsp) {
+            if (in_wsp and has_content) {
                 try writer.writeByte(' ');
-                in_wsp = false;
             }
+            in_wsp = false;
+            has_content = true;
             try writer.writeByte(c);
         }
     }

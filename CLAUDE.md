@@ -1,3 +1,33 @@
+
+# Task: SMTP client
+
+Implement a comprehensive SMTP client API for Bun in Zig using Bun's event loop, usockets, string & URL parsing utilities, and BoringSSL.
+
+Features:
+- Security focused - designed to avoid remote code execution vulnerabilities that have affected other Node.js email libraries.
+- Full Unicode support - send messages with any characters, including emoji 💪.
+- HTML and plain-text emails - send rich HTML emails with automatic plain-text fallbacks.
+- Attachments and embedded images - easily include files and inline images in your messages.
+- Built-in TLS/STARTTLS encryption - secure connections are handled automatically.
+- Multiple transports - send via SMTP, Sendmail, Amazon SES, streams, and more.
+- DKIM signing and OAuth2 authentication - enterprise-ready email authentication.
+- Proxy support - route email through proxies for restricted network environments.
+- Ethereal.email integration - generate test accounts instantly for local development and testing.
+
+Location: Put it in src/smtp/**.
+Tests: Put it in test/bun/api/smtp. Port tests from vendor/nodemailer.
+
+References:
+- vendor/nodemailer: Look at nodemailer's source code for inspiration of how various protocols and handshaking and TLS and implementation details of a production-ready SMTP client. 
+- src/sql/mysql/js/JSMySQLConnection.zig: MySQL client that uses TCP & TLS with non-blocking sockets
+- src/sql/postgres/PostgresSQLConnection.zig: PostgreSQL client
+- src/valkey/js_valkey.zig: Valkey (Redis) client
+
+To expose the API to JavaScript, use the implementing-jsc-classes-zig skill.
+
+
+---
+
 This is the Bun repository - an all-in-one JavaScript runtime & toolkit designed for speed, with a bundler, test runner, and Node.js-compatible package manager. It's written primarily in Zig with C++ for JavaScriptCore integration, powered by WebKit's JavaScriptCore engine.
 
 ## Building and Running Bun

@@ -15,7 +15,7 @@ pub const ElfFile = struct {
         const ehdr = readEhdr(elf_data);
 
         // Validate ELF magic
-        if (!std.mem.eql(u8, ehdr.e_ident[0..4], "\x7fELF")) return error.InvalidElfFile;
+        if (!bun.strings.eqlComptime(ehdr.e_ident[0..4], "\x7fELF")) return error.InvalidElfFile;
 
         // Must be 64-bit
         if (ehdr.e_ident[elf.EI_CLASS] != elf.ELFCLASS64) return error.Not64Bit;
@@ -24,6 +24,7 @@ pub const ElfFile = struct {
         if (ehdr.e_ident[elf.EI_DATA] != elf.ELFDATA2LSB) return error.NotLittleEndian;
 
         var data = try std.array_list.Managed(u8).initCapacity(allocator, elf_data.len);
+        errdefer data.deinit();
         try data.appendSlice(elf_data);
 
         const self = try allocator.create(ElfFile);
@@ -52,7 +53,8 @@ pub const ElfFile = struct {
     /// and expanding in-place would invalidate their absolute virtual addresses.
     pub fn writeBunSection(self: *ElfFile, payload: []const u8) !void {
         const ehdr = readEhdr(self.data.items);
-        const bun_section_offset = try self.findBunSection(ehdr);
+        const bun_section = try self.findBunSection(ehdr);
+        const bun_section_offset = bun_section.file_offset;
         const page_size = pageSize(ehdr);
 
         const header_size: u64 = @sizeOf(u64);
@@ -120,6 +122,18 @@ pub const ElfFile = struct {
         // Non-standalone binaries have BUN_COMPILED.size = 0, so 0 means "no data".
         std.mem.writeInt(u64, self.data.items[bun_section_offset..][0..8], new_vaddr, .little);
 
+        // Update the .bun section header to reflect the new data location and size
+        // so that tools like `readelf -S` show accurate metadata.
+        {
+            const shdr_offset = new_shdr_offset + @as(u64, bun_section.section_index) * @sizeOf(Elf64_Shdr);
+            const shdr_bytes = self.data.items[shdr_offset..][0..@sizeOf(Elf64_Shdr)];
+            var shdr = std.mem.bytesAsValue(Elf64_Shdr, shdr_bytes).*;
+            shdr.sh_offset = new_file_offset;
+            shdr.sh_size = new_content_size;
+            shdr.sh_addr = new_vaddr;
+            @memcpy(shdr_bytes, std.mem.asBytes(&shdr));
+        }
+
         // Find PT_GNU_STACK and convert it to PT_LOAD for the new .bun data.
         // PT_GNU_STACK only controls stack executability; on modern kernels the
         // stack defaults to non-executable without it, so repurposing is safe.
@@ -157,8 +171,15 @@ pub const ElfFile = struct {
 
     // --- Internal helpers ---
 
-    /// Returns the file offset (sh_offset) of the `.bun` section.
-    fn findBunSection(self: *const ElfFile, ehdr: Elf64_Ehdr) !u64 {
+    const BunSectionInfo = struct {
+        /// File offset of the .bun section's data (sh_offset).
+        file_offset: u64,
+        /// Index of the .bun section in the section header table.
+        section_index: u16,
+    };
+
+    /// Returns the file offset and section index of the `.bun` section.
+    fn findBunSection(self: *const ElfFile, ehdr: Elf64_Ehdr) !BunSectionInfo {
         const shdr_size = @sizeOf(Elf64_Shdr);
         const shdr_table_offset = ehdr.e_shoff;
         const shnum = ehdr.e_shnum;
@@ -182,8 +203,11 @@ pub const ElfFile = struct {
 
             if (name_offset < strtab.len) {
                 const name = std.mem.sliceTo(strtab[name_offset..], 0);
-                if (std.mem.eql(u8, name, ".bun")) {
-                    return shdr.sh_offset;
+                if (bun.strings.eqlComptime(name, ".bun")) {
+                    return .{
+                        .file_offset = shdr.sh_offset,
+                        .section_index = @intCast(i),
+                    };
                 }
             }
         }

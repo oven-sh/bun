@@ -34,34 +34,112 @@ const { FakeSocket } = require("internal/http/FakeSocket");
 var defaultIncomingOpts = { type: "request" };
 const nop = () => {};
 
+// Map of lowercase header names to their canonical (Title-Case) form.
+// Used by assignHeadersSlow to restore proper casing for rawHeaders,
+// since the Fetch API normalizes all header names to lowercase.
+const canonicalHeaderNames: Record<string, string> = {
+  "accept": "Accept",
+  "accept-charset": "Accept-Charset",
+  "accept-encoding": "Accept-Encoding",
+  "accept-language": "Accept-Language",
+  "accept-ranges": "Accept-Ranges",
+  "access-control-allow-credentials": "Access-Control-Allow-Credentials",
+  "access-control-allow-headers": "Access-Control-Allow-Headers",
+  "access-control-allow-methods": "Access-Control-Allow-Methods",
+  "access-control-allow-origin": "Access-Control-Allow-Origin",
+  "access-control-expose-headers": "Access-Control-Expose-Headers",
+  "access-control-max-age": "Access-Control-Max-Age",
+  "access-control-request-headers": "Access-Control-Request-Headers",
+  "access-control-request-method": "Access-Control-Request-Method",
+  "age": "Age",
+  "authorization": "Authorization",
+  "cache-control": "Cache-Control",
+  "connection": "Connection",
+  "content-disposition": "Content-Disposition",
+  "content-encoding": "Content-Encoding",
+  "content-language": "Content-Language",
+  "content-length": "Content-Length",
+  "content-location": "Content-Location",
+  "content-range": "Content-Range",
+  "content-security-policy": "Content-Security-Policy",
+  "content-security-policy-report-only": "Content-Security-Policy-Report-Only",
+  "content-type": "Content-Type",
+  "cookie": "Cookie",
+  "cookie2": "Cookie2",
+  "date": "Date",
+  "dnt": "DNT",
+  "etag": "ETag",
+  "expect": "Expect",
+  "expires": "Expires",
+  "host": "Host",
+  "if-match": "If-Match",
+  "if-modified-since": "If-Modified-Since",
+  "if-none-match": "If-None-Match",
+  "if-range": "If-Range",
+  "if-unmodified-since": "If-Unmodified-Since",
+  "keep-alive": "Keep-Alive",
+  "last-modified": "Last-Modified",
+  "link": "Link",
+  "location": "Location",
+  "origin": "Origin",
+  "pragma": "Pragma",
+  "proxy-authorization": "Proxy-Authorization",
+  "range": "Range",
+  "referer": "Referer",
+  "referrer-policy": "Referrer-Policy",
+  "refresh": "Refresh",
+  "sec-fetch-dest": "Sec-Fetch-Dest",
+  "sec-fetch-mode": "Sec-Fetch-Mode",
+  "sec-websocket-accept": "Sec-WebSocket-Accept",
+  "sec-websocket-extensions": "Sec-WebSocket-Extensions",
+  "sec-websocket-key": "Sec-WebSocket-Key",
+  "sec-websocket-protocol": "Sec-WebSocket-Protocol",
+  "sec-websocket-version": "Sec-WebSocket-Version",
+  "server-timing": "Server-Timing",
+  "set-cookie": "Set-Cookie",
+  "set-cookie2": "Set-Cookie2",
+  "strict-transport-security": "Strict-Transport-Security",
+  "te": "TE",
+  "trailer": "Trailer",
+  "transfer-encoding": "Transfer-Encoding",
+  "upgrade": "Upgrade",
+  "upgrade-insecure-requests": "Upgrade-Insecure-Requests",
+  "user-agent": "User-Agent",
+  "vary": "Vary",
+  "via": "Via",
+  "x-content-type-options": "X-Content-Type-Options",
+  "x-dns-prefetch-control": "X-DNS-Prefetch-Control",
+  "x-frame-options": "X-Frame-Options",
+  "x-xss-protection": "X-XSS-Protection",
+};
+
 function assignHeadersSlow(object, req) {
   const headers = req.headers;
   var outHeaders = Object.create(null);
   const rawHeaders: string[] = [];
   var i = 0;
   for (let key in headers) {
-    var originalKey = key;
-    var value = headers[originalKey];
+    var value = headers[key];
+    var lowercaseKey = key.toLowerCase();
+    var rawHeaderName = canonicalHeaderNames[lowercaseKey] || key;
 
-    key = key.toLowerCase();
-
-    if (key !== "set-cookie") {
+    if (lowercaseKey !== "set-cookie") {
       value = String(value);
-      $putByValDirect(rawHeaders, i++, originalKey);
+      $putByValDirect(rawHeaders, i++, rawHeaderName);
       $putByValDirect(rawHeaders, i++, value);
-      outHeaders[key] = value;
+      outHeaders[lowercaseKey] = value;
     } else {
       if ($isJSArray(value)) {
-        outHeaders[key] = value.slice();
+        outHeaders[lowercaseKey] = value.slice();
 
         for (let entry of value) {
-          $putByValDirect(rawHeaders, i++, originalKey);
+          $putByValDirect(rawHeaders, i++, rawHeaderName);
           $putByValDirect(rawHeaders, i++, entry);
         }
       } else {
         value = String(value);
-        outHeaders[key] = [value];
-        $putByValDirect(rawHeaders, i++, originalKey);
+        outHeaders[lowercaseKey] = [value];
+        $putByValDirect(rawHeaders, i++, rawHeaderName);
         $putByValDirect(rawHeaders, i++, value);
       }
     }

@@ -387,9 +387,11 @@ pub const BundleV2 = struct {
 
         var additional_files_imported_by_js_and_inlined_in_css = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(stack_alloc, this.graph.input_files.len);
         var additional_files_imported_by_css_and_inlined = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(stack_alloc, this.graph.input_files.len);
+        var entry_point_bitset = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(stack_alloc, this.graph.input_files.len);
         defer {
             additional_files_imported_by_js_and_inlined_in_css.deinit(stack_alloc);
             additional_files_imported_by_css_and_inlined.deinit(stack_alloc);
+            entry_point_bitset.deinit(stack_alloc);
         }
 
         this.dynamic_import_entry_points = std.AutoArrayHashMap(Index.Int, void).init(this.allocator());
@@ -423,6 +425,7 @@ pub const BundleV2 = struct {
             inline else => |check_dynamic_imports| {
                 for (this.graph.entry_points.items) |entry_point| {
                     visitor.visit(entry_point, false, comptime check_dynamic_imports);
+                    entry_point_bitset.set(entry_point.get());
                 }
             },
         }
@@ -449,8 +452,8 @@ pub const BundleV2 = struct {
         for (all_urls_for_css, 0..) |url_for_css, index| {
             if (url_for_css.len > 0) {
                 // We like to inline additional files in CSS if they fit a size threshold
-                // If we do inline a file in CSS, and it is not imported by JS, then we don't need to copy the additional file into the output directory
-                if (additional_files_imported_by_css_and_inlined.isSet(index) and !additional_files_imported_by_js_and_inlined_in_css.isSet(index)) {
+                // If we do inline a file in CSS, it is not imported by JS, and it is not an entry point, then we don't need to copy the additional file into the output directory
+                if (additional_files_imported_by_css_and_inlined.isSet(index) and !additional_files_imported_by_js_and_inlined_in_css.isSet(index) and !entry_point_bitset.isSet(index)) {
                     additional_files[index].clearRetainingCapacity();
                     unique_keys[index] = "";
                     content_hashes[index] = 0;

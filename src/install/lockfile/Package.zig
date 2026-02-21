@@ -596,6 +596,22 @@ pub fn Package(comptime SemverIntType: type) type {
                     }
                 }
 
+                // Also compare override trees
+                if (!summary.overrides_changed) {
+                    from_lockfile.overrides.sort(from_lockfile);
+                    to_lockfile.overrides.sort(to_lockfile);
+                    if (!from_lockfile.overrides.treeEquals(
+                        &to_lockfile.overrides,
+                        from_lockfile.buffers.string_bytes.items,
+                        to_lockfile.buffers.string_bytes.items,
+                    )) {
+                        summary.overrides_changed = true;
+                        if (PackageManager.verbose_install) {
+                            Output.prettyErrorln("Override tree changed since last install", .{});
+                        }
+                    }
+                }
+
                 if (is_root) catalogs: {
 
                     // don't sort if lengths are different

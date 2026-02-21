@@ -300,7 +300,7 @@ pub const Stringifier = struct {
                 );
             }
 
-            if (lockfile.overrides.map.count() > 0) {
+            if (lockfile.overrides.map.count() > 0 or lockfile.overrides.hasTree()) {
                 lockfile.overrides.sort(lockfile);
 
                 try writeIndent(writer, indent);
@@ -309,12 +309,33 @@ pub const Stringifier = struct {
                     \\
                 );
                 indent.* += 1;
-                for (lockfile.overrides.map.values()) |override_dep| {
-                    try writeIndent(writer, indent);
-                    try writer.print(
-                        \\{f}: {f},
-                        \\
-                    , .{ override_dep.name.fmtJson(buf, .{}), override_dep.version.literal.fmtJson(buf, .{}) });
+
+                if (lockfile.overrides.hasTree()) {
+                    // Write tree nodes recursively, starting from root's children
+                    try writeOverrideTree(writer, &lockfile.overrides, buf, indent);
+                } else {
+                    // Write flat overrides
+                    for (lockfile.overrides.map.values()) |override_dep| {
+                        try writeIndent(writer, indent);
+                        try writer.print(
+                            \\{f}: {f},
+                            \\
+                        , .{ override_dep.name.fmtJson(buf, .{}), override_dep.version.literal.fmtJson(buf, .{}) });
+                    }
+                }
+
+                // Also write flat-only overrides that are not in the tree
+                if (lockfile.overrides.hasTree()) {
+                    for (lockfile.overrides.map.values()) |override_dep| {
+                        const name_hash = override_dep.name_hash;
+                        // Skip if this override is already represented in the tree
+                        if (lockfile.overrides.findChild(0, name_hash) != null) continue;
+                        try writeIndent(writer, indent);
+                        try writer.print(
+                            \\{f}: {f},
+                            \\
+                        , .{ override_dep.name.fmtJson(buf, .{}), override_dep.version.literal.fmtJson(buf, .{}) });
+                    }
                 }
 
                 try decIndent(writer, indent);
@@ -980,6 +1001,63 @@ pub const Stringifier = struct {
         try writer.writeAll("},");
     }
 
+    fn writeOverrideTree(writer: *std.Io.Writer, overrides: *const OverrideMap, buf: string, indent: *u32) std.Io.Writer.Error!void {
+        if (overrides.nodes.items.len == 0) return;
+        try writeOverrideNodeChildren(writer, overrides, 0, buf, indent);
+    }
+
+    fn writeOverrideNodeChildren(writer: *std.Io.Writer, overrides: *const OverrideMap, node_id: OverrideMap.NodeID, buf: string, indent: *u32) std.Io.Writer.Error!void {
+        if (node_id >= overrides.nodes.items.len) return;
+        var child_id = overrides.nodes.items[node_id].first_child;
+        while (child_id != OverrideMap.invalid_node_id) {
+            if (child_id >= overrides.nodes.items.len) break;
+            const child = overrides.nodes.items[child_id];
+
+            try writeIndent(writer, indent);
+
+            if (child.first_child != OverrideMap.invalid_node_id) {
+                // Has children: write as object with key = name or name@key_spec
+                try writeOverrideNodeKey(writer, child, buf);
+                try writer.writeAll(": {\n");
+                indent.* += 1;
+                if (child.value) |val| {
+                    try writeIndent(writer, indent);
+                    try writer.print(
+                        \\".": {f},
+                        \\
+                    , .{val.version.literal.fmtJson(buf, .{})});
+                }
+                try writeOverrideNodeChildren(writer, overrides, child_id, buf, indent);
+                try decIndent(writer, indent);
+                try writer.writeAll("},\n");
+            } else if (child.value) |val| {
+                // Leaf with value: write key = name or name@key_spec
+                try writeOverrideNodeKey(writer, child, buf);
+                try writer.print(
+                    \\: {f},
+                    \\
+                , .{val.version.literal.fmtJson(buf, .{})});
+            }
+
+            child_id = child.next_sibling;
+        }
+    }
+
+    /// Write the JSON key for an override node: "name" or "name@key_spec"
+    fn writeOverrideNodeKey(writer: *std.Io.Writer, node: OverrideMap.OverrideNode, buf: string) std.Io.Writer.Error!void {
+        const key_spec_str = node.key_spec.slice(buf);
+        if (key_spec_str.len > 0) {
+            // Write "name@key_spec" as a single JSON string with proper escaping
+            try writer.writeAll("\"");
+            try writer.print("{f}", .{node.name.fmtJson(buf, .{ .quote = false })});
+            try writer.writeAll("@");
+            try writer.print("{f}", .{node.key_spec.fmtJson(buf, .{ .quote = false })});
+            try writer.writeAll("\"");
+        } else {
+            try writer.print("{f}", .{node.name.fmtJson(buf, .{})});
+        }
+    }
+
     fn writeIndent(writer: *std.Io.Writer, indent: *const u32) std.Io.Writer.Error!void {
         for (0..indent.*) |_| {
             try writer.writeAll(" " ** indent_scalar);
@@ -1242,49 +1320,7 @@ pub fn parseIntoBinaryLockfile(
             return error.InvalidOverridesObject;
         }
 
-        for (overrides_expr.data.e_object.properties.slice()) |prop| {
-            const key = prop.key.?;
-            const value = prop.value.?;
-
-            if (!key.isString() or key.data.e_string.len() == 0) {
-                try log.addError(source, key.loc, "Expected a non-empty string");
-                return error.InvalidOverridesObject;
-            }
-
-            const name_str = key.asString(allocator).?;
-            const name_hash = String.Builder.stringHash(name_str);
-            const name = try string_buf.appendWithHash(name_str, name_hash);
-
-            // TODO(dylan-conway) also accept object when supported
-            if (!value.isString()) {
-                try log.addError(source, value.loc, "Expected a string");
-                return error.InvalidOverridesObject;
-            }
-
-            const version_str = value.asString(allocator).?;
-            const version_hash = String.Builder.stringHash(version_str);
-            const version = try string_buf.appendWithHash(version_str, version_hash);
-            const version_sliced = version.sliced(string_buf.bytes.items);
-
-            const dep: Dependency = .{
-                .name = name,
-                .name_hash = name_hash,
-                .version = Dependency.parse(
-                    allocator,
-                    name,
-                    name_hash,
-                    version_sliced.slice,
-                    &version_sliced,
-                    log,
-                    manager,
-                ) orelse {
-                    try log.addError(source, value.loc, "Invalid override version");
-                    return error.InvalidOverridesObject;
-                },
-            };
-
-            try lockfile.overrides.map.put(allocator, name_hash, dep);
-        }
+        try parseOverridesFromLockfileObj(lockfile, overrides_expr, allocator, &string_buf, log, source, manager, 0);
     }
 
     if (root.get("catalog")) |catalog_expr| {
@@ -2076,6 +2112,139 @@ pub fn parseIntoBinaryLockfile(
     }
 }
 
+fn parseOverridesFromLockfileObj(
+    lockfile: *BinaryLockfile,
+    expr: Expr,
+    allocator: std.mem.Allocator,
+    string_buf: *String.Buf,
+    log: *logger.Log,
+    source: *const logger.Source,
+    manager: ?*PackageManager,
+    parent_node_id: OverrideMap.NodeID,
+) !void {
+    if (!expr.isObject()) return;
+
+    for (expr.data.e_object.properties.slice()) |prop| {
+        const key = prop.key.?;
+        const value = prop.value.?;
+
+        if (!key.isString() or key.data.e_string.len() == 0) {
+            try log.addError(source, key.loc, "Expected a non-empty string");
+            return error.InvalidOverridesObject;
+        }
+
+        const raw_key_str = key.asString(allocator).?;
+        // Skip "." key (handled by parent)
+        if (strings.eql(raw_key_str, ".")) continue;
+
+        // Parse key: "name" or "name@key_spec"
+        const parsed_key = OverrideMap.parseKeyWithVersion(raw_key_str);
+        const name_str = parsed_key.name;
+        const key_spec_str = parsed_key.spec;
+
+        const name_hash = String.Builder.stringHash(name_str);
+        const name = try string_buf.appendWithHash(name_str, name_hash);
+        const key_spec_s = if (key_spec_str.len > 0) try string_buf.append(key_spec_str) else String{};
+
+        if (value.isString()) {
+            const version_str = value.asString(allocator).?;
+            const version_hash = String.Builder.stringHash(version_str);
+            const version_s = try string_buf.appendWithHash(version_str, version_hash);
+            const version_sliced = version_s.sliced(string_buf.bytes.items);
+
+            const dep: Dependency = .{
+                .name = name,
+                .name_hash = name_hash,
+                .version = Dependency.parse(
+                    allocator,
+                    name,
+                    name_hash,
+                    version_sliced.slice,
+                    &version_sliced,
+                    log,
+                    manager,
+                ) orelse {
+                    try log.addError(source, value.loc, "Invalid override version");
+                    return error.InvalidOverridesObject;
+                },
+            };
+
+            if (parent_node_id == 0 and lockfile.overrides.nodes.items.len == 0) {
+                try lockfile.overrides.map.put(allocator, name_hash, dep);
+            } else {
+                try lockfile.overrides.ensureRootNode(allocator);
+                _ = try lockfile.overrides.getOrAddChild(allocator, parent_node_id, .{
+                    .name = name,
+                    .name_hash = name_hash,
+                    .key_spec = key_spec_s,
+                    .value = dep,
+                    .first_child = OverrideMap.invalid_node_id,
+                    .next_sibling = OverrideMap.invalid_node_id,
+                    .parent = OverrideMap.invalid_node_id,
+                }, string_buf.bytes.items);
+            }
+        } else if (value.isObject()) {
+            var self_dep: ?Dependency = null;
+
+            if (value.asProperty(".")) |dot_prop| {
+                if (dot_prop.expr.isString()) {
+                    const dot_str = dot_prop.expr.asString(allocator).?;
+                    const dot_hash = String.Builder.stringHash(dot_str);
+                    const dot_s = try string_buf.appendWithHash(dot_str, dot_hash);
+                    const dot_sliced = dot_s.sliced(string_buf.bytes.items);
+                    self_dep = .{
+                        .name = name,
+                        .name_hash = name_hash,
+                        .version = Dependency.parse(
+                            allocator,
+                            name,
+                            name_hash,
+                            dot_sliced.slice,
+                            &dot_sliced,
+                            log,
+                            manager,
+                        ) orelse {
+                            try log.addError(source, dot_prop.expr.loc, "Invalid override version");
+                            return error.InvalidOverridesObject;
+                        },
+                    };
+                }
+            }
+
+            var has_children = false;
+            for (value.data.e_object.properties.slice()) |child_prop| {
+                const ck = child_prop.key.?.asString(allocator).?;
+                if (!strings.eql(ck, ".")) {
+                    has_children = true;
+                    break;
+                }
+            }
+
+            if (!has_children and self_dep != null and parent_node_id == 0 and lockfile.overrides.nodes.items.len == 0) {
+                try lockfile.overrides.map.put(allocator, name_hash, self_dep.?);
+            } else {
+                try lockfile.overrides.ensureRootNode(allocator);
+                if (self_dep != null and parent_node_id == 0) {
+                    try lockfile.overrides.map.put(allocator, name_hash, self_dep.?);
+                }
+                const node_id = try lockfile.overrides.getOrAddChild(allocator, parent_node_id, .{
+                    .name = name,
+                    .name_hash = name_hash,
+                    .key_spec = key_spec_s,
+                    .value = self_dep,
+                    .first_child = OverrideMap.invalid_node_id,
+                    .next_sibling = OverrideMap.invalid_node_id,
+                    .parent = OverrideMap.invalid_node_id,
+                }, string_buf.bytes.items);
+                try parseOverridesFromLockfileObj(lockfile, value, allocator, string_buf, log, source, manager, node_id);
+            }
+        } else {
+            try log.addError(source, value.loc, "Expected a string or object");
+            return error.InvalidOverridesObject;
+        }
+    }
+}
+
 fn mapDepToPkg(dep: *Dependency, dep_id: DependencyID, pkg_id: PackageID, lockfile: *BinaryLockfile, pkg_resolutions: []const Resolution) void {
     lockfile.buffers.resolutions.items[dep_id] = pkg_id;
 
@@ -2292,6 +2461,7 @@ const invalid_package_id = Install.invalid_package_id;
 const BinaryLockfile = bun.install.Lockfile;
 const DependencySlice = BinaryLockfile.DependencySlice;
 const LoadResult = BinaryLockfile.LoadResult;
+const OverrideMap = BinaryLockfile.OverrideMap;
 const Meta = BinaryLockfile.Package.Meta;
 
 const Npm = Install.Npm;

@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 test("Response.clone() does not crash when body stream contains SharedArrayBuffer-backed typed array", async () => {
   const sab = new SharedArrayBuffer(8);

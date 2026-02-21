@@ -2020,7 +2020,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSetPrototypeFunction, (JSGlobalObject * l
             return {};
         }
 
-        castedThis->userPrototype.set(vm, classObject, prototype.getObject());
+        castedThis->userPrototype.set(vm, castedThis, prototype.getObject());
 
         // Force the prototypes to be re-created
         if (castedThis->version_db) {

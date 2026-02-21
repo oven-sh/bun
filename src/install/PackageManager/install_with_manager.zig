@@ -193,6 +193,14 @@ pub fn installWithManager(
 
                 had_any_diffs = manager.summary.hasDiffs();
 
+                // When --frozen-lockfile is set and the only diffs are removed
+                // workspace dependencies (e.g. from `turbo prune`), the lockfile
+                // is a superset of what's needed. Treat this as no diff so the
+                // lockfile stays intact and the frozen-lockfile check passes.
+                if (had_any_diffs and manager.options.enable.frozen_lockfile and manager.summary.hasOnlyRemovals()) {
+                    had_any_diffs = false;
+                }
+
                 if (!had_any_diffs) {
                     // always grab latest scripts for root package
                     var builder_ = manager.lockfile.stringBuilder();

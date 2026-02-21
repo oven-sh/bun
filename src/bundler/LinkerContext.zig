@@ -578,12 +578,31 @@ pub const LinkerContext = struct {
         const entry_points = c.graph.entry_points.items(.source_index);
         const distances = c.graph.files.items(.distance_from_entry_point);
 
+        // Initialize per-entry-point part liveness tracking. This is used
+        // to enable per-entry-point tree-shaking: when multiple entry points
+        // share a module, each chunk only includes parts actually used by its
+        // entry point(s), rather than the union of all parts used by any entry point.
+        if (entry_points.len > 1) {
+            c.graph.part_entry_bits = try c.allocator().alloc([]AutoBitSet, parts.len);
+            for (parts, c.graph.part_entry_bits) |file_parts, *peb| {
+                const num_parts = file_parts.len;
+                if (num_parts > 0) {
+                    peb.* = try c.allocator().alloc(AutoBitSet, num_parts);
+                    for (peb.*) |*bits| {
+                        bits.* = try AutoBitSet.initEmpty(c.allocator(), entry_points.len);
+                    }
+                } else {
+                    peb.* = &[_]AutoBitSet{};
+                }
+            }
+        }
+
         {
             const trace2 = bun.perf.trace("Bundler.markFileLiveForTreeShaking");
             defer trace2.end();
 
             // Tree shaking: Each entry point marks all files reachable from itself
-            for (entry_points) |entry_point| {
+            for (entry_points, 0..) |entry_point, entry_id| {
                 c.markFileLiveForTreeShaking(
                     entry_point,
                     side_effects,
@@ -591,6 +610,7 @@ pub const LinkerContext = struct {
                     import_records,
                     entry_point_kinds,
                     css_reprs,
+                    @intCast(entry_id),
                 );
             }
         }
@@ -1655,6 +1675,7 @@ pub const LinkerContext = struct {
         import_records: []bun.BabyList(bun.ImportRecord),
         entry_point_kinds: []EntryPoint.Kind,
         css_reprs: []?*bun.css.BundlerStyleSheet,
+        entry_point_id: u32,
     ) void {
         if (comptime bun.Environment.allow_assert) {
             debugTreeShake("markFileLiveForTreeShaking({d}, {s} {s}) = {s}", .{
@@ -1669,7 +1690,15 @@ pub const LinkerContext = struct {
             debugTreeShake("end()", .{});
         };
 
-        if (c.graph.files_live.isSet(source_index)) return;
+        // Unlike the global files_live check, we must not early-return here when
+        // files_live is already set if we're tracking per-entry-point part liveness.
+        // We still need to traverse into the file to propagate entry point bits to
+        // parts, even if the file was already marked live by a previous entry point.
+        const already_live = c.graph.files_live.isSet(source_index);
+        const has_part_entry_bits = c.graph.part_entry_bits.len > 0;
+
+        if (already_live and !has_part_entry_bits) return;
+
         c.graph.files_live.set(source_index);
 
         if (source_index >= c.graph.ast.len) {
@@ -1688,6 +1717,7 @@ pub const LinkerContext = struct {
                         import_records,
                         entry_point_kinds,
                         css_reprs,
+                        entry_point_id,
                     );
                 }
             }
@@ -1730,6 +1760,7 @@ pub const LinkerContext = struct {
                         import_records,
                         entry_point_kinds,
                         css_reprs,
+                        entry_point_id,
                     );
                 } else if (record.flags.is_external_without_side_effects) {
                     // This can be removed if it's unused
@@ -1757,6 +1788,7 @@ pub const LinkerContext = struct {
                     import_records,
                     entry_point_kinds,
                     css_reprs,
+                    entry_point_id,
                 );
             }
         }
@@ -1771,14 +1803,32 @@ pub const LinkerContext = struct {
         import_records: []bun.BabyList(bun.ImportRecord),
         entry_point_kinds: []EntryPoint.Kind,
         css_reprs: []?*bun.css.BundlerStyleSheet,
+        entry_point_id: u32,
     ) void {
         const part: *Part = &parts[source_index].slice()[part_index];
 
-        // only once
-        if (part.is_live) {
-            return;
-        }
+        const was_live = part.is_live;
         part.is_live = true;
+
+        // Track per-entry-point part liveness if we have multiple entry points.
+        // We can't early-return based on is_live alone when tracking per-entry-point
+        // bits, because we need to propagate the new entry point's bit through
+        // dependencies even if the part was already marked live by another entry point.
+        const has_part_entry_bits = c.graph.part_entry_bits.len > 0;
+        if (has_part_entry_bits) {
+            const peb = &c.graph.part_entry_bits[source_index][part_index];
+            if (peb.isSet(entry_point_id)) {
+                // This part was already marked live for this entry point,
+                // so we don't need to traverse its dependencies again.
+                return;
+            }
+            peb.set(entry_point_id);
+        } else {
+            // Single entry point or no per-entry tracking: use the old behavior.
+            if (was_live) {
+                return;
+            }
+        }
 
         if (comptime bun.Environment.isDebug) {
             debugTreeShake("markPartLiveForTreeShaking({d}): {s}:{d} = {d}, {s}", .{
@@ -1802,6 +1852,7 @@ pub const LinkerContext = struct {
             import_records,
             entry_point_kinds,
             css_reprs,
+            entry_point_id,
         );
 
         if (Environment.enable_logs and part.dependencies.slice().len == 0) {
@@ -1825,6 +1876,7 @@ pub const LinkerContext = struct {
                 import_records,
                 entry_point_kinds,
                 css_reprs,
+                entry_point_id,
             );
         }
     }

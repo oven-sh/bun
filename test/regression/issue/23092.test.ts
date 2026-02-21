@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-// Regression test for panic in sendInitialRequestPayload:
+// Regression test for #23092 - panic in sendInitialRequestPayload:
 // "index out of bounds: index 4162794746, len 671"
 //
 // Root cause: WebCore__FetchHeaders__count used createIterator()
@@ -28,13 +28,13 @@ test("fetch with many headers does not corrupt header data", async () => {
     headers.set("X-Check", `value-${i}`);
     // Add progressively more headers to stress the buffer
     for (let j = 0; j < i * 5; j++) {
-      headers.set(`X-Header-${j}`, "x".repeat(j + 1));
+      headers.set(`X-Header-${j}`, Buffer.alloc(j + 1, "x").toString());
     }
 
     const response = await fetch(server.url, {
       method: "POST",
       headers,
-      body: "a".repeat(671),
+      body: Buffer.alloc(671, "a").toString(),
     });
 
     const text = await response.text();

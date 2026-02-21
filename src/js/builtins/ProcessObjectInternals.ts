@@ -386,9 +386,27 @@ export function windowsEnv(
     return { ...internalEnv };
   };
 
+  const objectProto = $Object.prototype;
   return new Proxy(internalEnv, {
-    get(_, p) {
-      return typeof p === "string" ? internalEnv[p.toUpperCase()] : undefined;
+    get(target, p, receiver) {
+      if (typeof p === "string") {
+        // First check if it's an inherited Object.prototype method (case-sensitive)
+        // This prevents env vars from shadowing methods like hasOwnProperty
+        if (p in objectProto) {
+          const method = objectProto[p];
+          if ($isCallable(method)) {
+            // Return a wrapper that invokes the method with the proxy as `this`
+            // Using $call avoids relying on potentially mutated Function.prototype.bind
+            return function (...args) {
+              return method.$call(receiver, ...args);
+            };
+          }
+          return method;
+        }
+        // Otherwise, look up the env var (case-insensitive)
+        return internalEnv[p.toUpperCase()];
+      }
+      return undefined;
     },
     set(_, p, value) {
       const k = String(p).toUpperCase();

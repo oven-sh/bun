@@ -635,7 +635,8 @@ function getVerifyBaselineStep(platform, options) {
           `echo Downloading Intel SDE...`,
           `curl.exe -fsSL -o sde.tar.xz "${SDE_URL}"`,
           `echo Extracting Intel SDE...`,
-          `tar -xf sde.tar.xz`,
+          `7z x -y sde.tar.xz`,
+          `7z x -y sde.tar`,
           `ren sde-external-${SDE_VERSION}-win sde-external`,
         ]
       : [

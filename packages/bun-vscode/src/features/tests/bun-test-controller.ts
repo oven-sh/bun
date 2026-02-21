@@ -136,9 +136,42 @@ export class BunTestController implements vscode.Disposable {
   }
 
   private isTestFile(document: vscode.TextDocument): boolean {
-    return (
-      document?.uri?.scheme === "file" && /\.(test|spec)\.(js|jsx|ts|tsx|cjs|mjs|mts|cts)$/.test(document.uri.fsPath)
-    );
+    if (document?.uri?.scheme !== "file") {
+      return false;
+    }
+    const pattern = this.customFilePattern();
+    return this.matchesGlobPattern(document.uri.fsPath, pattern);
+  }
+
+  private matchesGlobPattern(filePath: string, globPattern: string): boolean {
+    // Basic sanity check to prevent pathological patterns
+    if (globPattern.length > 500) {
+      debug.appendLine(`Warning: glob pattern too long (${globPattern.length} chars), skipping match`);
+      return false;
+    }
+
+    // Normalize file path: convert Windows backslashes to forward slashes
+    const normalizedPath = filePath.replace(/\\/g, "/");
+
+    // Convert glob pattern to regex
+    // Handle common glob patterns like **/*.test.{js,ts}
+    let regexPattern = globPattern
+      // Escape special regex characters (except those used in glob patterns)
+      .replace(/[.+^$|\\]/g, "\\$&")
+      // Convert ** to match any path
+      .replace(/\*\*/g, "<<<GLOBSTAR>>>")
+      // Convert * to match any filename characters (not path separators)
+      .replace(/\*/g, "[^/]*")
+      // Restore ** as .* to match anything including path separators
+      .replace(/<<<GLOBSTAR>>>/g, ".*")
+      // Convert ? to match single character
+      .replace(/\?/g, ".")
+      // Convert {a,b,c} to (a|b|c)
+      .replace(/\{([^}]+)\}/g, (_, group) => `(${group.split(",").join("|")})`);
+
+    // The pattern should match the end of the file path
+    const regex = new RegExp(`(^|/)${regexPattern}$`, "i");
+    return regex.test(normalizedPath);
   }
 
   private async discoverInitialTests(
@@ -1480,6 +1513,7 @@ export class BunTestController implements vscode.Disposable {
 
       isTestFile: this.isTestFile.bind(this),
       customFilePattern: this.customFilePattern.bind(this),
+      matchesGlobPattern: this.matchesGlobPattern.bind(this),
       getBunExecutionConfig: this.getBunExecutionConfig.bind(this),
 
       findTestByPath: this.findTestByPath.bind(this),

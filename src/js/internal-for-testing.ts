@@ -214,6 +214,14 @@ export const lsanDoLeakCheck = $newCppFunction("InternalForTesting.cpp", "jsFunc
 export const getEventLoopStats: () => { activeTasks: number; concurrentRef: number; numPolls: number } =
   $newZigFunction("event_loop.zig", "getActiveTasks", 0);
 
+export const smtpInternals = {
+  isPlainText: $newZigFunction("mime.zig", "TestingAPIs.jsIsPlainText", 1),
+  hasLongerLines: $newZigFunction("mime.zig", "TestingAPIs.jsHasLongerLines", 2),
+  encodeWord: $newZigFunction("mime.zig", "TestingAPIs.jsEncodeWord", 2),
+  encodeQP: $newZigFunction("mime.zig", "TestingAPIs.jsEncodeQP", 1),
+  foldHeader: $newZigFunction("mime.zig", "TestingAPIs.jsFoldHeader", 1),
+};
+
 export const hostedGitInfo = {
   parseUrl: $newZigFunction("hosted_git_info.zig", "TestingAPIs.jsParseUrl", 1),
   fromUrl: $newZigFunction("hosted_git_info.zig", "TestingAPIs.jsFromUrl", 1),

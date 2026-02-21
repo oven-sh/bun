@@ -91,6 +91,7 @@ pub const Classes = struct {
     pub const BlockList = api.BlockList;
     pub const NativeZstd = api.NativeZstd;
     pub const SourceMap = bun.SourceMap.JSSourceMap;
+    pub const SMTPClient = api.SMTPClient;
 };
 
 const bun = @import("bun");

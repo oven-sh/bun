@@ -30,6 +30,7 @@ pub const BunObject = struct {
     pub const registerMacro = toJSCallback(Bun.registerMacro);
     pub const resolve = toJSCallback(Bun.resolve);
     pub const resolveSync = toJSCallback(Bun.resolveSync);
+    pub const email = toJSCallback(jsc.API.SMTPClient.jsEmail);
     pub const serve = toJSCallback(Bun.serve);
     pub const sha = toJSCallback(host_fn.wrapStaticMethod(Crypto.SHA512_256, "hash_", true));
     pub const shellEscape = toJSCallback(Bun.shellEscape);
@@ -82,6 +83,7 @@ pub const BunObject = struct {
     pub const s3 = toJSLazyPropertyCallback(Bun.getS3DefaultClient);
     pub const ValkeyClient = toJSLazyPropertyCallback(Bun.getValkeyClientConstructor);
     pub const valkey = toJSLazyPropertyCallback(Bun.getValkeyDefaultClient);
+    pub const SMTPClient = toJSLazyPropertyCallback(Bun.getSMTPClientConstructor);
     pub const Terminal = toJSLazyPropertyCallback(Bun.getTerminalConstructor);
     // --- Lazy property callbacks ---
 
@@ -152,6 +154,7 @@ pub const BunObject = struct {
         @export(&BunObject.s3, .{ .name = lazyPropertyCallbackName("s3") });
         @export(&BunObject.ValkeyClient, .{ .name = lazyPropertyCallbackName("ValkeyClient") });
         @export(&BunObject.valkey, .{ .name = lazyPropertyCallbackName("valkey") });
+        @export(&BunObject.SMTPClient, .{ .name = lazyPropertyCallbackName("SMTPClient") });
         @export(&BunObject.Terminal, .{ .name = lazyPropertyCallbackName("Terminal") });
         // --- Lazy property callbacks ---
 
@@ -163,6 +166,7 @@ pub const BunObject = struct {
         @export(&BunObject.createParsedShellScript, .{ .name = callbackName("createParsedShellScript") });
         @export(&BunObject.createShellInterpreter, .{ .name = callbackName("createShellInterpreter") });
         @export(&BunObject.deflateSync, .{ .name = callbackName("deflateSync") });
+        @export(&BunObject.email, .{ .name = callbackName("email") });
         @export(&BunObject.file, .{ .name = callbackName("file") });
         @export(&BunObject.gunzipSync, .{ .name = callbackName("gunzipSync") });
         @export(&BunObject.gzipSync, .{ .name = callbackName("gzipSync") });
@@ -1338,6 +1342,10 @@ pub fn getValkeyDefaultClient(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject)
 
 pub fn getValkeyClientConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
     return jsc.API.Valkey.js.getConstructor(globalThis);
+}
+
+pub fn getSMTPClientConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
+    return jsc.API.SMTPClient.js.getConstructor(globalThis);
 }
 
 pub fn getTerminalConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {

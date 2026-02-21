@@ -63,6 +63,7 @@ pub const Tag = enum {
     MySQLConnectionMaxLifetime,
     ValkeyConnectionTimeout,
     ValkeyConnectionReconnect,
+    SMTPConnectionTimeout,
     SubprocessTimeout,
     DevServerSweepSourceMaps,
     DevServerMemoryVisualizerTick,
@@ -88,6 +89,7 @@ pub const Tag = enum {
             .SubprocessTimeout => jsc.Subprocess,
             .ValkeyConnectionReconnect => jsc.API.Valkey,
             .ValkeyConnectionTimeout => jsc.API.Valkey,
+            .SMTPConnectionTimeout => jsc.API.SMTPClient,
             .DevServerSweepSourceMaps,
             .DevServerMemoryVisualizerTick,
             => bun.bake.DevServer,
@@ -172,6 +174,7 @@ pub fn fire(self: *Self, now: *const timespec, vm: *VirtualMachine) void {
         .MySQLConnectionMaxLifetime => @as(*api.MySQL.MySQLConnection, @alignCast(@fieldParentPtr("max_lifetime_timer", self))).onMaxLifetimeTimeout(),
         .ValkeyConnectionTimeout => @as(*api.Valkey, @alignCast(@fieldParentPtr("timer", self))).onConnectionTimeout(),
         .ValkeyConnectionReconnect => @as(*api.Valkey, @alignCast(@fieldParentPtr("reconnect_timer", self))).onReconnectTimer(),
+        .SMTPConnectionTimeout => @as(*api.SMTPClient, @alignCast(@fieldParentPtr("timer", self))).onConnectionTimeout(),
         .DevServerMemoryVisualizerTick => bun.bake.DevServer.emitMemoryVisualizerMessageTimer(self, now),
         .DevServerSweepSourceMaps => bun.bake.DevServer.SourceMapStore.sweepWeakRefs(self, now),
         .AbortSignalTimeout => {

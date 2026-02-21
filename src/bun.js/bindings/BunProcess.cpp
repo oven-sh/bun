@@ -162,6 +162,7 @@ extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global);
 extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValue value);
 
 extern "C" void Bun__suppressCrashOnProcessKillSelfIfDesired();
+extern "C" void Bun__EventLoop__getActiveResourceCounts(JSGlobalObject*, uint32_t* outTimers, uint32_t* outImmediates, uint32_t* outHandles);
 
 static Process* getProcessObject(JSC::JSGlobalObject* lexicalGlobalObject, JSValue thisValue);
 bool setProcessExitCodeInner(JSC::JSGlobalObject* lexicalGlobalObject, Process* process, JSValue code);
@@ -3472,6 +3473,51 @@ JSC_DEFINE_HOST_FUNCTION(Process_stubFunctionReturningArray, (JSGlobalObject * g
     return JSValue::encode(JSC::constructEmptyArray(globalObject, nullptr));
 }
 
+JSC_DEFINE_HOST_FUNCTION(Process_getActiveResourcesInfo, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    uint32_t timers = 0, immediates = 0, handles = 0;
+    Bun__EventLoop__getActiveResourceCounts(globalObject, &timers, &immediates, &handles);
+
+    uint32_t totalEntries = timers + immediates + handles;
+
+    JSArray* array = JSC::constructEmptyArray(globalObject, nullptr, totalEntries);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    uint32_t idx = 0;
+
+    // Add "Timeout" for each active setTimeout/setInterval (matches Node.js naming)
+    if (timers > 0) {
+        JSValue timeoutStr = jsNontrivialString(vm, "Timeout"_s);
+        for (uint32_t i = 0; i < timers; i++) {
+            array->putDirectIndex(globalObject, idx++, timeoutStr);
+        }
+    }
+
+    // Add "Immediate" for each active setImmediate
+    if (immediates > 0) {
+        JSValue immediateStr = jsNontrivialString(vm, "Immediate"_s);
+        for (uint32_t i = 0; i < immediates; i++) {
+            array->putDirectIndex(globalObject, idx++, immediateStr);
+        }
+    }
+
+    // Add entries for remaining active poll handles (TCP, pipes, servers, etc.)
+    // Since Bun doesn't maintain a typed registry of these handles, we report
+    // them generically. This still allows code that checks .length > 0
+    // (like Expo's exit logic) to work correctly.
+    if (handles > 0) {
+        JSValue handleStr = jsNontrivialString(vm, "TCPSocketWrap"_s);
+        for (uint32_t i = 0; i < handles; i++) {
+            array->putDirectIndex(globalObject, idx++, handleStr);
+        }
+    }
+
+    RELEASE_AND_RETURN(scope, JSValue::encode(array));
+}
+
 static JSValue Process_stubEmptyArray(VM& vm, JSObject* processObject)
 {
     return JSC::constructEmptyArray(processObject->globalObject(), nullptr);
@@ -4001,7 +4047,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   exit                             Process_functionExit                                Function 1
   exitCode                         processExitCode                                     CustomAccessor|DontDelete
   features                         constructFeatures                                   PropertyCallback
-  getActiveResourcesInfo           Process_stubFunctionReturningArray                  Function 0
+  getActiveResourcesInfo           Process_getActiveResourcesInfo                      Function 0
   getBuiltinModule                 Process_functionLoadBuiltinModule                   Function 1
   hasUncaughtExceptionCaptureCallback Process_hasUncaughtExceptionCaptureCallback      Function 0
   hrtime                           constructProcessHrtimeObject                        PropertyCallback

@@ -699,7 +699,7 @@ describe.concurrent(() => {
     });
   }
 
-  const arrayStubs = ["getActiveResourcesInfo", "_getActiveRequests", "_getActiveHandles"];
+  const arrayStubs = ["_getActiveRequests", "_getActiveHandles"];
 
   for (const stub of arrayStubs) {
     it(`process.${stub}`, () => {

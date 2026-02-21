@@ -2235,13 +2235,22 @@ pub fn reloadEntryPointForTestRunner(this: *VirtualMachine, entry_path: []const 
     return promise;
 }
 
-// worker dont has bun_watcher and also we dont wanna call autoTick before dispatchOnline
+// Worker doesn't have bun_watcher and also we don't want to call autoTick before dispatchOnline.
+// This function kicks off module evaluation and runs a single tick to execute all
+// synchronous code (including event listener registration like parentPort.on("message", ...)).
+// It does NOT wait for top-level await to complete — the caller (spin()) is responsible
+// for calling dispatchOnline/fireEarlyMessages and then entering the main event loop,
+// which will naturally resolve any pending TLA promise.
 pub fn loadEntryPointForWebWorker(this: *VirtualMachine, entry_path: string) anyerror!*JSInternalPromise {
-    const promise = try this.reloadEntryPoint(entry_path);
+    _ = try this.reloadEntryPoint(entry_path);
     this.eventLoop().performGC();
-    this.eventLoop().waitForPromiseWithTermination(jsc.AnyPromise{
-        .internal = promise,
-    });
+    // Run a single tick to execute synchronous module code. This ensures that
+    // event listeners (e.g. parentPort.on("message")) are registered before
+    // we call dispatchOnline/fireEarlyMessages. We intentionally do NOT wait
+    // for the promise to settle here, because modules with top-level await
+    // (e.g. `while (true) { await ... }`) may never settle, and blocking here
+    // would prevent messages from being dispatched to the worker.
+    this.eventLoop().tick();
     if (this.worker) |worker| {
         if (worker.hasRequestedTerminate()) {
             return error.WorkerTerminated;

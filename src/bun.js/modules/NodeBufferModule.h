@@ -155,16 +155,56 @@ static std::optional<TranscodeEncoding> parseTranscodeEncoding(JSC::JSGlobalObje
     }
 }
 
-// Transcode UTF-8 to single-byte encoding: codepoints > threshold become '?'
+// Count the number of output codepoints from UTF-8 input, handling invalid sequences safely.
+// Each valid codepoint produces one output byte; each invalid/truncated byte also produces one.
+static size_t countUtf8Codepoints(const char* source, size_t sourceLength)
+{
+    size_t count = 0;
+    size_t srcIdx = 0;
+    while (srcIdx < sourceLength) {
+        uint8_t byte = static_cast<uint8_t>(source[srcIdx]);
+        size_t seqLen;
+        if (byte < 0x80)
+            seqLen = 1;
+        else if ((byte & 0xE0) == 0xC0)
+            seqLen = 2;
+        else if ((byte & 0xF0) == 0xE0)
+            seqLen = 3;
+        else if ((byte & 0xF8) == 0xF0)
+            seqLen = 4;
+        else {
+            // Invalid start byte: counts as one output
+            count++;
+            srcIdx++;
+            continue;
+        }
+        if (srcIdx + seqLen > sourceLength) {
+            // Truncated sequence: each remaining byte counts as one output
+            count += (sourceLength - srcIdx);
+            break;
+        }
+        count++;
+        srcIdx += seqLen;
+    }
+    return count;
+}
+
+// Transcode UTF-8 to single-byte encoding: codepoints > threshold become '?'.
+// Invalid/truncated UTF-8 sequences emit '?' for each bad byte.
 static JSC::JSUint8Array* transcodeUtf8ToSingleByte(JSC::JSGlobalObject* globalObject, const char* source, size_t sourceLength, uint32_t threshold)
 {
-    size_t outputLength = simdutf::utf32_length_from_utf8(source, sourceLength);
+    size_t outputLength;
+    if (simdutf::validate_utf8(source, sourceLength)) {
+        outputLength = simdutf::utf32_length_from_utf8(source, sourceLength);
+    } else {
+        outputLength = countUtf8Codepoints(source, sourceLength);
+    }
+
     auto* result = WebCore::createUninitializedBuffer(globalObject, outputLength);
     if (!result)
         return nullptr;
 
     auto* out = result->typedVector();
-
     size_t srcIdx = 0;
     size_t dstIdx = 0;
     while (srcIdx < sourceLength && dstIdx < outputLength) {
@@ -177,25 +217,45 @@ static JSC::JSUint8Array* transcodeUtf8ToSingleByte(JSC::JSGlobalObject* globalO
             seqLen = 1;
         } else if ((byte & 0xE0) == 0xC0) {
             seqLen = 2;
-            if (srcIdx + seqLen > sourceLength) break;
+            if (srcIdx + seqLen > sourceLength) {
+                while (srcIdx < sourceLength && dstIdx < outputLength) {
+                    out[dstIdx++] = '?';
+                    srcIdx++;
+                }
+                break;
+            }
             codepoint = (byte & 0x1F) << 6;
             codepoint |= (static_cast<uint8_t>(source[srcIdx + 1]) & 0x3F);
         } else if ((byte & 0xF0) == 0xE0) {
             seqLen = 3;
-            if (srcIdx + seqLen > sourceLength) break;
+            if (srcIdx + seqLen > sourceLength) {
+                while (srcIdx < sourceLength && dstIdx < outputLength) {
+                    out[dstIdx++] = '?';
+                    srcIdx++;
+                }
+                break;
+            }
             codepoint = (byte & 0x0F) << 12;
             codepoint |= (static_cast<uint8_t>(source[srcIdx + 1]) & 0x3F) << 6;
             codepoint |= (static_cast<uint8_t>(source[srcIdx + 2]) & 0x3F);
         } else if ((byte & 0xF8) == 0xF0) {
             seqLen = 4;
-            if (srcIdx + seqLen > sourceLength) break;
+            if (srcIdx + seqLen > sourceLength) {
+                while (srcIdx < sourceLength && dstIdx < outputLength) {
+                    out[dstIdx++] = '?';
+                    srcIdx++;
+                }
+                break;
+            }
             codepoint = (byte & 0x07) << 18;
             codepoint |= (static_cast<uint8_t>(source[srcIdx + 1]) & 0x3F) << 12;
             codepoint |= (static_cast<uint8_t>(source[srcIdx + 2]) & 0x3F) << 6;
             codepoint |= (static_cast<uint8_t>(source[srcIdx + 3]) & 0x3F);
         } else {
-            codepoint = 0xFFFD;
-            seqLen = 1;
+            // Invalid UTF-8 start byte
+            out[dstIdx++] = '?';
+            srcIdx++;
+            continue;
         }
 
         out[dstIdx++] = (codepoint <= threshold) ? static_cast<uint8_t>(codepoint) : '?';
@@ -299,11 +359,42 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_transcode,
     }
 
     switch (from) {
-    case TranscodeEncoding::ASCII:
+    case TranscodeEncoding::ASCII: {
+        // Node.js ASCII encoding masks bytes > 0x7F with & 0x7F
+        Vector<char> masked(sourceLength);
+        for (size_t i = 0; i < sourceLength; i++)
+            masked[i] = static_cast<char>(static_cast<uint8_t>(sourceData[i]) & 0x7F);
+        const char* maskedData = masked.data();
+
+        switch (to) {
+        case TranscodeEncoding::UCS2: {
+            auto* result = WebCore::createUninitializedBuffer(globalObject, sourceLength * 2);
+            if (!result) {
+                RETURN_IF_EXCEPTION(scope, {});
+                return {};
+            }
+            (void)simdutf::convert_latin1_to_utf16le(maskedData, sourceLength,
+                reinterpret_cast<char16_t*>(result->typedVector()));
+            resultBuffer = result;
+            break;
+        }
+        case TranscodeEncoding::UTF8: {
+            // All bytes are <= 0x7F after masking, so UTF-8 output == sourceLength
+            resultBuffer = WebCore::createBuffer(globalObject, reinterpret_cast<const uint8_t*>(maskedData), sourceLength);
+            break;
+        }
+        case TranscodeEncoding::LATIN1: {
+            resultBuffer = WebCore::createBuffer(globalObject, reinterpret_cast<const uint8_t*>(maskedData), sourceLength);
+            break;
+        }
+        default:
+            break;
+        }
+        break;
+    }
     case TranscodeEncoding::LATIN1: {
         switch (to) {
         case TranscodeEncoding::UCS2: {
-            // Latin1/ASCII → UCS-2: use simdutf
             auto* result = WebCore::createUninitializedBuffer(globalObject, sourceLength * 2);
             if (!result) {
                 RETURN_IF_EXCEPTION(scope, {});
@@ -315,7 +406,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_transcode,
             break;
         }
         case TranscodeEncoding::UTF8: {
-            // Latin1 → UTF-8: use simdutf
             size_t utf8Length = simdutf::utf8_length_from_latin1(sourceData, sourceLength);
             auto* result = WebCore::createUninitializedBuffer(globalObject, utf8Length);
             if (!result) {
@@ -342,11 +432,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_transcode,
             resultBuffer = result;
             break;
         }
-        case TranscodeEncoding::LATIN1: {
-            // ASCII → Latin1: just copy (ASCII is a subset of Latin1)
-            resultBuffer = WebCore::createBuffer(globalObject, reinterpret_cast<const uint8_t*>(sourceData), sourceLength);
+        default:
             break;
-        }
         }
         break;
     }

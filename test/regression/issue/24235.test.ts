@@ -33,8 +33,9 @@ test("buffer.transcode round-trips UCS-2 to UTF-8", () => {
 });
 
 test("buffer.transcode handles large data", () => {
-  const utf8 = Buffer.from("€".repeat(4000), "utf8");
-  const ucs2 = Buffer.from("€".repeat(4000), "ucs2");
+  const repeated = Buffer.alloc(4000 * Buffer.byteLength("€"), "€").toString();
+  const utf8 = Buffer.from(repeated, "utf8");
+  const ucs2 = Buffer.from(repeated, "ucs2");
   const utf8_to_ucs2 = buffer.transcode(utf8, "utf8", "ucs2");
   const ucs2_to_utf8 = buffer.transcode(ucs2, "ucs2", "utf8");
   expect(Buffer.compare(utf8, ucs2_to_utf8)).toBe(0);

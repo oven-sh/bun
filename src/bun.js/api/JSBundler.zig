@@ -991,45 +991,57 @@ pub const JSBundler = struct {
             }
 
             if (this.compile) |*compile| {
-                this.target = .bun;
+                // When compile + target=browser + all HTML entrypoints, produce standalone HTML.
+                // Otherwise, default to bun executable compile.
+                const has_all_html_entrypoints = brk: {
+                    if (this.entry_points.count() == 0) break :brk false;
+                    for (this.entry_points.keys()) |ep| {
+                        if (!strings.hasSuffixComptime(ep, ".html")) break :brk false;
+                    }
+                    break :brk true;
+                };
+                const is_standalone_html = this.target == .browser and has_all_html_entrypoints;
+                if (!is_standalone_html) {
+                    this.target = .bun;
 
-                const define_keys = compile.compile_target.defineKeys();
-                const define_values = compile.compile_target.defineValues();
-                for (define_keys, define_values) |key, value| {
-                    try this.define.insert(key, value);
-                }
-
-                const base_public_path = bun.StandaloneModuleGraph.targetBasePublicPath(this.compile.?.compile_target.os, "root/");
-                try this.public_path.append(base_public_path);
-
-                // When using --compile, only `external` sourcemaps work, as we do not
-                // look at the source map comment. Override any other sourcemap type.
-                if (this.source_map != .none) {
-                    this.source_map = .external;
-                }
-
-                if (compile.outfile.isEmpty()) {
-                    const entry_point = this.entry_points.keys()[0];
-                    var outfile = std.fs.path.basename(entry_point);
-                    const ext = std.fs.path.extension(outfile);
-                    if (ext.len > 0) {
-                        outfile = outfile[0 .. outfile.len - ext.len];
+                    const define_keys = compile.compile_target.defineKeys();
+                    const define_values = compile.compile_target.defineValues();
+                    for (define_keys, define_values) |key, value| {
+                        try this.define.insert(key, value);
                     }
 
-                    if (strings.eqlComptime(outfile, "index")) {
-                        outfile = std.fs.path.basename(std.fs.path.dirname(entry_point) orelse "index");
+                    const base_public_path = bun.StandaloneModuleGraph.targetBasePublicPath(this.compile.?.compile_target.os, "root/");
+                    try this.public_path.append(base_public_path);
+
+                    // When using --compile, only `external` sourcemaps work, as we do not
+                    // look at the source map comment. Override any other sourcemap type.
+                    if (this.source_map != .none) {
+                        this.source_map = .external;
                     }
 
-                    if (strings.eqlComptime(outfile, "bun")) {
-                        outfile = std.fs.path.basename(std.fs.path.dirname(entry_point) orelse "bun");
-                    }
+                    if (compile.outfile.isEmpty()) {
+                        const entry_point = this.entry_points.keys()[0];
+                        var outfile = std.fs.path.basename(entry_point);
+                        const ext = std.fs.path.extension(outfile);
+                        if (ext.len > 0) {
+                            outfile = outfile[0 .. outfile.len - ext.len];
+                        }
 
-                    // If argv[0] is "bun" or "bunx", we don't check if the binary is standalone
-                    if (strings.eqlComptime(outfile, "bun") or strings.eqlComptime(outfile, "bunx")) {
-                        return globalThis.throwInvalidArguments("cannot use compile with an output file named 'bun' because bun won't realize it's a standalone executable. Please choose a different name for compile.outfile", .{});
-                    }
+                        if (strings.eqlComptime(outfile, "index")) {
+                            outfile = std.fs.path.basename(std.fs.path.dirname(entry_point) orelse "index");
+                        }
 
-                    try compile.outfile.appendSliceExact(outfile);
+                        if (strings.eqlComptime(outfile, "bun")) {
+                            outfile = std.fs.path.basename(std.fs.path.dirname(entry_point) orelse "bun");
+                        }
+
+                        // If argv[0] is "bun" or "bunx", we don't check if the binary is standalone
+                        if (strings.eqlComptime(outfile, "bun") or strings.eqlComptime(outfile, "bunx")) {
+                            return globalThis.throwInvalidArguments("cannot use compile with an output file named 'bun' because bun won't realize it's a standalone executable. Please choose a different name for compile.outfile", .{});
+                        }
+
+                        try compile.outfile.appendSliceExact(outfile);
+                    }
                 }
             }
 
@@ -1038,6 +1050,20 @@ pub const JSBundler = struct {
             // twice (once for module analysis, once for bytecode), which is a deopt.
             if (this.bytecode and this.format == .esm and this.compile == null) {
                 return globalThis.throwInvalidArguments("ESM bytecode requires compile: true. Use format: 'cjs' for bytecode without compile.", .{});
+            }
+
+            // Validate standalone HTML mode: compile + browser target + all HTML entrypoints
+            if (this.compile != null and this.target == .browser) {
+                const has_all_html = brk: {
+                    if (this.entry_points.count() == 0) break :brk false;
+                    for (this.entry_points.keys()) |ep| {
+                        if (!strings.hasSuffixComptime(ep, ".html")) break :brk false;
+                    }
+                    break :brk true;
+                };
+                if (has_all_html and this.code_splitting) {
+                    return globalThis.throwInvalidArguments("Cannot use compile with target 'browser' and splitting for standalone HTML", .{});
+                }
             }
 
             return this;

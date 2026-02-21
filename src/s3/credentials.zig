@@ -221,7 +221,11 @@ pub const S3Credentials = struct {
                             defer str.deref();
                             if (str.tag != .Empty and str.tag != .Dead) {
                                 new_credentials._contentDispositionSlice = str.toUTF8(bun.default_allocator);
-                                new_credentials.content_disposition = new_credentials._contentDispositionSlice.?.slice();
+                                const slice = new_credentials._contentDispositionSlice.?.slice();
+                                if (containsNewlineOrCR(slice)) {
+                                    return globalObject.throwInvalidArguments("contentDisposition must not contain newline characters (CR/LF)", .{});
+                                }
+                                new_credentials.content_disposition = slice;
                             }
                         } else {
                             return globalObject.throwInvalidArgumentTypeValue("contentDisposition", "string", js_value);
@@ -236,7 +240,11 @@ pub const S3Credentials = struct {
                             defer str.deref();
                             if (str.tag != .Empty and str.tag != .Dead) {
                                 new_credentials._contentTypeSlice = str.toUTF8(bun.default_allocator);
-                                new_credentials.content_type = new_credentials._contentTypeSlice.?.slice();
+                                const slice = new_credentials._contentTypeSlice.?.slice();
+                                if (containsNewlineOrCR(slice)) {
+                                    return globalObject.throwInvalidArguments("type must not contain newline characters (CR/LF)", .{});
+                                }
+                                new_credentials.content_type = slice;
                             }
                         } else {
                             return globalObject.throwInvalidArgumentTypeValue("type", "string", js_value);
@@ -251,7 +259,11 @@ pub const S3Credentials = struct {
                             defer str.deref();
                             if (str.tag != .Empty and str.tag != .Dead) {
                                 new_credentials._contentEncodingSlice = str.toUTF8(bun.default_allocator);
-                                new_credentials.content_encoding = new_credentials._contentEncodingSlice.?.slice();
+                                const slice = new_credentials._contentEncodingSlice.?.slice();
+                                if (containsNewlineOrCR(slice)) {
+                                    return globalObject.throwInvalidArguments("contentEncoding must not contain newline characters (CR/LF)", .{});
+                                }
+                                new_credentials.content_encoding = slice;
                             }
                         } else {
                             return globalObject.throwInvalidArgumentTypeValue("contentEncoding", "string", js_value);
@@ -1149,6 +1161,12 @@ const CanonicalRequest = struct {
         };
     }
 };
+
+/// Returns true if the given slice contains any CR (\r) or LF (\n) characters,
+/// which would allow HTTP header injection if used in a header value.
+fn containsNewlineOrCR(value: []const u8) bool {
+    return strings.indexOfAny(value, "\r\n") != null;
+}
 
 const std = @import("std");
 const ACL = @import("./acl.zig").ACL;

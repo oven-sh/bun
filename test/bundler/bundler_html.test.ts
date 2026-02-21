@@ -843,4 +843,131 @@ body {
       api.expectFile("out/" + jsFile).toContain("sourceMappingURL");
     },
   });
+
+  // Test that multiple HTML entrypoints sharing the same CSS file both get
+  // the CSS link tag in production mode (css_chunking deduplication).
+  // Regression test for https://github.com/oven-sh/bun/issues/23668
+  itBundled("html/SharedCSSProductionMultipleEntries", {
+    outdir: "out/",
+    production: true,
+    files: {
+      "/entry1.html": `<!doctype html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./global.css" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script src="./main1.tsx"></script>
+  </body>
+</html>`,
+      "/entry2.html": `<!doctype html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./global.css" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script src="./main2.tsx"></script>
+  </body>
+</html>`,
+      "/global.css": `h1 { font-size: 24px; }`,
+      "/main1.tsx": `console.log("entry1");`,
+      "/main2.tsx": `console.log("entry2");`,
+    },
+    entryPoints: ["/entry1.html", "/entry2.html"],
+    onAfterBundle(api) {
+      const entry1Html = api.readFile("out/entry1.html");
+      const entry2Html = api.readFile("out/entry2.html");
+
+      // Both HTML files must contain a CSS link tag
+      const cssMatch1 = entry1Html.match(/href="(.*\.css)"/);
+      const cssMatch2 = entry2Html.match(/href="(.*\.css)"/);
+
+      expect(cssMatch1).not.toBeNull();
+      expect(cssMatch2).not.toBeNull();
+
+      // Both should reference the same deduplicated CSS chunk
+      expect(cssMatch1![1]).toBe(cssMatch2![1]);
+
+      // The CSS file should contain the shared styles
+      const cssContent = api.readFile("out/" + cssMatch1![1]);
+      expect(cssContent).toContain("font-size");
+
+      // Both HTML files should also have their respective JS bundles
+      expect(entry1Html).toMatch(/src=".*\.js"/);
+      expect(entry2Html).toMatch(/src=".*\.js"/);
+    },
+  });
+
+  // Test manifest.json is copied as an asset and link href is rewritten
+  itBundled("html/manifest-json", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="manifest" href="./manifest.json" />
+  </head>
+  <body>
+    <h1>App</h1>
+    <script src="./app.js"></script>
+  </body>
+</html>`,
+      "/manifest.json": JSON.stringify({
+        name: "My App",
+        short_name: "App",
+        start_url: "/",
+        display: "standalone",
+        background_color: "#ffffff",
+        theme_color: "#000000",
+      }),
+      "/app.js": "console.log('hello')",
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const htmlContent = api.readFile("out/index.html");
+
+      // The original manifest.json reference should be rewritten to a hashed filename
+      expect(htmlContent).not.toContain('manifest.json"');
+      expect(htmlContent).toMatch(/href="(?:\.\/|\/)?manifest-[a-zA-Z0-9]+\.json"/);
+
+      // Extract the hashed manifest filename and verify its content
+      const manifestMatch = htmlContent.match(/href="(?:\.\/|\/)?(manifest-[a-zA-Z0-9]+\.json)"/);
+      expect(manifestMatch).not.toBeNull();
+      const manifestContent = api.readFile("out/" + manifestMatch![1]);
+      expect(manifestContent).toContain('"name"');
+      expect(manifestContent).toContain('"My App"');
+    },
+  });
+
+  // Test that other non-JS/CSS file types referenced via URL imports are copied as assets
+  itBundled("html/xml-asset", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="manifest" href="./site.webmanifest" />
+  </head>
+  <body>
+    <h1>App</h1>
+  </body>
+</html>`,
+      "/site.webmanifest": JSON.stringify({
+        name: "My App",
+        icons: [{ src: "/icon.png", sizes: "192x192" }],
+      }),
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const htmlContent = api.readFile("out/index.html");
+
+      // The webmanifest reference should be rewritten to a hashed filename
+      expect(htmlContent).not.toContain("site.webmanifest");
+      expect(htmlContent).toMatch(/href=".*\.webmanifest"/);
+    },
+  });
 });

@@ -4,7 +4,7 @@ endif()
 
 optionx(BUN_LINK_ONLY BOOL "If only the linking step should be built" DEFAULT OFF)
 optionx(BUN_CPP_ONLY BOOL "If only the C++ part of Bun should be built" DEFAULT OFF)
-optionx(SKIP_CODEGEN BOOL "Skip JavaScript codegen (for Windows ARM64 debug)" DEFAULT OFF)
+optionx(SKIP_CODEGEN BOOL "Skip JavaScript codegen (useful for bootstrapping new platforms)" DEFAULT OFF)
 
 optionx(BUILDKITE BOOL "If Buildkite is enabled" DEFAULT OFF)
 optionx(GITHUB_ACTIONS BOOL "If GitHub Actions is enabled" DEFAULT OFF)
@@ -56,18 +56,6 @@ elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "amd64|x86_64|x64|AMD64")
   setx(ARCH "x64")
 else()
   message(FATAL_ERROR "Unsupported architecture: ${CMAKE_SYSTEM_PROCESSOR}")
-endif()
-
-# CMake 4.0+ policy CMP0197 controls how MSVC machine type flags are handled
-# Setting to NEW prevents duplicate /machine: flags being added to linker commands
-if(WIN32 AND ARCH STREQUAL "aarch64")
-  set(CMAKE_POLICY_DEFAULT_CMP0197 NEW)
-  set(CMAKE_MSVC_CMP0197 NEW)
-  # Set linker flags for exe/shared linking
-  set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /machine:ARM64")
-  set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} /machine:ARM64")
-  set(CMAKE_MODULE_LINKER_FLAGS "${CMAKE_MODULE_LINKER_FLAGS} /machine:ARM64")
-  set(CMAKE_STATIC_LINKER_FLAGS "${CMAKE_STATIC_LINKER_FLAGS} /machine:ARM64")
 endif()
 
 # Windows Code Signing Option

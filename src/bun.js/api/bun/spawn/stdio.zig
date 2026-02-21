@@ -235,10 +235,10 @@ pub const Stdio = union(enum) {
                         return .{ .err = .blob_used_as_out };
                     }
 
-                    break :brk .{ .buffer = bun.handleOom(bun.default_allocator.create(uv.Pipe)) };
+                    break :brk .{ .buffer = createZeroedPipe() };
                 },
-                .ipc => .{ .ipc = bun.handleOom(bun.default_allocator.create(uv.Pipe)) },
-                .capture, .pipe, .array_buffer, .readable_stream => .{ .buffer = bun.handleOom(bun.default_allocator.create(uv.Pipe)) },
+                .ipc => .{ .ipc = createZeroedPipe() },
+                .capture, .pipe, .array_buffer, .readable_stream => .{ .buffer = createZeroedPipe() },
                 .fd => |fd| .{ .pipe = fd },
                 .dup2 => .{ .dup2 = .{ .out = stdio.dup2.out, .to = stdio.dup2.to } },
                 .path => |pathlike| .{ .path = pathlike.slice() },
@@ -487,12 +487,18 @@ pub const Stdio = union(enum) {
     }
 };
 
+/// Allocate a zero-initialized uv.Pipe. Zero-init ensures `pipe.loop` is null
+/// for pipes that never reach `uv_pipe_init`, so `closeAndDestroy` can tell
+/// whether `uv_close` is needed.
+fn createZeroedPipe() *uv.Pipe {
+    return bun.new(uv.Pipe, std.mem.zeroes(uv.Pipe));
+}
+
 const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
 const Output = bun.Output;
-const default_allocator = bun.default_allocator;
 const uv = bun.windows.libuv;
 
 const jsc = bun.jsc;

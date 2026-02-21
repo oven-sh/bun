@@ -50,6 +50,7 @@
     macro(createParsedShellScript) \
     macro(createShellInterpreter) \
     macro(deflateSync) \
+    macro(email) \
     macro(file) \
     macro(fs) \
     macro(gc) \

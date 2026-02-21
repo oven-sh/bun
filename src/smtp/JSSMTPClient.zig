@@ -32,6 +32,7 @@ message_id_hostname: []const u8 = "bun",
 disable_file_access: bool = false,
 keep_bcc: bool = false,
 sendmail_path: []const u8 = "", // if non-empty, use sendmail transport instead of SMTP
+auto_close: bool = false, // if true, close connection after first send (used by Bun.email())
 
 // Pool options
 pool: bool = false,
@@ -88,6 +89,11 @@ fn onSendComplete(ctx: *anyopaque, response: []const u8) void {
     const this: *JSSMTPClient = @ptrCast(@alignCast(ctx));
     this.resolveSendPromise(response);
     this.messages_sent += 1;
+    if (this.auto_close) {
+        this.conn.closeSocket();
+        this.updatePollRef();
+        return;
+    }
     // Pool: process queued send if any
     this.processQueue();
 }
@@ -282,6 +288,27 @@ const conn_callbacks = SMTPConnection.Callbacks{
     .ctx = undefined, // set in constructor
 };
 
+// ========== Bun.email() one-shot helper ==========
+
+/// Bun.email(options) — one-shot email send.
+/// Creates a transient SMTPClient with auto_close=true, sends one message,
+/// and automatically closes the connection when done.
+pub fn jsEmail(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    const args = callframe.arguments();
+    if (args.len < 1 or !args[0].isObject())
+        return globalObject.throwInvalidArguments("Bun.email() requires an options object", .{});
+
+    const client = try constructFromOpts(globalObject, args[0]);
+    client.auto_close = true;
+
+    // Wrap in a JSC object with a strong ref so GC doesn't collect
+    // the transient client before the async send completes.
+    const client_js = client.toJS(globalObject);
+    client.this_value = jsc.JSRef.initStrong(client_js, globalObject);
+
+    return client.send(globalObject, callframe);
+}
+
 // ========== Static Methods ==========
 
 pub fn jsCreateTestAccount(globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
@@ -427,6 +454,12 @@ fn makeAddrObj(globalObject: *jsc.JSGlobalObject, addr: address_parser.Address) 
 pub fn constructor(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, js_this: jsc.JSValue) bun.JSError!*JSSMTPClient {
     const args = callframe.arguments();
     if (args.len < 1) return globalObject.throwInvalidArguments("SMTPClient requires an options object or URL string", .{});
+    const client = try constructFromOpts(globalObject, args[0]);
+    client.this_value = jsc.JSRef.initWeak(js_this);
+    return client;
+}
+
+fn constructFromOpts(globalObject: *jsc.JSGlobalObject, arg0: jsc.JSValue) bun.JSError!*JSSMTPClient {
 
     // Support string argument as URL: new SMTPClient("smtp://user:pass@host:port")
     var opts: jsc.JSValue = undefined;
@@ -435,8 +468,8 @@ pub fn constructor(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame,
 
     const alloc = bun.default_allocator;
 
-    if (args[0].isString()) {
-        const s = try args[0].toBunString(globalObject);
+    if (arg0.isString()) {
+        const s = try arg0.toBunString(globalObject);
         defer s.deref();
         const utf8 = s.toUTF8WithoutRef(alloc);
         defer utf8.deinit();
@@ -444,8 +477,8 @@ pub fn constructor(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame,
         url_str = url_buf_owned.?;
         // Create empty options object for the rest of parsing
         opts = jsc.JSValue.createEmptyObject(globalObject, 0);
-    } else if (args[0].isObject()) {
-        opts = args[0];
+    } else if (arg0.isObject()) {
+        opts = arg0;
         // Check for url property
         if (try opts.getTruthy(globalObject, "url")) |v| {
             const s = try v.toBunString(globalObject);
@@ -709,7 +742,6 @@ pub fn constructor(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame,
         .ctx = @ptrCast(client),
     };
 
-    client.this_value = jsc.JSRef.initWeak(js_this);
     return client;
 }
 

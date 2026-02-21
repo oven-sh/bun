@@ -940,6 +940,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     deepMatch                                      functionBunDeepMatch                                                DontDelete|Function 2
     deflateSync                                    BunObject_callback_deflateSync                                      DontDelete|Function 1
     dns                                            constructDNSObject                                                  ReadOnly|DontDelete|PropertyCallback
+    email                                          BunObject_callback_email                                            DontDelete|Function 1
     enableANSIColors                               BunObject_lazyPropCb_wrap_enableANSIColors                          DontDelete|PropertyCallback
     env                                            constructEnvObject                                                  ReadOnly|DontDelete|PropertyCallback
     escapeHTML                                     functionBunEscapeHTML                                               DontDelete|Function 2

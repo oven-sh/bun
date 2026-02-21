@@ -2294,11 +2294,9 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     const basename = std.fs.path.basename(filename);
                     if (basename.len > 0) {
                         var filename_buf: [1024]u8 = undefined;
-
-                        resp.writeHeader(
-                            "content-disposition",
-                            std.fmt.bufPrint(&filename_buf, "filename=\"{s}\"", .{basename[0..@min(basename.len, 1024 - 32)]}) catch "",
-                        );
+                        if (sanitizeForContentDisposition(basename, &filename_buf)) |value| {
+                            resp.writeHeader("content-disposition", value);
+                        }
                     }
                 }
             }
@@ -2335,6 +2333,25 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
         fn doWriteHeaders(this: *RequestContext, headers: *WebCore.FetchHeaders) void {
             writeHeaders(headers, ssl_enabled, this.resp);
+        }
+
+        /// Sanitize a filename for use in a Content-Disposition header value.
+        /// Strips \r and \n to prevent CRLF header injection, and replaces
+        /// double quotes with single quotes to prevent breaking out of the
+        /// filename="..." parameter. Returns the formatted header value, or
+        /// null if the sanitized name is empty.
+        fn sanitizeForContentDisposition(basename: []const u8, out: *[1024]u8) ?[]const u8 {
+            var sanitized_buf: [1024 - 32]u8 = undefined;
+            const max_len = @min(basename.len, sanitized_buf.len);
+            var sanitized_len: usize = 0;
+            for (basename[0..max_len]) |c| {
+                if (c != '\r' and c != '\n') {
+                    sanitized_buf[sanitized_len] = if (c == '"') '\'' else c;
+                    sanitized_len += 1;
+                }
+            }
+            if (sanitized_len == 0) return null;
+            return std.fmt.bufPrint(out, "filename=\"{s}\"", .{sanitized_buf[0..sanitized_len]}) catch null;
         }
 
         pub fn renderBytes(this: *RequestContext) void {

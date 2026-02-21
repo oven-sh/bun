@@ -79,6 +79,7 @@ using namespace JSC;
     macro(controller) \
     macro(cork) \
     macro(createCommonJSModule) \
+    macro(createEmptyByteReadableStream) \
     macro(createEmptyReadableStream) \
     macro(createFIFO) \
     macro(createInternalModuleById) \

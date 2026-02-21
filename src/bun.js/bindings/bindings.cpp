@@ -2987,6 +2987,17 @@ JSC::EncodedJSValue JSC__JSModuleLoader__evaluate(JSC::JSGlobalObject* globalObj
     return JSValue::encode(emptyStream);
 }
 
+[[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue ReadableStream__emptyByte(Zig::GlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto clientData = WebCore::clientData(vm);
+    auto* function = globalObject->getDirect(vm, clientData->builtinNames().createEmptyByteReadableStreamPrivateName()).getObject();
+    JSValue emptyStream = JSC::call(globalObject, function, JSC::ArgList(), "ReadableStream.create"_s);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(emptyStream);
+}
+
 [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue ReadableStream__used(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);

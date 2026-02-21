@@ -567,6 +567,8 @@ pub const Transpiler = struct {
         } else if (is_production) {
             this.options.setProduction(true);
             this.resolver.opts.setProduction(true);
+            this.options.force_node_env = .production;
+            this.resolver.opts.force_node_env = .production;
         }
     }
 

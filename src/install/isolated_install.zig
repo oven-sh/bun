@@ -51,6 +51,9 @@ pub fn installIsolatedPackages(
         var early_dedupe: std.AutoHashMap(PackageID, Store.Node.Id) = .init(lockfile.allocator);
         defer early_dedupe.deinit();
 
+        var logged_disabled_pkgs = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(lockfile.allocator, lockfile.packages.len);
+        defer logged_disabled_pkgs.deinit(lockfile.allocator);
+
         var peer_dep_ids: std.array_list.Managed(DependencyID) = .init(lockfile.allocator);
         defer peer_dep_ids.deinit();
 
@@ -223,6 +226,7 @@ pub fn installIsolatedPackages(
                         install_root_dependencies,
                         manager,
                         lockfile,
+                        &logged_disabled_pkgs,
                     )) {
                         continue;
                     }

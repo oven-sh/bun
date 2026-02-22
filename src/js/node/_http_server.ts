@@ -822,6 +822,13 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   #pendingCallback = null;
   constructor(server: Server, handle, encrypted) {
     super();
+    // Switch prototype chain based on whether this is a TLS connection
+    // so that instanceof checks match Node.js behavior.
+    if (encrypted) {
+      Object.setPrototypeOf(this, getTLSSocketProto());
+    } else {
+      Object.setPrototypeOf(this, getNetSocketProto());
+    }
     this.server = server;
     this[kHandle] = handle;
     this._secureEstablished = !!handle?.secureEstablished;
@@ -1106,6 +1113,42 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     return this[kHandle]?.response;
   }
 } as unknown as typeof import("node:net").Socket;
+
+// Create alternative prototype chains so that:
+// - For HTTPS connections: req.socket instanceof TLSSocket === true
+// - For HTTP connections: req.socket instanceof net.Socket === true
+// This matches Node.js behavior (see issue #16834).
+const NodeHTTPServerSocketPrototype = NodeHTTPServerSocket.prototype;
+
+// Lazily resolve prototypes to avoid circular dependency issues at module load time.
+let _netSocketProto: object | undefined;
+let _tlsSocketProto: object | undefined;
+
+function getNetSocketProto() {
+  if (!_netSocketProto) {
+    const { Socket } = require("node:net");
+    // Create a new prototype that has all NodeHTTPServerSocket methods
+    // but inherits from net.Socket.prototype instead of Duplex.prototype
+    _netSocketProto = Object.create(Socket.prototype);
+    const descriptors = Object.getOwnPropertyDescriptors(NodeHTTPServerSocketPrototype);
+    delete descriptors.constructor;
+    Object.defineProperties(_netSocketProto, descriptors);
+  }
+  return _netSocketProto;
+}
+
+function getTLSSocketProto() {
+  if (!_tlsSocketProto) {
+    const { TLSSocket } = require("node:tls");
+    // Create a new prototype that has all NodeHTTPServerSocket methods
+    // but inherits from TLSSocket.prototype (which itself inherits from net.Socket.prototype)
+    _tlsSocketProto = Object.create(TLSSocket.prototype);
+    const descriptors = Object.getOwnPropertyDescriptors(NodeHTTPServerSocketPrototype);
+    delete descriptors.constructor;
+    Object.defineProperties(_tlsSocketProto, descriptors);
+  }
+  return _tlsSocketProto;
+}
 
 function _writeHead(statusCode, reason, obj, response) {
   const originalStatusCode = statusCode;

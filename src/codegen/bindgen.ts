@@ -142,6 +142,36 @@ function resolveComplexArgumentStrategy(
   }
 }
 
+function collectStringTemps(args: readonly { type: TypeImpl }[]): Map<number, string[]> {
+  const result = new Map<number, string[]>();
+  // Use the same JS argument indexing as the arg processing loop:
+  // skip virtual args entirely, increment for everything else.
+  let jsArgIdx = 0;
+  for (const arg of args) {
+    const type = arg.type;
+    if (type.isVirtualArgument()) continue;
+    if (type.isIgnoredUndefinedType()) {
+      jsArgIdx++;
+      continue;
+    }
+    if (type.isStringType()) {
+      result.set(jsArgIdx, [cpp.nextTemporaryName("wtfString")]);
+    } else if (type.kind === "dictionary") {
+      const temps: string[] = [];
+      for (const field of type.data as DictionaryField[]) {
+        if (field.type.isStringType()) {
+          temps.push(cpp.nextTemporaryName("wtfString"));
+        }
+      }
+      if (temps.length > 0) {
+        result.set(jsArgIdx, temps);
+      }
+    }
+    jsArgIdx++;
+  }
+  return result;
+}
+
 function emitCppCallToVariant(name: string, variant: Variant, dispatchFunctionName: string) {
   cpp.line(`auto& vm = JSC::getVM(global);`);
   cpp.line(`auto throwScope = DECLARE_THROW_SCOPE(vm);`);
@@ -155,6 +185,16 @@ function emitCppCallToVariant(name: string, variant: Variant, dispatchFunctionNa
   if (communicationStruct) {
     cpp.line(`${communicationStruct.name()} buf;`);
     communicationStruct.emitCpp(cppInternal, communicationStruct.name());
+  }
+
+  // Hoist all WTF::String temps to the dispatch scope so they outlive any
+  // BunString values that reference them. Bun::toString() does not ref the
+  // StringImpl, so the WTF::String must stay alive until the dispatch call.
+  const hoistedTemps = collectStringTemps(variant.args);
+  for (const temps of hoistedTemps.values()) {
+    for (const temp of temps) {
+      cpp.line(`WTF::String ${temp};`);
+    }
   }
 
   let i = 0;
@@ -201,27 +241,14 @@ function emitCppCallToVariant(name: string, variant: Variant, dispatchFunctionNa
     /** If the final representation may include null */
     const isNullable = type.flags.optional && !("default" in type.flags);
 
+    const argTemps = hoistedTemps.get(i);
+
     if (isOptionalToUser) {
       if (needDeclare) {
         addHeaderForType(type);
         cpp.line(`${type.cppName()} ${storageLocation};`);
       }
       const isUndefinedOrNull = type.flags.nonNull ? "isUndefined" : "isUndefinedOrNull";
-
-      // For string types with defaults, we need to keep the WTF::String alive
-      // outside the if block to prevent use-after-free when the BunString is used later.
-      // See: https://github.com/oven-sh/bun/issues/XXXXX
-      const isStringType =
-        type.kind === "DOMString" ||
-        type.kind === "USVString" ||
-        type.kind === "ByteString" ||
-        type.kind === "UTF8String";
-      let wtfStringHolder: string | undefined;
-      if (isStringType && "default" in type.flags) {
-        wtfStringHolder = cpp.nextTemporaryName("wtfStringHolder");
-        cpp.line(`WTF::String ${wtfStringHolder};`);
-      }
-
       if (isNullable) {
         assert(strategy.type === "uses-communication-buffer");
         cpp.line(`if ((${storageLocation}Set = !${jsValueRef}.${isUndefinedOrNull}())) {`);
@@ -230,22 +257,12 @@ function emitCppCallToVariant(name: string, variant: Variant, dispatchFunctionNa
         cpp.line(`if (!${jsValueRef}.${isUndefinedOrNull}()) {`);
       }
       cpp.indent();
-      if (wtfStringHolder) {
-        // For string types, just convert to WTF::String inside the if block
-        const idlType = type.kind === "UTF8String" ? "DOMString" : type.kind;
-        cpp.line(`${wtfStringHolder} = WebCore::convert<WebCore::IDL${idlType}>(*global, ${jsValueRef});`);
-        cpp.line(`RETURN_IF_EXCEPTION(throwScope, {});`);
-      } else {
-        emitConvertValue(storageLocation, arg.type, jsValueRef, exceptionContext, "assign");
-      }
+      const hoistedTemp = type.isStringType() ? argTemps?.[0] : undefined;
+      emitConvertValue(storageLocation, arg.type, jsValueRef, exceptionContext, "assign", hoistedTemp, argTemps);
       cpp.dedent();
       if ("default" in type.flags) {
         cpp.line(`} else {`);
         cpp.indent();
-        if (wtfStringHolder) {
-          // For string defaults, assign empty string to WTF::String holder
-          // The default BunString::Empty will be created from it below
-        }
         cpp.add(`${storageLocation} = `);
         type.emitCppDefaultValue(cpp);
         cpp.line(";");
@@ -254,14 +271,17 @@ function emitCppCallToVariant(name: string, variant: Variant, dispatchFunctionNa
         assert(isNullable);
       }
       cpp.line(`}`);
-
-      // For string types, create the BunString from the WTF::String holder
-      // now that we're outside the if block and the holder is still in scope
-      if (wtfStringHolder) {
-        cpp.line(`if (!${wtfStringHolder}.isEmpty()) ${storageLocation} = Bun::toString(${wtfStringHolder});`);
-      }
     } else {
-      emitConvertValue(storageLocation, arg.type, jsValueRef, exceptionContext, needDeclare ? "declare" : "assign");
+      const hoistedTemp = type.isStringType() ? argTemps?.[0] : undefined;
+      emitConvertValue(
+        storageLocation,
+        arg.type,
+        jsValueRef,
+        exceptionContext,
+        needDeclare ? "declare" : "assign",
+        hoistedTemp,
+        argTemps,
+      );
     }
 
     i += 1;
@@ -456,6 +476,8 @@ function emitConvertValue(
   jsValueRef: string,
   exceptionContext: ExceptionContext,
   decl: "declare" | "assign",
+  hoistedTemp?: string,
+  dictStringTemps?: string[],
 ) {
   if (decl === "declare") {
     addHeaderForType(type);
@@ -505,8 +527,12 @@ function emitConvertValue(
       case "USVString":
       case "DOMString":
       case "ByteString": {
-        const temp = cpp.nextTemporaryName("wtfString");
-        cpp.line(`WTF::String ${temp} = WebCore::convert<WebCore::IDL${type.kind}>(*global, ${jsValueRef});`);
+        const temp = hoistedTemp ?? cpp.nextTemporaryName("wtfString");
+        if (hoistedTemp) {
+          cpp.line(`${temp} = WebCore::convert<WebCore::IDL${type.kind}>(*global, ${jsValueRef});`);
+        } else {
+          cpp.line(`WTF::String ${temp} = WebCore::convert<WebCore::IDL${type.kind}>(*global, ${jsValueRef});`);
+        }
         cpp.line(`RETURN_IF_EXCEPTION(throwScope, {});`);
 
         if (decl === "declare") {
@@ -516,8 +542,12 @@ function emitConvertValue(
         break;
       }
       case "UTF8String": {
-        const temp = cpp.nextTemporaryName("wtfString");
-        cpp.line(`WTF::String ${temp} = WebCore::convert<WebCore::IDLDOMString>(*global, ${jsValueRef});`);
+        const temp = hoistedTemp ?? cpp.nextTemporaryName("wtfString");
+        if (hoistedTemp) {
+          cpp.line(`${temp} = WebCore::convert<WebCore::IDLDOMString>(*global, ${jsValueRef});`);
+        } else {
+          cpp.line(`WTF::String ${temp} = WebCore::convert<WebCore::IDLDOMString>(*global, ${jsValueRef});`);
+        }
         cpp.line(`RETURN_IF_EXCEPTION(throwScope, {});`);
 
         if (decl === "declare") {
@@ -530,7 +560,13 @@ function emitConvertValue(
         if (decl === "declare") {
           cpp.line(`${type.cppName()} ${storageLocation};`);
         }
-        cpp.line(`auto did_convert = convert${type.cppInternalName()}(&${storageLocation}, global, ${jsValueRef});`);
+        if (dictStringTemps && dictStringTemps.length > 0) {
+          cpp.line(
+            `auto did_convert = convert${type.cppInternalName()}(&${storageLocation}, global, ${jsValueRef}, ${dictStringTemps.join(", ")});`,
+          );
+        } else {
+          cpp.line(`auto did_convert = convert${type.cppInternalName()}(&${storageLocation}, global, ${jsValueRef});`);
+        }
         cpp.line(`RETURN_IF_EXCEPTION(throwScope, {});`);
         cpp.line(`if (!did_convert) return {};`);
         break;
@@ -614,10 +650,22 @@ function emitConvertDictionaryFunction(type: TypeImpl) {
 
   addHeaderForType(type);
 
+  // Build WTF::String& params for string fields (caller owns the storage).
+  const stringFieldParams: string[] = [];
+  for (const field of fields) {
+    if (field.type.isStringType()) {
+      stringFieldParams.push(`WTF::String& ${field.key}_str`);
+    }
+  }
+
   cpp.line(`// Internal dictionary parse for ${type.name()}`);
-  cpp.line(
-    `bool convert${type.cppInternalName()}(${type.cppName()}* result, JSC::JSGlobalObject* global, JSC::JSValue value) {`,
-  );
+  const params = [
+    `${type.cppName()}* result`,
+    `JSC::JSGlobalObject* global`,
+    `JSC::JSValue value`,
+    ...stringFieldParams,
+  ];
+  cpp.line(`bool convert${type.cppInternalName()}(${params.join(", ")}) {`);
   cpp.indent();
 
   cpp.line(`auto& vm = JSC::getVM(global);`);
@@ -642,30 +690,12 @@ function emitConvertDictionaryFunction(type: TypeImpl) {
     );
     cpp.line(`    RETURN_IF_EXCEPTION(throwScope, false);`);
     cpp.line(`}`);
-
-    // For string types with defaults, we need to keep the WTF::String alive
-    // outside the if block to prevent use-after-free when the BunString is used later.
-    const isStringType =
-      fieldType.kind === "DOMString" ||
-      fieldType.kind === "USVString" ||
-      fieldType.kind === "ByteString" ||
-      fieldType.kind === "UTF8String";
-    let wtfStringHolder: string | undefined;
-    if (isStringType && "default" in fieldType.flags) {
-      wtfStringHolder = cpp.nextTemporaryName("wtfStringHolder");
-      cpp.line(`WTF::String ${wtfStringHolder};`);
-    }
-
+    // For string fields, use the caller-owned WTF::String& ref so the
+    // string data outlives this function and the BunString in the result.
+    const hoistedTemp = fieldType.isStringType() ? `${key}_str` : undefined;
     cpp.line(`if (!propValue.isUndefined()) {`);
     cpp.indent();
-    if (wtfStringHolder) {
-      // For string types, just convert to WTF::String inside the if block
-      const idlType = fieldType.kind === "UTF8String" ? "DOMString" : fieldType.kind;
-      cpp.line(`${wtfStringHolder} = WebCore::convert<WebCore::IDL${idlType}>(*global, propValue);`);
-      cpp.line(`RETURN_IF_EXCEPTION(throwScope, {});`);
-    } else {
-      emitConvertValue(`result->${key}`, fieldType, "propValue", { type: "none" }, "assign");
-    }
+    emitConvertValue(`result->${key}`, fieldType, "propValue", { type: "none" }, "assign", hoistedTemp);
     cpp.dedent();
     cpp.line(`} else {`);
     cpp.indent();
@@ -681,12 +711,6 @@ function emitConvertDictionaryFunction(type: TypeImpl) {
     }
     cpp.dedent();
     cpp.line(`}`);
-
-    // For string types, create the BunString from the WTF::String holder
-    // now that we're outside the if block and the holder is still in scope
-    if (wtfStringHolder) {
-      cpp.line(`if (!${wtfStringHolder}.isEmpty()) result->${key} = Bun::toString(${wtfStringHolder});`);
-    }
   }
 
   cpp.line(`return true;`);

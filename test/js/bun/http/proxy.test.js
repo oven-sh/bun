@@ -221,8 +221,14 @@ describe.concurrent(() => {
     ["''", "''"],
     ['""', '""'],
   ])("test proxy env, http_proxy=%s https_proxy=%s", async (http_proxy, https_proxy) => {
+    using localServer = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response("OK");
+      },
+    });
     const { exited, stderr: stream } = Bun.spawn({
-      cmd: [bunExe(), "-e", 'await fetch("https://example.com")'],
+      cmd: [bunExe(), "-e", `await fetch("${localServer.url}")`],
       env: {
         ...bunEnv,
         http_proxy: http_proxy,

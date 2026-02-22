@@ -70,11 +70,13 @@ pub fn isZeroWidthCodepointType(comptime T: type, cp: T) bool {
     }
 
     // Thai combining marks
-    if ((cp >= 0xe31 and cp <= 0xe3a) or (cp >= 0xe47 and cp <= 0xe4e))
+    // Note: U+0E32 (SARA AA) and U+0E33 (SARA AM) are Grapheme_Base (spacing vowels), not combining
+    if (cp == 0xe31 or (cp >= 0xe34 and cp <= 0xe3a) or (cp >= 0xe47 and cp <= 0xe4e))
         return true;
 
     // Lao combining marks
-    if ((cp >= 0xeb1 and cp <= 0xebc) or (cp >= 0xec8 and cp <= 0xecd))
+    // Note: U+0EB2 and U+0EB3 are spacing vowels like Thai, not combining
+    if (cp == 0xeb1 or (cp >= 0xeb4 and cp <= 0xebc) or (cp >= 0xec8 and cp <= 0xecd))
         return true;
 
     // Combining Diacritical Marks Extended

@@ -641,13 +641,16 @@ JSC_DEFINE_CUSTOM_GETTER(errorInstanceLazyStackCustomGetter, (JSGlobalObject * g
     OrdinalNumber column;
     String sourceURL;
     auto stackTrace = errorObject->stackTrace();
-    if (stackTrace == nullptr) {
-        return JSValue::encode(jsUndefined());
-    }
 
-    JSValue result = computeErrorInfoToJSValue(vm, *stackTrace, line, column, sourceURL, errorObject, nullptr);
-    stackTrace->clear();
-    errorObject->setStackFrames(vm, {});
+    JSValue result;
+    if (stackTrace == nullptr) {
+        WTF::Vector<JSC::StackFrame> emptyTrace;
+        result = computeErrorInfoToJSValue(vm, emptyTrace, line, column, sourceURL, errorObject, nullptr);
+    } else {
+        result = computeErrorInfoToJSValue(vm, *stackTrace, line, column, sourceURL, errorObject, nullptr);
+        stackTrace->clear();
+        errorObject->setStackFrames(vm, {});
+    }
     RETURN_IF_EXCEPTION(scope, {});
     errorObject->putDirect(vm, vm.propertyNames->stack, result, 0);
     return JSValue::encode(result);
@@ -687,17 +690,27 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
     JSCStackTrace::getFramesForCaller(vm, callFrame, errorObject, caller, stackTrace, stackTraceLimit);
 
     if (auto* instance = jsDynamicCast<JSC::ErrorInstance*>(errorObject)) {
+        // Force materialization before replacing the stack frames, so that JSC's
+        // internal lazy error info mechanism doesn't later see the replaced (possibly empty)
+        // stack trace and fail to create the stack property.
+        if (!instance->hasMaterializedErrorInfo())
+            instance->materializeErrorInfoIfNeeded(vm);
+        RETURN_IF_EXCEPTION(scope, {});
+
         instance->setStackFrames(vm, WTF::move(stackTrace));
-        if (instance->hasMaterializedErrorInfo()) {
+
+        {
             const auto& propertyName = vm.propertyNames->stack;
-            VM::DeletePropertyModeScope scope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
+            VM::DeletePropertyModeScope deleteScope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
             DeletePropertySlot slot;
             JSObject::deleteProperty(instance, globalObject, propertyName, slot);
-            if (auto* zigGlobalObject = jsDynamicCast<Zig::GlobalObject*>(globalObject)) {
-                instance->putDirectCustomAccessor(vm, vm.propertyNames->stack, zigGlobalObject->m_lazyStackCustomGetterSetter.get(zigGlobalObject), JSC::PropertyAttribute::CustomAccessor | 0);
-            } else {
-                instance->putDirectCustomAccessor(vm, vm.propertyNames->stack, CustomGetterSetter::create(vm, errorInstanceLazyStackCustomGetter, errorInstanceLazyStackCustomSetter), JSC::PropertyAttribute::CustomAccessor | 0);
-            }
+        }
+        RETURN_IF_EXCEPTION(scope, {});
+
+        if (auto* zigGlobalObject = jsDynamicCast<Zig::GlobalObject*>(globalObject)) {
+            instance->putDirectCustomAccessor(vm, vm.propertyNames->stack, zigGlobalObject->m_lazyStackCustomGetterSetter.get(zigGlobalObject), JSC::PropertyAttribute::CustomAccessor | 0);
+        } else {
+            instance->putDirectCustomAccessor(vm, vm.propertyNames->stack, CustomGetterSetter::create(vm, errorInstanceLazyStackCustomGetter, errorInstanceLazyStackCustomSetter), JSC::PropertyAttribute::CustomAccessor | 0);
         }
     } else {
         OrdinalNumber line;

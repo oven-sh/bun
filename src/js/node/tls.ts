@@ -344,6 +344,10 @@ function splitEscapedAltNames(altNames) {
 }
 
 function checkServerIdentity(hostname, cert) {
+  // Return an error if cert is missing (e.g., getPeerCertificate returns undefined)
+  if (cert == null || typeof cert !== "object") {
+    return $ERR_TLS_CERT_ALTNAME_INVALID("Peer certificate is missing", hostname, cert);
+  }
   const subject = cert.subject;
   const altNames = cert.subjectaltname;
   const dnsNames = [];

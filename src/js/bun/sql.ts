@@ -9,11 +9,171 @@ const { MySQLAdapter } = require("internal/sql/mysql");
 const { SQLiteAdapter } = require("internal/sql/sqlite");
 const { SQLHelper, parseOptions } = require("internal/sql/shared");
 
+const { validateOneOf, validateObject } = require("internal/validators");
+
 const { SQLError, PostgresError, SQLiteError, MySQLError } = require("internal/sql/errors");
+
+const ensurePostgresAdapter = (adapter: any, methodName: string) => {
+  if (adapter !== "postgres") {
+    throw $ERR_INVALID_ARG_VALUE(
+      "options.adapter",
+      adapter,
+      `${methodName} is only supported for the postgres adapter`,
+    );
+  }
+};
+
+type CopyStreamLikeSink = {
+  write: (chunk: string | ArrayBuffer | Uint8Array) => unknown | Promise<unknown>;
+  close?: () => unknown | Promise<unknown>;
+  end?: () => unknown | Promise<unknown>;
+};
+
+const isWritableStream = (value: unknown): value is WritableStream<Uint8Array | string> => {
+  return (
+    !!value &&
+    typeof value === "object" &&
+    "getWriter" in value &&
+    typeof (value as { getWriter: unknown }).getWriter === "function"
+  );
+};
+
+const isWritableSink = (value: unknown): value is CopyStreamLikeSink => {
+  return (
+    !!value &&
+    typeof value === "object" &&
+    "write" in value &&
+    typeof (value as { write: unknown }).write === "function"
+  );
+};
+
+const isIterable = (value: unknown): value is Iterable<unknown> => {
+  return (
+    !!value &&
+    typeof value === "object" &&
+    Symbol.iterator in value &&
+    typeof (value as { [Symbol.iterator]: unknown })[Symbol.iterator] === "function"
+  );
+};
+
+const isAsyncIterable = (value: unknown): value is AsyncIterable<unknown> => {
+  return (
+    !!value &&
+    typeof value === "object" &&
+    Symbol.asyncIterator in value &&
+    typeof (value as { [Symbol.asyncIterator]: unknown })[Symbol.asyncIterator] === "function"
+  );
+};
+
+const hasByteLength = (value: unknown): value is { byteLength: number } => {
+  return (
+    !!value &&
+    (typeof value === "object" || typeof value === "function") &&
+    "byteLength" in (value as object) &&
+    typeof (value as { byteLength: unknown }).byteLength === "number"
+  );
+};
+
+const toUint8ArrayView = (value: unknown): Uint8Array | null => {
+  if (value instanceof Uint8Array) return value;
+  if (value instanceof ArrayBuffer) return new Uint8Array(value);
+  if (ArrayBuffer.isView(value)) {
+    const view = value as ArrayBufferView;
+    return new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+  }
+  return null;
+};
+
+// Import shared PostgreSQL encoding utilities (types only via import type, runtime via require)
+import type { CopyBinaryType, CopyBinaryBaseType } from "internal/sql/postgres-encoding";
+
+const {
+  encodeBinaryValue,
+  encodeBinaryRow,
+  encodeArray1D,
+  createBinaryCopyHeader,
+  createBinaryCopyTrailer,
+  copyTextEscape,
+  csvQuote: pgCsvQuote,
+  needsCsvQuote,
+} = require("internal/sql/postgres-encoding");
+
+const {
+  TYPE_OID,
+  TYPE_ARRAY_OID,
+  isSupportedBaseType,
+  isSupportedArrayType,
+  getSupportedBaseTypes,
+  getSupportedArrayTypes,
+} = require("internal/sql/postgres-types");
 
 const defineProperties = Object.defineProperties;
 
-type TransactionCallback = (sql: (strings: string, ...values: any[]) => Query<any, any>) => Promise<any>;
+// Default COPY protocol constants
+const DEFAULT_COPY_BATCH_SIZE = 64 * 1024; // 64 KiB - batch accumulation threshold
+const DEFAULT_COPY_MAX_CHUNK_SIZE = 256 * 1024; // 256 KiB - max bytes per chunk
+
+// Re-export types for convenience
+export type { CopyBinaryType, CopyBinaryBaseType };
+
+interface CopyFromOptionsBase {
+  format?: "text" | "csv" | "binary";
+  delimiter?: string;
+  null?: string;
+  sanitizeNUL?: boolean;
+  replaceInvalid?: string;
+  signal?: AbortSignal;
+  onProgress?: (info: { bytesSent: number; chunksSent: number }) => void;
+  batchSize?: number;
+  /**
+   * Maximum number of bytes to send per chunk. Defaults to 256 KiB when not set.
+   */
+  maxChunkSize?: number;
+  /**
+   * Maximum total number of bytes to send for this COPY FROM operation.
+   * When exceeded, the operation is aborted with CopyFail.
+   */
+  maxBytes?: number;
+  /**
+   * COPY operation timeout in milliseconds (0 = no timeout).
+   */
+  timeout?: number;
+}
+
+interface CopyFromBinaryOptions extends CopyFromOptionsBase {
+  format: "binary";
+  binaryTypes: CopyBinaryType[];
+}
+
+type CopyFromOptions = CopyFromOptionsBase | CopyFromBinaryOptions;
+
+const isCopyFromBinaryOptions = (options: CopyFromOptions | undefined): options is CopyFromBinaryOptions => {
+  return !!options && options.format === "binary" && "binaryTypes" in options && $isArray(options.binaryTypes);
+};
+
+interface CopyToOptions {
+  table: string;
+  columns?: string[];
+  format?: "text" | "csv" | "binary";
+  signal?: AbortSignal;
+  onProgress?: (info: { bytesReceived: number; chunksReceived: number }) => void;
+  /**
+   * Maximum total number of bytes to receive for this COPY TO operation.
+   * When exceeded, the stream stops early with an error.
+   */
+  maxBytes?: number;
+  /**
+   * Enable streaming mode to avoid buffering in Zig. Defaults to true.
+   */
+  stream?: boolean;
+  /**
+   * COPY operation timeout in milliseconds (0 = no timeout).
+   */
+  timeout?: number;
+}
+
+type SQLTemplateFn = (strings: TemplateStringsArray | string, ...values: unknown[]) => Query<unknown, unknown>;
+type TransactionCallback = (sql: SQLTemplateFn) => Promise<unknown>;
 
 enum ReservedConnectionState {
   acceptQueries = 1 << 0,
@@ -39,6 +199,166 @@ function adapterFromOptions(options: Bun.SQL.__internal.DefinedOptions) {
     default:
       throw new Error(`Unsupported adapter: ${(options as { adapter?: string }).adapter}.`);
   }
+}
+
+// Helper types and functions for COPY protocol
+type __CopyDefaults__ = {
+  from: { maxChunkSize: number; maxBytes: number };
+  to: { stream: boolean; maxBytes: number };
+};
+
+/**
+ * Resolves copyFrom limits (maxBytes, maxChunkSize) from options and pool defaults
+ */
+function resolveCopyFromLimits(options: any, pool: any): { maxBytes: number; maxChunkSize: number } {
+  const __defaults__: __CopyDefaults__ | undefined =
+    "getCopyDefaults" in pool
+      ? (pool as unknown as { getCopyDefaults: () => __CopyDefaults__ }).getCopyDefaults()
+      : undefined;
+  const __fromDefaults__ = (__defaults__ && __defaults__.from) || {
+    maxChunkSize: DEFAULT_COPY_MAX_CHUNK_SIZE,
+    maxBytes: 0,
+  };
+
+  const maxBytes =
+    options && typeof options.maxBytes === "number" && options.maxBytes > 0
+      ? Number(options.maxBytes)
+      : Math.max(0, Math.trunc(Number(__fromDefaults__.maxBytes) || 0));
+
+  const maxChunkSize =
+    options && typeof options.maxChunkSize === "number" && options.maxChunkSize > 0
+      ? Math.max(1, Math.trunc(Number(options.maxChunkSize)))
+      : Math.max(1, Math.trunc(Number(__fromDefaults__.maxChunkSize) || DEFAULT_COPY_MAX_CHUNK_SIZE));
+
+  return { maxBytes, maxChunkSize };
+}
+
+/**
+ * Resolves copyTo maxBytes from query options and pool defaults
+ */
+function resolveCopyToMaxBytes(queryOrOptions: any, pool: any): number {
+  const __defaults__: __CopyDefaults__ | undefined =
+    "getCopyDefaults" in pool
+      ? (pool as unknown as { getCopyDefaults: () => __CopyDefaults__ }).getCopyDefaults()
+      : undefined;
+  const __toDefaults__ = (__defaults__ && __defaults__.to) || { stream: true, maxBytes: 0 };
+
+  return typeof queryOrOptions === "string"
+    ? Math.max(0, Math.trunc(Number(__toDefaults__.maxBytes) || 0))
+    : typeof queryOrOptions?.maxBytes === "number" && queryOrOptions.maxBytes > 0
+      ? Number(queryOrOptions.maxBytes)
+      : Math.max(0, Math.trunc(Number(__toDefaults__.maxBytes) || 0));
+}
+
+function getByteLength(value: string | { byteLength: number } | Uint8Array | ArrayBuffer): number {
+  if (typeof value === "string") {
+    return Buffer?.byteLength ? Buffer.byteLength(value, "utf8") : new TextEncoder().encode(value).byteLength;
+  }
+  const length = value?.byteLength;
+  return Number.isFinite(length) ? Math.max(0, Math.trunc(length)) : 0;
+}
+
+/**
+ * Await socket writability with a microtask fallback to prevent hanging.
+ * Used throughout COPY protocol to handle backpressure.
+ */
+async function awaitWritableWithFallback(reserved: any, pool: any): Promise<void> {
+  if (reserved && typeof reserved.awaitWritable === "function") {
+    const promise = reserved.awaitWritable();
+    if (promise && typeof promise.then === "function") {
+      await promise;
+      return;
+    }
+  }
+  if (pool && typeof pool.awaitWritableFor === "function") {
+    const promise = pool.awaitWritableFor(reserved);
+    if (promise && typeof promise.then === "function") {
+      await promise;
+      return;
+    }
+  }
+  await new Promise<void>(queueMicrotask);
+}
+
+/**
+ * Sends data in chunks with backpressure handling
+ */
+async function sendChunkedData(
+  data: Uint8Array | string,
+  reserved: any,
+  pool: any,
+  limits: { maxBytes: number; maxChunkSize: number },
+  counters: { bytesSent: number; chunksSent: number },
+  notifyProgress: () => void,
+): Promise<void> {
+  const { maxBytes, maxChunkSize } = limits;
+
+  // Convert string to Uint8Array to ensure chunking by bytes, not characters
+  // This prevents splitting multi-byte UTF-8 characters
+  const bytes: Uint8Array = typeof data === "string" ? new TextEncoder().encode(data) : data;
+  const dataLength = bytes.byteLength;
+
+  if (dataLength <= maxChunkSize) {
+    if (maxBytes && counters.bytesSent + dataLength > maxBytes) {
+      throw new Error("copyFrom: maxBytes exceeded");
+    }
+    reserved.copySendData(bytes);
+    counters.bytesSent += dataLength;
+    counters.chunksSent += 1;
+    notifyProgress();
+    await awaitWritableWithFallback(reserved, pool);
+  } else {
+    for (let i = 0; i < dataLength; i += maxChunkSize) {
+      const part = bytes.subarray(i, Math.min(dataLength, i + maxChunkSize));
+      const partLength = part.byteLength;
+
+      if (maxBytes && counters.bytesSent + partLength > maxBytes) {
+        throw new Error("copyFrom: maxBytes exceeded");
+      }
+      reserved.copySendData(part);
+      counters.bytesSent += partLength;
+      counters.chunksSent += 1;
+      notifyProgress();
+      await awaitWritableWithFallback(reserved, pool);
+    }
+  }
+}
+
+/**
+ * Validates binary types for COPY FROM binary format
+ */
+function validateBinaryTypes(options: any, columns: string[] | undefined): string[] {
+  const types = options?.binaryTypes as string[] | undefined;
+  if (!types || !$isArray(types)) {
+    throw new Error(
+      "Binary COPY format requires raw bytes or provide options.binaryTypes to enable automatic binary row encoding.",
+    );
+  }
+  if (types.length !== (columns?.length ?? types.length)) {
+    throw new Error("binaryTypes length must match number of columns for COPY FROM.");
+  }
+
+  // Validate that each provided token is a supported base or array type
+  // Uses helper functions from shared postgres-types module
+  const isSupportedToken = (token: string): boolean => {
+    if (typeof token !== "string" || token.length === 0) return false;
+    return token.endsWith("[]") ? isSupportedArrayType(token) : isSupportedBaseType(token);
+  };
+
+  for (let i = 0; i < types.length; i++) {
+    const token = types[i];
+    if (!isSupportedToken(token)) {
+      throw new Error(
+        `Unsupported COPY binaryTypes token at index ${i}: "${token}".` +
+          " Supported base types include: " +
+          getSupportedBaseTypes().join(", ") +
+          "; supported array types include: " +
+          getSupportedArrayTypes().join(", "),
+      );
+    }
+  }
+
+  return types;
 }
 
 const SQL: typeof Bun.SQL = function SQL(
@@ -109,8 +429,12 @@ const SQL: typeof Bun.SQL = function SQL(
   }
 
   function queryFromPool(
-    strings: string | TemplateStringsArray | import("internal/sql/shared.ts").SQLHelper<any> | Query<any, any>,
-    values: any[],
+    strings:
+      | string
+      | TemplateStringsArray
+      | import("internal/sql/shared.ts").SQLHelper<unknown>
+      | Query<unknown, unknown>,
+    values: unknown[],
   ) {
     try {
       return new Query(
@@ -126,8 +450,12 @@ const SQL: typeof Bun.SQL = function SQL(
   }
 
   function unsafeQuery(
-    strings: string | TemplateStringsArray | import("internal/sql/shared.ts").SQLHelper<any> | Query<any, any>,
-    values: any[],
+    strings:
+      | string
+      | TemplateStringsArray
+      | import("internal/sql/shared.ts").SQLHelper<unknown>
+      | Query<unknown, unknown>,
+    values: unknown[],
   ) {
     try {
       let flags = connectionInfo.bigint ? SQLQueryFlags.bigint | SQLQueryFlags.unsafe : SQLQueryFlags.unsafe;
@@ -173,8 +501,12 @@ const SQL: typeof Bun.SQL = function SQL(
   }
 
   function queryFromTransaction(
-    strings: string | TemplateStringsArray | import("internal/sql/shared.ts").SQLHelper<any> | Query<any, any>,
-    values: any[],
+    strings:
+      | string
+      | TemplateStringsArray
+      | import("internal/sql/shared.ts").SQLHelper<unknown>
+      | Query<unknown, unknown>,
+    values: unknown[],
     pooledConnection: PooledPostgresConnection,
     transactionQueries: Set<Query<any, any>>,
   ) {
@@ -197,8 +529,12 @@ const SQL: typeof Bun.SQL = function SQL(
   }
 
   function unsafeQueryFromTransaction(
-    strings: string | TemplateStringsArray | import("internal/sql/shared.ts").SQLHelper<any> | Query<any, any>,
-    values: any[],
+    strings:
+      | string
+      | TemplateStringsArray
+      | import("internal/sql/shared.ts").SQLHelper<unknown>
+      | Query<unknown, unknown>,
+    values: unknown[],
     pooledConnection: PooledPostgresConnection,
     transactionQueries: Set<Query<any, any>>,
   ) {
@@ -237,7 +573,7 @@ const SQL: typeof Bun.SQL = function SQL(
     }
   }
 
-  function onReserveConnected(this: Query<any, any>, err: Error | null, pooledConnection) {
+  function onReserveConnected(this: Query<unknown, unknown>, err: Error | null, pooledConnection) {
     const { resolve, reject } = this;
 
     if (err) {
@@ -253,12 +589,21 @@ const SQL: typeof Bun.SQL = function SQL(
       queries: new Set(),
     };
 
+    const clampUint32 = (value: number) => {
+      const n = Number(value);
+      if (!Number.isFinite(n) || n <= 0) return 0;
+      return Math.min(0xffffffff, Math.trunc(n));
+    };
+
     const onClose = onTransactionDisconnected.bind(state);
     if (pooledConnection.onClose) {
       pooledConnection.onClose(onClose);
     }
 
-    function reserved_sql(strings: string | TemplateStringsArray | SQLHelper<any> | Query<any, any>, ...values: any[]) {
+    function reserved_sql(
+      strings: string | TemplateStringsArray | SQLHelper<unknown> | Query<unknown, unknown>,
+      ...values: unknown[]
+    ) {
       if (
         state.connectionState & ReservedConnectionState.closed ||
         !(state.connectionState & ReservedConnectionState.acceptQueries)
@@ -298,7 +643,7 @@ const SQL: typeof Bun.SQL = function SQL(
 
     reserved_sql.commitDistributed = async function (name: string) {
       if (!pool.getCommitDistributedSQL) {
-        throw Error(`This adapter doesn't support distributed transactions.`);
+        throw new Error(`This adapter doesn't support distributed transactions.`);
       }
 
       const sql = pool.getCommitDistributedSQL(name);
@@ -306,7 +651,7 @@ const SQL: typeof Bun.SQL = function SQL(
     };
     reserved_sql.rollbackDistributed = async function (name: string) {
       if (!pool.getRollbackDistributedSQL) {
-        throw Error(`This adapter doesn't support distributed transactions.`);
+        throw new Error(`This adapter doesn't support distributed transactions.`);
       }
 
       const sql = pool.getRollbackDistributedSQL(name);
@@ -317,6 +662,149 @@ const SQL: typeof Bun.SQL = function SQL(
     // this matchs the behavior of the postgres package
     reserved_sql.reserve = () => sql.reserve();
     reserved_sql.array = sql.array;
+
+    // COPY FROM STDIN low-level helpers (Phase 2)
+    // These delegate to adapter instance methods bound to this reserved connection
+    reserved_sql.onCopyStart = (handler: () => void) => {
+      ensurePostgresAdapter(connectionInfo.adapter, "onCopyStart");
+      // register one-shot callback when server replies with CopyInResponse/CopyOutResponse
+      pool.onCopyStartFor(pooledConnection, handler);
+    };
+    reserved_sql.copySendData = (data: string | Uint8Array) => {
+      ensurePostgresAdapter(connectionInfo.adapter, "copySendData");
+      pool.copySendDataFor(pooledConnection, data);
+    };
+    reserved_sql.copyDone = () => {
+      ensurePostgresAdapter(connectionInfo.adapter, "copyDone");
+      pool.copyDoneFor(pooledConnection);
+    };
+    reserved_sql.copyFail = (message?: string) => {
+      ensurePostgresAdapter(connectionInfo.adapter, "copyFail");
+      pool.copyFailFor(pooledConnection, message);
+    };
+    /**
+     * Enable or disable streaming mode for COPY TO.
+     * When enabled, the connection will not accumulate COPY TO data in memory
+     * and will emit chunks via onCopyChunk instead.
+     */
+    /** @type {(enable: boolean) => void} */
+    reserved_sql.setCopyStreamingMode = (enable: boolean) => {
+      ensurePostgresAdapter(connectionInfo.adapter, "setCopyStreamingMode");
+      const copyPool = pool as unknown as {
+        setCopyStreamingModeFor?: (connection: any, enable: boolean) => void;
+        getConnectionForQuery?: (connection: any) => any;
+      };
+      if (typeof copyPool.setCopyStreamingModeFor === "function") {
+        copyPool.setCopyStreamingModeFor(pooledConnection, !!enable);
+        return;
+      }
+
+      const underlying = copyPool.getConnectionForQuery
+        ? copyPool.getConnectionForQuery(pooledConnection)
+        : pooledConnection?.connection;
+
+      const adapter = PostgresAdapter as unknown as {
+        setCopyStreamingMode?: (connection: any, enable: boolean) => void;
+      };
+      if (underlying && typeof adapter.setCopyStreamingMode === "function") {
+        adapter.setCopyStreamingMode(underlying, !!enable);
+      }
+    };
+    /** @type {(ms: number) => void} */
+    reserved_sql.setCopyTimeout = (ms: number) => {
+      ensurePostgresAdapter(connectionInfo.adapter, "setCopyTimeout");
+      const copyPool = pool as unknown as {
+        setCopyTimeoutFor?: (connection: any, ms: number) => void;
+        getConnectionForQuery?: (connection: any) => any;
+      };
+      const clamped = clampUint32(ms);
+
+      if (typeof copyPool.setCopyTimeoutFor === "function") {
+        copyPool.setCopyTimeoutFor(pooledConnection, clamped);
+        return;
+      }
+
+      const underlying = copyPool.getConnectionForQuery
+        ? copyPool.getConnectionForQuery(pooledConnection)
+        : pooledConnection?.connection;
+
+      const adapter = PostgresAdapter as unknown as { setCopyTimeout?: (connection: any, ms: number) => void };
+      if (underlying && typeof adapter.setCopyTimeout === "function") {
+        adapter.setCopyTimeout(underlying, clamped);
+      }
+    };
+    /** @type {(bytes: number) => void} */
+    reserved_sql.setMaxCopyBufferSize = (bytes: number) => {
+      ensurePostgresAdapter(connectionInfo.adapter, "setMaxCopyBufferSize");
+      const copyPool = pool as unknown as {
+        setMaxCopyBufferSizeFor?: (connection: any, bytes: number) => void;
+        getConnectionForQuery?: (connection: any) => any;
+      };
+      const clamped = clampUint32(bytes);
+
+      if (typeof copyPool.setMaxCopyBufferSizeFor === "function") {
+        copyPool.setMaxCopyBufferSizeFor(pooledConnection, clamped);
+        return;
+      }
+
+      const underlying = copyPool.getConnectionForQuery
+        ? copyPool.getConnectionForQuery(pooledConnection)
+        : pooledConnection?.connection;
+
+      const adapter = PostgresAdapter as unknown as { setMaxCopyBufferSize?: (connection: any, bytes: number) => void };
+      if (underlying && typeof adapter.setMaxCopyBufferSize === "function") {
+        // Delegate to adapter binding so native-side safety caps are applied consistently.
+        adapter.setMaxCopyBufferSize(underlying, clamped);
+      }
+    };
+    // Expose adapter-level COPY defaults on reserved connections
+    reserved_sql.getCopyDefaults = () => {
+      ensurePostgresAdapter(connectionInfo.adapter, "getCopyDefaults");
+      return pool.getCopyDefaults();
+    };
+    reserved_sql.setCopyDefaults = (defaults: {
+      from?: { maxChunkSize?: number; maxBytes?: number; timeout?: number };
+      to?: { stream?: boolean; maxBytes?: number; timeout?: number };
+    }) => {
+      ensurePostgresAdapter(connectionInfo.adapter, "setCopyDefaults");
+      pool.setCopyDefaultsFor(pooledConnection, defaults);
+      return reserved_sql;
+    };
+
+    // Streaming COPY TO STDOUT helpers (Phase 4)
+    reserved_sql.onCopyChunk = (handler: (chunk: string | ArrayBuffer | Uint8Array) => void) => {
+      ensurePostgresAdapter(connectionInfo.adapter, "onCopyChunk");
+      const copyPool = pool as unknown as { getConnectionForQuery?: (connection: any) => any };
+      const underlying = copyPool.getConnectionForQuery
+        ? copyPool.getConnectionForQuery(pooledConnection)
+        : pooledConnection?.connection;
+
+      const adapter = PostgresAdapter as unknown as {
+        onCopyChunk?: (connection: any, handler: (chunk: any) => void) => void;
+      };
+      if (underlying && typeof adapter.onCopyChunk === "function") {
+        adapter.onCopyChunk(underlying, handler as unknown as (chunk: any) => void);
+        return true;
+      }
+
+      return false;
+    };
+    reserved_sql.onCopyEnd = (handler: () => void) => {
+      ensurePostgresAdapter(connectionInfo.adapter, "onCopyEnd");
+      const copyPool = pool as unknown as { getConnectionForQuery?: (connection: any) => any };
+      const underlying = copyPool.getConnectionForQuery
+        ? copyPool.getConnectionForQuery(pooledConnection)
+        : pooledConnection?.connection;
+
+      const adapter = PostgresAdapter as unknown as { onCopyEnd?: (connection: any, handler: () => void) => void };
+      if (underlying && typeof adapter.onCopyEnd === "function") {
+        adapter.onCopyEnd(underlying, handler);
+        return true;
+      }
+
+      return false;
+    };
+
     function onTransactionFinished(transaction_promise: Promise<any>) {
       reservedTransaction.delete(transaction_promise);
     }
@@ -558,8 +1046,12 @@ const SQL: typeof Bun.SQL = function SQL(
       return unsafeQueryFromTransaction(string, [], pooledConnection, state.queries);
     }
     function transaction_sql(
-      strings: string | TemplateStringsArray | import("internal/sql/shared.ts").SQLHelper<any> | Query<any, any>,
-      ...values: any[]
+      strings:
+        | string
+        | TemplateStringsArray
+        | import("internal/sql/shared.ts").SQLHelper<unknown>
+        | Query<unknown, unknown>,
+      ...values: unknown[]
     ) {
       if (
         state.connectionState & ReservedConnectionState.closed ||
@@ -602,7 +1094,7 @@ const SQL: typeof Bun.SQL = function SQL(
     };
     transaction_sql.commitDistributed = async function (name: string) {
       if (!pool.getCommitDistributedSQL) {
-        throw Error(`This adapter doesn't support distributed transactions.`);
+        throw new Error(`This adapter doesn't support distributed transactions.`);
       }
 
       const sql = pool.getCommitDistributedSQL(name);
@@ -610,7 +1102,7 @@ const SQL: typeof Bun.SQL = function SQL(
     };
     transaction_sql.rollbackDistributed = async function (name: string) {
       if (!pool.getRollbackDistributedSQL) {
-        throw Error(`This adapter doesn't support distributed transactions.`);
+        throw new Error(`This adapter doesn't support distributed transactions.`);
       }
 
       const sql = pool.getRollbackDistributedSQL(name);
@@ -835,13 +1327,1029 @@ const SQL: typeof Bun.SQL = function SQL(
   sql.array = (values: any[], typeNameOrID: number | string | undefined = undefined) => {
     return pool.array(values, typeNameOrID);
   };
+
+  type CopyReservedConnection = {
+    unsafe: (sqlText: string, values?: unknown[]) => Promise<any>;
+    release: () => Promise<void>;
+    onCopyStart?: (handler: () => void) => void;
+    onCopyChunk?: (handler: (chunk: string | ArrayBuffer | Uint8Array) => void) => boolean | void;
+    onCopyEnd?: (handler: () => void) => boolean | void;
+    copySendData: (data: string | Uint8Array) => void;
+    copyDone: () => void;
+    copyFail?: (message?: string) => void;
+    setCopyTimeout?: (ms: number) => void;
+    setCopyStreamingMode?: (enable: boolean) => void;
+    getCopyDefaults?: () => {
+      from?: { maxChunkSize?: number; maxBytes?: number; timeout?: number };
+      to?: { stream?: boolean; maxBytes?: number; timeout?: number };
+    };
+  };
+
+  // High-level COPY FROM STDIN helper
+  // Usage: await sql.copyFrom("table", ["col1","col2"], data, {
+  //   format: "text"|"csv"|"binary",
+  //   delimiter?: string,
+  //   null?: string,
+  //   sanitizeNUL?: boolean,        // strip NUL (0x00) from strings and raw bytes
+  //   replaceInvalid?: string,      // replacement for NUL in strings (default: "")
+  //   signal?: AbortSignal,         // optional cancellation
+  //   onProgress?: (info: { bytesSent: number; chunksSent: number }) => void, // optional progress
+  // })
+  // - data can be: string, any[][], generator/iterator, AsyncIterable<row[]>, or AsyncIterable<string|Uint8Array>
+  sql.copyFrom = async function (
+    this: Bun.SQL,
+    table: string,
+    columns: string[],
+    data:
+      | string
+      | unknown[]
+      | Iterable<unknown[]>
+      | AsyncIterable<unknown[]>
+      | AsyncIterable<string | Uint8Array | ArrayBuffer>
+      | (() => Iterable<unknown[]>),
+    options?: CopyFromOptions,
+  ) {
+    ensurePostgresAdapter(connectionInfo.adapter, "COPY");
+
+    if (typeof table !== "string" || table.length === 0) {
+      throw $ERR_INVALID_ARG_VALUE("table", table, "must be a non-empty string");
+    }
+
+    if (!$isArray(columns)) {
+      throw $ERR_INVALID_ARG_VALUE("columns", columns, "must be an array of strings");
+    }
+    for (let i = 0; i < columns.length; i++) {
+      const column = columns[i];
+      if (typeof column !== "string") {
+        throw $ERR_INVALID_ARG_VALUE(`columns[${i}]`, column, "must be a string");
+      }
+    }
+
+    if (options !== undefined) {
+      validateObject(options, "options");
+    }
+
+    // Reserve a dedicated connection for COPY
+    const reserved = (await sql.reserve()) as CopyReservedConnection;
+    const closeReserved = async () => {
+      try {
+        await reserved.release();
+      } catch {}
+    };
+
+    // Helpers
+    const escapeIdentifier =
+      pool.escapeIdentifier && typeof pool.escapeIdentifier === "function"
+        ? (s: string) => pool.escapeIdentifier(s)
+        : (s: string) => '"' + String(s).replaceAll('"', '""').replaceAll(".", '"."') + '"';
+
+    if (options?.format !== undefined) {
+      validateOneOf(options.format, "options.format", ["text", "csv", "binary"]);
+    }
+
+    const fmt = options?.format === "csv" ? "csv" : options?.format === "binary" ? "binary" : "text";
+
+    let delimiter = options?.delimiter ?? (fmt === "csv" ? "," : "\t");
+    if (delimiter !== undefined) {
+      delimiter = String(delimiter);
+      if (delimiter.length !== 1) {
+        throw $ERR_INVALID_ARG_VALUE("options.delimiter", delimiter, "must be exactly one character");
+      }
+    }
+
+    const nullToken = options?.null ?? (fmt === "csv" ? "" : "\\N");
+
+    const stripNul = options?.sanitizeNUL === true;
+    const replaceInvalid = options?.replaceInvalid ?? "";
+
+    const sanitizeString = (s: string) => (stripNul ? s.replaceAll("\u0000", replaceInvalid) : s);
+    const sanitizeBytes = (u8: Uint8Array) => {
+      if (!stripNul) return u8;
+      let keep = 0;
+      for (let i = 0; i < u8.length; i++) if (u8[i] !== 0) keep++;
+      if (keep === u8.length) return u8;
+      const out = new Uint8Array(keep);
+      let j = 0;
+      for (let i = 0; i < u8.length; i++) if (u8[i] !== 0) out[j++] = u8[i];
+      return out;
+    };
+
+    // Abort handling and progress
+    const signal: AbortSignal | undefined = options?.signal;
+    let aborted = false;
+    const counters = { bytesSent: 0, chunksSent: 0 };
+    const notifyProgress = () => {
+      try {
+        options?.onProgress?.({ bytesSent: counters.bytesSent, chunksSent: counters.chunksSent });
+      } catch {}
+    };
+    const onAbort = () => {
+      aborted = true;
+    };
+    if (signal) {
+      if (signal.aborted) onAbort();
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
+
+    const serializeValue = (v: any): string => {
+      if (v === null || v === undefined) return nullToken;
+      if (v instanceof Date) return v.toISOString();
+      if (typeof v === "boolean") return fmt === "csv" ? (v ? "true" : "false") : v ? "t" : "f";
+      if (typeof v === "number" || typeof v === "bigint") return String(v);
+      if (typeof v === "string") return sanitizeString(v);
+      if (ArrayBuffer.isView(v) && !globalThis.Buffer?.isBuffer?.(v)) {
+        // Typed array -> string
+        return String(v);
+      }
+      // Fallback stringify
+      try {
+        const json = JSON.stringify(v);
+        if (json === undefined) {
+          return sanitizeString(String(v));
+        }
+        return sanitizeString(json);
+      } catch {
+        return sanitizeString(String(v));
+      }
+    };
+
+    // Use shared needsCsvQuote(s, delimiter) from encoding utilities
+
+    const serializeRow = (row: any[]): string => {
+      if (fmt === "csv") {
+        const parts = row.map(v => {
+          // Check for actual null/undefined before serializing
+          if (v === null || v === undefined) {
+            // Emit caller-provided NULL literal; quote if needed for CSV
+            return needsCsvQuote(nullToken, delimiter) ? pgCsvQuote(nullToken) : nullToken;
+          }
+          const s = serializeValue(v);
+          // Empty string should be quoted to distinguish from NULL
+          if (s === "") {
+            return pgCsvQuote("");
+          }
+          return needsCsvQuote(s, delimiter) ? pgCsvQuote(s) : s;
+        });
+        return parts.join(delimiter) + "\n";
+      } else {
+        // text format: escape backslash, tab, LF, CR; null => \N
+        const parts = row.map(v => {
+          if (v === null || v === undefined) return nullToken;
+          const serialized = serializeValue(v);
+          return copyTextEscape(serialized);
+        });
+        return parts.join(delimiter) + "\n";
+      }
+    };
+
+    // TYPE_OID and TYPE_ARRAY_OID are now imported from postgres-encoding
+
+    const feedData = async () => {
+      // Batch size for accumulating small chunks (configurable)
+      const BATCH_SIZE =
+        options && typeof options.batchSize === "number" && options.batchSize > 0
+          ? (options.batchSize as number)
+          : DEFAULT_COPY_BATCH_SIZE;
+      let batch = "";
+
+      // Resolve limits once at start (avoid repeated option resolution inside loops)
+      const resolvedLimits = resolveCopyFromLimits(options, pool);
+      const resolvedMaxBytes = resolvedLimits.maxBytes;
+
+      // Binary COPY support using shared encoding utilities
+      let binaryHeaderSent = false;
+      const sendBinaryHeader = () => {
+        if (binaryHeaderSent) return;
+        reserved.copySendData(createBinaryCopyHeader());
+        binaryHeaderSent = true;
+      };
+      const sendBinaryTrailer = () => {
+        // Only emit the binary envelope for the automatic encoder path.
+        // For raw binary chunk streams, the caller is responsible for providing a correct envelope.
+        if (!shouldAutoEmitBinaryEnvelope) return;
+
+        // Always emit a valid trailer. If the header was never sent (e.g. empty iterable),
+        // send it now so the stream is still a valid PostgreSQL COPY BINARY payload.
+        if (!binaryHeaderSent) {
+          sendBinaryHeader();
+        }
+        reserved.copySendData(createBinaryCopyTrailer());
+      };
+
+      const shouldAutoEmitBinaryEnvelope = isCopyFromBinaryOptions(options);
+      if (shouldAutoEmitBinaryEnvelope) {
+        sendBinaryHeader();
+      }
+
+      const flushBatch = async () => {
+        if (batch.length > 0) {
+          // Enforce maxBytes and update progress before sending this batch
+          const bLen = getByteLength(batch);
+
+          if (resolvedMaxBytes && counters.bytesSent + bLen > resolvedMaxBytes) {
+            throw new Error("copyFrom: maxBytes exceeded");
+          }
+
+          await sendChunkedData(batch, reserved, pool, resolvedLimits, counters, notifyProgress);
+          batch = "";
+        }
+      };
+
+      const addToBatch = async (chunk: string) => {
+        batch += chunk;
+        if (batch.length >= BATCH_SIZE) {
+          await flushBatch();
+        }
+      };
+
+      // Send data depending on type
+      if (typeof data === "string") {
+        if (fmt === "binary") {
+          throw new Error(
+            'copyFrom: string payloads are not allowed when format is "binary". Provide row arrays with options.binaryTypes for automatic encoding, or provide raw byte chunks (Uint8Array/ArrayBuffer) that already include the COPY BINARY envelope.',
+          );
+        }
+        if (aborted) throw new Error("AbortError");
+        const payload = sanitizeString(data);
+        await sendChunkedData(payload, reserved, pool, resolvedLimits, counters, notifyProgress);
+        sendBinaryTrailer();
+        reserved.copyDone();
+        return;
+      }
+
+      const maybeIter = typeof data === "function" ? data() : data;
+
+      let cachedBinaryTypes: ReturnType<typeof validateBinaryTypes> | undefined = undefined;
+      const getBinaryTypes = () => {
+        if (cachedBinaryTypes !== undefined) return cachedBinaryTypes;
+        cachedBinaryTypes = validateBinaryTypes(options, columns);
+        return cachedBinaryTypes;
+      };
+
+      // Async iterable (rows or raw string/Uint8Array chunks)
+      if (isAsyncIterable(maybeIter)) {
+        for await (const item of maybeIter as AsyncIterable<unknown>) {
+          if (aborted) throw new Error("AbortError");
+          if ($isArray(item)) {
+            if (fmt === "binary") {
+              const types = getBinaryTypes();
+              await flushBatch();
+              const payload = encodeBinaryRow(item, types);
+              await sendChunkedData(payload, reserved, pool, resolvedLimits, counters, notifyProgress);
+            } else {
+              // text/csv: treat as row[]
+              await addToBatch(serializeRow(item));
+            }
+          } else if (typeof item === "string") {
+            if (fmt === "binary") {
+              throw $ERR_INVALID_ARG_VALUE(
+                "data",
+                item,
+                'must be an array row or a byte source when format is "binary"',
+              );
+            }
+            // raw string chunk
+            await addToBatch(sanitizeString(item));
+          } else if (hasByteLength(item)) {
+            // raw bytes (Uint8Array or ArrayBuffer) - flush and send directly
+            await flushBatch();
+            const view = toUint8ArrayView(item);
+            if (!view) {
+              throw $ERR_INVALID_ARG_VALUE("data", item, "must be a string, an array row, or a byte source");
+            }
+            // For binary format, send raw bytes as-is; for text/csv, sanitize NUL bytes if requested
+            const src = fmt === "binary" ? view : sanitizeBytes(view);
+            await sendChunkedData(src, reserved, pool, resolvedLimits, counters, notifyProgress);
+          } else {
+            if (fmt === "binary") {
+              throw $ERR_INVALID_ARG_VALUE(
+                "data",
+                item,
+                'must be an array row or a byte source when format is "binary"',
+              );
+            }
+            // fallback: attempt to serialize as a row
+            await addToBatch(serializeRow(item));
+          }
+        }
+        await flushBatch();
+        sendBinaryTrailer();
+        reserved.copyDone();
+        return;
+      }
+
+      // Raw byte buffers (Uint8Array/Buffer/ArrayBuffer) are iterable, so handle them before the generic iterable branch.
+      if (hasByteLength(maybeIter)) {
+        if (aborted) throw new Error("AbortError");
+        await flushBatch();
+        if (aborted) throw new Error("AbortError");
+        const view = toUint8ArrayView(maybeIter);
+        if (!view) {
+          throw $ERR_INVALID_ARG_VALUE("data", maybeIter, "must be a string, an array row, or a byte source");
+        }
+        const src = fmt === "binary" ? view : sanitizeBytes(view);
+        await sendChunkedData(src, reserved, pool, resolvedLimits, counters, notifyProgress);
+        sendBinaryTrailer();
+        reserved.copyDone();
+        return;
+      }
+
+      // Sync iterable (rows or raw string/Uint8Array chunks)
+      if (isIterable(maybeIter)) {
+        for (const item of maybeIter as Iterable<unknown>) {
+          if (aborted) throw new Error("AbortError");
+          if ($isArray(item)) {
+            if (fmt === "binary") {
+              const types = getBinaryTypes();
+              if (aborted) throw new Error("AbortError");
+              await flushBatch();
+              if (aborted) throw new Error("AbortError");
+              const payload = encodeBinaryRow(item, types);
+              await sendChunkedData(payload, reserved, pool, resolvedLimits, counters, notifyProgress);
+            } else {
+              if (aborted) throw new Error("AbortError");
+              await addToBatch(serializeRow(item));
+            }
+          } else if (typeof item === "string") {
+            if (aborted) throw new Error("AbortError");
+            if (fmt === "binary") {
+              throw $ERR_INVALID_ARG_VALUE(
+                "data",
+                item,
+                'must be an array row or a byte source when format is "binary"',
+              );
+            }
+            await addToBatch(sanitizeString(item));
+          } else if (hasByteLength(item)) {
+            // raw bytes (Uint8Array or ArrayBuffer) - flush and send directly
+            if (aborted) throw new Error("AbortError");
+            await flushBatch();
+            if (aborted) throw new Error("AbortError");
+            const view = toUint8ArrayView(item);
+            if (!view) {
+              throw $ERR_INVALID_ARG_VALUE("data", item, "must be a string, an array row, or a byte source");
+            }
+            const src = fmt === "binary" ? view : sanitizeBytes(view);
+            await sendChunkedData(src, reserved, pool, resolvedLimits, counters, notifyProgress);
+          } else {
+            if (aborted) throw new Error("AbortError");
+            if (fmt === "binary") {
+              throw $ERR_INVALID_ARG_VALUE(
+                "data",
+                item,
+                'must be an array row or a byte source when format is "binary"',
+              );
+            }
+            await addToBatch(serializeRow(item));
+          }
+        }
+        await flushBatch();
+        sendBinaryTrailer();
+        reserved.copyDone();
+        return;
+      }
+
+      // Array of arrays
+      if ($isArray(data)) {
+        if (fmt === "binary") {
+          if (!isCopyFromBinaryOptions(options)) {
+            throw $ERR_INVALID_ARG_VALUE(
+              "options.binaryTypes",
+              undefined,
+              'must be provided when format is "binary" and data is an array of rows',
+            );
+          }
+
+          const types = validateBinaryTypes(options, columns);
+          await flushBatch();
+
+          for (let i = 0; i < data.length; i++) {
+            const row = data[i];
+            if (aborted) throw new Error("AbortError");
+            if (!$isArray(row)) {
+              throw $ERR_INVALID_ARG_VALUE(`data[${i}]`, row, "must be an array");
+            }
+            const payload = encodeBinaryRow(row, types);
+            await sendChunkedData(payload, reserved, pool, resolvedLimits, counters, notifyProgress);
+          }
+
+          await flushBatch();
+          sendBinaryTrailer();
+          reserved.copyDone();
+          return;
+        }
+
+        for (const row of data) {
+          if (aborted) throw new Error("AbortError");
+          await addToBatch(serializeRow(row));
+        }
+        await flushBatch();
+        reserved.copyDone();
+        return;
+      }
+
+      // Fallback: treat as string
+      if (aborted) throw new Error("AbortError");
+      const fallback = sanitizeString(String(data ?? ""));
+      await sendChunkedData(fallback, reserved, pool, resolvedLimits, counters, notifyProgress);
+      sendBinaryTrailer();
+      reserved.copyDone();
+    };
+
+    try {
+      // Register one-shot onCopyStart to feed rows
+      if (typeof reserved.onCopyStart === "function") {
+        reserved.onCopyStart(() => {
+          // Properly handle errors during data feeding
+          feedData().catch(feedErr => {
+            try {
+              // Send CopyFail to server to abort the COPY operation
+              if (typeof reserved.copyFail === "function") {
+                reserved.copyFail(String(feedErr?.message || feedErr || "Error feeding data"));
+              }
+            } catch {}
+          });
+        });
+      }
+
+      // Build and run COPY ... FROM STDIN
+      const cols = (columns ?? []).map(c => escapeIdentifier(String(c))).join(", ");
+      const tableName = escapeIdentifier(String(table));
+      // If automatic binary encoding is requested, validate column OIDs match expected types
+      if (fmt === "binary" && isCopyFromBinaryOptions(options)) {
+        const typeTokens = options.binaryTypes;
+        if (typeTokens.length !== (columns?.length ?? typeTokens.length)) {
+          throw new Error("binaryTypes length must match number of columns for COPY FROM.");
+        }
+        // Fetch column OIDs in the provided order using array_position for stable ordering
+        const colNames = columns ?? [];
+        // Determine schema and relation name (unquoted) for OID validation
+        const rawTable = String(table).replaceAll('"', "");
+        let schemaName: string | null = null;
+        let relName = rawTable;
+        const dotIndex = rawTable.indexOf(".");
+        if (dotIndex !== -1) {
+          schemaName = rawTable.slice(0, dotIndex);
+          relName = rawTable.slice(dotIndex + 1);
+        }
+
+        // Fetch all columns and validate in JS according to the provided columns[] order
+        const q = `
+          SELECT a.attname::text AS name, a.atttypid::oid AS oid
+          FROM pg_catalog.pg_attribute a
+          JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
+          JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+          WHERE c.relname = $1
+            AND ($2::text IS NULL OR n.nspname = $2)
+            AND a.attnum > 0 AND NOT a.attisdropped
+          ORDER BY a.attnum
+        `;
+        const rows = await reserved.unsafe(q, [relName, schemaName]);
+        // Build expected OIDs for provided type tokens
+        const expectedOids: number[] = typeTokens.map(tok => {
+          if (tok.endsWith("[]")) {
+            const arrOid = TYPE_ARRAY_OID[tok];
+            if (!arrOid) throw new Error(`Unsupported array type for validation: ${tok}`);
+            return arrOid;
+          }
+          // map varchar/bpchar to their OIDs, otherwise base TYPE_OID
+          const base =
+            TYPE_OID[tok] ?? (tok === "varchar" ? TYPE_OID.varchar : tok === "bpchar" ? TYPE_OID.bpchar : undefined);
+          if (!base && base !== 0) throw new Error(`Unsupported type for validation: ${tok}`);
+          // Column OID must be the base type OID when not array
+          return base!;
+        });
+        if (!$isArray(rows) || rows.length === 0) {
+          throw new Error("Could not resolve column OIDs for validation.");
+        }
+        if ((colNames?.length ?? 0) > 0) {
+          const oidByName = new Map<string, number>();
+          for (const r of rows) {
+            if (typeof r?.name === "string" && typeof r?.oid === "number") {
+              oidByName.set(r.name, r.oid);
+            }
+          }
+          for (let i = 0; i < expectedOids.length; i++) {
+            const colName = String(colNames[i]);
+            const got = oidByName.get(colName);
+            const want = expectedOids[i];
+            if (typeof got !== "number" || got !== want) {
+              throw new Error(
+                `COPY binaryTypes validation failed for column "${colName}": expected OID ${want}, got ${got}`,
+              );
+            }
+          }
+        } else {
+          if (rows.length < expectedOids.length) {
+            throw new Error("Could not resolve column OIDs for validation.");
+          }
+          for (let i = 0; i < expectedOids.length; i++) {
+            const got = rows[i]?.oid;
+            const want = expectedOids[i];
+            if (typeof got !== "number" || got !== want) {
+              throw new Error(
+                `COPY binaryTypes validation failed for column #${i + 1}: expected OID ${want}, got ${got}`,
+              );
+            }
+          }
+        }
+      }
+      let sqlText = cols ? `COPY ${tableName} (${cols}) FROM STDIN` : `COPY ${tableName} FROM STDIN`;
+      if (fmt === "csv" || fmt === "text") {
+        const delimiterOption =
+          delimiter && String(delimiter).length === 1 ? `, DELIMITER '${String(delimiter).replaceAll("'", "''")}'` : "";
+        const nullOption = options?.null != null ? `, NULL '${String(nullToken).replaceAll("'", "''")}'` : "";
+        const formatOption = fmt === "csv" ? "CSV" : "TEXT";
+        sqlText += ` (FORMAT ${formatOption}${delimiterOption}${nullOption})`;
+      } else if (fmt === "binary") {
+        sqlText += ` (FORMAT BINARY)`;
+      }
+
+      // Handle AbortSignal: if aborted before issuing query
+      if (aborted) throw new Error("AbortError");
+
+      // Apply COPY FROM timeout default (if provided) before issuing the command
+      try {
+        const __defaults__ =
+          (reserved && typeof reserved.getCopyDefaults === "function" ? reserved.getCopyDefaults() : undefined) ||
+          (pool && typeof pool.getCopyDefaults === "function" ? pool.getCopyDefaults() : undefined) ||
+          undefined;
+
+        const __fromDefaults__ = (__defaults__ && __defaults__.from) || {
+          maxChunkSize: DEFAULT_COPY_MAX_CHUNK_SIZE,
+          maxBytes: 0,
+          timeout: 0,
+        };
+        const timeout =
+          options && typeof options.timeout === "number" && options.timeout >= 0
+            ? Math.max(0, Math.trunc(options.timeout))
+            : Math.max(0, Math.trunc(__fromDefaults__.timeout ?? 0));
+        if (typeof reserved.setCopyTimeout === "function") {
+          try {
+            reserved.setCopyTimeout(timeout);
+          } catch {}
+        }
+      } catch {}
+
+      const result = await reserved.unsafe(sqlText);
+      await closeReserved();
+      return result;
+    } catch (err) {
+      // Ensure we send CopyFail if we haven't already
+      try {
+        if (typeof reserved.copyFail === "function") {
+          reserved.copyFail(String(err?.message || err || "COPY operation failed"));
+        }
+      } catch {}
+      await closeReserved();
+      throw err;
+    } finally {
+      // detach abort listener
+      if (options?.signal) {
+        options.signal.removeEventListener("abort", onAbort);
+      }
+    }
+  };
+
+  // Streaming COPY TO STDOUT helper:
+  // Usage:
+  //   for await (const chunk of sql.copyTo(`COPY (SELECT ...) TO STDOUT`)) {
+  //     // chunk is string for text format, ArrayBuffer for binary
+  //   }
+  // or pass table/columns/options:
+  //   for await (const chunk of sql.copyTo({
+  //     table: "t",
+  //     columns: ["a","b"],
+  //     format: "csv",
+  //     signal?: AbortSignal,
+  //     onProgress?: (info: { bytesReceived: number; chunksReceived: number }) => void,
+  //   })) { ... }
+  sql.copyTo = function (this: Bun.SQL, queryOrOptions: string | CopyToOptions): AsyncIterable<string | ArrayBuffer> {
+    ensurePostgresAdapter(connectionInfo.adapter, "COPY");
+
+    const self = this;
+    const makeQuery = () => {
+      if (typeof queryOrOptions === "string") {
+        return queryOrOptions;
+      }
+
+      validateObject(queryOrOptions, "queryOrOptions");
+
+      const table = queryOrOptions.table;
+      if ((typeof table !== "string" && typeof table !== "symbol") || String(table).length === 0) {
+        throw $ERR_INVALID_ARG_VALUE("queryOrOptions.table", table, "must be a non-empty string or symbol");
+      }
+
+      const format = queryOrOptions.format;
+      if (format !== undefined) {
+        validateOneOf(format, "queryOrOptions.format", ["text", "csv", "binary"]);
+      }
+
+      const columns = queryOrOptions.columns;
+      if (columns !== undefined && !$isArray(columns)) {
+        throw $ERR_INVALID_ARG_VALUE("queryOrOptions.columns", columns, "must be an array of strings");
+      }
+      if ($isArray(columns)) {
+        for (let i = 0; i < columns.length; i++) {
+          const column = columns[i];
+          if (typeof column !== "string" || column.length === 0) {
+            throw $ERR_INVALID_ARG_VALUE(`queryOrOptions.columns[${i}]`, column, "must be a non-empty string");
+          }
+        }
+      }
+
+      // Use adapter's escapeIdentifier to handle schema-qualified names correctly
+      const escapeIdentifier = pool.escapeIdentifier
+        ? pool.escapeIdentifier.bind(pool)
+        : (str: string) => '"' + String(str).replaceAll('"', '""').replaceAll(".", '"."') + '"';
+
+      const tableName = escapeIdentifier(String(table));
+      const list = $isArray(columns) ? columns.map(c => escapeIdentifier(String(c))).join(", ") : "";
+      const fmt = format === "csv" ? " (FORMAT CSV)" : format === "binary" ? " (FORMAT BINARY)" : "";
+      return `COPY ${tableName}${list ? ` (${list})` : ""} TO STDOUT${fmt}`;
+    };
+
+    return {
+      async *[Symbol.asyncIterator](): AsyncIterator<string | ArrayBuffer> {
+        const reserved = await self.reserve();
+        const chunks: any[] = [];
+        let done = false;
+        let rejectErr: any = null;
+
+        // Progress and abort state
+        let bytesReceived = 0;
+        let chunksReceived = 0;
+        const notifyProgress = () => {
+          try {
+            if (typeof queryOrOptions !== "string") {
+              queryOrOptions.onProgress?.({ bytesReceived, chunksReceived });
+            }
+          } catch {}
+        };
+        let aborted = false;
+        const signal = typeof queryOrOptions === "string" ? undefined : queryOrOptions.signal;
+        const onAbort = () => {
+          aborted = true;
+          if (chunkResolve) {
+            chunkResolve();
+            chunkResolve = null;
+          }
+        };
+        if (signal) {
+          if (signal.aborted) onAbort();
+          signal.addEventListener("abort", onAbort, { once: true });
+        }
+
+        let chunkResolve: (() => void) | null = null;
+
+        const waitForChunk = () =>
+          new Promise<void>(r => {
+            chunkResolve = r;
+          });
+
+        let hasCopyChunkHandler = false;
+        let hasCopyEndHandler = false;
+
+        // Register streaming handlers (wrapper functions always exist; detect real registration via return value)
+        if (typeof reserved.onCopyChunk === "function") {
+          hasCopyChunkHandler =
+            reserved.onCopyChunk((chunk: any) => {
+              chunks.push(chunk);
+              if (chunkResolve) {
+                chunkResolve();
+                chunkResolve = null;
+              }
+              try {
+                // Update progress
+                if (chunk instanceof ArrayBuffer) {
+                  bytesReceived += chunk.byteLength;
+                } else if (typeof chunk === "string") {
+                  bytesReceived += Buffer?.byteLength
+                    ? Buffer.byteLength(chunk, "utf8")
+                    : new TextEncoder().encode(chunk).byteLength;
+                } else if (chunk?.byteLength != null) {
+                  bytesReceived += chunk.byteLength;
+                }
+                chunksReceived += 1;
+                notifyProgress();
+                // Guardrail: maxBytes
+                const toMax = resolveCopyToMaxBytes(queryOrOptions, pool);
+                if (toMax > 0 && bytesReceived > toMax) {
+                  rejectErr = new Error("copyTo: maxBytes exceeded");
+                  done = true;
+                  // Immediately release connection to halt incoming data
+                  try {
+                    reserved.release();
+                  } catch {}
+                }
+              } catch {}
+            }) === true;
+        }
+
+        if (typeof reserved.onCopyEnd === "function") {
+          hasCopyEndHandler =
+            reserved.onCopyEnd(() => {
+              done = true;
+              if (chunkResolve) {
+                chunkResolve();
+                chunkResolve = null;
+              }
+            }) === true;
+        }
+
+        const toUint8Array = (value: unknown): Uint8Array | null => {
+          if (value instanceof Uint8Array) return value;
+          if (value instanceof ArrayBuffer) return new Uint8Array(value);
+          if (ArrayBuffer.isView(value)) {
+            const view = value as ArrayBufferView;
+            return new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+          }
+          return null;
+        };
+
+        const toRealArrayBuffer = (u8: Uint8Array): ArrayBuffer => {
+          const buffer = u8.buffer;
+          if (buffer instanceof ArrayBuffer && u8.byteOffset === 0 && u8.byteLength === buffer.byteLength) {
+            return buffer;
+          }
+          return u8.slice().buffer;
+        };
+
+        const joinUint8Arrays = (parts: Uint8Array[]): ArrayBuffer => {
+          let total = 0;
+          for (let i = 0; i < parts.length; i++) total += parts[i].byteLength;
+          const out = new Uint8Array(total);
+          let offset = 0;
+          for (let i = 0; i < parts.length; i++) {
+            out.set(parts[i], offset);
+            offset += parts[i].byteLength;
+          }
+          return toRealArrayBuffer(out);
+        };
+
+        const yieldAccumulated = async function* (
+          accumulated: unknown,
+          isBinary: boolean,
+          format: string | undefined,
+        ): AsyncGenerator<string | ArrayBuffer, void, void> {
+          if (isBinary) {
+            if ($isArray(accumulated)) {
+              const parts: Uint8Array[] = [];
+              for (let i = 0; i < accumulated.length; i++) {
+                const u8 = toUint8Array(accumulated[i]);
+                if (!u8) {
+                  throw $ERR_INVALID_ARG_VALUE(
+                    "format",
+                    format,
+                    'COPY TO returned non-binary data while format is "binary"',
+                  );
+                }
+                parts.push(u8);
+              }
+              yield joinUint8Arrays(parts);
+              return;
+            }
+
+            const value = accumulated ?? null;
+            const u8 = toUint8Array(value);
+            if (!u8) {
+              throw $ERR_INVALID_ARG_VALUE(
+                "format",
+                format,
+                'COPY TO returned non-binary data while format is "binary"',
+              );
+            }
+            yield toRealArrayBuffer(u8);
+            return;
+          }
+
+          if ($isArray(accumulated)) {
+            yield accumulated.map(x => String(x ?? "")).join("");
+            return;
+          }
+
+          yield String(accumulated ?? "");
+        };
+
+        try {
+          if (aborted) throw new Error("AbortError");
+
+          // Determine whether streaming was requested for COPY TO.
+          const __defaults__ =
+            (reserved && typeof reserved.getCopyDefaults === "function" ? reserved.getCopyDefaults() : undefined) ||
+            (pool && typeof pool.getCopyDefaults === "function" ? pool.getCopyDefaults() : undefined) ||
+            undefined;
+
+          const __toDefaults__ = (__defaults__ && __defaults__.to) || { stream: true, maxBytes: 0, timeout: 0 };
+          const desiredStream =
+            typeof queryOrOptions === "string"
+              ? __toDefaults__.stream
+              : queryOrOptions.stream !== undefined
+                ? !!queryOrOptions.stream
+                : __toDefaults__.stream;
+
+          const timeout =
+            typeof queryOrOptions === "string"
+              ? (__toDefaults__.timeout ?? 0)
+              : queryOrOptions.timeout !== undefined
+                ? (() => {
+                    const value = queryOrOptions.timeout;
+                    if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+                      throw $ERR_INVALID_ARG_VALUE(
+                        "queryOrOptions.timeout",
+                        value,
+                        "must be a finite non-negative number",
+                      );
+                    }
+                    return Math.trunc(value);
+                  })()
+                : (__toDefaults__.timeout ?? 0);
+
+          // Tightened semantics:
+          // - If streaming is requested but we do not have an onCopyChunk handler, we force accumulation
+          //   and yield exactly one chunk (the accumulated payload).
+          if (desiredStream && !hasCopyChunkHandler) {
+            if (typeof reserved.setCopyTimeout === "function") {
+              try {
+                reserved.setCopyTimeout(timeout);
+              } catch {}
+            }
+
+            if (typeof reserved.setCopyStreamingMode === "function") {
+              try {
+                reserved.setCopyStreamingMode(false);
+              } catch {}
+            }
+
+            const q = makeQuery();
+            const accumulated = await reserved.unsafe(q);
+
+            const format = typeof queryOrOptions === "string" ? undefined : queryOrOptions.format;
+            const isBinary = format === "binary";
+
+            for await (const part of yieldAccumulated(accumulated, isBinary, format)) {
+              yield part;
+            }
+
+            done = true;
+          } else if (!desiredStream) {
+            if (typeof reserved.setCopyTimeout === "function") {
+              try {
+                reserved.setCopyTimeout(timeout);
+              } catch {}
+            }
+
+            if (typeof reserved.setCopyStreamingMode === "function") {
+              try {
+                reserved.setCopyStreamingMode(false);
+              } catch {}
+            }
+
+            const q = makeQuery();
+            const accumulated = await reserved.unsafe(q);
+
+            const format = typeof queryOrOptions === "string" ? undefined : queryOrOptions.format;
+            const isBinary = format === "binary";
+
+            for await (const part of yieldAccumulated(accumulated, isBinary, format)) {
+              yield part;
+            }
+
+            done = true;
+          } else {
+            // Enable streaming mode to avoid accumulation in Zig during COPY TO.
+            if (typeof reserved.setCopyStreamingMode === "function") {
+              try {
+                if (typeof reserved.setCopyTimeout === "function") {
+                  try {
+                    reserved.setCopyTimeout(timeout);
+                  } catch {}
+                }
+
+                reserved.setCopyStreamingMode(!!desiredStream);
+              } catch {}
+            }
+
+            // Start COPY TO STDOUT
+            const q = makeQuery();
+            await reserved.unsafe(q);
+
+            // Drain chunks as they arrive; finish when done flag is set
+            while (!done || chunks.length > 0) {
+              if (aborted) {
+                // Stop consumption early; close the reserved connection to abort server-side
+                rejectErr = new Error("AbortError");
+                break;
+              }
+              if (chunks.length === 0) {
+                // yield to event loop
+                await waitForChunk();
+                continue;
+              }
+              const next = chunks.shift();
+              if (next instanceof Uint8Array) {
+                // Normalize Uint8Array view to an ArrayBuffer containing only the view's bytes
+                const buffer = next.buffer.slice(next.byteOffset, next.byteOffset + next.byteLength);
+                yield buffer;
+              } else {
+                yield next;
+              }
+            }
+          }
+        } catch (e) {
+          rejectErr = e;
+        } finally {
+          try {
+            if (typeof reserved.setCopyStreamingMode === "function") {
+              try {
+                reserved.setCopyStreamingMode(false);
+              } catch {}
+            }
+            await reserved.release();
+          } catch {}
+          if (signal) {
+            signal.removeEventListener("abort", onAbort);
+          }
+        }
+
+        if (rejectErr) {
+          throw rejectErr;
+        }
+      },
+    };
+  };
+
+  // Helper to pipe COPY TO stream directly into a WritableStream or stream-like sink
+  // Usage:
+  //   await sql.copyToPipeTo({ table: "t", format: "binary" }, writable)
+  // Where writable is a Web WritableStream or an object with write(), close()/end()
+  sql.copyToPipeTo = async function (
+    this: Bun.SQL,
+    queryOrOptions: string | CopyToOptions,
+    writable:
+      | WritableStream<Uint8Array | string>
+      | {
+          write: (chunk: string | ArrayBuffer | Uint8Array) => unknown | Promise<unknown>;
+          close?: () => unknown | Promise<unknown>;
+          end?: () => unknown | Promise<unknown>;
+        },
+  ) {
+    ensurePostgresAdapter(connectionInfo.adapter, "COPY");
+
+    const isWritable = isWritableStream(writable);
+    const isStreamLike = isWritableSink(writable);
+
+    if (!isWritable && !isStreamLike) {
+      throw $ERR_INVALID_ARG_VALUE("writable", writable, "must be a WritableStream or an object with a write() method");
+    }
+
+    const iterable = this.copyTo(queryOrOptions);
+
+    // Web WritableStream path
+    if (isWritable) {
+      const writer = writable.getWriter();
+      try {
+        for await (const chunk of iterable) {
+          // Normalize ArrayBuffer to Uint8Array for WritableStream
+          if (chunk instanceof ArrayBuffer) {
+            await writer.write(new Uint8Array(chunk));
+          } else {
+            await writer.write(chunk);
+          }
+        }
+        await writer.close();
+      } catch (e) {
+        try {
+          await writer.close();
+        } catch {}
+        throw e;
+      }
+      return;
+    }
+
+    // Generic stream-like sink with write()/close() or end()
+    if (isStreamLike) {
+      for await (const chunk of iterable) {
+        await writable.write(chunk);
+      }
+      if (typeof writable.close === "function") {
+        await writable.close();
+      } else if (typeof writable.end === "function") {
+        await writable.end();
+      }
+      return;
+    }
+
+    throw $ERR_INVALID_ARG_VALUE("writable", writable, "must be a WritableStream or an object with a write() method");
+  };
+
   sql.rollbackDistributed = async function (name: string) {
     if (pool.closed) {
       throw pool.connectionClosedError();
     }
 
     if (!pool.getRollbackDistributedSQL) {
-      throw Error(`This adapter doesn't support distributed transactions.`);
+      throw new Error(`This adapter doesn't support distributed transactions.`);
     }
 
     const sqlQuery = pool.getRollbackDistributedSQL(name);
@@ -854,7 +2362,7 @@ const SQL: typeof Bun.SQL = function SQL(
     }
 
     if (!pool.getCommitDistributedSQL) {
-      throw Error(`This adapter doesn't support distributed transactions.`);
+      throw new Error(`This adapter doesn't support distributed transactions.`);
     }
 
     const sqlQuery = pool.getCommitDistributedSQL(name);
@@ -936,6 +2444,18 @@ const SQL: typeof Bun.SQL = function SQL(
   sql.transaction = sql.begin;
   sql.distributed = sql.beginDistributed;
   sql.end = sql.close;
+  // Expose adapter-level COPY defaults on SQL instance (only when supported by adapter)
+  if (pool && typeof pool.getCopyDefaults === "function" && typeof pool.setCopyDefaults === "function") {
+    sql.getCopyDefaults = () => pool.getCopyDefaults();
+    sql.setCopyDefaults = (defaults: {
+      from?: { maxChunkSize?: number; maxBytes?: number; timeout?: number };
+      to?: { stream?: boolean; maxBytes?: number; timeout?: number };
+    }) => {
+      pool.setCopyDefaults(defaults);
+      return sql;
+    };
+  }
+
   return sql;
 };
 

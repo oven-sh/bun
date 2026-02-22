@@ -242,6 +242,8 @@ pub fn crashHandler(
                 // To make the release-mode behavior easier to demo, debug mode
                 // checks for this CLI flag.
                 const debug_trace = bun.Environment.show_crash_trace and check_flag: {
+                    if (Bun__forceDumpCrashTrace) break :check_flag true;
+
                     for (bun.argv) |arg| {
                         if (bun.strings.eqlComptime(arg, "--debug-crash-handler-use-trace-string")) {
                             break :check_flag false;
@@ -1647,13 +1649,15 @@ pub inline fn handleErrorReturnTrace(err: anyerror, maybe_trace: ?*std.builtin.S
 }
 extern "c" fn WTF__DumpStackTrace(ptr: [*]usize, count: usize) void;
 
+pub export var Bun__forceDumpCrashTrace: bool = false;
+
 /// Version of the standard library dumpStackTrace that has some fallbacks for
 /// cases where such logic fails to run.
 pub fn dumpStackTrace(trace: std.builtin.StackTrace, limits: WriteStackTraceLimits) void {
     Output.flush();
     var stderr_w = std.fs.File.stderr().writerStreaming(&.{});
     const stderr = &stderr_w.interface;
-    if (!bun.Environment.show_crash_trace) {
+    if (!bun.Environment.show_crash_trace and !Bun__forceDumpCrashTrace) {
         // debug symbols aren't available, lets print a tracestring
         stderr.print("View Debug Trace: {f}\n", .{TraceString{
             .action = .view_trace,

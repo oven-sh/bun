@@ -9,7 +9,11 @@
   },
   {
     "output": "ZigGeneratedClassesSources.txt",
-    "paths": ["src/bun.js/*.classes.ts", "src/bun.js/{api,node,test,webcore}/*.classes.ts"]
+    "paths": [
+      "src/bun.js/*.classes.ts",
+      "src/bun.js/{api,node,test,webcore}/*.classes.ts",
+      "src/bun.js/api/tui/*.classes.ts"
+    ]
   },
   {
     "output": "JavaScriptSources.txt",

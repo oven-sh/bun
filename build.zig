@@ -759,7 +759,6 @@ fn configureObj(b: *Build, opts: *BunBuildOptions, obj: *Compile) void {
 
     obj.no_link_obj = opts.os != .windows and !opts.no_llvm;
 
-
     if (opts.enable_asan and !enableFastBuild(b)) {
         if (@hasField(Build.Module, "sanitize_address")) {
             if (opts.enable_fuzzilli) {
@@ -868,6 +867,28 @@ fn addInternalImports(b: *Build, mod: *Module, opts: *BunBuildOptions) void {
     mod.addAnonymousImport("async", .{
         .root_source_file = b.path(async_path),
     });
+
+    // Ghostty terminal module — used by Bun's TUI primitives (Screen/Writer).
+    // We provide terminal_options matching Ghostty's build_options.zig.Options.
+    {
+        // Must match ghostty's terminal/build_options.zig Artifact enum
+        const GhosttyArtifact = enum { ghostty, lib };
+
+        const ghostty_terminal_opts = b.addOptions();
+        ghostty_terminal_opts.addOption(GhosttyArtifact, "artifact", .lib);
+        ghostty_terminal_opts.addOption(bool, "c_abi", false);
+        ghostty_terminal_opts.addOption(bool, "oniguruma", false);
+        ghostty_terminal_opts.addOption(bool, "simd", true);
+        ghostty_terminal_opts.addOption(bool, "slow_runtime_safety", false);
+        ghostty_terminal_opts.addOption(bool, "kitty_graphics", false);
+        ghostty_terminal_opts.addOption(bool, "tmux_control_mode", false);
+
+        const ghostty_mod = b.createModule(.{
+            .root_source_file = b.path("vendor/ghostty/src/ghostty_terminal.zig"),
+        });
+        ghostty_mod.addOptions("terminal_options", ghostty_terminal_opts);
+        mod.addImport("ghostty", ghostty_mod);
+    }
 
     // Generated code exposed as individual modules.
     inline for (.{

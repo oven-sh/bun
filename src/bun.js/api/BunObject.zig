@@ -83,6 +83,10 @@ pub const BunObject = struct {
     pub const ValkeyClient = toJSLazyPropertyCallback(Bun.getValkeyClientConstructor);
     pub const valkey = toJSLazyPropertyCallback(Bun.getValkeyDefaultClient);
     pub const Terminal = toJSLazyPropertyCallback(Bun.getTerminalConstructor);
+    pub const TUIScreen = toJSLazyPropertyCallback(Bun.getScreenConstructor);
+    pub const TUITerminalWriter = toJSLazyPropertyCallback(Bun.getTerminalWriterConstructor);
+    pub const TUIBufferWriter = toJSLazyPropertyCallback(Bun.getBufferWriterConstructor);
+    pub const TUIKeyReader = toJSLazyPropertyCallback(Bun.getKeyReaderConstructor);
     // --- Lazy property callbacks ---
 
     // --- Getters ---
@@ -153,6 +157,10 @@ pub const BunObject = struct {
         @export(&BunObject.ValkeyClient, .{ .name = lazyPropertyCallbackName("ValkeyClient") });
         @export(&BunObject.valkey, .{ .name = lazyPropertyCallbackName("valkey") });
         @export(&BunObject.Terminal, .{ .name = lazyPropertyCallbackName("Terminal") });
+        @export(&BunObject.TUIScreen, .{ .name = lazyPropertyCallbackName("TUIScreen") });
+        @export(&BunObject.TUITerminalWriter, .{ .name = lazyPropertyCallbackName("TUITerminalWriter") });
+        @export(&BunObject.TUIBufferWriter, .{ .name = lazyPropertyCallbackName("TUIBufferWriter") });
+        @export(&BunObject.TUIKeyReader, .{ .name = lazyPropertyCallbackName("TUIKeyReader") });
         // --- Lazy property callbacks ---
 
         // --- Callbacks ---
@@ -1342,6 +1350,22 @@ pub fn getValkeyClientConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObj
 
 pub fn getTerminalConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
     return api.Terminal.js.getConstructor(globalThis);
+}
+
+pub fn getScreenConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
+    return api.TuiScreen.js.getConstructor(globalThis);
+}
+
+pub fn getTerminalWriterConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
+    return api.TuiTerminalWriter.js.getConstructor(globalThis);
+}
+
+pub fn getBufferWriterConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
+    return api.TuiBufferWriter.js.getConstructor(globalThis);
+}
+
+pub fn getKeyReaderConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
+    return api.TuiKeyReader.js.getConstructor(globalThis);
 }
 
 pub fn getEmbeddedFiles(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) bun.JSError!jsc.JSValue {

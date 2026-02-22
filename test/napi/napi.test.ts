@@ -822,6 +822,24 @@ describe("cleanup hooks", () => {
       expect(output).toContain("PASS: napi_create_threadsafe_function accepted AsyncContextFrame");
     });
 
+    it("should not crash when given an invalid pointer as napi_value", async () => {
+      // Regression test for BUN-1PYR: napi_typeof segfaults when a native
+      // module passes a raw C string pointer as napi_value. The crash address
+      // 0x6F20726F736E6554 decoded to "Tensor o", indicating string data was
+      // being dereferenced as a JSValue.
+      const { BUN_INSPECT_CONNECT_TO: _, ...rest } = bunEnv;
+      await using exec = spawn({
+        cmd: [bunExe(), "--expose-gc", join(__dirname, "napi-app/main.js"), "test_napi_typeof_invalid_pointer", "[]"],
+        env: rest,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, exitCode] = await Promise.all([new Response(exec.stdout).text(), exec.exited]);
+      // napi_typeof should return an error status instead of crashing
+      expect(stdout).toContain("PASS");
+      expect(exitCode).toBe(0);
+    });
+
     it("should return napi_object for boxed primitives (String, Number, Boolean)", async () => {
       // Regression test for https://github.com/oven-sh/bun/issues/25351
       // napi_typeof was incorrectly returning napi_string for String objects (new String("hello"))

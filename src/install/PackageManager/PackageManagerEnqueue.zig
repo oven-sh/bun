@@ -1424,6 +1424,17 @@ fn getOrPutResolvedPackageWithFindResult(
     if (comptime Environment.allow_assert) bun.assert(package.meta.id != invalid_package_id);
     defer successFn(this, dependency_id, package.meta.id);
 
+    // Print deprecation warning if package is deprecated
+    if (!find_result.package.deprecated.isEmpty()) {
+        const package_name = this.lockfile.str(&name);
+        const deprecated_msg = manifest.str(&find_result.package.deprecated);
+        Output.warn("<b>{s}@{f}<r><d>:<r> {s}", .{
+            package_name,
+            find_result.version.fmt(manifest.string_buf),
+            deprecated_msg,
+        });
+    }
+
     // non-null if the package is in "patchedDependencies"
     var name_and_version_hash: ?u64 = null;
     var patchfile_hash: ?u64 = null;

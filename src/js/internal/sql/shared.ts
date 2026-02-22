@@ -692,7 +692,8 @@ function parseOptions(
       break;
     }
     case "postgres": {
-      username ||= options.username || options.user || env.PG_USER || env.PGUSER || env.USER || "postgres";
+      username ||=
+        options.username || options.user || env.PGUSERNAME || env.PG_USER || env.PGUSER || env.USER || env.USERNAME || "postgres";
       break;
     }
   }

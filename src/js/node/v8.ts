@@ -55,16 +55,36 @@ function totalmem() {
   return totalmem_;
 }
 
+// Adaptive cache for getHeapStatistics
+// Automatically adjusts cache duration based on call frequency
+let cachedHeapStats: any = null;
+let cacheExpiry: number = 0;
+let lastCallTime: number = 0;
+let isFirstCall: boolean = true;
+
+const MIN_CACHE_MS = 50;   // Normal usage - fresh stats every 50ms
+const MAX_CACHE_MS = 1000; // High frequency - cache for 1 second
+
 function getHeapStatistics() {
+  const now = Date.now();
+  
+  // Return cached value if still valid
+  if (cachedHeapStats !== null && now < cacheExpiry) {
+    return { ...cachedHeapStats };
+  }
+  
+  // Calculate time since last call
+  // First call assumes spam scenario (timeSinceLastCall = 0)
+  // JavaScript is single-threaded, so no race conditions
+  const timeSinceLastCall = isFirstCall ? Infinity : now - lastCallTime;
+  lastCallTime = now;
+  isFirstCall = false;
+  
+  // Get fresh heap statistics (expensive operation)
   const stats = jsc.heapStats();
   const memory = jsc.memoryUsage();
-
-  // These numbers need to be plausible, even if incorrect
-  // From npm's codebase:
-  //
-  // > static #heapLimit = Math.floor(getHeapStatistics().heap_size_limit)
-  //
-  return {
+  
+  cachedHeapStats = {
     total_heap_size: stats.heapSize,
     total_heap_size_executable: stats.heapSize >> 1,
     total_physical_size: memory.peak,
@@ -73,17 +93,24 @@ function getHeapStatistics() {
     heap_size_limit: Math.min(memory.peak * 10, totalmem()),
     malloced_memory: stats.heapSize,
     peak_malloced_memory: memory.peak,
-
-    // -- Copied from Node:
     does_zap_garbage: 0,
     number_of_native_contexts: stats.globalObjectCount,
     number_of_detached_contexts: 0,
     total_global_handles_size: 8192,
     used_global_handles_size: 2208,
-    // ---- End of copied from Node
-
     external_memory: stats.extraMemorySize,
   };
+  
+  // Adaptive cache duration based on call frequency:
+  // - Frequent calls (< 100ms apart): Long cache to prevent GC spam
+  // - Sparse calls (> 100ms apart): Short cache for accuracy
+  const cacheDuration = timeSinceLastCall < 100 
+    ? MAX_CACHE_MS 
+    : MIN_CACHE_MS;
+  
+  cacheExpiry = now + cacheDuration;
+  
+  return { ...cachedHeapStats };
 }
 function getHeapSpaceStatistics() {
   notimpl("getHeapSpaceStatistics");

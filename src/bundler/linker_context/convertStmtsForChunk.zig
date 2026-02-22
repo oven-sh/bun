@@ -128,11 +128,16 @@ pub fn convertStmtsForChunk(
                     }
 
                     // "export * from 'path'"
+                    const record = ast.import_records.at(s.import_record_index);
+
+                    // Barrel optimization: deferred export * records should be dropped
+                    if (record.flags.is_unused) {
+                        continue;
+                    }
+
                     if (!shouldStripExports) {
                         break :process_stmt;
                     }
-
-                    const record = ast.import_records.at(s.import_record_index);
 
                     // Is this export star evaluated at run time?
                     if (!record.source_index.isValid() and c.options.output_format.keepES6ImportExportSyntax()) {

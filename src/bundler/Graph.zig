@@ -76,7 +76,14 @@ pub const InputFile = struct {
     additional_files: BabyList(AdditionalFile) = .{},
     unique_key_for_additional_file: string = "",
     content_hash_for_additional_file: u64 = 0,
-    is_plugin_file: bool = false,
+    flags: Flags = .{},
+
+    pub const Flags = packed struct(u8) {
+        is_plugin_file: bool = false,
+        /// Set when a barrel-eligible file has `export * from` this file.
+        is_export_star_target: bool = false,
+        _: u6 = 0,
+    };
 };
 
 pub inline fn pathToSourceIndexMap(this: *Graph, target: options.Target) *PathToSourceIndexMap {

@@ -79,6 +79,8 @@ pub fn memoryCostDetailed(dev: *DevServer) MemoryCost {
             js_code += cost.code;
             source_maps += cost.source_maps;
         },
+        .barrel_files_with_deferrals = {},
+        .barrel_needed_exports = {},
         .assets = {
             assets += dev.assets.memoryCost();
         },

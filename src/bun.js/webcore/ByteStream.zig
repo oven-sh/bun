@@ -15,6 +15,31 @@ highWaterMark: Blob.SizeType = 0,
 pipe: Pipe = .{},
 size_hint: Blob.SizeType = 0,
 buffer_action: ?BufferAction = null,
+backpressure: Backpressure = .{},
+
+/// Callback interface for propagating backpressure to the data source
+/// (e.g., pausing/resuming an HTTP socket when the stream consumer is slow).
+pub const Backpressure = struct {
+    ctx: ?*anyopaque = null,
+    onBackpressure: ?*const fn (ctx: *anyopaque, paused: bool) void = null,
+
+    pub fn pause(this: *const Backpressure) void {
+        if (this.ctx) |ctx| {
+            if (this.onBackpressure) |cb| cb(ctx, true);
+        }
+    }
+
+    pub fn @"resume"(this: *const Backpressure) void {
+        if (this.ctx) |ctx| {
+            if (this.onBackpressure) |cb| cb(ctx, false);
+        }
+    }
+
+    pub fn clear(this: *Backpressure) void {
+        this.ctx = null;
+        this.onBackpressure = null;
+    }
+};
 
 pub const Source = webcore.ReadableStream.NewSource(
     @This(),
@@ -201,8 +226,14 @@ pub fn onData(
         }
 
         const remaining = chunk[to_copy.len..];
-        if (remaining.len > 0 and chunk.len > 0)
+        if (remaining.len > 0 and chunk.len > 0) {
             this.append(stream, to_copy.len, chunk, allocator) catch @panic("Out of memory while copying request body");
+        }
+
+        // Pause the source after delivering data. The source will be resumed
+        // when the consumer's next onPull arrives, which creates a natural
+        // throttle matching the consumer's processing speed.
+        this.backpressure.pause();
 
         log("ByteStream.onData pending.run()", .{});
 
@@ -214,6 +245,10 @@ pub fn onData(
     log("ByteStream.onData no action just append", .{});
 
     this.append(stream, 0, chunk, allocator) catch @panic("Out of memory while copying request body");
+
+    // No consumer is actively reading (pending state is not pending), so data is
+    // accumulating in our internal buffer. Signal backpressure to pause the source.
+    this.backpressure.pause();
 }
 
 pub fn append(
@@ -299,8 +334,11 @@ pub fn onPull(this: *@This(), buffer: []u8, view: jsc.JSValue) streams.Result {
         if (this.offset + to_write == this.buffer.items.len) {
             this.offset = 0;
             this.buffer.items.len = 0;
+            // Buffer fully drained - resume the source so more data can flow in.
+            this.backpressure.@"resume"();
         } else {
             this.offset += to_write;
+            // Buffer still has data - keep the source paused until fully drained.
         }
 
         if (this.has_received_last_chunk and remaining_in_buffer.len == 0) {
@@ -329,6 +367,9 @@ pub fn onPull(this: *@This(), buffer: []u8, view: jsc.JSValue) streams.Result {
         };
     }
 
+    // Consumer is waiting for data - ensure source is resumed.
+    this.backpressure.@"resume"();
+
     this.pending_buffer = buffer;
     this.setValue(view);
 
@@ -343,6 +384,9 @@ pub fn onCancel(this: *@This()) void {
     if (this.buffer.capacity > 0) this.buffer.clearAndFree();
     this.done = true;
     this.pending_value.deinit();
+    // Resume the source before clearing the callback so the socket doesn't stay paused.
+    this.backpressure.@"resume"();
+    this.backpressure.clear();
 
     if (view != .zero) {
         this.pending_buffer = &.{};
@@ -366,6 +410,10 @@ pub fn memoryCost(this: *const @This()) usize {
 pub fn deinit(this: *@This()) void {
     jsc.markBinding(@src());
     if (this.buffer.capacity > 0) this.buffer.clearAndFree();
+
+    // Resume the source before tearing down so the socket doesn't stay paused.
+    this.backpressure.@"resume"();
+    this.backpressure.clear();
 
     this.pending_value.deinit();
     if (!this.done) {

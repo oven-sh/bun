@@ -1372,6 +1372,10 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         fn detachResponse(this: *RequestContext) void {
             this.request_body_buf.clearAndFree(bun.default_allocator);
 
+            // Clear the backpressure callback before detaching the response,
+            // so the ByteStream cannot try to pause/resume a freed response.
+            this.clearRequestBodyBackpressure();
+
             if (this.resp) |resp| {
                 this.resp = null;
 
@@ -2395,6 +2399,10 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         bun.default_allocator,
                     ) catch {}; // TODO: properly propagate exception upwards
                 } else {
+                    // This is the last chunk - clear the backpressure callback
+                    // since the RequestContext may be freed after this point.
+                    readable.ptr.Bytes.backpressure.clear();
+
                     var strong = this.request_body_readable_stream_ref;
                     this.request_body_readable_stream_ref = .{};
                     defer strong.deinit();
@@ -2523,6 +2531,35 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             var this = bun.cast(*RequestContext, ptr);
             bun.debugAssert(this.request_body_readable_stream_ref.held.impl == null);
             this.request_body_readable_stream_ref = jsc.WebCore.ReadableStream.Strong.init(readable, globalThis);
+            // Wire up backpressure so ByteStream can pause/resume the HTTP socket
+            // when the JS consumer is not keeping up with incoming data.
+            readable.ptr.Bytes.backpressure = .{
+                .ctx = this,
+                .onBackpressure = onRequestBodyBackpressure,
+            };
+        }
+
+        fn onRequestBodyBackpressure(ctx: *anyopaque, paused: bool) void {
+            const this = bun.cast(*RequestContext, ctx);
+            if (this.resp) |resp| {
+                if (paused) {
+                    ctxLog("backpressure: pausing HTTP socket", .{});
+                    resp.pause();
+                } else {
+                    ctxLog("backpressure: resuming HTTP socket", .{});
+                    resp.@"resume"();
+                }
+            }
+        }
+
+        /// Clear the backpressure callback on the request body's ByteStream,
+        /// preventing it from referencing this RequestContext after it's freed.
+        fn clearRequestBodyBackpressure(this: *RequestContext) void {
+            if (this.server) |server| {
+                if (this.request_body_readable_stream_ref.get(server.globalThis)) |readable| {
+                    readable.ptr.Bytes.backpressure.clear();
+                }
+            }
         }
 
         pub fn onStartBufferingCallback(this: *anyopaque) void {

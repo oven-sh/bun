@@ -591,7 +591,13 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
         struct us_socket_context_t* context = c->context;
         struct us_socket_t *s = (struct us_socket_t *)us_create_poll(loop, 0, sizeof(struct us_socket_t) + c->socket_ext_size);
         s->context = context;
-        s->timeout = c->timeout;
+        /* Set a connection attempt timeout so we don't hang forever on unreachable
+         * addresses (e.g. broken IPv6 connectivity). The timeout granularity is ~4s,
+         * and we use 10s which is ~2-3 ticks. This implements a simplified Happy
+         * Eyeballs (RFC 8305) approach: if a connection attempt doesn't succeed within
+         * this window, it will be treated as a connect error and the next address in
+         * the list will be tried. */
+        us_socket_timeout(0, s, 10);
         s->long_timeout = c->long_timeout;
         struct us_socket_flags* flags = &s->flags;
         flags->low_prio_state = 0;

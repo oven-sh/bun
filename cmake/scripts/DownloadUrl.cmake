@@ -30,6 +30,11 @@ else()
   set(DOWNLOAD_ACCEPT_HEADER "Accept: */*")
 endif()
 
+set(DOWNLOAD_AUTH_HEADER)
+if(DEFINED ENV{GITHUB_TOKEN} AND NOT "$ENV{GITHUB_TOKEN}" STREQUAL "" AND DOWNLOAD_URL MATCHES "^https://github\\.com/")
+  set(DOWNLOAD_AUTH_HEADER HTTPHEADER "Authorization: Bearer $ENV{GITHUB_TOKEN}")
+endif()
+
 foreach(i RANGE 10)
   set(DOWNLOAD_TMP_FILE_${i} ${DOWNLOAD_TMP_FILE}.${i})
 
@@ -38,12 +43,13 @@ foreach(i RANGE 10)
   else()
     message(STATUS "Downloading ${DOWNLOAD_URL}... (retry ${i})")
   endif()
-  
+
   file(DOWNLOAD
     ${DOWNLOAD_URL}
     ${DOWNLOAD_TMP_FILE_${i}}
     HTTPHEADER "User-Agent: cmake/${CMAKE_VERSION}"
     HTTPHEADER ${DOWNLOAD_ACCEPT_HEADER}
+    ${DOWNLOAD_AUTH_HEADER}
     STATUS DOWNLOAD_STATUS
     INACTIVITY_TIMEOUT 60
     TIMEOUT 180

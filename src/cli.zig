@@ -302,6 +302,9 @@ pub var pretend_to_be_node = false;
 /// This is set `true` during `Command.which()` if argv0 is "bunx"
 pub var is_bunx_exe = false;
 
+/// Index in argv where the command was found by `which()`
+var command_arg_index: usize = 1;
+
 pub const Command = struct {
     pub fn get() Context {
         return global_cli_ctx;
@@ -575,6 +578,8 @@ pub const Command = struct {
             next_arg = ((args_iter.next()) orelse return .AutoCommand);
         }
 
+        command_arg_index = args_iter.i - 1;
+
         const first_arg_name = next_arg;
         const RootCommandMatcher = strings.ExactSizeMatcher(12);
 
@@ -765,7 +770,7 @@ pub const Command = struct {
             .DiscordCommand => return try DiscordCommand.exec(allocator),
             .HelpCommand => return try HelpCommand.exec(allocator),
             .ReservedCommand => return try ReservedCommand.exec(allocator),
-            .InitCommand => return try InitCommand.exec(allocator, bun.argv[@min(2, bun.argv.len)..]),
+            .InitCommand => return try InitCommand.exec(allocator, bun.argv[@min(command_arg_index + 1, bun.argv.len)..]),
             .InfoCommand => {
                 try @"bun info"(allocator, log);
                 return;

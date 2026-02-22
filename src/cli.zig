@@ -92,6 +92,7 @@ pub const AuditCommand = @import("./cli/audit_command.zig").AuditCommand;
 pub const InitCommand = @import("./cli/init_command.zig").InitCommand;
 pub const WhyCommand = @import("./cli/why_command.zig").WhyCommand;
 pub const FuzzilliCommand = @import("./cli/fuzzilli_command.zig").FuzzilliCommand;
+pub const SecretCommand = @import("./cli/secret_command.zig").SecretCommand;
 
 pub const Arguments = @import("./cli/Arguments.zig");
 
@@ -190,6 +191,7 @@ pub const HelpCommand = struct {
         \\  <b><cyan>create<r>    <d>{s:<16}<r>     Create a new project from a template <d>(bun c)<r>
         \\  <b><cyan>upgrade<r>                        Upgrade to latest version of Bun.
         \\  <b><cyan>feedback<r>  <d>./file1 ./file2<r>      Provide feedback to the Bun team.
+        \\  <b><cyan>secret<r>                         Manage secrets in the system keychain
         \\
         \\  <d>\<command\><r> <b><cyan>--help<r>               Print help text for command.
         \\
@@ -644,6 +646,7 @@ pub const Command = struct {
             RootCommandMatcher.case("prune") => .ReservedCommand,
             RootCommandMatcher.case("list") => .PackageManagerCommand,
             RootCommandMatcher.case("why") => .WhyCommand,
+            RootCommandMatcher.case("secret") => .SecretCommand,
             RootCommandMatcher.case("fuzzilli") => if (bun.Environment.enable_fuzzilli)
                 .FuzzilliCommand
             else
@@ -673,6 +676,7 @@ pub const Command = struct {
         "x",
         "repl",
         "info",
+        "secret",
     };
 
     const reject_list = default_completions_list ++ [_]string{
@@ -766,6 +770,7 @@ pub const Command = struct {
             .HelpCommand => return try HelpCommand.exec(allocator),
             .ReservedCommand => return try ReservedCommand.exec(allocator),
             .InitCommand => return try InitCommand.exec(allocator, bun.argv[@min(2, bun.argv.len)..]),
+            .SecretCommand => return try SecretCommand.exec(allocator, bun.argv[@min(2, bun.argv.len)..]),
             .InfoCommand => {
                 try @"bun info"(allocator, log);
                 return;
@@ -1032,6 +1037,7 @@ pub const Command = struct {
         AuditCommand,
         WhyCommand,
         FuzzilliCommand,
+        SecretCommand,
 
         /// Used by crash reports.
         ///
@@ -1070,6 +1076,7 @@ pub const Command = struct {
                 .AuditCommand => 'A',
                 .WhyCommand => 'W',
                 .FuzzilliCommand => 'F',
+                .SecretCommand => 'S',
             };
         }
 
@@ -1382,6 +1389,9 @@ pub const Command = struct {
                     Output.pretty(intro_text, .{});
                     Output.flush();
                 },
+                .SecretCommand => {
+                    SecretCommand.printHelp();
+                },
                 else => {
                     HelpCommand.printWithReason(.explicit, false);
                 },
@@ -1478,6 +1488,7 @@ pub const Command = struct {
             .PatchCommitCommand = false,
             .PublishCommand = false,
             .RemoveCommand = false,
+            .SecretCommand = false,
             .UnlinkCommand = false,
             .UpdateCommand = false,
         });

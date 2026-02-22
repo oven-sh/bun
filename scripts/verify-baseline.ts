@@ -180,8 +180,13 @@ if (values["jit-stress"]) {
     await runTest(`[${i + 1}/${jsFixtures.length}] ${fixture}`, ["--preload", preloadPath, join(fixturesDir, fixture)]);
   }
 
+  const skipFixtures = new Set<string>();
+  if (isWindows) {
+    // 100k recursive tail calls with exceptions — takes 17+ minutes under SDE
+    skipFixtures.add("tail-call-should-consume-stack-in-bbq.js");
+  }
   const wasmFixtures = readdirSync(wasmFixturesDir)
-    .filter(f => f.endsWith(".js"))
+    .filter(f => f.endsWith(".js") && !skipFixtures.has(f))
     .sort();
   console.log();
   console.log(`--- Wasm fixtures (BBQ/OMG) — ${wasmFixtures.length} tests`);

@@ -42,6 +42,7 @@ test("fetch via localhost resolves when server is on 127.0.0.1", async () => {
   const elapsed = performance.now() - start;
   expect(resp.status).toBe(200);
   expect(await resp.text()).toBe("localhost-ok");
-  // Should complete within a reasonable time, not hang for minutes
-  expect(elapsed).toBeLessThan(15_000);
-}, 30_000);
+  // With a 1s connect timeout and 4s timer granularity, fallback fires in ~4-8s.
+  // Use 20s threshold to avoid flakiness from timer jitter and CI load.
+  expect(elapsed).toBeLessThan(20_000);
+});

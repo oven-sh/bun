@@ -710,6 +710,8 @@ pub const FetchTasklet = struct {
             return .{ .AbortReason = reason };
         }
 
+        const globalThis = this.global_this;
+
         // some times we don't have metadata so we also check http.url
         const path = if (this.metadata) |metadata|
             bun.String.cloneUTF8(metadata.url)
@@ -718,16 +720,28 @@ pub const FetchTasklet = struct {
         else
             bun.String.empty;
 
+        const hostname_str = if (this.http) |http_|
+            bun.String.cloneUTF8(http_.url.hostname)
+        else
+            bun.String.empty;
+
         const fetch_error = jsc.SystemError{
             .code = bun.String.static(switch (this.result.fail.?) {
                 error.ConnectionClosed => "ECONNRESET",
+                error.ConnectionRefused => "ECONNREFUSED",
+                error.DNSLookupFailed => "ENOTFOUND",
                 else => |e| @errorName(e),
             }),
             .message = switch (this.result.fail.?) {
                 error.ConnectionClosed => bun.String.static("The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()"),
+                error.DNSLookupFailed => bun.String.createFormat("getaddrinfo ENOTFOUND {f}", .{
+                    hostname_str,
+                }) catch |err| bun.handleOom(err),
                 error.FailedToOpenSocket => bun.String.static("Was there a typo in the url or port?"),
                 error.TooManyRedirects => bun.String.static("The response redirected too many times. For more information, pass `verbose: true` in the second argument to fetch()"),
-                error.ConnectionRefused => bun.String.static("Unable to connect. Is the computer able to access the url?"),
+                error.ConnectionRefused => bun.String.createFormat("connect ECONNREFUSED {f}", .{
+                    path,
+                }) catch |err| bun.handleOom(err),
                 error.RedirectURLInvalid => bun.String.static("Redirect URL in Location header is invalid."),
 
                 error.UNABLE_TO_GET_ISSUER_CERT => bun.String.static("unable to get issuer certificate"),
@@ -802,10 +816,32 @@ pub const FetchTasklet = struct {
                     path,
                 }) catch |err| bun.handleOom(err),
             },
+            .syscall = switch (this.result.fail.?) {
+                error.DNSLookupFailed => bun.String.static("getaddrinfo"),
+                error.ConnectionRefused => bun.String.static("connect"),
+                else => bun.String.empty,
+            },
+            .hostname = hostname_str,
             .path = path,
         };
 
-        return .{ .SystemError = fetch_error };
+        // Create the inner cause error from SystemError
+        const cause_js = fetch_error.toErrorInstance(globalThis);
+
+        // Wrap in a TypeError with message "fetch failed" to match Node.js behavior
+        const outer_error = globalThis.createTypeErrorInstance("fetch failed", .{});
+        outer_error.put(globalThis, "cause", cause_js);
+
+        // Also set .code on the outer error for backward compatibility with existing Bun code
+        const code_str = switch (this.result.fail.?) {
+            error.ConnectionClosed => bun.String.static("ECONNRESET"),
+            error.ConnectionRefused => bun.String.static("ECONNREFUSED"),
+            error.DNSLookupFailed => bun.String.static("ENOTFOUND"),
+            else => |e| bun.String.static(@errorName(e)),
+        };
+        outer_error.put(globalThis, "code", code_str.toJS(globalThis) catch .js_undefined);
+
+        return .{ .JSValue = .create(outer_error, globalThis) };
     }
 
     pub fn onReadableStreamAvailable(ctx: *anyopaque, globalThis: *jsc.JSGlobalObject, readable: jsc.WebCore.ReadableStream) void {

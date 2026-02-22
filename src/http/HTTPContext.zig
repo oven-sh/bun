@@ -361,12 +361,12 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             pub fn onConnectError(
                 ptr: *anyopaque,
                 socket: HTTPSocket,
-                _: c_int,
+                code: c_int,
             ) void {
                 const tagged = getTagged(ptr);
                 markTaggedSocketAsDead(socket, tagged);
                 if (tagged.get(HTTPClient)) |client| {
-                    client.onConnectError();
+                    client.onConnectError(code);
                 }
                 // us_connecting_socket_close is always called internally by uSockets
             }

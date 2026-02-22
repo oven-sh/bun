@@ -583,34 +583,38 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
         }
     }
     // compute dependencies (TODO: maybe we should do this only in a workspace?)
-    for (state.handles) |*handle| {
-        const source_buf = handle.config.deps.source_buf;
-        var iter = handle.config.deps.map.iterator();
-        while (iter.next()) |entry| {
-            const name = entry.key_ptr.slice(source_buf);
-            // is it a workspace dependency?
-            if (map.get(name)) |pkgs| {
-                for (pkgs.items) |dep| {
-                    try dep.dependents.append(handle);
-                    handle.remaining_dependencies += 1;
+    // When --parallel is set, skip dependency ordering so all scripts start concurrently.
+    // This is important for long-running scripts (like "dev") where dependencies never exit.
+    if (!ctx.parallel) {
+        for (state.handles) |*handle| {
+            const source_buf = handle.config.deps.source_buf;
+            var iter = handle.config.deps.map.iterator();
+            while (iter.next()) |entry| {
+                const name = entry.key_ptr.slice(source_buf);
+                // is it a workspace dependency?
+                if (map.get(name)) |pkgs| {
+                    for (pkgs.items) |dep| {
+                        try dep.dependents.append(handle);
+                        handle.remaining_dependencies += 1;
+                    }
                 }
             }
         }
-    }
 
-    // check if there is a dependency cycle
-    var has_cycle = false;
-    for (state.handles) |*handle| {
-        if (hasCycle(handle)) {
-            has_cycle = true;
-            break;
-        }
-    }
-    // if there is, we ignore dependency order completely
-    if (has_cycle) {
+        // check if there is a dependency cycle
+        var has_cycle = false;
         for (state.handles) |*handle| {
-            handle.dependents.clearRetainingCapacity();
-            handle.remaining_dependencies = 0;
+            if (hasCycle(handle)) {
+                has_cycle = true;
+                break;
+            }
+        }
+        // if there is, we ignore dependency order completely
+        if (has_cycle) {
+            for (state.handles) |*handle| {
+                handle.dependents.clearRetainingCapacity();
+                handle.remaining_dependencies = 0;
+            }
         }
     }
 

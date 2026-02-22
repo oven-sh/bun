@@ -391,7 +391,16 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     args.append(object);
     args.append(keyArray);
     args.append(editWindowsEnvVar);
-    auto clientData = WebCore::clientData(vm);
+#else
+    // Wrap the env object in a Proxy that coerces all assigned values to strings.
+    // This matches Node.js behavior where `process.env.FOO = undefined` results in
+    // `process.env.FOO === "undefined"` (string), not `undefined` (the value).
+    JSC::JSFunction* getSourceEvent = JSC::JSFunction::create(vm, globalObject, processObjectInternalsPosixEnvCodeGenerator(vm), globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSC::MarkedArgumentBuffer args;
+    args.append(object);
+#endif
+
     JSC::CallData callData = JSC::getCallData(getSourceEvent);
     NakedPtr<JSC::Exception> returnedException = nullptr;
     auto result = JSC::profiledCall(globalObject, JSC::ProfilingReason::API, getSourceEvent, callData, globalObject->globalThis(), args, returnedException);
@@ -403,8 +412,5 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     }
 
     RELEASE_AND_RETURN(scope, result);
-#else
-    return object;
-#endif
 }
 }

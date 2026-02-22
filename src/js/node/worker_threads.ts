@@ -1,11 +1,10 @@
-// import type { Readable, Writable } from "node:stream";
-// import type { WorkerOptions } from "node:worker_threads";
 declare const self: typeof globalThis;
 type WebWorker = InstanceType<typeof globalThis.Worker>;
 
 const EventEmitter = require("node:events");
 const Readable = require("internal/streams/readable");
 const { throwNotImplemented, warnNotImplementedOnce } = require("internal/shared");
+const { SafeWeakMap } = require("internal/primordials");
 
 const {
   MessageChannel,
@@ -38,7 +37,46 @@ type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
 // after their Worker exits
 let urlRevokeRegistry: FinalizationRegistry<string> | undefined = undefined;
 
-function injectFakeEmitter(Class) {
+// Storage for stdio streams (using SafeWeakMap to avoid userland patching)
+const stdioStreams = new SafeWeakMap();
+
+function getOrCreateStdioStream(worker: object, type: string, nativeWorker: WebWorker, options: any) {
+  let streams = stdioStreams.get(worker);
+  if (!streams) {
+    streams = { stdout: null, stderr: null, stdin: null, options };
+    stdioStreams.set(worker, streams);
+  }
+
+  if (streams[type] !== null) return streams[type];
+  if (!options || !options[type]) return null;
+
+  // For stdout/stderr, get the ReadableStream directly from native code
+  if (type === "stdout") {
+    if (typeof nativeWorker["$getStdoutStream"] !== "function") return null;
+    const webStream = nativeWorker["$getStdoutStream"].$call(nativeWorker);
+    if (!webStream) return null;
+    const nodeStream = Readable.fromWeb(webStream);
+    streams[type] = nodeStream;
+    return nodeStream;
+  }
+
+  if (type === "stderr") {
+    if (typeof nativeWorker["$getStderrStream"] !== "function") return null;
+    const webStream = nativeWorker["$getStderrStream"].$call(nativeWorker);
+    if (!webStream) return null;
+    const nodeStream = Readable.fromWeb(webStream);
+    streams[type] = nodeStream;
+    return nodeStream;
+  }
+
+  if (type === "stdin") {
+    // TODO: implement worker_threads.stdin, not part of this issue
+    throwNotImplemented("worker_threads.stdin", 22585);
+  }
+  return null;
+}
+
+function injectFakeEmitter(Class: any) {
   function messageEventHandler(event: MessageEvent) {
     return event.data;
   }
@@ -49,15 +87,15 @@ function injectFakeEmitter(Class) {
 
   const wrappedListener = Symbol("wrappedListener");
 
-  function wrapped(run, listener) {
-    const callback = function (event) {
+  function wrapped(run: (e: any) => any, listener: any) {
+    const callback = function (event: any) {
       return listener(run(event));
     };
     listener[wrappedListener] = callback;
     return callback;
   }
 
-  function functionForEventType(event, listener) {
+  function functionForEventType(event: string, listener: any) {
     switch (event) {
       case "error":
       case "messageerror": {
@@ -70,39 +108,50 @@ function injectFakeEmitter(Class) {
     }
   }
 
-  Class.prototype.on = function (event, listener) {
+  Class.prototype.on = function (this: any, event: string, listener: any) {
     this.addEventListener(event, functionForEventType(event, listener));
-
     return this;
   };
 
-  Class.prototype.off = function (event, listener) {
+  Class.prototype.off = function (this: any, event: string, listener: any) {
     if (listener) {
       this.removeEventListener(event, listener[wrappedListener] || listener);
     } else {
       this.removeEventListener(event);
     }
-
     return this;
   };
 
-  Class.prototype.once = function (event, listener) {
+  Class.prototype.once = function (this: any, event: string, listener: any) {
     this.addEventListener(event, functionForEventType(event, listener), { once: true });
-
     return this;
   };
 
-  function EventClass(eventName) {
+  function EventClass(eventName: string) {
     if (eventName === "error" || eventName === "messageerror") {
       return ErrorEvent;
     }
-
     return MessageEvent;
   }
 
-  Class.prototype.emit = function (event, ...args) {
-    this.dispatchEvent(new (EventClass(event))(event, ...args));
+  Class.prototype.emit = function (this: any, event: string, ...args: any[]) {
+    const EventConstructor = EventClass(event);
+    let eventInstance: Event;
 
+    if (EventConstructor === MessageEvent) {
+      // Wrap first argument as { data: <arg> } for MessageEvent
+      const init = args.length > 0 ? { data: args[0] } : { data: undefined };
+      eventInstance = new MessageEvent(event, init);
+    } else if (EventConstructor === ErrorEvent) {
+      // Wrap first argument as { error: <arg> } for ErrorEvent
+      const init = args.length > 0 ? { error: args[0] } : { error: undefined };
+      eventInstance = new ErrorEvent(event, init);
+    } else {
+      // Fallback for other event types
+      eventInstance = new (EventConstructor as any)(event, ...args);
+    }
+
+    this.dispatchEvent(eventInstance);
     return this;
   };
 
@@ -225,7 +274,7 @@ function moveMessagePortToContext() {
 
 class Worker extends EventEmitter {
   #worker: WebWorker;
-  #performance;
+  #performance: any;
 
   // this is used by terminate();
   // either is the exit code if exited, a promise resolving to the exit code, or undefined if we haven't sent .terminate() yet
@@ -237,7 +286,7 @@ class Worker extends EventEmitter {
 
     const builtinsGeneratorHatesEval = "ev" + "a" + "l"[0];
     if (options && builtinsGeneratorHatesEval in options) {
-      if (options[builtinsGeneratorHatesEval]) {
+      if ((options as any)[builtinsGeneratorHatesEval]) {
         // TODO: consider doing this step in native code and letting the Blob be cleaned up by the
         // C++ Worker object's destructor
         const blob = new Blob([filename], { type: "" });
@@ -262,6 +311,14 @@ class Worker extends EventEmitter {
     this.#worker.addEventListener("messageerror", this.#onMessageError.bind(this));
     this.#worker.addEventListener("open", this.#onOpen.bind(this), { once: true });
 
+    // Initialize stdio stream storage with options
+    stdioStreams.set(this, {
+      stdout: null,
+      stderr: null,
+      stdin: null,
+      options: { stdout: options.stdout, stderr: options.stderr, stdin: options.stdin },
+    });
+
     if (this.#urlToRevoke) {
       if (!urlRevokeRegistry) {
         urlRevokeRegistry = new FinalizationRegistry<string>(url => {
@@ -285,18 +342,18 @@ class Worker extends EventEmitter {
   }
 
   get stdin() {
-    // TODO:
-    return null;
+    const data = stdioStreams.get(this);
+    return getOrCreateStdioStream(this, "stdin", this.#worker, data?.options || {});
   }
 
   get stdout() {
-    // TODO:
-    return null;
+    const data = stdioStreams.get(this);
+    return getOrCreateStdioStream(this, "stdout", this.#worker, data?.options || {});
   }
 
   get stderr() {
-    // TODO:
-    return null;
+    const data = stdioStreams.get(this);
+    return getOrCreateStdioStream(this, "stderr", this.#worker, data?.options || {});
   }
 
   get performance() {
@@ -312,14 +369,14 @@ class Worker extends EventEmitter {
     });
   }
 
-  terminate(callback: unknown) {
+  terminate(callback?: (err: Error | null, code: number) => void) {
     if (typeof callback === "function") {
       process.emitWarning(
         "Passing a callback to worker.terminate() is deprecated. It returns a Promise instead.",
         "DeprecationWarning",
         "DEP0132",
       );
-      this.#worker.addEventListener("close", event => callback(null, event.code), { once: true });
+      this.#worker.addEventListener("close", (event: any) => callback(null, event.code), { once: true });
     }
 
     const onExitPromise = this.#onExitPromise;
@@ -330,7 +387,7 @@ class Worker extends EventEmitter {
     const { resolve, promise } = Promise.withResolvers();
     this.#worker.addEventListener(
       "close",
-      event => {
+      (event: any) => {
         resolve(event.code);
       },
       { once: true },
@@ -341,15 +398,16 @@ class Worker extends EventEmitter {
   }
 
   postMessage(...args: [any, any]) {
+    // @ts-ignore
     return this.#worker.postMessage.$apply(this.#worker, args);
   }
 
   getHeapSnapshot(options: unknown) {
-    const stringPromise = this.#worker.getHeapSnapshot(options);
-    return stringPromise.then(s => new HeapSnapshotStream(s));
+    const stringPromise = (this.#worker as any).getHeapSnapshot(options);
+    return stringPromise.then((s: string) => new HeapSnapshotStream(s));
   }
 
-  #onClose(e) {
+  #onClose(e: any) {
     this.#onExitPromise = e.code;
     this.emit("exit", e.code);
   }

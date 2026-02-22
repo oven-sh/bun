@@ -40,6 +40,18 @@ execArgv: ?[]const WTFStringImpl,
 /// Used to distinguish between terminate() called by exit(), and terminate() called for other reasons
 exit_called: bool = false,
 
+/// Stdio capture options for node:worker_threads (Node.js compatibility)
+/// When true, the respective stream is captured and can be read from the parent
+#capture_stdout: bool = false,
+#capture_stderr: bool = false,
+#capture_stdin: bool = false,
+
+/// Pipe file descriptors for stdio redirection
+/// Format: [read_fd, write_fd] - read end for parent, write end for worker
+#stdout_pipe: ?[2]bun.FileDescriptor = null,
+#stderr_pipe: ?[2]bun.FileDescriptor = null,
+#stdin_pipe: ?[2]bun.FileDescriptor = null,
+
 pub const Status = enum(u8) {
     start,
     starting,
@@ -78,6 +90,82 @@ export fn WebWorker__updatePtr(worker: *WebWorker, ptr: *anyopaque) bool {
     };
     thread.detach();
     return true;
+}
+
+/// Create a ReadableStream from the stdout pipe.
+/// Returns a JSValue containing the ReadableStream, or undefined if no pipe is configured.
+export fn WebWorker__getStdoutStream(worker: *WebWorker, globalObject: *jsc.JSGlobalObject) JSValue {
+    return worker.createReadableStreamFromPipe(worker.#stdout_pipe, globalObject);
+}
+
+/// Create a ReadableStream from the stderr pipe.
+/// Returns a JSValue containing the ReadableStream, or undefined if no pipe is configured.
+export fn WebWorker__getStderrStream(worker: *WebWorker, globalObject: *jsc.JSGlobalObject) JSValue {
+    return worker.createReadableStreamFromPipe(worker.#stderr_pipe, globalObject);
+}
+
+/// Get the stdin pipe write FD for the parent to write to.
+/// Returns -1 if no stdin pipe is configured.
+export fn WebWorker__getStdinWriteFd(worker: *WebWorker) i32 {
+    if (worker.#stdin_pipe) |pipe| {
+        return @intCast(pipe[1].native());
+    }
+    return -1;
+}
+
+/// Helper function to create a ReadableStream from a pipe's read FD.
+/// The FD is duplicated so the stream owns its own copy, allowing the original
+/// to be closed when the worker exits while the stream can still be read.
+fn createReadableStreamFromPipe(worker: *WebWorker, pipe: ?[2]bun.FileDescriptor, globalObject: *jsc.JSGlobalObject) JSValue {
+    _ = worker;
+    const fds = pipe orelse return .js_undefined;
+    const read_fd = fds[0];
+
+    // Duplicate the FD so the stream owns its own copy
+    const duped_fd = bun.sys.dupWithFlags(read_fd, 0).unwrap() catch |err| {
+        log("Failed to duplicate pipe FD: {}", .{err});
+        return .js_undefined;
+    };
+
+    // Create a Blob.Store from the FD
+    const store = bun.webcore.Blob.Store.initFile(
+        .{ .fd = duped_fd },
+        null, // mime type
+        bun.default_allocator,
+    ) catch |err| {
+        log("Failed to create blob store: {}", .{err});
+        duped_fd.close();
+        return .js_undefined;
+    };
+
+    // Create a Blob from the store
+    var blob = bun.webcore.Blob.initWithStore(store, globalObject);
+    defer blob.deinit();
+
+    // Create a ReadableStream from the blob
+    // The blob's store owns the FD and will close it when the stream is done
+    return bun.webcore.ReadableStream.fromBlobCopyRef(globalObject, &blob, 0) catch |err| {
+        _ = globalObject.takeException(err);
+        return .js_undefined;
+    };
+}
+
+/// Get the stdout pipe write FD for the worker to write to.
+/// Returns null if no stdout pipe is configured.
+pub fn getStdoutWritePipe(worker: *const WebWorker) ?bun.FileDescriptor {
+    if (worker.#stdout_pipe) |pipe| {
+        return pipe[1];
+    }
+    return null;
+}
+
+/// Get the stderr pipe write FD for the worker to write to.
+/// Returns null if no stderr pipe is configured.
+pub fn getStderrWritePipe(worker: *const WebWorker) ?bun.FileDescriptor {
+    if (worker.#stderr_pipe) |pipe| {
+        return pipe[1];
+    }
+    return null;
 }
 
 fn resolveEntryPointSpecifier(
@@ -203,6 +291,9 @@ pub fn create(
     execArgv_len: usize,
     preload_modules_ptr: ?[*]bun.String,
     preload_modules_len: usize,
+    capture_stdout: bool,
+    capture_stderr: bool,
+    capture_stdin: bool,
 ) callconv(.c) ?*WebWorker {
     jsc.markBinding(@src());
     log("[{d}] WebWorker.create", .{this_context_id});
@@ -233,6 +324,59 @@ pub fn create(
         }
     }
 
+    // Create pipes for stdio capture if requested
+    var stdout_pipe: ?[2]bun.FileDescriptor = null;
+    var stderr_pipe: ?[2]bun.FileDescriptor = null;
+    var stdin_pipe: ?[2]bun.FileDescriptor = null;
+
+    if (capture_stdout) {
+        stdout_pipe = bun.sys.pipe().unwrap() catch |err| {
+            log("Failed to create stdout pipe: {}", .{err});
+            error_message.* = bun.String.static("Failed to create stdout pipe for worker");
+            for (preloads.items) |preload| {
+                bun.default_allocator.free(preload);
+            }
+            preloads.deinit();
+            return null;
+        };
+    }
+
+    if (capture_stderr) {
+        stderr_pipe = bun.sys.pipe().unwrap() catch |err| {
+            log("Failed to create stderr pipe: {}", .{err});
+            if (stdout_pipe) |p| {
+                p[0].close();
+                p[1].close();
+            }
+            error_message.* = bun.String.static("Failed to create stderr pipe for worker");
+            for (preloads.items) |preload| {
+                bun.default_allocator.free(preload);
+            }
+            preloads.deinit();
+            return null;
+        };
+    }
+
+    if (capture_stdin) {
+        stdin_pipe = bun.sys.pipe().unwrap() catch |err| {
+            log("Failed to create stdin pipe: {}", .{err});
+            if (stdout_pipe) |p| {
+                p[0].close();
+                p[1].close();
+            }
+            if (stderr_pipe) |p| {
+                p[0].close();
+                p[1].close();
+            }
+            error_message.* = bun.String.static("Failed to create stdin pipe for worker");
+            for (preloads.items) |preload| {
+                bun.default_allocator.free(preload);
+            }
+            preloads.deinit();
+            return null;
+        };
+    }
+
     var worker = bun.handleOom(bun.default_allocator.create(WebWorker));
     worker.* = WebWorker{
         .cpp_worker = cpp_worker,
@@ -254,6 +398,12 @@ pub fn create(
         .argv = if (argv_ptr) |ptr| ptr[0..argv_len] else &.{},
         .execArgv = if (inherit_execArgv) null else (if (execArgv_ptr) |ptr| ptr[0..execArgv_len] else &.{}),
         .preloads = preloads.items,
+        .#capture_stdout = capture_stdout,
+        .#capture_stderr = capture_stderr,
+        .#capture_stdin = capture_stdin,
+        .#stdout_pipe = stdout_pipe,
+        .#stderr_pipe = stderr_pipe,
+        .#stdin_pipe = stdin_pipe,
     };
 
     worker.parent_poll_ref.ref(parent);
@@ -373,6 +523,23 @@ fn deinit(this: *WebWorker) void {
         bun.default_allocator.free(preload);
     }
     bun.default_allocator.free(this.preloads);
+
+    // Close both ends of the pipes.
+    // The ReadableStream has its own duplicated FD, so we can safely close the originals.
+    // Closing the write end signals EOF to any readers.
+    if (this.#stdout_pipe) |p| {
+        p[0].close();
+        p[1].close();
+    }
+    if (this.#stderr_pipe) |p| {
+        p[0].close();
+        p[1].close();
+    }
+    if (this.#stdin_pipe) |p| {
+        p[0].close();
+        p[1].close();
+    }
+
     bun.default_allocator.destroy(this);
 }
 

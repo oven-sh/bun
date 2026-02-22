@@ -2254,6 +2254,11 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             defer if (content_type_needs_free) content_type.deinit(this.allocator);
             var has_content_disposition = false;
             var has_content_range = false;
+            // Save user-provided Content-Length before writeHeaders strips it.
+            // This is needed for ReadableStream bodies where the user knows the
+            // total size upfront (e.g. proxy responses). For known-size bodies
+            // (blob/string), tryEnd() will set Content-Length from the actual size.
+            var user_content_length: ?usize = null;
             if (response.swapInitHeaders()) |headers_| {
                 defer headers_.deref();
                 has_content_disposition = headers_.fastHas(.ContentDisposition);
@@ -2261,6 +2266,14 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 needs_content_range = needs_content_range and has_content_range;
                 if (needs_content_range) {
                     status = 206;
+                }
+
+                if (this.blob.isDetached()) {
+                    if (headers_.fastGet(.ContentLength)) |cl| {
+                        const cl_str = cl.toSlice(this.allocator);
+                        defer cl_str.deinit();
+                        user_content_length = std.fmt.parseInt(usize, cl_str.slice(), 10) catch null;
+                    }
                 }
 
                 this.doWriteStatus(status);
@@ -2306,6 +2319,12 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             if (this.flags.needs_content_length) {
                 resp.writeHeaderInt("content-length", size);
                 this.flags.needs_content_length = false;
+            } else if (user_content_length) |cl| {
+                // For ReadableStream bodies where the user explicitly set
+                // Content-Length, write it and tell uWS to use content-length
+                // framing instead of chunked transfer encoding.
+                resp.writeHeaderInt("content-length", cl);
+                resp.markWroteContentLengthHeader();
             }
 
             if (needs_content_range and !has_content_range) {

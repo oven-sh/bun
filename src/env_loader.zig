@@ -163,6 +163,11 @@ pub const Loader = struct {
         return this.has("http_proxy") or this.has("HTTP_PROXY") or this.has("https_proxy") or this.has("HTTPS_PROXY");
     }
 
+    fn lookupFn(context: ?*anyopaque, key: []const u8) ?[]const u8 {
+        const this: *Loader = @ptrCast(@alignCast(context.?));
+        return this.get(key);
+    }
+
     /// Get proxy URL for HTTP/HTTPS requests, respecting NO_PROXY.
     /// `hostname` is the host without port (e.g., "localhost")
     /// `host` is the host with port if present (e.g., "localhost:3000")
@@ -571,9 +576,38 @@ pub const Loader = struct {
     // mostly for tests
     pub fn loadFromString(this: *Loader, str: string, comptime overwrite: bool, comptime expand: bool) OOM!void {
         const source = &logger.Source.initPathString("test", str);
-        var value_buffer = std.array_list.Managed(u8).init(this.allocator);
-        defer value_buffer.deinit();
-        try Parser.parse(source, this.allocator, this.map, &value_buffer, overwrite, false, expand);
+
+        const options = zigenv.ParserOptions{
+            .support_export_prefix = true,
+            .support_colon_separator = true,
+            .allow_braceless_variables = true,
+        };
+        var env = try zigenv.parseStringWithOptions(this.allocator, source.contents, options, if (expand) lookupFn else null, this);
+        defer env.deinit();
+
+        var iter = env.map.iterator();
+        while (iter.next()) |entry| {
+            const key = entry.key_ptr.*;
+            const value = entry.value_ptr.*;
+
+            const gop = try this.map.map.getOrPut(key);
+            if (gop.found_existing) {
+                if (overwrite) {
+                    this.allocator.free(gop.value_ptr.value);
+                    gop.value_ptr.* = .{
+                        .value = try this.allocator.dupe(u8, value),
+                        .conditional = false,
+                    };
+                }
+            } else {
+                gop.key_ptr.* = try this.allocator.dupe(u8, key);
+                gop.value_ptr.* = .{
+                    .value = try this.allocator.dupe(u8, value),
+                    .conditional = false,
+                };
+            }
+        }
+
         std.mem.doNotOptimizeAway(&source);
     }
 
@@ -586,13 +620,8 @@ pub const Loader = struct {
     ) !void {
         const start = std.time.nanoTimestamp();
 
-        // Create a reusable buffer with stack fallback for parsing multiple files
-        var stack_fallback = std.heap.stackFallback(4096, this.allocator);
-        var value_buffer = std.array_list.Managed(u8).init(stack_fallback.get());
-        defer value_buffer.deinit();
-
         if (env_files.len > 0) {
-            try this.loadExplicitFiles(env_files, &value_buffer);
+            try this.loadExplicitFiles(env_files);
         } else {
             // Do not automatically load .env files in `bun run <script>`
             // Instead, it is the responsibility of the script's instance of `bun` to load .env,
@@ -602,7 +631,7 @@ pub const Loader = struct {
             // See https://github.com/oven-sh/bun/issues/9635#issuecomment-2021350123
             // for more details on how this edge case works.
             if (!skip_default_env)
-                try this.loadDefaultFiles(dir, suffix, &value_buffer);
+                try this.loadDefaultFiles(dir, suffix);
         }
 
         if (!this.quiet) this.printLoaded(start);
@@ -611,7 +640,6 @@ pub const Loader = struct {
     fn loadExplicitFiles(
         this: *Loader,
         env_files: []const []const u8,
-        value_buffer: *std.array_list.Managed(u8),
     ) !void {
         // iterate backwards, so the latest entry in the latest arg instance assumes the highest priority
         var i: usize = env_files.len;
@@ -621,7 +649,7 @@ pub const Loader = struct {
                 var iter = std.mem.splitBackwardsScalar(u8, arg_value, ',');
                 while (iter.next()) |file_path| {
                     if (file_path.len > 0) {
-                        try this.loadEnvFileDynamic(file_path, false, value_buffer);
+                        try this.loadEnvFileDynamic(file_path, false);
                         analytics.Features.dotenv += 1;
                     }
                 }
@@ -637,26 +665,25 @@ pub const Loader = struct {
         this: *Loader,
         dir: *Fs.FileSystem.DirEntry,
         comptime suffix: DotEnvFileSuffix,
-        value_buffer: *std.array_list.Managed(u8),
     ) !void {
         const dir_handle: std.fs.Dir = std.fs.cwd();
 
         switch (comptime suffix) {
             .development => {
                 if (dir.hasComptimeQuery(".env.development.local")) {
-                    try this.loadEnvFile(dir_handle, ".env.development.local", false, value_buffer);
+                    try this.loadEnvFile(dir_handle, ".env.development.local", false);
                     analytics.Features.dotenv += 1;
                 }
             },
             .production => {
                 if (dir.hasComptimeQuery(".env.production.local")) {
-                    try this.loadEnvFile(dir_handle, ".env.production.local", false, value_buffer);
+                    try this.loadEnvFile(dir_handle, ".env.production.local", false);
                     analytics.Features.dotenv += 1;
                 }
             },
             .@"test" => {
                 if (dir.hasComptimeQuery(".env.test.local")) {
-                    try this.loadEnvFile(dir_handle, ".env.test.local", false, value_buffer);
+                    try this.loadEnvFile(dir_handle, ".env.test.local", false);
                     analytics.Features.dotenv += 1;
                 }
             },
@@ -664,7 +691,7 @@ pub const Loader = struct {
 
         if (comptime suffix != .@"test") {
             if (dir.hasComptimeQuery(".env.local")) {
-                try this.loadEnvFile(dir_handle, ".env.local", false, value_buffer);
+                try this.loadEnvFile(dir_handle, ".env.local", false);
                 analytics.Features.dotenv += 1;
             }
         }
@@ -672,26 +699,26 @@ pub const Loader = struct {
         switch (comptime suffix) {
             .development => {
                 if (dir.hasComptimeQuery(".env.development")) {
-                    try this.loadEnvFile(dir_handle, ".env.development", false, value_buffer);
+                    try this.loadEnvFile(dir_handle, ".env.development", false);
                     analytics.Features.dotenv += 1;
                 }
             },
             .production => {
                 if (dir.hasComptimeQuery(".env.production")) {
-                    try this.loadEnvFile(dir_handle, ".env.production", false, value_buffer);
+                    try this.loadEnvFile(dir_handle, ".env.production", false);
                     analytics.Features.dotenv += 1;
                 }
             },
             .@"test" => {
                 if (dir.hasComptimeQuery(".env.test")) {
-                    try this.loadEnvFile(dir_handle, ".env.test", false, value_buffer);
+                    try this.loadEnvFile(dir_handle, ".env.test", false);
                     analytics.Features.dotenv += 1;
                 }
             },
         }
 
         if (dir.hasComptimeQuery(".env")) {
-            try this.loadEnvFile(dir_handle, ".env", false, value_buffer);
+            try this.loadEnvFile(dir_handle, ".env", false);
             analytics.Features.dotenv += 1;
         }
     }
@@ -766,7 +793,6 @@ pub const Loader = struct {
         dir: std.fs.Dir,
         comptime base: string,
         comptime override: bool,
-        value_buffer: *std.array_list.Managed(u8),
     ) !void {
         if (@field(this, base) != null) {
             return;
@@ -838,15 +864,38 @@ pub const Loader = struct {
 
         const source = &logger.Source.initPathString(base, buf[0..amount_read]);
 
-        try Parser.parse(
-            source,
-            this.allocator,
-            this.map,
-            value_buffer,
-            override,
-            false,
-            true,
-        );
+
+        const options = zigenv.ParserOptions{
+            .support_export_prefix = true,
+            .support_colon_separator = true,
+            .allow_braceless_variables = true,
+        };
+        var env = try zigenv.parseStringWithOptions(this.allocator, source.contents, options, lookupFn, this);
+        defer env.deinit();
+
+        var iter = env.map.iterator();
+        while (iter.next()) |entry| {
+            const key = entry.key_ptr.*;
+            const value = entry.value_ptr.*;
+
+            const gop = try this.map.map.getOrPut(key);
+            if (gop.found_existing) {
+                if (override) {
+                    this.allocator.free(gop.value_ptr.value);
+                    gop.value_ptr.* = .{
+                        .value = try this.allocator.dupe(u8, value),
+                        .conditional = false,
+                    };
+                }
+            } else {
+                gop.key_ptr.* = try this.allocator.dupe(u8, key);
+                gop.value_ptr.* = .{
+                    .value = try this.allocator.dupe(u8, value),
+                    .conditional = false,
+                };
+            }
+        }
+
 
         @field(this, base) = source.*;
     }
@@ -855,7 +904,6 @@ pub const Loader = struct {
         this: *Loader,
         file_path: []const u8,
         comptime override: bool,
-        value_buffer: *std.array_list.Managed(u8),
     ) !void {
         if (this.custom_files_loaded.contains(file_path)) {
             return;
@@ -911,280 +959,40 @@ pub const Loader = struct {
 
         const source = &logger.Source.initPathString(file_path, buf[0..amount_read]);
 
-        try Parser.parse(
-            source,
-            this.allocator,
-            this.map,
-            value_buffer,
-            override,
-            false,
-            true,
-        );
 
-        try this.custom_files_loaded.put(file_path, source.*);
-    }
-};
+        const options = zigenv.ParserOptions{
+            .support_export_prefix = true,
+            .support_colon_separator = true,
+            .allow_braceless_variables = true,
+        };
+        var env = try zigenv.parseStringWithOptions(this.allocator, source.contents, options, lookupFn, this);
+        defer env.deinit();
 
-const Parser = struct {
-    pos: usize = 0,
-    src: string,
-    value_buffer: *std.array_list.Managed(u8),
+        var iter = env.map.iterator();
+        while (iter.next()) |entry| {
+            const key = entry.key_ptr.*;
+            const value = entry.value_ptr.*;
 
-    const whitespace_chars = "\t\x0B\x0C \xA0\n\r";
-
-    fn skipLine(this: *Parser) void {
-        if (strings.indexOfAny(this.src[this.pos..], "\n\r")) |i| {
-            this.pos += i + 1;
-        } else {
-            this.pos = this.src.len;
-        }
-    }
-
-    fn skipWhitespaces(this: *Parser) void {
-        var i = this.pos;
-        while (i < this.src.len) : (i += 1) {
-            if (strings.indexOfChar(whitespace_chars, this.src[i]) == null) break;
-        }
-        this.pos = i;
-    }
-
-    fn parseKey(this: *Parser, comptime check_export: bool) ?string {
-        if (comptime check_export) this.skipWhitespaces();
-        const start = this.pos;
-        var end = start;
-        while (end < this.src.len) : (end += 1) {
-            switch (this.src[end]) {
-                'a'...'z', 'A'...'Z', '0'...'9', '_', '-', '.' => continue,
-                else => break,
-            }
-        }
-        if (end < this.src.len and start < end) {
-            this.pos = end;
-            this.skipWhitespaces();
-            if (this.pos < this.src.len) {
-                if (comptime check_export) {
-                    if (end < this.pos and strings.eqlComptime(this.src[start..end], "export")) {
-                        if (this.parseKey(false)) |key| return key;
-                    }
-                }
-                switch (this.src[this.pos]) {
-                    '=' => {
-                        this.pos += 1;
-                        return this.src[start..end];
-                    },
-                    ':' => {
-                        const next = this.pos + 1;
-                        if (next < this.src.len and strings.indexOfChar(whitespace_chars, this.src[next]) != null) {
-                            this.pos += 2;
-                            return this.src[start..end];
-                        }
-                    },
-                    else => {},
-                }
-            }
-        }
-        this.pos = start;
-        return null;
-    }
-
-    fn parseQuoted(this: *Parser, comptime quote: u8) !?string {
-        if (comptime Environment.allow_assert) bun.assert(this.src[this.pos] == quote);
-        const start = this.pos;
-        this.value_buffer.clearRetainingCapacity(); // Reset the buffer
-        var end = start + 1;
-        while (end < this.src.len) : (end += 1) {
-            switch (this.src[end]) {
-                '\\' => end += 1,
-                quote => {
-                    end += 1;
-                    this.pos = end;
-                    this.skipWhitespaces();
-                    if (this.pos >= this.src.len or
-                        this.src[this.pos] == '#' or
-                        strings.indexOfChar(this.src[end..this.pos], '\n') != null or
-                        strings.indexOfChar(this.src[end..this.pos], '\r') != null)
-                    {
-                        var i = start;
-                        while (i < end) {
-                            switch (this.src[i]) {
-                                '\\' => if (comptime quote == '"') {
-                                    if (comptime Environment.allow_assert) bun.assert(i + 1 < end);
-                                    switch (this.src[i + 1]) {
-                                        'n' => {
-                                            try this.value_buffer.append('\n');
-                                            i += 2;
-                                        },
-                                        'r' => {
-                                            try this.value_buffer.append('\r');
-                                            i += 2;
-                                        },
-                                        else => {
-                                            try this.value_buffer.appendSlice(this.src[i..][0..2]);
-                                            i += 2;
-                                        },
-                                    }
-                                } else {
-                                    try this.value_buffer.append('\\');
-                                    i += 1;
-                                },
-                                '\r' => {
-                                    i += 1;
-                                    if (i >= end or this.src[i] != '\n') {
-                                        try this.value_buffer.append('\n');
-                                    }
-                                },
-                                else => |c| {
-                                    try this.value_buffer.append(c);
-                                    i += 1;
-                                },
-                            }
-                        }
-                        return this.value_buffer.items;
-                    }
-                    this.pos = start;
-                },
-                else => {},
-            }
-        }
-        return null;
-    }
-
-    fn parseValue(this: *Parser, comptime is_process: bool) OOM!string {
-        const start = this.pos;
-        this.skipWhitespaces();
-        var end = this.pos;
-        if (end >= this.src.len) return this.src[this.src.len..];
-        switch (this.src[end]) {
-            inline '`', '"', '\'' => |quote| {
-                if (try this.parseQuoted(quote)) |value| {
-                    return if (comptime is_process) value else value[1 .. value.len - 1];
-                }
-            },
-            else => {},
-        }
-        end = start;
-        while (end < this.src.len) : (end += 1) {
-            switch (this.src[end]) {
-                '#', '\r', '\n' => break,
-                else => {},
-            }
-        }
-        this.pos = end;
-        return strings.trim(this.src[start..end], whitespace_chars);
-    }
-
-    fn expandValue(this: *Parser, map: *Map, value: string) OOM!?string {
-        if (value.len < 2) return null;
-
-        this.value_buffer.clearRetainingCapacity();
-
-        var pos = value.len - 2;
-        var last = value.len;
-        while (true) : (pos -= 1) {
-            if (value[pos] == '$') {
-                if (pos > 0 and value[pos - 1] == '\\') {
-                    try this.value_buffer.insertSlice(0, value[pos..last]);
-                    pos -= 1;
-                } else {
-                    var end = if (value[pos + 1] == '{') pos + 2 else pos + 1;
-                    const key_start = end;
-                    while (end < value.len) : (end += 1) {
-                        switch (value[end]) {
-                            'a'...'z', 'A'...'Z', '0'...'9', '_' => continue,
-                            else => break,
-                        }
-                    }
-                    const lookup_value = map.get(value[key_start..end]);
-                    const default_value = if (strings.hasPrefixComptime(value[end..], ":-")) brk: {
-                        end += ":-".len;
-                        const value_start = end;
-                        while (end < value.len) : (end += 1) {
-                            switch (value[end]) {
-                                '}', '\\' => break,
-                                else => continue,
-                            }
-                        }
-                        break :brk value[value_start..end];
-                    } else "";
-                    if (end < value.len and value[end] == '}') end += 1;
-                    try this.value_buffer.insertSlice(0, value[end..last]);
-                    try this.value_buffer.insertSlice(0, lookup_value orelse default_value);
-                }
-                last = pos;
-            }
-            if (pos == 0) {
-                if (last == value.len) return null;
-                break;
-            }
-        }
-        if (last > 0) {
-            try this.value_buffer.insertSlice(0, value[0..last]);
-        }
-        return this.value_buffer.items;
-    }
-
-    fn _parse(
-        this: *Parser,
-        allocator: std.mem.Allocator,
-        map: *Map,
-        comptime override: bool,
-        comptime is_process: bool,
-        comptime expand: bool,
-    ) OOM!void {
-        var count = map.map.count();
-        while (this.pos < this.src.len) {
-            const key = this.parseKey(true) orelse {
-                this.skipLine();
-                continue;
-            };
-            const value = try this.parseValue(is_process);
-            const entry = try map.map.getOrPut(key);
-            if (entry.found_existing) {
-                if (entry.index < count) {
-                    // Allow keys defined later in the same file to override keys defined earlier
-                    // https://github.com/oven-sh/bun/issues/1262
-                    if (comptime !override) continue;
-                } else {
-                    allocator.free(entry.value_ptr.value);
-                }
-            }
-            entry.value_ptr.* = .{
-                .value = try allocator.dupe(u8, value),
-                .conditional = false,
-            };
-        }
-        if (comptime !is_process and expand) {
-            var it = map.iterator();
-            while (it.next()) |entry| {
-                if (count > 0) {
-                    count -= 1;
-                } else if (try this.expandValue(map, entry.value_ptr.value)) |value| {
-                    allocator.free(entry.value_ptr.value);
-                    entry.value_ptr.* = .{
-                        .value = try allocator.dupe(u8, value),
+            const gop = try this.map.map.getOrPut(key);
+            if (gop.found_existing) {
+                if (override) {
+                    this.allocator.free(gop.value_ptr.value);
+                    gop.value_ptr.* = .{
+                        .value = try this.allocator.dupe(u8, value),
                         .conditional = false,
                     };
                 }
+            } else {
+                gop.key_ptr.* = try this.allocator.dupe(u8, key);
+                gop.value_ptr.* = .{
+                    .value = try this.allocator.dupe(u8, value),
+                    .conditional = false,
+                };
             }
         }
-    }
 
-    pub fn parse(
-        source: *const logger.Source,
-        allocator: std.mem.Allocator,
-        map: *Map,
-        value_buffer: *std.array_list.Managed(u8),
-        comptime override: bool,
-        comptime is_process: bool,
-        comptime expand: bool,
-    ) OOM!void {
-        // Clear the buffer before each parse to ensure no leftover data
-        value_buffer.clearRetainingCapacity();
-        var parser = Parser{
-            .src = source.contents,
-            .value_buffer = value_buffer,
-        };
-        try parser._parse(allocator, map, override, is_process, expand);
+
+        try this.custom_files_loaded.put(file_path, source.*);
     }
 };
 
@@ -1411,3 +1219,4 @@ const logger = bun.logger;
 const s3 = bun.S3;
 const strings = bun.strings;
 const api = bun.schema.api;
+const zigenv = @import("./zigenv/lib.zig");

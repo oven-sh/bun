@@ -59,4 +59,15 @@ var objectsMedium = Array.from({ length: 100 }, (_, i) => ({ id: i, name: `item-
 bench("structuredClone([10 objects])", () => structuredClone(objectsSmall));
 bench("structuredClone([100 objects])", () => structuredClone(objectsMedium));
 
+// TypedArray fast path targets
+var uint8Small = new Uint8Array(64);
+var uint8Medium = new Uint8Array(1024);
+var uint8Large = new Uint8Array(1024 * 1024);
+var float64Medium = new Float64Array(128);
+
+bench("structuredClone(Uint8Array 64B)", () => structuredClone(uint8Small));
+bench("structuredClone(Uint8Array 1KB)", () => structuredClone(uint8Medium));
+bench("structuredClone(Uint8Array 1MB)", () => structuredClone(uint8Large));
+bench("structuredClone(Float64Array 1KB)", () => structuredClone(float64Medium));
+
 await run();

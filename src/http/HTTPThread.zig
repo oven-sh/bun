@@ -226,14 +226,12 @@ pub fn connect(this: *@This(), client: *HTTPClient, comptime is_ssl: bool) !NewH
     if (comptime is_ssl) {
         const needs_own_context = client.tls_props != null and client.tls_props.?.requires_custom_request_ctx;
         if (needs_own_context) {
-            var requested_config = client.tls_props.?;
+            const requested_config = client.tls_props.?;
             for (custom_ssl_context_map.keys()) |other_config| {
                 if (requested_config.isSame(other_config)) {
-                    // we free the callers config since we have a existing one
-                    if (requested_config != client.tls_props) {
-                        requested_config.deinit();
-                        bun.default_allocator.destroy(requested_config);
-                    }
+                    // Free the caller's config since we already have an equivalent cached one.
+                    requested_config.deinit();
+                    bun.default_allocator.destroy(requested_config);
                     client.tls_props = other_config;
                     if (client.http_proxy) |url| {
                         return try custom_ssl_context_map.get(other_config).?.connect(client, url.hostname, url.getPortAuto());

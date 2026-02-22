@@ -95,6 +95,12 @@ elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|x64|amd64|AMD64")
     x86_64-link.c
     i386-asm.c
   )
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "riscv64|RISCV64")
+  list(APPEND TCC_SOURCES
+    riscv64-gen.c
+    riscv64-link.c
+    riscv64-asm.c
+  )
 else()
   message(FATAL_ERROR "Unsupported architecture: ${CMAKE_SYSTEM_PROCESSOR}")
 endif()

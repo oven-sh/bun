@@ -53,6 +53,8 @@ else if (Environment.isX86)
     "x86"
 else if (Environment.isAarch64)
     "arm64"
+else if (Environment.isRiscV64)
+    "riscv64"
 else
     "unknown";
 

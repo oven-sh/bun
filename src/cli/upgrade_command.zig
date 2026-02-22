@@ -42,7 +42,7 @@ pub const Version = struct {
         .wasm => @compileError("Unsupported OS for Bun Upgrade"),
     };
 
-    pub const arch_label = if (Environment.isAarch64) "aarch64" else "x64";
+    pub const arch_label = if (Environment.isAarch64) "aarch64" else if (Environment.isRiscV64) "riscv64" else "x64";
     pub const triplet = platform_label ++ "-" ++ arch_label;
     const suffix_abi = if (Environment.isMusl) "-musl" else "";
     const suffix_cpu = if (Environment.baseline) "-baseline" else "";

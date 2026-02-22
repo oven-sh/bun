@@ -20,6 +20,7 @@ pub const isLinux = builtin.target.os.tag == .linux;
 pub const isAarch64 = builtin.target.cpu.arch.isAARCH64();
 pub const isX86 = builtin.target.cpu.arch.isX86();
 pub const isX64 = builtin.target.cpu.arch == .x86_64;
+pub const isRiscV64 = builtin.target.cpu.arch == .riscv64;
 pub const isMusl = builtin.target.abi.isMusl();
 pub const allow_assert = isDebug or isTest or std.builtin.OptimizeMode.ReleaseSafe == builtin.mode;
 pub const ci_assert = isDebug or isTest or enable_asan or (std.builtin.OptimizeMode.ReleaseSafe == builtin.mode and is_canary);
@@ -144,6 +145,7 @@ else
 pub const Architecture = enum {
     x64,
     arm64,
+    riscv64,
     wasm,
 
     /// npm package name, `@oven-sh/bun-{os}-{arch}`
@@ -151,6 +153,7 @@ pub const Architecture = enum {
         return switch (this) {
             .x64 => "x64",
             .arm64 => "aarch64",
+            .riscv64 => "riscv64",
             .wasm => "wasm",
         };
     }
@@ -161,6 +164,7 @@ pub const Architecture = enum {
         .{ "amd64", .x64 },
         .{ "aarch64", .arm64 },
         .{ "arm64", .arm64 },
+        .{ "riscv64", .riscv64 },
         .{ "wasm", .wasm },
     });
 };
@@ -171,6 +175,8 @@ else if (isX64)
     .x64
 else if (isAarch64)
     .arm64
+else if (isRiscV64)
+    .riscv64
 else
     @compileError("Please add your architecture to the Architecture enum");
 

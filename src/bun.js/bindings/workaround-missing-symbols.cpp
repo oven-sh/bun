@@ -71,7 +71,7 @@ extern "C" int kill(int pid, int sig)
 #include <dlfcn.h>
 
 #ifndef _STAT_VER
-#if defined(__aarch64__)
+#if defined(__aarch64__) || defined(__riscv)
 #define _STAT_VER 0
 #elif defined(__x86_64__)
 #define _STAT_VER 1
@@ -100,9 +100,19 @@ __asm__(".symver log2f,log2f@GLIBC_2.17");
 __asm__(".symver logf,logf@GLIBC_2.17");
 __asm__(".symver pow,pow@GLIBC_2.17");
 __asm__(".symver powf,powf@GLIBC_2.17");
+#elif defined(__riscv)
+__asm__(".symver expf,expf@GLIBC_2.27");
+__asm__(".symver exp,exp@GLIBC_2.27");
+__asm__(".symver exp2,exp2@GLIBC_2.27");
+__asm__(".symver log,log@GLIBC_2.27");
+__asm__(".symver log2,log2@GLIBC_2.27");
+__asm__(".symver log2f,log2f@GLIBC_2.27");
+__asm__(".symver logf,logf@GLIBC_2.27");
+__asm__(".symver pow,pow@GLIBC_2.27");
+__asm__(".symver powf,powf@GLIBC_2.27");
 #endif
 
-#if defined(__x86_64__) || defined(__aarch64__)
+#if defined(__x86_64__) || defined(__aarch64__) || defined(__riscv)
 #define BUN_WRAP_GLIBC_SYMBOL(symbol) __wrap_##symbol
 #else
 #define BUN_WRAP_GLIBC_SYMBOL(symbol) symbol

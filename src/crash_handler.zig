@@ -813,6 +813,8 @@ pub fn reportBaseUrl() []const u8 {
 
 const arch_display_string = if (bun.Environment.isAarch64)
     if (bun.Environment.isMac) "Silicon" else "arm64"
+else if (bun.Environment.isRiscV64)
+    "riscv64"
 else
     "x64";
 
@@ -1096,6 +1098,7 @@ const Platform = enum(u8) {
     linux_x86_64 = 'l',
     linux_x86_64_baseline = 'B',
     linux_aarch64 = 'L',
+    linux_riscv64 = 'r',
 
     mac_x86_64_baseline = 'b',
     mac_x86_64 = 'm',

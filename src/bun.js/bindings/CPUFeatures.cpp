@@ -130,12 +130,62 @@ static uint8_t aarch64_cpu_features()
 
 #endif
 
+// RISC-V ISA extension bits from the hwcap
+#if CPU(RISCV64)
+
+#include <sys/auxv.h>
+
+enum class RiscVCPUFeature : uint8_t {
+    m = 1,       // Integer multiply/divide
+    a = 2,       // Atomics
+    f = 3,       // Single-precision float
+    d = 4,       // Double-precision float
+    c = 5,       // Compressed instructions
+    v = 6,       // Vector extension
+};
+
+// RISC-V hwcap bits (from arch/riscv/include/uapi/asm/hwcap.h)
+#ifndef COMPAT_HWCAP_ISA_I
+#define COMPAT_HWCAP_ISA_I  (1 << ('I' - 'A'))
+#define COMPAT_HWCAP_ISA_M  (1 << ('M' - 'A'))
+#define COMPAT_HWCAP_ISA_A  (1 << ('A' - 'A'))
+#define COMPAT_HWCAP_ISA_F  (1 << ('F' - 'A'))
+#define COMPAT_HWCAP_ISA_D  (1 << ('D' - 'A'))
+#define COMPAT_HWCAP_ISA_C  (1 << ('C' - 'A'))
+#define COMPAT_HWCAP_ISA_V  (1 << ('V' - 'A'))
+#endif
+
+static uint8_t riscv64_cpu_features()
+{
+    uint8_t features = 0;
+    unsigned long hwcaps = getauxval(AT_HWCAP);
+
+    if (hwcaps & COMPAT_HWCAP_ISA_M)
+        features |= 1 << static_cast<uint8_t>(RiscVCPUFeature::m);
+    if (hwcaps & COMPAT_HWCAP_ISA_A)
+        features |= 1 << static_cast<uint8_t>(RiscVCPUFeature::a);
+    if (hwcaps & COMPAT_HWCAP_ISA_F)
+        features |= 1 << static_cast<uint8_t>(RiscVCPUFeature::f);
+    if (hwcaps & COMPAT_HWCAP_ISA_D)
+        features |= 1 << static_cast<uint8_t>(RiscVCPUFeature::d);
+    if (hwcaps & COMPAT_HWCAP_ISA_C)
+        features |= 1 << static_cast<uint8_t>(RiscVCPUFeature::c);
+    if (hwcaps & COMPAT_HWCAP_ISA_V)
+        features |= 1 << static_cast<uint8_t>(RiscVCPUFeature::v);
+
+    return features;
+}
+
+#endif
+
 extern "C" uint8_t bun_cpu_features()
 {
 #if CPU(X86_64)
     return x86_cpu_features();
 #elif CPU(ARM64)
     return aarch64_cpu_features();
+#elif CPU(RISCV64)
+    return riscv64_cpu_features();
 #else
 #error "Unknown architecture"
 #endif

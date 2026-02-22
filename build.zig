@@ -120,10 +120,14 @@ pub fn getOSVersionMin(os: OperatingSystem) ?Target.Query.OsVersion {
     };
 }
 
-pub fn getOSGlibCVersion(os: OperatingSystem) ?Version {
+pub fn getOSGlibCVersion(os: OperatingSystem, arch: Arch) ?Version {
     return switch (os) {
         // Compiling with a newer glibc than this will break certain cloud environments. See symbols.test.ts.
-        .linux => .{ .major = 2, .minor = 26, .patch = 0 },
+        .linux => switch (arch) {
+            // riscv64 was added in glibc 2.27
+            .riscv64 => .{ .major = 2, .minor = 27, .patch = 0 },
+            else => .{ .major = 2, .minor = 26, .patch = 0 },
+        },
 
         else => null,
     };
@@ -180,7 +184,7 @@ pub fn build(b: *Build) !void {
     }
 
     target_query.os_version_min = getOSVersionMin(os);
-    target_query.glibc_version = if (abi.isGnu()) getOSGlibCVersion(os) else null;
+    target_query.glibc_version = if (abi.isGnu()) getOSGlibCVersion(os, arch) else null;
 
     const target = b.resolveTargetQuery(target_query);
 
@@ -361,8 +365,10 @@ pub fn build(b: *Build) !void {
             .{ .os = .mac, .arch = .aarch64 },
             .{ .os = .linux, .arch = .x86_64 },
             .{ .os = .linux, .arch = .aarch64 },
+            .{ .os = .linux, .arch = .riscv64 },
             .{ .os = .linux, .arch = .x86_64, .musl = true },
             .{ .os = .linux, .arch = .aarch64, .musl = true },
+            .{ .os = .linux, .arch = .riscv64, .musl = true },
         }, &.{ .Debug, .ReleaseFast });
     }
 
@@ -376,8 +382,10 @@ pub fn build(b: *Build) !void {
             .{ .os = .mac, .arch = .aarch64 },
             .{ .os = .linux, .arch = .x86_64 },
             .{ .os = .linux, .arch = .aarch64 },
+            .{ .os = .linux, .arch = .riscv64 },
             .{ .os = .linux, .arch = .x86_64, .musl = true },
             .{ .os = .linux, .arch = .aarch64, .musl = true },
+            .{ .os = .linux, .arch = .riscv64, .musl = true },
         }, &.{.Debug});
     }
 
@@ -612,7 +620,7 @@ const TargetDescription = struct {
             .cpu_arch = desc.arch,
             .cpu_model = getCpuModel(desc.os, desc.arch) orelse .determined_by_arch_os,
             .os_version_min = getOSVersionMin(desc.os),
-            .glibc_version = if (desc.musl) null else getOSGlibCVersion(desc.os),
+            .glibc_version = if (desc.musl) null else getOSGlibCVersion(desc.os, desc.arch),
         });
     }
 };
@@ -758,7 +766,6 @@ fn configureObj(b: *Build, opts: *BunBuildOptions, obj: *Compile) void {
     }
 
     obj.no_link_obj = opts.os != .windows and !opts.no_llvm;
-
 
     if (opts.enable_asan and !enableFastBuild(b)) {
         if (@hasField(Build.Module, "sanitize_address")) {

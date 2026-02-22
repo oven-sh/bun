@@ -66,15 +66,15 @@ pub const darwin = struct {
 
     pub const lstat = blk: {
         const T = *const fn (?[*:0]const u8, ?*bun.Stat) callconv(.c) c_int;
-        break :blk @extern(T, .{ .name = if (bun.Environment.isAarch64) "lstat" else "lstat64" });
+        break :blk @extern(T, .{ .name = if (bun.Environment.isAarch64 or bun.Environment.isRiscV64) "lstat" else "lstat64" });
     };
     pub const fstat = blk: {
         const T = *const fn (i32, ?*bun.Stat) callconv(.c) c_int;
-        break :blk @extern(T, .{ .name = if (bun.Environment.isAarch64) "fstat" else "fstat64" });
+        break :blk @extern(T, .{ .name = if (bun.Environment.isAarch64 or bun.Environment.isRiscV64) "fstat" else "fstat64" });
     };
     pub const stat = blk: {
         const T = *const fn (?[*:0]const u8, ?*bun.Stat) callconv(.c) c_int;
-        break :blk @extern(T, .{ .name = if (bun.Environment.isAarch64) "stat" else "stat64" });
+        break :blk @extern(T, .{ .name = if (bun.Environment.isAarch64 or bun.Environment.isRiscV64) "stat" else "stat64" });
     };
 };
 pub const windows = struct {

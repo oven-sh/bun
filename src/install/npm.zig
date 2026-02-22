@@ -759,18 +759,21 @@ pub const Architecture = enum(u16) {
     pub const s390x: u16 = 1 << 9;
     pub const x32: u16 = 1 << 10;
     pub const x64: u16 = 1 << 11;
+    pub const riscv64: u16 = 1 << 12;
 
-    pub const all_value: u16 = arm | arm64 | ia32 | mips | mipsel | ppc | ppc64 | s390 | s390x | x32 | x64;
+    pub const all_value: u16 = arm | arm64 | ia32 | mips | mipsel | ppc | ppc64 | s390 | s390x | x32 | x64 | riscv64;
 
     pub const current: Architecture = switch (Environment.arch) {
         .arm64 => @enumFromInt(arm64),
         .x64 => @enumFromInt(x64),
+        .riscv64 => @enumFromInt(riscv64),
         .wasm => @compileError("Specify architecture: " ++ Environment.arch),
     };
 
     pub const current_name = switch (Environment.arch) {
         .arm64 => "arm64",
         .x64 => "x64",
+        .riscv64 => "riscv64",
         .wasm => @compileError("Unsupported architecture: " ++ @tagName(current)),
     };
 
@@ -786,6 +789,7 @@ pub const Architecture = enum(u16) {
         .{ "s390x", s390x },
         .{ "x32", x32 },
         .{ "x64", x64 },
+        .{ "riscv64", riscv64 },
     });
 
     pub inline fn has(this: Architecture, other: u16) bool {

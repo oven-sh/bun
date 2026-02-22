@@ -200,6 +200,15 @@ export function loadEsmIntoCjs(resolvedSpecifier: string) {
         (!$isPromise(fetch) ||
           ($getPromiseInternalField(fetch, $promiseFieldFlags) & $promiseStateMask) === $promiseStatePending))
     ) {
+      // If import() already started fetching this module, entry.fetch is a
+      // chained promise with a pending microtask reaction from the raw fetch
+      // promise. Clear it so $fulfillModuleSync → provideFetch → fulfillFetch
+      // creates a fresh promise instead of fulfilling the old one.
+      // https://github.com/oven-sh/bun/issues/12910
+      if (entry) {
+        entry.fetch = undefined;
+      }
+
       // force it to be no longer pending
       $fulfillModuleSync(key);
 

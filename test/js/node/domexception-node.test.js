@@ -56,8 +56,7 @@ describe("DOMException in Node.js environment", () => {
     expect(DOMException.DATA_CLONE_ERR).toBe(25);
   });
 
-  // TODO: missing stack trace on DOMException
-  it.failing("inherits prototype properties from Error", () => {
+  it("inherits prototype properties from Error", () => {
     const error = new DOMException("Test error");
     expect(error.toString()).toBe("Error: Test error");
     expect(error.stack).toBeDefined();

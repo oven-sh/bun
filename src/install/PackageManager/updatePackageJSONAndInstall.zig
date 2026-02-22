@@ -1,3 +1,165 @@
+fn updatePackageJSONForWorkspaces(
+    manager: *PackageManager,
+    ctx: Command.Context,
+    original_cwd: string,
+    workspace_pkg_ids: []const PackageID,
+) !void {
+    const lockfile = manager.lockfile;
+    const packages = lockfile.packages.slice();
+    const pkg_resolutions = packages.items(.resolution);
+    const string_buf = lockfile.buffers.string_bytes.items;
+    const root_dir = FileSystem.instance.top_level_dir;
+
+    for (workspace_pkg_ids) |workspace_pkg_id| {
+        const workspace_resolution = pkg_resolutions[workspace_pkg_id];
+        const workspace_path = if (workspace_resolution.tag == .workspace)
+            workspace_resolution.value.workspace.slice(string_buf)
+        else
+            "";
+
+        var path_buf: bun.PathBuffer = undefined;
+        const package_json_paths = buildWorkspacePackageJsonPath(root_dir, workspace_path, &path_buf);
+
+        var package_json = switch (manager.workspace_package_json_cache.getWithPath(
+            manager.allocator,
+            manager.log,
+            package_json_paths.path_z,
+            .{ .guess_indentation = true },
+        )) {
+            .parse_err => |err| {
+                Output.errGeneric("Failed to parse package.json at {s}: {s}", .{ package_json_paths.path, @errorName(err) });
+                continue;
+            },
+            .read_err => |err| {
+                Output.errGeneric("Failed to read package.json at {s}: {s}", .{ package_json_paths.path, @errorName(err) });
+                continue;
+            },
+            .entry => |package_entry| package_entry,
+        };
+
+        PackageJSONEditor.editUpdateNoArgs(
+            manager,
+            &package_json.root,
+            .{
+                .exact_versions = true,
+                .before_install = true,
+            },
+        ) catch |err| {
+            Output.errGeneric("Failed to update package.json at {s}: {s}", .{ package_json_paths.path, @errorName(err) });
+            continue;
+        };
+
+        const preserve_trailing_newline = package_json.source.contents.len > 0 and
+            package_json.source.contents[package_json.source.contents.len - 1] == '\n';
+
+        var buffer_writer = JSPrinter.BufferWriter.init(manager.allocator);
+        buffer_writer.buffer.list.ensureTotalCapacity(manager.allocator, package_json.source.contents.len + 1) catch |err| bun.handleOom(err);
+        buffer_writer.append_newline = preserve_trailing_newline;
+        var package_json_writer = JSPrinter.BufferPrinter.init(buffer_writer);
+
+        _ = JSPrinter.printJSON(
+            @TypeOf(&package_json_writer),
+            &package_json_writer,
+            package_json.root,
+            &package_json.source,
+            .{
+                .indent = package_json.indentation,
+                .mangled_props = null,
+            },
+        ) catch |err| {
+            Output.errGeneric("Failed to serialize package.json at {s}: {s}", .{ package_json_paths.path, @errorName(err) });
+            continue;
+        };
+
+        const new_package_json_source = manager.allocator.dupe(u8, package_json_writer.ctx.writtenWithoutTrailingZero()) catch |err| bun.handleOom(err);
+
+        const write_file = std.fs.cwd().createFile(package_json_paths.path, .{}) catch |err| {
+            Output.errGeneric("Failed to write package.json at {s}: {s}", .{ package_json_paths.path, @errorName(err) });
+            manager.allocator.free(new_package_json_source);
+            continue;
+        };
+        defer write_file.close();
+
+        write_file.writeAll(new_package_json_source) catch |err| {
+            Output.errGeneric("Failed to write package.json at {s}: {s}", .{ package_json_paths.path, @errorName(err) });
+            manager.allocator.free(new_package_json_source);
+            continue;
+        };
+
+        manager.allocator.free(new_package_json_source);
+    }
+
+    manager.to_update = true;
+
+    var root_path_buf: bun.PathBuffer = undefined;
+    const root_package_json_path = bun.path.joinAbsStringBuf(
+        root_dir,
+        &root_path_buf,
+        &[_]string{"package.json"},
+        .auto,
+    );
+    root_path_buf[root_package_json_path.len] = 0;
+    const root_package_json_path_z = root_path_buf[0..root_package_json_path.len :0];
+
+    try manager.installWithManager(ctx, root_package_json_path_z, original_cwd);
+
+    for (workspace_pkg_ids) |workspace_pkg_id| {
+        const workspace_resolution = pkg_resolutions[workspace_pkg_id];
+        const workspace_path = if (workspace_resolution.tag == .workspace)
+            workspace_resolution.value.workspace.slice(string_buf)
+        else
+            "";
+
+        var path_buf2: bun.PathBuffer = undefined;
+        const package_json_paths = buildWorkspacePackageJsonPath(root_dir, workspace_path, &path_buf2);
+
+        var package_json = switch (manager.workspace_package_json_cache.getWithPath(
+            manager.allocator,
+            manager.log,
+            package_json_paths.path_z,
+            .{ .guess_indentation = true },
+        )) {
+            .parse_err, .read_err => continue,
+            .entry => |package_entry| package_entry,
+        };
+
+        PackageJSONEditor.editUpdateNoArgs(
+            manager,
+            &package_json.root,
+            .{
+                .exact_versions = manager.options.enable.exact_versions,
+            },
+        ) catch continue;
+
+        const preserve_trailing_newline = package_json.source.contents.len > 0 and
+            package_json.source.contents[package_json.source.contents.len - 1] == '\n';
+
+        var buffer_writer = JSPrinter.BufferWriter.init(manager.allocator);
+        buffer_writer.buffer.list.ensureTotalCapacity(manager.allocator, package_json.source.contents.len + 1) catch |err| bun.handleOom(err);
+        buffer_writer.append_newline = preserve_trailing_newline;
+        var package_json_writer = JSPrinter.BufferPrinter.init(buffer_writer);
+
+        _ = JSPrinter.printJSON(
+            @TypeOf(&package_json_writer),
+            &package_json_writer,
+            package_json.root,
+            &package_json.source,
+            .{
+                .indent = package_json.indentation,
+                .mangled_props = null,
+            },
+        ) catch continue;
+
+        const new_package_json_source = manager.allocator.dupe(u8, package_json_writer.ctx.writtenWithoutTrailingZero()) catch |err| bun.handleOom(err);
+        defer manager.allocator.free(new_package_json_source);
+
+        const write_file = std.fs.cwd().createFile(package_json_paths.path, .{}) catch continue;
+        defer write_file.close();
+
+        write_file.writeAll(new_package_json_source) catch continue;
+    }
+}
+
 pub fn updatePackageJSONAndInstallWithManager(
     manager: *PackageManager,
     ctx: Command.Context,
@@ -24,6 +186,64 @@ pub fn updatePackageJSONAndInstallWithManager(
             },
             .update => {},
             else => {},
+        }
+    }
+
+    if (manager.subcommand == .update and manager.options.positionals.len <= 1) {
+        if (manager.options.do.recursive or manager.options.filter_patterns.len > 0) {
+            const load_lockfile_result = manager.lockfile.loadFromCwd(
+                manager,
+                manager.allocator,
+                manager.log,
+                true,
+            );
+
+            manager.lockfile = switch (load_lockfile_result) {
+                .not_found => {
+                    return try updatePackageJSONAndInstallWithManagerWithUpdatesAndUpdateRequests(
+                        manager,
+                        ctx,
+                        original_cwd,
+                        manager.options.positionals[1..],
+                        &update_requests,
+                    );
+                },
+                .err => {
+                    return try updatePackageJSONAndInstallWithManagerWithUpdatesAndUpdateRequests(
+                        manager,
+                        ctx,
+                        original_cwd,
+                        manager.options.positionals[1..],
+                        &update_requests,
+                    );
+                },
+                .ok => |ok| ok.lockfile,
+            };
+        }
+
+        const workspace_pkg_ids = if (manager.options.filter_patterns.len > 0) blk: {
+            const filters = manager.options.filter_patterns;
+            break :blk findMatchingWorkspaces(
+                bun.default_allocator,
+                original_cwd,
+                manager,
+                filters,
+            ) catch |err| bun.handleOom(err);
+        } else if (manager.options.do.recursive) blk: {
+            break :blk bun.handleOom(getAllWorkspaces(bun.default_allocator, manager));
+        } else blk: {
+            break :blk bun.handleOom(bun.default_allocator.alloc(PackageID, 0));
+        };
+
+        defer bun.default_allocator.free(workspace_pkg_ids);
+
+        if (workspace_pkg_ids.len > 1 or (workspace_pkg_ids.len == 1 and manager.options.do.recursive)) {
+            return try updatePackageJSONForWorkspaces(
+                manager,
+                ctx,
+                original_cwd,
+                workspace_pkg_ids,
+            );
         }
     }
 
@@ -759,3 +979,10 @@ const PatchCommitResult = PackageManager.PatchCommitResult;
 const Subcommand = PackageManager.Subcommand;
 const UpdateRequest = PackageManager.UpdateRequest;
 const attemptToCreatePackageJSON = PackageManager.attemptToCreatePackageJSON;
+const PackageID = bun.install.PackageID;
+const OOM = bun.OOM;
+
+const WorkspaceHelpers = @import("./WorkspaceHelpers.zig");
+const getAllWorkspaces = WorkspaceHelpers.getAllWorkspaces;
+const findMatchingWorkspaces = WorkspaceHelpers.findMatchingWorkspaces;
+const buildWorkspacePackageJsonPath = WorkspaceHelpers.buildWorkspacePackageJsonPath;

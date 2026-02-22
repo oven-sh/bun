@@ -780,10 +780,16 @@ pub fn cleanWithLogger(
 
     {
         var builder = new.stringBuilder();
-        for (old.patched_dependencies.values()) |patched_dep| builder.count(patched_dep.path.slice(old.buffers.string_bytes.items));
+        for (old.patched_dependencies.values()) |patched_dep| {
+            // Skip entries whose patch hash was never calculated — this means
+            // the patched package was not part of the resolved dependency graph
+            // (e.g. patchedDependencies in a pruned monorepo root).
+            if (patched_dep.patchfile_hash_is_null) continue;
+            builder.count(patched_dep.path.slice(old.buffers.string_bytes.items));
+        }
         try builder.allocate();
         for (old.patched_dependencies.keys(), old.patched_dependencies.values()) |k, v| {
-            bun.assert(!v.patchfile_hash_is_null);
+            if (v.patchfile_hash_is_null) continue;
             var patchdep = v;
             patchdep.path = builder.append(String, patchdep.path.slice(old.buffers.string_bytes.items));
             try new.patched_dependencies.put(new.allocator, k, patchdep);

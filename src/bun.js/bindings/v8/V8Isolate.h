@@ -2,6 +2,7 @@
 
 #include "v8.h"
 #include "V8Local.h"
+#include <JavaScriptCore/WriteBarrier.h>
 
 namespace v8 {
 
@@ -34,9 +35,9 @@ public:
 
     BUN_EXPORT Local<Context> GetCurrentContext();
 
-    Zig::GlobalObject* globalObject() { return m_globalObject; }
+    Zig::GlobalObject* globalObject() { return m_globalObject.get(); }
     JSC::VM& vm() { return globalObject()->vm(); }
-    shim::GlobalInternals* globalInternals() { return m_globalInternals; }
+    shim::GlobalInternals* globalInternals() { return m_globalInternals.get(); }
     HandleScope* currentHandleScope();
 
     TaggedPointer* undefinedSlot() { return &m_roots[Isolate::kUndefinedValueRootIndex]; }
@@ -47,8 +48,8 @@ public:
 
     TaggedPointer* falseSlot() { return &m_roots[Isolate::kFalseValueRootIndex]; }
 
-    shim::GlobalInternals* m_globalInternals;
-    Zig::GlobalObject* m_globalObject;
+    JSC::WriteBarrier<shim::GlobalInternals> m_globalInternals;
+    JSC::WriteBarrier<Zig::GlobalObject> m_globalObject;
 
     uintptr_t m_padding[78];
 

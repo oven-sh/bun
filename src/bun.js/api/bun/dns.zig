@@ -95,7 +95,7 @@ const LibInfo = struct {
         );
 
         if (errno != 0) {
-            request.head.promise.rejectTask(globalThis, globalThis.createErrorInstance("getaddrinfo_async_start error: {s}", .{@tagName(bun.sys.getErrno(errno))})) catch {}; // TODO: properly propagate exception upwards
+            request.head.promise.rejectTask(globalThis, globalThis.createErrorInstance("getaddrinfo_async_start error: {s}", .{@tagName(bun.sys.getErrno(errno))})) catch |err| bun.handleOom(err);
             if (request.cache.pending_cache) this.pending_host_cache_native.used.set(request.cache.pos_in_pending);
             this.vm.allocator.destroy(request);
 
@@ -507,7 +507,13 @@ pub const CAresNameInfo = struct {
             return;
         }
         var name_info = result.?;
-        const array = name_info.toJSResponse(this.globalThis.allocator(), this.globalThis) catch .zero; // TODO: properly propagate exception upwards
+        const array = name_info.toJSResponse(this.globalThis.allocator(), this.globalThis) catch |err| {
+            // FIX: Propagate allocation/conversion errors as Promise rejections
+            const err_val = this.globalThis.createErrorInstance("{s}", .{@errorName(err)});
+            this.promise.rejectTask(this.globalThis, err_val) catch {};
+            this.deinit();
+            return;
+        };
         this.onComplete(array);
         return;
     }
@@ -516,7 +522,7 @@ pub const CAresNameInfo = struct {
         var promise = this.promise;
         const globalThis = this.globalThis;
         this.promise = .{};
-        promise.resolveTask(globalThis, result) catch {}; // TODO: properly propagate exception upwards
+        promise.resolveTask(globalThis, result) catch |err| bun.handleOom(err);
         this.deinit();
     }
 
@@ -923,7 +929,13 @@ pub const CAresReverse = struct {
             return;
         }
         var node = result.?;
-        const array = node.toJSResponse(this.globalThis.allocator(), this.globalThis, "") catch .zero; // TODO: properly propagate exception upwards
+        const array = node.toJSResponse(this.globalThis.allocator(), this.globalThis, "") catch |err| {
+            // FIX: Propagate allocation/conversion errors as Promise rejections
+            const err_val = this.globalThis.createErrorInstance("{s}", .{@errorName(err)});
+            this.promise.rejectTask(this.globalThis, err_val) catch {};
+            this.deinit();
+            return;
+        };
         this.onComplete(array);
         return;
     }
@@ -932,7 +944,7 @@ pub const CAresReverse = struct {
         var promise = this.promise;
         const globalThis = this.globalThis;
         this.promise = .{};
-        promise.resolveTask(globalThis, result) catch {}; // TODO: properly propagate exception upwards
+        promise.resolveTask(globalThis, result) catch |err| bun.handleOom(err);
         if (this.resolver) |resolver| {
             resolver.requestCompleted();
         }
@@ -1004,7 +1016,13 @@ pub fn CAresLookup(comptime cares_type: type, comptime type_name: []const u8) ty
             }
 
             var node = result.?;
-            const array = node.toJSResponse(this.globalThis.allocator(), this.globalThis, type_name) catch .zero; // TODO: properly propagate exception upwards
+            const array = node.toJSResponse(this.globalThis.allocator(), this.globalThis, type_name) catch |err| {
+                // FIX: Propagate allocation/conversion errors as Promise rejections
+                const err_val = this.globalThis.createErrorInstance("{s}", .{@errorName(err)});
+                this.promise.rejectTask(this.globalThis, err_val) catch {};
+                this.deinit();
+                return;
+            };
             this.onComplete(array);
             return;
         }
@@ -1013,7 +1031,7 @@ pub fn CAresLookup(comptime cares_type: type, comptime type_name: []const u8) ty
             var promise = this.promise;
             const globalThis = this.globalThis;
             this.promise = .{};
-            promise.resolveTask(globalThis, result) catch {}; // TODO: properly propagate exception upwards
+            promise.resolveTask(globalThis, result) catch |err| bun.handleOom(err);
             if (this.resolver) |resolver| {
                 resolver.requestCompleted();
             }
@@ -1065,7 +1083,22 @@ pub const DNSLookup = struct {
 
     pub fn onCompleteNative(this: *DNSLookup, result: GetAddrInfo.Result.Any) void {
         log("onCompleteNative", .{});
-        const array = (result.toJS(this.globalThis) catch .zero).?; // TODO: properly propagate exception upwards
+        var array: jsc.JSValue = .zero;
+        if (result.toJS(this.globalThis)) |maybe_val| {
+            if (maybe_val) |v| {
+                array = v;
+            } else {
+                const err_val = jsc.Error.DNS_ENOTFOUND.toErrorInstance(this.globalThis);
+                this.promise.rejectTask(this.globalThis, err_val) catch {};
+                this.deinit();
+                return;
+            }
+        } else |err| {
+            const err_val = this.globalThis.createErrorInstance("{s}", .{@errorName(err)});
+            this.promise.rejectTask(this.globalThis, err_val) catch {};
+            this.deinit();
+            return;
+        }
         this.onCompleteWithArray(array);
     }
 
@@ -1098,7 +1131,12 @@ pub const DNSLookup = struct {
     pub fn onComplete(this: *DNSLookup, result: *c_ares.AddrInfo) void {
         log("onComplete", .{});
 
-        const array = result.toJSArray(this.globalThis) catch .zero; // TODO: properly propagate exception upwards
+        const array = result.toJSArray(this.globalThis) catch |err| {
+            const err_val = this.globalThis.createErrorInstance("{s}", .{@errorName(err)});
+            this.promise.rejectTask(this.globalThis, err_val) catch {};
+            this.deinit();
+            return;
+        };
         this.onCompleteWithArray(array);
     }
 
@@ -1108,7 +1146,7 @@ pub const DNSLookup = struct {
         var promise = this.promise;
         this.promise = .{};
         const globalThis = this.globalThis;
-        promise.resolveTask(globalThis, result) catch {}; // TODO: properly propagate exception upwards
+        promise.resolveTask(globalThis, result) catch |err| bun.handleOom(err);
         if (this.resolver) |resolver| {
             resolver.requestCompleted();
         }
@@ -2073,26 +2111,36 @@ pub const Resolver = struct {
 
         var pending: ?*CAresLookup(cares_type, lookup_name) = key.lookup.head.next;
         var prev_global = key.lookup.head.globalThis;
-        var array = addr.toJSResponse(this.vm.allocator, prev_global, lookup_name) catch .zero; // TODO: properly propagate exception upwards
+        var current_array_or_err = addr.toJSResponse(this.vm.allocator, prev_global, lookup_name);
         defer addr.deinit();
-        array.ensureStillAlive();
-        key.lookup.head.onComplete(array);
-        bun.default_allocator.destroy(key.lookup);
 
-        array.ensureStillAlive();
+        if (current_array_or_err) |array| {
+            array.ensureStillAlive();
+            key.lookup.head.onComplete(array);
+        } else |err| {
+            const err_val = prev_global.createErrorInstance("{s}", .{@errorName(err)});
+            key.lookup.head.promise.rejectTask(prev_global, err_val) catch {};
+            key.lookup.head.deinit();
+        }
+        bun.default_allocator.destroy(key.lookup);
 
         while (pending) |value| {
             const new_global = value.globalThis;
-            if (prev_global != new_global) {
-                array = addr.toJSResponse(this.vm.allocator, new_global, lookup_name) catch .zero; // TODO: properly propagate exception upwards
-                prev_global = new_global;
-            }
             pending = value.next;
 
-            {
+            if (prev_global != new_global) {
+                current_array_or_err = addr.toJSResponse(this.vm.allocator, new_global, lookup_name);
+                prev_global = new_global;
+            }
+
+            if (current_array_or_err) |array| {
                 array.ensureStillAlive();
                 value.onComplete(array);
                 array.ensureStillAlive();
+            } else |err| {
+                const err_val = new_global.createErrorInstance("{s}", .{@errorName(err)});
+                value.promise.rejectTask(new_global, err_val) catch {};
+                value.deinit();
             }
         }
     }
@@ -2117,27 +2165,38 @@ pub const Resolver = struct {
 
         var pending: ?*DNSLookup = key.lookup.head.next;
         var prev_global = key.lookup.head.globalThis;
-        var array = addr.toJSArray(prev_global) catch .zero; // TODO: properly propagate exception upwards
+        var current_array_or_err = addr.toJSArray(prev_global);
         defer addr.deinit();
-        array.ensureStillAlive();
-        key.lookup.head.onCompleteWithArray(array);
+
+        if (current_array_or_err) |array| {
+            array.ensureStillAlive();
+            key.lookup.head.onCompleteWithArray(array);
+        } else |err| {
+            const err_val = prev_global.createErrorInstance("{s}", .{@errorName(err)});
+            key.lookup.head.promise.rejectTask(prev_global, err_val) catch {};
+            key.lookup.head.deinit();
+        }
         bun.default_allocator.destroy(key.lookup);
 
-        array.ensureStillAlive();
         // std.c.addrinfo
 
         while (pending) |value| {
             const new_global = value.globalThis;
-            if (prev_global != new_global) {
-                array = addr.toJSArray(new_global) catch .zero; // TODO: properly propagate exception upwards
-                prev_global = new_global;
-            }
             pending = value.next;
 
-            {
+            if (prev_global != new_global) {
+                current_array_or_err = addr.toJSArray(new_global);
+                prev_global = new_global;
+            }
+
+            if (current_array_or_err) |array| {
                 array.ensureStillAlive();
                 value.onCompleteWithArray(array);
                 array.ensureStillAlive();
+            } else |err| {
+                const err_val = new_global.createErrorInstance("{s}", .{@errorName(err)});
+                value.promise.rejectTask(new_global, err_val) catch {};
+                value.deinit();
             }
         }
     }
@@ -2149,19 +2208,48 @@ pub const Resolver = struct {
         this.ref();
         defer this.deref();
 
-        var array = (result.toJS(globalObject) catch .zero) orelse { // TODO: properly propagate exception upwards
-            var pending: ?*DNSLookup = key.lookup.head.next;
-            var head = key.lookup.head;
-            head.processGetAddrInfoNative(err, null);
-            bun.default_allocator.destroy(key.lookup);
+        var array: jsc.JSValue = .zero;
+        
+        // Helper to handle fallback on null result
+        const fallback = struct {
+            fn run(err_code: i32, key_ptr: *GetAddrInfoRequest.PendingCacheKey) void {
+                var pending: ?*DNSLookup = key_ptr.lookup.head.next;
+                var head = key_ptr.lookup.head;
+                head.processGetAddrInfoNative(err_code, null);
+                bun.default_allocator.destroy(key_ptr.lookup);
 
-            while (pending) |value| {
-                pending = value.next;
-                value.processGetAddrInfoNative(err, null);
+                while (pending) |value| {
+                    pending = value.next;
+                    value.processGetAddrInfoNative(err_code, null);
+                }
             }
+        }.run;
 
-            return;
-        };
+        if (result.toJS(globalObject)) |maybe_val| {
+            if (maybe_val) |v| {
+                array = v;
+            } else {
+                return fallback(err, &key);
+            }
+        } else |e| {
+             const err_val = globalObject.createErrorInstance("{s}", .{@errorName(e)});
+             
+             // Reject head
+             key.lookup.head.promise.rejectTask(globalObject, err_val) catch {};
+             key.lookup.head.deinit();
+             
+             var pending: ?*DNSLookup = key.lookup.head.next;
+             bun.default_allocator.destroy(key.lookup);
+             
+             while (pending) |value| {
+                 pending = value.next;
+                 const val_err = value.globalThis.createErrorInstance("{s}", .{@errorName(e)});
+                 value.promise.rejectTask(value.globalThis, val_err) catch {};
+                 value.deinit();
+             }
+             return;
+        }
+
         var pending: ?*DNSLookup = key.lookup.head.next;
         var prev_global = key.lookup.head.globalThis;
 
@@ -2178,7 +2266,22 @@ pub const Resolver = struct {
             const new_global = value.globalThis;
             pending = value.next;
             if (prev_global != new_global) {
-                array = (result.toJS(new_global) catch .zero).?; // TODO: properly propagate exception upwards
+                if (result.toJS(new_global)) |maybe_val| {
+                    if (maybe_val) |v| {
+                        array = v;
+                    } else {
+                        // Fallback for this item
+                        value.processGetAddrInfoNative(err, null);
+                        prev_global = new_global;
+                        continue;
+                    }
+                } else |e| {
+                    const err_val = new_global.createErrorInstance("{s}", .{@errorName(e)});
+                    value.promise.rejectTask(new_global, err_val) catch {};
+                    value.deinit();
+                    prev_global = new_global;
+                    continue;
+                }
                 prev_global = new_global;
             }
 
@@ -2213,25 +2316,35 @@ pub const Resolver = struct {
         //  The callback need not and should not attempt to free the memory
         //  pointed to by hostent; the ares library will free it when the
         //  callback returns.
-        var array = addr.toJSResponse(this.vm.allocator, prev_global, "") catch .zero; // TODO: properly propagate exception upwards
-        array.ensureStillAlive();
-        key.lookup.head.onComplete(array);
+        var current_array_or_err = addr.toJSResponse(this.vm.allocator, prev_global, "");
+        
+        if (current_array_or_err) |array| {
+            array.ensureStillAlive();
+            key.lookup.head.onComplete(array);
+        } else |err| {
+            const err_val = prev_global.createErrorInstance("{s}", .{@errorName(err)});
+            key.lookup.head.promise.rejectTask(prev_global, err_val) catch {};
+            key.lookup.head.deinit();
+        }
         bun.default_allocator.destroy(key.lookup);
-
-        array.ensureStillAlive();
 
         while (pending) |value| {
             const new_global = value.globalThis;
-            if (prev_global != new_global) {
-                array = addr.toJSResponse(this.vm.allocator, new_global, "") catch .zero; // TODO: properly propagate exception upwards
-                prev_global = new_global;
-            }
             pending = value.next;
 
-            {
+            if (prev_global != new_global) {
+                current_array_or_err = addr.toJSResponse(this.vm.allocator, new_global, "");
+                prev_global = new_global;
+            }
+
+            if (current_array_or_err) |array| {
                 array.ensureStillAlive();
                 value.onComplete(array);
                 array.ensureStillAlive();
+            } else |err| {
+                const err_val = new_global.createErrorInstance("{s}", .{@errorName(err)});
+                value.promise.rejectTask(new_global, err_val) catch {};
+                value.deinit();
             }
         }
     }
@@ -2257,25 +2370,35 @@ pub const Resolver = struct {
         var pending: ?*CAresNameInfo = key.lookup.head.next;
         var prev_global = key.lookup.head.globalThis;
 
-        var array = name_info.toJSResponse(this.vm.allocator, prev_global) catch .zero; // TODO: properly propagate exception upwards
-        array.ensureStillAlive();
-        key.lookup.head.onComplete(array);
+        var current_array_or_err = name_info.toJSResponse(this.vm.allocator, prev_global);
+        
+        if (current_array_or_err) |array| {
+            array.ensureStillAlive();
+            key.lookup.head.onComplete(array);
+        } else |err| {
+            const err_val = prev_global.createErrorInstance("{s}", .{@errorName(err)});
+            key.lookup.head.promise.rejectTask(prev_global, err_val) catch {};
+            key.lookup.head.deinit();
+        }
         bun.default_allocator.destroy(key.lookup);
-
-        array.ensureStillAlive();
 
         while (pending) |value| {
             const new_global = value.globalThis;
-            if (prev_global != new_global) {
-                array = name_info.toJSResponse(this.vm.allocator, new_global) catch .zero; // TODO: properly propagate exception upwards
-                prev_global = new_global;
-            }
             pending = value.next;
 
-            {
+            if (prev_global != new_global) {
+                current_array_or_err = name_info.toJSResponse(this.vm.allocator, new_global);
+                prev_global = new_global;
+            }
+
+            if (current_array_or_err) |array| {
                 array.ensureStillAlive();
                 value.onComplete(array);
                 array.ensureStillAlive();
+            } else |err| {
+                const err_val = new_global.createErrorInstance("{s}", .{@errorName(err)});
+                value.promise.rejectTask(new_global, err_val) catch {};
+                value.deinit();
             }
         }
     }

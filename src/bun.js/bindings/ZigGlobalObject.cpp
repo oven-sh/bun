@@ -194,6 +194,7 @@
 #include "node/NodeTimers.h"
 #include "JSConnectionsList.h"
 #include "JSHTTPParser.h"
+#include "JSYogaConstructor.h"
 #include <exception>
 #include <mutex>
 #include "JSBunRequest.h"
@@ -1793,6 +1794,19 @@ void GlobalObject::finishCreation(VM& vm)
     m_JSHTTPParserClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
             setupHTTPParserClassStructure(init);
+        });
+
+    m_JSYogaConfigClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            setupJSYogaConfigClassStructure(init);
+        });
+    m_JSYogaNodeClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            setupJSYogaNodeClassStructure(init);
+        });
+    m_JSYogaModuleStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            setupJSYogaModuleClassStructure(init);
         });
 
     m_JSNodePerformanceHooksHistogramClassStructure.initLater(

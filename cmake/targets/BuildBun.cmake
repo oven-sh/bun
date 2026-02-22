@@ -61,6 +61,7 @@ set(BUN_DEPENDENCIES
   LibArchive # must be loaded after zlib
   HdrHistogram # must be loaded after zlib
   Zstd
+  Yoga
 )
 
 # TinyCC is optional - disabled on Windows ARM64 where it's not supported

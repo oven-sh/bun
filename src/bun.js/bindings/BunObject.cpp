@@ -335,6 +335,12 @@ static JSValue constructBunSQLObject(VM& vm, JSObject* bunObject)
 }
 
 extern "C" JSC::EncodedJSValue JSPasswordObject__create(JSGlobalObject*);
+extern "C" JSC::EncodedJSValue Bun__createYogaModule(Zig::GlobalObject*);
+
+static JSValue constructYogaObject(VM& vm, JSObject* bunObject)
+{
+    return JSValue::decode(Bun__createYogaModule(jsCast<Zig::GlobalObject*>(bunObject->globalObject())));
+}
 
 static JSValue constructPasswordObject(VM& vm, JSObject* bunObject)
 {
@@ -924,6 +930,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     markdown                                         BunObject_lazyPropCb_wrap_markdown                                  DontDelete|PropertyCallback
     TOML                                           BunObject_lazyPropCb_wrap_TOML                                      DontDelete|PropertyCallback
     YAML                                           BunObject_lazyPropCb_wrap_YAML                                      DontDelete|PropertyCallback
+    Yoga                                           constructYogaObject                                                 ReadOnly|DontDelete|PropertyCallback
     Transpiler                                     BunObject_lazyPropCb_wrap_Transpiler                                DontDelete|PropertyCallback
     embeddedFiles                                  BunObject_lazyPropCb_wrap_embeddedFiles                             DontDelete|PropertyCallback
     S3Client                                       BunObject_lazyPropCb_wrap_S3Client                                  DontDelete|PropertyCallback

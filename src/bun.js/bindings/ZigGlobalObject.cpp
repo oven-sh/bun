@@ -309,6 +309,15 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             JSC::Options::useExplicitResourceManagement() = true;
             JSC::dangerouslyOverrideJSCBytecodeCacheVersion(getWebKitBytecodeCacheVersion());
 
+#if OS(LINUX) && CPU(X86_64)
+            // Disable the WASM In-Place Interpreter on Linux x86_64 due to a known
+            // JavaScriptCore bug that causes segfaults in wasm_ipint_call_wide32.
+            // See: https://bugs.webkit.org/show_bug.cgi?id=289009
+            // See: https://github.com/oven-sh/bun/issues/17841
+            // Users can re-enable with BUN_JSC_useWasmIPInt=1 (env vars are processed below).
+            JSC::Options::useWasmIPInt() = false;
+#endif
+
 #ifdef BUN_DEBUG
             JSC::Options::showPrivateScriptsInStackTraces() = true;
 #endif

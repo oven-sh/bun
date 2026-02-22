@@ -592,7 +592,18 @@ pub const PathWatcherManager = struct {
                     const path_ = path.path;
                     this.main_watcher.remove(path.hash);
                     _ = this.file_paths.remove(path_);
-                    bun.default_allocator.free(path_);
+                    // Note: we intentionally do NOT free path_ here. The path
+                    // string is still referenced by the Watcher's watchlist
+                    // (both the file entry and potentially its parent directory
+                    // entry, whose file_path is a substring of this path). The
+                    // watchlist entries are pending eviction (added by remove()
+                    // above) and will be cleaned up by flushEvictions() on the
+                    // watcher thread. Freeing here would cause use-after-free
+                    // in the watcher thread. The path will be freed when the
+                    // evicted entries are processed, or when the manager is
+                    // destroyed. We accept this small, bounded leak (one path
+                    // string per close/re-watch cycle) rather than risk memory
+                    // corruption.
                 }
             }
         }

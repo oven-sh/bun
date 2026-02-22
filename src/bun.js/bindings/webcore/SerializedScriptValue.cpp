@@ -1843,18 +1843,10 @@ private:
                     serializedKey, SerializationContext::Default, dummySharedBuffers, m_forStorage, m_forTransfer);
                 rawKeySerializer.write(key);
                 Vector<uint8_t> wrappedKey;
+                if (!wrapCryptoKey(m_lexicalGlobalObject, serializedKey, wrappedKey))
+                    return false;
 
-                // Wrapping isn't required
-                // https://github.com/WebKit/WebKit/blob/c0902fc4dd3abf5d2d5e008eb0b008aeae837953/Source/WebCore/crypto/SerializedCryptoKeyWrap.h#L35-L40
-                //
-                // and doesn't do anything currently, so we skip it.
-                // https://github.com/WebKit/WebKit/blob/c0902fc4dd3abf5d2d5e008eb0b008aeae837953/Source/WebCore/crypto/gcrypt/SerializedCryptoKeyWrapGCrypt.cpp#L49
-                // https://github.com/WebKit/WebKit/blob/c0902fc4dd3abf5d2d5e008eb0b008aeae837953/Source/WebCore/crypto/openssl/SerializedCryptoKeyWrapOpenSSL.cpp#L51
-                //
-                // if (!wrapCryptoKey(m_lexicalGlobalObject, serializedKey, wrappedKey))
-                //     return false;
-
-                write(serializedKey);
+                write(wrappedKey);
                 return true;
             }
 #endif
@@ -5118,22 +5110,18 @@ private:
         }
 #if ENABLE(WEB_CRYPTO)
         case CryptoKeyTag: {
-            Vector<uint8_t> serializedKey;
-            if (!read(serializedKey)) {
+            Vector<uint8_t> wrappedKey;
+            if (!read(wrappedKey)) {
                 fail();
                 return JSValue();
             }
 
-            // See CryptoKey serialization for why we don't wrap
-            //
-            // Vector<uint8_t> serializedKey;
-            // if (!unwrapCryptoKey(m_lexicalGlobalObject, wrappedKey, serializedKey)) {
-            //     fail();
-            //     return JSValue();
-            // }
+            Vector<uint8_t> serializedKey;
+            if (!unwrapCryptoKey(m_lexicalGlobalObject, wrappedKey, serializedKey)) {
+                fail();
+                return JSValue();
+            }
             JSValue cryptoKey;
-            // Vector<RefPtr<MessagePort>> dummyMessagePorts;
-            // CloneDeserializer rawKeyDeserializer(m_lexicalGlobalObject, m_globalObject, dummyMessagePorts, nullptr, {}, serializedKey);
             CloneDeserializer rawKeyDeserializer(m_lexicalGlobalObject, m_globalObject, {}, nullptr, serializedKey);
             if (!rawKeyDeserializer.readCryptoKey(cryptoKey)) {
                 fail();

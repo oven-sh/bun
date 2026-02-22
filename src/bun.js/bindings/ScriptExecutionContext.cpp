@@ -9,6 +9,10 @@
 #include "EventLoopTask.h"
 #include "BunBroadcastChannelRegistry.h"
 #include <wtf/LazyRef.h>
+
+#if ENABLE(WEB_CRYPTO)
+#include "SerializedCryptoKeyWrap.h"
+#endif
 extern "C" void Bun__startLoop(us_loop_t* loop);
 
 namespace WebCore {
@@ -395,5 +399,23 @@ extern "C" JSC::JSGlobalObject* ScriptExecutionContextIdentifier__getGlobalObjec
     if (!context) return nullptr;
     return context->globalObject();
 }
+
+#if ENABLE(WEB_CRYPTO)
+bool ScriptExecutionContext::wrapCryptoKey(const Vector<uint8_t>& key, Vector<uint8_t>& wrappedKey)
+{
+    auto masterKey = defaultWebCryptoMasterKey();
+    if (!masterKey)
+        return false;
+    return wrapSerializedCryptoKey(*masterKey, key, wrappedKey);
+}
+
+bool ScriptExecutionContext::unwrapCryptoKey(const Vector<uint8_t>& wrappedKey, Vector<uint8_t>& key)
+{
+    auto masterKey = defaultWebCryptoMasterKey();
+    if (!masterKey)
+        return false;
+    return unwrapSerializedCryptoKey(*masterKey, wrappedKey, key);
+}
+#endif
 
 } // namespace WebCore

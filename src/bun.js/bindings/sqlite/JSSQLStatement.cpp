@@ -250,12 +250,79 @@ static Vector<VersionSqlite3*>& databases()
     return _instance->databases;
 }
 
+class BackupHandle {
+public:
+    enum class State : uint8_t {
+        Active, // Backup in progress
+        Done, // Completed successfully
+        Failed, // Finished with a fatal error
+        Aborted, // Aborted (by close() or explicit abort)
+    };
+
+    sqlite3_backup* backup = nullptr;
+    VersionSqlite3* sourceDb = nullptr;
+    VersionSqlite3* destDb = nullptr;
+    State state = State::Active;
+    bool ownsDestDb = false;
+
+    BackupHandle(sqlite3_backup* b, VersionSqlite3* src, VersionSqlite3* dst)
+        : backup(b)
+        , sourceDb(src)
+        , destDb(dst)
+    {
+    }
+
+    void cleanup(State finalState = State::Aborted)
+    {
+        if (state != State::Active)
+            return;
+        state = finalState;
+        if (backup) {
+            sqlite3_backup_finish(backup);
+            backup = nullptr;
+        }
+        if (sourceDb) {
+            sourceDb->release();
+            sourceDb = nullptr;
+        }
+        if (destDb) {
+            auto* dest = destDb;
+            bool shouldDelete = ownsDestDb;
+            destDb = nullptr;
+            dest->release();
+            if (shouldDelete)
+                delete dest;
+        }
+    }
+};
+
+// Append-only vector matching the databases() pattern.
+// Slots are nulled on cleanup; new backups reuse null slots or append.
+static Vector<BackupHandle*>& backups()
+{
+    static Vector<BackupHandle*>* instance = nullptr;
+    if (!instance) {
+        instance = new Vector<BackupHandle*>();
+        instance->reserveInitialCapacity(4);
+    }
+    return *instance;
+}
+
 extern "C" void Bun__closeAllSQLiteDatabasesForTermination()
 {
     if (!_instance) {
         return;
     }
     auto& dbs = _instance->databases;
+
+    // Clean up any outstanding backup handles first
+    for (auto& handle : backups()) {
+        if (handle) {
+            handle->cleanup();
+            delete handle;
+            handle = nullptr;
+        }
+    }
 
     for (auto& db : dbs) {
         if (db->db)
@@ -286,6 +353,11 @@ JSC_DECLARE_CUSTOM_GETTER(jsSqlStatementGetColumnCount);
 
 JSC_DECLARE_HOST_FUNCTION(jsSQLStatementSerialize);
 JSC_DECLARE_HOST_FUNCTION(jsSQLStatementDeserialize);
+
+JSC_DECLARE_HOST_FUNCTION(jsSQLStatementBackupInitFunction);
+JSC_DECLARE_HOST_FUNCTION(jsSQLStatementBackupStepFunction);
+JSC_DECLARE_HOST_FUNCTION(jsSQLStatementBackupFinishFunction);
+JSC_DECLARE_HOST_FUNCTION(jsSQLStatementBackupDisposeFunction);
 
 JSC_DECLARE_HOST_FUNCTION(jsSQLStatementSetPrototypeFunction);
 JSC_DECLARE_HOST_FUNCTION(jsSQLStatementFunctionFinalize);
@@ -330,6 +402,38 @@ static JSValue createSQLiteError(JSC::JSGlobalObject* globalObject, sqlite3* db)
 
     object->putDirect(vm, builtinNames.errnoPublicName(), jsNumber(code), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | 0);
     object->putDirect(vm, vm.propertyNames->byteOffset, jsNumber(byteOffset), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | 0);
+
+    return object;
+}
+
+// Overload for when the error code is known (e.g. from sqlite3_backup_step return value)
+// but NOT set on the connection — SQLite doesn't set errmsg for transient BUSY/LOCKED.
+static JSValue createSQLiteError(JSC::JSGlobalObject* globalObject, int rc)
+{
+    auto& vm = JSC::getVM(globalObject);
+    const char* msg = sqlite3_errstr(rc);
+    WTF::String str = WTF::String::fromUTF8(msg);
+    JSC::JSObject* object = JSC::createError(globalObject, str);
+    auto& builtinNames = WebCore::builtinNames(vm);
+    object->putDirect(vm, vm.propertyNames->name, jsString(vm, String("SQLiteError"_s)), JSC::PropertyAttribute::DontEnum | 0);
+
+    String codeStr;
+
+    switch (rc) {
+#define MACRO(SQLITE_DEF)          \
+    case SQLITE_DEF: {             \
+        codeStr = #SQLITE_DEF##_s; \
+        break;                     \
+    }
+        FOR_EACH_SQLITE_ERROR(MACRO)
+
+#undef MACRO
+    }
+    if (!codeStr.isEmpty())
+        object->putDirect(vm, builtinNames.codePublicName(), jsString(vm, codeStr), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | 0);
+
+    object->putDirect(vm, builtinNames.errnoPublicName(), jsNumber(rc), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | 0);
+    object->putDirect(vm, vm.propertyNames->byteOffset, jsNumber(-1), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | 0);
 
     return object;
 }
@@ -1745,6 +1849,16 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementCloseStatementFunction, (JSC::JSGlobalObj
         return JSValue::encode(jsUndefined());
     }
 
+    // Abort any active backups that reference this database (as source or dest).
+    // sqlite3_close may not detect unfinished sqlite3_backup objects on the
+    // destination connection, so we must clean them up first to avoid use-after-free.
+    for (size_t i = 0; i < backups().size(); i++) {
+        auto* h = backups()[i];
+        if (h && h->state == BackupHandle::State::Active && (h->sourceDb == databases()[dbIndex] || h->destDb == databases()[dbIndex])) {
+            h->cleanup(BackupHandle::State::Aborted);
+        }
+    }
+
     // sqlite3_close_v2 is used for automatic GC cleanup
     int statusCode = shouldThrowOnError ? sqlite3_close(db) : sqlite3_close_v2(db);
     if (statusCode != SQLITE_OK) {
@@ -1841,6 +1955,328 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFcntlFunction, (JSC::JSGlobalObject * lex
     return JSValue::encode(jsNumber(statusCode));
 }
 
+/* ******************************************************************************** */
+// SQLite Backup API
+/* ******************************************************************************** */
+
+// backupInit(sourceDbIndex, destination, finalizationTarget)
+// destination can be a string (file path) or a number (existing db handle index)
+JSC_DEFINE_HOST_FUNCTION(jsSQLStatementBackupInitFunction, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue thisValue = callFrame->thisValue();
+    JSSQLStatementConstructor* constructor = jsDynamicCast<JSSQLStatementConstructor*>(thisValue.getObject());
+    if (!constructor) [[unlikely]] {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected SQLStatement"_s));
+        return {};
+    }
+
+#if LAZY_LOAD_SQLITE
+    if (!sqlite3_backup_init || !sqlite3_backup_step || !sqlite3_backup_finish || !sqlite3_backup_remaining || !sqlite3_backup_pagecount) [[unlikely]] {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "SQLite backup API is unavailable in this build"_s));
+        return {};
+    }
+#endif
+
+    if (callFrame->argumentCount() < 2) [[unlikely]] {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected at least 2 arguments"_s));
+        return {};
+    }
+
+    // Get source database handle
+    int32_t srcIndex = callFrame->argument(0).toInt32(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (srcIndex < 0 || static_cast<size_t>(srcIndex) >= databases().size()) [[unlikely]] {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Invalid source database handle"_s));
+        return {};
+    }
+
+    VersionSqlite3* sourceDb = databases()[srcIndex];
+    if (!sourceDb->db) [[unlikely]] {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Can't backup a closed database"_s));
+        return {};
+    }
+
+    // Get destination - either a string path or a database handle index
+    JSValue destValue = callFrame->argument(1);
+    VersionSqlite3* destDb = nullptr;
+    bool ownsDest = false;
+
+    if (destValue.isString()) {
+        WTF::String destPath = destValue.toWTFString(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        sqlite3* destSqlite = nullptr;
+        int rc = sqlite3_open_v2(destPath.utf8().data(), &destSqlite, DEFAULT_SQLITE_FLAGS, nullptr);
+        if (rc != SQLITE_OK) [[unlikely]] {
+            if (destSqlite) {
+                JSValue err = createSQLiteError(lexicalGlobalObject, destSqlite);
+                sqlite3_close_v2(destSqlite);
+                throwException(lexicalGlobalObject, scope, err);
+            } else {
+                throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Failed to open destination database"_s));
+            }
+            return {};
+        }
+        sqlite3_extended_result_codes(destSqlite, 1);
+        sqlite3_db_config(destSqlite, SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION, 1, NULL);
+        sqlite3_db_config(destSqlite, SQLITE_DBCONFIG_DEFENSIVE, 1, NULL);
+        destDb = new VersionSqlite3(destSqlite);
+        ownsDest = true;
+        // reference_count starts at 1
+    } else if (destValue.isNumber()) {
+        int32_t destIndex = destValue.toInt32(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        if (destIndex < 0 || static_cast<size_t>(destIndex) >= databases().size()) [[unlikely]] {
+            throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Invalid destination database handle"_s));
+            return {};
+        }
+        destDb = databases()[destIndex];
+        if (!destDb->db) [[unlikely]] {
+            throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Destination database is closed"_s));
+            return {};
+        }
+        ++destDb->reference_count;
+    } else {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected destination to be a string path or database handle"_s));
+        return {};
+    }
+
+    // Per SQLite docs, source and destination must be different connections
+    if (sourceDb == destDb) [[unlikely]] {
+        destDb->release();
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Cannot backup a database to itself"_s));
+        return {};
+    }
+
+    // Increment source reference count to prevent closure during backup
+    ++sourceDb->reference_count;
+
+    // Read optional schema names (args 3 and 4), defaulting to "main"
+    CString sourceSchemaStr;
+    const char* sourceSchema = "main";
+    JSValue sourceSchemaValue = callFrame->argument(3);
+    if (sourceSchemaValue.isString()) {
+        sourceSchemaStr = sourceSchemaValue.toWTFString(lexicalGlobalObject).utf8();
+        if (scope.exception()) [[unlikely]] {
+            sourceDb->release();
+            destDb->release();
+            if (ownsDest) delete destDb;
+            return {};
+        }
+        sourceSchema = sourceSchemaStr.data();
+    }
+
+    CString destSchemaStr;
+    const char* destSchema = "main";
+    JSValue destSchemaValue = callFrame->argument(4);
+    if (destSchemaValue.isString()) {
+        destSchemaStr = destSchemaValue.toWTFString(lexicalGlobalObject).utf8();
+        if (scope.exception()) [[unlikely]] {
+            sourceDb->release();
+            destDb->release();
+            if (ownsDest) delete destDb;
+            return {};
+        }
+        destSchema = destSchemaStr.data();
+    }
+
+    sqlite3_backup* backup = sqlite3_backup_init(
+        destDb->db, destSchema,
+        sourceDb->db, sourceSchema);
+
+    if (!backup) [[unlikely]] {
+        JSValue err = createSQLiteError(lexicalGlobalObject, destDb->db);
+        sourceDb->release();
+        destDb->release();
+        if (ownsDest)
+            delete destDb;
+        throwException(lexicalGlobalObject, scope, err);
+        return {};
+    }
+
+    // Create backup handle and store it
+    auto* handle = new BackupHandle(backup, sourceDb, destDb);
+    handle->ownsDestDb = ownsDest;
+
+    // Find a free (null) slot or append
+    size_t index = backups().size();
+    for (size_t i = 0; i < backups().size(); i++) {
+        if (!backups()[i]) {
+            index = i;
+            break;
+        }
+    }
+    if (index == backups().size())
+        backups().append(handle);
+    else
+        backups()[index] = handle;
+
+    // Set up GC finalization target to ensure cleanup.
+    // The GC finalizer is the sole owner of `delete` + slot-null.
+    // backupDispose only calls cleanup() and leaves the handle as a tombstone
+    // (~40 bytes, all internal pointers nulled). This prevents slot reuse
+    // until GC collects the JS object and the finalizer safely runs,
+    // avoiding ABA problems where a new backup reuses a nulled slot
+    // and a stale finalizer destroys the wrong backup.
+    JSValue finalizationTarget = callFrame->argument(2);
+    if (finalizationTarget.isObject()) {
+        vm.heap.addFinalizer(finalizationTarget.getObject(), [index](JSC::JSCell*) -> void {
+            if (index < backups().size() && backups()[index]) {
+                backups()[index]->cleanup();
+                delete backups()[index];
+                backups()[index] = nullptr;
+            }
+        });
+    }
+
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsNumber(index)));
+}
+
+// backupStep(backupIndex, pageCount)
+// Returns false when done, or { totalPages, remainingPages } when more pages remain
+JSC_DEFINE_HOST_FUNCTION(jsSQLStatementBackupStepFunction, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (!jsDynamicCast<JSSQLStatementConstructor*>(callFrame->thisValue().getObject())) [[unlikely]] {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected SQLStatement"_s));
+        return {};
+    }
+
+    int32_t backupIndex = callFrame->argument(0).toInt32(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (backupIndex < 0 || static_cast<size_t>(backupIndex) >= backups().size() || !backups()[backupIndex]) [[unlikely]] {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Invalid backup handle"_s));
+        return {};
+    }
+
+    auto* handle = backups()[backupIndex];
+    if (handle->state != BackupHandle::State::Active || !handle->backup) {
+        if (handle->state == BackupHandle::State::Aborted) {
+            throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Cannot use backup after the database was closed"_s));
+            return {};
+        }
+        RELEASE_AND_RETURN(scope, JSValue::encode(jsBoolean(false)));
+    }
+
+    int32_t pageCount = callFrame->argument(1).toInt32(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    int rc = sqlite3_backup_step(handle->backup, pageCount);
+
+    if (rc == SQLITE_DONE) {
+        handle->cleanup(BackupHandle::State::Done);
+        RELEASE_AND_RETURN(scope, JSValue::encode(jsBoolean(false)));
+    }
+
+    if (rc == SQLITE_OK) {
+        int total = sqlite3_backup_pagecount(handle->backup);
+        int remaining = sqlite3_backup_remaining(handle->backup);
+        JSObject* result = constructEmptyObject(lexicalGlobalObject);
+        result->putDirect(vm, Identifier::fromString(vm, "totalPages"_s), jsNumber(total));
+        result->putDirect(vm, Identifier::fromString(vm, "remainingPages"_s), jsNumber(remaining));
+        RELEASE_AND_RETURN(scope, JSValue::encode(result));
+    }
+
+    if (rc == SQLITE_BUSY || rc == SQLITE_LOCKED) {
+        // Transient error -- leave backup open for retry.
+        // Use rc directly: SQLite doesn't set errmsg on dest for transient conditions.
+        throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, rc));
+        return {};
+    }
+
+    // Fatal error -- clean up the backup handle
+    JSValue err = createSQLiteError(lexicalGlobalObject, handle->destDb->db);
+    handle->cleanup(BackupHandle::State::Failed);
+    throwException(lexicalGlobalObject, scope, err);
+    return {};
+}
+
+// backupFinish(backupIndex)
+// Copies all remaining pages at once and cleans up. Returns true on success.
+JSC_DEFINE_HOST_FUNCTION(jsSQLStatementBackupFinishFunction, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (!jsDynamicCast<JSSQLStatementConstructor*>(callFrame->thisValue().getObject())) [[unlikely]] {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected SQLStatement"_s));
+        return {};
+    }
+
+    int32_t backupIndex = callFrame->argument(0).toInt32(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (backupIndex < 0 || static_cast<size_t>(backupIndex) >= backups().size() || !backups()[backupIndex]) [[unlikely]] {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Invalid backup handle"_s));
+        return {};
+    }
+
+    auto* handle = backups()[backupIndex];
+    if (handle->state != BackupHandle::State::Active || !handle->backup) {
+        if (handle->state == BackupHandle::State::Aborted) {
+            throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Cannot use backup after the database was closed"_s));
+            return {};
+        }
+        RELEASE_AND_RETURN(scope, JSValue::encode(jsBoolean(handle->state == BackupHandle::State::Done)));
+    }
+
+    // Copy all pages at once
+    int rc = sqlite3_backup_step(handle->backup, -1);
+    if (rc == SQLITE_DONE) {
+        handle->cleanup(BackupHandle::State::Done);
+        RELEASE_AND_RETURN(scope, JSValue::encode(jsBoolean(true)));
+    }
+
+    if (rc == SQLITE_BUSY || rc == SQLITE_LOCKED) {
+        // Transient error -- leave backup open for retry.
+        // Use rc directly: SQLite doesn't set errmsg on dest for transient conditions.
+        throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, rc));
+        return {};
+    }
+
+    // Fatal error -- report from destination connection and clean up
+    JSValue err = createSQLiteError(lexicalGlobalObject, handle->destDb->db);
+    handle->cleanup(BackupHandle::State::Failed);
+    throwException(lexicalGlobalObject, scope, err);
+    return {};
+}
+
+// backupDispose(backupIndex)
+// Cleans up without copying remaining pages. Used by abort().
+JSC_DEFINE_HOST_FUNCTION(jsSQLStatementBackupDisposeFunction, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (!jsDynamicCast<JSSQLStatementConstructor*>(callFrame->thisValue().getObject())) [[unlikely]] {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected SQLStatement"_s));
+        return {};
+    }
+
+    int32_t backupIndex = callFrame->argument(0).toInt32(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (backupIndex < 0 || static_cast<size_t>(backupIndex) >= backups().size() || !backups()[backupIndex]) [[unlikely]] {
+        // Already disposed or invalid, no-op
+        RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
+    }
+
+    auto* handle = backups()[backupIndex];
+    handle->cleanup();
+    // Don't delete or null the slot — the GC finalizer owns that.
+    // The cleaned-up handle stays as a tombstone to prevent slot reuse.
+
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
+}
+
 /* Hash table for constructor */
 static const HashTableValue JSSQLStatementConstructorTableValues[] = {
     { "open"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementOpenStatementFunction, 2 } },
@@ -1853,6 +2289,10 @@ static const HashTableValue JSSQLStatementConstructorTableValues[] = {
     { "serialize"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementSerialize, 1 } },
     { "deserialize"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementDeserialize, 2 } },
     { "fcntl"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementFcntlFunction, 2 } },
+    { "backupInit"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementBackupInitFunction, 5 } },
+    { "backupStep"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementBackupStepFunction, 2 } },
+    { "backupFinish"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementBackupFinishFunction, 1 } },
+    { "backupDispose"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementBackupDisposeFunction, 1 } },
 };
 
 const ClassInfo JSSQLStatementConstructor::s_info = { "SQLStatement"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSSQLStatementConstructor) };

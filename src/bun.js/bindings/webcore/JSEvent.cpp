@@ -122,16 +122,18 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSEventPrototype, JSEventPrototype::Base);
 
 using JSEventDOMConstructor = JSDOMConstructor<JSEvent>;
 
-/* Hash table */
+/* Source for JSEvent.lut.h
+@begin JSEventTable
+isTrusted  jsEvent_isTrusted  DontDelete|ReadOnly|CustomAccessor|DOMAttribute
+@end
+*/
 
-static const struct CompactHashIndex JSEventTableIndex[2] = {
-    { 0, -1 },
-    { -1, -1 },
-};
-
-static const HashTableValue JSEventTableValues[] = {
-    { "isTrusted"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsEvent_isTrusted, 0 } },
-};
+// The generated .lut.h defines JSEventTable with nullptr for classForThis,
+// but DOMAttribute properties require it for type checking. Rename the
+// generated table and redefine it with the correct classForThis.
+#define JSEventTable JSEventTable_GENERATED
+#include "JSEvent.lut.h"
+#undef JSEventTable
 
 static const HashTable JSEventTable = { 1, 1, true, JSEvent::info(), JSEventTableValues, JSEventTableIndex };
 /* Hash table for constructor */

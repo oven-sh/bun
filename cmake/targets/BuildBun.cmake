@@ -547,6 +547,7 @@ set(BUN_OBJECT_LUT_SOURCES
   ${CWD}/src/bun.js/bindings/ProcessBindingHTTPParser.cpp
   ${CWD}/src/bun.js/modules/NodeModuleModule.cpp
   ${CODEGEN_PATH}/ZigGeneratedClasses.lut.txt
+  ${CWD}/src/bun.js/bindings/webcore/JSEvent.cpp
 )
 
 set(BUN_OBJECT_LUT_OUTPUTS
@@ -561,6 +562,7 @@ set(BUN_OBJECT_LUT_OUTPUTS
   ${CODEGEN_PATH}/ProcessBindingHTTPParser.lut.h
   ${CODEGEN_PATH}/NodeModuleModule.lut.h
   ${CODEGEN_PATH}/ZigGeneratedClasses.lut.h
+  ${CODEGEN_PATH}/JSEvent.lut.h
 )
 
 macro(WEBKIT_ADD_SOURCE_DEPENDENCIES _source _deps)
@@ -594,6 +596,7 @@ foreach(i RANGE 0 ${BUN_OBJECT_LUT_SOURCES_MAX_INDEX})
       "Generating ${filename}.lut.h"
     DEPENDS
       ${BUN_OBJECT_LUT_SOURCE}
+      ${CWD}/src/codegen/create_hash_table
     COMMAND
       ${BUN_EXECUTABLE}
         ${BUN_FLAGS}
@@ -603,6 +606,7 @@ foreach(i RANGE 0 ${BUN_OBJECT_LUT_SOURCES_MAX_INDEX})
         ${BUN_OBJECT_LUT_OUTPUT}
     SOURCES
       ${BUN_OBJECT_LUT_SCRIPT}
+      ${CWD}/src/codegen/create_hash_table
       ${BUN_OBJECT_LUT_SOURCE}
     OUTPUTS
       ${BUN_OBJECT_LUT_OUTPUT}

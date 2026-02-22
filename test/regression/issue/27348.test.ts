@@ -53,6 +53,7 @@ test("WASM execution does not crash with SIGILL on Linux x86_64", async () => {
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  expect(stderr.trim()).toBe("");
   expect(stdout.trim()).toBe("OK");
   expect(exitCode).toBe(0);
 });

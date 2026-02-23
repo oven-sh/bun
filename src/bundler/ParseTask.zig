@@ -34,6 +34,7 @@ emit_decorator_metadata: bool = false,
 experimental_decorators: bool = false,
 ctx: *BundleV2,
 package_version: string = "",
+package_name: string = "",
 is_entry_point: bool = false,
 
 const ParseTaskStage = union(enum) {
@@ -84,6 +85,9 @@ pub const Result = struct {
         content_hash_for_additional_file: u64 = 0,
 
         loader: Loader,
+
+        /// The package name from package.json, used for barrel optimization.
+        package_name: string = "",
     };
 
     pub const Error = struct {
@@ -121,6 +125,7 @@ pub fn init(resolve_result: *const _resolver.Result, source_index: Index, ctx: *
         .emit_decorator_metadata = resolve_result.flags.emit_decorator_metadata,
         .experimental_decorators = resolve_result.flags.experimental_decorators,
         .package_version = if (resolve_result.package_json) |package_json| package_json.version else "",
+        .package_name = if (resolve_result.package_json) |package_json| package_json.name else "",
         .known_target = ctx.transpiler.options.target,
     };
 }
@@ -1294,6 +1299,7 @@ fn runWithSourceCode(
         .unique_key_for_additional_file = unique_key_for_additional_file.key,
         .side_effects = task.side_effects,
         .loader = loader,
+        .package_name = task.package_name,
 
         // Hash the files in here so that we do it in parallel.
         .content_hash_for_additional_file = if (loader.shouldCopyForBundling())

@@ -336,7 +336,7 @@ pub const StandaloneModuleGraph = struct {
                     .contents = sliceToZ(raw_bytes, module.contents),
                     .sourcemap = if (module.sourcemap.length > 0)
                         .{ .serialized = .{
-                            .bytes = @alignCast(sliceTo(raw_bytes, module.sourcemap)),
+                            .bytes = sliceTo(raw_bytes, module.sourcemap),
                         } }
                     else
                         .none,
@@ -588,7 +588,7 @@ pub const StandaloneModuleGraph = struct {
 
         if (comptime Environment.isDebug) {
             // An expensive sanity check:
-            var graph = try fromBytes(allocator, @alignCast(output_bytes), offsets);
+            var graph = try fromBytes(allocator, output_bytes, offsets);
             defer {
                 graph.files.unlockPointers();
                 graph.files.deinit();

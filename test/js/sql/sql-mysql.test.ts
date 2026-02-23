@@ -64,12 +64,14 @@ if (isDockerEnabled()) {
           expect(stderr).toBe("");
         });
         test("sequential queries should not hang (#27362)", async () => {
-          const { stdout, stderr } = bunRun(path.join(import.meta.dir, "sql-mysql-sequential-fixture.ts"), {
+          const { stdout, stderr, exitCode } = bunRun(path.join(import.meta.dir, "sql-mysql-sequential-fixture.ts"), {
             ...bunEnv,
             MYSQL_URL: getOptions().url,
+            CA_PATH: image.name === "MySQL with TLS" ? path.join(import.meta.dir, "mysql-tls", "ssl", "ca.pem") : "",
           });
           expect(stderr).toBe("");
           expect(stdout).toContain("all queries completed");
+          expect(exitCode).toBe(0);
         });
         test("should return lastInsertRowid and affectedRows", async () => {
           await using db = new SQL({ ...getOptions(), max: 1, idleTimeout: 5 });

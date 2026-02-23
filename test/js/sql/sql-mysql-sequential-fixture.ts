@@ -1,8 +1,10 @@
 // Fixture for issue #27362: Sequential await sql.unsafe() calls should not hang.
 // Without the fix, the process hangs on the 3rd-4th sequential call because the
 // poll_ref is not re-refed when a new query is enqueued on an idle connection.
+const tls = process.env.CA_PATH ? { ca: Bun.file(process.env.CA_PATH) } : undefined;
 const sql = new Bun.SQL({
   url: process.env.MYSQL_URL,
+  tls,
   max: 1,
   idleTimeout: 100,
   maxLifetime: 100,

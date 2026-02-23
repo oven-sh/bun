@@ -250,6 +250,7 @@ pub fn connect(this: *@This(), client: *HTTPClient, comptime is_ssl: bool) !NewH
             }
             // we need the config so dont free it
             var custom_context = try bun.default_allocator.create(NewHTTPContext(is_ssl));
+            custom_context.pending_sockets = NewHTTPContext(is_ssl).PooledSocketHiveAllocator.init();
             custom_context.initWithClientConfig(client) catch |err| {
                 client.tls_props = null;
 

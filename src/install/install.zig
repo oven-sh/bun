@@ -209,6 +209,9 @@ pub const ExtractData = struct {
         path: string = "",
         buf: []u8 = "",
     } = null,
+    /// Integrity hash computed from the raw tarball bytes.
+    /// Used for HTTPS/local tarball dependencies where the hash
+    /// is not available from a registry manifest.
     integrity: Integrity = .{},
 };
 
@@ -270,9 +273,9 @@ pub const ExternalStringList = external.ExternalStringList;
 pub const ExternalStringMap = external.ExternalStringMap;
 pub const VersionSlice = external.VersionSlice;
 
+pub const Integrity = @import("./integrity.zig").Integrity;
 pub const Dependency = @import("./dependency.zig");
 pub const Behavior = @import("./dependency.zig").Behavior;
-pub const Integrity = @import("./integrity.zig").Integrity;
 
 pub const Lockfile = @import("./lockfile.zig");
 pub const PatchedDep = Lockfile.PatchedDep;

@@ -1708,13 +1708,19 @@ fn NewPrinter(
                 }
 
                 // Internal "require()" or "import()"
+                const has_side_effects = meta.wrapper_ref.isValid() or
+                    meta.exports_ref.isValid() or
+                    meta.was_unwrapped_require or
+                    p.options.input_files_for_dev_server != null;
                 if (record.kind == .dynamic) {
                     p.printSpaceBeforeIdentifier();
                     p.print("Promise.resolve()");
 
-                    level = p.printDotThenPrefix();
+                    if (has_side_effects) {
+                        level = p.printDotThenPrefix();
+                    }
                 }
-                defer if (record.kind == .dynamic) p.printDotThenSuffix();
+                defer if (record.kind == .dynamic and has_side_effects) p.printDotThenSuffix();
 
                 // Make sure the comma operator is properly wrapped
                 const wrap_comma_operator = meta.exports_ref.isValid() and

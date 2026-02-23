@@ -797,6 +797,7 @@ JSC_DEFINE_HOST_FUNCTION(functionGenerateHeapSnapshot, (JSC::JSGlobalObject * gl
     JSValue arg0 = callFrame->argument(0);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     bool useV8 = false;
+    bool useArrayBuffer = false;
     if (!arg0.isUndefined()) {
         if (arg0.isString()) {
             auto str = arg0.toWTFString(globalObject);
@@ -813,6 +814,31 @@ JSC_DEFINE_HOST_FUNCTION(functionGenerateHeapSnapshot, (JSC::JSGlobalObject * gl
     }
 
     if (useV8) {
+        JSValue arg1 = callFrame->argument(1);
+        if (!arg1.isUndefined()) {
+            if (arg1.isString()) {
+                auto str = arg1.toWTFString(globalObject);
+                RETURN_IF_EXCEPTION(throwScope, {});
+                if (str == "arraybuffer"_s) {
+                    useArrayBuffer = true;
+                } else {
+                    throwTypeError(globalObject, throwScope, "Expected 'arraybuffer' or undefined as second argument"_s);
+                    return {};
+                }
+            }
+        }
+
+        if (useArrayBuffer) {
+            JSC::BunV8HeapSnapshotBuilder builder(heapProfiler);
+            auto bytes = builder.jsonBytes();
+            auto released = bytes.releaseBuffer();
+            auto span = released.leakSpan();
+            auto buffer = ArrayBuffer::createFromBytes(std::span<const uint8_t> { span.data(), span.size() }, createSharedTask<void(void*)>([](void* p) {
+                fastFree(p);
+            }));
+            return JSC::JSValue::encode(JSC::JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(), WTF::move(buffer)));
+        }
+
         JSC::BunV8HeapSnapshotBuilder builder(heapProfiler);
         return JSC::JSValue::encode(jsString(vm, builder.json()));
     }
@@ -947,7 +973,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     file                                           BunObject_callback_file                                             DontDelete|Function 1
     fileURLToPath                                  functionFileURLToPath                                               DontDelete|Function 1
     gc                                             Generated::BunObject::jsGc                                          DontDelete|Function 1
-    generateHeapSnapshot                           functionGenerateHeapSnapshot                                        DontDelete|Function 1
+    generateHeapSnapshot                           functionGenerateHeapSnapshot                                        DontDelete|Function 2
     gunzipSync                                     BunObject_callback_gunzipSync                                       DontDelete|Function 1
     gzipSync                                       BunObject_callback_gzipSync                                         DontDelete|Function 1
     hash                                           BunObject_lazyPropCb_wrap_hash                                      DontDelete|PropertyCallback
@@ -995,7 +1021,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     stderr                                         BunObject_lazyPropCb_wrap_stderr                                    DontDelete|PropertyCallback
     stdin                                          BunObject_lazyPropCb_wrap_stdin                                     DontDelete|PropertyCallback
     stdout                                         BunObject_lazyPropCb_wrap_stdout                                    DontDelete|PropertyCallback
-    stringWidth                                    Generated::BunObject::jsStringWidth                                 DontDelete|Function 2
+    stringWidth                                    BunObject_callback_stringWidth                                      DontDelete|Function 2
     stripANSI                                      jsFunctionBunStripANSI                                              DontDelete|Function 1
     wrapAnsi                                       jsFunctionBunWrapAnsi                                               DontDelete|Function 3
     Terminal                                       BunObject_lazyPropCb_wrap_Terminal                                  DontDelete|PropertyCallback

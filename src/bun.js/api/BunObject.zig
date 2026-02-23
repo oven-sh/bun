@@ -34,6 +34,7 @@ pub const BunObject = struct {
     pub const sha = toJSCallback(host_fn.wrapStaticMethod(Crypto.SHA512_256, "hash_", true));
     pub const shellEscape = toJSCallback(Bun.shellEscape);
     pub const shrink = toJSCallback(Bun.shrink);
+    pub const stringWidth = toJSCallback(Bun.stringWidth);
     pub const sleepSync = toJSCallback(Bun.sleepSync);
     pub const spawn = toJSCallback(host_fn.wrapStaticMethod(api.Subprocess, "spawn", false));
     pub const spawnSync = toJSCallback(host_fn.wrapStaticMethod(api.Subprocess, "spawnSync", false));
@@ -179,6 +180,7 @@ pub const BunObject = struct {
         @export(&BunObject.sha, .{ .name = callbackName("sha") });
         @export(&BunObject.shellEscape, .{ .name = callbackName("shellEscape") });
         @export(&BunObject.shrink, .{ .name = callbackName("shrink") });
+        @export(&BunObject.stringWidth, .{ .name = callbackName("stringWidth") });
         @export(&BunObject.sleepSync, .{ .name = callbackName("sleepSync") });
         @export(&BunObject.spawn, .{ .name = callbackName("spawn") });
         @export(&BunObject.spawnSync, .{ .name = callbackName("spawnSync") });
@@ -1382,14 +1384,8 @@ pub fn getUnsafe(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue 
     return UnsafeObject.create(globalThis);
 }
 
-pub fn stringWidth(str: bun.String, opts: gen.StringWidthOptions) usize {
-    if (str.length() == 0)
-        return 0;
-
-    if (opts.count_ansi_escape_codes)
-        return str.visibleWidth(!opts.ambiguous_is_narrow);
-
-    return str.visibleWidthExcludeANSIColors(!opts.ambiguous_is_narrow);
+pub fn stringWidth(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    return bun.String.jsGetStringWidth(globalObject, callFrame);
 }
 
 /// EnvironmentVariables is runtime defined.

@@ -168,6 +168,8 @@ fn commandImplStart(this: *CondExpr) Yield {
         .@"-d",
         .@"-f",
         => {
+            // Empty string expansion produces no args; the path doesn't exist.
+            if (this.args.items.len == 0) return this.parent.childDone(this, 1);
             this.state = .waiting_stat;
             return this.doStat();
         },

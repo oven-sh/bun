@@ -1087,8 +1087,10 @@ pub const WindowsSpawnOptions = struct {
         dup2: struct { out: bun.jsc.Subprocess.StdioKind, to: bun.jsc.Subprocess.StdioKind },
 
         pub fn deinit(this: *const Stdio) void {
-            if (this.* == .buffer) {
-                bun.default_allocator.destroy(this.buffer);
+            switch (this.*) {
+                .buffer => |pipe| pipe.closeAndDestroy(),
+                .ipc => |pipe| pipe.closeAndDestroy(),
+                else => {},
             }
         }
     };
@@ -1629,9 +1631,10 @@ pub fn spawnProcessWindows(
                 stdio.flags = uv.UV_INHERIT_FD;
                 stdio.data.fd = fd_i;
             },
-            .ipc => |my_pipe| {
-                // ipc option inside stdin, stderr or stdout are not supported
-                bun.default_allocator.destroy(my_pipe);
+            .ipc => {
+                // ipc option inside stdin, stderr or stdout is not supported.
+                // Don't free the pipe here — the caller owns it and will
+                // clean it up via WindowsSpawnOptions.deinit().
                 stdio.flags = uv.UV_IGNORE;
             },
             .ignore => {
@@ -1829,7 +1832,7 @@ pub const sync = struct {
                     .ignore => .ignore,
                     .buffer => .{
                         .buffer = if (Environment.isWindows)
-                            bun.handleOom(bun.default_allocator.create(bun.windows.libuv.Pipe)),
+                            bun.new(bun.windows.libuv.Pipe, std.mem.zeroes(bun.windows.libuv.Pipe)),
                     },
                 };
             }

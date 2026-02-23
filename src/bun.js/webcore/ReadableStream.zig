@@ -442,6 +442,8 @@ pub fn NewSource(
         close_handler: ?*const fn (?*anyopaque) void = null,
         close_ctx: ?*anyopaque = null,
         close_jsvalue: jsc.Strong.Optional = .empty,
+        cancel_handler: ?*const fn (?*anyopaque) void = null,
+        cancel_ctx: ?*anyopaque = null,
         globalThis: *JSGlobalObject = undefined,
         this_jsvalue: jsc.JSValue = .zero,
         is_closed: bool = false,
@@ -493,6 +495,10 @@ pub fn NewSource(
 
             this.cancelled = true;
             onCancel(&this.context);
+            if (this.cancel_handler) |handler| {
+                this.cancel_handler = null;
+                handler(this.cancel_ctx);
+            }
         }
 
         pub fn onClose(this: *This) void {

@@ -234,7 +234,7 @@
           {
             "group": "Asset Processing",
             "icon": "image",
-            "pages": ["/bundler/html-static", "/bundler/css", "/bundler/loaders"]
+            "pages": ["/bundler/html-static", "/bundler/standalone-html", "/bundler/css", "/bundler/loaders"]
           },
           {
             "group": "Single File Executable",

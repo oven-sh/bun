@@ -51,7 +51,7 @@ if(APPLE)
 endif()
 
 if(WIN32)
-  # Prefer standalone LLVM over VS-bundled (standalone supports cross-compilation)
+  # Prefer standalone LLVM over VS-bundled
   list(APPEND LLVM_PATHS "C:/Program Files/LLVM/bin")
 endif()
 

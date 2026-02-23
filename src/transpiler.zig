@@ -471,6 +471,7 @@ pub const Transpiler = struct {
                         transpiler.options.jsx = tsconfig.jsx;
                     }
                     transpiler.options.emit_decorator_metadata = tsconfig.emit_decorator_metadata;
+                    transpiler.options.experimental_decorators = tsconfig.experimental_decorators;
                 }
             }
         }
@@ -638,6 +639,7 @@ pub const Transpiler = struct {
                         .macro_remappings = transpiler.options.macro_remap,
                         .jsx = resolve_result.jsx,
                         .emit_decorator_metadata = resolve_result.flags.emit_decorator_metadata,
+                        .experimental_decorators = resolve_result.flags.experimental_decorators,
                     },
                     client_entry_point_,
                 ) orelse {
@@ -960,6 +962,7 @@ pub const Transpiler = struct {
         inject_jest_globals: bool = false,
         set_breakpoint_on_first_line: bool = false,
         emit_decorator_metadata: bool = false,
+        experimental_decorators: bool = false,
         remove_cjs_module_wrapper: bool = false,
 
         dont_bundle_twice: bool = false,
@@ -1100,6 +1103,7 @@ pub const Transpiler = struct {
                 var opts = js_parser.Parser.Options.init(jsx, loader);
 
                 opts.features.emit_decorator_metadata = this_parse.emit_decorator_metadata;
+                opts.features.standard_decorators = !loader.isTypeScript() or !this_parse.experimental_decorators;
                 opts.features.allow_runtime = transpiler.options.allow_runtime;
                 opts.features.set_breakpoint_on_first_line = this_parse.set_breakpoint_on_first_line;
                 opts.features.trim_unused_imports = transpiler.options.trim_unused_imports orelse loader.isTypeScript();

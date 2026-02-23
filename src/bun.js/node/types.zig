@@ -587,12 +587,12 @@ pub const PathLike = union(enum) {
             if (std.fs.path.isAbsolute(sliced)) {
                 if (sliced.len > 2 and bun.path.isDriveLetter(sliced[0]) and sliced[1] == ':' and bun.path.isSepAny(sliced[2])) {
                     // Add the long path syntax. This affects most of node:fs
-                    const drive_resolve_buf = bun.path_buffer_pool.get();
-                    defer bun.path_buffer_pool.put(drive_resolve_buf);
-                    const rest = path_handler.PosixToWinNormalizer.resolveCWDWithExternalBufZ(drive_resolve_buf, sliced) catch @panic("Error while resolving path.");
+                    // Normalize the path directly into buf without an intermediate
+                    // buffer. The input (sliced) already has a drive letter, so
+                    // resolveCWDWithExternalBufZ would just memcpy it, making the
+                    // temporary allocation unnecessary.
                     buf[0..4].* = bun.windows.long_path_prefix_u8;
-                    // When long path syntax is used, the entire string should be normalized
-                    const n = bun.path.normalizeBuf(rest, buf[4..], .windows).len;
+                    const n = bun.path.normalizeBuf(sliced, buf[4..], .windows).len;
                     buf[4 + n] = 0;
                     return buf[0 .. 4 + n :0];
                 }

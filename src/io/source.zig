@@ -210,11 +210,11 @@ pub const Source = union(enum) {
 
     pub fn openPipe(loop: *uv.Loop, fd: bun.FileDescriptor) bun.sys.Maybe(*Source.Pipe) {
         log("openPipe (fd = {f})", .{fd});
-        const pipe = bun.default_allocator.create(Source.Pipe) catch |err| bun.handleOom(err);
+        const pipe = bun.new(Source.Pipe, std.mem.zeroes(Source.Pipe));
         // we should never init using IPC here see ipc.zig
         switch (pipe.init(loop, false)) {
             .err => |err| {
-                bun.default_allocator.destroy(pipe);
+                bun.destroy(pipe);
                 return .{ .err = err };
             },
             else => {},
@@ -222,7 +222,7 @@ pub const Source = union(enum) {
 
         switch (pipe.open(fd)) {
             .err => |err| {
-                bun.default_allocator.destroy(pipe);
+                pipe.closeAndDestroy();
                 return .{
                     .err = err,
                 };

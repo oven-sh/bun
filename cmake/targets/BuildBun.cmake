@@ -341,6 +341,7 @@ register_command(
   SOURCES
     ${BUN_JAVASCRIPT_CODEGEN_SOURCES}
     ${BUN_CXX_SOURCES}
+    ${ESBUILD_EXECUTABLE}
   OUTPUTS
     ${BUN_CPP_OUTPUTS}
 )
@@ -362,7 +363,7 @@ register_command(
 )
 
 if(SKIP_CODEGEN)
-  # Skip JavaScript codegen - useful for Windows ARM64 debug builds where bun crashes
+  # Skip JavaScript codegen - useful for bootstrapping new platforms
   message(STATUS "SKIP_CODEGEN is ON - skipping bun-js-modules codegen")
   foreach(output ${BUN_JAVASCRIPT_OUTPUTS})
     if(NOT EXISTS ${output})
@@ -680,8 +681,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm|ARM|arm64|ARM64|aarch64|AARCH64")
   if(APPLE)
     set(ZIG_CPU "apple_m1")
   elseif(WIN32)
-    # Windows ARM64: use a specific CPU with NEON support
-    # Zig running under x64 emulation would detect wrong CPU with "native"
+    # Windows ARM64: use a specific CPU target for consistent builds
     set(ZIG_CPU "cortex_a76")
   else()
     set(ZIG_CPU "native")
@@ -1457,8 +1457,6 @@ if(NOT BUN_CPP_ONLY)
   # ==856230==See https://github.com/google/sanitizers/issues/856 for possible workarounds.
   # the linked issue refers to very old kernels but this still happens to us on modern ones.
   # disabling ASLR to run the binary works around it
-  # Skip post-build test/features when cross-compiling (can't run the target binary on the host)
-  if(NOT CMAKE_CROSSCOMPILING)
   set(TEST_BUN_COMMAND_BASE ${BUILD_PATH}/${bunExe} --revision)
   set(TEST_BUN_COMMAND_ENV_WRAP
     ${CMAKE_COMMAND} -E env BUN_DEBUG_QUIET_LOGS=1)
@@ -1507,7 +1505,6 @@ if(NOT BUN_CPP_ONLY)
         ${BUILD_PATH}/features.json
     )
   endif()
-  endif() # NOT CMAKE_CROSSCOMPILING
 
   if(CMAKE_HOST_APPLE AND bunStrip)
     register_command(
@@ -1554,10 +1551,7 @@ if(NOT BUN_CPP_ONLY)
       string(REPLACE bun ${bunTriplet} bunPath ${bun})
     endif()
 
-    set(bunFiles ${bunExe})
-    if(NOT CMAKE_CROSSCOMPILING)
-      list(APPEND bunFiles features.json)
-    endif()
+    set(bunFiles ${bunExe} features.json)
     if(WIN32)
       list(APPEND bunFiles ${bun}.pdb)
     elseif(APPLE)

@@ -6576,7 +6576,7 @@ pub const NodeFS = struct {
                 const wbuf = bun.os_path_buffer_pool.get();
                 defer bun.os_path_buffer_pool.put(wbuf);
                 const len = bun.windows.GetFinalPathNameByHandleW(handle.cast(), wbuf, wbuf.len, 0);
-                if (len == 0) {
+                if (len == 0 or len >= wbuf.len) {
                     return ret.errnoSysP(0, .copyfile, this.osPathIntoSyncErrorBuf(dest)) orelse dst_enoent_maybe;
                 }
                 const flags = if (stat_ & windows.FILE_ATTRIBUTE_DIRECTORY != 0)

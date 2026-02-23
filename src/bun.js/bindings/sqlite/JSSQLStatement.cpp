@@ -759,8 +759,6 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
 
     // Slow path:
 
-    JSC::ObjectInitializationScope initializationScope(vm);
-
     // 64 is the maximum we can preallocate here
     // see https://github.com/oven-sh/bun/issues/987
     JSObject* prototype = castedThis->userPrototype ? castedThis->userPrototype.get() : lexicalGlobalObject->objectPrototype();
@@ -2022,7 +2020,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSetPrototypeFunction, (JSGlobalObject * l
             return {};
         }
 
-        castedThis->userPrototype.set(vm, classObject, prototype.getObject());
+        castedThis->userPrototype.set(vm, castedThis, prototype.getObject());
 
         // Force the prototypes to be re-created
         if (castedThis->version_db) {

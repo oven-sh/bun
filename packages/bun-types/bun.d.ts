@@ -2428,7 +2428,7 @@ declare module "bun" {
   }
 
   namespace Build {
-    type Architecture = "x64" | "arm64";
+    type Architecture = "x64" | "arm64" | "aarch64";
     type Libc = "glibc" | "musl";
     type SIMD = "baseline" | "modern";
     type CompileTarget =

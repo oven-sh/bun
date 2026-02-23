@@ -498,9 +498,8 @@ pub fn handleAuth(this: *MySQLConnection, comptime Context: type, reader: NewRea
 
             this.#status_flags = ok.status_flags;
             this.#flags.is_ready_for_query = true;
-            const connection = this.getJSConnection();
             this.queue.markAsReadyForQuery();
-            this.queue.advance(connection);
+            this.flushQueue() catch {};
         },
 
         @intFromEnum(PacketType.ERROR) => {
@@ -535,7 +534,7 @@ pub fn handleAuth(this: *MySQLConnection, comptime Context: type, reader: NewRea
 
                                 this.#flags.is_ready_for_query = true;
                                 this.queue.markAsReadyForQuery();
-                                this.queue.advance(this.getJSConnection());
+                                this.flushQueue() catch {};
                             },
                             .continue_auth => {
                                 debug("continue auth", .{});
@@ -837,7 +836,7 @@ fn checkIfPreparedStatementIsDone(this: *MySQLConnection, statement: *MySQLState
         this.queue.markAsReadyForQuery();
         this.queue.markAsPrepared();
         statement.reset();
-        this.queue.advance(this.getJSConnection());
+        this.flushQueue() catch {};
     }
 }
 
@@ -909,7 +908,7 @@ pub fn handlePreparedStatement(this: *MySQLConnection, comptime Context: type, r
             defer err.deinit();
             const connection = this.getJSConnection();
             defer {
-                this.queue.advance(connection);
+                this.flushQueue() catch {};
             }
             this.#flags.is_ready_for_query = true;
             statement.status = .failed;

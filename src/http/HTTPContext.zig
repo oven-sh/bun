@@ -312,7 +312,14 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                     unreachable;
                 } else {
                     log("PooledSocket not claimed by any context pool", .{});
-                    terminateSocket(pooled.http_socket);
+                    // Cannot call terminateSocket here: it goes through
+                    // markSocketAsDead → markTaggedSocketAsDead which reads the
+                    // still-PooledSocket tag and re-enters addMemoryBackToPool,
+                    // causing infinite recursion. Mark dead and close directly.
+                    if (pooled.http_socket.ext(**anyopaque)) |ctx| {
+                        ctx.* = bun.cast(**anyopaque, ActiveSocket.init(dead_socket).ptr());
+                    }
+                    pooled.http_socket.close(.failure);
                 }
             }
 

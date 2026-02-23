@@ -20,6 +20,9 @@ stderr: Readable,
 stdio_pipes: if (Environment.isWindows) std.ArrayListUnmanaged(StdioResult) else std.ArrayListUnmanaged(bun.FileDescriptor) = .{},
 pid_rusage: ?Rusage = null,
 
+/// Terminal attached to this subprocess (if spawned with terminal option)
+terminal: ?*Terminal = null,
+
 globalThis: *jsc.JSGlobalObject,
 observable_getters: std.enums.EnumSet(enum {
     stdin,
@@ -269,21 +272,40 @@ pub const PipeReader = @import("./subprocess/SubprocessPipeReader.zig");
 pub const Readable = @import("./subprocess/Readable.zig").Readable;
 
 pub fn getStderr(this: *Subprocess, globalThis: *JSGlobalObject) bun.JSError!JSValue {
+    // When terminal is used, stderr goes through the terminal
+    if (this.terminal != null) {
+        return .null;
+    }
     this.observable_getters.insert(.stderr);
     return this.stderr.toJS(globalThis, this.hasExited());
 }
 
 pub fn getStdin(this: *Subprocess, globalThis: *JSGlobalObject) bun.JSError!JSValue {
+    // When terminal is used, stdin goes through the terminal
+    if (this.terminal != null) {
+        return .null;
+    }
     this.observable_getters.insert(.stdin);
     return this.stdin.toJS(globalThis, this);
 }
 
 pub fn getStdout(this: *Subprocess, globalThis: *JSGlobalObject) bun.JSError!JSValue {
+    // When terminal is used, stdout goes through the terminal
+    if (this.terminal != null) {
+        return .null;
+    }
     this.observable_getters.insert(.stdout);
     // NOTE: ownership of internal buffers is transferred to the JSValue, which
     // gets cached on JSSubprocess (created via bindgen). This makes it
     // re-accessable to JS code but not via `this.stdout`, which is now `.closed`.
     return this.stdout.toJS(globalThis, this.hasExited());
+}
+
+pub fn getTerminal(this: *Subprocess, globalThis: *JSGlobalObject) JSValue {
+    if (this.terminal) |terminal| {
+        return terminal.toJS(globalThis);
+    }
+    return .js_undefined;
 }
 
 pub fn asyncDispose(this: *Subprocess, global: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
@@ -306,7 +328,7 @@ pub fn asyncDispose(this: *Subprocess, global: *JSGlobalObject, callframe: *jsc.
         .result => {},
         .err => |err| {
             // Signal 9 should always be fine, but just in case that somehow fails.
-            return global.throwValue(err.toJS(global));
+            return global.throwValue(try err.toJS(global));
         },
     }
 
@@ -359,7 +381,7 @@ pub fn kill(
         .result => {},
         .err => |err| {
             // EINVAL or ENOSYS means the signal is not supported in the current platform (most likely unsupported on windows)
-            return globalThis.throwValue(err.toJS(globalThis));
+            return globalThis.throwValue(try err.toJS(globalThis));
         },
     }
 
@@ -568,7 +590,7 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
     var existing_stdin_value = jsc.JSValue.zero;
     if (this_jsvalue != .zero) {
         if (jsc.Codegen.JSSubprocess.stdinGetCached(this_jsvalue)) |existing_value| {
-            if (existing_stdin_value.isCell()) {
+            if (existing_value.isCell()) {
                 if (stdin == null) {
                     // TODO: review this cast
                     stdin = @ptrCast(@alignCast(jsc.WebCore.FileSink.JSSink.fromJS(existing_value)));
@@ -637,7 +659,7 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
 
                 switch (status) {
                     .exited => |exited| promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(exited.code)) catch {}, // TODO: properly propagate exception upwards
-                    .err => |err| promise.asAnyPromise().?.reject(globalThis, err.toJS(globalThis)) catch {}, // TODO: properly propagate exception upwards
+                    .err => |err| promise.asAnyPromise().?.reject(globalThis, err.toJS(globalThis) catch return) catch {}, // TODO: properly propagate exception upwards
                     .signaled => promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(128 +% @intFromEnum(status.signaled))) catch {}, // TODO: properly propagate exception upwards
                     else => {
                         // crash in debug mode
@@ -650,7 +672,7 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
             if (consumeOnExitCallback(this_jsvalue, globalThis)) |callback| {
                 const waitpid_value: JSValue =
                     if (status == .err)
-                        status.err.toJS(globalThis)
+                        (status.err.toJS(globalThis) catch return)
                     else
                         .js_undefined;
 
@@ -792,7 +814,8 @@ pub fn getExited(
             return jsc.JSPromise.resolvedPromiseValue(globalThis, JSValue.jsNumber(signal.toExitCode() orelse 254));
         },
         .err => |err| {
-            return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJS(globalThis));
+            const js_err = err.toJS(globalThis) catch return .zero;
+            return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, js_err);
         },
         else => {
             const promise = jsc.JSPromise.create(globalThis).toJS();
@@ -896,6 +919,7 @@ pub const spawnSync = js_bun_spawn_bindings.spawnSync;
 pub const spawn = js_bun_spawn_bindings.spawn;
 
 const IPC = @import("../../ipc.zig");
+const Terminal = @import("./Terminal.zig");
 const js_bun_spawn_bindings = @import("./js_bun_spawn_bindings.zig");
 const node_cluster_binding = @import("../../node/node_cluster_binding.zig");
 const std = @import("std");

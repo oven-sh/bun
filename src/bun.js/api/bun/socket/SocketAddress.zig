@@ -327,10 +327,10 @@ pub fn finalize(this: *SocketAddress) void {
 /// This method is slightly faster if you are creating a lot of socket addresses
 /// that will not be around for very long. `createDTO` is even faster, but
 /// requires callers to already have a presentation-formatted address.
-pub fn intoDTO(this: *SocketAddress, global: *jsc.JSGlobalObject) jsc.JSValue {
+pub fn intoDTO(this: *SocketAddress, global: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
     var addr_str = this.address();
     defer this._presentation = .dead;
-    return JSSocketAddressDTO__create(global, addr_str.transferToJS(global), this.port(), this.family() == AF.INET6);
+    return JSSocketAddressDTO__create(global, try addr_str.transferToJS(global), this.port(), this.family() == AF.INET6);
 }
 
 /// Directly create a socket address DTO. This is a POJO with address, port, and family properties.
@@ -351,7 +351,7 @@ extern "c" fn JSSocketAddressDTO__create(globalObject: *jsc.JSGlobalObject, addr
 
 // =============================================================================
 
-pub fn getAddress(this: *SocketAddress, global: *jsc.JSGlobalObject) jsc.JSValue {
+pub fn getAddress(this: *SocketAddress, global: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
     // toJS increments ref count
     const addr_ = this.address();
     return switch (addr_.tag) {
@@ -389,7 +389,7 @@ pub fn address(this: *SocketAddress) bun.String {
 ///
 /// NOTE: node's `net.SocketAddress` wants `"ipv4"` and `"ipv6"` while Bun's APIs
 /// use `"IPv4"` and `"IPv6"`. This is annoying.
-pub fn getFamily(this: *SocketAddress, global: *jsc.JSGlobalObject) JSValue {
+pub fn getFamily(this: *SocketAddress, global: *jsc.JSGlobalObject) bun.JSError!JSValue {
     // NOTE: cannot use global.commonStrings().IPv[4,6]() b/c this needs to be
     // lower case.
     return switch (this.family()) {
@@ -452,8 +452,8 @@ pub fn estimatedSize(this: *SocketAddress) usize {
 
 pub fn toJSON(this: *SocketAddress, global: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     return (try jsc.JSObject.create(.{
-        .address = this.getAddress(global),
-        .family = this.getFamily(global),
+        .address = try this.getAddress(global),
+        .family = try this.getFamily(global),
         .port = this.port(),
         .flowlabel = this.flowLabel() orelse 0,
     }, global)).toJS();

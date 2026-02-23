@@ -149,25 +149,25 @@ div.callout .code-block {
   margin-bottom: 0px;
 }
 
-.code-block[language="shellscript"] code span.line:not(:empty):has(span)::before {
+[language="shellscript"] code span.line:not(:empty):has(span)::before {
   content: "$ ";
   color: #6272a4;
   user-select: none;
 }
 
-.code-block[language="shellscript"] code span.line:has(> span:first-child[style*="color: rgb(98, 114, 164)"])::before,
-.code-block[language="shellscript"] code span.line:has(> span:first-child[style*="#6272A4"])::before {
+[language="shellscript"] code span.line:has(> span:first-child[style*="color: rgb(98, 114, 164)"])::before,
+[language="shellscript"] code span.line:has(> span:first-child[style*="#6272A4"])::before {
   content: "";
 }
 
-.code-block[language="powershell"] code span.line:not(:empty):has(span)::before {
+[language="powershell"] code span.line:not(:empty):has(span)::before {
   content: "> ";
   color: #6272a4;
   user-select: none;
 }
 
-.code-block[language="powershell"] code span.line:has(> span:first-child[style*="color: rgb(98, 114, 164)"])::before,
-.code-block[language="powershell"] code span.line:has(> span:first-child[style*="#6272A4"])::before {
+[language="powershell"] code span.line:has(> span:first-child[style*="color: rgb(98, 114, 164)"])::before,
+[language="powershell"] code span.line:has(> span:first-child[style*="#6272A4"])::before {
   content: "";
 }
 

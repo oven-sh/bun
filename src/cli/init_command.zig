@@ -791,7 +791,9 @@ pub const InitCommand = struct {
 
         switch (template) {
             .blank, .typescript_library => {
-                Template.createAgentRule();
+                if (!minimal) {
+                    Template.createAgentRule();
+                }
 
                 if (package_json_file != null and !did_load_package_json) {
                     Output.prettyln(" + <r><d>package.json<r>", .{});

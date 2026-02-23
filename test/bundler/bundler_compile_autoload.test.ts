@@ -453,6 +453,84 @@ console.log("PRELOAD");
     },
   });
 
+  // Test that autoloadBunfig: false works with execArgv (regression test for #25640)
+  // When execArgv is present, bunfig should still be disabled if autoloadBunfig: false
+  itBundled("compile/AutoloadBunfigDisabledWithExecArgv", {
+    compile: {
+      autoloadBunfig: false,
+      execArgv: ["--smol"],
+    },
+    files: {
+      "/entry.ts": /* js */ `
+        console.log("ENTRY");
+      `,
+    },
+    runtimeFiles: {
+      "/bunfig.toml": `
+preload = ["./preload.ts"]
+      `,
+      "/preload.ts": `
+console.log("PRELOAD");
+      `,
+    },
+    run: {
+      // When bunfig is disabled, preload should NOT execute even with execArgv
+      stdout: "ENTRY",
+      setCwd: true,
+    },
+  });
+
+  // Test CLI backend for autoloadBunfig: false with execArgv (regression test for #25640)
+  itBundled("compile/AutoloadBunfigDisabledWithExecArgvCLI", {
+    compile: {
+      autoloadBunfig: false,
+      execArgv: ["--smol"],
+    },
+    backend: "cli",
+    files: {
+      "/entry.ts": /* js */ `
+        console.log("ENTRY");
+      `,
+    },
+    runtimeFiles: {
+      "/bunfig.toml": `
+preload = ["./preload.ts"]
+      `,
+      "/preload.ts": `
+console.log("PRELOAD");
+      `,
+    },
+    run: {
+      stdout: "ENTRY",
+      setCwd: true,
+    },
+  });
+
+  // Test that autoloadBunfig: true with execArgv still loads bunfig
+  itBundled("compile/AutoloadBunfigEnabledWithExecArgv", {
+    compile: {
+      autoloadBunfig: true,
+      execArgv: ["--smol"],
+    },
+    files: {
+      "/entry.ts": /* js */ `
+        console.log("ENTRY");
+      `,
+    },
+    runtimeFiles: {
+      "/bunfig.toml": `
+preload = ["./preload.ts"]
+      `,
+      "/preload.ts": `
+console.log("PRELOAD");
+      `,
+    },
+    run: {
+      stdout: "PRELOAD\nENTRY",
+      setCwd: true,
+    },
+  });
+
   // Test that both tsconfig and package.json can be enabled together
   itBundled("compile/AutoloadBothTsconfigAndPackageJson", {
     compile: {

@@ -46,12 +46,14 @@ pub fn start(this: *@This()) Yield {
 
     const maybe1 = iter.next().?;
     const int1 = std.fmt.parseFloat(f32, bun.sliceTo(maybe1, 0)) catch return this.fail("seq: invalid argument\n");
+    if (!std.math.isFinite(int1)) return this.fail("seq: invalid argument\n");
     this._end = int1;
     if (this._start > this._end) this.increment = -1;
 
     const maybe2 = iter.next();
     if (maybe2 == null) return this.do();
     const int2 = std.fmt.parseFloat(f32, bun.sliceTo(maybe2.?, 0)) catch return this.fail("seq: invalid argument\n");
+    if (!std.math.isFinite(int2)) return this.fail("seq: invalid argument\n");
     this._start = int1;
     this._end = int2;
     if (this._start < this._end) this.increment = 1;
@@ -60,6 +62,7 @@ pub fn start(this: *@This()) Yield {
     const maybe3 = iter.next();
     if (maybe3 == null) return this.do();
     const int3 = std.fmt.parseFloat(f32, bun.sliceTo(maybe3.?, 0)) catch return this.fail("seq: invalid argument\n");
+    if (!std.math.isFinite(int3)) return this.fail("seq: invalid argument\n");
     this._start = int1;
     this.increment = int2;
     this._end = int3;

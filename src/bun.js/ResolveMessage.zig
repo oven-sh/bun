@@ -13,7 +13,7 @@ pub const ResolveMessage = struct {
         return globalThis.throw("ResolveMessage is not constructable", .{});
     }
 
-    pub fn getCode(this: *ResolveMessage, globalObject: *jsc.JSGlobalObject) jsc.JSValue {
+    pub fn getCode(this: *ResolveMessage, globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
         switch (this.msg.metadata) {
             .resolve => |resolve| {
                 const code: []const u8 = brk: {
@@ -153,7 +153,7 @@ pub const ResolveMessage = struct {
         _: *jsc.CallFrame,
     ) bun.JSError!jsc.JSValue {
         var object = jsc.JSValue.createEmptyObject(globalThis, 7);
-        object.put(globalThis, ZigString.static("name"), bun.String.static("ResolveMessage").toJS(globalThis));
+        object.put(globalThis, ZigString.static("name"), try bun.String.static("ResolveMessage").toJS(globalThis));
         object.put(globalThis, ZigString.static("position"), this.getPosition(globalThis));
         object.put(globalThis, ZigString.static("message"), this.getMessage(globalThis));
         object.put(globalThis, ZigString.static("level"), this.getLevel(globalThis));

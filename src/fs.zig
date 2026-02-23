@@ -530,43 +530,55 @@ pub const FileSystem = struct {
         file_limit: usize = 32,
         file_quota: usize = 32,
 
-        pub var win_tempdir_cache: ?[]const u8 = undefined;
+        fn #platformTempDir() []const u8 {
+            // Try TMPDIR, TMP, and TEMP in that order, matching Node.js.
+            // https://github.com/nodejs/node/blob/e172be269890702bf2ad06252f2f152e7604d76c/src/node_credentials.cc#L132
+            if (bun.env_var.TMPDIR.getNotEmpty() orelse
+                bun.env_var.TMP.getNotEmpty() orelse
+                bun.env_var.TEMP.getNotEmpty()) |dir|
+            {
+                if (dir.len > 1 and dir[dir.len - 1] == std.fs.path.sep) {
+                    return dir[0 .. dir.len - 1];
+                }
 
-        pub fn platformTempDir() []const u8 {
+                return dir;
+            }
+
             return switch (Environment.os) {
                 // https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-gettemppathw#remarks
-                .windows => win_tempdir_cache orelse {
-                    const value = bun.env_var.TEMP.get() orelse bun.env_var.TMP.get() orelse brk: {
-                        if (bun.env_var.SYSTEMROOT.get() orelse bun.env_var.WINDIR.get()) |windir| {
-                            break :brk std.fmt.allocPrint(
-                                bun.default_allocator,
-                                "{s}\\Temp",
-                                .{strings.withoutTrailingSlash(windir)},
-                            ) catch |err| bun.handleOom(err);
-                        }
-
-                        if (bun.env_var.HOME.get()) |profile| {
-                            var buf: bun.PathBuffer = undefined;
-                            var parts = [_]string{"AppData\\Local\\Temp"};
-                            const out = bun.path.joinAbsStringBuf(profile, &buf, &parts, .loose);
-                            break :brk bun.handleOom(bun.default_allocator.dupe(u8, out));
-                        }
-
-                        var tmp_buf: bun.PathBuffer = undefined;
-                        const cwd = std.posix.getcwd(&tmp_buf) catch @panic("Failed to get cwd for platformTempDir");
-                        const root = bun.path.windowsFilesystemRoot(cwd);
-                        break :brk std.fmt.allocPrint(
+                .windows => {
+                    if (bun.env_var.SYSTEMROOT.get() orelse bun.env_var.WINDIR.get()) |windir| {
+                        return std.fmt.allocPrint(
                             bun.default_allocator,
-                            "{s}\\Windows\\Temp",
-                            .{strings.withoutTrailingSlash(root)},
+                            "{s}\\Temp",
+                            .{strings.withoutTrailingSlash(windir)},
                         ) catch |err| bun.handleOom(err);
-                    };
-                    win_tempdir_cache = value;
-                    return value;
+                    }
+
+                    if (bun.env_var.HOME.get()) |profile| {
+                        var buf: bun.PathBuffer = undefined;
+                        var parts = [_]string{"AppData\\Local\\Temp"};
+                        const out = bun.path.joinAbsStringBuf(profile, &buf, &parts, .loose);
+                        return bun.handleOom(bun.default_allocator.dupe(u8, out));
+                    }
+
+                    var tmp_buf: bun.PathBuffer = undefined;
+                    const cwd = std.posix.getcwd(&tmp_buf) catch @panic("Failed to get cwd for platformTempDir");
+                    const root = bun.path.windowsFilesystemRoot(cwd);
+                    return std.fmt.allocPrint(
+                        bun.default_allocator,
+                        "{s}\\Windows\\Temp",
+                        .{strings.withoutTrailingSlash(root)},
+                    ) catch |err| bun.handleOom(err);
                 },
                 .mac => "/private/tmp",
                 else => "/tmp",
             };
+        }
+
+        var get_platform_tempdir = bun.once(#platformTempDir);
+        pub fn platformTempDir() []const u8 {
+            return get_platform_tempdir.call(.{});
         }
 
         pub const Tmpfile = switch (Environment.os) {
@@ -574,25 +586,13 @@ pub const FileSystem = struct {
             else => TmpfilePosix,
         };
 
-        pub var tmpdir_path: []const u8 = undefined;
-        pub var tmpdir_path_set = false;
-        pub fn tmpdirPath(_: *const @This()) []const u8 {
-            if (!tmpdir_path_set) {
-                tmpdir_path = bun.env_var.BUN_TMPDIR.get() orelse platformTempDir();
-                tmpdir_path_set = true;
-            }
-
-            return tmpdir_path;
+        pub fn tmpdirPath() []const u8 {
+            return bun.env_var.BUN_TMPDIR.getNotEmpty() orelse platformTempDir();
         }
 
         pub fn openTmpDir(_: *const RealFS) !std.fs.Dir {
-            if (!tmpdir_path_set) {
-                tmpdir_path = bun.env_var.BUN_TMPDIR.get() orelse platformTempDir();
-                tmpdir_path_set = true;
-            }
-
             if (comptime Environment.isWindows) {
-                return (try bun.sys.openDirAtWindowsA(bun.invalid_fd, tmpdir_path, .{
+                return (try bun.sys.openDirAtWindowsA(bun.invalid_fd, tmpdirPath(), .{
                     .iterable = true,
                     // we will not delete the temp directory
                     .can_rename_or_delete = false,
@@ -600,7 +600,7 @@ pub const FileSystem = struct {
                 }).unwrap()).stdDir();
             }
 
-            return try bun.openDirAbsolute(tmpdir_path);
+            return try bun.openDirAbsolute(tmpdirPath());
         }
 
         pub fn entriesAt(this: *RealFS, index: allocators.IndexType, generation: bun.Generation) ?*EntriesOption {
@@ -637,11 +637,6 @@ pub const FileSystem = struct {
 
         pub fn getDefaultTempDir() string {
             return bun.env_var.BUN_TMPDIR.get() orelse platformTempDir();
-        }
-
-        pub fn setTempdir(path: ?string) void {
-            tmpdir_path = path orelse getDefaultTempDir();
-            tmpdir_path_set = true;
         }
 
         pub const TmpfilePosix = struct {

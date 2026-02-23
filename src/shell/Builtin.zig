@@ -264,6 +264,11 @@ pub const BuiltinIO = struct {
         ref_count: RefCount,
         blob: bun.webcore.Blob,
 
+        fn dupeRef(this: *Blob) *Blob {
+            this.ref();
+            return this;
+        }
+
         fn deinit(this: *Blob) void {
             this.blob.deinit();
             bun.destroy(this);
@@ -340,16 +345,16 @@ pub fn init(
     io: *IO,
 ) ?Yield {
     const stdin: BuiltinIO.Input = switch (io.stdin) {
-        .fd => |fd| .{ .fd = fd.refSelf() },
+        .fd => |fd| .{ .fd = fd.dupeRef() },
         .ignore => .ignore,
     };
     const stdout: BuiltinIO.Output = switch (io.stdout) {
-        .fd => |val| .{ .fd = .{ .writer = val.writer.refSelf(), .captured = val.captured } },
+        .fd => |val| .{ .fd = .{ .writer = val.writer.dupeRef(), .captured = val.captured } },
         .pipe => .{ .buf = std.array_list.Managed(u8).init(cmd.base.allocator()) },
         .ignore => .ignore,
     };
     const stderr: BuiltinIO.Output = switch (io.stderr) {
-        .fd => |val| .{ .fd = .{ .writer = val.writer.refSelf(), .captured = val.captured } },
+        .fd => |val| .{ .fd = .{ .writer = val.writer.dupeRef(), .captured = val.captured } },
         .pipe => .{ .buf = std.array_list.Managed(u8).init(cmd.base.allocator()) },
         .ignore => .ignore,
     };
@@ -481,13 +486,26 @@ fn initRedirections(
                     cmd.exec.bltn.stdin.deref();
                     cmd.exec.bltn.stdin = .{ .fd = IOReader.init(redirfd, cmd.base.eventLoop()) };
                 }
+
+                if (!node.redirect.stdout and !node.redirect.stderr) {
+                    return null;
+                }
+
+                const redirect_writer: *IOWriter = .init(
+                    redirfd,
+                    .{ .pollable = is_pollable, .nonblocking = is_nonblocking, .is_socket = is_socket },
+                    cmd.base.eventLoop(),
+                );
+                defer redirect_writer.deref();
+
                 if (node.redirect.stdout) {
                     cmd.exec.bltn.stdout.deref();
-                    cmd.exec.bltn.stdout = .{ .fd = .{ .writer = IOWriter.init(redirfd, .{ .pollable = is_pollable, .nonblocking = is_nonblocking, .is_socket = is_socket }, cmd.base.eventLoop()) } };
+                    cmd.exec.bltn.stdout = .{ .fd = .{ .writer = redirect_writer.dupeRef() } };
                 }
+
                 if (node.redirect.stderr) {
                     cmd.exec.bltn.stderr.deref();
-                    cmd.exec.bltn.stderr = .{ .fd = .{ .writer = IOWriter.init(redirfd, .{ .pollable = is_pollable, .nonblocking = is_nonblocking, .is_socket = is_socket }, cmd.base.eventLoop()) } };
+                    cmd.exec.bltn.stderr = .{ .fd = .{ .writer = redirect_writer.dupeRef() } };
                 }
             },
             .jsbuf => |val| {
@@ -522,24 +540,29 @@ fn initRedirections(
                     var original_blob = body.use();
                     defer original_blob.deinit();
 
+                    if (!node.redirect.stdin and !node.redirect.stdout and !node.redirect.stderr) {
+                        return null;
+                    }
+
                     const blob: *BuiltinIO.Blob = bun.new(BuiltinIO.Blob, .{
                         .ref_count = .init(),
                         .blob = original_blob.dupe(),
                     });
+                    defer blob.deref();
 
                     if (node.redirect.stdin) {
                         cmd.exec.bltn.stdin.deref();
-                        cmd.exec.bltn.stdin = .{ .blob = blob };
+                        cmd.exec.bltn.stdin = .{ .blob = blob.dupeRef() };
                     }
 
                     if (node.redirect.stdout) {
                         cmd.exec.bltn.stdout.deref();
-                        cmd.exec.bltn.stdout = .{ .blob = blob };
+                        cmd.exec.bltn.stdout = .{ .blob = blob.dupeRef() };
                     }
 
                     if (node.redirect.stderr) {
                         cmd.exec.bltn.stderr.deref();
-                        cmd.exec.bltn.stderr = .{ .blob = blob };
+                        cmd.exec.bltn.stderr = .{ .blob = blob.dupeRef() };
                     }
                 } else if (interpreter.jsobjs[file.jsbuf.idx].as(jsc.WebCore.Blob)) |blob| {
                     if ((node.redirect.stdout or node.redirect.stderr) and !blob.needsToReadFile()) {

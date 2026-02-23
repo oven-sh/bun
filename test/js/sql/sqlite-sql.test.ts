@@ -1614,6 +1614,91 @@ describe("Helper argument validation", () => {
     await sqlSafe.close();
   });
 
+  test("insert helper filters out undefined values", async () => {
+    await sql`CREATE TABLE insert_undefined_test (id INTEGER PRIMARY KEY, name TEXT NOT NULL, optional TEXT)`;
+
+    // Insert with undefined value - should only include defined columns
+    await sql`INSERT INTO insert_undefined_test ${sql({ id: 1, name: "test", optional: undefined })}`;
+
+    const result = await sql`SELECT * FROM insert_undefined_test WHERE id = 1`;
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe(1);
+    expect(result[0].name).toBe("test");
+    expect(result[0].optional).toBe(null); // SQLite default
+
+    // Insert with all defined values - should work normally
+    await sql`INSERT INTO insert_undefined_test ${sql({ id: 2, name: "test2", optional: "value" })}`;
+    const result2 = await sql`SELECT * FROM insert_undefined_test WHERE id = 2`;
+    expect(result2[0].optional).toBe("value");
+
+    // Bulk insert with undefined values
+    await sql`INSERT INTO insert_undefined_test ${sql([
+      { id: 3, name: "bulk1", optional: undefined },
+      { id: 4, name: "bulk2", optional: undefined },
+    ])}`;
+    const result3 = await sql`SELECT * FROM insert_undefined_test WHERE id IN (3, 4) ORDER BY id`;
+    expect(result3).toHaveLength(2);
+    expect(result3[0].name).toBe("bulk1");
+    expect(result3[1].name).toBe("bulk2");
+
+    // DATA LOSS TEST: Bulk insert where first item has undefined but later item has value
+    // Previously this would silently lose "has-value" because columns were determined from first item only
+    await sql`INSERT INTO insert_undefined_test ${sql([
+      { id: 5, name: "mixed1", optional: undefined },
+      { id: 6, name: "mixed2", optional: "has-value" },
+    ])}`;
+    const result4 = await sql`SELECT * FROM insert_undefined_test WHERE id IN (5, 6) ORDER BY id`;
+    expect(result4).toHaveLength(2);
+    expect(result4[0].name).toBe("mixed1");
+    expect(result4[0].optional).toBe(null); // first item's undefined becomes null
+    expect(result4[1].name).toBe("mixed2");
+    expect(result4[1].optional).toBe("has-value"); // CRITICAL: this value must be preserved, not lost!
+
+    // Bulk insert with mixed undefined patterns - reverse order (first has value, second undefined)
+    await sql`INSERT INTO insert_undefined_test ${sql([
+      { id: 7, name: "mixed3", optional: "first-has-value" },
+      { id: 8, name: "mixed4", optional: undefined },
+    ])}`;
+    const result5 = await sql`SELECT * FROM insert_undefined_test WHERE id IN (7, 8) ORDER BY id`;
+    expect(result5).toHaveLength(2);
+    expect(result5[0].optional).toBe("first-has-value");
+    expect(result5[1].optional).toBe(null); // second item's undefined becomes null
+
+    // DATA LOSS TEST: Bulk insert with 3+ items where only middle item has value
+    // Ensures we check ALL items, not just first or last
+    await sql`INSERT INTO insert_undefined_test ${sql([
+      { id: 9, name: "three1", optional: undefined },
+      { id: 10, name: "three2", optional: "middle-value" },
+      { id: 11, name: "three3", optional: undefined },
+    ])}`;
+    const result6 = await sql`SELECT * FROM insert_undefined_test WHERE id IN (9, 10, 11) ORDER BY id`;
+    expect(result6).toHaveLength(3);
+    expect(result6[0].optional).toBe(null);
+    expect(result6[1].optional).toBe("middle-value"); // CRITICAL: middle item's value must be preserved
+    expect(result6[2].optional).toBe(null);
+
+    // Insert with all undefined except one column should throw
+    expect(
+      async () =>
+        await sql`INSERT INTO insert_undefined_test ${sql({ id: undefined, name: undefined, optional: undefined })}`.execute(),
+    ).toThrow("Insert needs to have at least one column with a defined value");
+  });
+
+  // Exact regression test for https://github.com/oven-sh/bun/issues/25829
+  // undefined values should be filtered out, allowing NOT NULL columns with DEFAULT to use their default
+  test("insert with undefined on NOT NULL column with DEFAULT uses default value", async () => {
+    await sql`CREATE TABLE issue_25829 (id TEXT PRIMARY KEY, foo TEXT NOT NULL DEFAULT 'default-foo')`;
+
+    // This should work - foo:undefined should be filtered out, and DEFAULT should be used
+    await sql`INSERT INTO issue_25829 ${sql({
+      foo: undefined,
+      id: "test-id",
+    })}`;
+
+    const result = await sql`SELECT * FROM issue_25829 WHERE id = 'test-id'`;
+    expect(result).toEqual([{ id: "test-id", foo: "default-foo" }]);
+  });
+
   test("invalid keys for helper throw immediately", () => {
     const obj = { id: 1, text_val: "x" };
     expect(() => sql`INSERT INTO helper_invalid ${sql(obj, Symbol("k") as any)}`).toThrowErrorMatchingInlineSnapshot(

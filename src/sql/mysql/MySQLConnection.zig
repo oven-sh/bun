@@ -646,7 +646,7 @@ pub fn handleCommand(this: *MySQLConnection, comptime Context: type, reader: New
             .failed => {
                 const connection = this.getJSConnection();
                 defer {
-                    this.queue.advance(connection);
+                    this.flushQueue() catch {};
                 }
                 this.#flags.is_ready_for_query = true;
                 this.queue.markAsReadyForQuery();
@@ -933,7 +933,11 @@ fn handleResultSetOK(this: *MySQLConnection, request: *JSMySQLQuery, statement: 
     const connection = this.getJSConnection();
     debug("handleResultSetOK: {d} {}", .{ status_flags.toInt(), is_last_result });
     defer {
-        this.queue.advance(connection);
+        // Use flushQueue instead of just advance to ensure any data written
+        // by queries added during onQueryResult is actually sent.
+        // This fixes a race condition where the auto flusher may not be
+        // registered if the queue's current item is completed (not pending).
+        this.flushQueue() catch {};
     }
     this.#flags.is_ready_for_query = is_last_result;
     if (is_last_result) {
@@ -977,7 +981,7 @@ fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: NewRe
             try err.decode(reader);
             defer err.deinit();
             defer {
-                this.queue.advance(connection);
+                this.flushQueue() catch {};
             }
             if (request.getStatement()) |statement| {
                 statement.reset();

@@ -29,8 +29,6 @@ reachable_files: []Index = &[_]Index{},
 stable_source_indices: []const u32 = &[_]u32{},
 
 is_scb_bitset: BitSet = .{},
-has_client_components: bool = false,
-has_server_components: bool = false,
 
 /// This is for cross-module inlining of detected inlinable constants
 // const_values: js_ast.Ast.ConstValuesMap = .{},

@@ -216,6 +216,7 @@ pub fn StyleRule(comptime R: type) type {
                 var handler_context = context.handler_context.child(.style_rule);
                 std.mem.swap(css.PropertyHandlerContext, &context.handler_context, &handler_context);
                 try this.rules.minify(context, unused);
+                std.mem.swap(css.PropertyHandlerContext, &context.handler_context, &handler_context);
                 if (unused and this.rules.v.items.len == 0) {
                     return true;
                 }

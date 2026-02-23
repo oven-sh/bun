@@ -31,7 +31,7 @@ import {
 } from "../scripts/utils.mjs";
 
 /**
- * @typedef {"linux" | "darwin" | "windows" | "freebsd"} Os
+ * @typedef {"linux" | "darwin" | "windows"} Os
  * @typedef {"aarch64" | "x64"} Arch
  * @typedef {"musl"} Abi
  * @typedef {"debian" | "ubuntu" | "alpine" | "amazonlinux"} Distro
@@ -99,6 +99,23 @@ function getTargetLabel(target) {
  * @property {string[]} [features]
  */
 
+// Azure VM sizes for Windows CI runners.
+// DDSv6 = x64, DPSv6 = ARM64 (Cobalt 100). Quota: 100 cores per family in eastus2.
+const azureVmSizes = {
+  "windows-x64": {
+    build: "Standard_D16ds_v6", // 16 vCPU, 64 GiB — C++ build, link
+    test: "Standard_D4ds_v6", // 4 vCPU, 16 GiB — test shards
+  },
+  "windows-aarch64": {
+    build: "Standard_D16ps_v6", // 16 vCPU, 64 GiB — C++ build, link
+    test: "Standard_D4ps_v6", // 4 vCPU, 16 GiB — test shards
+  },
+};
+
+function getAzureVmSize(os, arch, tier = "build") {
+  return azureVmSizes[`${os}-${arch}`]?.[tier];
+}
+
 /**
  * @type {Platform[]}
  */
@@ -109,12 +126,12 @@ const buildPlatforms = [
   { os: "linux", arch: "x64", distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "linux", arch: "x64", baseline: true, distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "linux", arch: "x64", profile: "asan", distro: "amazonlinux", release: "2023", features: ["docker"] },
-  { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.22" },
-  { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.22" },
-  { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.22" },
+  { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.23" },
+  { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.23" },
+  { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.23" },
   { os: "windows", arch: "x64", release: "2019" },
   { os: "windows", arch: "x64", baseline: true, release: "2019" },
-  { os: "freebsd", arch: "x64", release: "14.3" },
+  { os: "windows", arch: "aarch64", release: "11" },
 ];
 
 /**
@@ -132,11 +149,12 @@ const testPlatforms = [
   { os: "linux", arch: "aarch64", distro: "ubuntu", release: "25.04", tier: "latest" },
   { os: "linux", arch: "x64", distro: "ubuntu", release: "25.04", tier: "latest" },
   { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "25.04", tier: "latest" },
-  { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.22", tier: "latest" },
-  { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.22", tier: "latest" },
-  { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.22", tier: "latest" },
+  { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.23", tier: "latest" },
+  { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.23", tier: "latest" },
+  { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.23", tier: "latest" },
   { os: "windows", arch: "x64", release: "2019", tier: "oldest" },
   { os: "windows", arch: "x64", release: "2019", baseline: true, tier: "oldest" },
+  { os: "windows", arch: "aarch64", release: "11", tier: "latest" },
 ];
 
 /**
@@ -302,7 +320,7 @@ function getCppAgent(platform, options) {
   }
 
   return getEc2Agent(platform, options, {
-    instanceType: arch === "aarch64" ? "c8g.4xlarge" : "c7i.4xlarge",
+    instanceType: os === "windows" ? getAzureVmSize(os, arch) : arch === "aarch64" ? "c8g.4xlarge" : "c7i.4xlarge",
   });
 }
 
@@ -324,7 +342,7 @@ function getLinkBunAgent(platform, options) {
 
   if (os === "windows") {
     return getEc2Agent(platform, options, {
-      instanceType: arch === "aarch64" ? "r8g.large" : "r7i.large",
+      instanceType: getAzureVmSize(os, arch),
     });
   }
 
@@ -342,7 +360,7 @@ function getZigPlatform() {
     arch: "aarch64",
     abi: "musl",
     distro: "alpine",
-    release: "3.22",
+    release: "3.23",
   };
 }
 
@@ -351,7 +369,17 @@ function getZigPlatform() {
  * @param {PipelineOptions} options
  * @returns {Agent}
  */
-function getZigAgent(_platform, options) {
+function getZigAgent(platform, options) {
+  const { os, arch } = platform;
+
+  // Windows builds Zig natively on Azure
+  if (os === "windows") {
+    return getEc2Agent(platform, options, {
+      instanceType: getAzureVmSize(os, arch),
+    });
+  }
+
+  // Everything else cross-compiles from Linux aarch64
   return getEc2Agent(getZigPlatform(), options, {
     instanceType: "r8g.large",
   });
@@ -376,7 +404,7 @@ function getTestAgent(platform, options) {
   // TODO: delete this block when we upgrade to mimalloc v3
   if (os === "windows") {
     return getEc2Agent(platform, options, {
-      instanceType: "c7i.2xlarge",
+      instanceType: getAzureVmSize(os, arch, "test"),
       cpuCount: 2,
       threadsPerCore: 1,
     });
@@ -460,6 +488,7 @@ function getBuildCommand(target, options, label) {
  */
 function getBuildCppStep(platform, options) {
   const command = getBuildCommand(platform, options);
+
   return {
     key: `${getTargetKey(platform)}-build-cpp`,
     label: `${getTargetLabel(platform)} - build-cpp`,
@@ -499,7 +528,10 @@ function getBuildToolchain(target) {
  * @returns {Step}
  */
 function getBuildZigStep(platform, options) {
+  const { os, arch } = platform;
   const toolchain = getBuildToolchain(platform);
+  // Native Windows builds don't need a cross-compilation toolchain
+  const toolchainArg = os === "windows" ? "" : ` --toolchain ${toolchain}`;
   return {
     key: `${getTargetKey(platform)}-build-zig`,
     retry: getRetry(),
@@ -507,7 +539,7 @@ function getBuildZigStep(platform, options) {
     agents: getZigAgent(platform, options),
     cancel_on_build_failing: isMergeQueue(),
     env: getBuildEnv(platform, options),
-    command: `${getBuildCommand(platform, options)} --target bun-zig --toolchain ${toolchain}`,
+    command: `${getBuildCommand(platform, options)} --target bun-zig${toolchainArg}`,
     timeout_in_minutes: 35,
   };
 }
@@ -531,6 +563,111 @@ function getLinkBunStep(platform, options) {
       ...getBuildEnv(platform, options),
     },
     command: `${getBuildCommand(platform, options, "build-bun")} --target bun`,
+  };
+}
+
+/**
+ * Returns the artifact triplet for a platform, e.g. "bun-linux-aarch64" or "bun-linux-x64-musl-baseline".
+ * Matches the naming convention in cmake/targets/BuildBun.cmake.
+ * @param {Platform} platform
+ * @returns {string}
+ */
+function getTargetTriplet(platform) {
+  const { os, arch, abi, baseline } = platform;
+  let triplet = `bun-${os}-${arch}`;
+  if (abi === "musl") {
+    triplet += "-musl";
+  }
+  if (baseline) {
+    triplet += "-baseline";
+  }
+  return triplet;
+}
+
+/**
+ * Returns true if a platform needs QEMU-based baseline CPU verification.
+ * x64 baseline builds verify no AVX/AVX2 instructions snuck in.
+ * aarch64 builds verify no LSE/SVE instructions snuck in.
+ * @param {Platform} platform
+ * @returns {boolean}
+ */
+function needsBaselineVerification(platform) {
+  const { os, arch, baseline } = platform;
+  if (os === "linux") return (arch === "x64" && baseline) || arch === "aarch64";
+  if (os === "windows") return arch === "x64" && baseline;
+  return false;
+}
+
+/**
+ * Returns the emulator binary name for the given platform.
+ * Linux uses QEMU user-mode; Windows uses Intel SDE.
+ * @param {Platform} platform
+ * @returns {string}
+ */
+function getEmulatorBinary(platform) {
+  const { os, arch } = platform;
+  if (os === "windows") return "sde-external/sde.exe";
+  if (arch === "aarch64") return "qemu-aarch64-static";
+  return "qemu-x86_64-static";
+}
+
+const SDE_VERSION = "9.58.0-2025-06-16";
+const SDE_URL = `https://downloadmirror.intel.com/859732/sde-external-${SDE_VERSION}-win.tar.xz`;
+
+/**
+ * @param {Platform} platform
+ * @param {PipelineOptions} options
+ * @returns {Step}
+ */
+function hasWebKitChanges(options) {
+  const { changedFiles = [] } = options;
+  return changedFiles.some(file => file.includes("SetupWebKit.cmake"));
+}
+
+/**
+ * @param {Platform} platform
+ * @param {PipelineOptions} options
+ * @returns {Step}
+ */
+function getVerifyBaselineStep(platform, options) {
+  const { os } = platform;
+  const targetKey = getTargetKey(platform);
+  const triplet = getTargetTriplet(platform);
+  const emulator = getEmulatorBinary(platform);
+  const jitStressFlag = hasWebKitChanges(options) ? " --jit-stress" : "";
+
+  const setupCommands =
+    os === "windows"
+      ? [
+          `echo Downloading build artifacts...`,
+          `buildkite-agent artifact download ${triplet}.zip . --step ${targetKey}-build-bun`,
+          `echo Extracting ${triplet}.zip...`,
+          `tar -xf ${triplet}.zip`,
+          `echo Downloading Intel SDE...`,
+          `curl.exe -fsSL -o sde.tar.xz "${SDE_URL}"`,
+          `echo Extracting Intel SDE...`,
+          `7z x -y sde.tar.xz`,
+          `7z x -y sde.tar`,
+          `ren sde-external-${SDE_VERSION}-win sde-external`,
+        ]
+      : [
+          `buildkite-agent artifact download '*.zip' . --step ${targetKey}-build-bun`,
+          `unzip -o '${triplet}.zip'`,
+          `chmod +x ${triplet}/bun`,
+        ];
+
+  return {
+    key: `${targetKey}-verify-baseline`,
+    label: `${getTargetLabel(platform)} - verify-baseline`,
+    depends_on: [`${targetKey}-build-bun`],
+    agents: getLinkBunAgent(platform, options),
+    retry: getRetry(),
+    cancel_on_build_failing: isMergeQueue(),
+    timeout_in_minutes: hasWebKitChanges(options) ? 30 : 10,
+    command: [
+      ...setupCommands,
+      `bun scripts/verify-baseline.ts --binary ${triplet}/${os === "windows" ? "bun.exe" : "bun"} --emulator ${emulator}${jitStressFlag}`,
+    ],
   };
 }
 
@@ -572,6 +709,7 @@ function getTestBunStep(platform, options, testOptions = {}) {
   if (buildId) {
     args.push(`--build-id=${buildId}`);
   }
+
   if (testFiles) {
     args.push(...testFiles.map(testFile => `--include=${testFile}`));
   }
@@ -588,14 +726,14 @@ function getTestBunStep(platform, options, testOptions = {}) {
     agents: getTestAgent(platform, options),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
-    parallelism: os === "darwin" ? 2 : 10,
+    parallelism: os === "darwin" ? 2 : os === "windows" ? 8 : 20,
     timeout_in_minutes: profile === "asan" || os === "windows" ? 45 : 30,
     env: {
       ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
     },
     command:
       os === "windows"
-        ? `node .\\scripts\\runner.node.mjs ${args.join(" ")}`
+        ? `pwsh -NoProfile -File .\\scripts\\vs-shell.ps1 node .\\scripts\\runner.node.mjs ${args.join(" ")}`
         : `./scripts/runner.node.mjs ${args.join(" ")}`,
   };
 }
@@ -610,6 +748,7 @@ function getBuildImageStep(platform, options) {
   const { publishImages } = options;
   const action = publishImages ? "publish-image" : "create-image";
 
+  const cloud = os === "windows" ? "azure" : "aws";
   const command = [
     "node",
     "./scripts/machine.mjs",
@@ -618,7 +757,7 @@ function getBuildImageStep(platform, options) {
     `--arch=${arch}`,
     distro && `--distro=${distro}`,
     `--release=${release}`,
-    "--cloud=aws",
+    `--cloud=${cloud}`,
     "--ci",
     "--authorized-org=oven-sh",
   ];
@@ -657,7 +796,7 @@ function getReleaseStep(buildPlatforms, options) {
     agents: {
       queue: "test-darwin",
     },
-    depends_on: buildPlatforms.filter(p => p.os !== "freebsd").map(platform => `${getTargetKey(platform)}-build-bun`),
+    depends_on: buildPlatforms.map(platform => `${getTargetKey(platform)}-build-bun`),
     env: {
       CANARY: revision,
     },
@@ -770,6 +909,7 @@ function getBenchmarkStep() {
  * @property {Platform[]} [buildPlatforms]
  * @property {Platform[]} [testPlatforms]
  * @property {string[]} [testFiles]
+ * @property {string[]} [changedFiles]
  */
 
 /**
@@ -1039,9 +1179,10 @@ async function getPipelineOptions() {
     skipBuilds: parseOption(/\[(skip builds?|no builds?|only tests?)\]/i),
     forceBuilds: parseOption(/\[(force builds?)\]/i),
     skipTests: parseOption(/\[(skip tests?|no tests?|only builds?)\]/i),
-    buildImages: parseOption(/\[(build images?)\]/i),
+    buildImages: parseOption(/\[(build (?:(?:windows|linux) )?images?)\]/i),
     dryRun: parseOption(/\[(dry run)\]/i),
-    publishImages: parseOption(/\[(publish images?)\]/i),
+    publishImages: parseOption(/\[(publish (?:(?:windows|linux) )?images?)\]/i),
+    imageFilter: (commitMessage.match(/\[(?:build|publish) (windows|linux) images?\]/i) || [])[1]?.toLowerCase(),
     buildPlatforms: Array.from(buildPlatformsMap.values()),
     testPlatforms: Array.from(testPlatformsMap.values()),
   };
@@ -1066,11 +1207,12 @@ async function getPipeline(options = {}) {
     return;
   }
 
-  const { buildPlatforms = [], testPlatforms = [], buildImages, publishImages } = options;
+  const { buildPlatforms = [], testPlatforms = [], buildImages, publishImages, imageFilter } = options;
   const imagePlatforms = new Map(
     buildImages || publishImages
       ? [...buildPlatforms, ...testPlatforms]
           .filter(({ os }) => os !== "darwin")
+          .filter(({ os, distro }) => !imageFilter || os === imageFilter || distro === imageFilter)
           .map(platform => [getImageKey(platform), platform])
       : [],
   );
@@ -1108,9 +1250,6 @@ async function getPipeline(options = {}) {
       ? buildPlatforms
       : buildPlatforms.filter(({ profile }) => profile !== "asan");
 
-    // run build-image but no build-bun yet
-    relevantBuildPlatforms = relevantBuildPlatforms.filter(({ os }) => os !== "freebsd");
-
     steps.push(
       ...relevantBuildPlatforms.map(target => {
         const imageKey = getImageKey(target);
@@ -1124,6 +1263,10 @@ async function getPipeline(options = {}) {
         steps.push(getBuildCppStep(target, options));
         steps.push(getBuildZigStep(target, options));
         steps.push(getLinkBunStep(target, options));
+
+        if (needsBaselineVerification(target)) {
+          steps.push(getVerifyBaselineStep(target, options));
+        }
 
         return getStepWithDependsOn(
           {
@@ -1204,6 +1347,10 @@ async function main() {
           { headers: { Authorization: `Bearer ${getSecret("GITHUB_TOKEN")}` } },
         );
         const doc = await res.json();
+        if (!Array.isArray(doc)) {
+          console.error(`-> page ${i}, unexpected response:`, JSON.stringify(doc));
+          break;
+        }
         console.log(`-> page ${i}, found ${doc.length} items`);
         if (doc.length === 0) break;
         for (const { filename, status } of doc) {
@@ -1218,10 +1365,11 @@ async function main() {
     } catch (e) {
       console.error(e);
     }
-    if (allFiles.every(filename => filename.startsWith("docs/"))) {
+    if (allFiles.length > 0 && allFiles.every(filename => filename.startsWith("docs/"))) {
       console.log(`- PR is only docs, skipping tests!`);
       return;
     }
+    options.changedFiles = allFiles;
   }
 
   startGroup("Generating pipeline...");

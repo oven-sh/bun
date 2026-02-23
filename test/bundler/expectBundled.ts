@@ -163,6 +163,8 @@ export interface BundlerTestInput {
   drop?: string[];
   /** Feature flags for dead-code elimination via `import { feature } from "bun:bundle"` */
   features?: string[];
+  /** Package names whose barrel files should be optimized */
+  optimizeImports?: string[];
 
   /** Use for resolve custom conditions */
   conditions?: string[];
@@ -447,6 +449,7 @@ function expectBundled(
     packages,
     drop = [],
     features = [],
+    optimizeImports,
     files,
     footer,
     format,
@@ -541,9 +544,6 @@ function expectBundled(
     throw new Error("bundling:false only supports a single entry point");
   }
 
-  if (!ESBUILD && metafile) {
-    throw new Error("metafile not implemented in bun build");
-  }
   if (!ESBUILD && legalComments) {
     throw new Error("legalComments not implemented in bun build");
   }
@@ -718,6 +718,9 @@ function expectBundled(
     if (backend === "cli") {
       if (plugins) {
         throw new Error("plugins not possible in backend=CLI");
+      }
+      if (optimizeImports) {
+        throw new Error("optimizeImports not possible in backend=CLI (API-only option)");
       }
       const cmd = (
         !ESBUILD
@@ -1121,9 +1124,11 @@ function expectBundled(
           ignoreDCEAnnotations,
           drop,
           features,
+          optimizeImports,
           define: define ?? {},
           throw: _throw ?? false,
           compile,
+          metafile: !!metafile,
           jsx: jsx
             ? {
                 runtime: jsx.runtime,
@@ -1199,6 +1204,11 @@ for (const [key, blob] of build.outputs) {
         if (onAfterApiBundle) await onAfterApiBundle(build);
         configRef = null!;
         Bun.gc(true);
+
+        // Write metafile if requested
+        if (metafile && build.success && (build as any).metafile) {
+          writeFileSync(metafile, JSON.stringify((build as any).metafile, null, 2));
+        }
 
         const buildLogs = build.logs.filter(x => x.level === "error");
         if (buildLogs.length) {

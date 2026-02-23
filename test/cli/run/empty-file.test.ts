@@ -1,15 +1,18 @@
-import { expect, it } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
 
-it("should execute empty scripts", () => {
-  const { stdout, stderr, exitCode } = Bun.spawnSync({
-    cmd: [bunExe(), "run", "--bun", join(import.meta.dir, "empty-file.js")],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
+describe.concurrent("empty-file", () => {
+  it("should execute empty scripts", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--bun", join(import.meta.dir, "empty-file.js")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBeEmpty();
+    expect(stderr).toBeEmpty();
+    expect(exitCode).toBe(0);
   });
-  expect(stdout.toString()).toBeEmpty();
-  expect(stderr.toString()).toBeEmpty();
-  expect(exitCode).toBe(0);
 });

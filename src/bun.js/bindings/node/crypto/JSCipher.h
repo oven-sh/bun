@@ -43,7 +43,7 @@ public:
 
     static JSCipher* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* globalObject, CipherKind kind, ncrypto::CipherCtxPointer&& ctx, std::optional<uint32_t> authTagLen, int32_t maxMessageSize)
     {
-        JSCipher* instance = new (NotNull, JSC::allocateCell<JSCipher>(vm)) JSCipher(vm, structure, kind, WTFMove(ctx), authTagLen, maxMessageSize);
+        JSCipher* instance = new (NotNull, JSC::allocateCell<JSCipher>(vm)) JSCipher(vm, structure, kind, WTF::move(ctx), authTagLen, maxMessageSize);
         instance->finishCreation(vm, globalObject);
         return instance;
     }
@@ -109,7 +109,7 @@ private:
         , m_authTagLen(authTagLen)
         , m_pendingAuthFailed(false)
         , m_maxMessageSize(maxMessageSize)
-        , m_ctx(WTFMove(ctx))
+        , m_ctx(WTF::move(ctx))
     {
     }
 

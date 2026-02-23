@@ -487,8 +487,8 @@ fn spin(this: *WebWorker) void {
         return;
     };
 
-    if (promise.status(vm.global.vm()) == .rejected) {
-        const handled = vm.uncaughtException(vm.global, promise.result(vm.global.vm()), true);
+    if (promise.status() == .rejected) {
+        const handled = vm.uncaughtException(vm.global, promise.result(), true);
 
         if (!handled) {
             vm.exit_handler.exit_code = 1;
@@ -496,7 +496,7 @@ fn spin(this: *WebWorker) void {
             return;
         }
     } else {
-        _ = promise.result(vm.global.vm());
+        _ = promise.result();
     }
 
     this.flushLogs();

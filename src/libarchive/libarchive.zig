@@ -29,10 +29,7 @@ pub const BufferReadStream = struct {
 
     pub fn deinit(this: *BufferReadStream) void {
         _ = this.archive.readClose();
-        // don't free it if we never actually read it
-        // if (this.reading) {
-        //     _ = lib.archive_read_free(this.archive);
-        // }
+        _ = this.archive.readFree();
     }
 
     pub fn openRead(this: *BufferReadStream) Archive.Result {
@@ -107,7 +104,7 @@ pub const BufferReadStream = struct {
 
         const proposed = pos + offset;
         const new_pos = @min(@max(proposed, 0), buflen - 1);
-        this.pos = @as(usize, @intCast(this.pos));
+        this.pos = @as(usize, @intCast(new_pos));
         return new_pos - pos;
     }
 
@@ -172,6 +169,41 @@ pub const BufferReadStream = struct {
     //     var that = fromCtx(ctx2);
     // }
 };
+
+/// Validates that a symlink target doesn't escape the extraction directory.
+/// Returns true if the symlink is safe (target stays within extraction dir),
+/// false if it would escape (e.g., via ../ traversal or absolute path).
+///
+/// The check works by resolving the symlink target relative to the symlink's
+/// directory location using a fake root, then checking if the result stays
+/// within that fake root.
+fn isSymlinkTargetSafe(symlink_path: []const u8, link_target: [:0]const u8, symlink_join_buf: *?*bun.PathBuffer) bool {
+    // Absolute symlink targets are never safe - they could point anywhere
+    if (link_target.len > 0 and link_target[0] == '/') {
+        return false;
+    }
+
+    // Get the directory containing the symlink
+    const symlink_dir = std.fs.path.dirname(symlink_path) orelse "";
+
+    // Use a fake root to resolve the path and check if it escapes
+    const fake_root = "/packages/";
+
+    const join_buf = symlink_join_buf.* orelse join_buf: {
+        symlink_join_buf.* = bun.path_buffer_pool.get();
+        break :join_buf symlink_join_buf.*.?;
+    };
+
+    const resolved = bun.path.joinAbsStringBuf(
+        fake_root,
+        join_buf,
+        &.{ symlink_dir, link_target },
+        .posix,
+    );
+
+    // If the resolved path doesn't start with our fake root, it escaped
+    return strings.hasPrefix(resolved, fake_root);
+}
 
 pub const Archiver = struct {
     // impl: *lib.archive = undefined,
@@ -318,7 +350,12 @@ pub const Archiver = struct {
         var count: u32 = 0;
         const dir_fd = dir.fd;
 
+        var symlink_join_buf: ?*bun.PathBuffer = null;
+        defer if (symlink_join_buf) |join_buf| bun.path_buffer_pool.put(join_buf);
+
         var normalized_buf: bun.OSPathBuffer = undefined;
+        var use_pwrite = Environment.isPosix;
+        var use_lseek = true;
 
         loop: while (true) {
             const r = archive.readNextHeader(&entry);
@@ -423,19 +460,32 @@ pub const Archiver = struct {
                             if (comptime Environment.isWindows) {
                                 try bun.MakePath.makePath(u16, dir, path);
                             } else {
-                                std.posix.mkdiratZ(dir_fd, pathname, @intCast(mode)) catch |err| {
+                                std.posix.mkdiratZ(dir_fd, path, @intCast(mode)) catch |err| {
                                     // It's possible for some tarballs to return a directory twice, with and
                                     // without `./` in the beginning. So if it already exists, continue to the
                                     // next entry.
                                     if (err == error.PathAlreadyExists or err == error.NotDir) continue;
                                     bun.makePath(dir, std.fs.path.dirname(path_slice) orelse return err) catch {};
-                                    std.posix.mkdiratZ(dir_fd, pathname, 0o777) catch {};
+                                    std.posix.mkdiratZ(dir_fd, path, 0o777) catch {};
                                 };
                             }
                         },
                         .sym_link => {
                             const link_target = entry.symlink();
                             if (Environment.isPosix) {
+                                // Validate that the symlink target doesn't escape the extraction directory.
+                                // This prevents path traversal attacks where a malicious tarball creates a symlink
+                                // pointing outside (e.g., to /tmp), then writes files through that symlink.
+                                if (!isSymlinkTargetSafe(path_slice, link_target, &symlink_join_buf)) {
+                                    // Skip symlinks that would escape the extraction directory
+                                    if (options.log) {
+                                        Output.warn("Skipping symlink with unsafe target: {f} -> {s}\n", .{
+                                            bun.fmt.fmtOSPath(path_slice, .{}),
+                                            link_target,
+                                        });
+                                    }
+                                    continue;
+                                }
                                 bun.sys.symlinkat(link_target, .fromNative(dir_fd), path).unwrap() catch |err| brk: {
                                     switch (err) {
                                         error.EPERM, error.ENOENT => {
@@ -510,6 +560,7 @@ pub const Archiver = struct {
                             };
 
                             const size: usize = @intCast(@max(entry.size(), 0));
+
                             if (size > 0) {
                                 if (ctx) |ctx_| {
                                     const hash: u64 = if (ctx_.pluckers.len > 0)
@@ -550,8 +601,9 @@ pub const Archiver = struct {
                                 }
 
                                 var retries_remaining: u8 = 5;
+
                                 possibly_retry: while (retries_remaining != 0) : (retries_remaining -= 1) {
-                                    switch (archive.readDataIntoFd(file_handle.uv())) {
+                                    switch (archive.readDataIntoFd(file_handle, &use_pwrite, &use_lseek)) {
                                         .eof => break :loop,
                                         .ok => break :possibly_retry,
                                         .retry => {

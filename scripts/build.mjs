@@ -14,6 +14,8 @@ import {
   startGroup,
 } from "./utils.mjs";
 
+const isWindowsARM64 = isWindows && process.arch === "arm64";
+
 if (globalThis.Bun) {
   await import("./glob-sources.mjs");
 }
@@ -83,6 +85,11 @@ async function build(args) {
     generateOptions["--toolchain"] = toolchainPath;
   }
 
+  // Windows ARM64: log detection (compiler is selected by CMake/toolchain)
+  if (isWindowsARM64) {
+    console.log("Windows ARM64 detected");
+  }
+
   const generateArgs = Object.entries(generateOptions).flatMap(([flag, value]) =>
     flag.startsWith("-D") ? [`${flag}=${value}`] : [flag, value],
   );
@@ -108,8 +115,8 @@ async function build(args) {
   await startGroup("CMake Build", () => spawn("cmake", buildArgs, { env }));
 
   if (ciCppBuild) {
-    await startGroup("sccache stats", () => {
-      spawn("sccache", ["--show-stats"], { env });
+    await startGroup("ccache stats", () => {
+      spawn("ccache", ["--show-stats"], { env });
     });
   }
 

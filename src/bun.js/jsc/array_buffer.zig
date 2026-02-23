@@ -58,7 +58,7 @@ pub const ArrayBuffer = extern struct {
                     }
                 },
                 .err => |err| {
-                    return globalObject.throwValue(err.toJS(globalObject)) catch .zero;
+                    return globalObject.throwValue(err.toJS(globalObject) catch return .zero) catch .zero;
                 },
             }
         }
@@ -75,7 +75,7 @@ pub const ArrayBuffer = extern struct {
         const stat = switch (bun.sys.fstat(fd)) {
             .err => |err| {
                 fd.close();
-                return globalObject.throwValue(err.toJS(globalObject));
+                return globalObject.throwValue(try err.toJS(globalObject));
             },
             .result => |fstat| fstat,
         };
@@ -112,7 +112,7 @@ pub const ArrayBuffer = extern struct {
                 return JSBuffer__fromMmap(globalObject, buf.ptr, buf.len);
             },
             .err => |err| {
-                return globalObject.throwValue(err.toJS(globalObject));
+                return globalObject.throwValue(err.toJS(globalObject) catch return .zero) catch return .zero;
             },
         }
     }

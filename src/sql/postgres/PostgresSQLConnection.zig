@@ -428,7 +428,7 @@ pub fn onHandshake(this: *PostgresSQLConnection, success: i32, ssl_error: uws.us
 
                 .verify_ca, .verify_full => {
                     if (ssl_error.error_no != 0) {
-                        this.failWithJSValue(ssl_error.toJS(this.globalObject));
+                        this.failWithJSValue(ssl_error.toJS(this.globalObject) catch return);
                         return;
                     }
 
@@ -436,7 +436,7 @@ pub fn onHandshake(this: *PostgresSQLConnection, success: i32, ssl_error: uws.us
                     if (BoringSSL.c.SSL_get_servername(ssl_ptr, 0)) |servername| {
                         const hostname = servername[0..bun.len(servername)];
                         if (!BoringSSL.checkServerIdentity(ssl_ptr, hostname)) {
-                            this.failWithJSValue(ssl_error.toJS(this.globalObject));
+                            this.failWithJSValue(ssl_error.toJS(this.globalObject) catch return);
                         }
                     }
                 },
@@ -447,7 +447,7 @@ pub fn onHandshake(this: *PostgresSQLConnection, success: i32, ssl_error: uws.us
     } else {
         // if we are here is because server rejected us, and the error_no is the cause of this
         // no matter if reject_unauthorized is false because we are disconnected by the server
-        this.failWithJSValue(ssl_error.toJS(this.globalObject));
+        this.failWithJSValue(ssl_error.toJS(this.globalObject) catch return);
     }
 }
 
@@ -618,12 +618,9 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
             return .zero;
         }
 
-        // we always request the cert so we can verify it and also we manually abort the connection if the hostname doesn't match
-        const original_reject_unauthorized = tls_config.reject_unauthorized;
-        tls_config.reject_unauthorized = 0;
-        tls_config.request_cert = 1;
+        // We always request the cert so we can verify it and also we manually abort the connection if the hostname doesn't match.
         // We create it right here so we can throw errors early.
-        const context_options = tls_config.asUSockets();
+        const context_options = tls_config.asUSocketsForClientVerification();
         var err: uws.create_bun_socket_error_t = .none;
         tls_ctx = uws.SocketContext.createSSLContext(vm.uwsLoop(), @sizeOf(*PostgresSQLConnection), context_options, &err) orelse {
             if (err != .none) {
@@ -632,8 +629,6 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
                 return globalObject.throwValue(err.toJS(globalObject));
             }
         };
-        // restore the original reject_unauthorized
-        tls_config.reject_unauthorized = original_reject_unauthorized;
         if (err != .none) {
             tls_config.deinit();
             if (tls_ctx) |ctx| {
@@ -684,6 +679,20 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
 
         break :brk b.allocatedSlice();
     };
+
+    // Reject null bytes in connection parameters to prevent Postgres startup
+    // message parameter injection (null bytes act as field terminators in the
+    // wire protocol's key\0value\0 format).
+    inline for (.{ .{ username, "username" }, .{ password, "password" }, .{ database, "database" }, .{ path, "path" } }) |entry| {
+        if (entry[0].len > 0 and std.mem.indexOfScalar(u8, entry[0], 0) != null) {
+            bun.default_allocator.free(options_buf);
+            tls_config.deinit();
+            if (tls_ctx) |tls| {
+                tls.deinit(true);
+            }
+            return globalObject.throwInvalidArguments(entry[1] ++ " must not contain null bytes", .{});
+        }
+    }
 
     const on_connect = arguments[9];
     const on_close = arguments[10];
@@ -1631,7 +1640,10 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
                     // This will usually start with "v="
                     const comparison_signature = final.data.slice();
 
-                    if (comparison_signature.len < 2 or !bun.strings.eqlLong(server_signature, comparison_signature[2..], true)) {
+                    if (comparison_signature.len < 2 or
+                        server_signature.len != comparison_signature.len - 2 or
+                        BoringSSL.c.CRYPTO_memcmp(server_signature.ptr, comparison_signature[2..].ptr, server_signature.len) != 0)
+                    {
                         debug("SASLFinal - SASL Server signature mismatch\nExpected: {s}\nActual: {s}", .{ server_signature, comparison_signature[2..] });
                         this.fail("The server did not return the correct signature", error.SASL_SIGNATURE_MISMATCH);
                     } else {

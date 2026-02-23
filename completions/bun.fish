@@ -35,8 +35,8 @@ end
 set -l bun_install_boolean_flags yarn production optional development no-save dry-run force no-cache silent verbose global
 set -l bun_install_boolean_flags_descriptions "Write a yarn.lock file (yarn v1)" "Don't install devDependencies" "Add dependency to optionalDependencies" "Add dependency to devDependencies" "Don't update package.json or save a lockfile" "Don't install anything" "Always request the latest versions from the registry & reinstall all dependencies" "Ignore manifest cache entirely" "Don't output anything" "Excessively verbose logging" "Use global folder"
 
-set -l bun_builtin_cmds_without_run dev create help bun upgrade discord install remove add init pm x
-set -l bun_builtin_cmds_accepting_flags create help bun upgrade discord run init link unlink pm x
+set -l bun_builtin_cmds_without_run dev create help bun upgrade discord install remove add update init pm x
+set -l bun_builtin_cmds_accepting_flags create help bun upgrade discord run init link unlink pm x update
 
 function __bun_complete_bins_scripts --inherit-variable bun_builtin_cmds_without_run -d "Emit bun completions for bins and scripts"
     # Do nothing if we already have a builtin subcommand,
@@ -148,14 +148,14 @@ complete -c bun \
 
 for i in (seq (count $bun_install_boolean_flags))
 	complete -c bun \
-		-n "__fish_seen_subcommand_from install add remove" -l "$bun_install_boolean_flags[$i]" -d "$bun_install_boolean_flags_descriptions[$i]"
+		-n "__fish_seen_subcommand_from install add remove update" -l "$bun_install_boolean_flags[$i]" -d "$bun_install_boolean_flags_descriptions[$i]"
 end
 
 complete -c bun \
-	-n "__fish_seen_subcommand_from install add remove" -l 'cwd' -d 'Change working directory'
+	-n "__fish_seen_subcommand_from install add remove update" -l 'cwd' -d 'Change working directory'
 
 complete -c bun \
-	-n "__fish_seen_subcommand_from install add remove" -l 'cache-dir' -d 'Choose a cache directory (default: $HOME/.bun/install/cache)'
+	-n "__fish_seen_subcommand_from install add remove update" -l 'cache-dir' -d 'Choose a cache directory (default: $HOME/.bun/install/cache)'
 
 complete -c bun \
 	-n "__fish_seen_subcommand_from add" -d 'Popular' -a '(__fish__get_bun_packages)'
@@ -183,4 +183,5 @@ complete -c bun -n "__fish_use_subcommand" -a "unlink" -d "Unregister a local np
 complete -c bun -n "__fish_use_subcommand" -a "pm" -d "Additional package management utilities" -f
 complete -c bun -n "__fish_use_subcommand" -a "x" -d "Execute a package binary, installing if needed" -f
 complete -c bun -n "__fish_use_subcommand" -a "outdated" -d "Display the latest versions of outdated dependencies" -f
+complete -c bun -n "__fish_use_subcommand" -a "update" -d "Update dependencies to their latest versions" -f
 complete -c bun -n "__fish_use_subcommand" -a "publish" -d "Publish your package from local to npm" -f

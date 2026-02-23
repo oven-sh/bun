@@ -84,6 +84,7 @@ pub const ProcessExitHandler = struct {
             LifecycleScriptSubprocess,
             ShellSubprocess,
             ProcessHandle,
+            MultiRunProcessHandle,
             SecurityScanSubprocess,
             SyncProcess,
         },
@@ -109,6 +110,10 @@ pub const ProcessExitHandler = struct {
             },
             @field(TaggedPointer.Tag, @typeName(ProcessHandle)) => {
                 const subprocess = this.ptr.as(ProcessHandle);
+                subprocess.onProcessExit(process, status, rusage);
+            },
+            @field(TaggedPointer.Tag, @typeName(MultiRunProcessHandle)) => {
+                const subprocess = this.ptr.as(MultiRunProcessHandle);
                 subprocess.onProcessExit(process, status, rusage);
             },
             @field(TaggedPointer.Tag, @typeName(ShellSubprocess)) => {
@@ -994,6 +999,8 @@ pub const PosixSpawnOptions = struct {
     /// for stdout. This is used to preserve
     /// consistent shell semantics.
     no_sigpipe: bool = true,
+    /// PTY slave fd for controlling terminal setup (-1 if not using PTY).
+    pty_slave_fd: i32 = -1,
 
     pub const Stdio = union(enum) {
         path: []const u8,
@@ -1062,6 +1069,8 @@ pub const WindowsSpawnOptions = struct {
     stream: bool = true,
     use_execve_on_macos: bool = false,
     can_block_entire_thread_to_reduce_cpu_usage_in_fast_path: bool = false,
+    /// PTY not supported on Windows - this is a void placeholder for struct compatibility
+    pty_slave_fd: void = {},
     pub const WindowsOptions = struct {
         verbatim_arguments: bool = false,
         hide_window: bool = true,
@@ -1078,8 +1087,10 @@ pub const WindowsSpawnOptions = struct {
         dup2: struct { out: bun.jsc.Subprocess.StdioKind, to: bun.jsc.Subprocess.StdioKind },
 
         pub fn deinit(this: *const Stdio) void {
-            if (this.* == .buffer) {
-                bun.default_allocator.destroy(this.buffer);
+            switch (this.*) {
+                .buffer => |pipe| pipe.closeAndDestroy(),
+                .ipc => |pipe| pipe.closeAndDestroy(),
+                else => {},
             }
         }
     };
@@ -1257,6 +1268,9 @@ pub fn spawnProcessPosix(
         flags |= bun.c.POSIX_SPAWN_SETSID;
     }
 
+    // Pass PTY slave fd to attr for controlling terminal setup
+    attr.pty_slave_fd = options.pty_slave_fd;
+
     if (options.cwd.len > 0) {
         try actions.chdir(options.cwd);
     }
@@ -1339,7 +1353,7 @@ pub fn spawnProcessPosix(
                             else => "spawn_stdio_generic",
                         };
 
-                        const fd = bun.sys.memfd_create(label, 0).unwrap() catch break :use_memfd;
+                        const fd = bun.sys.memfd_create(label, .cross_process).unwrap() catch break :use_memfd;
 
                         to_close_on_error.append(fd) catch {};
                         to_set_cloexec.append(fd) catch {};
@@ -1617,9 +1631,10 @@ pub fn spawnProcessWindows(
                 stdio.flags = uv.UV_INHERIT_FD;
                 stdio.data.fd = fd_i;
             },
-            .ipc => |my_pipe| {
-                // ipc option inside stdin, stderr or stdout are not supported
-                bun.default_allocator.destroy(my_pipe);
+            .ipc => {
+                // ipc option inside stdin, stderr or stdout is not supported.
+                // Don't free the pipe here — the caller owns it and will
+                // clean it up via WindowsSpawnOptions.deinit().
                 stdio.flags = uv.UV_IGNORE;
             },
             .ignore => {
@@ -1817,7 +1832,7 @@ pub const sync = struct {
                     .ignore => .ignore,
                     .buffer => .{
                         .buffer = if (Environment.isWindows)
-                            bun.handleOom(bun.default_allocator.create(bun.windows.libuv.Pipe)),
+                            bun.new(bun.windows.libuv.Pipe, std.mem.zeroes(bun.windows.libuv.Pipe)),
                     },
                 };
             }
@@ -2244,6 +2259,7 @@ pub const sync = struct {
 };
 
 const std = @import("std");
+const MultiRunProcessHandle = @import("../../../cli/multi_run.zig").ProcessHandle;
 const ProcessHandle = @import("../../../cli/filter_run.zig").ProcessHandle;
 
 const bun = @import("bun");

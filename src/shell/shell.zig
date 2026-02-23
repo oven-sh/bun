@@ -3251,11 +3251,15 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                 self.chars.current = .{ .char = cur_ascii_char };
                 return;
             }
+            // Set the cursor to decode the codepoint at new_idx.
+            // Use width=0 so that nextCursor (which computes pos = width + i)
+            // starts reading from exactly new_idx.
             self.chars.src.cursor = CodepointIterator.Cursor{
                 .i = @intCast(new_idx),
-                .c = cur_ascii_char,
-                .width = 1,
+                .c = 0,
+                .width = 0,
             };
+            SrcUnicode.nextCursor(&self.chars.src.iter, &self.chars.src.cursor);
             self.chars.src.next_cursor = self.chars.src.cursor;
             SrcUnicode.nextCursor(&self.chars.src.iter, &self.chars.src.next_cursor);
             if (prev_ascii_char) |pc| self.chars.prev = .{ .char = pc };
@@ -3602,13 +3606,13 @@ pub fn ShellCharIter(comptime encoding: StringEncoding) type {
                 return bytes[self.src.i..];
             }
 
-            if (self.src.iter.i >= bytes.len) return "";
-            return bytes[self.src.iter.i..];
+            if (self.src.cursor.i >= bytes.len) return "";
+            return bytes[self.src.cursor.i..];
         }
 
         pub fn cursorPos(self: *@This()) usize {
             if (comptime encoding == .ascii) return self.src.i;
-            return self.src.iter.i;
+            return self.src.cursor.i;
         }
 
         pub fn eat(self: *@This()) ?InputChar {

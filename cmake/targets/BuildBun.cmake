@@ -1150,16 +1150,16 @@ if(LINUX)
   endif()
   endif()
 
-  if(NOT ABI STREQUAL "musl")
-    target_link_options(${bun} PUBLIC
-      -static-libstdc++
-      -static-libgcc
-    )
-  else()
-    target_link_options(${bun} PUBLIC
-      -lstdc++
-      -lgcc
-    )
+  target_link_options(${bun} PUBLIC
+    -static-libstdc++
+    -static-libgcc
+  )
+
+  if(ABI STREQUAL "musl")
+    # Statically link the musl C library so the binary doesn't require
+    # /lib/ld-musl-*.so.1 at runtime. This makes musl builds portable
+    # to any Linux system, not just ones with musl installed.
+    target_link_options(${bun} PUBLIC -static)
   endif()
 
   if (ENABLE_LTO)

@@ -514,6 +514,11 @@ pub fn deinit(this: *HTTPClient) void {
         this.proxy_tunnel = null;
         tunnel.detachAndDeref();
     }
+    if (this.tls_props) |tls| {
+        this.tls_props = null;
+        var ref = SSLConfig.Ref.adoptRawUnsafe(tls);
+        ref.deinit();
+    }
     this.unix_socket_path.deinit();
     this.unix_socket_path = jsc.ZigString.Slice.empty;
 }

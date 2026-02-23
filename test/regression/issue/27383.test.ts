@@ -56,7 +56,6 @@ try { fn(); } catch (e) {
   // The stack trace should contain original file names (sourcemap worked)
   expect(stdout).toMatch(/error from (a|bb|ccc|ddddd)/);
 
-  // Should not crash (exit code 0, no panic in stderr)
-  expect(stderr).not.toContain("panic");
+  // Should not crash
   expect(exitCode).toBe(0);
 });

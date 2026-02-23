@@ -8,6 +8,11 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             port: u16 = 0,
             /// If you set `rejectUnauthorized` to `false`, the connection fails to verify,
             did_have_handshaking_error_while_reject_unauthorized_is_false: bool = false,
+            /// The interned SSLConfig this socket was created with (null = default context).
+            /// Holds a ref while the socket is in the keepalive pool.
+            ssl_config: ?*SSLConfig = null,
+            /// The context that owns this pooled socket's memory (for returning to correct pool).
+            owner: *Context = undefined,
         };
 
         pub fn markTaggedSocketAsDead(socket: HTTPSocket, tagged: ActiveSocket) void {
@@ -161,7 +166,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
         /// If `did_have_handshaking_error_while_reject_unauthorized_is_false`
         /// is set, then we can only reuse the socket for HTTP Keep Alive if
         /// `reject_unauthorized` is set to `false`.
-        pub fn releaseSocket(this: *@This(), socket: HTTPSocket, did_have_handshaking_error_while_reject_unauthorized_is_false: bool, hostname: []const u8, port: u16) void {
+        pub fn releaseSocket(this: *@This(), socket: HTTPSocket, did_have_handshaking_error_while_reject_unauthorized_is_false: bool, hostname: []const u8, port: u16, ssl_config: ?*SSLConfig) void {
             // log("releaseSocket(0x{f})", .{bun.fmt.hexIntUpper(@intFromPtr(socket.socket))});
 
             if (comptime Environment.allow_assert) {
@@ -186,6 +191,12 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                     @memcpy(pending.hostname_buf[0..hostname.len], hostname);
                     pending.hostname_len = @as(u8, @truncate(hostname.len));
                     pending.port = port;
+                    pending.owner = this;
+                    // Hold a ref on ssl_config while it's in the keepalive pool
+                    pending.ssl_config = ssl_config;
+                    if (ssl_config) |config| {
+                        config.addRef();
+                    }
 
                     log("Keep-Alive release {s}:{d}", .{
                         hostname,
@@ -299,7 +310,12 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             }
 
             fn addMemoryBackToPool(pooled: *PooledSocket) void {
-                assert(context().pending_sockets.put(pooled));
+                // Release the ssl_config ref held by this pooled socket
+                if (pooled.ssl_config) |config| {
+                    config.deref();
+                    pooled.ssl_config = null;
+                }
+                assert(pooled.owner.pending_sockets.put(pooled));
             }
 
             pub fn onData(
@@ -312,7 +328,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                     return client.onData(
                         comptime ssl,
                         buf,
-                        if (comptime ssl) &bun.http.http_thread.https_context else &bun.http.http_thread.http_context,
+                        client.getSslCtx(ssl),
                         socket,
                     );
                 } else if (tagged.is(PooledSocket)) {
@@ -392,7 +408,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             }
         };
 
-        fn existingSocket(this: *@This(), reject_unauthorized: bool, hostname: []const u8, port: u16) ?HTTPSocket {
+        fn existingSocket(this: *@This(), reject_unauthorized: bool, hostname: []const u8, port: u16, ssl_config: ?*SSLConfig) ?HTTPSocket {
             if (hostname.len > MAX_KEEPALIVE_HOSTNAME)
                 return null;
 
@@ -401,6 +417,11 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             while (iter.next()) |pending_socket_index| {
                 var socket = this.pending_sockets.at(@as(u16, @intCast(pending_socket_index)));
                 if (socket.port != port) {
+                    continue;
+                }
+
+                // Match ssl_config by pointer equality (interned configs)
+                if (socket.ssl_config != ssl_config) {
                     continue;
                 }
 
@@ -421,7 +442,12 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                         continue;
                     }
 
-                    assert(context().pending_sockets.put(socket));
+                    // Release the pooled socket's ssl_config ref (caller has its own ref)
+                    if (socket.ssl_config) |config| {
+                        config.deref();
+                        socket.ssl_config = null;
+                    }
+                    assert(this.pending_sockets.put(socket));
                     log("+ Keep-Alive reuse {s}:{d}", .{ hostname, port });
                     return http_socket;
                 }
@@ -452,7 +478,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             client.connected_url.hostname = hostname;
 
             if (client.isKeepAlivePossible()) {
-                if (this.existingSocket(client.flags.reject_unauthorized, hostname, port)) |sock| {
+                if (this.existingSocket(client.flags.reject_unauthorized, hostname, port, client.tls_props)) |sock| {
                     if (sock.ext(**anyopaque)) |ctx| {
                         ctx.* = bun.cast(**anyopaque, ActiveSocket.init(client).ptr());
                     }
@@ -502,3 +528,4 @@ const BoringSSL = bun.BoringSSL.c;
 
 const HTTPClient = bun.http;
 const InitError = HTTPClient.InitError;
+const SSLConfig = bun.api.server.ServerConfig.SSLConfig;

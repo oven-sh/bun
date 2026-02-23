@@ -24,6 +24,12 @@ client_renegotiation_window: u32 = 0,
 requires_custom_request_ctx: bool = false,
 is_using_default_ciphers: bool = true,
 low_memory_mode: bool = false,
+ref_count: RC = .init(),
+cached_hash: u64 = 0,
+
+const RC = bun.ptr.ThreadSafeRefCount(@This(), "ref_count", destroy, .{});
+pub const addRef = RC.ref;
+pub const deref = RC.deref;
 
 const ReadFromBlobError = bun.JSError || error{
     NullStore,
@@ -113,6 +119,7 @@ pub fn forClientVerification(this: SSLConfig) SSLConfig {
 
 pub fn isSame(this: *const SSLConfig, other: *const SSLConfig) bool {
     inline for (comptime std.meta.fields(SSLConfig)) |field| {
+        if (comptime std.mem.eql(u8, field.name, "ref_count") or std.mem.eql(u8, field.name, "cached_hash")) continue;
         const first = @field(this, field.name);
         const second = @field(other, field.name);
         switch (field.type) {
@@ -185,6 +192,8 @@ pub fn deinit(this: *SSLConfig) void {
         .requires_custom_request_ctx = {},
         .is_using_default_ciphers = {},
         .low_memory_mode = {},
+        .ref_count = {},
+        .cached_hash = {},
     });
 }
 
@@ -222,8 +231,96 @@ pub fn clone(this: *const SSLConfig) SSLConfig {
         .requires_custom_request_ctx = this.requires_custom_request_ctx,
         .is_using_default_ciphers = this.is_using_default_ciphers,
         .low_memory_mode = this.low_memory_mode,
+        .ref_count = .init(),
+        .cached_hash = 0,
     };
 }
+
+pub fn contentHash(this: *SSLConfig) u64 {
+    if (this.cached_hash != 0) return this.cached_hash;
+    var hasher = std.hash.Wyhash.init(0);
+    inline for (comptime std.meta.fields(SSLConfig)) |field| {
+        if (comptime std.mem.eql(u8, field.name, "ref_count") or std.mem.eql(u8, field.name, "cached_hash")) continue;
+        const value = @field(this, field.name);
+        switch (field.type) {
+            ?[*:0]const u8 => {
+                if (value) |s| {
+                    hasher.update(bun.asByteSlice(s));
+                }
+                hasher.update(&.{0});
+            },
+            ?[][*:0]const u8 => {
+                if (value) |slice| {
+                    for (slice) |s| {
+                        hasher.update(bun.asByteSlice(s));
+                        hasher.update(&.{0});
+                    }
+                }
+                hasher.update(&.{0});
+            },
+            else => {
+                hasher.update(std.mem.asBytes(&value));
+            },
+        }
+    }
+    const hash = hasher.final();
+    // Avoid 0 since it's the sentinel for "not computed"
+    this.cached_hash = if (hash == 0) 1 else hash;
+    return this.cached_hash;
+}
+
+/// Called by the RC mixin when refcount reaches 0.
+fn destroy(this: *SSLConfig) void {
+    GlobalRegistry.remove(this);
+    this.deinit();
+    bun.default_allocator.destroy(this);
+}
+
+pub const GlobalRegistry = struct {
+    const MapContext = struct {
+        pub fn hash(_: @This(), key: *SSLConfig) u32 {
+            return @truncate(key.contentHash());
+        }
+        pub fn eql(_: @This(), a: *SSLConfig, b: *SSLConfig, _: usize) bool {
+            return a.isSame(b);
+        }
+    };
+
+    var mutex: bun.Mutex = .{};
+    var configs: std.ArrayHashMapUnmanaged(*SSLConfig, void, MapContext, true) = .empty;
+
+    /// Takes ownership of a heap-allocated SSLConfig.
+    /// If an identical config already exists in the registry, the new one is freed
+    /// and the existing one is returned (with refcount incremented).
+    /// If no match, the new config is registered and returned.
+    pub fn intern(new_config: *SSLConfig) *SSLConfig {
+        mutex.lock();
+        defer mutex.unlock();
+
+        // Look up by content hash/equality
+        const gop = configs.getOrPutContext(bun.default_allocator, new_config, .{}) catch bun.outOfMemory();
+        if (gop.found_existing) {
+            // Identical config already exists - free the new one, return existing
+            const existing = gop.key_ptr.*;
+            new_config.ref_count.clearWithoutDestructor();
+            new_config.deinit();
+            bun.default_allocator.destroy(new_config);
+            existing.addRef();
+            return existing;
+        }
+
+        // New config - it's already inserted by getOrPut
+        // refcount is already 1 from initialization
+        return new_config;
+    }
+
+    /// Remove a config from the registry. Called when refcount reaches 0.
+    fn remove(config: *SSLConfig) void {
+        mutex.lock();
+        defer mutex.unlock();
+        _ = configs.swapRemoveContext(config, .{});
+    }
+};
 
 pub const zero = SSLConfig{};
 

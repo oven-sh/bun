@@ -13,10 +13,103 @@ pub const FrontmatterResult = struct {
     content_start: u32,
 };
 
+pub const StmtKind = enum { import_stmt, export_stmt };
+
 pub const TopLevelStatement = struct {
     text: []const u8,
-    kind: enum { import_stmt, export_stmt },
+    kind: StmtKind,
 };
+
+const StatementParseState = struct {
+    brace_depth: usize = 0,
+    paren_depth: usize = 0,
+    bracket_depth: usize = 0,
+    string_quote: ?u8 = null,
+    string_escaped: bool = false,
+};
+
+fn updateStatementParseState(state: *StatementParseState, line: []const u8) void {
+    for (line) |c| {
+        if (state.string_quote) |quote| {
+            if (state.string_escaped) {
+                state.string_escaped = false;
+                continue;
+            }
+            if (c == '\\') {
+                state.string_escaped = true;
+                continue;
+            }
+            if (c == quote) {
+                state.string_quote = null;
+            }
+            continue;
+        }
+
+        switch (c) {
+            '\'', '"', '`' => state.string_quote = c,
+            '{' => state.brace_depth += 1,
+            '}' => state.brace_depth -|= 1,
+            '(' => state.paren_depth += 1,
+            ')' => state.paren_depth -|= 1,
+            '[' => state.bracket_depth += 1,
+            ']' => state.bracket_depth -|= 1,
+            else => {},
+        }
+    }
+}
+
+fn trimTrailingLineComment(line: []const u8) []const u8 {
+    var quote: ?u8 = null;
+    var escaped = false;
+    var i: usize = 0;
+    while (i < line.len) : (i += 1) {
+        const c = line[i];
+        if (quote) |q| {
+            if (escaped) {
+                escaped = false;
+                continue;
+            }
+            if (c == '\\') {
+                escaped = true;
+                continue;
+            }
+            if (c == q) {
+                quote = null;
+            }
+            continue;
+        }
+
+        if (c == '\'' or c == '"' or c == '`') {
+            quote = c;
+            continue;
+        }
+
+        if (c == '/' and i + 1 < line.len and line[i + 1] == '/') {
+            return line[0..i];
+        }
+    }
+
+    return line;
+}
+
+fn isStatementComplete(kind: StmtKind, line: []const u8, state: StatementParseState) bool {
+    if (state.string_quote != null or state.brace_depth != 0 or state.paren_depth != 0 or state.bracket_depth != 0) {
+        return false;
+    }
+
+    const trimmed_for_completion = bun.strings.trimSpaces(trimTrailingLineComment(line));
+    if (trimmed_for_completion.len == 0) return false;
+
+    const last = trimmed_for_completion[trimmed_for_completion.len - 1];
+    if (last == ';') return true;
+    if (kind == .import_stmt) return true;
+    if (last == '}' or last == ')' or last == ']') return true;
+
+    return switch (last) {
+        ',', '=', ':', '+', '-', '*', '/', '%', '&', '|', '^', '?', '(', '[', '{', '\\', '.' => false,
+        else => true,
+    };
+}
 
 pub const ExpressionSlot = jsx_renderer.JSXRenderer.ExpressionSlot;
 
@@ -53,14 +146,39 @@ pub fn extractTopLevelStatements(
 ) !struct { stmts: []TopLevelStatement, remaining: []const u8 } {
     var stmts: std.ArrayListUnmanaged(TopLevelStatement) = .{};
     var remaining: std.ArrayListUnmanaged(u8) = .{};
+    var stmt_buffer: std.ArrayListUnmanaged(u8) = .{};
     errdefer stmts.deinit(allocator);
     errdefer remaining.deinit(allocator);
+    defer stmt_buffer.deinit(allocator);
 
     var lines = std.mem.splitScalar(u8, source, '\n');
     var seen_content = false;
     var in_code_fence = false;
+
+    var pending_stmt_kind: ?StmtKind = null;
+    var stmt_state: StatementParseState = .{};
+
     while (lines.next()) |line| {
         const trimmed = bun.strings.trimSpaces(line);
+
+        if (pending_stmt_kind) |kind| {
+            if (stmt_buffer.items.len > 0) {
+                try stmt_buffer.append(allocator, '\n');
+            }
+            try stmt_buffer.appendSlice(allocator, line);
+            updateStatementParseState(&stmt_state, line);
+            const is_complete = isStatementComplete(kind, line, stmt_state);
+            if (is_complete) {
+                try stmts.append(allocator, .{
+                    .text = try allocator.dupe(u8, stmt_buffer.items),
+                    .kind = kind,
+                });
+                stmt_buffer.clearRetainingCapacity();
+                pending_stmt_kind = null;
+                stmt_state = .{};
+            }
+            continue;
+        }
 
         if (bun.strings.hasPrefixComptime(trimmed, "```")) {
             in_code_fence = !in_code_fence;
@@ -71,16 +189,37 @@ pub fn extractTopLevelStatements(
             (bun.strings.hasPrefixComptime(trimmed, "export ") and !bun.strings.hasPrefixComptime(trimmed, "export default")));
 
         if (maybe_stmt) {
-            try stmts.append(allocator, .{
-                .text = try allocator.dupe(u8, line),
-                .kind = if (bun.strings.hasPrefixComptime(trimmed, "import")) .import_stmt else .export_stmt,
-            });
+            pending_stmt_kind = if (bun.strings.hasPrefixComptime(trimmed, "import")) .import_stmt else .export_stmt;
+            stmt_buffer.clearRetainingCapacity();
+            stmt_state = .{};
+
+            try stmt_buffer.appendSlice(allocator, line);
+            updateStatementParseState(&stmt_state, line);
+            const immediate_complete = isStatementComplete(pending_stmt_kind.?, line, stmt_state);
+            if (immediate_complete) {
+                try stmts.append(allocator, .{
+                    .text = try allocator.dupe(u8, stmt_buffer.items),
+                    .kind = pending_stmt_kind.?,
+                });
+                stmt_buffer.clearRetainingCapacity();
+                pending_stmt_kind = null;
+                stmt_state = .{};
+            }
             continue;
         }
 
         if (trimmed.len > 0) seen_content = true;
         try remaining.appendSlice(allocator, line);
         try remaining.append(allocator, '\n');
+    }
+
+    if (pending_stmt_kind) |kind| {
+        if (stmt_buffer.items.len > 0) {
+            try stmts.append(allocator, .{
+                .text = try allocator.dupe(u8, stmt_buffer.items),
+                .kind = kind,
+            });
+        }
     }
 
     return .{
@@ -103,6 +242,8 @@ pub fn replaceExpressions(
     var expr_start: ?usize = null;
     var in_code_fence = false;
     var in_inline_code = false;
+    var expr_quote: ?u8 = null;
+    var expr_escaped = false;
 
     while (i < source.len) : (i += 1) {
         const c = source[i];
@@ -119,6 +260,26 @@ pub fn replaceExpressions(
         }
 
         if (expr_start != null) {
+            if (expr_quote) |quote| {
+                if (expr_escaped) {
+                    expr_escaped = false;
+                    continue;
+                }
+                if (c == '\\') {
+                    expr_escaped = true;
+                    continue;
+                }
+                if (c == quote) {
+                    expr_quote = null;
+                }
+                continue;
+            }
+
+            if (c == '\'' or c == '"' or c == '`') {
+                expr_quote = c;
+                continue;
+            }
+
             if (c == '{') depth += 1;
             if (c == '}') {
                 depth -= 1;
@@ -132,6 +293,8 @@ pub fn replaceExpressions(
                     });
                     try output.appendSlice(allocator, placeholder);
                     expr_start = null;
+                    expr_quote = null;
+                    expr_escaped = false;
                     continue;
                 }
             }
@@ -151,6 +314,8 @@ pub fn replaceExpressions(
         if (c == '{' and expr_start == null) {
             expr_start = i;
             depth = 1;
+            expr_quote = null;
+            expr_escaped = false;
             continue;
         }
 

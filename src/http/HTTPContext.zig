@@ -525,7 +525,7 @@ const assert = bun.assert;
 const strings = bun.strings;
 const uws = bun.uws;
 const BoringSSL = bun.BoringSSL.c;
+const SSLConfig = bun.api.server.ServerConfig.SSLConfig;
 
 const HTTPClient = bun.http;
 const InitError = HTTPClient.InitError;
-const SSLConfig = bun.api.server.ServerConfig.SSLConfig;

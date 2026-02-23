@@ -80,15 +80,19 @@ size_t IndexOfAnyCharImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, con
         return text_len;
     } else {
         ASSERT(chars_len <= 16);
-        constexpr size_t kMaxPreloadedChars = 16;
+
+        const size_t simd_text_len = text_len - (text_len % N);
+        size_t i = 0;
+
+#if !HWY_HAVE_SCALABLE && !HWY_TARGET_IS_SVE
+        // Preload search characters into native-width vectors.
+        // On non-SVE targets, Vec has a known size and can be stored in arrays.
+        static constexpr size_t kMaxPreloadedChars = 16;
         hn::Vec<D8> char_vecs[kMaxPreloadedChars];
         const size_t num_chars_to_preload = std::min(chars_len, kMaxPreloadedChars);
         for (size_t c = 0; c < num_chars_to_preload; ++c) {
             char_vecs[c] = hn::Set(d, chars[c]);
         }
-
-        const size_t simd_text_len = text_len - (text_len % N);
-        size_t i = 0;
 
         for (; i < simd_text_len; i += N) {
             const auto text_vec = hn::LoadN(d, text + i, N);
@@ -97,11 +101,18 @@ size_t IndexOfAnyCharImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, con
             for (size_t c = 0; c < num_chars_to_preload; ++c) {
                 found_mask = hn::Or(found_mask, hn::Eq(text_vec, char_vecs[c]));
             }
-            if (chars_len > num_chars_to_preload) {
-                for (size_t c = num_chars_to_preload; c < chars_len; ++c) {
-                    found_mask = hn::Or(found_mask, hn::Eq(text_vec, hn::Set(d, chars[c])));
-                }
+#else
+        // SVE types are sizeless and cannot be stored in arrays.
+        // hn::Set is a single broadcast instruction; the compiler will
+        // hoist these loop-invariant broadcasts out of the outer loop.
+        for (; i < simd_text_len; i += N) {
+            const auto text_vec = hn::LoadN(d, text + i, N);
+            auto found_mask = hn::MaskFalse(d);
+
+            for (size_t c = 0; c < chars_len; ++c) {
+                found_mask = hn::Or(found_mask, hn::Eq(text_vec, hn::Set(d, chars[c])));
             }
+#endif
 
             const intptr_t pos = hn::FindFirstTrue(d, found_mask);
             if (pos >= 0) {

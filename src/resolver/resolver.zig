@@ -171,7 +171,8 @@ pub const Result = struct {
         // value is not "remove".
         preserve_unused_imports_ts: bool = false,
         emit_decorator_metadata: bool = false,
-        _padding: u2 = 0,
+        experimental_decorators: bool = false,
+        _padding: u1 = 0,
     };
 
     pub const Union = union(enum) {
@@ -1000,6 +1001,7 @@ pub const Resolver = struct {
             if (dir.enclosing_tsconfig_json) |tsconfig| {
                 result.jsx = tsconfig.mergeJSX(result.jsx);
                 result.flags.emit_decorator_metadata = result.flags.emit_decorator_metadata or tsconfig.emit_decorator_metadata;
+                result.flags.experimental_decorators = result.flags.experimental_decorators or tsconfig.experimental_decorators;
             }
 
             // If you use mjs or mts, then you're using esm

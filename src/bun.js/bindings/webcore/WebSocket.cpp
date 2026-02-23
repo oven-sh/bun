@@ -1323,6 +1323,7 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::spa
 
         if (auto* context = scriptExecutionContext()) {
             RefPtr<Blob> blob = Blob::create(binaryData, context->jsGlobalObject());
+            this->incPendingActivityCount();
             context->postTask([this, name = eventName, blob = blob.releaseNonNull(), protectedThis = Ref { *this }](ScriptExecutionContext& context) {
                 ASSERT(scriptExecutionContext());
                 protectedThis->dispatchEvent(MessageEvent::create(name, blob, protectedThis->m_url.string()));

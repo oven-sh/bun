@@ -485,6 +485,28 @@ describe("stringWidth extended", () => {
       expect(Bun.stringWidth("ก็")).toBe(1); // With maitaikhu
       expect(Bun.stringWidth("ปฏัก")).toBe(3); // ป + ฏ + ั (combining) + ก = 3 visible
     });
+
+    test("Thai spacing vowels (SARA AA and SARA AM)", () => {
+      // U+0E32 (SARA AA) and U+0E33 (SARA AM) are spacing vowels, not combining marks
+      expect(Bun.stringWidth("\u0E32")).toBe(1); // SARA AA alone
+      expect(Bun.stringWidth("\u0E33")).toBe(1); // SARA AM alone
+      expect(Bun.stringWidth("ก\u0E32")).toBe(2); // ก + SARA AA
+      expect(Bun.stringWidth("ก\u0E33")).toBe(2); // กำ (KO KAI + SARA AM)
+      expect(Bun.stringWidth("คำ")).toBe(2); // Common Thai word
+      expect(Bun.stringWidth("ทำ")).toBe(2); // Common Thai word
+      // True combining marks should still be zero-width
+      expect(Bun.stringWidth("\u0E31")).toBe(0); // MAI HAN-AKAT (combining)
+      expect(Bun.stringWidth("ก\u0E31")).toBe(1); // กั
+    });
+
+    test("Lao spacing vowels", () => {
+      // U+0EB2 and U+0EB3 are spacing vowels in Lao, similar to Thai
+      expect(Bun.stringWidth("\u0EB2")).toBe(1); // LAO VOWEL SIGN AA
+      expect(Bun.stringWidth("\u0EB3")).toBe(1); // LAO VOWEL SIGN AM
+      expect(Bun.stringWidth("ກ\u0EB2")).toBe(2); // KO + AA
+      // True combining marks should still be zero-width
+      expect(Bun.stringWidth("\u0EB1")).toBe(0); // MAI KAN (combining)
+    });
   });
 
   describe("non-ASCII in escape sequences and Indic script handling", () => {

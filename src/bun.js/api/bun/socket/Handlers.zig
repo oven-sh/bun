@@ -15,7 +15,7 @@ binary_type: BinaryType = .Buffer,
 vm: *jsc.VirtualMachine,
 globalObject: *jsc.JSGlobalObject,
 active_connections: u32 = 0,
-is_server: bool,
+mode: SocketMode = .client,
 promise: jsc.Strong.Optional = .empty,
 
 protection_count: if (Environment.ci_assert) u32 else void = if (Environment.ci_assert) 0,
@@ -81,7 +81,7 @@ pub fn markInactive(this: *Handlers) void {
     Listener.log("markInactive", .{});
     this.active_connections -= 1;
     if (this.active_connections == 0) {
-        if (this.is_server) {
+        if (this.mode == .server) {
             const listen_socket: *Listener = @fieldParentPtr("handlers", this);
             // allow it to be GC'd once the last connection is closed and it's not listening anymore
             if (listen_socket.listener == .none) {
@@ -133,7 +133,7 @@ pub fn fromGenerated(
     var result: Handlers = .{
         .vm = globalObject.bunVM(),
         .globalObject = globalObject,
-        .is_server = is_server,
+        .mode = if (is_server) .server else .client,
         .binary_type = switch (generated.binary_type) {
             .arraybuffer => .ArrayBuffer,
             .buffer => .Buffer,
@@ -217,7 +217,7 @@ pub fn clone(this: *const Handlers) Handlers {
         .vm = this.vm,
         .globalObject = this.globalObject,
         .binary_type = this.binary_type,
-        .is_server = this.is_server,
+        .mode = this.mode,
     };
     inline for (callback_fields) |field| {
         @field(result, field) = @field(this, field);
@@ -346,6 +346,7 @@ const strings = bun.strings;
 const uws = bun.uws;
 const Listener = bun.api.Listener;
 const SSLConfig = bun.api.ServerConfig.SSLConfig;
+const SocketMode = bun.api.socket.SocketMode;
 
 const jsc = bun.jsc;
 const JSValue = jsc.JSValue;

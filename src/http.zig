@@ -719,7 +719,21 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
 
     if (body_len > 0 or this.method.hasRequestBody()) {
         if (this.flags.is_streaming_request_body) {
-            if (add_transfer_encoding and this.flags.upgrade_state == .none) {
+            if (original_content_length) |content_length| {
+                if (add_transfer_encoding) {
+                    // User explicitly set Content-Length and did not set Transfer-Encoding;
+                    // preserve Content-Length instead of using chunked encoding.
+                    // This matches Node.js behavior where an explicit Content-Length is always honored.
+                    request_headers_buf[header_count] = .{
+                        .name = content_length_header_name,
+                        .value = content_length,
+                    };
+                    header_count += 1;
+                }
+                // If !add_transfer_encoding, the user explicitly set Transfer-Encoding,
+                // which was already added to request_headers_buf. We respect that and
+                // do not add Content-Length (they are mutually exclusive per HTTP/1.1).
+            } else if (add_transfer_encoding and this.flags.upgrade_state == .none) {
                 request_headers_buf[header_count] = chunked_encoded_header;
                 header_count += 1;
             }

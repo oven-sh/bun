@@ -386,6 +386,7 @@ pub const RuntimeTranspilerStore = struct {
                 .macro_remappings = macro_remappings,
                 .jsx = transpiler.options.jsx,
                 .emit_decorator_metadata = transpiler.options.emit_decorator_metadata,
+                .experimental_decorators = transpiler.options.experimental_decorators,
                 .virtual_source = null,
                 .dont_bundle_twice = true,
                 .allow_commonjs = true,

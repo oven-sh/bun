@@ -215,8 +215,12 @@ pub fn VisitStmt(
                 switch (data.value) {
                     .expr => |expr| {
                         const was_anonymous_named_expr = expr.isAnonymousNamed();
-
+                        const prev_decorator_class_name = p.decorator_class_name;
+                        if (was_anonymous_named_expr and expr.data == .e_class and expr.data.e_class.should_lower_standard_decorators) {
+                            p.decorator_class_name = js_ast.ClauseItem.default_alias;
+                        }
                         data.value.expr = p.visitExpr(expr);
+                        p.decorator_class_name = prev_decorator_class_name;
 
                         if (p.is_control_flow_dead) {
                             return;
@@ -457,17 +461,29 @@ pub fn VisitStmt(
                                 }
                             }
 
-                            // This is to handle TS decorators, mostly.
+                            // Lower the class (handles both TS legacy and standard decorators).
+                            // Standard decorator lowering may produce prefix statements
+                            // (variable declarations) before the class statement.
                             var class_stmts = p.lowerClass(.{ .stmt = s2 });
-                            bun.assert(class_stmts[0].data == .s_class);
 
-                            if (class_stmts.len > 1) {
-                                data.value.stmt = class_stmts[0];
-                                stmts.append(stmt.*) catch {};
-                                stmts.appendSlice(class_stmts[1..]) catch {};
-                            } else {
-                                data.value.stmt = class_stmts[0];
-                                stmts.append(stmt.*) catch {};
+                            // Find the s_class statement in the returned list
+                            var class_stmt_idx: usize = 0;
+                            for (class_stmts, 0..) |cs, idx| {
+                                if (cs.data == .s_class) {
+                                    class_stmt_idx = idx;
+                                    break;
+                                }
+                            }
+
+                            // Emit any prefix statements before the export default
+                            stmts.appendSlice(class_stmts[0..class_stmt_idx]) catch {};
+
+                            data.value.stmt = class_stmts[class_stmt_idx];
+                            stmts.append(stmt.*) catch {};
+
+                            // Emit any suffix statements after the export default
+                            if (class_stmt_idx + 1 < class_stmts.len) {
+                                stmts.appendSlice(class_stmts[class_stmt_idx + 1 ..]) catch {};
                             }
 
                             if (p.options.features.server_components.wrapsExports()) {

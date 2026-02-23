@@ -7,6 +7,7 @@ const VirtualMachine = @This();
 
 export var has_bun_garbage_collector_flag_enabled = false;
 pub export var isBunTest: bool = false;
+pub export var Bun__defaultRemainingRunsUntilSkipReleaseAccess: c_int = 10;
 
 // TODO: evaluate if this has any measurable performance impact.
 pub var synthetic_allocation_limit: usize = std.math.maxInt(u32);
@@ -1615,7 +1616,7 @@ fn _resolve(
     if (strings.eqlComptime(std.fs.path.basename(specifier), Runtime.Runtime.Imports.alt_name)) {
         ret.path = Runtime.Runtime.Imports.Name;
         return;
-    } else if (strings.eqlComptime(specifier, main_file_name)) {
+    } else if (strings.eqlComptime(specifier, main_file_name) and jsc_vm.entry_point.generated) {
         ret.result = null;
         ret.path = jsc_vm.entry_point.source.path.text;
         return;

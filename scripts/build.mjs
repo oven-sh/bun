@@ -14,14 +14,7 @@ import {
   startGroup,
 } from "./utils.mjs";
 
-// Detect Windows ARM64 - bun may run under x64 emulation (WoW64), so check multiple indicators
-const isWindowsARM64 =
-  isWindows &&
-  (process.env.PROCESSOR_ARCHITECTURE === "ARM64" ||
-    process.env.VSCMD_ARG_HOST_ARCH === "arm64" ||
-    process.env.MSYSTEM_CARCH === "aarch64" ||
-    (process.env.PROCESSOR_IDENTIFIER || "").includes("ARMv8") ||
-    process.arch === "arm64");
+const isWindowsARM64 = isWindows && process.arch === "arm64";
 
 if (globalThis.Bun) {
   await import("./glob-sources.mjs");
@@ -92,21 +85,9 @@ async function build(args) {
     generateOptions["--toolchain"] = toolchainPath;
   }
 
-  // Windows ARM64: automatically set required options
+  // Windows ARM64: log detection (compiler is selected by CMake/toolchain)
   if (isWindowsARM64) {
-    // Use clang-cl instead of MSVC cl.exe for proper ARM64 flag support
-    if (!generateOptions["-DCMAKE_C_COMPILER"]) {
-      generateOptions["-DCMAKE_C_COMPILER"] = "clang-cl";
-    }
-    if (!generateOptions["-DCMAKE_CXX_COMPILER"]) {
-      generateOptions["-DCMAKE_CXX_COMPILER"] = "clang-cl";
-    }
-    // Skip codegen by default since x64 bun crashes under WoW64 emulation
-    // Can be overridden with -DSKIP_CODEGEN=OFF once ARM64 bun is available
-    if (!generateOptions["-DSKIP_CODEGEN"]) {
-      generateOptions["-DSKIP_CODEGEN"] = "ON";
-    }
-    console.log("Windows ARM64 detected: using clang-cl and SKIP_CODEGEN=ON");
+    console.log("Windows ARM64 detected");
   }
 
   const generateArgs = Object.entries(generateOptions).flatMap(([flag, value]) =>

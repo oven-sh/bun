@@ -2453,7 +2453,7 @@ private:
 
     void write(SerializableErrorType errorType)
     {
-        write(enumToUnderlyingType(errorType));
+        write(std::to_underlying(errorType));
     }
 
     void write(const CryptoKey* key)
@@ -4197,7 +4197,7 @@ private:
     bool read(SerializableErrorType& errorType)
     {
         std::underlying_type_t<SerializableErrorType> errorTypeInt;
-        if (!read(errorTypeInt) || errorTypeInt > enumToUnderlyingType(SerializableErrorType::Last))
+        if (!read(errorTypeInt) || errorTypeInt > std::to_underlying(SerializableErrorType::Last))
             return false;
 
         errorType = static_cast<SerializableErrorType>(errorTypeInt);

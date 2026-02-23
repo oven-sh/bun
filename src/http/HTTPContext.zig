@@ -312,6 +312,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                     unreachable;
                 } else {
                     log("PooledSocket not claimed by any context pool", .{});
+                    terminateSocket(pooled.http_socket);
                 }
             }
 

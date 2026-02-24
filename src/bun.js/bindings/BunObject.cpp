@@ -318,6 +318,9 @@ static JSValue defaultBunSQLObject(VM& vm, JSObject* bunObject)
         (void)scope.tryClearException();
         return jsUndefined();
     }
+    if (!sqlValue.isObject()) [[unlikely]] {
+        return jsUndefined();
+    }
     JSValue result = sqlValue.getObject()->get(globalObject, vm.propertyNames->defaultKeyword);
     if (scope.exception()) [[unlikely]] {
         (void)scope.tryClearException();
@@ -333,6 +336,9 @@ static JSValue constructBunSQLObject(VM& vm, JSObject* bunObject)
     JSValue sqlValue = globalObject->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::BunSql);
     if (scope.exception()) [[unlikely]] {
         (void)scope.tryClearException();
+        return jsUndefined();
+    }
+    if (!sqlValue.isObject()) [[unlikely]] {
         return jsUndefined();
     }
     auto clientData = WebCore::clientData(vm);

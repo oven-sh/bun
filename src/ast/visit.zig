@@ -474,9 +474,11 @@ pub fn Visit(
         pub fn visitLoopBody(noalias p: *P, stmt: StmtNodeIndex) StmtNodeIndex {
             const old_is_inside_loop = p.fn_or_arrow_data_visit.is_inside_loop;
             p.fn_or_arrow_data_visit.is_inside_loop = true;
+            p.control_flow_nesting_depth += 1;
             p.loop_body = stmt.data;
             const res = p.visitSingleStmt(stmt, .loop_body);
             p.fn_or_arrow_data_visit.is_inside_loop = old_is_inside_loop;
+            p.control_flow_nesting_depth -= 1;
             return res;
         }
 

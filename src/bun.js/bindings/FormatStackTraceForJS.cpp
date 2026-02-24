@@ -541,7 +541,7 @@ WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, Vector<StackFrame>& sta
     return result;
 }
 
-void computeLineColumnWithSourcemap(JSC::VM& vm, JSC::SourceProvider* _Nonnull sourceProvider, JSC::LineColumn& lineColumn)
+void computeLineColumnWithSourcemap(JSC::VM& vm, JSC::SourceProvider* _Nonnull sourceProvider, JSC::LineColumn& lineColumn, WTF::String* remappedURL)
 {
     auto sourceURL = sourceProvider->sourceURL();
     if (sourceURL.isEmpty()) {
@@ -561,6 +561,11 @@ void computeLineColumnWithSourcemap(JSC::VM& vm, JSC::SourceProvider* _Nonnull s
     if (frame.remapped) {
         lineColumn.line = frame.position.line().oneBasedInt();
         lineColumn.column = frame.position.column().oneBasedInt();
+        if (remappedURL) {
+            WTF::String newURL = frame.source_url.toWTFString();
+            if (!newURL.isEmpty() && newURL != sourceURL)
+                *remappedURL = newURL;
+        }
     }
 }
 

@@ -260,6 +260,10 @@ pub const JSBundler = struct {
         files: FileMap = .{},
         /// Generate metafile (JSON module graph)
         metafile: bool = false,
+        /// Package names whose barrel files should be optimized.
+        /// Named imports from these packages will only load the submodules
+        /// that are actually used instead of parsing all re-exported submodules.
+        optimize_imports: bun.StringSet = bun.StringSet.init(bun.default_allocator),
 
         pub const CompileOptions = struct {
             compile_target: CompileTarget = .{},
@@ -435,6 +439,7 @@ pub const JSBundler = struct {
             var this = Config{
                 .entry_points = bun.StringSet.init(allocator),
                 .external = bun.StringSet.init(allocator),
+                .optimize_imports = bun.StringSet.init(allocator),
                 .define = bun.StringMap.init(allocator, true),
                 .dir = OwnedString.initEmpty(allocator),
                 .outdir = OwnedString.initEmpty(allocator),
@@ -819,6 +824,15 @@ pub const JSBundler = struct {
                 }
             }
 
+            if (try config.getOwnArray(globalThis, "optimizeImports")) |optimize_imports| {
+                var iter = try optimize_imports.arrayIterator(globalThis);
+                while (try iter.next()) |entry| {
+                    var slice = try entry.toSliceOrNull(globalThis);
+                    defer slice.deinit();
+                    try this.optimize_imports.insert(slice.slice());
+                }
+            }
+
             // if (try config.getOptional(globalThis, "dir", ZigString.Slice)) |slice| {
             //     defer slice.deinit();
             //     this.appendSliceExact(slice.slice()) catch unreachable;
@@ -1129,6 +1143,7 @@ pub const JSBundler = struct {
             self.env_prefix.deinit();
             self.footer.deinit();
             self.tsconfig_override.deinit();
+            self.optimize_imports.deinit();
             self.files.deinitAndUnprotect();
             self.metafile_json_path.deinit();
             self.metafile_markdown_path.deinit();

@@ -16,7 +16,7 @@ The `CookieMap` behaves similarly to a standard JavaScript `Map`, but it is spec
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `get` | `(name: string) => string \| undefined` | Retrieves the value of a cookie by name. |
-| `set` | `(name: string, value: string, options?: CookieOptions) => this` | Adds or updates a cookie. |
+| `set` | `(name: string, value: string, options?: CookieOptions) => void` | Adds or updates a cookie. |
 | `has` | `(name: string) => boolean` | Checks if a cookie exists in the request. |
 | `delete` | `(name: string, options?: CookieOptions) => boolean` | Sets a `Set-Cookie` header with an expired date to remove the cookie from the client. |
 | `entries` | `() => IterableIterator<[string, string]>` | Returns an iterator of all cookie name-value pairs. |

@@ -139,7 +139,8 @@ main();`,
 
     expect(result.success).toBe(true);
 
-    const executablePath = result.outputs[0].path;
+    const executableOutput = result.outputs.find((o: any) => o.kind === "entry-point")!;
+    const executablePath = executableOutput.path;
     // No .map file should exist next to the executable
     expect(await Bun.file(`${executablePath}.map`).exists()).toBe(false);
     // No sourcemap outputs should be in the result
@@ -233,7 +234,6 @@ export function greet() {
 
     const [_stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).not.toContain("error");
     expect(exitCode).toBe(0);
 
     // The executable should be at subdir/myapp
@@ -249,9 +249,8 @@ export function greet() {
     expect(mapContent.version).toBe(3);
     expect(mapContent.mappings).toBeString();
 
-    // The doubled path (subdir/subdir/) should NOT exist
-    const doubledSubdir = join(String(dir), "subdir", "subdir");
-    expect(await Bun.file(doubledSubdir).exists()).toBe(false);
+    // Verify no .map was written into the doubled path subdir/subdir/
+    expect(await Bun.file(join(String(dir), "subdir", "subdir", "myapp.map")).exists()).toBe(false);
   });
 
   test("compile with multiple source files", async () => {

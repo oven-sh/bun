@@ -321,7 +321,12 @@ static JSValue defaultBunSQLObject(VM& vm, JSObject* bunObject)
         (void)scope.tryClearException();
         return jsUndefined();
     }
-    RELEASE_AND_RETURN(scope, sqlValue.getObject()->get(globalObject, vm.propertyNames->defaultKeyword));
+    JSValue result = sqlValue.getObject()->get(globalObject, vm.propertyNames->defaultKeyword);
+    if (scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        return jsUndefined();
+    }
+    return result;
 }
 
 static JSValue constructBunSQLObject(VM& vm, JSObject* bunObject)
@@ -334,16 +339,24 @@ static JSValue constructBunSQLObject(VM& vm, JSObject* bunObject)
         return jsUndefined();
     }
     auto clientData = WebCore::clientData(vm);
-    RELEASE_AND_RETURN(scope, sqlValue.getObject()->get(globalObject, clientData->builtinNames().SQLPublicName()));
+    JSValue result = sqlValue.getObject()->get(globalObject, clientData->builtinNames().SQLPublicName());
+    if (scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        return jsUndefined();
+    }
+    return result;
 }
 
 extern "C" JSC::EncodedJSValue JSPasswordObject__create(JSGlobalObject*);
 
 static JSValue constructPasswordObject(VM& vm, JSObject* bunObject)
 {
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue result = JSValue::decode(JSPasswordObject__create(bunObject->globalObject()));
-    if (!result) [[unlikely]]
+    if (!result) [[unlikely]] {
+        (void)scope.tryClearException();
         return jsUndefined();
+    }
     return result;
 }
 

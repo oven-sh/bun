@@ -84,7 +84,30 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
         }
 
         pub fn deinit(this: *@This()) void {
-            this.us_socket_context.deinit(ssl);
+            // Replace callbacks with no-ops first to avoid UAF when closing sockets.
+            this.us_socket_context.cleanCallbacks(ssl);
+
+            // Drain pooled keepalive sockets: deref their ssl_config and force-close.
+            // Must force-close (code != 0) because SSL clean shutdown (code=0) requires a
+            // shutdown handshake with the peer, which won't complete during eviction.
+            // Without force-close, the socket stays linked and the context refcount never
+            // reaches 0, leaking the SSL_CTX.
+            if (comptime ssl) {
+                var iter = this.pending_sockets.used.iterator(.{ .kind = .set });
+                while (iter.next()) |idx| {
+                    const pooled = this.pending_sockets.at(@intCast(idx));
+                    if (pooled.ssl_config) |config| {
+                        config.deref();
+                        pooled.ssl_config = null;
+                    }
+                    pooled.http_socket.close(.failure);
+                }
+            }
+
+            // Close any remaining sockets in the context (should be none after draining pool).
+            this.us_socket_context.close(ssl);
+            // Free the uSockets context synchronously.
+            this.us_socket_context.free(ssl);
             bun.default_allocator.destroy(this);
         }
 

@@ -171,7 +171,8 @@ describe("TLS custom config memory leak detection", () => {
     // SSL context cache is bounded at 60 entries. 200 unique configs
     // should only keep ~60 alive after LRU eviction.
     // Each SSL context is ~50-200KB, so 60 × 200KB = ~12MB max in release.
-    // Note: debug builds may exceed this due to ThreadSafeRefCount tracking overhead.
+    // Residual RSS overhead from allocator fragmentation varies by platform
+    // (macOS typically higher than Linux).
     expect(result.growthMB).toBeLessThan(100);
   }, 120_000);
 });

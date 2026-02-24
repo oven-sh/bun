@@ -55,6 +55,10 @@ if (mode === "same") {
   }
 }
 
+// Allow the HTTP thread to process deferred SSL context frees
+await Bun.sleep(100);
+Bun.gc(true);
+await Bun.sleep(100);
 Bun.gc(true);
 const finalRss = process.memoryUsage.rss();
 const growthMB = (finalRss - baselineRss) / (1024 * 1024);

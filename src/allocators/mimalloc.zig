@@ -60,29 +60,17 @@ pub const Heap = opaque {
         return mi_heap_realloc(self, p, newsize);
     }
 
-    pub fn isOwned(self: *Heap, p: ?*const anyopaque) bool {
-        return mi_heap_contains(self, p);
+    pub fn isOwned(self: *Heap, p: ?*anyopaque) bool {
+        return mi_heap_check_owned(self, p);
     }
 };
 pub extern fn mi_heap_new() ?*Heap;
 pub extern fn mi_heap_delete(heap: *Heap) void;
 pub extern fn mi_heap_destroy(heap: *Heap) void;
+pub extern fn mi_heap_set_default(heap: *Heap) *Heap;
+pub extern fn mi_heap_get_default() *Heap;
+pub extern fn mi_heap_get_backing() *Heap;
 pub extern fn mi_heap_collect(heap: *Heap, force: bool) void;
-pub extern fn mi_heap_main() *Heap;
-
-// Thread-local heap (theap) API - new in mimalloc v3
-pub const THeap = opaque {};
-pub extern fn mi_theap_get_default() *THeap;
-pub extern fn mi_theap_set_default(theap: *THeap) *THeap;
-pub extern fn mi_theap_collect(theap: *THeap, force: bool) void;
-pub extern fn mi_theap_malloc(theap: *THeap, size: usize) ?*anyopaque;
-pub extern fn mi_theap_zalloc(theap: *THeap, size: usize) ?*anyopaque;
-pub extern fn mi_theap_calloc(theap: *THeap, count: usize, size: usize) ?*anyopaque;
-pub extern fn mi_theap_malloc_small(theap: *THeap, size: usize) ?*anyopaque;
-pub extern fn mi_theap_malloc_aligned(theap: *THeap, size: usize, alignment: usize) ?*anyopaque;
-pub extern fn mi_theap_realloc(theap: *THeap, p: ?*anyopaque, newsize: usize) ?*anyopaque;
-pub extern fn mi_theap_destroy(theap: *THeap) void;
-pub extern fn mi_heap_theap(heap: *Heap) *THeap;
 pub extern fn mi_heap_malloc(heap: *Heap, size: usize) ?*anyopaque;
 pub extern fn mi_heap_zalloc(heap: *Heap, size: usize) ?*anyopaque;
 pub extern fn mi_heap_calloc(heap: *Heap, count: usize, size: usize) ?*anyopaque;
@@ -114,7 +102,8 @@ pub extern fn mi_heap_rezalloc_aligned(heap: *Heap, p: ?*anyopaque, newsize: usi
 pub extern fn mi_heap_rezalloc_aligned_at(heap: *Heap, p: ?*anyopaque, newsize: usize, alignment: usize, offset: usize) ?*anyopaque;
 pub extern fn mi_heap_recalloc_aligned(heap: *Heap, p: ?*anyopaque, newcount: usize, size: usize, alignment: usize) ?*anyopaque;
 pub extern fn mi_heap_recalloc_aligned_at(heap: *Heap, p: ?*anyopaque, newcount: usize, size: usize, alignment: usize, offset: usize) ?*anyopaque;
-pub extern fn mi_heap_contains(heap: *const Heap, p: ?*const anyopaque) bool;
+pub extern fn mi_heap_contains_block(heap: *Heap, p: *const anyopaque) bool;
+pub extern fn mi_heap_check_owned(heap: *Heap, p: *const anyopaque) bool;
 pub extern fn mi_check_owned(p: ?*const anyopaque) bool;
 pub const struct_mi_heap_area_s = extern struct {
     blocks: ?*anyopaque,

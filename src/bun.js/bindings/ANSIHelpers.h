@@ -24,6 +24,18 @@ static inline bool isEscapeCharacter(Char c)
     }
 }
 
+// SIMD comparison against exact escape character values. Used to refine
+// the broad range match (0x10-0x1F / 0x90-0x9F) to only actual escape
+// introducers: 0x1B, 0x90, 0x98, 0x9B, 0x9D, 0x9E, 0x9F.
+template<typename SIMDType>
+static auto exactEscapeMatch(std::conditional_t<sizeof(SIMDType) == 1, simde_uint8x16_t, simde_uint16x8_t> chunk)
+{
+    if constexpr (sizeof(SIMDType) == 1)
+        return SIMD::equal<0x1b, 0x90, 0x98, 0x9b, 0x9d, 0x9e, 0x9f>(chunk);
+    else
+        return SIMD::equal<u'\x1b', u'\x90', u'\x98', u'\x9b', u'\x9d', u'\x9e', u'\x9f'>(chunk);
+}
+
 // Find the first escape character in a string using SIMD
 template<typename Char>
 static const Char* findEscapeCharacter(const Char* start, const Char* end)
@@ -43,8 +55,13 @@ static const Char* findEscapeCharacter(const Char* start, const Char* end)
         const auto chunk = SIMD::load(reinterpret_cast<const SIMDType*>(it));
         const auto chunkMasked = SIMD::bitAnd(chunk, escMask);
         const auto chunkIsEsc = SIMD::equal(chunkMasked, escVector);
-        if (const auto index = SIMD::findFirstNonZeroIndex(chunkIsEsc))
-            return it + *index;
+        if (SIMD::findFirstNonZeroIndex(chunkIsEsc)) {
+            // Broad mask matched 0x10-0x1F / 0x90-0x9F. Refine with exact
+            // escape character comparison to filter out false positives.
+            const auto exactMatch = exactEscapeMatch<SIMDType>(chunk);
+            if (const auto exactIndex = SIMD::findFirstNonZeroIndex(exactMatch))
+                return it + *exactIndex;
+        }
     }
 
     // Check remaining characters

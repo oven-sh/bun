@@ -1,0 +1,297 @@
+
+# Coverage
+
+This file is just a collection of tests designed to activate code in MD4C
+which may otherwise be hard to hit. It's to improve our test coverage.
+
+
+## `md_is_unicode_whitespace__()`
+
+Unicode whitespace (here U+2000) forms a word boundary so these cannot be
+resolved as emphasis span because there is no closer mark.
+
+```````````````````````````````` example
+*foo *bar
+.
+<p>*foo *bar</p>
+````````````````````````````````
+
+
+## `md_is_unicode_punct__()`
+
+Ditto for Unicode punctuation (here U+00A1).
+
+```````````````````````````````` example
+*foo¡*bar
+.
+<p>*foo¡*bar</p>
+````````````````````````````````
+
+
+## `md_get_unicode_fold_info()`
+
+```````````````````````````````` example
+[Příliš žluťoučký kůň úpěl ďábelské ódy.]
+
+[PŘÍLIŠ ŽLUŤOUČKÝ KŮŇ ÚPĚL ĎÁBELSKÉ ÓDY.]: /url
+.
+<p><a href="/url">Příliš žluťoučký kůň úpěl ďábelské ódy.</a></p>
+````````````````````````````````
+
+
+## `md_decode_utf8__()` and `md_decode_utf8_before__()`
+
+### Alphanumerical Character (i.e. not whitespace, not punctuation)
+
+Non-whitespace & non-punctuation characters below suppress `_` from being
+recognized as an emphasis because `_` should be seen as in-word character:
+
+Example of 1-byte UTF-8 sequence (U+0058):
+```````````````````````````````` example
+X__foo__X
+.
+<p>X__foo__X</p>
+````````````````````````````````
+
+Example of 2-byte UTF-8 sequence (U+0158):
+```````````````````````````````` example
+Ř__foo__Ř
+.
+<p>Ř__foo__Ř</p>
+````````````````````````````````
+
+Example of 3-byte UTF-8 sequence (U+0BA3):
+```````````````````````````````` example
+ண__foo__ண
+.
+<p>ண__foo__ண</p>
+````````````````````````````````
+
+Example of 4-byte UTF-8 sequence (U+13142):
+```````````````````````````````` example
+𓅂__foo__𓅂
+.
+<p>𓅂__foo__𓅂</p>
+````````````````````````````````
+
+### Whitespace character
+
+Whitespace on the other hand should not suppress `_`:
+
+Example of 1-byte UTF-8 sequence (U+0009):
+```````````````````````````````` example
+x→__foo__→
+.
+<p>x <strong>foo</strong></p>
+````````````````````````````````
+(The initial `x` to suppress indented code block.)
+
+Example of 2-byte UTF-8 sequence (U+00A0):
+```````````````````````````````` example
+ __foo__
+.
+<p> <strong>foo</strong> </p>
+````````````````````````````````
+
+Example of 3-byte UTF-8 sequence (U+2000):
+```````````````````````````````` example
+ __foo__
+.
+<p> <strong>foo</strong> </p>
+````````````````````````````````
+
+(AFAIK, there is no 4-byte UTF-8 whitespace.)
+
+### Punctuation character
+
+Punctuation also should not suppress `_`:
+
+Example of 1-byte UTF-8 sequence (U+002E):
+```````````````````````````````` example
+.__foo__.
+.
+<p>.<strong>foo</strong>.</p>
+````````````````````````````````
+
+Example of 2-byte UTF-8 sequence (U+00B7):
+```````````````````````````````` example
+·__foo__·
+.
+<p>·<strong>foo</strong>·</p>
+````````````````````````````````
+
+Example of 3-byte UTF-8 sequence (U+0C84):
+```````````````````````````````` example
+಄__foo__಄
+.
+<p>಄<strong>foo</strong>಄</p>
+````````````````````````````````
+
+Example of 4-byte UTF-8 sequence (U+1039F):
+```````````````````````````````` example
+𐎟__foo__𐎟
+.
+<p>𐎟<strong>foo</strong>𐎟</p>
+````````````````````````````````
+
+
+## `md_is_link_destination_A()`
+
+```````````````````````````````` example
+[link](</url\.with\.escape>)
+.
+<p><a href="/url.with.escape">link</a></p>
+````````````````````````````````
+
+
+## `md_link_label_eq()`
+
+```````````````````````````````` example
+[foo bar]
+
+[foo bar]: /url
+.
+<p><a href="/url">foo bar</a></p>
+````````````````````````````````
+
+
+## `md_is_inline_link_spec()`
+
+```````````````````````````````` example
+> [link](/url 'foo
+> bar')
+.
+<blockquote>
+<p><a href="/url" title="foo
+bar">link</a></p>
+</blockquote>
+````````````````````````````````
+
+
+## `md_build_ref_def_hashtable()`
+
+All link labels in the following example all have the same FNV1a hash (after
+normalization of the label, which means after converting to a vector of Unicode
+codepoints and lowercase folding).
+
+So the example triggers quite complex code paths which are not otherwise easily
+tested.
+
+```````````````````````````````` example
+[foo]: /foo
+[qnptgbh]: /qnptgbh
+[abgbrwcv]: /abgbrwcv
+[abgbrwcv]: /abgbrwcv2
+[abgbrwcv]: /abgbrwcv3
+[abgbrwcv]: /abgbrwcv4
+[alqadfgn]: /alqadfgn
+
+[foo]
+[qnptgbh]
+[abgbrwcv]
+[alqadfgn]
+[axgydtdu]
+.
+<p><a href="/foo">foo</a>
+<a href="/qnptgbh">qnptgbh</a>
+<a href="/abgbrwcv">abgbrwcv</a>
+<a href="/alqadfgn">alqadfgn</a>
+[axgydtdu]</p>
+````````````````````````````````
+
+For the sake of completeness, the following C program was used to find the hash
+collisions by brute force:
+
+~~~
+
+#include <stdio.h>
+#include <string.h>
+
+
+static unsigned etalon;
+
+
+
+#define MD_FNV1A_BASE       2166136261
+#define MD_FNV1A_PRIME      16777619
+
+static inline unsigned
+fnv1a(unsigned base, const void* data, size_t n)
+{
+    const unsigned char* buf = (const unsigned char*) data;
+    unsigned hash = base;
+    size_t i;
+
+    for(i = 0; i < n; i++) {
+        hash ^= buf[i];
+        hash *= MD_FNV1A_PRIME;
+    }
+
+    return hash;
+}
+
+
+static unsigned
+unicode_hash(const char* data, size_t n)
+{
+    unsigned value;
+    unsigned hash = MD_FNV1A_BASE;
+    int i;
+
+    for(i = 0; i < n; i++) {
+        value = data[i];
+        hash = fnv1a(hash, &value, sizeof(unsigned));
+    }
+
+    return hash;
+}
+
+
+static void
+recurse(char* buffer, size_t off, size_t len)
+{
+    int ch;
+
+    if(off < len - 1) {
+        for(ch = 'a'; ch <= 'z'; ch++) {
+            buffer[off] = ch;
+            recurse(buffer, off+1, len);
+        }
+    } else {
+        for(ch = 'a'; ch <= 'z'; ch++) {
+            buffer[off] = ch;
+            if(unicode_hash(buffer, len) == etalon) {
+                printf("Dup: %.*s\n", (int)len, buffer);
+            }
+        }
+    }
+}
+
+int
+main(int argc, char** argv)
+{
+    char buffer[32];
+    int len;
+
+    if(argc < 2)
+        etalon = unicode_hash("foo", 3);
+    else
+        etalon = unicode_hash(argv[1], strlen(argv[1]));
+
+    for(len = 1; len <= sizeof(buffer); len++)
+        recurse(buffer, 0, len);
+
+    return 0;
+}
+~~~
+
+
+## Flag `MD_FLAG_COLLAPSEWHITESPACE`
+
+```````````````````````````````` example
+foo  bar → baz
+.
+<p>foo bar baz</p>
+.
+--fcollapse-whitespace
+````````````````````````````````

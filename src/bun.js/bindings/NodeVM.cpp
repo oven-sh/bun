@@ -703,6 +703,17 @@ void NodeVMSpecialSandbox::finishCreation(VM& vm)
 
 const JSC::ClassInfo NodeVMSpecialSandbox::s_info = { "NodeVMSpecialSandbox"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(NodeVMSpecialSandbox) };
 
+template<typename Visitor>
+void NodeVMSpecialSandbox::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = jsCast<NodeVMSpecialSandbox*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+    visitor.append(thisObject->m_parentGlobal);
+}
+
+DEFINE_VISIT_CHILDREN(NodeVMSpecialSandbox);
+
 NodeVMGlobalObject::NodeVMGlobalObject(JSC::VM& vm, JSC::Structure* structure, NodeVMContextOptions contextOptions, JSValue importer)
     : Base(vm, structure, &globalObjectMethodTable())
     , m_dynamicImportCallback(vm, this, importer)
@@ -799,6 +810,8 @@ void NodeVMGlobalObject::finishCreation(JSC::VM& vm)
     auto* parentGlobalObject = defaultGlobalObject(this);
     if (parentGlobalObject && parentGlobalObject->m_asyncContextData) {
         m_asyncContextData.set(vm, this, parentGlobalObject->m_asyncContextData.get());
+        if (parentGlobalObject->isAsyncContextTrackingEnabled())
+            setAsyncContextTrackingEnabled(true);
     }
 }
 

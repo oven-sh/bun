@@ -234,6 +234,7 @@ pub const csrf = @import("./csrf.zig");
 pub const validators = @import("./bun.js/node/util/validators.zig");
 
 pub const shell = @import("./shell/shell.zig");
+pub const md = @import("./md/root.zig");
 
 pub const Output = @import("./output.zig");
 pub const Global = @import("./Global.zig");

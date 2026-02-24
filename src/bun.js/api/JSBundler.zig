@@ -242,6 +242,10 @@ pub const JSBundler = struct {
         bytecode: bool = false,
         banner: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         footer: OwnedString = OwnedString.initEmpty(bun.default_allocator),
+        /// Path to write JSON metafile (if specified via metafile object) - TEST: moved here
+        metafile_json_path: OwnedString = OwnedString.initEmpty(bun.default_allocator),
+        /// Path to write markdown metafile (if specified via metafile object) - TEST: moved here
+        metafile_markdown_path: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         css_chunking: bool = false,
         drop: bun.StringSet = bun.StringSet.init(bun.default_allocator),
         features: bun.StringSet = bun.StringSet.init(bun.default_allocator),
@@ -254,7 +258,12 @@ pub const JSBundler = struct {
         /// In-memory files that can be used as entrypoints or imported.
         /// These files do not need to exist on disk.
         files: FileMap = .{},
+        /// Generate metafile (JSON module graph)
         metafile: bool = false,
+        /// Package names whose barrel files should be optimized.
+        /// Named imports from these packages will only load the submodules
+        /// that are actually used instead of parsing all re-exported submodules.
+        optimize_imports: bun.StringSet = bun.StringSet.init(bun.default_allocator),
 
         pub const CompileOptions = struct {
             compile_target: CompileTarget = .{},
@@ -430,6 +439,7 @@ pub const JSBundler = struct {
             var this = Config{
                 .entry_points = bun.StringSet.init(allocator),
                 .external = bun.StringSet.init(allocator),
+                .optimize_imports = bun.StringSet.init(allocator),
                 .define = bun.StringMap.init(allocator, true),
                 .dir = OwnedString.initEmpty(allocator),
                 .outdir = OwnedString.initEmpty(allocator),
@@ -670,8 +680,8 @@ pub const JSBundler = struct {
             if (try config.getOptionalEnum(globalThis, "format", options.Format)) |format| {
                 this.format = format;
 
-                if (this.bytecode and format != .cjs) {
-                    return globalThis.throwInvalidArguments("format must be 'cjs' when bytecode is true. Eventually we'll add esm support as well.", .{});
+                if (this.bytecode and format != .cjs and format != .esm) {
+                    return globalThis.throwInvalidArguments("format must be 'cjs' or 'esm' when bytecode is true.", .{});
                 }
             }
 
@@ -814,6 +824,15 @@ pub const JSBundler = struct {
                 }
             }
 
+            if (try config.getOwnArray(globalThis, "optimizeImports")) |optimize_imports| {
+                var iter = try optimize_imports.arrayIterator(globalThis);
+                while (try iter.next()) |entry| {
+                    var slice = try entry.toSliceOrNull(globalThis);
+                    defer slice.deinit();
+                    try this.optimize_imports.insert(slice.slice());
+                }
+            }
+
             // if (try config.getOptional(globalThis, "dir", ZigString.Slice)) |slice| {
             //     defer slice.deinit();
             //     this.appendSliceExact(slice.slice()) catch unreachable;
@@ -936,8 +955,30 @@ pub const JSBundler = struct {
                 this.throw_on_error = flag;
             }
 
-            if (try config.getBooleanLoose(globalThis, "metafile")) |flag| {
-                this.metafile = flag;
+            // Parse metafile option: boolean | string | { json?: string, markdown?: string }
+            if (try config.getOwn(globalThis, "metafile")) |metafile_value| {
+                if (metafile_value.isBoolean()) {
+                    this.metafile = metafile_value == .true;
+                } else if (metafile_value.isString()) {
+                    // metafile: "path/to/meta.json" - shorthand for { json: "..." }
+                    this.metafile = true;
+                    const slice = try metafile_value.toSlice(globalThis, bun.default_allocator);
+                    defer slice.deinit();
+                    try this.metafile_json_path.appendSliceExact(slice.slice());
+                } else if (metafile_value.isObject()) {
+                    // metafile: { json?: string, markdown?: string }
+                    this.metafile = true;
+                    if (try metafile_value.getOptional(globalThis, "json", ZigString.Slice)) |slice| {
+                        defer slice.deinit();
+                        try this.metafile_json_path.appendSliceExact(slice.slice());
+                    }
+                    if (try metafile_value.getOptional(globalThis, "markdown", ZigString.Slice)) |slice| {
+                        defer slice.deinit();
+                        try this.metafile_markdown_path.appendSliceExact(slice.slice());
+                    }
+                } else if (!metafile_value.isUndefinedOrNull()) {
+                    return globalThis.throwInvalidArguments("Expected metafile to be a boolean, string, or object with json/markdown paths", .{});
+                }
             }
 
             if (try CompileOptions.fromJS(
@@ -950,45 +991,78 @@ pub const JSBundler = struct {
             }
 
             if (this.compile) |*compile| {
-                this.target = .bun;
+                // When compile + target=browser + all HTML entrypoints, produce standalone HTML.
+                // Otherwise, default to bun executable compile.
+                const has_all_html_entrypoints = brk: {
+                    if (this.entry_points.count() == 0) break :brk false;
+                    for (this.entry_points.keys()) |ep| {
+                        if (!strings.hasSuffixComptime(ep, ".html")) break :brk false;
+                    }
+                    break :brk true;
+                };
+                const is_standalone_html = this.target == .browser and has_all_html_entrypoints;
+                if (!is_standalone_html) {
+                    this.target = .bun;
 
-                const define_keys = compile.compile_target.defineKeys();
-                const define_values = compile.compile_target.defineValues();
-                for (define_keys, define_values) |key, value| {
-                    try this.define.insert(key, value);
+                    const define_keys = compile.compile_target.defineKeys();
+                    const define_values = compile.compile_target.defineValues();
+                    for (define_keys, define_values) |key, value| {
+                        try this.define.insert(key, value);
+                    }
+
+                    const base_public_path = bun.StandaloneModuleGraph.targetBasePublicPath(this.compile.?.compile_target.os, "root/");
+                    try this.public_path.append(base_public_path);
+
+                    // When using --compile, only `external` sourcemaps work, as we do not
+                    // look at the source map comment. Override any other sourcemap type.
+                    if (this.source_map != .none) {
+                        this.source_map = .external;
+                    }
+
+                    if (compile.outfile.isEmpty()) {
+                        const entry_point = this.entry_points.keys()[0];
+                        var outfile = std.fs.path.basename(entry_point);
+                        const ext = std.fs.path.extension(outfile);
+                        if (ext.len > 0) {
+                            outfile = outfile[0 .. outfile.len - ext.len];
+                        }
+
+                        if (strings.eqlComptime(outfile, "index")) {
+                            outfile = std.fs.path.basename(std.fs.path.dirname(entry_point) orelse "index");
+                        }
+
+                        if (strings.eqlComptime(outfile, "bun")) {
+                            outfile = std.fs.path.basename(std.fs.path.dirname(entry_point) orelse "bun");
+                        }
+
+                        // If argv[0] is "bun" or "bunx", we don't check if the binary is standalone
+                        if (strings.eqlComptime(outfile, "bun") or strings.eqlComptime(outfile, "bunx")) {
+                            return globalThis.throwInvalidArguments("cannot use compile with an output file named 'bun' because bun won't realize it's a standalone executable. Please choose a different name for compile.outfile", .{});
+                        }
+
+                        try compile.outfile.appendSliceExact(outfile);
+                    }
                 }
+            }
 
-                const base_public_path = bun.StandaloneModuleGraph.targetBasePublicPath(this.compile.?.compile_target.os, "root/");
-                try this.public_path.append(base_public_path);
+            // ESM bytecode requires compile because module_info (import/export metadata)
+            // is only available in compiled binaries. Without it, JSC must parse the file
+            // twice (once for module analysis, once for bytecode), which is a deopt.
+            if (this.bytecode and this.format == .esm and this.compile == null) {
+                return globalThis.throwInvalidArguments("ESM bytecode requires compile: true. Use format: 'cjs' for bytecode without compile.", .{});
+            }
 
-                // When using --compile, only `external` sourcemaps work, as we do not
-                // look at the source map comment. Override any other sourcemap type.
-                if (this.source_map != .none) {
-                    this.source_map = .external;
-                }
-
-                if (compile.outfile.isEmpty()) {
-                    const entry_point = this.entry_points.keys()[0];
-                    var outfile = std.fs.path.basename(entry_point);
-                    const ext = std.fs.path.extension(outfile);
-                    if (ext.len > 0) {
-                        outfile = outfile[0 .. outfile.len - ext.len];
+            // Validate standalone HTML mode: compile + browser target + all HTML entrypoints
+            if (this.compile != null and this.target == .browser) {
+                const has_all_html = brk: {
+                    if (this.entry_points.count() == 0) break :brk false;
+                    for (this.entry_points.keys()) |ep| {
+                        if (!strings.hasSuffixComptime(ep, ".html")) break :brk false;
                     }
-
-                    if (strings.eqlComptime(outfile, "index")) {
-                        outfile = std.fs.path.basename(std.fs.path.dirname(entry_point) orelse "index");
-                    }
-
-                    if (strings.eqlComptime(outfile, "bun")) {
-                        outfile = std.fs.path.basename(std.fs.path.dirname(entry_point) orelse "bun");
-                    }
-
-                    // If argv[0] is "bun" or "bunx", we don't check if the binary is standalone
-                    if (strings.eqlComptime(outfile, "bun") or strings.eqlComptime(outfile, "bunx")) {
-                        return globalThis.throwInvalidArguments("cannot use compile with an output file named 'bun' because bun won't realize it's a standalone executable. Please choose a different name for compile.outfile", .{});
-                    }
-
-                    try compile.outfile.appendSliceExact(outfile);
+                    break :brk true;
+                };
+                if (has_all_html and this.code_splitting) {
+                    return globalThis.throwInvalidArguments("Cannot use compile with target 'browser' and splitting for standalone HTML", .{});
                 }
             }
 
@@ -1069,7 +1143,10 @@ pub const JSBundler = struct {
             self.env_prefix.deinit();
             self.footer.deinit();
             self.tsconfig_override.deinit();
+            self.optimize_imports.deinit();
             self.files.deinitAndUnprotect();
+            self.metafile_json_path.deinit();
+            self.metafile_markdown_path.deinit();
         }
     };
 
@@ -1688,9 +1765,12 @@ pub const BuildArtifact = struct {
         @"entry-point",
         sourcemap,
         bytecode,
+        module_info,
+        @"metafile-json",
+        @"metafile-markdown",
 
         pub fn isFileInStandaloneMode(this: OutputKind) bool {
-            return this != .sourcemap and this != .bytecode;
+            return this != .sourcemap and this != .bytecode and this != .module_info and this != .@"metafile-json" and this != .@"metafile-markdown";
         }
     };
 

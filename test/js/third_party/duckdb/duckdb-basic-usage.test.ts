@@ -3,6 +3,10 @@ if (libcFamily == "musl") {
   // duckdb does not distribute musl binaries, so we skip this test on musl to avoid CI noise
   process.exit(0);
 }
+if (process.platform === "win32" && process.arch === "arm64") {
+  // duckdb does not distribute win32-arm64 binaries
+  process.exit(0);
+}
 
 import { describe, expect, test } from "bun:test";
 // Must be CJS require so that the above code can exit before we attempt to import DuckDB

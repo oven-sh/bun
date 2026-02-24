@@ -566,8 +566,10 @@ namespace uWS
 
 
             bool isHTTPMethod = (__builtin_expect(data[1] == '/', 1));
-            bool isConnect = !isHTTPMethod && (isHTTPorHTTPSPrefixForProxies(data + 1, end) == 1 || ((data - start) == 7 && memcmp(start, "CONNECT", 7) == 0));
-            if (isHTTPMethod || isConnect) [[likely]] {
+            bool isConnect = !isHTTPMethod && ((data - start) == 7 && memcmp(start, "CONNECT", 7) == 0);
+            /* Also accept proxy-style absolute URLs (http://... or https://...) as valid request targets */
+            bool isProxyStyleURL = !isHTTPMethod && !isConnect && data[0] == 32 && isHTTPorHTTPSPrefixForProxies(data + 1, end) == 1;
+            if (isHTTPMethod || isConnect || isProxyStyleURL) [[likely]] {
                 header.key = {start, (size_t) (data - start)};
                 data++;
                 if(!isValidMethod(header.key, useStrictMethodValidation)) {

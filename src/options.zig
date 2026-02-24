@@ -635,6 +635,7 @@ pub const Loader = enum(u8) {
     html = 17,
     yaml = 18,
     json5 = 19,
+    md = 20,
 
     pub const Optional = enum(u8) {
         none = 254,
@@ -705,7 +706,7 @@ pub const Loader = enum(u8) {
             .css => bun.http.MimeType.css,
             .toml, .yaml, .json, .jsonc, .json5 => bun.http.MimeType.json,
             .wasm => bun.http.MimeType.wasm,
-            .html => bun.http.MimeType.html,
+            .html, .md => bun.http.MimeType.html,
             else => {
                 for (paths) |path| {
                     var extname = std.fs.path.extension(path);
@@ -758,6 +759,7 @@ pub const Loader = enum(u8) {
         map.set(.text, "input.txt");
         map.set(.bunsh, "input.sh");
         map.set(.html, "input.html");
+        map.set(.md, "input.md");
         break :brk map;
     };
 
@@ -777,7 +779,7 @@ pub const Loader = enum(u8) {
         if (zig_str.len == 0) return null;
 
         return fromString(zig_str.slice()) orelse {
-            return global.throwInvalidArguments("invalid loader - must be js, jsx, tsx, ts, css, file, toml, yaml, wasm, bunsh, or json", .{});
+            return global.throwInvalidArguments("invalid loader - must be js, jsx, tsx, ts, css, file, toml, yaml, wasm, bunsh, json, or md", .{});
         };
     }
 
@@ -808,6 +810,8 @@ pub const Loader = enum(u8) {
         .{ "sqlite", .sqlite },
         .{ "sqlite_embedded", .sqlite_embedded },
         .{ "html", .html },
+        .{ "md", .md },
+        .{ "markdown", .md },
     });
 
     pub const api_names = bun.ComptimeStringMap(api.Loader, .{
@@ -835,6 +839,8 @@ pub const Loader = enum(u8) {
         .{ "sh", .file },
         .{ "sqlite", .sqlite },
         .{ "html", .html },
+        .{ "md", .md },
+        .{ "markdown", .md },
     });
 
     pub fn fromString(slice_: string) ?Loader {
@@ -873,6 +879,7 @@ pub const Loader = enum(u8) {
             .dataurl => .dataurl,
             .text => .text,
             .sqlite_embedded, .sqlite => .sqlite,
+            .md => .md,
         };
     }
 
@@ -899,6 +906,7 @@ pub const Loader = enum(u8) {
             .html => .html,
             .sqlite => .sqlite,
             .sqlite_embedded => .sqlite_embedded,
+            .md => .md,
             _ => .file,
         };
     }
@@ -938,7 +946,7 @@ pub const Loader = enum(u8) {
 
     pub fn sideEffects(this: Loader) bun.resolver.SideEffects {
         return switch (this) {
-            .text, .json, .jsonc, .toml, .yaml, .json5, .file => bun.resolver.SideEffects.no_side_effects__pure_data,
+            .text, .json, .jsonc, .toml, .yaml, .json5, .file, .md => bun.resolver.SideEffects.no_side_effects__pure_data,
             else => bun.resolver.SideEffects.has_side_effects,
         };
     }
@@ -1732,6 +1740,7 @@ pub const BundleOptions = struct {
     resolve_dir: string = "/",
     jsx: JSX.Pragma = JSX.Pragma{},
     emit_decorator_metadata: bool = false,
+    experimental_decorators: bool = false,
     auto_import_jsx: bool = true,
     allow_runtime: bool = true,
 
@@ -1824,7 +1833,12 @@ pub const BundleOptions = struct {
     debugger: bool = false,
 
     compile: bool = false,
+    compile_to_standalone_html: bool = false,
     metafile: bool = false,
+    /// Path to write JSON metafile (for Bun.build API)
+    metafile_json_path: []const u8 = "",
+    /// Path to write markdown metafile (for Bun.build API)
+    metafile_markdown_path: []const u8 = "",
 
     /// Set when bake.DevServer is bundling.
     dev_server: ?*bun.bake.DevServer = null,
@@ -1851,6 +1865,12 @@ pub const BundleOptions = struct {
     force_node_env: ForceNodeEnv = .unspecified,
 
     ignore_module_resolution_errors: bool = false,
+
+    /// Package names whose barrel files should be optimized.
+    /// When set, barrel files from these packages will only load submodules
+    /// that are actually imported. Also, any file with sideEffects: false
+    /// in its package.json is automatically a barrel candidate.
+    optimize_imports: ?*const bun.StringSet = null,
 
     pub const ForceNodeEnv = enum {
         unspecified,

@@ -4,7 +4,7 @@ register_repository(
   REPOSITORY
     oven-sh/mimalloc
   COMMIT
-    989115cefb6915baa13788cb8252d83aac5330ad
+    1beadf9651a7bfdec6b5367c380ecc3fe1c40d1a
 )
 
 set(MIMALLOC_CMAKE_ARGS
@@ -14,7 +14,7 @@ set(MIMALLOC_CMAKE_ARGS
   -DMI_BUILD_TESTS=OFF
   -DMI_USE_CXX=ON
   -DMI_SKIP_COLLECT_ON_EXIT=ON
-
+  
   # ```
   # ❯ mimalloc_allow_large_os_pages=0 BUN_PORT=3004 mem bun http-hello.js
   # Started development server: http://localhost:3004
@@ -51,7 +51,7 @@ if(ENABLE_ASAN)
   list(APPEND MIMALLOC_CMAKE_ARGS -DMI_DEBUG_UBSAN=ON)
 elseif(APPLE OR LINUX)
   if(APPLE)
-    list(APPEND MIMALLOC_CMAKE_ARGS -DMI_OVERRIDE=OFF)
+    list(APPEND MIMALLOC_CMAKE_ARGS -DMI_OVERRIDE=OFF)  
     list(APPEND MIMALLOC_CMAKE_ARGS -DMI_OSX_ZONE=OFF)
     list(APPEND MIMALLOC_CMAKE_ARGS -DMI_OSX_INTERPOSE=OFF)
   else()
@@ -69,17 +69,37 @@ if(ENABLE_VALGRIND)
   list(APPEND MIMALLOC_CMAKE_ARGS -DMI_VALGRIND=ON)
 endif()
 
-# Enable SIMD optimizations when not building for baseline (older CPUs)
-if(NOT ENABLE_BASELINE)
+# Enable architecture-specific optimizations when not building for baseline.
+# On Linux aarch64, upstream mimalloc force-enables MI_OPT_ARCH which adds
+# -march=armv8.1-a (LSE atomics). This crashes on ARMv8.0 CPUs
+# (Cortex-A53, Raspberry Pi 4, AWS a1 instances). Use MI_NO_OPT_ARCH
+# to prevent that, but keep SIMD enabled. -moutline-atomics for runtime
+# dispatch to LSE/LL-SC. macOS arm64 always has LSE (Apple Silicon) so
+# MI_OPT_ARCH is safe there.
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64|AARCH64" AND NOT APPLE)
+  list(APPEND MIMALLOC_CMAKE_ARGS -DMI_NO_OPT_ARCH=ON)
+  list(APPEND MIMALLOC_CMAKE_ARGS -DMI_OPT_SIMD=ON)
+  if(NOT WIN32)
+    list(APPEND MIMALLOC_CMAKE_ARGS "-DCMAKE_C_FLAGS=-moutline-atomics")
+  endif()
+elseif(NOT ENABLE_BASELINE)
   list(APPEND MIMALLOC_CMAKE_ARGS -DMI_OPT_ARCH=ON)
   list(APPEND MIMALLOC_CMAKE_ARGS -DMI_OPT_SIMD=ON)
 endif()
 
+# Suppress all warnings from mimalloc on Windows — it's vendored C code compiled
+# as C++ (MI_USE_CXX=ON) which triggers many clang-cl warnings (-Wold-style-cast,
+# -Wzero-as-null-pointer-constant, -Wc++98-compat-pedantic, etc.)
+if(WIN32)
+  list(APPEND MIMALLOC_CMAKE_ARGS "-DCMAKE_C_FLAGS=-w")
+  list(APPEND MIMALLOC_CMAKE_ARGS "-DCMAKE_CXX_FLAGS=-w")
+endif()
+
 if(WIN32)
   if(DEBUG)
-    set(MIMALLOC_LIBRARY mimalloc-debug)
+    set(MIMALLOC_LIBRARY mimalloc-static-debug)
   else()
-    set(MIMALLOC_LIBRARY mimalloc)
+    set(MIMALLOC_LIBRARY mimalloc-static)
   endif()
 elseif(DEBUG)
   if (ENABLE_ASAN)

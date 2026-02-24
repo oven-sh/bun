@@ -341,6 +341,7 @@ pub const Command = struct {
         default_timeout_ms: u32 = 5 * std.time.ms_per_s,
         update_snapshots: bool = false,
         repeat_count: u32 = 0,
+        retry: u32 = 0,
         run_todo: bool = false,
         only: bool = false,
         pass_with_no_tests: bool = false,
@@ -392,6 +393,7 @@ pub const Command = struct {
             enabled: bool = false,
             name: []const u8 = "",
             dir: []const u8 = "",
+            interval: u32 = 1000,
             md_format: bool = false,
             json_format: bool = false,
         } = .{},
@@ -425,6 +427,9 @@ pub const Command = struct {
         filters: []const []const u8 = &.{},
         workspaces: bool = false,
         if_present: bool = false,
+        parallel: bool = false,
+        sequential: bool = false,
+        no_exit_on_error: bool = false,
 
         preloads: []const string = &.{},
         has_loaded_global_config: bool = false,
@@ -433,6 +438,7 @@ pub const Command = struct {
             outdir: []const u8 = "",
             outfile: []const u8 = "",
             metafile: [:0]const u8 = "",
+            metafile_md: [:0]const u8 = "",
             root_dir: []const u8 = "",
             public_path: []const u8 = "",
             entry_naming: []const u8 = "[dir]/[name].[ext]",
@@ -454,7 +460,6 @@ pub const Command = struct {
             banner: []const u8 = "",
             footer: []const u8 = "",
             css_chunking: bool = false,
-
             bake: bool = false,
             bake_debug_dump_server: bool = false,
             bake_debug_disable_minify: bool = false,
@@ -887,6 +892,13 @@ pub const Command = struct {
                 const ctx = try Command.init(allocator, log, .RunCommand);
                 ctx.args.target = .bun;
 
+                if (ctx.parallel or ctx.sequential) {
+                    MultiRun.run(ctx) catch |err| {
+                        Output.prettyErrorln("<r><red>error<r>: {s}", .{@errorName(err)});
+                        Global.exit(1);
+                    };
+                }
+
                 if (ctx.filters.len > 0 or ctx.workspaces) {
                     FilterRun.runScriptsWithFilter(ctx) catch |err| {
                         Output.prettyErrorln("<r><red>error<r>: {s}", .{@errorName(err)});
@@ -925,6 +937,13 @@ pub const Command = struct {
                     }
                 };
                 ctx.args.target = .bun;
+
+                if (ctx.parallel or ctx.sequential) {
+                    MultiRun.run(ctx) catch |err| {
+                        Output.prettyErrorln("<r><red>error<r>: {s}", .{@errorName(err)});
+                        Global.exit(1);
+                    };
+                }
 
                 if (ctx.filters.len > 0 or ctx.workspaces) {
                     FilterRun.runScriptsWithFilter(ctx) catch |err| {
@@ -1761,6 +1780,7 @@ const string = []const u8;
 
 const AddCompletions = @import("./cli/add_completions.zig");
 const FilterRun = @import("./cli/filter_run.zig");
+const MultiRun = @import("./cli/multi_run.zig");
 const PmViewCommand = @import("./cli/pm_view_command.zig");
 const fs = @import("./fs.zig");
 const options = @import("./options.zig");

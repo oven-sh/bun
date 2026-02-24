@@ -1435,6 +1435,7 @@ fn transformForRepl(self: *Repl, code: []const u8) ?[]const u8 {
     // Print the transformed AST back to JavaScript
     const buffer_writer = js_printer.BufferWriter.init(self.allocator);
     var buffer_printer = js_printer.BufferPrinter.init(buffer_writer);
+    defer buffer_printer.ctx.buffer.deinit();
 
     // Create symbol map from ast.symbols
     const symbols_nested = bun.ast.Symbol.NestedList.fromBorrowedSliceDangerous(&.{ast.symbols});

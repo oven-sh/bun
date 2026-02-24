@@ -12,7 +12,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             /// Holds a ref while the socket is in the keepalive pool.
             ssl_config: ?*SSLConfig = null,
             /// The context that owns this pooled socket's memory (for returning to correct pool).
-            owner: *Context = undefined,
+            owner: *Context,
         };
 
         pub fn markTaggedSocketAsDead(socket: HTTPSocket, tagged: ActiveSocket) void {

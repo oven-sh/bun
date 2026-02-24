@@ -298,7 +298,7 @@ pub const GlobalRegistry = struct {
         defer mutex.unlock();
 
         // Look up by content hash/equality
-        const gop = configs.getOrPutContext(bun.default_allocator, new_config, .{}) catch bun.outOfMemory();
+        const gop = bun.handleOom(configs.getOrPutContext(bun.default_allocator, new_config, .{}));
         if (gop.found_existing) {
             // Identical config already exists - free the new one, return existing
             const existing = gop.key_ptr.*;

@@ -273,10 +273,10 @@ pub fn connect(this: *@This(), client: *HTTPClient, comptime is_ssl: bool) !NewH
             // Hold a ref on the config for the cache entry
             requested_config.addRef();
             const now = this.timer.read();
-            custom_ssl_context_map.put(requested_config, .{
+            bun.handleOom(custom_ssl_context_map.put(requested_config, .{
                 .ctx = custom_context,
                 .last_used_ns = now,
-            }) catch bun.outOfMemory();
+            }));
 
             // Enforce max cache size - evict oldest entry
             if (custom_ssl_context_map.count() > ssl_context_cache_max_size) {

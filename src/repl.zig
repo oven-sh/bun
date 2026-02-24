@@ -189,13 +189,14 @@ const History = struct {
         if (home == null or home.?.len == 0) return;
         const home_path = home.?;
 
-        const path = try std.fs.path.join(self.allocator, &.{ home_path, HISTORY_FILENAME });
-        self.file_path = path;
+        var path_buf: bun.PathBuffer = undefined;
+        const path = bun.path.joinZBuf(&path_buf, &[_][]const u8{ home_path, HISTORY_FILENAME }, .auto);
+        self.file_path = try self.allocator.dupe(u8, path);
 
-        const file = std.fs.openFileAbsolute(path, .{}) catch return;
-        defer file.close();
-
-        const content = file.readToEndAlloc(self.allocator, 1024 * 1024) catch return;
+        const content = switch (bun.sys.File.readFrom(bun.FD.cwd(), path, self.allocator)) {
+            .result => |bytes| bytes,
+            .err => return,
+        };
         defer self.allocator.free(content);
 
         var lines = std.mem.splitScalar(u8, content, '\n');
@@ -219,18 +220,24 @@ const History = struct {
         if (!self.modified) return;
         const path = self.file_path orelse return;
 
-        const file = std.fs.createFileAbsolute(path, .{}) catch return;
-        defer file.close();
-
-        // Save last MAX_HISTORY_SIZE entries
+        // Build content
         const start = if (self.entries.items.len > MAX_HISTORY_SIZE)
             self.entries.items.len - MAX_HISTORY_SIZE
         else
             0;
 
+        var content = ArrayList(u8).init(self.allocator);
+        defer content.deinit();
         for (self.entries.items[start..]) |entry| {
-            file.writeAll(entry) catch return;
-            file.writeAll("\n") catch return;
+            content.appendSlice(entry) catch return;
+            content.append('\n') catch return;
+        }
+
+        var path_buf: bun.PathBuffer = undefined;
+        const pathZ = bun.path.z(path, &path_buf);
+        switch (bun.sys.File.writeFile(bun.FD.cwd(), pathZ, content.items)) {
+            .result => {},
+            .err => return,
         }
 
         self.modified = false;
@@ -573,21 +580,18 @@ fn cmdLoad(repl: *Repl, args: []const u8) ReplResult {
         return .skip_eval;
     }
 
-    const file = std.fs.cwd().openFile(filename, .{}) catch |err| {
-        repl.printError("Error loading file: {s}\n", .{@errorName(err)});
-        return .skip_eval;
-    };
-    defer file.close();
-
-    const content = file.readToEndAlloc(repl.allocator, 10 * 1024 * 1024) catch |err| {
-        repl.printError("Error reading file: {s}\n", .{@errorName(err)});
-        return .skip_eval;
+    var path_buf: bun.PathBuffer = undefined;
+    const pathZ = bun.path.z(filename, &path_buf);
+    const content = switch (bun.sys.File.readFrom(bun.FD.cwd(), pathZ, repl.allocator)) {
+        .result => |bytes| bytes,
+        .err => |err| {
+            repl.printError("{f}\n", .{err});
+            return .skip_eval;
+        },
     };
     defer repl.allocator.free(content);
 
     repl.print("{s}Loading {s}...{s}\n", .{ Color.dim, filename, Color.reset });
-
-    // Evaluate the loaded content
     repl.evaluateAndPrint(content);
     return .skip_eval;
 }
@@ -599,18 +603,22 @@ fn cmdSave(repl: *Repl, args: []const u8) ReplResult {
         return .skip_eval;
     }
 
-    const file = std.fs.cwd().createFile(filename, .{}) catch |err| {
-        repl.printError("Error creating file: {s}\n", .{@errorName(err)});
-        return .skip_eval;
-    };
-    defer file.close();
-
+    // Build content
+    var content = ArrayList(u8).init(repl.allocator);
+    defer content.deinit();
     for (repl.history.entries.items) |entry| {
-        file.writeAll(entry) catch |err| {
-            repl.printError("Error writing file: {s}\n", .{@errorName(err)});
+        content.appendSlice(entry) catch return .skip_eval;
+        content.append('\n') catch return .skip_eval;
+    }
+
+    var path_buf: bun.PathBuffer = undefined;
+    const pathZ = bun.path.z(filename, &path_buf);
+    switch (bun.sys.File.writeFile(bun.FD.cwd(), pathZ, content.items)) {
+        .result => {},
+        .err => |err| {
+            repl.printError("{f}\n", .{err});
             return .skip_eval;
-        };
-        file.writeAll("\n") catch {};
+        },
     }
 
     repl.print("{s}Session saved to {s}{s}\n", .{ Color.green, filename, Color.reset });
@@ -663,6 +671,11 @@ use_colors: bool = false,
 terminal_width: u16 = 80,
 terminal_height: u16 = 24,
 ctrl_c_pressed: bool = false,
+
+// Buffered stdin
+stdin_buf: [256]u8 = undefined,
+stdin_buf_start: usize = 0,
+stdin_buf_end: usize = 0,
 
 // JavaScript VM
 vm: ?*jsc.VirtualMachine = null,
@@ -847,19 +860,22 @@ fn printError(self: *Repl, comptime format: []const u8, args: anytype) void {
     }
 }
 
-fn readByte(_: *Repl) ?u8 {
-    var buf: [1]u8 = undefined;
-    if (Environment.isPosix) {
-        const n = std.posix.read(std.posix.STDIN_FILENO, &buf) catch return null;
-        if (n == 0) return null;
-        return buf[0];
-    } else {
-        // Windows: use standard input via bun.sys
-        const stdin_fd = bun.FileDescriptor.fromUV(0);
-        const result = bun.sys.read(stdin_fd, &buf);
-        if (result == .err or result.result == 0) return null;
-        return buf[0];
+fn readByte(self: *Repl) ?u8 {
+    if (self.stdin_buf_start < self.stdin_buf_end) {
+        const b = self.stdin_buf[self.stdin_buf_start];
+        self.stdin_buf_start += 1;
+        return b;
     }
+    // Refill buffer
+    const stdin = bun.sys.File{ .handle = bun.FD.stdin() };
+    const n = switch (stdin.read(&self.stdin_buf)) {
+        .result => |n| n,
+        .err => return null,
+    };
+    if (n == 0) return null;
+    self.stdin_buf_start = 1;
+    self.stdin_buf_end = n;
+    return self.stdin_buf[0];
 }
 
 fn readKey(self: *Repl) ?Key {

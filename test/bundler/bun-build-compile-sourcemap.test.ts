@@ -214,6 +214,7 @@ export function greet() {
     using dir = tempDir("build-compile-sourcemap-outfile-subdir", helperFiles);
 
     const subdirPath = join(String(dir), "subdir");
+    const exeSuffix = process.platform === "win32" ? ".exe" : "";
 
     // Use CLI: bun build --compile --outfile subdir/myapp --sourcemap=external
     await using proc = Bun.spawn({
@@ -237,8 +238,8 @@ export function greet() {
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
 
-    // The executable should be at subdir/myapp
-    expect(await Bun.file(join(subdirPath, "myapp")).exists()).toBe(true);
+    // The executable should be at subdir/myapp (with .exe on Windows)
+    expect(await Bun.file(join(subdirPath, `myapp${exeSuffix}`)).exists()).toBe(true);
 
     // The .map file should be in subdir/ (next to the executable)
     const glob = new Bun.Glob("*.map");

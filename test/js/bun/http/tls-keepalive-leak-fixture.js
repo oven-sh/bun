@@ -31,7 +31,7 @@ for (let i = 0; i < 20_000; i++) {
   await fetch(url, {
     tls: { ca: cert, rejectUnauthorized: false },
     keepalive: true,
-  });
+  }).then(r => r.text());
 }
 Bun.gc(true);
 const baselineRss = process.memoryUsage.rss();
@@ -42,7 +42,7 @@ if (mode === "same") {
   const tlsOpts = { ca: cert, rejectUnauthorized: false };
 
   for (let i = 0; i < numRequests; i++) {
-    await fetch(url, { tls: tlsOpts, keepalive: true });
+    await fetch(url, { tls: tlsOpts, keepalive: true }).then(r => r.text());
   }
 } else if (mode === "distinct") {
   // Each request uses a unique TLS config — tests cache eviction
@@ -50,7 +50,7 @@ if (mode === "same") {
     await fetch(url, {
       tls: { ca: cert, rejectUnauthorized: false, serverName: `host-${i}.example.com` },
       keepalive: true,
-    });
+    }).then(r => r.text());
   }
 }
 

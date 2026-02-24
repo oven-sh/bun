@@ -2035,10 +2035,11 @@ pub fn readAll(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
     return .{ .result = total_read };
 }
 
-const socket_flags_nonblock = c.MSG_DONTWAIT | c.MSG_NOSIGNAL;
+const recv_flags_nonblock = c.MSG_DONTWAIT;
+const send_flags_nonblock = c.MSG_DONTWAIT | c.MSG_NOSIGNAL;
 
 pub fn recvNonBlock(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
-    return recv(fd, buf, socket_flags_nonblock);
+    return recv(fd, buf, recv_flags_nonblock);
 }
 
 pub fn poll(fds: []std.posix.pollfd, timeout: i32) Maybe(usize) {
@@ -2119,7 +2120,7 @@ pub fn kevent(fd: bun.FileDescriptor, changelist: []const std.c.Kevent, eventlis
 }
 
 pub fn sendNonBlock(fd: bun.FileDescriptor, buf: []const u8) Maybe(usize) {
-    return send(fd, buf, socket_flags_nonblock);
+    return send(fd, buf, send_flags_nonblock);
 }
 
 pub fn send(fd: bun.FileDescriptor, buf: []const u8, flag: u32) Maybe(usize) {

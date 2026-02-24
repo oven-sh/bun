@@ -78,7 +78,14 @@ pub const FetchTasklet = struct {
         bun.debugAssert(count > 0);
 
         if (count == 1) {
-            this.deinit() catch |err| switch (err) {};
+            if (this.javascript_vm.isShuttingDown()) {
+                this.deinit() catch |err| switch (err) {};
+                return;
+            }
+            // this is really unlikely to happen, but can happen
+            // lets make sure that we always call deinit from main thread
+
+            this.javascript_vm.eventLoop().enqueueTaskConcurrent(jsc.ConcurrentTask.fromCallback(this, FetchTasklet.deinit));
         }
     }
 

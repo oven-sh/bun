@@ -183,6 +183,98 @@ describe("issue #11032: CJS exports inside control flow", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("module.exports object inside braceless if produces valid output", async () => {
+    using dir = tempDir("issue-11032-modexp-if", {
+      "mod.js": `
+        var condition = true;
+        if (condition) module.exports = { x: "a", y: "b" };
+      `,
+      "entry.js": `
+        import { x, y } from "./mod.js";
+        console.log(x, y);
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--target", "bun", path.join(String(dir), "entry.js")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [buildOutput, buildStderr, buildExitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
+    expect(buildExitCode).toBe(0);
+
+    expect(buildOutput).not.toContain("tagSymbol");
+    expect(buildOutput).not.toContain("__INVALID__REF__");
+
+    using runDir = tempDir("issue-11032-modexp-if-exec", {
+      "bundle.js": buildOutput,
+    });
+
+    await using run = Bun.spawn({
+      cmd: [bunExe(), path.join(String(runDir), "bundle.js")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+
+    expect(stdout.trim()).toBe("a b");
+    expect(exitCode).toBe(0);
+  });
+
+  test("module.exports object inside while loop produces valid output", async () => {
+    using dir = tempDir("issue-11032-modexp-while", {
+      "mod.js": `
+        var i = 0;
+        while (i < 1) { module.exports = { x: "loop-obj" }; i++; }
+      `,
+      "entry.js": `
+        import { x } from "./mod.js";
+        console.log(x);
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--target", "bun", path.join(String(dir), "entry.js")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [buildOutput, buildStderr, buildExitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
+    expect(buildExitCode).toBe(0);
+
+    expect(buildOutput).not.toContain("tagSymbol");
+    expect(buildOutput).not.toContain("__INVALID__REF__");
+
+    using runDir = tempDir("issue-11032-modexp-while-exec", {
+      "bundle.js": buildOutput,
+    });
+
+    await using run = Bun.spawn({
+      cmd: [bunExe(), path.join(String(runDir), "bundle.js")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+
+    expect(stdout.trim()).toBe("loop-obj");
+    expect(exitCode).toBe(0);
+  });
+
   test("top-level CJS exports still work correctly", async () => {
     using dir = tempDir("issue-11032-toplevel", {
       "mod.js": `

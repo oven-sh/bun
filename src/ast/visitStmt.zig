@@ -913,7 +913,22 @@ pub fn VisitStmt(
                                     }
                                 }
                             } else if (p.commonjs_replacement_stmts.len > 0) {
-                                if (stmts.items.len == 0) {
+                                if (p.control_flow_nesting_depth > 0) {
+                                    // Inside control flow, var declarations can be
+                                    // emitted inline (var is hoisted), but export
+                                    // clauses must be deferred to the module top level.
+                                    for (p.commonjs_replacement_stmts) |replacement_stmt| {
+                                        if (replacement_stmt.data == .s_export_clause) {
+                                            p.deferred_commonjs_export_stmts.append(
+                                                p.allocator,
+                                                replacement_stmt,
+                                            ) catch unreachable;
+                                        } else {
+                                            stmts.append(replacement_stmt) catch unreachable;
+                                        }
+                                    }
+                                    p.commonjs_replacement_stmts.len = 0;
+                                } else if (stmts.items.len == 0) {
                                     stmts.items = p.commonjs_replacement_stmts;
                                     stmts.capacity = p.commonjs_replacement_stmts.len;
                                     p.commonjs_replacement_stmts.len = 0;

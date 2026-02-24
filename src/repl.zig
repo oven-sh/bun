@@ -233,9 +233,12 @@ const History = struct {
             content.append('\n') catch return;
         }
 
-        var path_buf: bun.PathBuffer = undefined;
-        const pathZ = bun.path.z(path, &path_buf);
-        switch (bun.sys.File.writeFile(bun.FD.cwd(), pathZ, content.items)) {
+        const file = switch (bun.sys.openA(path, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o644)) {
+            .result => |fd| bun.sys.File{ .handle = fd },
+            .err => return,
+        };
+        defer file.close();
+        switch (file.writeAll(content.items)) {
             .result => {},
             .err => return,
         }
@@ -611,9 +614,15 @@ fn cmdSave(repl: *Repl, args: []const u8) ReplResult {
         content.append('\n') catch return .skip_eval;
     }
 
-    var path_buf: bun.PathBuffer = undefined;
-    const pathZ = bun.path.z(filename, &path_buf);
-    switch (bun.sys.File.writeFile(bun.FD.cwd(), pathZ, content.items)) {
+    const file = switch (bun.sys.openA(filename, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o644)) {
+        .result => |fd| bun.sys.File{ .handle = fd },
+        .err => |err| {
+            repl.printError("{f}\n", .{err});
+            return .skip_eval;
+        },
+    };
+    defer file.close();
+    switch (file.writeAll(content.items)) {
         .result => {},
         .err => |err| {
             repl.printError("{f}\n", .{err});
@@ -685,8 +694,8 @@ global: ?*jsc.JSGlobalObject = null,
 last_result: jsc.JSValue = .js_undefined,
 last_error: jsc.JSValue = .js_undefined,
 
-// Original termios for restoration (POSIX only)
-original_termios: if (Environment.isPosix) ?std.posix.termios else void = if (Environment.isPosix) null else {},
+// Windows: saved console mode for restoration
+original_windows_mode: if (Environment.isWindows) ?bun.windows.DWORD else void = if (Environment.isWindows) null else {},
 
 pub fn init(allocator: Allocator) Repl {
     return .{
@@ -711,7 +720,7 @@ pub fn deinit(self: *Repl) void {
 // Terminal I/O
 // ============================================================================
 
-fn setupTerminal(self: *Repl) !void {
+fn setupTerminal(self: *Repl) void {
     self.is_tty = Output.isStdoutTTY() and Output.isStdinTTY();
 
     if (!self.is_tty) {
@@ -733,45 +742,22 @@ fn setupTerminal(self: *Repl) !void {
 
     // Enable raw mode
     if (Environment.isPosix) {
-        const stdin_fd = std.posix.STDIN_FILENO;
-        self.original_termios = std.posix.tcgetattr(stdin_fd) catch null;
-
-        if (self.original_termios) |orig| {
-            var raw = orig;
-
-            // Input flags: disable break, CR to NL, parity check, strip, flow control
-            raw.iflag.BRKINT = false;
-            raw.iflag.ICRNL = false;
-            raw.iflag.INPCK = false;
-            raw.iflag.ISTRIP = false;
-            raw.iflag.IXON = false;
-
-            // Output flags: keep output post-processing
-            raw.oflag.OPOST = true;
-
-            // Control flags: set 8 bit chars
-            raw.cflag.CSIZE = .CS8;
-
-            // Local flags: disable echo, canonical mode, extended input, signals
-            raw.lflag.ECHO = false;
-            raw.lflag.ICANON = false;
-            raw.lflag.IEXTEN = false;
-            raw.lflag.ISIG = false;
-
-            // Control chars: return each byte, no timeout
-            raw.cc[@intFromEnum(std.posix.V.MIN)] = 1;
-            raw.cc[@intFromEnum(std.posix.V.TIME)] = 0;
-
-            std.posix.tcsetattr(stdin_fd, .FLUSH, raw) catch {};
-        }
+        _ = bun.tty.setMode(0, .raw);
+    } else if (Environment.isWindows) {
+        self.original_windows_mode = bun.windows.updateStdioModeFlags(.std_in, .{
+            .set = bun.windows.ENABLE_VIRTUAL_TERMINAL_INPUT | bun.windows.ENABLE_PROCESSED_INPUT,
+            .unset = bun.windows.ENABLE_LINE_INPUT | bun.windows.ENABLE_ECHO_INPUT,
+        }) catch null;
     }
 }
 
 fn restoreTerminal(self: *Repl) void {
     if (Environment.isPosix) {
-        if (self.original_termios) |orig| {
-            std.posix.tcsetattr(std.posix.STDIN_FILENO, .FLUSH, orig) catch {};
-            self.original_termios = null;
+        _ = bun.tty.setMode(0, .normal);
+    } else if (Environment.isWindows) {
+        if (self.original_windows_mode) |mode| {
+            _ = bun.c.SetConsoleMode(bun.FD.stdin().native(), mode);
+            self.original_windows_mode = null;
         }
     }
 }
@@ -787,61 +773,42 @@ fn sigintHandler(_: c_int) callconv(.c) void {
 
 /// Temporarily enable SIGINT delivery during blocking promise waits
 fn enableSignalsDuringWait(self: *Repl) void {
-    if (!Environment.isPosix) return;
-
-    // Store VM pointer for signal handler
     if (self.vm) |vm| {
         sigint_vm = vm.jsc_vm;
     }
 
-    // Enable ISIG so Ctrl+C generates SIGINT
-    if (self.original_termios) |orig| {
-        var raw = orig;
-        raw.lflag.ISIG = true;
-        std.posix.tcsetattr(std.posix.STDIN_FILENO, .FLUSH, raw) catch {};
-    }
+    if (Environment.isPosix) {
+        // Switch to normal terminal mode (has ISIG) so Ctrl+C generates SIGINT
+        _ = bun.tty.setMode(0, .normal);
 
-    // Install SIGINT handler
-    const act = std.posix.Sigaction{
-        .handler = .{ .handler = sigintHandler },
-        .mask = std.posix.sigemptyset(),
-        .flags = 0,
-    };
-    std.posix.sigaction(std.posix.SIG.INT, &act, null);
+        // Install SIGINT handler
+        const act = std.posix.Sigaction{
+            .handler = .{ .handler = sigintHandler },
+            .mask = std.posix.sigemptyset(),
+            .flags = 0,
+        };
+        std.posix.sigaction(std.posix.SIG.INT, &act, null);
+    }
+    // On Windows, ENABLE_PROCESSED_INPUT is already set so Ctrl+C works
 }
 
 /// Restore raw terminal mode after promise wait
 fn disableSignalsDuringWait(self: *Repl) void {
-    if (!Environment.isPosix) return;
-
+    _ = self;
     sigint_vm = null;
 
-    // Restore ISIG disabled (raw mode)
-    if (self.original_termios) |orig| {
-        var raw = orig;
-        raw.iflag.BRKINT = false;
-        raw.iflag.ICRNL = false;
-        raw.iflag.INPCK = false;
-        raw.iflag.ISTRIP = false;
-        raw.iflag.IXON = false;
-        raw.oflag.OPOST = true;
-        raw.cflag.CSIZE = .CS8;
-        raw.lflag.ECHO = false;
-        raw.lflag.ICANON = false;
-        raw.lflag.IEXTEN = false;
-        raw.lflag.ISIG = false;
-        raw.cc[@intFromEnum(std.posix.V.MIN)] = 1;
-        raw.cc[@intFromEnum(std.posix.V.TIME)] = 0;
-        std.posix.tcsetattr(std.posix.STDIN_FILENO, .FLUSH, raw) catch {};
-    }
+    if (Environment.isPosix) {
+        // Back to raw mode
+        _ = bun.tty.setMode(0, .raw);
 
-    // Restore default SIGINT handling (SIG_DFL)
-    const act = std.posix.Sigaction{
-        .handler = .{ .handler = std.posix.SIG.DFL },
-        .mask = std.posix.sigemptyset(),
-        .flags = 0,
-    };
-    std.posix.sigaction(std.posix.SIG.INT, &act, null);
+        // Restore default SIGINT handling
+        const act = std.posix.Sigaction{
+            .handler = .{ .handler = std.posix.SIG.DFL },
+            .mask = std.posix.sigemptyset(),
+            .flags = 0,
+        };
+        std.posix.sigaction(std.posix.SIG.INT, &act, null);
+    }
 }
 
 fn write(_: *Repl, data: []const u8) void {
@@ -1532,7 +1499,7 @@ pub fn runWithVM(self: *Repl, vm: ?*jsc.VirtualMachine) !void {
         self.global = v.global;
     }
 
-    try self.setupTerminal();
+    self.setupTerminal();
     defer self.restoreTerminal();
 
     try self.history.load();

@@ -104,10 +104,9 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                 }
             }
 
-            // Close any remaining sockets in the context (should be none after draining pool).
-            this.us_socket_context.close(ssl);
-            // Free the uSockets context synchronously.
-            this.us_socket_context.free(ssl);
+            // Use deferred free pattern (via nextTick) to avoid freeing the uSockets
+            // context while close callbacks may still reference it.
+            this.us_socket_context.deinit(ssl);
             bun.default_allocator.destroy(this);
         }
 

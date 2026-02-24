@@ -545,7 +545,7 @@ fn cmdCopy(repl: *Repl, args: []const u8) ReplResult {
 
     if (code.len == 0) {
         // .copy with no args - copy _ (last result) to clipboard
-        repl.copyValueToClipboard(repl.last_result);
+        repl.copyValueToClipboard(repl.last_result) catch {};
         return .skip_eval;
     }
 
@@ -662,6 +662,7 @@ is_tty: bool = false,
 use_colors: bool = false,
 terminal_width: u16 = 80,
 terminal_height: u16 = 24,
+ctrl_c_pressed: bool = false,
 
 // JavaScript VM
 vm: ?*jsc.VirtualMachine = null,
@@ -1279,7 +1280,7 @@ fn evaluateAndCopy(self: *Repl, code: []const u8) void {
         global_this.put(global, "_", actual_result);
     }
 
-    self.copyValueToClipboard(actual_result);
+    self.copyValueToClipboard(actual_result) catch {};
     vm.tick();
 }
 
@@ -1313,14 +1314,14 @@ fn valueToClipboardString(self: *Repl, value: jsc.JSValue) ?[]const u8 {
 }
 
 /// Copy a JS value to the system clipboard via OSC 52
-fn copyValueToClipboard(self: *Repl, value: jsc.JSValue) void {
+fn copyValueToClipboard(self: *Repl, value: jsc.JSValue) !void {
     const text = self.valueToClipboardString(value) orelse {
         self.printError("Failed to format value for clipboard\n", .{});
         return;
     };
     defer self.allocator.free(text);
 
-    self.copyToClipboardOSC52(text);
+    try self.copyToClipboardOSC52(text);
     if (self.use_colors) {
         self.print("{s}Copied {d} characters to clipboard{s}\n", .{ Color.dim, text.len, Color.reset });
     } else {
@@ -1329,17 +1330,32 @@ fn copyValueToClipboard(self: *Repl, value: jsc.JSValue) void {
 }
 
 /// Write text to clipboard using OSC 52 escape sequence.
-fn copyToClipboardOSC52(self: *Repl, text: []const u8) void {
-    const clean = strings.ANSISkipper.collectAlloc(text, self.allocator) orelse return;
-    defer self.allocator.free(clean);
+fn copyToClipboardOSC52(self: *Repl, text: []const u8) !void {
+    var it = strings.ANSIIterator.init(text);
+    const first = it.next() orelse return;
 
-    var encoded = bun.base64.encodeAlloc(self.allocator, clean) catch return;
-    defer encoded.deinit(self.allocator);
-
-    // OSC 52: \x1b]52;c;<base64>\x07
-    self.write("\x1b]52;c;");
-    self.write(encoded.slice());
-    self.write("\x07");
+    if (first.len == text.len) {
+        // No ANSI sequences - encode the original directly
+        var encoded = try bun.base64.encodeAlloc(self.allocator, text);
+        defer encoded.deinit(self.allocator);
+        self.write("\x1b]52;c;");
+        self.write(encoded.slice());
+        self.write("\x07");
+    } else {
+        // Has ANSI sequences - collect clean slices then encode
+        var clean = ArrayList(u8).init(self.allocator);
+        defer clean.deinit();
+        try clean.ensureTotalCapacity(text.len);
+        clean.appendSliceAssumeCapacity(first);
+        while (it.next()) |slice| {
+            clean.appendSliceAssumeCapacity(slice);
+        }
+        var encoded = try bun.base64.encodeAlloc(self.allocator, clean.items);
+        defer encoded.deinit(self.allocator);
+        self.write("\x1b]52;c;");
+        self.write(encoded.slice());
+        self.write("\x07");
+    }
 }
 
 /// Transform code using the REPL parser (hoists declarations, wraps expressions)
@@ -1517,6 +1533,9 @@ pub fn runWithVM(self: *Repl, vm: ?*jsc.VirtualMachine) !void {
             self.print("\n", .{});
             break;
         };
+
+        // Reset double-Ctrl+C state on any other key
+        if (key != .ctrl_c) self.ctrl_c_pressed = false;
 
         switch (key) {
             .enter => try self.handleEnter(),
@@ -1733,8 +1752,14 @@ fn handleCtrlC(self: *Repl) void {
     } else if (self.line_editor.buffer.items.len > 0) {
         self.print("^C\n", .{});
         self.line_editor.clear();
+    } else if (self.ctrl_c_pressed) {
+        // Second Ctrl+C on empty line - exit
+        self.print("\n", .{});
+        self.running = false;
+        return;
     } else {
-        self.print("\n{s}(To exit, press Ctrl+D or type .exit){s}\n", .{ Color.dim, Color.reset });
+        self.ctrl_c_pressed = true;
+        self.print("\n{s}(press Ctrl+C again to exit, or Ctrl+D){s}\n", .{ Color.dim, Color.reset });
     }
     self.history.resetPosition();
     self.refreshLine();

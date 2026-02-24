@@ -383,6 +383,7 @@ pub const PackageInstall = struct {
             &[_]bun.OSPathSlice{},
             &[_]bun.OSPathSlice{},
         ) catch |err| return Result.fail(err, .opening_cache_dir, @errorReturnTrace());
+        walker_.resolve_unknown_entry_types = true;
         defer walker_.deinit();
 
         const FileCopier = struct {
@@ -520,6 +521,7 @@ pub const PackageInstall = struct {
             else
                 &[_]bun.OSPathSlice{},
         ) catch |err| bun.handleOom(err);
+        state.walker.resolve_unknown_entry_types = true;
 
         if (!Environment.isWindows) {
             state.subdir = destbase.makeOpenPath(bun.span(destpath), .{
@@ -534,9 +536,12 @@ pub const PackageInstall = struct {
         }
 
         const dest_path_length = bun.windows.GetFinalPathNameByHandleW(destbase.fd, &state.buf, state.buf.len, 0);
-        if (dest_path_length == 0) {
+        if (dest_path_length == 0 or dest_path_length >= state.buf.len) {
             const e = bun.windows.Win32Error.get();
-            const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else error.Unexpected;
+            const err = if (dest_path_length == 0)
+                (if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else error.Unexpected)
+            else
+                error.NameTooLong;
             state.cached_package_dir.close();
             state.walker.deinit();
             return Result.fail(err, .opening_dest_dir, null);
@@ -558,9 +563,12 @@ pub const PackageInstall = struct {
         state.to_copy_buf = state.buf[fullpath.len..];
 
         const cache_path_length = bun.windows.GetFinalPathNameByHandleW(state.cached_package_dir.fd, &state.buf2, state.buf2.len, 0);
-        if (cache_path_length == 0) {
+        if (cache_path_length == 0 or cache_path_length >= state.buf2.len) {
             const e = bun.windows.Win32Error.get();
-            const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else error.Unexpected;
+            const err = if (cache_path_length == 0)
+                (if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else error.Unexpected)
+            else
+                error.NameTooLong;
             state.cached_package_dir.close();
             state.walker.deinit();
             return Result.fail(err, .copying_files, null);
@@ -1256,10 +1264,13 @@ pub const PackageInstall = struct {
         // When we're linking on Windows, we want to avoid keeping the source directory handle open
         if (comptime Environment.isWindows) {
             var wbuf: bun.WPathBuffer = undefined;
-            const dest_path_length = bun.windows.GetFinalPathNameByHandleW(destination_dir.fd, &wbuf, dest_buf.len, 0);
-            if (dest_path_length == 0) {
+            const dest_path_length = bun.windows.GetFinalPathNameByHandleW(destination_dir.fd, &wbuf, wbuf.len, 0);
+            if (dest_path_length == 0 or dest_path_length >= wbuf.len) {
                 const e = bun.windows.Win32Error.get();
-                const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else error.Unexpected;
+                const err = if (dest_path_length == 0)
+                    (if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else error.Unexpected)
+                else
+                    error.NameTooLong;
                 return Result.fail(err, .linking_dependency, null);
             }
 

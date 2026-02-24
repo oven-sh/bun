@@ -150,6 +150,15 @@ pub const BundleV2 = struct {
     // if false we can skip TLA validation and propagation
     has_any_top_level_await_modules: bool = false,
 
+    /// Barrel optimization: tracks which exports have been requested from each
+    /// module encountered during barrel BFS. Keys are source_indices. Values
+    /// track requested export names for deduplication and cycle detection.
+    /// Persists across calls to scheduleBarrelDeferredImports so cross-file
+    /// deduplication is free.
+    requested_exports: std.AutoArrayHashMapUnmanaged(u32, barrel_imports.RequestedExports) = .{},
+
+    const barrel_imports = @import("./barrel_imports.zig");
+
     const BakeOptions = struct {
         framework: bake.Framework,
         client_transpiler: *Transpiler,
@@ -2012,6 +2021,9 @@ pub const BundleV2 = struct {
             transpiler.options.metafile = config.metafile;
             transpiler.options.metafile_json_path = config.metafile_json_path.slice();
             transpiler.options.metafile_markdown_path = config.metafile_markdown_path.slice();
+            if (config.optimize_imports.count() > 0) {
+                transpiler.options.optimize_imports = &config.optimize_imports;
+            }
 
             if (transpiler.options.compile) {
                 // Emitting DCE annotations is nonsensical in --compile.
@@ -2433,7 +2445,7 @@ pub const BundleV2 = struct {
                 }
                 this.graph.input_files.items(.loader)[load.source_index.get()] = code.loader;
                 this.graph.input_files.items(.source)[load.source_index.get()].contents = code.source_code;
-                this.graph.input_files.items(.is_plugin_file)[load.source_index.get()] = true;
+                this.graph.input_files.items(.flags)[load.source_index.get()].is_plugin_file = true;
                 var parse_task = load.parse_task;
                 parse_task.loader = code.loader;
                 if (!should_copy_for_bundling) this.free_list.append(code.source_code) catch unreachable;
@@ -3292,6 +3304,18 @@ pub const BundleV2 = struct {
         this.graph.ast.appendAssumeCapacity(JSAst.empty);
     }
 
+    /// See barrel_imports.zig for barrel optimization implementation.
+    const applyBarrelOptimization = barrel_imports.applyBarrelOptimization;
+    const scheduleBarrelDeferredImports = barrel_imports.scheduleBarrelDeferredImports;
+
+    /// Returns true when barrel optimization is enabled. Barrel optimization
+    /// can apply to any package with sideEffects: false or listed in
+    /// optimize_imports, so it is always enabled during bundling.
+    fn isBarrelOptimizationEnabled(this: *const BundleV2) bool {
+        _ = this;
+        return true;
+    }
+
     // TODO: remove ResolveQueue
     //
     // Moving this to the Bundle thread was a significant perf improvement on Linux for first builds
@@ -3299,18 +3323,68 @@ pub const BundleV2 = struct {
     // The problem is that module resolution has many mutexes.
     // The downside is cached resolutions are faster to do in threads since they only lock very briefly.
     fn runResolutionForParseTask(parse_result: *ParseTask.Result, this: *BundleV2) ResolveQueue {
-        var ast = &parse_result.value.success.ast;
-        const source = &parse_result.value.success.source;
-        const loader = parse_result.value.success.loader;
+        const result = &parse_result.value.success;
+        // Capture these before resolveImportRecords, since on error we overwrite
+        // parse_result.value (invalidating the `result` pointer).
+        const source_index = result.source.index;
+        const target = result.ast.target;
+        var resolve_result = this.resolveImportRecords(.{
+            .import_records = &result.ast.import_records,
+            .source = &result.source,
+            .loader = result.loader,
+            .target = target,
+        });
+
+        if (resolve_result.last_error) |err| {
+            debug("failed with error: {s}", .{@errorName(err)});
+            resolve_result.resolve_queue.clearAndFree();
+            parse_result.value = .{
+                .err = .{
+                    .err = err,
+                    .step = .resolve,
+                    .log = Logger.Log.init(bun.default_allocator),
+                    .source_index = source_index,
+                    .target = target,
+                },
+            };
+        }
+
+        return resolve_result.resolve_queue;
+    }
+
+    pub const ResolveImportRecordCtx = struct {
+        import_records: *ImportRecord.List,
+        source: *const Logger.Source,
+        loader: Loader,
+        target: options.Target,
+    };
+
+    pub const ResolveImportRecordResult = struct {
+        resolve_queue: ResolveQueue,
+        last_error: ?anyerror,
+    };
+
+    /// Resolve all unresolved import records for a module. Skips records that
+    /// are already resolved (valid source_index), unused, or internal.
+    /// Returns a resolve queue of new modules to schedule, plus any fatal error.
+    /// Used by both initial parse resolution and barrel un-deferral.
+    pub fn resolveImportRecords(this: *BundleV2, ctx: ResolveImportRecordCtx) ResolveImportRecordResult {
+        const source = ctx.source;
+        const loader = ctx.loader;
         const source_dir = source.path.sourceDir();
         var estimated_resolve_queue_count: usize = 0;
-        for (ast.import_records.slice()) |*import_record| {
+        for (ctx.import_records.slice()) |*import_record| {
             if (import_record.flags.is_internal) {
                 import_record.tag = .runtime;
                 import_record.source_index = Index.runtime;
             }
 
-            if (import_record.flags.is_unused) {
+            // For non-dev-server builds, barrel-deferred records need their
+            // source_index cleared so they don't get linked. For dev server,
+            // skip this — is_unused is also set by ConvertESMExportsForHmr
+            // deduplication, and clearing those source_indices breaks module
+            // identity (e.g., __esModule on ESM namespace objects).
+            if (import_record.flags.is_unused and this.transpiler.options.dev_server == null) {
                 import_record.source_index = Index.invalid;
             }
 
@@ -3321,7 +3395,7 @@ pub const BundleV2 = struct {
 
         var last_error: ?anyerror = null;
 
-        outer: for (ast.import_records.slice(), 0..) |*import_record, i| {
+        outer: for (ctx.import_records.slice(), 0..) |*import_record, i| {
             // Preserve original import specifier before resolution modifies path
             if (import_record.original_path.len == 0) {
                 import_record.original_path = import_record.path.text;
@@ -3341,7 +3415,7 @@ pub const BundleV2 = struct {
             }
 
             if (this.framework) |fw| if (fw.server_components != null) {
-                switch (ast.target.isServerSide()) {
+                switch (ctx.target.isServerSide()) {
                     inline else => |is_server| {
                         const src = if (is_server) bake.server_virtual_source else bake.client_virtual_source;
                         if (strings.eqlComptime(import_record.path.text, src.path.pretty)) {
@@ -3371,7 +3445,7 @@ pub const BundleV2 = struct {
                 continue;
             }
 
-            if (ast.target.isBun()) {
+            if (ctx.target.isBun()) {
                 if (jsc.ModuleLoader.HardcodedModule.Alias.get(import_record.path.text, .bun, .{ .rewrite_jest_for_tests = this.transpiler.options.rewrite_jest_for_tests })) |replacement| {
                     // When bundling node builtins, remove the "node:" prefix.
                     // This supports special use cases where the bundle is put
@@ -3408,7 +3482,7 @@ pub const BundleV2 = struct {
                 import_record.flags.is_external_without_side_effects = true;
             }
 
-            if (this.enqueueOnResolvePluginIfNeeded(source.index.get(), import_record, source.path.text, @as(u32, @truncate(i)), ast.target)) {
+            if (this.enqueueOnResolvePluginIfNeeded(source.index.get(), import_record, source.path.text, @as(u32, @truncate(i)), ctx.target)) {
                 continue;
             }
 
@@ -3444,9 +3518,9 @@ pub const BundleV2 = struct {
                         .bake_server_components_ssr,
                     };
                 } else .{
-                    this.transpilerForTarget(ast.target),
-                    ast.target.bakeGraph(),
-                    ast.target,
+                    this.transpilerForTarget(ctx.target),
+                    ctx.target.bakeGraph(),
+                    ctx.target,
                 };
 
             // Check the FileMap first for in-memory files
@@ -3519,7 +3593,7 @@ pub const BundleV2 = struct {
                             dev.directory_watchers.trackResolutionFailure(
                                 source.path.text,
                                 import_record.path.text,
-                                ast.target.bakeGraph(), // use the source file target not the altered one
+                                ctx.target.bakeGraph(), // use the source file target not the altered one
                                 loader,
                             ) catch |e| bun.handleOom(e);
                         }
@@ -3539,7 +3613,7 @@ pub const BundleV2 = struct {
                         if (!import_record.flags.handles_import_errors and !this.transpiler.options.ignore_module_resolution_errors) {
                             last_error = err;
                             if (isPackagePath(import_record.path.text)) {
-                                if (ast.target == .browser and options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
+                                if (ctx.target == .browser and options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
                                     addError(
                                         log,
                                         source,
@@ -3556,7 +3630,7 @@ pub const BundleV2 = struct {
                                         },
                                         import_record.kind,
                                     ) catch |e| bun.handleOom(e);
-                                } else if (!ast.target.isBun() and strings.eqlComptime(import_record.path.text, "bun")) {
+                                } else if (!ctx.target.isBun() and strings.eqlComptime(import_record.path.text, "bun")) {
                                     addError(
                                         log,
                                         source,
@@ -3573,7 +3647,7 @@ pub const BundleV2 = struct {
                                         },
                                         import_record.kind,
                                     ) catch |e| bun.handleOom(e);
-                                } else if (!ast.target.isBun() and strings.hasPrefixComptime(import_record.path.text, "bun:")) {
+                                } else if (!ctx.target.isBun() and strings.hasPrefixComptime(import_record.path.text, "bun:")) {
                                     addError(
                                         log,
                                         source,
@@ -3771,21 +3845,126 @@ pub const BundleV2 = struct {
             }
         }
 
-        if (last_error) |err| {
-            debug("failed with error: {s}", .{@errorName(err)});
-            resolve_queue.clearAndFree();
-            parse_result.value = .{
-                .err = .{
-                    .err = err,
-                    .step = .resolve,
-                    .log = Logger.Log.init(bun.default_allocator),
-                    .source_index = source.index,
-                    .target = ast.target,
-                },
-            };
+        return .{ .resolve_queue = resolve_queue, .last_error = last_error };
+    }
+
+    /// Process a resolve queue: create input file slots and schedule parse tasks.
+    /// Returns the number of newly scheduled tasks (for pending_items accounting).
+    pub fn processResolveQueue(this: *BundleV2, resolve_queue: ResolveQueue, target: options.Target, importer_source_index: Index.Int) i32 {
+        var diff: i32 = 0;
+        const graph = &this.graph;
+        var iter = resolve_queue.iterator();
+        const path_to_source_index_map = this.pathToSourceIndexMap(target);
+        while (iter.next()) |entry| {
+            const value: *ParseTask = entry.value_ptr.*;
+            const loader = value.loader orelse value.path.loader(&this.transpiler.options.loaders) orelse options.Loader.file;
+            const is_html_entrypoint = loader == .html and target.isServerSide() and this.transpiler.options.dev_server == null;
+            const map: *PathToSourceIndexMap = if (is_html_entrypoint) this.pathToSourceIndexMap(.browser) else path_to_source_index_map;
+            const existing = map.getOrPut(this.allocator(), entry.key_ptr.*) catch unreachable;
+
+            if (!existing.found_existing) {
+                var new_task: *ParseTask = value;
+                var new_input_file = Graph.InputFile{
+                    .source = Logger.Source.initEmptyFile(new_task.path.text),
+                    .side_effects = value.side_effects,
+                    .secondary_path = if (value.secondary_path_for_commonjs_interop) |*secondary_path| secondary_path.text else "",
+                };
+
+                graph.has_any_secondary_paths = graph.has_any_secondary_paths or new_input_file.secondary_path.len > 0;
+
+                new_input_file.source.index = Index.source(graph.input_files.len);
+                new_input_file.source.path = new_task.path;
+                new_input_file.loader = loader;
+                new_task.source_index = new_input_file.source.index;
+                new_task.ctx = this;
+                existing.value_ptr.* = new_task.source_index.get();
+
+                diff += 1;
+
+                graph.input_files.append(this.allocator(), new_input_file) catch unreachable;
+                graph.ast.append(this.allocator(), JSAst.empty) catch unreachable;
+
+                if (is_html_entrypoint) {
+                    this.ensureClientTranspiler();
+                    this.graph.entry_points.append(this.allocator(), new_input_file.source.index) catch unreachable;
+                }
+
+                if (this.enqueueOnLoadPluginIfNeeded(new_task)) {
+                    continue;
+                }
+
+                if (loader.shouldCopyForBundling()) {
+                    var additional_files: *BabyList(AdditionalFile) = &graph.input_files.items(.additional_files)[importer_source_index];
+                    bun.handleOom(additional_files.append(this.allocator(), .{ .source_index = new_task.source_index.get() }));
+                    graph.input_files.items(.side_effects)[new_task.source_index.get()] = _resolver.SideEffects.no_side_effects__pure_data;
+                    graph.estimated_file_loader_count += 1;
+                }
+
+                graph.pool.schedule(new_task);
+            } else {
+                if (loader.shouldCopyForBundling()) {
+                    var additional_files: *BabyList(AdditionalFile) = &graph.input_files.items(.additional_files)[importer_source_index];
+                    bun.handleOom(additional_files.append(this.allocator(), .{ .source_index = existing.value_ptr.* }));
+                    graph.estimated_file_loader_count += 1;
+                }
+
+                bun.default_allocator.destroy(value);
+            }
+        }
+        return diff;
+    }
+
+    pub const PatchImportRecordsCtx = struct {
+        source_index: Index,
+        source_path: []const u8,
+        loader: Loader,
+        target: options.Target,
+        redirect_import_record_index: u32 = std.math.maxInt(u32),
+        /// When true, always save source indices regardless of dev_server/loader.
+        /// Used for barrel un-deferral where records must always be connected.
+        force_save: bool = false,
+    };
+
+    /// Patch source_index on import records from pathToSourceIndexMap and
+    /// resolve_tasks_waiting_for_import_source_index. Called after
+    /// processResolveQueue has registered new modules.
+    pub fn patchImportRecordSourceIndices(this: *BundleV2, import_records: *ImportRecord.List, ctx: PatchImportRecordsCtx) void {
+        const graph = &this.graph;
+        const input_file_loaders = graph.input_files.items(.loader);
+        const save_import_record_source_index = ctx.force_save or
+            this.transpiler.options.dev_server == null or
+            ctx.loader == .html or
+            ctx.loader.isCSS();
+
+        if (this.resolve_tasks_waiting_for_import_source_index.fetchSwapRemove(ctx.source_index.get())) |pending_entry| {
+            var value = pending_entry.value;
+            for (value.slice()) |to_assign| {
+                if (save_import_record_source_index or
+                    input_file_loaders[to_assign.to_source_index.get()].isCSS())
+                {
+                    import_records.slice()[to_assign.import_record_index].source_index = to_assign.to_source_index;
+                }
+            }
+            value.deinit(this.allocator());
         }
 
-        return resolve_queue;
+        const path_to_source_index_map = this.pathToSourceIndexMap(ctx.target);
+        for (import_records.slice(), 0..) |*record, i| {
+            if (path_to_source_index_map.getPath(&record.path)) |source_index| {
+                if (save_import_record_source_index or input_file_loaders[source_index].isCSS())
+                    record.source_index.value = source_index;
+
+                if (getRedirectId(ctx.redirect_import_record_index)) |compare| {
+                    if (compare == @as(u32, @truncate(i))) {
+                        path_to_source_index_map.put(
+                            this.allocator(),
+                            ctx.source_path,
+                            source_index,
+                        ) catch unreachable;
+                    }
+                }
+            }
+        }
     }
 
     fn generateServerHTMLModule(this: *BundleV2, path: *const Fs.Path, target: options.Target, import_record: *ImportRecord, path_text: []const u8) !void {
@@ -3884,6 +4063,8 @@ pub const BundleV2 = struct {
         var process_log = true;
 
         if (parse_result.value == .success) {
+            this.applyBarrelOptimization(parse_result);
+
             resolve_queue = runResolutionForParseTask(parse_result, this);
             if (parse_result.value == .err) {
                 process_log = false;
@@ -3960,124 +4141,39 @@ pub const BundleV2 = struct {
                     result.ast.named_exports.count(),
                 });
 
-                var iter = resolve_queue.iterator();
-
-                const path_to_source_index_map = this.pathToSourceIndexMap(result.ast.target);
-                const original_target = result.ast.target;
-                while (iter.next()) |entry| {
-                    const value: *ParseTask = entry.value_ptr.*;
-                    const loader = value.loader orelse value.path.loader(&this.transpiler.options.loaders) orelse options.Loader.file;
-                    const is_html_entrypoint = loader == .html and original_target.isServerSide() and this.transpiler.options.dev_server == null;
-                    const map: *PathToSourceIndexMap = if (is_html_entrypoint) this.pathToSourceIndexMap(.browser) else path_to_source_index_map;
-                    const existing = map.getOrPut(this.allocator(), entry.key_ptr.*) catch unreachable;
-
-                    // Originally, we attempted to avoid the "dual package
-                    // hazard" right here by checking if pathToSourceIndexMap
-                    // already contained the secondary_path for the ParseTask.
-                    // That leads to a race condition where whichever parse task
-                    // completes first ends up being used in the bundle. So we
-                    // added `scanForSecondaryPaths` before `findReachableFiles`
-                    // to prevent that.
-                    //
-                    // It would be nice, in theory, to find a way to bring that
-                    // back because it means we can skip parsing the files we
-                    // don't end up using.
-                    //
-
-                    if (!existing.found_existing) {
-                        var new_task: *ParseTask = value;
-                        var new_input_file = Graph.InputFile{
-                            .source = Logger.Source.initEmptyFile(new_task.path.text),
-                            .side_effects = value.side_effects,
-                            .secondary_path = if (value.secondary_path_for_commonjs_interop) |*secondary_path| secondary_path.text else "",
-                        };
-
-                        graph.has_any_secondary_paths = graph.has_any_secondary_paths or new_input_file.secondary_path.len > 0;
-
-                        new_input_file.source.index = Index.source(graph.input_files.len);
-                        new_input_file.source.path = new_task.path;
-
-                        // We need to ensure the loader is set or else importstar_ts/ReExportTypeOnlyFileES6 will fail.
-                        new_input_file.loader = loader;
-                        new_task.source_index = new_input_file.source.index;
-                        new_task.ctx = this;
-                        existing.value_ptr.* = new_task.source_index.get();
-
-                        diff += 1;
-
-                        graph.input_files.append(this.allocator(), new_input_file) catch unreachable;
-                        graph.ast.append(this.allocator(), JSAst.empty) catch unreachable;
-
-                        if (is_html_entrypoint) {
-                            this.ensureClientTranspiler();
-                            this.graph.entry_points.append(this.allocator(), new_input_file.source.index) catch unreachable;
-                        }
-
-                        if (this.enqueueOnLoadPluginIfNeeded(new_task)) {
-                            continue;
-                        }
-
-                        if (loader.shouldCopyForBundling()) {
-                            var additional_files: *BabyList(AdditionalFile) = &graph.input_files.items(.additional_files)[result.source.index.get()];
-                            bun.handleOom(additional_files.append(this.allocator(), .{ .source_index = new_task.source_index.get() }));
-                            new_input_file.side_effects = _resolver.SideEffects.no_side_effects__pure_data;
-                            graph.estimated_file_loader_count += 1;
-                        }
-
-                        graph.pool.schedule(new_task);
-                    } else {
-                        if (loader.shouldCopyForBundling()) {
-                            var additional_files: *BabyList(AdditionalFile) = &graph.input_files.items(.additional_files)[result.source.index.get()];
-                            bun.handleOom(additional_files.append(this.allocator(), .{ .source_index = existing.value_ptr.* }));
-                            graph.estimated_file_loader_count += 1;
-                        }
-
-                        bun.default_allocator.destroy(value);
-                    }
-                }
-
-                var import_records = result.ast.import_records.clone(this.allocator()) catch unreachable;
-
-                const input_file_loaders = graph.input_files.items(.loader);
-                const save_import_record_source_index = this.transpiler.options.dev_server == null or
-                    result.loader == .html or
-                    result.loader.isCSS();
-
-                if (this.resolve_tasks_waiting_for_import_source_index.fetchSwapRemove(result.source.index.get())) |pending_entry| {
-                    var value = pending_entry.value;
-                    for (value.slice()) |to_assign| {
-                        if (save_import_record_source_index or
-                            input_file_loaders[to_assign.to_source_index.get()].isCSS())
-                        {
-                            import_records.slice()[to_assign.import_record_index].source_index = to_assign.to_source_index;
-                        }
-                    }
-                    value.deinit(this.allocator());
-                }
-
                 if (result.ast.css != null) {
                     graph.css_file_count += 1;
                 }
 
-                for (import_records.slice(), 0..) |*record, i| {
-                    if (path_to_source_index_map.getPath(&record.path)) |source_index| {
-                        if (save_import_record_source_index or input_file_loaders[source_index] == .css)
-                            record.source_index.value = source_index;
+                diff += this.processResolveQueue(resolve_queue, result.ast.target, result.source.index.get());
 
-                        if (getRedirectId(result.ast.redirect_import_record_index)) |compare| {
-                            if (compare == @as(u32, @truncate(i))) {
-                                path_to_source_index_map.put(
-                                    this.allocator(),
-                                    result.source.path.text,
-                                    source_index,
-                                ) catch unreachable;
-                            }
+                var import_records = result.ast.import_records.clone(this.allocator()) catch unreachable;
+                this.patchImportRecordSourceIndices(&import_records, .{
+                    .source_index = result.source.index,
+                    .source_path = result.source.path.text,
+                    .loader = result.loader,
+                    .target = result.ast.target,
+                    .redirect_import_record_index = result.ast.redirect_import_record_index,
+                });
+                result.ast.import_records = import_records;
+
+                // Set is_export_star_target for barrel optimization
+                for (result.ast.export_star_import_records) |star_record_idx| {
+                    if (star_record_idx < import_records.len) {
+                        const star_ir = import_records.slice()[star_record_idx];
+                        if (star_ir.source_index.isValid()) {
+                            graph.input_files.items(.flags)[star_ir.source_index.get()].is_export_star_target = true;
                         }
                     }
                 }
-                result.ast.import_records = import_records;
 
                 graph.ast.set(result.source.index.get(), result.ast);
+
+                // Barrel optimization: eagerly record import requests and
+                // un-defer barrel records that are now needed.
+                if (this.isBarrelOptimizationEnabled()) {
+                    diff += bun.handleOom(this.scheduleBarrelDeferredImports(result));
+                }
 
                 // For files with use directives, index and prepare the other side.
                 if (result.use_directive != .none and if (this.framework.?.server_components.?.separate_ssr_graph)

@@ -2645,6 +2645,25 @@ declare module "bun" {
     features?: string[];
 
     /**
+     * List of package names whose barrel files (re-export index files) should
+     * be optimized. When a named import comes from one of these packages,
+     * only the submodules actually used are parsed — unused re-exports are
+     * skipped entirely.
+     *
+     * This is also enabled automatically for any package with
+     * `"sideEffects": false` in its `package.json`.
+     *
+     * @example
+     * ```ts
+     * await Bun.build({
+     *   entrypoints: ['./app.ts'],
+     *   optimizeImports: ['antd', '@mui/material', 'lodash-es'],
+     * });
+     * ```
+     */
+    optimizeImports?: string[];
+
+    /**
      * - When set to `true`, the returned promise rejects with an AggregateError when a build failure happens.
      * - When set to `false`, returns a {@link BuildOutput} with `{success: false}`
      *
@@ -4566,6 +4585,20 @@ declare module "bun" {
    * ```
    */
   function generateHeapSnapshot(format: "v8"): string;
+
+  /**
+   * Show precise statistics about memory usage of your application
+   *
+   * Generate a V8 Heap Snapshot as an ArrayBuffer.
+   *
+   * This avoids the overhead of creating a JavaScript string for large heap snapshots.
+   * The ArrayBuffer contains the UTF-8 encoded JSON.
+   * ```ts
+   * const snapshot = Bun.generateHeapSnapshot("v8", "arraybuffer");
+   * await Bun.write("heap.heapsnapshot", snapshot);
+   * ```
+   */
+  function generateHeapSnapshot(format: "v8", encoding: "arraybuffer"): ArrayBuffer;
 
   /**
    * The next time JavaScriptCore is idle, clear unused memory and attempt to reduce the heap size.

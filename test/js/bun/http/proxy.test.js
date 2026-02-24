@@ -256,7 +256,7 @@ describe.concurrent(() => {
     // We just need to verify parsing NO_PROXY doesn't crash.
     // The fetch target doesn't matter - NO_PROXY parsing happens before the connection.
     const { exited, stderr: stream } = Bun.spawn({
-      cmd: [bunExe(), "-e", `fetch("http://localhost:1").catch(() => {})`],
+      cmd: [bunExe(), "-e", `await fetch("http://localhost:1").catch(() => {})`],
       env: {
         ...bunEnv,
         http_proxy: "http://127.0.0.1:1",

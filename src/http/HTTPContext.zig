@@ -195,7 +195,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                     // Hold a ref on ssl_config while it's in the keepalive pool
                     pending.ssl_config = ssl_config;
                     if (ssl_config) |config| {
-                        config.addRef();
+                        config.ref();
                     }
 
                     log("Keep-Alive release {s}:{d}", .{

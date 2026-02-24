@@ -271,7 +271,7 @@ pub fn connect(this: *@This(), client: *HTTPClient, comptime is_ssl: bool) !NewH
             };
 
             // Hold a ref on the config for the cache entry
-            requested_config.addRef();
+            requested_config.ref();
             const now = this.timer.read();
             bun.handleOom(custom_ssl_context_map.put(requested_config, .{
                 .ctx = custom_context,

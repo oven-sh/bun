@@ -28,7 +28,7 @@ ref_count: RC = .init(),
 cached_hash: u64 = 0,
 
 const RC = bun.ptr.ThreadSafeRefCount(@This(), "ref_count", destroy, .{});
-pub const addRef = RC.ref;
+pub const ref = RC.ref;
 pub const deref = RC.deref;
 
 const ReadFromBlobError = bun.JSError || error{
@@ -305,7 +305,7 @@ pub const GlobalRegistry = struct {
             new_config.ref_count.clearWithoutDestructor();
             new_config.deinit();
             bun.default_allocator.destroy(new_config);
-            existing.addRef();
+            existing.ref();
             return existing;
         }
 
@@ -391,9 +391,9 @@ pub fn fromGenerated(
 
     const protocols = switch (generated.alpn_protocols) {
         .none => null,
-        .string => |*ref| ref.get().toOwnedSliceZ(bun.default_allocator),
-        .buffer => |*ref| blk: {
-            const buffer: jsc.ArrayBuffer = ref.get().asArrayBuffer();
+        .string => |*val| val.get().toOwnedSliceZ(bun.default_allocator),
+        .buffer => |*val| blk: {
+            const buffer: jsc.ArrayBuffer = val.get().asArrayBuffer();
             break :blk try bun.default_allocator.dupeZ(u8, buffer.byteSlice());
         },
     };
@@ -463,9 +463,9 @@ fn handleFile(
 ) ReadFromBlobError!?[][*:0]const u8 {
     const single = try handleSingleFile(global, switch (file.*) {
         .none => return null,
-        .string => |*ref| .{ .string = ref.get() },
-        .buffer => |*ref| .{ .buffer = ref.get() },
-        .file => |*ref| .{ .file = ref.get() },
+        .string => |*val| .{ .string = val.get() },
+        .buffer => |*val| .{ .buffer = val.get() },
+        .file => |*val| .{ .file = val.get() },
         .array => |*list| return try handleFileArray(global, list.items()),
     });
     errdefer bun.freeSensitive(bun.default_allocator, single);
@@ -488,9 +488,9 @@ fn handleFileArray(
     }
     for (elements) |*elem| {
         result.appendAssumeCapacity(try handleSingleFile(global, switch (elem.*) {
-            .string => |*ref| .{ .string = ref.get() },
-            .buffer => |*ref| .{ .buffer = ref.get() },
-            .file => |*ref| .{ .file = ref.get() },
+            .string => |*val| .{ .string = val.get() },
+            .buffer => |*val| .{ .buffer = val.get() },
+            .file => |*val| .{ .file = val.get() },
         }));
     }
     return try result.toOwnedSlice();

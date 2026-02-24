@@ -78,14 +78,7 @@ pub const FetchTasklet = struct {
         bun.debugAssert(count > 0);
 
         if (count == 1) {
-            if (this.javascript_vm.isShuttingDown()) {
-                this.deinit() catch |err| switch (err) {};
-                return;
-            }
-            // this is really unlikely to happen, but can happen
-            // lets make sure that we always call deinit from main thread
-
-            this.javascript_vm.eventLoop().enqueueTaskConcurrent(jsc.ConcurrentTask.fromCallback(this, FetchTasklet.deinit));
+            this.deinit() catch |err| switch (err) {};
         }
     }
 
@@ -1388,7 +1381,7 @@ pub const FetchTasklet = struct {
                 return;
             }
         }
-
+        // will deinit when done with the http client (when is_done = true)
         if (task.javascript_vm.isShuttingDown()) return;
         task.javascript_vm.eventLoop().enqueueTaskConcurrent(task.concurrent_task.from(task, .manual_deinit));
     }

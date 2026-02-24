@@ -41,8 +41,8 @@ const kProxySocket = Symbol("proxySocket");
 const kSessions = Symbol("sessions");
 const kQuotedString = /^[\x09\x20-\x5b\x5d-\x7e\x80-\xff]*$/;
 const MAX_ADDITIONAL_SETTINGS = 10;
-const Stream = require("node:stream");
-const { Readable } = Stream;
+const { Stream } = require("internal/streams/legacy");
+const Readable = require("internal/streams/readable");
 type Http2ConnectOptions = {
   settings?: Settings;
   protocol?: "https:" | "http:";
@@ -51,7 +51,7 @@ type Http2ConnectOptions = {
 const TLSSocket = tls.TLSSocket;
 const Socket = net.Socket;
 const EventEmitter = require("node:events");
-const { Duplex } = Stream;
+const Duplex = require("internal/streams/duplex");
 const { SafeArrayIterator, SafeSet } = require("internal/primordials");
 const { promisify } = require("internal/promisify");
 

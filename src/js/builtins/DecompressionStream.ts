@@ -1,6 +1,7 @@
 export function initializeDecompressionStream(this, format) {
   const zlib = require("node:zlib");
-  const stream = require("node:stream");
+  const Readable = require("internal/streams/readable");
+  const Writable = require("internal/streams/writable");
 
   const builders = {
     "deflate": zlib.createInflate,
@@ -14,8 +15,8 @@ export function initializeDecompressionStream(this, format) {
     throw $ERR_INVALID_ARG_VALUE("format", format, "must be one of: " + Object.keys(builders).join(", "));
 
   const handle = builders[format]();
-  $putByIdDirectPrivate(this, "readable", stream.Readable.toWeb(handle));
-  $putByIdDirectPrivate(this, "writable", stream.Writable.toWeb(handle));
+  $putByIdDirectPrivate(this, "readable", Readable.toWeb(handle));
+  $putByIdDirectPrivate(this, "writable", Writable.toWeb(handle));
 
   return this;
 }

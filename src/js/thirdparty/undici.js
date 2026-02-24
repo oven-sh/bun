@@ -1,6 +1,5 @@
 const EventEmitter = require("node:events");
-const StreamModule = require("node:stream");
-const { Readable } = StreamModule;
+const Readable = require("internal/streams/readable");
 const { _ReadableFromWeb: ReadableFromWeb } = require("internal/webstreams_adapters");
 
 const ObjectCreate = Object.create;

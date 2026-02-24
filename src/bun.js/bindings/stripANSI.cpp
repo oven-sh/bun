@@ -75,7 +75,10 @@ extern "C" bool Bun__ANSI__next(BunANSIIterator* it)
         const auto escPos = ANSI::findEscapeCharacter(start, end);
         if (escPos != start) break;
         const auto after = ANSI::consumeANSI(start, end);
-        if (after == start) { start++; break; }
+        if (after == start) {
+            start++;
+            break;
+        }
         start = after;
     }
 

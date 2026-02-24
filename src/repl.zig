@@ -488,6 +488,7 @@ const ReplCommand = struct {
         .{ .name = ".help", .help = "Print this help message", .handler = cmdHelp },
         .{ .name = ".exit", .help = "Exit the REPL", .handler = cmdExit },
         .{ .name = ".clear", .help = "Clear the REPL context and screen", .handler = cmdClear },
+        .{ .name = ".copy", .help = "Copy result to clipboard (.copy [expr])", .handler = cmdCopy },
         .{ .name = ".load", .help = "Load a file into the REPL session", .handler = cmdLoad },
         .{ .name = ".save", .help = "Save REPL history to a file", .handler = cmdSave },
         .{ .name = ".editor", .help = "Enter multi-line editor mode", .handler = cmdEditor },
@@ -536,6 +537,20 @@ fn cmdHelp(repl: *Repl, _: []const u8) ReplResult {
     repl.print("  {s}_{s}            Last expression result\n", .{ Color.cyan, Color.reset });
     repl.print("  {s}_error{s}       Last error\n", .{ Color.cyan, Color.reset });
     repl.print("\n", .{});
+    return .skip_eval;
+}
+
+fn cmdCopy(repl: *Repl, args: []const u8) ReplResult {
+    const code = std.mem.trim(u8, args, " \t");
+
+    if (code.len == 0) {
+        // .copy with no args - copy _ (last result) to clipboard
+        repl.copyValueToClipboard(repl.last_result);
+        return .skip_eval;
+    }
+
+    // .copy <code> - evaluate and copy result to clipboard instead of printing
+    repl.evaluateAndCopy(code);
     return .skip_eval;
 }
 
@@ -1200,6 +1215,133 @@ fn evaluateRaw(self: *Repl, code: []const u8) void {
     }
 }
 
+/// Evaluate code and copy the result to clipboard instead of printing it
+fn evaluateAndCopy(self: *Repl, code: []const u8) void {
+    const global = self.global orelse return;
+    const vm = self.vm orelse return;
+
+    const transformed_code = self.transformForRepl(code) orelse {
+        self.evaluateRaw(code);
+        return;
+    };
+    defer self.allocator.free(transformed_code);
+
+    var exception: jsc.JSValue = .js_undefined;
+    const result = Bun__REPL__evaluate(
+        global,
+        transformed_code.ptr,
+        transformed_code.len,
+        "[repl]".ptr,
+        "[repl]".len,
+        &exception,
+    );
+
+    if (!exception.isUndefined() and !exception.isNull()) {
+        self.last_error = exception;
+        self.printJSError(exception);
+        return;
+    }
+
+    var resolved_result = result;
+    if (result.asPromise()) |promise| {
+        promise.setHandled();
+        self.enableSignalsDuringWait();
+        defer self.disableSignalsDuringWait();
+        vm.waitForPromise(.{ .normal = promise });
+        if (vm.jsc_vm.executionForbidden()) {
+            vm.jsc_vm.setExecutionForbidden(false);
+            global.clearTerminationException();
+            self.print("\n", .{});
+            return;
+        }
+        switch (promise.status()) {
+            .fulfilled => resolved_result = promise.result(vm.jsc_vm),
+            .rejected => {
+                const rejection = promise.result(vm.jsc_vm);
+                self.last_error = rejection;
+                self.printJSError(rejection);
+                return;
+            },
+            .pending => return,
+        }
+    }
+
+    var actual_result = resolved_result;
+    if (resolved_result.isObject()) {
+        if (resolved_result.getOwn(global, "value") catch null) |value| {
+            actual_result = value;
+        }
+    }
+
+    self.last_result = actual_result;
+    if (!actual_result.isUndefined()) {
+        const global_this = global.toJSValue();
+        global_this.put(global, "_", actual_result);
+    }
+
+    self.copyValueToClipboard(actual_result);
+    vm.tick();
+}
+
+/// Format a JS value as a string suitable for clipboard
+fn valueToClipboardString(self: *Repl, value: jsc.JSValue) ?[]const u8 {
+    const global = self.global orelse return null;
+
+    if (value.isUndefined()) return self.allocator.dupe(u8, "undefined") catch null;
+    if (value.isNull()) return self.allocator.dupe(u8, "null") catch null;
+
+    // For strings, copy the raw string value (not quoted/JSON-ified)
+    if (value.isString()) {
+        const slice = value.toSlice(global, self.allocator) catch return null;
+        defer slice.deinit();
+        return self.allocator.dupe(u8, slice.slice()) catch null;
+    }
+
+    // For everything else, use Bun.inspect without colors
+    var array = std.Io.Writer.Allocating.init(self.allocator);
+    defer array.deinit();
+    jsc.ConsoleObject.format2(.Log, global, @ptrCast(&value), 1, &array.writer, .{
+        .enable_colors = false,
+        .add_newline = false,
+        .flush = false,
+        .quote_strings = true,
+        .ordered_properties = false,
+        .max_depth = 4,
+    }) catch return null;
+    array.writer.flush() catch return null;
+    return self.allocator.dupe(u8, array.written()) catch null;
+}
+
+/// Copy a JS value to the system clipboard via OSC 52
+fn copyValueToClipboard(self: *Repl, value: jsc.JSValue) void {
+    const text = self.valueToClipboardString(value) orelse {
+        self.printError("Failed to format value for clipboard\n", .{});
+        return;
+    };
+    defer self.allocator.free(text);
+
+    self.copyToClipboardOSC52(text);
+    if (self.use_colors) {
+        self.print("{s}Copied {d} characters to clipboard{s}\n", .{ Color.dim, text.len, Color.reset });
+    } else {
+        self.print("Copied {d} characters to clipboard\n", .{text.len});
+    }
+}
+
+/// Write text to clipboard using OSC 52 escape sequence.
+fn copyToClipboardOSC52(self: *Repl, text: []const u8) void {
+    const clean = strings.ANSISkipper.collectAlloc(text, self.allocator) orelse return;
+    defer self.allocator.free(clean);
+
+    var encoded = bun.base64.encodeAlloc(self.allocator, clean) catch return;
+    defer encoded.deinit(self.allocator);
+
+    // OSC 52: \x1b]52;c;<base64>\x07
+    self.write("\x1b]52;c;");
+    self.write(encoded.slice());
+    self.write("\x07");
+}
+
 /// Transform code using the REPL parser (hoists declarations, wraps expressions)
 fn transformForRepl(self: *Repl, code: []const u8) ?[]const u8 {
     const vm = self.vm orelse return null;
@@ -1364,7 +1506,7 @@ pub fn runWithVM(self: *Repl, vm: ?*jsc.VirtualMachine) !void {
 
     // Print welcome message
     self.print("Welcome to Bun v{s}\n", .{VERSION});
-    self.print("Type {s}.help{s} for more information.\n\n", .{ Color.cyan, Color.reset });
+    self.print("Type {s}.copy [code]{s} to copy to clipboard. {s}.help{s} for more info.\n\n", .{ Color.cyan, Color.reset, Color.cyan, Color.reset });
 
     self.running = true;
     self.refreshLine();

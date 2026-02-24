@@ -270,6 +270,31 @@ describe.todoIf(isWindows)("Bun REPL", () => {
     });
   });
 
+  describe(".copy command", () => {
+    test(".copy with no args copies last result", async () => {
+      const { stdout, exitCode } = await runRepl(["42", ".copy", ".exit"]);
+      const output = stripAnsi(stdout);
+      expect(output).toContain("Copied");
+      expect(output).toContain("clipboard");
+      expect(exitCode).toBe(0);
+    });
+
+    test(".copy with expression evaluates and copies", async () => {
+      const { stdout, exitCode } = await runRepl([".copy 1 + 1", ".exit"]);
+      const output = stripAnsi(stdout);
+      expect(output).toContain("Copied");
+      expect(output).toContain("clipboard");
+      expect(exitCode).toBe(0);
+    });
+
+    test(".copy still sets _ variable", async () => {
+      const { stdout, exitCode } = await runRepl([".copy 'hello'", "_", ".exit"]);
+      const output = stripAnsi(stdout);
+      expect(output).toContain("hello");
+      expect(exitCode).toBe(0);
+    });
+  });
+
   describe("error handling", () => {
     test("handles syntax errors gracefully", async () => {
       const { stdout, stderr, exitCode } = await runRepl(["(1 + ))", "1 + 1", ".exit"]);

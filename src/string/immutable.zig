@@ -2392,6 +2392,78 @@ const escapeRegExp_ = @import("./escapeRegExp.zig");
 const paths_ = @import("./immutable/paths.zig");
 const std = @import("std");
 const unicode = @import("./immutable/unicode.zig");
+/// Iterator that yields bytes from a string while skipping ANSI escape sequences.
+/// Works with both Latin-1 and UTF-8 since ANSI sequences are pure ASCII.
+pub const ANSISkipper = struct {
+    input: []const u8,
+    pos: usize = 0,
+
+    pub fn init(input: []const u8) ANSISkipper {
+        return .{ .input = input };
+    }
+
+    /// Returns the next non-ANSI byte, or null when done.
+    pub fn next(self: *ANSISkipper) ?u8 {
+        while (self.pos < self.input.len) {
+            const c = self.input[self.pos];
+            if (c != 0x1b) {
+                self.pos += 1;
+                return c;
+            }
+            // Skip ANSI escape sequence
+            self.skipEscape();
+        }
+        return null;
+    }
+
+    /// Collect all non-ANSI bytes into an allocated slice.
+    pub fn collectAlloc(input: []const u8, allocator: std.mem.Allocator) ?[]const u8 {
+        var out = std.array_list.Managed(u8).init(allocator);
+        out.ensureTotalCapacity(input.len) catch return null;
+        var skipper = ANSISkipper.init(input);
+        while (skipper.next()) |c| {
+            out.appendAssumeCapacity(c);
+        }
+        return out.toOwnedSlice() catch null;
+    }
+
+    fn skipEscape(self: *ANSISkipper) void {
+        if (self.pos + 1 >= self.input.len) {
+            self.pos = self.input.len;
+            return;
+        }
+        switch (self.input[self.pos + 1]) {
+            '[' => {
+                // CSI: ESC [ <params (0x20-0x3f)*> <final (0x40-0x7e)>
+                self.pos += 2;
+                while (self.pos < self.input.len) {
+                    const b = self.input[self.pos];
+                    self.pos += 1;
+                    if (b >= 0x40 and b <= 0x7e) break;
+                }
+            },
+            ']' => {
+                // OSC: ESC ] ... (terminated by BEL or ST)
+                self.pos += 2;
+                while (self.pos < self.input.len) {
+                    if (self.input[self.pos] == 0x07) {
+                        self.pos += 1;
+                        break;
+                    } else if (self.input[self.pos] == 0x1b and self.pos + 1 < self.input.len and self.input[self.pos + 1] == '\\') {
+                        self.pos += 2;
+                        break;
+                    }
+                    self.pos += 1;
+                }
+            },
+            else => {
+                // 2-byte escape (e.g. ESC 7, ESC 8)
+                self.pos += 2;
+            },
+        }
+    }
+};
+
 const visible_ = @import("./immutable/visible.zig");
 
 const bun = @import("bun");

@@ -2222,7 +2222,8 @@ pub const BundleV2 = struct {
                                 } },
                             },
                         )) {
-                            .err => {
+                            .err => |err| {
+                                bun.Output.err(err, "failed to write sourcemap file '{s}'", .{write_path});
                                 current.deinit();
                             },
                             .result => {

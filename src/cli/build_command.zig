@@ -549,7 +549,6 @@ pub const BuildCommand = struct {
                 // Write external sourcemap files next to the compiled executable.
                 // With --splitting, there can be multiple .map files (one per chunk).
                 if (this_transpiler.options.source_map == .external) {
-                    const outfile_dirname = std.fs.path.dirname(outfile) orelse "";
                     for (output_files) |f| {
                         if (f.output_kind == .sourcemap and f.value == .buffer) {
                             const sourcemap_bytes = f.value.buffer.bytes;
@@ -567,11 +566,9 @@ pub const BuildCommand = struct {
                                     try std.fmt.allocPrint(allocator, "{s}.map", .{exe_base});
                             };
 
-                            const map_path = if (outfile_dirname.len == 0)
-                                map_basename
-                            else
-                                try std.fmt.allocPrint(allocator, "{s}{c}{s}", .{ outfile_dirname, std.fs.path.sep, map_basename });
-
+                            // root_dir already points to the outfile's parent directory,
+                            // so use map_basename (not a path with directory components)
+                            // to avoid writing to a doubled directory path.
                             var pathbuf: bun.PathBuffer = undefined;
                             switch (bun.jsc.Node.fs.NodeFS.writeFileWithPathBuffer(
                                 &pathbuf,
@@ -586,12 +583,12 @@ pub const BuildCommand = struct {
                                     .encoding = .buffer,
                                     .dirfd = .fromStdDir(root_dir),
                                     .file = .{ .path = .{
-                                        .string = bun.PathString.init(map_path),
+                                        .string = bun.PathString.init(map_basename),
                                     } },
                                 },
                             )) {
                                 .err => |err| {
-                                    Output.err(err, "failed to write sourcemap file '{s}'", .{map_path});
+                                    Output.err(err, "failed to write sourcemap file '{s}'", .{map_basename});
                                     had_err = true;
                                 },
                                 .result => {},

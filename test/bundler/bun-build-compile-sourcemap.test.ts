@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
 describe("Bun.build compile with sourcemap", () => {
@@ -207,6 +207,51 @@ export function greet() {
 
     expect(stdout).toContain("hello from lazy module");
     expect(exitCode).toBe(0);
+  });
+
+  test("compile with --outfile subdir/myapp writes .map next to executable", async () => {
+    using dir = tempDir("build-compile-sourcemap-outfile-subdir", helperFiles);
+
+    const subdirPath = join(String(dir), "subdir");
+
+    // Use CLI: bun build --compile --outfile subdir/myapp --sourcemap=external
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "--compile",
+        join(String(dir), "app.js"),
+        "--outfile",
+        join(subdirPath, "myapp"),
+        "--sourcemap=external",
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [_stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("error");
+    expect(exitCode).toBe(0);
+
+    // The executable should be at subdir/myapp
+    expect(await Bun.file(join(subdirPath, "myapp")).exists()).toBe(true);
+
+    // The .map file should be in subdir/ (next to the executable)
+    const glob = new Bun.Glob("*.map");
+    const mapFiles = Array.from(glob.scanSync({ cwd: subdirPath }));
+    expect(mapFiles.length).toBe(1);
+
+    // Validate the sourcemap is valid JSON
+    const mapContent = JSON.parse(await Bun.file(join(subdirPath, mapFiles[0])).text());
+    expect(mapContent.version).toBe(3);
+    expect(mapContent.mappings).toBeString();
+
+    // The doubled path (subdir/subdir/) should NOT exist
+    const doubledSubdir = join(String(dir), "subdir", "subdir");
+    expect(await Bun.file(doubledSubdir).exists()).toBe(false);
   });
 
   test("compile with multiple source files", async () => {

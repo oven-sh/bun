@@ -2669,7 +2669,7 @@ pub fn remapZigException(
     allow_source_code_preview: bool,
 ) void {
     error_instance.toZigException(this.global, exception);
-    const enable_source_code_preview = allow_source_code_preview and
+    var enable_source_code_preview = allow_source_code_preview and
         !(bun.feature_flag.BUN_DISABLE_SOURCE_CODE_PREVIEW.get() or
             bun.feature_flag.BUN_DISABLE_TRANSPILED_SOURCE_CODE_PREVIEW.get());
 
@@ -2764,6 +2764,12 @@ pub fn remapZigException(
         }
     }
 
+    // Don't show source code preview for REPL frames - it would show the
+    // transformed IIFE wrapper code, not what the user typed.
+    if (top.source_url.eqlComptime("[repl]")) {
+        enable_source_code_preview = false;
+    }
+
     var top_source_url = top.source_url.toUTF8(bun.default_allocator);
     defer top_source_url.deinit();
 
@@ -2815,7 +2821,6 @@ pub fn remapZigException(
                 // Avoid printing "export default 'native'"
                 break :code ZigString.Slice.empty;
             }
-
             var log = logger.Log.init(bun.default_allocator);
             defer log.deinit();
 

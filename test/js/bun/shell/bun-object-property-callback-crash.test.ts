@@ -23,7 +23,7 @@ test("accessing Bun.sql with tampered Array does not crash", async () => {
     ],
     env: bunEnv,
     stdout: "pipe",
-    stderr: "pipe",
+    stderr: "inherit",
   });
 
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
@@ -46,7 +46,7 @@ test("accessing Bun.$ during stack overflow does not crash", async () => {
     ],
     env: bunEnv,
     stdout: "pipe",
-    stderr: "pipe",
+    stderr: "inherit",
   });
 
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);

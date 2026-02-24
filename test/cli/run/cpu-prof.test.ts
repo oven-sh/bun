@@ -388,6 +388,8 @@ describe.concurrent("--cpu-prof", () => {
       `,
     });
 
+    const appName = process.platform === "win32" ? "app.exe" : "app";
+
     // Build with --compile --sourcemap
     await using buildProc = Bun.spawn({
       cmd: [
@@ -396,7 +398,7 @@ describe.concurrent("--cpu-prof", () => {
         "--compile",
         "--sourcemap",
         "--outfile",
-        join(String(dir), "app"),
+        join(String(dir), appName),
         join(String(dir), "src/index.ts"),
       ],
       cwd: String(dir),
@@ -412,7 +414,7 @@ describe.concurrent("--cpu-prof", () => {
     // Run the compiled binary with cpu-prof flags via BUN_OPTIONS env var
     // (standalone binaries don't parse runtime args, but do parse BUN_OPTIONS)
     await using runProc = Bun.spawn({
-      cmd: [join(String(dir), "app")],
+      cmd: [join(String(dir), appName)],
       cwd: String(dir),
       env: { ...bunEnv, BUN_OPTIONS: "--cpu-prof --cpu-prof-md" },
       stderr: "pipe",

@@ -134,7 +134,7 @@ async function withTerminalRepl(
   if (!proc.killed) proc.kill();
 }
 
-describe.todoIf(isWindows)("Bun REPL", () => {
+describe("Bun REPL", () => {
   describe("basic evaluation", () => {
     test("evaluates simple expression", async () => {
       const { stdout, exitCode } = await runRepl(["1 + 1", ".exit"]);

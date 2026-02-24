@@ -682,7 +682,7 @@ terminal_height: u16 = 24,
 ctrl_c_pressed: bool = false,
 
 // Buffered stdin
-stdin_buf: [256]u8 = undefined,
+stdin_buf: [256]u8 = .{0} ** 256,
 stdin_buf_start: usize = 0,
 stdin_buf_end: usize = 0,
 

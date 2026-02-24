@@ -11,6 +11,14 @@ function repeat(fn: any) {
   const interval = setInterval(fn, 20).unref();
   return interval;
 }
+// Write to a temp file then rename, so stat never sees a 0-byte intermediate
+// state (writeFileSync uses O_TRUNC which briefly truncates the file to 0
+// bytes, visible to concurrent stat on Windows).
+function updateFile(filepath: string, data: string) {
+  const tmp = filepath + ".tmp";
+  fs.writeFileSync(tmp, data);
+  fs.renameSync(tmp, filepath);
+}
 const encodingFileName = `新建文夹件.txt`;
 let testDir = "";
 beforeEach(() => {
@@ -54,7 +62,7 @@ describe("fs.watchFile", () => {
     let increment = 0;
     const interval = repeat(() => {
       increment++;
-      fs.writeFileSync(path.join(testDir, "watch.txt"), "hello" + increment);
+      updateFile(path.join(testDir, "watch.txt"), "hello" + increment);
     });
     await promise;
     clearInterval(interval);
@@ -79,7 +87,7 @@ describe("fs.watchFile", () => {
     let increment = 0;
     const interval = repeat(() => {
       increment++;
-      fs.writeFileSync(path.join(testDir, encodingFileName), "hello" + increment);
+      updateFile(path.join(testDir, encodingFileName), "hello" + increment);
     });
     await promise;
     clearInterval(interval);
@@ -105,7 +113,7 @@ describe("fs.watchFile", () => {
     let increment = 0;
     const interval = repeat(() => {
       increment++;
-      fs.writeFileSync(path.join(testDir, encodingFileName), "hello" + "a".repeat(increment));
+      updateFile(path.join(testDir, encodingFileName), "hello" + "a".repeat(increment));
     });
     await promise;
     clearInterval(interval);
@@ -144,7 +152,7 @@ describe("fs.watchFile", () => {
     let increment = 0;
     const interval = repeat(() => {
       increment++;
-      fs.writeFileSync(filepath, "hello" + increment);
+      updateFile(filepath, "hello" + increment);
     });
     await promise;
     clearInterval(interval);

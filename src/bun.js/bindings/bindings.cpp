@@ -2450,13 +2450,20 @@ void JSC__JSObject__putRecord(JSC::JSObject* object, JSC::JSGlobalObject* global
         descriptor.setValue(JSC::jsString(global->vm(), Zig::toStringCopy(values[0])));
     } else {
 
+        // Pre-convert all strings to JSValues before entering ObjectInitializationScope,
+        // since jsString() allocates GC cells which is not allowed inside the scope.
+        MarkedArgumentBuffer strings;
+        for (size_t i = 0; i < valuesLen; ++i) {
+            strings.append(JSC::jsString(global->vm(), Zig::toStringCopy(values[i])));
+        }
+
         JSC::JSArray* array = nullptr;
         {
             JSC::ObjectInitializationScope initializationScope(global->vm());
             if ((array = JSC::JSArray::tryCreateUninitializedRestricted(initializationScope, nullptr, global->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), valuesLen))) {
 
                 for (size_t i = 0; i < valuesLen; ++i) {
-                    array->initializeIndexWithoutBarrier(initializationScope, i, JSC::jsString(global->vm(), Zig::toStringCopy(values[i])));
+                    array->initializeIndexWithoutBarrier(initializationScope, i, strings.at(i));
                 }
             }
         }
@@ -2490,6 +2497,13 @@ void JSC__JSValue__putRecord(JSC::EncodedJSValue objectValue, JSC::JSGlobalObjec
         descriptor.setValue(JSC::jsString(global->vm(), Zig::toString(values[0])));
     } else {
 
+        // Pre-convert all strings to JSValues before entering ObjectInitializationScope,
+        // since jsString() allocates GC cells which is not allowed inside the scope.
+        MarkedArgumentBuffer strings;
+        for (size_t i = 0; i < valuesLen; ++i) {
+            strings.append(JSC::jsString(global->vm(), Zig::toString(values[i])));
+        }
+
         JSC::JSArray* array = nullptr;
         {
             JSC::ObjectInitializationScope initializationScope(global->vm());
@@ -2500,7 +2514,7 @@ void JSC__JSValue__putRecord(JSC::EncodedJSValue objectValue, JSC::JSGlobalObjec
 
                 for (size_t i = 0; i < valuesLen; ++i) {
                     array->initializeIndexWithoutBarrier(
-                        initializationScope, i, JSC::jsString(global->vm(), Zig::toString(values[i])));
+                        initializationScope, i, strings.at(i));
                 }
             }
         }
@@ -3536,13 +3550,11 @@ void JSC__JSPromise__rejectOnNextTickWithHandled(JSC::JSPromise* promise, JSC::J
 
         promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, jsNumber(flags | JSC::JSPromise::isFirstResolvingFunctionCalledFlag));
         auto* globalObject = jsCast<Zig::GlobalObject*>(promise->globalObject());
-        auto microtaskFunction = globalObject->performMicrotaskFunction();
         auto rejectPromiseFunction = globalObject->rejectPromiseFunction();
 
         auto asyncContext = globalObject->m_asyncContextData.get()->getInternalField(0);
 
 #if ASSERT_ENABLED
-        ASSERT_WITH_MESSAGE(microtaskFunction, "Invalid microtask function");
         ASSERT_WITH_MESSAGE(rejectPromiseFunction, "Invalid microtask callback");
         ASSERT_WITH_MESSAGE(!value.isEmpty(), "Invalid microtask value");
 #endif
@@ -3555,7 +3567,8 @@ void JSC__JSPromise__rejectOnNextTickWithHandled(JSC::JSPromise* promise, JSC::J
             value = jsUndefined();
         }
 
-        JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::BunPerformMicrotaskJob, 0, globalObject, microtaskFunction, rejectPromiseFunction, globalObject->m_asyncContextData.get()->getInternalField(0), promise, value };
+        // BunPerformMicrotaskJob: rejectPromiseFunction, asyncContext, promise, value
+        JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::BunPerformMicrotaskJob, 0, globalObject, rejectPromiseFunction, globalObject->m_asyncContextData.get()->getInternalField(0), promise, value };
         globalObject->vm().queueMicrotask(WTF::move(task));
         RETURN_IF_EXCEPTION(scope, );
     }
@@ -5436,9 +5449,7 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskJob(JSC::JSGlobalObject* arg0
     if (microtaskArgs[3].isEmpty()) {
         microtaskArgs[3] = jsUndefined();
     }
-    JSC::JSFunction* microTaskFunction = globalObject->performMicrotaskFunction();
 #if ASSERT_ENABLED
-    ASSERT_WITH_MESSAGE(microTaskFunction, "Invalid microtask function");
     auto& vm = globalObject->vm();
     if (microtaskArgs[0].isCell()) {
         JSC::Integrity::auditCellFully(vm, microtaskArgs[0].asCell());
@@ -5458,7 +5469,8 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskJob(JSC::JSGlobalObject* arg0
 
 #endif
 
-    JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::BunPerformMicrotaskJob, 0, globalObject, microTaskFunction, WTF::move(microtaskArgs[0]), WTF::move(microtaskArgs[1]), WTF::move(microtaskArgs[2]), WTF::move(microtaskArgs[3]) };
+    // BunPerformMicrotaskJob: job, asyncContext, arg0, arg1
+    JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::BunPerformMicrotaskJob, 0, globalObject, WTF::move(microtaskArgs[0]), WTF::move(microtaskArgs[1]), WTF::move(microtaskArgs[2]), WTF::move(microtaskArgs[3]) };
     globalObject->vm().queueMicrotask(WTF::move(task));
 }
 

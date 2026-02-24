@@ -26,9 +26,9 @@ main();`,
     });
 
     expect(result.success).toBe(true);
-    expect(result.outputs.length).toBe(1);
 
-    const executablePath = result.outputs[0].path;
+    const executableOutput = result.outputs.find((o: any) => o.kind === "entry-point")!;
+    const executablePath = executableOutput.path;
     expect(await Bun.file(executablePath).exists()).toBe(true);
 
     // Run the compiled executable and capture the error
@@ -92,6 +92,59 @@ main();`,
 
     // Verify it failed (the error was thrown)
     expect(exitCode).not.toBe(0);
+  });
+
+  test("compile with sourcemap: external writes .map file to disk", async () => {
+    using dir = tempDir("build-compile-sourcemap-external-file", helperFiles);
+
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "app.js")],
+      compile: true,
+      sourcemap: "external",
+    });
+
+    expect(result.success).toBe(true);
+
+    const executableOutput = result.outputs.find((o: any) => o.kind === "entry-point")!;
+    const executablePath = executableOutput.path;
+    expect(await Bun.file(executablePath).exists()).toBe(true);
+
+    // The sourcemap output should appear in build result outputs
+    const sourcemapOutputs = result.outputs.filter((o: any) => o.kind === "sourcemap");
+    expect(sourcemapOutputs.length).toBe(1);
+
+    // The .map file should exist next to the executable
+    const mapPath = sourcemapOutputs[0].path;
+    expect(mapPath).toEndWith(".map");
+    expect(await Bun.file(mapPath).exists()).toBe(true);
+
+    // Validate the sourcemap is valid JSON with expected fields
+    const mapContent = JSON.parse(await Bun.file(mapPath).text());
+    expect(mapContent.version).toBe(3);
+    expect(mapContent.sources).toBeArray();
+    expect(mapContent.sources.length).toBeGreaterThan(0);
+    expect(mapContent.mappings).toBeString();
+  });
+
+  test("compile without sourcemap does not write .map file", async () => {
+    using dir = tempDir("build-compile-no-sourcemap-file", {
+      "nosourcemap_entry.js": helperFiles["app.js"],
+      "helper.js": helperFiles["helper.js"],
+    });
+
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "nosourcemap_entry.js")],
+      compile: true,
+    });
+
+    expect(result.success).toBe(true);
+
+    const executablePath = result.outputs[0].path;
+    // No .map file should exist next to the executable
+    expect(await Bun.file(`${executablePath}.map`).exists()).toBe(false);
+    // No sourcemap outputs should be in the result
+    const sourcemapOutputs = result.outputs.filter((o: any) => o.kind === "sourcemap");
+    expect(sourcemapOutputs.length).toBe(0);
   });
 
   test("compile with multiple source files", async () => {

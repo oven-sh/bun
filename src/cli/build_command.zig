@@ -546,6 +546,46 @@ pub const BuildCommand = struct {
                     Global.exit(1);
                 }
 
+                // Write external sourcemap files next to the compiled executable
+                if (this_transpiler.options.source_map == .external) {
+                    for (output_files) |f| {
+                        if (f.output_kind == .sourcemap and f.value == .buffer) {
+                            const sourcemap_bytes = f.value.buffer.bytes;
+                            if (sourcemap_bytes.len == 0) continue;
+
+                            const outfile_with_ext = if (compile_target.os == .windows and !strings.hasSuffixComptime(outfile, ".exe"))
+                                try std.fmt.allocPrint(allocator, "{s}.exe.map", .{outfile})
+                            else
+                                try std.fmt.allocPrint(allocator, "{s}.map", .{outfile});
+
+                            var pathbuf: bun.PathBuffer = undefined;
+                            switch (bun.jsc.Node.fs.NodeFS.writeFileWithPathBuffer(
+                                &pathbuf,
+                                .{
+                                    .data = .{ .buffer = .{
+                                        .buffer = .{
+                                            .ptr = @constCast(sourcemap_bytes.ptr),
+                                            .len = @as(u32, @truncate(sourcemap_bytes.len)),
+                                            .byte_len = @as(u32, @truncate(sourcemap_bytes.len)),
+                                        },
+                                    } },
+                                    .encoding = .buffer,
+                                    .dirfd = .fromStdDir(root_dir),
+                                    .file = .{ .path = .{
+                                        .string = bun.PathString.init(outfile_with_ext),
+                                    } },
+                                },
+                            )) {
+                                .err => |err| {
+                                    Output.err(err, "failed to write sourcemap file '{s}'", .{outfile_with_ext});
+                                    had_err = true;
+                                },
+                                .result => {},
+                            }
+                        }
+                    }
+                }
+
                 const compiled_elapsed = @divTrunc(@as(i64, @truncate(std.time.nanoTimestamp() - bundled_end)), @as(i64, std.time.ns_per_ms));
                 const compiled_elapsed_digit_count: isize = switch (compiled_elapsed) {
                     0...9 => 3,

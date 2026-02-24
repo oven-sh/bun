@@ -2179,15 +2179,55 @@ pub const BundleV2 = struct {
                 output_file.is_executable = true;
             }
 
+            // Write external sourcemap files next to the compiled executable and
+            // keep them in the output array. Destroy all other non-entry-point files.
+            const sourcemap_outfile = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{s}.map", .{full_outfile_path}));
+            var kept: usize = 0;
             for (output_files.items, 0..) |*current, i| {
-                if (i != entry_point_index) {
+                if (i == entry_point_index) {
+                    output_files.items[kept] = current.*;
+                    kept += 1;
+                } else if (result == .success and current.output_kind == .sourcemap and current.value == .buffer) {
+                    const sourcemap_bytes = current.value.buffer.bytes;
+                    if (sourcemap_bytes.len > 0) {
+                        // Write the sourcemap file to disk next to the executable
+                        var pathbuf: bun.PathBuffer = undefined;
+                        const sourcemap_basename = std.fs.path.basename(sourcemap_outfile);
+                        const write_path = if (Environment.isWindows) sourcemap_outfile else sourcemap_basename;
+                        switch (bun.jsc.Node.fs.NodeFS.writeFileWithPathBuffer(
+                            &pathbuf,
+                            .{
+                                .data = .{ .buffer = .{
+                                    .buffer = .{
+                                        .ptr = @constCast(sourcemap_bytes.ptr),
+                                        .len = @as(u32, @truncate(sourcemap_bytes.len)),
+                                        .byte_len = @as(u32, @truncate(sourcemap_bytes.len)),
+                                    },
+                                } },
+                                .encoding = .buffer,
+                                .dirfd = .fromStdDir(root_dir),
+                                .file = .{ .path = .{
+                                    .string = bun.PathString.init(write_path),
+                                } },
+                            },
+                        )) {
+                            .err => {
+                                current.deinit();
+                            },
+                            .result => {
+                                current.dest_path = sourcemap_outfile;
+                                output_files.items[kept] = current.*;
+                                kept += 1;
+                            },
+                        }
+                    } else {
+                        current.deinit();
+                    }
+                } else {
                     current.deinit();
                 }
             }
-
-            const entry_point_output_file = output_files.swapRemove(entry_point_index);
-            output_files.items.len = 1;
-            output_files.items[0] = entry_point_output_file;
+            output_files.items.len = kept;
 
             return result;
         }

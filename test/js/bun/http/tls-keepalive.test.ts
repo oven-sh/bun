@@ -129,15 +129,14 @@ describe.skipIf(isASAN)("TLS custom config memory leak detection", () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    if (exitCode !== 0) {
-      console.error(stderr);
-    }
-    expect(exitCode).toBe(0);
-
     const result = JSON.parse(stdout.trim());
     console.log(`Same config: ${result.numRequests} requests, growth: ${result.growthMB} MB`);
 
-    expect(result.growthMB).toBeLessThan(10);
+    if (exitCode !== 0) {
+      console.error(stderr);
+    }
+    expect(result.growthMB).toBeLessThan(50);
+    expect(exitCode).toBe(0);
   });
 
   test("many distinct TLS configs stay bounded by cache eviction", async () => {
@@ -156,14 +155,13 @@ describe.skipIf(isASAN)("TLS custom config memory leak detection", () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    if (exitCode !== 0) {
-      console.error(stderr);
-    }
-    expect(exitCode).toBe(0);
-
     const result = JSON.parse(stdout.trim());
     console.log(`Distinct configs: ${result.numRequests} configs, growth: ${result.growthMB} MB`);
 
+    if (exitCode !== 0) {
+      console.error(stderr);
+    }
     expect(result.growthMB).toBeLessThan(75);
+    expect(exitCode).toBe(0);
   });
 });

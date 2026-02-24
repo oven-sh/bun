@@ -1,5 +1,5 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, tls as validTls, isASAN } from "harness";
+import { bunEnv, bunExe, isASAN, tls as validTls } from "harness";
 import { join } from "node:path";
 
 setDefaultTimeout(30_000);

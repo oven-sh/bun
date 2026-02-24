@@ -2035,7 +2035,6 @@ pub fn readAll(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
     return .{ .result = total_read };
 }
 
-const recv_flags_nonblock = c.MSG_DONTWAIT;
 const send_flags_nonblock = c.MSG_DONTWAIT | c.MSG_NOSIGNAL;
 
 pub fn recvNonBlock(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
@@ -4360,10 +4359,12 @@ const bun = @import("bun");
 const Environment = bun.Environment;
 const FD = bun.FD;
 const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
-const c = bun.c; // translated c headers
 const jsc = bun.jsc;
 const libc_stat = bun.Stat;
 const darwin_nocancel = bun.darwin.nocancel;
+
+const c = bun.c; // translated c headers
+const recv_flags_nonblock = c.MSG_DONTWAIT;
 
 const windows = bun.windows;
 const kernel32 = bun.windows.kernel32;

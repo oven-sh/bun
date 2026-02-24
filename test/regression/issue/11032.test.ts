@@ -69,6 +69,7 @@ describe("issue #11032: CJS exports inside control flow", () => {
       proc.stderr.text(),
       proc.exited,
     ]);
+    expect(buildStderr).toBe("");
     expect(buildExitCode).toBe(0);
 
     // Write the bundled output and run it
@@ -113,6 +114,7 @@ describe("issue #11032: CJS exports inside control flow", () => {
       proc.stderr.text(),
       proc.exited,
     ]);
+    expect(buildStderr).toBe("");
     expect(buildExitCode).toBe(0);
 
     expect(buildOutput).not.toContain("tagSymbol");
@@ -161,6 +163,7 @@ describe("issue #11032: CJS exports inside control flow", () => {
       proc.stderr.text(),
       proc.exited,
     ]);
+    expect(buildStderr).toBe("");
     expect(buildExitCode).toBe(0);
 
     expect(buildOutput).not.toContain("tagSymbol");
@@ -207,6 +210,7 @@ describe("issue #11032: CJS exports inside control flow", () => {
       proc.stderr.text(),
       proc.exited,
     ]);
+    expect(buildStderr).toBe("");
     expect(buildExitCode).toBe(0);
 
     expect(buildOutput).not.toContain("tagSymbol");
@@ -253,6 +257,7 @@ describe("issue #11032: CJS exports inside control flow", () => {
       proc.stderr.text(),
       proc.exited,
     ]);
+    expect(buildStderr).toBe("");
     expect(buildExitCode).toBe(0);
 
     expect(buildOutput).not.toContain("tagSymbol");
@@ -299,6 +304,7 @@ describe("issue #11032: CJS exports inside control flow", () => {
       proc.stderr.text(),
       proc.exited,
     ]);
+    expect(buildStderr).toBe("");
     expect(buildExitCode).toBe(0);
 
     using runDir = tempDir("issue-11032-toplevel-exec", {

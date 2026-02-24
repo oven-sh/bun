@@ -108,7 +108,16 @@ pub const BunObject = struct {
     fn toJSLazyPropertyCallback(comptime wrapped: anytype) LazyPropertyCallback {
         return struct {
             pub fn callback(this: *jsc.JSGlobalObject, object: *jsc.JSObject) callconv(jsc.conv) JSValue {
-                return bun.jsc.toJSHostCall(this, @src(), wrapped, .{ this, object });
+                const result = bun.jsc.toJSHostCall(this, @src(), wrapped, .{ this, object });
+                if (result == .zero) {
+                    // PropertyCallback handlers cannot safely return empty JSValue.
+                    // JSC's reifyStaticProperty passes the return value to putDirect(),
+                    // which calls isGetterSetter() on it. A zero-encoded JSValue passes
+                    // isCell() but asCell() returns nullptr, causing a null deref crash.
+                    _ = this.clearExceptionExceptTermination();
+                    return .js_undefined;
+                }
+                return result;
             }
         }.callback;
     }

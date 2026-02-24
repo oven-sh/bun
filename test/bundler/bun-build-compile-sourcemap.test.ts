@@ -173,9 +173,10 @@ export function greet() {
     const executablePath = executableOutput.path;
     expect(await Bun.file(executablePath).exists()).toBe(true);
 
-    // With splitting, there should be multiple sourcemap outputs
+    // With splitting and a dynamic import, there should be at least 2 sourcemaps
+    // (one for the entry chunk, one for the lazy-loaded chunk)
     const sourcemapOutputs = result.outputs.filter((o: any) => o.kind === "sourcemap");
-    expect(sourcemapOutputs.length).toBeGreaterThanOrEqual(1);
+    expect(sourcemapOutputs.length).toBeGreaterThanOrEqual(2);
 
     // Each sourcemap should be a valid .map file on disk
     const mapPaths = new Set<string>();

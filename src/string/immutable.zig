@@ -2387,11 +2387,6 @@ pub const CodePoint = i32;
 
 const string = []const u8;
 
-const escapeHTML_ = @import("./immutable/escapeHTML.zig");
-const escapeRegExp_ = @import("./escapeRegExp.zig");
-const paths_ = @import("./immutable/paths.zig");
-const std = @import("std");
-const unicode = @import("./immutable/unicode.zig");
 /// Iterator that yields bytes from a string while skipping ANSI escape sequences.
 /// Works with both Latin-1 and UTF-8 since ANSI sequences are pure ASCII.
 pub const ANSISkipper = struct {
@@ -2464,6 +2459,11 @@ pub const ANSISkipper = struct {
     }
 };
 
+const escapeHTML_ = @import("./immutable/escapeHTML.zig");
+const escapeRegExp_ = @import("./escapeRegExp.zig");
+const paths_ = @import("./immutable/paths.zig");
+const std = @import("std");
+const unicode = @import("./immutable/unicode.zig");
 const visible_ = @import("./immutable/visible.zig");
 
 const bun = @import("bun");

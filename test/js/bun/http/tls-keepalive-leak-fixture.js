@@ -27,31 +27,30 @@ using server = Bun.serve({
 const url = `https://127.0.0.1:${server.port}`;
 
 // Warmup
-for (let i = 0; i < 500; i++) {
-  const res = await fetch(url, {
+for (let i = 0; i < 20_000; i++) {
+  await fetch(url, {
     tls: { ca: cert, rejectUnauthorized: false },
     keepalive: true,
   });
-  await res.text();
 }
 Bun.gc(true);
 const baselineRss = process.memoryUsage.rss();
 
+const requests = [];
 if (mode === "same") {
   // All requests use the same TLS config — tests SSLConfig dedup
   const tlsOpts = { ca: cert, rejectUnauthorized: false };
+
   for (let i = 0; i < numRequests; i++) {
-    const res = await fetch(url, { tls: tlsOpts, keepalive: true });
-    await res.text();
+    await fetch(url, { tls: tlsOpts, keepalive: true });
   }
 } else if (mode === "distinct") {
   // Each request uses a unique TLS config — tests cache eviction
   for (let i = 0; i < numRequests; i++) {
-    const res = await fetch(url, {
+    await fetch(url, {
       tls: { ca: cert, rejectUnauthorized: false, serverName: `host-${i}.example.com` },
       keepalive: true,
     });
-    await res.text();
   }
 }
 

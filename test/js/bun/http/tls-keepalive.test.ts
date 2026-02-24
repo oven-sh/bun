@@ -1,5 +1,5 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, tls as validTls } from "harness";
+import { bunEnv, bunExe, tls as validTls, isASAN } from "harness";
 import { join } from "node:path";
 
 setDefaultTimeout(30_000);
@@ -112,7 +112,7 @@ describe("TLS keepalive for custom SSL configs", () => {
   });
 });
 
-describe("TLS custom config memory leak detection", () => {
+describe.skipIf(isASAN)("TLS custom config memory leak detection", () => {
   test("repeated fetches with same custom TLS config do not leak memory", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "--smol", join(import.meta.dir, "tls-keepalive-leak-fixture.js")],
@@ -120,7 +120,7 @@ describe("TLS custom config memory leak detection", () => {
         ...bunEnv,
         TLS_CERT: validTls.cert,
         TLS_KEY: validTls.key,
-        NUM_REQUESTS: "50000",
+        NUM_REQUESTS: "100000",
         MODE: "same",
       },
       stdout: "pipe",
@@ -137,11 +137,7 @@ describe("TLS custom config memory leak detection", () => {
     const result = JSON.parse(stdout.trim());
     console.log(`Same config: ${result.numRequests} requests, growth: ${result.growthMB} MB`);
 
-    // In release builds (CI): with the fix, all 50k requests share one interned SSLConfig, ~0 growth.
-    // Without fix: 50k leaked SSLConfigs × ~1.5KB = ~75MB growth.
-    // Note: debug builds may exceed this due to ThreadSafeRefCount tracking overhead (~5KB/request).
-    // This test is primarily validated in CI release builds.
-    expect(result.growthMB).toBeLessThan(50);
+    expect(result.growthMB).toBeLessThan(10);
   });
 
   test("many distinct TLS configs stay bounded by cache eviction", async () => {
@@ -168,11 +164,6 @@ describe("TLS custom config memory leak detection", () => {
     const result = JSON.parse(stdout.trim());
     console.log(`Distinct configs: ${result.numRequests} configs, growth: ${result.growthMB} MB`);
 
-    // SSL context cache is bounded at 60 entries. 200 unique configs
-    // should only keep ~60 alive after LRU eviction.
-    // Each SSL context is ~50-200KB, so 60 × 200KB = ~12MB max in release.
-    // Residual RSS overhead from allocator fragmentation varies by platform
-    // (macOS typically higher than Linux).
-    expect(result.growthMB).toBeLessThan(100);
-  }, 120_000);
+    expect(result.growthMB).toBeLessThan(75);
+  });
 });

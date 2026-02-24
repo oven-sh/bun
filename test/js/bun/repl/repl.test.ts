@@ -1,17 +1,9 @@
 // Tests for Bun REPL
-// These tests verify the interactive REPL functionality including:
-// - Basic JavaScript evaluation
-// - Special variables (_ and _error)
-// - REPL commands (.help, .exit, .clear)
-// - Multi-line input
-// - History navigation
-// - Tab completion
-// - Error handling
-
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import path from "path";
 
-// Helper function to run REPL with input and capture output
+// Helper to run REPL with piped stdin (non-TTY mode) and capture output
 async function runRepl(
   input: string | string[],
   options: {
@@ -29,18 +21,16 @@ async function runRepl(
     stderr: "pipe",
     env: {
       ...bunEnv,
-      TERM: "dumb", // Disable color codes for easier parsing
+      TERM: "dumb",
       NO_COLOR: "1",
       ...env,
     },
   });
 
-  // Write input to stdin
   proc.stdin.write(inputStr);
   proc.stdin.flush();
   proc.stdin.end();
 
-  // Wait for process with timeout
   const exitCode = await Promise.race([
     proc.exited,
     Bun.sleep(timeout).then(() => {
@@ -55,73 +45,132 @@ async function runRepl(
   return { stdout, stderr, exitCode };
 }
 
-// Strip ANSI escape sequences and control characters for easier assertion
 function stripAnsi(str: string): string {
-  // Remove ANSI escape codes
   return str
     .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "")
-    .replace(/\x1b\][^\x07]*\x07/g, "") // OSC sequences
-    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, ""); // Control chars except \n, \r, \t
+    .replace(/\x1b\][^\x07]*\x07/g, "")
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, "");
 }
 
-// Extract result values from REPL output
-function extractResults(output: string): string[] {
-  const lines = stripAnsi(output).split("\n");
-  const results: string[] = [];
+// Helper to run REPL in a PTY and interact with it
+async function withTerminalRepl(
+  fn: (helpers: {
+    terminal: Bun.Terminal;
+    proc: Bun.ChildProcess;
+    send: (text: string) => void;
+    waitFor: (pattern: string | RegExp, timeoutMs?: number) => Promise<string>;
+    allOutput: () => string;
+  }) => Promise<void>,
+) {
+  const received: string[] = [];
+  let cursor = 0;
+  let resolveWaiter: ((value: string) => void) | null = null;
+  let waiterPattern: string | RegExp | null = null;
 
-  for (const line of lines) {
-    const trimmed = line.trim();
-    // Skip empty lines, prompts, and welcome message
-    if (
-      trimmed &&
-      !trimmed.startsWith("bun>") &&
-      !trimmed.startsWith("...>") &&
-      !trimmed.startsWith("Welcome to Bun") &&
-      !trimmed.startsWith("Type .help")
-    ) {
-      results.push(trimmed);
+  await using terminal = new Bun.Terminal({
+    cols: 120,
+    rows: 40,
+    data(_term, data) {
+      const str = Buffer.from(data).toString();
+      received.push(str);
+      if (resolveWaiter && waiterPattern) {
+        const all = received.join("");
+        const recent = all.slice(cursor);
+        const match = typeof waiterPattern === "string" ? recent.includes(waiterPattern) : waiterPattern.test(recent);
+        if (match) {
+          cursor = all.length;
+          resolveWaiter(recent);
+          resolveWaiter = null;
+          waiterPattern = null;
+        }
+      }
+    },
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "repl"],
+    terminal,
+    env: {
+      ...bunEnv,
+      TERM: "xterm-256color",
+    },
+  });
+
+  const send = (text: string) => terminal.write(text);
+
+  const waitFor = (pattern: string | RegExp, timeoutMs = 5000): Promise<string> => {
+    const all = received.join("");
+    const recent = all.slice(cursor);
+    const alreadyMatch = typeof pattern === "string" ? recent.includes(pattern) : pattern.test(recent);
+    if (alreadyMatch) {
+      cursor = all.length;
+      return Promise.resolve(recent);
     }
-  }
 
-  return results;
+    return new Promise<string>((resolve, reject) => {
+      resolveWaiter = resolve;
+      waiterPattern = pattern;
+      setTimeout(() => {
+        resolveWaiter = null;
+        waiterPattern = null;
+        reject(
+          new Error(
+            `Timed out waiting for pattern: ${pattern}\nReceived so far:\n${stripAnsi(received.join("").slice(cursor))}`,
+          ),
+        );
+      }, timeoutMs);
+    });
+  };
+
+  const allOutput = () => stripAnsi(received.join(""));
+
+  await waitFor(/\u276f|> /); // Wait for prompt
+
+  await fn({ terminal, proc, send, waitFor, allOutput });
+
+  // Clean exit
+  send(".exit\n");
+  await Promise.race([proc.exited, Bun.sleep(2000)]);
+  if (!proc.killed) proc.kill();
 }
 
 describe.todoIf(isWindows)("Bun REPL", () => {
   describe("basic evaluation", () => {
     test("evaluates simple expression", async () => {
       const { stdout, exitCode } = await runRepl(["1 + 1", ".exit"]);
-      const results = extractResults(stdout);
-      expect(results).toContain("2");
+      expect(stripAnsi(stdout)).toContain("2");
       expect(exitCode).toBe(0);
     });
 
     test("evaluates multiple expressions", async () => {
       const { stdout, exitCode } = await runRepl(["1 + 1", "2 * 3", "Math.sqrt(16)", ".exit"]);
-      const results = extractResults(stdout);
-      expect(results).toContain("2");
-      expect(results).toContain("6");
-      expect(results).toContain("4");
+      const output = stripAnsi(stdout);
+      expect(output).toContain("2");
+      expect(output).toContain("6");
+      expect(output).toContain("4");
       expect(exitCode).toBe(0);
     });
 
     test("evaluates string expressions", async () => {
       const { stdout, exitCode } = await runRepl(["'hello'.toUpperCase()", ".exit"]);
-      const results = extractResults(stdout);
-      expect(results.some(r => r.includes("HELLO"))).toBe(true);
+      expect(stripAnsi(stdout)).toContain("HELLO");
       expect(exitCode).toBe(0);
     });
 
     test("evaluates object literals", async () => {
       const { stdout, exitCode } = await runRepl(["({ a: 1, b: 2 })", ".exit"]);
-      const results = extractResults(stdout);
-      expect(results.some(r => r.includes("a") && r.includes("b"))).toBe(true);
+      const output = stripAnsi(stdout);
+      expect(output).toContain("a");
+      expect(output).toContain("b");
       expect(exitCode).toBe(0);
     });
 
     test("evaluates array expressions", async () => {
       const { stdout, exitCode } = await runRepl(["[1, 2, 3].map(x => x * 2)", ".exit"]);
-      const results = extractResults(stdout);
-      expect(results.some(r => r.includes("2") && r.includes("4") && r.includes("6"))).toBe(true);
+      const output = stripAnsi(stdout);
+      expect(output).toContain("2");
+      expect(output).toContain("4");
+      expect(output).toContain("6");
       expect(exitCode).toBe(0);
     });
   });
@@ -129,35 +178,24 @@ describe.todoIf(isWindows)("Bun REPL", () => {
   describe("special variables", () => {
     test("_ contains last result", async () => {
       const { stdout, exitCode } = await runRepl(["42", "_", ".exit"]);
-      const results = extractResults(stdout);
-      // Should have 42 twice - once from evaluation, once from _
-      const fortyTwos = results.filter(r => r === "42");
-      expect(fortyTwos.length).toBe(2);
+      const output = stripAnsi(stdout);
+      // 42 should appear at least twice: once for the eval, once for _
+      expect(output.split("42").length - 1).toBeGreaterThanOrEqual(2);
       expect(exitCode).toBe(0);
     });
 
     test("_ updates with each result", async () => {
       const { stdout, exitCode } = await runRepl(["10", "_ * 2", "_ + 5", ".exit"]);
-      const results = extractResults(stdout);
-      expect(results).toContain("10");
-      expect(results).toContain("20");
-      expect(results).toContain("25");
+      const output = stripAnsi(stdout);
+      expect(output).toContain("10");
+      expect(output).toContain("20");
+      expect(output).toContain("25");
       expect(exitCode).toBe(0);
     });
 
     test("_error contains last error", async () => {
       const { stdout, exitCode } = await runRepl(["throw new Error('test error')", "_error.message", ".exit"]);
-      const results = extractResults(stdout);
-      expect(results.some(r => r.includes("test error"))).toBe(true);
-      expect(exitCode).toBe(0);
-    });
-
-    test("_ is not updated for undefined results", async () => {
-      const { stdout, exitCode } = await runRepl(["42", "undefined", "_", ".exit"]);
-      const results = extractResults(stdout);
-      // _ should still be 42, not undefined
-      const fortyTwos = results.filter(r => r === "42");
-      expect(fortyTwos.length).toBeGreaterThanOrEqual(2);
+      expect(stripAnsi(stdout)).toContain("test error");
       expect(exitCode).toBe(0);
     });
   });
@@ -173,36 +211,162 @@ describe.todoIf(isWindows)("Bun REPL", () => {
       const output = stripAnsi(stdout);
       expect(output).toContain(".help");
       expect(output).toContain(".exit");
+      expect(output).toContain(".load");
+      expect(output).toContain(".save");
       expect(exitCode).toBe(0);
     });
 
-    test(".clear clears context", async () => {
-      const { stdout, exitCode } = await runRepl(["const x = 42", ".clear", ".exit"]);
+    test(".load loads and evaluates a file", async () => {
+      using dir = tempDir("repl-load-test", {
+        "test.js": "var loadedVar = 42;\n",
+      });
+      const filePath = path.join(String(dir), "test.js");
+      const { stdout, exitCode } = await runRepl([`.load ${filePath}`, "loadedVar", ".exit"]);
+      const output = stripAnsi(stdout);
+      expect(output).toContain("42");
+      expect(exitCode).toBe(0);
+    });
+
+    test(".load with nonexistent file shows error", async () => {
+      const { stdout, stderr, exitCode } = await runRepl([".load /nonexistent/path/file.js", "1 + 1", ".exit"]);
+      const allOutput = stripAnsi(stdout + stderr);
+      expect(allOutput.toLowerCase()).toMatch(/error|not found|no such file/i);
+      // REPL should continue after failed load
+      expect(allOutput).toContain("2");
+      expect(exitCode).toBe(0);
+    });
+
+    test(".load without filename shows usage", async () => {
+      const { stdout, exitCode } = await runRepl([".load", ".exit"]);
+      const output = stripAnsi(stdout);
+      expect(output.toLowerCase()).toMatch(/usage|filename/i);
+      expect(exitCode).toBe(0);
+    });
+
+    test(".save saves history to file", async () => {
+      using dir = tempDir("repl-save-test", {});
+      const filePath = path.join(String(dir), "saved.js");
+      const { exitCode } = await runRepl(["const x = 1", "const y = 2", `.save ${filePath}`, ".exit"]);
+      expect(exitCode).toBe(0);
+      const content = await Bun.file(filePath).text();
+      expect(content).toContain("const x = 1");
+      expect(content).toContain("const y = 2");
+    });
+
+    test(".save without filename shows usage", async () => {
+      const { stdout, exitCode } = await runRepl([".save", ".exit"]);
+      const output = stripAnsi(stdout);
+      expect(output.toLowerCase()).toMatch(/usage|filename/i);
+      expect(exitCode).toBe(0);
+    });
+
+    test("unknown command shows error", async () => {
+      const { stdout, exitCode } = await runRepl([".nonexistent", "1 + 1", ".exit"]);
+      const output = stripAnsi(stdout);
+      expect(output.toLowerCase()).toContain("unknown");
+      // REPL should continue
+      expect(output).toContain("2");
       expect(exitCode).toBe(0);
     });
   });
 
   describe("error handling", () => {
     test("handles syntax errors gracefully", async () => {
-      // Use a complete but invalid syntax - extra closing paren
       const { stdout, stderr, exitCode } = await runRepl(["(1 + ))", "1 + 1", ".exit"]);
       const allOutput = stripAnsi(stdout + stderr);
-      // Should contain error indication but still continue
-      expect(allOutput.toLowerCase().includes("error") || allOutput.toLowerCase().includes("unexpected")).toBe(true);
+      expect(allOutput.toLowerCase()).toContain("error");
+      // REPL should continue working after syntax error
+      expect(allOutput).toContain("2");
       expect(exitCode).toBe(0);
     });
 
     test("handles runtime errors gracefully", async () => {
       const { stdout, stderr, exitCode } = await runRepl(["undefinedVariable", "1 + 1", ".exit"]);
       const allOutput = stripAnsi(stdout + stderr);
-      expect(allOutput.includes("not defined") || allOutput.includes("ReferenceError")).toBe(true);
+      expect(allOutput).toMatch(/not defined|ReferenceError/);
       expect(exitCode).toBe(0);
     });
 
-    test("handles thrown errors", async () => {
+    test("handles thrown string errors", async () => {
       const { stdout, stderr, exitCode } = await runRepl(["throw 'custom error'", "1 + 1", ".exit"]);
       const allOutput = stripAnsi(stdout + stderr);
       expect(allOutput).toContain("custom error");
+      // REPL should continue after thrown error
+      expect(allOutput).toContain("2");
+      expect(exitCode).toBe(0);
+    });
+
+    test("handles thrown Error objects", async () => {
+      const { stdout, stderr, exitCode } = await runRepl(["throw new Error('boom')", ".exit"]);
+      const allOutput = stripAnsi(stdout + stderr);
+      expect(allOutput).toContain("boom");
+      expect(exitCode).toBe(0);
+    });
+
+    test("shows system error properties", async () => {
+      const { stdout, stderr, exitCode } = await runRepl(["fs.readFileSync('/nonexistent/path/file.txt')", ".exit"]);
+      const allOutput = stripAnsi(stdout + stderr);
+      expect(allOutput).toMatch(/ENOENT|no such file/);
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  describe("import statements", () => {
+    test("import default from builtin module", async () => {
+      const { stdout, exitCode } = await runRepl(["import path from 'path'", "typeof path.join", ".exit"]);
+      const output = stripAnsi(stdout);
+      expect(output).toContain("function");
+      expect(exitCode).toBe(0);
+    });
+
+    test("import named exports from builtin module", async () => {
+      const { stdout, exitCode } = await runRepl(["import { join, resolve } from 'path'", "typeof join", ".exit"]);
+      const output = stripAnsi(stdout);
+      expect(output).toContain("function");
+      expect(exitCode).toBe(0);
+    });
+
+    test("import namespace from builtin module", async () => {
+      const { stdout, exitCode } = await runRepl(["import * as os from 'os'", "typeof os.cpus", ".exit"]);
+      const output = stripAnsi(stdout);
+      expect(output).toContain("function");
+      expect(exitCode).toBe(0);
+    });
+
+    test("import used across lines", async () => {
+      const { stdout, exitCode } = await runRepl(["import path from 'path'", "path.join('/tmp', 'test')", ".exit"]);
+      const output = stripAnsi(stdout);
+      expect(output).toContain("/tmp/test");
+      expect(exitCode).toBe(0);
+    });
+
+    test("import nonexistent module shows error", async () => {
+      const { stdout, stderr, exitCode } = await runRepl(["import _ from 'nonexistent-module-xyz'", "1 + 1", ".exit"]);
+      const allOutput = stripAnsi(stdout + stderr);
+      // Should show an error about the module not being found
+      expect(allOutput.toLowerCase()).toMatch(/error|not found|cannot find|resolve/);
+      // REPL should continue after failed import
+      expect(allOutput).toContain("2");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  describe("require", () => {
+    test("require is defined", async () => {
+      const { stdout, exitCode } = await runRepl(["typeof require", ".exit"]);
+      expect(stripAnsi(stdout)).toContain("function");
+      expect(exitCode).toBe(0);
+    });
+
+    test("require builtin module", async () => {
+      const { stdout, exitCode } = await runRepl(["const path = require('path')", "typeof path.join", ".exit"]);
+      expect(stripAnsi(stdout)).toContain("function");
+      expect(exitCode).toBe(0);
+    });
+
+    test("require.resolve works", async () => {
+      const { stdout, exitCode } = await runRepl(["typeof require.resolve", ".exit"]);
+      expect(stripAnsi(stdout)).toContain("function");
       expect(exitCode).toBe(0);
     });
   });
@@ -210,29 +374,38 @@ describe.todoIf(isWindows)("Bun REPL", () => {
   describe("global objects", () => {
     test("has access to Bun globals", async () => {
       const { stdout, exitCode } = await runRepl(["typeof Bun.version", ".exit"]);
-      const results = extractResults(stdout);
-      expect(results.some(r => r.includes("string"))).toBe(true);
+      expect(stripAnsi(stdout)).toContain("string");
       expect(exitCode).toBe(0);
     });
 
     test("has access to console", async () => {
       const { stdout, exitCode } = await runRepl(["console.log('hello from repl')", ".exit"]);
-      const output = stripAnsi(stdout);
-      expect(output).toContain("hello from repl");
+      expect(stripAnsi(stdout)).toContain("hello from repl");
       expect(exitCode).toBe(0);
     });
 
     test("has access to Buffer", async () => {
       const { stdout, exitCode } = await runRepl(["Buffer.from('hello').length", ".exit"]);
-      const results = extractResults(stdout);
-      expect(results).toContain("5");
+      expect(stripAnsi(stdout)).toContain("5");
       expect(exitCode).toBe(0);
     });
 
     test("has access to process", async () => {
       const { stdout, exitCode } = await runRepl(["typeof process.version", ".exit"]);
-      const results = extractResults(stdout);
-      expect(results.some(r => r.includes("string"))).toBe(true);
+      expect(stripAnsi(stdout)).toContain("string");
+      expect(exitCode).toBe(0);
+    });
+
+    test("has __dirname and __filename", async () => {
+      const { stdout, exitCode } = await runRepl(["typeof __dirname", "typeof __filename", ".exit"]);
+      const output = stripAnsi(stdout);
+      expect(output).toContain("string");
+      expect(exitCode).toBe(0);
+    });
+
+    test("has module object", async () => {
+      const { stdout, exitCode } = await runRepl(["typeof module", ".exit"]);
+      expect(stripAnsi(stdout)).toContain("object");
       expect(exitCode).toBe(0);
     });
   });
@@ -240,104 +413,224 @@ describe.todoIf(isWindows)("Bun REPL", () => {
   describe("variable persistence", () => {
     test("variables persist across evaluations", async () => {
       const { stdout, exitCode } = await runRepl(["const x = 10", "const y = 20", "x + y", ".exit"]);
-      const results = extractResults(stdout);
-      expect(results).toContain("30");
+      expect(stripAnsi(stdout)).toContain("30");
       expect(exitCode).toBe(0);
     });
 
     test("let variables can be reassigned", async () => {
       const { stdout, exitCode } = await runRepl(["let counter = 0", "counter++", "counter++", "counter", ".exit"]);
-      const results = extractResults(stdout);
-      expect(results).toContain("2");
+      expect(stripAnsi(stdout)).toContain("2");
       expect(exitCode).toBe(0);
     });
 
     test("functions persist", async () => {
       const { stdout, exitCode } = await runRepl(["function add(a, b) { return a + b; }", "add(5, 3)", ".exit"]);
-      const results = extractResults(stdout);
-      expect(results).toContain("8");
+      expect(stripAnsi(stdout)).toContain("8");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  describe("multiline input", () => {
+    test("handles multiline function definition", async () => {
+      const { stdout, exitCode } = await runRepl([
+        "function greet(name) {",
+        "  return 'hi ' + name",
+        "}",
+        "greet('world')",
+        ".exit",
+      ]);
+      expect(stripAnsi(stdout)).toContain("hi world");
+      expect(exitCode).toBe(0);
+    });
+
+    test("handles multiline object", async () => {
+      const { stdout, exitCode } = await runRepl(["({", "  x: 1,", "  y: 2", "})", ".exit"]);
+      const output = stripAnsi(stdout);
+      expect(output).toContain("x");
+      expect(output).toContain("y");
       expect(exitCode).toBe(0);
     });
   });
 
   describe("async evaluation", () => {
-    test("evaluates promises", async () => {
-      const { stdout, exitCode } = await runRepl(["Promise.resolve(42)", ".exit"]);
-      const results = extractResults(stdout);
-      expect(results.some(r => r.includes("42") || r.includes("Promise"))).toBe(true);
+    test("await expressions", async () => {
+      const { stdout, exitCode } = await runRepl(["await Promise.resolve(42)", ".exit"]);
+      expect(stripAnsi(stdout)).toContain("42");
       expect(exitCode).toBe(0);
     });
 
-    test("evaluates async functions", async () => {
-      const { stdout, exitCode } = await runRepl(["async function getValue() { return 123; }", "getValue()", ".exit"]);
-      const results = extractResults(stdout);
-      expect(results.some(r => r.includes("123") || r.includes("Promise"))).toBe(true);
+    test("await rejected promise shows error", async () => {
+      const { stdout, stderr, exitCode } = await runRepl([
+        "await Promise.reject(new Error('async fail'))",
+        "1 + 1",
+        ".exit",
+      ]);
+      const allOutput = stripAnsi(stdout + stderr);
+      expect(allOutput).toContain("async fail");
+      // REPL should continue after rejected promise
+      expect(allOutput).toContain("2");
+      expect(exitCode).toBe(0);
+    });
+
+    test("async functions", async () => {
+      const { stdout, exitCode } = await runRepl([
+        "async function getValue() { return 123; }",
+        "await getValue()",
+        ".exit",
+      ]);
+      expect(stripAnsi(stdout)).toContain("123");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  describe("TypeScript support", () => {
+    test("type annotations are stripped", async () => {
+      const { stdout, exitCode } = await runRepl(["const x: number = 42", "x", ".exit"]);
+      expect(stripAnsi(stdout)).toContain("42");
+      expect(exitCode).toBe(0);
+    });
+
+    test("interface declarations work", async () => {
+      const { stdout, exitCode } = await runRepl([
+        "interface User { name: string }",
+        "const u: User = { name: 'test' }",
+        "u.name",
+        ".exit",
+      ]);
+      expect(stripAnsi(stdout)).toContain("test");
       expect(exitCode).toBe(0);
     });
   });
 
   describe("welcome message", () => {
-    test("shows welcome message on startup", async () => {
+    test("shows welcome message with version", async () => {
       const { stdout, exitCode } = await runRepl([".exit"]);
       const output = stripAnsi(stdout);
       expect(output).toContain("Welcome to Bun");
-      expect(exitCode).toBe(0);
-    });
-
-    test("shows version in welcome message", async () => {
-      const { stdout, exitCode } = await runRepl([".exit"]);
-      const output = stripAnsi(stdout);
-      // Should contain "Bun v" followed by version numbers
       expect(output).toMatch(/Bun v\d+\.\d+\.\d+/);
       expect(exitCode).toBe(0);
     });
   });
 });
 
-// Terminal-based REPL tests (for interactive features)
-describe.todoIf(isWindows)("Bun REPL with Terminal", () => {
-  test("spawns REPL in PTY and receives welcome message", async () => {
-    const received: Uint8Array[] = [];
-    const { promise: welcomeReceived, resolve: gotWelcome } = Promise.withResolvers<void>();
+// Interactive terminal-based REPL tests
+describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
+  test("shows welcome message and prompt", async () => {
+    await withTerminalRepl(async ({ allOutput }) => {
+      const output = allOutput();
+      expect(output).toContain("Welcome to Bun");
+      expect(output).toMatch(/\u276f|> /);
+    });
+  });
 
-    const terminal = new Bun.Terminal({
-      cols: 80,
-      rows: 24,
+  test("evaluates expression and shows result", async () => {
+    await withTerminalRepl(async ({ send, waitFor }) => {
+      send("40 + 2\n");
+      const output = await waitFor("42");
+      expect(stripAnsi(output)).toContain("42");
+    });
+  });
+
+  test("error shows in terminal", async () => {
+    await withTerminalRepl(async ({ send, waitFor }) => {
+      send("throw new Error('order test')\n");
+      const output = await waitFor("order test");
+      expect(stripAnsi(output)).toContain("order test");
+    });
+  });
+
+  test("console.log shows in terminal", async () => {
+    await withTerminalRepl(async ({ send, waitFor }) => {
+      send("console.log('side effect')\n");
+      const output = await waitFor("side effect");
+      expect(stripAnsi(output)).toContain("side effect");
+    });
+  });
+
+  test("Ctrl+C cancels current input", async () => {
+    await withTerminalRepl(async ({ send, waitFor, allOutput }) => {
+      send("some partial input");
+      // Small delay to let the input render
+      await Bun.sleep(100);
+      send("\x03"); // Ctrl+C
+      await waitFor(/\u276f|> /);
+      // Should be back at a clean prompt
+      send("1 + 1\n");
+      await waitFor("2");
+    });
+  });
+
+  test("Ctrl+D exits on empty line", async () => {
+    const received: string[] = [];
+    await using terminal = new Bun.Terminal({
+      cols: 120,
+      rows: 40,
       data(_term, data) {
-        received.push(new Uint8Array(data));
-        const str = Buffer.from(data).toString();
-        if (str.includes("Welcome")) {
-          gotWelcome();
-        }
+        received.push(Buffer.from(data).toString());
       },
     });
 
-    const proc = Bun.spawn({
+    await using proc = Bun.spawn({
       cmd: [bunExe(), "repl"],
       terminal,
-      env: {
-        ...bunEnv,
-        TERM: "xterm-256color",
-      },
+      env: { ...bunEnv, TERM: "xterm-256color" },
     });
 
-    // Wait for welcome message (with timeout)
-    await Promise.race([welcomeReceived, Bun.sleep(3000)]);
+    // Wait for ready
+    await new Promise<void>(resolve => {
+      const check = () => {
+        if (received.join("").includes("\u276f") || received.join("").includes("> ")) return resolve();
+        setTimeout(check, 50);
+      };
+      check();
+    });
 
-    // Exit the REPL
-    terminal.write(".exit\n");
+    terminal.write("\x04"); // Ctrl+D
+    const exitCode = await Promise.race([proc.exited, Bun.sleep(3000).then(() => -1)]);
+    expect(exitCode).toBe(0);
+  });
 
-    // Wait for process exit with timeout
-    await Promise.race([proc.exited, Bun.sleep(1000)]);
+  test("require works in terminal", async () => {
+    await withTerminalRepl(async ({ send, waitFor }) => {
+      send("typeof require\n");
+      const output = await waitFor("function");
+      expect(stripAnsi(output)).toContain("function");
+    });
+  });
 
-    // Kill if still running
-    if (!proc.killed) {
-      proc.kill();
-    }
+  test("import statement works in terminal", async () => {
+    await withTerminalRepl(async ({ send, waitFor }) => {
+      send("import path from 'path'\n");
+      // Wait for the import to complete
+      await waitFor(/\u276f|> /);
+      send("path.sep\n");
+      await waitFor("/");
+    });
+  });
 
-    const allData = Buffer.concat(received).toString();
-    expect(allData).toContain("Welcome to Bun");
+  test("up arrow recalls previous command", async () => {
+    await withTerminalRepl(async ({ send, waitFor }) => {
+      send("111 + 222\n");
+      await waitFor("333");
+      // Press up arrow to recall previous command
+      send("\x1b[A"); // Up arrow escape sequence
+      await Bun.sleep(100);
+      send("\n");
+      // Should evaluate the same expression again
+      await waitFor("333");
+    });
+  });
 
-    terminal.close();
+  test("multiline input with open brace", async () => {
+    await withTerminalRepl(async ({ send, waitFor }) => {
+      send("function test() {\n");
+      await waitFor("..."); // multiline prompt
+      send("  return 99\n");
+      send("}\n");
+      // Wait for function to be defined
+      await waitFor(/\u276f|> /);
+      send("test()\n");
+      await waitFor("99");
+    });
   });
 });

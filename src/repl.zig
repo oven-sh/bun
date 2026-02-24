@@ -32,14 +32,6 @@ extern fn Bun__REPL__getCompletions(
     prefixPtr: [*]const u8,
     prefixLen: usize,
 ) jsc.JSValue;
-
-extern fn Bun__REPL__formatValue(
-    globalObject: *jsc.JSGlobalObject,
-    value: jsc.JSValue,
-    depth: i32,
-    colors: bool,
-) jsc.JSValue;
-
 // ============================================================================
 // Constants
 // ============================================================================
@@ -755,19 +747,87 @@ fn restoreTerminal(self: *Repl) void {
     }
 }
 
+/// Global pointer for signal handler to access the VM
+var sigint_vm: ?*jsc.VM = null;
+
+fn sigintHandler(_: c_int) callconv(.c) void {
+    if (sigint_vm) |vm| {
+        vm.setExecutionForbidden(true);
+    }
+}
+
+/// Temporarily enable SIGINT delivery during blocking promise waits
+fn enableSignalsDuringWait(self: *Repl) void {
+    if (!Environment.isPosix) return;
+
+    // Store VM pointer for signal handler
+    if (self.vm) |vm| {
+        sigint_vm = vm.jsc_vm;
+    }
+
+    // Enable ISIG so Ctrl+C generates SIGINT
+    if (self.original_termios) |orig| {
+        var raw = orig;
+        raw.lflag.ISIG = true;
+        std.posix.tcsetattr(std.posix.STDIN_FILENO, .FLUSH, raw) catch {};
+    }
+
+    // Install SIGINT handler
+    const act = std.posix.Sigaction{
+        .handler = .{ .handler = sigintHandler },
+        .mask = std.posix.sigemptyset(),
+        .flags = 0,
+    };
+    std.posix.sigaction(std.posix.SIG.INT, &act, null);
+}
+
+/// Restore raw terminal mode after promise wait
+fn disableSignalsDuringWait(self: *Repl) void {
+    if (!Environment.isPosix) return;
+
+    sigint_vm = null;
+
+    // Restore ISIG disabled (raw mode)
+    if (self.original_termios) |orig| {
+        var raw = orig;
+        raw.iflag.BRKINT = false;
+        raw.iflag.ICRNL = false;
+        raw.iflag.INPCK = false;
+        raw.iflag.ISTRIP = false;
+        raw.iflag.IXON = false;
+        raw.oflag.OPOST = true;
+        raw.cflag.CSIZE = .CS8;
+        raw.lflag.ECHO = false;
+        raw.lflag.ICANON = false;
+        raw.lflag.IEXTEN = false;
+        raw.lflag.ISIG = false;
+        raw.cc[@intFromEnum(std.posix.V.MIN)] = 1;
+        raw.cc[@intFromEnum(std.posix.V.TIME)] = 0;
+        std.posix.tcsetattr(std.posix.STDIN_FILENO, .FLUSH, raw) catch {};
+    }
+
+    // Restore default SIGINT handling (SIG_DFL)
+    const act = std.posix.Sigaction{
+        .handler = .{ .handler = std.posix.SIG.DFL },
+        .mask = std.posix.sigemptyset(),
+        .flags = 0,
+    };
+    std.posix.sigaction(std.posix.SIG.INT, &act, null);
+}
+
 fn write(_: *Repl, data: []const u8) void {
     Output.writer().writeAll(data) catch {};
 }
 
 fn print(_: *Repl, comptime format: []const u8, args: anytype) void {
-    Output.print(format, args);
+    Output.writer().print(format, args) catch {};
 }
 
 fn printError(self: *Repl, comptime format: []const u8, args: anytype) void {
     if (self.use_colors) {
-        Output.print(Color.red ++ format ++ Color.reset, args);
+        Output.writer().print(Color.red ++ format ++ Color.reset, args) catch {};
     } else {
-        Output.print(format, args);
+        Output.writer().print(format, args) catch {};
     }
 }
 
@@ -868,9 +928,9 @@ fn getPrompt(self: *Repl) []const u8 {
     }
 
     if (self.use_colors) {
-        return Color.green ++ "bun" ++ Color.reset ++ "> ";
+        return Color.dim ++ "\xe2\x9d\xaf" ++ Color.reset ++ " ";
     } else {
-        return "bun> ";
+        return "> ";
     }
 }
 
@@ -878,10 +938,13 @@ fn getPromptLength(self: *Repl) usize {
     if (self.in_multiline or self.editor_mode) {
         return 4; // "... "
     }
-    return 5; // "bun> "
+    return 2; // "> " or "\u{276f} "
 }
 
 fn refreshLine(self: *Repl) void {
+    // Flush any buffered output (e.g., from console.log in JS) before drawing prompt
+    Output.flush();
+
     const prompt = self.getPrompt();
     const prompt_len = self.getPromptLength();
     const line = self.line_editor.getLine();
@@ -1025,8 +1088,24 @@ fn evaluateAndPrint(self: *Repl, code: []const u8) void {
     // Handle async IIFE results - wait for promise to resolve
     var resolved_result = result;
     if (result.asPromise()) |promise| {
+        // Mark as handled BEFORE waiting to prevent unhandled rejection output
+        promise.setHandled();
+
+        // Temporarily re-enable signal delivery so Ctrl+C can interrupt
+        // the blocking waitForPromise call
+        self.enableSignalsDuringWait();
+        defer self.disableSignalsDuringWait();
+
         // Wait for the promise to settle
         vm.waitForPromise(.{ .normal = promise });
+
+        // If execution was forbidden by SIGINT, clear it and report
+        if (vm.jsc_vm.executionForbidden()) {
+            vm.jsc_vm.setExecutionForbidden(false);
+            global.clearTerminationException();
+            self.print("\n", .{});
+            return;
+        }
 
         // Check promise status after waiting
         switch (promise.status()) {
@@ -1035,7 +1114,6 @@ fn evaluateAndPrint(self: *Repl, code: []const u8) void {
             },
             .rejected => {
                 const rejection = promise.result(vm.jsc_vm);
-                promise.setHandled();
                 self.last_error = rejection;
                 // Set _error on the global object
                 const global_this = global.toJSValue();
@@ -1044,8 +1122,8 @@ fn evaluateAndPrint(self: *Repl, code: []const u8) void {
                 return;
             },
             .pending => {
-                // Should not happen after waitForPromise
-                self.print("[Promise still pending]\n", .{});
+                // Interrupted by signal or timed out
+                self.print("\n", .{});
                 return;
             },
         }
@@ -1077,33 +1155,13 @@ fn evaluateAndPrint(self: *Repl, code: []const u8) void {
             self.print("undefined\n", .{});
         }
     } else {
-        // Format and print the result using util.inspect
-        const formatted = Bun__REPL__formatValue(global, actual_result, 4, self.use_colors);
-        if (!formatted.isUndefined() and formatted.isString()) {
-            const slice = formatted.toSlice(global, self.allocator) catch {
-                self.print("[Error formatting value]\n", .{});
-                return;
-            };
-            defer slice.deinit();
-            if (slice.len > 0) {
-                self.print("{s}\n", .{slice.slice()});
-            }
-        } else {
-            // Fallback to simple toString
-            const slice = actual_result.toSlice(global, self.allocator) catch {
-                self.print("[object]\n", .{});
-                return;
-            };
-            defer slice.deinit();
-            self.print("{s}\n", .{slice.slice()});
-        }
+        self.printFormattedValue(actual_result);
     }
 
     // Tick the event loop to handle any pending work
     vm.tick();
 }
 
-/// Evaluate code without REPL transforms (fallback for errors)
 /// Evaluate code without REPL transforms (fallback for errors)
 /// The C++ Bun__REPL__evaluate handles setting _ and _error
 fn evaluateRaw(self: *Repl, code: []const u8) void {
@@ -1128,14 +1186,7 @@ fn evaluateRaw(self: *Repl, code: []const u8) void {
     self.last_result = result;
 
     if (!result.isUndefined()) {
-        const formatted = Bun__REPL__formatValue(global, result, 4, self.use_colors);
-        if (!formatted.isUndefined() and formatted.isString()) {
-            const slice = formatted.toSlice(global, self.allocator) catch return;
-            defer slice.deinit();
-            if (slice.len > 0) {
-                self.print("{s}\n", .{slice.slice()});
-            }
-        }
+        self.printFormattedValue(result);
     } else {
         if (self.use_colors) {
             self.print("{s}undefined{s}\n", .{ Color.dim, Color.reset });
@@ -1173,10 +1224,16 @@ fn transformForRepl(self: *Repl, code: []const u8) ?[]const u8 {
     const allocator = arena.allocator();
 
     // Set up parser options with repl_mode enabled
-    var opts = js_parser.Parser.Options.init(vm.transpiler.options.jsx, .js);
+    var opts = js_parser.Parser.Options.init(vm.transpiler.options.jsx, .tsx);
     opts.repl_mode = true;
     opts.features.dead_code_elimination = false; // REPL needs all code
     opts.features.top_level_await = true; // Enable top-level await in REPL
+
+    // Initialize macro context from transpiler (required for import processing)
+    if (vm.transpiler.macro_context == null) {
+        vm.transpiler.macro_context = bun.ast.Macro.MacroContext.init(&vm.transpiler);
+    }
+    opts.macro_context = &vm.transpiler.macro_context.?;
 
     // Create log for errors
     var log = logger.Log.init(arena.backingAllocator());
@@ -1201,7 +1258,6 @@ fn transformForRepl(self: *Repl, code: []const u8) ?[]const u8 {
 
     // Check for parse errors
     if (log.errors > 0) return null;
-
     // Print the transformed AST back to JavaScript
     const buffer_writer = js_printer.BufferWriter.init(self.allocator);
     var buffer_printer = js_printer.BufferPrinter.init(buffer_writer);
@@ -1261,45 +1317,30 @@ fn setReplVariables(self: *Repl) void {
 
 fn printJSError(self: *Repl, error_value: jsc.JSValue) void {
     const global = self.global orelse return;
+    const writer = Output.writer();
+    // Use .Error level for proper error formatting with Bun.inspect
+    jsc.ConsoleObject.format2(.Error, global, @ptrCast(&error_value), 1, writer, .{
+        .enable_colors = self.use_colors,
+        .add_newline = true,
+        .flush = false,
+        .quote_strings = true,
+        .ordered_properties = false,
+        .max_depth = 4,
+    }) catch {};
+}
 
-    // Try to get error message
-    if (error_value.isObject()) {
-        const message_opt = error_value.getOwn(global, "message") catch null;
-        const name_opt = error_value.getOwn(global, "name") catch null;
-
-        var name_str: []const u8 = "Error";
-        var name_slice: ?jsc.ZigString.Slice = null;
-        defer if (name_slice) |*s| s.deinit();
-
-        if (name_opt) |name| {
-            if (name.isString()) {
-                name_slice = name.toSlice(global, self.allocator) catch null;
-                if (name_slice) |s| {
-                    name_str = s.slice();
-                }
-            }
-        }
-
-        if (message_opt) |message| {
-            if (message.isString()) {
-                const msg_slice = message.toSlice(global, self.allocator) catch {
-                    self.printError("{s}\n", .{name_str});
-                    return;
-                };
-                defer msg_slice.deinit();
-                self.printError("{s}: {s}\n", .{ name_str, msg_slice.slice() });
-                return;
-            }
-        }
-        self.printError("{s}\n", .{name_str});
-    } else {
-        const slice = error_value.toSlice(global, self.allocator) catch {
-            self.printError("Error\n", .{});
-            return;
-        };
-        defer slice.deinit();
-        self.printError("Error: {s}\n", .{slice.slice()});
-    }
+/// Format and print a JS value using Bun's console formatter (same as console.log)
+fn printFormattedValue(self: *Repl, value: jsc.JSValue) void {
+    const global = self.global orelse return;
+    const writer = Output.writer();
+    jsc.ConsoleObject.format2(.Log, global, @ptrCast(&value), 1, writer, .{
+        .enable_colors = self.use_colors,
+        .add_newline = true,
+        .flush = false,
+        .quote_strings = true,
+        .ordered_properties = false,
+        .max_depth = 4,
+    }) catch {};
 }
 
 // ============================================================================

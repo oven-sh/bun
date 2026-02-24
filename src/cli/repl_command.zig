@@ -136,6 +136,10 @@ const ReplRunner = struct {
         // This must be done inside the API lock as it allocates JS objects
         bun.cpp.Bun__ExposeNodeModuleGlobals(vm.global);
 
+        // Set up require(), module, __filename, __dirname relative to cwd
+        const cwd = vm.transpiler.fs.top_level_dir;
+        bun.cpp.Bun__REPL__setupGlobalRequire(vm.global, cwd.ptr, cwd.len);
+
         // Set timezone if specified
         if (vm.transpiler.env.get("TZ")) |tz| {
             if (tz.len > 0) {

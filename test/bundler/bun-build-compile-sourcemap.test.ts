@@ -234,6 +234,7 @@ export function greet() {
 
     const [_stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
 
     // The executable should be at subdir/myapp

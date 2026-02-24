@@ -2193,9 +2193,9 @@ pub const BundleV2 = struct {
                         // Derive the .map filename from the sourcemap's own dest_path,
                         // placed in the same directory as the compiled executable.
                         const map_basename = if (current.dest_path.len > 0)
-                            std.fs.path.basename(current.dest_path)
+                            bun.path.basename(current.dest_path)
                         else
-                            std.fs.path.basename(bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{s}.map", .{full_outfile_path})));
+                            bun.path.basename(bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{s}.map", .{full_outfile_path})));
 
                         const sourcemap_full_path = if (dirname.len == 0 or strings.eqlComptime(dirname, "."))
                             bun.handleOom(bun.default_allocator.dupe(u8, map_basename))

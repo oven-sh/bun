@@ -557,9 +557,9 @@ pub const BuildCommand = struct {
                             // Use the sourcemap's own dest_path basename if available,
                             // otherwise fall back to {outfile}.map
                             const map_basename = if (f.dest_path.len > 0)
-                                std.fs.path.basename(f.dest_path)
+                                bun.path.basename(f.dest_path)
                             else brk: {
-                                const exe_base = std.fs.path.basename(outfile);
+                                const exe_base = bun.path.basename(outfile);
                                 break :brk if (compile_target.os == .windows and !strings.hasSuffixComptime(exe_base, ".exe"))
                                     try std.fmt.allocPrint(allocator, "{s}.exe.map", .{exe_base})
                                 else

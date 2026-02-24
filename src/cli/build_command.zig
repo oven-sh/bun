@@ -546,17 +546,31 @@ pub const BuildCommand = struct {
                     Global.exit(1);
                 }
 
-                // Write external sourcemap files next to the compiled executable
+                // Write external sourcemap files next to the compiled executable.
+                // With --splitting, there can be multiple .map files (one per chunk).
                 if (this_transpiler.options.source_map == .external) {
+                    const outfile_dirname = std.fs.path.dirname(outfile) orelse "";
                     for (output_files) |f| {
                         if (f.output_kind == .sourcemap and f.value == .buffer) {
                             const sourcemap_bytes = f.value.buffer.bytes;
                             if (sourcemap_bytes.len == 0) continue;
 
-                            const outfile_with_ext = if (compile_target.os == .windows and !strings.hasSuffixComptime(outfile, ".exe"))
-                                try std.fmt.allocPrint(allocator, "{s}.exe.map", .{outfile})
+                            // Use the sourcemap's own dest_path basename if available,
+                            // otherwise fall back to {outfile}.map
+                            const map_basename = if (f.dest_path.len > 0)
+                                std.fs.path.basename(f.dest_path)
+                            else brk: {
+                                const exe_base = std.fs.path.basename(outfile);
+                                break :brk if (compile_target.os == .windows and !strings.hasSuffixComptime(exe_base, ".exe"))
+                                    try std.fmt.allocPrint(allocator, "{s}.exe.map", .{exe_base})
+                                else
+                                    try std.fmt.allocPrint(allocator, "{s}.map", .{exe_base});
+                            };
+
+                            const map_path = if (outfile_dirname.len == 0)
+                                map_basename
                             else
-                                try std.fmt.allocPrint(allocator, "{s}.map", .{outfile});
+                                try std.fmt.allocPrint(allocator, "{s}{c}{s}", .{ outfile_dirname, std.fs.path.sep, map_basename });
 
                             var pathbuf: bun.PathBuffer = undefined;
                             switch (bun.jsc.Node.fs.NodeFS.writeFileWithPathBuffer(
@@ -572,12 +586,12 @@ pub const BuildCommand = struct {
                                     .encoding = .buffer,
                                     .dirfd = .fromStdDir(root_dir),
                                     .file = .{ .path = .{
-                                        .string = bun.PathString.init(outfile_with_ext),
+                                        .string = bun.PathString.init(map_path),
                                     } },
                                 },
                             )) {
                                 .err => |err| {
-                                    Output.err(err, "failed to write sourcemap file '{s}'", .{outfile_with_ext});
+                                    Output.err(err, "failed to write sourcemap file '{s}'", .{map_path});
                                     had_err = true;
                                 },
                                 .result => {},

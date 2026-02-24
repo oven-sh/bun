@@ -2181,7 +2181,7 @@ pub const BundleV2 = struct {
 
             // Write external sourcemap files next to the compiled executable and
             // keep them in the output array. Destroy all other non-entry-point files.
-            const sourcemap_outfile = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{s}.map", .{full_outfile_path}));
+            // With --splitting, there can be multiple sourcemap files (one per chunk).
             var kept: usize = 0;
             for (output_files.items, 0..) |*current, i| {
                 if (i == entry_point_index) {
@@ -2190,10 +2190,21 @@ pub const BundleV2 = struct {
                 } else if (result == .success and current.output_kind == .sourcemap and current.value == .buffer) {
                     const sourcemap_bytes = current.value.buffer.bytes;
                     if (sourcemap_bytes.len > 0) {
+                        // Derive the .map filename from the sourcemap's own dest_path,
+                        // placed in the same directory as the compiled executable.
+                        const map_basename = if (current.dest_path.len > 0)
+                            std.fs.path.basename(current.dest_path)
+                        else
+                            std.fs.path.basename(bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{s}.map", .{full_outfile_path})));
+
+                        const sourcemap_full_path = if (dirname.len == 0 or strings.eqlComptime(dirname, "."))
+                            bun.handleOom(bun.default_allocator.dupe(u8, map_basename))
+                        else
+                            bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{s}{c}{s}", .{ dirname, std.fs.path.sep, map_basename }));
+
                         // Write the sourcemap file to disk next to the executable
                         var pathbuf: bun.PathBuffer = undefined;
-                        const sourcemap_basename = std.fs.path.basename(sourcemap_outfile);
-                        const write_path = if (Environment.isWindows) sourcemap_outfile else sourcemap_basename;
+                        const write_path = if (Environment.isWindows) sourcemap_full_path else map_basename;
                         switch (bun.jsc.Node.fs.NodeFS.writeFileWithPathBuffer(
                             &pathbuf,
                             .{
@@ -2215,7 +2226,7 @@ pub const BundleV2 = struct {
                                 current.deinit();
                             },
                             .result => {
-                                current.dest_path = sourcemap_outfile;
+                                current.dest_path = sourcemap_full_path;
                                 output_files.items[kept] = current.*;
                                 kept += 1;
                             },

@@ -147,6 +147,67 @@ main();`,
     expect(sourcemapOutputs.length).toBe(0);
   });
 
+  test("compile with splitting and external sourcemap writes multiple .map files", async () => {
+    using dir = tempDir("build-compile-sourcemap-splitting", {
+      "entry.js": `
+const mod = await import("./lazy.js");
+mod.greet();
+`,
+      "lazy.js": `
+export function greet() {
+  console.log("hello from lazy module");
+}
+`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "entry.js")],
+      compile: true,
+      splitting: true,
+      sourcemap: "external",
+    });
+
+    expect(result.success).toBe(true);
+
+    const executableOutput = result.outputs.find((o: any) => o.kind === "entry-point")!;
+    const executablePath = executableOutput.path;
+    expect(await Bun.file(executablePath).exists()).toBe(true);
+
+    // With splitting, there should be multiple sourcemap outputs
+    const sourcemapOutputs = result.outputs.filter((o: any) => o.kind === "sourcemap");
+    expect(sourcemapOutputs.length).toBeGreaterThanOrEqual(1);
+
+    // Each sourcemap should be a valid .map file on disk
+    const mapPaths = new Set<string>();
+    for (const sm of sourcemapOutputs) {
+      expect(sm.path).toEndWith(".map");
+      expect(await Bun.file(sm.path).exists()).toBe(true);
+
+      // Each map file should have a unique path (no overwrites)
+      expect(mapPaths.has(sm.path)).toBe(false);
+      mapPaths.add(sm.path);
+
+      // Validate the sourcemap is valid JSON
+      const mapContent = JSON.parse(await Bun.file(sm.path).text());
+      expect(mapContent.version).toBe(3);
+      expect(mapContent.mappings).toBeString();
+    }
+
+    // Run the compiled executable to ensure it works
+    await using proc = Bun.spawn({
+      cmd: [executablePath],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toContain("hello from lazy module");
+    expect(exitCode).toBe(0);
+  });
+
   test("compile with multiple source files", async () => {
     using dir = tempDir("build-compile-sourcemap-multiple-files", {
       "utils.js": `export function utilError() {

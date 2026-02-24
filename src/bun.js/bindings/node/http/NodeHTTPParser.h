@@ -130,8 +130,8 @@ public:
     HTTPParser(JSC::JSGlobalObject* globalObject)
         : m_currentBufferData(nullptr)
         , m_currentBufferLen(0)
+        , m_globalObject(globalObject)
     {
-        m_globalObject.setWithoutWriteBarrier(globalObject);
     }
 
     void init(llhttp_type_t type, uint64_t maxHttpHeaderSize, uint32_t lenientFlags);
@@ -171,8 +171,8 @@ public:
     JSC::WriteBarrier<JSConnectionsList> m_connectionsList;
 
     // need these for llhttp callbacks unfortunately
-    JSC::WriteBarrier<JSC::JSGlobalObject> m_globalObject;
-    JSC::WriteBarrier<JSHTTPParser> m_thisParser;
+    JSC::JSGlobalObject* m_globalObject;
+    JSHTTPParser* m_thisParser = nullptr;
 
     llhttp_t m_parserData;
     StringPtr m_fields[kMaxHeaderFieldsCount];

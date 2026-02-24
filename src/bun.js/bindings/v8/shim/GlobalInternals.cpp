@@ -60,8 +60,6 @@ void GlobalInternals::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
 
     visitor.append(thisObject->m_globalObject);
-    visitor.append(thisObject->m_isolate.m_globalInternals);
-    visitor.append(thisObject->m_isolate.m_globalObject);
     thisObject->m_objectTemplateStructure.visit(visitor);
     thisObject->m_handleScopeBufferStructure.visit(visitor);
     thisObject->m_functionTemplateStructure.visit(visitor);

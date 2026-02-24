@@ -16,7 +16,7 @@ void JSHTTPParser::finishCreation(VM& vm)
     ASSERT(inherits(info()));
 
     // llhttp callbacks need JSHTTPParser for the connections list.
-    m_impl.m_thisParser.set(vm, this, this);
+    m_impl.m_thisParser = this;
 }
 
 template<typename Visitor>
@@ -25,8 +25,8 @@ void JSHTTPParser::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     JSHTTPParser* thisObject = jsCast<JSHTTPParser*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_impl.m_globalObject);
-    visitor.append(thisObject->m_impl.m_thisParser);
+    visitor.appendUnbarriered(thisObject->m_impl.m_globalObject);
+    visitor.appendUnbarriered(thisObject->m_impl.m_thisParser);
     visitor.append(thisObject->m_impl.m_connectionsList);
 }
 

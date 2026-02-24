@@ -1187,6 +1187,10 @@ pub const LinkerContext = struct {
         ast: *const JSAst,
     ) !bool {
         const record = ast.import_records.at(import_record_index);
+        // Barrel optimization: deferred import records should be dropped
+        if (record.flags.is_unused) {
+            return true;
+        }
         // Is this an external import?
         if (!record.source_index.isValid()) {
             // Keep the "import" statement if import statements are supported
@@ -2316,6 +2320,14 @@ pub const LinkerContext = struct {
         // Is this an external file?
         const record: *const ImportRecord = import_records.at(named_import.import_record_index);
         if (!record.source_index.isValid()) {
+            return .{
+                .value = .{},
+                .status = .external,
+            };
+        }
+
+        // Barrel optimization: deferred import records point to empty ASTs
+        if (record.flags.is_unused) {
             return .{
                 .value = .{},
                 .status = .external,

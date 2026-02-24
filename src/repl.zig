@@ -714,6 +714,20 @@ pub fn deinit(self: *Repl) void {
     self.history.deinit();
     self.multiline_buffer.deinit();
     self.editor_buffer.deinit();
+    if (!self.last_result.isUndefined()) self.last_result.unprotect();
+    if (!self.last_error.isUndefined()) self.last_error.unprotect();
+}
+
+fn setLastResult(self: *Repl, value: jsc.JSValue) void {
+    if (!self.last_result.isUndefined()) self.last_result.unprotect();
+    self.last_result = value;
+    if (!value.isUndefined()) value.protect();
+}
+
+fn setLastError(self: *Repl, value: jsc.JSValue) void {
+    if (!self.last_error.isUndefined()) self.last_error.unprotect();
+    self.last_error = value;
+    if (!value.isUndefined()) value.protect();
 }
 
 // ============================================================================
@@ -1079,7 +1093,7 @@ fn evaluateAndPrint(self: *Repl, code: []const u8) void {
 
     // Check for exception
     if (!exception.isUndefined() and !exception.isNull()) {
-        self.last_error = exception;
+        self.setLastError(exception);
         self.printJSError(exception);
         return;
     }
@@ -1113,7 +1127,7 @@ fn evaluateAndPrint(self: *Repl, code: []const u8) void {
             },
             .rejected => {
                 const rejection = promise.result(vm.jsc_vm);
-                self.last_error = rejection;
+                self.setLastError(rejection);
                 // Set _error on the global object
                 const global_this = global.toJSValue();
                 global_this.put(global, "_error", rejection);
@@ -1138,7 +1152,7 @@ fn evaluateAndPrint(self: *Repl, code: []const u8) void {
     }
 
     // Store and print result
-    self.last_result = actual_result;
+    self.setLastResult(actual_result);
 
     // Set _ to the last result (only if not undefined)
     // Use the global object as JSValue and put the property on it
@@ -1177,12 +1191,12 @@ fn evaluateRaw(self: *Repl, code: []const u8) void {
     );
 
     if (!exception.isUndefined() and !exception.isNull()) {
-        self.last_error = exception;
+        self.setLastError(exception);
         self.printJSError(exception);
         return;
     }
 
-    self.last_result = result;
+    self.setLastResult(result);
 
     if (!result.isUndefined()) {
         self.printFormattedValue(result);
@@ -1221,7 +1235,7 @@ fn evaluateAndCopy(self: *Repl, code: []const u8) void {
     );
 
     if (!exception.isUndefined() and !exception.isNull()) {
-        self.last_error = exception;
+        self.setLastError(exception);
         self.printJSError(exception);
         return;
     }
@@ -1242,7 +1256,7 @@ fn evaluateAndCopy(self: *Repl, code: []const u8) void {
             .fulfilled => resolved_result = promise.result(vm.jsc_vm),
             .rejected => {
                 const rejection = promise.result(vm.jsc_vm);
-                self.last_error = rejection;
+                self.setLastError(rejection);
                 self.printJSError(rejection);
                 return;
             },
@@ -1257,7 +1271,7 @@ fn evaluateAndCopy(self: *Repl, code: []const u8) void {
         }
     }
 
-    self.last_result = actual_result;
+    self.setLastResult(actual_result);
     if (!actual_result.isUndefined()) {
         const global_this = global.toJSValue();
         global_this.put(global, "_", actual_result);

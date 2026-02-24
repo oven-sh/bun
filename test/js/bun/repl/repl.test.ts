@@ -575,8 +575,7 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
   test("Ctrl+C cancels current input", async () => {
     await withTerminalRepl(async ({ send, waitFor, allOutput }) => {
       send("some partial input");
-      // Small delay to let the input render
-      await Bun.sleep(100);
+      await waitFor("some partial input");
       send("\x03"); // Ctrl+C
       await waitFor(/\u276f|> /);
       // Should be back at a clean prompt

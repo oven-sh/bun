@@ -79,7 +79,12 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
         }
 
         pub fn deinit(this: *@This()) void {
-            this.us_socket_context.deinit(ssl);
+            // Replace callbacks with no-ops first to avoid UAF when closing sockets.
+            this.us_socket_context.cleanCallbacks(ssl);
+            // Close any remaining sockets in the context.
+            this.us_socket_context.close(ssl);
+            // Free the uSockets context synchronously.
+            this.us_socket_context.free(ssl);
             bun.default_allocator.destroy(this);
         }
 

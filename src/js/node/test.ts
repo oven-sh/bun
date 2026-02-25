@@ -304,32 +304,25 @@ function createTest(arg0: unknown, arg1: unknown, arg2: unknown) {
   checkNotInsideTest(ctx, "test");
   const context = new TestContext(true, name, Bun.main, ctx);
 
-  const runTest = (done: (error?: unknown) => void) => {
+  // Return an async function instead of a done-callback style function.
+  // Using (done) => {} would cause bun:test to interpret the function as
+  // a done-callback test (because callback.length >= 1), leading to
+  // misleading "done callback" error messages on timeout.
+  const runTest = async () => {
     const originalContext = ctx;
     ctx = context;
-    const endTest = (error?: unknown) => {
-      try {
-        done(error);
-      } finally {
-        ctx = originalContext;
-      }
-    };
-
-    let result: unknown;
     try {
-      result = fn(context);
-    } catch (error) {
-      endTest(error);
-      return;
-    }
-    if (result instanceof Promise) {
-      (result as Promise<unknown>).then(() => endTest()).catch(error => endTest(error));
-    } else {
-      endTest();
+      await fn(context);
+    } finally {
+      ctx = originalContext;
     }
   };
 
-  return { name, options, fn: runTest };
+  // Node.js node:test defaults to Infinity timeout (no timeout).
+  // In bun:test, timeout=0 means "no timeout", so use that as default.
+  const testOptions = { ...options, timeout: options.timeout ?? 0 };
+
+  return { name, options: testOptions, fn: runTest };
 }
 
 function createDescribe(arg0: unknown, arg1: unknown, arg2: unknown) {

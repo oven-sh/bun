@@ -218,9 +218,14 @@ describe("Bun REPL", () => {
     });
 
     test(".load with nonexistent file shows error", async () => {
-      const { stdout, stderr, exitCode } = await runRepl([".load /nonexistent/path/file.js", "1 + 1", ".exit"]);
+      // Use a relative path so Windows doesn't choke on forward-slash absolute paths (EINVAL).
+      const { stdout, stderr, exitCode } = await runRepl([
+        ".load definitely-does-not-exist-repl-test.js",
+        "1 + 1",
+        ".exit",
+      ]);
       const allOutput = stripAnsi(stdout + stderr);
-      expect(allOutput.toLowerCase()).toMatch(/error|not found|no such file/i);
+      expect(allOutput.toLowerCase()).toMatch(/error|not found|no such file|enoent|invalid argument/i);
       // REPL should continue after failed load
       expect(allOutput).toContain("2");
       expect(exitCode).toBe(0);
@@ -408,7 +413,12 @@ describe("Bun REPL", () => {
     });
 
     test("import used across lines", async () => {
-      const { stdout, exitCode } = await runRepl(["import path from 'path'", "path.join('/tmp', 'test')", ".exit"]);
+      // Use path.posix.join so the output is identical on Windows (otherwise: "\\tmp\\test").
+      const { stdout, exitCode } = await runRepl([
+        "import path from 'path'",
+        "path.posix.join('/tmp', 'test')",
+        ".exit",
+      ]);
       const output = stripAnsi(stdout);
       expect(output).toContain("/tmp/test");
       expect(exitCode).toBe(0);

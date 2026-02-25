@@ -149,13 +149,13 @@ class TestContext {
 
     const { test } = bunTest();
     if (options.only) {
-      test.only(name, fn);
+      test.only(name, fn, options);
     } else if (options.todo) {
-      test.todo(name, fn);
+      test.todo(name, fn, options);
     } else if (options.skip) {
-      test.skip(name, fn);
+      test.skip(name, fn, options);
     } else {
-      test(name, fn);
+      test(name, fn, options);
     }
   }
 

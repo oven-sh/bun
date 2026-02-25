@@ -19,4 +19,5 @@ test("node:test async tests should not time out by default", async () => {
   // Should not contain the misleading "done callback" error message
   expect(output).not.toContain("done callback");
   expect(exitCode).toBe(0);
-}, 30_000);
+  // The spawned test sleeps for 7s, so this outer bun:test needs a longer timeout.
+}, 15_000);

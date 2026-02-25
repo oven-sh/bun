@@ -2,7 +2,7 @@
 import type { FileSink } from "bun";
 const Readable = require("internal/streams/readable");
 const Writable = require("internal/streams/writable");
-const { finished } = require("internal/streams/end-of-stream");
+const finished = require("internal/streams/end-of-stream");
 const fs: typeof import("node:fs") = require("node:fs");
 const { read, write, fsync, writev } = fs;
 const { FileHandle, kRef, kUnref, kFd } = (fs.promises as any).$data as {

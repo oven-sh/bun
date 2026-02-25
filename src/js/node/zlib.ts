@@ -23,7 +23,7 @@ const isAnyArrayBuffer = b => b instanceof ArrayBuffer || b instanceof SharedArr
 const kMaxLength = $requireMap.$get("buffer")?.exports.kMaxLength ?? BufferModule.kMaxLength;
 
 const Transform = require("internal/streams/transform");
-const { finished } = require("internal/streams/end-of-stream");
+const finished = require("internal/streams/end-of-stream");
 const owner_symbol = Symbol("owner_symbol");
 const { checkRangesOrGetDefault, validateFunction, validateFiniteNumber } = require("internal/validators");
 

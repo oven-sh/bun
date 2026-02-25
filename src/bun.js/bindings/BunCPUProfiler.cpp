@@ -207,7 +207,10 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
 #if USE(BUN_JSC_ADDITIONS)
                         auto& fn = vm.computeLineColumnWithSourcemap();
                         if (fn) {
-                            fn(vm, provider, sourceMappedLineColumn, url);
+                            String remappedURL;
+                            fn(vm, provider, sourceMappedLineColumn, remappedURL);
+                            if (!remappedURL.isEmpty())
+                                url = WTF::move(remappedURL);
                         }
 #endif
                     }
@@ -669,8 +672,12 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                         if (provider) {
 #if USE(BUN_JSC_ADDITIONS)
                             auto& fn = vm.computeLineColumnWithSourcemap();
-                            if (fn)
-                                fn(vm, provider, sourceMappedLineColumn, url);
+                            if (fn) {
+                                String remappedURL;
+                                fn(vm, provider, sourceMappedLineColumn, remappedURL);
+                                if (!remappedURL.isEmpty())
+                                    url = WTF::move(remappedURL);
+                            }
 #endif
                         }
                         lineNumber = static_cast<int>(sourceMappedLineColumn.line);
@@ -840,8 +847,12 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                         if (provider) {
 #if USE(BUN_JSC_ADDITIONS)
                             auto& fn = vm.computeLineColumnWithSourcemap();
-                            if (fn)
-                                fn(vm, provider, sourceMappedLineColumn, url);
+                            if (fn) {
+                                String remappedURL;
+                                fn(vm, provider, sourceMappedLineColumn, remappedURL);
+                                if (!remappedURL.isEmpty())
+                                    url = WTF::move(remappedURL);
+                            }
 #endif
                         }
                         lineNumber = static_cast<int>(sourceMappedLineColumn.line);

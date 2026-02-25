@@ -1,11 +1,11 @@
-import { test, expect } from "bun:test";
+import { test } from "bun:test";
+import { tls as tlsCerts } from "harness";
 import http from "node:http";
 import net from "node:net";
-import { tls as tlsCerts } from "harness";
 
 test("bidirectional ping/pong through TLS proxy", async () => {
   const { promise, resolve, reject } = Promise.withResolvers<void>();
-  
+
   const server = Bun.serve({
     port: 0,
     tls: { key: tlsCerts.key, cert: tlsCerts.cert },
@@ -14,7 +14,9 @@ test("bidirectional ping/pong through TLS proxy", async () => {
       return new Response("no", { status: 400 });
     },
     websocket: {
-      message(ws, msg) { ws.send("echo:" + msg); },
+      message(ws, msg) {
+        ws.send("echo:" + msg);
+      },
       open(ws) {
         // Server pings every 500ms (like tunnel client's 54s interval, sped up)
         const pingTimer = setInterval(() => {
@@ -31,18 +33,21 @@ test("bidirectional ping/pong through TLS proxy", async () => {
   });
 
   // HTTP CONNECT proxy
-  const proxy = http.createServer((req, res) => { res.writeHead(400); res.end(); });
-  proxy.on('connect', (req, clientSocket, head) => {
-    const [host, port] = req.url!.split(':');
+  const proxy = http.createServer((req, res) => {
+    res.writeHead(400);
+    res.end();
+  });
+  proxy.on("connect", (req, clientSocket, head) => {
+    const [host, port] = req.url!.split(":");
     const serverSocket = net.createConnection({ host: host!, port: parseInt(port!) }, () => {
-      clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+      clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
       serverSocket.pipe(clientSocket);
       clientSocket.pipe(serverSocket);
       if (head.length > 0) serverSocket.write(head);
     });
   });
   const { promise: proxyReady, resolve: proxyReadyResolve } = Promise.withResolvers<void>();
-  proxy.listen(0, '127.0.0.1', () => proxyReadyResolve());
+  proxy.listen(0, "127.0.0.1", () => proxyReadyResolve());
   await proxyReady;
   const proxyPort = (proxy.address() as any).port;
 
@@ -56,7 +61,7 @@ test("bidirectional ping/pong through TLS proxy", async () => {
   let clientPongReceived = true;
   let clientPingInterval: ReturnType<typeof setInterval>;
 
-  ws.addEventListener('open', () => {
+  ws.addEventListener("open", () => {
     // Client sends pings (like Claude Code's 10s interval, sped up)
     clientPingInterval = setInterval(() => {
       if (!clientPongReceived) {
@@ -75,9 +80,14 @@ test("bidirectional ping/pong through TLS proxy", async () => {
     }, 50);
   });
 
-  ws.addEventListener('pong', () => { clientPongCount++; clientPongReceived = true; });
-  ws.addEventListener('message', () => { messageCount++; });
-  ws.addEventListener('close', (e) => {
+  ws.addEventListener("pong", () => {
+    clientPongCount++;
+    clientPongReceived = true;
+  });
+  ws.addEventListener("message", () => {
+    messageCount++;
+  });
+  ws.addEventListener("close", e => {
     console.log(`close: ${(e as CloseEvent).code}, pongs: ${clientPongCount}, msgs: ${messageCount}`);
     clearInterval(clientPingInterval);
   });

@@ -2179,15 +2179,67 @@ pub const BundleV2 = struct {
                 output_file.is_executable = true;
             }
 
+            // Write external sourcemap files next to the compiled executable and
+            // keep them in the output array. Destroy all other non-entry-point files.
+            // With --splitting, there can be multiple sourcemap files (one per chunk).
+            var kept: usize = 0;
             for (output_files.items, 0..) |*current, i| {
-                if (i != entry_point_index) {
+                if (i == entry_point_index) {
+                    output_files.items[kept] = current.*;
+                    kept += 1;
+                } else if (result == .success and current.output_kind == .sourcemap and current.value == .buffer) {
+                    const sourcemap_bytes = current.value.buffer.bytes;
+                    if (sourcemap_bytes.len > 0) {
+                        // Derive the .map filename from the sourcemap's own dest_path,
+                        // placed in the same directory as the compiled executable.
+                        const map_basename = if (current.dest_path.len > 0)
+                            bun.path.basename(current.dest_path)
+                        else
+                            bun.path.basename(bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{s}.map", .{full_outfile_path})));
+
+                        const sourcemap_full_path = if (dirname.len == 0 or strings.eqlComptime(dirname, "."))
+                            bun.handleOom(bun.default_allocator.dupe(u8, map_basename))
+                        else
+                            bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{s}{c}{s}", .{ dirname, std.fs.path.sep, map_basename }));
+
+                        // Write the sourcemap file to disk next to the executable
+                        var pathbuf: bun.PathBuffer = undefined;
+                        const write_path = if (Environment.isWindows) sourcemap_full_path else map_basename;
+                        switch (bun.jsc.Node.fs.NodeFS.writeFileWithPathBuffer(
+                            &pathbuf,
+                            .{
+                                .data = .{ .buffer = .{
+                                    .buffer = .{
+                                        .ptr = @constCast(sourcemap_bytes.ptr),
+                                        .len = @as(u32, @truncate(sourcemap_bytes.len)),
+                                        .byte_len = @as(u32, @truncate(sourcemap_bytes.len)),
+                                    },
+                                } },
+                                .encoding = .buffer,
+                                .dirfd = .fromStdDir(root_dir),
+                                .file = .{ .path = .{
+                                    .string = bun.PathString.init(write_path),
+                                } },
+                            },
+                        )) {
+                            .err => |err| {
+                                bun.Output.err(err, "failed to write sourcemap file '{s}'", .{write_path});
+                                current.deinit();
+                            },
+                            .result => {
+                                current.dest_path = sourcemap_full_path;
+                                output_files.items[kept] = current.*;
+                                kept += 1;
+                            },
+                        }
+                    } else {
+                        current.deinit();
+                    }
+                } else {
                     current.deinit();
                 }
             }
-
-            const entry_point_output_file = output_files.swapRemove(entry_point_index);
-            output_files.items.len = 1;
-            output_files.items[0] = entry_point_output_file;
+            output_files.items.len = kept;
 
             return result;
         }

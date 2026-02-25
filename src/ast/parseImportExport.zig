@@ -12,11 +12,12 @@ pub fn ParseImportExport(
         pub fn parseImportExpr(noalias p: *P, loc: logger.Loc, level: Level) anyerror!Expr {
             // Parse an "import.meta" expression
             if (p.lexer.token == .t_dot) {
-                p.esm_import_keyword = js_lexer.rangeOfIdentifier(p.source, loc);
+                const r = js_lexer.rangeOfIdentifier(p.source, loc);
                 try p.lexer.next();
                 if (p.lexer.isContextualKeyword("meta")) {
                     try p.lexer.next();
                     p.has_import_meta = true;
+                    p.import_meta_keyword = r;
                     return p.newExpr(E.ImportMeta{}, loc);
                 } else {
                     try p.lexer.expectedString("\"meta\"");

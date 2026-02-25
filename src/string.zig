@@ -381,6 +381,16 @@ pub const String = extern struct {
         return JSC__createRangeError(globalObject, this);
     }
 
+    pub fn toSyntaxErrorInstance(this: *const String, globalObject: *jsc.JSGlobalObject) jsc.JSValue {
+        defer this.deref();
+        return JSC__createSyntaxError(globalObject, this);
+    }
+
+    pub fn toDOMExceptionInstance(this: *const String, globalObject: *jsc.JSGlobalObject, code: jsc.WebCore.DOMExceptionCode) jsc.JSValue {
+        defer this.deref();
+        return JSC__createDOMException(globalObject, this, @intFromEnum(code));
+    }
+
     extern fn BunString__createExternal(
         bytes: [*]const u8,
         len: usize,
@@ -1091,6 +1101,8 @@ pub const String = extern struct {
     extern fn JSC__createError(*jsc.JSGlobalObject, str: *const String) jsc.JSValue;
     extern fn JSC__createTypeError(*jsc.JSGlobalObject, str: *const String) jsc.JSValue;
     extern fn JSC__createRangeError(*jsc.JSGlobalObject, str: *const String) jsc.JSValue;
+    extern fn JSC__createSyntaxError(*jsc.JSGlobalObject, str: *const String) jsc.JSValue;
+    extern fn JSC__createDOMException(*jsc.JSGlobalObject, str: *const String, code: u8) jsc.JSValue;
 
     pub fn jsGetStringWidth(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         const args = callFrame.argumentsAsArray(2);
@@ -1140,10 +1152,133 @@ pub const String = extern struct {
         };
     }
 
-    // TODO: move ZigString.Slice here
-    /// A UTF-8 encoded slice tied to the lifetime of a `bun.String`
-    /// Must call `.deinit` to release memory
-    pub const Slice = ZigString.Slice;
+    /// A UTF-8 encoded slice tied to the lifetime of a `bun.String`.
+    /// Must call `.deinit` to release memory.
+    ///
+    /// This struct has no encoding tag — its contents are always valid UTF-8
+    /// (converted from the underlying string's encoding if necessary).
+    pub const Slice = struct {
+        allocator: NullableAllocator = .{},
+        ptr: [*]const u8 = &.{},
+        len: u32 = 0,
+
+        pub fn reportExtraMemory(this: *const Slice, vm: *jsc.VM) void {
+            if (this.allocator.get()) |allocator| {
+                // Don't report it if the memory is actually owned by jsc.
+                if (!String.isWTFAllocator(allocator)) {
+                    vm.reportExtraMemory(this.len);
+                }
+            }
+        }
+
+        pub fn isWTFAllocated(this: *const Slice) bool {
+            return String.isWTFAllocator(this.allocator.get() orelse return false);
+        }
+
+        pub fn init(allocator: std.mem.Allocator, input: []const u8) Slice {
+            return .{
+                .ptr = input.ptr,
+                .len = @as(u32, @truncate(input.len)),
+                .allocator = NullableAllocator.init(allocator),
+            };
+        }
+
+        pub fn initDupe(allocator: std.mem.Allocator, input: []const u8) OOM!Slice {
+            return .init(allocator, try allocator.dupe(u8, input));
+        }
+
+        pub fn byteLength(this: *const Slice) usize {
+            return this.len;
+        }
+
+        pub fn toZigString(this: Slice) ZigString {
+            if (this.isAllocated())
+                return ZigString.initUTF8(this.ptr[0..this.len]);
+            return ZigString.init(this.slice());
+        }
+
+        pub inline fn length(this: Slice) usize {
+            return this.len;
+        }
+
+        pub const byteSlice = Slice.slice;
+
+        pub fn fromUTF8NeverFree(input: []const u8) Slice {
+            return .{
+                .ptr = input.ptr,
+                .len = @as(u32, @truncate(input.len)),
+                .allocator = .{},
+            };
+        }
+
+        pub const empty = Slice{ .ptr = "", .len = 0 };
+
+        pub inline fn isAllocated(this: Slice) bool {
+            return !this.allocator.isNull();
+        }
+
+        pub fn toOwned(this: Slice, allocator: std.mem.Allocator) OOM!Slice {
+            const duped = try allocator.dupe(u8, this.ptr[0..this.len]);
+            return .{ .allocator = .init(allocator), .ptr = duped.ptr, .len = this.len };
+        }
+
+        /// Converts this `Slice` into a `[]const u8`, guaranteed to be allocated by
+        /// `allocator`.
+        ///
+        /// This method sets `this` to an empty string. If you don't need the original string,
+        /// this method may be more efficient than `toOwned`, which always allocates memory.
+        pub fn intoOwnedSlice(this: *Slice, allocator: std.mem.Allocator) OOM![]const u8 {
+            defer this.* = .{};
+            if (this.allocator.get()) |this_allocator| blk: {
+                if (allocator.vtable != this_allocator.vtable) break :blk;
+                // Can add support for more allocators here
+                if (allocator.vtable == bun.default_allocator.vtable) {
+                    return this.slice();
+                }
+            }
+            defer this.deinit();
+            return (try this.toOwned(allocator)).slice();
+        }
+
+        /// Same as `intoOwnedSlice`, but creates `[:0]const u8`
+        pub fn intoOwnedSliceZ(this: *Slice, allocator: std.mem.Allocator) OOM![:0]const u8 {
+            defer {
+                this.deinit();
+                this.* = .{};
+            }
+            // always clones
+            return allocator.dupeZ(u8, this.slice());
+        }
+
+        /// Note that the returned slice is not guaranteed to be allocated by `allocator`.
+        pub fn cloneIfBorrowed(this: Slice, allocator: std.mem.Allocator) bun.OOM!Slice {
+            if (this.isAllocated()) {
+                return this;
+            }
+
+            const duped = try allocator.dupe(u8, this.ptr[0..this.len]);
+            return Slice{ .allocator = NullableAllocator.init(allocator), .ptr = duped.ptr, .len = this.len };
+        }
+
+        pub fn cloneWithTrailingSlash(this: Slice, allocator: std.mem.Allocator) !Slice {
+            const buf = try bun.strings.cloneNormalizingSeparators(allocator, this.slice());
+            return Slice{ .allocator = NullableAllocator.init(allocator), .ptr = buf.ptr, .len = @as(u32, @truncate(buf.len)) };
+        }
+
+        pub fn slice(this: *const Slice) []const u8 {
+            return this.ptr[0..this.len];
+        }
+
+        pub fn mut(this: Slice) []u8 {
+            bun.assertf(!this.allocator.isNull(), "cannot mutate a borrowed String.Slice", .{});
+            return @constCast(this.ptr)[0..this.len];
+        }
+
+        /// Does nothing if the slice is not allocated
+        pub fn deinit(this: *const Slice) void {
+            this.allocator.free(this.slice());
+        }
+    };
 };
 
 pub const SliceWithUnderlyingString = struct {
@@ -1296,6 +1431,7 @@ const std = @import("std");
 const bun = @import("bun");
 const JSError = bun.JSError;
 const OOM = bun.OOM;
+const NullableAllocator = bun.NullableAllocator;
 const AsciiStatus = bun.strings.AsciiStatus;
 
 const jsc = bun.jsc;

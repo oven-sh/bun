@@ -268,7 +268,7 @@ pub fn wrap4v(comptime func: anytype) @"return": {
 const private = struct {
     pub extern fn Bun__CreateFFIFunctionWithDataValue(
         *JSGlobalObject,
-        ?*const ZigString,
+        ?*const bun.String,
         argCount: u32,
         function: *const JSHostFn,
         data: *anyopaque,
@@ -276,7 +276,7 @@ const private = struct {
 
     pub extern fn Bun__CreateFFIFunctionValue(
         globalObject: *JSGlobalObject,
-        symbolName: ?*const ZigString,
+        symbolName: ?*const bun.String,
         argCount: u32,
         function: *const JSHostFn,
         add_ptr_field: bool,
@@ -289,7 +289,7 @@ const private = struct {
 
 pub fn NewRuntimeFunction(
     globalObject: *JSGlobalObject,
-    symbolName: ?*const ZigString,
+    symbolName: ?*const bun.String,
     argCount: u32,
     functionPointer: *const JSHostFn,
     add_ptr_property: bool,
@@ -311,7 +311,7 @@ pub fn setFunctionData(function: JSValue, value: ?*anyopaque) void {
 
 pub fn NewFunctionWithData(
     globalObject: *JSGlobalObject,
-    symbolName: ?*const ZigString,
+    symbolName: ?*const bun.String,
     argCount: u32,
     comptime function: JSHostFnZig,
     data: *anyopaque,
@@ -592,6 +592,20 @@ pub fn wrapInstanceMethod(
 
                         args[i] = try string_value.getZigString(globalThis);
                     },
+                    bun.String => {
+                        var string_value = eater(&iter) orelse {
+                            iter.deinit();
+                            return globalThis.throwInvalidArguments("Missing argument", .{});
+                        };
+
+                        if (string_value.isUndefinedOrNull()) {
+                            iter.deinit();
+                            return globalThis.throwInvalidArguments("Expected string", .{});
+                        }
+
+                        // NOTE: callee is responsible for calling `.deref()` on this.
+                        args[i] = try string_value.toBunString(globalThis);
+                    },
                     ?bun.api.HTMLRewriter.ContentOptions => {
                         if (iter.nextEat()) |content_arg| {
                             if (try content_arg.get(globalThis, "html")) |html_val| {
@@ -744,6 +758,20 @@ pub fn wrapStaticMethod(
                         }
 
                         args[i] = try string_value.getZigString(globalThis);
+                    },
+                    bun.String => {
+                        var string_value = eater(&iter) orelse {
+                            iter.deinit();
+                            return globalThis.throwInvalidArguments("Missing argument", .{});
+                        };
+
+                        if (string_value.isUndefinedOrNull()) {
+                            iter.deinit();
+                            return globalThis.throwInvalidArguments("Expected string", .{});
+                        }
+
+                        // NOTE: callee is responsible for calling `.deref()` on this.
+                        args[i] = try string_value.toBunString(globalThis);
                     },
                     ?bun.api.HTMLRewriter.ContentOptions => {
                         if (iter.nextEat()) |content_arg| {

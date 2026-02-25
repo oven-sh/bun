@@ -372,7 +372,7 @@ pub const JSValue = enum(i64) {
             } else if (Elem == bun.String) {
                 putBunString(value, global, key, result);
             } else if (std.meta.Elem(Key) == u8) {
-                putZigString(value, global, &ZigString.init(key), result);
+                putBunString(value, global, &bun.String.init(key), result);
             } else {
                 @compileError("Unsupported key type in put(). Expected ZigString or bun.String, got " ++ @typeName(Elem));
             }

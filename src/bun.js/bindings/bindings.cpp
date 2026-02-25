@@ -5850,6 +5850,16 @@ extern "C" EncodedJSValue JSC__createRangeError(JSC::JSGlobalObject* globalObjec
     return JSValue::encode(JSC::createRangeError(globalObject, str->toWTFString(BunString::ZeroCopy)));
 }
 
+extern "C" EncodedJSValue JSC__createSyntaxError(JSC::JSGlobalObject* globalObject, const BunString* str)
+{
+    return JSValue::encode(JSC::createSyntaxError(globalObject, str->toWTFString(BunString::ZeroCopy)));
+}
+
+extern "C" EncodedJSValue JSC__createDOMException(JSC::JSGlobalObject* globalObject, const BunString* str, WebCore::ExceptionCode code)
+{
+    return JSValue::encode(createDOMException(globalObject, code, str->toWTFString(BunString::ZeroCopy)));
+}
+
 extern "C" EncodedJSValue ExpectMatcherUtils__getSingleton(JSC::JSGlobalObject* globalObject_)
 {
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(globalObject_);

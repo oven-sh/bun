@@ -800,7 +800,7 @@ pub const FFI = struct {
                     return globalThis.throw("Failed to compile (nothing happend!)", .{});
                 },
                 .compiled => |*compiled| {
-                    const str = ZigString.init(bun.asByteSlice(function_name));
+                    const str = bun.String.init(bun.asByteSlice(function_name));
                     const cb = jsc.host_fn.NewRuntimeFunction(
                         globalThis,
                         &str,
@@ -1148,7 +1148,7 @@ pub const FFI = struct {
                     return ZigString.init("Failed to compile (nothing happend!)").toErrorInstance(global);
                 },
                 .compiled => |*compiled| {
-                    const str = ZigString.init(bun.asByteSlice(function_name));
+                    const str = bun.String.init(bun.asByteSlice(function_name));
                     const cb = jsc.host_fn.NewRuntimeFunction(
                         global,
                         &str,
@@ -1253,7 +1253,7 @@ pub const FFI = struct {
                     return ZigString.static("Failed to compile (nothing happend!)").toErrorInstance(global);
                 },
                 .compiled => |*compiled| {
-                    const name = &ZigString.init(bun.asByteSlice(function_name));
+                    const name = &bun.String.init(bun.asByteSlice(function_name));
 
                     const cb = jsc.host_fn.NewRuntimeFunction(
                         global,

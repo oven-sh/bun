@@ -1,6 +1,7 @@
 #include "ErrorCode.h"
 #include "root.h"
 #include "Secrets.h"
+#include "mimalloc.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/JSCJSValue.h>
 #include <JavaScriptCore/JSObject.h>
@@ -395,3 +396,147 @@ JSObject* createSecretsObject(VM& vm, JSGlobalObject* globalObject)
 }
 
 } // namespace Bun
+
+// Must be synced with secret_command.zig's SecretsCliResult
+struct SecretsCliResult {
+    int error_type;
+    int error_code;
+    char* error_message;
+    char* value;
+    size_t value_len;
+    bool success;
+};
+
+extern "C" SYSV_ABI SecretsCliResult Bun__Secrets__setSync(
+    const char* service, size_t service_len,
+    const char* name, size_t name_len,
+    const char* value, size_t value_len,
+    bool allowUnrestrictedAccess)
+{
+    SecretsCliResult result = {};
+
+    WTF::CString serviceCStr(std::span<const char>(service, service_len));
+    WTF::CString nameCStr(std::span<const char>(name, name_len));
+    WTF::CString valueCStr(std::span<const char>(value, value_len));
+
+    auto err = Bun::Secrets::setPassword(serviceCStr, nameCStr, WTF::move(valueCStr), allowUnrestrictedAccess);
+
+    // Zero sensitive data after use
+    if (valueCStr.length() > 0) {
+        memsetSpan(valueCStr.mutableSpan(), 0);
+    }
+    if (nameCStr.length() > 0) {
+        memsetSpan(nameCStr.mutableSpan(), 0);
+    }
+    if (serviceCStr.length() > 0) {
+        memsetSpan(serviceCStr.mutableSpan(), 0);
+    }
+
+    if (err.isError()) {
+        result.error_type = static_cast<int>(err.type);
+        result.error_code = err.code;
+        if (!err.message.isEmpty()) {
+            auto utf8 = err.message.utf8();
+            char* msg = static_cast<char*>(mi_malloc(utf8.length() + 1));
+            memcpy(msg, utf8.data(), utf8.length());
+            msg[utf8.length()] = '\0';
+            result.error_message = msg;
+        }
+        result.success = false;
+    } else {
+        result.success = true;
+    }
+
+    return result;
+}
+
+extern "C" SYSV_ABI SecretsCliResult Bun__Secrets__getSync(
+    const char* service, size_t service_len,
+    const char* name, size_t name_len)
+{
+    SecretsCliResult result = {};
+
+    WTF::CString serviceCStr(std::span<const char>(service, service_len));
+    WTF::CString nameCStr(std::span<const char>(name, name_len));
+
+    Bun::Secrets::Error err;
+    auto maybeValue = Bun::Secrets::getPassword(serviceCStr, nameCStr, err);
+
+    if (err.type == Bun::Secrets::ErrorType::NotFound) {
+        result.success = true;
+        result.value = nullptr;
+        result.value_len = 0;
+        return result;
+    }
+    if (err.isError()) {
+        result.error_type = static_cast<int>(err.type);
+        result.error_code = err.code;
+        if (!err.message.isEmpty()) {
+            auto utf8 = err.message.utf8();
+            char* msg = static_cast<char*>(mi_malloc(utf8.length() + 1));
+            memcpy(msg, utf8.data(), utf8.length());
+            msg[utf8.length()] = '\0';
+            result.error_message = msg;
+        }
+        result.success = false;
+    } else if (maybeValue.has_value()) {
+        auto& valueVec = maybeValue.value();
+        auto valueSpan = valueVec.mutableSpan();
+        char* valueCopy = static_cast<char*>(mi_malloc(valueSpan.size() + 1));
+        memcpy(valueCopy, valueSpan.data(), valueSpan.size());
+        valueCopy[valueSpan.size()] = '\0';
+        result.value = valueCopy;
+        result.value_len = valueSpan.size();
+        result.success = true;
+        memsetSpan(valueSpan, 0);
+    } else {
+        result.success = true;
+        result.value = nullptr;
+        result.value_len = 0;
+    }
+
+    return result;
+}
+
+extern "C" SYSV_ABI SecretsCliResult Bun__Secrets__deleteSync(
+    const char* service, size_t service_len,
+    const char* name, size_t name_len)
+{
+    SecretsCliResult result = {};
+
+    WTF::CString serviceCStr(std::span<const char>(service, service_len));
+    WTF::CString nameCStr(std::span<const char>(name, name_len));
+
+    Bun::Secrets::Error err;
+    bool deleted = Bun::Secrets::deletePassword(serviceCStr, nameCStr, err);
+
+    if (err.isError() && err.type != Bun::Secrets::ErrorType::NotFound) {
+        result.error_type = static_cast<int>(err.type);
+        result.error_code = err.code;
+        if (!err.message.isEmpty()) {
+            auto utf8 = err.message.utf8();
+            char* msg = static_cast<char*>(mi_malloc(utf8.length() + 1));
+            memcpy(msg, utf8.data(), utf8.length());
+            msg[utf8.length()] = '\0';
+            result.error_message = msg;
+        }
+        result.success = false;
+    } else {
+        result.success = deleted;
+    }
+
+    return result;
+}
+
+extern "C" SYSV_ABI void Bun__Secrets__freeResult(SecretsCliResult* result)
+{
+    if (result->error_message) {
+        mi_free(result->error_message);
+        result->error_message = nullptr;
+    }
+    if (result->value) {
+        memset(result->value, 0, result->value_len);
+        mi_free(result->value);
+        result->value = nullptr;
+    }
+}

@@ -1,6 +1,11 @@
 const HTTPThread = @This();
 
-var custom_ssl_context_map = std.AutoArrayHashMap(*SSLConfig, *NewHTTPContext(true)).init(bun.default_allocator);
+var custom_ssl_context_map = std.ArrayHashMap(
+    SSLConfig.Ref,
+    *NewHTTPContext(true),
+    SSLConfig.MapContext,
+    true,
+).init(bun.default_allocator);
 
 loop: *jsc.MiniEventLoop,
 http_context: NewHTTPContext(false),
@@ -226,29 +231,33 @@ pub fn connect(this: *@This(), client: *HTTPClient, comptime is_ssl: bool) !NewH
     if (comptime is_ssl) {
         const needs_own_context = client.tls_props != null and client.tls_props.?.requires_custom_request_ctx;
         if (needs_own_context) {
-            var requested_config = client.tls_props.?;
-            for (custom_ssl_context_map.keys()) |other_config| {
-                if (requested_config.isSame(other_config)) {
-                    // we free the callers config since we have a existing one
-                    if (requested_config != client.tls_props) {
-                        requested_config.deinit();
-                        bun.default_allocator.destroy(requested_config);
-                    }
-                    client.tls_props = other_config;
-                    if (client.http_proxy) |url| {
-                        return try custom_ssl_context_map.get(other_config).?.connect(client, url.hostname, url.getPortAuto());
-                    } else {
-                        return try custom_ssl_context_map.get(other_config).?.connect(client, client.url.hostname, client.url.getPortAuto());
-                    }
+            const requested_config = client.tls_props.?;
+            // Wrap the raw pointer as a Ref for lookup without changing the refcount.
+            const lookup_ref = SSLConfig.Ref.adoptRawUnsafe(requested_config);
+            const gop = try custom_ssl_context_map.getOrPut(lookup_ref);
+            if (gop.found_existing) {
+                // Cache hit: release the caller's config and point client at the cached one.
+                var caller_ref = lookup_ref;
+                caller_ref.deinit();
+                var new_ref = gop.key_ptr.*.clone();
+                client.tls_props = new_ref.leak();
+                const cached_context = gop.value_ptr.*;
+                if (client.http_proxy) |url| {
+                    return try cached_context.connect(client, url.hostname, url.getPortAuto());
+                } else {
+                    return try cached_context.connect(client, client.url.hostname, client.url.getPortAuto());
                 }
             }
-            // we need the config so dont free it
+            // Cache miss: create a new SSL context for this config.
             var custom_context = try bun.default_allocator.create(NewHTTPContext(is_ssl));
             custom_context.initWithClientConfig(client) catch |err| {
                 client.tls_props = null;
 
-                requested_config.deinit();
-                bun.default_allocator.destroy(requested_config);
+                // Remove the incomplete entry that getOrPut inserted.
+                custom_ssl_context_map.swapRemoveAt(gop.index);
+
+                var caller_ref = lookup_ref;
+                caller_ref.deinit();
                 bun.default_allocator.destroy(custom_context);
 
                 // TODO: these error names reach js. figure out how they should be handled
@@ -259,7 +268,10 @@ pub fn connect(this: *@This(), client: *HTTPClient, comptime is_ssl: bool) !NewH
                     error.LoadCAFile => error.FailedToOpenSocket,
                 };
             };
-            try custom_ssl_context_map.put(requested_config, custom_context);
+            // getOrPut inserted lookup_ref (the caller's ref) as the key.
+            // Clone it so the cache owns an independent reference.
+            gop.key_ptr.* = lookup_ref.clone();
+            gop.value_ptr.* = custom_context;
             // We might deinit the socket context, so we disable keepalive to make sure we don't
             // free it while in use.
             client.flags.disable_keepalive = true;

@@ -25,6 +25,20 @@ requires_custom_request_ctx: bool = false,
 is_using_default_ciphers: bool = true,
 low_memory_mode: bool = false,
 
+/// Thread-safe shared pointer for SSLConfig used by the HTTP client cache.
+pub const Ref = bun.ptr.AtomicShared(*SSLConfig);
+
+/// HashMap context for content-based hashing/equality of `Ref` keys.
+/// Compares the underlying SSLConfig values, not pointer addresses.
+pub const MapContext = struct {
+    pub fn hash(_: @This(), key: Ref) u32 {
+        return key.get().contentHash();
+    }
+    pub fn eql(_: @This(), a: Ref, b: Ref, _: usize) bool {
+        return a.get().isSame(b.get());
+    }
+};
+
 const ReadFromBlobError = bun.JSError || error{
     NullStore,
     NotAFile,
@@ -141,6 +155,39 @@ pub fn isSame(this: *const SSLConfig, other: *const SSLConfig) bool {
         }
     }
     return true;
+}
+
+/// Content-based hash for use in HashMap lookups.
+pub fn contentHash(this: *const SSLConfig) u32 {
+    var hasher = std.hash.Wyhash.init(0);
+    inline for (comptime std.meta.fields(SSLConfig)) |field| {
+        const value = @field(this, field.name);
+        switch (field.type) {
+            ?[*:0]const u8 => {
+                if (value) |s| {
+                    const slice = bun.asByteSlice(s);
+                    hasher.update(slice);
+                    hasher.update(&.{1});
+                } else {
+                    hasher.update(&.{0});
+                }
+            },
+            ?[][*:0]const u8 => {
+                if (value) |slice| {
+                    hasher.update(std.mem.asBytes(&slice.len));
+                    for (slice) |s| {
+                        hasher.update(bun.asByteSlice(s));
+                        hasher.update(&.{0});
+                    }
+                    hasher.update(&.{1});
+                } else {
+                    hasher.update(&.{0});
+                }
+            },
+            else => hasher.update(std.mem.asBytes(&value)),
+        }
+    }
+    return @truncate(hasher.final());
 }
 
 fn stringsEqual(a: [*:0]const u8, b: [*:0]const u8) bool {

@@ -275,8 +275,8 @@ fn fetchImpl(
 
         if (ssl_config) |conf| {
             ssl_config = null;
-            conf.deinit();
-            bun.default_allocator.destroy(conf);
+            var ref = SSLConfig.Ref.adoptRawUnsafe(conf);
+            ref.deinit();
         }
     }
 
@@ -466,9 +466,8 @@ fn fetchImpl(
                             is_error = true;
                             return .zero;
                         }) |config| {
-                            const ssl_config_object = bun.handleOom(bun.default_allocator.create(SSLConfig));
-                            ssl_config_object.* = config;
-                            break :extract_ssl_config ssl_config_object;
+                            var shared = SSLConfig.Ref.new(config);
+                            break :extract_ssl_config shared.leak();
                         }
                     }
                 }

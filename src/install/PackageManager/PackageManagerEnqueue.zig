@@ -448,6 +448,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
     comptime failFn: ?FailFn,
 ) !void {
     if (dependency.behavior.isOptionalPeer()) return;
+    if (dependency.behavior.isBundled()) return;
 
     var name = dependency.realname();
     var name_hash = switch (dependency.version.tag) {

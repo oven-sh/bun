@@ -767,11 +767,14 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         ) bool {
             // For tunnel mode, write through the tunnel instead of direct socket
             if (this.proxy_tunnel) |tunnel| {
-                // The tunnel handles TLS encryption and buffering
-                _ = tunnel.write(bytes) catch {
+                const wrote = tunnel.write(bytes) catch {
                     this.terminate(ErrorCode.failed_to_write);
                     return false;
                 };
+                // Buffer any data the tunnel couldn't accept
+                if (wrote < bytes.len) {
+                    _ = this.copyToSendBuffer(bytes[wrote..], false);
+                }
                 return true;
             }
 
@@ -856,9 +859,11 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
                 if (do_write) {
                     if (comptime Environment.allow_assert) {
-                        bun.assert(!this.tcp.isShutdown());
-                        bun.assert(!this.tcp.isClosed());
-                        bun.assert(this.tcp.isEstablished());
+                        if (this.proxy_tunnel == null) {
+                            bun.assert(!this.tcp.isShutdown());
+                            bun.assert(!this.tcp.isClosed());
+                            bun.assert(this.tcp.isEstablished());
+                        }
                     }
                     return this.sendBuffer(this.send_buffer.readableSlice(0));
                 }
@@ -880,9 +885,11 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
             if (do_write) {
                 if (comptime Environment.allow_assert) {
-                    bun.assert(!this.tcp.isShutdown());
-                    bun.assert(!this.tcp.isClosed());
-                    bun.assert(this.tcp.isEstablished());
+                    if (this.proxy_tunnel == null) {
+                        bun.assert(!this.tcp.isShutdown());
+                        bun.assert(!this.tcp.isClosed());
+                        bun.assert(this.tcp.isEstablished());
+                    }
                 }
                 return this.sendBuffer(this.send_buffer.readableSlice(0));
             }
@@ -895,7 +902,20 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             out_buf: []const u8,
         ) bool {
             bun.assert(out_buf.len > 0);
-            // Do not set MSG_MORE, see https://github.com/oven-sh/bun/issues/4010
+            // Do not use MSG_MORE, see https://github.com/oven-sh/bun/issues/4010
+            if (this.proxy_tunnel) |tunnel| {
+                // In tunnel mode, write through the tunnel's TLS layer
+                // instead of the detached raw socket.
+                const wrote = tunnel.write(out_buf) catch {
+                    this.terminate(ErrorCode.failed_to_write);
+                    return false;
+                };
+                const readable = this.send_buffer.readableSlice(0);
+                if (readable.ptr == out_buf.ptr) {
+                    this.send_buffer.discard(wrote);
+                }
+                return true;
+            }
             if (this.tcp.isClosed()) {
                 return false;
             }

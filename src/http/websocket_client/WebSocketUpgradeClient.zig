@@ -707,10 +707,17 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
             // Send through the tunnel (will be encrypted)
             if (p.getTunnel()) |tunnel| {
-                _ = tunnel.write(upgrade_request) catch {
+                const wrote = tunnel.write(upgrade_request) catch {
                     this.terminate(ErrorCode.failed_to_write);
                     return;
                 };
+                if (wrote < upgrade_request.len) {
+                    // Partial write of upgrade request - the TLS tunnel
+                    // should accept the full request, but if not, we can't
+                    // recover since the HTTP upgrade must be sent atomically.
+                    this.terminate(ErrorCode.failed_to_write);
+                    return;
+                }
             } else {
                 this.terminate(ErrorCode.proxy_tunnel_failed);
             }

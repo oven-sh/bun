@@ -299,7 +299,28 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             }
 
             fn addMemoryBackToPool(pooled: *PooledSocket) void {
-                assert(context().pending_sockets.put(pooled));
+                // Check the default context first (most common case).
+                if (context().pending_sockets.put(pooled)) return;
+                // Check custom SSL contexts — the pooled socket may belong
+                // to a custom context's HiveArray.
+                if (comptime ssl) {
+                    for (bun.http.HTTPThread.customSslContextValues()) |custom_ctx| {
+                        if (custom_ctx.pending_sockets.put(pooled)) return;
+                    }
+                }
+                if (comptime bun.Environment.allow_assert) {
+                    unreachable;
+                } else {
+                    log("PooledSocket not claimed by any context pool", .{});
+                    // Cannot call terminateSocket here: it goes through
+                    // markSocketAsDead → markTaggedSocketAsDead which reads the
+                    // still-PooledSocket tag and re-enters addMemoryBackToPool,
+                    // causing infinite recursion. Mark dead and close directly.
+                    if (pooled.http_socket.ext(**anyopaque)) |ctx| {
+                        ctx.* = bun.cast(**anyopaque, ActiveSocket.init(dead_socket).ptr());
+                    }
+                    pooled.http_socket.close(.failure);
+                }
             }
 
             pub fn onData(
@@ -312,7 +333,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                     return client.onData(
                         comptime ssl,
                         buf,
-                        if (comptime ssl) &bun.http.http_thread.https_context else &bun.http.http_thread.http_context,
+                        if (comptime ssl) client.getSslCtx() else &bun.http.http_thread.http_context,
                         socket,
                     );
                 } else if (tagged.is(PooledSocket)) {
@@ -421,7 +442,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                         continue;
                     }
 
-                    assert(context().pending_sockets.put(socket));
+                    assert(this.pending_sockets.put(socket));
                     log("+ Keep-Alive reuse {s}:{d}", .{ hostname, port });
                     return http_socket;
                 }

@@ -235,15 +235,22 @@ pub fn connect(this: *@This(), client: *HTTPClient, comptime is_ssl: bool) !NewH
                         bun.default_allocator.destroy(requested_config);
                     }
                     client.tls_props = other_config;
+                    const matched_ctx = custom_ssl_context_map.get(other_config).?;
+                    client.custom_ssl_ctx = matched_ctx;
                     if (client.http_proxy) |url| {
-                        return try custom_ssl_context_map.get(other_config).?.connect(client, url.hostname, url.getPortAuto());
+                        // https://github.com/oven-sh/bun/issues/11343
+                        if (url.protocol.len == 0 or strings.eqlComptime(url.protocol, "https") or strings.eqlComptime(url.protocol, "http")) {
+                            return try this.context(is_ssl).connect(client, url.hostname, url.getPortAuto());
+                        }
+                        return error.UnsupportedProxyProtocol;
                     } else {
-                        return try custom_ssl_context_map.get(other_config).?.connect(client, client.url.hostname, client.url.getPortAuto());
+                        return try matched_ctx.connect(client, client.url.hostname, client.url.getPortAuto());
                     }
                 }
             }
             // we need the config so dont free it
             var custom_context = try bun.default_allocator.create(NewHTTPContext(is_ssl));
+            custom_context.pending_sockets = NewHTTPContext(is_ssl).PooledSocketHiveAllocator.init();
             custom_context.initWithClientConfig(client) catch |err| {
                 client.tls_props = null;
 
@@ -259,10 +266,8 @@ pub fn connect(this: *@This(), client: *HTTPClient, comptime is_ssl: bool) !NewH
                     error.LoadCAFile => error.FailedToOpenSocket,
                 };
             };
-            try custom_ssl_context_map.put(requested_config, custom_context);
-            // We might deinit the socket context, so we disable keepalive to make sure we don't
-            // free it while in use.
-            client.flags.disable_keepalive = true;
+            bun.handleOom(custom_ssl_context_map.put(requested_config, custom_context));
+            client.custom_ssl_ctx = custom_context;
             if (client.http_proxy) |url| {
                 // https://github.com/oven-sh/bun/issues/11343
                 if (url.protocol.len == 0 or strings.eqlComptime(url.protocol, "https") or strings.eqlComptime(url.protocol, "http")) {
@@ -287,6 +292,15 @@ pub fn connect(this: *@This(), client: *HTTPClient, comptime is_ssl: bool) !NewH
 
 pub fn context(this: *@This(), comptime is_ssl: bool) *NewHTTPContext(is_ssl) {
     return if (is_ssl) &this.https_context else &this.http_context;
+}
+
+/// Returns a borrowed slice of custom SSL context pointers from the internal
+/// hash map storage. The caller must not mutate `custom_ssl_context_map`
+/// (e.g. via `connect()` adding a new entry) while iterating the result.
+/// This is safe because map mutations and pool returns happen in distinct
+/// phases of the event loop.
+pub fn customSslContextValues() []*NewHTTPContext(true) {
+    return custom_ssl_context_map.values();
 }
 
 fn drainQueuedShutdowns(this: *@This()) void {

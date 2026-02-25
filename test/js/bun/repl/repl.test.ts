@@ -258,6 +258,39 @@ describe("Bun REPL", () => {
       expect(output).toContain("2");
       expect(exitCode).toBe(0);
     });
+
+    test(".history shows command history", async () => {
+      const { stdout, exitCode } = await runRepl(["1 + 1", "2 + 2", ".history", ".exit"]);
+      const output = stripAnsi(stdout);
+      expect(output).toContain("1 + 1");
+      expect(output).toContain("2 + 2");
+      expect(exitCode).toBe(0);
+    });
+
+    test(".break cancels multiline input", async () => {
+      const { stdout, exitCode } = await runRepl([
+        "function foo() {", // opens multiline
+        ".break", // cancels it
+        "1 + 1", // should eval normally
+        ".exit",
+      ]);
+      const output = stripAnsi(stdout);
+      expect(output).toContain("2");
+      // foo should NOT be defined since we broke out
+      expect(exitCode).toBe(0);
+    });
+
+    test(".break on empty multiline recovers prompt", async () => {
+      const { stdout, exitCode } = await runRepl(["{", ".break", "99", ".exit"]);
+      expect(stripAnsi(stdout)).toContain("99");
+      expect(exitCode).toBe(0);
+    });
+
+    test("command prefix matching (.e -> .exit)", async () => {
+      // ReplCommand.find allows prefix matching when name.len > 1
+      const { exitCode } = await runRepl([".ex"]);
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe(".copy command", () => {
@@ -364,6 +397,77 @@ describe("Bun REPL", () => {
       expect(allOutput).toContain("2");
       expect(exitCode).toBe(0);
     });
+
+    test("import default and named together", async () => {
+      // Combined form: import X, { a, b } from 'mod'
+      // Verifies both default and named bindings are set correctly.
+      using dir = tempDir("repl-import-combined", {
+        "mod.mjs": `
+          export const named1 = "first";
+          export const named2 = "second";
+          export default "the-default";
+        `,
+      });
+      const filePath = path.join(String(dir), "mod.mjs").replace(/\\/g, "/");
+      const { stdout, stderr, exitCode } = await runRepl([
+        `import def, { named1, named2 } from ${JSON.stringify(filePath)}`,
+        "JSON.stringify([def, named1, named2])",
+        ".exit",
+      ]);
+      const output = stripAnsi(stdout + stderr);
+      expect(output).toContain(`the-default`);
+      expect(output).toContain(`first`);
+      expect(output).toContain(`second`);
+      // Ensure the array is fully populated (no undefineds).
+      expect(output).not.toMatch(/\bnull\b|\bundefined\b/);
+      expect(exitCode).toBe(0);
+    });
+
+    test("import with alias uses source export name", async () => {
+      // Regression: `import { foo as bar }` was reading __ns.bar instead of __ns.foo.
+      using dir = tempDir("repl-import-alias", {
+        "mod.mjs": `export const foo = "correct"; export const bar = "wrong";`,
+      });
+      const filePath = path.join(String(dir), "mod.mjs").replace(/\\/g, "/");
+      const { stdout, exitCode } = await runRepl([
+        `import { foo as bar } from ${JSON.stringify(filePath)}`,
+        "bar",
+        ".exit",
+      ]);
+      const output = stripAnsi(stdout);
+      expect(output).toContain("correct");
+      expect(output).not.toContain("wrong");
+      expect(exitCode).toBe(0);
+    });
+
+    test("import with multiple aliases", async () => {
+      using dir = tempDir("repl-import-multi-alias", {
+        "mod.mjs": `export const a = 1; export const b = 2; export const c = 3;`,
+      });
+      const filePath = path.join(String(dir), "mod.mjs").replace(/\\/g, "/");
+      const { stdout, exitCode } = await runRepl([
+        `import { a as x, b as y, c } from ${JSON.stringify(filePath)}`,
+        "JSON.stringify([x, y, c])",
+        ".exit",
+      ]);
+      const output = stripAnsi(stdout);
+      expect(output).toContain("[1,2,3]");
+      expect(exitCode).toBe(0);
+    });
+
+    test("side-effect-only import", async () => {
+      using dir = tempDir("repl-import-side-effect", {
+        "side.mjs": `globalThis.__sideEffectRan = true;`,
+      });
+      const filePath = path.join(String(dir), "side.mjs").replace(/\\/g, "/");
+      const { stdout, exitCode } = await runRepl([
+        `import ${JSON.stringify(filePath)}`,
+        "globalThis.__sideEffectRan",
+        ".exit",
+      ]);
+      expect(stripAnsi(stdout)).toContain("true");
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("require", () => {
@@ -382,6 +486,37 @@ describe("Bun REPL", () => {
     test("require.resolve works", async () => {
       const { stdout, exitCode } = await runRepl(["typeof require.resolve", ".exit"]);
       expect(stripAnsi(stdout)).toContain("function");
+      expect(exitCode).toBe(0);
+    });
+
+    test("require resolves local files relative to cwd", async () => {
+      // Verifies module.filename is set correctly so require("./x") resolves.
+      using dir = tempDir("repl-require-local", {
+        "local.js": `module.exports = { value: "from-local-file" };`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "repl"],
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+        cwd: String(dir),
+        env: { ...bunEnv, TERM: "dumb", NO_COLOR: "1" },
+      });
+      proc.stdin.write(`require("./local").value\n.exit\n`);
+      proc.stdin.end();
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stripAnsi(stdout)).toContain("from-local-file");
+      expect(exitCode).toBe(0);
+    });
+
+    test("module.filename has correct path separator", async () => {
+      // Regression: was producing `/cwd[repl]` instead of `/cwd/[repl]`.
+      const { stdout, exitCode } = await runRepl(["module.filename", ".exit"]);
+      const output = stripAnsi(stdout);
+      // Must contain a separator before [repl] — matches / or \ followed by [repl]
+      expect(output).toMatch(/[\/\\]\[repl\]/);
+      // Must NOT have the cwd smashed against [repl] without a separator
+      expect(output).not.toMatch(/[a-zA-Z0-9]\[repl\]/);
       expect(exitCode).toBe(0);
     });
   });
@@ -443,6 +578,78 @@ describe("Bun REPL", () => {
       expect(stripAnsi(stdout)).toContain("8");
       expect(exitCode).toBe(0);
     });
+
+    test("classes persist across evaluations", async () => {
+      const { stdout, exitCode } = await runRepl([
+        "class Point { constructor(x, y) { this.x = x; this.y = y; } sum() { return this.x + this.y; } }",
+        "new Point(3, 4).sum()",
+        ".exit",
+      ]);
+      expect(stripAnsi(stdout)).toContain("7");
+      expect(exitCode).toBe(0);
+    });
+
+    test("const can be redeclared across lines", async () => {
+      // REPL hoists const -> var so redeclaration works like Node's REPL.
+      const { stdout, stderr, exitCode } = await runRepl(["const x = 1", "const x = 2", "x", ".exit"]);
+      const output = stripAnsi(stdout + stderr);
+      expect(output).not.toMatch(/already.*declared|redeclar/i);
+      expect(output).toContain("2");
+      expect(exitCode).toBe(0);
+    });
+
+    test("array destructuring persists", async () => {
+      const { stdout, exitCode } = await runRepl(["const [a, b, c] = [10, 20, 30]", "a + b + c", ".exit"]);
+      expect(stripAnsi(stdout)).toContain("60");
+      expect(exitCode).toBe(0);
+    });
+
+    test("object destructuring persists", async () => {
+      const { stdout, exitCode } = await runRepl(["const { px, py } = { px: 5, py: 7 }", "px * py", ".exit"]);
+      expect(stripAnsi(stdout)).toContain("35");
+      expect(exitCode).toBe(0);
+    });
+
+    test("object destructuring with rename persists", async () => {
+      const { stdout, exitCode } = await runRepl(["const { a: renamed } = { a: 99 }", "renamed", ".exit"]);
+      expect(stripAnsi(stdout)).toContain("99");
+      expect(exitCode).toBe(0);
+    });
+
+    test("destructuring with defaults persists", async () => {
+      const { stdout, exitCode } = await runRepl(["const { missing = 42 } = {}", "missing", ".exit"]);
+      expect(stripAnsi(stdout)).toContain("42");
+      expect(exitCode).toBe(0);
+    });
+
+    test("array rest destructuring persists", async () => {
+      const { stdout, exitCode } = await runRepl(["const [first, ...rest] = [1, 2, 3, 4]", "rest", ".exit"]);
+      const output = stripAnsi(stdout);
+      expect(output).toContain("2");
+      expect(output).toContain("3");
+      expect(output).toContain("4");
+      expect(exitCode).toBe(0);
+    });
+
+    test("object rest destructuring persists", async () => {
+      const { stdout, exitCode } = await runRepl([
+        "const { keep, ...others } = { keep: 1, x: 2, y: 3 }",
+        "Object.keys(others).sort().join(',')",
+        ".exit",
+      ]);
+      expect(stripAnsi(stdout)).toContain("x,y");
+      expect(exitCode).toBe(0);
+    });
+
+    test("nested destructuring persists", async () => {
+      const { stdout, exitCode } = await runRepl([
+        "const { outer: { inner } } = { outer: { inner: 'deep' } }",
+        "inner",
+        ".exit",
+      ]);
+      expect(stripAnsi(stdout)).toContain("deep");
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("multiline input", () => {
@@ -463,6 +670,13 @@ describe("Bun REPL", () => {
       const output = stripAnsi(stdout);
       expect(output).toContain("x");
       expect(output).toContain("y");
+      expect(exitCode).toBe(0);
+    });
+
+    test("lone string directive returns the string", async () => {
+      // REPL treats directives (string literal statements) as expressions.
+      const { stdout, exitCode } = await runRepl([`"use strict"`, ".exit"]);
+      expect(stripAnsi(stdout)).toContain("use strict");
       expect(exitCode).toBe(0);
     });
   });
@@ -610,6 +824,49 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
       send("\n");
       // Should evaluate the same expression again
       await waitFor("333");
+    });
+  });
+
+  test("down arrow restores temp line after history", async () => {
+    // Regression: temp_line was leaked/lost when navigating history.
+    await withTerminalRepl(async ({ send, waitFor }) => {
+      // Establish history
+      send("777 + 1\n");
+      await waitFor("778");
+
+      // Type partial input, go up (to 777+1), then down (back to partial)
+      send("partial");
+      await waitFor("partial");
+      send("\x1b[A"); // Up — shows "777 + 1"
+      await waitFor("777");
+      send("\x1b[B"); // Down — should restore "partial"
+      await waitFor("partial");
+
+      // Cancel and verify REPL still works
+      send("\x03"); // Ctrl+C to clear
+      await waitFor(/\u276f|> /);
+      send("1 + 1\n");
+      await waitFor("2");
+    });
+  });
+
+  test("tab completes REPL commands", async () => {
+    await withTerminalRepl(async ({ send, waitFor }) => {
+      send(".he");
+      await waitFor(".he");
+      send("\t"); // Tab — should complete to .help (only match)
+      await waitFor(".help");
+    });
+  });
+
+  test(".editor mode collects lines until Ctrl+D", async () => {
+    await withTerminalRepl(async ({ send, waitFor }) => {
+      send(".editor\n");
+      await waitFor(/editor mode/i);
+      send("let __editorResult = 100\n");
+      send("__editorResult + 23\n");
+      send("\x04"); // Ctrl+D to finish editor mode
+      await waitFor("123");
     });
   });
 

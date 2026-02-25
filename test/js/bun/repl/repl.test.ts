@@ -7,16 +7,15 @@ import path from "path";
 async function runRepl(
   input: string | string[],
   options: {
-    timeout?: number;
     env?: Record<string, string>;
   } = {},
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   const inputStr = Array.isArray(input) ? input.join("\n") + "\n" : input;
-  const { timeout = 5000, env = {} } = options;
+  const { env = {} } = options;
 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "repl"],
-    stdin: "pipe",
+    stdin: Buffer.from(inputStr),
     stdout: "pipe",
     stderr: "pipe",
     env: {
@@ -27,17 +26,7 @@ async function runRepl(
     },
   });
 
-  proc.stdin.write(inputStr);
-  proc.stdin.flush();
-  proc.stdin.end();
-
-  const exitCode = await Promise.race([
-    proc.exited,
-    Bun.sleep(timeout).then(() => {
-      proc.kill();
-      return -1;
-    }),
-  ]);
+  const exitCode = await proc.exited;
 
   const stdout = await new Response(proc.stdout).text();
   const stderr = await new Response(proc.stderr).text();
@@ -532,14 +521,12 @@ describe("Bun REPL", () => {
       });
       await using proc = Bun.spawn({
         cmd: [bunExe(), "repl"],
-        stdin: "pipe",
+        stdin: Buffer.from(`require("./local").value\n.exit\n`),
         stdout: "pipe",
         stderr: "pipe",
         cwd: String(dir),
         env: { ...bunEnv, TERM: "dumb", NO_COLOR: "1" },
       });
-      proc.stdin.write(`require("./local").value\n.exit\n`);
-      proc.stdin.end();
       const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
       expect(stripAnsi(stdout)).toContain("from-local-file");
       expect(exitCode).toBe(0);

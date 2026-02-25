@@ -122,8 +122,9 @@ const ReplRunner = struct {
             if (vm.global.tryTakeException()) |exception| {
                 vm.printErrorLikeObjectToConsole(exception);
             }
+            vm.exit_handler.exit_code = 1;
             vm.onExit();
-            Global.exit(1);
+            vm.globalExit();
         };
 
         // Run the REPL loop
@@ -133,7 +134,7 @@ const ReplRunner = struct {
 
         // Clean up
         vm.onExit();
-        Global.exit(vm.exit_handler.exit_code);
+        vm.globalExit();
     }
 
     fn setupReplEnvironment(this: *ReplRunner) bun.JSError!void {

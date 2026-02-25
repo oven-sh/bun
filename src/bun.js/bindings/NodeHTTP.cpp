@@ -570,6 +570,11 @@ static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::
         if (header.key == WebCore::HTTPHeaderName::Date) {
             data->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_DATE_HEADER;
         }
+
+        // Prevent automatic Transfer-Encoding: chunked insertion when user provides one
+        if (header.key == WebCore::HTTPHeaderName::TransferEncoding) {
+            data->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER;
+        }
         writeResponseHeader<isSSL>(res, name, value);
     }
 
@@ -642,6 +647,7 @@ static void NodeHTTPServer__writeHead(
                 String key = propertyNames[i].string();
                 String value = headerValue.toWTFString(globalObject);
                 RETURN_IF_EXCEPTION(scope, void());
+
                 writeResponseHeader<isSSL>(response, key, value);
             }
         }

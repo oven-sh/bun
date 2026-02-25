@@ -682,7 +682,6 @@ pub fn Visit(
                     }
                 }
 
-                // note: our version assumes useDefineForClassFields is true
                 if (comptime is_typescript_enabled) {
                     if (constructor_function) |constructor| {
                         var to_add: usize = 0;
@@ -743,6 +742,95 @@ pub fn Visit(
                             class.properties = class_body.items;
                             constructor.func.body.stmts = stmts.items;
                         }
+                    }
+
+                    // When "useDefineForClassFields" is false (legacy TypeScript behavior):
+                    // - Type-only fields (no initializer) are stripped entirely
+                    // - Instance fields with initializers are moved to constructor assignments
+                    if (!p.options.use_define_for_class_fields) {
+                        // Count instance fields with initializers that need to be moved to constructor
+                        var instance_field_init_count: usize = 0;
+                        for (class.properties) |property| {
+                            if (property.flags.contains(.is_method) or property.kind == .class_static_block) continue;
+                            if (property.flags.contains(.is_static)) continue;
+                            // Skip private fields - they don't interact with prototype setters
+                            if (property.key != null and @as(Expr.Tag, property.key.?.data) == .e_private_identifier) continue;
+                            if (property.initializer != null) {
+                                instance_field_init_count += 1;
+                            }
+                        }
+
+                        // Move instance field initializers to the constructor if there's one
+                        if (instance_field_init_count > 0 and constructor_function != null) {
+                            const ctor = constructor_function.?;
+                            var ctor_stmts = std.array_list.Managed(Stmt).fromOwnedSlice(p.allocator, ctor.func.body.stmts);
+                            ctor_stmts.ensureUnusedCapacity(instance_field_init_count) catch unreachable;
+
+                            // Find super() call index for derived classes
+                            var ctor_super_index: ?usize = null;
+                            if (class.extends != null) {
+                                for (ctor_stmts.items, 0..) |stmt, index| {
+                                    if (stmt.data == .s_expr and stmt.data.s_expr.value.data == .e_call and stmt.data.s_expr.value.data.e_call.target.data == .e_super) {
+                                        ctor_super_index = index;
+                                        break;
+                                    }
+                                }
+                            }
+
+                            var insert_offset: usize = 0;
+                            for (class.properties) |property| {
+                                if (property.flags.contains(.is_method) or property.kind == .class_static_block) continue;
+                                if (property.flags.contains(.is_static)) continue;
+                                if (property.key != null and @as(Expr.Tag, property.key.?.data) == .e_private_identifier) continue;
+                                if (property.initializer) |init_val| {
+                                    const key_loc = if (property.key) |k| k.loc else logger.Loc{};
+                                    const field_name: []const u8 = if (property.key) |k| switch (k.data) {
+                                        .e_string => |s| s.string(p.allocator) catch "",
+                                        .e_identifier => |ident| p.symbols.items[ident.ref.innerIndex()].original_name,
+                                        else => "",
+                                    } else "";
+                                    ctor_stmts.insert(
+                                        if (ctor_super_index) |k| insert_offset + k + 1 else insert_offset,
+                                        Stmt.assign(
+                                            p.newExpr(E.Dot{
+                                                .target = p.newExpr(E.This{}, key_loc),
+                                                .name = field_name,
+                                                .name_loc = key_loc,
+                                            }, key_loc),
+                                            init_val,
+                                        ),
+                                    ) catch unreachable;
+                                    insert_offset += 1;
+                                }
+                            }
+
+                            ctor.func.body.stmts = ctor_stmts.items;
+                        }
+
+                        // Remove non-private, non-static instance fields from class body.
+                        // Type-only fields (no initializer) are just type annotations.
+                        // Fields with initializers have been moved to the constructor above.
+                        // Keep: methods, static blocks, static fields, private fields.
+                        var write_idx: usize = 0;
+                        for (class.properties) |property| {
+                            if (property.flags.contains(.is_method) or property.kind == .class_static_block) {
+                                class.properties[write_idx] = property;
+                                write_idx += 1;
+                                continue;
+                            }
+                            if (property.flags.contains(.is_static)) {
+                                class.properties[write_idx] = property;
+                                write_idx += 1;
+                                continue;
+                            }
+                            if (property.key != null and @as(Expr.Tag, property.key.?.data) == .e_private_identifier) {
+                                class.properties[write_idx] = property;
+                                write_idx += 1;
+                                continue;
+                            }
+                            // Non-private, non-static instance field: remove from class body
+                        }
+                        class.properties = class.properties[0..write_idx];
                     }
                 }
             }

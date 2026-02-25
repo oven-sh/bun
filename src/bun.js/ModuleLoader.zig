@@ -234,6 +234,7 @@ pub fn transpileSourceCode(
                 .jsx = jsc_vm.transpiler.options.jsx,
                 .emit_decorator_metadata = jsc_vm.transpiler.options.emit_decorator_metadata,
                 .experimental_decorators = jsc_vm.transpiler.options.experimental_decorators,
+                .use_define_for_class_fields = jsc_vm.transpiler.options.use_define_for_class_fields orelse true,
                 .virtual_source = virtual_source,
                 .dont_bundle_twice = true,
                 .allow_commonjs = true,

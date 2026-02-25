@@ -387,6 +387,7 @@ pub const RuntimeTranspilerStore = struct {
                 .jsx = transpiler.options.jsx,
                 .emit_decorator_metadata = transpiler.options.emit_decorator_metadata,
                 .experimental_decorators = transpiler.options.experimental_decorators,
+                .use_define_for_class_fields = transpiler.options.use_define_for_class_fields orelse true,
                 .virtual_source = null,
                 .dont_bundle_twice = true,
                 .allow_commonjs = true,

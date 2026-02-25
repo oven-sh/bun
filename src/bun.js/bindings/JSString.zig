@@ -35,7 +35,7 @@ pub const JSString = opaque {
         this: *JSString,
         global: *JSGlobalObject,
         allocator: std.mem.Allocator,
-    ) ZigString.Slice {
+    ) bun.String.Slice {
         var str = ZigString.init("");
         this.toZigString(global, &str);
         return str.toSlice(allocator);
@@ -45,7 +45,7 @@ pub const JSString = opaque {
         this: *JSString,
         global: *JSGlobalObject,
         allocator: std.mem.Allocator,
-    ) JSError!ZigString.Slice {
+    ) JSError!bun.String.Slice {
         var str = ZigString.init("");
         this.toZigString(global, &str);
         return str.toSliceClone(allocator);
@@ -55,7 +55,7 @@ pub const JSString = opaque {
         this: *JSString,
         global: *JSGlobalObject,
         allocator: std.mem.Allocator,
-    ) ZigString.Slice {
+    ) bun.String.Slice {
         var str = ZigString.init("");
         this.toZigString(global, &str);
         return str.toSliceZ(allocator);

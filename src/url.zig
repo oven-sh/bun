@@ -1021,7 +1021,7 @@ pub const FormData = struct {
 
         const input_value = args[0];
         const boundary_value = args[1];
-        var boundary_slice = jsc.ZigString.Slice.empty;
+        var boundary_slice = bun.String.Slice.empty;
         defer boundary_slice.deinit();
 
         var encoding = Encoding{
@@ -1045,7 +1045,7 @@ pub const FormData = struct {
                 return globalThis.throwInvalidArguments("boundary must be a string or ArrayBufferView", .{});
             }
         }
-        var input_slice = jsc.ZigString.Slice{};
+        var input_slice = bun.String.Slice{};
         defer input_slice.deinit();
         var input: []const u8 = "";
 

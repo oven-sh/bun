@@ -63,7 +63,7 @@ pub inline fn setUrl(this: *Response, url: bun.String) void {
     this.#url.deref();
     this.#url = url;
 }
-pub inline fn getUTF8Url(this: *Response, allocator: std.mem.Allocator) ZigString.Slice {
+pub inline fn getUTF8Url(this: *Response, allocator: std.mem.Allocator) bun.String.Slice {
     return this.#url.toUTF8(allocator);
 }
 pub inline fn getUrl(this: *Response) bun.String {
@@ -86,7 +86,7 @@ pub inline fn getMethod(this: *Response) Method {
     return this.#init.method;
 }
 pub fn getFormDataEncoding(this: *Response) bun.JSError!?*bun.FormData.AsyncFormData {
-    var content_type_slice: ZigString.Slice = (try this.getContentType()) orelse return null;
+    var content_type_slice: bun.String.Slice = (try this.getContentType()) orelse return null;
     defer content_type_slice.deinit();
     const encoding = bun.FormData.Encoding.get(content_type_slice.slice()) orelse return null;
     return bun.handleOom(bun.FormData.AsyncFormData.init(bun.default_allocator, encoding));
@@ -476,7 +476,7 @@ pub fn finalize(
 
 pub fn getContentType(
     this: *Response,
-) bun.JSError!?ZigString.Slice {
+) bun.JSError!?bun.String.Slice {
     if (this.#init.headers) |headers| {
         if (headers.fastGet(.ContentType)) |value| {
             return value.toSlice(bun.default_allocator);
@@ -485,7 +485,7 @@ pub fn getContentType(
 
     if (this.#body.value == .Blob) {
         if (this.#body.value.Blob.content_type.len > 0)
-            return ZigString.Slice.fromUTF8NeverFree(this.#body.value.Blob.content_type);
+            return bun.String.Slice.fromUTF8NeverFree(this.#body.value.Blob.content_type);
     }
 
     return null;
@@ -601,7 +601,7 @@ pub fn constructRedirectImpl(
     // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
     var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), args_list.ptr[0..args_list.len]);
 
-    var url_string_slice = ZigString.Slice.empty;
+    var url_string_slice = bun.String.Slice.empty;
     defer url_string_slice.deinit();
     var response: Response = brk: {
         var response = Response{

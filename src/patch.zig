@@ -1130,7 +1130,7 @@ pub const TestingAPIs = struct {
         };
     }
     const ApplyArgs = struct {
-        patchfile_txt: jsc.ZigString.Slice,
+        patchfile_txt: bun.String.Slice,
         patchfile: PatchFile,
         dirfd: bun.FileDescriptor,
 

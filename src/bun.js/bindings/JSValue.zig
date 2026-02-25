@@ -1196,13 +1196,13 @@ pub const JSValue = enum(i64) {
     /// ASCII-only string.
     ///
     /// Otherwise, it will be cloned using the allocator.
-    pub fn toSlice(this: JSValue, global: *JSGlobalObject, allocator: std.mem.Allocator) JSError!ZigString.Slice {
+    pub fn toSlice(this: JSValue, global: *JSGlobalObject, allocator: std.mem.Allocator) JSError!bun.String.Slice {
         const str = try bun.String.fromJS(this, global);
         defer str.deref();
         return str.toUTF8(allocator);
     }
 
-    pub inline fn toSliceZ(this: JSValue, global: *JSGlobalObject, allocator: std.mem.Allocator) ZigString.Slice {
+    pub inline fn toSliceZ(this: JSValue, global: *JSGlobalObject, allocator: std.mem.Allocator) bun.String.Slice {
         return getZigString(this, global).toSliceZ(allocator);
     }
 
@@ -1232,14 +1232,14 @@ pub const JSValue = enum(i64) {
     }
 
     /// Call `toString()` on the JSValue and clone the result.
-    pub fn toSliceOrNull(this: JSValue, globalThis: *JSGlobalObject) bun.JSError!ZigString.Slice {
+    pub fn toSliceOrNull(this: JSValue, globalThis: *JSGlobalObject) bun.JSError!bun.String.Slice {
         const str = try bun.String.fromJS(this, globalThis);
         defer str.deref();
         return str.toUTF8(bun.default_allocator);
     }
 
     /// Call `toString()` on the JSValue and clone the result.
-    pub fn toSliceOrNullWithAllocator(this: JSValue, globalThis: *JSGlobalObject, allocator: std.mem.Allocator) bun.JSError!ZigString.Slice {
+    pub fn toSliceOrNullWithAllocator(this: JSValue, globalThis: *JSGlobalObject, allocator: std.mem.Allocator) bun.JSError!bun.String.Slice {
         const str = try bun.String.fromJS(this, globalThis);
         defer str.deref();
         return str.toUTF8(allocator);
@@ -1249,7 +1249,7 @@ pub const JSValue = enum(i64) {
     /// On exception or out of memory, this returns null.
     ///
     /// Remember that `Symbol` throws an exception when you call `toString()`.
-    pub fn toSliceClone(this: JSValue, globalThis: *JSGlobalObject) bun.JSError!ZigString.Slice {
+    pub fn toSliceClone(this: JSValue, globalThis: *JSGlobalObject) bun.JSError!bun.String.Slice {
         return this.toSliceCloneWithAllocator(globalThis, bun.default_allocator);
     }
 
@@ -1258,7 +1258,7 @@ pub const JSValue = enum(i64) {
         this: JSValue,
         globalThis: *JSGlobalObject,
         allocator: std.mem.Allocator,
-    ) JSError!ZigString.Slice {
+    ) JSError!bun.String.Slice {
         var str = try this.toJSString(globalThis);
         return str.toSliceClone(globalThis, allocator);
     }
@@ -1781,7 +1781,7 @@ pub const JSValue = enum(i64) {
         switch (comptime T) {
             JSValue => return prop,
             bool => @compileError("ambiguous coercion: use getBooleanStrict (throw error if not boolean) or getBooleanLoose (truthy check, never throws)"),
-            ZigString.Slice => {
+            bun.String.Slice => {
                 if (prop.isString()) {
                     return try prop.toSliceOrNull(global);
                 }

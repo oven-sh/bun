@@ -57,7 +57,7 @@ comptime {
 }
 
 pub const PathOrFileDescriptor = union(enum) {
-    path: jsc.ZigString.Slice,
+    path: bun.String.Slice,
     fd: bun.FileDescriptor,
 
     pub fn deinit(this: *const PathOrFileDescriptor) void {

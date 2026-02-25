@@ -425,7 +425,7 @@ pub fn basename(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*
     const pathZSlice = pathZStr.toSlice(allocator);
     defer pathZSlice.deinit();
 
-    var suffixZSlice: ?jsc.ZigString.Slice = null;
+    var suffixZSlice: ?bun.String.Slice = null;
     if (suffix_ptr) |_suffix_ptr| {
         const suffixZStr = try _suffix_ptr.getZigString(globalObject);
         if (suffixZStr.len > 0 and suffixZStr.len <= pathZStr.len) {
@@ -916,7 +916,7 @@ pub fn format(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*]j
     const allocator = stack_fallback.get();
 
     var root: []const u8 = "";
-    var root_slice: ?jsc.ZigString.Slice = null;
+    var root_slice: ?bun.String.Slice = null;
     defer if (root_slice) |slice| slice.deinit();
 
     if (try pathObject_ptr.getTruthy(globalObject, "root")) |jsValue| {
@@ -924,7 +924,7 @@ pub fn format(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*]j
         root = root_slice.?.slice();
     }
     var dir: []const u8 = "";
-    var dir_slice: ?jsc.ZigString.Slice = null;
+    var dir_slice: ?bun.String.Slice = null;
     defer if (dir_slice) |slice| slice.deinit();
 
     if (try pathObject_ptr.getTruthy(globalObject, "dir")) |jsValue| {
@@ -932,7 +932,7 @@ pub fn format(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*]j
         dir = dir_slice.?.slice();
     }
     var base: []const u8 = "";
-    var base_slice: ?jsc.ZigString.Slice = null;
+    var base_slice: ?bun.String.Slice = null;
     defer if (base_slice) |slice| slice.deinit();
 
     if (try pathObject_ptr.getTruthy(globalObject, "base")) |jsValue| {
@@ -940,7 +940,7 @@ pub fn format(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*]j
         base = base_slice.?.slice();
     }
     var _name: []const u8 = "";
-    var _name_slice: ?jsc.ZigString.Slice = null;
+    var _name_slice: ?bun.String.Slice = null;
     defer if (_name_slice) |slice| slice.deinit();
 
     if (try pathObject_ptr.getTruthy(globalObject, "name")) |jsValue| {
@@ -948,7 +948,7 @@ pub fn format(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*]j
         _name = _name_slice.?.slice();
     }
     var ext: []const u8 = "";
-    var ext_slice: ?jsc.ZigString.Slice = null;
+    var ext_slice: ?bun.String.Slice = null;
     defer if (ext_slice) |slice| slice.deinit();
 
     if (try pathObject_ptr.getTruthy(globalObject, "ext")) |jsValue| {

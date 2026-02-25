@@ -1732,7 +1732,7 @@ pub const internal = struct {
 
         const hostname_or_url = arguments[0];
 
-        var hostname_slice = jsc.ZigString.Slice.empty;
+        var hostname_slice = bun.String.Slice.empty;
         defer hostname_slice.deinit();
 
         if (hostname_or_url.isString()) {
@@ -2505,7 +2505,7 @@ pub const Resolver = struct {
     }
 
     const DNSQuery = struct {
-        name: jsc.ZigString.Slice,
+        name: bun.String.Slice,
         record_type: RecordType,
 
         ttl: i32 = 0,

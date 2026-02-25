@@ -1103,7 +1103,7 @@ pub const CommandLineReporter = struct {
             _ = fs.mkdirRecursive(
                 .{
                     .path = bun.jsc.Node.PathLike{
-                        .encoded_slice = jsc.ZigString.Slice.fromUTF8NeverFree(opts.reports_directory),
+                        .encoded_slice = bun.String.Slice.fromUTF8NeverFree(opts.reports_directory),
                     },
                     .always_return_none = true,
                 },
@@ -1264,7 +1264,7 @@ pub const CommandLineReporter = struct {
 };
 
 export fn BunTest__shouldGenerateCodeCoverage(test_name_str: bun.String) callconv(.c) bool {
-    var zig_slice: bun.jsc.ZigString.Slice = .{};
+    var zig_slice: bun.String.Slice = .{};
     defer zig_slice.deinit();
 
     // In this particular case, we don't actually care about non-ascii latin1 characters.

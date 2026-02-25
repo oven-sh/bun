@@ -1015,15 +1015,15 @@ pub const S3CredentialsWithOptions = struct {
     changed_credentials: bool = false,
     /// indicates if the virtual hosted style is used
     virtual_hosted_style: bool = false,
-    _accessKeyIdSlice: ?jsc.ZigString.Slice = null,
-    _secretAccessKeySlice: ?jsc.ZigString.Slice = null,
-    _regionSlice: ?jsc.ZigString.Slice = null,
-    _endpointSlice: ?jsc.ZigString.Slice = null,
-    _bucketSlice: ?jsc.ZigString.Slice = null,
-    _sessionTokenSlice: ?jsc.ZigString.Slice = null,
-    _contentDispositionSlice: ?jsc.ZigString.Slice = null,
-    _contentTypeSlice: ?jsc.ZigString.Slice = null,
-    _contentEncodingSlice: ?jsc.ZigString.Slice = null,
+    _accessKeyIdSlice: ?bun.String.Slice = null,
+    _secretAccessKeySlice: ?bun.String.Slice = null,
+    _regionSlice: ?bun.String.Slice = null,
+    _endpointSlice: ?bun.String.Slice = null,
+    _bucketSlice: ?bun.String.Slice = null,
+    _sessionTokenSlice: ?bun.String.Slice = null,
+    _contentDispositionSlice: ?bun.String.Slice = null,
+    _contentTypeSlice: ?bun.String.Slice = null,
+    _contentEncodingSlice: ?bun.String.Slice = null,
 
     pub fn deinit(this: *@This()) void {
         if (this._accessKeyIdSlice) |slice| slice.deinit();

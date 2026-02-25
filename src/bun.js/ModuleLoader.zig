@@ -55,7 +55,7 @@ pub fn resolveEmbeddedFile(vm: *VirtualMachine, path_buf: *bun.PathBuffer, input
 
         .{
             .data = .{
-                .encoded_slice = ZigString.Slice.fromUTF8NeverFree(file.contents),
+                .encoded_slice = bun.String.Slice.fromUTF8NeverFree(file.contents),
             },
             .dirfd = tmpdir,
             .file = .{ .fd = tmpfile.fd },

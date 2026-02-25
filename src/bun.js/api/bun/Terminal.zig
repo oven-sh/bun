@@ -47,7 +47,7 @@ cols: u16,
 rows: u16,
 
 /// Terminal name (e.g., "xterm-256color")
-term_name: jsc.ZigString.Slice,
+term_name: bun.String.Slice,
 
 /// Event loop handle for callbacks
 event_loop_handle: jsc.EventLoopHandle,
@@ -96,7 +96,7 @@ pub const IOReader = bun.io.BufferedReader;
 pub const Options = struct {
     cols: u16 = 80,
     rows: u16 = 24,
-    term_name: jsc.ZigString.Slice = .{},
+    term_name: bun.String.Slice = .{},
     data_callback: ?JSValue = null,
     exit_callback: ?JSValue = null,
     drain_callback: ?JSValue = null,
@@ -117,7 +117,7 @@ pub const Options = struct {
             if (n > 0 and n <= 65535) options.rows = @intCast(n);
         }
 
-        if (try js_options.getOptional(globalObject, "name", jsc.ZigString.Slice)) |slice| {
+        if (try js_options.getOptional(globalObject, "name", bun.String.Slice)) |slice| {
             if (slice.len > max_term_name_len) {
                 slice.deinit();
                 return globalObject.throw("Terminal name too long (max {d} characters)", .{max_term_name_len});
@@ -174,7 +174,7 @@ fn initTerminal(
     const term_name = if (options.term_name.len > 0)
         options.term_name
     else
-        jsc.ZigString.Slice.fromUTF8NeverFree("xterm-256color");
+        bun.String.Slice.fromUTF8NeverFree("xterm-256color");
 
     const terminal = bun.new(Terminal, .{
         .ref_count = .init(),

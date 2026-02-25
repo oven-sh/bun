@@ -495,7 +495,7 @@ proxy_tunnel: ?*ProxyTunnel = null,
 signals: Signals = .{},
 async_http_id: u32 = 0,
 hostname: ?[]u8 = null,
-unix_socket_path: jsc.ZigString.Slice = jsc.ZigString.Slice.empty,
+unix_socket_path: bun.String.Slice = bun.String.Slice.empty,
 
 pub fn deinit(this: *HTTPClient) void {
     if (this.redirect.len > 0) {
@@ -515,7 +515,7 @@ pub fn deinit(this: *HTTPClient) void {
         tunnel.detachAndDeref();
     }
     this.unix_socket_path.deinit();
-    this.unix_socket_path = jsc.ZigString.Slice.empty;
+    this.unix_socket_path = bun.String.Slice.empty;
 }
 
 pub fn isKeepAlivePossible(this: *HTTPClient) bool {
@@ -775,7 +775,7 @@ pub fn doRedirect(
     }
 
     this.unix_socket_path.deinit();
-    this.unix_socket_path = jsc.ZigString.Slice.empty;
+    this.unix_socket_path = bun.String.Slice.empty;
     // TODO: what we do with stream body?
     const request_body = if (this.state.flags.resend_request_body_on_redirect and this.state.original_request_body == .bytes)
         this.state.original_request_body.bytes

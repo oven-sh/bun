@@ -632,7 +632,7 @@ fn hsetImpl(this: *JSValkeyClient, globalObject: *jsc.JSGlobalObject, callframe:
 
     const second_arg = callframe.argument(1);
 
-    var args = std.array_list.Managed(jsc.ZigString.Slice).init(bun.default_allocator);
+    var args = std.array_list.Managed(bun.String.Slice).init(bun.default_allocator);
     defer {
         for (args.items) |item| item.deinit();
         args.deinit();
@@ -1592,7 +1592,7 @@ const SubscriptionCtx = @import("./js_valkey.zig").SubscriptionCtx;
 const jsc = bun.jsc;
 const JSValue = jsc.JSValue;
 const JSArgument = jsc.Node.BlobOrStringOrBuffer;
-const Slice = jsc.ZigString.Slice;
+const Slice = bun.String.Slice;
 
 const valkey = bun.valkey;
 const Command = valkey.Command;

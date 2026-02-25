@@ -2665,7 +2665,7 @@ pub fn remapZigException(
     error_instance: JSValue,
     exception_list: ?*ExceptionList,
     must_reset_parser_arena_later: *bool,
-    source_code_slice: *?ZigString.Slice,
+    source_code_slice: *?bun.String.Slice,
     allow_source_code_preview: bool,
 ) void {
     error_instance.toZigException(this.global, exception);
@@ -2802,7 +2802,7 @@ pub fn remapZigException(
 
         const code = code: {
             if (!enable_source_code_preview) {
-                break :code ZigString.Slice.empty;
+                break :code bun.String.Slice.empty;
             }
 
             if (!top.remapped and lookup.source_map != null and lookup.source_map.?.isExternal()) {
@@ -2813,7 +2813,7 @@ pub fn remapZigException(
 
             if (top_frame_is_builtin) {
                 // Avoid printing "export default 'native'"
-                break :code ZigString.Slice.empty;
+                break :code bun.String.Slice.empty;
             }
 
             var log = logger.Log.init(bun.default_allocator);
@@ -2935,7 +2935,7 @@ fn printErrorInstance(
     // The ZigException structure stores substrings of the source code, in
     // which we need the lifetime of this data to outlive the inner call to
     // remapZigException, but still get freed.
-    var source_code_slice: ?ZigString.Slice = null;
+    var source_code_slice: ?bun.String.Slice = null;
     defer if (source_code_slice) |slice| slice.deinit();
 
     if (mode == .js) {

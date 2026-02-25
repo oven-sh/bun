@@ -676,7 +676,7 @@ pub fn writeTrace(comptime Writer: type, writer: Writer, global: *JSGlobalObject
     defer holder.deinit(vm);
     const exception = holder.zigException();
 
-    var source_code_slice: ?ZigString.Slice = null;
+    var source_code_slice: ?bun.String.Slice = null;
     defer if (source_code_slice) |slice| slice.deinit();
 
     var err = ZigString.init("trace output").toErrorInstance(global);
@@ -3072,7 +3072,7 @@ pub const Formatter = struct {
                 var needs_space = false;
                 var tag_name_str = ZigString.init("");
 
-                var tag_name_slice: ZigString.Slice = ZigString.Slice.empty;
+                var tag_name_slice: bun.String.Slice = bun.String.Slice.empty;
                 var is_tag_kind_primitive = false;
 
                 defer if (tag_name_slice.isAllocated()) tag_name_slice.deinit();

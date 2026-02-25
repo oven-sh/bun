@@ -311,9 +311,9 @@ pub fn which(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
         return globalThis.throw("which: expected 1 argument, got 0", .{});
     };
 
-    var path_str: ZigString.Slice = ZigString.Slice.empty;
-    var bin_str: ZigString.Slice = ZigString.Slice.empty;
-    var cwd_str: ZigString.Slice = ZigString.Slice.empty;
+    var path_str: bun.String.Slice = bun.String.Slice.empty;
+    var bin_str: bun.String.Slice = bun.String.Slice.empty;
+    var cwd_str: bun.String.Slice = bun.String.Slice.empty;
     defer {
         path_str.deinit();
         bin_str.deinit();
@@ -337,10 +337,10 @@ pub fn which(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
         return jsc.JSValue.jsNull();
     }
 
-    path_str = ZigString.Slice.fromUTF8NeverFree(
+    path_str = bun.String.Slice.fromUTF8NeverFree(
         globalThis.bunVM().transpiler.env.get("PATH") orelse "",
     );
-    cwd_str = ZigString.Slice.fromUTF8NeverFree(
+    cwd_str = bun.String.Slice.fromUTF8NeverFree(
         globalThis.bunVM().transpiler.fs.top_level_dir,
     );
 

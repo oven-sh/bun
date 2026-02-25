@@ -1281,7 +1281,7 @@ pub const FetchTasklet = struct {
         // Custom Hostname
         hostname: ?[]u8 = null,
         check_server_identity: jsc.Strong.Optional = .empty,
-        unix_socket_path: ZigString.Slice,
+        unix_socket_path: bun.String.Slice,
         ssl_config: ?*SSLConfig = null,
         upgraded_connection: bool = false,
     };

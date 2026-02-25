@@ -89,7 +89,7 @@ pub const UserOptions = struct {
             alloc,
         );
 
-        const root = if (try config.getOptional(global, "root", ZigString.Slice)) |slice|
+        const root = if (try config.getOptional(global, "root", bun.String.Slice)) |slice|
             allocations.track(slice)
         else
             bun.getcwdAlloc(alloc) catch |err| switch (err) {
@@ -117,11 +117,11 @@ pub const UserOptions = struct {
 
 /// Each string stores its allocator since some may hold reference counts to JSC
 pub const StringRefList = struct {
-    strings: std.ArrayListUnmanaged(ZigString.Slice),
+    strings: std.ArrayListUnmanaged(bun.String.Slice),
 
     pub const empty: StringRefList = .{ .strings = .{} };
 
-    pub fn track(al: *StringRefList, str: ZigString.Slice) []const u8 {
+    pub fn track(al: *StringRefList, str: bun.String.Slice) []const u8 {
         bun.handleOom(al.strings.append(bun.default_allocator, str));
         return str.slice();
     }
@@ -156,7 +156,7 @@ pub const SplitBundlerOptions = struct {
                 return global.throwInvalidArguments("Expected plugin to be an object", .{});
             }
 
-            if (try plugin_config.getOptional(global, "name", ZigString.Slice)) |slice| {
+            if (try plugin_config.getOptional(global, "name", bun.String.Slice)) |slice| {
                 defer slice.deinit();
                 if (slice.len == 0) {
                     return global.throwInvalidArguments("Expected plugin to have a non-empty name", .{});
@@ -508,14 +508,14 @@ pub const Framework = struct {
                     return global.throwInvalidArguments("'framework.serverComponents.separateSSRGraph' must be a boolean", .{});
                 },
                 .server_runtime_import = refs.track(
-                    try sc.getOptional(global, "serverRuntimeImportSource", ZigString.Slice) orelse {
+                    try sc.getOptional(global, "serverRuntimeImportSource", bun.String.Slice) orelse {
                         return global.throwInvalidArguments("Missing 'framework.serverComponents.serverRuntimeImportSource'", .{});
                     },
                 ),
                 .server_register_client_reference = if (try sc.getOptional(
                     global,
                     "serverRegisterClientReferenceExport",
-                    ZigString.Slice,
+                    bun.String.Slice,
                 )) |slice|
                     refs.track(slice)
                 else

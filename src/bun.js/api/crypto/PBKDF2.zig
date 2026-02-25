@@ -227,8 +227,8 @@ pub fn pbkdf2(
 ) ?[]const u8 {
     var pbk = PBKDF2{
         .algorithm = algorithm,
-        .password = jsc.Node.StringOrBuffer{ .encoded_slice = jsc.ZigString.Slice.fromUTF8NeverFree(password) },
-        .salt = jsc.Node.StringOrBuffer{ .encoded_slice = jsc.ZigString.Slice.fromUTF8NeverFree(salt) },
+        .password = jsc.Node.StringOrBuffer{ .encoded_slice = bun.String.Slice.fromUTF8NeverFree(password) },
+        .salt = jsc.Node.StringOrBuffer{ .encoded_slice = bun.String.Slice.fromUTF8NeverFree(salt) },
         .iteration_count = iteration_count,
         .length = @intCast(output.len),
     };

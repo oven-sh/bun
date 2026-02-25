@@ -79,7 +79,7 @@ fn hashWrap(comptime Hasher_: anytype) jsc.JSHostFnZig {
             defer args.deinit();
 
             var input: []const u8 = "";
-            var input_slice = ZigString.Slice.empty;
+            var input_slice = bun.String.Slice.empty;
             defer input_slice.deinit();
             if (args.nextEat()) |arg| {
                 if (arg.as(jsc.WebCore.Blob)) |blob| {

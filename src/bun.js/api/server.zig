@@ -140,7 +140,7 @@ pub const AnyRoute = union(enum) {
     fn bundledHTMLManifestFromJS(argument: jsc.JSValue, init_ctx: *ServerInitContext) bun.JSError!?AnyRoute {
         if (!argument.isObject()) return null;
 
-        const index = try argument.getOptional(init_ctx.global, "index", ZigString.Slice) orelse return null;
+        const index = try argument.getOptional(init_ctx.global, "index", bun.String.Slice) orelse return null;
         defer index.deinit();
 
         const files = try argument.getArray(init_ctx.global, "files") orelse return null;

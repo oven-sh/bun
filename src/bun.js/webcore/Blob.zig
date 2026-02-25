@@ -77,7 +77,7 @@ pub const ClosingState = enum(u8) {
 };
 
 pub fn getFormDataEncoding(this: *Blob) ?*bun.FormData.AsyncFormData {
-    var content_type_slice: ZigString.Slice = this.getContentType() orelse return null;
+    var content_type_slice: bun.String.Slice = this.getContentType() orelse return null;
     defer content_type_slice.deinit();
     const encoding = bun.FormData.Encoding.get(content_type_slice.slice()) orelse return null;
     return bun.handleOom(bun.FormData.AsyncFormData.init(bun.default_allocator, encoding));
@@ -283,9 +283,9 @@ const FormDataContext = struct {
 
 pub fn getContentType(
     this: *Blob,
-) ?ZigString.Slice {
+) ?bun.String.Slice {
     if (this.content_type.len > 0)
-        return ZigString.Slice.fromUTF8NeverFree(this.content_type);
+        return bun.String.Slice.fromUTF8NeverFree(this.content_type);
 
     return null;
 }
@@ -2529,7 +2529,7 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, re
                 break :brk .{ .fd = store.data.file.pathlike.fd };
             } else {
                 break :brk .{
-                    .path = bun.handleOom(ZigString.Slice.initDupe(
+                    .path = bun.handleOom(bun.String.Slice.initDupe(
                         bun.default_allocator,
                         store.data.file.pathlike.path.slice(),
                     )),
@@ -2674,7 +2674,7 @@ pub fn getWriter(
                         }
                     }
                 }
-                var content_disposition_str: ?ZigString.Slice = null;
+                var content_disposition_str: ?bun.String.Slice = null;
                 defer if (content_disposition_str) |cd| cd.deinit();
                 if (try options.getTruthy(globalThis, "contentDisposition")) |content_disposition| {
                     if (!content_disposition.isString()) {
@@ -2682,7 +2682,7 @@ pub fn getWriter(
                     }
                     content_disposition_str = try content_disposition.toSlice(globalThis, bun.default_allocator);
                 }
-                var content_encoding_str: ?ZigString.Slice = null;
+                var content_encoding_str: ?bun.String.Slice = null;
                 defer if (content_encoding_str) |ce| ce.deinit();
                 if (try options.getTruthy(globalThis, "contentEncoding")) |content_encoding| {
                     if (!content_encoding.isString()) {
@@ -2791,7 +2791,7 @@ pub fn getWriter(
             break :brk .{ .fd = store.data.file.pathlike.fd };
         } else {
             break :brk .{
-                .path = bun.handleOom(ZigString.Slice.initDupe(
+                .path = bun.handleOom(bun.String.Slice.initDupe(
                     bun.default_allocator,
                     store.data.file.pathlike.path.slice(),
                 )),

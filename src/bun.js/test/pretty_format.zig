@@ -1484,7 +1484,7 @@ pub const JestPrettyFormat = struct {
                     var needs_space = false;
                     var tag_name_str = ZigString.init("");
 
-                    var tag_name_slice: ZigString.Slice = ZigString.Slice.empty;
+                    var tag_name_slice: bun.String.Slice = bun.String.Slice.empty;
                     var is_tag_kind_primitive = false;
 
                     defer if (tag_name_slice.isAllocated()) tag_name_slice.deinit();

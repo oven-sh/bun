@@ -32,10 +32,10 @@ pub const FileSystemRouter = struct {
         }
         var vm = globalThis.bunVM();
 
-        var root_dir_path: ZigString.Slice = ZigString.Slice.fromUTF8NeverFree(vm.transpiler.fs.top_level_dir);
+        var root_dir_path: bun.String.Slice = bun.String.Slice.fromUTF8NeverFree(vm.transpiler.fs.top_level_dir);
         defer root_dir_path.deinit();
-        var origin_str: ZigString.Slice = .{};
-        var asset_prefix_slice: ZigString.Slice = .{};
+        var origin_str: bun.String.Slice = .{};
+        var asset_prefix_slice: bun.String.Slice = .{};
 
         var out_buf: [bun.MAX_PATH_BYTES * 2]u8 = undefined;
         if (try argument.get(globalThis, "style")) |style_val| {
@@ -58,7 +58,7 @@ pub const FileSystemRouter = struct {
                     root_dir_path = root_dir_path_;
                 } else {
                     var parts = [_][]const u8{path};
-                    root_dir_path = jsc.ZigString.Slice.fromUTF8NeverFree(bun.path.joinAbsStringBuf(Fs.FileSystem.instance.top_level_dir, &out_buf, &parts, .auto));
+                    root_dir_path = bun.String.Slice.fromUTF8NeverFree(bun.path.joinAbsStringBuf(Fs.FileSystem.instance.top_level_dir, &out_buf, &parts, .auto));
                 }
             }
         } else {
@@ -273,7 +273,7 @@ pub const FileSystemRouter = struct {
             return globalThis.throwInvalidArguments("Expected string, Request or Response", .{});
         }
 
-        var path: ZigString.Slice = brk: {
+        var path: bun.String.Slice = brk: {
             if (argument.isString()) {
                 break :brk try (try argument.toSlice(globalThis, globalThis.allocator())).cloneIfBorrowed(globalThis.allocator());
             }
@@ -294,7 +294,7 @@ pub const FileSystemRouter = struct {
 
         if (path.len == 0 or (path.len == 1 and path.ptr[0] == '/')) {
             path.deinit();
-            path = ZigString.Slice.fromUTF8NeverFree("/");
+            path = bun.String.Slice.fromUTF8NeverFree("/");
         }
 
         if (strings.hasPrefixComptime(path.slice(), "http://") or strings.hasPrefixComptime(path.slice(), "https://") or strings.hasPrefixComptime(path.slice(), "file://")) {

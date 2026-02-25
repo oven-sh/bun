@@ -149,10 +149,10 @@ pub fn init2(
 
 pub fn getContentType(
     this: *Request,
-) bun.JSError!?ZigString.Slice {
+) bun.JSError!?bun.String.Slice {
     if (this.request_context.getRequest()) |req| {
         if (req.header("content-type")) |value| {
-            return ZigString.Slice.fromUTF8NeverFree(value);
+            return bun.String.Slice.fromUTF8NeverFree(value);
         }
     }
 
@@ -164,14 +164,14 @@ pub fn getContentType(
 
     if (this.#body.value == .Blob) {
         if (this.#body.value.Blob.content_type.len > 0)
-            return ZigString.Slice.fromUTF8NeverFree(this.#body.value.Blob.content_type);
+            return bun.String.Slice.fromUTF8NeverFree(this.#body.value.Blob.content_type);
     }
 
     return null;
 }
 
 pub fn getFormDataEncoding(this: *Request) bun.JSError!?*bun.FormData.AsyncFormData {
-    var content_type_slice: ZigString.Slice = (try this.getContentType()) orelse return null;
+    var content_type_slice: bun.String.Slice = (try this.getContentType()) orelse return null;
     defer content_type_slice.deinit();
     const encoding = bun.FormData.Encoding.get(content_type_slice.slice()) orelse return null;
     return bun.FormData.AsyncFormData.init(bun.default_allocator, encoding);

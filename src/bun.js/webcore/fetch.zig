@@ -230,7 +230,7 @@ fn fetchImpl(
     // Custom Hostname
     var hostname: ?[]u8 = null;
     var range: ?[]u8 = null;
-    var unix_socket_path: ZigString.Slice = ZigString.Slice.empty;
+    var unix_socket_path: bun.String.Slice = bun.String.Slice.empty;
 
     var url_proxy_buffer: []const u8 = "";
     const URLType = enum {
@@ -1044,7 +1044,7 @@ fn fetchImpl(
 
             var pathlike: jsc.Node.PathOrFileDescriptor = .{
                 .path = .{
-                    .encoded_slice = ZigString.Slice.init(bun.default_allocator, try bun.default_allocator.dupe(u8, temp_file_path)),
+                    .encoded_slice = bun.String.Slice.init(bun.default_allocator, try bun.default_allocator.dupe(u8, temp_file_path)),
                 },
             };
 
@@ -1438,7 +1438,7 @@ fn fetchImpl(
     signal = null;
     ssl_config = null;
     hostname = null;
-    unix_socket_path = ZigString.Slice.empty;
+    unix_socket_path = bun.String.Slice.empty;
 
     return promise_val;
 }

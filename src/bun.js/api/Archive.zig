@@ -255,16 +255,16 @@ fn buildTarballFromObject(globalThis: *jsc.JSGlobalObject, obj: jsc.JSValue) bun
     };
 }
 
-/// Returns data as a ZigString.Slice (handles ownership automatically via deinit)
-fn getEntryData(globalThis: *jsc.JSGlobalObject, value: jsc.JSValue, allocator: std.mem.Allocator) bun.JSError!jsc.ZigString.Slice {
+/// Returns data as a bun.String.Slice (handles ownership automatically via deinit)
+fn getEntryData(globalThis: *jsc.JSGlobalObject, value: jsc.JSValue, allocator: std.mem.Allocator) bun.JSError!bun.String.Slice {
     // For Blob, use sharedView (no copy needed)
     if (value.as(jsc.WebCore.Blob)) |blob_ptr| {
-        return jsc.ZigString.Slice.fromUTF8NeverFree(blob_ptr.sharedView());
+        return bun.String.Slice.fromUTF8NeverFree(blob_ptr.sharedView());
     }
 
     // For ArrayBuffer/TypedArray, use view (no copy needed)
     if (value.asArrayBuffer(globalThis)) |array_buffer| {
-        return jsc.ZigString.Slice.fromUTF8NeverFree(array_buffer.slice());
+        return bun.String.Slice.fromUTF8NeverFree(array_buffer.slice());
     }
 
     // For strings, convert (allocates)

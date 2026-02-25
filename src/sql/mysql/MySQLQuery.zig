@@ -91,7 +91,7 @@ fn runPreparedQuery(
     columns_value: JSValue,
     binding_value: JSValue,
 ) !void {
-    var query_str: ?bun.ZigString.Slice = null;
+    var query_str: ?bun.String.Slice = null;
     defer if (query_str) |str| str.deinit();
 
     if (this.#statement == null) {

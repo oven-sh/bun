@@ -59,7 +59,7 @@ pub const BlobOrStringOrBuffer = union(enum) {
                 // rather than referencing the store which isn't thread-safe
                 const blob_data = blob.sharedView();
                 const owned_data = allocator.dupe(u8, blob_data) catch return error.OutOfMemory;
-                return .{ .string_or_buffer = .{ .encoded_slice = jsc.ZigString.Slice.init(allocator, owned_data) } };
+                return .{ .string_or_buffer = .{ .encoded_slice = bun.String.Slice.init(allocator, owned_data) } };
             }
 
             if (blob.store) |store| {
@@ -135,10 +135,10 @@ pub const BlobOrStringOrBuffer = union(enum) {
 pub const StringOrBuffer = union(enum) {
     string: bun.SliceWithUnderlyingString,
     threadsafe_string: bun.SliceWithUnderlyingString,
-    encoded_slice: jsc.ZigString.Slice,
+    encoded_slice: bun.String.Slice,
     buffer: Buffer,
 
-    pub const empty = StringOrBuffer{ .encoded_slice = jsc.ZigString.Slice.empty };
+    pub const empty = StringOrBuffer{ .encoded_slice = bun.String.Slice.empty };
 
     pub fn toThreadSafe(this: *@This()) void {
         switch (this.*) {
@@ -311,7 +311,7 @@ pub const StringOrBuffer = union(enum) {
             const out = str.encode(encoding);
             defer global.vm().reportExtraMemory(out.len);
 
-            return .{ .encoded_slice = jsc.ZigString.Slice.init(bun.default_allocator, out) };
+            return .{ .encoded_slice = bun.String.Slice.init(bun.default_allocator, out) };
         }
 
         return null;
@@ -528,7 +528,7 @@ pub const PathLike = union(enum) {
     buffer: Buffer,
     slice_with_underlying_string: bun.SliceWithUnderlyingString,
     threadsafe_string: bun.SliceWithUnderlyingString,
-    encoded_slice: jsc.ZigString.Slice,
+    encoded_slice: bun.String.Slice,
 
     pub fn estimatedSize(this: *const PathLike) usize {
         return switch (this.*) {
@@ -760,7 +760,7 @@ pub const PathLike = union(enum) {
 };
 
 pub const Valid = struct {
-    pub fn pathSlice(zig_str: jsc.ZigString.Slice, ctx: *jsc.JSGlobalObject) bun.JSError!void {
+    pub fn pathSlice(zig_str: bun.String.Slice, ctx: *jsc.JSGlobalObject) bun.JSError!void {
         switch (zig_str.len) {
             0...bun.MAX_PATH_BYTES => return,
             else => {

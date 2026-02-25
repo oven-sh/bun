@@ -167,4 +167,4 @@ const bun = @import("bun");
 const JSError = bun.JSError;
 const jsc = bun.jsc;
 const node = bun.api.node;
-const Slice = jsc.ZigString.Slice;
+const Slice = bun.String.Slice;

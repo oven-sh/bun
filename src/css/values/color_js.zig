@@ -156,7 +156,7 @@ pub fn jsFunctionColor(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFram
 
         break :brk OutputColorFormat.css;
     };
-    var input = jsc.ZigString.Slice.empty;
+    var input = bun.String.Slice.empty;
     defer input.deinit();
 
     var parsed_color: css.CssColor.ParseResult = brk: {

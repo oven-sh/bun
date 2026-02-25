@@ -7,11 +7,11 @@ pub const S3ListObjectsOptions = struct {
     prefix: ?[]const u8,
     start_after: ?[]const u8,
 
-    _continuation_token: ?jsc.ZigString.Slice,
-    _delimiter: ?jsc.ZigString.Slice,
-    _encoding_type: ?jsc.ZigString.Slice,
-    _prefix: ?jsc.ZigString.Slice,
-    _start_after: ?jsc.ZigString.Slice,
+    _continuation_token: ?bun.String.Slice,
+    _delimiter: ?bun.String.Slice,
+    _encoding_type: ?bun.String.Slice,
+    _prefix: ?bun.String.Slice,
+    _start_after: ?bun.String.Slice,
 
     pub fn deinit(this: *@This()) void {
         if (this._continuation_token) |slice| slice.deinit();

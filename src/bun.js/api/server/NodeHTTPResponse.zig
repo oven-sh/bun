@@ -156,9 +156,9 @@ pub fn upgrade(this: *NodeHTTPResponse, data_value: JSValue, sec_websocket_proto
 
     const ws = ServerWebSocket.init(ws_handler, data_value, null);
 
-    var sec_websocket_protocol_str: ?ZigString.Slice = null;
+    var sec_websocket_protocol_str: ?bun.String.Slice = null;
     defer if (sec_websocket_protocol_str) |*str| str.deinit();
-    var sec_websocket_extensions_str: ?ZigString.Slice = null;
+    var sec_websocket_extensions_str: ?bun.String.Slice = null;
     defer if (sec_websocket_extensions_str) |*str| str.deinit();
 
     const sec_websocket_protocol_value = brk: {
@@ -457,7 +457,7 @@ pub fn writeHead(this: *NodeHTTPResponse, globalObject: *jsc.JSGlobalObject, cal
     const status_message_slice = if (!status_message_value.isUndefined())
         try status_message_value.toSlice(globalObject, allocator)
     else
-        ZigString.Slice.empty;
+        bun.String.Slice.empty;
     defer status_message_slice.deinit();
 
     if (globalObject.hasException()) {

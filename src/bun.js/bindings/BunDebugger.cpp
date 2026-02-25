@@ -29,6 +29,11 @@ using namespace WebCore;
 // interrupt busy JS execution. When false (--inspect), the event loop handles delivery.
 static std::atomic<bool> runtimeInspectorActivated { false };
 
+// True after the first connection has been bootstrap-paused via the STW callback.
+// Prevents subsequent connections (reconnects) from triggering bootstrap pause,
+// which would trap the main thread in breakProgram() during Runtime.evaluate.
+static std::atomic<bool> hasEverBootstrapped { false };
+
 class BunInspectorConnection;
 static void installRunWhilePausedCallback(JSC::JSGlobalObject* globalObject);
 static void makeInspectable(JSC::JSGlobalObject* globalObject);
@@ -968,9 +973,14 @@ JSC::StopTheWorldStatus Bun__stopTheWorldCallback(JSC::VM& vm, JSC::StopTheWorld
     using namespace JSC;
 
     // We only act on VMStopped (all VMs have reached a safe point).
-    // For other events (VMCreated, VMActivated), just continue the STW process.
+    // Other events (VMCreated, VMActivated) happen when a secondary VM
+    // (e.g. the debugger thread's VM, or a worker) is constructed/entered
+    // while our stop request is pending. We must return RESUME_ALL, not
+    // CONTINUE: CONTINUE leaves m_currentStopReason set, so if the event-loop
+    // path concurrently clears the stop request, the caller (notifyVMStop)
+    // loops with stale state and waits forever on m_worldConditionVariable.
     if (event != StopTheWorldEvent::VMStopped)
-        return STW_CONTINUE();
+        return STW_RESUME_ALL();
 
     // Phase 1: Activate inspector if requested (SIGUSR1 handler sets a flag)
     bool activated = Bun__tryActivateInspector();
@@ -988,9 +998,14 @@ JSC::StopTheWorldStatus Bun__stopTheWorldCallback(JSC::VM& vm, JSC::StopTheWorld
     }
 
     // Phase 3: Handle pending pause/message flags.
-    // Phase 3: Handle pending pause/message flags.
     uint8_t pendingFlags = Bun::getPendingPauseFlags();
-    bool isBootstrap = connected || (pendingFlags & Bun::BunInspectorConnection::kBootstrapPause);
+    // Bootstrap pause is only for the FIRST-EVER connection after SIGUSR1 activation.
+    // On reconnect, connected=true but hasEverBootstrapped is already set, so
+    // isBootstrap=false. Without this gate, reconnecting clients get a stale
+    // kBootstrapPause flag that causes Bun__shouldBreakAfterMessageDrain to return
+    // true during Runtime.evaluate → breakProgram() → deadlock in runWhilePaused.
+    bool isBootstrap = (connected && !Bun::hasEverBootstrapped.exchange(true))
+        || (pendingFlags & Bun::BunInspectorConnection::kBootstrapPause);
     if (isBootstrap || (pendingFlags & Bun::BunInspectorConnection::kMessageDeliveryPause)) {
         Bun::schedulePauseForConnectedSessions(vm, isBootstrap);
     }

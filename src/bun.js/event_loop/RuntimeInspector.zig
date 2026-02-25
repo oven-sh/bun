@@ -76,19 +76,19 @@ pub fn checkAndActivateInspector() void {
         return;
     }
 
-    // Cancel the pending STW and clear residual trap state. requestStopAll()
-    // poisons the stack limit and sets NeedStopTheWorld trap bits. If the event
-    // loop path wins the race (activates the inspector before handleTraps fires),
-    // these must be cleared. Otherwise when JS next enters a function, the
-    // poisoned stack limit triggers handleTraps → notifyVMStop on a VMManager
-    // that already had its request bits cleared by requestResumeAll, causing
-    // inconsistent state (crashes on some Linux aarch64 kernels).
-    defer {
-        if (VirtualMachine.getMainThreadVM()) |vm| {
-            vm.jsc_vm.cancelStop();
-        }
-        jsc.VMManager.requestResumeAll(.JSDebugger);
+    // Cancel the pending STW and clear residual trap state BEFORE activating.
+    // This must happen before Debugger.create() spawns the debugger thread:
+    // otherwise the debugger VM's construction calls notifyVMConstruction
+    // while m_worldMode == Stopping, the debugger thread becomes the STW
+    // servicing thread (since the main VM is not entered while idle in
+    // epoll_wait), our callback returns STW_CONTINUE for VMCreated events,
+    // and when the main thread's cleanup runs concurrently, m_currentStopReason
+    // is left stale — leaving the debugger thread waiting forever on
+    // m_worldConditionVariable. The banner is never printed and tests time out.
+    if (VirtualMachine.getMainThreadVM()) |vm| {
+        vm.jsc_vm.cancelStop();
     }
+    jsc.VMManager.requestResumeAll(.JSDebugger);
 
     if (tryActivateInspector()) {
         // Set the C++ runtimeInspectorActivated flag so that connect() and

@@ -15,8 +15,6 @@ async function waitForDebuggerListening(
   const decoder = new TextDecoder();
   let stderr = "";
 
-  const startTime = Date.now();
-
   // Wait for the full banner (header + content + footer)
   // The banner format is:
   // --------------------- Bun Inspector ---------------------
@@ -25,14 +23,26 @@ async function waitForDebuggerListening(
   // Inspect in browser:
   //   https://debug.bun.sh/#localhost:<port>/...
   // --------------------- Bun Inspector ---------------------
+  //
+  // We race each read() against a timeout so that if the target process is
+  // alive but never writes (the activation hang bug), we throw a useful error
+  // instead of blocking forever and hitting the 90s CI harness timeout.
   try {
-    while ((stderr.match(/Bun Inspector/g) || []).length < 2) {
-      if (Date.now() - startTime > timeoutMs) {
-        throw new Error(`Timeout waiting for Bun Inspector banner after ${timeoutMs}ms. Got stderr: "${stderr}"`);
-      }
+    let timeoutFired = false;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => {
+        timeoutFired = true;
+        reject(
+          new Error(
+            `Timeout waiting for Bun Inspector banner after ${timeoutMs}ms. Got stderr: ${JSON.stringify(stderr)}`,
+          ),
+        );
+      }, timeoutMs).unref();
+    });
 
-      const { value, done } = await reader.read();
-      if (done) break;
+    while ((stderr.match(/Bun Inspector/g) || []).length < 2) {
+      const { value, done } = await Promise.race([reader.read(), timeoutPromise]);
+      if (timeoutFired || done) break;
       stderr += decoder.decode(value, { stream: true });
     }
   } finally {
@@ -384,7 +394,7 @@ describe("Runtime inspector activation", () => {
     test.skipIf(isASAN)("CDP messages work after client reconnects", async () => {
       // Start target process - prints PID to stdout then stays alive
       await using targetProc = spawn({
-        cmd: [bunExe(), "--inspect-port=0", "-e", `console.log(process.pid); setInterval(() => {}, 1000);`],
+        cmd: [bunExe(), "--inspect-port=0", "-e", `console.log(process.pid); setInterval(() => {}, 200);`],
         env: bunEnv,
         stdout: "pipe",
         stderr: "pipe",

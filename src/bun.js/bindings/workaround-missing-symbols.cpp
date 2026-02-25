@@ -277,4 +277,14 @@ extern "C" bool icu_hasBinaryProperty(UChar32 cp, unsigned int prop)
     return u_hasBinaryProperty(cp, static_cast<UProperty>(prop));
 }
 
+extern "C" UChar32 icu_toUpper(UChar32 cp)
+{
+    return u_toupper(cp);
+}
+
+extern "C" UChar32 icu_toLower(UChar32 cp)
+{
+    return u_tolower(cp);
+}
+
 extern "C" __attribute__((weak)) void mi_thread_set_in_threadpool() {}

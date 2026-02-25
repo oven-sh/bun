@@ -182,12 +182,8 @@ const History = struct {
     }
 
     pub fn load(self: *History) !void {
-        const home = if (Environment.isPosix)
-            std.posix.getenv("HOME")
-        else
-            bun.getenvZ("USERPROFILE") orelse bun.getenvZ("HOME");
-        if (home == null or home.?.len == 0) return;
-        const home_path = home.?;
+        const home_path = bun.env_var.HOME.get() orelse return;
+        if (home_path.len == 0) return;
 
         var path_buf: bun.PathBuffer = undefined;
         const path = bun.path.joinZBuf(&path_buf, &[_][]const u8{ home_path, HISTORY_FILENAME }, .auto);
@@ -252,7 +248,7 @@ const History = struct {
         // Don't add duplicates of the last entry
         if (self.entries.items.len > 0) {
             const last = self.entries.items[self.entries.items.len - 1];
-            if (std.mem.eql(u8, last, line)) {
+            if (strings.eqlLong(last, line, true)) {
                 self.position = self.entries.items.len;
                 return;
             }
@@ -296,9 +292,9 @@ const History = struct {
         }
 
         if (self.position == self.entries.items.len) {
-            const temp = self.temp_line;
-            self.temp_line = null;
-            return temp;
+            // Keep ownership in History; resetPosition() frees temp_line.
+            // Caller copies the data via set(), so borrowed reference is safe.
+            return self.temp_line;
         }
 
         if (self.position < self.entries.items.len) {
@@ -508,8 +504,8 @@ const ReplCommand = struct {
 
     pub fn find(name: []const u8) ?*const ReplCommand {
         for (&all) |*cmd| {
-            if (std.mem.eql(u8, cmd.name, name) or
-                (name.len > 1 and std.mem.startsWith(u8, cmd.name, name)))
+            if (strings.eqlLong(cmd.name, name, true) or
+                (name.len > 1 and strings.startsWith(cmd.name, name)))
             {
                 return cmd;
             }
@@ -551,7 +547,7 @@ fn cmdHelp(repl: *Repl, _: []const u8) ReplResult {
 }
 
 fn cmdCopy(repl: *Repl, args: []const u8) ReplResult {
-    const code = std.mem.trim(u8, args, " \t");
+    const code = strings.trim(args, " \t");
 
     if (code.len == 0) {
         // .copy with no args - copy _ (last result) to clipboard
@@ -577,7 +573,7 @@ fn cmdClear(repl: *Repl, _: []const u8) ReplResult {
 }
 
 fn cmdLoad(repl: *Repl, args: []const u8) ReplResult {
-    const filename = std.mem.trim(u8, args, " \t");
+    const filename = strings.trim(args, " \t");
     if (filename.len == 0) {
         repl.printError("Usage: .load <filename>\n", .{});
         return .skip_eval;
@@ -600,7 +596,7 @@ fn cmdLoad(repl: *Repl, args: []const u8) ReplResult {
 }
 
 fn cmdSave(repl: *Repl, args: []const u8) ReplResult {
-    const filename = std.mem.trim(u8, args, " \t");
+    const filename = strings.trim(args, " \t");
     if (filename.len == 0) {
         repl.printError("Usage: .save <filename>\n", .{});
         return .skip_eval;
@@ -743,10 +739,7 @@ fn setupTerminal(self: *Repl) void {
     }
 
     // Check for NO_COLOR
-    self.use_colors = if (Environment.isPosix)
-        std.posix.getenv("NO_COLOR") == null
-    else
-        bun.getenvZ("NO_COLOR") == null;
+    self.use_colors = !bun.env_var.NO_COLOR.get();
 
     // Get terminal size
     if (Output.terminal_size.col > 0) {
@@ -1360,7 +1353,7 @@ fn transformForRepl(self: *Repl, code: []const u8) ?[]const u8 {
     const vm = self.vm orelse return null;
 
     // Skip empty code
-    if (code.len == 0 or std.mem.trim(u8, code, " \t\n\r").len == 0) {
+    if (code.len == 0 or strings.trim(code, " \t\n\r").len == 0) {
         return null;
     }
 
@@ -1654,7 +1647,7 @@ fn handleEnter(self: *Repl) !void {
     const line = self.line_editor.getLine();
 
     if (self.editor_mode) {
-        if (std.mem.eql(u8, std.mem.trim(u8, line, " \t"), "")) {
+        if (strings.trim(line, " \t").len == 0) {
             try self.editor_buffer.appendSlice("\n");
         } else {
             try self.editor_buffer.appendSlice(line);
@@ -1667,7 +1660,7 @@ fn handleEnter(self: *Repl) !void {
 
     // Check for REPL commands
     if (line.len > 0 and line[0] == '.') {
-        const space_idx = std.mem.indexOfScalar(u8, line, ' ');
+        const space_idx = strings.indexOfChar(line, ' ');
         const cmd_name = if (space_idx) |idx| line[0..idx] else line;
         const args = if (space_idx) |idx| line[idx + 1 ..] else "";
 
@@ -1726,7 +1719,7 @@ fn handleEnter(self: *Repl) !void {
         self.allocator.dupe(u8, line) catch unreachable;
     defer self.allocator.free(code_to_eval);
 
-    try self.history.add(std.mem.trim(u8, code_to_eval, "\n"));
+    try self.history.add(strings.trim(code_to_eval, "\n"));
 
     self.evaluateAndPrint(code_to_eval);
 
@@ -1772,7 +1765,7 @@ fn handleTab(self: *Repl) void {
         defer matches.deinit();
 
         for (ReplCommand.all) |cmd| {
-            if (std.mem.startsWith(u8, cmd.name, line)) {
+            if (strings.startsWith(cmd.name, line)) {
                 matches.append(cmd.name) catch continue;
             }
         }

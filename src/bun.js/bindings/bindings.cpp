@@ -6220,7 +6220,9 @@ extern "C" JSC::EncodedJSValue Bun__REPL__getCompletions(
     }
 
     if (!target.isObject()) {
-        return JSC::JSValue::encode(JSC::jsUndefined());
+        JSObject* boxed = target.toObject(globalObject);
+        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+        target = boxed;
     }
 
     WTF::String prefix = prefixLen > 0
@@ -6286,7 +6288,9 @@ extern "C" JSC::EncodedJSValue Bun__REPL__formatValue(
     if (!inspectFn || !inspectFn.isCallable()) {
         // Fallback to toString if util.inspect is not available
         JSC::JSValue value = JSC::JSValue::decode(valueEncoded);
-        return JSC::JSValue::encode(value.toString(globalObject));
+        JSString* str = value.toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+        return JSC::JSValue::encode(str);
     }
 
     // Create options object

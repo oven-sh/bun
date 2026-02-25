@@ -2,6 +2,7 @@
 #include "root.h"
 #include "ModuleLoader.h"
 #include "headers-handwritten.h"
+#include "PathInlines.h"
 #include "JSCommonJSModule.h"
 
 #include <JavaScriptCore/JSBoundFunction.h>
@@ -102,7 +103,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__REPL__setupGlobalRequire(
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto cwdStr = WTF::String::fromUTF8(std::span { cwdPtr, cwdLen });
-    auto* filename = jsString(vm, makeString(cwdStr, "[repl]"_s));
+    auto* filename = jsString(vm, makeString(cwdStr, PLATFORM_SEP_s, "[repl]"_s));
     auto* dirname = jsString(vm, WTF::String(cwdStr));
 
     auto* moduleObject = Bun::JSCommonJSModule::create(vm,

@@ -194,6 +194,7 @@ pub fn ReplTransforms(comptime P: type) type {
                             try inner_stmts.append(p.s(S.SExpr{ .value = assign }, stmt.loc));
                         } else if (import_data.default_name) |default_name| {
                             // import X from 'mod' -> var X = (await import('mod')).default
+                            // import X, { a } from 'mod' -> var __ns = await import('mod'); var X = __ns.default; var a = __ns.a;
                             try hoisted_stmts.append(p.s(S.Local{
                                 .kind = .k_var,
                                 .decls = Decl.List.fromOwnedSlice(bun.handleOom(allocator.dupe(G.Decl, &.{
@@ -203,25 +204,39 @@ pub fn ReplTransforms(comptime P: type) type {
                                     },
                                 }))),
                             }, stmt.loc));
-                            const dot_default = p.newExpr(E.Dot{
-                                .target = await_expr,
-                                .name = "default",
-                                .name_loc = stmt.loc,
-                            }, stmt.loc);
-                            const assign = p.newExpr(E.Binary{
-                                .op = .bin_assign,
-                                .left = p.newExpr(E.Identifier{ .ref = default_name.ref.? }, default_name.loc),
-                                .right = dot_default,
-                            }, stmt.loc);
-                            try inner_stmts.append(p.s(S.SExpr{ .value = assign }, stmt.loc));
 
-                            // Also handle named imports alongside default: import X, { a } from 'mod'
                             if (import_data.items.len > 0) {
-                                try convertNamedImports(p, import_data, &hoisted_stmts, &inner_stmts, allocator, stmt.loc);
+                                // Share a single await import() between default and named imports.
+                                // namespace_ref is synthesized by processImportStatement for all non-star imports.
+                                try convertNamedImports(p, import_data, await_expr, &hoisted_stmts, &inner_stmts, allocator, stmt.loc);
+                                const ns_ref_expr = p.newExpr(E.Identifier{ .ref = import_data.namespace_ref }, stmt.loc);
+                                const dot_default = p.newExpr(E.Dot{
+                                    .target = ns_ref_expr,
+                                    .name = "default",
+                                    .name_loc = stmt.loc,
+                                }, stmt.loc);
+                                const assign = p.newExpr(E.Binary{
+                                    .op = .bin_assign,
+                                    .left = p.newExpr(E.Identifier{ .ref = default_name.ref.? }, default_name.loc),
+                                    .right = dot_default,
+                                }, stmt.loc);
+                                try inner_stmts.append(p.s(S.SExpr{ .value = assign }, stmt.loc));
+                            } else {
+                                const dot_default = p.newExpr(E.Dot{
+                                    .target = await_expr,
+                                    .name = "default",
+                                    .name_loc = stmt.loc,
+                                }, stmt.loc);
+                                const assign = p.newExpr(E.Binary{
+                                    .op = .bin_assign,
+                                    .left = p.newExpr(E.Identifier{ .ref = default_name.ref.? }, default_name.loc),
+                                    .right = dot_default,
+                                }, stmt.loc);
+                                try inner_stmts.append(p.s(S.SExpr{ .value = assign }, stmt.loc));
                             }
                         } else if (import_data.items.len > 0) {
                             // import { a, b } from 'mod' -> destructure from await import('mod')
-                            try convertNamedImports(p, import_data, &hoisted_stmts, &inner_stmts, allocator, stmt.loc);
+                            try convertNamedImports(p, import_data, await_expr, &hoisted_stmts, &inner_stmts, allocator, stmt.loc);
                         } else {
                             // import 'mod' (side-effect only) -> await import('mod')
                             try inner_stmts.append(p.s(S.SExpr{ .value = await_expr }, stmt.loc));
@@ -275,17 +290,12 @@ pub fn ReplTransforms(comptime P: type) type {
         fn convertNamedImports(
             p: *P,
             import_data: *const S.Import,
+            await_expr: Expr,
             hoisted_stmts: *ListManaged(Stmt),
             inner_stmts: *ListManaged(Stmt),
             allocator: Allocator,
             loc: logger.Loc,
         ) !void {
-            const path_str = p.import_records.items[import_data.import_record_index].path.text;
-            const import_expr = p.newExpr(E.Import{
-                .expr = p.newExpr(E.String{ .data = path_str }, loc),
-                .import_record_index = std.math.maxInt(u32),
-            }, loc);
-            const await_expr = p.newExpr(E.Await{ .value = import_expr }, loc);
 
             // Store the module in the namespace ref: var __ns = await import('mod')
             try hoisted_stmts.append(p.s(S.Local{
@@ -318,7 +328,7 @@ pub fn ReplTransforms(comptime P: type) type {
                 const ns_ref_expr = p.newExpr(E.Identifier{ .ref = import_data.namespace_ref }, loc);
                 const prop_access = p.newExpr(E.Dot{
                     .target = ns_ref_expr,
-                    .name = item.original_name,
+                    .name = item.alias,
                     .name_loc = item.name.loc,
                 }, loc);
                 const item_assign = p.newExpr(E.Binary{

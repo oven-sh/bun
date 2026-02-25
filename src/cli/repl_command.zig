@@ -137,7 +137,7 @@ const ReplRunner = struct {
         bun.cpp.Bun__ExposeNodeModuleGlobals(vm.global);
 
         // Set up require(), module, __filename, __dirname relative to cwd
-        const cwd = vm.transpiler.fs.top_level_dir;
+        const cwd = vm.transpiler.fs.topLevelDirWithoutTrailingSlash();
         bun.cpp.Bun__REPL__setupGlobalRequire(vm.global, cwd.ptr, cwd.len);
 
         // Set timezone if specified

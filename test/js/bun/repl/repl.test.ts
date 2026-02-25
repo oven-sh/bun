@@ -14,7 +14,7 @@ async function runRepl(
   const inputStr = Array.isArray(input) ? input.join("\n") + "\n" : input;
   const { timeout = 5000, env = {} } = options;
 
-  const proc = Bun.spawn({
+  await using proc = Bun.spawn({
     cmd: [bunExe(), "repl"],
     stdin: "pipe",
     stdout: "pipe",
@@ -45,12 +45,7 @@ async function runRepl(
   return { stdout, stderr, exitCode };
 }
 
-function stripAnsi(str: string): string {
-  return str
-    .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "")
-    .replace(/\x1b\][^\x07]*\x07/g, "")
-    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, "");
-}
+const stripAnsi = Bun.stripANSI;
 
 // Helper to run REPL in a PTY and interact with it
 async function withTerminalRepl(
@@ -64,8 +59,7 @@ async function withTerminalRepl(
 ) {
   const received: string[] = [];
   let cursor = 0;
-  let resolveWaiter: ((value: string) => void) | null = null;
-  let waiterPattern: string | RegExp | null = null;
+  let resolveWaiter: (() => void) | null = null;
 
   await using terminal = new Bun.Terminal({
     cols: 120,
@@ -73,16 +67,9 @@ async function withTerminalRepl(
     data(_term, data) {
       const str = Buffer.from(data).toString();
       received.push(str);
-      if (resolveWaiter && waiterPattern) {
-        const all = received.join("");
-        const recent = all.slice(cursor);
-        const match = typeof waiterPattern === "string" ? recent.includes(waiterPattern) : waiterPattern.test(recent);
-        if (match) {
-          cursor = all.length;
-          resolveWaiter(recent);
-          resolveWaiter = null;
-          waiterPattern = null;
-        }
+      if (resolveWaiter) {
+        resolveWaiter();
+        resolveWaiter = null;
       }
     },
   });
@@ -98,28 +85,31 @@ async function withTerminalRepl(
 
   const send = (text: string) => terminal.write(text);
 
-  const waitFor = (pattern: string | RegExp, timeoutMs = 5000): Promise<string> => {
-    const all = received.join("");
-    const recent = all.slice(cursor);
-    const alreadyMatch = typeof pattern === "string" ? recent.includes(pattern) : pattern.test(recent);
-    if (alreadyMatch) {
-      cursor = all.length;
-      return Promise.resolve(recent);
-    }
-
-    return new Promise<string>((resolve, reject) => {
-      resolveWaiter = resolve;
-      waiterPattern = pattern;
-      setTimeout(() => {
-        resolveWaiter = null;
-        waiterPattern = null;
-        reject(
-          new Error(
-            `Timed out waiting for pattern: ${pattern}\nReceived so far:\n${stripAnsi(received.join("").slice(cursor))}`,
-          ),
+  const waitFor = async (pattern: string | RegExp, timeoutMs = 5000): Promise<string> => {
+    const deadline = Date.now() + timeoutMs;
+    while (true) {
+      const all = received.join("");
+      const recent = all.slice(cursor);
+      const matched = typeof pattern === "string" ? recent.includes(pattern) : pattern.test(recent);
+      if (matched) {
+        cursor = all.length;
+        return recent;
+      }
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) {
+        throw new Error(
+          `Timed out waiting for pattern: ${pattern}\nReceived so far:\n${stripAnsi(received.join("").slice(cursor))}`,
         );
-      }, timeoutMs);
-    });
+      }
+      // Wait for the next chunk of terminal data (or time out).
+      await Promise.race([
+        new Promise<void>(resolve => {
+          resolveWaiter = resolve;
+        }),
+        Bun.sleep(remaining),
+      ]);
+      resolveWaiter = null;
+    }
   };
 
   const allOutput = () => stripAnsi(received.join(""));
@@ -585,33 +575,11 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
   });
 
   test("Ctrl+D exits on empty line", async () => {
-    const received: string[] = [];
-    await using terminal = new Bun.Terminal({
-      cols: 120,
-      rows: 40,
-      data(_term, data) {
-        received.push(Buffer.from(data).toString());
-      },
+    await withTerminalRepl(async ({ terminal, proc }) => {
+      terminal.write("\x04"); // Ctrl+D
+      const exitCode = await Promise.race([proc.exited, Bun.sleep(3000).then(() => -1)]);
+      expect(exitCode).toBe(0);
     });
-
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "repl"],
-      terminal,
-      env: { ...bunEnv, TERM: "xterm-256color" },
-    });
-
-    // Wait for ready
-    await new Promise<void>(resolve => {
-      const check = () => {
-        if (received.join("").includes("\u276f") || received.join("").includes("> ")) return resolve();
-        setTimeout(check, 50);
-      };
-      check();
-    });
-
-    terminal.write("\x04"); // Ctrl+D
-    const exitCode = await Promise.race([proc.exited, Bun.sleep(3000).then(() => -1)]);
-    expect(exitCode).toBe(0);
   });
 
   test("require works in terminal", async () => {

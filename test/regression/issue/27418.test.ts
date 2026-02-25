@@ -50,9 +50,10 @@ test("bun install does not fetch bundled dependencies from registry", async () =
     }),
   );
 
-  // Install the tarball — this should NOT try to resolve the bundled dep from the registry
+  // Install the tarball with the registry pointed at an unreachable address so that
+  // any accidental registry fetch fails fast instead of hitting the real npm registry.
   await using proc = spawn({
-    cmd: [bunExe(), "install", join(pkgDir, "my-pkg-1.0.0.tgz")],
+    cmd: [bunExe(), "install", "--registry", "http://localhost:0", join(pkgDir, "my-pkg-1.0.0.tgz")],
     cwd: consumerDir,
     stdout: "pipe",
     stderr: "pipe",
@@ -64,5 +65,6 @@ test("bun install does not fetch bundled dependencies from registry", async () =
   // Should not contain any error about failing to resolve the bundled dependency
   expect(stderr).not.toContain("failed to resolve");
   expect(stderr).not.toContain("error:");
+  expect(stdout).toContain("installed my-pkg");
   expect(exitCode).toBe(0);
 });

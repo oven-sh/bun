@@ -357,6 +357,32 @@ describe("Bun REPL", () => {
       expect(allOutput).toMatch(/ENOENT|no such file/);
       expect(exitCode).toBe(0);
     });
+
+    test("throwing custom inspect doesn't crash the loop", async () => {
+      // format2 catches custom-inspect throws internally, but we verify no exception
+      // leaks (BUN_JSC_validateExceptionChecks in CI) and the loop continues.
+      const { stdout, stderr, exitCode } = await runRepl([
+        `globalThis.__bad = { [Symbol.for("nodejs.util.inspect.custom")]() { throw new Error("boom"); } }; __bad`,
+        "7 * 6",
+        ".exit",
+      ]);
+      const allOutput = stripAnsi(stdout + stderr);
+      // REPL must keep working after the inspection failure.
+      // Use a product that won't appear in echoed input (7*6=42).
+      expect(allOutput).toContain("42");
+      expect(exitCode).toBe(0);
+    });
+
+    test("throwing Proxy ownKeys trap doesn't crash the loop", async () => {
+      const { stdout, stderr, exitCode } = await runRepl([
+        `new Proxy({}, { ownKeys() { throw new Error("boom"); } })`,
+        "100 + 23",
+        ".exit",
+      ]);
+      const allOutput = stripAnsi(stdout + stderr);
+      expect(allOutput).toContain("123");
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("import statements", () => {
@@ -408,7 +434,7 @@ describe("Bun REPL", () => {
           export default "the-default";
         `,
       });
-      const filePath = path.join(String(dir), "mod.mjs").replace(/\\/g, "/");
+      const filePath = Bun.pathToFileURL(path.join(String(dir), "mod.mjs")).href;
       const { stdout, stderr, exitCode } = await runRepl([
         `import def, { named1, named2 } from ${JSON.stringify(filePath)}`,
         "JSON.stringify([def, named1, named2])",
@@ -428,7 +454,7 @@ describe("Bun REPL", () => {
       using dir = tempDir("repl-import-alias", {
         "mod.mjs": `export const foo = "correct"; export const bar = "wrong";`,
       });
-      const filePath = path.join(String(dir), "mod.mjs").replace(/\\/g, "/");
+      const filePath = Bun.pathToFileURL(path.join(String(dir), "mod.mjs")).href;
       const { stdout, exitCode } = await runRepl([
         `import { foo as bar } from ${JSON.stringify(filePath)}`,
         "bar",
@@ -444,7 +470,7 @@ describe("Bun REPL", () => {
       using dir = tempDir("repl-import-multi-alias", {
         "mod.mjs": `export const a = 1; export const b = 2; export const c = 3;`,
       });
-      const filePath = path.join(String(dir), "mod.mjs").replace(/\\/g, "/");
+      const filePath = Bun.pathToFileURL(path.join(String(dir), "mod.mjs")).href;
       const { stdout, exitCode } = await runRepl([
         `import { a as x, b as y, c } from ${JSON.stringify(filePath)}`,
         "JSON.stringify([x, y, c])",
@@ -459,7 +485,7 @@ describe("Bun REPL", () => {
       using dir = tempDir("repl-import-side-effect", {
         "side.mjs": `globalThis.__sideEffectRan = true;`,
       });
-      const filePath = path.join(String(dir), "side.mjs").replace(/\\/g, "/");
+      const filePath = Bun.pathToFileURL(path.join(String(dir), "side.mjs")).href;
       const { stdout, exitCode } = await runRepl([
         `import ${JSON.stringify(filePath)}`,
         "globalThis.__sideEffectRan",

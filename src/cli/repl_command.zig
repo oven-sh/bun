@@ -117,7 +117,14 @@ const ReplRunner = struct {
         const vm = this.vm;
 
         // Set up the REPL environment (now inside API lock)
-        this.setupReplEnvironment();
+        this.setupReplEnvironment() catch {
+            // setupGlobalRequire threw a JS exception — surface it and exit
+            if (vm.global.tryTakeException()) |exception| {
+                vm.printErrorLikeObjectToConsole(exception);
+            }
+            vm.onExit();
+            Global.exit(1);
+        };
 
         // Run the REPL loop
         this.repl.runWithVM(vm) catch |err| {
@@ -129,7 +136,7 @@ const ReplRunner = struct {
         Global.exit(vm.exit_handler.exit_code);
     }
 
-    fn setupReplEnvironment(this: *ReplRunner) void {
+    fn setupReplEnvironment(this: *ReplRunner) bun.JSError!void {
         const vm = this.vm;
 
         // Expose Node.js module globals (__dirname, __filename, require, etc.)
@@ -138,7 +145,7 @@ const ReplRunner = struct {
 
         // Set up require(), module, __filename, __dirname relative to cwd
         const cwd = vm.transpiler.fs.topLevelDirWithoutTrailingSlash();
-        bun.cpp.Bun__REPL__setupGlobalRequire(vm.global, cwd.ptr, cwd.len);
+        try bun.cpp.Bun__REPL__setupGlobalRequire(vm.global, cwd.ptr, cwd.len);
 
         // Set timezone if specified
         if (vm.transpiler.env.get("TZ")) |tz| {

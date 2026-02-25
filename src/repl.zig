@@ -551,7 +551,13 @@ fn cmdCopy(repl: *Repl, args: []const u8) ReplResult {
 
     if (code.len == 0) {
         // .copy with no args - copy _ (last result) to clipboard
-        repl.copyValueToClipboard(repl.last_result) catch {};
+        repl.copyValueToClipboard(repl.last_result) catch |err| {
+            if (repl.global) |global| {
+                const exc = global.takeException(err);
+                repl.setLastError(exc);
+                repl.printJSError(exc);
+            }
+        };
         return .skip_eval;
     }
 
@@ -1139,7 +1145,16 @@ fn evaluateAndPrint(self: *Repl, code: []const u8) void {
     // The REPL transform wraps the last expression in { value: expr }
     var actual_result = resolved_result;
     if (resolved_result.isObject()) {
-        if (resolved_result.getOwn(global, "value") catch null) |value| {
+        // Wrapper is REPL-built { __proto__: null, value: ... } so getOwn shouldn't throw,
+        // but if it does, propagate as a REPL error.
+        const maybe_value = resolved_result.getOwn(global, "value") catch |err| {
+            const exc = global.takeException(err);
+            self.setLastError(exc);
+            self.printJSError(exc);
+            vm.tick();
+            return;
+        };
+        if (maybe_value) |value| {
             actual_result = value;
         }
     }
@@ -1259,7 +1274,14 @@ fn evaluateAndCopy(self: *Repl, code: []const u8) void {
 
     var actual_result = resolved_result;
     if (resolved_result.isObject()) {
-        if (resolved_result.getOwn(global, "value") catch null) |value| {
+        const maybe_value = resolved_result.getOwn(global, "value") catch |err| {
+            const exc = global.takeException(err);
+            self.setLastError(exc);
+            self.printJSError(exc);
+            vm.tick();
+            return;
+        };
+        if (maybe_value) |value| {
             actual_result = value;
         }
     }
@@ -1270,12 +1292,17 @@ fn evaluateAndCopy(self: *Repl, code: []const u8) void {
         global_this.put(global, "_", actual_result);
     }
 
-    self.copyValueToClipboard(actual_result) catch {};
+    self.copyValueToClipboard(actual_result) catch |err| {
+        const exc = global.takeException(err);
+        self.setLastError(exc);
+        self.printJSError(exc);
+    };
     vm.tick();
 }
 
-/// Format a JS value as a string suitable for clipboard
-fn valueToClipboardString(self: *Repl, value: jsc.JSValue) ?[]const u8 {
+/// Format a JS value as a string suitable for clipboard.
+/// Returns null on allocator OOM; propagates JS exceptions (e.g. throwing getters).
+fn valueToClipboardString(self: *Repl, value: jsc.JSValue) bun.JSError!?[]const u8 {
     const global = self.global orelse return null;
 
     if (value.isUndefined()) return self.allocator.dupe(u8, "undefined") catch null;
@@ -1283,7 +1310,7 @@ fn valueToClipboardString(self: *Repl, value: jsc.JSValue) ?[]const u8 {
 
     // For strings, copy the raw string value (not quoted/JSON-ified)
     if (value.isString()) {
-        const slice = value.toSlice(global, self.allocator) catch return null;
+        const slice = try value.toSlice(global, self.allocator);
         defer slice.deinit();
         return self.allocator.dupe(u8, slice.slice()) catch null;
     }
@@ -1291,27 +1318,31 @@ fn valueToClipboardString(self: *Repl, value: jsc.JSValue) ?[]const u8 {
     // For everything else, use Bun.inspect without colors
     var array = std.Io.Writer.Allocating.init(self.allocator);
     defer array.deinit();
-    jsc.ConsoleObject.format2(.Log, global, @ptrCast(&value), 1, &array.writer, .{
+    try jsc.ConsoleObject.format2(.Log, global, @ptrCast(&value), 1, &array.writer, .{
         .enable_colors = false,
         .add_newline = false,
         .flush = false,
         .quote_strings = true,
         .ordered_properties = false,
         .max_depth = 4,
-    }) catch return null;
+    });
     array.writer.flush() catch return null;
     return self.allocator.dupe(u8, array.written()) catch null;
 }
 
-/// Copy a JS value to the system clipboard via OSC 52
-fn copyValueToClipboard(self: *Repl, value: jsc.JSValue) !void {
-    const text = self.valueToClipboardString(value) orelse {
+/// Copy a JS value to the system clipboard via OSC 52.
+/// Propagates JS exceptions from value formatting; swallows I/O errors.
+fn copyValueToClipboard(self: *Repl, value: jsc.JSValue) bun.JSError!void {
+    const text = (try self.valueToClipboardString(value)) orelse {
         self.printError("Failed to format value for clipboard\n", .{});
         return;
     };
     defer self.allocator.free(text);
 
-    try self.copyToClipboardOSC52(text);
+    self.copyToClipboardOSC52(text) catch {
+        self.printError("Failed to write to clipboard\n", .{});
+        return;
+    };
     if (self.use_colors) {
         self.print("{s}Copied {d} characters to clipboard{s}\n", .{ Color.dim, text.len, Color.reset });
     } else {
@@ -1475,7 +1506,11 @@ fn printJSError(self: *Repl, error_value: jsc.JSValue) void {
         .quote_strings = true,
         .ordered_properties = false,
         .max_depth = 4,
-    }) catch {};
+    }) catch {
+        // Formatting the error itself threw — clear it to avoid recursion and show a fallback.
+        global.clearException();
+        self.printError("error: [failed to format error]\n", .{});
+    };
 }
 
 /// Format and print a JS value using Bun's console formatter (same as console.log)
@@ -1489,7 +1524,12 @@ fn printFormattedValue(self: *Repl, value: jsc.JSValue) void {
         .quote_strings = true,
         .ordered_properties = false,
         .max_depth = 4,
-    }) catch {};
+    }) catch |err| {
+        // A getter on the value threw during inspection — show that error.
+        const exc = global.takeException(err);
+        self.setLastError(exc);
+        self.printJSError(exc);
+    };
 }
 
 // ============================================================================
@@ -1819,7 +1859,10 @@ fn handleTab(self: *Repl) void {
     }
 
     // Get array length
-    const len = completions.getLength(global) catch 0;
+    const len = completions.getLength(global) catch brk: {
+        global.clearException();
+        break :brk 0;
+    };
     if (len == 0) {
         self.line_editor.insert(' ') catch {};
         self.line_editor.insert(' ') catch {};
@@ -1829,9 +1872,15 @@ fn handleTab(self: *Repl) void {
 
     if (len == 1) {
         // Single completion - insert it
-        const item = completions.getIndex(global, 0) catch .js_undefined;
+        const item = completions.getIndex(global, 0) catch brk: {
+            global.clearException();
+            break :brk .js_undefined;
+        };
         if (item.isString()) {
-            const slice = item.toSlice(global, self.allocator) catch return;
+            const slice = item.toSlice(global, self.allocator) catch {
+                global.clearException();
+                return;
+            };
             defer slice.deinit();
             const completion = slice.slice();
             // Replace the prefix with the completion
@@ -1846,9 +1895,15 @@ fn handleTab(self: *Repl) void {
         self.print("\n", .{});
         var i: u32 = 0;
         while (i < @as(u32, @truncate(len))) : (i += 1) {
-            const item = completions.getIndex(global, i) catch .js_undefined;
+            const item = completions.getIndex(global, i) catch brk: {
+                global.clearException();
+                break :brk .js_undefined;
+            };
             if (item.isString()) {
-                const slice = item.toSlice(global, self.allocator) catch continue;
+                const slice = item.toSlice(global, self.allocator) catch {
+                    global.clearException();
+                    continue;
+                };
                 defer slice.deinit();
                 self.print("  {s}{s}{s}\n", .{ Color.cyan, slice.slice(), Color.reset });
             }

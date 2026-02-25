@@ -91,12 +91,10 @@ async function withTerminalRepl(
         );
       }
       // Wait for the next chunk of terminal data (or time out).
-      await Promise.race([
-        new Promise<void>(resolve => {
-          resolveWaiter = resolve;
-        }),
-        Bun.sleep(remaining),
-      ]);
+
+      await new Promise<void>(resolve => {
+        resolveWaiter = resolve;
+      });
       resolveWaiter = null;
     }
   };
@@ -113,7 +111,7 @@ async function withTerminalRepl(
   if (!proc.killed) proc.kill();
 }
 
-describe("Bun REPL", () => {
+describe.concurrent("Bun REPL", () => {
   describe("basic evaluation", () => {
     test("evaluates simple expression", async () => {
       const { stdout, exitCode } = await runRepl(["1 + 1", ".exit"]);

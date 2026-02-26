@@ -23,25 +23,6 @@ undefined
 
 ---
 
-## Non-interactive mode
-
-Use `-e` / `--eval` to evaluate a script with REPL semantics and exit. Use `-p` / `--print` to additionally print the result.
-
-```sh terminal icon="terminal"
-bun repl -e "const x: number = 42; console.log(x)"
-# 42
-
-bun repl -p "await fetch('https://example.com').then(r => r.status)"
-# 200
-
-bun repl -p "{ a: 1, b: 2 }"
-# { a: 1, b: 2 }
-```
-
-This uses the same transforms as the interactive REPL, so a bare object literal like `{ a: 1 }` is treated as an object expression instead of a block statement. The process exits after the event loop drains (pending timers and I/O complete first). On error, the process exits with code `1`.
-
----
-
 ## Features
 
 - **TypeScript & JSX** — Write TypeScript and JSX directly. Bun transpiles everything on the fly.
@@ -73,46 +54,6 @@ SyntaxError: JSON Parse error: Unexpected identifier "oops"
 > _error
 SyntaxError: JSON Parse error: Unexpected identifier "oops"
 ```
-
----
-
-## REPL commands
-
-Type `.help` at the prompt to see all available REPL commands.
-
-| Command    | Description                                                                                      |
-| ---------- | ------------------------------------------------------------------------------------------------ |
-| `.help`    | Print the help message listing commands and keybindings                                          |
-| `.exit`    | Exit the REPL                                                                                    |
-| `.clear`   | Clear the screen                                                                                 |
-| `.copy`    | Copy the last result to the clipboard. Pass an expression to evaluate and copy it: `.copy 1 + 1` |
-| `.load`    | Load a file into the REPL session: `.load ./script.ts`                                           |
-| `.save`    | Save the current REPL history to a file: `.save ./session.txt`                                   |
-| `.editor`  | Enter multi-line editor mode (press `Ctrl+D` to evaluate, `Ctrl+C` to cancel)                    |
-| `.break`   | Cancel the current multi-line input                                                              |
-| `.history` | Print the command history                                                                        |
-
----
-
-## Keybindings
-
-The REPL supports Emacs-style line editing.
-
-| Keybinding          | Action                                                   |
-| ------------------- | -------------------------------------------------------- |
-| `Ctrl+A`            | Move to start of line                                    |
-| `Ctrl+E`            | Move to end of line                                      |
-| `Ctrl+B` / `Ctrl+F` | Move backward/forward one character                      |
-| `Alt+B` / `Alt+F`   | Move backward/forward one word                           |
-| `Ctrl+U`            | Delete to start of line                                  |
-| `Ctrl+K`            | Delete to end of line                                    |
-| `Ctrl+W`            | Delete word backward                                     |
-| `Ctrl+D`            | Delete character (or exit if line is empty)              |
-| `Ctrl+L`            | Clear screen                                             |
-| `Ctrl+T`            | Swap the two characters before the cursor                |
-| `Up` / `Down`       | Navigate history                                         |
-| `Tab`               | Auto-complete                                            |
-| `Ctrl+C`            | Cancel current input (press twice on empty line to exit) |
 
 ---
 
@@ -165,12 +106,71 @@ For longer multi-line entries, use `.editor` to enter editor mode, which buffers
 
 ---
 
+## REPL commands
+
+Type `.help` at the prompt to see all available REPL commands.
+
+| Command    | Description                                                                                      |
+| ---------- | ------------------------------------------------------------------------------------------------ |
+| `.help`    | Print the help message listing commands and keybindings                                          |
+| `.exit`    | Exit the REPL                                                                                    |
+| `.clear`   | Clear the screen                                                                                 |
+| `.copy`    | Copy the last result to the clipboard. Pass an expression to evaluate and copy it: `.copy 1 + 1` |
+| `.load`    | Load a file into the REPL session: `.load ./script.ts`                                           |
+| `.save`    | Save the current REPL history to a file: `.save ./session.txt`                                   |
+| `.editor`  | Enter multi-line editor mode (press `Ctrl+D` to evaluate, `Ctrl+C` to cancel)                    |
+| `.break`   | Cancel the current multi-line input                                                              |
+| `.history` | Print the command history                                                                        |
+
+---
+
+## Keybindings
+
+The REPL supports Emacs-style line editing.
+
+| Keybinding          | Action                                                   |
+| ------------------- | -------------------------------------------------------- |
+| `Ctrl+A`            | Move to start of line                                    |
+| `Ctrl+E`            | Move to end of line                                      |
+| `Ctrl+B` / `Ctrl+F` | Move backward/forward one character                      |
+| `Alt+B` / `Alt+F`   | Move backward/forward one word                           |
+| `Ctrl+U`            | Delete to start of line                                  |
+| `Ctrl+K`            | Delete to end of line                                    |
+| `Ctrl+W`            | Delete word backward                                     |
+| `Ctrl+D`            | Delete character (or exit if line is empty)              |
+| `Ctrl+L`            | Clear screen                                             |
+| `Ctrl+T`            | Swap the two characters before the cursor                |
+| `Up` / `Down`       | Navigate history                                         |
+| `Tab`               | Auto-complete                                            |
+| `Ctrl+C`            | Cancel current input (press twice on empty line to exit) |
+
+---
+
 ## History
 
-REPL history is automatically saved to `~/.bun_repl_history` (up to 1000 entries) and loaded at the start of each session. Use `Up`/`Down` to navigate or `Ctrl+R` to search.
+REPL history is automatically saved to `~/.bun_repl_history` (up to 1000 entries) and loaded at the start of each session. Use `Up`/`Down` to navigate.
 
 To export your history to a different file, use `.save`:
 
 ```txt
 > .save ./my-session.txt
 ```
+
+---
+
+## Non-interactive mode
+
+Use `-e` / `--eval` to evaluate a script with REPL semantics and exit. Use `-p` / `--print` to additionally print the result.
+
+```sh terminal icon="terminal"
+bun repl -e "const x: number = 42; console.log(x)"
+# 42
+
+bun repl -p "await fetch('https://example.com').then(r => r.status)"
+# 200
+
+bun repl -p "{ a: 1, b: 2 }"
+# { a: 1, b: 2 }
+```
+
+This uses the same transforms as the interactive REPL, so a bare object literal like `{ a: 1 }` is treated as an object expression instead of a block statement. The process exits after the event loop drains (pending timers and I/O complete first). On error, the process exits with code `1`.

@@ -25,6 +25,10 @@ $ProgressPreference = "SilentlyContinue"
 $ArtifactList = $Artifacts -split ","
 $BuildStepList = $BuildSteps -split ","
 
+# smctl shells out to signtool.exe which is only in PATH when the VS dev
+# environment is loaded. Dot-source the existing helper to set it up.
+. $PSScriptRoot\..\..\scripts\vs-shell.ps1
+
 function Log-Info {
     param([string]$Message)
     Write-Host "[INFO] $Message" -ForegroundColor Cyan
@@ -187,11 +191,11 @@ function Sign-Exe {
     }
 
     $out = & $Smctl sign --keypair-alias $env:SM_KEYPAIR_ALIAS --input $ExePath --verbose 2>&1 | Out-String
-    if ($LASTEXITCODE -ne 0) {
-        Log-Error "smctl sign output: $out"
-        throw "Signing failed for $fileName (exit $LASTEXITCODE)"
+    Log-Info "smctl output: $out"
+    # smctl exits 0 even on failure — must also check output text
+    if ($LASTEXITCODE -ne 0 -or $out -like "*FAILED*" -or $out -like "*error*") {
+        throw "Signing failed for $fileName (exit $LASTEXITCODE): $out"
     }
-    Log-Debug "smctl sign output: $out"
 
     $sig = Get-AuthenticodeSignature $ExePath
     if ($sig.Status -ne "Valid") {

@@ -7237,6 +7237,54 @@ declare module "bun" {
     options?: SpawnOptions.SpawnSyncOptions<In, Out, Err>,
   ): SyncSubprocess<Out, Err>;
 
+  /**
+   * Spawn a new process, returning a promise that resolves with the buffered
+   * stdout, stderr, exit code, and other information — the same shape as
+   * {@link Bun.spawnSync()}.
+   *
+   * Unlike `Bun.spawn()`, the result contains buffered `stdout` and `stderr`
+   * as `Buffer` objects instead of `ReadableStream`.
+   * Unlike `Bun.spawnSync()`, this does not block the event loop.
+   *
+   * @category Process Management
+   *
+   * ```js
+   * const { stdout, exitCode } = await Bun.spawnAndWait(["echo", "hello"]);
+   * console.log(stdout.toString()); // "hello\n"
+   * ```
+   */
+  function spawnAndWait<
+    const In extends SpawnOptions.Writable = "ignore",
+    const Out extends SpawnOptions.Readable = "pipe",
+    const Err extends SpawnOptions.Readable = "pipe",
+  >(
+    options: SpawnOptions.SpawnOptions<In, Out, Err> & {
+      cmd: string[];
+    },
+  ): Promise<SyncSubprocess<Out, Err>>;
+
+  /**
+   * Spawn a new process, returning a promise that resolves with the buffered
+   * stdout, stderr, exit code, and other information — the same shape as
+   * {@link Bun.spawnSync()}.
+   *
+   * Unlike `Bun.spawn()`, the result contains buffered `stdout` and `stderr`
+   * as `Buffer` objects instead of `ReadableStream`.
+   * Unlike `Bun.spawnSync()`, this does not block the event loop.
+   *
+   * @category Process Management
+   *
+   * ```js
+   * const { stdout, exitCode } = await Bun.spawnAndWait(["echo", "hello"]);
+   * console.log(stdout.toString()); // "hello\n"
+   * ```
+   */
+  function spawnAndWait<
+    const In extends SpawnOptions.Writable = "ignore",
+    const Out extends SpawnOptions.Readable = "pipe",
+    const Err extends SpawnOptions.Readable = "pipe",
+  >(cmds: string[], options?: SpawnOptions.SpawnOptions<In, Out, Err>): Promise<SyncSubprocess<Out, Err>>;
+
   /** Utility type for any process from {@link Bun.spawn()} with both stdout and stderr set to `"pipe"` */
   type ReadableSubprocess = Subprocess<any, "pipe", "pipe">;
   /** Utility type for any process from {@link Bun.spawn()} with stdin set to `"pipe"` */

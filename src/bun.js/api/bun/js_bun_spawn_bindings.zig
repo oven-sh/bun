@@ -94,12 +94,39 @@ fn getArgv(globalThis: *jsc.JSGlobalObject, args: JSValue, PATH: []const u8, cwd
 
 /// Bun.spawn() calls this.
 pub fn spawn(globalThis: *jsc.JSGlobalObject, args: JSValue, secondaryArgsValue: ?JSValue) bun.JSError!JSValue {
-    return spawnMaybeSync(globalThis, args, secondaryArgsValue, false);
+    return spawnMaybeSync(globalThis, args, secondaryArgsValue, false, false);
 }
 
 /// Bun.spawnSync() calls this.
 pub fn spawnSync(globalThis: *jsc.JSGlobalObject, args: JSValue, secondaryArgsValue: ?JSValue) bun.JSError!JSValue {
-    return spawnMaybeSync(globalThis, args, secondaryArgsValue, true);
+    return spawnMaybeSync(globalThis, args, secondaryArgsValue, true, true);
+}
+
+/// Bun.spawnAndWait() calls this.
+/// Like Bun.spawn() but returns a Promise that resolves with the same result
+/// shape as Bun.spawnSync() (buffered stdout/stderr, exitCode, etc).
+pub fn spawnAndWait(globalThis: *jsc.JSGlobalObject, args: JSValue, secondaryArgsValue: ?JSValue) bun.JSError!JSValue {
+    // Use the async spawn path but with stderr defaulting to pipe (like spawnSync)
+    const subprocess_js = try spawnMaybeSync(globalThis, args, secondaryArgsValue, false, true);
+
+    const subprocess = Subprocess.fromJSDirect(subprocess_js) orelse
+        return globalThis.throwInvalidArguments("failed to create subprocess", .{});
+
+    // Mark as buffered async mode
+    subprocess.flags.is_buffered_async = true;
+
+    // Create the promise that will resolve with the buffered result
+    const promise = jsc.JSPromise.create(globalThis);
+    subprocess.spawn_and_wait_promise.set(globalThis, promise.toJS());
+
+    // Take an extra ref to prevent deallocation before the promise resolves.
+    // This is balanced by deref() in maybeResolveBufferedAsync.
+    subprocess.ref();
+
+    // If the process already exited and stdio is already closed, resolve immediately
+    subprocess.maybeResolveBufferedAsync();
+
+    return promise.toJS();
 }
 
 pub fn spawnMaybeSync(
@@ -107,6 +134,7 @@ pub fn spawnMaybeSync(
     args_: JSValue,
     secondaryArgsValue: ?JSValue,
     comptime is_sync: bool,
+    comptime default_stderr_to_pipe: bool,
 ) bun.JSError!JSValue {
     if (comptime is_sync) {
         // We skip this on Windows due to test failures.
@@ -134,7 +162,7 @@ pub fn spawnMaybeSync(
         .{ .inherit = {} },
     };
 
-    if (comptime is_sync) {
+    if (comptime is_sync or default_stderr_to_pipe) {
         stdio[1] = .{ .pipe = {} };
         stdio[2] = .{ .pipe = {} };
     }

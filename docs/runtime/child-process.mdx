@@ -437,6 +437,39 @@ As a rule of thumb, the asynchronous `Bun.spawn` API is better for HTTP servers 
 
 ---
 
+## Async buffered API (`Bun.spawnAndWait()`)
+
+`Bun.spawnAndWait` combines the best of both APIs: it returns a `Promise` that resolves with the same `SyncSubprocess` result as `Bun.spawnSync` (buffered `stdout`/`stderr` as `Buffer`, `exitCode`, `success`, etc.), but **without blocking the event loop**.
+
+```ts
+const result = await Bun.spawnAndWait(["echo", "hello"]);
+
+console.log(result.stdout.toString()); // => "hello\n"
+console.log(result.exitCode); // => 0
+console.log(result.success); // => true
+```
+
+Like `Bun.spawnSync`, `stdout` and `stderr` default to `"pipe"` and are returned as `Buffer` objects. Like `Bun.spawn`, the event loop continues running while the process executes — timers, network requests, and other async work proceed normally.
+
+```ts
+const result = await Bun.spawnAndWait({
+  cmd: ["ls", "-la"],
+  cwd: "/tmp",
+  env: { ...process.env, MY_VAR: "hello" },
+});
+
+if (result.success) {
+  console.log(result.stdout.toString());
+} else {
+  console.error(`Failed with exit code ${result.exitCode}`);
+  console.error(result.stderr.toString());
+}
+```
+
+This is useful when you need the simplicity of `spawnSync`'s buffered result but can't afford to block the event loop — for example, in HTTP servers or when running multiple subprocesses concurrently with `Promise.all`.
+
+---
+
 ## Benchmarks
 
 <Note>
@@ -482,9 +515,11 @@ A reference of the Spawn API and types are shown below. The real types have comp
 interface Bun {
   spawn(command: string[], options?: SpawnOptions.OptionsObject): Subprocess;
   spawnSync(command: string[], options?: SpawnOptions.OptionsObject): SyncSubprocess;
+  spawnAndWait(command: string[], options?: SpawnOptions.OptionsObject): Promise<SyncSubprocess>;
 
   spawn(options: { cmd: string[] } & SpawnOptions.OptionsObject): Subprocess;
   spawnSync(options: { cmd: string[] } & SpawnOptions.OptionsObject): SyncSubprocess;
+  spawnAndWait(options: { cmd: string[] } & SpawnOptions.OptionsObject): Promise<SyncSubprocess>;
 }
 
 namespace SpawnOptions {

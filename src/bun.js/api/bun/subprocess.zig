@@ -51,6 +51,10 @@ stdout_maxbuf: ?*MaxBuf = null,
 stderr_maxbuf: ?*MaxBuf = null,
 exited_due_to_maxbuf: ?MaxBuf.Kind = null,
 
+/// Promise for Bun.spawnAndWait() — resolves with SyncSubprocess-shaped result
+/// when process exits AND all stdio pipes are closed.
+spawn_and_wait_promise: jsc.Strong.Optional = .empty,
+
 pub const Flags = packed struct(u8) {
     is_sync: bool = false,
     killed: bool = false,
@@ -58,7 +62,8 @@ pub const Flags = packed struct(u8) {
     finalized: bool = false,
     deref_on_stdin_destroyed: bool = false,
     is_stdin_a_readable_stream: bool = false,
-    _: u2 = 0,
+    is_buffered_async: bool = false,
+    _: u1 = 0,
 };
 
 pub const SignalCode = bun.SignalCode;
@@ -147,6 +152,10 @@ pub fn hasExited(this: *const Subprocess) bool {
 }
 
 pub fn computeHasPendingActivity(this: *const Subprocess) bool {
+    if (this.spawn_and_wait_promise.has()) {
+        return true;
+    }
+
     if (this.ipc_data != null) {
         return true;
     }
@@ -225,6 +234,79 @@ pub fn onCloseIO(this: *Subprocess, kind: StdioKind) void {
             }
         },
     }
+
+    if (this.flags.is_buffered_async) {
+        this.maybeResolveBufferedAsync();
+    }
+}
+
+/// Called from onProcessExit and onCloseIO when is_buffered_async is set.
+/// Resolves the spawnAndWait promise once ALL conditions are met:
+/// 1. The process has exited
+/// 2. stdout is not an active pipe (has been closed/buffered)
+/// 3. stderr is not an active pipe (has been closed/buffered)
+pub fn maybeResolveBufferedAsync(this: *Subprocess) void {
+    // Condition 1: process must have exited
+    if (!this.process.hasExited()) return;
+
+    // Condition 2: stdout must not be an active pipe
+    if (this.stdout == .pipe) return;
+
+    // Condition 3: stderr must not be an active pipe
+    if (this.stderr == .pipe) return;
+
+    // All conditions met — resolve the promise
+    const promise_js = this.spawn_and_wait_promise.trySwap() orelse return;
+
+    const globalThis = this.globalThis;
+    const loop = globalThis.bunVM().eventLoop();
+    loop.enter();
+    defer loop.exit();
+
+    if (this.buildBufferedResult(globalThis)) |result| {
+        if (promise_js.asAnyPromise()) |promise| {
+            promise.resolve(globalThis, result) catch {};
+        }
+    } else |_| {
+        if (promise_js.asAnyPromise()) |promise| {
+            const err = if (globalThis.hasException())
+                globalThis.takeException(error.JSError)
+            else
+                JSValue.zero;
+            if (err != .zero) {
+                promise.reject(globalThis, err) catch {};
+            }
+        }
+    }
+
+    this.updateHasPendingActivity();
+    // Balance the ref() taken in spawnAndWait
+    this.deref();
+}
+
+/// Build a result object with the same shape as spawnSync's return value.
+fn buildBufferedResult(this: *Subprocess, globalThis: *jsc.JSGlobalObject) bun.JSError!JSValue {
+    const signalCode = this.getSignalCode(globalThis);
+    const exitCode = this.getExitCode(globalThis);
+    const stdout = try this.stdout.toBufferedValue(globalThis);
+    const stderr = try this.stderr.toBufferedValue(globalThis);
+    const resource_usage: JSValue = if (!globalThis.hasException()) try this.createResourceUsageObject(globalThis) else .zero;
+    const exitedDueToMaxBuffer = this.exited_due_to_maxbuf;
+    const resultPid = jsc.JSValue.jsNumberFromInt32(this.pid());
+
+    const sync_value = jsc.JSValue.createEmptyObject(globalThis, 0);
+    sync_value.put(globalThis, jsc.ZigString.static("exitCode"), exitCode);
+    if (!signalCode.isEmptyOrUndefinedOrNull()) {
+        sync_value.put(globalThis, jsc.ZigString.static("signalCode"), signalCode);
+    }
+    sync_value.put(globalThis, jsc.ZigString.static("stdout"), stdout);
+    sync_value.put(globalThis, jsc.ZigString.static("stderr"), stderr);
+    sync_value.put(globalThis, jsc.ZigString.static("success"), JSValue.jsBoolean(exitCode.isInt32() and exitCode.asInt32() == 0));
+    sync_value.put(globalThis, jsc.ZigString.static("resourceUsage"), resource_usage);
+    if (exitedDueToMaxBuffer != null) sync_value.put(globalThis, jsc.ZigString.static("exitedDueToMaxBuffer"), .true);
+    sync_value.put(globalThis, jsc.ZigString.static("pid"), resultPid);
+
+    return sync_value;
 }
 
 pub fn jsRef(this: *Subprocess) void {
@@ -699,6 +781,10 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
                 );
             }
         }
+
+        if (this.flags.is_buffered_async) {
+            this.maybeResolveBufferedAsync();
+        }
     }
 }
 
@@ -772,6 +858,7 @@ pub fn finalize(this: *Subprocess) callconv(.c) void {
     // access it after it's been freed We cannot call any methods which
     // access GC'd values during the finalizer
     this.this_value.finalize();
+    this.spawn_and_wait_promise.deinit();
 
     this.clearAbortSignal();
 
@@ -917,6 +1004,7 @@ pub const Writable = @import("./subprocess/Writable.zig").Writable;
 pub const MaxBuf = bun.io.MaxBuf;
 pub const spawnSync = js_bun_spawn_bindings.spawnSync;
 pub const spawn = js_bun_spawn_bindings.spawn;
+pub const spawnAndWait = js_bun_spawn_bindings.spawnAndWait;
 
 const IPC = @import("../../ipc.zig");
 const Terminal = @import("./Terminal.zig");

@@ -31,9 +31,9 @@
 
 namespace WebCore {
 
-extern "C" JSC::EncodedJSValue URLSearchParams__create(JSDOMGlobalObject* globalObject, const ZigString* input)
+extern "C" JSC::EncodedJSValue URLSearchParams__create(JSDOMGlobalObject* globalObject, const BunString* input)
 {
-    String str = Zig::toString(*input);
+    auto str = input->toWTFString();
     auto result = URLSearchParams::create(str, nullptr);
     return JSC::JSValue::encode(WebCore::toJSNewlyCreated(globalObject, globalObject, WTF::move(result)));
 }
@@ -43,14 +43,14 @@ extern "C" WebCore::URLSearchParams* URLSearchParams__fromJS(JSC::EncodedJSValue
     return WebCoreCast<WebCore::JSURLSearchParams, WebCore::URLSearchParams>(value);
 }
 
-// callback accepting a void* and a const ZigString*, returning void
-typedef void (*URLSearchParams__toStringCallback)(void* ctx, const ZigString* str);
+// callback accepting a void* and a const BunString*, returning void
+typedef void (*URLSearchParams__toStringCallback)(void* ctx, const BunString* str);
 
 extern "C" void URLSearchParams__toString(WebCore::URLSearchParams* urlSearchParams, void* ctx, URLSearchParams__toStringCallback callback)
 {
-    String str = urlSearchParams->toString();
-    auto zig = Zig::toZigString(str);
-    callback(ctx, &zig);
+    auto str = urlSearchParams->toString();
+    BunString out = Bun::toString(str);
+    callback(ctx, &out);
 }
 
 URLSearchParams::URLSearchParams(const String& init, DOMURL* associatedURL)

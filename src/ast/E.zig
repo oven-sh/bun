@@ -1196,14 +1196,6 @@ pub const String = struct {
         }
     }
 
-    pub fn toZigString(s: *String, allocator: std.mem.Allocator) jsc.ZigString {
-        if (s.isUTF8()) {
-            return jsc.ZigString.fromUTF8(s.slice(allocator));
-        } else {
-            return jsc.ZigString.initUTF16(s.slice16());
-        }
-    }
-
     pub fn format(s: String, writer: *std.Io.Writer) !void {
         try writer.writeAll("E.String");
         if (s.next == null) {

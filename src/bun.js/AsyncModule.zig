@@ -392,8 +392,8 @@ pub const AsyncModule = struct {
             });
         }
 
-        var spec = bun.String.init(ZigString.init(this.specifier).withEncoding());
-        var ref = bun.String.init(ZigString.init(this.referrer).withEncoding());
+        var spec = bun.String.fromBytes(this.specifier);
+        var ref = bun.String.fromBytes(this.referrer);
         bun.jsc.fromJSHostCallGeneric(this.globalThis, @src(), Bun__onFulfillAsyncModule, .{
             this.globalThis,
             this.promise.get().?,
@@ -531,21 +531,21 @@ pub const AsyncModule = struct {
             else => "PackageResolveError",
         };
 
-        var error_instance = ZigString.init(msg).withEncoding().toErrorInstance(globalThis);
+        var error_instance = bun.String.borrowUTF8(msg).toErrorInstance(globalThis);
         if (result.url.len > 0)
-            error_instance.put(globalThis, bun.String.static("url"), ZigString.init(result.url).withEncoding().toJS(globalThis));
-        error_instance.put(globalThis, bun.String.static("name"), ZigString.init(name).withEncoding().toJS(globalThis));
-        error_instance.put(globalThis, bun.String.static("pkg"), ZigString.init(result.name).withEncoding().toJS(globalThis));
-        error_instance.put(globalThis, bun.String.static("specifier"), ZigString.init(this.specifier).withEncoding().toJS(globalThis));
+            error_instance.put(globalThis, bun.String.static("url"), try bun.String.createUTF8ForJS(globalThis, result.url));
+        error_instance.put(globalThis, bun.String.static("name"), try bun.String.createUTF8ForJS(globalThis, name));
+        error_instance.put(globalThis, bun.String.static("pkg"), try bun.String.createUTF8ForJS(globalThis, result.name));
+        error_instance.put(globalThis, bun.String.static("specifier"), try bun.String.createUTF8ForJS(globalThis, this.specifier));
         const location = logger.rangeData(&this.parse_result.source, this.parse_result.ast.import_records.at(import_record_id).range, "").location.?;
-        error_instance.put(globalThis, bun.String.static("sourceURL"), ZigString.init(this.parse_result.source.path.text).withEncoding().toJS(globalThis));
+        error_instance.put(globalThis, bun.String.static("sourceURL"), try bun.String.createUTF8ForJS(globalThis, this.parse_result.source.path.text));
         error_instance.put(globalThis, bun.String.static("line"), JSValue.jsNumber(location.line));
         if (location.line_text) |line_text| {
-            error_instance.put(globalThis, bun.String.static("lineText"), ZigString.init(line_text).withEncoding().toJS(globalThis));
+            error_instance.put(globalThis, bun.String.static("lineText"), try bun.String.createUTF8ForJS(globalThis, line_text));
         }
         error_instance.put(globalThis, bun.String.static("column"), JSValue.jsNumber(location.column));
         if (this.referrer.len > 0 and !strings.eqlComptime(this.referrer, "undefined")) {
-            error_instance.put(globalThis, bun.String.static("referrer"), ZigString.init(this.referrer).withEncoding().toJS(globalThis));
+            error_instance.put(globalThis, bun.String.static("referrer"), try bun.String.createUTF8ForJS(globalThis, this.referrer));
         }
 
         const promise_value = this.promise.swap();
@@ -623,23 +623,21 @@ pub const AsyncModule = struct {
             else => "TarballDownloadError",
         };
 
-        var error_instance = ZigString.init(msg).withEncoding().toErrorInstance(globalThis);
+        var error_instance = bun.String.borrowUTF8(msg).toErrorInstance(globalThis);
         if (result.url.len > 0)
-            error_instance.put(globalThis, bun.String.static("url"), ZigString.init(result.url).withEncoding().toJS(globalThis));
-        error_instance.put(globalThis, bun.String.static("name"), ZigString.init(name).withEncoding().toJS(globalThis));
-        error_instance.put(globalThis, bun.String.static("pkg"), ZigString.init(result.name).withEncoding().toJS(globalThis));
+            error_instance.put(globalThis, bun.String.static("url"), try bun.String.createUTF8ForJS(globalThis, result.url));
+        error_instance.put(globalThis, bun.String.static("name"), try bun.String.createUTF8ForJS(globalThis, name));
+        error_instance.put(globalThis, bun.String.static("pkg"), try bun.String.createUTF8ForJS(globalThis, result.name));
         if (this.specifier.len > 0 and !strings.eqlComptime(this.specifier, "undefined")) {
-            error_instance.put(globalThis, bun.String.static("referrer"), ZigString.init(this.specifier).withEncoding().toJS(globalThis));
+            error_instance.put(globalThis, bun.String.static("referrer"), try bun.String.createUTF8ForJS(globalThis, this.specifier));
         }
 
         const location = logger.rangeData(&this.parse_result.source, this.parse_result.ast.import_records.at(import_record_id).range, "").location.?;
-        error_instance.put(globalThis, bun.String.static("specifier"), ZigString.init(
-            this.parse_result.ast.import_records.at(import_record_id).path.text,
-        ).withEncoding().toJS(globalThis));
-        error_instance.put(globalThis, bun.String.static("sourceURL"), ZigString.init(this.parse_result.source.path.text).withEncoding().toJS(globalThis));
+        error_instance.put(globalThis, bun.String.static("specifier"), try bun.String.createUTF8ForJS(globalThis, this.parse_result.ast.import_records.at(import_record_id).path.text));
+        error_instance.put(globalThis, bun.String.static("sourceURL"), try bun.String.createUTF8ForJS(globalThis, this.parse_result.source.path.text));
         error_instance.put(globalThis, bun.String.static("line"), JSValue.jsNumber(location.line));
         if (location.line_text) |line_text| {
-            error_instance.put(globalThis, bun.String.static("lineText"), ZigString.init(line_text).withEncoding().toJS(globalThis));
+            error_instance.put(globalThis, bun.String.static("lineText"), try bun.String.createUTF8ForJS(globalThis, line_text));
         }
         error_instance.put(globalThis, bun.String.static("column"), JSValue.jsNumber(location.column));
 
@@ -779,4 +777,3 @@ const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
 const ResolvedSource = bun.jsc.ResolvedSource;
 const VirtualMachine = bun.jsc.VirtualMachine;
-const ZigString = bun.jsc.ZigString;

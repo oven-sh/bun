@@ -1200,7 +1200,7 @@ pub fn unsubscribe(
         ) catch {
             return globalObject.throw(
                 "Failed to remove handler for channel {f}",
-                .{channel.asString().getZigString(globalObject)},
+                .{channel.asString().toBunString(globalObject)},
             );
         } orelse {
             // Listeners weren't present in the first place, so we can return a

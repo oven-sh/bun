@@ -609,7 +609,7 @@ pub const IniTestingAPIs = struct {
                 var value = object_iter.value;
                 if (value.isUndefined()) continue;
 
-                const value_str = try value.getZigString(globalThis);
+                const value_str = try value.toString(globalThis);
                 const slice = try value_str.toOwnedSlice(allocator);
 
                 envmap.put(keyslice, .{

@@ -619,7 +619,7 @@ fn fetchImpl(
             if (objects_to_try[i] != .zero) {
                 if (try objects_to_try[i].get(globalThis, "verbose")) |verb| {
                     if (verb.isString()) {
-                        if ((try verb.getZigString(globalThis)).eqlComptime("curl")) {
+                        if ((try verb.toString(globalThis)).eqlComptime("curl")) {
                             break :extract_verbose .curl;
                         }
                     } else if (verb.isBoolean()) {
@@ -933,7 +933,7 @@ fn fetchImpl(
             }
 
             if (headers_.fastGet(bun.webcore.FetchHeaders.HTTPHeaderName.Upgrade)) |_upgrade| {
-                const upgrade = _upgrade.toSlice(bun.default_allocator);
+                const upgrade = _upgrade.toUTF8(bun.default_allocator);
                 defer upgrade.deinit();
                 const slice = upgrade.slice();
                 if (!bun.strings.eqlComptime(slice, "h2") and !bun.strings.eqlComptime(slice, "h2c")) {
@@ -1476,7 +1476,6 @@ const JSGlobalObject = jsc.JSGlobalObject;
 const JSPromise = jsc.JSPromise;
 const JSValue = jsc.JSValue;
 const VirtualMachine = jsc.VirtualMachine;
-const ZigString = jsc.ZigString;
 const JSType = jsc.C.JSType;
 
 const Body = jsc.WebCore.Body;

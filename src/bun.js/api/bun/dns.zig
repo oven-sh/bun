@@ -1941,7 +1941,7 @@ pub const Resolver = struct {
         });
 
         pub fn toJS(this: Order, globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
-            return jsc.ZigString.init(@tagName(this)).toJS(globalThis);
+            return try bun.String.createUTF8ForJS(globalThis, @tagName(this));
         }
 
         pub fn fromString(order: []const u8) ?Order {
@@ -2577,7 +2577,7 @@ pub const Resolver = struct {
                 break :brk RecordType.default;
             }
 
-            break :brk RecordType.map.getWithEql(record_type_str.getZigString(globalThis), jsc.ZigString.eqlComptime) orelse {
+            break :brk RecordType.map.getWithEql(record_type_str.toBunString(globalThis), bun.String.eqlComptime) orelse {
                 return globalThis.throwInvalidArgumentPropertyValue("record", "one of: A, AAAA, ANY, CAA, CNAME, MX, NS, PTR, SOA, SRV, TXT", record_type_value);
             };
         };
@@ -3170,16 +3170,16 @@ pub const Resolver = struct {
 
             const size = bun.len(bun.cast([*:0]u8, buf[1..])) + 1;
             if (port == IANA_DNS_PORT) {
-                try values.putIndex(globalThis, i, jsc.ZigString.init(buf[1..size]).withEncoding().toJS(globalThis));
+                try values.putIndex(globalThis, i, try bun.String.createUTF8ForJS(globalThis, buf[1..size]));
             } else {
                 if (family == std.posix.AF.INET6) {
                     buf[0] = '[';
                     buf[size] = ']';
                     const port_slice = std.fmt.bufPrint(buf[size + 1 ..], ":{d}", .{port}) catch unreachable;
-                    try values.putIndex(globalThis, i, jsc.ZigString.init(buf[0 .. size + 1 + port_slice.len]).withEncoding().toJS(globalThis));
+                    try values.putIndex(globalThis, i, try bun.String.createUTF8ForJS(globalThis, buf[0 .. size + 1 + port_slice.len]));
                 } else {
                     const port_slice = std.fmt.bufPrint(buf[size..], ":{d}", .{port}) catch unreachable;
-                    try values.putIndex(globalThis, i, jsc.ZigString.init(buf[1 .. size + port_slice.len]).withEncoding().toJS(globalThis));
+                    try values.putIndex(globalThis, i, try bun.String.createUTF8ForJS(globalThis, buf[1 .. size + port_slice.len]));
                 }
             }
         }
@@ -3383,7 +3383,9 @@ pub const Resolver = struct {
         if (addr_str.length() == 0) {
             return globalThis.throwInvalidArgumentType("lookupService", "address", "non-empty string");
         }
-        const addr_s = addr_str.getZigString(globalThis).slice();
+        const addr_slice = addr_str.toBunString(globalThis).toUTF8(bun.default_allocator);
+        defer addr_slice.deinit();
+        const addr_s = addr_slice.slice();
 
         const port_value = arguments.ptr[1];
         const port: u16 = try port_value.toPortNumber(globalThis);

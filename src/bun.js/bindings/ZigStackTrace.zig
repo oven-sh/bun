@@ -147,4 +147,3 @@ const api = bun.schema.api;
 const jsc = bun.jsc;
 const SourceProvider = jsc.SourceProvider;
 const ZigStackFrame = jsc.ZigStackFrame;
-const ZigString = jsc.ZigString;

@@ -874,7 +874,7 @@ fn callExitCallback(this: *Terminal, exit_code: i32, signal: ?bun.SignalCode) vo
 
     const globalThis = this.globalThis;
     const signal_value: JSValue = if (signal) |s|
-        jsc.ZigString.init(s.name() orelse "unknown").toJS(globalThis)
+        bun.String.createUTF8ForJS(globalThis, s.name() orelse "unknown") catch return
     else
         JSValue.jsNull();
 

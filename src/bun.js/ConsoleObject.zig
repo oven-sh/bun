@@ -679,7 +679,7 @@ pub fn writeTrace(comptime Writer: type, writer: Writer, global: *JSGlobalObject
     var source_code_slice: ?bun.String.Slice = null;
     defer if (source_code_slice) |slice| slice.deinit();
 
-    var err = ZigString.init("trace output").toErrorInstance(global);
+    var err = bun.String.static("trace output").toErrorInstance(global);
     err.toZigException(global, exception);
     vm.remapZigException(
         exception,
@@ -1302,10 +1302,10 @@ pub const Formatter = struct {
             if (js_type.isObject() and js_type != .ProxyObject) {
                 if (try value.getOwnTruthy(globalThis, "$$typeof")) |typeof_symbol| {
                     // React 18 and below
-                    var react_element_legacy = ZigString.init("react.element");
+                    const react_element_legacy = bun.String.static("react.element");
                     // For React 19 - https://github.com/oven-sh/bun/issues/17223
-                    var react_element_transitional = ZigString.init("react.transitional.element");
-                    var react_fragment = ZigString.init("react.fragment");
+                    const react_element_transitional = bun.String.static("react.transitional.element");
+                    const react_fragment = bun.String.static("react.fragment");
 
                     if (try typeof_symbol.isSameValue(.symbolFor(globalThis, &react_element_legacy), globalThis) or
                         try typeof_symbol.isSameValue(.symbolFor(globalThis, &react_element_transitional), globalThis) or
@@ -1740,7 +1740,7 @@ pub const Formatter = struct {
                 };
             }
 
-            pub inline fn writeString(self: *@This(), str: ZigString) void {
+            pub inline fn writeString(self: *@This(), str: bun.String) void {
                 self.print("{f}", .{str});
             }
 
@@ -1901,6 +1901,7 @@ pub const Formatter = struct {
                     };
 
                     if (try getObjectName(globalThis, value)) |name_str| {
+                        defer name_str.deref();
                         writer.print("{f} ", .{name_str});
                     }
                 }
@@ -1922,11 +1923,12 @@ pub const Formatter = struct {
             pub fn forEach(
                 globalThis: *JSGlobalObject,
                 ctx_ptr: ?*anyopaque,
-                key: *ZigString,
+                key_ptr: *bun.String,
                 value: JSValue,
                 is_symbol: bool,
                 is_private_symbol: bool,
             ) callconv(.c) void {
+                const key = key_ptr.*;
                 if (key.eqlComptime("constructor")) return;
 
                 var ctx: *@This() = bun.cast(*@This(), ctx_ptr orelse return);
@@ -1962,25 +1964,26 @@ pub const Formatter = struct {
                     }
                 }
 
+                const key_len = key.length();
                 if (!is_symbol) {
 
                     // TODO: make this one pass?
-                    if (!key.is16Bit() and (!this.quote_keys and JSLexer.isLatin1Identifier(@TypeOf(key.slice()), key.slice()))) {
-                        this.addForNewLine(key.len + 1);
+                    if (!key.isUTF16() and (!this.quote_keys and JSLexer.isLatin1Identifier([]const u8, key.latin1()))) {
+                        this.addForNewLine(key_len + 1);
 
                         writer.print(
                             comptime Output.prettyFmt("<r>{f}<d>:<r> ", enable_ansi_colors),
                             .{key},
                         );
-                    } else if (key.is16Bit() and (!this.quote_keys and JSLexer.isLatin1Identifier(@TypeOf(key.utf16SliceAligned()), key.utf16SliceAligned()))) {
-                        this.addForNewLine(key.len + 1);
+                    } else if (key.isUTF16() and (!this.quote_keys and JSLexer.isLatin1Identifier([]const u16, key.utf16()))) {
+                        this.addForNewLine(key_len + 1);
 
                         writer.print(
                             comptime Output.prettyFmt("<r>{f}<d>:<r> ", enable_ansi_colors),
                             .{key},
                         );
-                    } else if (key.is16Bit()) {
-                        var utf16Slice = key.utf16SliceAligned();
+                    } else if (key.isUTF16()) {
+                        var utf16Slice = key.utf16();
 
                         this.addForNewLine(utf16Slice.len + 2);
 
@@ -2003,24 +2006,24 @@ pub const Formatter = struct {
                             .{},
                         );
                     } else {
-                        this.addForNewLine(key.len + 2);
+                        this.addForNewLine(key_len + 2);
 
                         writer.print(
                             comptime Output.prettyFmt("<r><green>{f}<r><d>:<r> ", enable_ansi_colors),
-                            .{bun.fmt.formatJSONStringLatin1(key.slice())},
+                            .{bun.fmt.formatJSONStringLatin1(key.latin1())},
                         );
                     }
                 } else if (Environment.isDebug and is_private_symbol) {
-                    this.addForNewLine(1 + "$:".len + key.len);
+                    this.addForNewLine(1 + "$:".len + key_len);
                     writer.print(
                         comptime Output.prettyFmt("<r><magenta>{s}{f}<r><d>:<r> ", enable_ansi_colors),
                         .{
-                            if (key.len > 0 and key.charAt(0) == '#') "" else "$",
+                            if (key_len > 0 and key.charAt(0) == '#') "" else "$",
                             key,
                         },
                     );
                 } else {
-                    this.addForNewLine(1 + "[Symbol()]:".len + key.len);
+                    this.addForNewLine(1 + "[Symbol()]:".len + key_len);
                     writer.print(
                         comptime Output.prettyFmt("<r><d>[<r><blue>Symbol({f})<r><d>]:<r> ", enable_ansi_colors),
                         .{key},
@@ -2044,13 +2047,16 @@ pub const Formatter = struct {
         };
     }
 
-    fn getObjectName(globalThis: *jsc.JSGlobalObject, value: JSValue) bun.JSError!?ZigString {
-        var name_str = ZigString.init("");
+    /// Caller must `.deref()` the non-null result.
+    fn getObjectName(globalThis: *jsc.JSGlobalObject, value: JSValue) bun.JSError!?bun.String {
+        var name_str: bun.String = .empty;
         try value.getClassName(globalThis, &name_str);
         if (!name_str.eqlComptime("Object")) {
             return name_str;
-        } else if (value.getPrototype(globalThis).eqlValue(JSValue.null)) {
-            return ZigString.static("[Object: null prototype]").*;
+        }
+        name_str.deref();
+        if (value.getPrototype(globalThis).eqlValue(JSValue.null)) {
+            return bun.String.static("[Object: null prototype]");
         }
         return null;
     }
@@ -2221,21 +2227,21 @@ pub const Formatter = struct {
                 writer.print(comptime Output.prettyFmt("<r><yellow>{d}<r>", enable_ansi_colors), .{int});
             },
             .BigInt => {
-                const out_str = (try value.getZigString(this.globalThis)).slice();
+                const out_str = (try value.toString(this.globalThis)).latin1();
                 this.addForNewLine(out_str.len);
 
                 writer.print(comptime Output.prettyFmt("<r><yellow>{s}n<r>", enable_ansi_colors), .{out_str});
             },
             .Double => {
                 if (value.isCell()) {
-                    var number_name = ZigString.Empty;
+                    var number_name: bun.String = .empty;
+                    defer number_name.deref();
                     try value.getClassName(this.globalThis, &number_name);
 
-                    var number_value = ZigString.Empty;
-                    try value.toZigString(&number_value, this.globalThis);
+                    const number_value = try value.toString(this.globalThis);
 
-                    if (!strings.eqlComptime(number_name.slice(), "Number")) {
-                        this.addForNewLine(number_name.len + number_value.len + "[Number ():]".len);
+                    if (!number_name.eqlComptime("Number")) {
+                        this.addForNewLine(number_name.length() + number_value.length() + "[Number ():]".len);
                         writer.print(comptime Output.prettyFmt("<r><yellow>[Number ({f}): {f}]<r>", enable_ansi_colors), .{
                             number_name,
                             number_value,
@@ -2243,7 +2249,7 @@ pub const Formatter = struct {
                         return;
                     }
 
-                    this.addForNewLine(number_name.len + number_value.len + 4);
+                    this.addForNewLine(number_name.length() + number_value.length() + 4);
                     writer.print(comptime Output.prettyFmt("<r><yellow>[{f}: {f}]<r>", enable_ansi_colors), .{
                         number_name,
                         number_value,
@@ -2297,10 +2303,11 @@ pub const Formatter = struct {
             },
             .Symbol => {
                 const description = value.getDescription(this.globalThis);
+                defer description.deref();
                 this.addForNewLine("Symbol".len);
 
-                if (description.len > 0) {
-                    this.addForNewLine(description.len + "()".len);
+                if (description.length() > 0) {
+                    this.addForNewLine(description.length() + "()".len);
                     writer.print(comptime Output.prettyFmt("<r><blue>Symbol({f})<r>", enable_ansi_colors), .{description});
                 } else {
                     writer.print(comptime Output.prettyFmt("<r><blue>Symbol()<r>", enable_ansi_colors), .{});
@@ -2326,16 +2333,18 @@ pub const Formatter = struct {
                 );
             },
             .Class => {
-                var printable = ZigString.init(&name_buf);
+                var printable: bun.String = .empty;
+                defer printable.deref();
                 try value.getClassName(this.globalThis, &printable);
-                this.addForNewLine(printable.len);
+                this.addForNewLine(printable.length());
 
                 const proto = value.getPrototype(this.globalThis);
-                var printable_proto = ZigString.init(&name_buf);
+                var printable_proto: bun.String = .empty;
+                defer printable_proto.deref();
                 try proto.getClassName(this.globalThis, &printable_proto);
-                this.addForNewLine(printable_proto.len);
+                this.addForNewLine(printable_proto.length());
 
-                if (printable.len == 0) {
+                if (printable.isEmpty()) {
                     if (printable_proto.isEmpty()) {
                         writer.print(comptime Output.prettyFmt("<cyan>[class (anonymous)]<r>", enable_ansi_colors), .{});
                     } else {
@@ -2716,20 +2725,20 @@ pub const Formatter = struct {
             },
             .Boolean => {
                 if (value.isCell()) {
-                    var bool_name = ZigString.Empty;
+                    var bool_name: bun.String = .empty;
+                    defer bool_name.deref();
                     try value.getClassName(this.globalThis, &bool_name);
-                    var bool_value = ZigString.Empty;
-                    try value.toZigString(&bool_value, this.globalThis);
+                    const bool_value = try value.toString(this.globalThis);
 
-                    if (!strings.eqlComptime(bool_name.slice(), "Boolean")) {
-                        this.addForNewLine(bool_value.len + bool_name.len + "[Boolean (): ]".len);
+                    if (!bool_name.eqlComptime("Boolean")) {
+                        this.addForNewLine(bool_value.length() + bool_name.length() + "[Boolean (): ]".len);
                         writer.print(comptime Output.prettyFmt("<r><yellow>[Boolean ({f}): {f}]<r>", enable_ansi_colors), .{
                             bool_name,
                             bool_value,
                         });
                         return;
                     }
-                    this.addForNewLine(bool_value.len + "[Boolean: ]".len);
+                    this.addForNewLine(bool_value.length() + "[Boolean: ]".len);
                     writer.print(comptime Output.prettyFmt("<r><yellow>[Boolean: {f}]<r>", enable_ansi_colors), .{bool_value});
                     return;
                 }
@@ -3070,7 +3079,10 @@ pub const Formatter = struct {
                 writer.writeAll("<");
 
                 var needs_space = false;
-                var tag_name_str = ZigString.init("");
+                var tag_name_str: bun.String = .empty;
+                // Backing storage for getNameProperty result; must outlive tag_name_str.
+                var tag_name_backing: bun.String = .empty;
+                defer tag_name_backing.deref();
 
                 var tag_name_slice: bun.String.Slice = bun.String.Slice.empty;
                 var is_tag_kind_primitive = false;
@@ -3084,21 +3096,23 @@ pub const Formatter = struct {
                     });
 
                     if (_tag.cell == .Symbol) {} else if (_tag.cell.isStringLike()) {
-                        try type_value.toZigString(&tag_name_str, this.globalThis);
+                        tag_name_str = try type_value.toString(this.globalThis);
                         is_tag_kind_primitive = true;
                     } else if (_tag.cell.isObject() or type_value.isCallable()) {
-                        try type_value.getNameProperty(this.globalThis, &tag_name_str);
-                        if (tag_name_str.len == 0) {
-                            tag_name_str = ZigString.init("NoName");
+                        try type_value.getNameProperty(this.globalThis, &tag_name_backing);
+                        if (tag_name_backing.isEmpty()) {
+                            tag_name_str = bun.String.static("NoName");
+                        } else {
+                            tag_name_str = tag_name_backing;
                         }
                     } else {
-                        try type_value.toZigString(&tag_name_str, this.globalThis);
+                        tag_name_str = try type_value.toString(this.globalThis);
                     }
 
-                    tag_name_slice = tag_name_str.toSlice(default_allocator);
+                    tag_name_slice = tag_name_str.toUTF8WithoutRef(default_allocator);
                     needs_space = true;
                 } else {
-                    tag_name_slice = ZigString.init("unknown").toSlice(default_allocator);
+                    tag_name_slice = bun.String.Slice.fromUTF8NeverFree("unknown");
 
                     needs_space = true;
                 }
@@ -3215,12 +3229,12 @@ pub const Formatter = struct {
                                 print_children: {
                                     switch (tag.tag) {
                                         .String => {
-                                            const children_string = try children.getZigString(this.globalThis);
-                                            if (children_string.len == 0) break :print_children;
+                                            const children_string = try children.toString(this.globalThis);
+                                            if (children_string.length() == 0) break :print_children;
                                             if (comptime enable_ansi_colors) writer.writeAll(comptime Output.prettyFmt("<r>", true));
 
                                             writer.writeAll(">");
-                                            if (children_string.len < 128) {
+                                            if (children_string.length() < 128) {
                                                 writer.writeString(children_string);
                                             } else {
                                                 this.indent += 1;
@@ -3366,6 +3380,7 @@ pub const Formatter = struct {
                         try this.printAs(.Function, Writer, writer_, value, jsType, enable_ansi_colors)
                     else {
                         if (try getObjectName(this.globalThis, value)) |name_str| {
+                            defer name_str.deref();
                             writer.print("{f} ", .{name_str});
                         }
                         writer.writeAll("{}");
@@ -3820,4 +3835,3 @@ const JSPromise = jsc.JSPromise;
 const JSValue = jsc.JSValue;
 const VirtualMachine = jsc.VirtualMachine;
 const ZigException = jsc.ZigException;
-const ZigString = jsc.ZigString;

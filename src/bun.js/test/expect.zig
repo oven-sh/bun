@@ -393,7 +393,7 @@ pub const Expect = struct {
         const arguments_ = callFrame.arguments_old(1);
         const arguments = arguments_.slice();
 
-        var _msg: ZigString = ZigString.Empty;
+        var _msg: bun.String = .empty;
 
         if (arguments.len > 0) {
             const value = arguments[0];
@@ -403,9 +403,9 @@ pub const Expect = struct {
                 return globalThis.throwInvalidArgumentType("pass", "message", "string");
             }
 
-            try value.toZigString(&_msg, globalThis);
+            _msg = try value.toString(globalThis);
         } else {
-            _msg = ZigString.fromBytes("passes by .pass() assertion");
+            _msg = bun.String.static("passes by .pass() assertion");
         }
 
         this.incrementExpectCallCounter();
@@ -416,7 +416,7 @@ pub const Expect = struct {
         if (not) pass = !pass;
         if (pass) return .js_undefined;
 
-        var msg = _msg.toSlice(default_allocator);
+        var msg = _msg.toUTF8WithoutRef(default_allocator);
         defer msg.deinit();
 
         if (not) {
@@ -438,7 +438,7 @@ pub const Expect = struct {
         const arguments_ = callFrame.arguments_old(1);
         const arguments = arguments_.slice();
 
-        var _msg: ZigString = ZigString.Empty;
+        var _msg: bun.String = .empty;
 
         if (arguments.len > 0) {
             const value = arguments[0];
@@ -448,9 +448,9 @@ pub const Expect = struct {
                 return globalThis.throwInvalidArgumentType("fail", "message", "string");
             }
 
-            try value.toZigString(&_msg, globalThis);
+            _msg = try value.toString(globalThis);
         } else {
-            _msg = ZigString.fromBytes("fails by .fail() assertion");
+            _msg = bun.String.static("fails by .fail() assertion");
         }
 
         this.incrementExpectCallCounter();
@@ -461,7 +461,7 @@ pub const Expect = struct {
         if (not) pass = !pass;
         if (pass) return .js_undefined;
 
-        var msg = _msg.toSlice(default_allocator);
+        var msg = _msg.toUTF8WithoutRef(default_allocator);
         defer msg.deinit();
 
         const signature = comptime getSignature("fail", "", true);
@@ -947,7 +947,7 @@ pub const Expect = struct {
                 const matcher_fn: JSValue = iter.value;
 
                 if (!matcher_fn.jsType().isFunction()) {
-                    const type_name = if (matcher_fn.isNull()) bun.String.static("null") else bun.String.init(matcher_fn.jsTypeString(globalThis).getZigString(globalThis));
+                    const type_name = if (matcher_fn.isNull()) bun.String.static("null") else matcher_fn.jsTypeString(globalThis).toBunString(globalThis);
                     return globalThis.throwInvalidArguments("expect.extend: `{f}` is not a valid matcher. Must be a function, is \"{f}\"", .{ matcher_name, type_name });
                 }
 
@@ -976,6 +976,7 @@ pub const Expect = struct {
         pub fn format(this: CustomMatcherParamsFormatter, writer: *std.Io.Writer) !void {
             // try to detect param names from matcher_fn (user function) source code
             if (jsc.JSFunction.getSourceCode(this.matcher_fn)) |source_str| {
+                defer source_str.deref();
                 const source_slice = source_str.toUTF8(this.globalThis.allocator());
                 defer source_slice.deinit();
 
@@ -2265,7 +2266,6 @@ const CallFrame = jsc.CallFrame;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
 const VirtualMachine = jsc.VirtualMachine;
-const ZigString = jsc.ZigString;
 
 const jest = bun.jsc.Jest;
 const DescribeScope = jest.DescribeScope;

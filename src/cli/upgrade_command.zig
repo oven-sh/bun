@@ -896,7 +896,6 @@ pub const UpgradeCommand = struct {
 pub const upgrade_js_bindings = struct {
     const jsc = bun.jsc;
     const JSValue = jsc.JSValue;
-    const ZigString = jsc.ZigString;
 
     var tempdir_fd: ?bun.FileDescriptor = null;
 

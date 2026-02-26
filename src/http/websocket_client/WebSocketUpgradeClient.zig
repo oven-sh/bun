@@ -96,26 +96,26 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             global: *jsc.JSGlobalObject,
             socket_ctx: *uws.SocketContext,
             websocket: *CppWebSocket,
-            host: *const jsc.ZigString,
+            host: *const bun.String,
             port: u16,
-            pathname: *const jsc.ZigString,
-            client_protocol: *const jsc.ZigString,
-            header_names: ?[*]const jsc.ZigString,
-            header_values: ?[*]const jsc.ZigString,
+            pathname: *const bun.String,
+            client_protocol: *const bun.String,
+            header_names: ?[*]const bun.String,
+            header_values: ?[*]const bun.String,
             header_count: usize,
             // Proxy parameters
-            proxy_host: ?*const jsc.ZigString,
+            proxy_host: ?*const bun.String,
             proxy_port: u16,
-            proxy_authorization: ?*const jsc.ZigString,
-            proxy_header_names: ?[*]const jsc.ZigString,
-            proxy_header_values: ?[*]const jsc.ZigString,
+            proxy_authorization: ?*const bun.String,
+            proxy_header_names: ?[*]const bun.String,
+            proxy_header_values: ?[*]const bun.String,
             proxy_header_count: usize,
             // TLS options (full SSLConfig for complete TLS customization)
             ssl_config: ?*SSLConfig,
             // Whether the target URL is wss:// (separate from ssl template parameter)
             target_is_secure: bool,
             // Target URL authorization (Basic auth from ws://user:pass@host)
-            target_authorization: ?*const jsc.ZigString,
+            target_authorization: ?*const bun.String,
         ) callconv(.c) ?*HTTPClient {
             const vm = global.bunVM();
 
@@ -127,7 +127,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             // Check if user provided a custom protocol for subprotocols validation
             var protocol_for_subprotocols = client_protocol.*;
             for (extra_headers.names, extra_headers.values) |name, value| {
-                if (strings.eqlCaseInsensitiveASCII(name.slice(), "sec-websocket-protocol", true)) {
+                if (strings.eqlCaseInsensitiveASCII(name.latin1(), "sec-websocket-protocol", true)) {
                     protocol_for_subprotocols = value;
                     break;
                 }
@@ -141,7 +141,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 port,
                 client_protocol,
                 extra_headers,
-                if (target_authorization) |auth| auth.slice() else null,
+                if (target_authorization) |auth| auth.latin1() else null,
             ) catch return null;
 
             // Build proxy state if using proxy
@@ -156,7 +156,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 defer if (proxy_auth_owned) |auth| bun.default_allocator.free(auth);
 
                 if (proxy_authorization) |auth| {
-                    proxy_auth_owned = bun.default_allocator.dupe(u8, auth.slice()) catch {
+                    proxy_auth_owned = bun.default_allocator.dupe(u8, auth.latin1()) catch {
                         bun.default_allocator.free(body);
                         return null;
                     };
@@ -177,7 +177,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
                 // Build CONNECT request (proxy_auth and proxy_hdrs are freed by defer after this)
                 connect_request = buildConnectRequest(
-                    host.slice(),
+                    host.latin1(),
                     port,
                     proxy_auth_slice,
                     proxy_hdrs,
@@ -187,7 +187,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 };
 
                 // Duplicate target_host (needed for SNI during TLS handshake)
-                const target_host_dup = bun.default_allocator.dupe(u8, host.slice()) catch {
+                const target_host_dup = bun.default_allocator.dupe(u8, host.latin1()) catch {
                     bun.default_allocator.free(body);
                     bun.default_allocator.free(connect_request);
                     return null;
@@ -211,7 +211,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 .proxy = proxy_state,
                 .subprotocols = brk: {
                     var subprotocols = bun.StringSet.init(bun.default_allocator);
-                    var it = bun.http.HeaderValueIterator.init(protocol_for_subprotocols.slice());
+                    var it = bun.http.HeaderValueIterator.init(protocol_for_subprotocols.latin1());
                     while (it.next()) |protocol| {
                         subprotocols.insert(protocol) catch |e| bun.handleOom(e);
                     }
@@ -222,7 +222,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             // Store TLS config if provided (ownership transferred to client)
             client.ssl_config = ssl_config;
 
-            var host_ = if (using_proxy) proxy_host.?.toSlice(bun.default_allocator) else host.toSlice(bun.default_allocator);
+            var host_ = if (using_proxy) proxy_host.?.toUTF8(bun.default_allocator) else host.toUTF8(bun.default_allocator);
             defer host_.deinit();
 
             const connect_port = if (using_proxy) proxy_port else port;
@@ -1076,8 +1076,8 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 }
 
 const NonUTF8Headers = struct {
-    names: []const jsc.ZigString,
-    values: []const jsc.ZigString,
+    names: []const bun.String,
+    values: []const bun.String,
 
     pub fn format(self: NonUTF8Headers, writer: *std.Io.Writer) !void {
         const count = self.names.len;
@@ -1087,11 +1087,11 @@ const NonUTF8Headers = struct {
         }
     }
 
-    pub fn init(names: ?[*]const jsc.ZigString, values: ?[*]const jsc.ZigString, len: usize) NonUTF8Headers {
+    pub fn init(names: ?[*]const bun.String, values: ?[*]const bun.String, len: usize) NonUTF8Headers {
         if (len == 0) {
             return .{
-                .names = &[_]jsc.ZigString{},
-                .values = &[_]jsc.ZigString{},
+                .names = &[_]bun.String{},
+                .values = &[_]bun.String{},
             };
         }
 
@@ -1109,7 +1109,7 @@ const NonUTF8Headers = struct {
         errdefer headers.deinit();
 
         for (self.names, self.values) |name, value| {
-            try headers.append(name.slice(), value.slice());
+            try headers.append(name.latin1(), value.latin1());
         }
 
         return headers;
@@ -1167,24 +1167,24 @@ fn buildConnectRequest(
 
 fn buildRequestBody(
     vm: *jsc.VirtualMachine,
-    pathname: *const jsc.ZigString,
+    pathname: *const bun.String,
     is_https: bool,
-    host: *const jsc.ZigString,
+    host: *const bun.String,
     port: u16,
-    client_protocol: *const jsc.ZigString,
+    client_protocol: *const bun.String,
     extra_headers: NonUTF8Headers,
     target_authorization: ?[]const u8,
 ) std.mem.Allocator.Error![]u8 {
     const allocator = vm.allocator;
 
     // Check for user overrides
-    var user_host: ?jsc.ZigString = null;
-    var user_key: ?jsc.ZigString = null;
-    var user_protocol: ?jsc.ZigString = null;
+    var user_host: ?bun.String = null;
+    var user_key: ?bun.String = null;
+    var user_protocol: ?bun.String = null;
     var user_authorization: bool = false;
 
     for (extra_headers.names, extra_headers.values) |name, value| {
-        const name_slice = name.slice();
+        const name_slice = name.latin1();
         if (user_host == null and strings.eqlCaseInsensitiveASCII(name_slice, "host", true)) {
             user_host = value;
         } else if (user_key == null and strings.eqlCaseInsensitiveASCII(name_slice, "sec-websocket-key", true)) {
@@ -1200,7 +1200,7 @@ fn buildRequestBody(
     var encoded_buf: [24]u8 = undefined;
     const key = blk: {
         if (user_key) |k| {
-            const k_slice = k.slice();
+            const k_slice = k.latin1();
             // Validate that it's a valid base64-encoded 16-byte value
             var decoded_buf: [24]u8 = undefined; // Max possible decoded size
             const decoded_len = std.base64.standard.Decoder.calcSizeForSlice(k_slice) catch {
@@ -1221,10 +1221,10 @@ fn buildRequestBody(
         // Generate a new key if user key is invalid or not provided
         break :blk std.base64.standard.Encoder.encode(&encoded_buf, &vm.rareData().nextUUID().bytes);
     };
-    const protocol = if (user_protocol) |p| p.slice() else client_protocol.slice();
+    const protocol = if (user_protocol) |p| p.latin1() else client_protocol.latin1();
 
-    const pathname_ = pathname.toSlice(allocator);
-    const host_ = host.toSlice(allocator);
+    const pathname_ = pathname.toUTF8(allocator);
+    const host_ = host.toUTF8(allocator);
     defer {
         pathname_.deinit();
         host_.deinit();
@@ -1257,7 +1257,7 @@ fn buildRequestBody(
     }
 
     for (extra_headers.names, extra_headers.values) |name, value| {
-        const name_slice = name.slice();
+        const name_slice = name.latin1();
         if (strings.eqlCaseInsensitiveASCII(name_slice, "host", true) or
             strings.eqlCaseInsensitiveASCII(name_slice, "connection", true) or
             strings.eqlCaseInsensitiveASCII(name_slice, "upgrade", true) or

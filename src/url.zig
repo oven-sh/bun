@@ -942,7 +942,7 @@ pub const FormData = struct {
         pub fn toJS(this: *AsyncFormData, global: *jsc.JSGlobalObject, data: []const u8, promise: jsc.AnyPromise) bun.JSTerminated!void {
             if (this.encoding == .Multipart and this.encoding.Multipart.len == 0) {
                 log("AsnycFormData.toJS -> promise.reject missing boundary", .{});
-                try promise.reject(global, jsc.ZigString.init("FormData missing boundary").toErrorInstance(global));
+                try promise.reject(global, bun.String.static("FormData missing boundary").toErrorInstance(global));
                 return;
             }
 
@@ -986,18 +986,12 @@ pub const FormData = struct {
             field: Field,
             list: bun.BabyList(Field),
         };
-
-        pub const External = extern struct {
-            name: jsc.ZigString,
-            value: jsc.ZigString,
-            blob: ?*jsc.WebCore.Blob = null,
-        };
     };
 
     pub fn toJS(globalThis: *jsc.JSGlobalObject, input: []const u8, encoding: Encoding) !jsc.JSValue {
         switch (encoding) {
             .URLEncoded => {
-                var str = jsc.ZigString.fromUTF8(strings.withoutUTF8BOM(input));
+                const str = bun.String.borrowUTF8(strings.withoutUTF8BOM(input));
                 const result = jsc.DOMFormData.createFromURLQuery(globalThis, &str);
                 // Check if an exception was thrown (e.g., string too long)
                 if (result == .zero) {
@@ -1089,14 +1083,14 @@ pub const FormData = struct {
 
             pub fn onEntry(wrap: *@This(), name: bun.Semver.String, field: Field, buf: []const u8) void {
                 const value_str = field.value.slice(buf);
-                var key = jsc.ZigString.initUTF8(name.slice(buf));
+                const key = bun.String.borrowUTF8(name.slice(buf));
 
                 if (field.is_file) {
                     const filename_str = field.filename.slice(buf);
 
                     var blob = jsc.WebCore.Blob.create(value_str, bun.default_allocator, wrap.globalThis, false);
                     defer blob.detach();
-                    var filename = jsc.ZigString.initUTF8(filename_str);
+                    const filename = bun.String.borrowUTF8(filename_str);
                     const content_type: []const u8 = brk: {
                         if (!field.content_type.isEmpty()) {
                             break :brk field.content_type.slice(buf);
@@ -1131,7 +1125,7 @@ pub const FormData = struct {
 
                     wrap.form.appendBlob(wrap.globalThis, &key, &blob, &filename);
                 } else {
-                    var value = jsc.ZigString.initUTF8(
+                    const value = bun.String.borrowUTF8(
                         // > Each part whose `Content-Disposition` header does not
                         // > contain a `filename` parameter must be parsed into an
                         // > entry whose value is the UTF-8 decoded without BOM

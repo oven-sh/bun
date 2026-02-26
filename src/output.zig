@@ -1182,7 +1182,7 @@ pub inline fn err(error_name: anytype, comptime fmt: []const u8, args: anytype) 
         }
 
         // other zig strings we shall treat as dynamic
-        if (comptime bun.trait.isZigString(T)) {
+        if (comptime bun.trait.isStringSlice(T)) {
             break :display_name .{ error_name, false };
         }
 

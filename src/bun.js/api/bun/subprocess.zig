@@ -682,7 +682,7 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
                 const args = [_]JSValue{
                     this_value,
                     this.getExitCode(globalThis),
-                    this.getSignalCode(globalThis),
+                    this.getSignalCode(globalThis) catch return,
                     waitpid_value,
                 };
 
@@ -838,10 +838,10 @@ pub fn getExitCode(
 pub fn getSignalCode(
     this: *Subprocess,
     global: *JSGlobalObject,
-) JSValue {
+) bun.JSError!JSValue {
     if (this.process.signalCode()) |signal| {
         if (signal.name()) |name|
-            return jsc.ZigString.init(name).toJS(global)
+            return try bun.String.createUTF8ForJS(global, name)
         else
             return jsc.JSValue.jsNumber(@intFromEnum(signal));
     }

@@ -333,15 +333,15 @@ pub const prompt = struct {
 
         // 8. Let result be null if the user aborts, or otherwise the string
         //    that the user responded with.
-        var result = jsc.ZigString.init(input.items);
-        result.markUTF8();
-
+        // 8. Let result be null if the user aborts, or otherwise the string
+        //    that the user responded with.
+        //
         // 9. Invoke WebDriver BiDi user prompt closed with this, false if
         //    result is null or true otherwise, and result.
         // *  Too complex for server context.
 
         // 9. Return result.
-        return result.toJS(globalObject);
+        return bun.String.createUTF8ForJS(globalObject, input.items) catch .zero;
     }
 };
 

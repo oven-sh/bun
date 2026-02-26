@@ -18,13 +18,13 @@ pub fn toMatchSnapshot(this: *Expect, globalThis: *JSGlobalObject, callFrame: *C
     };
     defer buntest_strong.deinit();
 
-    var hint_string: ZigString = ZigString.Empty;
+    var hint_string: bun.String = .empty;
     var property_matchers: ?JSValue = null;
     switch (arguments.len) {
         0 => {},
         1 => {
             if (arguments[0].isString()) {
-                try arguments[0].toZigString(&hint_string, globalThis);
+                hint_string = try arguments[0].toString(globalThis);
             } else if (arguments[0].isObject()) {
                 property_matchers = arguments[0];
             } else {
@@ -40,14 +40,14 @@ pub fn toMatchSnapshot(this: *Expect, globalThis: *JSGlobalObject, callFrame: *C
             property_matchers = arguments[0];
 
             if (arguments[1].isString()) {
-                try arguments[1].toZigString(&hint_string, globalThis);
+                hint_string = try arguments[1].toString(globalThis);
             } else {
                 return this.throw(globalThis, "", "\n\nMatcher error: Expected second argument to be a string\n", .{});
             }
         },
     }
 
-    var hint = hint_string.toSlice(default_allocator);
+    var hint = hint_string.toUTF8WithoutRef(default_allocator);
     defer hint.deinit();
 
     const value: JSValue = try this.getValue(globalThis, thisValue, "toMatchSnapshot", "<green>properties<r><d>, <r>hint");
@@ -56,7 +56,6 @@ pub fn toMatchSnapshot(this: *Expect, globalThis: *JSGlobalObject, callFrame: *C
 }
 
 const bun = @import("bun");
-const ZigString = bun.ZigString;
 const default_allocator = bun.default_allocator;
 
 const jsc = bun.jsc;

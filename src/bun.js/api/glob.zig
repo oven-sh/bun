@@ -138,7 +138,7 @@ pub const WalkTask = struct {
         pub fn toJS(this: Err, globalThis: *JSGlobalObject) bun.JSError!JSValue {
             return switch (this) {
                 .syscall => |err| try err.toJS(globalThis),
-                .unknown => |err| ZigString.fromBytes(@errorName(err)).toJS(globalThis),
+                .unknown => |err| try bun.String.createUTF8ForJS(globalThis, @errorName(err)),
             };
         }
     };
@@ -401,5 +401,4 @@ const GlobWalker = bun.glob.BunGlobWalker;
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
-const ZigString = jsc.ZigString;
 const ArgumentsSlice = jsc.CallFrame.ArgumentsSlice;

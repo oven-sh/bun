@@ -15,19 +15,18 @@ pub const DeferredError = struct {
         };
     }
 
-    pub fn toError(this: *const DeferredError, globalThis: *JSGlobalObject) JSValue {
+    pub fn toError(this: *const DeferredError, globalThis: *JSGlobalObject) bun.JSError!JSValue {
         const err = switch (this.kind) {
             .plainerror => this.msg.toErrorInstance(globalThis),
             .typeerror => this.msg.toTypeErrorInstance(globalThis),
             .rangeerror => this.msg.toRangeErrorInstance(globalThis),
         };
-        err.put(globalThis, bun.String.static("code"), ZigString.init(@tagName(this.code)).toJS(globalThis));
+        err.put(globalThis, bun.String.static("code"), try bun.String.createUTF8ForJS(globalThis, @tagName(this.code)));
         return err;
     }
 };
 
 const bun = @import("bun");
-const ZigString = @import("./ZigString.zig").ZigString;
 
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;

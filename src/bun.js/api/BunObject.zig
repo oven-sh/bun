@@ -362,7 +362,7 @@ pub fn which(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
         cwd_str.slice(),
         bin_str.slice(),
     )) |bin_path| {
-        return ZigString.init(bin_path).withEncoding().toJS(globalThis);
+        return try bun.String.createUTF8ForJS(globalThis, bin_path);
     }
 
     return jsc.JSValue.jsNull();
@@ -481,10 +481,7 @@ pub fn inspect(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.J
 
     // we are going to always clone to keep things simple for now
     // the common case here will be stack-allocated, so it should be fine
-    var out = ZigString.init(array.written()).withEncoding();
-    const ret = out.toJS(globalThis);
-
-    return ret;
+    return try bun.String.createUTF8ForJS(globalThis, array.written());
 }
 
 export fn Bun__inspect(globalThis: *JSGlobalObject, value: JSValue) bun.String {
@@ -520,8 +517,7 @@ export fn Bun__inspect_singleline(globalThis: *JSGlobalObject, value: JSValue) b
 
 pub fn getInspect(globalObject: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
     const fun = jsc.JSFunction.create(globalObject, "inspect", inspect, 2, .{});
-    var str = ZigString.init("nodejs.util.inspect.custom");
-    fun.put(globalObject, bun.String.static("custom"), jsc.JSValue.symbolFor(globalObject, &str));
+    fun.put(globalObject, bun.String.static("custom"), jsc.JSValue.symbolFor(globalObject, &bun.String.static("nodejs.util.inspect.custom")));
     fun.put(globalObject, bun.String.static("table"), jsc.JSFunction.create(globalObject, "table", inspectTable, 3, .{}));
     return fun;
 }
@@ -554,11 +550,11 @@ pub fn registerMacro(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFram
 }
 
 pub fn getCWD(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
-    return ZigString.init(VirtualMachine.get().transpiler.fs.top_level_dir).toJS(globalThis);
+    return bun.String.createUTF8ForJS(globalThis, VirtualMachine.get().transpiler.fs.top_level_dir) catch .zero;
 }
 
 pub fn getOrigin(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
-    return ZigString.init(VirtualMachine.get().origin.origin).toJS(globalThis);
+    return bun.String.createUTF8ForJS(globalThis, VirtualMachine.get().origin.origin) catch .zero;
 }
 
 pub fn enableANSIColors(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
@@ -615,7 +611,7 @@ fn getMain(globalThis: *jsc.JSGlobalObject) callconv(jsc.conv) jsc.JSValue {
         return vm.main_resolved_path.toJS(globalThis) catch .zero;
     }
 
-    return ZigString.init(vm.main).toJS(globalThis);
+    return bun.String.createUTF8ForJS(globalThis, vm.main) catch .zero;
 }
 
 fn setMain(global_this: *jsc.JSGlobalObject, new_value: JSValue) callconv(jsc.conv) bool {
@@ -820,7 +816,7 @@ fn doResolve(globalThis: *jsc.JSGlobalObject, arguments: []const JSValue) bun.JS
 
 fn doResolveWithArgs(ctx: *jsc.JSGlobalObject, specifier: bun.String, from: bun.String, is_esm: bool, comptime is_file_path: bool, is_user_require_resolve: bool) bun.JSError!jsc.JSValue {
     var errorable: ErrorableString = undefined;
-    var query_string = ZigString.Empty;
+    var query_string = bun.String.empty;
 
     const specifier_decoded = if (specifier.hasPrefixComptime("file://"))
         bun.jsc.URL.pathFromFileURL(specifier)
@@ -843,7 +839,7 @@ fn doResolveWithArgs(ctx: *jsc.JSGlobalObject, specifier: bun.String, from: bun.
         return ctx.throwValue(errorable.result.err.value);
     }
 
-    if (query_string.len > 0) {
+    if (!query_string.isEmpty()) {
         var stack = std.heap.stackFallback(1024, ctx.allocator());
         const allocator = stack.get();
         var arraylist = std.array_list.Managed(u8).initCapacity(allocator, 1024) catch unreachable;
@@ -853,7 +849,7 @@ fn doResolveWithArgs(ctx: *jsc.JSGlobalObject, specifier: bun.String, from: bun.
             query_string,
         });
 
-        return ZigString.initUTF8(arraylist.items).toJS(ctx);
+        return try bun.String.createUTF8ForJS(ctx, arraylist.items);
     }
 
     return errorable.result.value.toJS(ctx);
@@ -1109,13 +1105,16 @@ pub export fn Bun__escapeHTML16(globalObject: *jsc.JSGlobalObject, input_value: 
     assert(len > 0);
     const input_slice = ptr[0..len];
     const escaped = strings.escapeHTMLForUTF16Input(globalObject.bunVM().allocator, input_slice) catch {
-        return globalObject.throwValue(ZigString.init("Out of memory").toErrorInstance(globalObject)) catch return .zero;
+        return globalObject.throwValue(bun.String.static("Out of memory").toErrorInstance(globalObject)) catch return .zero;
     };
 
     return switch (escaped) {
-        .static => |val| ZigString.init(val).toJS(globalObject),
+        .static => |val| bun.String.createUTF8ForJS(globalObject, val) catch .zero,
         .original => input_value,
-        .allocated => |escaped_html| ZigString.from16(escaped_html.ptr, escaped_html.len).toExternalValue(globalObject),
+        .allocated => |escaped_html| blk: {
+            var out_str = bun.String.createExternalGloballyAllocated(.utf16, escaped_html);
+            break :blk out_str.transferToJS(globalObject) catch .zero;
+        },
     };
 }
 
@@ -1127,12 +1126,12 @@ pub export fn Bun__escapeHTML8(globalObject: *jsc.JSGlobalObject, input_value: J
     const allocator = if (input_slice.len <= 32) stack_allocator.get() else stack_allocator.fallback_allocator;
 
     const escaped = strings.escapeHTMLForLatin1Input(allocator, input_slice) catch {
-        return globalObject.throwValue(ZigString.init("Out of memory").toErrorInstance(globalObject)) catch return .zero;
+        return globalObject.throwValue(bun.String.static("Out of memory").toErrorInstance(globalObject)) catch return .zero;
     };
 
     switch (escaped) {
         .static => |val| {
-            return ZigString.init(val).toJS(globalObject);
+            return bun.String.createUTF8ForJS(globalObject, val) catch .zero;
         },
         .original => return input_value,
         .allocated => |escaped_html| {
@@ -1151,12 +1150,14 @@ pub export fn Bun__escapeHTML8(globalObject: *jsc.JSGlobalObject, input_value: J
             }
 
             if (input_slice.len <= 32) {
-                const zig_str = ZigString.init(escaped_html);
-                const out = zig_str.toAtomicValue(globalObject);
-                return out;
+                // escaped_html is in the stack fallback buffer — must copy
+                var out_str = bun.String.cloneLatin1(escaped_html);
+                return out_str.transferToJS(globalObject) catch .zero;
             }
 
-            return ZigString.init(escaped_html).toExternalValue(globalObject);
+            // escaped_html is heap-allocated by bun.default_allocator
+            var out_str = bun.String.createExternalGloballyAllocated(.latin1, escaped_html);
+            return out_str.transferToJS(globalObject) catch .zero;
         },
     }
 }
@@ -1428,7 +1429,7 @@ pub const EnvironmentVariables = struct {
         return item.len;
     }
 
-    pub export fn Bun__getEnvValue(globalObject: *jsc.JSGlobalObject, name: *ZigString, value: *ZigString) bool {
+    pub export fn Bun__getEnvValue(globalObject: *jsc.JSGlobalObject, name: *bun.String, value: *bun.String) bool {
         if (getEnvValue(globalObject, name.*)) |val| {
             value.* = val;
             return true;
@@ -1437,22 +1438,12 @@ pub const EnvironmentVariables = struct {
         return false;
     }
 
-    pub fn getEnvNames(globalObject: *jsc.JSGlobalObject, names: []ZigString) usize {
+    pub fn getEnvValue(globalObject: *jsc.JSGlobalObject, name: bun.String) ?bun.String {
         var vm = globalObject.bunVM();
-        const keys = vm.transpiler.env.map.map.keys();
-        const len = @min(names.len, keys.len);
-        for (keys[0..len], names[0..len]) |key, *name| {
-            name.* = ZigString.initUTF8(key);
-        }
-        return len;
-    }
-
-    pub fn getEnvValue(globalObject: *jsc.JSGlobalObject, name: ZigString) ?ZigString {
-        var vm = globalObject.bunVM();
-        var sliced = name.toSlice(vm.allocator);
+        var sliced = name.toUTF8(vm.allocator);
         defer sliced.deinit();
         const value = vm.transpiler.env.get(sliced.slice()) orelse return null;
-        return ZigString.initUTF8(value);
+        return bun.String.borrowUTF8(value);
     }
 };
 
@@ -1606,7 +1597,7 @@ pub const JSZlib = struct {
 
                 reader.readAll(true) catch {
                     defer reader.deinit();
-                    return globalThis.throwValue(ZigString.init(reader.errorMessage() orelse "Zlib returned an error").toErrorInstance(globalThis));
+                    return globalThis.throwValue(bun.String.borrowUTF8(reader.errorMessage() orelse "Zlib returned an error").toErrorInstance(globalThis));
                 };
                 reader.list = .{ .items = reader.list.items };
                 reader.list.capacity = reader.list.items.len;
@@ -1713,7 +1704,7 @@ pub const JSZlib = struct {
 
                 reader.readAll() catch {
                     defer reader.deinit();
-                    return globalThis.throwValue(ZigString.init(reader.errorMessage() orelse "Zlib returned an error").toErrorInstance(globalThis));
+                    return globalThis.throwValue(bun.String.borrowUTF8(reader.errorMessage() orelse "Zlib returned an error").toErrorInstance(globalThis));
                 };
                 reader.list = .{ .items = bun.handleOom(reader.list.toOwnedSlice(allocator)) };
                 reader.list.capacity = reader.list.items.len;
@@ -2089,7 +2080,6 @@ const JSPromise = bun.jsc.JSPromise;
 const JSValue = bun.jsc.JSValue;
 const VirtualMachine = jsc.VirtualMachine;
 const WebCore = bun.jsc.WebCore;
-const ZigString = bun.jsc.ZigString;
 const host_fn = bun.jsc.host_fn;
 
 const JSBundler = bun.jsc.API.JSBundler;

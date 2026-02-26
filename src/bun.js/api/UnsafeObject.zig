@@ -45,14 +45,11 @@ pub fn arrayBufferToString(
     const array_buffer = jsc.ArrayBuffer.fromTypedArray(globalThis, args[0]);
     switch (array_buffer.typed_array_type) {
         .Uint16Array, .Int16Array => {
-            var zig_str = ZigString.init("");
-            zig_str._unsafe_ptr_do_not_use = @as([*]const u8, @ptrCast(@alignCast(array_buffer.ptr)));
-            zig_str.len = array_buffer.len;
-            zig_str.markUTF16();
-            return zig_str.toJS(globalThis);
+            const ptr: [*]const u16 = @ptrCast(@alignCast(array_buffer.ptr));
+            return bun.String.borrowUTF16(ptr[0..array_buffer.len]).toJS(globalThis);
         },
         else => {
-            return ZigString.init(array_buffer.slice()).toJS(globalThis);
+            return bun.String.initLatin1OrASCIIView(array_buffer.slice()).toJS(globalThis);
         },
     }
 }
@@ -73,4 +70,3 @@ const std = @import("std");
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
-const ZigString = jsc.ZigString;

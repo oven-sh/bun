@@ -902,16 +902,15 @@ pub const JSBundler = struct {
                         return globalThis.throwInvalidArguments("define \"{f}\" must be a JSON string", .{prop});
                     }
 
-                    var val = jsc.ZigString.init("");
-                    try property_value.toZigString(&val, globalThis);
-                    if (val.len == 0) {
-                        val = jsc.ZigString.fromUTF8("\"\"");
+                    var val = try property_value.toString(globalThis);
+                    if (val.isEmpty()) {
+                        val = bun.String.static("\"\"");
                     }
 
                     const key = try prop.toOwnedSlice(bun.default_allocator);
 
                     // value is always cloned
-                    const value = val.toSlice(bun.default_allocator);
+                    const value = val.toUTF8WithoutRef(bun.default_allocator);
                     defer value.deinit();
 
                     // .insert clones the value, but not the key
@@ -1813,7 +1812,7 @@ pub const BuildArtifact = struct {
     pub fn getType(
         this: *BuildArtifact,
         globalThis: *jsc.JSGlobalObject,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         return @call(bun.callmod_inline, Blob.getType, .{ &this.blob, globalThis });
     }
 
@@ -1832,36 +1831,36 @@ pub const BuildArtifact = struct {
     pub fn getPath(
         this: *BuildArtifact,
         globalThis: *jsc.JSGlobalObject,
-    ) JSValue {
-        return ZigString.fromUTF8(this.path).toJS(globalThis);
+    ) bun.JSError!JSValue {
+        return try bun.String.createUTF8ForJS(globalThis, this.path);
     }
 
     pub fn getLoader(
         this: *BuildArtifact,
         globalThis: *jsc.JSGlobalObject,
-    ) JSValue {
-        return ZigString.fromUTF8(@tagName(this.loader)).toJS(globalThis);
+    ) bun.JSError!JSValue {
+        return try bun.String.createUTF8ForJS(globalThis, @tagName(this.loader));
     }
 
     pub fn getHash(
         this: *BuildArtifact,
         globalThis: *jsc.JSGlobalObject,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         var buf: [512]u8 = undefined;
         const out = std.fmt.bufPrint(&buf, "{f}", .{bun.fmt.truncatedHash32(this.hash)}) catch @panic("Unexpected");
-        return ZigString.init(out).toJS(globalThis);
+        return try bun.String.createUTF8ForJS(globalThis, out);
     }
 
     pub fn getSize(this: *BuildArtifact, globalObject: *jsc.JSGlobalObject) JSValue {
         return @call(bun.callmod_inline, Blob.getSize, .{ &this.blob, globalObject });
     }
 
-    pub fn getMimeType(this: *BuildArtifact, globalObject: *jsc.JSGlobalObject) JSValue {
+    pub fn getMimeType(this: *BuildArtifact, globalObject: *jsc.JSGlobalObject) bun.JSError!JSValue {
         return @call(bun.callmod_inline, Blob.getType, .{ &this.blob, globalObject });
     }
 
-    pub fn getOutputKind(this: *BuildArtifact, globalObject: *jsc.JSGlobalObject) JSValue {
-        return ZigString.init(@tagName(this.output_kind)).toJS(globalObject);
+    pub fn getOutputKind(this: *BuildArtifact, globalObject: *jsc.JSGlobalObject) bun.JSError!JSValue {
+        return try bun.String.createUTF8ForJS(globalObject, @tagName(this.output_kind));
     }
 
     pub fn getSourceMap(this: *BuildArtifact, _: *jsc.JSGlobalObject) JSValue {
@@ -2009,5 +2008,4 @@ const api = bun.schema.api;
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
-const ZigString = jsc.ZigString;
 const Blob = jsc.WebCore.Blob;

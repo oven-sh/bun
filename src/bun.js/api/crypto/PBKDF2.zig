@@ -255,7 +255,6 @@ const CallFrame = jsc.CallFrame;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
 const VirtualMachine = jsc.VirtualMachine;
-const ZigString = jsc.ZigString;
 const createCryptoError = jsc.API.Bun.Crypto.createCryptoError;
 
 const EVP = jsc.API.Bun.Crypto.EVP;

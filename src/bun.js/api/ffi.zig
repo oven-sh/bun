@@ -577,7 +577,7 @@ pub const FFI = struct {
                     items.deinit();
                     return globalThis.throwInvalidArgumentTypeValue(property, "array of strings", val);
                 }
-                const str = try val.getZigString(globalThis);
+                const str = try val.toString(globalThis);
                 if (str.isEmpty()) continue;
                 bun.handleOom(items.append(bun.handleOom(str.toOwnedSliceZ(bun.default_allocator))));
             }
@@ -590,7 +590,7 @@ pub const FFI = struct {
             if (!value.isString()) {
                 return globalThis.throwInvalidArgumentTypeValue(property, "array of strings", value);
             }
-            const str = try value.getZigString(globalThis);
+            const str = try value.toString(globalThis);
             if (str.isEmpty()) return .{};
             var items = std.array_list.Managed([:0]const u8).init(bun.default_allocator);
             bun.handleOom(items.append(bun.handleOom(str.toOwnedSliceZ(bun.default_allocator))));
@@ -680,7 +680,7 @@ pub const FFI = struct {
                     return globalThis.throwInvalidArgumentTypeValue("flags", "string", flags_value);
                 }
 
-                const str = try flags_value.getZigString(globalThis);
+                const str = try flags_value.toString(globalThis);
                 if (!str.isEmpty()) {
                     compile_c.flags = bun.handleOom(str.toOwnedSliceZ(allocator));
                 }
@@ -701,8 +701,8 @@ pub const FFI = struct {
                     var owned_value: [:0]const u8 = "";
                     if (!iter.value.isUndefinedOrNull()) {
                         if (iter.value.isString()) {
-                            const value = try iter.value.getZigString(globalThis);
-                            if (value.len > 0) {
+                            const value = try iter.value.toString(globalThis);
+                            if (!value.isEmpty()) {
                                 owned_value = bun.handleOom(value.toOwnedSliceZ(allocator));
                             }
                         }
@@ -737,12 +737,12 @@ pub const FFI = struct {
                     if (!value.isString()) {
                         return globalThis.throwInvalidArgumentTypeValue("source", "array of strings", value);
                     }
-                    try compile_c.source.files.append(bun.default_allocator, try (try value.getZigString(globalThis)).toOwnedSliceZ(bun.default_allocator));
+                    try compile_c.source.files.append(bun.default_allocator, try (try value.toString(globalThis)).toOwnedSliceZ(bun.default_allocator));
                 }
             } else if (!source_value.isString()) {
                 return globalThis.throwInvalidArgumentTypeValue("source", "string", source_value);
             } else {
-                const source_path = try (try source_value.getZigString(globalThis)).toOwnedSliceZ(bun.default_allocator);
+                const source_path = try (try source_value.toString(globalThis)).toOwnedSliceZ(bun.default_allocator);
                 compile_c.source.file = source_path;
             }
         }
@@ -793,7 +793,7 @@ pub const FFI = struct {
             };
             switch (function.step) {
                 .failed => |err| {
-                    const res = ZigString.init(err.msg).toErrorInstance(globalThis);
+                    const res = bun.String.borrowUTF8(err.msg).toErrorInstance(globalThis);
                     return globalThis.throwValue(res);
                 },
                 .pending => {
@@ -853,7 +853,7 @@ pub const FFI = struct {
         var function: Function = .{ .allocator = allocator };
         var func = &function;
 
-        if (generateSymbolForFunction(globalThis, allocator, interface, func) catch ZigString.init("Out of memory").toErrorInstance(globalThis)) |val| {
+        if (generateSymbolForFunction(globalThis, allocator, interface, func) catch bun.String.static("Out of memory").toErrorInstance(globalThis)) |val| {
             return val;
         }
 
@@ -861,10 +861,10 @@ pub const FFI = struct {
         func.base_name = "";
         js_callback.ensureStillAlive();
 
-        func.compileCallback(globalThis, js_callback, func.threadsafe) catch return ZigString.init("Out of memory").toErrorInstance(globalThis);
+        func.compileCallback(globalThis, js_callback, func.threadsafe) catch return bun.String.static("Out of memory").toErrorInstance(globalThis);
         switch (func.step) {
             .failed => |err| {
-                const message = ZigString.init(err.msg).toErrorInstance(globalThis);
+                const message = bun.String.borrowUTF8(err.msg).toErrorInstance(globalThis);
 
                 func.deinit(globalThis);
 
@@ -872,15 +872,15 @@ pub const FFI = struct {
             },
             .pending => {
                 func.deinit(globalThis);
-                return ZigString.init("Failed to compile, but not sure why. Please report this bug").toErrorInstance(globalThis);
+                return bun.String.static("Failed to compile, but not sure why. Please report this bug").toErrorInstance(globalThis);
             },
             .compiled => {
                 const function_ = bun.default_allocator.create(Function) catch unreachable;
                 function_.* = func.*;
                 return JSValue.createObject2(
                     globalThis,
-                    ZigString.static("ptr"),
-                    ZigString.static("ctx"),
+                    &bun.String.static("ptr"),
+                    &bun.String.static("ctx"),
                     jsc.JSValue.fromPtrAddress(@intFromPtr(function_.step.compiled.ptr)),
                     jsc.JSValue.fromPtrAddress(@intFromPtr(function_)),
                 );
@@ -918,7 +918,7 @@ pub const FFI = struct {
         return .js_undefined;
     }
 
-    pub fn printCallback(global: *JSGlobalObject, object: jsc.JSValue) JSValue {
+    pub fn printCallback(global: *JSGlobalObject, object: jsc.JSValue) bun.JSError!JSValue {
         jsc.markBinding(@src());
         const allocator = VirtualMachine.get().allocator;
 
@@ -927,7 +927,7 @@ pub const FFI = struct {
         }
 
         var function: Function = .{ .allocator = allocator };
-        if (generateSymbolForFunction(global, allocator, object, &function) catch ZigString.init("Out of memory").toErrorInstance(global)) |val| {
+        if (generateSymbolForFunction(global, allocator, object, &function) catch bun.String.static("Out of memory").toErrorInstance(global)) |val| {
             return val;
         }
 
@@ -938,9 +938,9 @@ pub const FFI = struct {
         function.base_name = "my_callback_function";
 
         function.printCallbackSourceCode(null, null, &writer) catch {
-            return ZigString.init("Error while printing code").toErrorInstance(global);
+            return bun.String.static("Error while printing code").toErrorInstance(global);
         };
-        return ZigString.init(arraylist.items).toJS(global);
+        return try bun.String.createUTF8ForJS(global, arraylist.items);
     }
 
     pub fn print(global: *JSGlobalObject, object: jsc.JSValue, is_callback_val: ?jsc.JSValue) bun.JSError!JSValue {
@@ -984,7 +984,7 @@ pub const FFI = struct {
                 }
 
                 symbols.clearAndFree(allocator);
-                return ZigString.init("Error while printing code").toErrorInstance(global);
+                return bun.String.static("Error while printing code").toErrorInstance(global);
             };
             strs.appendAssumeCapacity(bun.String.cloneUTF8(arraylist.items));
         }
@@ -1008,14 +1008,15 @@ pub const FFI = struct {
         return global.toInvalidArguments("Expected an options object with symbol names", .{});
     }
 
-    pub fn open(global: *JSGlobalObject, name_str: ZigString, object_value: jsc.JSValue) jsc.JSValue {
+    pub fn open(global: *JSGlobalObject, name_str: bun.String, object_value: jsc.JSValue) jsc.JSValue {
+        defer name_str.deref();
         if (comptime !Environment.enable_tinycc) {
             global.throw("bun:ffi dlopen() is not available in this build (TinyCC is disabled)", .{}) catch {};
             return .zero;
         }
         jsc.markBinding(@src());
         const vm = VirtualMachine.get();
-        var name_slice = name_str.toSlice(bun.default_allocator);
+        var name_slice = name_str.toUTF8(bun.default_allocator);
         defer name_slice.deinit();
 
         if (object_value.isEmptyOrUndefinedOrNull()) return invalidOptionsArg(global);
@@ -1134,7 +1135,7 @@ pub const FFI = struct {
                         other_function.deinit(global);
                     };
 
-                    const res = ZigString.init(err.msg).toErrorInstance(global);
+                    const res = bun.String.borrowUTF8(err.msg).toErrorInstance(global);
                     symbols.clearAndFree(bun.default_allocator);
                     dylib.close();
                     return res;
@@ -1145,7 +1146,7 @@ pub const FFI = struct {
                     }
                     symbols.clearAndFree(bun.default_allocator);
                     dylib.close();
-                    return ZigString.init("Failed to compile (nothing happend!)").toErrorInstance(global);
+                    return bun.String.static("Failed to compile (nothing happend!)").toErrorInstance(global);
                 },
                 .compiled => |*compiled| {
                     const str = bun.String.init(bun.asByteSlice(function_name));
@@ -1239,7 +1240,7 @@ pub const FFI = struct {
                         value.arg_types.clearAndFree(allocator);
                     }
 
-                    const res = ZigString.init(err.msg).toErrorInstance(global);
+                    const res = bun.String.borrowUTF8(err.msg).toErrorInstance(global);
                     function.deinit(global);
                     symbols.clearAndFree(allocator);
                     return res;
@@ -1250,7 +1251,7 @@ pub const FFI = struct {
                         value.arg_types.clearAndFree(allocator);
                     }
                     symbols.clearAndFree(allocator);
-                    return ZigString.static("Failed to compile (nothing happend!)").toErrorInstance(global);
+                    return bun.String.static("Failed to compile (nothing happend!)").toErrorInstance(global);
                 },
                 .compiled => |*compiled| {
                     const name = &bun.String.init(bun.asByteSlice(function_name));
@@ -1286,7 +1287,7 @@ pub const FFI = struct {
 
         if (try value.getOwn(global, "args")) |args| {
             if (args.isEmptyOrUndefinedOrNull() or !args.jsType().isArray()) {
-                return ZigString.static("Expected an object with \"args\" as an array").toErrorInstance(global);
+                return bun.String.static("Expected an object with \"args\" as an array").toErrorInstance(global);
             }
 
             var array = try args.arrayIterator(global);
@@ -1295,7 +1296,7 @@ pub const FFI = struct {
             while (try array.next()) |val| {
                 if (val.isEmptyOrUndefinedOrNull()) {
                     abi_types.clearAndFree(allocator);
-                    return ZigString.static("param must be a string (type name) or number").toErrorInstance(global);
+                    return bun.String.static("param must be a string (type name) or number").toErrorInstance(global);
                 }
 
                 if (val.isAnyInt()) {
@@ -1307,14 +1308,14 @@ pub const FFI = struct {
                         },
                         else => {
                             abi_types.clearAndFree(allocator);
-                            return ZigString.static("invalid ABI type").toErrorInstance(global);
+                            return bun.String.static("invalid ABI type").toErrorInstance(global);
                         },
                     }
                 }
 
                 if (!val.jsType().isStringLike()) {
                     abi_types.clearAndFree(allocator);
-                    return ZigString.static("param must be a string (type name) or number").toErrorInstance(global);
+                    return bun.String.static("param must be a string (type name) or number").toErrorInstance(global);
                 }
 
                 var type_name = try val.toSlice(global, allocator);
@@ -1344,7 +1345,7 @@ pub const FFI = struct {
                     },
                     else => {
                         abi_types.clearAndFree(allocator);
-                        return ZigString.static("invalid ABI type").toErrorInstance(global);
+                        return bun.String.static("invalid ABI type").toErrorInstance(global);
                     },
                 }
             }
@@ -1359,17 +1360,17 @@ pub const FFI = struct {
 
         if (return_type == ABIType.napi_env) {
             abi_types.clearAndFree(allocator);
-            return ZigString.static("Cannot return napi_env to JavaScript").toErrorInstance(global);
+            return bun.String.static("Cannot return napi_env to JavaScript").toErrorInstance(global);
         }
 
         if (return_type == .buffer) {
             abi_types.clearAndFree(allocator);
-            return ZigString.static("Cannot return a buffer to JavaScript (since byteLength and byteOffset are unknown)").toErrorInstance(global);
+            return bun.String.static("Cannot return a buffer to JavaScript (since byteLength and byteOffset are unknown)").toErrorInstance(global);
         }
 
         if (function.threadsafe and return_type != ABIType.void) {
             abi_types.clearAndFree(allocator);
-            return ZigString.static("Threadsafe functions must return void").toErrorInstance(global);
+            return bun.String.static("Threadsafe functions must return void").toErrorInstance(global);
         }
 
         function.* = Function{
@@ -2453,4 +2454,3 @@ const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
 const VM = bun.jsc.VM;
 const VirtualMachine = jsc.VirtualMachine;
-const ZigString = bun.jsc.ZigString;

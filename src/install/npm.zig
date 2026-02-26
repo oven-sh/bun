@@ -1332,7 +1332,6 @@ pub const PackageManifest = struct {
         const JSValue = jsc.JSValue;
         const JSGlobalObject = jsc.JSGlobalObject;
         const CallFrame = jsc.CallFrame;
-        const ZigString = jsc.ZigString;
 
         pub fn generate(global: *JSGlobalObject) JSValue {
             const obj = JSValue.createEmptyObject(global, 1);

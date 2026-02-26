@@ -2614,7 +2614,6 @@ pub const bindings = struct {
     const JSValue = jsc.JSValue;
     const JSGlobalObject = jsc.JSGlobalObject;
     const CallFrame = jsc.CallFrame;
-    const ZigString = jsc.ZigString;
     const String = bun.String;
     const JSArray = jsc.JSArray;
     const JSObject = jsc.JSObject;

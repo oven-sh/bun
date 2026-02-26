@@ -1,6 +1,5 @@
 pub const bun_install_js_bindings = struct {
     const JSValue = jsc.JSValue;
-    const ZigString = jsc.ZigString;
     const JSGlobalObject = jsc.JSGlobalObject;
 
     pub fn generate(global: *JSGlobalObject) JSValue {

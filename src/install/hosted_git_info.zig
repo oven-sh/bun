@@ -256,7 +256,9 @@ pub const HostedGitInfo = struct {
         }
 
         // Shortcut path: github:user/repo, gitlab:user/repo, etc. (from-url.js line 68-96)
-        const pathname_owned = try parsed.url.pathname().toOwnedSlice(allocator);
+        const pathname_str = parsed.url.pathname();
+        defer pathname_str.deref();
+        const pathname_owned = try pathname_str.toOwnedSlice(allocator);
         defer allocator.free(pathname_owned);
 
         // Strip leading / (from-url.js line 69)
@@ -1136,7 +1138,9 @@ const HostProvider = enum {
                     allocator: std.mem.Allocator,
                     url: *jsc.URL,
                 ) error{ OutOfMemory, InvalidURL }!?Result {
-                    const pathname_owned = try url.pathname().toOwnedSlice(allocator);
+                    const pathname_str = url.pathname();
+                    defer pathname_str.deref();
+                    const pathname_owned = try pathname_str.toOwnedSlice(allocator);
                     defer allocator.free(pathname_owned);
                     const pathname = bun.strings.trimPrefixComptime(u8, pathname_owned, "/");
 
@@ -1202,7 +1206,9 @@ const HostProvider = enum {
                     allocator: std.mem.Allocator,
                     url: *jsc.URL,
                 ) error{ InvalidURL, OutOfMemory }!?Result {
-                    const pathname_owned = try url.pathname().toOwnedSlice(allocator);
+                    const pathname_str = url.pathname();
+                    defer pathname_str.deref();
+                    const pathname_owned = try pathname_str.toOwnedSlice(allocator);
                     defer allocator.free(pathname_owned);
                     const pathname = bun.strings.trimPrefixComptime(u8, pathname_owned, "/");
 
@@ -1258,7 +1264,9 @@ const HostProvider = enum {
                     allocator: std.mem.Allocator,
                     url: *jsc.URL,
                 ) error{ OutOfMemory, InvalidURL }!?Result {
-                    const pathname_owned = try url.pathname().toOwnedSlice(allocator);
+                    const pathname_str = url.pathname();
+                    defer pathname_str.deref();
+                    const pathname_owned = try pathname_str.toOwnedSlice(allocator);
                     defer allocator.free(pathname_owned);
                     const pathname = bun.strings.trimPrefixComptime(u8, pathname_owned, "/");
 
@@ -1312,7 +1320,9 @@ const HostProvider = enum {
                     allocator: std.mem.Allocator,
                     url: *jsc.URL,
                 ) error{ OutOfMemory, InvalidURL }!?Result {
-                    const pathname_owned = try url.pathname().toOwnedSlice(allocator);
+                    const pathname_str = url.pathname();
+                    defer pathname_str.deref();
+                    const pathname_owned = try pathname_str.toOwnedSlice(allocator);
                     defer allocator.free(pathname_owned);
                     const pathname = bun.strings.trimPrefixComptime(u8, pathname_owned, "/");
 
@@ -1379,7 +1389,9 @@ const HostProvider = enum {
                     allocator: std.mem.Allocator,
                     url: *jsc.URL,
                 ) error{ InvalidURL, OutOfMemory }!?Result {
-                    const pathname_owned = try url.pathname().toOwnedSlice(allocator);
+                    const pathname_str = url.pathname();
+                    defer pathname_str.deref();
+                    const pathname_owned = try pathname_str.toOwnedSlice(allocator);
                     defer allocator.free(pathname_owned);
                     const pathname = bun.strings.trimPrefixComptime(u8, pathname_owned, "/");
 

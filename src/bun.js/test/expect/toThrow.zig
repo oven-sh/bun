@@ -119,7 +119,8 @@ pub fn toThrow(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame
 
         if (!result.isInstanceOf(globalThis, expected_value)) return .js_undefined;
 
-        var expected_class = ZigString.Empty;
+        var expected_class: bun.String = .empty;
+        defer expected_class.deref();
         try expected_value.getClassName(globalThis, &expected_class);
         const received_message: JSValue = (try result.fastGet(globalThis, .message)) orelse .js_undefined;
         return this.throw(globalThis, signature, "\n\nExpected constructor: not <green>{f}<r>\n\nReceived message: <red>{f}<r>\n", .{ expected_class, received_message.toFmt(&formatter) });
@@ -242,8 +243,10 @@ pub fn toThrow(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame
         // error: received error not instance of received error constructor
         var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
         defer formatter.deinit();
-        var expected_class = ZigString.Empty;
-        var received_class = ZigString.Empty;
+        var expected_class: bun.String = .empty;
+        defer expected_class.deref();
+        var received_class: bun.String = .empty;
+        defer received_class.deref();
         try expected_value.getClassName(globalThis, &expected_class);
         try result.getClassName(globalThis, &received_class);
         const signature = comptime getSignature("toThrow", "<green>expected<r>", false);
@@ -299,13 +302,13 @@ pub fn toThrow(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame
     }
 
     const expected_fmt = "\n\nExpected constructor: <green>{f}<r>\n\n" ++ received_line;
-    var expected_class = ZigString.Empty;
+    var expected_class: bun.String = .empty;
+    defer expected_class.deref();
     try expected_value.getClassName(globalThis, &expected_class);
     return this.throw(globalThis, signature, expected_fmt, .{ expected_class, result.toFmt(&formatter) });
 }
 
 const bun = @import("bun");
-const ZigString = bun.ZigString;
 const assert = bun.assert;
 const strings = bun.strings;
 

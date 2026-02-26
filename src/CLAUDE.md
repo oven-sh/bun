@@ -123,12 +123,12 @@ Bun handles UTF-8, Latin-1, and UTF-16/WTF-16 because JSC uses Latin-1 and UTF-1
 
 ### `bun.String` (`src/string.zig`)
 
-Bridges Zig and JavaScriptCore. Prefer over `ZigString` in new code.
+Bridges Zig and JavaScriptCore.
 
 ```zig
 const s = bun.String.cloneUTF8(utf8_slice);    // copies into WTFStringImpl
 const s = bun.String.borrowUTF8(utf8_slice);   // no copy, caller keeps alive
-const utf8 = s.toUTF8(allocator);              // ZigString.Slice
+const utf8 = s.toUTF8(allocator);              // bun.String.Slice
 defer utf8.deinit();
 const js_value = s.toJS(globalObject);
 

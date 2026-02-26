@@ -60,9 +60,9 @@ pub fn toAnyBlob(this: *Store) ?Blob.Any {
     return null;
 }
 
-pub fn external(ptr: ?*anyopaque, _: ?*anyopaque, _: usize) callconv(.c) void {
-    if (ptr == null) return;
-    var this = bun.cast(*Store, ptr);
+/// Free callback for external strings backed by this Store.
+/// Signature matches bun.String.ExternalStringImplFreeFunction(*Store).
+pub fn external(this: *Store, _: *anyopaque, _: u32) callconv(.c) void {
     this.deref();
 }
 pub fn initS3WithReferencedCredentials(pathlike: node.PathLike, mime_type: ?MimeType, credentials: *bun.S3.S3Credentials, allocator: std.mem.Allocator) !*Store {
@@ -263,7 +263,7 @@ pub const File = struct {
                 .path = .{
                     .encoded_slice = switch (path_like) {
                         .encoded_slice => |slice| try slice.toOwned(bun.default_allocator),
-                        else => try jsc.ZigString.init(path_like.slice()).toSliceClone(bun.default_allocator),
+                        else => try bun.String.Slice.initDupe(bun.default_allocator, path_like.slice()),
                     },
                 },
             }, globalThis.bunVM()),

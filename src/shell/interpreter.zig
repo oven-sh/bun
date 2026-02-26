@@ -672,10 +672,10 @@ pub const Interpreter = struct {
         syscall: Syscall.Error,
         other: ShellErrorKind,
 
-        fn toJS(this: ShellErrorCtx, globalThis: *JSGlobalObject) JSValue {
+        fn toJS(this: ShellErrorCtx, globalThis: *JSGlobalObject) bun.JSError!JSValue {
             return switch (this) {
                 .syscall => |err| err.toJS(globalThis),
-                .other => |err| bun.jsc.ZigString.fromBytes(@errorName(err)).toJS(globalThis),
+                .other => |err| bun.String.createUTF8ForJS(globalThis, @errorName(err)),
             };
         }
     };
@@ -1339,7 +1339,7 @@ pub const Interpreter = struct {
             var value = object_iter.value;
             if (value.isUndefined()) continue;
 
-            const value_str = value.getZigString(globalThis);
+            const value_str = try value.toString(globalThis);
             const slice = bun.handleOom(value_str.toOwnedSlice(bun.default_allocator));
             const keyref = EnvStr.initRefCounted(keyslice);
             defer keyref.deref();

@@ -1411,7 +1411,6 @@ const JSGlobalObject = jsc.JSGlobalObject;
 const JSPromise = jsc.JSPromise;
 const JSValue = jsc.JSValue;
 const VirtualMachine = jsc.VirtualMachine;
-const ZigString = jsc.ZigString;
 
 const Body = jsc.WebCore.Body;
 const Response = jsc.WebCore.Response;

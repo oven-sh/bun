@@ -337,4 +337,3 @@ const Output = bun.Output;
 const Buffer = bun.api.node.Buffer;
 
 const jsc = bun.jsc;
-const ZigString = jsc.ZigString;

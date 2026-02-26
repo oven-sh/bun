@@ -1,47 +1,32 @@
 pub const BufferVectorized = struct {
     pub fn fill(
-        str: *jsc.ZigString,
+        str: *const bun.String,
         buf_ptr: [*]u8,
         fill_length: usize,
         encoding: jsc.Node.Encoding,
     ) callconv(.c) bool {
-        if (str.len == 0) return true;
+        if (str.length() == 0) return true;
 
         var buf = buf_ptr[0..fill_length];
 
+        const is_16bit = str.isUTF16();
+        const utf16_slice = if (is_16bit) str.utf16() else &[_]u16{};
+        const latin1_slice = if (is_16bit) &[_]u8{} else str.latin1();
+
         const written = switch (encoding) {
-            .utf8 => if (str.is16Bit())
-                Encoder.writeU16(str.utf16SliceAligned().ptr, str.utf16SliceAligned().len, buf.ptr, buf.len, .utf8, true)
+            inline .utf8,
+            .ascii,
+            .latin1,
+            .buffer,
+            .utf16le,
+            .ucs2,
+            .base64,
+            .base64url,
+            .hex,
+            => |enc| if (is_16bit)
+                Encoder.writeU16(utf16_slice.ptr, utf16_slice.len, buf.ptr, buf.len, enc, true)
             else
-                Encoder.writeU8(str.slice().ptr, str.slice().len, buf.ptr, buf.len, .utf8),
-            .ascii => if (str.is16Bit())
-                Encoder.writeU16(str.utf16SliceAligned().ptr, str.utf16SliceAligned().len, buf.ptr, buf.len, .ascii, true)
-            else
-                Encoder.writeU8(str.slice().ptr, str.slice().len, buf.ptr, buf.len, .ascii),
-            .latin1 => if (str.is16Bit())
-                Encoder.writeU16(str.utf16SliceAligned().ptr, str.utf16SliceAligned().len, buf.ptr, buf.len, .latin1, true)
-            else
-                Encoder.writeU8(str.slice().ptr, str.slice().len, buf.ptr, buf.len, .latin1),
-            .buffer => if (str.is16Bit())
-                Encoder.writeU16(str.utf16SliceAligned().ptr, str.utf16SliceAligned().len, buf.ptr, buf.len, .buffer, true)
-            else
-                Encoder.writeU8(str.slice().ptr, str.slice().len, buf.ptr, buf.len, .buffer),
-            .utf16le, .ucs2 => if (str.is16Bit())
-                Encoder.writeU16(str.utf16SliceAligned().ptr, str.utf16SliceAligned().len, buf.ptr, buf.len, .utf16le, true)
-            else
-                Encoder.writeU8(str.slice().ptr, str.slice().len, buf.ptr, buf.len, .utf16le),
-            .base64 => if (str.is16Bit())
-                Encoder.writeU16(str.utf16SliceAligned().ptr, str.utf16SliceAligned().len, buf.ptr, buf.len, .base64, true)
-            else
-                Encoder.writeU8(str.slice().ptr, str.slice().len, buf.ptr, buf.len, .base64),
-            .base64url => if (str.is16Bit())
-                Encoder.writeU16(str.utf16SliceAligned().ptr, str.utf16SliceAligned().len, buf.ptr, buf.len, .base64url, true)
-            else
-                Encoder.writeU8(str.slice().ptr, str.slice().len, buf.ptr, buf.len, .base64url),
-            .hex => if (str.is16Bit())
-                Encoder.writeU16(str.utf16SliceAligned().ptr, str.utf16SliceAligned().len, buf.ptr, buf.len, .hex, true)
-            else
-                Encoder.writeU8(str.slice().ptr, str.slice().len, buf.ptr, buf.len, .hex),
+                Encoder.writeU8(latin1_slice.ptr, latin1_slice.len, buf.ptr, buf.len, enc),
         } catch return false;
 
         if (written == 0 and str.length() > 0) return false;

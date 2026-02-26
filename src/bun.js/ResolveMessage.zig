@@ -106,15 +106,8 @@ pub const ResolveMessage = struct {
         const text = std.fmt.allocPrint(default_allocator, "ResolveMessage: {s}", .{this.msg.data.text}) catch {
             return globalThis.throwOutOfMemoryValue();
         };
-        var str = ZigString.init(text);
-        str.setOutputEncoding();
-        if (str.isUTF8()) {
-            const out = str.toJS(globalThis);
-            default_allocator.free(text);
-            return out;
-        }
-
-        return str.toExternalValue(globalThis);
+        defer default_allocator.free(text);
+        return bun.String.createUTF8ForJS(globalThis, text) catch return globalThis.throwOutOfMemoryValue();
     }
 
     pub fn toString(
@@ -138,7 +131,7 @@ pub const ResolveMessage = struct {
                 return jsc.JSValue.jsNull();
             }
 
-            const str = try args[0].getZigString(globalThis);
+            const str = try args[0].toString(globalThis);
             if (str.eqlComptime("default") or str.eqlComptime("string")) {
                 return this.toStringFn(globalThis);
             }
@@ -154,12 +147,12 @@ pub const ResolveMessage = struct {
     ) bun.JSError!jsc.JSValue {
         var object = jsc.JSValue.createEmptyObject(globalThis, 7);
         object.put(globalThis, bun.String.static("name"), try bun.String.static("ResolveMessage").toJS(globalThis));
-        object.put(globalThis, bun.String.static("position"), this.getPosition(globalThis));
-        object.put(globalThis, bun.String.static("message"), this.getMessage(globalThis));
-        object.put(globalThis, bun.String.static("level"), this.getLevel(globalThis));
-        object.put(globalThis, bun.String.static("specifier"), this.getSpecifier(globalThis));
-        object.put(globalThis, bun.String.static("importKind"), this.getImportKind(globalThis));
-        object.put(globalThis, bun.String.static("referrer"), this.getReferrer(globalThis));
+        object.put(globalThis, bun.String.static("position"), try this.getPosition(globalThis));
+        object.put(globalThis, bun.String.static("message"), try this.getMessage(globalThis));
+        object.put(globalThis, bun.String.static("level"), try this.getLevel(globalThis));
+        object.put(globalThis, bun.String.static("specifier"), try this.getSpecifier(globalThis));
+        object.put(globalThis, bun.String.static("importKind"), try this.getImportKind(globalThis));
+        object.put(globalThis, bun.String.static("referrer"), try this.getReferrer(globalThis));
         return object;
     }
 
@@ -181,44 +174,44 @@ pub const ResolveMessage = struct {
     pub fn getPosition(
         this: *ResolveMessage,
         globalThis: *jsc.JSGlobalObject,
-    ) jsc.JSValue {
+    ) bun.JSError!jsc.JSValue {
         return bun.api.BuildMessage.generatePositionObject(this.msg, globalThis);
     }
 
     pub fn getMessage(
         this: *ResolveMessage,
         globalThis: *jsc.JSGlobalObject,
-    ) jsc.JSValue {
-        return ZigString.init(this.msg.data.text).toJS(globalThis);
+    ) bun.JSError!jsc.JSValue {
+        return try bun.String.createUTF8ForJS(globalThis, this.msg.data.text);
     }
 
     pub fn getLevel(
         this: *ResolveMessage,
         globalThis: *jsc.JSGlobalObject,
-    ) jsc.JSValue {
-        return ZigString.init(this.msg.kind.string()).toJS(globalThis);
+    ) bun.JSError!jsc.JSValue {
+        return try bun.String.createUTF8ForJS(globalThis, this.msg.kind.string());
     }
 
     pub fn getSpecifier(
         this: *ResolveMessage,
         globalThis: *jsc.JSGlobalObject,
-    ) jsc.JSValue {
-        return ZigString.init(this.msg.metadata.resolve.specifier.slice(this.msg.data.text)).toJS(globalThis);
+    ) bun.JSError!jsc.JSValue {
+        return try bun.String.createUTF8ForJS(globalThis, this.msg.metadata.resolve.specifier.slice(this.msg.data.text));
     }
 
     pub fn getImportKind(
         this: *ResolveMessage,
         globalThis: *jsc.JSGlobalObject,
-    ) jsc.JSValue {
-        return ZigString.init(this.msg.metadata.resolve.import_kind.label()).toJS(globalThis);
+    ) bun.JSError!jsc.JSValue {
+        return try bun.String.createUTF8ForJS(globalThis, this.msg.metadata.resolve.import_kind.label());
     }
 
     pub fn getReferrer(
         this: *ResolveMessage,
         globalThis: *jsc.JSGlobalObject,
-    ) jsc.JSValue {
+    ) bun.JSError!jsc.JSValue {
         if (this.referrer) |referrer| {
-            return ZigString.init(referrer.text).toJS(globalThis);
+            return try bun.String.createUTF8ForJS(globalThis, referrer.text);
         } else {
             return jsc.JSValue.jsNull();
         }
@@ -242,4 +235,3 @@ const strings = bun.strings;
 
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
-const ZigString = jsc.ZigString;

@@ -13,14 +13,14 @@ pub fn toMatchInlineSnapshot(this: *Expect, globalThis: *JSGlobalObject, callFra
     }
 
     var has_expected = false;
-    var expected_string: ZigString = ZigString.Empty;
+    var expected_string: bun.String = .empty;
     var property_matchers: ?JSValue = null;
     switch (arguments.len) {
         0 => {},
         1 => {
             if (arguments[0].isString()) {
                 has_expected = true;
-                try arguments[0].toZigString(&expected_string, globalThis);
+                expected_string = try arguments[0].toString(globalThis);
             } else if (arguments[0].isObject()) {
                 property_matchers = arguments[0];
             } else {
@@ -37,12 +37,12 @@ pub fn toMatchInlineSnapshot(this: *Expect, globalThis: *JSGlobalObject, callFra
 
             if (arguments[1].isString()) {
                 has_expected = true;
-                try arguments[1].toZigString(&expected_string, globalThis);
+                expected_string = try arguments[1].toString(globalThis);
             }
         },
     }
 
-    var expected = expected_string.toSlice(default_allocator);
+    var expected = expected_string.toUTF8WithoutRef(default_allocator);
     defer expected.deinit();
 
     const expected_slice: ?[]const u8 = if (has_expected) expected.slice() else null;
@@ -52,7 +52,6 @@ pub fn toMatchInlineSnapshot(this: *Expect, globalThis: *JSGlobalObject, callFra
 }
 
 const bun = @import("bun");
-const ZigString = bun.ZigString;
 const default_allocator = bun.default_allocator;
 
 const jsc = bun.jsc;

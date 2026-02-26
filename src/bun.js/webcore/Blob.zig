@@ -201,7 +201,7 @@ const FormDataContext = struct {
     failed: bool = false,
     globalThis: *jsc.JSGlobalObject,
 
-    pub fn onEntry(this: *FormDataContext, name: ZigString, entry: jsc.DOMFormData.FormDataEntry) void {
+    pub fn onEntry(this: *FormDataContext, name: bun.String, entry: jsc.DOMFormData.FormDataEntry) void {
         if (this.failed) return;
         var globalThis = this.globalThis;
 
@@ -214,18 +214,18 @@ const FormDataContext = struct {
         joiner.pushStatic("\r\n");
 
         joiner.pushStatic("Content-Disposition: form-data; name=\"");
-        const name_slice = name.toSlice(allocator);
+        const name_slice = name.toUTF8(allocator);
         joiner.push(name_slice.slice(), name_slice.allocator.get());
 
         switch (entry) {
             .string => |value| {
                 joiner.pushStatic("\"\r\n\r\n");
-                const value_slice = value.toSlice(allocator);
+                const value_slice = value.toUTF8(allocator);
                 joiner.push(value_slice.slice(), value_slice.allocator.get());
             },
             .file => |value| {
                 joiner.pushStatic("\"; filename=\"");
-                const filename_slice = value.filename.toSlice(allocator);
+                const filename_slice = value.filename.toUTF8(allocator);
                 joiner.push(filename_slice.slice(), filename_slice.allocator.get());
                 joiner.pushStatic("\"\r\n");
 
@@ -548,7 +548,7 @@ const URLSearchParamsConverter = struct {
     allocator: std.mem.Allocator,
     buf: []u8 = "",
     globalThis: *jsc.JSGlobalObject,
-    pub fn convert(this: *URLSearchParamsConverter, str: ZigString) void {
+    pub fn convert(this: *URLSearchParamsConverter, str: bun.String) void {
         this.buf = bun.handleOom(str.toOwnedSlice(this.allocator));
     }
 };
@@ -2915,8 +2915,8 @@ pub fn getSlice(
     if (args_iter.nextEat()) |content_type_| {
         inner: {
             if (content_type_.isString()) {
-                var zig_str = try content_type_.getZigString(globalThis);
-                var slicer = zig_str.toSlice(bun.default_allocator);
+                const str = try content_type_.toString(globalThis);
+                var slicer = str.toUTF8WithoutRef(bun.default_allocator);
                 defer slicer.deinit();
                 const slice = slicer.slice();
                 if (!strings.isAllASCII(slice)) {
@@ -2961,19 +2961,19 @@ pub fn getMimeTypeOrContentType(this: *const Blob) ?bun.http.MimeType {
 pub fn getType(
     this: *Blob,
     globalThis: *jsc.JSGlobalObject,
-) JSValue {
+) bun.JSError!JSValue {
     if (this.content_type.len > 0) {
         if (this.content_type_allocated) {
-            return ZigString.init(this.content_type).toJS(globalThis);
+            return try bun.String.createUTF8ForJS(globalThis, this.content_type);
         }
-        return ZigString.init(this.content_type).toJS(globalThis);
+        return try bun.String.createUTF8ForJS(globalThis, this.content_type);
     }
 
     if (this.store) |store| {
-        return ZigString.init(store.mime_type.value).toJS(globalThis);
+        return try bun.String.createUTF8ForJS(globalThis, store.mime_type.value);
     }
 
-    return ZigString.Empty.toJS(globalThis);
+    return try bun.String.empty.toJS(globalThis);
 }
 
 pub fn getNameString(this: *Blob) ?bun.String {
@@ -3134,7 +3134,7 @@ pub fn getStat(this: *Blob, globalThis: *jsc.JSGlobalObject, callback: *jsc.Call
                             .encoded_slice = switch (path_like) {
                                 // it's already converted to utf8
                                 .encoded_slice => |slice| try slice.toOwned(bun.default_allocator),
-                                else => try ZigString.init(path_like.slice()).toSliceClone(bun.default_allocator),
+                                else => try bun.String.Slice.initDupe(bun.default_allocator, path_like.slice()),
                             },
                         },
                     }, globalThis.bunVM());
@@ -3511,7 +3511,7 @@ pub fn toStringWithBytes(this: *Blob, global: *JSGlobalObject, raw_bytes: []cons
     if (buf.len == 0) {
         // If all it contained was the bom, we need to free the bytes
         if (lifetime == .temporary) bun.default_allocator.free(raw_bytes);
-        return ZigString.Empty.toJS(global);
+        return bun.String.empty.toJS(global);
     }
 
     if (bom == .utf16_le) {
@@ -3540,7 +3540,9 @@ pub fn toStringWithBytes(this: *Blob, global: *JSGlobalObject, raw_bytes: []cons
                 bun.default_allocator.free(raw_bytes);
             }
 
-            return ZigString.toExternalU16(external.ptr, external.len, global);
+            // external is globally-allocated (from toUTF16Alloc). Length > 0 guaranteed by outer `if (buf.len == 0)` check.
+            var out = bun.String.createExternalGloballyAllocated(.utf16, external);
+            return out.transferToJS(global);
         }
 
         if (lifetime != .temporary) this.setIsASCIIFlag(true);
@@ -3552,21 +3554,24 @@ pub fn toStringWithBytes(this: *Blob, global: *JSGlobalObject, raw_bytes: []cons
         .clone => {
             this.store.?.ref();
             // we don't need to worry about UTF-8 BOM in this case because the store owns the memory.
-            return ZigString.init(buf).external(global, this.store.?, Store.external);
+            var out = bun.String.createExternal(*Store, buf, true, this.store.?, &Store.external);
+            return out.transferToJS(global);
         },
         .transfer => {
             const store = this.store.?;
             assert(store.data == .bytes);
             this.transfer();
             // we don't need to worry about UTF-8 BOM in this case because the store owns the memory.
-            return ZigString.init(buf).external(global, store, Store.external);
+            var out = bun.String.createExternal(*Store, buf, true, store, &Store.external);
+            return out.transferToJS(global);
         },
         // strings are immutable
         // sharing isn't really a thing
         .share => {
             this.store.?.ref();
             // we don't need to worry about UTF-8 BOM in this case because the store owns the memory.s
-            return ZigString.init(buf).external(global, this.store.?, Store.external);
+            var out = bun.String.createExternal(*Store, buf, true, this.store.?, &Store.external);
+            return out.transferToJS(global);
         },
         .temporary => {
             // if there was a UTF-8 BOM, we need to clone the buffer because
@@ -3581,7 +3586,9 @@ pub fn toStringWithBytes(this: *Blob, global: *JSGlobalObject, raw_bytes: []cons
                 return out.toJS(global);
             }
 
-            return ZigString.init(buf).toExternalValue(global);
+            // buf is globally-allocated (raw_bytes from temporary lifetime)
+            var out = bun.String.createExternalGloballyAllocated(.latin1, @constCast(buf));
+            return out.transferToJS(global);
         },
     }
 }
@@ -3602,7 +3609,7 @@ pub fn toString(this: *Blob, global: *JSGlobalObject, comptime lifetime: Lifetim
         @constCast(this.sharedView());
 
     if (view_.len == 0)
-        return ZigString.Empty.toJS(global);
+        return bun.String.empty.toJS(global);
 
     return toStringWithBytes(this, global, view_, lifetime);
 }
@@ -3642,7 +3649,8 @@ pub fn toJSONWithBytes(this: *Blob, global: *JSGlobalObject, raw_bytes: []const 
         // if toUTF16Alloc returns null, it means there are no non-ASCII characters
         if (strings.toUTF16Alloc(allocator, buf, false, false) catch null) |external| {
             if (comptime lifetime != .temporary) this.setIsASCIIFlag(false);
-            const result = ZigString.initUTF16(external).toJSONObject(global);
+            var json_str = bun.String.borrowUTF16(external);
+            const result = json_str.toJSByParseJSON(global);
             allocator.free(external);
             return result;
         }
@@ -3650,12 +3658,13 @@ pub fn toJSONWithBytes(this: *Blob, global: *JSGlobalObject, raw_bytes: []const 
         if (comptime lifetime != .temporary) this.setIsASCIIFlag(true);
     }
 
-    return ZigString.init(buf).toJSONObject(global);
+    var json_str = bun.String.borrowUTF8(buf);
+    return json_str.toJSByParseJSON(global);
 }
 
 pub fn toFormDataWithBytes(this: *Blob, global: *JSGlobalObject, buf: []u8, comptime _: Lifetime) JSValue {
     var encoder = this.getFormDataEncoding() orelse return {
-        return ZigString.init("Invalid encoding").toErrorInstance(global);
+        return bun.String.static("Invalid encoding").toErrorInstance(global);
     };
     defer encoder.deinit();
 
@@ -4228,7 +4237,7 @@ pub const Any = union(enum) {
                     return JSValue.jsNull();
                 }
 
-                const str = this.InternalBlob.toJSON(global);
+                const str = try this.InternalBlob.toJSON(global);
 
                 // the GC will collect the string
                 this.* = .{
@@ -4294,7 +4303,7 @@ pub const Any = union(enum) {
             .Blob => return this.Blob.toString(global, lifetime),
             // .InlineBlob => {
             //     if (this.InlineBlob.len == 0) {
-            //         return ZigString.Empty.toValue(global);
+            //         return bun.String.empty.toJS(global);
             //     }
             //     const owned = this.InlineBlob.toStringOwned(global);
             //     this.* = .{ .InlineBlob = .{ .len = 0 } };
@@ -4302,7 +4311,7 @@ pub const Any = union(enum) {
             // },
             .InternalBlob => {
                 if (this.InternalBlob.bytes.items.len == 0) {
-                    return ZigString.Empty.toJS(global);
+                    return bun.String.empty.toJS(global);
                 }
 
                 const owned = try this.InternalBlob.toStringOwned(global);
@@ -4463,8 +4472,10 @@ pub const Internal = struct {
 
     pub fn toStringOwned(this: *@This(), globalThis: *jsc.JSGlobalObject) bun.JSError!JSValue {
         const bytes_without_bom = strings.withoutUTF8BOM(this.bytes.items);
-        if (strings.toUTF16Alloc(bun.default_allocator, bytes_without_bom, false, false) catch &[_]u16{}) |out| {
-            const return_value = ZigString.toExternalU16(out.ptr, out.len, globalThis);
+        if (strings.toUTF16Alloc(bun.default_allocator, bytes_without_bom, false, false) catch null) |out| {
+            // out.len > 0 guaranteed: toUTF16Alloc returns null (not empty) for all-ASCII
+            var str = bun.String.createExternalGloballyAllocated(.utf16, out);
+            const return_value = try str.transferToJS(globalThis);
             return_value.ensureStillAlive();
             this.deinit();
             return return_value;
@@ -4476,15 +4487,18 @@ pub const Internal = struct {
             defer out.deref();
             return out.toJS(globalThis);
         } else {
-            var str = ZigString.init(this.toOwnedSlice());
-            str.markGlobal();
-            return str.toExternalValue(globalThis);
+            const owned = this.toOwnedSlice();
+            if (owned.len == 0) {
+                return bun.String.empty.toJS(globalThis);
+            }
+            var str = bun.String.createExternalGloballyAllocated(.latin1, owned);
+            return str.transferToJS(globalThis);
         }
     }
 
-    pub fn toJSON(this: *@This(), globalThis: *jsc.JSGlobalObject) JSValue {
-        const str_bytes = ZigString.init(strings.withoutUTF8BOM(this.bytes.items)).withEncoding();
-        const json = str_bytes.toJSONObject(globalThis);
+    pub fn toJSON(this: *@This(), globalThis: *jsc.JSGlobalObject) bun.JSError!JSValue {
+        var str = bun.String.borrowUTF8(strings.withoutUTF8BOM(this.bytes.items));
+        const json = try str.toJSByParseJSON(globalThis);
         this.deinit();
         return json;
     }
@@ -4577,17 +4591,11 @@ pub const Inline = extern struct {
         return internalInit(data, true);
     }
 
-    pub fn toStringOwned(this: *@This(), globalThis: *jsc.JSGlobalObject) JSValue {
+    pub fn toStringOwned(this: *@This(), globalThis: *jsc.JSGlobalObject) bun.JSError!JSValue {
         if (this.len == 0)
-            return ZigString.Empty.toJS(globalThis);
+            return bun.String.empty.toJS(globalThis);
 
-        var str = ZigString.init(this.sliceConst());
-
-        if (!strings.isAllASCII(this.sliceConst())) {
-            str.markUTF8();
-        }
-
-        const out = str.toJS(globalThis);
+        const out = try bun.String.createUTF8ForJS(globalThis, this.sliceConst());
         out.ensureStillAlive();
         this.len = 0;
         return out;
@@ -4879,7 +4887,6 @@ const JSGlobalObject = jsc.JSGlobalObject;
 const JSPromise = jsc.JSPromise;
 const JSValue = jsc.JSValue;
 const VirtualMachine = jsc.VirtualMachine;
-const ZigString = jsc.ZigString;
 const PathOrBlob = jsc.Node.PathOrBlob;
 
 const Request = jsc.WebCore.Request;

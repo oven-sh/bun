@@ -543,17 +543,17 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
     if (!protocols.isEmpty())
         protocolString = joinStrings(protocols, subprotocolSeparator());
 
-    ZigString host = Zig::toZigString(m_url.host());
+    BunString host = Bun::toStringView(m_url.host());
     auto resource = resourceName(m_url);
-    ZigString path = Zig::toZigString(resource);
-    ZigString clientProtocolString = Zig::toZigString(protocolString);
+    BunString path = Bun::toString(resource);
+    BunString clientProtocolString = Bun::toString(protocolString);
     uint16_t port = is_secure ? 443 : 80;
     if (auto userPort = m_url.port()) {
         port = userPort.value();
     }
 
-    Vector<ZigString, 8> headerNames;
-    Vector<ZigString, 8> headerValues;
+    Vector<BunString, 8> headerNames;
+    Vector<BunString, 8> headerValues;
 
     auto headersOrException = FetchHeaders::create(WTF::move(headersInit));
     if (headersOrException.hasException()) [[unlikely]] {
@@ -568,8 +568,8 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
     // lowerCaseKeys = false so we dont touch the keys casing
     auto iterator = headers.get().createIterator(false);
     while (auto value = iterator.next()) {
-        headerNames.unsafeAppendWithoutCapacityCheck(Zig::toZigString(value->key));
-        headerValues.unsafeAppendWithoutCapacityCheck(Zig::toZigString(value->value));
+        headerNames.unsafeAppendWithoutCapacityCheck(Bun::toString(value->key));
+        headerValues.unsafeAppendWithoutCapacityCheck(Bun::toString(value->value));
     }
 
     // Determine connection type based on proxy usage and TLS requirements
@@ -601,18 +601,18 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
     this->incPendingActivityCount();
 
     // Prepare proxy parameters (use local variables, not member fields)
-    ZigString proxyHost = hasProxy ? Zig::toZigString(proxyConfig->host) : ZigString {};
-    ZigString proxyAuth = hasProxy ? Zig::toZigString(proxyConfig->authorization) : ZigString {};
+    BunString proxyHost = hasProxy ? Bun::toString(proxyConfig->host) : BunString { BunStringTag::Empty };
+    BunString proxyAuth = hasProxy ? Bun::toString(proxyConfig->authorization) : BunString { BunStringTag::Empty };
     uint16_t proxyPort = hasProxy ? proxyConfig->port : 0;
 
-    Vector<ZigString, 8> proxyHeaderNames;
-    Vector<ZigString, 8> proxyHeaderValues;
+    Vector<BunString, 8> proxyHeaderNames;
+    Vector<BunString, 8> proxyHeaderValues;
     if (hasProxy) {
         proxyHeaderNames.reserveInitialCapacity(proxyConfig->headers.size());
         proxyHeaderValues.reserveInitialCapacity(proxyConfig->headers.size());
         for (const auto& header : proxyConfig->headers) {
-            proxyHeaderNames.unsafeAppendWithoutCapacityCheck(Zig::toZigString(header.first));
-            proxyHeaderValues.unsafeAppendWithoutCapacityCheck(Zig::toZigString(header.second));
+            proxyHeaderNames.unsafeAppendWithoutCapacityCheck(Bun::toString(header.first));
+            proxyHeaderValues.unsafeAppendWithoutCapacityCheck(Bun::toString(header.second));
         }
     }
 
@@ -624,7 +624,7 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
         auto encoded = base64EncodeToString(std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(utf8.data()), utf8.length()));
         targetAuthorization = makeString("Basic "_s, encoded);
     }
-    ZigString targetAuth = Zig::toZigString(targetAuthorization);
+    BunString targetAuth = Bun::toString(targetAuthorization);
 
     // Pass SSLConfig pointer to Zig (ownership transferred - Zig will deinit when connection closes)
     // After this call, m_sslConfig should not be used by C++ anymore
@@ -818,15 +818,15 @@ void WebSocket::sendWebSocketString(const String& message, const Opcode op)
 {
     switch (m_connectedWebSocketKind) {
     case ConnectedWebSocketKind::Client: {
-        auto zigStr = Zig::toZigString(message);
-        Bun__WebSocketClient__writeString(this->m_connectedWebSocket.client, &zigStr, static_cast<uint8_t>(op));
+        auto bunStr = Bun::toString(message);
+        Bun__WebSocketClient__writeString(this->m_connectedWebSocket.client, &bunStr, static_cast<uint8_t>(op));
         // this->m_connectedWebSocket.client->send({ baseAddress, length }, opCode);
         // this->m_bufferedAmount = this->m_connectedWebSocket.client->getBufferedAmount();
         break;
     }
     case ConnectedWebSocketKind::ClientSSL: {
-        auto zigStr = Zig::toZigString(message);
-        Bun__WebSocketClientTLS__writeString(this->m_connectedWebSocket.clientSSL, &zigStr, static_cast<uint8_t>(op));
+        auto bunStr = Bun::toString(message);
+        Bun__WebSocketClientTLS__writeString(this->m_connectedWebSocket.clientSSL, &bunStr, static_cast<uint8_t>(op));
         break;
     }
     // case ConnectedWebSocketKind::Server: {
@@ -883,15 +883,15 @@ ExceptionOr<void> WebSocket::close(std::optional<unsigned short> optionalCode, c
     m_state = CLOSING;
     switch (m_connectedWebSocketKind) {
     case ConnectedWebSocketKind::Client: {
-        ZigString reasonZigStr = Zig::toZigString(reason);
-        Bun__WebSocketClient__close(this->m_connectedWebSocket.client, code, &reasonZigStr);
+        BunString reasonStr = Bun::toString(reason);
+        Bun__WebSocketClient__close(this->m_connectedWebSocket.client, code, &reasonStr);
         updateHasPendingActivity();
         // this->m_bufferedAmount = this->m_connectedWebSocket.client->getBufferedAmount();
         break;
     }
     case ConnectedWebSocketKind::ClientSSL: {
-        ZigString reasonZigStr = Zig::toZigString(reason);
-        Bun__WebSocketClientTLS__close(this->m_connectedWebSocket.clientSSL, code, &reasonZigStr);
+        BunString reasonStr = Bun::toString(reason);
+        Bun__WebSocketClientTLS__close(this->m_connectedWebSocket.clientSSL, code, &reasonStr);
         updateHasPendingActivity();
         // this->m_bufferedAmount = this->m_connectedWebSocket.clientSSL->getBufferedAmount();
         break;
@@ -1759,9 +1759,9 @@ extern "C" void WebSocket__didClose(WebCore::WebSocket* webSocket, uint16_t erro
     webSocket->didClose(0, errorCode, WTF::move(wtf_reason));
 }
 
-extern "C" void WebSocket__didReceiveText(WebCore::WebSocket* webSocket, bool clone, const ZigString* str)
+extern "C" void WebSocket__didReceiveText(WebCore::WebSocket* webSocket, const BunString* str)
 {
-    WTF::String wtf_str = clone ? Zig::toStringCopy(*str) : Zig::toString(*str);
+    WTF::String wtf_str = str->toWTFString(BunString::ZeroCopy);
     webSocket->didReceiveMessage(WTF::move(wtf_str));
 }
 extern "C" void WebSocket__didReceiveBytes(WebCore::WebSocket* webSocket, const uint8_t* bytes, size_t len, const uint8_t op)

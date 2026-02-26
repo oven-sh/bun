@@ -23,7 +23,7 @@ pub fn toFetchHeaders(this: *Headers, global: *bun.jsc.JSGlobalObject) bun.JSErr
         global,
         this.entries.items(.name).ptr,
         this.entries.items(.value).ptr,
-        &bun.ZigString.fromBytes(this.buf.items),
+        &bun.String.fromBytes(this.buf.items),
         @truncate(this.entries.len),
     ) orelse return error.JSError;
     return headers;

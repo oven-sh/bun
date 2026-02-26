@@ -49,7 +49,6 @@ export const sharedTypes: Record<string, string> = {
   "JSC::VM": "jsc.VM",
   "WTF::StringImpl": "bun.WTF._StringImplStruct",
   "WebCore::DOMURL": "bun.DOMURL",
-  "ZigString": "bun.jsc.ZigString",
   "JSC::JSPromise": "bun.jsc.JSPromise",
   "JSC::JSMap": "bun.jsc.JSMap",
   "JSC::CustomGetterSetter": "bun.jsc.CustomGetterSetter",

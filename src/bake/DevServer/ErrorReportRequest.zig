@@ -103,7 +103,7 @@ pub fn runWithBody(ctx: *ErrorReportRequest, body: []const u8, r: AnyResponse) !
     var top_frame_position: jsc.ZigStackFramePosition = undefined;
     var region_of_interest_line: u32 = 0;
     for (frames.items) |*frame| {
-        const source_url = frame.source_url.value.ZigString.slice();
+        const source_url = frame.source_url.byteSlice();
         // The browser code strips "http://localhost:3000" when the string
         // has /_bun/client. It's done because JS can refer to `location`
         const id = parseId(source_url, browser_url_origin) orelse continue;
@@ -163,7 +163,7 @@ pub fn runWithBody(ctx: *ErrorReportRequest, body: []const u8, r: AnyResponse) !
                 const relative_path_buf = bun.path_buffer_pool.get();
                 defer bun.path_buffer_pool.put(relative_path_buf);
                 const rel_path = ctx.dev.relativePath(relative_path_buf, abs_path);
-                if (bun.strings.eql(frame.function_name.value.ZigString.slice(), rel_path)) {
+                if (bun.strings.eql(frame.function_name.byteSlice(), rel_path)) {
                     frame.function_name = .empty;
                 }
                 frame.remapped = true;
@@ -197,7 +197,7 @@ pub fn runWithBody(ctx: *ErrorReportRequest, body: []const u8, r: AnyResponse) !
     trim_runtime_frames: {
         // Ensure that trimming will not remove ALL frames.
         for (frames.items) |frame| {
-            if (!frame.position.isInvalid() or frame.source_url.value.ZigString.slice().ptr != runtime_name) {
+            if (!frame.position.isInvalid() or frame.source_url.byteSlice().ptr != runtime_name) {
                 break;
             }
         } else break :trim_runtime_frames;
@@ -205,7 +205,7 @@ pub fn runWithBody(ctx: *ErrorReportRequest, body: []const u8, r: AnyResponse) !
         // Move all frames up
         var i: usize = 0;
         for (frames.items[i..]) |frame| {
-            if (frame.position.isInvalid() and frame.source_url.value.ZigString.slice().ptr == runtime_name) {
+            if (frame.position.isInvalid() and frame.source_url.byteSlice().ptr == runtime_name) {
                 continue; // skip runtime frames
             }
 
@@ -248,11 +248,11 @@ pub fn runWithBody(ctx: *ErrorReportRequest, body: []const u8, r: AnyResponse) !
         try w.writeInt(i32, frame.position.line.oneBased(), .little);
         try w.writeInt(i32, frame.position.column.oneBased(), .little);
 
-        const function_name = frame.function_name.value.ZigString.slice();
+        const function_name = frame.function_name.byteSlice();
         try w.writeInt(u32, @intCast(function_name.len), .little);
         try w.writeAll(function_name);
 
-        const src_to_write = frame.source_url.value.ZigString.slice();
+        const src_to_write = frame.source_url.byteSlice();
         if (bun.strings.hasPrefixComptime(src_to_write, "/")) {
             const relative_path_buf = bun.path_buffer_pool.get();
             defer bun.path_buffer_pool.put(relative_path_buf);

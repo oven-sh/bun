@@ -158,7 +158,7 @@ pub fn getContentType(
 
     if (this.#headers) |headers| {
         if (headers.fastGet(.ContentType)) |value| {
-            return value.toSlice(bun.default_allocator);
+            return value.toUTF8(bun.default_allocator);
         }
     }
 
@@ -317,8 +317,8 @@ pub fn writeFormat(this: *Request, this_value: JSValue, comptime Formatter: type
 
 pub fn mimeType(this: *const Request) string {
     if (this.#headers) |headers| {
-        if (try headers.fastGet(.ContentType)) |content_type| {
-            return content_type.slice();
+        if (headers.fastGet(.ContentType)) |content_type| {
+            return content_type.byteSlice();
         }
     }
 
@@ -340,29 +340,29 @@ pub fn mimeType(this: *const Request) string {
 pub fn getCache(
     this: *Request,
     globalThis: *jsc.JSGlobalObject,
-) jsc.JSValue {
+) bun.JSError!jsc.JSValue {
     return switch (this.flags.cache) {
-        inline else => |tag| ZigString.static(@tagName(tag)).toJS(globalThis),
+        inline else => |tag| bun.String.static(@tagName(tag)).toJS(globalThis),
     };
 }
 pub fn getCredentials(
     _: *Request,
     globalThis: *jsc.JSGlobalObject,
-) jsc.JSValue {
-    return ZigString.init("include").toJS(globalThis);
+) bun.JSError!jsc.JSValue {
+    return bun.String.static("include").toJS(globalThis);
 }
 pub fn getDestination(
     _: *Request,
     globalThis: *jsc.JSGlobalObject,
 ) jsc.JSValue {
-    return ZigString.init("").toJS(globalThis);
+    return jsc.JSValue.jsEmptyString(globalThis);
 }
 
 pub fn getIntegrity(
     _: *Request,
     globalThis: *jsc.JSGlobalObject,
-) jsc.JSValue {
-    return ZigString.Empty.toJS(globalThis);
+) bun.JSError!jsc.JSValue {
+    return bun.String.empty.toJS(globalThis);
 }
 
 pub fn getSignal(this: *Request, globalThis: *jsc.JSGlobalObject) jsc.JSValue {
@@ -390,9 +390,9 @@ pub fn getMethod(
 pub fn getMode(
     this: *Request,
     globalThis: *jsc.JSGlobalObject,
-) jsc.JSValue {
+) bun.JSError!jsc.JSValue {
     return switch (this.flags.mode) {
-        inline else => |tag| ZigString.static(@tagName(tag)).toJS(globalThis),
+        inline else => |tag| bun.String.static(@tagName(tag)).toJS(globalThis),
     };
 }
 
@@ -424,28 +424,28 @@ pub fn finalize(this: *Request) void {
 pub fn getRedirect(
     this: *Request,
     globalThis: *jsc.JSGlobalObject,
-) jsc.JSValue {
+) bun.JSError!jsc.JSValue {
     return switch (this.flags.redirect) {
-        inline else => |tag| ZigString.static(@tagName(tag)).toJS(globalThis),
+        inline else => |tag| bun.String.static(@tagName(tag)).toJS(globalThis),
     };
 }
 pub fn getReferrer(
     this: *Request,
     globalObject: *jsc.JSGlobalObject,
-) jsc.JSValue {
+) bun.JSError!jsc.JSValue {
     if (this.#headers) |headers_ref| {
         if (headers_ref.get("referrer", globalObject)) |referrer| {
-            return ZigString.init(referrer).toJS(globalObject);
+            return try bun.String.createUTF8ForJS(globalObject, referrer);
         }
     }
 
-    return ZigString.init("").toJS(globalObject);
+    return jsc.JSValue.jsEmptyString(globalObject);
 }
 pub fn getReferrerPolicy(
     _: *Request,
     globalThis: *jsc.JSGlobalObject,
 ) jsc.JSValue {
-    return ZigString.init("").toJS(globalThis);
+    return jsc.JSValue.jsEmptyString(globalThis);
 }
 pub fn getUrl(this: *Request, globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
     try this.ensureURL();
@@ -1108,7 +1108,6 @@ const MimeType = bun.http.MimeType;
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
-const ZigString = jsc.ZigString;
 
 const AbortSignal = jsc.WebCore.AbortSignal;
 const Response = jsc.WebCore.Response;

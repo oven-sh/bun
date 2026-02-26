@@ -1,6 +1,6 @@
 pub const URLSearchParams = opaque {
-    extern fn URLSearchParams__create(globalObject: *JSGlobalObject, *const ZigString) JSValue;
-    pub fn create(globalObject: *JSGlobalObject, init: ZigString) JSValue {
+    extern fn URLSearchParams__create(globalObject: *JSGlobalObject, *const bun.String) JSValue;
+    pub fn create(globalObject: *JSGlobalObject, init: bun.String) JSValue {
         jsc.markBinding(@src());
         return URLSearchParams__create(globalObject, &init);
     }
@@ -14,19 +14,19 @@ pub const URLSearchParams = opaque {
     extern fn URLSearchParams__toString(
         self: *URLSearchParams,
         ctx: *anyopaque,
-        callback: *const fn (ctx: *anyopaque, str: *const ZigString) callconv(.c) void,
+        callback: *const fn (ctx: *anyopaque, str: *const bun.String) callconv(.c) void,
     ) void;
 
     pub fn toString(
         self: *URLSearchParams,
         comptime Ctx: type,
         ctx: *Ctx,
-        comptime callback: *const fn (ctx: *Ctx, str: ZigString) void,
+        comptime callback: *const fn (ctx: *Ctx, str: bun.String) void,
     ) void {
         jsc.markBinding(@src());
         const Wrap = struct {
             const cb_ = callback;
-            pub fn cb(c: *anyopaque, str: *const ZigString) callconv(.c) void {
+            pub fn cb(c: *anyopaque, str: *const bun.String) callconv(.c) void {
                 cb_(
                     bun.cast(*Ctx, c),
                     str.*,
@@ -39,7 +39,6 @@ pub const URLSearchParams = opaque {
 };
 
 const bun = @import("bun");
-const ZigString = @import("./ZigString.zig").ZigString;
 
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;

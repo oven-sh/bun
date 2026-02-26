@@ -9,12 +9,12 @@ pub const DOMURL = opaque {
         return cast_(value, jsc.VirtualMachine.get().global.vm());
     }
 
-    pub fn href_(this: *DOMURL, out: *ZigString) void {
+    pub fn href_(this: *DOMURL, out: *bun.String) void {
         return bun.cpp.WebCore__DOMURL__href_(this, out);
     }
 
-    pub fn href(this: *DOMURL) ZigString {
-        var out = ZigString.Empty;
+    pub fn href(this: *DOMURL) bun.String {
+        var out = bun.String.empty;
         this.href_(&out);
         return out;
     }
@@ -38,21 +38,19 @@ pub const DOMURL = opaque {
         return path;
     }
 
-    pub fn pathname_(this: *DOMURL, out: *ZigString) void {
+    pub fn pathname_(this: *DOMURL, out: *bun.String) void {
         return bun.cpp.WebCore__DOMURL__pathname_(this, out);
     }
 
-    pub fn pathname(this: *DOMURL) ZigString {
-        var out = ZigString.Empty;
+    pub fn pathname(this: *DOMURL) bun.String {
+        var out = bun.String.empty;
         this.pathname_(&out);
         return out;
     }
 };
 
 const bun = @import("bun");
-const String = bun.String;
 
 const jsc = bun.jsc;
 const JSValue = jsc.JSValue;
 const VM = jsc.VM;
-const ZigString = jsc.ZigString;

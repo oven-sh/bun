@@ -416,13 +416,13 @@ pub const Encoding = enum(u8) {
             .base64 => {
                 var buf: [std.base64.standard.Encoder.calcSize(size)]u8 = undefined;
                 const len = bun.base64.encode(&buf, input);
-                return jsc.ZigString.init(buf[0..len]).toJS(globalObject);
+                return try bun.String.createUTF8ForJS(globalObject, buf[0..len]);
             },
             .base64url => {
                 var buf: [std.base64.url_safe_no_pad.Encoder.calcSize(size)]u8 = undefined;
                 const encoded = std.base64.url_safe_no_pad.Encoder.encode(&buf, input);
 
-                return jsc.ZigString.init(buf[0..encoded.len]).toJS(globalObject);
+                return try bun.String.createUTF8ForJS(globalObject, buf[0..encoded.len]);
             },
             .hex => {
                 var buf: [size * 4]u8 = undefined;
@@ -433,8 +433,7 @@ pub const Encoding = enum(u8) {
                 ) catch |err| switch (err) {
                     error.NoSpaceLeft => unreachable,
                 };
-                const result = jsc.ZigString.init(out).toJS(globalObject);
-                return result;
+                return try bun.String.createUTF8ForJS(globalObject, out);
             },
             .buffer => {
                 return jsc.ArrayBuffer.createBuffer(globalObject, input);
@@ -463,7 +462,7 @@ pub const Encoding = enum(u8) {
                 var buf: [std.base64.url_safe_no_pad.Encoder.calcSize(max_size * 4)]u8 = undefined;
                 const encoded = std.base64.url_safe_no_pad.Encoder.encode(&buf, input);
 
-                return jsc.ZigString.init(buf[0..encoded.len]).toJS(globalObject);
+                return try bun.String.createUTF8ForJS(globalObject, buf[0..encoded.len]);
             },
             .hex => {
                 var buf: [max_size * 4]u8 = undefined;
@@ -474,8 +473,7 @@ pub const Encoding = enum(u8) {
                 ) catch |err| switch (err) {
                     error.NoSpaceLeft => unreachable,
                 };
-                const result = jsc.ZigString.init(out).toJS(globalObject);
-                return result;
+                return try bun.String.createUTF8ForJS(globalObject, out);
             },
             .buffer => {
                 return jsc.ArrayBuffer.createBuffer(globalObject, input);
@@ -784,10 +782,6 @@ pub const Valid = struct {
         comptime unreachable;
     }
 
-    pub fn pathString(zig_str: jsc.ZigString, ctx: *jsc.JSGlobalObject) bun.JSError!void {
-        return pathStringLength(zig_str.len, ctx);
-    }
-
     pub fn pathBuffer(buffer: Buffer, ctx: *jsc.JSGlobalObject) bun.JSError!void {
         const slice = buffer.slice();
         switch (slice.len) {
@@ -865,9 +859,14 @@ pub fn modeFromJS(ctx: *jsc.JSGlobalObject, value: jsc.JSValue) bun.JSError!?Mod
         // the example), specifies permissions for the group. The right-most
         // digit (5 in the example), specifies the permissions for others.
 
-        var zig_str = jsc.ZigString.Empty;
-        try value.toZigString(&zig_str, ctx);
-        var slice = zig_str.slice();
+        const str = try value.toString(ctx);
+        // Mode strings are always ASCII octal digits; non-ASCII chars will fail parseInt anyway.
+        if (str.isUTF16()) {
+            var formatter = bun.jsc.ConsoleObject.Formatter{ .globalThis = ctx };
+            defer formatter.deinit();
+            return ctx.throwValue(ctx.ERR(.INVALID_ARG_VALUE, "The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received {f}", .{value.toFmt(&formatter)}).toJS());
+        }
+        var slice = str.latin1();
         if (strings.hasPrefix(slice, "0o")) {
             slice = slice[2..];
         }
@@ -1046,24 +1045,24 @@ pub const FileSystemFlags = enum(c_int) {
 
         const jsType = val.jsType();
         if (jsType.isStringLike()) {
-            const str = try val.getZigString(ctx);
+            const str = try val.toString(ctx);
             if (str.isEmpty()) {
                 return ctx.throwInvalidArguments("Expected flags to be a non-empty string. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags", .{});
             }
             // it's definitely wrong when the string is super long
-            else if (str.len > 12) {
+            else if (str.length() > 12) {
                 return ctx.throwInvalidArguments("Invalid flag '{f}'. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags", .{str});
             }
 
             const flags: i32 = brk: {
-                switch (str.is16Bit()) {
+                switch (str.isUTF16()) {
                     inline else => |is_16bit| {
-                        const chars = if (is_16bit) str.utf16SliceAligned() else str.slice();
+                        const chars = if (is_16bit) str.utf16() else str.latin1();
 
                         if (std.ascii.isDigit(@as(u8, @truncate(chars[0])))) {
                             // node allows "0o644" as a string :(
                             if (is_16bit) {
-                                const slice = str.toSlice(bun.default_allocator);
+                                const slice = str.toUTF8(bun.default_allocator);
                                 defer slice.deinit();
 
                                 break :brk @as(i32, @intCast(std.fmt.parseInt(Mode, slice.slice(), 10) catch break :brk null));
@@ -1074,7 +1073,7 @@ pub const FileSystemFlags = enum(c_int) {
                     },
                 }
 
-                break :brk map.getWithEql(str, jsc.ZigString.eqlComptime) orelse break :brk null;
+                break :brk map.getWithEql(str, bun.String.eqlComptime) orelse break :brk null;
             } orelse {
                 return ctx.throwInvalidArguments("Invalid flag '{f}'. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags", .{str});
             };

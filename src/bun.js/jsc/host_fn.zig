@@ -579,19 +579,6 @@ pub fn wrapInstanceMethod(
                             args[i] = null;
                         }
                     },
-                    jsc.ZigString => {
-                        var string_value = eater(&iter) orelse {
-                            iter.deinit();
-                            return globalThis.throwInvalidArguments("Missing argument", .{});
-                        };
-
-                        if (string_value.isUndefinedOrNull()) {
-                            iter.deinit();
-                            return globalThis.throwInvalidArguments("Expected string", .{});
-                        }
-
-                        args[i] = try string_value.getZigString(globalThis);
-                    },
                     bun.String => {
                         var string_value = eater(&iter) orelse {
                             iter.deinit();
@@ -603,8 +590,9 @@ pub fn wrapInstanceMethod(
                             return globalThis.throwInvalidArguments("Expected string", .{});
                         }
 
-                        // NOTE: callee is responsible for calling `.deref()` on this.
-                        args[i] = try string_value.toBunString(globalThis);
+                        // Borrowed view (tied to JSValue GC lifetime, valid for this call).
+                        // Callers with `defer .deref()` are harmless — deref is a no-op for borrowed.
+                        args[i] = try string_value.toString(globalThis);
                     },
                     ?bun.api.HTMLRewriter.ContentOptions => {
                         if (iter.nextEat()) |content_arg| {
@@ -746,19 +734,6 @@ pub fn wrapStaticMethod(
                             args[i] = null;
                         }
                     },
-                    jsc.ZigString => {
-                        var string_value = eater(&iter) orelse {
-                            iter.deinit();
-                            return globalThis.throwInvalidArguments("Missing argument", .{});
-                        };
-
-                        if (string_value.isUndefinedOrNull()) {
-                            iter.deinit();
-                            return globalThis.throwInvalidArguments("Expected string", .{});
-                        }
-
-                        args[i] = try string_value.getZigString(globalThis);
-                    },
                     bun.String => {
                         var string_value = eater(&iter) orelse {
                             iter.deinit();
@@ -770,8 +745,9 @@ pub fn wrapStaticMethod(
                             return globalThis.throwInvalidArguments("Expected string", .{});
                         }
 
-                        // NOTE: callee is responsible for calling `.deref()` on this.
-                        args[i] = try string_value.toBunString(globalThis);
+                        // Borrowed view (tied to JSValue GC lifetime, valid for this call).
+                        // Callers with `defer .deref()` are harmless — deref is a no-op for borrowed.
+                        args[i] = try string_value.toString(globalThis);
                     },
                     ?bun.api.HTMLRewriter.ContentOptions => {
                         if (iter.nextEat()) |content_arg| {
@@ -832,4 +808,3 @@ const jsc = bun.jsc;
 const CallFrame = jsc.CallFrame;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
-const ZigString = jsc.ZigString;

@@ -338,7 +338,7 @@ pub fn getSourceMapImpl(
         if (load_hint != .is_external_map) try_inline: {
             const source = SourceProviderKind.getSourceSlice(provider);
             defer source.deref();
-            bun.assert(source.tag == .ZigString);
+            bun.assert(source.tag == .StringView);
 
             const maybe_found_url = found_url: {
                 if (source.is8Bit())

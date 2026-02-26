@@ -3195,7 +3195,7 @@ const Return = struct {
     pub const Link = void;
     pub const Lstat = StatOrNotFound;
     pub const Mkdir = StringOrUndefined;
-    pub const Mkdtemp = jsc.ZigString;
+    pub const Mkdtemp = bun.String;
     pub const Open = FD;
     pub const WriteFile = void;
     pub const Readv = Read;
@@ -3211,8 +3211,8 @@ const Return = struct {
         bytes_read: u52,
         buffer_val: jsc.JSValue = jsc.JSValue.zero,
         const fields = .{
-            .bytesRead = jsc.ZigString.init("bytesRead"),
-            .buffer = jsc.ZigString.init("buffer"),
+            .bytesRead = bun.String.static("bytesRead"),
+            .buffer = bun.String.static("buffer"),
         };
         pub fn toJS(this: *const ReadPromise, ctx: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
             defer if (!this.buffer_val.isEmptyOrUndefinedOrNull())
@@ -3232,8 +3232,8 @@ const Return = struct {
         buffer: StringOrBuffer,
         buffer_val: jsc.JSValue = jsc.JSValue.zero,
         const fields = .{
-            .bytesWritten = jsc.ZigString.init("bytesWritten"),
-            .buffer = jsc.ZigString.init("buffer"),
+            .bytesWritten = bun.String.static("bytesWritten"),
+            .buffer = bun.String.static("buffer"),
         };
 
         // Excited for the issue that's like "cannot read file bigger than 2 GB"
@@ -3255,9 +3255,6 @@ const Return = struct {
     };
     pub const Write = struct {
         bytes_written: u52,
-        const fields = .{
-            .bytesWritten = jsc.ZigString.init("bytesWritten"),
-        };
 
         // Excited for the issue that's like "cannot read file bigger than 2 GB"
         pub fn toJS(this: *const Write, _: *jsc.JSGlobalObject) jsc.JSValue {
@@ -4157,12 +4154,12 @@ pub const NodeFS = struct {
                     .path = prefix_buf[0 .. len + 6],
                 } };
             }
-            return .initResult(bun.handleOom(jsc.ZigString.dupeForJS(bun.sliceTo(req.path, 0), bun.default_allocator)));
+            return .initResult(bun.String.cloneUTF8(bun.sliceTo(req.path, 0)));
         }
 
         const rc = c.mkdtemp(prefix_buf);
         if (rc) |ptr| {
-            return .initResult(bun.handleOom(jsc.ZigString.dupeForJS(bun.sliceTo(ptr, 0), bun.default_allocator)));
+            return .initResult(bun.String.cloneUTF8(bun.sliceTo(ptr, 0)));
         }
 
         // c.getErrno(rc) returns SUCCESS if rc is -1 so we call std.c._errno() directly

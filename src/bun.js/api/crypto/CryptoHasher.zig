@@ -147,8 +147,8 @@ pub const CryptoHasher = union(enum) {
 
     pub fn getAlgorithm(this: *CryptoHasher, globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
         return switch (this.*) {
-            inline .evp, .zig => |*inner| ZigString.fromUTF8(bun.asByteSlice(@tagName(inner.algorithm))).toJS(globalObject),
-            .hmac => |inner| if (inner) |hmac| ZigString.fromUTF8(bun.asByteSlice(@tagName(hmac.algorithm))).toJS(globalObject) else {
+            inline .evp, .zig => |*inner| bun.String.createUTF8ForJS(globalObject, bun.asByteSlice(@tagName(inner.algorithm))),
+            .hmac => |inner| if (inner) |hmac| bun.String.createUTF8ForJS(globalObject, bun.asByteSlice(@tagName(hmac.algorithm))) else {
                 return throwHmacConsumed(globalObject);
             },
         };
@@ -210,10 +210,11 @@ pub const CryptoHasher = union(enum) {
 
     pub fn hash_(
         globalThis: *JSGlobalObject,
-        algorithm: ZigString,
+        algorithm: bun.String,
         input: jsc.Node.BlobOrStringOrBuffer,
         output: ?jsc.Node.StringOrBuffer,
     ) bun.JSError!jsc.JSValue {
+        defer algorithm.deref();
         var evp = EVP.byName(algorithm, globalThis) orelse return try CryptoHasherZig.hashByName(globalThis, algorithm, input, output) orelse {
             return globalThis.throwInvalidArguments("Unsupported algorithm \"{f}\"", .{algorithm});
         };
@@ -250,9 +251,10 @@ pub const CryptoHasher = union(enum) {
             return globalThis.throwInvalidArguments("algorithm must be a string", .{});
         }
 
-        const algorithm = try algorithm_name.getZigString(globalThis);
+        const algorithm = try algorithm_name.toBunString(globalThis);
+        defer algorithm.deref();
 
-        if (algorithm.len == 0) {
+        if (algorithm.isEmpty()) {
             return globalThis.throwInvalidArguments("Invalid algorithm name", .{});
         }
 
@@ -499,9 +501,9 @@ const CryptoHasherZig = struct {
         };
     }
 
-    pub fn hashByName(globalThis: *JSGlobalObject, algorithm: ZigString, input: jsc.Node.BlobOrStringOrBuffer, output: ?jsc.Node.StringOrBuffer) bun.JSError!?jsc.JSValue {
+    pub fn hashByName(globalThis: *JSGlobalObject, algorithm: bun.String, input: jsc.Node.BlobOrStringOrBuffer, output: ?jsc.Node.StringOrBuffer) bun.JSError!?jsc.JSValue {
         inline for (algo_map) |item| {
-            if (bun.strings.eqlComptime(algorithm.slice(), item[0])) {
+            if (algorithm.eqlComptime(item[0])) {
                 return try hashByNameInner(globalThis, item[1], input, output);
             }
         }
@@ -576,9 +578,9 @@ const CryptoHasherZig = struct {
         }
     }
 
-    fn constructor(algorithm: ZigString) ?*CryptoHasher {
+    fn constructor(algorithm: bun.String) ?*CryptoHasher {
         inline for (algo_map) |item| {
-            if (bun.strings.eqlComptime(algorithm.slice(), item[0])) {
+            if (algorithm.eqlComptime(item[0])) {
                 return CryptoHasher.new(.{ .zig = .{
                     .algorithm = @field(EVP.Algorithm, item[0]),
                     .state = bun.new(item[1], item[1].init(.{})),
@@ -889,7 +891,6 @@ const CallFrame = jsc.CallFrame;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
 const VirtualMachine = jsc.VirtualMachine;
-const ZigString = jsc.ZigString;
 const host_fn = bun.jsc.host_fn;
 
 const Crypto = jsc.API.Bun.Crypto;

@@ -1730,7 +1730,7 @@ pub fn resolve(
     global: *JSGlobalObject,
     specifier: bun.String,
     source: bun.String,
-    query_string: ?*ZigString,
+    query_string: ?*bun.String,
     is_esm: bool,
 ) !void {
     try resolveMaybeNeedsTrailingSlash(res, global, specifier, source, query_string, is_esm, true, false);
@@ -1749,7 +1749,7 @@ pub fn resolveMaybeNeedsTrailingSlash(
     global: *JSGlobalObject,
     specifier: bun.String,
     source: bun.String,
-    query_string: ?*ZigString,
+    query_string: ?*bun.String,
     is_esm: bool,
     comptime is_a_file_path: bool,
     is_user_require_resolve: bool,
@@ -1870,7 +1870,7 @@ pub fn resolveMaybeNeedsTrailingSlash(
     };
 
     if (query_string) |query| {
-        query.* = ZigString.init(result.query_string);
+        query.* = bun.String.init(result.query_string);
     }
 
     res.* = ErrorableString.ok(bun.String.init(result.path));
@@ -1948,7 +1948,7 @@ pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, refer
                 err,
                 globalThis.createAggregateError(
                     errors,
-                    &ZigString.init(
+                    &bun.String.borrowUTF8(
                         std.fmt.allocPrint(globalThis.allocator(), "{d} errors building \"{f}\"", .{
                             errors.len,
                             specifier,
@@ -2043,8 +2043,7 @@ pub fn clearEntryPoint(this: *VirtualMachine) bun.JSError!void {
         return;
     }
 
-    var str = ZigString.init(main_file_name);
-    try this.global.deleteModuleRegistryEntry(&str);
+    try this.global.deleteModuleRegistryEntry(&bun.String.borrowUTF8(main_file_name));
 }
 
 fn loadPreloads(this: *VirtualMachine) !?*JSInternalPromise {
@@ -3430,7 +3429,7 @@ pub noinline fn printGithubAnnotation(exception: *ZigException) void {
         }
 
         if (cursor > 0) {
-            const body = ZigString.initUTF8(msg[cursor..]);
+            const body = bun.String.borrowUTF8(msg[cursor..]);
             writer.print("{f}", .{body.githubAction()}) catch {};
         }
     } else {
@@ -3769,7 +3768,6 @@ const SavedSourceMap = jsc.SavedSourceMap;
 const VM = jsc.VM;
 const ZigException = jsc.ZigException;
 const ZigStackTrace = jsc.ZigStackTrace;
-const ZigString = jsc.ZigString;
 const Bun = jsc.API.Bun;
 
 const ModuleLoader = jsc.ModuleLoader;

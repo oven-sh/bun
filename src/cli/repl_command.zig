@@ -134,8 +134,17 @@ const ReplRunner = struct {
         if (this.eval_script.len > 0 or this.eval_and_print) {
             // Non-interactive: evaluate the -e/--eval or -p/--print script,
             // drain the event loop, and exit
-            vm.exit_handler.exit_code = this.repl.evalScript(this.eval_script, this.eval_and_print);
+            const had_error = this.repl.evalScript(this.eval_script, this.eval_and_print);
             Output.flush();
+            if (had_error) {
+                // Only overwrite on error so `process.exitCode = N` in the
+                // script is preserved on success.
+                vm.exit_handler.exit_code = 1;
+            } else {
+                // Fire process.on("beforeExit") and re-drain as needed
+                // (matches bun -e / Node.js semantics).
+                vm.onBeforeExit();
+            }
         } else {
             // Interactive: run the REPL loop
             this.repl.runWithVM(vm) catch |err| {

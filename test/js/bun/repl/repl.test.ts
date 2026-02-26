@@ -843,22 +843,39 @@ describe.concurrent("Bun REPL", () => {
       expect(exitCode).toBe(0);
     });
 
-    test("-e with thrown error exits with code 1", async () => {
+    test("-e with thrown error writes to stderr and exits with code 1", async () => {
       const { stdout, stderr, exitCode } = await runReplWith(["-e", "throw new Error('boom')"]);
-      expect(stdout + stderr).toContain("boom");
+      expect(stdout).toBe("");
+      expect(stderr).toContain("boom");
       expect(exitCode).toBe(1);
     });
 
-    test("-e with syntax error exits with code 1", async () => {
+    test("-e with syntax error writes to stderr and exits with code 1", async () => {
       const { stdout, stderr, exitCode } = await runReplWith(["-e", "const ="]);
-      expect((stdout + stderr).toLowerCase()).toContain("syntaxerror");
+      expect(stdout).toBe("");
+      expect(stderr.toLowerCase()).toContain("syntaxerror");
       expect(exitCode).toBe(1);
     });
 
-    test("-e with rejected top-level await exits with code 1", async () => {
+    test("-e with rejected top-level await writes to stderr and exits with code 1", async () => {
       const { stdout, stderr, exitCode } = await runReplWith(["-e", "await Promise.reject(new Error('async fail'))"]);
-      expect(stdout + stderr).toContain("async fail");
+      expect(stdout).toBe("");
+      expect(stderr).toContain("async fail");
       expect(exitCode).toBe(1);
+    });
+
+    test("-e preserves process.exitCode set by the script", async () => {
+      const { exitCode } = await runReplWith(["-e", "process.exitCode = 42"]);
+      expect(exitCode).toBe(42);
+    });
+
+    test("-e fires process.on('beforeExit')", async () => {
+      const { stdout, exitCode } = await runReplWith([
+        "-e",
+        "process.on('beforeExit', () => console.log('beforeExit fired'))",
+      ]);
+      expect(stdout).toBe("beforeExit fired\n");
+      expect(exitCode).toBe(0);
     });
 
     test("-e drains event loop (timers fire before exit)", async () => {

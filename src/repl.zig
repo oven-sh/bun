@@ -493,7 +493,7 @@ const ReplCommand = struct {
     pub const all = [_]ReplCommand{
         .{ .name = ".help", .help = "Print this help message", .handler = cmdHelp },
         .{ .name = ".exit", .help = "Exit the REPL", .handler = cmdExit },
-        .{ .name = ".clear", .help = "Clear the REPL context and screen", .handler = cmdClear },
+        .{ .name = ".clear", .help = "Clear the screen", .handler = cmdClear },
         .{ .name = ".copy", .help = "Copy result to clipboard (.copy [expr])", .handler = cmdCopy },
         .{ .name = ".load", .help = "Load a file into the REPL session", .handler = cmdLoad },
         .{ .name = ".save", .help = "Save REPL history to a file", .handler = cmdSave },
@@ -535,7 +535,6 @@ fn cmdHelp(repl: *Repl, _: []const u8) ReplResult {
     repl.print("  {s}Ctrl+W{s}       Delete word backward\n", .{ Color.cyan, Color.reset });
     repl.print("  {s}Ctrl+D{s}       Delete character / Exit if line empty\n", .{ Color.cyan, Color.reset });
     repl.print("  {s}Ctrl+L{s}       Clear screen\n", .{ Color.cyan, Color.reset });
-    repl.print("  {s}Ctrl+R{s}       Reverse history search\n", .{ Color.cyan, Color.reset });
     repl.print("  {s}Ctrl+T{s}       Swap characters\n", .{ Color.cyan, Color.reset });
     repl.print("  {s}Up/Down{s}      Navigate history\n", .{ Color.cyan, Color.reset });
     repl.print("  {s}Tab{s}          Auto-complete\n", .{ Color.cyan, Color.reset });
@@ -1185,13 +1184,17 @@ fn evaluateAndPrint(self: *Repl, code: []const u8) void {
 
 /// Evaluate a script from `bun repl -e/--eval` or `-p/--print` non-interactively.
 /// Uses the REPL transform pipeline (TypeScript/JSX, top-level await, object literal
-/// wrapping, declaration hoisting), drains the event loop, optionally prints the
-/// result, and returns an exit code (0 on success, 1 on error).
-pub fn evalScript(self: *Repl, code: []const u8, print_result: bool) u8 {
-    const global = self.global orelse return 1;
-    const vm = self.vm orelse return 1;
+/// wrapping, declaration hoisting), drains the event loop, and optionally prints the
+/// result to stdout. Errors are written to stderr.
+/// Returns true if an error occurred (the caller should set exit_code=1 and
+/// skip onBeforeExit); false on success (caller preserves process.exitCode).
+pub fn evalScript(self: *Repl, code: []const u8, print_result: bool) bool {
+    const global = self.global orelse return true;
+    const vm = self.vm orelse return true;
 
-    self.use_colors = Output.enable_ansi_colors_stdout and !bun.env_var.NO_COLOR.get();
+    const no_color = bun.env_var.NO_COLOR.get();
+    self.use_colors = Output.enable_ansi_colors_stdout and !no_color;
+    const stderr_colors = Output.enable_ansi_colors_stderr and !no_color;
 
     // Empty / whitespace-only script: nothing to do (matches `node -e ""`)
     if (strings.trim(code, " \t\n\r").len == 0) {
@@ -1202,7 +1205,7 @@ pub fn evalScript(self: *Repl, code: []const u8, print_result: bool) u8 {
                 self.print("undefined\n", .{});
             }
         }
-        return 0;
+        return false;
     }
 
     const transformed_code = self.transformForRepl(code) orelse {
@@ -1210,9 +1213,9 @@ pub fn evalScript(self: *Repl, code: []const u8, print_result: bool) u8 {
         var exception: jsc.JSValue = .js_undefined;
         _ = Bun__REPL__evaluate(global, code.ptr, code.len, "[eval]".ptr, "[eval]".len, &exception);
         if (!exception.isUndefined() and !exception.isNull()) {
-            self.printJSError(exception);
+            self.printJSErrorTo(exception, Output.errorWriter(), stderr_colors);
         }
-        return 1;
+        return true;
     };
     defer self.allocator.free(transformed_code);
 
@@ -1227,8 +1230,8 @@ pub fn evalScript(self: *Repl, code: []const u8, print_result: bool) u8 {
     );
 
     if (!exception.isUndefined() and !exception.isNull()) {
-        self.printJSError(exception);
-        return 1;
+        self.printJSErrorTo(exception, Output.errorWriter(), stderr_colors);
+        return true;
     }
 
     // If the transform wrapped in an async IIFE (top-level await), wait for it
@@ -1240,10 +1243,10 @@ pub fn evalScript(self: *Repl, code: []const u8, print_result: bool) u8 {
             .fulfilled => resolved_result = promise.result(vm.jsc_vm),
             .rejected => {
                 const rejection = promise.result(vm.jsc_vm);
-                self.printJSError(rejection);
-                return 1;
+                self.printJSErrorTo(rejection, Output.errorWriter(), stderr_colors);
+                return true;
             },
-            .pending => return 1,
+            .pending => return true,
         }
     }
 
@@ -1252,8 +1255,8 @@ pub fn evalScript(self: *Repl, code: []const u8, print_result: bool) u8 {
     if (resolved_result.isObject()) {
         const maybe_value = resolved_result.getOwn(global, "value") catch |err| {
             const exc = global.takeException(err);
-            self.printJSError(exc);
-            return 1;
+            self.printJSErrorTo(exc, Output.errorWriter(), stderr_colors);
+            return true;
         };
         if (maybe_value) |value| actual_result = value;
     }
@@ -1280,7 +1283,7 @@ pub fn evalScript(self: *Repl, code: []const u8, print_result: bool) u8 {
         }
     }
 
-    return 0;
+    return false;
 }
 
 /// Evaluate code without REPL transforms (fallback for errors)
@@ -1596,11 +1599,15 @@ fn setReplVariables(self: *Repl) void {
 }
 
 fn printJSError(self: *Repl, error_value: jsc.JSValue) void {
+    // Interactive REPL writes everything to stdout (single terminal stream).
+    self.printJSErrorTo(error_value, Output.writer(), self.use_colors);
+}
+
+fn printJSErrorTo(self: *Repl, error_value: jsc.JSValue, writer: *std.Io.Writer, enable_colors: bool) void {
     const global = self.global orelse return;
-    const writer = Output.writer();
     // Use .Error level for proper error formatting with Bun.inspect
     jsc.ConsoleObject.format2(.Error, global, @ptrCast(&error_value), 1, writer, .{
-        .enable_colors = self.use_colors,
+        .enable_colors = enable_colors,
         .add_newline = true,
         .flush = false,
         .quote_strings = true,
@@ -1609,7 +1616,7 @@ fn printJSError(self: *Repl, error_value: jsc.JSValue) void {
     }) catch {
         // Formatting the error itself threw — clear it to avoid recursion and show a fallback.
         global.clearException();
-        self.printError("error: [failed to format error]\n", .{});
+        writer.writeAll("error: [failed to format error]\n") catch {};
     };
 }
 

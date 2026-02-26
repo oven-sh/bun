@@ -273,7 +273,7 @@ test.todoIf(isCI && !isWindows)("Bun.secrets handles unicode", async () => {
   await Bun.secrets.delete({ service: testService, name: testUser });
 });
 
-test.todoIf(isCI && !isWindows)("Bun.secrets update preserves access after repeated updates", async () => {
+test.todoIf(!isMacOS)("Bun.secrets update preserves access after repeated updates", async () => {
   const testService = "bun-test-acl-update-" + Date.now();
   const testUser = "test-acl-user";
 

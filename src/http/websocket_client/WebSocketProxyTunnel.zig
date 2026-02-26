@@ -297,16 +297,22 @@ pub fn onWritable(this: *WebSocketProxyTunnel) void {
 
     // Send buffered encrypted data
     const to_send = this.#write_buffer.slice();
-    if (to_send.len == 0) return;
+    if (to_send.len > 0) {
+        const written = this.#socket.write(to_send);
+        if (written < 0) return;
 
-    const written = this.#socket.write(to_send);
-    if (written < 0) return;
+        const written_usize: usize = @intCast(written);
+        if (written_usize == to_send.len) {
+            this.#write_buffer.reset();
+        } else {
+            this.#write_buffer.cursor += written_usize;
+            return; // still have backpressure
+        }
+    }
 
-    const written_usize: usize = @intCast(written);
-    if (written_usize == to_send.len) {
-        this.#write_buffer.reset();
-    } else {
-        this.#write_buffer.cursor += written_usize;
+    // Tunnel drained - let the connected WebSocket flush its send_buffer
+    if (this.#connected_websocket) |ws| {
+        ws.handleTunnelWritable();
     }
 }
 

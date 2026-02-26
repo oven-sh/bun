@@ -903,33 +903,28 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         ) bool {
             bun.assert(out_buf.len > 0);
             // Do not use MSG_MORE, see https://github.com/oven-sh/bun/issues/4010
-            if (this.proxy_tunnel) |tunnel| {
-                // In tunnel mode, write through the tunnel's TLS layer
+            const wrote: usize = if (this.proxy_tunnel) |tunnel|
+                // In tunnel mode, route through the tunnel's TLS layer
                 // instead of the detached raw socket.
-                const wrote = tunnel.write(out_buf) catch {
+                tunnel.write(out_buf) catch {
                     this.terminate(ErrorCode.failed_to_write);
                     return false;
-                };
-                const readable = this.send_buffer.readableSlice(0);
-                if (readable.ptr == out_buf.ptr) {
-                    this.send_buffer.discard(wrote);
                 }
-                return true;
-            }
-            if (this.tcp.isClosed()) {
-                return false;
-            }
-            const wrote = this.tcp.write(out_buf);
-            if (wrote < 0) {
-                this.terminate(ErrorCode.failed_to_write);
-                return false;
-            }
-            const expected = @as(usize, @intCast(wrote));
+            else blk: {
+                if (this.tcp.isClosed()) {
+                    return false;
+                }
+                const w = this.tcp.write(out_buf);
+                if (w < 0) {
+                    this.terminate(ErrorCode.failed_to_write);
+                    return false;
+                }
+                break :blk @intCast(w);
+            };
             const readable = this.send_buffer.readableSlice(0);
             if (readable.ptr == out_buf.ptr) {
-                this.send_buffer.discard(expected);
+                this.send_buffer.discard(wrote);
             }
-
             return true;
         }
 
@@ -1043,7 +1038,9 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         }
 
         pub fn hasBackpressure(this: *const WebSocket) bool {
-            return this.send_buffer.count > 0;
+            if (this.send_buffer.count > 0) return true;
+            if (this.proxy_tunnel) |tunnel| return tunnel.hasBackpressure();
+            return false;
         }
 
         pub fn writeBinaryData(
@@ -1373,6 +1370,15 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             // Process the decrypted data as if it came from the socket
             // hasTCP() now returns true for tunnel mode, so this will work correctly
             this.handleData(this.tcp, data);
+        }
+
+        /// Called by the WebSocketProxyTunnel when the underlying socket drains.
+        /// Flushes any buffered plaintext data through the tunnel.
+        pub fn handleTunnelWritable(this: *WebSocket) void {
+            if (this.close_received) return;
+            const send_buf = this.send_buffer.readableSlice(0);
+            if (send_buf.len == 0) return;
+            _ = this.sendBuffer(send_buf);
         }
 
         pub fn finalize(this: *WebSocket) callconv(.c) void {

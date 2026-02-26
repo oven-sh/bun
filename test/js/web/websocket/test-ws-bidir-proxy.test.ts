@@ -1,33 +1,47 @@
-import { test } from "bun:test";
+import { expect, test } from "bun:test";
 import { tls as tlsCerts } from "harness";
 import http from "node:http";
 import net from "node:net";
 
+// Regression test: sendBuffer() was writing directly to this.tcp (which is
+// detached in proxy tunnel mode) instead of routing through the tunnel's TLS
+// layer. Under bidirectional traffic, backpressure pushes writes through the
+// sendBuffer slow path, corrupting the TLS stream and killing the connection
+// (close code 1006) within seconds.
 test("bidirectional ping/pong through TLS proxy", async () => {
-  const { promise, resolve, reject } = Promise.withResolvers<void>();
+  const intervals: ReturnType<typeof setInterval>[] = [];
+  const clearIntervals = () => {
+    for (const i of intervals) clearInterval(i);
+    intervals.length = 0;
+  };
 
-  const server = Bun.serve({
+  using server = Bun.serve({
     port: 0,
     tls: { key: tlsCerts.key, cert: tlsCerts.cert },
     fetch(req, server) {
       if (server.upgrade(req)) return;
-      return new Response("no", { status: 400 });
+      return new Response("Expected WebSocket", { status: 400 });
     },
     websocket: {
       message(ws, msg) {
         ws.send("echo:" + msg);
       },
       open(ws) {
-        // Server pings every 500ms (like tunnel client's 54s interval, sped up)
-        const pingTimer = setInterval(() => {
-          if (ws.readyState === 1) ws.ping();
-          else clearInterval(pingTimer);
-        }, 500);
+        // Server pings periodically (like session-ingress's 54s interval, sped up)
+        intervals.push(
+          setInterval(() => {
+            if (ws.readyState === 1) ws.ping();
+          }, 500),
+        );
         // Server pushes data continuously
-        const dataTimer = setInterval(() => {
-          if (ws.readyState === 1) ws.send("push:" + Date.now());
-          else clearInterval(dataTimer);
-        }, 100);
+        intervals.push(
+          setInterval(() => {
+            if (ws.readyState === 1) ws.send("push:" + Date.now());
+          }, 100),
+        );
+      },
+      close() {
+        clearIntervals();
       },
     },
   });
@@ -45,61 +59,68 @@ test("bidirectional ping/pong through TLS proxy", async () => {
       clientSocket.pipe(serverSocket);
       if (head.length > 0) serverSocket.write(head);
     });
+    serverSocket.on("error", () => clientSocket.destroy());
+    clientSocket.on("error", () => serverSocket.destroy());
   });
+
   const { promise: proxyReady, resolve: proxyReadyResolve } = Promise.withResolvers<void>();
   proxy.listen(0, "127.0.0.1", () => proxyReadyResolve());
   await proxyReady;
-  const proxyPort = (proxy.address() as any).port;
+  const proxyPort = (proxy.address() as net.AddressInfo).port;
+
+  const { promise, resolve, reject } = Promise.withResolvers<void>();
 
   const ws = new WebSocket(`wss://localhost:${server.port}`, {
     proxy: `http://127.0.0.1:${proxyPort}`,
     tls: { rejectUnauthorized: false },
   } as any);
 
-  let clientPongCount = 0;
-  let messageCount = 0;
-  let clientPongReceived = true;
-  let clientPingInterval: ReturnType<typeof setInterval>;
+  const REQUIRED_PONGS = 5;
+  let pongReceived = true;
+  let closeCode: number | undefined;
 
   ws.addEventListener("open", () => {
     // Client sends pings (like Claude Code's 10s interval, sped up)
-    clientPingInterval = setInterval(() => {
-      if (!clientPongReceived) {
-        console.log(`FAIL: No pong after ${clientPongCount} pongs, ${messageCount} msgs`);
-        clearInterval(clientPingInterval);
-        reject(new Error("Pong timeout"));
-        return;
-      }
-      clientPongReceived = false;
-      (ws as any).ping?.();
-    }, 500);
-    // Client writes data (bidirectional traffic)
-    const writeInterval = setInterval(() => {
-      if (ws.readyState === WebSocket.OPEN) ws.send("data:" + Date.now());
-      else clearInterval(writeInterval);
-    }, 50);
+    intervals.push(
+      setInterval(() => {
+        if (!pongReceived) {
+          reject(new Error("Pong timeout - connection dead"));
+          return;
+        }
+        pongReceived = false;
+        (ws as any).ping?.();
+      }, 400),
+    );
+    // Client writes data continuously (bidirectional traffic triggers the bug)
+    intervals.push(
+      setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) ws.send("data:" + Date.now());
+      }, 50),
+    );
   });
 
+  // Resolve as soon as enough pongs arrive (condition-based, not timer-gated)
+  let pongCount = 0;
   ws.addEventListener("pong", () => {
-    clientPongCount++;
-    clientPongReceived = true;
+    pongCount++;
+    pongReceived = true;
+    if (pongCount >= REQUIRED_PONGS) resolve();
   });
-  ws.addEventListener("message", () => {
-    messageCount++;
-  });
+
   ws.addEventListener("close", e => {
-    console.log(`close: ${(e as CloseEvent).code}, pongs: ${clientPongCount}, msgs: ${messageCount}`);
-    clearInterval(clientPingInterval);
+    closeCode = (e as CloseEvent).code;
+    clearIntervals();
+    if (pongCount < REQUIRED_PONGS) {
+      reject(new Error(`Connection closed (${closeCode}) after only ${pongCount}/${REQUIRED_PONGS} pongs`));
+    }
   });
 
-  setTimeout(() => {
-    console.log(`DONE: pongs=${clientPongCount}, msgs=${messageCount}`);
-    if (clientPongCount >= 5) resolve();
-    else reject(new Error(`Only ${clientPongCount} pongs in 5s`));
-  }, 5000);
-
-  await promise;
-  ws.close();
-  server.stop();
-  proxy.close();
+  try {
+    await promise;
+    expect(pongCount).toBeGreaterThanOrEqual(REQUIRED_PONGS);
+    ws.close();
+  } finally {
+    clearIntervals();
+    proxy.close();
+  }
 }, 10000);

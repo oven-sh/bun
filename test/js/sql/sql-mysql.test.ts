@@ -964,39 +964,43 @@ if (isDockerEnabled()) {
           expect((await sql`select 9223372036854777 as x`)[0].x).toBe(9223372036854777n);
         });
 
+        // Regression: previously any in-range BigInt parameter would throw
+        // ERR_OUT_OF_RANGE due to inverted logic in JSC__isBigIntInInt64Range.
         describe("bigint parameter binding", () => {
-          test("binds in-range signed BigInt", async () => {
+          test("binds BigInt values into BIGINT columns", async () => {
             await using sql = new SQL({ ...getOptions(), bigint: true });
-            const [{ x }] = await sql`select ${100n} as x`;
-            expect(x).toBe(100n);
+            const table = "t_" + randomUUIDv7("hex").replaceAll("-", "");
+            await sql`CREATE TEMPORARY TABLE ${sql(table)} (s BIGINT, u BIGINT UNSIGNED)`;
+
+            const signed = [100n, 0n, -1n, 9223372036854775807n, -9223372036854775808n];
+            const unsigned = [100n, 0n, 9223372036854775808n, 18446744073709551615n];
+
+            for (const v of signed) {
+              await sql`INSERT INTO ${sql(table)} (s) VALUES (${v})`;
+            }
+            for (const v of unsigned) {
+              await sql`INSERT INTO ${sql(table)} (u) VALUES (${v})`;
+            }
+
+            const s = (await sql`SELECT s FROM ${sql(table)} WHERE s IS NOT NULL ORDER BY s`).map(r => r.s);
+            expect(s).toEqual([...signed].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)));
+
+            const u = (await sql`SELECT u FROM ${sql(table)} WHERE u IS NOT NULL ORDER BY u`).map(r => r.u);
+            expect(u).toEqual([...unsigned].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)));
           });
 
-          test("binds i64 max boundary", async () => {
-            await using sql = new SQL({ ...getOptions(), bigint: true });
-            const [{ x }] = await sql`select ${9223372036854775807n} as x`;
-            expect(x).toBe(9223372036854775807n);
+          test("throws ERR_OUT_OF_RANGE for BigInt exceeding u64", async () => {
+            await using sql = new SQL({ ...getOptions() });
+            await expect(sql`select ${18446744073709551616n} as x`).rejects.toMatchObject({
+              code: "ERR_OUT_OF_RANGE",
+            });
           });
 
-          test("binds i64 min boundary", async () => {
-            await using sql = new SQL({ ...getOptions(), bigint: true });
-            const [{ x }] = await sql`select ${-9223372036854775808n} as x`;
-            expect(x).toBe(-9223372036854775808n);
-          });
-
-          test("binds u64 max as unsigned", async () => {
-            await using sql = new SQL({ ...getOptions(), bigint: true });
-            const [{ x }] = await sql`select ${18446744073709551615n} as x`;
-            expect(x).toBe(18446744073709551615n);
-          });
-
-          test("throws OUT_OF_RANGE for BigInt exceeding u64", async () => {
-            await using sql = new SQL({ ...getOptions(), bigint: true });
-            await expect(sql`select ${18446744073709551616n} as x`).rejects.toThrow(/out of range/i);
-          });
-
-          test("throws OUT_OF_RANGE for BigInt below i64 min", async () => {
-            await using sql = new SQL({ ...getOptions(), bigint: true });
-            await expect(sql`select ${-9223372036854775809n} as x`).rejects.toThrow(/out of range/i);
+          test("throws ERR_OUT_OF_RANGE for BigInt below i64 min", async () => {
+            await using sql = new SQL({ ...getOptions() });
+            await expect(sql`select ${-9223372036854775809n} as x`).rejects.toMatchObject({
+              code: "ERR_OUT_OF_RANGE",
+            });
           });
         });
 

@@ -708,6 +708,38 @@ pub fn init(allocator: Allocator) Repl {
     };
 }
 
+/// Initialize the REPL helper for const variable protection.
+/// This defines a helper function on globalThis that uses getter/setter
+/// to make const variables non-reassignable across REPL evaluations.
+/// Must be called after the VM and global object are fully initialized.
+pub fn initConstHelper(self: *Repl) void {
+    const global = self.global orelse return;
+    const helper_code =
+        \\Object.defineProperty(globalThis, "__repl_defineConst", {
+        \\  value: function(name, value) {
+        \\    Object.defineProperty(globalThis, name, {
+        \\      get: function() { return value; },
+        \\      set: function() { throw new TypeError("Assignment to constant variable."); },
+        \\      configurable: true,
+        \\      enumerable: true
+        \\    });
+        \\  },
+        \\  writable: false,
+        \\  configurable: false,
+        \\  enumerable: false
+        \\});
+    ;
+    var exception: jsc.JSValue = .js_undefined;
+    _ = Bun__REPL__evaluate(
+        global,
+        helper_code.ptr,
+        helper_code.len,
+        "[repl-init]".ptr,
+        "[repl-init]".len,
+        &exception,
+    );
+}
+
 pub fn deinit(self: *Repl) void {
     self.restoreTerminal();
     self.history.save();

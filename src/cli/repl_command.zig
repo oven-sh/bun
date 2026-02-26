@@ -176,6 +176,9 @@ const ReplRunner = struct {
         }
 
         vm.transpiler.env.loadTracy();
+
+        // Set up the const variable helper for REPL persistence
+        this.repl.initConstHelper();
     }
 };
 

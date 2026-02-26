@@ -619,6 +619,55 @@ describe.concurrent("Bun REPL", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("const cannot be reassigned across lines (#27485)", async () => {
+      const { stdout, stderr, exitCode } = await runRepl(["const a = 1", "a = 2", ".exit"]);
+      const output = stripAnsi(stdout + stderr);
+      expect(output).toMatch(/TypeError.*Assignment to constant variable/i);
+      expect(exitCode).toBe(0);
+    });
+
+    test("const destructured variables cannot be reassigned (#27485)", async () => {
+      const { stdout, stderr, exitCode } = await runRepl(["const [x, y] = [10, 20]", "x = 99", ".exit"]);
+      const output = stripAnsi(stdout + stderr);
+      expect(output).toMatch(/TypeError.*Assignment to constant variable/i);
+      expect(exitCode).toBe(0);
+    });
+
+    test("const object destructured variables cannot be reassigned (#27485)", async () => {
+      const { stdout, stderr, exitCode } = await runRepl(["const { a, b } = { a: 1, b: 2 }", "a = 99", ".exit"]);
+      const output = stripAnsi(stdout + stderr);
+      expect(output).toMatch(/TypeError.*Assignment to constant variable/i);
+      expect(exitCode).toBe(0);
+    });
+
+    test("const value is preserved after failed reassignment (#27485)", async () => {
+      const { stdout, stderr, exitCode } = await runRepl(["const a = 42", "try { a = 0 } catch(e) {}", "a", ".exit"]);
+      const output = stripAnsi(stdout + stderr);
+      // The last "a" evaluation should still return 42
+      // Split output lines and check the last result line before .exit
+      const lines = output
+        .split("\n")
+        .map((l: string) => l.trim())
+        .filter((l: string) => l === "42");
+      // Should find 42 at least twice: once from declaration, once from final read
+      expect(lines.length).toBeGreaterThanOrEqual(2);
+      expect(exitCode).toBe(0);
+    });
+
+    test("let can still be reassigned across lines", async () => {
+      const { stdout, exitCode } = await runRepl(["let v = 1", "v = 2", "v", ".exit"]);
+      const output = stripAnsi(stdout);
+      expect(output).toContain("2");
+      expect(exitCode).toBe(0);
+    });
+
+    test("var can still be reassigned across lines", async () => {
+      const { stdout, exitCode } = await runRepl(["var v = 1", "v = 2", "v", ".exit"]);
+      const output = stripAnsi(stdout);
+      expect(output).toContain("2");
+      expect(exitCode).toBe(0);
+    });
+
     test("array destructuring persists", async () => {
       const { stdout, exitCode } = await runRepl(["const [a, b, c] = [10, 20, 30]", "a + b + c", ".exit"]);
       expect(stripAnsi(stdout)).toContain("60");

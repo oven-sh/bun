@@ -74,30 +74,61 @@ pub fn ReplTransforms(comptime P: type) type {
             for (all_stmts) |stmt| {
                 switch (stmt.data) {
                     .s_local => |local| {
-                        // Hoist all declarations as var so they become context properties
-                        // In sloppy mode, var at top level becomes a property of the global/context object
-                        // This is essential for REPL variable persistence across vm.runInContext calls
-                        const kind: S.Local.Kind = .k_var;
+                        const is_const = local.kind == .k_const or local.kind == .k_using or local.kind == .k_await_using;
 
-                        // Extract individual identifiers from binding patterns for hoisting
-                        var hoisted_decl_list = ListManaged(G.Decl).init(allocator);
-                        for (local.decls.slice()) |decl| {
-                            try extractIdentifiersFromBinding(p, decl.binding, &hoisted_decl_list);
-                        }
+                        if (is_const) {
+                            // For const/using declarations, preserve the original declaration inside the IIFE
+                            // to maintain immutability semantics. After the declaration, use
+                            // Object.defineProperty(globalThis, name, { value, writable: false, configurable: true, enumerable: true })
+                            // to persist each binding on globalThis as a non-writable property.
+                            // configurable: true allows re-declaration in subsequent REPL lines.
+                            try inner_stmts.append(stmt);
 
-                        if (hoisted_decl_list.items.len > 0) {
-                            try hoisted_stmts.append(p.s(S.Local{
-                                .kind = kind,
-                                .decls = Decl.List.fromOwnedSlice(hoisted_decl_list.items),
-                            }, stmt.loc));
-                        }
+                            // Add Object.defineProperty calls for each identifier in the binding
+                            for (local.decls.slice()) |decl| {
+                                try emitDefinePropertyCalls(p, decl.binding, &inner_stmts, allocator, stmt.loc);
+                            }
 
-                        // Create assignment expressions for the inner statements
-                        for (local.decls.slice()) |decl| {
-                            if (decl.value) |value| {
-                                // Create assignment expression: binding = value
-                                const assign_expr = createBindingAssignment(p, decl.binding, value, allocator);
-                                try inner_stmts.append(p.s(S.SExpr{ .value = assign_expr }, stmt.loc));
+                            // Add the last declarator's first identifier as a result
+                            // expression so wrapLastExpressionWithReturn can capture it
+                            // for display. We emit the identifier (not the initializer)
+                            // to avoid re-evaluating side-effectful expressions.
+                            const decls = local.decls.slice();
+                            if (decls.len > 0) {
+                                const last_decl = decls[decls.len - 1];
+                                if (last_decl.value != null) {
+                                    if (getFirstIdentifierRef(last_decl.binding)) |ref| {
+                                        try inner_stmts.append(p.s(S.SExpr{
+                                            .value = p.newExpr(E.Identifier{ .ref = ref }, stmt.loc),
+                                        }, stmt.loc));
+                                    }
+                                }
+                            }
+                        } else {
+                            // For var/let declarations, hoist as var so they become global properties
+                            // In sloppy mode, var at top level becomes a property of the global/context object
+                            // This is essential for REPL variable persistence across vm.runInContext calls
+
+                            // Extract individual identifiers from binding patterns for hoisting
+                            var hoisted_decl_list = ListManaged(G.Decl).init(allocator);
+                            for (local.decls.slice()) |decl| {
+                                try extractIdentifiersFromBinding(p, decl.binding, &hoisted_decl_list);
+                            }
+
+                            if (hoisted_decl_list.items.len > 0) {
+                                try hoisted_stmts.append(p.s(S.Local{
+                                    .kind = .k_var,
+                                    .decls = Decl.List.fromOwnedSlice(hoisted_decl_list.items),
+                                }, stmt.loc));
+                            }
+
+                            // Create assignment expressions for the inner statements
+                            for (local.decls.slice()) |decl| {
+                                if (decl.value) |value| {
+                                    // Create assignment expression: binding = value
+                                    const assign_expr = createBindingAssignment(p, decl.binding, value, allocator);
+                                    try inner_stmts.append(p.s(S.SExpr{ .value = assign_expr }, stmt.loc));
+                                }
                             }
                         }
                     },
@@ -384,6 +415,63 @@ pub fn ReplTransforms(comptime P: type) type {
             }
         }
 
+        /// Get the first identifier ref from a binding pattern
+        fn getFirstIdentifierRef(binding: Binding) ?Ref {
+            switch (binding.data) {
+                .b_identifier => |ident| return ident.ref,
+                .b_array => |arr| {
+                    for (arr.items) |item| {
+                        if (getFirstIdentifierRef(item.binding)) |ref| return ref;
+                    }
+                    return null;
+                },
+                .b_object => |obj| {
+                    for (obj.properties) |prop| {
+                        if (getFirstIdentifierRef(prop.value)) |ref| return ref;
+                    }
+                    return null;
+                },
+                .b_missing => return null,
+            }
+        }
+
+        /// Emit __repl_defineConst("name", name) for each identifier in a binding pattern.
+        /// This persists const bindings on globalThis using getter/setter so that
+        /// subsequent REPL evaluations cannot reassign them.
+        /// The __repl_defineConst helper is initialized during REPL startup (see repl.zig).
+        fn emitDefinePropertyCalls(p: *P, binding: Binding, inner_stmts: *ListManaged(Stmt), allocator: Allocator, loc: logger.Loc) !void {
+            switch (binding.data) {
+                .b_identifier => |ident| {
+                    const name = p.symbols.items[ident.ref.innerIndex()].original_name;
+
+                    // __repl_defineConst("name", name)
+                    const helper_ref = try p.newSymbol(.unbound, "__repl_defineConst");
+                    const helper = p.newExpr(E.Identifier{ .ref = helper_ref }, loc);
+
+                    var args = bun.handleOom(allocator.alloc(Expr, 2));
+                    args[0] = p.newExpr(E.String{ .data = name }, loc);
+                    args[1] = p.newExpr(E.Identifier{ .ref = ident.ref }, loc);
+
+                    const call = p.newExpr(E.Call{
+                        .target = helper,
+                        .args = ExprNodeList.fromOwnedSlice(args),
+                    }, loc);
+                    try inner_stmts.append(p.s(S.SExpr{ .value = call }, loc));
+                },
+                .b_array => |arr| {
+                    for (arr.items) |item| {
+                        try emitDefinePropertyCalls(p, item.binding, inner_stmts, allocator, loc);
+                    }
+                },
+                .b_object => |obj| {
+                    for (obj.properties) |prop| {
+                        try emitDefinePropertyCalls(p, prop.value, inner_stmts, allocator, loc);
+                    }
+                },
+                .b_missing => {},
+            }
+        }
+
         /// Create { __proto__: null, value: expr } wrapper object
         /// Uses null prototype to create a clean data object
         fn wrapExprInValueObject(p: *P, expr: Expr, allocator: Allocator) Expr {
@@ -505,6 +593,8 @@ const Expr = js_ast.Expr;
 const ExprNodeList = js_ast.ExprNodeList;
 const S = js_ast.S;
 const Stmt = js_ast.Stmt;
+
+const Ref = js_ast.Ref;
 
 const G = js_ast.G;
 const Decl = G.Decl;

@@ -1347,32 +1347,38 @@ var _Interface = class Interface extends InterfaceConstructor {
     // cursor position
     var cursorPos = this.getCursorPos();
 
+    // Build the entire output as a single string to avoid flicker
+    // from multiple individual write() calls (especially on Windows).
+    var data = "";
+
     // First move to the bottom of the current line, based on cursor pos
     var prevRows = this.prevRows || 0;
     if (prevRows > 0) {
-      moveCursor(this.output, 0, -prevRows);
+      data += CSI`${prevRows}A`;
     }
 
     // Cursor to left edge.
-    cursorTo(this.output, 0);
+    data += CSI`${1}G`;
     // erase data
-    clearScreenDown(this.output);
+    data += kClearScreenDown;
 
     // Write the prompt and the current buffer content.
-    this[kWriteToOutput](line);
+    data += line;
 
     // Force terminal to allocate a new line
     if (lineCols === 0) {
-      this[kWriteToOutput](" ");
+      data += " ";
     }
 
     // Move cursor to original position.
-    cursorTo(this.output, cursorPos.cols);
+    data += CSI`${cursorPos.cols + 1}G`;
 
     var diff = lineRows - cursorPos.rows;
     if (diff > 0) {
-      moveCursor(this.output, 0, -diff);
+      data += CSI`${diff}A`;
     }
+
+    this[kWriteToOutput](data);
 
     this.prevRows = cursorPos.rows;
   }

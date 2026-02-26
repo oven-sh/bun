@@ -2,7 +2,7 @@ pub fn create(globalThis: *jsc.JSGlobalObject) jsc.JSValue {
     const object = JSValue.createEmptyObject(globalThis, 1);
     object.put(
         globalThis,
-        ZigString.static("parse"),
+        bun.String.static("parse"),
         jsc.JSFunction.create(
             globalThis,
             "parse",
@@ -61,4 +61,3 @@ const json = bun.interchange.json;
 
 const jsc = bun.jsc;
 const JSValue = jsc.JSValue;
-const ZigString = jsc.ZigString;

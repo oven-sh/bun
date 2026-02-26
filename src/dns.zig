@@ -375,13 +375,13 @@ pub const GetAddrInfo = struct {
 
         pub fn toJS(this: *const Result, globalThis: *jsc.JSGlobalObject) bun.JSError!JSValue {
             const obj = jsc.JSValue.createEmptyObject(globalThis, 3);
-            obj.put(globalThis, jsc.ZigString.static("address"), try addressToJS(&this.address, globalThis));
-            obj.put(globalThis, jsc.ZigString.static("family"), switch (this.address.any.family) {
+            obj.put(globalThis, bun.String.static("address"), try addressToJS(&this.address, globalThis));
+            obj.put(globalThis, bun.String.static("family"), switch (this.address.any.family) {
                 std.posix.AF.INET => JSValue.jsNumber(4),
                 std.posix.AF.INET6 => JSValue.jsNumber(6),
                 else => JSValue.jsNumber(0),
             });
-            obj.put(globalThis, jsc.ZigString.static("ttl"), JSValue.jsNumber(this.ttl));
+            obj.put(globalThis, bun.String.static("ttl"), JSValue.jsNumber(this.ttl));
             return obj;
         }
     };

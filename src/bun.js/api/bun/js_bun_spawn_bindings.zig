@@ -1043,17 +1043,17 @@ pub fn spawnMaybeSync(
     subprocess.finalize();
 
     const sync_value = jsc.JSValue.createEmptyObject(globalThis, 0);
-    sync_value.put(globalThis, jsc.ZigString.static("exitCode"), exitCode);
+    sync_value.put(globalThis, bun.String.static("exitCode"), exitCode);
     if (!signalCode.isEmptyOrUndefinedOrNull()) {
-        sync_value.put(globalThis, jsc.ZigString.static("signalCode"), signalCode);
+        sync_value.put(globalThis, bun.String.static("signalCode"), signalCode);
     }
-    sync_value.put(globalThis, jsc.ZigString.static("stdout"), stdout);
-    sync_value.put(globalThis, jsc.ZigString.static("stderr"), stderr);
-    sync_value.put(globalThis, jsc.ZigString.static("success"), JSValue.jsBoolean(exitCode.isInt32() and exitCode.asInt32() == 0));
-    sync_value.put(globalThis, jsc.ZigString.static("resourceUsage"), resource_usage);
-    if (timeout != null) sync_value.put(globalThis, jsc.ZigString.static("exitedDueToTimeout"), if (exitedDueToTimeout) .true else .false);
-    if (maxBuffer != null) sync_value.put(globalThis, jsc.ZigString.static("exitedDueToMaxBuffer"), if (exitedDueToMaxBuffer != null) .true else .false);
-    sync_value.put(globalThis, jsc.ZigString.static("pid"), resultPid);
+    sync_value.put(globalThis, bun.String.static("stdout"), stdout);
+    sync_value.put(globalThis, bun.String.static("stderr"), stderr);
+    sync_value.put(globalThis, bun.String.static("success"), JSValue.jsBoolean(exitCode.isInt32() and exitCode.asInt32() == 0));
+    sync_value.put(globalThis, bun.String.static("resourceUsage"), resource_usage);
+    if (timeout != null) sync_value.put(globalThis, bun.String.static("exitedDueToTimeout"), if (exitedDueToTimeout) .true else .false);
+    if (maxBuffer != null) sync_value.put(globalThis, bun.String.static("exitedDueToMaxBuffer"), if (exitedDueToMaxBuffer != null) .true else .false);
+    sync_value.put(globalThis, bun.String.static("pid"), resultPid);
 
     return sync_value;
 }

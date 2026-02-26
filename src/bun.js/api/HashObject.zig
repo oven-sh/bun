@@ -64,7 +64,7 @@ pub fn create(globalThis: *jsc.JSGlobalObject) jsc.JSValue {
     };
     inline for (fns) |name| {
         const value = jsc.JSFunction.create(globalThis, name, @field(HashObject, name), 1, .{});
-        function.put(globalThis, comptime ZigString.static(name), value);
+        function.put(globalThis, comptime bun.String.static(name), value);
     }
 
     return function;
@@ -153,4 +153,3 @@ const std = @import("std");
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
-const ZigString = jsc.ZigString;

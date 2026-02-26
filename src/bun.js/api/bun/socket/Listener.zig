@@ -189,9 +189,9 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
         );
         const errno = @intFromEnum(bun.sys.getErrno(@as(c_int, -1)));
         if (errno != 0) {
-            err.put(globalObject, ZigString.static("errno"), JSValue.jsNumber(errno));
+            err.put(globalObject, bun.String.static("errno"), JSValue.jsNumber(errno));
             if (bun.sys.SystemErrno.init(errno)) |str| {
-                err.put(globalObject, ZigString.static("code"), ZigString.init(@tagName(str)).toJS(globalObject));
+                err.put(globalObject, bun.String.static("code"), ZigString.init(@tagName(str)).toJS(globalObject));
             }
         }
         return globalObject.throwValue(err);
@@ -276,12 +276,12 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
         const err = globalObject.createErrorInstance("Failed to listen at {s}", .{hostname});
         log("Failed to listen {d}", .{errno});
         if (errno != 0) {
-            err.put(globalObject, ZigString.static("syscall"), try bun.String.createUTF8ForJS(globalObject, "listen"));
-            err.put(globalObject, ZigString.static("errno"), JSValue.jsNumber(errno));
-            err.put(globalObject, ZigString.static("address"), ZigString.initUTF8(hostname).toJS(globalObject));
-            if (port) |p| err.put(globalObject, ZigString.static("port"), .jsNumber(p));
+            err.put(globalObject, bun.String.static("syscall"), try bun.String.createUTF8ForJS(globalObject, "listen"));
+            err.put(globalObject, bun.String.static("errno"), JSValue.jsNumber(errno));
+            err.put(globalObject, bun.String.static("address"), ZigString.initUTF8(hostname).toJS(globalObject));
+            if (port) |p| err.put(globalObject, bun.String.static("port"), .jsNumber(p));
             if (bun.sys.SystemErrno.init(errno)) |str| {
-                err.put(globalObject, ZigString.static("code"), ZigString.init(@tagName(str)).toJS(globalObject));
+                err.put(globalObject, bun.String.static("code"), ZigString.init(@tagName(str)).toJS(globalObject));
             }
         }
         return globalObject.throwValue(err);

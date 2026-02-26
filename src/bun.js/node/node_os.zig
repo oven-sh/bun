@@ -27,7 +27,7 @@ const CPUTimes = struct {
         const fields = comptime std.meta.fieldNames(CPUTimes);
         const ret = jsc.JSValue.createEmptyObject(globalThis, fields.len);
         inline for (fields) |fieldName| {
-            ret.put(globalThis, jsc.ZigString.static(fieldName), jsc.JSValue.jsNumberFromUint64(@field(self, fieldName)));
+            ret.put(globalThis, bun.String.static(fieldName), jsc.JSValue.jsNumberFromUint64(@field(self, fieldName)));
         }
         return ret;
     }
@@ -93,7 +93,7 @@ fn cpusImplLinux(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
 
             // Actually create the JS object representing the CPU
             const cpu = jsc.JSValue.createEmptyObject(globalThis, 1);
-            cpu.put(globalThis, jsc.ZigString.static("times"), times.toValue(globalThis));
+            cpu.put(globalThis, bun.String.static("times"), times.toValue(globalThis));
             try values.putIndex(globalThis, num_cpus, cpu);
 
             num_cpus += 1;
@@ -119,7 +119,7 @@ fn cpusImplLinux(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
             if (strings.hasPrefixComptime(line, key_processor)) {
                 if (!has_model_name) {
                     const cpu = try values.getIndex(globalThis, cpu_index);
-                    cpu.put(globalThis, jsc.ZigString.static("model"), jsc.ZigString.static("unknown").withEncoding().toJS(globalThis));
+                    cpu.put(globalThis, bun.String.static("model"), jsc.ZigString.static("unknown").withEncoding().toJS(globalThis));
                 }
                 // If this line starts a new processor, parse the index from the line
                 const digits = std.mem.trim(u8, line[key_processor.len..], " \t\n");
@@ -130,19 +130,19 @@ fn cpusImplLinux(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
                 // If this is the model name, extract it and store on the current cpu
                 const model_name = line[key_model_name.len..];
                 const cpu = try values.getIndex(globalThis, cpu_index);
-                cpu.put(globalThis, jsc.ZigString.static("model"), jsc.ZigString.init(model_name).withEncoding().toJS(globalThis));
+                cpu.put(globalThis, bun.String.static("model"), jsc.ZigString.init(model_name).withEncoding().toJS(globalThis));
                 has_model_name = true;
             }
         }
         if (!has_model_name) {
             const cpu = try values.getIndex(globalThis, cpu_index);
-            cpu.put(globalThis, jsc.ZigString.static("model"), jsc.ZigString.static("unknown").withEncoding().toJS(globalThis));
+            cpu.put(globalThis, bun.String.static("model"), jsc.ZigString.static("unknown").withEncoding().toJS(globalThis));
         }
     } else |_| {
         // Initialize model name to "unknown"
         var it = try values.arrayIterator(globalThis);
         while (try it.next()) |cpu| {
-            cpu.put(globalThis, jsc.ZigString.static("model"), jsc.ZigString.static("unknown").withEncoding().toJS(globalThis));
+            cpu.put(globalThis, bun.String.static("model"), jsc.ZigString.static("unknown").withEncoding().toJS(globalThis));
         }
     }
 
@@ -162,10 +162,10 @@ fn cpusImplLinux(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
             const digits = std.mem.trim(u8, contents, " \n");
             const speed = (std.fmt.parseInt(u64, digits, 10) catch 0) / 1000;
 
-            cpu.put(globalThis, jsc.ZigString.static("speed"), jsc.JSValue.jsNumber(speed));
+            cpu.put(globalThis, bun.String.static("speed"), jsc.JSValue.jsNumber(speed));
         } else |_| {
             // Initialize CPU speed to 0
-            cpu.put(globalThis, jsc.ZigString.static("speed"), jsc.JSValue.jsNumber(0));
+            cpu.put(globalThis, bun.String.static("speed"), jsc.JSValue.jsNumber(0));
         }
     }
 
@@ -236,9 +236,9 @@ fn cpusImplDarwin(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
         };
 
         const cpu = jsc.JSValue.createEmptyObject(globalThis, 3);
-        cpu.put(globalThis, jsc.ZigString.static("speed"), jsc.JSValue.jsNumber(speed / 1_000_000));
-        cpu.put(globalThis, jsc.ZigString.static("model"), model_name);
-        cpu.put(globalThis, jsc.ZigString.static("times"), times.toValue(globalThis));
+        cpu.put(globalThis, bun.String.static("speed"), jsc.JSValue.jsNumber(speed / 1_000_000));
+        cpu.put(globalThis, bun.String.static("model"), model_name);
+        cpu.put(globalThis, bun.String.static("times"), times.toValue(globalThis));
 
         try values.putIndex(globalThis, cpu_index, cpu);
     }
@@ -266,9 +266,9 @@ pub fn cpusImplWindows(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
         };
 
         const cpu = jsc.JSValue.createEmptyObject(globalThis, 3);
-        cpu.put(globalThis, jsc.ZigString.static("model"), jsc.ZigString.init(bun.span(cpu_info.model)).withEncoding().toJS(globalThis));
-        cpu.put(globalThis, jsc.ZigString.static("speed"), jsc.JSValue.jsNumber(cpu_info.speed));
-        cpu.put(globalThis, jsc.ZigString.static("times"), times.toValue(globalThis));
+        cpu.put(globalThis, bun.String.static("model"), jsc.ZigString.init(bun.span(cpu_info.model)).withEncoding().toJS(globalThis));
+        cpu.put(globalThis, bun.String.static("speed"), jsc.JSValue.jsNumber(cpu_info.speed));
+        cpu.put(globalThis, bun.String.static("times"), times.toValue(globalThis));
 
         try values.putIndex(globalThis, @intCast(i), cpu);
     }
@@ -551,19 +551,19 @@ fn networkInterfacesPosix(globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSVal
                 cidr = jsc.ZigString.init(cidr_str).withEncoding().toJS(globalThis);
             }
 
-            interface.put(globalThis, jsc.ZigString.static("address"), jsc.ZigString.init(addr_str).withEncoding().toJS(globalThis));
-            interface.put(globalThis, jsc.ZigString.static("cidr"), cidr);
+            interface.put(globalThis, bun.String.static("address"), jsc.ZigString.init(addr_str).withEncoding().toJS(globalThis));
+            interface.put(globalThis, bun.String.static("cidr"), cidr);
         }
 
         // netmask <string> The IPv4 or IPv6 network mask
         {
             var buf: [64]u8 = undefined;
             const str = bun.fmt.formatIp(netmask, &buf) catch unreachable;
-            interface.put(globalThis, jsc.ZigString.static("netmask"), jsc.ZigString.init(str).withEncoding().toJS(globalThis));
+            interface.put(globalThis, bun.String.static("netmask"), jsc.ZigString.init(str).withEncoding().toJS(globalThis));
         }
 
         // family <string> Either IPv4 or IPv6
-        interface.put(globalThis, jsc.ZigString.static("family"), (switch (addr.any.family) {
+        interface.put(globalThis, bun.String.static("family"), (switch (addr.any.family) {
             std.posix.AF.INET => jsc.ZigString.static("IPv4"),
             std.posix.AF.INET6 => jsc.ZigString.static("IPv6"),
             else => jsc.ZigString.static("unknown"),
@@ -598,26 +598,26 @@ fn networkInterfacesPosix(globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSVal
                 const addr_data = if (comptime Environment.isLinux) ll_addr.addr else if (comptime Environment.isMac) ll_addr.sdl_data[ll_addr.sdl_nlen..] else @compileError("unreachable");
                 if (addr_data.len < 6) {
                     const mac = "00:00:00:00:00:00";
-                    interface.put(globalThis, jsc.ZigString.static("mac"), jsc.ZigString.init(mac).withEncoding().toJS(globalThis));
+                    interface.put(globalThis, bun.String.static("mac"), jsc.ZigString.init(mac).withEncoding().toJS(globalThis));
                 } else {
                     const mac = std.fmt.bufPrint(&mac_buf, "{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}", .{
                         addr_data[0], addr_data[1], addr_data[2],
                         addr_data[3], addr_data[4], addr_data[5],
                     }) catch unreachable;
-                    interface.put(globalThis, jsc.ZigString.static("mac"), jsc.ZigString.init(mac).withEncoding().toJS(globalThis));
+                    interface.put(globalThis, bun.String.static("mac"), jsc.ZigString.init(mac).withEncoding().toJS(globalThis));
                 }
             } else {
                 const mac = "00:00:00:00:00:00";
-                interface.put(globalThis, jsc.ZigString.static("mac"), jsc.ZigString.init(mac).withEncoding().toJS(globalThis));
+                interface.put(globalThis, bun.String.static("mac"), jsc.ZigString.init(mac).withEncoding().toJS(globalThis));
             }
         }
 
         // internal <boolean> true if the network interface is a loopback or similar interface that is not remotely accessible; otherwise false
-        interface.put(globalThis, jsc.ZigString.static("internal"), jsc.JSValue.jsBoolean(helpers.isLoopback(iface)));
+        interface.put(globalThis, bun.String.static("internal"), jsc.JSValue.jsBoolean(helpers.isLoopback(iface)));
 
         // scopeid <number> The numeric IPv6 scope ID (only specified when family is IPv6)
         if (addr.any.family == std.posix.AF.INET6) {
-            interface.put(globalThis, jsc.ZigString.static("scopeid"), jsc.JSValue.jsNumber(addr.in6.sa.scope_id));
+            interface.put(globalThis, bun.String.static("scopeid"), jsc.JSValue.jsNumber(addr.in6.sa.scope_id));
         }
 
         // Does this entry already exist?
@@ -692,7 +692,7 @@ fn networkInterfacesWindows(globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSV
                 cidr = jsc.ZigString.init(cidr_str).withEncoding().toJS(globalThis);
             }
 
-            interface.put(globalThis, jsc.ZigString.static("address"), jsc.ZigString.init(addr_str).withEncoding().toJS(globalThis));
+            interface.put(globalThis, bun.String.static("address"), jsc.ZigString.init(addr_str).withEncoding().toJS(globalThis));
         }
 
         // netmask
@@ -702,10 +702,10 @@ fn networkInterfacesWindows(globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSV
                 std.net.Address.initPosix(@ptrCast(&iface.netmask.netmask4)),
                 &ip_buf,
             ) catch unreachable;
-            interface.put(globalThis, jsc.ZigString.static("netmask"), jsc.ZigString.init(str).withEncoding().toJS(globalThis));
+            interface.put(globalThis, bun.String.static("netmask"), jsc.ZigString.init(str).withEncoding().toJS(globalThis));
         }
         // family
-        interface.put(globalThis, jsc.ZigString.static("family"), (switch (iface.address.address4.family) {
+        interface.put(globalThis, bun.String.static("family"), (switch (iface.address.address4.family) {
             std.posix.AF.INET => jsc.ZigString.static("IPv4"),
             std.posix.AF.INET6 => jsc.ZigString.static("IPv6"),
             else => jsc.ZigString.static("unknown"),
@@ -717,20 +717,20 @@ fn networkInterfacesWindows(globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSV
             const mac = std.fmt.bufPrint(&mac_buf, "{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}", .{
                 phys[0], phys[1], phys[2], phys[3], phys[4], phys[5],
             }) catch unreachable;
-            interface.put(globalThis, jsc.ZigString.static("mac"), jsc.ZigString.init(mac).withEncoding().toJS(globalThis));
+            interface.put(globalThis, bun.String.static("mac"), jsc.ZigString.init(mac).withEncoding().toJS(globalThis));
         }
 
         // internal
         {
-            interface.put(globalThis, jsc.ZigString.static("internal"), jsc.JSValue.jsBoolean(iface.is_internal != 0));
+            interface.put(globalThis, bun.String.static("internal"), jsc.JSValue.jsBoolean(iface.is_internal != 0));
         }
 
         // cidr. this is here to keep ordering consistent with the node implementation
-        interface.put(globalThis, jsc.ZigString.static("cidr"), cidr);
+        interface.put(globalThis, bun.String.static("cidr"), cidr);
 
         // scopeid
         if (iface.address.address4.family == std.posix.AF.INET6) {
-            interface.put(globalThis, jsc.ZigString.static("scopeid"), jsc.JSValue.jsNumber(iface.address.address6.scope_id));
+            interface.put(globalThis, bun.String.static("scopeid"), jsc.JSValue.jsNumber(iface.address.address6.scope_id));
         }
 
         // Does this entry already exist?
@@ -935,20 +935,20 @@ pub fn userInfo(globalThis: *jsc.JSGlobalObject, options: gen.UserInfoOptions) b
     const home = try homedir(globalThis);
     defer home.deref();
 
-    result.put(globalThis, jsc.ZigString.static("homedir"), try home.toJS(globalThis));
+    result.put(globalThis, bun.String.static("homedir"), try home.toJS(globalThis));
 
     if (comptime Environment.isWindows) {
-        result.put(globalThis, jsc.ZigString.static("username"), jsc.ZigString.init(bun.env_var.USER.get() orelse "unknown").withEncoding().toJS(globalThis));
-        result.put(globalThis, jsc.ZigString.static("uid"), jsc.JSValue.jsNumber(-1));
-        result.put(globalThis, jsc.ZigString.static("gid"), jsc.JSValue.jsNumber(-1));
-        result.put(globalThis, jsc.ZigString.static("shell"), jsc.JSValue.jsNull());
+        result.put(globalThis, bun.String.static("username"), jsc.ZigString.init(bun.env_var.USER.get() orelse "unknown").withEncoding().toJS(globalThis));
+        result.put(globalThis, bun.String.static("uid"), jsc.JSValue.jsNumber(-1));
+        result.put(globalThis, bun.String.static("gid"), jsc.JSValue.jsNumber(-1));
+        result.put(globalThis, bun.String.static("shell"), jsc.JSValue.jsNull());
     } else {
         const username = bun.env_var.USER.get() orelse "unknown";
 
-        result.put(globalThis, jsc.ZigString.static("username"), jsc.ZigString.init(username).withEncoding().toJS(globalThis));
-        result.put(globalThis, jsc.ZigString.static("shell"), jsc.ZigString.init(bun.env_var.SHELL.get() orelse "unknown").withEncoding().toJS(globalThis));
-        result.put(globalThis, jsc.ZigString.static("uid"), jsc.JSValue.jsNumber(c.getuid()));
-        result.put(globalThis, jsc.ZigString.static("gid"), jsc.JSValue.jsNumber(c.getgid()));
+        result.put(globalThis, bun.String.static("username"), jsc.ZigString.init(username).withEncoding().toJS(globalThis));
+        result.put(globalThis, bun.String.static("shell"), jsc.ZigString.init(bun.env_var.SHELL.get() orelse "unknown").withEncoding().toJS(globalThis));
+        result.put(globalThis, bun.String.static("uid"), jsc.JSValue.jsNumber(c.getuid()));
+        result.put(globalThis, bun.String.static("gid"), jsc.JSValue.jsNumber(c.getgid()));
     }
 
     return result;

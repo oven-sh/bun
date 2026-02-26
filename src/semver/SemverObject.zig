@@ -5,7 +5,7 @@ pub fn create(globalThis: *jsc.JSGlobalObject) jsc.JSValue {
 
     object.put(
         globalThis,
-        jsc.ZigString.static("satisfies"),
+        bun.String.static("satisfies"),
         jsc.JSFunction.create(
             globalThis,
             "satisfies",
@@ -17,7 +17,7 @@ pub fn create(globalThis: *jsc.JSGlobalObject) jsc.JSValue {
 
     object.put(
         globalThis,
-        jsc.ZigString.static("order"),
+        bun.String.static("order"),
         jsc.JSFunction.create(
             globalThis,
             "order",

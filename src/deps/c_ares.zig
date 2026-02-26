@@ -887,7 +887,7 @@ pub const struct_ares_caa_reply = extern struct {
     pub fn toJS(this: *struct_ares_caa_reply, globalThis: *jsc.JSGlobalObject, _: std.mem.Allocator) jsc.JSValue {
         var obj = jsc.JSValue.createEmptyObject(globalThis, 2);
 
-        obj.put(globalThis, jsc.ZigString.static("critical"), jsc.JSValue.jsNumber(this.critical));
+        obj.put(globalThis, bun.String.static("critical"), jsc.JSValue.jsNumber(this.critical));
 
         const property = this.property[0..this.plength];
         const value = this.value[0..this.length];
@@ -971,13 +971,13 @@ pub const struct_ares_srv_reply = extern struct {
         //   name: 'service.example.com'
         // }
 
-        obj.put(globalThis, jsc.ZigString.static("priority"), jsc.JSValue.jsNumber(this.priority));
-        obj.put(globalThis, jsc.ZigString.static("weight"), jsc.JSValue.jsNumber(this.weight));
-        obj.put(globalThis, jsc.ZigString.static("port"), jsc.JSValue.jsNumber(this.port));
+        obj.put(globalThis, bun.String.static("priority"), jsc.JSValue.jsNumber(this.priority));
+        obj.put(globalThis, bun.String.static("weight"), jsc.JSValue.jsNumber(this.weight));
+        obj.put(globalThis, bun.String.static("port"), jsc.JSValue.jsNumber(this.port));
 
         const len = bun.len(this.host);
         const host = this.host[0..len];
-        obj.put(globalThis, jsc.ZigString.static("name"), jsc.ZigString.fromUTF8(host).toJS(globalThis));
+        obj.put(globalThis, bun.String.static("name"), jsc.ZigString.fromUTF8(host).toJS(globalThis));
 
         return obj;
     }
@@ -1047,11 +1047,11 @@ pub const struct_ares_mx_reply = extern struct {
 
     pub fn toJS(this: *struct_ares_mx_reply, globalThis: *jsc.JSGlobalObject, _: std.mem.Allocator) jsc.JSValue {
         const obj = jsc.JSValue.createEmptyObject(globalThis, 2);
-        obj.put(globalThis, jsc.ZigString.static("priority"), jsc.JSValue.jsNumber(this.priority));
+        obj.put(globalThis, bun.String.static("priority"), jsc.JSValue.jsNumber(this.priority));
 
         const host_len = bun.len(this.host);
         const host = this.host[0..host_len];
-        obj.put(globalThis, jsc.ZigString.static("exchange"), jsc.ZigString.fromUTF8(host).toJS(globalThis));
+        obj.put(globalThis, bun.String.static("exchange"), jsc.ZigString.fromUTF8(host).toJS(globalThis));
 
         return obj;
     }
@@ -1224,24 +1224,24 @@ pub const struct_ares_naptr_reply = extern struct {
     pub fn toJS(this: *struct_ares_naptr_reply, globalThis: *jsc.JSGlobalObject, _: std.mem.Allocator) jsc.JSValue {
         const obj = jsc.JSValue.createEmptyObject(globalThis, 6);
 
-        obj.put(globalThis, jsc.ZigString.static("preference"), jsc.JSValue.jsNumber(this.preference));
-        obj.put(globalThis, jsc.ZigString.static("order"), jsc.JSValue.jsNumber(this.order));
+        obj.put(globalThis, bun.String.static("preference"), jsc.JSValue.jsNumber(this.preference));
+        obj.put(globalThis, bun.String.static("order"), jsc.JSValue.jsNumber(this.order));
 
         const flags_len = bun.len(this.flags);
         const flags = this.flags[0..flags_len];
-        obj.put(globalThis, jsc.ZigString.static("flags"), jsc.ZigString.fromUTF8(flags).toJS(globalThis));
+        obj.put(globalThis, bun.String.static("flags"), jsc.ZigString.fromUTF8(flags).toJS(globalThis));
 
         const service_len = bun.len(this.service);
         const service = this.service[0..service_len];
-        obj.put(globalThis, jsc.ZigString.static("service"), jsc.ZigString.fromUTF8(service).toJS(globalThis));
+        obj.put(globalThis, bun.String.static("service"), jsc.ZigString.fromUTF8(service).toJS(globalThis));
 
         const regexp_len = bun.len(this.regexp);
         const regexp = this.regexp[0..regexp_len];
-        obj.put(globalThis, jsc.ZigString.static("regexp"), jsc.ZigString.fromUTF8(regexp).toJS(globalThis));
+        obj.put(globalThis, bun.String.static("regexp"), jsc.ZigString.fromUTF8(regexp).toJS(globalThis));
 
         const replacement_len = bun.len(this.replacement);
         const replacement = this.replacement[0..replacement_len];
-        obj.put(globalThis, jsc.ZigString.static("replacement"), jsc.ZigString.fromUTF8(replacement).toJS(globalThis));
+        obj.put(globalThis, bun.String.static("replacement"), jsc.ZigString.fromUTF8(replacement).toJS(globalThis));
 
         return obj;
     }
@@ -1300,19 +1300,19 @@ pub const struct_ares_soa_reply = extern struct {
     pub fn toJS(this: *struct_ares_soa_reply, globalThis: *jsc.JSGlobalObject, _: std.mem.Allocator) jsc.JSValue {
         const obj = jsc.JSValue.createEmptyObject(globalThis, 7);
 
-        obj.put(globalThis, jsc.ZigString.static("serial"), jsc.JSValue.jsNumber(this.serial));
-        obj.put(globalThis, jsc.ZigString.static("refresh"), jsc.JSValue.jsNumber(this.refresh));
-        obj.put(globalThis, jsc.ZigString.static("retry"), jsc.JSValue.jsNumber(this.retry));
-        obj.put(globalThis, jsc.ZigString.static("expire"), jsc.JSValue.jsNumber(this.expire));
-        obj.put(globalThis, jsc.ZigString.static("minttl"), jsc.JSValue.jsNumber(this.minttl));
+        obj.put(globalThis, bun.String.static("serial"), jsc.JSValue.jsNumber(this.serial));
+        obj.put(globalThis, bun.String.static("refresh"), jsc.JSValue.jsNumber(this.refresh));
+        obj.put(globalThis, bun.String.static("retry"), jsc.JSValue.jsNumber(this.retry));
+        obj.put(globalThis, bun.String.static("expire"), jsc.JSValue.jsNumber(this.expire));
+        obj.put(globalThis, bun.String.static("minttl"), jsc.JSValue.jsNumber(this.minttl));
 
         const nsname_len = bun.len(this.nsname);
         const nsname = this.nsname[0..nsname_len];
-        obj.put(globalThis, jsc.ZigString.static("nsname"), jsc.ZigString.fromUTF8(nsname).toJS(globalThis));
+        obj.put(globalThis, bun.String.static("nsname"), jsc.ZigString.fromUTF8(nsname).toJS(globalThis));
 
         const hostmaster_len = bun.len(this.hostmaster);
         const hostmaster = this.hostmaster[0..hostmaster_len];
-        obj.put(globalThis, jsc.ZigString.static("hostmaster"), jsc.ZigString.fromUTF8(hostmaster).toJS(globalThis));
+        obj.put(globalThis, bun.String.static("hostmaster"), jsc.ZigString.fromUTF8(hostmaster).toJS(globalThis));
 
         return obj;
     }

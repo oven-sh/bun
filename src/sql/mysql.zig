@@ -1,16 +1,16 @@
 pub fn createBinding(globalObject: *jsc.JSGlobalObject) JSValue {
     const binding = JSValue.createEmptyObjectWithNullPrototype(globalObject);
-    binding.put(globalObject, ZigString.static("MySQLConnection"), MySQLConnection.js.getConstructor(globalObject));
-    binding.put(globalObject, ZigString.static("init"), jsc.JSFunction.create(globalObject, "init", MySQLContext.init, 0, .{}));
+    binding.put(globalObject, bun.String.static("MySQLConnection"), MySQLConnection.js.getConstructor(globalObject));
+    binding.put(globalObject, bun.String.static("init"), jsc.JSFunction.create(globalObject, "init", MySQLContext.init, 0, .{}));
     binding.put(
         globalObject,
-        ZigString.static("createQuery"),
+        bun.String.static("createQuery"),
         jsc.JSFunction.create(globalObject, "createQuery", MySQLQuery.createInstance, 6, .{}),
     );
 
     binding.put(
         globalObject,
-        ZigString.static("createConnection"),
+        bun.String.static("createConnection"),
         jsc.JSFunction.create(globalObject, "createConnection", MySQLConnection.createInstance, 2, .{}),
     );
 
@@ -25,4 +25,3 @@ const bun = @import("bun");
 
 const jsc = bun.jsc;
 const JSValue = jsc.JSValue;
-const ZigString = jsc.ZigString;

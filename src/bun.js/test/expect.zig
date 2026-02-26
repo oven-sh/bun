@@ -1029,7 +1029,7 @@ pub const Expect = struct {
         const err = switch (Output.enable_ansi_colors_stderr) {
             inline else => |colors| globalThis.createErrorInstance(Output.prettyFmt(fmt, colors), .{ matcher_name, result.toFmt(&formatter) }),
         };
-        err.put(globalThis, ZigString.static("name"), try bun.String.static("InvalidMatcherError").toJS(globalThis));
+        err.put(globalThis, bun.String.static("name"), try bun.String.static("InvalidMatcherError").toJS(globalThis));
         return globalThis.throwValue(err);
     }
 
@@ -1251,13 +1251,13 @@ pub const Expect = struct {
 
         if (arg.isEmptyOrUndefinedOrNull()) {
             const error_value = bun.String.init("reached unreachable code").toErrorInstance(globalThis);
-            error_value.put(globalThis, ZigString.static("name"), try bun.String.init("UnreachableError").toJS(globalThis));
+            error_value.put(globalThis, bun.String.static("name"), try bun.String.init("UnreachableError").toJS(globalThis));
             return globalThis.throwValue(error_value);
         }
 
         if (arg.isString()) {
             const error_value = (try arg.toBunString(globalThis)).toErrorInstance(globalThis);
-            error_value.put(globalThis, ZigString.static("name"), try bun.String.init("UnreachableError").toJS(globalThis));
+            error_value.put(globalThis, bun.String.static("name"), try bun.String.init("UnreachableError").toJS(globalThis));
             return globalThis.throwValue(error_value);
         }
 

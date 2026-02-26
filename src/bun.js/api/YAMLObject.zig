@@ -2,7 +2,7 @@ pub fn create(globalThis: *jsc.JSGlobalObject) jsc.JSValue {
     const object = JSValue.createEmptyObject(globalThis, 2);
     object.put(
         globalThis,
-        ZigString.static("parse"),
+        bun.String.static("parse"),
         jsc.JSFunction.create(
             globalThis,
             "parse",
@@ -13,7 +13,7 @@ pub fn create(globalThis: *jsc.JSGlobalObject) jsc.JSValue {
     );
     object.put(
         globalThis,
-        ZigString.static("stringify"),
+        bun.String.static("stringify"),
         jsc.JSFunction.create(
             globalThis,
             "stringify",
@@ -1090,5 +1090,4 @@ const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
 const MarkedArgumentBuffer = jsc.MarkedArgumentBuffer;
-const ZigString = jsc.ZigString;
 const wtf = bun.jsc.wtf;

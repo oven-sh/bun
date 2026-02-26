@@ -22,20 +22,20 @@ pub fn toJS(globalObject: *jsc.JSGlobalObject) jsc.JSValue {
             const func = jsc.toJSHostFn(@field(fields, field));
             object.put(
                 globalObject,
-                comptime ZigString.static(field),
+                comptime bun.String.static(field),
                 jsc.JSFunction.create(globalObject, field, func, 1, .{ .constructor = func }),
             );
         } else {
             object.put(
                 globalObject,
-                comptime ZigString.static(field),
+                comptime bun.String.static(field),
                 jsc.JSFunction.create(globalObject, field, @field(fields, field), 1, .{}),
             );
         }
     }
 
     dom_call.put(globalObject, object);
-    object.put(globalObject, ZigString.static("read"), Reader.toJS(globalObject));
+    object.put(globalObject, bun.String.static("read"), Reader.toJS(globalObject));
 
     return object;
 }
@@ -643,7 +643,6 @@ const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSObject = jsc.JSObject;
 const JSValue = jsc.JSValue;
-const ZigString = jsc.ZigString;
 const Bun = jsc.API.Bun;
 
 const DOMCall = jsc.host_fn.DOMCall;

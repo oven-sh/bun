@@ -2254,15 +2254,15 @@ pub const BundleV2 = struct {
             const throw_on_error = this.config.throw_on_error;
 
             const build_result = jsc.JSValue.createEmptyObject(globalThis, 3);
-            build_result.put(globalThis, jsc.ZigString.static("outputs"), jsc.JSValue.createEmptyArray(globalThis, 0) catch return promise.reject(globalThis, error.JSError));
+            build_result.put(globalThis, bun.String.static("outputs"), jsc.JSValue.createEmptyArray(globalThis, 0) catch return promise.reject(globalThis, error.JSError));
             build_result.put(
                 globalThis,
-                jsc.ZigString.static("success"),
+                bun.String.static("success"),
                 .false,
             );
             build_result.put(
                 globalThis,
-                jsc.ZigString.static("logs"),
+                bun.String.static("logs"),
                 this.log.toJSArray(globalThis, bun.default_allocator) catch |err| {
                     return promise.reject(globalThis, err);
                 },
@@ -2377,11 +2377,11 @@ pub const BundleV2 = struct {
                         };
                     }
                     const build_output = jsc.JSValue.createEmptyObject(globalThis, 4);
-                    build_output.put(globalThis, jsc.ZigString.static("outputs"), output_files_js);
-                    build_output.put(globalThis, jsc.ZigString.static("success"), .true);
+                    build_output.put(globalThis, bun.String.static("outputs"), output_files_js);
+                    build_output.put(globalThis, bun.String.static("success"), .true);
                     build_output.put(
                         globalThis,
-                        jsc.ZigString.static("logs"),
+                        bun.String.static("logs"),
                         this.log.toJSArray(globalThis, bun.default_allocator) catch |err| {
                             return promise.reject(globalThis, err);
                         },

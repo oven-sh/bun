@@ -1,16 +1,16 @@
 pub fn createBinding(globalObject: *jsc.JSGlobalObject) JSValue {
     const binding = JSValue.createEmptyObjectWithNullPrototype(globalObject);
-    binding.put(globalObject, ZigString.static("PostgresSQLConnection"), PostgresSQLConnection.js.getConstructor(globalObject));
-    binding.put(globalObject, ZigString.static("init"), jsc.JSFunction.create(globalObject, "init", PostgresSQLContext.init, 0, .{}));
+    binding.put(globalObject, bun.String.static("PostgresSQLConnection"), PostgresSQLConnection.js.getConstructor(globalObject));
+    binding.put(globalObject, bun.String.static("init"), jsc.JSFunction.create(globalObject, "init", PostgresSQLContext.init, 0, .{}));
     binding.put(
         globalObject,
-        ZigString.static("createQuery"),
+        bun.String.static("createQuery"),
         jsc.JSFunction.create(globalObject, "createQuery", PostgresSQLQuery.call, 6, .{}),
     );
 
     binding.put(
         globalObject,
-        ZigString.static("createConnection"),
+        bun.String.static("createConnection"),
         jsc.JSFunction.create(globalObject, "createConnection", PostgresSQLConnection.call, 2, .{}),
     );
 
@@ -27,4 +27,3 @@ const bun = @import("bun");
 
 const jsc = bun.jsc;
 const JSValue = jsc.JSValue;
-const ZigString = jsc.ZigString;

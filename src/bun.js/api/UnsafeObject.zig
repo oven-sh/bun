@@ -8,7 +8,7 @@ pub fn create(globalThis: *jsc.JSGlobalObject) jsc.JSValue {
     inline for (comptime std.meta.fieldNames(@TypeOf(fields))) |name| {
         object.put(
             globalThis,
-            comptime ZigString.static(name),
+            comptime bun.String.static(name),
             jsc.JSFunction.create(globalThis, name, @field(fields, name), 1, .{}),
         );
     }

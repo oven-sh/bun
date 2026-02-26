@@ -638,7 +638,7 @@ pub fn transpileSourceCode(
                         const globalValue = decoded.encode();
                         globalValue.put(
                             globalThis,
-                            ZigString.static("wasmSourceBytes"),
+                            bun.String.static("wasmSourceBytes"),
                             try jsc.ArrayBuffer.create(globalThis, source.contents, .Uint8Array),
                         );
                     }

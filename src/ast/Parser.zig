@@ -39,6 +39,16 @@ pub const Parser = struct {
         /// able to customize what import sources are used.
         framework: ?*bun.bake.Framework = null,
 
+        /// True when bundling with `bun build --compile`. Used to inline
+        /// import.meta.url (and related properties) per-module so that
+        /// bundled dependencies resolve paths relative to their original
+        /// source rather than the entry-point chunk.
+        compile: bool = false,
+
+        /// The root directory used to compute relative paths in the
+        /// standalone module graph. Only meaningful when `compile` is true.
+        compile_root_dir: []const u8 = "",
+
         /// REPL mode: transforms code for interactive evaluation
         /// - Wraps lone object literals `{...}` in parentheses
         /// - Hoists variable declarations for REPL persistence

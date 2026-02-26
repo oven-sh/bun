@@ -109,6 +109,12 @@ fn resolveEntryPointSpecifier(
             var base = str;
 
             base = bun.path.joinAbsStringBuf(bun.StandaloneModuleGraph.base_public_path_with_default_suffix, &pathbuf, &.{str}, .loose);
+
+            // First, try the joined path directly (e.g. ./child.js -> /$bunfs/root/child.js)
+            if (graph.find(pathbuf[0..base.len])) |file| {
+                return file.name;
+            }
+
             const extname = std.fs.path.extension(base);
 
             // ./foo -> ./foo.js

@@ -1045,6 +1045,10 @@ pub const JSBundler = struct {
                 }
             }
 
+            if (this.code_splitting and this.format != .esm) {
+                return globalThis.throwInvalidArguments("Splitting currently only works with the \"esm\" format", .{});
+            }
+
             // ESM bytecode requires compile because module_info (import/export metadata)
             // is only available in compiled binaries. Without it, JSC must parse the file
             // twice (once for module analysis, once for bytecode), which is a deopt.

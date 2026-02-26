@@ -134,6 +134,23 @@ describe("Bun.build", () => {
     ).toThrow();
   });
 
+  test("splitting with non-esm format throws", async () => {
+    expect(() =>
+      Bun.build({
+        entrypoints: ["hello.js"],
+        splitting: true,
+        format: "iife",
+      }),
+    ).toThrow('Splitting currently only works with the "esm" format');
+    expect(() =>
+      Bun.build({
+        entrypoints: ["hello.js"],
+        splitting: true,
+        format: "cjs",
+      }),
+    ).toThrow('Splitting currently only works with the "esm" format');
+  });
+
   test("returns errors properly", async () => {
     Bun.gc(true);
     const build = await buildNoThrow({

@@ -91,6 +91,12 @@ pub const BuildCommand = struct {
         this_transpiler.options.output_dir = ctx.bundler_options.outdir;
         this_transpiler.options.output_format = ctx.bundler_options.output_format;
 
+        if (ctx.bundler_options.code_splitting and ctx.bundler_options.output_format != .esm) {
+            Output.prettyErrorln("<r><red>error<r><d>:<r> Splitting currently only works with the \"esm\" format", .{});
+            Global.exit(1);
+            return;
+        }
+
         if (ctx.bundler_options.output_format == .internal_bake_dev) {
             this_transpiler.options.tree_shaking = false;
         }

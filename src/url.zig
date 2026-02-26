@@ -976,7 +976,10 @@ pub const FormData = struct {
     }
 
     pub const Field = struct {
-        value: bun.Semver.String = .{},
+        /// Raw slice into the input buffer. Not using `bun.Semver.String` because
+        /// file bodies are binary data that can contain null bytes, which
+        /// Semver.String's inline storage treats as terminators.
+        value: []const u8 = "",
         filename: bun.Semver.String = .{},
         content_type: bun.Semver.String = .{},
         is_file: bool = false,
@@ -1088,7 +1091,7 @@ pub const FormData = struct {
             form: *jsc.DOMFormData,
 
             pub fn onEntry(wrap: *@This(), name: bun.Semver.String, field: Field, buf: []const u8) void {
-                const value_str = field.value.slice(buf);
+                const value_str = field.value;
                 var key = jsc.ZigString.initUTF8(name.slice(buf));
 
                 if (field.is_file) {
@@ -1278,7 +1281,7 @@ pub const FormData = struct {
             if (strings.endsWithComptime(body, "\r\n")) {
                 body = body[0 .. body.len - 2];
             }
-            field.value = subslicer.sub(body).value();
+            field.value = body;
             field.filename = filename orelse .{};
             field.is_file = is_file;
 

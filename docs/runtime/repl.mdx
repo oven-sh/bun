@@ -58,10 +58,10 @@ This uses the same transforms as the interactive REPL, so a bare object literal 
 
 The REPL exposes two special variables that update after each evaluation.
 
-| Variable | Description                         |
-| -------- | ----------------------------------- |
-| `_`      | The result of the last expression   |
-| `_error` | The last error that was thrown      |
+| Variable | Description                       |
+| -------- | --------------------------------- |
+| `_`      | The result of the last expression |
+| `_error` | The last error that was thrown    |
 
 ```txt
 > 2 + 2
@@ -80,17 +80,17 @@ SyntaxError: JSON Parse error: Unexpected identifier "oops"
 
 Type `.help` at the prompt to see all available REPL commands.
 
-| Command     | Description                                                                      |
-| ----------- | -------------------------------------------------------------------------------- |
-| `.help`     | Print the help message listing commands and keybindings                          |
-| `.exit`     | Exit the REPL                                                                    |
-| `.clear`    | Clear the REPL context and screen                                                |
-| `.copy`     | Copy the last result to the clipboard. Pass an expression to evaluate and copy it: `.copy 1 + 1` |
-| `.load`     | Load a file into the REPL session: `.load ./script.ts`                           |
-| `.save`     | Save the current REPL history to a file: `.save ./session.txt`                   |
-| `.editor`   | Enter multi-line editor mode (press `Ctrl+D` to evaluate, `Ctrl+C` to cancel)    |
-| `.break`    | Cancel the current multi-line input                                              |
-| `.history`  | Print the command history                                                        |
+| Command    | Description                                                                                      |
+| ---------- | ------------------------------------------------------------------------------------------------ |
+| `.help`    | Print the help message listing commands and keybindings                                          |
+| `.exit`    | Exit the REPL                                                                                    |
+| `.clear`   | Clear the REPL context and screen                                                                |
+| `.copy`    | Copy the last result to the clipboard. Pass an expression to evaluate and copy it: `.copy 1 + 1` |
+| `.load`    | Load a file into the REPL session: `.load ./script.ts`                                           |
+| `.save`    | Save the current REPL history to a file: `.save ./session.txt`                                   |
+| `.editor`  | Enter multi-line editor mode (press `Ctrl+D` to evaluate, `Ctrl+C` to cancel)                    |
+| `.break`   | Cancel the current multi-line input                                                              |
+| `.history` | Print the command history                                                                        |
 
 ---
 
@@ -98,22 +98,22 @@ Type `.help` at the prompt to see all available REPL commands.
 
 The REPL supports Emacs-style line editing.
 
-| Keybinding              | Action                                       |
-| ----------------------- | -------------------------------------------- |
-| `Ctrl+A`                | Move to start of line                        |
-| `Ctrl+E`                | Move to end of line                          |
-| `Ctrl+B` / `Ctrl+F`     | Move backward/forward one character          |
-| `Alt+B` / `Alt+F`       | Move backward/forward one word               |
-| `Ctrl+U`                | Delete to start of line                      |
-| `Ctrl+K`                | Delete to end of line                        |
-| `Ctrl+W`                | Delete word backward                         |
-| `Ctrl+D`                | Delete character (or exit if line is empty)  |
-| `Ctrl+L`                | Clear screen                                 |
-| `Ctrl+R`                | Reverse history search                       |
-| `Ctrl+T`                | Swap the two characters before the cursor    |
-| `Up` / `Down`           | Navigate history                             |
-| `Tab`                   | Auto-complete                                |
-| `Ctrl+C`                | Cancel current input (press twice on empty line to exit) |
+| Keybinding          | Action                                                   |
+| ------------------- | -------------------------------------------------------- |
+| `Ctrl+A`            | Move to start of line                                    |
+| `Ctrl+E`            | Move to end of line                                      |
+| `Ctrl+B` / `Ctrl+F` | Move backward/forward one character                      |
+| `Alt+B` / `Alt+F`   | Move backward/forward one word                           |
+| `Ctrl+U`            | Delete to start of line                                  |
+| `Ctrl+K`            | Delete to end of line                                    |
+| `Ctrl+W`            | Delete word backward                                     |
+| `Ctrl+D`            | Delete character (or exit if line is empty)              |
+| `Ctrl+L`            | Clear screen                                             |
+| `Ctrl+R`            | Reverse history search                                   |
+| `Ctrl+T`            | Swap the two characters before the cursor                |
+| `Up` / `Down`       | Navigate history                                         |
+| `Tab`               | Auto-complete                                            |
+| `Ctrl+C`            | Cancel current input (press twice on empty line to exit) |
 
 ---
 

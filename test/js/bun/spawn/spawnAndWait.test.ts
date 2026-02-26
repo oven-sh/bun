@@ -30,12 +30,14 @@ test("non-zero exit code", async () => {
   expect(result.success).toBe(false);
 });
 
-test("returns a promise", () => {
-  const result = Bun.spawnAndWait({
-    cmd: [bunExe(), "-e", ""],
+test("returns a promise that resolves", async () => {
+  const promise = Bun.spawnAndWait({
+    cmd: [bunExe(), "-e", "process.exit(0)"],
     env: bunEnv,
   });
-  expect(result).toBeInstanceOf(Promise);
+  expect(promise).toBeInstanceOf(Promise);
+  const result = await promise;
+  expect(result.exitCode).toBe(0);
 });
 
 test("does not block the event loop", async () => {
@@ -124,8 +126,7 @@ test("invalid command throws", () => {
 });
 
 test("array form works", async () => {
-  const result = await Bun.spawnAndWait({
-    cmd: [bunExe(), "-e", "console.log('array form')"],
+  const result = await Bun.spawnAndWait([bunExe(), "-e", "console.log('array form')"], {
     env: bunEnv,
   });
   expect(result.stdout.toString()).toBe("array form\n");

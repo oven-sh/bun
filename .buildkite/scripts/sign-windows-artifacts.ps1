@@ -9,15 +9,21 @@
 # with the same name so downstream steps (release, tests) see signed binaries.
 
 param(
+    # Comma-separated list. powershell.exe -File passes everything as
+    # literal strings, so [string[]] with "a,b,c" becomes a 1-element array.
     [Parameter(Mandatory=$true)]
-    [string[]]$Artifacts,
+    [string]$Artifacts,
 
+    # Comma-separated, same length as Artifacts, mapping each zip to its source step.
     [Parameter(Mandatory=$true)]
-    [string[]]$BuildSteps
+    [string]$BuildSteps
 )
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
+
+$ArtifactList = $Artifacts -split ","
+$BuildStepList = $BuildSteps -split ","
 
 function Log-Info {
     param([string]$Message)
@@ -240,18 +246,19 @@ try {
     Write-Host "  Windows Artifact Code Signing" -ForegroundColor Cyan
     Write-Host "================================================" -ForegroundColor Cyan
 
-    if ($Artifacts.Count -ne $BuildSteps.Count) {
-        throw "Artifact count ($($Artifacts.Count)) must match BuildStep count ($($BuildSteps.Count))"
+    if ($ArtifactList.Count -ne $BuildStepList.Count) {
+        throw "Artifact count ($($ArtifactList.Count)) must match BuildStep count ($($BuildStepList.Count))"
     }
+    Log-Info "Will sign $($ArtifactList.Count) artifacts: $($ArtifactList -join ', ')"
 
     Ensure-Secrets
     Setup-Certificate
     $smctl = Install-KeyLocker
     Configure-KeyLocker -Smctl $smctl
 
-    for ($i = 0; $i -lt $Artifacts.Count; $i++) {
-        Download-Artifact -Name $Artifacts[$i] -StepKey $BuildSteps[$i]
-        Sign-Artifact -ZipName $Artifacts[$i] -Smctl $smctl
+    for ($i = 0; $i -lt $ArtifactList.Count; $i++) {
+        Download-Artifact -Name $ArtifactList[$i] -StepKey $BuildStepList[$i]
+        Sign-Artifact -ZipName $ArtifactList[$i] -Smctl $smctl
     }
 
     Write-Host "================================================" -ForegroundColor Green

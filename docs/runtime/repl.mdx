@@ -74,18 +74,18 @@ undefined
 
 ## Importing modules
 
-Use `import` or `require` to load modules. Module resolution uses the same rules as `bun run`, so you can import from `node_modules`, relative paths, or `node:` builtins.
+Just like Bun's runtime, you can use either `require` or `import` in the REPL and it Just Works — mix ESM and CommonJS freely at the prompt. Module resolution uses the same rules as `bun run`, so you can import from `node_modules`, relative paths, or `node:` builtins.
 
 ```txt
 > import { z } from "zod"
 undefined
-> z.string().parse("hello")
-'hello'
 > const path = require("path")
 undefined
-> path.join("/tmp", "file.txt")
+> z.string().parse(path.join("/tmp", "file.txt"))
 '/tmp/file.txt'
 ```
+
+Declarations persist for the rest of the session, and `const`/`let` can be redeclared across evaluations (unlike in regular scripts) so you can re-run `import` and `require` statements while iterating.
 
 ---
 

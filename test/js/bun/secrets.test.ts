@@ -273,6 +273,41 @@ test.todoIf(isCI && !isWindows)("Bun.secrets handles unicode", async () => {
   await Bun.secrets.delete({ service: testService, name: testUser });
 });
 
+test.todoIf(isCI && !isWindows)("Bun.secrets update preserves access after repeated updates", async () => {
+  const testService = "bun-test-acl-update-" + Date.now();
+  const testUser = "test-acl-user";
+
+  // Create a credential
+  await Bun.secrets.set({
+    service: testService,
+    name: testUser,
+    value: "initial-value",
+    ...(shouldUseUnrestrictedAccess() && { allowUnrestrictedAccess: true }),
+  });
+  expect(await Bun.secrets.get({ service: testService, name: testUser })).toBe("initial-value");
+
+  // Perform multiple updates in sequence - this exercises the SecItemUpdate path
+  // repeatedly. Before the fix, each update could corrupt the ACL, causing
+  // subsequent reads to trigger a Keychain prompt.
+  for (let i = 0; i < 5; i++) {
+    const value = `updated-value-${i}`;
+    await Bun.secrets.set({
+      service: testService,
+      name: testUser,
+      value,
+      ...(shouldUseUnrestrictedAccess() && { allowUnrestrictedAccess: true }),
+    });
+    const retrieved = await Bun.secrets.get({ service: testService, name: testUser });
+    expect(retrieved).toBe(value);
+  }
+
+  // Verify the final value is accessible
+  expect(await Bun.secrets.get({ service: testService, name: testUser })).toBe("updated-value-4");
+
+  // Clean up
+  await Bun.secrets.delete({ service: testService, name: testUser });
+});
+
 test.todoIf(isCI && !isWindows)("Bun.secrets handles concurrent operations", async () => {
   const promises: Promise<void>[] = [];
   const count = 10;

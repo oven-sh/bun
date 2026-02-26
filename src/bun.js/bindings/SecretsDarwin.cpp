@@ -364,13 +364,25 @@ Error setPassword(const CString& service, const CString& name, CString&& passwor
 
     OSStatus status = framework->SecItemAdd((CFDictionaryRef)query.get(), NULL);
 
-    // Clean up accessRef if it was created
+    // Clean up accessRef if it was created (only needed for the initial add)
     if (accessRef) {
         framework->CFRelease(accessRef);
     }
 
     if (status == errSecDuplicateItem) {
-        // Password exists -- update it
+        // Password already exists — update only the value.
+        // We must use a fresh search query here. The add-query has been
+        // polluted with kSecValueData (and possibly kSecAttrAccess), which
+        // are not search attributes. Passing them to SecItemUpdate's search
+        // dict causes macOS to reset the item's ACL, so subsequent reads
+        // trigger a new Keychain prompt even if the user chose "Always Allow".
+        ScopedCFRef searchQuery = createQuery(service, name);
+        if (!searchQuery) {
+            err.type = ErrorType::PlatformError;
+            err.message = "Failed to create search query for update"_s;
+            return err;
+        }
+
         ScopedCFRef attributesToUpdate(framework->CFDictionaryCreateMutable(
             framework->kCFAllocatorDefault, 0,
             framework->kCFTypeDictionaryKeyCallBacks,
@@ -384,7 +396,8 @@ Error setPassword(const CString& service, const CString& name, CString&& passwor
 
         framework->CFDictionaryAddValue((CFMutableDictionaryRef)attributesToUpdate.get(),
             framework->kSecValueData, cfPassword.get());
-        status = framework->SecItemUpdate((CFDictionaryRef)query.get(),
+
+        status = framework->SecItemUpdate((CFDictionaryRef)searchQuery.get(),
             (CFDictionaryRef)attributesToUpdate.get());
     }
 

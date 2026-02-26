@@ -187,6 +187,13 @@ fn buildTarballFromObject(globalThis: *jsc.JSGlobalObject, obj: jsc.JSValue) bun
         return globalThis.throwInvalidArguments("Failed to create tarball: ArchiveFormatError", .{});
     }
 
+    // Disable charset conversion so non-ASCII UTF-8 filenames work without
+    // iconv (which is not enabled in this build). BINARY mode stores bytes
+    // as-is, which is correct since our filenames are already valid UTF-8.
+    if (archive.writeSetOptions("hdrcharset=BINARY") != .ok) {
+        return globalThis.throwInvalidArguments("Failed to create tarball: ArchiveOptionError", .{});
+    }
+
     if (lib.archive_write_open2(
         @ptrCast(archive),
         @ptrCast(&growing_buffer),
@@ -229,7 +236,7 @@ fn buildTarballFromObject(globalThis: *jsc.JSGlobalObject, obj: jsc.JSValue) bun
         // Write entry to archive
         const data = data_slice.slice();
         _ = entry.clear();
-        entry.setPathnameUtf8(key_str);
+        entry.setPathname(key_str);
         entry.setSize(@intCast(data.len));
         entry.setFiletype(@intFromEnum(lib.FileType.regular));
         entry.setPerm(0o644);
@@ -815,7 +822,7 @@ const FilesContext = struct {
         while (archive.readNextHeader(&entry) == .ok) {
             if (entry.filetype() != @intFromEnum(lib.FileType.regular)) continue;
 
-            const pathname = entry.pathnameUtf8();
+            const pathname = entry.pathname();
             // Apply glob pattern filtering (supports both positive and negative patterns)
             if (this.glob_patterns) |patterns| {
                 if (!matchGlobPatterns(patterns, pathname)) continue;
@@ -1019,7 +1026,7 @@ fn extractToDiskFiltered(
     var entry: *lib.Archive.Entry = undefined;
 
     while (archive.readNextHeader(&entry) == .ok) {
-        const pathname = entry.pathnameUtf8();
+        const pathname = entry.pathname();
 
         // Validate path safety (reject absolute paths, path traversal)
         if (!isSafePath(pathname)) continue;

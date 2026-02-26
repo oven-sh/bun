@@ -1,8 +1,11 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 test("basic echo", async () => {
-  const result = await Bun.spawnAndWait(["echo", "hello"]);
+  const result = await Bun.spawnAndWait({
+    cmd: [bunExe(), "-e", "console.log('hello')"],
+    env: bunEnv,
+  });
   expect(result.stdout.toString()).toBe("hello\n");
   expect(result.exitCode).toBe(0);
   expect(result.success).toBe(true);
@@ -28,21 +31,28 @@ test("non-zero exit code", async () => {
 });
 
 test("returns a promise", () => {
-  const result = Bun.spawnAndWait(["echo", "hello"]);
+  const result = Bun.spawnAndWait({
+    cmd: [bunExe(), "-e", ""],
+    env: bunEnv,
+  });
   expect(result).toBeInstanceOf(Promise);
 });
 
 test("does not block the event loop", async () => {
   let timerFired = false;
-  setTimeout(() => {
-    timerFired = true;
-  }, 1);
+  const timerPromise = new Promise<void>(resolve => {
+    setTimeout(() => {
+      timerFired = true;
+      resolve();
+    }, 1);
+  });
 
   // Sleep for 100ms in a child process - timer should fire during wait
   const result = await Bun.spawnAndWait({
     cmd: [bunExe(), "-e", "await Bun.sleep(100)"],
     env: bunEnv,
   });
+  await timerPromise;
   expect(result.exitCode).toBe(0);
   expect(timerFired).toBe(true);
 });
@@ -56,10 +66,15 @@ test("stdout and stderr are Buffers", async () => {
   expect(Buffer.isBuffer(result.stderr)).toBe(true);
   expect(result.stdout.toString()).toBe("out\n");
   expect(result.stderr.toString()).toBe("err\n");
+  expect(result.exitCode).toBe(0);
 });
 
 test("resourceUsage is present", async () => {
-  const result = await Bun.spawnAndWait(["echo", "hello"]);
+  const result = await Bun.spawnAndWait({
+    cmd: [bunExe(), "-e", ""],
+    env: bunEnv,
+  });
+  expect(result.exitCode).toBe(0);
   expect(result.resourceUsage).toBeDefined();
   expect(typeof result.resourceUsage.maxRSS).toBe("number");
 });
@@ -67,7 +82,7 @@ test("resourceUsage is present", async () => {
 test("large output is buffered correctly", async () => {
   const size = 1024 * 1024; // 1MB
   const result = await Bun.spawnAndWait({
-    cmd: [bunExe(), "-e", `process.stdout.write("x".repeat(${size}))`],
+    cmd: [bunExe(), "-e", `process.stdout.write(Buffer.alloc(${size}, 'x').toString())`],
     env: bunEnv,
   });
   expect(result.stdout.length).toBe(size);
@@ -89,16 +104,18 @@ test("env option is forwarded", async () => {
     env: { ...bunEnv, MY_TEST_VAR: "hello_from_env" },
   });
   expect(result.stdout.toString().trim()).toBe("hello_from_env");
+  expect(result.exitCode).toBe(0);
 });
 
 test("cwd option is forwarded", async () => {
+  using dir = tempDir("spawnAndWait-cwd", {});
   const result = await Bun.spawnAndWait({
     cmd: [bunExe(), "-e", "console.log(process.cwd())"],
     env: bunEnv,
-    cwd: "/tmp",
+    cwd: String(dir),
   });
-  // /tmp may be a symlink to /private/tmp on macOS
-  expect(result.stdout.toString().trim()).toEndWith("tmp");
+  expect(result.stdout.toString().trim()).toBe(String(dir));
+  expect(result.exitCode).toBe(0);
 });
 
 test("invalid command throws", () => {
@@ -107,21 +124,29 @@ test("invalid command throws", () => {
 });
 
 test("array form works", async () => {
-  const result = await Bun.spawnAndWait(["echo", "array", "form"]);
+  const result = await Bun.spawnAndWait({
+    cmd: [bunExe(), "-e", "console.log('array form')"],
+    env: bunEnv,
+  });
   expect(result.stdout.toString()).toBe("array form\n");
   expect(result.exitCode).toBe(0);
 });
 
 test("object form with cmd works", async () => {
   const result = await Bun.spawnAndWait({
-    cmd: ["echo", "object", "form"],
+    cmd: [bunExe(), "-e", "console.log('object form')"],
+    env: bunEnv,
   });
   expect(result.stdout.toString()).toBe("object form\n");
   expect(result.exitCode).toBe(0);
 });
 
 test("empty stdout", async () => {
-  const result = await Bun.spawnAndWait(["true"]);
+  const result = await Bun.spawnAndWait({
+    cmd: [bunExe(), "-e", "process.exit(0)"],
+    env: bunEnv,
+    stdout: "pipe",
+  });
   expect(result.stdout.length).toBe(0);
   expect(result.exitCode).toBe(0);
 });

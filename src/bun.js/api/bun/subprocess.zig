@@ -291,7 +291,6 @@ fn buildBufferedResult(this: *Subprocess, globalThis: *jsc.JSGlobalObject) bun.J
     const stdout = try this.stdout.toBufferedValue(globalThis);
     const stderr = try this.stderr.toBufferedValue(globalThis);
     const resource_usage: JSValue = if (!globalThis.hasException()) try this.createResourceUsageObject(globalThis) else .zero;
-    const exitedDueToMaxBuffer = this.exited_due_to_maxbuf;
     const resultPid = jsc.JSValue.jsNumberFromInt32(this.pid());
 
     const sync_value = jsc.JSValue.createEmptyObject(globalThis, 0);
@@ -303,7 +302,17 @@ fn buildBufferedResult(this: *Subprocess, globalThis: *jsc.JSGlobalObject) bun.J
     sync_value.put(globalThis, jsc.ZigString.static("stderr"), stderr);
     sync_value.put(globalThis, jsc.ZigString.static("success"), JSValue.jsBoolean(exitCode.isInt32() and exitCode.asInt32() == 0));
     sync_value.put(globalThis, jsc.ZigString.static("resourceUsage"), resource_usage);
-    if (exitedDueToMaxBuffer != null) sync_value.put(globalThis, jsc.ZigString.static("exitedDueToMaxBuffer"), .true);
+
+    // Match spawnSync: include exitedDueToTimeout when a timeout was configured
+    if (this.event_loop_timer.next.ns() != 0 or this.event_loop_timer.state == .FIRED) {
+        sync_value.put(globalThis, jsc.ZigString.static("exitedDueToTimeout"), if (this.event_loop_timer.state == .FIRED) .true else .false);
+    }
+
+    // Match spawnSync: include exitedDueToMaxBuffer when maxBuffer was configured
+    if (this.stdout_maxbuf != null or this.stderr_maxbuf != null or this.exited_due_to_maxbuf != null) {
+        sync_value.put(globalThis, jsc.ZigString.static("exitedDueToMaxBuffer"), if (this.exited_due_to_maxbuf != null) .true else .false);
+    }
+
     sync_value.put(globalThis, jsc.ZigString.static("pid"), resultPid);
 
     return sync_value;

@@ -275,8 +275,7 @@ fn fetchImpl(
 
         if (ssl_config) |conf| {
             ssl_config = null;
-            conf.deinit();
-            bun.default_allocator.destroy(conf);
+            conf.deref();
         }
     }
 
@@ -468,7 +467,8 @@ fn fetchImpl(
                         }) |config| {
                             const ssl_config_object = bun.handleOom(bun.default_allocator.create(SSLConfig));
                             ssl_config_object.* = config;
-                            break :extract_ssl_config ssl_config_object;
+                            // Intern via GlobalRegistry for deduplication and pointer equality
+                            break :extract_ssl_config SSLConfig.GlobalRegistry.intern(ssl_config_object);
                         }
                     }
                 }

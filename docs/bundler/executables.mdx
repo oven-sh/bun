@@ -157,6 +157,31 @@ To build for Windows x64:
   </Tab>
 </Tabs>
 
+To build for Windows arm64:
+
+<Tabs>
+  <Tab title="CLI">
+    ```bash icon="terminal" terminal
+    bun build --compile --target=bun-windows-arm64 ./path/to/my/app.ts --outfile myapp
+
+    # note: if no .exe extension is provided, Bun will automatically add it for Windows executables
+    ```
+
+  </Tab>
+  <Tab title="JavaScript">
+    ```ts build.ts icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ["./path/to/my/app.ts"],
+      compile: {
+        target: "bun-windows-arm64",
+        outfile: "./myapp", // .exe added automatically
+      },
+    });
+    ```
+
+  </Tab>
+</Tabs>
+
 To build for macOS arm64:
 
 <Tabs>
@@ -208,7 +233,7 @@ The order of the `--target` flag does not matter, as long as they're delimited b
 | bun-linux-x64         | Linux            | x64          | ✅     | ✅       | glibc |
 | bun-linux-arm64       | Linux            | arm64        | ✅     | N/A      | glibc |
 | bun-windows-x64       | Windows          | x64          | ✅     | ✅       | -     |
-| ~~bun-windows-arm64~~ | ~~Windows~~      | ~~arm64~~    | ❌     | ❌       | -     |
+| bun-windows-arm64     | Windows          | arm64        | ✅     | N/A      | -     |
 | bun-darwin-x64        | macOS            | x64          | ✅     | ✅       | -     |
 | bun-darwin-arm64      | macOS            | arm64        | ✅     | N/A      | -     |
 | bun-linux-x64-musl    | Linux            | x64          | ✅     | ✅       | musl  |
@@ -1252,7 +1277,8 @@ type Target =
   | "bun-linux-arm64-musl"
   | "bun-windows-x64"
   | "bun-windows-x64-baseline"
-  | "bun-windows-x64-modern";
+  | "bun-windows-x64-modern"
+  | "bun-windows-arm64";
 ```
 
 ### Complete example

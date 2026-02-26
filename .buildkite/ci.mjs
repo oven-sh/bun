@@ -474,7 +474,8 @@ function getBuildCommand(target, options, label) {
 
   if (target.os === "windows" && label === "build-bun") {
     // Only sign release builds, not canary builds (DigiCert charges per signature)
-    const enableSigning = !options.canary ? " -DENABLE_WINDOWS_CODESIGNING=ON" : "";
+    // Skip signing on ARM64 for now — smctl (x64-only) silently fails under emulation
+    const enableSigning = !options.canary && target.arch !== "aarch64" ? " -DENABLE_WINDOWS_CODESIGNING=ON" : "";
     return `bun run build:${buildProfile}${enableSigning}`;
   }
 

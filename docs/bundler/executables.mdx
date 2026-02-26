@@ -228,16 +228,16 @@ To build for macOS x64:
 
 The order of the `--target` flag does not matter, as long as they're delimited by a `-`.
 
-| --target              | Operating System | Architecture | Modern | Baseline | Libc  |
-| --------------------- | ---------------- | ------------ | ------ | -------- | ----- |
-| bun-linux-x64         | Linux            | x64          | ✅     | ✅       | glibc |
-| bun-linux-arm64       | Linux            | arm64        | ✅     | N/A      | glibc |
-| bun-windows-x64       | Windows          | x64          | ✅     | ✅       | -     |
-| bun-windows-arm64     | Windows          | arm64        | ✅     | N/A      | -     |
-| bun-darwin-x64        | macOS            | x64          | ✅     | ✅       | -     |
-| bun-darwin-arm64      | macOS            | arm64        | ✅     | N/A      | -     |
-| bun-linux-x64-musl    | Linux            | x64          | ✅     | ✅       | musl  |
-| bun-linux-arm64-musl  | Linux            | arm64        | ✅     | N/A      | musl  |
+| --target             | Operating System | Architecture | Modern | Baseline | Libc  |
+| -------------------- | ---------------- | ------------ | ------ | -------- | ----- |
+| bun-linux-x64        | Linux            | x64          | ✅     | ✅       | glibc |
+| bun-linux-arm64      | Linux            | arm64        | ✅     | N/A      | glibc |
+| bun-windows-x64      | Windows          | x64          | ✅     | ✅       | -     |
+| bun-windows-arm64    | Windows          | arm64        | ✅     | N/A      | -     |
+| bun-darwin-x64       | macOS            | x64          | ✅     | ✅       | -     |
+| bun-darwin-arm64     | macOS            | arm64        | ✅     | N/A      | -     |
+| bun-linux-x64-musl   | Linux            | x64          | ✅     | ✅       | musl  |
+| bun-linux-arm64-musl | Linux            | arm64        | ✅     | N/A      | musl  |
 
 <Warning>
   On x64 platforms, Bun uses SIMD optimizations which require a modern CPU supporting AVX2 instructions. The `-baseline`

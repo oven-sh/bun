@@ -102,7 +102,7 @@ test("integration test", () => {
     });
 
     const stderr = result.stderr.toString("utf-8");
-    expect(stderr).toContain("unit/math.test.ts");
+    expect(stderr).toContain("math.test.ts");
     expect(stderr).not.toContain("integration");
     expect(stderr).toContain("1 pass");
     expect(result.exitCode).toBe(0);

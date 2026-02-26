@@ -184,14 +184,14 @@ fn buildTarballFromObject(globalThis: *jsc.JSGlobalObject, obj: jsc.JSValue) bun
     defer _ = archive.writeFree();
 
     if (archive.writeSetFormatPaxRestricted() != .ok) {
-        return globalThis.throwInvalidArguments("Failed to create tarball: ArchiveFormatError", .{});
+        return globalThis.throwInvalidArguments("Failed to create tarball: ArchiveFormatError: {s}", .{archive.errorString()});
     }
 
     // Disable charset conversion so non-ASCII UTF-8 filenames work without
     // iconv (which is not enabled in this build). BINARY mode stores bytes
     // as-is, which is correct since our filenames are already valid UTF-8.
     if (archive.writeSetOptions("hdrcharset=BINARY") != .ok) {
-        return globalThis.throwInvalidArguments("Failed to create tarball: ArchiveOptionError", .{});
+        return globalThis.throwInvalidArguments("Failed to create tarball: ArchiveOptionError: {s}", .{archive.errorString()});
     }
 
     if (lib.archive_write_open2(
@@ -202,7 +202,7 @@ fn buildTarballFromObject(globalThis: *jsc.JSGlobalObject, obj: jsc.JSValue) bun
         &lib.GrowingBuffer.closeCallback,
         null,
     ) != 0) {
-        return globalThis.throwInvalidArguments("Failed to create tarball: ArchiveOpenError", .{});
+        return globalThis.throwInvalidArguments("Failed to create tarball: ArchiveOpenError: {s}", .{archive.errorString()});
     }
 
     const entry = lib.Archive.Entry.new();
@@ -243,18 +243,18 @@ fn buildTarballFromObject(globalThis: *jsc.JSGlobalObject, obj: jsc.JSValue) bun
         entry.setMtime(now_secs, 0);
 
         if (archive.writeHeader(entry) != .ok) {
-            return globalThis.throwInvalidArguments("Failed to create tarball: ArchiveHeaderError", .{});
+            return globalThis.throwInvalidArguments("Failed to create tarball: ArchiveHeaderError: {s}", .{archive.errorString()});
         }
         if (archive.writeData(data) < 0) {
-            return globalThis.throwInvalidArguments("Failed to create tarball: ArchiveWriteError", .{});
+            return globalThis.throwInvalidArguments("Failed to create tarball: ArchiveWriteError: {s}", .{archive.errorString()});
         }
         if (archive.writeFinishEntry() != .ok) {
-            return globalThis.throwInvalidArguments("Failed to create tarball: ArchiveFinishEntryError", .{});
+            return globalThis.throwInvalidArguments("Failed to create tarball: ArchiveFinishEntryError: {s}", .{archive.errorString()});
         }
     }
 
     if (archive.writeClose() != .ok) {
-        return globalThis.throwInvalidArguments("Failed to create tarball: ArchiveCloseError", .{});
+        return globalThis.throwInvalidArguments("Failed to create tarball: ArchiveCloseError: {s}", .{archive.errorString()});
     }
 
     return growing_buffer.toOwnedSlice() catch {

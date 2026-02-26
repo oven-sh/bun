@@ -1183,6 +1183,106 @@ fn evaluateAndPrint(self: *Repl, code: []const u8) void {
     vm.tick();
 }
 
+/// Evaluate a script from `bun repl -e/--eval` or `-p/--print` non-interactively.
+/// Uses the REPL transform pipeline (TypeScript/JSX, top-level await, object literal
+/// wrapping, declaration hoisting), drains the event loop, optionally prints the
+/// result, and returns an exit code (0 on success, 1 on error).
+pub fn evalScript(self: *Repl, code: []const u8, print_result: bool) u8 {
+    const global = self.global orelse return 1;
+    const vm = self.vm orelse return 1;
+
+    self.use_colors = Output.enable_ansi_colors_stdout and !bun.env_var.NO_COLOR.get();
+
+    // Empty / whitespace-only script: nothing to do (matches `node -e ""`)
+    if (strings.trim(code, " \t\n\r").len == 0) {
+        if (print_result) {
+            if (self.use_colors) {
+                self.print("{s}undefined{s}\n", .{ Color.dim, Color.reset });
+            } else {
+                self.print("undefined\n", .{});
+            }
+        }
+        return 0;
+    }
+
+    const transformed_code = self.transformForRepl(code) orelse {
+        // Transform failed — fall back to raw evaluation for the error message
+        var exception: jsc.JSValue = .js_undefined;
+        _ = Bun__REPL__evaluate(global, code.ptr, code.len, "[eval]".ptr, "[eval]".len, &exception);
+        if (!exception.isUndefined() and !exception.isNull()) {
+            self.printJSError(exception);
+        }
+        return 1;
+    };
+    defer self.allocator.free(transformed_code);
+
+    var exception: jsc.JSValue = .js_undefined;
+    const result = Bun__REPL__evaluate(
+        global,
+        transformed_code.ptr,
+        transformed_code.len,
+        "[eval]".ptr,
+        "[eval]".len,
+        &exception,
+    );
+
+    if (!exception.isUndefined() and !exception.isNull()) {
+        self.printJSError(exception);
+        return 1;
+    }
+
+    // If the transform wrapped in an async IIFE (top-level await), wait for it
+    var resolved_result = result;
+    if (result.asPromise()) |promise| {
+        promise.setHandled();
+        vm.waitForPromise(.{ .normal = promise });
+        switch (promise.status()) {
+            .fulfilled => resolved_result = promise.result(vm.jsc_vm),
+            .rejected => {
+                const rejection = promise.result(vm.jsc_vm);
+                self.printJSError(rejection);
+                return 1;
+            },
+            .pending => return 1,
+        }
+    }
+
+    // Unwrap the { value: expr } wrapper produced by transformForRepl
+    var actual_result = resolved_result;
+    if (resolved_result.isObject()) {
+        const maybe_value = resolved_result.getOwn(global, "value") catch |err| {
+            const exc = global.takeException(err);
+            self.printJSError(exc);
+            return 1;
+        };
+        if (maybe_value) |value| actual_result = value;
+    }
+    // Protect across tick() in case of GC
+    if (!actual_result.isUndefined()) actual_result.protect();
+    defer if (!actual_result.isUndefined()) actual_result.unprotect();
+
+    // Drain the event loop (timers, I/O, etc.) before printing / exiting
+    vm.tick();
+    while (vm.isEventLoopAlive()) {
+        vm.tick();
+        vm.eventLoop().autoTickActive();
+    }
+
+    if (print_result) {
+        if (actual_result.isUndefined()) {
+            if (self.use_colors) {
+                self.print("{s}undefined{s}\n", .{ Color.dim, Color.reset });
+            } else {
+                self.print("undefined\n", .{});
+            }
+        } else {
+            self.printFormattedValue(actual_result);
+        }
+    }
+
+    return 0;
+}
+
 /// Evaluate code without REPL transforms (fallback for errors)
 /// The C++ Bun__REPL__evaluate handles setting _ and _error
 fn evaluateRaw(self: *Repl, code: []const u8) void {

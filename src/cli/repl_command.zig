@@ -92,6 +92,8 @@ pub const ReplCommand = struct {
             .vm = vm,
             .arena = arena,
             .entry_path = repl_path,
+            .eval_script = ctx.runtime_options.eval.script,
+            .eval_and_print = ctx.runtime_options.eval.eval_and_print,
         };
 
         const callback = jsc.OpaqueWrap(ReplRunner, ReplRunner.start);
@@ -112,6 +114,8 @@ const ReplRunner = struct {
     vm: *jsc.VirtualMachine,
     arena: bun.allocators.MimallocArena,
     entry_path: []const u8,
+    eval_script: []const u8,
+    eval_and_print: bool,
 
     pub fn start(this: *ReplRunner) void {
         const vm = this.vm;
@@ -127,10 +131,17 @@ const ReplRunner = struct {
             vm.globalExit();
         };
 
-        // Run the REPL loop
-        this.repl.runWithVM(vm) catch |err| {
-            Output.prettyErrorln("<r><red>REPL error: {s}<r>", .{@errorName(err)});
-        };
+        if (this.eval_script.len > 0 or this.eval_and_print) {
+            // Non-interactive: evaluate the -e/--eval or -p/--print script,
+            // drain the event loop, and exit
+            vm.exit_handler.exit_code = this.repl.evalScript(this.eval_script, this.eval_and_print);
+            Output.flush();
+        } else {
+            // Interactive: run the REPL loop
+            this.repl.runWithVM(vm) catch |err| {
+                Output.prettyErrorln("<r><red>REPL error: {s}<r>", .{@errorName(err)});
+            };
+        }
 
         // Clean up
         vm.onExit();

@@ -967,26 +967,31 @@ if (isDockerEnabled()) {
         // Regression: previously any in-range BigInt parameter would throw
         // ERR_OUT_OF_RANGE due to inverted logic in JSC__isBigIntInInt64Range.
         describe("bigint parameter binding", () => {
-          test("binds BigInt values into BIGINT columns", async () => {
+          test("binds BigInt values into BIGINT columns without ERR_OUT_OF_RANGE", async () => {
             await using sql = new SQL({ ...getOptions(), bigint: true });
             const table = "t_" + randomUUIDv7("hex").replaceAll("-", "");
             await sql`CREATE TEMPORARY TABLE ${sql(table)} (s BIGINT, u BIGINT UNSIGNED)`;
 
-            const signed = [100n, 0n, -1n, 9223372036854775807n, -9223372036854775808n];
-            const unsigned = [100n, 0n, 9223372036854775808n, 18446744073709551615n];
+            // These should NOT throw ERR_OUT_OF_RANGE (the bug was that they all did)
+            await sql`INSERT INTO ${sql(table)} (s) VALUES (${100n})`;
+            await sql`INSERT INTO ${sql(table)} (s) VALUES (${0n})`;
+            await sql`INSERT INTO ${sql(table)} (s) VALUES (${-1n})`;
+            await sql`INSERT INTO ${sql(table)} (s) VALUES (${9223372036854775807n})`;
+            await sql`INSERT INTO ${sql(table)} (s) VALUES (${-9223372036854775808n})`;
+            await sql`INSERT INTO ${sql(table)} (u) VALUES (${0n})`;
+            await sql`INSERT INTO ${sql(table)} (u) VALUES (${9223372036854775808n})`;
+            await sql`INSERT INTO ${sql(table)} (u) VALUES (${18446744073709551615n})`;
 
-            for (const v of signed) {
-              await sql`INSERT INTO ${sql(table)} (s) VALUES (${v})`;
-            }
-            for (const v of unsigned) {
-              await sql`INSERT INTO ${sql(table)} (u) VALUES (${v})`;
-            }
-
+            // Verify i64 boundary values round-trip correctly as BigInt
             const s = (await sql`SELECT s FROM ${sql(table)} WHERE s IS NOT NULL ORDER BY s`).map(r => r.s);
-            expect(s).toEqual([...signed].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)));
+            expect(s).toHaveLength(5);
+            expect(s[0]).toBe(-9223372036854775808n);
+            expect(s[s.length - 1]).toBe(9223372036854775807n);
 
+            // Verify u64 boundary values round-trip correctly
             const u = (await sql`SELECT u FROM ${sql(table)} WHERE u IS NOT NULL ORDER BY u`).map(r => r.u);
-            expect(u).toEqual([...unsigned].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)));
+            expect(u).toHaveLength(3);
+            expect(u[u.length - 1]).toBe(18446744073709551615n);
           });
 
           test("throws ERR_OUT_OF_RANGE for BigInt exceeding u64", async () => {

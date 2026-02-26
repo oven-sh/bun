@@ -591,10 +591,9 @@ const Binding = js_ast.Binding;
 const E = js_ast.E;
 const Expr = js_ast.Expr;
 const ExprNodeList = js_ast.ExprNodeList;
+const Ref = js_ast.Ref;
 const S = js_ast.S;
 const Stmt = js_ast.Stmt;
-
-const Ref = js_ast.Ref;
 
 const G = js_ast.G;
 const Decl = G.Decl;

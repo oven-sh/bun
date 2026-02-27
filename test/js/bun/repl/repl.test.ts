@@ -1029,6 +1029,26 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
     });
   });
 
+  test("tab completion does not show duplicate property names (#27516)", async () => {
+    await withTerminalRepl(async ({ send, waitFor, allOutput }) => {
+      // Assign an object so we can complete on it
+      send("let __obj27516 = {}\n");
+      await waitFor(/\u276f|> /);
+
+      // Type partial property prefix "toS" — only "toString" should match.
+      // With the bug, duplicates made the REPL think there were multiple
+      // matches so it displayed a list instead of auto-completing.
+      send("__obj27516.toS");
+      await waitFor("__obj27516.toS");
+      send("\t"); // Tab — should auto-complete to toString (only unique match)
+      await waitFor("toString");
+
+      // Verify auto-completion happened (input line shows the completed name)
+      const output = allOutput();
+      expect(output).toContain("__obj27516.toString");
+    });
+  });
+
   test(".editor mode collects lines until Ctrl+D", async () => {
     await withTerminalRepl(async ({ send, waitFor }) => {
       send(".editor\n");

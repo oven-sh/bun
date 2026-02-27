@@ -299,28 +299,49 @@ if(EXISTS ${BSYSCALL_H})
     } \\
 } while (0);"
     BSYSCALL_CONTENT "${BSYSCALL_CONTENT}")
+  string(FIND "${BSYSCALL_CONTENT}" "BSYSCALL_MAX_RETRIES" BSYSCALL_PATCH_APPLIED)
+  if(BSYSCALL_PATCH_APPLIED EQUAL -1)
+    message(WARNING "BSyscall.h patch did not apply - header may have changed in new WebKit version")
+  else()
+    message(STATUS "Patched BSyscall.h: SYSCALL macro backoff")
+  endif()
   file(WRITE ${BSYSCALL_H} "${BSYSCALL_CONTENT}")
-  message(STATUS "Patched BSyscall.h: SYSCALL macro backoff")
 endif()
 
 # Patch pas_utils.h: add backoff and retry cap to PAS_SYSCALL macro
+# Also add #include <unistd.h> for usleep()
 set(PAS_UTILS_H ${BMALLOC_INCLUDE}/pas_utils.h)
 if(EXISTS ${PAS_UTILS_H})
   file(READ ${PAS_UTILS_H} PAS_UTILS_CONTENT)
   string(REPLACE
+    "#include <string.h>"
+    "#include <string.h>
+#if !PAS_OS(WINDOWS)
+#include <unistd.h>
+#endif"
+    PAS_UTILS_CONTENT "${PAS_UTILS_CONTENT}")
+  string(REPLACE
     "#define PAS_SYSCALL(x) do { \\
     while ((x) == -1 && errno == EAGAIN) { } \\
 } while (0)"
-    "#define PAS_SYSCALL(x) do { \\
+    "#define PAS_SYSCALL_MAX_RETRIES 100
+#define PAS_SYSCALL_RETRY_DELAY_US 1000
+
+#define PAS_SYSCALL(x) do { \\
     int _pas_syscall_tries = 0; \\
     while ((x) == -1 && errno == EAGAIN) { \\
-        if (++_pas_syscall_tries > 100) break; \\
-        usleep(1000); \\
+        if (++_pas_syscall_tries > PAS_SYSCALL_MAX_RETRIES) break; \\
+        usleep(PAS_SYSCALL_RETRY_DELAY_US); \\
     } \\
 } while (0)"
     PAS_UTILS_CONTENT "${PAS_UTILS_CONTENT}")
+  string(FIND "${PAS_UTILS_CONTENT}" "PAS_SYSCALL_MAX_RETRIES" PAS_PATCH_APPLIED)
+  if(PAS_PATCH_APPLIED EQUAL -1)
+    message(WARNING "pas_utils.h patch did not apply - header may have changed in new WebKit version")
+  else()
+    message(STATUS "Patched pas_utils.h: PAS_SYSCALL macro backoff")
+  endif()
   file(WRITE ${PAS_UTILS_H} "${PAS_UTILS_CONTENT}")
-  message(STATUS "Patched pas_utils.h: PAS_SYSCALL macro backoff")
 endif()
 
 # Patch VMAllocate.h: remove MADV_DONTDUMP/MADV_DODUMP (Linux only)
@@ -329,6 +350,7 @@ endif()
 set(VMALLOCATE_H ${BMALLOC_INCLUDE}/VMAllocate.h)
 if(EXISTS ${VMALLOCATE_H})
   file(READ ${VMALLOCATE_H} VMALLOCATE_CONTENT)
+  string(FIND "${VMALLOCATE_CONTENT}" "MADV_DONTDUMP" VMALLOCATE_HAS_DONTDUMP)
   string(REPLACE
     "    SYSCALL(madvise(p, vmSize, MADV_DONTNEED));
 #if BOS(LINUX)
@@ -343,6 +365,11 @@ if(EXISTS ${VMALLOCATE_H})
 #endif"
     "    SYSCALL(madvise(p, vmSize, MADV_NORMAL));"
     VMALLOCATE_CONTENT "${VMALLOCATE_CONTENT}")
+  string(FIND "${VMALLOCATE_CONTENT}" "MADV_DONTDUMP" VMALLOCATE_STILL_HAS_DONTDUMP)
+  if(NOT VMALLOCATE_HAS_DONTDUMP EQUAL -1 AND NOT VMALLOCATE_STILL_HAS_DONTDUMP EQUAL -1)
+    message(WARNING "VMAllocate.h patch did not apply - header may have changed in new WebKit version")
+  else()
+    message(STATUS "Patched VMAllocate.h: removed MADV_DONTDUMP/MADV_DODUMP")
+  endif()
   file(WRITE ${VMALLOCATE_H} "${VMALLOCATE_CONTENT}")
-  message(STATUS "Patched VMAllocate.h: removed MADV_DONTDUMP/MADV_DODUMP")
 endif()

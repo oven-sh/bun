@@ -305,7 +305,7 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     bool hasNodeTLSRejectUnauthorized = false;
     bool hasBunConfigVerboseFetch = false;
 
-    auto* cached_getter_setter = JSC::CustomGetterSetter::create(vm, jsGetterEnvironmentVariable, nullptr);
+    auto* cached_getter_setter = JSC::CustomGetterSetter::create(vm, jsGetterEnvironmentVariable, jsSetterEnvironmentVariable);
 
     for (size_t i = 0; i < count; i++) {
         unsigned char* chars;

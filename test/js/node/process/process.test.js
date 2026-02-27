@@ -158,6 +158,18 @@ it("process.env", () => {
   expect(process.env["LOL SMILE latin1 <abc>"]).toBe("<abc>");
   delete process.env["LOL SMILE latin1 <abc>"];
   expect(process.env["LOL SMILE latin1 <abc>"]).toBe(undefined);
+
+  // Node.js coerces non-string values to strings
+  process.env.BUN_TEST_ENV_COERCE = undefined;
+  expect(process.env.BUN_TEST_ENV_COERCE).toBe("undefined");
+  process.env.BUN_TEST_ENV_COERCE = null;
+  expect(process.env.BUN_TEST_ENV_COERCE).toBe("null");
+  process.env.BUN_TEST_ENV_COERCE = 123;
+  expect(process.env.BUN_TEST_ENV_COERCE).toBe("123");
+  delete process.env.BUN_TEST_ENV_COERCE;
+
+  // Symbol assignment should throw TypeError, matching Node.js
+  expect(() => { process.env.BUN_TEST_ENV_COERCE = Symbol("test"); }).toThrow(TypeError);
 });
 
 it("process.env is spreadable and editable", () => {

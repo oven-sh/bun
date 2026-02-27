@@ -393,7 +393,7 @@ export function windowsEnv(
     set(_, p, value) {
       const k = String(p).toUpperCase();
       $assert(typeof p === "string"); // proxy is only string and symbol. the symbol would have thrown by now
-      value = String(value); // If toString() throws, we want to avoid it existing in the envMapList
+      value = "" + value; // If toString() throws, we want to avoid it existing in the envMapList
       if (!(k in internalEnv) && !envMapList.includes(p)) {
         envMapList.push(p);
       }

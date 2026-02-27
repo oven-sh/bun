@@ -493,7 +493,20 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__toJSON(
     BunString* bunString)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    JSC::JSValue result = JSC::JSONParse(globalObject, bunString->toWTFString());
+    WTF::String str = bunString->toWTFString();
+
+    if (str.isNull()) {
+        // toWTFString() returns null for empty strings and for strings that exceed
+        // the synthetic allocation limit. Distinguish by checking the source length.
+        if ((bunString->tag == BunStringTag::StringView || bunString->tag == BunStringTag::StaticStringView)
+            && bunString->impl.view.len > Bun__stringSyntheticAllocationLimit) {
+            auto message = makeString("Cannot parse a JSON string longer than "_s, WTF::String::MaxLength, " characters"_s);
+            scope.throwException(globalObject, Bun::createError(globalObject, Bun::ErrorCode::ERR_STRING_TOO_LONG, message));
+            return {};
+        }
+    }
+
+    JSC::JSValue result = JSC::JSONParse(globalObject, str);
 
     if (!result && !scope.exception()) {
         scope.throwException(globalObject, createSyntaxError(globalObject, "Failed to parse JSON"_s));

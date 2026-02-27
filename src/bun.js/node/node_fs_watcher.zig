@@ -515,7 +515,7 @@ pub const FSWatcher = struct {
             if (this.encoding == .buffer)
                 filename = jsc.ArrayBuffer.createBuffer(globalObject, file_name) catch return // TODO: properly propagate exception upwards
             else if (this.encoding == .utf8) {
-                filename = bun.String.createUTF8ForJS(globalObject, file_name) catch return; // TODO: properly propagate exception upwards
+                filename = bun.String.createUTF8ForJS(globalObject, file_name) catch return;
             } else {
                 // convert to desired encoding
                 filename = Encoder.toString(file_name, globalObject, this.encoding) catch return;

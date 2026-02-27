@@ -22,7 +22,8 @@ var print_every_i: usize = 0;
 
 // we always rewrite the entire HTTP request when write() returns EAGAIN
 // so we can reuse this buffer
-var shared_request_headers_buf: [256]picohttp.Header = undefined;
+const max_request_headers = 256;
+var shared_request_headers_buf: [max_request_headers]picohttp.Header = undefined;
 
 // this doesn't need to be stack memory because it is immediately cloned after use
 var shared_response_headers_buf: [256]picohttp.Header = undefined;
@@ -633,6 +634,11 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
     var add_transfer_encoding = true;
     var original_content_length: ?string = null;
 
+    // Reserve slots for default headers that may be appended after user headers
+    // (Connection, User-Agent, Accept, Host, Accept-Encoding, Content-Length/Transfer-Encoding).
+    const max_default_headers = 6;
+    const max_user_headers = max_request_headers - max_default_headers;
+
     for (header_names, 0..) |head, i| {
         const name = this.headerStr(head);
         // Hash it as lowercase
@@ -684,6 +690,9 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
             },
             else => {},
         }
+
+        // Silently drop excess headers to stay within the fixed-size request header buffer.
+        if (header_count >= max_user_headers) continue;
 
         request_headers_buf[header_count] = .{
             .name = name,

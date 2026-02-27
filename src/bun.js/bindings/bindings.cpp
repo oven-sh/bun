@@ -6165,7 +6165,7 @@ extern "C" JSC::EncodedJSValue Bun__REPL__evaluate(
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
-    WTF::String source = WTF::String::fromUTF8(std::span { sourcePtr, sourceLen });
+    WTF::String source = makeString("\"use strict\";"_s, WTF::String::fromUTF8(std::span { sourcePtr, sourceLen }));
     WTF::String filename = filenameLen > 0
         ? WTF::String::fromUTF8(std::span { filenamePtr, filenameLen })
         : "[repl]"_s;

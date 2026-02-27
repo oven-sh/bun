@@ -1307,9 +1307,9 @@ pub fn joinStringBufT(comptime T: type, buf: []T, parts: anytype, comptime platf
 /// for arbitrarily long inputs while preserving zero-alloc behaviour for the
 /// common case.
 const JoinScratch = struct {
-    sfa: std.heap.StackFallbackAllocator(bun.MAX_PATH_BYTES * 2) = undefined,
-    alloc: std.mem.Allocator = undefined,
-    buf: []u8 = &.{},
+    sfa: std.heap.StackFallbackAllocator(bun.MAX_PATH_BYTES * 2),
+    alloc: std.mem.Allocator,
+    buf: []u8,
 
     pub fn init(self: *JoinScratch, base: usize, parts: []const []const u8) []u8 {
         self.sfa = std.heap.stackFallback(bun.MAX_PATH_BYTES * 2, bun.default_allocator);
@@ -1434,7 +1434,7 @@ fn _joinAbsStringBuf(comptime is_sentinel: bool, comptime ReturnType: type, _cwd
         }
     }
 
-    var scratch: JoinScratch = .{};
+    var scratch: JoinScratch = undefined;
     const temp_buf = scratch.init(cwd.len, parts);
     defer scratch.deinit();
 
@@ -1554,7 +1554,7 @@ fn _joinAbsStringBufWindows(
     if (set_cwd.len > 0)
         assert(isSepAny(set_cwd[0]));
 
-    var scratch: JoinScratch = .{};
+    var scratch: JoinScratch = undefined;
     const temp_buf = scratch.init(root.len + set_cwd.len, parts[n_start..]);
     defer scratch.deinit();
 

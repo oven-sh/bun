@@ -260,3 +260,89 @@ file(RENAME ${CACHE_PATH}/bun-webkit ${WEBKIT_PATH})
 if(APPLE)
   file(REMOVE_RECURSE ${WEBKIT_INCLUDE_PATH}/unicode)
 endif()
+
+# --- Apply bmalloc patches ---
+# Fix: SYSCALL/PAS_SYSCALL macros spin at 100% CPU on madvise EAGAIN (oven-sh/bun#27490)
+#
+# The SYSCALL macro retries syscalls returning EAGAIN in a zero-delay tight loop.
+# Under kernel mmap_write_lock contention (e.g. concurrent GC threads calling
+# madvise(MADV_DONTDUMP)), this causes 250K+ retries/sec/thread and 100% CPU.
+#
+# Fix has two parts:
+# 1. Add usleep(1000) backoff and 100-retry cap to SYSCALL/PAS_SYSCALL macros
+# 2. Remove MADV_DONTDUMP/MADV_DODUMP calls which require mmap_write_lock
+#    (MADV_DONTDUMP only affects core dump size, not allocation correctness)
+
+set(BMALLOC_INCLUDE ${WEBKIT_INCLUDE_PATH}/bmalloc)
+
+# Patch BSyscall.h: add backoff and retry cap to SYSCALL macro
+set(BSYSCALL_H ${BMALLOC_INCLUDE}/BSyscall.h)
+if(EXISTS ${BSYSCALL_H})
+  file(READ ${BSYSCALL_H} BSYSCALL_CONTENT)
+  string(REPLACE
+    "#include <errno.h>
+
+#define SYSCALL(x) do { \\
+    while ((x) == -1 && errno == EAGAIN) { } \\
+} while (0);"
+    "#include <errno.h>
+#include <unistd.h>
+
+#define BSYSCALL_MAX_RETRIES 100
+#define BSYSCALL_RETRY_DELAY_US 1000
+
+#define SYSCALL(x) do { \\
+    int _syscall_tries = 0; \\
+    while ((x) == -1 && errno == EAGAIN) { \\
+        if (++_syscall_tries > BSYSCALL_MAX_RETRIES) break; \\
+        usleep(BSYSCALL_RETRY_DELAY_US); \\
+    } \\
+} while (0);"
+    BSYSCALL_CONTENT "${BSYSCALL_CONTENT}")
+  file(WRITE ${BSYSCALL_H} "${BSYSCALL_CONTENT}")
+  message(STATUS "Patched BSyscall.h: SYSCALL macro backoff")
+endif()
+
+# Patch pas_utils.h: add backoff and retry cap to PAS_SYSCALL macro
+set(PAS_UTILS_H ${BMALLOC_INCLUDE}/pas_utils.h)
+if(EXISTS ${PAS_UTILS_H})
+  file(READ ${PAS_UTILS_H} PAS_UTILS_CONTENT)
+  string(REPLACE
+    "#define PAS_SYSCALL(x) do { \\
+    while ((x) == -1 && errno == EAGAIN) { } \\
+} while (0)"
+    "#define PAS_SYSCALL(x) do { \\
+    int _pas_syscall_tries = 0; \\
+    while ((x) == -1 && errno == EAGAIN) { \\
+        if (++_pas_syscall_tries > 100) break; \\
+        usleep(1000); \\
+    } \\
+} while (0)"
+    PAS_UTILS_CONTENT "${PAS_UTILS_CONTENT}")
+  file(WRITE ${PAS_UTILS_H} "${PAS_UTILS_CONTENT}")
+  message(STATUS "Patched pas_utils.h: PAS_SYSCALL macro backoff")
+endif()
+
+# Patch VMAllocate.h: remove MADV_DONTDUMP/MADV_DODUMP (Linux only)
+# These require mmap_write_lock and are the primary contention source.
+# MADV_DONTDUMP only affects core dump size, not allocation correctness.
+set(VMALLOCATE_H ${BMALLOC_INCLUDE}/VMAllocate.h)
+if(EXISTS ${VMALLOCATE_H})
+  file(READ ${VMALLOCATE_H} VMALLOCATE_CONTENT)
+  string(REPLACE
+    "    SYSCALL(madvise(p, vmSize, MADV_DONTNEED));
+#if BOS(LINUX)
+    SYSCALL(madvise(p, vmSize, MADV_DONTDUMP));
+#endif"
+    "    SYSCALL(madvise(p, vmSize, MADV_DONTNEED));"
+    VMALLOCATE_CONTENT "${VMALLOCATE_CONTENT}")
+  string(REPLACE
+    "    SYSCALL(madvise(p, vmSize, MADV_NORMAL));
+#if BOS(LINUX)
+    SYSCALL(madvise(p, vmSize, MADV_DODUMP));
+#endif"
+    "    SYSCALL(madvise(p, vmSize, MADV_NORMAL));"
+    VMALLOCATE_CONTENT "${VMALLOCATE_CONTENT}")
+  file(WRITE ${VMALLOCATE_H} "${VMALLOCATE_CONTENT}")
+  message(STATUS "Patched VMAllocate.h: removed MADV_DONTDUMP/MADV_DODUMP")
+endif()

@@ -108,7 +108,7 @@ describe.todoIf(isWindows)("REPL tab completion targets correct object (#27518)"
   });
 
   test("array dot-completion does not show global properties", async () => {
-    await withTerminalRepl(async ({ send, waitFor, allOutput }) => {
+    await withTerminalRepl(async ({ send, waitFor }) => {
       // [1,2,3].a should NOT show addEventListener, alert, atob etc.
       // Array.prototype has no properties starting with 'a' (at() starts with 'a' in modern engines)
       send("[1,2,3].pus\t");

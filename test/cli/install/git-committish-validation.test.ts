@@ -12,156 +12,59 @@ function envWithCache(dir: string) {
 // rather than the GitHub tarball download path.
 const gitUrlBase = "git+https://git@github.com/jonschlinkert/is-number.git";
 
+async function runInstallWithCommittish(dirName: string, committish: string, expected: { shouldReject: boolean }) {
+  using dir = tempDir(dirName, {
+    "package.json": JSON.stringify({
+      name: "test-project",
+      version: "1.0.0",
+      dependencies: {
+        "is-number": `${gitUrlBase}#${committish}`,
+      },
+    }),
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "install"],
+    cwd: String(dir),
+    env: envWithCache(String(dir)),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  if (expected.shouldReject) {
+    expect(stderr).toContain(`invalid committish "${committish}" for "is-number"`);
+    expect(exitCode).toBe(1);
+  } else {
+    expect(stderr).not.toContain("invalid committish");
+    expect(stderr).toContain("Saved lockfile");
+    expect(exitCode).toBe(0);
+  }
+}
+
 describe("git committish validation", () => {
   it("should reject committish starting with a dash", async () => {
-    using dir = tempDir("committish-dash", {
-      "package.json": JSON.stringify({
-        name: "test-project",
-        version: "1.0.0",
-        dependencies: {
-          "is-number": `${gitUrlBase}#--output=/tmp/pwn`,
-        },
-      }),
-    });
-
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "install"],
-      cwd: String(dir),
-      env: envWithCache(String(dir)),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-    expect(stderr).toContain("invalid committish");
-    expect(exitCode).toBe(1);
+    await runInstallWithCommittish("committish-dash", "--output=/tmp/pwn", { shouldReject: true });
   });
 
   it("should reject committish that is a single dash flag", async () => {
-    using dir = tempDir("committish-flag", {
-      "package.json": JSON.stringify({
-        name: "test-project",
-        version: "1.0.0",
-        dependencies: {
-          "is-number": `${gitUrlBase}#-v`,
-        },
-      }),
-    });
-
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "install"],
-      cwd: String(dir),
-      env: envWithCache(String(dir)),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-    expect(stderr).toContain("invalid committish");
-    expect(exitCode).toBe(1);
+    await runInstallWithCommittish("committish-flag", "-v", { shouldReject: true });
   });
 
   it("should reject committish starting with a dot", async () => {
-    using dir = tempDir("committish-dot", {
-      "package.json": JSON.stringify({
-        name: "test-project",
-        version: "1.0.0",
-        dependencies: {
-          "is-number": `${gitUrlBase}#.hidden`,
-        },
-      }),
-    });
-
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "install"],
-      cwd: String(dir),
-      env: envWithCache(String(dir)),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-    expect(stderr).toContain("invalid committish");
-    expect(exitCode).toBe(1);
+    await runInstallWithCommittish("committish-dot", ".hidden", { shouldReject: true });
   });
 
   it("should reject committish containing '..'", async () => {
-    using dir = tempDir("committish-dotdot", {
-      "package.json": JSON.stringify({
-        name: "test-project",
-        version: "1.0.0",
-        dependencies: {
-          "is-number": `${gitUrlBase}#main..HEAD`,
-        },
-      }),
-    });
-
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "install"],
-      cwd: String(dir),
-      env: envWithCache(String(dir)),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-    expect(stderr).toContain("invalid committish");
-    expect(exitCode).toBe(1);
+    await runInstallWithCommittish("committish-dotdot", "main..HEAD", { shouldReject: true });
   });
 
   it("should accept valid committish with tag", async () => {
-    using dir = tempDir("committish-valid-tag", {
-      "package.json": JSON.stringify({
-        name: "test-project",
-        version: "1.0.0",
-        dependencies: {
-          "is-number": `${gitUrlBase}#7.0.0`,
-        },
-      }),
-    });
-
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "install"],
-      cwd: String(dir),
-      env: envWithCache(String(dir)),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-    expect(stderr).not.toContain("invalid committish");
-    expect(stderr).toContain("Saved lockfile");
-    expect(exitCode).toBe(0);
+    await runInstallWithCommittish("committish-valid-tag", "7.0.0", { shouldReject: false });
   });
 
   it("should accept valid committish with short commit hash", async () => {
-    using dir = tempDir("committish-valid-hash", {
-      "package.json": JSON.stringify({
-        name: "test-project",
-        version: "1.0.0",
-        dependencies: {
-          "is-number": `${gitUrlBase}#98e8ff1`,
-        },
-      }),
-    });
-
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "install"],
-      cwd: String(dir),
-      env: envWithCache(String(dir)),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-    expect(stderr).not.toContain("invalid committish");
-    expect(stderr).toContain("Saved lockfile");
-    expect(exitCode).toBe(0);
+    await runInstallWithCommittish("committish-valid-hash", "98e8ff1", { shouldReject: false });
   });
 });

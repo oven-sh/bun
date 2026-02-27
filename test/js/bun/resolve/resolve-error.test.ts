@@ -89,6 +89,8 @@ describe("ResolveMessage", () => {
         try { await import(\`./\${"x/../".repeat(${len})}\${long}.js\`); } catch {}
         // absolute path > PATH_MAX (dirInfoCached buffer overflow)
         try { await import(\`/\${long}/mixed\`); } catch {}
+        // deep path with >256 short components (dir_entry_paths_to_resolve overflow)
+        try { await import(\`/\${"a/".repeat(300)}x\`); } catch {}
         console.log("ok");
       `,
     });

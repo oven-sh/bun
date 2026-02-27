@@ -1336,12 +1336,20 @@ pub fn joinAbsStringBuf(cwd: []const u8, buf: []u8, _parts: anytype, comptime pl
 /// succeed.
 pub fn joinAbsStringBufChecked(cwd: []const u8, buf: []u8, parts: []const []const u8, comptime platform: Platform) ?[]const u8 {
     comptime if (platform == .nt) @compileError("joinAbsStringBufChecked does not support .nt (the \\\\?\\ prefix is not accounted for in scratch sizing)");
-    var scratch: JoinScratch = .{};
-    const tmp = scratch.init(cwd.len, parts);
-    defer scratch.deinit();
-    if (tmp.len < buf.len) return joinAbsStringBuf(cwd, buf, parts, platform);
+    // Fast path: size check only — don't allocate a JoinScratch here since the
+    // inner joinAbsStringBuf already has its own (avoids doubling stack usage).
+    var total: usize = cwd.len + 2;
+    for (parts) |p| total += p.len + 1;
+    if (total < buf.len) return joinAbsStringBuf(cwd, buf, parts, platform);
 
-    const joined = joinAbsStringBuf(cwd, tmp, parts, platform);
+    // Slow path: allocate a large scratch for the result. The inner
+    // joinAbsStringBuf will heap-allocate its own temp buffer for the concat
+    // since `total > MAX_PATH_BYTES * 2 > sfa inline size` is likely here.
+    var sfa = std.heap.stackFallback(bun.MAX_PATH_BYTES, bun.default_allocator);
+    const alloc = sfa.get();
+    const scratch = bun.handleOom(alloc.alloc(u8, total));
+    defer alloc.free(scratch);
+    const joined = joinAbsStringBuf(cwd, scratch, parts, platform);
     if (joined.len > buf.len) return null;
     bun.copy(u8, buf, joined);
     return buf[0..joined.len];

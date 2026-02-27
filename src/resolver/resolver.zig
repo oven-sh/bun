@@ -2711,6 +2711,10 @@ pub const Resolver = struct {
                 top_parent = result;
                 break;
             }
+            // Path has more uncached components than our fixed queue can hold.
+            // This only happens for user-controlled absolute import paths with
+            // hundreds of short components — no real directory is this deep.
+            if (@as(usize, @intCast(i)) >= bufs(.dir_entry_paths_to_resolve).len) return null;
             bufs(.dir_entry_paths_to_resolve)[@as(usize, @intCast(i))] = DirEntryResolveQueueItem{
                 .unsafe_path = top,
                 .result = result,
@@ -3083,7 +3087,7 @@ pub const Resolver = struct {
 
                 // 1. Normalize the base path
                 // so that "/Users/foo/project/", "../components/*" => "/Users/foo/components/""
-                const prefix = r.fs.absBuf(&prefix_parts, bufs(.tsconfig_match_full_buf2));
+                const prefix = r.fs.absBufChecked(&prefix_parts, bufs(.tsconfig_match_full_buf2)) orelse continue;
 
                 // 2. Join the new base path with the matched result
                 // so that "/Users/foo/components/", "/foo/bar" => /Users/foo/components/foo/bar

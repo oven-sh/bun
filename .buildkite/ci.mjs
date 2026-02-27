@@ -472,12 +472,9 @@ function getBuildCommand(target, options, label) {
   const { profile } = target;
   const buildProfile = profile || "release";
 
-  if (target.os === "windows" && label === "build-bun") {
-    // Only sign release builds, not canary builds (DigiCert charges per signature)
-    // Skip signing on ARM64 for now — smctl (x64-only) silently fails under emulation
-    const enableSigning = !options.canary && target.arch !== "aarch64" ? " -DENABLE_WINDOWS_CODESIGNING=ON" : "";
-    return `bun run build:${buildProfile}${enableSigning}`;
-  }
+  // Windows code signing is handled by a dedicated 'windows-sign' step after
+  // all Windows builds complete — see getWindowsSignStep(). smctl is x64-only,
+  // so signing on the build agent wouldn't work for ARM64 anyway.
 
   return `bun run build:${buildProfile}`;
 }
@@ -783,13 +780,60 @@ function getBuildImageStep(platform, options) {
 }
 
 /**
- * @param {Platform[]} buildPlatforms
+ * Batch-signs all Windows artifacts on an x64 agent. DigiCert smctl is x64-only
+ * and silently fails under ARM64 emulation, so signing must happen here instead
+ * of inline during each build. Re-uploads signed zips with the same names so
+ * the release step picks them up transparently.
+ * @param {Platform[]} windowsPlatforms
  * @param {PipelineOptions} options
  * @returns {Step}
  */
-function getReleaseStep(buildPlatforms, options) {
+function getWindowsSignStep(windowsPlatforms, options) {
+  // Each build-bun step produces two zips: <triplet>-profile.zip and <triplet>.zip
+  const artifacts = [];
+  const buildSteps = [];
+  for (const platform of windowsPlatforms) {
+    const triplet = getTargetTriplet(platform);
+    const stepKey = `${getTargetKey(platform)}-build-bun`;
+    artifacts.push(`${triplet}-profile.zip`, `${triplet}.zip`);
+    buildSteps.push(stepKey, stepKey);
+  }
+
+  // Run on an x64 build agent — smctl doesn't work on ARM64
+  const signPlatform = windowsPlatforms.find(p => p.arch === "x64" && !p.baseline) ?? windowsPlatforms[0];
+
+  return {
+    key: "windows-sign",
+    label: `${getBuildkiteEmoji("windows")} sign`,
+    depends_on: windowsPlatforms.map(p => `${getTargetKey(p)}-build-bun`),
+    agents: getEc2Agent(signPlatform, options, {
+      instanceType: getAzureVmSize("windows", "x64", "test"),
+    }),
+    retry: getRetry(),
+    cancel_on_build_failing: isMergeQueue(),
+    command: [
+      `powershell -NoProfile -ExecutionPolicy Bypass -File .buildkite/scripts/sign-windows-artifacts.ps1 ` +
+        `-Artifacts ${artifacts.join(",")} ` +
+        `-BuildSteps ${buildSteps.join(",")}`,
+    ],
+  };
+}
+
+/**
+ * @param {Platform[]} buildPlatforms
+ * @param {PipelineOptions} options
+ * @param {{ signed: boolean }} [extra]
+ * @returns {Step}
+ */
+function getReleaseStep(buildPlatforms, options, { signed = false } = {}) {
   const { canary } = options;
   const revision = typeof canary === "number" ? canary : 1;
+
+  // When signing ran, depend on windows-sign instead of the raw Windows builds
+  // so we wait for signed artifacts before releasing.
+  const depends_on = signed
+    ? [...buildPlatforms.filter(p => p.os !== "windows").map(p => `${getTargetKey(p)}-build-bun`), "windows-sign"]
+    : buildPlatforms.map(platform => `${getTargetKey(platform)}-build-bun`);
 
   return {
     key: "release",
@@ -797,9 +841,12 @@ function getReleaseStep(buildPlatforms, options) {
     agents: {
       queue: "test-darwin",
     },
-    depends_on: buildPlatforms.map(platform => `${getTargetKey(platform)}-build-bun`),
+    depends_on,
     env: {
       CANARY: revision,
+      // Tells upload-release.sh to fetch Windows zips from the sign step
+      // (same filenames, but the signed re-uploads are the ones we want).
+      WINDOWS_ARTIFACT_STEP: signed ? "windows-sign" : "",
     },
     command: ".buildkite/scripts/upload-release.sh",
   };
@@ -905,6 +952,7 @@ function getBenchmarkStep() {
  * @property {string | boolean} [forceBuilds]
  * @property {string | boolean} [forceTests]
  * @property {string | boolean} [buildImages]
+ * @property {string | boolean} [signWindows]
  * @property {string | boolean} [publishImages]
  * @property {number} [canary]
  * @property {Platform[]} [buildPlatforms]
@@ -1180,6 +1228,7 @@ async function getPipelineOptions() {
     skipBuilds: parseOption(/\[(skip builds?|no builds?|only tests?)\]/i),
     forceBuilds: parseOption(/\[(force builds?)\]/i),
     skipTests: parseOption(/\[(skip tests?|no tests?|only builds?)\]/i),
+    signWindows: parseOption(/\[(sign windows)\]/i),
     buildImages: parseOption(/\[(build (?:(?:windows|linux) )?images?)\]/i),
     dryRun: parseOption(/\[(dry run)\]/i),
     publishImages: parseOption(/\[(publish (?:(?:windows|linux) )?images?)\]/i),
@@ -1294,8 +1343,19 @@ async function getPipeline(options = {}) {
     }
   }
 
+  // Sign Windows builds on release (non-canary main) or when [sign windows]
+  // is in the commit message (for testing the sign step on a branch).
+  // DigiCert charges per signature, so canary builds are never signed.
+  const shouldSignWindows = (isMainBranch() && !options.canary) || options.signWindows;
+  if (shouldSignWindows) {
+    const windowsPlatforms = buildPlatforms.filter(p => p.os === "windows");
+    if (windowsPlatforms.length > 0) {
+      steps.push(getWindowsSignStep(windowsPlatforms, options));
+    }
+  }
+
   if (isMainBranch()) {
-    steps.push(getReleaseStep(buildPlatforms, options));
+    steps.push(getReleaseStep(buildPlatforms, options, { signed: shouldSignWindows }));
   }
   steps.push(getBenchmarkStep());
 

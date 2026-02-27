@@ -892,5 +892,3 @@ describe("pipelined request header isolation", () => {
     expect(secondRequestReached).toBe(false);
   });
 });
-
-

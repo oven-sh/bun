@@ -560,3 +560,187 @@ describe("SPILL.TERM - invalid chunk terminators", () => {
     });
   });
 });
+
+describe("pipelined request header isolation", () => {
+  test("pipelined request with no headers does not inherit previous request's headers", async () => {
+    // When pipelining requests, headers from a previous request must not
+    // carry over to subsequent requests. A request with no headers must
+    // be treated as having no Content-Length and no Transfer-Encoding.
+    const requestBodies: string[] = [];
+    const requestUrls: string[] = [];
+
+    await using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const url = new URL(req.url);
+        requestUrls.push(url.pathname);
+        const body = await req.text();
+        requestBodies.push(body);
+        return new Response("OK " + url.pathname);
+      },
+    });
+
+    const client = net.connect(server.port, "127.0.0.1");
+
+    // First request: has Content-Length header with a body
+    // Second request: has NO headers at all (just request line + \r\n\r\n)
+    // The second request must NOT inherit Content-Length from the first.
+    const body = "A".repeat(50);
+    const pipelinedRequests =
+      "POST /first HTTP/1.1\r\n" +
+      "Host: localhost\r\n" +
+      `Content-Length: ${body.length}\r\n` +
+      "\r\n" +
+      body +
+      "GET /second HTTP/1.1\r\n" +
+      "Host: localhost\r\n" +
+      "\r\n";
+
+    await new Promise<void>((resolve, reject) => {
+      let responseData = "";
+      let responseCount = 0;
+      client.on("error", reject);
+      client.on("data", data => {
+        responseData += data.toString();
+        // Count HTTP responses
+        const matches = responseData.match(/HTTP\/1\.1/g);
+        responseCount = matches ? matches.length : 0;
+        if (responseCount >= 2) {
+          client.end();
+          resolve();
+        }
+      });
+      client.write(pipelinedRequests);
+    });
+
+    // Both requests should have been handled
+    expect(requestUrls).toContain("/first");
+    expect(requestUrls).toContain("/second");
+    // The second request (GET with no body) must have an empty body
+    const secondIdx = requestUrls.indexOf("/second");
+    expect(requestBodies[secondIdx]).toBe("");
+  });
+
+  test("pipelined headerless request does not consume next client's data as body", async () => {
+    // Simulates the scenario where a headerless pipelined request could
+    // incorrectly read stale Content-Length and consume subsequent data as body.
+    const requestBodies: string[] = [];
+    const requestUrls: string[] = [];
+
+    await using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const url = new URL(req.url);
+        requestUrls.push(url.pathname);
+        const body = await req.text();
+        requestBodies.push(body);
+        return new Response("OK " + url.pathname);
+      },
+    });
+
+    const client = net.connect(server.port, "127.0.0.1");
+
+    const body = "X".repeat(30);
+    // Request 1: POST with Content-Length
+    // Request 2: GET with no headers at all (empty headers)
+    // Request 3: GET with normal headers
+    // If stale headers leak, request 2 would try to read request 3's bytes as body
+    const pipelinedRequests =
+      "POST /req1 HTTP/1.1\r\n" +
+      "Host: localhost\r\n" +
+      `Content-Length: ${body.length}\r\n` +
+      "\r\n" +
+      body +
+      "GET /req2 HTTP/1.1\r\n" +
+      "Host: localhost\r\n" +
+      "\r\n" +
+      "GET /req3 HTTP/1.1\r\n" +
+      "Host: localhost\r\n" +
+      "\r\n";
+
+    await new Promise<void>((resolve, reject) => {
+      let responseData = "";
+      let responseCount = 0;
+      client.on("error", reject);
+      client.on("data", data => {
+        responseData += data.toString();
+        const matches = responseData.match(/HTTP\/1\.1/g);
+        responseCount = matches ? matches.length : 0;
+        if (responseCount >= 3) {
+          client.end();
+          resolve();
+        }
+      });
+      client.write(pipelinedRequests);
+    });
+
+    // All three requests should have been processed independently
+    expect(requestUrls).toContain("/req1");
+    expect(requestUrls).toContain("/req2");
+    expect(requestUrls).toContain("/req3");
+    // req2 and req3 (both GETs) should have empty bodies
+    const req2Idx = requestUrls.indexOf("/req2");
+    const req3Idx = requestUrls.indexOf("/req3");
+    expect(requestBodies[req2Idx]).toBe("");
+    expect(requestBodies[req3Idx]).toBe("");
+  });
+
+  test("pipelined headerless request is rejected and does not inherit stale content-length", async () => {
+    // A pipelined request with truly NO headers (not even Host) must be
+    // properly rejected. It must NOT inherit a Content-Length or
+    // Transfer-Encoding from the previous request on the same connection.
+    let secondRequestReached = false;
+
+    await using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const url = new URL(req.url);
+        if (url.pathname === "/second") {
+          secondRequestReached = true;
+        }
+        return new Response("OK " + url.pathname);
+      },
+    });
+
+    const client = net.connect(server.port, "127.0.0.1");
+
+    const body = "B".repeat(50);
+    // Request 1: POST with Content-Length: 50
+    // Request 2: completely headerless (no Host, no nothing)
+    // Without the fix, headers[1] would still contain stale headers from
+    // request 1, and the parser would incorrectly read Content-Length: 50
+    // from the stale data, consuming the next 50 bytes as body.
+    const pipelinedRequests =
+      "POST /first HTTP/1.1\r\n" +
+      "Host: localhost\r\n" +
+      `Content-Length: ${body.length}\r\n` +
+      "\r\n" +
+      body +
+      "GET /second HTTP/1.1\r\n" +
+      "\r\n";
+
+    await new Promise<void>((resolve, reject) => {
+      let responseData = "";
+      client.on("error", reject);
+      client.on("data", data => {
+        responseData += data.toString();
+        // We expect: 200 for request 1, then 400 for request 2 (missing Host)
+        const responses = responseData.match(/HTTP\/1\.1 \d+/g);
+        if (responses && responses.length >= 2) {
+          client.end();
+          resolve();
+        }
+      });
+      // Also resolve on close in case the server closes the connection
+      client.on("close", () => {
+        resolve();
+      });
+      client.write(pipelinedRequests);
+    });
+
+    // The headerless second request must NOT have reached the handler
+    // (it should be rejected for missing Host header, not processed
+    // with stale headers from the first request)
+    expect(secondRequestReached).toBe(false);
+  });
+});

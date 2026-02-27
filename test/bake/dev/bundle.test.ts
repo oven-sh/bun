@@ -417,3 +417,175 @@ devTest("commonjs forms", {
     await c.expectMessage({ field: "6" });
   },
 });
+
+// --- Barrel optimization tests ---
+
+devTest("barrel optimization skips unused submodules", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { Alpha } from 'barrel-lib';
+      console.log('got: ' + Alpha);
+    `,
+    "node_modules/barrel-lib/package.json": JSON.stringify({
+      name: "barrel-lib",
+      version: "1.0.0",
+      main: "./index.js",
+      sideEffects: false,
+    }),
+    "node_modules/barrel-lib/index.js": `
+      export { Alpha } from './alpha.js';
+      export { Beta } from './beta.js';
+      export { Gamma } from './gamma.js';
+    `,
+    "node_modules/barrel-lib/alpha.js": `export const Alpha = "ALPHA";`,
+    "node_modules/barrel-lib/beta.js": `export const Beta = <<<SYNTAX_ERROR>>>;`,
+    "node_modules/barrel-lib/gamma.js": `export const Gamma = <<<SYNTAX_ERROR>>>;`,
+  },
+  async test(dev) {
+    // Beta.js and Gamma.js have syntax errors.
+    // If barrel optimization works, they are never parsed, so no error.
+    await using c = await dev.client("/");
+    await c.expectMessage("got: ALPHA");
+  },
+});
+
+devTest("barrel optimization: adding a new import triggers reload", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { Alpha } from 'barrel-lib';
+      console.log('result: ' + Alpha);
+    `,
+    "node_modules/barrel-lib/package.json": JSON.stringify({
+      name: "barrel-lib",
+      version: "1.0.0",
+      main: "./index.js",
+      sideEffects: false,
+    }),
+    "node_modules/barrel-lib/index.js": `
+      export { Alpha } from './alpha.js';
+      export { Beta } from './beta.js';
+      export { Gamma } from './gamma.js';
+    `,
+    "node_modules/barrel-lib/alpha.js": `export const Alpha = "ALPHA";`,
+    "node_modules/barrel-lib/beta.js": `export const Beta = "BETA";`,
+    "node_modules/barrel-lib/gamma.js": `export const Gamma = "GAMMA";`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("result: ALPHA");
+
+    // Add a second import from the barrel — Beta was previously deferred,
+    // now needs to be loaded. The barrel file should be re-bundled with
+    // Beta un-deferred.
+    await c.expectReload(async () => {
+      await dev.write(
+        "index.ts",
+        `
+        import { Alpha, Beta } from 'barrel-lib';
+        console.log('result: ' + Alpha + ' ' + Beta);
+      `,
+      );
+    });
+    await c.expectMessage("result: ALPHA BETA");
+
+    // Add a third import
+    await c.expectReload(async () => {
+      await dev.write(
+        "index.ts",
+        `
+        import { Alpha, Beta, Gamma } from 'barrel-lib';
+        console.log('result: ' + Alpha + ' ' + Beta + ' ' + Gamma);
+      `,
+      );
+    });
+    await c.expectMessage("result: ALPHA BETA GAMMA");
+  },
+});
+
+devTest("barrel optimization: multi-file imports preserved across rebuilds", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { Alpha } from 'barrel-lib';
+      import { value } from './other';
+      console.log('result: ' + Alpha + ' ' + value);
+    `,
+    "other.ts": `
+      import { Beta } from 'barrel-lib';
+      export const value = Beta;
+    `,
+    "node_modules/barrel-lib/package.json": JSON.stringify({
+      name: "barrel-lib",
+      version: "1.0.0",
+      main: "./index.js",
+      sideEffects: false,
+    }),
+    "node_modules/barrel-lib/index.js": `
+      export { Alpha } from './alpha.js';
+      export { Beta } from './beta.js';
+      export { Gamma } from './gamma.js';
+    `,
+    "node_modules/barrel-lib/alpha.js": `export const Alpha = "ALPHA";`,
+    "node_modules/barrel-lib/beta.js": `export const Beta = "BETA";`,
+    "node_modules/barrel-lib/gamma.js": `export const Gamma = "GAMMA";`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("result: ALPHA BETA");
+
+    // Edit only other.ts to also import Gamma. Alpha (from index.ts) must
+    // still be available even though index.ts is not re-parsed.
+    await c.expectReload(async () => {
+      await dev.write(
+        "other.ts",
+        `
+        import { Beta, Gamma } from 'barrel-lib';
+        export const value = Beta + ' ' + Gamma;
+      `,
+      );
+    });
+    await c.expectMessage("result: ALPHA BETA GAMMA");
+  },
+});
+
+devTest("barrel optimization: two export-from blocks pointing to the same source", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { invariant } from 'barrel-lib';
+      console.log('got: ' + typeof invariant);
+    `,
+    "node_modules/barrel-lib/package.json": JSON.stringify({
+      name: "barrel-lib",
+      version: "1.0.0",
+      main: "./index.js",
+      sideEffects: false,
+    }),
+    "node_modules/barrel-lib/index.js": `
+      export {
+        createDataProperty,
+        defineProperty,
+      } from './utils.js';
+
+      export { unrelated } from './other.js';
+
+      export {
+        invariant,
+      } from './utils.js';
+    `,
+    "node_modules/barrel-lib/utils.js": `
+      export function createDataProperty() {}
+      export function defineProperty() {}
+      export function invariant(cond, msg) {
+        if (!cond) throw new Error(msg);
+      }
+    `,
+    "node_modules/barrel-lib/other.js": `export const unrelated = "OTHER";`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("got: function");
+  },
+});

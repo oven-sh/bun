@@ -341,6 +341,7 @@ register_command(
   SOURCES
     ${BUN_JAVASCRIPT_CODEGEN_SOURCES}
     ${BUN_CXX_SOURCES}
+    ${ESBUILD_EXECUTABLE}
   OUTPUTS
     ${BUN_CPP_OUTPUTS}
 )
@@ -362,7 +363,7 @@ register_command(
 )
 
 if(SKIP_CODEGEN)
-  # Skip JavaScript codegen - useful for Windows ARM64 debug builds where bun crashes
+  # Skip JavaScript codegen - useful for bootstrapping new platforms
   message(STATUS "SKIP_CODEGEN is ON - skipping bun-js-modules codegen")
   foreach(output ${BUN_JAVASCRIPT_OUTPUTS})
     if(NOT EXISTS ${output})
@@ -546,6 +547,7 @@ set(BUN_OBJECT_LUT_SOURCES
   ${CWD}/src/bun.js/bindings/ProcessBindingHTTPParser.cpp
   ${CWD}/src/bun.js/modules/NodeModuleModule.cpp
   ${CODEGEN_PATH}/ZigGeneratedClasses.lut.txt
+  ${CWD}/src/bun.js/bindings/webcore/JSEvent.cpp
 )
 
 set(BUN_OBJECT_LUT_OUTPUTS
@@ -560,6 +562,7 @@ set(BUN_OBJECT_LUT_OUTPUTS
   ${CODEGEN_PATH}/ProcessBindingHTTPParser.lut.h
   ${CODEGEN_PATH}/NodeModuleModule.lut.h
   ${CODEGEN_PATH}/ZigGeneratedClasses.lut.h
+  ${CODEGEN_PATH}/JSEvent.lut.h
 )
 
 macro(WEBKIT_ADD_SOURCE_DEPENDENCIES _source _deps)
@@ -593,6 +596,7 @@ foreach(i RANGE 0 ${BUN_OBJECT_LUT_SOURCES_MAX_INDEX})
       "Generating ${filename}.lut.h"
     DEPENDS
       ${BUN_OBJECT_LUT_SOURCE}
+      ${CWD}/src/codegen/create_hash_table
     COMMAND
       ${BUN_EXECUTABLE}
         ${BUN_FLAGS}
@@ -602,6 +606,7 @@ foreach(i RANGE 0 ${BUN_OBJECT_LUT_SOURCES_MAX_INDEX})
         ${BUN_OBJECT_LUT_OUTPUT}
     SOURCES
       ${BUN_OBJECT_LUT_SCRIPT}
+      ${CWD}/src/codegen/create_hash_table
       ${BUN_OBJECT_LUT_SOURCE}
     OUTPUTS
       ${BUN_OBJECT_LUT_OUTPUT}
@@ -680,8 +685,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm|ARM|arm64|ARM64|aarch64|AARCH64")
   if(APPLE)
     set(ZIG_CPU "apple_m1")
   elseif(WIN32)
-    # Windows ARM64: use a specific CPU with NEON support
-    # Zig running under x64 emulation would detect wrong CPU with "native"
+    # Windows ARM64: use a specific CPU target for consistent builds
     set(ZIG_CPU "cortex_a76")
   else()
     set(ZIG_CPU "native")
@@ -1016,6 +1020,7 @@ if(NOT WIN32)
       -Wno-unused-function
       -Wno-c++23-lambda-attributes
       -Wno-nullability-completeness
+      -Wno-character-conversion
       -Werror
     )
   else()
@@ -1033,6 +1038,7 @@ if(NOT WIN32)
       -Werror=sometimes-uninitialized
       -Wno-c++23-lambda-attributes
       -Wno-nullability-completeness
+      -Wno-character-conversion
       -Werror
     )
 
@@ -1061,6 +1067,7 @@ else()
     -Wno-inconsistent-dllimport
     -Wno-incompatible-pointer-types
     -Wno-deprecated-declarations
+    -Wno-character-conversion
   )
 endif()
 
@@ -1136,6 +1143,15 @@ if(LINUX)
     -Wl,--wrap=pow
     -Wl,--wrap=powf
   )
+
+  # Disable LTO for workaround-missing-symbols.cpp to prevent LLD 21 from emitting
+  # glibc versioned symbol names (e.g. exp@GLIBC_2.17) from .symver directives into
+  # the .lto_discard assembler directive, which fails to parse the '@' character.
+  if(ENABLE_LTO)
+    set_source_files_properties(${CWD}/src/bun.js/bindings/workaround-missing-symbols.cpp
+      PROPERTIES COMPILE_OPTIONS "-fno-lto"
+    )
+  endif()
   endif()
 
   if(NOT ABI STREQUAL "musl")
@@ -1393,47 +1409,8 @@ if(NOT BUN_CPP_ONLY)
         ${BUILD_PATH}/${bunStripExe}
     )
 
-    # Then sign both executables on Windows
-    if(WIN32 AND ENABLE_WINDOWS_CODESIGNING)
-      set(SIGN_SCRIPT "${CMAKE_SOURCE_DIR}/.buildkite/scripts/sign-windows.ps1")
-
-      # Verify signing script exists
-      if(NOT EXISTS "${SIGN_SCRIPT}")
-        message(FATAL_ERROR "Windows signing script not found: ${SIGN_SCRIPT}")
-      endif()
-
-      # Use PowerShell for Windows code signing (native Windows, no path issues)
-      find_program(POWERSHELL_EXECUTABLE
-        NAMES pwsh.exe powershell.exe
-        PATHS
-          "C:/Program Files/PowerShell/7"
-          "C:/Program Files (x86)/PowerShell/7"
-          "C:/Windows/System32/WindowsPowerShell/v1.0"
-        DOC "Path to PowerShell executable"
-      )
-
-      if(NOT POWERSHELL_EXECUTABLE)
-        set(POWERSHELL_EXECUTABLE "powershell.exe")
-      endif()
-
-      message(STATUS "Using PowerShell executable: ${POWERSHELL_EXECUTABLE}")
-
-      # Sign both bun-profile.exe and bun.exe after stripping
-      register_command(
-        TARGET
-          ${bun}
-        TARGET_PHASE
-          POST_BUILD
-        COMMENT
-          "Code signing bun-profile.exe and bun.exe with DigiCert KeyLocker"
-        COMMAND
-          "${POWERSHELL_EXECUTABLE}" "-NoProfile" "-ExecutionPolicy" "Bypass" "-File" "${SIGN_SCRIPT}" "-BunProfileExe" "${BUILD_PATH}/${bunExe}" "-BunExe" "${BUILD_PATH}/${bunStripExe}"
-        CWD
-          ${CMAKE_SOURCE_DIR}
-        SOURCES
-          ${BUILD_PATH}/${bunStripExe}
-      )
-    endif()
+    # Windows code signing happens in a dedicated Buildkite step after all
+    # Windows builds complete. See .buildkite/scripts/sign-windows-artifacts.ps1
   endif()
 
   # somehow on some Linux systems we need to disable ASLR for ASAN-instrumented binaries to run

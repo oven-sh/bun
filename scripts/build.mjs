@@ -4,7 +4,6 @@ import { basename, join, relative, resolve } from "node:path";
 import {
   formatAnnotationToHtml,
   getEnv,
-  getSecret,
   isCI,
   isWindows,
   parseAnnotations,
@@ -14,14 +13,7 @@ import {
   startGroup,
 } from "./utils.mjs";
 
-// Detect Windows ARM64 - bun may run under x64 emulation (WoW64), so check multiple indicators
-const isWindowsARM64 =
-  isWindows &&
-  (process.env.PROCESSOR_ARCHITECTURE === "ARM64" ||
-    process.env.VSCMD_ARG_HOST_ARCH === "arm64" ||
-    process.env.MSYSTEM_CARCH === "aarch64" ||
-    (process.env.PROCESSOR_IDENTIFIER || "").includes("ARMv8") ||
-    process.arch === "arm64");
+const isWindowsARM64 = isWindows && process.arch === "arm64";
 
 if (globalThis.Bun) {
   await import("./glob-sources.mjs");
@@ -92,21 +84,9 @@ async function build(args) {
     generateOptions["--toolchain"] = toolchainPath;
   }
 
-  // Windows ARM64: automatically set required options
+  // Windows ARM64: log detection (compiler is selected by CMake/toolchain)
   if (isWindowsARM64) {
-    // Use clang-cl instead of MSVC cl.exe for proper ARM64 flag support
-    if (!generateOptions["-DCMAKE_C_COMPILER"]) {
-      generateOptions["-DCMAKE_C_COMPILER"] = "clang-cl";
-    }
-    if (!generateOptions["-DCMAKE_CXX_COMPILER"]) {
-      generateOptions["-DCMAKE_CXX_COMPILER"] = "clang-cl";
-    }
-    // Skip codegen by default since x64 bun crashes under WoW64 emulation
-    // Can be overridden with -DSKIP_CODEGEN=OFF once ARM64 bun is available
-    if (!generateOptions["-DSKIP_CODEGEN"]) {
-      generateOptions["-DSKIP_CODEGEN"] = "ON";
-    }
-    console.log("Windows ARM64 detected: using clang-cl and SKIP_CODEGEN=ON");
+    console.log("Windows ARM64 detected");
   }
 
   const generateArgs = Object.entries(generateOptions).flatMap(([flag, value]) =>
@@ -183,35 +163,6 @@ async function spawn(command, args, options, label) {
   label ??= basename(command);
 
   const pipe = process.env.CI === "true";
-
-  if (isBuildkite()) {
-    if (process.env.BUN_LINK_ONLY && isWindows) {
-      env ||= options?.env || { ...process.env };
-
-      // Pass signing secrets directly to the build process
-      // The PowerShell signing script will handle certificate decoding
-      env.SM_CLIENT_CERT_PASSWORD = getSecret("SM_CLIENT_CERT_PASSWORD", {
-        redact: true,
-        required: true,
-      });
-      env.SM_CLIENT_CERT_FILE = getSecret("SM_CLIENT_CERT_FILE", {
-        redact: true,
-        required: true,
-      });
-      env.SM_API_KEY = getSecret("SM_API_KEY", {
-        redact: true,
-        required: true,
-      });
-      env.SM_KEYPAIR_ALIAS = getSecret("SM_KEYPAIR_ALIAS", {
-        redact: true,
-        required: true,
-      });
-      env.SM_HOST = getSecret("SM_HOST", {
-        redact: true,
-        required: true,
-      });
-    }
-  }
 
   const subprocess = nodeSpawn(command, effectiveArgs, {
     stdio: pipe ? "pipe" : "inherit",

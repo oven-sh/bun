@@ -60,9 +60,18 @@ async function withTerminalRepl(
         );
       }
 
-      await new Promise<void>(resolve => {
-        resolveWaiter = resolve;
-      });
+      // Race the data callback against the remaining deadline so we
+      // re-check even when no new terminal data arrives.
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([
+        new Promise<void>(resolve => {
+          resolveWaiter = resolve;
+        }),
+        new Promise<void>(resolve => {
+          timer = setTimeout(resolve, remaining);
+        }),
+      ]);
+      clearTimeout(timer);
       resolveWaiter = null;
     }
   };
@@ -73,10 +82,12 @@ async function withTerminalRepl(
 
   await fn({ terminal, proc, send, waitFor, allOutput });
 
-  // Clean exit
+  // Clean exit — send .exit and give it time to terminate, then force-kill.
   send(".exit\n");
-  await Promise.race([proc.exited, Bun.sleep(2000)]);
-  if (!proc.killed) proc.kill();
+  const exitCode = await Promise.race([proc.exited, Bun.sleep(2000).then(() => null as number | null)]);
+  if (exitCode === null) {
+    proc.kill();
+  }
 }
 
 describe.todoIf(isWindows)("REPL tab completion targets correct object (#27518)", () => {

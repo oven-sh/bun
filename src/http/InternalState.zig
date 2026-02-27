@@ -115,6 +115,12 @@ pub fn isDone(this: *InternalState) bool {
     return this.flags.received_last_chunk;
 }
 
+/// Maximum decompressed output size for HTTP responses (128 MB).
+/// Matches the WebSocket MAX_DECOMPRESSED_SIZE limit.
+/// This guards against responses with disproportionate compression ratios
+/// that would otherwise cause unbounded memory growth during decompression.
+const max_http_decompressed_size: usize = 128 * 1024 * 1024;
+
 pub fn decompressBytes(this: *InternalState, buffer: []const u8, body_out_str: *MutableString, is_final_chunk: bool) !void {
     defer this.compressed_body.reset();
     var gzip_timer: std.time.Timer = undefined;
@@ -145,6 +151,9 @@ pub fn decompressBytes(this: *InternalState, buffer: []const u8, body_out_str: *
                     const result = deflater.decompressor.decompress(buffer, body_out_str.list.allocatedSlice(), .gzip);
 
                     if (result.status == .success) {
+                        if (result.written > max_http_decompressed_size) {
+                            return error.DecompressionOutputTooLarge;
+                        }
                         body_out_str.list.items.len = result.written;
                         still_needs_to_decompress = false;
                     }
@@ -160,6 +169,9 @@ pub fn decompressBytes(this: *InternalState, buffer: []const u8, body_out_str: *
             });
 
             if (result.status == .success) {
+                if (result.written > max_http_decompressed_size) {
+                    return error.DecompressionOutputTooLarge;
+                }
                 try body_out_str.list.ensureTotalCapacityPrecise(body_out_str.allocator, result.written);
                 body_out_str.list.appendSliceAssumeCapacity(deflater.shared_buffer[0..result.written]);
                 still_needs_to_decompress = false;
@@ -177,7 +189,7 @@ pub fn decompressBytes(this: *InternalState, buffer: []const u8, body_out_str: *
 
         try this.decompressor.updateBuffers(this.encoding, buffer, body_out_str);
 
-        this.decompressor.readAll(this.isDone()) catch |err| {
+        this.decompressor.readAllWithLimit(this.isDone(), max_http_decompressed_size) catch |err| {
             if (this.isDone() or error.ShortRead != err) {
                 Output.prettyErrorln("<r><red>Decompression error: {s}<r>", .{bun.asByteSlice(@errorName(err))});
                 Output.flush();

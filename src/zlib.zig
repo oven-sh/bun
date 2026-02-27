@@ -301,6 +301,7 @@ pub const ZlibError = error{
     InvalidArgument,
     ZlibError,
     ShortRead,
+    DecompressionOutputTooLarge,
 };
 
 const ZlibAllocator = struct {
@@ -431,6 +432,10 @@ pub const ZlibReaderArrayList = struct {
     }
 
     pub fn readAll(this: *ZlibReader, is_done: bool) ZlibError!void {
+        return this.readAllWithLimit(is_done, null);
+    }
+
+    pub fn readAllWithLimit(this: *ZlibReader, is_done: bool, max_output_size: ?usize) ZlibError!void {
         defer {
             if (this.list.items.len > this.zlib.total_out) {
                 this.list.shrinkRetainingCapacity(this.zlib.total_out);
@@ -479,6 +484,14 @@ pub const ZlibReaderArrayList = struct {
             // Try to inflate even if avail_in is 0, as this could be a valid empty gzip stream
             const rc = inflate(&this.zlib, FlushValue.NoFlush);
             this.state = State.Inflating;
+
+            // Check decompressed output size limit
+            if (max_output_size) |limit| {
+                if (this.zlib.total_out > limit) {
+                    this.state = State.Error;
+                    return error.DecompressionOutputTooLarge;
+                }
+            }
 
             switch (rc) {
                 ReturnCode.StreamEnd => {

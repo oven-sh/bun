@@ -96,6 +96,10 @@ pub const BrotliReaderArrayList = struct {
     }
 
     pub fn readAll(this: *BrotliReaderArrayList, is_done: bool) !void {
+        return this.readAllWithLimit(is_done, null);
+    }
+
+    pub fn readAllWithLimit(this: *BrotliReaderArrayList, is_done: bool, max_output_size: ?usize) !void {
         defer this.list_ptr.* = this.list;
 
         if (this.state == .End or this.state == .Error) {
@@ -133,6 +137,14 @@ pub const BrotliReaderArrayList = struct {
 
             this.list.items.len += bytes_written;
             this.total_in += bytes_read;
+
+            // Check decompressed output size limit
+            if (max_output_size) |limit| {
+                if (this.list.items.len > limit) {
+                    this.state = .Error;
+                    return error.DecompressionOutputTooLarge;
+                }
+            }
 
             switch (result) {
                 .success => {

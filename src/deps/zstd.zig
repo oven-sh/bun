@@ -172,6 +172,10 @@ pub const ZstdReaderArrayList = struct {
     }
 
     pub fn readAll(this: *ZstdReaderArrayList, is_done: bool) !void {
+        return this.readAllWithLimit(is_done, null);
+    }
+
+    pub fn readAllWithLimit(this: *ZstdReaderArrayList, is_done: bool, max_output_size: ?usize) !void {
         defer this.list_ptr.* = this.list;
 
         if (this.state == .End or this.state == .Error) return;
@@ -220,6 +224,14 @@ pub const ZstdReaderArrayList = struct {
             this.list.items.len += bytes_written;
             this.total_in += bytes_read;
             this.total_out += bytes_written;
+
+            // Check decompressed output size limit
+            if (max_output_size) |limit| {
+                if (this.total_out > limit) {
+                    this.state = .Error;
+                    return error.DecompressionOutputTooLarge;
+                }
+            }
 
             if (rc == 0) {
                 // Frame is complete

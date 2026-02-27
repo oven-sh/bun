@@ -104,10 +104,14 @@ pub const Decompressor = union(enum) {
     }
 
     pub fn readAll(this: *Decompressor, is_done: bool) !void {
+        return this.readAllWithLimit(is_done, null);
+    }
+
+    pub fn readAllWithLimit(this: *Decompressor, is_done: bool, max_output_size: ?usize) !void {
         switch (this.*) {
-            .zlib => |zlib| try zlib.readAll(is_done),
-            .brotli => |brotli| try brotli.readAll(is_done),
-            .zstd => |reader| try reader.readAll(is_done),
+            .zlib => |zlib| try zlib.readAllWithLimit(is_done, max_output_size),
+            .brotli => |brotli| try brotli.readAllWithLimit(is_done, max_output_size),
+            .zstd => |reader| try reader.readAllWithLimit(is_done, max_output_size),
             .none => {},
         }
     }

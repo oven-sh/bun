@@ -195,7 +195,7 @@ test/js/node/test/parallel/test-http-server-stale-close.js
 test/js/third_party/comlink/comlink.test.ts
 test/regression/issue/22635/22635.test.ts
 test/js/node/test/parallel/test-http-url.parse-https.request.js
-
+test/bundler/bundler_compile_autoload.test.ts 
 
 # Bun::JSNodeHTTPServerSocket::clearSocketData
 test/js/node/test/parallel/test-http-server-keep-alive-max-requests-null.js

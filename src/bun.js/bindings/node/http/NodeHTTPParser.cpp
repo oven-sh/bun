@@ -313,11 +313,11 @@ bool HTTPParser::lessThan(HTTPParser& other) const
 
 int HTTPParser::onMessageBegin()
 {
-    JSGlobalObject* globalObject = m_globalObject.get();
+    JSGlobalObject* globalObject = m_globalObject;
     auto& vm = globalObject->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
-    JSHTTPParser* thisParser = m_thisParser.get();
+    JSHTTPParser* thisParser = m_thisParser;
 
     if (JSConnectionsList* connections = m_connectionsList.get()) {
         connections->pop(globalObject, thisParser);
@@ -377,7 +377,7 @@ int HTTPParser::onStatus(const char* at, size_t length)
 
 int HTTPParser::onHeaderField(const char* at, size_t length)
 {
-    JSGlobalObject* globalObject = m_globalObject.get();
+    JSGlobalObject* globalObject = m_globalObject;
     auto& vm = globalObject->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
@@ -450,10 +450,10 @@ int HTTPParser::onChunkExtensionValue(const char* at, size_t length)
 
 int HTTPParser::onHeadersComplete()
 {
-    JSGlobalObject* globalObject = m_globalObject.get();
+    JSGlobalObject* globalObject = m_globalObject;
     auto& vm = globalObject->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    JSHTTPParser* thisParser = m_thisParser.get();
+    JSHTTPParser* thisParser = m_thisParser;
 
     m_headersCompleted = true;
     m_headerNread = 0;
@@ -537,12 +537,12 @@ int HTTPParser::onBody(const char* at, size_t length)
         return 0;
     }
 
-    JSGlobalObject* lexicalGlobalObject = m_globalObject.get();
+    JSGlobalObject* lexicalGlobalObject = m_globalObject;
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
-    JSValue onBodyCallback = m_thisParser.get()->get(lexicalGlobalObject, Identifier::from(vm, kOnBody));
+    JSValue onBodyCallback = m_thisParser->get(lexicalGlobalObject, Identifier::from(vm, kOnBody));
     RETURN_IF_EXCEPTION(scope, 0);
     if (!onBodyCallback.isCallable()) {
         return 0;
@@ -557,7 +557,7 @@ int HTTPParser::onBody(const char* at, size_t length)
     MarkedArgumentBuffer args;
     args.append(buffer);
 
-    JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, onBodyCallback, callData, m_thisParser.get(), args);
+    JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, onBodyCallback, callData, m_thisParser, args);
 
     if (scope.exception()) [[unlikely]] {
         llhttp_set_error_reason(&m_parserData, "HPE_USER:JS Exception");
@@ -569,10 +569,10 @@ int HTTPParser::onBody(const char* at, size_t length)
 
 int HTTPParser::onMessageComplete()
 {
-    JSGlobalObject* globalObject = m_globalObject.get();
+    JSGlobalObject* globalObject = m_globalObject;
     auto& vm = globalObject->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    JSHTTPParser* thisParser = m_thisParser.get();
+    JSHTTPParser* thisParser = m_thisParser;
 
     if (JSConnectionsList* connections = m_connectionsList.get()) {
         connections->pop(globalObject, thisParser);
@@ -634,11 +634,11 @@ int HTTPParser::trackHeader(size_t len)
 
 void HTTPParser::flush()
 {
-    JSGlobalObject* globalObject = m_globalObject.get();
+    JSGlobalObject* globalObject = m_globalObject;
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSHTTPParser* thisParser = m_thisParser.get();
+    JSHTTPParser* thisParser = m_thisParser;
 
     JSValue onHeadersCallback = thisParser->get(globalObject, Identifier::from(vm, kOnHeaders));
     RETURN_IF_EXCEPTION(scope, );

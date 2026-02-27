@@ -644,21 +644,30 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
         // Hash it as lowercase
         const hash = hashHeaderName(name);
 
+        // Whether this header will actually be written to the buffer.
+        // Override flags must only be set when the header is kept, otherwise
+        // the default header is suppressed but the user header is dropped,
+        // leaving the header entirely absent from the request.
+        const will_append = header_count < max_user_headers;
+
         // Skip host and connection header
         // we manage those
         switch (hash) {
             hashHeaderConst("Content-Length"),
             => {
+                // Content-Length is always consumed (never written to the buffer).
                 original_content_length = this.headerStr(header_values[i]);
                 continue;
             },
             hashHeaderConst("Connection") => {
-                override_connection_header = true;
-                const connection_value = this.headerStr(header_values[i]);
-                if (std.ascii.eqlIgnoreCase(connection_value, "close")) {
-                    this.flags.disable_keepalive = true;
-                } else if (std.ascii.eqlIgnoreCase(connection_value, "keep-alive")) {
-                    this.flags.disable_keepalive = false;
+                if (will_append) {
+                    override_connection_header = true;
+                    const connection_value = this.headerStr(header_values[i]);
+                    if (std.ascii.eqlIgnoreCase(connection_value, "close")) {
+                        this.flags.disable_keepalive = true;
+                    } else if (std.ascii.eqlIgnoreCase(connection_value, "keep-alive")) {
+                        this.flags.disable_keepalive = false;
+                    }
                 }
             },
             hashHeaderConst("if-modified-since") => {
@@ -667,32 +676,34 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
                 }
             },
             hashHeaderConst(host_header_name) => {
-                override_host_header = true;
+                if (will_append) override_host_header = true;
             },
             hashHeaderConst("Accept") => {
-                override_accept_header = true;
+                if (will_append) override_accept_header = true;
             },
             hashHeaderConst("User-Agent") => {
-                override_user_agent = true;
+                if (will_append) override_user_agent = true;
             },
             hashHeaderConst("Accept-Encoding") => {
-                override_accept_encoding = true;
+                if (will_append) override_accept_encoding = true;
             },
             hashHeaderConst("Upgrade") => {
-                const value = this.headerStr(header_values[i]);
-                if (!std.ascii.eqlIgnoreCase(value, "h2") and !std.ascii.eqlIgnoreCase(value, "h2c")) {
-                    this.flags.upgrade_state = .pending;
+                if (will_append) {
+                    const value = this.headerStr(header_values[i]);
+                    if (!std.ascii.eqlIgnoreCase(value, "h2") and !std.ascii.eqlIgnoreCase(value, "h2c")) {
+                        this.flags.upgrade_state = .pending;
+                    }
                 }
             },
             hashHeaderConst(chunked_encoded_header.name) => {
                 // We don't want to override chunked encoding header if it was set by the user
-                add_transfer_encoding = false;
+                if (will_append) add_transfer_encoding = false;
             },
             else => {},
         }
 
         // Silently drop excess headers to stay within the fixed-size request header buffer.
-        if (header_count >= max_user_headers) continue;
+        if (!will_append) continue;
 
         request_headers_buf[header_count] = .{
             .name = name,

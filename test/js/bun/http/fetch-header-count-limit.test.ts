@@ -48,9 +48,8 @@ test("fetch with many headers does not crash", async () => {
 
   const receivedCount = await res.json();
   // The request must complete successfully rather than crashing.
-  // Some headers may be silently dropped to stay within the internal buffer,
-  // but the request must not segfault or corrupt memory.
-  expect(receivedCount).toBeGreaterThan(0);
+  // Excess headers beyond the internal cap (250 user headers) are silently dropped.
+  expect(receivedCount).toBe(250);
 });
 
 test("fetch with exactly 250 custom headers sends all of them", async () => {

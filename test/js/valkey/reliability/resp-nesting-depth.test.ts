@@ -20,23 +20,62 @@ describe("Valkey: RESP Nesting Depth Handling", () => {
   }
 
   /**
-   * Creates a minimal mock Redis server that responds to every incoming
-   * data event with a specific payload. The first response is always +OK
-   * (for the HELLO handshake), subsequent responses use the provided payload.
+   * Count the number of complete RESP commands in a buffer.
+   * Each command starts with '*' (array) followed by the element count.
+   * We count top-level '*' markers that begin a new command frame.
+   */
+  function countRespCommands(data: Buffer): number {
+    const str = data.toString();
+    let count = 0;
+    let pos = 0;
+    while (pos < str.length) {
+      if (str[pos] === "*") {
+        count++;
+        // Skip past this command: find the array length line
+        const crlfIdx = str.indexOf("\r\n", pos);
+        if (crlfIdx === -1) break;
+        const arrayLen = parseInt(str.substring(pos + 1, crlfIdx), 10);
+        if (isNaN(arrayLen) || arrayLen < 0) break;
+        // Skip past arrayLen bulk-string elements (each is $<len>\r\n<data>\r\n)
+        let elemPos = crlfIdx + 2;
+        for (let i = 0; i < arrayLen; i++) {
+          if (elemPos >= str.length || str[elemPos] !== "$") break;
+          const lenEnd = str.indexOf("\r\n", elemPos);
+          if (lenEnd === -1) break;
+          const bulkLen = parseInt(str.substring(elemPos + 1, lenEnd), 10);
+          if (isNaN(bulkLen) || bulkLen < 0) break;
+          elemPos = lenEnd + 2 + bulkLen + 2; // skip $<len>\r\n<data>\r\n
+        }
+        pos = elemPos;
+      } else {
+        pos++;
+      }
+    }
+    return count;
+  }
+
+  /**
+   * Creates a minimal mock Redis server that parses incoming RESP command
+   * frames. The first command (HELLO handshake) gets +OK; all subsequent
+   * commands receive the crafted payload. Handles the case where multiple
+   * commands arrive in a single TCP chunk.
    */
   function createMockRedisServer(payload: Buffer): Promise<{ server: net.Server; port: number }> {
     return new Promise((resolve, reject) => {
       const server = net.createServer(socket => {
-        let isFirstMessage = true;
+        let commandsSeen = 0;
 
-        socket.on("data", () => {
-          if (isFirstMessage) {
-            // Respond to HELLO handshake with a simple OK
-            isFirstMessage = false;
-            socket.write("+OK\r\n");
-          } else {
-            // All subsequent commands get the crafted payload
-            socket.write(payload);
+        socket.on("data", (data: Buffer) => {
+          const numCmds = countRespCommands(data);
+          for (let i = 0; i < numCmds; i++) {
+            if (commandsSeen === 0) {
+              // Respond to HELLO handshake with a simple OK
+              socket.write("+OK\r\n");
+            } else {
+              // All subsequent commands get the crafted payload
+              socket.write(payload);
+            }
+            commandsSeen++;
           }
         });
 
@@ -72,8 +111,7 @@ describe("Valkey: RESP Nesting Depth Handling", () => {
         expect.unreachable();
       } catch (error: any) {
         // The client should surface an error rather than crashing.
-        expect(error).toBeDefined();
-        expect(error.message).toBeDefined();
+        expect(error.code).toBe("ERR_REDIS_INVALID_RESPONSE");
       } finally {
         client.close();
       }
@@ -118,14 +156,43 @@ describe("Valkey: RESP Nesting Depth Handling", () => {
         const leaf = ":0\\r\\n";
         const payload = Buffer.from(prefix.repeat(depth) + leaf);
 
+        // Count top-level RESP command frames in a buffer
+        function countRespCommands(data) {
+          const str = data.toString();
+          let count = 0, pos = 0;
+          while (pos < str.length) {
+            if (str[pos] === "*") {
+              count++;
+              const crlfIdx = str.indexOf("\\r\\n", pos);
+              if (crlfIdx === -1) break;
+              const arrayLen = parseInt(str.substring(pos + 1, crlfIdx), 10);
+              if (isNaN(arrayLen) || arrayLen < 0) break;
+              let elemPos = crlfIdx + 2;
+              for (let i = 0; i < arrayLen; i++) {
+                if (elemPos >= str.length || str[elemPos] !== "$") break;
+                const lenEnd = str.indexOf("\\r\\n", elemPos);
+                if (lenEnd === -1) break;
+                const bulkLen = parseInt(str.substring(elemPos + 1, lenEnd), 10);
+                if (isNaN(bulkLen) || bulkLen < 0) break;
+                elemPos = lenEnd + 2 + bulkLen + 2;
+              }
+              pos = elemPos;
+            } else { pos++; }
+          }
+          return count;
+        }
+
         const server = net.createServer(socket => {
-          let first = true;
-          socket.on("data", () => {
-            if (first) {
-              first = false;
-              socket.write("+OK\\r\\n");
-            } else {
-              socket.write(payload);
+          let cmdsSeen = 0;
+          socket.on("data", (data) => {
+            const n = countRespCommands(data);
+            for (let i = 0; i < n; i++) {
+              if (cmdsSeen === 0) {
+                socket.write("+OK\\r\\n");
+              } else {
+                socket.write(payload);
+              }
+              cmdsSeen++;
             }
           });
           socket.on("error", () => {});

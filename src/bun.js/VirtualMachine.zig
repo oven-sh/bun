@@ -1684,6 +1684,9 @@ fn _resolve(
                     const buster_name = name: {
                         if (std.fs.path.isAbsolute(normalized_specifier)) {
                             if (std.fs.path.dirname(normalized_specifier)) |dir| {
+                                if (dir.len > specifier_cache_resolver_buf.len) {
+                                    return error.ModuleNotFound;
+                                }
                                 // Normalized without trailing slash
                                 break :name bun.strings.normalizeSlashesOnly(&specifier_cache_resolver_buf, dir, std.fs.path.sep);
                             }

@@ -69,7 +69,7 @@ describe("ResolveMessage", () => {
     // PATH_MAX so the specifier itself doesn't hit ENAMETOOLONG earlier.
     // Any length > 512 also exercises the esm_subpath buffer overflow.
     // "a".repeat is slow in debug builds; use Buffer.alloc instead.
-    const len = process.platform === "darwin" ? 1000 : 4000;
+    const len = process.platform === "darwin" ? 1020 : 4090;
     const long = Buffer.alloc(len, "a").toString();
     using dir = tempDir("resolve-long-path", {
       // package.json + node_modules/ prevent the resolver from attempting
@@ -87,6 +87,8 @@ describe("ResolveMessage", () => {
         try { await import(\`./\${long}.js\`); } catch {}
         // very long with .. segments (tests normalization handling)
         try { await import(\`./\${"x/../".repeat(${len})}\${long}.js\`); } catch {}
+        // absolute path > PATH_MAX (dirInfoCached buffer overflow)
+        try { await import(\`/\${long}/mixed\`); } catch {}
         console.log("ok");
       `,
     });

@@ -1335,6 +1335,7 @@ pub fn joinAbsStringBuf(cwd: []const u8, buf: []u8, _parts: anytype, comptime pl
 /// whose unnormalized length exceeds `buf.len` but normalizes down will still
 /// succeed.
 pub fn joinAbsStringBufChecked(cwd: []const u8, buf: []u8, parts: []const []const u8, comptime platform: Platform) ?[]const u8 {
+    comptime if (platform == .nt) @compileError("joinAbsStringBufChecked does not support .nt (the \\\\?\\ prefix is not accounted for in scratch sizing)");
     var scratch: JoinScratch = .{};
     const tmp = scratch.init(cwd.len, parts);
     defer scratch.deinit();

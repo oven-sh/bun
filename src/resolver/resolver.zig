@@ -2641,6 +2641,11 @@ pub const Resolver = struct {
             input_path = r.fs.top_level_dir;
         }
 
+        // A path longer than MAX_PATH_BYTES cannot name a real directory.
+        // Bailing here also prevents overflowing `dir_info_uncached_path`
+        // below when called with user-controlled absolute import paths.
+        if (input_path.len > bun.MAX_PATH_BYTES) return null;
+
         if (comptime Environment.isWindows) {
             input_path = r.fs.normalizeBuf(&win32_normalized_dir_info_cache_buf, input_path);
             // kind of a patch on the fact normalizeBuf isn't 100% perfect what we want

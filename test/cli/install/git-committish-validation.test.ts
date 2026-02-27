@@ -32,7 +32,7 @@ describe("git committish validation", () => {
       stderr: "pipe",
     });
 
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).toContain("invalid committish");
     expect(exitCode).toBe(1);
@@ -57,7 +57,7 @@ describe("git committish validation", () => {
       stderr: "pipe",
     });
 
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).toContain("invalid committish");
     expect(exitCode).toBe(1);
@@ -82,7 +82,7 @@ describe("git committish validation", () => {
       stderr: "pipe",
     });
 
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).toContain("invalid committish");
     expect(exitCode).toBe(1);
@@ -107,7 +107,7 @@ describe("git committish validation", () => {
       stderr: "pipe",
     });
 
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).toContain("invalid committish");
     expect(exitCode).toBe(1);
@@ -132,7 +132,7 @@ describe("git committish validation", () => {
       stderr: "pipe",
     });
 
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).not.toContain("invalid committish");
     expect(stderr).toContain("Saved lockfile");
@@ -158,7 +158,7 @@ describe("git committish validation", () => {
       stderr: "pipe",
     });
 
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).not.toContain("invalid committish");
     expect(stderr).toContain("Saved lockfile");

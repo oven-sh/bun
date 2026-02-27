@@ -560,3 +560,151 @@ describe("SPILL.TERM - invalid chunk terminators", () => {
     });
   });
 });
+
+// Tests for strict RFC 7230 HEXDIG validation in chunk size parsing.
+// Chunk sizes must only contain characters from the set [0-9a-fA-F].
+// Non-HEXDIG characters must be rejected to ensure consistent parsing
+// across all HTTP implementations in a proxy chain.
+describe("chunk size strict hex digit validation", () => {
+  // Helper to send a raw HTTP request and get the response
+  async function sendRawChunkedRequest(port: number, chunkSizeLine: string, chunkData: string): Promise<string> {
+    const client = net.connect(port, "127.0.0.1");
+
+    const request =
+      "POST / HTTP/1.1\r\n" +
+      "Host: localhost\r\n" +
+      "Transfer-Encoding: chunked\r\n" +
+      "\r\n" +
+      chunkSizeLine +
+      "\r\n" +
+      chunkData +
+      "\r\n" +
+      "0\r\n" +
+      "\r\n";
+
+    return new Promise<string>((resolve, reject) => {
+      let responseData = "";
+      client.on("error", reject);
+      client.on("data", data => {
+        responseData += data.toString();
+      });
+      client.on("close", () => {
+        resolve(responseData);
+      });
+      client.write(request, () => {
+        // Give the server time to process before half-closing
+        setTimeout(() => client.end(), 100);
+      });
+    });
+  }
+
+  test("accepts valid hex digits 0-9 in chunk size", async () => {
+    let receivedBody = "";
+    await using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        receivedBody = await req.text();
+        return new Response("OK");
+      },
+    });
+
+    // "9" = 9 bytes
+    const response = await sendRawChunkedRequest(server.port, "9", "123456789");
+    expect(response).toContain("HTTP/1.1 200");
+    expect(receivedBody).toBe("123456789");
+  });
+
+  test("accepts valid hex digits a-f in chunk size", async () => {
+    let receivedBody = "";
+    await using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        receivedBody = await req.text();
+        return new Response("OK");
+      },
+    });
+
+    // "a" = 10 bytes
+    const response = await sendRawChunkedRequest(server.port, "a", "1234567890");
+    expect(response).toContain("HTTP/1.1 200");
+    expect(receivedBody).toBe("1234567890");
+  });
+
+  test("accepts valid hex digits A-F in chunk size", async () => {
+    let receivedBody = "";
+    await using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        receivedBody = await req.text();
+        return new Response("OK");
+      },
+    });
+
+    // "B" = 11 bytes
+    const response = await sendRawChunkedRequest(server.port, "B", "12345678901");
+    expect(response).toContain("HTTP/1.1 200");
+    expect(receivedBody).toBe("12345678901");
+  });
+
+  test("accepts multi-digit hex chunk size", async () => {
+    let receivedBody = "";
+    await using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        receivedBody = await req.text();
+        return new Response("OK");
+      },
+    });
+
+    // "1a" = 26 bytes
+    const response = await sendRawChunkedRequest(server.port, "1a", "abcdefghijklmnopqrstuvwxyz");
+    expect(response).toContain("HTTP/1.1 200");
+    expect(receivedBody).toBe("abcdefghijklmnopqrstuvwxyz");
+  });
+
+  // Characters in ASCII 71+ (G-Z, g-z) are not valid hex digits
+  for (const ch of ["G", "g", "Z", "z", "x", "X"]) {
+    test(`rejects '${ch}' in chunk size (not a hex digit)`, async () => {
+      await using server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          return new Response("OK");
+        },
+      });
+
+      const response = await sendRawChunkedRequest(server.port, `1${ch}`, "A".repeat(32));
+      expect(response).toContain("HTTP/1.1 400");
+    });
+  }
+
+  // Characters in ASCII 58-64 (:, <, =, >, ?, @) lie between '9' and 'A'
+  // and must not be accepted as hex digits
+  for (const ch of [":", "<", "=", ">", "?", "@"]) {
+    test(`rejects '${ch}' (ASCII ${ch.charCodeAt(0)}) in chunk size`, async () => {
+      await using server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          return new Response("OK");
+        },
+      });
+
+      const response = await sendRawChunkedRequest(server.port, `1${ch}`, "A".repeat(32));
+      expect(response).toContain("HTTP/1.1 400");
+    });
+  }
+
+  // Other non-hex characters
+  for (const ch of ["!", "#", "$", "%", "^", "&", "*", "(", ")", "_", "+", "~", "`", "|"]) {
+    test(`rejects '${ch}' in chunk size`, async () => {
+      await using server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          return new Response("OK");
+        },
+      });
+
+      const response = await sendRawChunkedRequest(server.port, `1${ch}`, "A".repeat(32));
+      expect(response).toContain("HTTP/1.1 400");
+    });
+  }
+});

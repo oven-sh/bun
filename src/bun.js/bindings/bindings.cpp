@@ -462,43 +462,41 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
 
         JSValue expectedArrayValue = expectArrayContaining->m_arrayValue.get();
 
-        if (JSC::isArray(globalObject, otherProp)) {
-            if (JSC::isArray(globalObject, expectedArrayValue)) {
-                JSArray* expectedArray = jsDynamicCast<JSArray*>(expectedArrayValue);
-                JSArray* otherArray = jsDynamicCast<JSArray*>(otherProp);
+        // Note: isArray() accepts Proxy->Array, but jsDynamicCast returns null for Proxy.
+        JSArray* expectedArray = jsDynamicCast<JSArray*>(expectedArrayValue);
+        JSArray* otherArray = jsDynamicCast<JSArray*>(otherProp);
+        if (expectedArray && otherArray) {
+            unsigned expectedLength = expectedArray->length();
+            unsigned otherLength = otherArray->length();
 
-                unsigned expectedLength = expectedArray->length();
-                unsigned otherLength = otherArray->length();
-
-                // A empty array is all array's subset
-                if (expectedLength == 0) {
-                    return AsymmetricMatcherResult::PASS;
-                }
-
-                // O(m*n) but works for now
-                for (unsigned m = 0; m < expectedLength; m++) {
-                    JSValue expectedValue = expectedArray->getIndex(globalObject, m);
-                    bool found = false;
-
-                    for (unsigned n = 0; n < otherLength; n++) {
-                        JSValue otherValue = otherArray->getIndex(globalObject, n);
-                        Vector<std::pair<JSValue, JSValue>, 16> stack;
-                        MarkedArgumentBuffer gcBuffer;
-                        bool foundNow = Bun__deepEquals<false, true>(globalObject, expectedValue, otherValue, gcBuffer, stack, throwScope, true);
-                        RETURN_IF_EXCEPTION(throwScope, AsymmetricMatcherResult::FAIL);
-                        if (foundNow) {
-                            found = true;
-                            break;
-                        }
-                    }
-
-                    if (!found) {
-                        return AsymmetricMatcherResult::FAIL;
-                    }
-                }
-
+            // A empty array is all array's subset
+            if (expectedLength == 0) {
                 return AsymmetricMatcherResult::PASS;
             }
+
+            // O(m*n) but works for now
+            for (unsigned m = 0; m < expectedLength; m++) {
+                JSValue expectedValue = expectedArray->getIndex(globalObject, m);
+                bool found = false;
+
+                for (unsigned n = 0; n < otherLength; n++) {
+                    JSValue otherValue = otherArray->getIndex(globalObject, n);
+                    Vector<std::pair<JSValue, JSValue>, 16> stack;
+                    MarkedArgumentBuffer gcBuffer;
+                    bool foundNow = Bun__deepEquals<false, true>(globalObject, expectedValue, otherValue, gcBuffer, stack, throwScope, true);
+                    RETURN_IF_EXCEPTION(throwScope, AsymmetricMatcherResult::FAIL);
+                    if (foundNow) {
+                        found = true;
+                        break;
+                    }
+                }
+
+                if (!found) {
+                    return AsymmetricMatcherResult::FAIL;
+                }
+            }
+
+            return AsymmetricMatcherResult::PASS;
         }
 
         return AsymmetricMatcherResult::FAIL;

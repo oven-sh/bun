@@ -2560,7 +2560,6 @@ void JSC__JSValue___then(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1
     }
 }
 
-
 void JSC__JSGlobalObject__deleteModuleRegistryEntry(JSC::JSGlobalObject* global, const BunString* arg1)
 {
     auto& vm = global->vm();
@@ -2774,7 +2773,6 @@ JSC::EncodedJSValue JSC__JSValue__getDirectIndex(JSC::EncodedJSValue jsValue, JS
     return JSC::JSValue::encode(object->getDirectIndex(arg1, arg3));
 }
 
-
 #pragma mark - JSC::JSCell
 
 JSC::JSObject* JSC__JSCell__getObject(JSC::JSCell* arg0)
@@ -2886,7 +2884,6 @@ JSC::EncodedJSValue JSC__JSModuleLoader__evaluate(JSC::JSGlobalObject* globalObj
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(usedStream);
 }
-
 
 JSC::EncodedJSValue JSC__JSValue__fromEntries(JSC::JSGlobalObject* globalObject, const BunString* keys,
     const BunString* values, size_t initialCapacity)

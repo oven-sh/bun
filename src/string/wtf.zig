@@ -267,8 +267,8 @@ pub const StringImplAllocator = struct {
     pub const VTablePtr = &VTable;
 };
 
-const bun = @import("bun");
 const std = @import("std");
 
+const bun = @import("bun");
 const jsc = bun.jsc;
 const StringView = bun.string.StringView;

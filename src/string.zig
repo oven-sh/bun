@@ -1781,8 +1781,8 @@ const std = @import("std");
 
 const bun = @import("bun");
 const JSError = bun.JSError;
-const OOM = bun.OOM;
 const NullableAllocator = bun.NullableAllocator;
+const OOM = bun.OOM;
 const AsciiStatus = bun.strings.AsciiStatus;
 
 const jsc = bun.jsc;

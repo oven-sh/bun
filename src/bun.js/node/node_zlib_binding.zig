@@ -334,6 +334,5 @@ const std = @import("std");
 
 const bun = @import("bun");
 const Output = bun.Output;
-const Buffer = bun.api.node.Buffer;
-
 const jsc = bun.jsc;
+const Buffer = bun.api.node.Buffer;

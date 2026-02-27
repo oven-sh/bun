@@ -1583,16 +1583,17 @@ fn fromJS(globalObject: *jsc.JSGlobalObject, value: JSValue) !?JSArgument {
     return try JSArgument.fromJSMaybeFile(globalObject, bun.default_allocator, value, false);
 }
 
-const bun = @import("bun");
 const std = @import("std");
 
 const JSValkeyClient = @import("./js_valkey.zig").JSValkeyClient;
 const SubscriptionCtx = @import("./js_valkey.zig").SubscriptionCtx;
 
+const bun = @import("bun");
+const Slice = bun.String.Slice;
+
 const jsc = bun.jsc;
 const JSValue = jsc.JSValue;
 const JSArgument = jsc.Node.BlobOrStringOrBuffer;
-const Slice = bun.String.Slice;
 
 const valkey = bun.valkey;
 const Command = valkey.Command;

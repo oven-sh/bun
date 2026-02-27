@@ -118,7 +118,6 @@ static const WTF::String toString(ZigStringView str)
               { reinterpret_cast<const char16_t*>(untag(str.ptr)), str.len }));
 }
 
-
 static const WTF::String toString(ZigStringView str, StringPointer ptr)
 {
     if (str.len == 0 || str.ptr == nullptr || ptr.len == 0) {
@@ -270,7 +269,6 @@ static void throwException(JSC::ThrowScope& scope, ZigErrorType err, JSC::JSGlob
         JSC::Exception::create(global->vm(), JSC::JSValue::decode(err.value)));
 }
 
-
 static const WTF::String toStringStatic(ZigStringView str)
 {
     if (str.len == 0 || str.ptr == nullptr) {
@@ -289,7 +287,6 @@ static const WTF::String toStringStatic(ZigStringView str)
     ASCIILiteral ascii = ASCIILiteral::fromLiteralUnsafe(reinterpret_cast<const char*>(untagged));
     return WTF::String(ascii);
 }
-
 
 }; // namespace Zig
 

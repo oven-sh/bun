@@ -86,9 +86,8 @@ pub fn toHaveProperty(this: *Expect, globalThis: *JSGlobalObject, callFrame: *Ca
     return this.throw(globalThis, signature, "\n\nExpected path: <green>{f}<r>\n\nUnable to find property\n", .{expected_property_path.toFmt(&formatter)});
 }
 
-const DiffFormatter = @import("../diff_format.zig").DiffFormatter;
-
 const bun = @import("bun");
+const DiffFormatter = @import("../diff_format.zig").DiffFormatter;
 
 const jsc = bun.jsc;
 const CallFrame = bun.jsc.CallFrame;

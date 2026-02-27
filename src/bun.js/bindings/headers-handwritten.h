@@ -344,7 +344,6 @@ extern "C" const char* Bun__userAgent;
 
 extern "C" ZigErrorCode Zig_ErrorCodeParserError;
 
-
 extern "C" bool Bun__transpileVirtualModule(
     JSC::JSGlobalObject* global,
     const BunString* specifier,

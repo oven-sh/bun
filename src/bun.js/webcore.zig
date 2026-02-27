@@ -117,12 +117,10 @@ pub const Lifetime = enum {
     temporary,
 };
 
+const bun = @import("bun");
 const std = @import("std");
 
 const WebSocketClient = @import("../http/websocket_http_client.zig").WebSocketClient;
 const WebSocketClientTLS = @import("../http/websocket_http_client.zig").WebSocketClientTLS;
 const WebSocketHTTPClient = @import("../http/websocket_http_client.zig").WebSocketHTTPClient;
 const WebSocketHTTPSClient = @import("../http/websocket_http_client.zig").WebSocketHTTPSClient;
-
-const bun = @import("bun");
-const jsc = bun.jsc;

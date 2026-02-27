@@ -473,7 +473,6 @@ const Environment = bun.Environment;
 const FeatureFlags = bun.FeatureFlags;
 const MutableString = bun.MutableString;
 const assert = bun.assert;
-const jsc = bun.jsc;
 const picohttp = bun.picohttp;
 const Channel = bun.threading.Channel;
 const SSLConfig = bun.api.server.ServerConfig.SSLConfig;

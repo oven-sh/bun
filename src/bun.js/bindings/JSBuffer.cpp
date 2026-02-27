@@ -1110,14 +1110,6 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_compareBody(JSC::JSGlobalOb
     if (targetStart >= targetEnd)
         RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(JSC::jsNumber(1)));
 
-    // After ruling out zero-length ranges, validate start values against buffer lengths.
-    if (targetStart > targetEndInit) {
-        return Bun::ERR::OUT_OF_RANGE(throwScope, lexicalGlobalObject, "targetStart"_s, 0, targetEndInit, targetStartValue);
-    }
-    if (sourceStart > sourceEndInit) {
-        return Bun::ERR::OUT_OF_RANGE(throwScope, lexicalGlobalObject, "sourceStart"_s, 0, sourceEndInit, sourceStartValue);
-    }
-
     auto sourceLength = sourceEnd - sourceStart;
     auto targetLength = targetEnd - targetStart;
     auto actualLength = std::min(sourceLength, targetLength);

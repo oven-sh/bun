@@ -501,6 +501,45 @@ pub const Bin = extern struct {
         return name;
     }
 
+    /// Normalize a bin target value (the file path the bin points to) to ensure
+    /// it stays within the package directory. Matches npm's npm-normalize-package-bin
+    /// behavior: `path.join('/', target).slice(1)` which strips leading slashes
+    /// and resolves `..` segments so the target cannot escape the package root.
+    /// https://github.com/npm/npm-normalize-package-bin/blob/574e6d7cd21b2f3dee28a216ec2053c2551f7af9/lib/index.js#L34
+    pub fn normalizedBinTarget(target: []const u8, buf: []u8) ?[]const u8 {
+        if (target.len == 0) return null;
+
+        // Normalize: resolve `.` and `..` segments with allow_above_root=false
+        // (equivalent to npm's `path.join('/', target).slice(1)`)
+        const normalized = path.normalizeStringBuf(target, buf, false, .auto, false);
+        if (normalized.len == 0) return null;
+
+        // Strip any leading separator (makes absolute paths relative, matching npm's .slice(1))
+        var result = normalized;
+        while (result.len > 0 and path.isSepAny(result[0])) {
+            result = result[1..];
+        }
+
+        if (result.len == 0) return null;
+        return result;
+    }
+
+    /// Check that a resolved absolute target path is contained within the
+    /// expected package directory. Returns true if abs_target starts with
+    /// package_dir followed by a path separator.
+    fn isTargetWithinPackageDir(package_dir: []const u8, abs_target: []const u8) bool {
+        const dir = strings.withoutTrailingSlash(package_dir);
+        if (abs_target.len <= dir.len) return false;
+        const prefix = abs_target[0..dir.len];
+
+        const matches = if (comptime !bun.Environment.isLinux)
+            strings.eqlCaseInsensitiveASCII(prefix, dir, false)
+        else
+            std.mem.eql(u8, prefix, dir);
+
+        return matches and path.isSepAny(abs_target[dir.len]);
+    }
+
     pub const Linker = struct {
         bin: Bin,
 
@@ -901,8 +940,13 @@ pub const Bin = extern struct {
                     const target = this.bin.value.file.slice(this.string_buf);
                     if (target.len == 0) return;
 
+                    var normalize_buf: bun.PathBuffer = undefined;
+                    const normalized_target = normalizedBinTarget(target, &normalize_buf) orelse return;
+
                     // for normalizing `target`
-                    const abs_target = path.joinAbsStringZ(package_dir, &.{target}, .auto);
+                    const abs_target = path.joinAbsStringZ(package_dir, &.{normalized_target}, .auto);
+
+                    if (!isTargetWithinPackageDir(package_dir, abs_target)) return;
 
                     const unscoped_package_name = Dependency.unscopedPackageName(this.package_name.slice());
                     @memcpy(abs_dest_buf_remain[0..unscoped_package_name.len], unscoped_package_name);
@@ -919,8 +963,13 @@ pub const Bin = extern struct {
                     const target = this.bin.value.named_file[1].slice(this.string_buf);
                     if (normalized_name.len == 0 or target.len == 0) return;
 
+                    var normalize_buf: bun.PathBuffer = undefined;
+                    const normalized_target = normalizedBinTarget(target, &normalize_buf) orelse return;
+
                     // for normalizing `target`
-                    const abs_target = path.joinAbsStringZ(package_dir, &.{target}, .auto);
+                    const abs_target = path.joinAbsStringZ(package_dir, &.{normalized_target}, .auto);
+
+                    if (!isTargetWithinPackageDir(package_dir, abs_target)) return;
 
                     @memcpy(abs_dest_buf_remain[0..normalized_name.len], normalized_name);
                     abs_dest_buf_remain = abs_dest_buf_remain[normalized_name.len..];
@@ -942,7 +991,12 @@ pub const Bin = extern struct {
                         const bin_target = this.extern_string_buf[i + 1].slice(this.string_buf);
                         if (bin_target.len == 0 or normalized_bin_dest.len == 0) continue;
 
-                        const abs_target = path.joinAbsStringZ(package_dir, &.{bin_target}, .auto);
+                        var normalize_buf: bun.PathBuffer = undefined;
+                        const normalized_bin_target = normalizedBinTarget(bin_target, &normalize_buf) orelse continue;
+
+                        const abs_target = path.joinAbsStringZ(package_dir, &.{normalized_bin_target}, .auto);
+
+                        if (!isTargetWithinPackageDir(package_dir, abs_target)) continue;
 
                         abs_dest_buf_remain = abs_dest_dir_end;
                         @memcpy(abs_dest_buf_remain[0..normalized_bin_dest.len], normalized_bin_dest);
@@ -958,8 +1012,13 @@ pub const Bin = extern struct {
                     const target = this.bin.value.dir.slice(this.string_buf);
                     if (target.len == 0) return;
 
+                    var normalize_buf: bun.PathBuffer = undefined;
+                    const normalized_target = normalizedBinTarget(target, &normalize_buf) orelse return;
+
                     // for normalizing `target`
-                    const abs_target_dir = path.joinAbsStringZ(package_dir, &.{target}, .auto);
+                    const abs_target_dir = path.joinAbsStringZ(package_dir, &.{normalized_target}, .auto);
+
+                    if (!isTargetWithinPackageDir(package_dir, abs_target_dir)) return;
 
                     var target_dir = bun.openDirAbsolute(abs_target_dir) catch |err| {
                         if (err == error.ENOENT) {
@@ -1053,7 +1112,12 @@ pub const Bin = extern struct {
                     const target = this.bin.value.dir.slice(this.string_buf);
                     if (target.len == 0) return;
 
-                    const abs_target_dir = path.joinAbsStringZ(package_dir, &.{target}, .auto);
+                    var normalize_buf: bun.PathBuffer = undefined;
+                    const normalized_target = normalizedBinTarget(target, &normalize_buf) orelse return;
+
+                    const abs_target_dir = path.joinAbsStringZ(package_dir, &.{normalized_target}, .auto);
+
+                    if (!isTargetWithinPackageDir(package_dir, abs_target_dir)) return;
 
                     var target_dir = bun.openDirAbsolute(abs_target_dir) catch |err| {
                         this.err = err;

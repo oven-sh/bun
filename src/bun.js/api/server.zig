@@ -1981,6 +1981,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                             if (!node_response.flags.request_has_completed and raw_response.state().isResponsePending()) {
                                 if (raw_response.state().isHttpStatusCalled()) {
                                     raw_response.writeStatus("500 Internal Server Error");
+                                    raw_response.writeMark();
                                     raw_response.endWithoutBody(true);
                                 } else {
                                     raw_response.endStream(true);
@@ -2217,6 +2218,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                     // Abort the request very early.
                     if (len > this.config.max_request_body_size) {
                         resp.writeStatus("413 Request Entity Too Large");
+                        resp.writeMark();
                         resp.endWithoutBody(true);
                         return null;
                     }
@@ -2344,6 +2346,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 // require fetch method to be set otherwise we dont know what route to call
                 // this should be the fallback in case no route is provided to upgrade
                 resp.writeStatus("403 Forbidden");
+                resp.writeMark();
                 resp.endWithoutBody(true);
                 return;
             }

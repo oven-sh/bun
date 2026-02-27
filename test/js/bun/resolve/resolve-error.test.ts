@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 describe("ResolveMessage", () => {
   it("position object does not segfault", async () => {
@@ -58,5 +59,43 @@ describe("ResolveMessage", () => {
       // @ts-ignore
       await import(":://filesystem");
     }).toThrow("Cannot find module");
+  });
+
+  it("doesn't crash on very long import paths with tsconfig baseUrl", async () => {
+    // Reproduces a panic where joining tsconfig baseUrl + a long import path
+    // overflowed a fixed-size PathBuffer in normalizeStringGenericTZ.
+    // "a".repeat is slow in debug builds; use Buffer.alloc instead.
+    const long = Buffer.alloc(1000, "a").toString();
+    using dir = tempDir("resolve-long-path", {
+      // package.json + node_modules/ prevent the resolver from attempting
+      // auto-install (which has an unrelated pre-existing bug).
+      "package.json": `{"name": "test", "version": "0.0.0"}`,
+      "node_modules/.keep": "",
+      "tsconfig.json": `{"compilerOptions": {"baseUrl": ".", "paths": {"@x/*": ["./src/*"]}}}`,
+      "test.js": `
+        const long = ${JSON.stringify(long)};
+        // bare package (tsconfig baseUrl path)
+        try { await import(\`@nonexistent/pkg/build/\${long}.js\`); } catch {}
+        // tsconfig paths wildcard (captures long text)
+        try { await import(\`@x/\${long}\`); } catch {}
+        // relative path
+        try { await import(\`./\${long}.js\`); } catch {}
+        // very long with .. segments (tests normalization handling)
+        try { await import(\`./\${"x/../".repeat(500)}\${long}.js\`); } catch {}
+        console.log("ok");
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("ok");
+    expect(exitCode).toBe(0);
   });
 });

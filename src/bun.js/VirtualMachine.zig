@@ -1689,6 +1689,12 @@ fn _resolve(
                             }
                         }
 
+                        // If the specifier is too long to join, it can't name a real
+                        // directory — skip the cache bust and fail.
+                        if (source_to_use.len + normalized_specifier.len + 4 >= specifier_cache_resolver_buf.len) {
+                            return error.ModuleNotFound;
+                        }
+
                         var parts = [_]string{
                             source_to_use,
                             normalized_specifier,

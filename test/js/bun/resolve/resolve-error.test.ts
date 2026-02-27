@@ -64,8 +64,13 @@ describe("ResolveMessage", () => {
   it("doesn't crash on very long import paths with tsconfig baseUrl", async () => {
     // Reproduces a panic where joining tsconfig baseUrl + a long import path
     // overflowed a fixed-size PathBuffer in normalizeStringGenericTZ.
+    // The bug triggers when import_path < PATH_MAX but baseUrl + import_path > PATH_MAX.
+    // PATH_MAX is 1024 on macOS, 4096 on Linux/Windows. Pick a length just under
+    // PATH_MAX so the specifier itself doesn't hit ENAMETOOLONG earlier.
+    // Any length > 512 also exercises the esm_subpath buffer overflow.
     // "a".repeat is slow in debug builds; use Buffer.alloc instead.
-    const long = Buffer.alloc(1000, "a").toString();
+    const len = process.platform === "darwin" ? 1000 : 4000;
+    const long = Buffer.alloc(len, "a").toString();
     using dir = tempDir("resolve-long-path", {
       // package.json + node_modules/ prevent the resolver from attempting
       // auto-install (which has an unrelated pre-existing bug).
@@ -81,7 +86,7 @@ describe("ResolveMessage", () => {
         // relative path
         try { await import(\`./\${long}.js\`); } catch {}
         // very long with .. segments (tests normalization handling)
-        try { await import(\`./\${"x/../".repeat(500)}\${long}.js\`); } catch {}
+        try { await import(\`./\${"x/../".repeat(${len})}\${long}.js\`); } catch {}
         console.log("ok");
       `,
     });

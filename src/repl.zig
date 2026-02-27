@@ -26,6 +26,12 @@ extern fn Bun__REPL__evaluate(
     exception: *jsc.JSValue,
 ) jsc.JSValue;
 
+extern fn Bun__REPL__evaluateCompletionTarget(
+    globalObject: *jsc.JSGlobalObject,
+    sourcePtr: [*]const u8,
+    sourceLen: usize,
+) jsc.JSValue;
+
 extern fn Bun__REPL__getCompletions(
     globalObject: *jsc.JSGlobalObject,
     targetValue: jsc.JSValue,
@@ -1940,7 +1946,7 @@ fn handleTab(self: *Repl) void {
         return;
     };
 
-    // Find the word being completed
+    // Find the word being completed (the part after the last dot)
     var word_start: usize = line.len;
     while (word_start > 0) {
         const c = line[word_start - 1];
@@ -1950,10 +1956,36 @@ fn handleTab(self: *Repl) void {
 
     const prefix = line[word_start..];
 
-    // Get completions from global object
+    // Determine the target object for completions.
+    // If there's a dot before the word being completed, evaluate the expression
+    // before the dot to get the target object (e.g., for "foo.bar.b[TAB]",
+    // evaluate "foo.bar" and complete properties of that object).
+    var target_value: jsc.JSValue = .js_undefined;
+    const has_dot = word_start > 0 and line[word_start - 1] == '.';
+    if (has_dot) {
+        const expr = line[0 .. word_start - 1];
+        if (expr.len > 0) {
+            // Wrap in parentheses so that e.g. `{}` is parsed as an expression
+            // (object literal) rather than a block statement.
+            const wrapped = std.fmt.allocPrint(self.allocator, "({s})", .{expr}) catch "";
+            defer if (wrapped.len > 0) self.allocator.free(wrapped);
+            if (wrapped.len > 0) {
+                const result = Bun__REPL__evaluateCompletionTarget(
+                    global,
+                    wrapped.ptr,
+                    wrapped.len,
+                );
+                if (!result.isEmptyOrUndefinedOrNull()) {
+                    target_value = result;
+                }
+            }
+        }
+    }
+
+    // Get completions from the target object (or globalThis if no target)
     const completions = Bun__REPL__getCompletions(
         global,
-        .js_undefined,
+        target_value,
         prefix.ptr,
         prefix.len,
     );

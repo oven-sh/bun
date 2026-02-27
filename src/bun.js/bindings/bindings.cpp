@@ -6203,6 +6203,38 @@ extern "C" JSC::EncodedJSValue Bun__REPL__evaluate(
     return JSC::JSValue::encode(result);
 }
 
+// Silently evaluate an expression for tab completion target resolution.
+// Unlike Bun__REPL__evaluate, this does NOT set _error on failure.
+// Returns the result value, or undefined if evaluation failed.
+extern "C" JSC::EncodedJSValue Bun__REPL__evaluateCompletionTarget(
+    JSC::JSGlobalObject* globalObject,
+    const unsigned char* sourcePtr,
+    size_t sourceLen)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    WTF::String source = WTF::String::fromUTF8(std::span { sourcePtr, sourceLen });
+
+    JSC::SourceCode sourceCode = JSC::makeSource(
+        source,
+        JSC::SourceOrigin {},
+        JSC::SourceTaintedOrigin::Untainted,
+        "[completion]"_s,
+        WTF::TextPosition(),
+        JSC::SourceProviderSourceType::Program);
+
+    WTF::NakedPtr<JSC::Exception> evalException;
+    JSC::JSValue result = JSC::evaluate(globalObject, sourceCode, globalObject->globalThis(), evalException);
+
+    if (evalException || scope.exception()) {
+        scope.clearException();
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
+
+    return JSC::JSValue::encode(result);
+}
+
 // REPL completion function - gets completions for a partial property access
 // Returns an array of completion strings, or undefined if no completions
 extern "C" JSC::EncodedJSValue Bun__REPL__getCompletions(
@@ -6237,6 +6269,8 @@ extern "C" JSC::EncodedJSValue Bun__REPL__getCompletions(
     JSC::JSArray* completions = JSC::constructEmptyArray(globalObject, nullptr, 0);
     RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
 
+    // getPropertyNames with DontEnumPropertiesMode::Include already traverses
+    // the entire prototype chain, so no need to walk it again manually.
     unsigned completionIndex = 0;
     for (const auto& propertyName : propertyNames) {
         WTF::String name = propertyName.string();
@@ -6244,28 +6278,6 @@ extern "C" JSC::EncodedJSValue Bun__REPL__getCompletions(
             completions->putDirectIndex(globalObject, completionIndex++, JSC::jsString(vm, name));
             RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
         }
-    }
-
-    // Also check the prototype chain
-    JSC::JSValue proto = object->getPrototype(globalObject);
-    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(completions));
-
-    while (proto && proto.isObject()) {
-        JSC::JSObject* protoObj = proto.getObject();
-        JSC::PropertyNameArrayBuilder protoNames(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
-        protoObj->getPropertyNames(globalObject, protoNames, DontEnumPropertiesMode::Include);
-        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(completions));
-
-        for (const auto& propertyName : protoNames) {
-            WTF::String name = propertyName.string();
-            if (prefix.isEmpty() || name.startsWith(prefix)) {
-                completions->putDirectIndex(globalObject, completionIndex++, JSC::jsString(vm, name));
-                RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(completions));
-            }
-        }
-
-        proto = protoObj->getPrototype(globalObject);
-        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(completions));
     }
 
     return JSC::JSValue::encode(completions);

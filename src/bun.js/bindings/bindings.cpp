@@ -6151,6 +6151,166 @@ CPP_DECL [[ZIG_EXPORT(nothrow)]] unsigned int Bun__CallFrame__getLineNumber(JSC:
     return lineColumn.line;
 }
 
+// REPL evaluation function - evaluates JavaScript code in the global scope
+// Returns the result value, or undefined if an exception was thrown
+// If an exception is thrown, the exception value is stored in *exception
+extern "C" JSC::EncodedJSValue Bun__REPL__evaluate(
+    JSC::JSGlobalObject* globalObject,
+    const unsigned char* sourcePtr,
+    size_t sourceLen,
+    const unsigned char* filenamePtr,
+    size_t filenameLen,
+    JSC::EncodedJSValue* exception)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    WTF::String source = WTF::String::fromUTF8(std::span { sourcePtr, sourceLen });
+    WTF::String filename = filenameLen > 0
+        ? WTF::String::fromUTF8(std::span { filenamePtr, filenameLen })
+        : "[repl]"_s;
+
+    JSC::SourceCode sourceCode = JSC::makeSource(
+        source,
+        JSC::SourceOrigin {},
+        JSC::SourceTaintedOrigin::Untainted,
+        filename,
+        WTF::TextPosition(),
+        JSC::SourceProviderSourceType::Program);
+
+    WTF::NakedPtr<JSC::Exception> evalException;
+    JSC::JSValue result = JSC::evaluate(globalObject, sourceCode, globalObject->globalThis(), evalException);
+
+    if (evalException) {
+        *exception = JSC::JSValue::encode(evalException->value());
+        // Set _error on the globalObject directly (not globalThis proxy)
+        globalObject->putDirect(vm, JSC::Identifier::fromString(vm, "_error"_s), evalException->value());
+        scope.clearException();
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
+
+    if (scope.exception()) {
+        *exception = JSC::JSValue::encode(scope.exception()->value());
+        // Set _error on the globalObject directly (not globalThis proxy)
+        globalObject->putDirect(vm, JSC::Identifier::fromString(vm, "_error"_s), scope.exception()->value());
+        scope.clearException();
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
+
+    // Note: _ is now set in Zig code (repl.zig) after extracting the value from
+    // the REPL transform wrapper. We don't set it here anymore.
+
+    return JSC::JSValue::encode(result);
+}
+
+// REPL completion function - gets completions for a partial property access
+// Returns an array of completion strings, or undefined if no completions
+extern "C" JSC::EncodedJSValue Bun__REPL__getCompletions(
+    JSC::JSGlobalObject* globalObject,
+    JSC::EncodedJSValue targetValue,
+    const unsigned char* prefixPtr,
+    size_t prefixLen)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSC::JSValue target = JSC::JSValue::decode(targetValue);
+    if (!target || target.isUndefined() || target.isNull()) {
+        target = globalObject->globalThis();
+    }
+
+    if (!target.isObject()) {
+        JSObject* boxed = target.toObject(globalObject);
+        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+        target = boxed;
+    }
+
+    WTF::String prefix = prefixLen > 0
+        ? WTF::String::fromUTF8(std::span { prefixPtr, prefixLen })
+        : WTF::String();
+
+    JSC::JSObject* object = target.getObject();
+    JSC::PropertyNameArrayBuilder propertyNames(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
+    object->getPropertyNames(globalObject, propertyNames, DontEnumPropertiesMode::Include);
+    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+
+    JSC::JSArray* completions = JSC::constructEmptyArray(globalObject, nullptr, 0);
+    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+
+    unsigned completionIndex = 0;
+    for (const auto& propertyName : propertyNames) {
+        WTF::String name = propertyName.string();
+        if (prefix.isEmpty() || name.startsWith(prefix)) {
+            completions->putDirectIndex(globalObject, completionIndex++, JSC::jsString(vm, name));
+            RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+        }
+    }
+
+    // Also check the prototype chain
+    JSC::JSValue proto = object->getPrototype(globalObject);
+    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(completions));
+
+    while (proto && proto.isObject()) {
+        JSC::JSObject* protoObj = proto.getObject();
+        JSC::PropertyNameArrayBuilder protoNames(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
+        protoObj->getPropertyNames(globalObject, protoNames, DontEnumPropertiesMode::Include);
+        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(completions));
+
+        for (const auto& propertyName : protoNames) {
+            WTF::String name = propertyName.string();
+            if (prefix.isEmpty() || name.startsWith(prefix)) {
+                completions->putDirectIndex(globalObject, completionIndex++, JSC::jsString(vm, name));
+                RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(completions));
+            }
+        }
+
+        proto = protoObj->getPrototype(globalObject);
+        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(completions));
+    }
+
+    return JSC::JSValue::encode(completions);
+}
+
+// Format a value for REPL output using util.inspect style
+extern "C" JSC::EncodedJSValue Bun__REPL__formatValue(
+    JSC::JSGlobalObject* globalObject,
+    JSC::EncodedJSValue valueEncoded,
+    int32_t depth,
+    bool colors)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Get the util.inspect function from the global object
+    auto* bunGlobal = jsCast<Zig::GlobalObject*>(globalObject);
+    JSC::JSValue inspectFn = bunGlobal->utilInspectFunction();
+
+    if (!inspectFn || !inspectFn.isCallable()) {
+        // Fallback to toString if util.inspect is not available
+        JSC::JSValue value = JSC::JSValue::decode(valueEncoded);
+        JSString* str = value.toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+        return JSC::JSValue::encode(str);
+    }
+
+    // Create options object
+    JSC::JSObject* options = JSC::constructEmptyObject(globalObject);
+    options->putDirect(vm, JSC::Identifier::fromString(vm, "depth"_s), JSC::jsNumber(depth));
+    options->putDirect(vm, JSC::Identifier::fromString(vm, "colors"_s), JSC::jsBoolean(colors));
+    options->putDirect(vm, JSC::Identifier::fromString(vm, "maxArrayLength"_s), JSC::jsNumber(100));
+    options->putDirect(vm, JSC::Identifier::fromString(vm, "maxStringLength"_s), JSC::jsNumber(10000));
+    options->putDirect(vm, JSC::Identifier::fromString(vm, "breakLength"_s), JSC::jsNumber(80));
+
+    JSC::MarkedArgumentBuffer args;
+    args.append(JSC::JSValue::decode(valueEncoded));
+    args.append(options);
+
+    JSC::JSValue result = JSC::call(globalObject, inspectFn, JSC::ArgList(args), "util.inspect"_s);
+    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+
+    return JSC::JSValue::encode(result);
+}
+
 extern "C" void JSC__ArrayBuffer__ref(JSC::ArrayBuffer* self) { self->ref(); }
 extern "C" void JSC__ArrayBuffer__deref(JSC::ArrayBuffer* self) { self->deref(); }
 extern "C" void JSC__ArrayBuffer__asBunArrayBuffer(JSC::ArrayBuffer* self, Bun__ArrayBuffer* out)

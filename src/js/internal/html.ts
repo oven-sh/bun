@@ -22,7 +22,7 @@ function shouldUseMdxMode(args: string[]) {
 // This function is called at startup.
 async function start() {
   if (shouldUseMdxMode(argv)) {
-    return mdxInternal();
+    return mdxInternal.start();
   }
 
   let args: string[] = [];

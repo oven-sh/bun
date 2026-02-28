@@ -472,4 +472,4 @@ Examples:
   printInitialMessage(true);
 }
 
-export default start;
+export default { start };

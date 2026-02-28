@@ -86,19 +86,25 @@ Bun's minifier has three independent modes that can be enabled separately or com
 ### Whitespace minification
 
 <ParamField path="--minify-whitespace" type="boolean">
-  Removes all unnecessary whitespace, newlines, and formatting from the output. Use <code>--emit-dce-annotations</code> to re-enable DCE annotations, which are disabled by default when this flag is active.
+  Removes all unnecessary whitespace, newlines, and formatting from the output.
+
+  - Use `--emit-dce-annotations` to re-emit DCE annotations, disabled by default when `--minify-whitespace` is active
 </ParamField>
 
 ### Syntax minification
 
 <ParamField path="--minify-syntax" type="boolean">
-  Rewrites JavaScript syntax to shorter equivalent forms and performs constant folding, dead code elimination, and other optimizations. Use <code>--keep-names</code> to preserve original function and class names.
+  Rewrites JavaScript syntax to shorter equivalent forms and performs constant folding, dead code elimination, and other optimizations.
+
+  - Use `--keep-names` to preserve original function and class names
 </ParamField>
 
 ### Identifier minification
 
 <ParamField path="--minify-identifiers" type="boolean">
-  Renames local variables and function names to shorter identifiers using frequency-based optimization. Use <code>--keep-names</code> to preserve original function and class names.
+  Renames local variables and function names to shorter identifiers using frequency-based optimization.
+
+  - Use `--keep-names` to preserve original function and class names
 </ParamField>
 
 ## All Transformations

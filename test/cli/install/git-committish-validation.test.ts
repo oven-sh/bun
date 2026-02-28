@@ -44,20 +44,12 @@ async function runInstallWithCommittish(dirName: string, committish: string, exp
 }
 
 describe("git committish validation", () => {
-  it("should reject committish starting with a dash", async () => {
+  it("should reject committish starting with a dash (flag injection)", async () => {
     await runInstallWithCommittish("committish-dash", "--output=/tmp/pwn", { shouldReject: true });
   });
 
   it("should reject committish that is a single dash flag", async () => {
     await runInstallWithCommittish("committish-flag", "-v", { shouldReject: true });
-  });
-
-  it("should reject committish starting with a dot", async () => {
-    await runInstallWithCommittish("committish-dot", ".hidden", { shouldReject: true });
-  });
-
-  it("should reject committish containing '..'", async () => {
-    await runInstallWithCommittish("committish-dotdot", "main..HEAD", { shouldReject: true });
   });
 
   it("should accept valid committish with tag", async () => {

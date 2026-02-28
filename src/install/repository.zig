@@ -553,28 +553,27 @@ pub const Repository = extern struct {
         };
     }
 
-    /// Returns whether a committish string is a valid git ref name.
-    /// Git refs must not start with '-' (which would be interpreted as a flag),
-    /// and must not contain certain control or special characters.
+    /// Returns whether a committish string is safe to pass to git commands.
+    /// This is a security check to prevent flag injection, not a ref-name
+    /// validation. Git revision specifiers legitimately use operators like
+    /// `~` (ancestor), `^` (parent/dereference), and `:` (tree path), so
+    /// those are allowed. We block:
+    ///  - leading `-` (would be interpreted as a git flag)
+    ///  - control characters (< 0x20) and DEL (0x7f)
+    ///  - spaces (not valid in committish values)
+    ///  - NUL bytes (string terminator issues)
     pub fn isValidCommittish(committish: string) bool {
         if (committish.len == 0) return true;
-        // Git refs cannot start with '-' or '.'
-        if (committish[0] == '-' or committish[0] == '.') return false;
-        // Git refs cannot end with '.' or '.lock'
-        if (committish[committish.len - 1] == '.') return false;
-        if (strings.hasSuffixComptime(committish, ".lock")) return false;
+        // Must not start with '-' (flag injection)
+        if (committish[0] == '-') return false;
 
         for (committish) |c| {
             switch (c) {
-                // Git refs must not contain these characters:
-                // space, ~, ^, :, ?, *, [, \, control chars (< 0x20), DEL (0x7f)
-                ' ', '~', '^', ':', '?', '*', '[', '\\', 0x7f => return false,
+                // Block control characters, spaces, and DEL
+                ' ', 0x7f => return false,
                 else => if (c < 0x20) return false,
             }
         }
-        // Git refs must not contain '..' or '@{'
-        if (strings.containsComptime(committish, "..")) return false;
-        if (strings.containsComptime(committish, "@{")) return false;
         return true;
     }
 

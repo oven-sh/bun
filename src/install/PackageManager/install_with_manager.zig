@@ -584,12 +584,11 @@ pub fn installWithManager(
             try waitForEverythingExceptPeers(manager);
         }
 
-        if (manager.peer_dependencies.readableLength() > 0) {
-            try manager.processPeerDependencyList();
-            manager.drainDependencyList();
-        }
-
-        if (manager.pendingTaskCount() > 0) {
+        // Resolving a peer dep can create a NEW package whose own peer deps
+        // get re-queued to `peer_dependencies`. If everything is cached and
+        // synchronous, `pendingTaskCount() == 0` and `waitForPeers` would be
+        // skipped — leaving those transitive peers unresolved. Check BOTH.
+        if (manager.pendingTaskCount() > 0 or manager.peer_dependencies.readableLength() > 0) {
             try waitForPeers(manager);
         }
 

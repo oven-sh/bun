@@ -1234,3 +1234,89 @@ test("runs lifecycle scripts correctly", async () => {
   expect(lifecyclePostinstallDir).toEqual(["lifecycle-postinstall"]);
   expect(allLifecycleScriptsDir).toEqual(["all-lifecycle-scripts"]);
 });
+
+// When an auto-installed peer dependency has its OWN peer deps, those
+// transitive peers get re-queued during peer processing. If all manifest
+// loads are synchronous (cached with valid max-age) AND the transitive peer's
+// version constraint doesn't match what's already in the lockfile,
+// pendingTaskCount() stays at 0 and waitForPeers was skipped — leaving
+// the transitive peer's resolution unset (= invalid_package_id → filtered
+// from the install).
+test("transitive peer deps are resolved when resolution is fully synchronous", async () => {
+  // Proxy Verdaccio to inject Cache-Control headers so bun treats cached
+  // manifests as fresh (skipping async revalidation HTTP requests). This
+  // replicates the npmjs.org max-age=300 behavior that triggers the fully-
+  // synchronous path on a warm-cache install.
+  using proxy = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      const upstream = new URL(req.url);
+      upstream.host = `localhost:${registry.port}`;
+      // Tarballs: redirect straight to Verdaccio to avoid body mangling
+      if (upstream.pathname.endsWith(".tgz")) {
+        return Response.redirect(upstream.toString(), 302);
+      }
+      // Manifests: buffer decompressed body, strip encoding headers, add
+      // Cache-Control so bun treats the cached manifest as fresh
+      const res = await fetch(upstream, { method: req.method, headers: req.headers });
+      const body = await res.arrayBuffer();
+      const headers = new Headers(res.headers);
+      headers.delete("content-encoding");
+      headers.delete("transfer-encoding");
+      headers.set("content-length", String(body.byteLength));
+      headers.set("Cache-Control", "public, max-age=300");
+      return new Response(body, { status: res.status, headers });
+    },
+  });
+
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+  // Override bunfig to point at the proxy instead of Verdaccio directly
+  await write(
+    join(packageDir, "bunfig.toml"),
+    `[install]\ncache = "${join(packageDir, ".bun-cache").replaceAll("\\", "\\\\")}"\nregistry = "http://localhost:${proxy.port}/"\nlinker = "isolated"\n`,
+  );
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "test-transitive-peer",
+      dependencies: {
+        // Chain: uses-strict-peer → (peer) strict-peer-dep → (peer) no-deps@^2.0.0
+        // Root has no-deps@1.0.0, which does NOT satisfy ^2.0.0. This forces
+        // strict-peer-dep's peer `no-deps` through the full resolution pass
+        // (can't reuse root's no-deps via getPackageID).
+        "no-deps": "1.0.0",
+        "uses-strict-peer": "1.0.0",
+      },
+    }),
+  );
+
+  // First install: populates manifest cache (with max-age=300 from proxy)
+  await runBunInstall(bunEnv, packageDir, { allowWarnings: true });
+
+  // Second install with NO lockfile and WARM cache. Manifests are fresh
+  // (within max-age) so all loads are synchronous — this is the bug trigger.
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await rm(join(packageDir, "bun.lock"), { force: true });
+  await runBunInstall(bunEnv, packageDir, { allowWarnings: true });
+
+  // Entry names have peer hashes; find them dynamically
+  const bunDir = join(packageDir, "node_modules", ".bun");
+  const entries = await readdirSorted(bunDir);
+  const strictPeerEntry = entries.find(e => e.startsWith("strict-peer-dep@1.0.0"));
+  const usesStrictEntry = entries.find(e => e.startsWith("uses-strict-peer@1.0.0"));
+
+  // strict-peer-dep must exist (auto-installed via uses-strict-peer's peer)
+  expect(strictPeerEntry).toBeDefined();
+  expect(usesStrictEntry).toBeDefined();
+
+  // strict-peer-dep's own peer `no-deps` must be resolved and symlinked.
+  // Without the fix: this symlink is missing because the transitive peer
+  // queue was never drained after drainDependencyList re-queued it.
+  expect(existsSync(join(bunDir, strictPeerEntry!, "node_modules", "no-deps"))).toBe(true);
+
+  // Verify the chain is intact
+  expect(readlinkSync(join(bunDir, usesStrictEntry!, "node_modules", "strict-peer-dep"))).toBe(
+    join("..", "..", strictPeerEntry!, "node_modules", "strict-peer-dep"),
+  );
+});

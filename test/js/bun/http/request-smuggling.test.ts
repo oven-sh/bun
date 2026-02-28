@@ -619,11 +619,14 @@ describe("chunked encoding size hardening", () => {
     let receivedBody: string | null = null;
     let bodyError = false;
 
+    const { promise: headersReceived, resolve: onHeadersReceived } = Promise.withResolvers<void>();
     const { promise: bodyHandled, resolve: bodyDone } = Promise.withResolvers<void>();
 
     await using server = Bun.serve({
       port: 0,
       async fetch(req) {
+        // Signal that headers have been parsed and the fetch handler entered
+        onHeadersReceived();
         try {
           receivedBody = await req.text();
         } catch {
@@ -648,9 +651,9 @@ describe("chunked encoding size hardening", () => {
 
     client.write(maliciousRequest);
 
-    // Give server a moment to process the data, then close the connection
-    // to trigger the body error (since we won't send 4GB).
-    await Bun.sleep(200);
+    // Wait until the server has parsed headers and entered the fetch handler,
+    // then close the connection to trigger the body error (since we won't send 4GB).
+    await headersReceived;
     client.end();
 
     await bodyHandled;
@@ -685,7 +688,7 @@ describe("chunked encoding size hardening", () => {
       "a\r\n" + // 10 bytes
       "0123456789\r\n" +
       "FF\r\n" + // 255 bytes
-      "A".repeat(255) +
+      Buffer.alloc(255, "A").toString() +
       "\r\n" +
       "0\r\n" +
       "\r\n";
@@ -695,7 +698,7 @@ describe("chunked encoding size hardening", () => {
       client.on("data", data => {
         const response = data.toString();
         expect(response).toContain("HTTP/1.1 200");
-        expect(receivedBody).toBe("0123456789" + "A".repeat(255));
+        expect(receivedBody).toBe("0123456789" + Buffer.alloc(255, "A").toString());
         client.end();
         resolve();
       });

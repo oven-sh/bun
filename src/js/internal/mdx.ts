@@ -378,7 +378,7 @@ Examples:
                     }
                   : false,
               hostname,
-              port: defaultPort++,
+              port: ++defaultPort,
               fetch() {
                 return new Response("Not found", { status: 404 });
               },

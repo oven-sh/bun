@@ -584,6 +584,7 @@ fn emitExprAsJson(out: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator
 }
 
 fn appendJsonStringEscaped(out: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, bytes: []const u8) !void {
+    const hex_digits = "0123456789abcdef";
     for (bytes) |c| {
         switch (c) {
             '\\' => try out.appendSlice(allocator, "\\\\"),
@@ -591,6 +592,13 @@ fn appendJsonStringEscaped(out: *std.ArrayListUnmanaged(u8), allocator: std.mem.
             '\n' => try out.appendSlice(allocator, "\\n"),
             '\r' => try out.appendSlice(allocator, "\\r"),
             '\t' => try out.appendSlice(allocator, "\\t"),
+            0x08 => try out.appendSlice(allocator, "\\b"),
+            0x0C => try out.appendSlice(allocator, "\\f"),
+            0x00...0x07, 0x0B, 0x0E...0x1F => {
+                try out.appendSlice(allocator, "\\u00");
+                try out.append(allocator, hex_digits[c >> 4]);
+                try out.append(allocator, hex_digits[c & 0x0F]);
+            },
             else => try out.append(allocator, c),
         }
     }

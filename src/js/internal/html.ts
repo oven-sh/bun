@@ -272,7 +272,7 @@ yourself with Bun.serve().
               hostname,
 
               // Retry with a different port up to 4 times.
-              port: defaultPort++,
+              port: ++defaultPort,
 
               fetch(_req: Request) {
                 return new Response("Not found", { status: 404 });

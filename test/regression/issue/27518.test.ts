@@ -62,16 +62,12 @@ async function withTerminalRepl(
 
       // Race the data callback against the remaining deadline so we
       // re-check even when no new terminal data arrives.
-      let timer: ReturnType<typeof setTimeout> | undefined;
       await Promise.race([
         new Promise<void>(resolve => {
           resolveWaiter = resolve;
         }),
-        new Promise<void>(resolve => {
-          timer = setTimeout(resolve, remaining);
-        }),
+        Bun.sleep(remaining),
       ]);
-      clearTimeout(timer);
       resolveWaiter = null;
     }
   };

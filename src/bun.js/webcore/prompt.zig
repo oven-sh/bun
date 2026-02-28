@@ -52,7 +52,7 @@ fn alert(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSErr
     const reader = &stdin_reader.interface;
     while (true) {
         const byte = reader.takeByte() catch break;
-        if (byte == '\n') break;
+        if (byte == '\n' or byte == '\r') break;
     }
 
     // 8. Invoke WebDriver BiDi user prompt closed with this and true.
@@ -110,16 +110,7 @@ fn confirm(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
     // *  Not relevant in a server context.
 
     switch (first_byte) {
-        '\n' => return .false,
-        '\r' => {
-            const next_byte = reader.takeByte() catch {
-                // They may have said yes, but the stdin is invalid.
-                return .false;
-            };
-            if (next_byte == '\n') {
-                return .false;
-            }
-        },
+        '\n', '\r' => return .false,
         'y', 'Y' => {
             const next_byte = reader.takeByte() catch {
                 // They may have said yes, but the stdin is invalid.
@@ -127,18 +118,10 @@ fn confirm(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
                 return .false;
             };
 
-            if (next_byte == '\n') {
+            if (next_byte == '\n' or next_byte == '\r') {
                 // 8. If the user responded positively, return true;
                 //    otherwise, the user responded negatively: return false.
                 return .true;
-            } else if (next_byte == '\r') {
-                //Check Windows style
-                const second_byte = reader.takeByte() catch {
-                    return .false;
-                };
-                if (second_byte == '\n') {
-                    return .true;
-                }
             }
         },
         else => {},
@@ -169,7 +152,9 @@ pub const prompt = struct {
 
             const byte: u8 = try reader.readByte();
 
-            if (byte == delimiter) {
+            // Accept both \n and \r as line endings to support raw terminal mode
+            // (e.g. when called from the REPL where Enter sends \r instead of \n)
+            if (byte == delimiter or byte == '\r') {
                 return;
             }
 
@@ -187,7 +172,8 @@ pub const prompt = struct {
         while (true) {
             const byte: u8 = try reader.readByte();
 
-            if (byte == delimiter) {
+            // Accept both \n and \r as line endings to support raw terminal mode
+            if (byte == delimiter or byte == '\r') {
                 return;
             }
 
@@ -263,21 +249,16 @@ pub const prompt = struct {
 
         // 7. Pause while waiting for the user's response.
         const reader = bun.Output.buffered_stdin.reader();
-        var second_byte: ?u8 = null;
         const first_byte = reader.readByte() catch {
             // 8. Let result be null if the user aborts, or otherwise the string
             //    that the user responded with.
             return .null;
         };
 
-        if (first_byte == '\n') {
+        if (first_byte == '\n' or first_byte == '\r') {
             // 8. Let result be null if the user aborts, or otherwise the string
             //    that the user responded with.
             return default;
-        } else if (first_byte == '\r') {
-            const second = reader.readByte() catch return .null;
-            second_byte = second;
-            if (second == '\n') return default;
         }
 
         var input = std.array_list.Managed(u8).initCapacity(allocator, 2048) catch {
@@ -288,7 +269,6 @@ pub const prompt = struct {
         defer input.deinit();
 
         input.appendAssumeCapacity(first_byte);
-        if (second_byte) |second| input.appendAssumeCapacity(second);
 
         // All of this code basically just first tries to load the input into a
         // buffer of size 2048. If that is too small, then increase the buffer

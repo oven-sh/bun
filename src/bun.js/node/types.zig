@@ -734,14 +734,13 @@ pub const PathLike = union(enum) {
     }
 
     pub fn fromBunString(global: *jsc.JSGlobalObject, str: *bun.String, will_be_async: bool, allocator: std.mem.Allocator) !PathLike {
-        // Validate using the UTF-8 byte length, not the UTF-16 code unit count,
-        // because the path will be stored as UTF-8 in a fixed-size PathBuffer.
-        try Valid.pathStringLength(str.utf8ByteLength(), global);
-
         if (will_be_async) {
             var sliced = try str.toThreadSafeSlice(allocator);
             errdefer sliced.deinit();
 
+            // Validate the UTF-8 byte length after conversion, since the path
+            // will be stored in a fixed-size PathBuffer.
+            try Valid.pathStringLength(sliced.slice().len, global);
             try Valid.pathNullBytes(sliced.slice(), global);
 
             sliced.reportExtraMemory(global.vm());
@@ -754,6 +753,9 @@ pub const PathLike = union(enum) {
             var sliced = str.toSlice(allocator);
             errdefer sliced.deinit();
 
+            // Validate the UTF-8 byte length after conversion, since the path
+            // will be stored in a fixed-size PathBuffer.
+            try Valid.pathStringLength(sliced.slice().len, global);
             try Valid.pathNullBytes(sliced.slice(), global);
 
             // Costs nothing to keep both around.

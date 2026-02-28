@@ -490,7 +490,7 @@ pub fn generateChunksInParallel(
                     chunk,
                     chunks,
                     &display_size,
-                    c.resolver.opts.compile and !chunk.flags.is_browser_chunk_from_server_build,
+                    c.resolver.opts.compile,
                     chunk.content.sourcemap(c.options.source_maps) != .none,
                 );
             var code_result = _code_result catch |err| bun.handleOom(err);

@@ -33,13 +33,22 @@ function emitMdxWrapperScript(compiledTsxName: string) {
   ].join("\n");
 }
 
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 function emitMdxHtmlShell(wrapperScriptName: string, title: string) {
   return `<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>${title}</title>
+    <title>${escapeHtml(title)}</title>
     <style>
       html, body {
         margin: 0;
@@ -276,6 +285,15 @@ Examples:
   const tmpRoot = path.join(os.tmpdir(), `.bun-mdx-${process.pid}-${uniqueId}`);
   ensureDir(tmpRoot);
 
+  // Symlink the project's node_modules so the bundler can resolve
+  // dependencies (react, react-dom) from the temp directory.
+  const cwdNodeModules = path.join(cwd, "node_modules");
+  try {
+    if (fs.existsSync(cwdNodeModules)) {
+      fs.symlinkSync(cwdNodeModules, path.join(tmpRoot, "node_modules"), "junction");
+    }
+  } catch {}
+
   // Clean up temp directory on exit. SIGKILL cannot be handled.
   process.on("exit", () => {
     try {
@@ -302,7 +320,8 @@ Examples:
     const htmlPath = path.join(entryDir, "index.html");
 
     fs.writeFileSync(wrapperScriptPath, emitMdxWrapperScript(compiledTsxName), "utf8");
-    fs.writeFileSync(htmlPath, emitMdxHtmlShell(wrapperScriptName, path.basename(mdxPath)), "utf8");
+    const titleBase = path.basename(mdxPath, ".mdx");
+    fs.writeFileSync(htmlPath, emitMdxHtmlShell(wrapperScriptName, titleBase), "utf8");
     return htmlPath;
   });
 

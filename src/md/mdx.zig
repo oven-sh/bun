@@ -500,28 +500,87 @@ pub fn compile(src: []const u8, allocator: std.mem.Allocator, options: MdxOption
     return out.toOwnedSlice(allocator);
 }
 
+/// Parses YAML frontmatter and serializes it as a JSON object literal.
+/// Uses Bun's YAML parser which supports the full YAML spec including
+/// nested objects, arrays, booleans, numbers, and multiline strings.
+/// Returns error.YamlParseError if the YAML content cannot be parsed.
 fn emitFrontmatterAsJson(out: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, yaml_content: []const u8) !void {
-    var first = true;
-    try out.append(allocator, '{');
-    var lines = std.mem.splitScalar(u8, yaml_content, '\n');
-    while (lines.next()) |line| {
-        const trimmed = bun.strings.trimSpaces(line);
-        if (trimmed.len == 0 or trimmed[0] == '#') continue;
-        const colon_index = bun.strings.indexOfChar(trimmed, ':') orelse continue;
-        const key = bun.strings.trimSpaces(trimmed[0..colon_index]);
-        const value = bun.strings.trimSpaces(trimmed[colon_index + 1 ..]);
-        if (key.len == 0) continue;
+    ast.Expr.Data.Store.create();
 
-        if (!first) try out.appendSlice(allocator, ", ");
-        try out.append(allocator, '"');
-        try appendJsonStringEscaped(out, allocator, key);
-        try out.appendSlice(allocator, "\": ");
-        try out.append(allocator, '"');
-        try appendJsonStringEscaped(out, allocator, value);
-        try out.append(allocator, '"');
-        first = false;
+    var log = logger.Log.init(allocator);
+    defer log.deinit();
+
+    const source = logger.Source.initPathString("frontmatter.yaml", yaml_content);
+    const expr = yaml.YAML.parse(&source, &log, allocator) catch {
+        return error.YamlParseError;
+    };
+
+    try emitExprAsJson(out, allocator, expr);
+}
+
+fn emitExprAsJson(out: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, expr: ast.Expr) !void {
+    switch (expr.data) {
+        .e_object => |obj| {
+            try out.append(allocator, '{');
+            for (obj.properties.slice(), 0..) |prop, i| {
+                if (i > 0) try out.appendSlice(allocator, ", ");
+                if (prop.key) |key| {
+                    if (key.data.as(.e_string)) |str| {
+                        try out.append(allocator, '"');
+                        try appendJsonStringEscaped(out, allocator, str.data);
+                        try out.appendSlice(allocator, "\": ");
+                    } else {
+                        try out.appendSlice(allocator, "\"\":");
+                    }
+                } else {
+                    try out.appendSlice(allocator, "\"\":");
+                }
+                if (prop.value) |val| {
+                    try emitExprAsJson(out, allocator, val);
+                } else {
+                    try out.appendSlice(allocator, "null");
+                }
+            }
+            try out.append(allocator, '}');
+        },
+        .e_array => |arr| {
+            try out.append(allocator, '[');
+            for (arr.items.slice(), 0..) |item, i| {
+                if (i > 0) try out.appendSlice(allocator, ", ");
+                try emitExprAsJson(out, allocator, item);
+            }
+            try out.append(allocator, ']');
+        },
+        .e_string => |str| {
+            try out.append(allocator, '"');
+            try appendJsonStringEscaped(out, allocator, str.data);
+            try out.append(allocator, '"');
+        },
+        .e_number => |num| {
+            if (std.math.isNan(num.value) or std.math.isInf(num.value)) {
+                try out.appendSlice(allocator, "null");
+            } else if (num.value == @trunc(num.value) and
+                @abs(num.value) < @as(f64, @floatFromInt(@as(i64, std.math.maxInt(i52)))))
+            {
+                var buf: [32]u8 = undefined;
+                const formatted = std.fmt.bufPrint(&buf, "{d}", .{@as(i64, @intFromFloat(num.value))}) catch unreachable;
+                try out.appendSlice(allocator, formatted);
+            } else {
+                var buf: [124]u8 = undefined;
+                const formatted = bun.fmt.FormatDouble.dtoa(&buf, num.value);
+                try out.appendSlice(allocator, formatted);
+            }
+        },
+        .e_boolean => |b| {
+            try out.appendSlice(allocator, if (b.value) "true" else "false");
+        },
+        .e_null => {
+            try out.appendSlice(allocator, "null");
+        },
+        else => {
+            try out.appendSlice(allocator, "null");
+        },
     }
-    try out.append(allocator, '}');
 }
 
 fn appendJsonStringEscaped(out: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, bytes: []const u8) !void {
@@ -541,3 +600,6 @@ const bun = @import("bun");
 const std = @import("std");
 const md = @import("./root.zig");
 const jsx_renderer = @import("./jsx_renderer.zig");
+const ast = bun.ast;
+const logger = bun.logger;
+const yaml = bun.interchange.yaml;

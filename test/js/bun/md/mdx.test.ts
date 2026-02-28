@@ -11,6 +11,33 @@ function linkNodeModules(dir: string) {
   fs.symlinkSync(repoNodeModules, path.join(dir, "node_modules"), "junction");
 }
 
+function extractFrontmatterObjectLiteral(compiled: string): string {
+  const prefix = "export const frontmatter = ";
+  const start = compiled.indexOf(prefix);
+  if (start === -1) {
+    throw new Error("frontmatter export not found in compiled output");
+  }
+
+  const objectStart = start + prefix.length;
+  if (compiled[objectStart] !== "{") {
+    throw new Error("frontmatter export does not start with an object literal");
+  }
+
+  let depth = 0;
+  for (let i = objectStart; i < compiled.length; i++) {
+    const ch = compiled[i];
+    if (ch === "{") depth++;
+    if (ch === "}") {
+      depth--;
+      if (depth === 0) {
+        return compiled.slice(objectStart, i + 1);
+      }
+    }
+  }
+
+  throw new Error("frontmatter object literal was not closed");
+}
+
 /** Matches the "url: http://..." line printed by the dev server. */
 const URL_REGEX = /url:\s*(\S+)/;
 /** The last-route marker (└──) used to wait until the full route tree is printed. */
@@ -61,12 +88,15 @@ describe("Bun.mdx.compile", () => {
     const src = "Result: {value\n// ignore }\n+ 1}";
     const output = Mdx.compile(src);
     expect(output).toContain("{value\n// ignore }\n+ 1}");
+    // Regression guard: if brace counting closes early, trailing text gets rendered as markdown.
+    expect(output).not.toContain("<p>+ 1}</p>");
   });
 
   test("skips braces inside block comments", () => {
     const src = "Result: {value /* } */ + rest}";
     const output = Mdx.compile(src);
     expect(output).toContain("{value /* } */ + rest}");
+    expect(output).not.toContain("<p>+ rest}</p>");
   });
 
   test("skips braces inside double-quoted strings", () => {
@@ -95,6 +125,7 @@ describe("Bun.mdx.compile", () => {
     const src = "Value: {'it\\'s } here'}";
     const output = Mdx.compile(src);
     expect(output).toContain("{'it\\'s } here'}");
+    expect(output).not.toContain("<p>here'}</p>");
   });
 
   test("handles comments inside template expression interpolations", () => {
@@ -152,7 +183,59 @@ describe("Bun.mdx.compile", () => {
   test("invalid arguments throw", () => {
     expect(() => Mdx.compile(undefined as any)).toThrow("Expected a string or buffer to compile");
     expect(() => Mdx.compile(null as any)).toThrow("Expected a string or buffer to compile");
-    expect(() => Mdx.compile("ok", { jsxImportSource: 123 as any })).toThrow("jsxImportSource must be a string");
+  });
+
+  test("jsxImportSource accepts undefined, null, empty string, and coerces numbers", () => {
+    const src = "# Hi";
+    const outDefault = Mdx.compile(src);
+    expect(outDefault).toContain("export default function MDXContent");
+
+    const outUndefined = Mdx.compile(src, { jsxImportSource: undefined });
+    expect(outUndefined).toContain("export default function MDXContent");
+    expect(outUndefined).not.toContain("@jsxImportSource");
+
+    const outNull = Mdx.compile(src, { jsxImportSource: null as any });
+    expect(outNull).toContain("export default function MDXContent");
+    expect(outNull).not.toContain("@jsxImportSource");
+
+    const outEmpty = Mdx.compile(src, { jsxImportSource: "" });
+    expect(outEmpty).toContain("export default function MDXContent");
+    expect(outEmpty).not.toContain("@jsxImportSource");
+
+    const outNumber = Mdx.compile(src, { jsxImportSource: 42 as any });
+    expect(outNumber).toContain("export default function MDXContent");
+    expect(outNumber).toContain("@jsxImportSource 42");
+  });
+
+  test("jsxImportSource rejects Symbol values", () => {
+    expect(() => Mdx.compile("# Hi", { jsxImportSource: Symbol("x") as any })).toThrow(/jsxImportSource|string/i);
+  });
+
+  test("frontmatter supports arrays, booleans, numbers, and nested objects", () => {
+    const src = [
+      "---",
+      "tags: [alpha, beta, gamma]",
+      "draft: true",
+      "version: 3",
+      "author:",
+      "  name: Alice",
+      "  url: https://example.com",
+      "---",
+      "",
+      "# Content",
+    ].join("\n");
+
+    const output = Mdx.compile(src);
+    const frontmatter = JSON.parse(extractFrontmatterObjectLiteral(output));
+    expect(frontmatter).toEqual({
+      tags: ["alpha", "beta", "gamma"],
+      draft: true,
+      version: 3,
+      author: {
+        name: "Alice",
+        url: "https://example.com",
+      },
+    });
   });
 
   test("malformed mdx throws syntax-like error", () => {
@@ -265,7 +348,7 @@ export const meta = { version: "2.0" };
     });
 
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    expect(stderr).toMatch(/Failed to compile MDX|MDX compile error/);
+    expect(stderr).toMatch(/Failed to compile MDX:\s*[A-Za-z_]\w*/);
     expect(exitCode).not.toBe(0);
   });
 });
@@ -279,7 +362,13 @@ describe("MDX transpiler integration", () => {
   });
 });
 
-async function readUntil(proc: Bun.Subprocess, predicate: (text: string) => boolean) {
+const READ_UNTIL_TIMEOUT_MS = 30_000;
+
+async function readUntil(
+  proc: Bun.Subprocess,
+  predicate: (text: string) => boolean,
+  timeoutMs = READ_UNTIL_TIMEOUT_MS,
+) {
   const stdout = proc.stdout;
   if (!stdout || typeof stdout === "number") {
     throw new Error("Expected subprocess stdout to be piped");
@@ -287,21 +376,72 @@ async function readUntil(proc: Bun.Subprocess, predicate: (text: string) => bool
   const reader = stdout.getReader();
   const decoder = new TextDecoder();
   let output = "";
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
   try {
-    while (true) {
-      const result = await reader.read();
-      if (result.done) break;
-      output += decoder.decode(result.value, { stream: true });
-      if (predicate(output)) {
-        return output;
-      }
+    const result = await Promise.race([
+      (async () => {
+        while (true) {
+          const chunk = await reader.read();
+          if (chunk.done) break;
+          output += decoder.decode(chunk.value, { stream: true });
+          if (predicate(output)) {
+            return output;
+          }
+        }
+        output += decoder.decode();
+        return undefined;
+      })(),
+      new Promise<"timeout">(
+        resolve =>
+          (timeoutId = setTimeout(() => {
+            resolve("timeout");
+          }, timeoutMs)),
+      ),
+    ]);
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+      timeoutId = undefined;
     }
-    output += decoder.decode();
+    if (result === "timeout") {
+      reader.cancel().catch(() => {});
+      throw new Error(`readUntil: timed out after ${timeoutMs}ms.\nAccumulated output:\n${output}`);
+    }
+    if (result === undefined) {
+      throw new Error(`readUntil: stream ended without predicate match.\nAccumulated output:\n${output}`);
+    }
+    return result;
   } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
     reader.releaseLock();
   }
-  throw new Error(`readUntil: stream ended without predicate match.\nAccumulated output:\n${output}`);
 }
+
+describe("test helpers", () => {
+  test("readUntil throws on timeout", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", "setTimeout(() => {}, 60000)"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    await expect(readUntil(proc, () => false, 500)).rejects.toThrow(/timed out/i);
+  });
+
+  test("readUntil resolves before timeout", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", "console.log('ready')"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const output = await readUntil(proc, text => text.includes("ready"), 5_000);
+    expect(output).toContain("ready");
+  });
+});
 
 describe("MDX direct serve mode", () => {
   test("bun file.mdx serves HTML shell", async () => {
@@ -416,6 +556,31 @@ describe("MDX direct serve mode", () => {
     const docsGuideCount = routes.filter(r => r === "/docs/guide").length;
     expect(docsIndexCount).toBe(1);
     expect(docsGuideCount).toBe(1);
+  });
+
+  test("title with special characters is HTML-escaped", async () => {
+    using dir = tempDir("mdx-escape", {
+      "a&b.mdx": `# Ampersand test`,
+    });
+    linkNodeModules(String(dir));
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "a&b.mdx", "--port=0"],
+      cwd: String(dir),
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const output = await readUntil(proc, text => URL_REGEX.test(text));
+    const urlMatch = output.match(URL_REGEX);
+    expect(urlMatch).not.toBeNull();
+
+    const res = await fetch(urlMatch![1]);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("<title>a&amp;b</title>");
+    expect(html).not.toContain("<title>a&b</title>");
   });
 
   test("--hostname=127.0.0.1 reachable URL", async () => {

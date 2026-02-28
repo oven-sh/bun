@@ -8,7 +8,6 @@ const argv = process.argv;
 const path = require("node:path");
 
 const env = Bun.env;
-const mdxInternal = require("internal/mdx");
 
 function shouldUseMdxMode(args: string[]) {
   for (let i = 1, length = args.length; i < length; i++) {
@@ -22,6 +21,7 @@ function shouldUseMdxMode(args: string[]) {
 // This function is called at startup.
 async function start() {
   if (shouldUseMdxMode(argv)) {
+    const mdxInternal = require("internal/mdx");
     return mdxInternal.start();
   }
 

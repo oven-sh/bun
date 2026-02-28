@@ -1302,8 +1302,57 @@ pub fn joinStringBufT(comptime T: type, buf: []T, parts: anytype, comptime platf
     return normalizeStringNodeT(T, temp_buf[0..written], buf, platform);
 }
 
+/// Inline `MAX_PATH_BYTES * 2` stack buffer that heap-allocates when the
+/// requested size exceeds it. Keeps `_joinAbsStringBuf`'s scratch buffer safe
+/// for arbitrarily long inputs while preserving zero-alloc behaviour for the
+/// common case.
+const JoinScratch = struct {
+    sfa: std.heap.StackFallbackAllocator(bun.MAX_PATH_BYTES * 2),
+    alloc: std.mem.Allocator,
+    buf: []u8,
+
+    pub fn init(self: *JoinScratch, base: usize, parts: []const []const u8) []u8 {
+        self.sfa = std.heap.stackFallback(bun.MAX_PATH_BYTES * 2, bun.default_allocator);
+        self.alloc = self.sfa.get();
+        var total = base + 2;
+        for (parts) |p| total += p.len + 1;
+        self.buf = bun.handleOom(self.alloc.alloc(u8, total));
+        return self.buf;
+    }
+
+    pub fn deinit(self: *JoinScratch) void {
+        self.alloc.free(self.buf);
+    }
+};
+
 pub fn joinAbsStringBuf(cwd: []const u8, buf: []u8, _parts: anytype, comptime platform: Platform) []const u8 {
     return _joinAbsStringBuf(false, []const u8, cwd, buf, _parts, platform);
+}
+
+/// Like `joinAbsStringBuf`, but returns null when the *normalized* result is
+/// too large for `buf`. Use this when `parts` may contain user-controlled
+/// input of arbitrary length. `..` segments are handled correctly: a path
+/// whose unnormalized length exceeds `buf.len` but normalizes down will still
+/// succeed.
+pub fn joinAbsStringBufChecked(cwd: []const u8, buf: []u8, parts: []const []const u8, comptime platform: Platform) ?[]const u8 {
+    comptime if (platform == .nt) @compileError("joinAbsStringBufChecked does not support .nt (the \\\\?\\ prefix is not accounted for in scratch sizing)");
+    // Fast path: size check only — don't allocate a JoinScratch here since the
+    // inner joinAbsStringBuf already has its own (avoids doubling stack usage).
+    var total: usize = cwd.len + 2;
+    for (parts) |p| total += p.len + 1;
+    if (total < buf.len) return joinAbsStringBuf(cwd, buf, parts, platform);
+
+    // Slow path: allocate a large scratch for the result. The inner
+    // joinAbsStringBuf will heap-allocate its own temp buffer for the concat
+    // since `total > MAX_PATH_BYTES * 2 > sfa inline size` is likely here.
+    var sfa = std.heap.stackFallback(bun.MAX_PATH_BYTES, bun.default_allocator);
+    const alloc = sfa.get();
+    const scratch = bun.handleOom(alloc.alloc(u8, total));
+    defer alloc.free(scratch);
+    const joined = joinAbsStringBuf(cwd, scratch, parts, platform);
+    if (joined.len > buf.len) return null;
+    bun.copy(u8, buf, joined);
+    return buf[0..joined.len];
 }
 
 pub fn joinAbsStringBufZ(cwd: []const u8, buf: []u8, _parts: anytype, comptime platform: Platform) [:0]const u8 {
@@ -1347,7 +1396,6 @@ fn _joinAbsStringBuf(comptime is_sentinel: bool, comptime ReturnType: type, _cwd
     }
 
     var parts: []const []const u8 = _parts;
-    var temp_buf: [bun.MAX_PATH_BYTES * 2]u8 = undefined;
     if (parts.len == 0) {
         if (comptime is_sentinel) {
             unreachable;
@@ -1386,7 +1434,11 @@ fn _joinAbsStringBuf(comptime is_sentinel: bool, comptime ReturnType: type, _cwd
         }
     }
 
-    bun.copy(u8, &temp_buf, cwd);
+    var scratch: JoinScratch = undefined;
+    const temp_buf = scratch.init(cwd.len, parts);
+    defer scratch.deinit();
+
+    bun.copy(u8, temp_buf, cwd);
     out = cwd.len;
 
     for (parts) |_part| {
@@ -1502,7 +1554,9 @@ fn _joinAbsStringBufWindows(
     if (set_cwd.len > 0)
         assert(isSepAny(set_cwd[0]));
 
-    var temp_buf: [bun.MAX_PATH_BYTES * 2]u8 = undefined;
+    var scratch: JoinScratch = undefined;
+    const temp_buf = scratch.init(root.len + set_cwd.len, parts[n_start..]);
+    defer scratch.deinit();
 
     @memcpy(temp_buf[0..root.len], root);
     @memcpy(temp_buf[root.len .. root.len + set_cwd.len], set_cwd);

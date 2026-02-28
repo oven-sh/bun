@@ -1092,21 +1092,23 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_compareBody(JSC::JSGlobalOb
         break;
     }
 
-    if (targetStart > targetEndInit && targetStart <= targetEnd) {
-        return Bun::ERR::OUT_OF_RANGE(throwScope, lexicalGlobalObject, "targetStart"_s, 0, targetEndInit, targetStartValue);
-    }
-    if (targetEnd > targetEndInit && targetEnd >= targetStart) {
+    // Validate end values against their respective buffer lengths to prevent OOB access.
+    // This matches Node.js behavior where targetEnd is validated against target.length
+    // and sourceEnd is validated against source.length.
+    if (targetEnd > targetEndInit) {
         return Bun::ERR::OUT_OF_RANGE(throwScope, lexicalGlobalObject, "targetEnd"_s, 0, targetEndInit, targetEndValue);
     }
-    if (sourceStart > sourceEndInit && sourceStart <= sourceEnd) {
-        return Bun::ERR::OUT_OF_RANGE(throwScope, lexicalGlobalObject, "sourceStart"_s, 0, sourceEndInit, sourceStartValue);
-    }
-    if (sourceEnd > sourceEndInit && sourceEnd >= sourceStart) {
+    if (sourceEnd > sourceEndInit) {
         return Bun::ERR::OUT_OF_RANGE(throwScope, lexicalGlobalObject, "sourceEnd"_s, 0, sourceEndInit, sourceEndValue);
     }
 
-    targetStart = std::min(targetStart, std::min(targetEnd, targetEndInit));
-    sourceStart = std::min(sourceStart, std::min(sourceEnd, sourceEndInit));
+    // When start >= end for either side, return early per Node.js semantics.
+    // This must be checked before validating start against buffer length, because
+    // Node.js allows start > buffer.length when it forms a zero-length range.
+    if (sourceStart >= sourceEnd)
+        RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(JSC::jsNumber(targetStart >= targetEnd ? 0 : -1)));
+    if (targetStart >= targetEnd)
+        RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(JSC::jsNumber(1)));
 
     auto sourceLength = sourceEnd - sourceStart;
     auto targetLength = targetEnd - targetStart;

@@ -118,8 +118,6 @@ pub const JSXRenderer = struct {
                 '<' => try self.write("&lt;"),
                 '>' => try self.write("&gt;"),
                 '"' => try self.write("&quot;"),
-                '{' => try self.write("{'{'}"),
-                '}' => try self.write("{'}'}"),
                 else => try self.writeChar(c),
             }
         }

@@ -63,6 +63,7 @@ const headerStateSymbol = Symbol("headerState");
 const kEmitState = Symbol("emitState");
 
 const bodyStreamSymbol = Symbol("bodyStream");
+const consumeStreamResumeSymbol = Symbol("consumeStreamResume");
 const controllerSymbol = Symbol("controller");
 const runSymbol = Symbol("run");
 const deferredSymbol = Symbol("deferred");
@@ -487,6 +488,7 @@ export {
   bodyStreamSymbol,
   callCloseCallback,
   checkShouldUseProxy,
+  consumeStreamResumeSymbol,
   controllerSymbol,
   deferredSymbol,
   drainMicrotasks,

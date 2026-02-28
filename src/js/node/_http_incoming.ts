@@ -27,6 +27,7 @@ const {
   webRequestOrResponseHasBodyValue,
   getCompleteWebRequestOrResponseBodyValueAsArrayBuffer,
   kAbortController,
+  consumeStreamResumeSymbol,
 } = require("internal/http");
 
 const { FakeSocket } = require("internal/http/FakeSocket");
@@ -140,6 +141,7 @@ function IncomingMessage(req, options = defaultIncomingOpts) {
     this[webRequestOrResponse] = req;
     this[typeSymbol] = type;
     this[bodyStreamSymbol] = undefined;
+    this[consumeStreamResumeSymbol] = undefined;
     const statusText = (req as Response)?.statusText;
     this[statusMessageSymbol] = statusText !== "" ? statusText || null : "";
     this[statusCodeSymbol] = (req as Response)?.status || 200;
@@ -236,6 +238,14 @@ const IncomingMessagePrototype = {
       return;
     }
 
+    // Resume consumeStream if it's paused due to backpressure.
+    const resumeFn = this[consumeStreamResumeSymbol];
+    if (resumeFn) {
+      this[consumeStreamResumeSymbol] = undefined;
+      resumeFn();
+      return;
+    }
+
     let internalRequest;
     if (this[noBodySymbol]) {
       emitEOFIncomingMessage(this);
@@ -302,6 +312,13 @@ const IncomingMessagePrototype = {
       // IncomingMessage emits 'aborted'.
       // Client emits 'abort'.
       this.emit("aborted");
+    }
+
+    // Unblock consumeStream if it's paused for backpressure.
+    const resumeFn = this[consumeStreamResumeSymbol];
+    if (resumeFn) {
+      this[consumeStreamResumeSymbol] = undefined;
+      resumeFn();
     }
 
     // Suppress "AbortError" from fetch() because we emit this in the 'aborted' event
@@ -443,8 +460,22 @@ async function consumeStream(self, reader: ReadableStreamDefaultReader) {
         break;
       }
       if (!self._dumped) {
+        var needsPause = false;
         for (var v of value) {
-          self.push(v);
+          if (!self.push(v)) {
+            needsPause = true;
+          }
+        }
+        // Respect backpressure: if push() returned false, the Readable buffer
+        // is full. Wait until _read() is called (consumer wants more data).
+        if (needsPause && !done && !self.destroyed && !self[abortedSymbol]) {
+          await new Promise<void>(resolve => {
+            self[consumeStreamResumeSymbol] = resolve;
+          });
+          self[consumeStreamResumeSymbol] = undefined;
+          if (self.destroyed || (aborted = self[abortedSymbol])) {
+            break;
+          }
         }
       }
 
@@ -456,7 +487,14 @@ async function consumeStream(self, reader: ReadableStreamDefaultReader) {
     if (aborted || self.destroyed) return;
     self.destroy(err);
   } finally {
-    reader?.cancel?.().catch?.(nop);
+    self[consumeStreamResumeSymbol] = undefined;
+    // Only cancel the reader on abnormal termination (abort/destroy/error).
+    // On normal completion (done=true), just release the lock.
+    if (!done) {
+      reader?.cancel?.().catch?.(nop);
+    } else {
+      reader?.releaseLock?.();
+    }
   }
 
   if (!self.complete) {

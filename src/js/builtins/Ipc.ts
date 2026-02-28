@@ -146,6 +146,11 @@
  * @returns {[unknown, Serialized] | null}
  */
 export function serialize(message, handle, options) {
+  // IPC handle passing requires SCM_RIGHTS (Unix domain sockets) which
+  // is not available on Windows. Bail out so the message is sent without
+  // a handle and the sender's socket state is not mutated.
+  if (process.platform === "win32") return null;
+
   const net = require("node:net");
   if (handle instanceof net.Server) {
     if (!handle._handle) return null;

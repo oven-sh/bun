@@ -743,7 +743,7 @@ pub const Log = struct {
                         .resolve => try bun.api.ResolveMessage.create(global, allocator, msg, ""),
                     };
                 }
-                const out = jsc.ZigString.init(message);
+                const out = bun.String.borrowUTF8(message);
                 const agg = try global.createAggregateError(errors_stack[0..count], &out);
                 return agg;
             },

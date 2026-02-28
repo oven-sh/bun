@@ -1,6 +1,6 @@
 pub const JSString = opaque {
     extern fn JSC__JSString__toObject(this: *JSString, global: *JSGlobalObject) ?*JSObject;
-    extern fn JSC__JSString__toZigString(this: *JSString, global: *JSGlobalObject, zig_str: *jsc.ZigString) void;
+    extern fn JSC__JSString__toBunString(this: *JSString, global: *JSGlobalObject, out: *bun.String) void;
     extern fn JSC__JSString__eql(this: *const JSString, global: *JSGlobalObject, other: *JSString) bool;
     extern fn JSC__JSString__iterator(this: *JSString, globalObject: *JSGlobalObject, iter: *anyopaque) void;
     extern fn JSC__JSString__length(this: *const JSString) usize;
@@ -14,51 +14,40 @@ pub const JSString = opaque {
         return JSC__JSString__toObject(this, global);
     }
 
-    pub fn toZigString(this: *JSString, global: *JSGlobalObject, zig_str: *jsc.ZigString) void {
-        return JSC__JSString__toZigString(this, global, zig_str);
-    }
-
     pub fn ensureStillAlive(this: *JSString) void {
         std.mem.doNotOptimizeAway(this);
     }
 
-    pub fn getZigString(this: *JSString, global: *JSGlobalObject) jsc.ZigString {
-        var out = jsc.ZigString.init("");
-        this.toZigString(global, &out);
+    /// Returns a borrowed bun.String view of this JSString.
+    /// The returned String has tag `.StringView` (or `.Empty`) — calling `.deref()` is a no-op.
+    /// Lifetime is tied to this JSString's GC lifetime, NOT reference-counted.
+    /// Call `ensureStillAlive()` on this JSString after using the view.
+    pub fn toBunString(this: *JSString, global: *JSGlobalObject) bun.String {
+        var out: bun.String = .empty;
+        JSC__JSString__toBunString(this, global, &out);
         return out;
     }
 
-    pub const view = getZigString;
+    /// Returns a borrowed bun.String view. Same as `toBunString`.
+    pub const view = toBunString;
 
-    /// doesn't always allocate
+    /// May allocate for 16-bit or non-ascii strings.
+    /// Lifetime is tied to this JSString's GC lifetime if no allocation was needed.
     pub fn toSlice(
         this: *JSString,
         global: *JSGlobalObject,
         allocator: std.mem.Allocator,
-    ) ZigString.Slice {
-        var str = ZigString.init("");
-        this.toZigString(global, &str);
-        return str.toSlice(allocator);
+    ) bun.String.Slice {
+        return this.toBunString(global).toUTF8WithoutRef(allocator);
     }
 
+    /// The returned slice is always allocated by `allocator`.
     pub fn toSliceClone(
         this: *JSString,
         global: *JSGlobalObject,
         allocator: std.mem.Allocator,
-    ) JSError!ZigString.Slice {
-        var str = ZigString.init("");
-        this.toZigString(global, &str);
-        return str.toSliceClone(allocator);
-    }
-
-    pub fn toSliceZ(
-        this: *JSString,
-        global: *JSGlobalObject,
-        allocator: std.mem.Allocator,
-    ) ZigString.Slice {
-        var str = ZigString.init("");
-        this.toZigString(global, &str);
-        return str.toSliceZ(allocator);
+    ) OOM!bun.String.Slice {
+        return this.toBunString(global).toUTF8WithoutRef(allocator).cloneIfBorrowed(allocator);
     }
 
     pub fn eql(this: *const JSString, global: *JSGlobalObject, other: *JSString) bool {
@@ -93,10 +82,9 @@ pub const JSString = opaque {
 
 const std = @import("std");
 const JSObject = @import("./JSObject.zig").JSObject;
-const ZigString = @import("./ZigString.zig").ZigString;
 
 const bun = @import("bun");
-const JSError = bun.JSError;
+const OOM = bun.OOM;
 
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;

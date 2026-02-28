@@ -571,7 +571,7 @@ pub const Value = union(Tag) {
                     .InternalBlob = .{
                         .bytes = std.array_list.Managed(u8){
                             .items = bun.default_allocator.dupe(u8, bytes) catch {
-                                return globalThis.throwValue(ZigString.static("Failed to clone ArrayBufferView").toErrorInstance(globalThis));
+                                return globalThis.throwValue(bun.String.static("Failed to clone ArrayBufferView").toErrorInstance(globalThis));
                             },
                             .capacity = bytes.len,
                             .allocator = bun.default_allocator,
@@ -714,7 +714,7 @@ pub const Value = union(Tag) {
                         var blob = new.useAsAnyBlob();
                         defer blob.detach();
                         var async_form_data: *bun.FormData.AsyncFormData = locked.action.getFormData orelse {
-                            try promise.reject(global, ZigString.init("Internal error: task for FormData must not be null").toErrorInstance(global));
+                            try promise.reject(global, bun.String.static("Internal error: task for FormData must not be null").toErrorInstance(global));
                             break :inner;
                         };
                         defer async_form_data.deinit();
@@ -724,7 +724,7 @@ pub const Value = union(Tag) {
                         var blob = Blob.new(new.use());
                         if (headers) |fetch_headers| {
                             if (fetch_headers.fastGet(.ContentType)) |content_type| {
-                                var content_slice = content_type.toSlice(bun.default_allocator);
+                                var content_slice = content_type.toUTF8(bun.default_allocator);
                                 defer content_slice.deinit();
                                 var allocated = false;
                                 const mimeType = MimeType.init(content_slice.slice(), bun.default_allocator, &allocated);
@@ -1400,7 +1400,7 @@ pub fn Mixin(comptime Type: type) type {
             if (blob.content_type.len == 0) {
                 if (this.getFetchHeaders()) |fetch_headers| {
                     if (fetch_headers.fastGet(.ContentType)) |content_type| {
-                        var content_slice = content_type.toSlice(bun.default_allocator);
+                        var content_slice = content_type.toUTF8(bun.default_allocator);
                         defer content_slice.deinit();
                         var allocated = false;
                         const mimeType = MimeType.init(content_slice.slice(), bun.default_allocator, &allocated);
@@ -1789,7 +1789,6 @@ const JSPromise = jsc.JSPromise;
 const JSValue = jsc.JSValue;
 const SystemError = jsc.SystemError;
 const VirtualMachine = jsc.VirtualMachine;
-const ZigString = jsc.ZigString;
 
 const Response = jsc.WebCore.Response;
 const streams = jsc.WebCore.streams;

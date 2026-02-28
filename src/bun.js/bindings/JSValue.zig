@@ -76,13 +76,13 @@ pub const JSValue = enum(i64) {
     const PropertyIteratorFn = *const fn (
         globalObject_: *JSGlobalObject,
         ctx_ptr: ?*anyopaque,
-        key: *ZigString,
+        key: *bun.String,
         value: JSValue,
         is_symbol: bool,
         is_private_symbol: bool,
     ) callconv(.c) void;
 
-    extern fn JSC__JSValue__forEachPropertyNonIndexed(JSValue0: JSValue, arg1: *JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?*const fn (*JSGlobalObject, ?*anyopaque, *ZigString, JSValue, bool, bool) callconv(.c) void) void;
+    extern fn JSC__JSValue__forEachPropertyNonIndexed(JSValue0: JSValue, arg1: *JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?*const fn (*JSGlobalObject, ?*anyopaque, *bun.String, JSValue, bool, bool) callconv(.c) void) void;
 
     pub fn forEachPropertyNonIndexed(
         this: JSValue,
@@ -320,32 +320,23 @@ pub const JSValue = enum(i64) {
         return fromJSHostCall(global, @src(), JSC__JSValue__createEmptyArray, .{ global, len });
     }
 
-    extern fn JSC__JSValue__putRecord(value: JSValue, global: *JSGlobalObject, key: *ZigString, values_array: [*]ZigString, values_len: usize) void;
-    pub fn putRecord(value: JSValue, global: *JSGlobalObject, key: *ZigString, values_array: [*]ZigString, values_len: usize) void {
-        return JSC__JSValue__putRecord(value, global, key, values_array, values_len);
-    }
-    extern fn JSC__JSValue__put(value: JSValue, global: *JSGlobalObject, key: *const ZigString, result: jsc.JSValue) void;
-    pub fn putZigString(value: JSValue, global: *JSGlobalObject, key: *const ZigString, result: jsc.JSValue) void {
-        JSC__JSValue__put(value, global, key, result);
-    }
-
-    extern fn JSC__JSValue__deleteProperty(target: JSValue, global: *JSGlobalObject, key: *const ZigString) bool;
+    extern fn JSC__JSValue__deleteProperty(target: JSValue, global: *JSGlobalObject, key: *const bun.String) bool;
     /// Delete a property from an object by key. Returns true if the property was deleted.
     pub fn deleteProperty(target: JSValue, global: *JSGlobalObject, key: anytype) bool {
         const Key = @TypeOf(key);
         if (comptime @typeInfo(Key) == .pointer) {
             const Elem = @typeInfo(Key).pointer.child;
-            if (Elem == ZigString) {
+            if (Elem == bun.String) {
                 return JSC__JSValue__deleteProperty(target, global, key);
             } else if (std.meta.Elem(Key) == u8) {
-                return JSC__JSValue__deleteProperty(target, global, &ZigString.init(key));
+                return JSC__JSValue__deleteProperty(target, global, &bun.String.borrowUTF8(key));
             } else {
-                @compileError("Unsupported key type in deleteProperty(). Expected ZigString or string literal, got " ++ @typeName(Elem));
+                @compileError("Unsupported key type in deleteProperty(). Expected bun.String or string literal, got " ++ @typeName(Elem));
             }
-        } else if (comptime Key == ZigString) {
+        } else if (comptime Key == bun.String) {
             return JSC__JSValue__deleteProperty(target, global, &key);
         } else {
-            @compileError("Unsupported key type in deleteProperty(). Expected ZigString or string literal, got " ++ @typeName(Key));
+            @compileError("Unsupported key type in deleteProperty(). Expected bun.String or string literal, got " ++ @typeName(Key));
         }
     }
 
@@ -367,21 +358,17 @@ pub const JSValue = enum(i64) {
         const Key = @TypeOf(key);
         if (comptime @typeInfo(Key) == .pointer) {
             const Elem = @typeInfo(Key).pointer.child;
-            if (Elem == ZigString) {
-                putZigString(value, global, key, result);
-            } else if (Elem == bun.String) {
+            if (Elem == bun.String) {
                 putBunString(value, global, key, result);
             } else if (std.meta.Elem(Key) == u8) {
-                putZigString(value, global, &ZigString.init(key), result);
+                putBunString(value, global, &bun.String.init(key), result);
             } else {
-                @compileError("Unsupported key type in put(). Expected ZigString or bun.String, got " ++ @typeName(Elem));
+                @compileError("Unsupported key type in put(). Expected bun.String or string literal, got " ++ @typeName(Elem));
             }
-        } else if (comptime Key == ZigString) {
-            putZigString(value, global, &key, result);
         } else if (comptime Key == bun.String) {
             putBunString(value, global, &key, result);
         } else {
-            @compileError("Unsupported key type in put(). Expected ZigString or bun.String, got " ++ @typeName(Key));
+            @compileError("Unsupported key type in put(). Expected bun.String or string literal, got " ++ @typeName(Key));
         }
     }
     /// Note: key can't be numeric (if so, use putMayBeIndex instead)
@@ -534,9 +521,9 @@ pub const JSValue = enum(i64) {
         Bun__JSValue__unprotect(this);
     }
 
-    extern fn JSC__JSValue__createObject2(global: *JSGlobalObject, key1: *const ZigString, key2: *const ZigString, value1: JSValue, value2: JSValue) JSValue;
+    extern fn JSC__JSValue__createObject2(global: *JSGlobalObject, key1: *const bun.String, key2: *const bun.String, value1: JSValue, value2: JSValue) JSValue;
     /// Create an object with exactly two properties
-    pub fn createObject2(global: *JSGlobalObject, key1: *const ZigString, key2: *const ZigString, value1: JSValue, value2: JSValue) bun.JSError!JSValue {
+    pub fn createObject2(global: *JSGlobalObject, key1: *const bun.String, key2: *const bun.String, value1: JSValue, value2: JSValue) bun.JSError!JSValue {
         return bun.jsc.fromJSHostCall(global, @src(), JSC__JSValue__createObject2, .{ global, key1, key2, value1, value2 });
     }
 
@@ -699,8 +686,9 @@ pub const JSValue = enum(i64) {
         return bun.cpp.JSC__JSValue__jsTDZValue();
     }
 
-    pub fn className(this: JSValue, globalThis: *JSGlobalObject) bun.JSError!ZigString {
-        var str = ZigString.init("");
+    /// Caller must call `str.deref()` on the result.
+    pub fn className(this: JSValue, globalThis: *JSGlobalObject) bun.JSError!bun.String {
+        var str: bun.String = .empty;
         try this.getClassName(globalThis, &str);
         return str;
     }
@@ -747,14 +735,14 @@ pub const JSValue = enum(i64) {
         return String.init(buf.slice()).toJS(globalThis);
     }
 
-    extern fn JSC__JSValue__fromEntries(globalThis: *JSGlobalObject, keys_array: [*c]ZigString, values_array: [*c]ZigString, strings_count: usize, clone: bool) JSValue;
-    pub fn fromEntries(globalThis: *JSGlobalObject, keys_array: [*c]ZigString, values_array: [*c]ZigString, strings_count: usize, clone: bool) JSValue {
+    extern fn JSC__JSValue__fromEntries(globalThis: *JSGlobalObject, keys_array: [*]const bun.String, values_array: [*]const bun.String, strings_count: usize) JSValue;
+    pub fn fromEntries(globalThis: *JSGlobalObject, keys_array: []const bun.String, values_array: []const bun.String) JSValue {
+        bun.assert(keys_array.len == values_array.len);
         return JSC__JSValue__fromEntries(
             globalThis,
-            keys_array,
-            values_array,
-            strings_count,
-            clone,
+            keys_array.ptr,
+            values_array.ptr,
+            keys_array.len,
         );
     }
 
@@ -1058,8 +1046,9 @@ pub const JSValue = enum(i64) {
         return bun.cpp.JSC__JSValue__isConstructor(this);
     }
 
-    extern fn JSC__JSValue__getNameProperty(this: JSValue, global: *JSGlobalObject, ret: *ZigString) void;
-    pub fn getNameProperty(this: JSValue, global: *JSGlobalObject, ret: *ZigString) bun.JSError!void {
+    extern fn JSC__JSValue__getNameProperty(this: JSValue, global: *JSGlobalObject, ret: *bun.String) void;
+    /// Writes to `ret`. Caller must call `ret.deref()` on the result.
+    pub fn getNameProperty(this: JSValue, global: *JSGlobalObject, ret: *bun.String) bun.JSError!void {
         if (this.isEmptyOrUndefinedOrNull()) {
             return;
         }
@@ -1074,11 +1063,12 @@ pub const JSValue = enum(i64) {
         return ret;
     }
 
-    extern fn JSC__JSValue__getClassName(this: JSValue, global: *JSGlobalObject, ret: *ZigString) void;
+    extern fn JSC__JSValue__getClassName(this: JSValue, global: *JSGlobalObject, ret: *bun.String) void;
     // TODO: absorb this into className()
-    pub fn getClassName(this: JSValue, global: *JSGlobalObject, ret: *ZigString) bun.JSError!void {
+    /// Writes to `ret`. Caller must call `ret.deref()` on the result.
+    pub fn getClassName(this: JSValue, global: *JSGlobalObject, ret: *bun.String) bun.JSError!void {
         if (!this.isCell()) {
-            ret.* = ZigString.static("[not a class]").*;
+            ret.* = bun.String.static("[not a class]");
             return;
         }
         return bun.jsc.fromJSHostCallGeneric(global, @src(), JSC__JSValue__getClassName, .{ this, global, ret });
@@ -1130,12 +1120,24 @@ pub const JSValue = enum(i64) {
         return bun.cpp.JSC__JSValue__toZigException(this, global, exception) catch return; // TODO: properly propagate termination
     }
 
-    extern fn JSC__JSValue__toZigString(this: JSValue, out: *ZigString, global: *JSGlobalObject) void;
-    pub fn toZigString(this: JSValue, out: *ZigString, global: *JSGlobalObject) JSError!void {
-        return bun.jsc.fromJSHostCallGeneric(global, @src(), JSC__JSValue__toZigString, .{ this, out, global });
+    extern fn JSC__JSValue__toBunString(this: JSValue, out: *bun.String, global: *JSGlobalObject) void;
+
+    /// Returns a borrowed bun.String view of the JSValue's string representation.
+    /// The returned String has tag `.StringView` (or `.Empty`) — calling `.deref()` is a no-op.
+    /// Lifetime is tied to the underlying JSString's GC lifetime, NOT reference-counted.
+    /// May throw if `toString()` on the JSValue throws.
+    ///
+    /// Use this when you only need the string for the current scope. For storing the
+    /// string beyond GC boundaries, use `toBunString` (ref-counted) instead.
+    pub fn toString(this: JSValue, globalObject: *jsc.JSGlobalObject) JSError!bun.String {
+        var out: bun.String = .empty;
+        try bun.jsc.fromJSHostCallGeneric(globalObject, @src(), JSC__JSValue__toBunString, .{ this, &out, globalObject });
+        return out;
     }
 
     /// Increments the reference count, you must call `.deref()` or it will leak memory.
+    /// If you only need the string for the current scope (no GC boundaries), prefer
+    /// `toString` (borrowed view, no refcount) for better performance.
     pub fn toBunString(this: JSValue, globalObject: *jsc.JSGlobalObject) JSError!bun.String {
         return bun.String.fromJS(this, globalObject);
     }
@@ -1182,13 +1184,6 @@ pub const JSValue = enum(i64) {
     }
     extern fn JSC__JSValue__toUInt64NoTruncate(this: JSValue) u64;
 
-    /// Deprecated: replace with 'toBunString'
-    pub fn getZigString(this: JSValue, global: *JSGlobalObject) bun.JSError!ZigString {
-        var str = ZigString.init("");
-        try this.toZigString(&str, global);
-        return str;
-    }
-
     /// Convert a JSValue to a string, potentially calling `toString` on the
     /// JSValue in JavaScript. Can throw an error.
     ///
@@ -1196,14 +1191,10 @@ pub const JSValue = enum(i64) {
     /// ASCII-only string.
     ///
     /// Otherwise, it will be cloned using the allocator.
-    pub fn toSlice(this: JSValue, global: *JSGlobalObject, allocator: std.mem.Allocator) JSError!ZigString.Slice {
+    pub fn toSlice(this: JSValue, global: *JSGlobalObject, allocator: std.mem.Allocator) JSError!bun.String.Slice {
         const str = try bun.String.fromJS(this, global);
         defer str.deref();
         return str.toUTF8(allocator);
-    }
-
-    pub inline fn toSliceZ(this: JSValue, global: *JSGlobalObject, allocator: std.mem.Allocator) ZigString.Slice {
-        return getZigString(this, global).toSliceZ(allocator);
     }
 
     /// The returned slice is always owned by `allocator`.
@@ -1232,14 +1223,14 @@ pub const JSValue = enum(i64) {
     }
 
     /// Call `toString()` on the JSValue and clone the result.
-    pub fn toSliceOrNull(this: JSValue, globalThis: *JSGlobalObject) bun.JSError!ZigString.Slice {
+    pub fn toSliceOrNull(this: JSValue, globalThis: *JSGlobalObject) bun.JSError!bun.String.Slice {
         const str = try bun.String.fromJS(this, globalThis);
         defer str.deref();
         return str.toUTF8(bun.default_allocator);
     }
 
     /// Call `toString()` on the JSValue and clone the result.
-    pub fn toSliceOrNullWithAllocator(this: JSValue, globalThis: *JSGlobalObject, allocator: std.mem.Allocator) bun.JSError!ZigString.Slice {
+    pub fn toSliceOrNullWithAllocator(this: JSValue, globalThis: *JSGlobalObject, allocator: std.mem.Allocator) bun.JSError!bun.String.Slice {
         const str = try bun.String.fromJS(this, globalThis);
         defer str.deref();
         return str.toUTF8(allocator);
@@ -1249,7 +1240,7 @@ pub const JSValue = enum(i64) {
     /// On exception or out of memory, this returns null.
     ///
     /// Remember that `Symbol` throws an exception when you call `toString()`.
-    pub fn toSliceClone(this: JSValue, globalThis: *JSGlobalObject) bun.JSError!ZigString.Slice {
+    pub fn toSliceClone(this: JSValue, globalThis: *JSGlobalObject) bun.JSError!bun.String.Slice {
         return this.toSliceCloneWithAllocator(globalThis, bun.default_allocator);
     }
 
@@ -1258,7 +1249,7 @@ pub const JSValue = enum(i64) {
         this: JSValue,
         globalThis: *JSGlobalObject,
         allocator: std.mem.Allocator,
-    ) JSError!ZigString.Slice {
+    ) JSError!bun.String.Slice {
         var str = try this.toJSString(globalThis);
         return str.toSliceClone(globalThis, allocator);
     }
@@ -1353,7 +1344,7 @@ pub const JSValue = enum(i64) {
     }
 
     // `this` must be known to be an object
-    // intended to be more lightweight than ZigString.
+    // intended to be more lightweight than bun.String.
     pub fn fastGet(this: JSValue, global: *JSGlobalObject, builtin_name: BuiltinName) JSError!?JSValue {
         if (bun.Environment.isDebug)
             bun.assert(this.isObject());
@@ -1407,18 +1398,20 @@ pub const JSValue = enum(i64) {
         return result;
     }
 
-    extern fn JSC__JSValue__getSymbolDescription(this: JSValue, global: *JSGlobalObject, str: *ZigString) void;
-    pub fn getSymbolDescription(this: JSValue, global: *JSGlobalObject, str: *ZigString) void {
+    extern fn JSC__JSValue__getSymbolDescription(this: JSValue, global: *JSGlobalObject, str: *bun.String) void;
+    /// Writes to `str`. Caller must call `str.deref()` on the result.
+    pub fn getSymbolDescription(this: JSValue, global: *JSGlobalObject, str: *bun.String) void {
         JSC__JSValue__getSymbolDescription(this, global, str);
     }
 
-    extern fn JSC__JSValue__symbolFor(global: *JSGlobalObject, str: *ZigString) JSValue;
-    pub fn symbolFor(global: *JSGlobalObject, str: *ZigString) JSValue {
+    extern fn JSC__JSValue__symbolFor(global: *JSGlobalObject, str: *const bun.String) JSValue;
+    pub fn symbolFor(global: *JSGlobalObject, str: *const bun.String) JSValue {
         return JSC__JSValue__symbolFor(global, str);
     }
 
-    extern fn JSC__JSValue__symbolKeyFor(this: JSValue, global: *JSGlobalObject, str: *ZigString) bool;
-    pub fn symbolKeyFor(this: JSValue, global: *JSGlobalObject, str: *ZigString) bool {
+    extern fn JSC__JSValue__symbolKeyFor(this: JSValue, global: *JSGlobalObject, str: *bun.String) bool;
+    /// Writes to `str`. Caller must call `str.deref()` on the result.
+    pub fn symbolKeyFor(this: JSValue, global: *JSGlobalObject, str: *bun.String) bool {
         return JSC__JSValue__symbolKeyFor(this, global, str);
     }
 
@@ -1443,10 +1436,11 @@ pub const JSValue = enum(i64) {
         try scope.assertNoExceptionExceptTermination();
     }
 
-    pub fn getDescription(this: JSValue, global: *JSGlobalObject) ZigString {
-        var zig_str = ZigString.init("");
-        getSymbolDescription(this, global, &zig_str);
-        return zig_str;
+    /// Caller must call `str.deref()` on the result.
+    pub fn getDescription(this: JSValue, global: *JSGlobalObject) bun.String {
+        var str: bun.String = .empty;
+        getSymbolDescription(this, global, &str);
+        return str;
     }
 
     /// Equivalent to `target[property]`. Calls userland getters/proxies.  Can
@@ -1781,7 +1775,7 @@ pub const JSValue = enum(i64) {
         switch (comptime T) {
             JSValue => return prop,
             bool => @compileError("ambiguous coercion: use getBooleanStrict (throw error if not boolean) or getBooleanLoose (truthy check, never throws)"),
-            ZigString.Slice => {
+            bun.String.Slice => {
                 if (prop.isString()) {
                     return try prop.toSliceOrNull(global);
                 }
@@ -1853,16 +1847,6 @@ pub const JSValue = enum(i64) {
 
     /// Alias for getIfPropertyExists
     pub const getIfPropertyExists = get;
-
-    extern fn JSC__JSValue__createTypeError(message: *const ZigString, code: *const ZigString, global: *JSGlobalObject) JSValue;
-    pub fn createTypeError(message: *const ZigString, code: *const ZigString, global: *JSGlobalObject) JSValue {
-        return JSC__JSValue__createTypeError(message, code, global);
-    }
-
-    extern fn JSC__JSValue__createRangeError(message: *const ZigString, code: *const ZigString, global: *JSGlobalObject) JSValue;
-    pub fn createRangeError(message: *const ZigString, code: *const ZigString, global: *JSGlobalObject) JSValue {
-        return JSC__JSValue__createRangeError(message, code, global);
-    }
 
     extern fn JSC__JSValue__isStrictEqual(JSValue, JSValue, *JSGlobalObject) bool;
     pub fn isStrictEqual(this: JSValue, other: JSValue, global: *JSGlobalObject) JSError!bool {
@@ -2446,6 +2430,5 @@ const JSString = jsc.JSString;
 const TopExceptionScope = jsc.TopExceptionScope;
 const VM = jsc.VM;
 const ZigException = jsc.ZigException;
-const ZigString = jsc.ZigString;
 const fromJSHostCall = jsc.fromJSHostCall;
 const toJSHostFunction = jsc.toJSHostFn;

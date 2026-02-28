@@ -288,16 +288,20 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                         this.terminate(ErrorCode.invalid_utf8);
                         return;
                     };
-                    var outstring = jsc.ZigString.Empty;
                     if (utf16_bytes_) |utf16| {
-                        outstring = jsc.ZigString.from16Slice(utf16);
-                        outstring.markGlobal();
+                        // Transfer ownership of the UTF-16 allocation to a WTFStringImpl.
+                        // C++ will take a ref via toWTFString(ZeroCopy), then we deref here.
+                        var outstring = bun.String.createExternalGloballyAllocated(.utf16, utf16);
+                        defer outstring.deref();
                         jsc.markBinding(@src());
-                        out.didReceiveText(false, &outstring);
+                        out.didReceiveText(&outstring);
                     } else {
-                        outstring = jsc.ZigString.init(data_);
+                        // data_ is ASCII (toUTF16Alloc returns null for pure-ASCII input).
+                        // Copy into a new WTFStringImpl; C++ will take an additional ref.
+                        var outstring = if (data_.len > 0) bun.String.cloneLatin1(data_) else bun.String.empty;
+                        defer outstring.deref();
                         jsc.markBinding(@src());
-                        out.didReceiveText(true, &outstring);
+                        out.didReceiveText(&outstring);
                     }
                 },
                 .Binary, .Ping, .Pong => {
@@ -1118,7 +1122,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
         pub fn writeString(
             this: *WebSocket,
-            str_: *const jsc.ZigString,
+            str_: *const bun.String,
             op: u8,
         ) callconv(.c) void {
             const str = str_.*;
@@ -1135,8 +1139,8 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 var inline_buf: [stack_frame_size]u8 = undefined;
 
                 // fast path: small frame, no backpressure, attempt to send without allocating
-                if (!str.is16Bit() and str.len < stack_frame_size) {
-                    const bytes = Copy{ .latin1 = str.slice() };
+                if (!str.isUTF16() and str.length() < stack_frame_size) {
+                    const bytes = Copy{ .latin1 = str.latin1() };
                     var byte_len: usize = 0;
                     const frame_size = bytes.len(&byte_len);
                     if (!this.hasBackpressure() and frame_size < stack_frame_size) {
@@ -1145,8 +1149,8 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                         return;
                     }
                     // max length of a utf16 -> utf8 conversion is 4 times the length of the utf16 string
-                } else if ((str.len * 4) < (stack_frame_size) and !this.hasBackpressure()) {
-                    const bytes = Copy{ .utf16 = str.utf16SliceAligned() };
+                } else if ((str.length() * 4) < (stack_frame_size) and !this.hasBackpressure()) {
+                    const bytes = Copy{ .utf16 = str.utf16() };
                     var byte_len: usize = 0;
                     const frame_size = bytes.len(&byte_len);
                     bun.assert(frame_size <= stack_frame_size);
@@ -1157,10 +1161,10 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             }
 
             _ = this.sendData(
-                if (str.is16Bit())
-                    Copy{ .utf16 = str.utf16SliceAligned() }
+                if (str.isUTF16())
+                    Copy{ .utf16 = str.utf16() }
                 else
-                    Copy{ .latin1 = str.slice() },
+                    Copy{ .latin1 = str.latin1() },
                 !this.hasBackpressure(),
                 opcode,
             );
@@ -1184,7 +1188,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             this.deref();
         }
 
-        pub fn close(this: *WebSocket, code: u16, reason: ?*const jsc.ZigString) callconv(.c) void {
+        pub fn close(this: *WebSocket, code: u16, reason: ?*const bun.String) callconv(.c) void {
             if (!this.hasTCP())
                 return;
             const tcp = this.tcp;

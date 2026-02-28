@@ -359,9 +359,9 @@ pub fn GlobWalker_(
         /// BunString is used so that we can call BunString.toJSArray()
         /// on the result of `.keys()` to give the result back to JS
         ///
-        /// The only type of string impl we use is ZigString since
+        /// Only borrowed-UTF-8 string variants are used since
         /// all matched paths are UTF-8 (DirIterator converts them on
-        /// windows) and allocated on the arnea
+        /// windows) and allocated on the arena
         ///
         /// Multiple patterns are not supported so right now this is
         /// only possible when running a pattern like:
@@ -371,7 +371,7 @@ pub fn GlobWalker_(
         /// Use `.keys()` to get the matched paths
         const MatchedMap = std.ArrayHashMapUnmanaged(BunString, void, struct {
             pub fn hash(_: @This(), this: BunString) u32 {
-                bun.assert(this.tag == .ZigString);
+                bun.assert(this.tag == .StringView);
                 const slice = this.byteSlice();
                 if (comptime sentinel) {
                     const slicez = slice[0 .. slice.len - 1 :0];
@@ -1801,9 +1801,6 @@ const bun = @import("bun");
 const BunString = bun.String;
 const CodepointIterator = bun.strings.UnsignedCodepointIterator;
 const isAllAscii = bun.strings.isAllASCII;
-
-const jsc = bun.jsc;
-const ZigString = bun.jsc.ZigString;
 
 const Cursor = CodepointIterator.Cursor;
 const Codepoint = CodepointIterator.Cursor.CodePointType;

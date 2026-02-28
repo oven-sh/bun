@@ -693,7 +693,7 @@ pub const WriteFileWaitFromLockedValueTask = struct {
                 _ = value.use();
                 this.promise.deinit();
                 bun.destroy(this);
-                try promise.reject(globalThis, ZigString.init("Body was used after it was consumed").toErrorInstance(globalThis));
+                try promise.reject(globalThis, bun.String.static("Body was used after it was consumed").toErrorInstance(globalThis));
             },
             .WTFStringImpl,
             .InternalBlob,
@@ -747,7 +747,6 @@ const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSPromise = jsc.JSPromise;
 const SystemError = jsc.SystemError;
-const ZigString = jsc.ZigString;
 const Body = jsc.WebCore.Body;
 
 const Blob = jsc.WebCore.Blob;

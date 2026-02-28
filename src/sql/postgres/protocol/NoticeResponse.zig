@@ -19,7 +19,7 @@ pub fn decodeInternal(this: *@This(), comptime Container: type, reader: NewReade
 }
 pub const decode = DecoderWrap(NoticeResponse, decodeInternal).decode;
 
-pub fn toJS(this: NoticeResponse, globalObject: *jsc.JSGlobalObject) JSValue {
+pub fn toJS(this: NoticeResponse, globalObject: *jsc.JSGlobalObject) bun.JSError!JSValue {
     var b = bun.StringBuilder{};
     defer b.deinit(bun.default_allocator);
 
@@ -39,7 +39,7 @@ pub fn toJS(this: NoticeResponse, globalObject: *jsc.JSGlobalObject) JSValue {
         _ = b.append("\n");
     }
 
-    return jsc.ZigString.init(b.allocatedSlice()[0..b.len]).toJS(globalObject);
+    return bun.String.createUTF8ForJS(globalObject, b.allocatedSlice()[0..b.len]);
 }
 
 const bun = @import("bun");

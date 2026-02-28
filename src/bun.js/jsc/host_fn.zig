@@ -268,7 +268,7 @@ pub fn wrap4v(comptime func: anytype) @"return": {
 const private = struct {
     pub extern fn Bun__CreateFFIFunctionWithDataValue(
         *JSGlobalObject,
-        ?*const ZigString,
+        ?*const bun.String,
         argCount: u32,
         function: *const JSHostFn,
         data: *anyopaque,
@@ -276,7 +276,7 @@ const private = struct {
 
     pub extern fn Bun__CreateFFIFunctionValue(
         globalObject: *JSGlobalObject,
-        symbolName: ?*const ZigString,
+        symbolName: ?*const bun.String,
         argCount: u32,
         function: *const JSHostFn,
         add_ptr_field: bool,
@@ -289,7 +289,7 @@ const private = struct {
 
 pub fn NewRuntimeFunction(
     globalObject: *JSGlobalObject,
-    symbolName: ?*const ZigString,
+    symbolName: ?*const bun.String,
     argCount: u32,
     functionPointer: *const JSHostFn,
     add_ptr_property: bool,
@@ -311,7 +311,7 @@ pub fn setFunctionData(function: JSValue, value: ?*anyopaque) void {
 
 pub fn NewFunctionWithData(
     globalObject: *JSGlobalObject,
-    symbolName: ?*const ZigString,
+    symbolName: ?*const bun.String,
     argCount: u32,
     comptime function: JSHostFnZig,
     data: *anyopaque,
@@ -579,7 +579,7 @@ pub fn wrapInstanceMethod(
                             args[i] = null;
                         }
                     },
-                    jsc.ZigString => {
+                    bun.String => {
                         var string_value = eater(&iter) orelse {
                             iter.deinit();
                             return globalThis.throwInvalidArguments("Missing argument", .{});
@@ -590,7 +590,9 @@ pub fn wrapInstanceMethod(
                             return globalThis.throwInvalidArguments("Expected string", .{});
                         }
 
-                        args[i] = try string_value.getZigString(globalThis);
+                        // Borrowed view (tied to JSValue GC lifetime, valid for this call).
+                        // Callers with `defer .deref()` are harmless — deref is a no-op for borrowed.
+                        args[i] = try string_value.toString(globalThis);
                     },
                     ?bun.api.HTMLRewriter.ContentOptions => {
                         if (iter.nextEat()) |content_arg| {
@@ -732,7 +734,7 @@ pub fn wrapStaticMethod(
                             args[i] = null;
                         }
                     },
-                    jsc.ZigString => {
+                    bun.String => {
                         var string_value = eater(&iter) orelse {
                             iter.deinit();
                             return globalThis.throwInvalidArguments("Missing argument", .{});
@@ -743,7 +745,9 @@ pub fn wrapStaticMethod(
                             return globalThis.throwInvalidArguments("Expected string", .{});
                         }
 
-                        args[i] = try string_value.getZigString(globalThis);
+                        // Borrowed view (tied to JSValue GC lifetime, valid for this call).
+                        // Callers with `defer .deref()` are harmless — deref is a no-op for borrowed.
+                        args[i] = try string_value.toString(globalThis);
                     },
                     ?bun.api.HTMLRewriter.ContentOptions => {
                         if (iter.nextEat()) |content_arg| {
@@ -804,4 +808,3 @@ const jsc = bun.jsc;
 const CallFrame = jsc.CallFrame;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
-const ZigString = jsc.ZigString;

@@ -388,9 +388,9 @@ pub const Value = union(enum) {
     float: f32,
     double: f64,
 
-    string: JSC.ZigString.Slice,
+    string: bun.String.Slice,
     string_data: Data,
-    bytes: JSC.ZigString.Slice,
+    bytes: bun.String.Slice,
     bytes_data: Data,
     date: DateTime,
     time: Time,
@@ -465,14 +465,14 @@ pub const Value = union(enum) {
             .MYSQL_TYPE_DATE, .MYSQL_TYPE_TIMESTAMP, .MYSQL_TYPE_DATETIME => Value{ .date = try DateTime.fromJS(value, globalObject) },
             .MYSQL_TYPE_TINY_BLOB, .MYSQL_TYPE_MEDIUM_BLOB, .MYSQL_TYPE_LONG_BLOB, .MYSQL_TYPE_BLOB => {
                 if (value.asArrayBuffer(globalObject)) |array_buffer| {
-                    return Value{ .bytes = JSC.ZigString.Slice.fromUTF8NeverFree(array_buffer.slice()) };
+                    return Value{ .bytes = bun.String.Slice.fromUTF8NeverFree(array_buffer.slice()) };
                 }
 
                 if (value.as(JSC.WebCore.Blob)) |blob| {
                     if (blob.needsToReadFile()) {
                         return globalObject.throwInvalidArguments("File blobs are not supported", .{});
                     }
-                    return Value{ .bytes = JSC.ZigString.Slice.fromUTF8NeverFree(blob.sharedView()) };
+                    return Value{ .bytes = bun.String.Slice.fromUTF8NeverFree(blob.sharedView()) };
                 }
 
                 if (value.isString()) {
@@ -875,4 +875,3 @@ const String = bun.String;
 
 const JSC = bun.jsc;
 const JSValue = JSC.JSValue;
-const ZigString = JSC.ZigString;

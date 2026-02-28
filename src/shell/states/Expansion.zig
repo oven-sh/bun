@@ -766,10 +766,10 @@ pub const ShellGlobTask = struct {
         syscall: Syscall.Error,
         unknown: anyerror,
 
-        pub fn toJS(this: Err, globalThis: *JSGlobalObject) JSValue {
+        pub fn toJS(this: Err, globalThis: *JSGlobalObject) bun.JSError!JSValue {
             return switch (this) {
                 .syscall => |err| err.toJS(globalThis),
-                .unknown => |err| jsc.ZigString.fromBytes(@errorName(err)).toJS(globalThis),
+                .unknown => |err| bun.String.createUTF8ForJS(globalThis, @errorName(err)),
             };
         }
     };

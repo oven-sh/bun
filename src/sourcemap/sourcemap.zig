@@ -295,14 +295,14 @@ pub const SourceMapLoadHint = enum(u2) {
 };
 
 /// Always returns UTF-8
-fn findSourceMappingURL(comptime T: type, source: []const T, alloc: std.mem.Allocator) ?bun.jsc.ZigString.Slice {
+fn findSourceMappingURL(comptime T: type, source: []const T, alloc: std.mem.Allocator) ?bun.String.Slice {
     const needle = comptime bun.strings.literal(T, "\n//# sourceMappingURL=");
     const found = std.mem.lastIndexOf(T, source, needle) orelse return null;
     const end = std.mem.indexOfScalarPos(T, source, found + needle.len, '\n') orelse source.len;
     const url = std.mem.trimRight(T, source[found + needle.len .. end], &.{ ' ', '\r' });
     return switch (T) {
-        u8 => bun.jsc.ZigString.Slice.fromUTF8NeverFree(url),
-        u16 => bun.jsc.ZigString.Slice.init(
+        u8 => bun.String.Slice.fromUTF8NeverFree(url),
+        u16 => bun.String.Slice.init(
             alloc,
             bun.handleOom(bun.strings.toUTF8Alloc(alloc, url)),
         ),
@@ -338,7 +338,7 @@ pub fn getSourceMapImpl(
         if (load_hint != .is_external_map) try_inline: {
             const source = SourceProviderKind.getSourceSlice(provider);
             defer source.deref();
-            bun.assert(source.tag == .ZigString);
+            bun.assert(source.tag == .StringView);
 
             const maybe_found_url = found_url: {
                 if (source.is8Bit())

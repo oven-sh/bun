@@ -15,7 +15,7 @@ const LinesHits = bun.collections.BabyList(u32);
 /// bitsets are simple and bitsets are relatively fast to construct and query
 ///
 pub const Report = struct {
-    source_url: bun.jsc.ZigString.Slice,
+    source_url: bun.String.Slice,
     executable_lines: Bitset,
     lines_which_have_executed: Bitset,
     line_hits: LinesHits = .{},
@@ -358,7 +358,7 @@ const BasicBlockRange = extern struct {
 pub const ByteRangeMapping = struct {
     line_offset_table: LineOffsetTable.List = .{},
     source_id: i32,
-    source_url: bun.jsc.ZigString.Slice,
+    source_url: bun.String.Slice,
 
     pub fn isLessThan(_: void, a: ByteRangeMapping, b: ByteRangeMapping) bool {
         return bun.strings.order(a.source_url.slice(), b.source_url.slice()) == .lt;
@@ -407,7 +407,7 @@ pub const ByteRangeMapping = struct {
     pub fn generateReportFromBlocks(
         this: *ByteRangeMapping,
         allocator: std.mem.Allocator,
-        source_url: bun.jsc.ZigString.Slice,
+        source_url: bun.String.Slice,
         blocks: []const BasicBlockRange,
         function_blocks: []const BasicBlockRange,
         ignore_sourcemap: bool,
@@ -688,7 +688,7 @@ pub const ByteRangeMapping = struct {
         return bun.String.createUTF8ForJS(globalThis, allocating_writer.written()) catch return .zero;
     }
 
-    pub fn compute(source_contents: []const u8, source_id: i32, source_url: bun.jsc.ZigString.Slice) ByteRangeMapping {
+    pub fn compute(source_contents: []const u8, source_id: i32, source_url: bun.String.Slice) ByteRangeMapping {
         return ByteRangeMapping{
             .line_offset_table = LineOffsetTable.generate(bun.jsc.VirtualMachine.get().allocator, source_contents, 0),
             .source_id = source_id,

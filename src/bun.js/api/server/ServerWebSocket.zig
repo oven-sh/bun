@@ -433,7 +433,7 @@ pub fn publish(
     {
         var js_string = try message_value.toJSString(globalThis);
         const view = js_string.view(globalThis);
-        const slice = view.toSlice(bun.default_allocator);
+        const slice = view.toUTF8WithoutRef(bun.default_allocator);
         defer slice.deinit();
 
         defer js_string.ensureStillAlive();
@@ -497,7 +497,7 @@ pub fn publishText(
 
     var js_string = try message_value.toJSString(globalThis);
     const view = js_string.view(globalThis);
-    const slice = view.toSlice(bun.default_allocator);
+    const slice = view.toUTF8WithoutRef(bun.default_allocator);
     defer slice.deinit();
 
     defer js_string.ensureStillAlive();
@@ -745,7 +745,7 @@ pub fn send(
     {
         var js_string = try message_value.toJSString(globalThis);
         const view = js_string.view(globalThis);
-        const slice = view.toSlice(bun.default_allocator);
+        const slice = view.toUTF8WithoutRef(bun.default_allocator);
         defer slice.deinit();
 
         defer js_string.ensureStillAlive();
@@ -800,7 +800,7 @@ pub fn sendText(
 
     var js_string = try message_value.toJSString(globalThis);
     const view = js_string.view(globalThis);
-    const slice = view.toSlice(bun.default_allocator);
+    const slice = view.toUTF8WithoutRef(bun.default_allocator);
     defer slice.deinit();
 
     defer js_string.ensureStillAlive();
@@ -1080,8 +1080,8 @@ pub fn close(
         break :brk try args.ptr[0].coerce(i32, globalThis);
     };
 
-    var message_value: ZigString.Slice = brk: {
-        if (args.ptr[1] == .zero or args.ptr[1].isUndefined()) break :brk ZigString.Slice.empty;
+    var message_value: bun.String.Slice = brk: {
+        if (args.ptr[1] == .zero or args.ptr[1].isUndefined()) break :brk bun.String.Slice.empty;
         break :brk try args.ptr[1].toSliceOrNull(globalThis);
     };
 
@@ -1295,4 +1295,3 @@ const WebSocketServer = bun.api.server.WebSocketServerContext;
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
-const ZigString = jsc.ZigString;

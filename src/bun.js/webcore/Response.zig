@@ -63,7 +63,7 @@ pub inline fn setUrl(this: *Response, url: bun.String) void {
     this.#url.deref();
     this.#url = url;
 }
-pub inline fn getUTF8Url(this: *Response, allocator: std.mem.Allocator) ZigString.Slice {
+pub inline fn getUTF8Url(this: *Response, allocator: std.mem.Allocator) bun.String.Slice {
     return this.#url.toUTF8(allocator);
 }
 pub inline fn getUrl(this: *Response) bun.String {
@@ -86,7 +86,7 @@ pub inline fn getMethod(this: *Response) Method {
     return this.#init.method;
 }
 pub fn getFormDataEncoding(this: *Response) bun.JSError!?*bun.FormData.AsyncFormData {
-    var content_type_slice: ZigString.Slice = (try this.getContentType()) orelse return null;
+    var content_type_slice: bun.String.Slice = (try this.getContentType()) orelse return null;
     defer content_type_slice.deinit();
     const encoding = bun.FormData.Encoding.get(content_type_slice.slice()) orelse return null;
     return bun.handleOom(bun.FormData.AsyncFormData.init(bun.default_allocator, encoding));
@@ -239,8 +239,8 @@ pub fn redirectLocation(this: *const Response) ?[]const u8 {
 }
 
 pub fn header(this: *const Response, name: bun.webcore.FetchHeaders.HTTPHeaderName) ?[]const u8 {
-    return if (try (this.#init.headers orelse return null).fastGet(name)) |str|
-        str.slice()
+    return if ((this.#init.headers orelse return null).fastGet(name)) |str|
+        str.byteSlice()
     else
         null;
 }
@@ -476,16 +476,16 @@ pub fn finalize(
 
 pub fn getContentType(
     this: *Response,
-) bun.JSError!?ZigString.Slice {
+) bun.JSError!?bun.String.Slice {
     if (this.#init.headers) |headers| {
         if (headers.fastGet(.ContentType)) |value| {
-            return value.toSlice(bun.default_allocator);
+            return value.toUTF8(bun.default_allocator);
         }
     }
 
     if (this.#body.value == .Blob) {
         if (this.#body.value.Blob.content_type.len > 0)
-            return ZigString.Slice.fromUTF8NeverFree(this.#body.value.Blob.content_type);
+            return bun.String.Slice.fromUTF8NeverFree(this.#body.value.Blob.content_type);
     }
 
     return null;
@@ -601,7 +601,7 @@ pub fn constructRedirectImpl(
     // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
     var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), args_list.ptr[0..args_list.len]);
 
-    var url_string_slice = ZigString.Slice.empty;
+    var url_string_slice = bun.String.Slice.empty;
     defer url_string_slice.deinit();
     var response: Response = brk: {
         var response = Response{
@@ -615,12 +615,12 @@ pub fn constructRedirectImpl(
         };
 
         const url_string_value = args.nextEat() orelse jsc.JSValue.zero;
-        var url_string = ZigString.init("");
+        var url_string: bun.String = .empty;
 
         if (@intFromEnum(url_string_value) != 0) {
-            url_string = try url_string_value.getZigString(globalThis);
+            url_string = try url_string_value.toString(globalThis);
         }
-        url_string_slice = url_string.toSlice(bun.default_allocator);
+        url_string_slice = url_string.toUTF8WithoutRef(bun.default_allocator);
         var did_succeed = false;
         defer {
             if (!did_succeed) {
@@ -913,7 +913,6 @@ const MimeType = bun.http.MimeType;
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
-const ZigString = jsc.ZigString;
 const Request = jsc.WebCore.Request;
 
 const Blob = jsc.WebCore.Blob;

@@ -46,8 +46,8 @@ pub fn getFatal(
 pub fn getEncoding(
     this: *TextDecoder,
     globalThis: *jsc.JSGlobalObject,
-) jsc.JSValue {
-    return ZigString.init(EncodingLabel.getLabel(this.encoding)).toJS(globalThis);
+) bun.JSError!jsc.JSValue {
+    return try bun.String.createUTF8ForJS(globalThis, EncodingLabel.getLabel(this.encoding));
 }
 const Vector16 = std.meta.Vector(16, u16);
 const max_16_ascii: Vector16 = @splat(@as(u16, 127));
@@ -195,7 +195,7 @@ fn decodeSlice(this: *TextDecoder, globalThis: *jsc.JSGlobalObject, buffer_slice
     switch (this.encoding) {
         EncodingLabel.latin1 => {
             if (strings.isAllASCII(buffer_slice)) {
-                return ZigString.init(buffer_slice).toJS(globalThis);
+                return try bun.String.createUTF8ForJS(globalThis, buffer_slice);
             }
 
             // It's unintuitive that we encode Latin1 as UTF16 even though the engine natively supports Latin1 strings...
@@ -206,7 +206,12 @@ fn decodeSlice(this: *TextDecoder, globalThis: *jsc.JSGlobalObject, buffer_slice
             const bytes = try bun.default_allocator.alloc(u16, out_length);
 
             const out = strings.copyCP1252IntoUTF16(bytes, buffer_slice);
-            return ZigString.toExternalU16(bytes.ptr, out.written, globalThis);
+            if (out.written == 0) {
+                bun.default_allocator.free(bytes);
+                return bun.String.empty.toJS(globalThis);
+            }
+            var out_str = bun.String.createExternalGloballyAllocated(.utf16, bytes[0..out.written]);
+            return out_str.transferToJS(globalThis);
         },
         EncodingLabel.@"UTF-8" => {
             const input, const deinit = input: {
@@ -250,13 +255,18 @@ fn decodeSlice(this: *TextDecoder, globalThis: *jsc.JSGlobalObject, buffer_slice
                         this.buffered.len = leftover_len;
                     }
                 }
-                return ZigString.toExternalU16(decoded.ptr, decoded.len, globalThis);
+                if (decoded.len == 0) {
+                    bun.default_allocator.free(decoded);
+                    return bun.String.empty.toJS(globalThis);
+                }
+                var out_str = bun.String.createExternalGloballyAllocated(.utf16, decoded);
+                return out_str.transferToJS(globalThis);
             }
 
             bun.debugAssert(input.len == 0 or !deinit);
 
             // Experiment: using mimalloc directly is slightly slower
-            return ZigString.init(input).toJS(globalThis);
+            return try bun.String.createUTF8ForJS(globalThis, input);
         },
 
         inline .@"UTF-16LE", .@"UTF-16BE" => |utf16_encoding| {
@@ -285,7 +295,7 @@ fn decodeSlice(this: *TextDecoder, globalThis: *jsc.JSGlobalObject, buffer_slice
             // Note: In production, we might want to cache these per-encoding
             const codec = TextCodec.create(encoding_name) orelse {
                 // Fallback to empty string if codec creation fails
-                return ZigString.init("").toJS(globalThis);
+                return jsc.JSValue.jsEmptyString(globalThis);
             };
             defer codec.deinit();
 
@@ -361,5 +371,4 @@ const ArrayBuffer = jsc.ArrayBuffer;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSUint8Array = jsc.JSUint8Array;
 const JSValue = jsc.JSValue;
-const ZigString = jsc.ZigString;
 const EncodingLabel = jsc.WebCore.EncodingLabel;

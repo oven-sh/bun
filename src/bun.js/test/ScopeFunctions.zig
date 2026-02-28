@@ -308,8 +308,9 @@ fn getDescription(gpa: std.mem.Allocator, globalThis: *jsc.JSGlobalObject, descr
 
     if (description.isClass(globalThis)) {
         var description_class_name = try description.className(globalThis);
+        defer description_class_name.deref();
 
-        if (description_class_name.len > 0) {
+        if (description_class_name.length() > 0) {
             return description_class_name.toOwnedSlice(gpa);
         }
 

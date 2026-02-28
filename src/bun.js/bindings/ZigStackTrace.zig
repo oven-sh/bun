@@ -97,7 +97,7 @@ pub const ZigStackTrace = extern struct {
 
         pub const SourceLine = struct {
             line: i32,
-            text: ZigString.Slice,
+            text: bun.String.Slice,
         };
 
         pub fn getLength(this: *SourceLineIterator) usize {
@@ -147,4 +147,3 @@ const api = bun.schema.api;
 const jsc = bun.jsc;
 const SourceProvider = jsc.SourceProvider;
 const ZigStackFrame = jsc.ZigStackFrame;
-const ZigString = jsc.ZigString;

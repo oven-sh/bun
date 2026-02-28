@@ -454,7 +454,7 @@ pub const JSBundler = struct {
             errdefer if (plugins.*) |plugin| plugin.deinit();
 
             var did_set_target = false;
-            if (try config.getOptional(globalThis, "target", ZigString.Slice)) |slice| {
+            if (try config.getOptional(globalThis, "target", bun.String.Slice)) |slice| {
                 defer slice.deinit();
                 if (strings.hasPrefixComptime(slice.slice(), "bun-")) {
                     this.compile = .{
@@ -490,7 +490,7 @@ pub const JSBundler = struct {
                         return globalThis.throwInvalidArguments("Expected plugin to be an object", .{});
                     }
 
-                    if (try plugin.getOptional(globalThis, "name", ZigString.Slice)) |slice| {
+                    if (try plugin.getOptional(globalThis, "name", bun.String.Slice)) |slice| {
                         defer slice.deinit();
                         if (slice.len == 0) {
                             return globalThis.throwInvalidArguments("Expected plugin to have a non-empty name", .{});
@@ -566,18 +566,18 @@ pub const JSBundler = struct {
             }
 
             var has_out_dir = false;
-            if (try config.getOptional(globalThis, "outdir", ZigString.Slice)) |slice| {
+            if (try config.getOptional(globalThis, "outdir", bun.String.Slice)) |slice| {
                 defer slice.deinit();
                 try this.outdir.appendSliceExact(slice.slice());
                 has_out_dir = true;
             }
 
-            if (try config.getOptional(globalThis, "banner", ZigString.Slice)) |slice| {
+            if (try config.getOptional(globalThis, "banner", bun.String.Slice)) |slice| {
                 defer slice.deinit();
                 try this.banner.appendSliceExact(slice.slice());
             }
 
-            if (try config.getOptional(globalThis, "footer", ZigString.Slice)) |slice| {
+            if (try config.getOptional(globalThis, "footer", bun.String.Slice)) |slice| {
                 defer slice.deinit();
                 try this.footer.appendSliceExact(slice.slice());
             }
@@ -638,7 +638,7 @@ pub const JSBundler = struct {
                     return globalThis.throwInvalidArguments("jsx must be an object", .{});
                 }
 
-                if (try jsx_value.getOptional(globalThis, "runtime", ZigString.Slice)) |slice| {
+                if (try jsx_value.getOptional(globalThis, "runtime", bun.String.Slice)) |slice| {
                     defer slice.deinit();
                     var str_lower: [128]u8 = undefined;
                     const len = @min(slice.len, str_lower.len);
@@ -653,17 +653,17 @@ pub const JSBundler = struct {
                     }
                 }
 
-                if (try jsx_value.getOptional(globalThis, "factory", ZigString.Slice)) |slice| {
+                if (try jsx_value.getOptional(globalThis, "factory", bun.String.Slice)) |slice| {
                     defer slice.deinit();
                     this.jsx.factory = try allocator.dupe(u8, slice.slice());
                 }
 
-                if (try jsx_value.getOptional(globalThis, "fragment", ZigString.Slice)) |slice| {
+                if (try jsx_value.getOptional(globalThis, "fragment", bun.String.Slice)) |slice| {
                     defer slice.deinit();
                     this.jsx.fragment = try allocator.dupe(u8, slice.slice());
                 }
 
-                if (try jsx_value.getOptional(globalThis, "importSource", ZigString.Slice)) |slice| {
+                if (try jsx_value.getOptional(globalThis, "importSource", bun.String.Slice)) |slice| {
                     defer slice.deinit();
                     this.jsx.import_source = try allocator.dupe(u8, slice.slice());
                 }
@@ -755,8 +755,8 @@ pub const JSBundler = struct {
             }
 
             {
-                const path: ZigString.Slice = brk: {
-                    if (try config.getOptional(globalThis, "root", ZigString.Slice)) |slice| {
+                const path: bun.String.Slice = brk: {
+                    if (try config.getOptional(globalThis, "root", bun.String.Slice)) |slice| {
                         break :brk slice;
                     }
 
@@ -772,15 +772,15 @@ pub const JSBundler = struct {
                             }
                         }
                         if (all_in_filemap) {
-                            break :brk ZigString.Slice.fromUTF8NeverFree(".");
+                            break :brk bun.String.Slice.fromUTF8NeverFree(".");
                         }
                     }
 
                     if (entry_points.len == 1) {
-                        break :brk ZigString.Slice.fromUTF8NeverFree(std.fs.path.dirname(entry_points[0]) orelse ".");
+                        break :brk bun.String.Slice.fromUTF8NeverFree(std.fs.path.dirname(entry_points[0]) orelse ".");
                     }
 
-                    break :brk ZigString.Slice.fromUTF8NeverFree(resolve_path.getIfExistsLongestCommonPath(entry_points) orelse ".");
+                    break :brk bun.String.Slice.fromUTF8NeverFree(resolve_path.getIfExistsLongestCommonPath(entry_points) orelse ".");
                 };
 
                 defer path.deinit();
@@ -833,21 +833,21 @@ pub const JSBundler = struct {
                 }
             }
 
-            // if (try config.getOptional(globalThis, "dir", ZigString.Slice)) |slice| {
+            // if (try config.getOptional(globalThis, "dir", bun.String.Slice)) |slice| {
             //     defer slice.deinit();
             //     this.appendSliceExact(slice.slice()) catch unreachable;
             // } else {
             //     this.appendSliceExact(globalThis.bunVM().transpiler.fs.top_level_dir) catch unreachable;
             // }
 
-            if (try config.getOptional(globalThis, "publicPath", ZigString.Slice)) |slice| {
+            if (try config.getOptional(globalThis, "publicPath", bun.String.Slice)) |slice| {
                 defer slice.deinit();
                 try this.public_path.appendSliceExact(slice.slice());
             }
 
             if (try config.getTruthy(globalThis, "naming")) |naming| {
                 if (naming.isString()) {
-                    if (try config.getOptional(globalThis, "naming", ZigString.Slice)) |slice| {
+                    if (try config.getOptional(globalThis, "naming", bun.String.Slice)) |slice| {
                         defer slice.deinit();
                         if (!strings.hasPrefixComptime(slice.slice(), "./")) {
                             try this.names.owned_entry_point.appendSliceExact("./");
@@ -856,7 +856,7 @@ pub const JSBundler = struct {
                         this.names.entry_point.data = this.names.owned_entry_point.list.items;
                     }
                 } else if (naming.isObject()) {
-                    if (try naming.getOptional(globalThis, "entry", ZigString.Slice)) |slice| {
+                    if (try naming.getOptional(globalThis, "entry", bun.String.Slice)) |slice| {
                         defer slice.deinit();
                         if (!strings.hasPrefixComptime(slice.slice(), "./")) {
                             try this.names.owned_entry_point.appendSliceExact("./");
@@ -865,7 +865,7 @@ pub const JSBundler = struct {
                         this.names.entry_point.data = this.names.owned_entry_point.list.items;
                     }
 
-                    if (try naming.getOptional(globalThis, "chunk", ZigString.Slice)) |slice| {
+                    if (try naming.getOptional(globalThis, "chunk", bun.String.Slice)) |slice| {
                         defer slice.deinit();
                         if (!strings.hasPrefixComptime(slice.slice(), "./")) {
                             try this.names.owned_chunk.appendSliceExact("./");
@@ -874,7 +874,7 @@ pub const JSBundler = struct {
                         this.names.chunk.data = this.names.owned_chunk.list.items;
                     }
 
-                    if (try naming.getOptional(globalThis, "asset", ZigString.Slice)) |slice| {
+                    if (try naming.getOptional(globalThis, "asset", bun.String.Slice)) |slice| {
                         defer slice.deinit();
                         if (!strings.hasPrefixComptime(slice.slice(), "./")) {
                             try this.names.owned_asset.appendSliceExact("./");
@@ -902,16 +902,15 @@ pub const JSBundler = struct {
                         return globalThis.throwInvalidArguments("define \"{f}\" must be a JSON string", .{prop});
                     }
 
-                    var val = jsc.ZigString.init("");
-                    try property_value.toZigString(&val, globalThis);
-                    if (val.len == 0) {
-                        val = jsc.ZigString.fromUTF8("\"\"");
+                    var val = try property_value.toString(globalThis);
+                    if (val.isEmpty()) {
+                        val = bun.String.static("\"\"");
                     }
 
                     const key = try prop.toOwnedSlice(bun.default_allocator);
 
                     // value is always cloned
-                    const value = val.toSlice(bun.default_allocator);
+                    const value = val.toUTF8WithoutRef(bun.default_allocator);
                     defer value.deinit();
 
                     // .insert clones the value, but not the key
@@ -968,11 +967,11 @@ pub const JSBundler = struct {
                 } else if (metafile_value.isObject()) {
                     // metafile: { json?: string, markdown?: string }
                     this.metafile = true;
-                    if (try metafile_value.getOptional(globalThis, "json", ZigString.Slice)) |slice| {
+                    if (try metafile_value.getOptional(globalThis, "json", bun.String.Slice)) |slice| {
                         defer slice.deinit();
                         try this.metafile_json_path.appendSliceExact(slice.slice());
                     }
-                    if (try metafile_value.getOptional(globalThis, "markdown", ZigString.Slice)) |slice| {
+                    if (try metafile_value.getOptional(globalThis, "markdown", bun.String.Slice)) |slice| {
                         defer slice.deinit();
                         try this.metafile_markdown_path.appendSliceExact(slice.slice());
                     }
@@ -1813,7 +1812,7 @@ pub const BuildArtifact = struct {
     pub fn getType(
         this: *BuildArtifact,
         globalThis: *jsc.JSGlobalObject,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         return @call(bun.callmod_inline, Blob.getType, .{ &this.blob, globalThis });
     }
 
@@ -1832,36 +1831,36 @@ pub const BuildArtifact = struct {
     pub fn getPath(
         this: *BuildArtifact,
         globalThis: *jsc.JSGlobalObject,
-    ) JSValue {
-        return ZigString.fromUTF8(this.path).toJS(globalThis);
+    ) bun.JSError!JSValue {
+        return try bun.String.createUTF8ForJS(globalThis, this.path);
     }
 
     pub fn getLoader(
         this: *BuildArtifact,
         globalThis: *jsc.JSGlobalObject,
-    ) JSValue {
-        return ZigString.fromUTF8(@tagName(this.loader)).toJS(globalThis);
+    ) bun.JSError!JSValue {
+        return try bun.String.createUTF8ForJS(globalThis, @tagName(this.loader));
     }
 
     pub fn getHash(
         this: *BuildArtifact,
         globalThis: *jsc.JSGlobalObject,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         var buf: [512]u8 = undefined;
         const out = std.fmt.bufPrint(&buf, "{f}", .{bun.fmt.truncatedHash32(this.hash)}) catch @panic("Unexpected");
-        return ZigString.init(out).toJS(globalThis);
+        return try bun.String.createUTF8ForJS(globalThis, out);
     }
 
     pub fn getSize(this: *BuildArtifact, globalObject: *jsc.JSGlobalObject) JSValue {
         return @call(bun.callmod_inline, Blob.getSize, .{ &this.blob, globalObject });
     }
 
-    pub fn getMimeType(this: *BuildArtifact, globalObject: *jsc.JSGlobalObject) JSValue {
+    pub fn getMimeType(this: *BuildArtifact, globalObject: *jsc.JSGlobalObject) bun.JSError!JSValue {
         return @call(bun.callmod_inline, Blob.getType, .{ &this.blob, globalObject });
     }
 
-    pub fn getOutputKind(this: *BuildArtifact, globalObject: *jsc.JSGlobalObject) JSValue {
-        return ZigString.init(@tagName(this.output_kind)).toJS(globalObject);
+    pub fn getOutputKind(this: *BuildArtifact, globalObject: *jsc.JSGlobalObject) bun.JSError!JSValue {
+        return try bun.String.createUTF8ForJS(globalObject, @tagName(this.output_kind));
     }
 
     pub fn getSourceMap(this: *BuildArtifact, _: *jsc.JSGlobalObject) JSValue {
@@ -2009,5 +2008,4 @@ const api = bun.schema.api;
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
-const ZigString = jsc.ZigString;
 const Blob = jsc.WebCore.Blob;

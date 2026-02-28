@@ -412,14 +412,14 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
             }
 
             defer str.ensureStillAlive();
-            if (view.is16Bit()) {
+            if (view.isUTF16()) {
                 return this.sink.writeUTF16(.{ .temporary = bun.ByteList.fromBorrowedSliceDangerous(
-                    std.mem.sliceAsBytes(view.utf16SliceAligned()),
+                    std.mem.sliceAsBytes(view.utf16()),
                 ) }).toJS(globalThis);
             }
 
             return this.sink.writeLatin1(
-                .{ .temporary = bun.ByteList.fromBorrowedSliceDangerous(view.slice()) },
+                .{ .temporary = bun.ByteList.fromBorrowedSliceDangerous(view.latin1()) },
             ).toJS(globalThis);
         }
 
@@ -447,10 +447,7 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
 
             const arg = args[0];
 
-            const str = arg.toString(globalThis);
-            if (globalThis.hasException()) {
-                return .zero;
-            }
+            const str = try arg.toJSString(globalThis);
 
             const view = str.view(globalThis);
             if (view.isEmpty()) {
@@ -459,10 +456,10 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
 
             defer str.ensureStillAlive();
             if (str.is16Bit()) {
-                return this.sink.writeUTF16(.{ .temporary = view.utf16SliceAligned() }).toJS(globalThis);
+                return this.sink.writeUTF16(.{ .temporary = view.utf16() }).toJS(globalThis);
             }
 
-            return this.sink.writeLatin1(.{ .temporary = view.slice() }).toJS(globalThis);
+            return this.sink.writeLatin1(.{ .temporary = view.latin1() }).toJS(globalThis);
         }
 
         pub fn close(globalThis: *JSGlobalObject, sink_ptr: ?*anyopaque) callconv(.c) JSValue {

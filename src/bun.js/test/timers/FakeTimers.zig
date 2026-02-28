@@ -359,7 +359,7 @@ const fake_timers_fns: []const struct { [:0]const u8, u32, (fn (*jsc.JSGlobalObj
 pub const timerFnsCount = fake_timers_fns.len;
 pub fn putTimersFns(globalObject: *jsc.JSGlobalObject, jest: jsc.JSValue, vi: jsc.JSValue) void {
     inline for (fake_timers_fns) |fake_timer_fn| {
-        const str = bun.ZigString.static(fake_timer_fn[0]);
+        const str = bun.String.static(fake_timer_fn[0]);
         const jsvalue = jsc.JSFunction.create(globalObject, fake_timer_fn[0], fake_timer_fn[2], fake_timer_fn[1], .{});
         vi.put(globalObject, str, jsvalue);
         jest.put(globalObject, str, jsvalue);

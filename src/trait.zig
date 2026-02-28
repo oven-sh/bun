@@ -10,7 +10,7 @@
 /// [*]const [N]u8, []const u16, []const i8,
 /// *const u8, ?[]const u8, ?*const [N]u8.
 /// ```
-pub inline fn isZigString(comptime T: type) bool {
+pub inline fn isStringSlice(comptime T: type) bool {
     return comptime blk: {
         // Only pointer types can be strings, no optionals
         const info = @typeInfo(T);

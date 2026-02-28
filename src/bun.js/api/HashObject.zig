@@ -64,7 +64,7 @@ pub fn create(globalThis: *jsc.JSGlobalObject) jsc.JSValue {
     };
     inline for (fns) |name| {
         const value = jsc.JSFunction.create(globalThis, name, @field(HashObject, name), 1, .{});
-        function.put(globalThis, comptime ZigString.static(name), value);
+        function.put(globalThis, comptime bun.String.static(name), value);
     }
 
     return function;
@@ -79,7 +79,7 @@ fn hashWrap(comptime Hasher_: anytype) jsc.JSHostFnZig {
             defer args.deinit();
 
             var input: []const u8 = "";
-            var input_slice = ZigString.Slice.empty;
+            var input_slice = bun.String.Slice.empty;
             defer input_slice.deinit();
             if (args.nextEat()) |arg| {
                 if (arg.as(jsc.WebCore.Blob)) |blob| {
@@ -153,4 +153,3 @@ const std = @import("std");
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
-const ZigString = jsc.ZigString;

@@ -23,8 +23,7 @@ pub fn toHaveProperty(this: *Expect, globalThis: *JSGlobalObject, callFrame: *Ca
     }
 
     const not = this.flags.not;
-    var path_string = ZigString.Empty;
-    try expected_property_path.toZigString(&path_string, globalThis);
+    _ = try expected_property_path.toString(globalThis);
 
     var pass = !value.isUndefinedOrNull();
     var received_property: JSValue = .zero;
@@ -87,10 +86,8 @@ pub fn toHaveProperty(this: *Expect, globalThis: *JSGlobalObject, callFrame: *Ca
     return this.throw(globalThis, signature, "\n\nExpected path: <green>{f}<r>\n\nUnable to find property\n", .{expected_property_path.toFmt(&formatter)});
 }
 
-const DiffFormatter = @import("../diff_format.zig").DiffFormatter;
-
 const bun = @import("bun");
-const ZigString = bun.ZigString;
+const DiffFormatter = @import("../diff_format.zig").DiffFormatter;
 
 const jsc = bun.jsc;
 const CallFrame = bun.jsc.CallFrame;

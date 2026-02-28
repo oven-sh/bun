@@ -439,18 +439,6 @@ pub const Runner = struct {
 
                 .JSON => {
                     this.is_top_level = false;
-                    // if (console_tag.cell == .JSDate) {
-                    //     // in the code for printing dates, it never exceeds this amount
-                    //     var iso_string_buf = this.allocator.alloc(u8, 36) catch unreachable;
-                    //     var str = jsc.ZigString.init("");
-                    //     value.jsonStringify(this.global, 0, &str);
-                    //     var out_buf: []const u8 = std.fmt.bufPrint(iso_string_buf, "{}", .{str}) catch "";
-                    //     if (out_buf.len > 2) {
-                    //         // trim the quotes
-                    //         out_buf = out_buf[1 .. out_buf.len - 1];
-                    //     }
-                    //     return Expr.init(E.New, E.New{.target = Expr.init(E.Dot{.target = E}) })
-                    // }
                 },
 
                 .Integer => {

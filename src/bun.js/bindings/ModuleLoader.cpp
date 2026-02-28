@@ -284,7 +284,7 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
 
     result.value.sourceText.loader = loader;
     result.value.sourceText.value = JSValue {};
-    result.value.sourceText.string = {};
+    result.value.sourceText.string = { BunStringTag::Empty };
 
     auto contentsValue = object->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "contents"_s));
     if (scope.exception()) [[unlikely]] {
@@ -295,11 +295,13 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
     if (contentsValue) {
         if (contentsValue.isString()) {
             if (JSC::JSString* contentsJSString = contentsValue.toStringOrNull(globalObject)) {
-                result.value.sourceText.string = Zig::toZigString(contentsJSString, globalObject);
+                auto contentsView = contentsJSString->view(globalObject);
+                WTF::StringView stringView = contentsView;
+                result.value.sourceText.string = Bun::toStringView(stringView);
                 result.value.sourceText.value = contentsValue;
             }
         } else if (JSC::JSArrayBufferView* view = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(contentsValue)) {
-            result.value.sourceText.string = ZigString { reinterpret_cast<const unsigned char*>(view->vector()), view->byteLength() };
+            result.value.sourceText.string = { BunStringTag::StringView, { .view = { reinterpret_cast<const unsigned char*>(view->vector()), view->byteLength() } } };
             result.value.sourceText.value = contentsValue;
         }
     }

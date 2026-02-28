@@ -55,7 +55,7 @@ pub fn resolveEmbeddedFile(vm: *VirtualMachine, path_buf: *bun.PathBuffer, input
 
         .{
             .data = .{
-                .encoded_slice = ZigString.Slice.fromUTF8NeverFree(file.contents),
+                .encoded_slice = bun.String.Slice.fromUTF8NeverFree(file.contents),
             },
             .dirfd = tmpdir,
             .file = .{ .fd = tmpfile.fd },
@@ -621,8 +621,6 @@ pub fn transpileSourceCode(
 
         //     return ResolvedSource{
         //         .allocator = if (jsc_vm.has_loaded) &jsc_vm.allocator else null,
-        //         .source_code = ZigString.init(jsc_vm.allocator.dupe(u8, source.contents) catch unreachable),
-        //         .specifier = ZigString.init(specifier),
         //         .source_url = input_specifier.createIfDifferent(path.text),
         //         .tag = ResolvedSource.Tag.wasm,
         //     };
@@ -638,7 +636,7 @@ pub fn transpileSourceCode(
                         const globalValue = decoded.encode();
                         globalValue.put(
                             globalThis,
-                            ZigString.static("wasmSourceBytes"),
+                            bun.String.static("wasmSourceBytes"),
                             try jsc.ArrayBuffer.create(globalThis, source.contents, .Uint8Array),
                         );
                     }
@@ -1230,7 +1228,7 @@ export fn Bun__transpileVirtualModule(
     globalObject: *JSGlobalObject,
     specifier_ptr: *const bun.String,
     referrer_ptr: *const bun.String,
-    source_code: *ZigString,
+    source_code: *const bun.String,
     loader_: api.Loader,
     ret: *jsc.ErrorableResolvedSource,
 ) bool {
@@ -1242,7 +1240,7 @@ export fn Bun__transpileVirtualModule(
     var specifier_slice = specifier_ptr.toUTF8(jsc_vm.allocator);
     const specifier = specifier_slice.slice();
     defer specifier_slice.deinit();
-    var source_code_slice = source_code.toSlice(jsc_vm.allocator);
+    var source_code_slice = source_code.toUTF8(jsc_vm.allocator);
     defer source_code_slice.deinit();
     var referrer_slice = referrer_ptr.toUTF8(jsc_vm.allocator);
     defer referrer_slice.deinit();
@@ -1383,7 +1381,6 @@ const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
 const ResolvedSource = bun.jsc.ResolvedSource;
 const VirtualMachine = bun.jsc.VirtualMachine;
-const ZigString = bun.jsc.ZigString;
 const Bun = jsc.API.Bun;
 
 const ParseResult = bun.transpiler.ParseResult;

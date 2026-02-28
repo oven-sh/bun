@@ -1286,7 +1286,7 @@ pub const FetchTasklet = struct {
         // Custom Hostname
         hostname: ?[]u8 = null,
         check_server_identity: jsc.Strong.Optional = .empty,
-        unix_socket_path: ZigString.Slice,
+        unix_socket_path: bun.String.Slice,
         ssl_config: ?*SSLConfig = null,
         upgraded_connection: bool = false,
     };
@@ -1417,7 +1417,6 @@ const JSGlobalObject = jsc.JSGlobalObject;
 const JSPromise = jsc.JSPromise;
 const JSValue = jsc.JSValue;
 const VirtualMachine = jsc.VirtualMachine;
-const ZigString = jsc.ZigString;
 
 const Body = jsc.WebCore.Body;
 const Response = jsc.WebCore.Response;

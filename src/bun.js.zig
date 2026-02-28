@@ -252,7 +252,7 @@ pub const Run = struct {
         // Allow setting a custom timezone
         if (vm.transpiler.env.get("TZ")) |tz| {
             if (tz.len > 0) {
-                _ = vm.global.setTimeZone(&jsc.ZigString.init(tz));
+                _ = vm.global.setTimeZone(&bun.String.borrowUTF8(tz));
             }
         }
 

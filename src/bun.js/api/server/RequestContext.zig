@@ -1442,7 +1442,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             if (response.getFetchHeaders()) |headers| {
                 // first respect the headers
                 if (headers.fastGet(.TransferEncoding)) |transfer_encoding| {
-                    const transfer_encoding_str = transfer_encoding.toSlice(server.allocator);
+                    const transfer_encoding_str = transfer_encoding.toUTF8(server.allocator);
                     defer transfer_encoding_str.deinit();
                     this.renderMetadata();
                     resp.writeHeader("transfer-encoding", transfer_encoding_str.slice());
@@ -1451,7 +1451,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     return;
                 }
                 if (headers.fastGet(.ContentLength)) |content_length| {
-                    const content_length_str = content_length.toSlice(server.allocator);
+                    const content_length_str = content_length.toUTF8(server.allocator);
                     defer content_length_str.deinit();
                     this.renderMetadata();
 
@@ -2631,7 +2631,7 @@ fn getContentType(headers: ?*WebCore.FetchHeaders, blob: *const WebCore.Blob.Any
             if (headers_.fastGet(.ContentType)) |content| {
                 needs_content_type = false;
 
-                var content_slice = content.toSlice(allocator);
+                var content_slice = content.toUTF8(allocator);
                 defer content_slice.deinit();
 
                 const content_type_allocator = if (content_slice.allocator.isNull()) null else allocator;

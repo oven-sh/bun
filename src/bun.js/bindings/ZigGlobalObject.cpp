@@ -2909,11 +2909,11 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->visitAdditionalChildren<Visitor>(visitor);
 }
 
-extern "C" bool JSGlobalObject__setTimeZone(JSC::JSGlobalObject* globalObject, const ZigString* timeZone)
+extern "C" bool JSGlobalObject__setTimeZone(JSC::JSGlobalObject* globalObject, const BunString* timeZone)
 {
     auto& vm = JSC::getVM(globalObject);
 
-    if (WTF::setTimeZoneOverride(Zig::toString(*timeZone))) {
+    if (WTF::setTimeZoneOverride(timeZone->toWTFString())) {
         vm.dateCache.resetIfNecessarySlow();
         return true;
     }
@@ -3126,14 +3126,14 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
         ASSERT(!globalObject->onLoadPlugins.mustDoExpensiveRelativeLookup);
     }
 
-    ZigString queryString = { 0, 0 };
+    BunString queryString = { BunStringTag::Empty, {} };
     Zig__GlobalObject__resolve(&res, globalObject, &keyZ, &referrerZ, &queryString);
     keyZ.deref();
     referrerZ.deref();
 
     if (res.success) {
-        if (queryString.len > 0) {
-            return JSC::Identifier::fromString(globalObject->vm(), makeString(res.result.value.toWTFString(BunString::ZeroCopy), Zig::toString(queryString)));
+        if (!queryString.isEmpty()) {
+            return JSC::Identifier::fromString(globalObject->vm(), makeString(res.result.value.toWTFString(BunString::ZeroCopy), queryString.toWTFString(BunString::ZeroCopy)));
         }
 
         return Identifier::fromString(globalObject->vm(), res.result.value.toWTFString(BunString::ZeroCopy));
@@ -3199,7 +3199,7 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* j
             moduleNameZ = Bun::toStringRef(moduleName);
         }
 
-        ZigString queryString = { 0, 0 };
+        BunString queryString = { BunStringTag::Empty, {} };
         String sourceOriginStringHolder;
 
         if (sourceURL.isEmpty()) {
@@ -3231,10 +3231,10 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* j
             return promise->rejectWithCaughtException(globalObject, scope);
         }
 
-        if (queryString.len == 0) {
+        if (queryString.isEmpty()) {
             resolvedIdentifier = JSC::Identifier::fromString(vm, resolved.result.value.toWTFString());
         } else {
-            resolvedIdentifier = JSC::Identifier::fromString(vm, makeString(resolved.result.value.toWTFString(BunString::ZeroCopy), Zig::toString(queryString)));
+            resolvedIdentifier = JSC::Identifier::fromString(vm, makeString(resolved.result.value.toWTFString(BunString::ZeroCopy), queryString.toWTFString(BunString::ZeroCopy)));
         }
 
         moduleNameZ.deref();

@@ -1847,7 +1847,6 @@ pub const StandaloneModuleGraph = @import("./StandaloneModuleGraph.zig").Standal
 
 pub const string = @import("./string.zig");
 pub const String = string.String;
-pub const ZigString = jsc.ZigString;
 pub const StringJoiner = string.StringJoiner;
 pub const SliceWithUnderlyingString = string.SliceWithUnderlyingString;
 pub const PathString = string.PathString;

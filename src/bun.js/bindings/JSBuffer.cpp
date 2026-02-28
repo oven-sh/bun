@@ -655,7 +655,8 @@ static JSC::EncodedJSValue jsBufferConstructorFunction_allocBody(JSC::JSGlobalOb
                 RELEASE_AND_RETURN(scope, JSC::JSValue::encode(uint8Array));
             }
 
-            ZigString str = Zig::toZigString(view);
+            WTF::StringView stringView = view;
+            BunString str = Bun::toStringView(stringView);
 
             if (!Bun__Buffer_fill(&str, startPtr, end - start, encoding)) [[unlikely]] {
                 return Bun::ERR::INVALID_ARG_VALUE(scope, lexicalGlobalObject, "value"_s, value);
@@ -1301,9 +1302,9 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_fillBody(JSC::JSGlobalObjec
         auto startPtr = castedThis->typedVector() + offset;
         auto str_ = value.toWTFString(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        ZigString str = Zig::toZigString(str_);
+        BunString str = Bun::toStringView(str_);
 
-        if (str.len == 0) {
+        if (str_.isEmpty()) {
             memset(startPtr, 0, end - offset);
         } else if (!Bun__Buffer_fill(&str, startPtr, end - offset, encoding)) [[unlikely]] {
             return Bun::ERR::INVALID_ARG_VALUE(scope, lexicalGlobalObject, "value"_s, value);

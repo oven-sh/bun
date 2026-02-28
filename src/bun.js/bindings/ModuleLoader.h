@@ -29,7 +29,7 @@ const OnLoadResultType OnLoadResultTypeObject = 2;
 const OnLoadResultType OnLoadResultTypePromise = 3;
 
 struct CodeString {
-    ZigString string;
+    BunString string;
     JSC::JSValue value;
     BunLoaderType loader;
 };

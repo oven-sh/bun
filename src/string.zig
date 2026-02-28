@@ -21,31 +21,31 @@ pub const Tag = enum(u8) {
     /// is set, then it is owned by mimalloc. When converted to JSValue it has to be cloned
     /// into a WTF::String.
     /// Can be in either `utf8` or `utf16le` encodings.
-    ZigString = 2,
+    StringView = 2,
     /// Static memory that is guaranteed to never be freed. When converted to WTF::String,
     /// the memory is not cloned, but instead referenced with WTF::ExternalStringImpl.
     /// Can be in either `utf8` or `utf16le` encodings.
-    StaticZigString = 3,
+    StaticStringView = 3,
     /// String is ""
     Empty = 4,
 };
 
 pub const StringImpl = extern union {
-    ZigString: ZigString,
+    StringView: StringView,
     WTFStringImpl: WTFStringImpl,
-    StaticZigString: ZigString,
+    StaticStringView: StringView,
     Dead: void,
     Empty: void,
 };
 
-/// Prefer using String instead of ZigString in new code.
+/// Represents a string value in Bun's runtime, bridging Zig and JavaScriptCore.
 pub const String = extern struct {
     pub const name = "BunString";
 
     tag: Tag,
     value: StringImpl,
 
-    pub const empty = String{ .tag = .Empty, .value = .{ .ZigString = .Empty } };
+    pub const empty = String{ .tag = .Empty, .value = .{ .StringView = .Empty } };
 
     pub const dead = String{ .tag = .Dead, .value = .{ .Dead = {} } };
     pub const StringImplAllocator = @import("./string/wtf.zig").StringImplAllocator;
@@ -57,11 +57,11 @@ pub const String = extern struct {
     }
 
     pub fn ascii(bytes: []const u8) String {
-        return String{ .tag = .ZigString, .value = .{ .ZigString = ZigString.init(bytes) } };
+        return String{ .tag = .StringView, .value = .{ .StringView = StringView.init(bytes) } };
     }
 
     pub fn isGlobal(this: String) bool {
-        return this.tag == Tag.ZigString and this.value.ZigString.isGloballyAllocated();
+        return this.tag == Tag.StringView and this.value.StringView.isGloballyAllocated();
     }
 
     pub fn ensureHash(this: String) void {
@@ -94,7 +94,7 @@ pub const String = extern struct {
 
     fn toOwnedSliceImpl(this: String, allocator: std.mem.Allocator) !struct { []u8, AsciiStatus } {
         return switch (this.tag) {
-            .ZigString => .{ try this.value.ZigString.toOwnedSlice(allocator), .unknown },
+            .StringView => .{ try this.value.StringView.toOwnedSlice(allocator), .unknown },
             .WTFStringImpl => blk: {
                 const utf8_slice = this.value.WTFStringImpl.toUTF8WithoutRef(allocator);
                 // `utf8_slice.allocator` is either null, or `allocator`.
@@ -111,8 +111,8 @@ pub const String = extern struct {
                 // `owned_slice.allocator` is guaranteed to be `allocator`.
                 break :blk .{ owned_slice.mut(), ascii_status };
             },
-            .StaticZigString => .{
-                try this.value.StaticZigString.toOwnedSlice(allocator), .unknown,
+            .StaticStringView => .{
+                try this.value.StaticStringView.toOwnedSlice(allocator), .unknown,
             },
             else => return .{ &.{}, .all_ascii }, // trivially all ascii
         };
@@ -257,7 +257,7 @@ pub const String = extern struct {
         if (this.isUTF16()) {
             const new, const bytes = createUninitialized(.utf16, this.length());
             if (new.tag != .Dead) {
-                @memcpy(bytes, this.value.ZigString.utf16Slice());
+                @memcpy(bytes, this.value.StringView.utf16Slice());
             }
             return new;
         }
@@ -296,8 +296,8 @@ pub const String = extern struct {
     pub fn utf8ByteLength(this: String) usize {
         return switch (this.tag) {
             .WTFStringImpl => this.value.WTFStringImpl.utf8ByteLength(),
-            .ZigString => this.value.ZigString.utf8ByteLength(),
-            .StaticZigString => this.value.StaticZigString.utf8ByteLength(),
+            .StringView => this.value.StringView.utf8ByteLength(),
+            .StaticStringView => this.value.StaticStringView.utf8ByteLength(),
             .Dead, .Empty => 0,
         };
     }
@@ -305,7 +305,7 @@ pub const String = extern struct {
     pub fn utf16ByteLength(this: String) usize {
         return switch (this.tag) {
             .WTFStringImpl => this.value.WTFStringImpl.utf16ByteLength(),
-            .StaticZigString, .ZigString => this.value.ZigString.utf16ByteLength(),
+            .StaticStringView, .StringView => this.value.StringView.utf16ByteLength(),
             .Dead, .Empty => 0,
         };
     }
@@ -313,7 +313,7 @@ pub const String = extern struct {
     pub fn latin1ByteLength(this: String) usize {
         return switch (this.tag) {
             .WTFStringImpl => this.value.WTFStringImpl.latin1ByteLength(),
-            .StaticZigString, .ZigString => this.value.ZigString.latin1ByteLength(),
+            .StaticStringView, .StringView => this.value.StringView.latin1ByteLength(),
             .Dead, .Empty => 0,
         };
     }
@@ -323,11 +323,11 @@ pub const String = extern struct {
             return this;
         }
 
-        return String.init(this.toZigString().trunc(len));
+        return String.init(this.asStringViewUnsafe().trunc(len));
     }
 
     pub fn toOwnedSliceZ(this: String, allocator: std.mem.Allocator) OOM![:0]u8 {
-        return this.toZigString().toOwnedSliceZ(allocator);
+        return this.asStringViewUnsafe().toOwnedSliceZ(allocator);
     }
 
     /// Create a bun.String from a slice. This is never a copy.
@@ -336,11 +336,11 @@ pub const String = extern struct {
         const Type = @TypeOf(value);
         return switch (Type) {
             String => value,
-            ZigString => .{ .tag = .ZigString, .value = .{ .ZigString = value } },
-            [:0]u8, []u8, [:0]const u8, []const u8 => .{ .tag = .ZigString, .value = .{ .ZigString = ZigString.fromBytes(value) } },
-            [:0]u16, []u16, [:0]const u16, []const u16 => .{ .tag = .ZigString, .value = .{ .ZigString = ZigString.from16Slice(value) } },
+            StringView => .{ .tag = .StringView, .value = .{ .StringView = value } },
+            [:0]u8, []u8, [:0]const u8, []const u8 => .{ .tag = .StringView, .value = .{ .StringView = StringView.fromBytes(value) } },
+            [:0]u16, []u16, [:0]const u16, []const u16 => .{ .tag = .StringView, .value = .{ .StringView = StringView.from16Slice(value) } },
             WTFStringImpl => .{ .tag = .WTFStringImpl, .value = .{ .WTFStringImpl = value } },
-            *const ZigString, *ZigString => .{ .tag = .ZigString, .value = .{ .ZigString = value.* } },
+            *const StringView, *StringView => .{ .tag = .StringView, .value = .{ .StringView = value.* } },
             *const [0:0]u8 => .{ .tag = .Empty, .value = .{ .Empty = {} } },
             else => {
                 const info = @typeInfo(Type);
@@ -361,8 +361,8 @@ pub const String = extern struct {
 
     pub fn static(input: [:0]const u8) String {
         return .{
-            .tag = .StaticZigString,
-            .value = .{ .StaticZigString = ZigString.init(input) },
+            .tag = .StaticStringView,
+            .value = .{ .StaticStringView = StringView.init(input) },
         };
     }
 
@@ -379,6 +379,16 @@ pub const String = extern struct {
     pub fn toRangeErrorInstance(this: *const String, globalObject: *jsc.JSGlobalObject) jsc.JSValue {
         defer this.deref();
         return JSC__createRangeError(globalObject, this);
+    }
+
+    pub fn toSyntaxErrorInstance(this: *const String, globalObject: *jsc.JSGlobalObject) jsc.JSValue {
+        defer this.deref();
+        return JSC__createSyntaxError(globalObject, this);
+    }
+
+    pub fn toDOMExceptionInstance(this: *const String, globalObject: *jsc.JSGlobalObject, code: jsc.WebCore.DOMExceptionCode) jsc.JSValue {
+        defer this.deref();
+        return JSC__createDOMException(globalObject, this, @intFromEnum(code));
     }
 
     extern fn BunString__createExternal(
@@ -487,7 +497,7 @@ pub const String = extern struct {
     /// - Never allocates or copies any memory
     /// - Does not increment reference counts
     pub fn borrowUTF8(value: []const u8) String {
-        return String.init(ZigString.initUTF8(value));
+        return String.init(StringView.initUTF8(value));
     }
 
     /// Create a `String` from a UTF-16 slice.
@@ -500,11 +510,11 @@ pub const String = extern struct {
     /// - Never allocates or copies any memory
     /// - Does not increment reference counts
     pub fn borrowUTF16(value: []const u16) String {
-        return String.init(ZigString.initUTF16(value));
+        return String.init(StringView.initUTF16(value));
     }
 
     pub fn initLatin1OrASCIIView(value: []const u8) String {
-        return String.init(ZigString.init(value));
+        return String.init(StringView.init(value));
     }
 
     /// Create a `String` from a byte slice.
@@ -517,11 +527,11 @@ pub const String = extern struct {
     /// - Never allocates or copies any memory
     /// - Does not increment reference counts
     pub fn fromBytes(value: []const u8) String {
-        return String.init(ZigString.fromBytes(value));
+        return String.init(StringView.fromBytes(value));
     }
 
     pub fn format(self: String, writer: *std.Io.Writer) !void {
-        try self.toZigString().format(writer);
+        try self.asStringViewUnsafe().format(writer);
     }
 
     pub fn fromJS(value: bun.jsc.JSValue, globalObject: *jsc.JSGlobalObject) bun.JSError!String {
@@ -567,15 +577,18 @@ pub const String = extern struct {
         return bun.jsc.fromJSHostCall(globalObject, @src(), BunString__createArray, .{ globalObject, array.ptr, array.len });
     }
 
-    pub fn toZigString(this: String) ZigString {
-        if (this.tag == .StaticZigString or this.tag == .ZigString) {
-            return this.value.ZigString;
+    /// Internal: get the borrowed-bytes view of this String.
+    /// Returns a `StringView` with bytes borrowed from the underlying storage.
+    /// For WTFStringImpl, the returned view's lifetime is tied to the StringImpl's refcount.
+    fn asStringViewUnsafe(this: String) StringView {
+        if (this.tag == .StaticStringView or this.tag == .StringView) {
+            return this.value.StringView;
         }
 
         if (this.tag == .WTFStringImpl)
-            return this.value.WTFStringImpl.toZigString();
+            return this.value.WTFStringImpl.asStringViewUnsafe();
 
-        return ZigString.Empty;
+        return StringView.Empty;
     }
 
     pub fn toWTF(this: *String) void {
@@ -588,7 +601,7 @@ pub const String = extern struct {
         return if (this.tag == .WTFStringImpl)
             this.value.WTFStringImpl.length()
         else
-            this.toZigString().length();
+            this.asStringViewUnsafe().length();
     }
 
     pub inline fn utf16(self: String) []const u16 {
@@ -598,7 +611,7 @@ pub const String = extern struct {
             return self.value.WTFStringImpl.utf16Slice();
         }
 
-        return self.toZigString().utf16SliceAligned();
+        return self.asStringViewUnsafe().utf16SliceAligned();
     }
 
     pub inline fn latin1(self: String) []const u8 {
@@ -609,14 +622,14 @@ pub const String = extern struct {
             return self.value.WTFStringImpl.latin1Slice();
         }
 
-        return self.toZigString().slice();
+        return self.asStringViewUnsafe().slice();
     }
 
     pub fn isUTF8(self: String) bool {
-        if (!(self.tag == .ZigString or self.tag == .StaticZigString))
+        if (!(self.tag == .StringView or self.tag == .StaticStringView))
             return false;
 
-        return self.value.ZigString.isUTF8();
+        return self.value.StringView.isUTF8();
     }
 
     pub inline fn asUTF8(self: String) ?[]const u8 {
@@ -628,13 +641,13 @@ pub const String = extern struct {
             return null;
         }
 
-        if (self.tag == .ZigString or self.tag == .StaticZigString) {
-            if (self.value.ZigString.isUTF8()) {
-                return self.value.ZigString.slice();
+        if (self.tag == .StringView or self.tag == .StaticStringView) {
+            if (self.value.StringView.isUTF8()) {
+                return self.value.StringView.slice();
             }
 
-            if (bun.strings.isAllASCII(self.toZigString().slice())) {
-                return self.value.ZigString.slice();
+            if (bun.strings.isAllASCII(self.asStringViewUnsafe().slice())) {
+                return self.value.StringView.slice();
             }
 
             return null;
@@ -655,13 +668,13 @@ pub const String = extern struct {
         return .latin1;
     }
 
-    pub fn githubAction(self: String) ZigString.GithubActionFormatter {
-        return self.toZigString().githubAction();
+    pub fn githubAction(self: String) StringView.GithubActionFormatter {
+        return self.asStringViewUnsafe().githubAction();
     }
 
     pub fn byteSlice(this: String) []const u8 {
         return switch (this.tag) {
-            .ZigString, .StaticZigString => this.value.ZigString.byteSlice(),
+            .StringView, .StaticStringView => this.value.StringView.byteSlice(),
             .WTFStringImpl => this.value.WTFStringImpl.byteSlice(),
             else => &[_]u8{},
         };
@@ -671,8 +684,8 @@ pub const String = extern struct {
         if (self.tag == .WTFStringImpl)
             return !self.value.WTFStringImpl.is8Bit();
 
-        if (self.tag == .ZigString or self.tag == .StaticZigString)
-            return self.value.ZigString.is16Bit();
+        if (self.tag == .StringView or self.tag == .StaticStringView)
+            return self.value.StringView.is16Bit();
 
         return false;
     }
@@ -694,27 +707,27 @@ pub const String = extern struct {
     }
 
     pub fn encode(self: String, enc: jsc.Node.Encoding) []u8 {
-        return self.toZigString().encodeWithAllocator(bun.default_allocator, enc);
+        return self.asStringViewUnsafe().encodeWithAllocator(bun.default_allocator, enc);
     }
 
     pub inline fn utf8(self: String) []const u8 {
         if (comptime bun.Environment.allow_assert) {
-            bun.assert(self.tag == .ZigString or self.tag == .StaticZigString);
+            bun.assert(self.tag == .StringView or self.tag == .StaticStringView);
             bun.assert(self.canBeUTF8());
         }
-        return self.value.ZigString.slice();
+        return self.value.StringView.slice();
     }
 
     pub fn canBeUTF8(self: String) bool {
         if (self.tag == .WTFStringImpl)
             return self.value.WTFStringImpl.is8Bit() and bun.strings.isAllASCII(self.value.WTFStringImpl.latin1Slice());
 
-        if (self.tag == .ZigString or self.tag == .StaticZigString) {
-            if (self.value.ZigString.isUTF8()) {
+        if (self.tag == .StringView or self.tag == .StaticStringView) {
+            if (self.value.StringView.isUTF8()) {
                 return true;
             }
 
-            return bun.strings.isAllASCII(self.toZigString().slice());
+            return bun.strings.isAllASCII(self.asStringViewUnsafe().slice());
         }
 
         return self.tag == .Empty;
@@ -727,55 +740,55 @@ pub const String = extern struct {
 
     pub fn substringWithLen(this: String, start_index: usize, end_index: usize) String {
         switch (this.tag) {
-            .ZigString, .StaticZigString => {
-                return String.init(this.value.ZigString.substringWithLen(start_index, end_index));
+            .StringView, .StaticStringView => {
+                return String.init(this.value.StringView.substringWithLen(start_index, end_index));
             },
             .WTFStringImpl => {
                 if (this.value.WTFStringImpl.is8Bit()) {
-                    return String.init(ZigString.init(this.value.WTFStringImpl.latin1Slice()[start_index..end_index]));
+                    return String.init(StringView.init(this.value.WTFStringImpl.latin1Slice()[start_index..end_index]));
                 } else {
-                    return String.init(ZigString.initUTF16(this.value.WTFStringImpl.utf16Slice()[start_index..end_index]));
+                    return String.init(StringView.initUTF16(this.value.WTFStringImpl.utf16Slice()[start_index..end_index]));
                 }
             },
             else => return this,
         }
     }
 
-    pub fn toUTF8(this: String, allocator: std.mem.Allocator) ZigString.Slice {
+    pub fn toUTF8(this: String, allocator: std.mem.Allocator) StringView.Slice {
         if (this.tag == .WTFStringImpl) {
             return this.value.WTFStringImpl.toUTF8(allocator);
         }
 
-        if (this.tag == .ZigString) {
-            return this.value.ZigString.toSlice(allocator);
+        if (this.tag == .StringView) {
+            return this.value.StringView.toSlice(allocator);
         }
 
-        if (this.tag == .StaticZigString) {
-            return ZigString.Slice.fromUTF8NeverFree(this.value.StaticZigString.slice());
+        if (this.tag == .StaticStringView) {
+            return StringView.Slice.fromUTF8NeverFree(this.value.StaticStringView.slice());
         }
 
-        return ZigString.Slice.empty;
+        return StringView.Slice.empty;
     }
 
     /// This is the same as toUTF8, but it doesn't increment the reference count for latin1 strings
-    pub fn toUTF8WithoutRef(this: String, allocator: std.mem.Allocator) ZigString.Slice {
+    pub fn toUTF8WithoutRef(this: String, allocator: std.mem.Allocator) StringView.Slice {
         if (this.tag == .WTFStringImpl) {
             return this.value.WTFStringImpl.toUTF8WithoutRef(allocator);
         }
 
-        if (this.tag == .ZigString) {
-            return this.value.ZigString.toSlice(allocator);
+        if (this.tag == .StringView) {
+            return this.value.StringView.toSlice(allocator);
         }
 
-        if (this.tag == .StaticZigString) {
-            return ZigString.Slice.fromUTF8NeverFree(this.value.StaticZigString.slice());
+        if (this.tag == .StaticStringView) {
+            return StringView.Slice.fromUTF8NeverFree(this.value.StaticStringView.slice());
         }
 
-        return ZigString.Slice.empty;
+        return StringView.Slice.empty;
     }
 
     /// Equivalent to calling `toUTF8WithoutRef` followed by `cloneIfBorrowed`.
-    pub fn toUTF8Owned(this: String, allocator: std.mem.Allocator) ZigString.Slice {
+    pub fn toUTF8Owned(this: String, allocator: std.mem.Allocator) StringView.Slice {
         return bun.handleOom(this.toUTF8WithoutRef(allocator).cloneIfBorrowed(allocator));
     }
 
@@ -801,7 +814,7 @@ pub const String = extern struct {
                 if (slice.allocator.isNull()) {
                     // This is an ASCII latin1 string with the same reference as the original.
                     return .{
-                        .utf8 = ZigString.Slice.init(allocator, try allocator.dupe(u8, slice.slice())),
+                        .utf8 = StringView.Slice.init(allocator, try allocator.dupe(u8, slice.slice())),
                         .underlying = empty,
                     };
                 }
@@ -830,7 +843,7 @@ pub const String = extern struct {
 
                     // We didn't clone anything, so let's conserve memory by re-using the existing WTFStringImpl
                     return .{
-                        .utf8 = ZigString.Slice.init(this.value.WTFStringImpl.refCountAllocator(), slice.slice()),
+                        .utf8 = StringView.Slice.init(this.value.WTFStringImpl.refCountAllocator(), slice.slice()),
                         .underlying = this.*,
                     };
                 }
@@ -889,13 +902,13 @@ pub const String = extern struct {
     }
 
     pub fn eqlComptime(this: String, comptime value: []const u8) bool {
-        return this.toZigString().eqlComptime(value);
+        return this.asStringViewUnsafe().eqlComptime(value);
     }
 
     pub fn is8Bit(this: String) bool {
         return switch (this.tag) {
             .WTFStringImpl => this.value.WTFStringImpl.is8Bit(),
-            .ZigString => !this.value.ZigString.is16Bit(),
+            .StringView => !this.value.StringView.is16Bit(),
             else => true,
         };
     }
@@ -906,7 +919,7 @@ pub const String = extern struct {
         }
         return switch (this.tag) {
             .WTFStringImpl => if (this.value.WTFStringImpl.is8Bit()) this.value.WTFStringImpl.latin1Slice()[index] else this.value.WTFStringImpl.utf16Slice()[index],
-            .ZigString, .StaticZigString => if (!this.value.ZigString.is16Bit()) this.value.ZigString.slice()[index] else this.value.ZigString.utf16Slice()[index],
+            .StringView, .StaticStringView => if (!this.value.StringView.is16Bit()) this.value.StringView.slice()[index] else this.value.StringView.utf16Slice()[index],
             else => 0,
         };
     }
@@ -917,6 +930,19 @@ pub const String = extern struct {
             true => std.mem.indexOfScalar(u16, this.utf16(), @intCast(chr)),
             false => bun.strings.indexOfCharUsize(this.byteSlice(), chr),
         };
+    }
+
+    pub fn indexOfAny(this: String, comptime chars: []const u8) ?bun.strings.OptionalUsize {
+        if (this.isUTF16()) {
+            return bun.strings.indexOfAny16(this.utf16(), chars);
+        }
+        return bun.strings.indexOfAny(this.latin1(), chars);
+    }
+
+    /// Returns the character at `index` as a u8 (truncated from u16 for UTF-16 strings).
+    /// Use this only when you know the character is ASCII.
+    pub fn charAtU8(this: String, index: usize) u8 {
+        return @truncate(this.charAt(index));
     }
 
     pub fn visibleWidth(this: *const String, ambiguousAsWide: bool) usize {
@@ -1042,7 +1068,7 @@ pub const String = extern struct {
             return this.value.WTFStringImpl.hasPrefix(value);
         }
 
-        var str = this.toZigString();
+        var str = this.asStringViewUnsafe();
         if (str.len < value.len) return false;
 
         return str.substringWithLen(0, value.len).eqlComptime(value);
@@ -1081,16 +1107,18 @@ pub const String = extern struct {
     }
 
     pub fn eqlUTF8(this: String, other: []const u8) bool {
-        return this.toZigString().eql(ZigString.fromUTF8(other));
+        return this.asStringViewUnsafe().eql(StringView.fromUTF8(other));
     }
 
     pub fn eql(this: String, other: String) bool {
-        return this.toZigString().eql(other.toZigString());
+        return this.asStringViewUnsafe().eql(other.asStringViewUnsafe());
     }
 
     extern fn JSC__createError(*jsc.JSGlobalObject, str: *const String) jsc.JSValue;
     extern fn JSC__createTypeError(*jsc.JSGlobalObject, str: *const String) jsc.JSValue;
     extern fn JSC__createRangeError(*jsc.JSGlobalObject, str: *const String) jsc.JSValue;
+    extern fn JSC__createSyntaxError(*jsc.JSGlobalObject, str: *const String) jsc.JSValue;
+    extern fn JSC__createDOMException(*jsc.JSGlobalObject, str: *const String, code: u8) jsc.JSValue;
 
     pub fn jsGetStringWidth(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         const args = callFrame.argumentsAsArray(2);
@@ -1102,13 +1130,11 @@ pub const String = extern struct {
         }
 
         const js_str = try argument.toJSString(globalObject);
-        const view = js_str.view(globalObject);
+        const str = js_str.view(globalObject);
 
-        if (view.isEmpty()) {
+        if (str.isEmpty()) {
             return .jsNumber(@as(i32, 0));
         }
-
-        const str = bun.String.init(view);
 
         // Parse options: { countAnsiEscapeCodes?: bool, ambiguousIsNarrow?: bool }
         var count_ansi: bool = false;
@@ -1134,20 +1160,137 @@ pub const String = extern struct {
     /// Reports owned allocation size, not the actual size of the string.
     pub fn estimatedSize(this: *const String) usize {
         return switch (this.tag) {
-            .Dead, .Empty, .StaticZigString => 0,
-            .ZigString => this.value.ZigString.len,
+            .Dead, .Empty, .StaticStringView => 0,
+            .StringView => this.value.StringView.len,
             .WTFStringImpl => this.value.WTFStringImpl.byteLength(),
         };
     }
 
-    // TODO: move ZigString.Slice here
-    /// A UTF-8 encoded slice tied to the lifetime of a `bun.String`
-    /// Must call `.deinit` to release memory
-    pub const Slice = ZigString.Slice;
+    /// A UTF-8 encoded slice tied to the lifetime of a `bun.String`.
+    /// Must call `.deinit` to release memory.
+    ///
+    /// This struct has no encoding tag — its contents are always valid UTF-8
+    /// (converted from the underlying string's encoding if necessary).
+    pub const Slice = struct {
+        allocator: NullableAllocator = .{},
+        ptr: [*]const u8 = &.{},
+        len: u32 = 0,
+
+        pub fn reportExtraMemory(this: *const Slice, vm: *jsc.VM) void {
+            if (this.allocator.get()) |allocator| {
+                // Don't report it if the memory is actually owned by jsc.
+                if (!String.isWTFAllocator(allocator)) {
+                    vm.reportExtraMemory(this.len);
+                }
+            }
+        }
+
+        pub fn isWTFAllocated(this: *const Slice) bool {
+            return String.isWTFAllocator(this.allocator.get() orelse return false);
+        }
+
+        pub fn init(allocator: std.mem.Allocator, input: []const u8) Slice {
+            return .{
+                .ptr = input.ptr,
+                .len = @as(u32, @truncate(input.len)),
+                .allocator = NullableAllocator.init(allocator),
+            };
+        }
+
+        pub fn initDupe(allocator: std.mem.Allocator, input: []const u8) OOM!Slice {
+            return .init(allocator, try allocator.dupe(u8, input));
+        }
+
+        pub fn byteLength(this: *const Slice) usize {
+            return this.len;
+        }
+
+        pub inline fn length(this: Slice) usize {
+            return this.len;
+        }
+
+        pub const byteSlice = Slice.slice;
+
+        pub fn fromUTF8NeverFree(input: []const u8) Slice {
+            return .{
+                .ptr = input.ptr,
+                .len = @as(u32, @truncate(input.len)),
+                .allocator = .{},
+            };
+        }
+
+        pub const empty = Slice{ .ptr = "", .len = 0 };
+
+        pub inline fn isAllocated(this: Slice) bool {
+            return !this.allocator.isNull();
+        }
+
+        pub fn toOwned(this: Slice, allocator: std.mem.Allocator) OOM!Slice {
+            const duped = try allocator.dupe(u8, this.ptr[0..this.len]);
+            return .{ .allocator = .init(allocator), .ptr = duped.ptr, .len = this.len };
+        }
+
+        /// Converts this `Slice` into a `[]const u8`, guaranteed to be allocated by
+        /// `allocator`.
+        ///
+        /// This method sets `this` to an empty string. If you don't need the original string,
+        /// this method may be more efficient than `toOwned`, which always allocates memory.
+        pub fn intoOwnedSlice(this: *Slice, allocator: std.mem.Allocator) OOM![]const u8 {
+            defer this.* = .{};
+            if (this.allocator.get()) |this_allocator| blk: {
+                if (allocator.vtable != this_allocator.vtable) break :blk;
+                // Can add support for more allocators here
+                if (allocator.vtable == bun.default_allocator.vtable) {
+                    return this.slice();
+                }
+            }
+            defer this.deinit();
+            return (try this.toOwned(allocator)).slice();
+        }
+
+        /// Same as `intoOwnedSlice`, but creates `[:0]const u8`
+        pub fn intoOwnedSliceZ(this: *Slice, allocator: std.mem.Allocator) OOM![:0]const u8 {
+            defer {
+                this.deinit();
+                this.* = .{};
+            }
+            // always clones
+            return allocator.dupeZ(u8, this.slice());
+        }
+
+        /// Note that the returned slice is not guaranteed to be allocated by `allocator`.
+        pub fn cloneIfBorrowed(this: Slice, allocator: std.mem.Allocator) bun.OOM!Slice {
+            if (this.isAllocated()) {
+                return this;
+            }
+
+            const duped = try allocator.dupe(u8, this.ptr[0..this.len]);
+            return Slice{ .allocator = NullableAllocator.init(allocator), .ptr = duped.ptr, .len = this.len };
+        }
+
+        pub fn cloneWithTrailingSlash(this: Slice, allocator: std.mem.Allocator) !Slice {
+            const buf = try bun.strings.cloneNormalizingSeparators(allocator, this.slice());
+            return Slice{ .allocator = NullableAllocator.init(allocator), .ptr = buf.ptr, .len = @as(u32, @truncate(buf.len)) };
+        }
+
+        pub fn slice(this: *const Slice) []const u8 {
+            return this.ptr[0..this.len];
+        }
+
+        pub fn mut(this: Slice) []u8 {
+            bun.assertf(!this.allocator.isNull(), "cannot mutate a borrowed String.Slice", .{});
+            return @constCast(this.ptr)[0..this.len];
+        }
+
+        /// Does nothing if the slice is not allocated
+        pub fn deinit(this: *const Slice) void {
+            this.allocator.free(this.slice());
+        }
+    };
 };
 
 pub const SliceWithUnderlyingString = struct {
-    utf8: ZigString.Slice = ZigString.Slice.empty,
+    utf8: StringView.Slice = StringView.Slice.empty,
     underlying: String = String.dead,
 
     did_report_extra_memory_debug: bun.DebugOnly(bool) = if (bun.Environment.isDebug) false,
@@ -1172,7 +1315,7 @@ pub const SliceWithUnderlyingString = struct {
 
     pub fn dupeRef(this: SliceWithUnderlyingString) SliceWithUnderlyingString {
         return .{
-            .utf8 = ZigString.Slice.empty,
+            .utf8 = StringView.Slice.empty,
             .underlying = this.underlying.dupeRef(),
         };
     }
@@ -1183,7 +1326,7 @@ pub const SliceWithUnderlyingString = struct {
     pub fn transcodeFromOwnedSlice(owned_input_bytes: []u8, encoding: jsc.Node.Encoding) SliceWithUnderlyingString {
         if (owned_input_bytes.len == 0) {
             return .{
-                .utf8 = ZigString.Slice.empty,
+                .utf8 = StringView.Slice.empty,
                 .underlying = String.empty,
             };
         }
@@ -1196,7 +1339,7 @@ pub const SliceWithUnderlyingString = struct {
     /// Assumes default allocator in use
     pub fn fromUTF8(utf8: []const u8) SliceWithUnderlyingString {
         return .{
-            .utf8 = ZigString.Slice.init(bun.default_allocator, utf8),
+            .utf8 = StringView.Slice.init(bun.default_allocator, utf8),
             .underlying = String.dead,
         };
     }
@@ -1256,13 +1399,14 @@ pub const SliceWithUnderlyingString = struct {
                 if (bun.strings.toUTF16Alloc(bun.default_allocator, this.utf8.slice(), false, false) catch null) |utf16| {
                     this.utf8.deinit();
                     this.utf8 = .{};
-                    return jsc.ZigString.toExternalU16(utf16.ptr, utf16.len, globalObject);
+                    // utf16.len > 0 guaranteed: toUTF16Alloc returns null for all-ASCII, and utf8.length() > 0 checked above
+                    var out = String.createExternalGloballyAllocated(.utf16, utf16);
+                    return out.transferToJS(globalObject);
                 } else {
-                    const js_value = ZigString.init(this.utf8.slice()).toExternalValue(
-                        globalObject,
-                    );
+                    // All-ASCII case. utf8.length() > 0 checked above.
+                    var out = String.createExternalGloballyAllocated(.latin1, @constCast(this.utf8.slice()));
                     this.utf8 = .{};
-                    return js_value;
+                    return out.transferToJS(globalObject);
                 }
             }
 
@@ -1286,6 +1430,348 @@ pub const SliceWithUnderlyingString = struct {
     }
 };
 
+/// Internal borrowed-bytes representation used by `bun.String` for the
+/// `.StringView` and `.StaticStringView` variants. Not a public API — prefer
+/// `bun.String` in all new code.
+///
+/// This struct uses a tagged pointer: bits 63/62/61/60 encode UTF16/global-alloc/UTF8/static.
+/// The ABI matches the C `struct ZigStringView { const unsigned char* ptr; size_t len; }` in
+/// `headers-handwritten.h`, and it backs the `.view` field of the C `BunStringImpl` union.
+///
+/// It is also used as a tagged byte-buffer carrier for `FetchHeaders.create` (see
+/// `WebCore__FetchHeaders__createValueNotJS` and `Zig::toStringCopy(ZigStringView, StringPointer)`).
+pub const StringView = extern struct {
+    _unsafe_ptr_do_not_use: [*]const u8,
+    len: usize,
+
+    pub const Empty = StringView{ ._unsafe_ptr_do_not_use = "", .len = 0 };
+
+    /// Alias for `bun.String.Slice`.
+    pub const Slice = String.Slice;
+
+    pub const ByteString = union(enum) {
+        latin1: []const u8,
+        utf16: []const u16,
+    };
+
+    // === Tag bit helpers ===
+
+    pub inline fn untagged(ptr: [*]const u8) [*]const u8 {
+        // this can be null ptr, so long as it's also a 0 length string
+        @setRuntimeSafety(false);
+        return @as([*]const u8, @ptrFromInt(@as(u53, @truncate(@intFromPtr(ptr)))));
+    }
+
+    pub inline fn is16Bit(this: *const StringView) bool {
+        return (@intFromPtr(this._unsafe_ptr_do_not_use) & (1 << 63)) != 0;
+    }
+
+    pub fn isUTF8(this: StringView) bool {
+        return (@intFromPtr(this._unsafe_ptr_do_not_use) & (1 << 61)) != 0;
+    }
+
+    pub inline fn isGloballyAllocated(this: StringView) bool {
+        return (@intFromPtr(this._unsafe_ptr_do_not_use) & (1 << 62)) != 0;
+    }
+
+    pub fn markUTF8(this: *StringView) void {
+        this._unsafe_ptr_do_not_use = @as([*]const u8, @ptrFromInt(@intFromPtr(this._unsafe_ptr_do_not_use) | (1 << 61)));
+    }
+
+    pub fn markUTF16(this: *StringView) void {
+        this._unsafe_ptr_do_not_use = @as([*]const u8, @ptrFromInt(@intFromPtr(this._unsafe_ptr_do_not_use) | (1 << 63)));
+    }
+
+    pub inline fn markGlobal(this: *StringView) void {
+        this._unsafe_ptr_do_not_use = @as([*]const u8, @ptrFromInt(@intFromPtr(this._unsafe_ptr_do_not_use) | (1 << 62)));
+    }
+
+    // === Constructors ===
+
+    pub inline fn init(slice_: []const u8) StringView {
+        return .{ ._unsafe_ptr_do_not_use = slice_.ptr, .len = slice_.len };
+    }
+
+    pub fn initUTF8(slice_: []const u8) StringView {
+        var out = init(slice_);
+        out.markUTF8();
+        return out;
+    }
+
+    pub fn initUTF16(items: []const u16) StringView {
+        var out = StringView{ ._unsafe_ptr_do_not_use = @ptrCast(items), .len = items.len };
+        out.markUTF16();
+        return out;
+    }
+
+    pub fn fromBytes(slice_: []const u8) StringView {
+        if (!bun.strings.isAllASCII(slice_)) {
+            return initUTF8(slice_);
+        }
+        return init(slice_);
+    }
+
+    pub fn fromUTF8(slice_: []const u8) StringView {
+        var out = init(slice_);
+        if (!bun.strings.isAllASCII(slice_))
+            out.markUTF8();
+        return out;
+    }
+
+    /// Globally-allocated memory only
+    pub fn from16Slice(slice_: []const u16) StringView {
+        var str = init(@as([*]const u8, @ptrCast(slice_.ptr))[0..slice_.len]);
+        str.markUTF16();
+        str.markGlobal();
+        return str;
+    }
+
+    fn from16SliceMaybeGlobal(slice_: []const u16, global: bool) StringView {
+        var str = init(@as([*]const u8, @ptrCast(@alignCast(slice_.ptr)))[0..slice_.len]);
+        str.markUTF16();
+        if (global) {
+            str.markGlobal();
+        }
+        return str;
+    }
+
+    // === Slice accessors ===
+
+    pub fn slice(this: *const StringView) []const u8 {
+        if (comptime bun.Environment.allow_assert) {
+            if (this.len > 0 and this.is16Bit()) {
+                @panic("StringView.slice() called on a UTF-16 string.\nPlease use .toSlice() instead or carefully check that .is16Bit() is false first.");
+            }
+        }
+        return untagged(this._unsafe_ptr_do_not_use)[0..@min(this.len, std.math.maxInt(u32))];
+    }
+
+    pub inline fn utf16Slice(this: *const StringView) []align(1) const u16 {
+        if (comptime bun.Environment.allow_assert) {
+            if (this.len > 0 and !this.is16Bit()) {
+                @panic("StringView.utf16Slice() called on a latin1 string.\nPlease use .toSlice() instead or carefully check that .is16Bit() is false first.");
+            }
+        }
+        return @as([*]align(1) const u16, @ptrCast(untagged(this._unsafe_ptr_do_not_use)))[0..this.len];
+    }
+
+    pub inline fn utf16SliceAligned(this: *const StringView) []const u16 {
+        if (comptime bun.Environment.allow_assert) {
+            if (this.len > 0 and !this.is16Bit()) {
+                @panic("StringView.utf16SliceAligned() called on a latin1 string.\nPlease use .toSlice() instead or carefully check that .is16Bit() is false first.");
+            }
+        }
+        return @as([*]const u16, @ptrCast(@alignCast(untagged(this._unsafe_ptr_do_not_use))))[0..this.len];
+    }
+
+    pub fn byteSlice(this: StringView) []const u8 {
+        if (this.is16Bit()) {
+            return std.mem.sliceAsBytes(this.utf16SliceAligned());
+        }
+        return this.slice();
+    }
+
+    pub inline fn as(this: StringView) ByteString {
+        return if (this.is16Bit()) .{ .utf16 = this.utf16SliceAligned() } else .{ .latin1 = this.slice() };
+    }
+
+    pub inline fn length(this: StringView) usize {
+        return this.len;
+    }
+
+    // === Transforms ===
+
+    pub fn trunc(this: StringView, len: usize) StringView {
+        return .{ ._unsafe_ptr_do_not_use = this._unsafe_ptr_do_not_use, .len = @min(len, this.len) };
+    }
+
+    pub fn substringWithLen(this: StringView, start_index: usize, end_index: usize) StringView {
+        if (this.is16Bit()) {
+            return from16SliceMaybeGlobal(this.utf16SliceAligned()[start_index..end_index], this.isGloballyAllocated());
+        }
+        var out = init(this.slice()[start_index..end_index]);
+        if (this.isUTF8()) out.markUTF8();
+        if (this.isGloballyAllocated()) out.markGlobal();
+        return out;
+    }
+
+    // === Length calculations ===
+
+    pub fn utf8ByteLength(this: StringView) usize {
+        if (this.isUTF8()) return this.len;
+        if (this.is16Bit()) return bun.strings.elementLengthUTF16IntoUTF8(this.utf16SliceAligned());
+        return bun.webcore.encoding.byteLengthU8(this.slice().ptr, this.slice().len, .utf8);
+    }
+
+    pub fn utf16ByteLength(this: StringView) usize {
+        if (this.isUTF8()) return bun.simdutf.length.utf16.from.utf8(this.slice());
+        if (this.is16Bit()) return this.len * 2;
+        return jsc.WebCore.encoding.byteLengthU8(this.slice().ptr, this.slice().len, .utf16le);
+    }
+
+    pub fn latin1ByteLength(this: StringView) usize {
+        if (this.isUTF8()) @panic("TODO");
+        return this.len;
+    }
+
+    // === Encoding conversions ===
+
+    pub fn toOwnedSlice(this: StringView, allocator: std.mem.Allocator) OOM![]u8 {
+        if (this.isUTF8())
+            return try allocator.dupeZ(u8, this.slice());
+
+        var list = std.array_list.Managed(u8).init(allocator);
+        list = if (this.is16Bit())
+            try bun.strings.toUTF8ListWithType(list, this.utf16SliceAligned())
+        else
+            try bun.strings.allocateLatin1IntoUTF8WithList(list, 0, this.slice());
+
+        if (list.capacity > list.items.len) {
+            list.items.ptr[list.items.len] = 0;
+        }
+        if (list.capacity > 0 and list.items.len == 0) {
+            list.deinit();
+            return &.{};
+        }
+        return list.items;
+    }
+
+    pub fn toOwnedSliceZ(this: StringView, allocator: std.mem.Allocator) OOM![:0]u8 {
+        if (this.isUTF8())
+            return allocator.dupeZ(u8, this.slice());
+
+        var list = std.array_list.Managed(u8).init(allocator);
+        list = if (this.is16Bit())
+            try bun.strings.toUTF8ListWithType(list, this.utf16SliceAligned())
+        else
+            try bun.strings.allocateLatin1IntoUTF8WithList(list, 0, this.slice());
+
+        return list.toOwnedSliceSentinel(0);
+    }
+
+    /// This function checks if the input is latin1 non-ascii.
+    /// It is slow but safer when the input is from JavaScript.
+    pub fn toSlice(this: StringView, allocator: std.mem.Allocator) String.Slice {
+        if (this.len == 0)
+            return String.Slice.empty;
+        if (is16Bit(&this)) {
+            const buffer = bun.handleOom(this.toOwnedSlice(allocator));
+            return .{
+                .allocator = NullableAllocator.init(allocator),
+                .ptr = buffer.ptr,
+                .len = @as(u32, @truncate(buffer.len)),
+            };
+        }
+        if (!this.isUTF8() and !bun.strings.isAllASCII(untagged(this._unsafe_ptr_do_not_use)[0..this.len])) {
+            const buffer = bun.handleOom(this.toOwnedSlice(allocator));
+            return .{
+                .allocator = NullableAllocator.init(allocator),
+                .ptr = buffer.ptr,
+                .len = @as(u32, @truncate(buffer.len)),
+            };
+        }
+        return .{
+            .ptr = untagged(this._unsafe_ptr_do_not_use),
+            .len = @as(u32, @truncate(this.len)),
+        };
+    }
+
+    pub fn encodeWithAllocator(this: StringView, allocator: std.mem.Allocator, enc: jsc.Node.Encoding) []u8 {
+        return switch (this.as()) {
+            inline else => |repr| switch (enc) {
+                inline else => |e| jsc.WebCore.encoding.constructFrom(std.meta.Child(@TypeOf(repr)), repr, allocator, e),
+            },
+        };
+    }
+
+    // === Equality ===
+
+    pub fn eqlComptime(this: StringView, comptime other: []const u8) bool {
+        if (this.is16Bit()) {
+            return bun.strings.eqlComptimeUTF16(this.utf16SliceAligned(), other);
+        }
+        if (comptime bun.strings.isAllASCII(other)) {
+            if (this.len != other.len) return false;
+            return bun.strings.eqlComptimeIgnoreLen(this.slice(), other);
+        }
+        @compileError("Not implemented yet for latin1");
+    }
+
+    pub fn eql(this: StringView, other: StringView) bool {
+        if (this.len == 0 or other.len == 0)
+            return this.len == other.len;
+
+        const left_utf16 = this.is16Bit();
+        const right_utf16 = other.is16Bit();
+
+        if (left_utf16 == right_utf16 and left_utf16) {
+            return bun.strings.eqlLong(std.mem.sliceAsBytes(this.utf16SliceAligned()), std.mem.sliceAsBytes(other.utf16SliceAligned()), true);
+        } else if (left_utf16 == right_utf16) {
+            return bun.strings.eqlLong(this.slice(), other.slice(), true);
+        }
+
+        const utf16: StringView = if (left_utf16) this else other;
+        const latin1_s: StringView = if (left_utf16) other else this;
+
+        if (latin1_s.isAllASCII()) {
+            return bun.strings.utf16EqlString(utf16.utf16SliceAligned(), latin1_s.slice());
+        }
+
+        // slow path
+        var utf16_slice = utf16.toSlice(bun.default_allocator);
+        var latin1_slice = latin1_s.toSlice(bun.default_allocator);
+        defer utf16_slice.deinit();
+        defer latin1_slice.deinit();
+        return bun.strings.eqlLong(utf16_slice.slice(), latin1_slice.slice(), true);
+    }
+
+    fn isAllASCII(this: StringView) bool {
+        if (this.is16Bit()) {
+            return bun.strings.firstNonASCII16(this.utf16SliceAligned()) == null;
+        }
+        return bun.strings.isAllASCII(this.slice());
+    }
+
+    // === Formatting ===
+
+    pub fn format(self: StringView, writer: *std.Io.Writer) !void {
+        if (self.isUTF8()) {
+            try writer.writeAll(self.slice());
+            return;
+        }
+        if (self.is16Bit()) {
+            try bun.fmt.formatUTF16Type(self.utf16SliceAligned(), writer);
+            return;
+        }
+        try bun.fmt.formatLatin1(self.slice(), writer);
+    }
+
+    pub const GithubActionFormatter = struct {
+        text: StringView,
+
+        pub fn format(this: GithubActionFormatter, writer: *std.Io.Writer) !void {
+            var bytes = this.text.toSlice(bun.default_allocator);
+            defer bytes.deinit();
+            try bun.fmt.githubActionWriter(writer, bytes.slice());
+        }
+    };
+
+    pub fn githubAction(this: StringView) GithubActionFormatter {
+        return .{ .text = this };
+    }
+};
+
+/// Free callback for ExternalStringImpl backed by mimalloc.
+/// Called from C++ `Zig::free_global_string` (helpers.h) to release globally-allocated string bytes.
+export fn BunString__freeGlobalBytes(ptr: [*]const u8, len: usize) void {
+    const untagged_ptr = @as(*anyopaque, @ptrFromInt(@intFromPtr(StringView.init(ptr[0..len]).slice().ptr)));
+    if (comptime bun.Environment.allow_assert) {
+        bun.assert(bun.mimalloc.mi_is_in_heap_region(ptr));
+    }
+    // we must untag the string pointer
+    bun.mimalloc.mi_free(untagged_ptr);
+}
+
 comptime {
     bun.assert_eql(@sizeOf(bun.String), 24);
     bun.assert_eql(@alignOf(bun.String), 8);
@@ -1295,9 +1781,9 @@ const std = @import("std");
 
 const bun = @import("bun");
 const JSError = bun.JSError;
+const NullableAllocator = bun.NullableAllocator;
 const OOM = bun.OOM;
 const AsciiStatus = bun.strings.AsciiStatus;
 
 const jsc = bun.jsc;
 const JSValue = bun.jsc.JSValue;
-const ZigString = bun.jsc.ZigString;

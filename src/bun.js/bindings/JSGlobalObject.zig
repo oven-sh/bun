@@ -29,14 +29,14 @@ pub const JSGlobalObject = opaque {
 
     pub fn throwTODO(this: *JSGlobalObject, msg: []const u8) bun.JSError {
         const err = this.createErrorInstance("{s}", .{msg});
-        err.put(this, ZigString.static("name"), (bun.String.static("TODOError").toJS(this)) catch return error.JSError);
+        err.put(this, bun.String.static("name"), (bun.String.static("TODOError").toJS(this)) catch return error.JSError);
         return this.throwValue(err);
     }
 
     pub const requestTermination = JSGlobalObject__requestTermination;
     pub const clearTerminationException = JSGlobalObject__clearTerminationException;
 
-    pub fn setTimeZone(this: *JSGlobalObject, timeZone: *const ZigString) bool {
+    pub fn setTimeZone(this: *JSGlobalObject, timeZone: *const bun.String) bool {
         return JSGlobalObject__setTimeZone(this, timeZone);
     }
 
@@ -266,17 +266,14 @@ pub const JSGlobalObject = opaque {
             var writer = &buf.writer;
             writer.print(fmt, args) catch
                 // if an exception occurs in the middle of formatting the error message, it's better to just return the formatting string than an error about an error
-                return ZigString.static(fmt).toErrorInstance(this);
+                return String.static(fmt).toErrorInstance(this);
 
-            // Ensure we clone it.
-            var str = ZigString.initUTF8(buf.written());
-
-            return str.toErrorInstance(this);
+            return String.borrowUTF8(buf.written()).toErrorInstance(this);
         } else {
             if (comptime strings.isAllASCII(fmt)) {
                 return String.static(fmt).toErrorInstance(this);
             } else {
-                return ZigString.initUTF8(fmt).toErrorInstance(this);
+                return String.borrowUTF8(fmt).toErrorInstance(this);
             }
         }
     }
@@ -287,11 +284,10 @@ pub const JSGlobalObject = opaque {
             var buf = bun.MutableString.init2048(stack_fallback.get()) catch unreachable;
             defer buf.deinit();
             var writer = buf.writer();
-            writer.print(fmt, args) catch return ZigString.static(fmt).toErrorInstance(this);
-            var str = ZigString.fromUTF8(buf.slice());
-            return str.toTypeErrorInstance(this);
+            writer.print(fmt, args) catch return String.static(fmt).toErrorInstance(this);
+            return String.borrowUTF8(buf.slice()).toTypeErrorInstance(this);
         } else {
-            return ZigString.static(fmt).toTypeErrorInstance(this);
+            return String.static(fmt).toTypeErrorInstance(this);
         }
     }
 
@@ -302,10 +298,9 @@ pub const JSGlobalObject = opaque {
             defer buf.deinit();
             var writer = buf.writer();
             try writer.print(fmt, args);
-            var str = ZigString.fromUTF8(buf.slice());
-            return str.toDOMExceptionInstance(this, code);
+            return String.borrowUTF8(buf.slice()).toDOMExceptionInstance(this, code);
         } else {
-            return ZigString.static(fmt).toDOMExceptionInstance(this, code);
+            return String.static(fmt).toDOMExceptionInstance(this, code);
         }
     }
 
@@ -315,11 +310,10 @@ pub const JSGlobalObject = opaque {
             var buf = bun.MutableString.init2048(stack_fallback.get()) catch unreachable;
             defer buf.deinit();
             var writer = buf.writer();
-            writer.print(fmt, args) catch return ZigString.static(fmt).toErrorInstance(this);
-            var str = ZigString.fromUTF8(buf.slice());
-            return str.toSyntaxErrorInstance(this);
+            writer.print(fmt, args) catch return String.static(fmt).toErrorInstance(this);
+            return String.borrowUTF8(buf.slice()).toSyntaxErrorInstance(this);
         } else {
-            return ZigString.static(fmt).toSyntaxErrorInstance(this);
+            return String.static(fmt).toSyntaxErrorInstance(this);
         }
     }
 
@@ -329,17 +323,16 @@ pub const JSGlobalObject = opaque {
             var buf = bun.MutableString.init2048(stack_fallback.get()) catch unreachable;
             defer buf.deinit();
             var writer = buf.writer();
-            writer.print(fmt, args) catch return ZigString.static(fmt).toErrorInstance(this);
-            var str = ZigString.fromUTF8(buf.slice());
-            return str.toRangeErrorInstance(this);
+            writer.print(fmt, args) catch return String.static(fmt).toErrorInstance(this);
+            return String.borrowUTF8(buf.slice()).toRangeErrorInstance(this);
         } else {
-            return ZigString.static(fmt).toRangeErrorInstance(this);
+            return String.static(fmt).toRangeErrorInstance(this);
         }
     }
 
     pub fn createRangeError(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) JSValue {
         const err = createErrorInstance(this, fmt, args);
-        err.put(this, ZigString.static("code"), ZigString.static(@tagName(jsc.Node.ErrorCode.ERR_OUT_OF_RANGE)).toJS(this));
+        err.put(this, bun.String.static("code"), bun.String.createUTF8ForJS(this, @tagName(jsc.Node.ErrorCode.ERR_OUT_OF_RANGE)) catch return err);
         return err;
     }
 
@@ -359,9 +352,9 @@ pub const JSGlobalObject = opaque {
         args: anytype,
     ) JSError {
         const err = createErrorInstance(this, message, args);
-        err.put(this, ZigString.static("code"), ZigString.init(@tagName(opts.code)).toJS(this));
-        if (opts.name) |name| err.put(this, ZigString.static("name"), ZigString.init(name).toJS(this));
-        if (opts.errno) |errno| err.put(this, ZigString.static("errno"), try .fromAny(this, i32, errno));
+        err.put(this, bun.String.static("code"), try bun.String.createUTF8ForJS(this, @tagName(opts.code)));
+        if (opts.name) |name| err.put(this, bun.String.static("name"), try bun.String.createUTF8ForJS(this, name));
+        if (opts.errno) |errno| err.put(this, bun.String.static("errno"), try .fromAny(this, i32, errno));
         return this.throwValue(err);
     }
 
@@ -448,8 +441,7 @@ pub const JSGlobalObject = opaque {
         const allocator_ = stack.get();
         const buffer = try std.fmt.allocPrint(allocator_, comptime "{s} " ++ fmt, .{@errorName(err)});
         defer allocator_.free(buffer);
-        const str = ZigString.initUTF8(buffer);
-        const err_value = str.toErrorInstance(this);
+        const err_value = bun.String.borrowUTF8(buffer).toErrorInstance(this);
         return this.vm().throwError(this, err_value);
     }
 
@@ -459,8 +451,8 @@ pub const JSGlobalObject = opaque {
     }
     pub const ctx = ref;
 
-    extern fn JSC__JSGlobalObject__createAggregateError(*JSGlobalObject, [*]const JSValue, usize, *const ZigString) JSValue;
-    pub fn createAggregateError(globalObject: *JSGlobalObject, errors: []const JSValue, message: *const ZigString) bun.JSError!JSValue {
+    extern fn JSC__JSGlobalObject__createAggregateError(*JSGlobalObject, [*]const JSValue, usize, *const bun.String) JSValue;
+    pub fn createAggregateError(globalObject: *JSGlobalObject, errors: []const JSValue, message: *const bun.String) bun.JSError!JSValue {
         return bun.jsc.fromJSHostCall(globalObject, @src(), JSC__JSGlobalObject__createAggregateError, .{ globalObject, errors.ptr, errors.len, message });
     }
 
@@ -553,7 +545,7 @@ pub const JSGlobalObject = opaque {
         return JSC__JSGlobalObject__vm(this);
     }
 
-    pub fn deleteModuleRegistryEntry(this: *JSGlobalObject, name_: *ZigString) bun.JSError!void {
+    pub fn deleteModuleRegistryEntry(this: *JSGlobalObject, name_: *const bun.String) bun.JSError!void {
         return bun.jsc.fromJSHostCallGeneric(this, @src(), JSC__JSGlobalObject__deleteModuleRegistryEntry, .{ this, name_ });
     }
 
@@ -791,12 +783,12 @@ pub const JSGlobalObject = opaque {
 
     extern fn JSC__JSGlobalObject__bunVM(*JSGlobalObject) *VM;
     extern fn JSC__JSGlobalObject__vm(*JSGlobalObject) *VM;
-    extern fn JSC__JSGlobalObject__deleteModuleRegistryEntry(*JSGlobalObject, *const ZigString) void;
+    extern fn JSC__JSGlobalObject__deleteModuleRegistryEntry(*JSGlobalObject, *const bun.String) void;
     extern fn JSGlobalObject__clearException(*JSGlobalObject) void;
     extern fn JSGlobalObject__clearExceptionExceptTermination(*JSGlobalObject) bool;
     extern fn JSGlobalObject__clearTerminationException(this: *JSGlobalObject) void;
     extern fn JSGlobalObject__hasException(*JSGlobalObject) bool;
-    extern fn JSGlobalObject__setTimeZone(this: *JSGlobalObject, timeZone: *const ZigString) bool;
+    extern fn JSGlobalObject__setTimeZone(this: *JSGlobalObject, timeZone: *const bun.String) bool;
     extern fn JSGlobalObject__tryTakeException(*JSGlobalObject) JSValue;
     extern fn JSGlobalObject__requestTermination(this: *JSGlobalObject) void;
 
@@ -831,7 +823,7 @@ pub const JSGlobalObject = opaque {
         return Zig__GlobalObject__resetModuleRegistryMap(global, map);
     }
 
-    pub fn resolve(res: *ErrorableString, global: *JSGlobalObject, specifier: *bun.String, source: *bun.String, query: *ZigString) callconv(.c) void {
+    pub fn resolve(res: *ErrorableString, global: *JSGlobalObject, specifier: *bun.String, source: *bun.String, query: *bun.String) callconv(.c) void {
         jsc.markBinding(@src());
         return jsc.VirtualMachine.resolve(res, global, specifier.*, source.*, query, true) catch {
             bun.debugAssert(res.success == false);
@@ -867,13 +859,12 @@ pub const JSGlobalObject = opaque {
             response_value,
         );
 
-        const content_type = if (try response.getContentType()) |content_type|
-            content_type.toZigString()
-        else
-            ZigString.static("null").*;
+        const content_type_slice: ?bun.String.Slice = try response.getContentType();
+        defer if (content_type_slice) |ct| ct.deinit();
+        const content_type: []const u8 = if (content_type_slice) |ct| ct.slice() else "null";
 
-        if (!content_type.eqlComptime("application/wasm")) {
-            return this.ERR(.WEBASSEMBLY_RESPONSE, "WebAssembly response has unsupported MIME type '{f}'", .{content_type}).throw();
+        if (!bun.strings.eqlComptime(content_type, "application/wasm")) {
+            return this.ERR(.WEBASSEMBLY_RESPONSE, "WebAssembly response has unsupported MIME type '{s}'", .{content_type}).throw();
         }
 
         if (!response.isOK()) {
@@ -933,21 +924,14 @@ pub const JSGlobalObject = opaque {
         args: anytype,
     ) jsc.JSValue {
         if (comptime std.meta.fields(@TypeOf(args)).len == 0) {
-            var zig_str = jsc.ZigString.init(fmt);
-            if (comptime !strings.isAllASCII(fmt)) {
-                zig_str.markUTF16();
-            }
-
-            return zig_str.toErrorInstance(globalThis);
+            return bun.String.borrowUTF8(fmt).toErrorInstance(globalThis);
         } else {
             var fallback = std.heap.stackFallback(256, bun.default_allocator);
             var alloc = fallback.get();
 
             const buf = std.fmt.allocPrint(alloc, fmt, args) catch unreachable;
-            var zig_str = jsc.ZigString.init(buf);
-            zig_str.detectEncoding();
-            // it alwayas clones
-            const res = zig_str.toErrorInstance(globalThis);
+            // toErrorInstance always clones, so we can free after.
+            const res = bun.String.borrowUTF8(buf).toErrorInstance(globalThis);
             alloc.free(buf);
             return res;
         }
@@ -1004,4 +988,3 @@ const CommonStrings = jsc.CommonStrings;
 const ErrorableString = jsc.ErrorableString;
 const JSValue = jsc.JSValue;
 const VM = jsc.VM;
-const ZigString = jsc.ZigString;

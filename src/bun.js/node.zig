@@ -196,8 +196,8 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
                         .int, .float, .comptime_int, .comptime_float => jsc.JSValue.jsNumber(r),
                         .@"struct", .@"enum", .@"opaque", .@"union" => r.toJS(globalObject),
                         .pointer => {
-                            if (bun.trait.isZigString(ReturnType))
-                                jsc.ZigString.init(bun.asByteSlice(r)).withEncoding().toJS(globalObject);
+                            if (bun.trait.isStringSlice(ReturnType))
+                                bun.String.fromBytes(bun.asByteSlice(r)).toJS(globalObject);
 
                             return r.toJS(globalObject);
                         },

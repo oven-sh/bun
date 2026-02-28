@@ -896,15 +896,14 @@ pub const UpgradeCommand = struct {
 pub const upgrade_js_bindings = struct {
     const jsc = bun.jsc;
     const JSValue = jsc.JSValue;
-    const ZigString = jsc.ZigString;
 
     var tempdir_fd: ?bun.FileDescriptor = null;
 
     pub fn generate(global: *jsc.JSGlobalObject) jsc.JSValue {
         const obj = JSValue.createEmptyObject(global, 2);
-        const open = ZigString.static("openTempDirWithoutSharingDelete");
+        const open = bun.String.static("openTempDirWithoutSharingDelete");
         obj.put(global, open, jsc.JSFunction.create(global, "openTempDirWithoutSharingDelete", jsOpenTempDirWithoutSharingDelete, 1, .{}));
-        const close = ZigString.static("closeTempDirHandle");
+        const close = bun.String.static("closeTempDirHandle");
         obj.put(global, close, jsc.JSFunction.create(global, "closeTempDirHandle", jsCloseTempDirHandle, 1, .{}));
         return obj;
     }

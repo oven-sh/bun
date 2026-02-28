@@ -57,11 +57,12 @@ pub const JSFunction = opaque {
         JSC__JSFunction__optimizeSoon(value);
     }
 
-    extern fn JSC__JSFunction__getSourceCode(value: JSValue, out: *ZigString) bool;
+    extern fn JSC__JSFunction__getSourceCode(value: JSValue, out: *bun.String) bool;
 
+    /// Caller must call `.deref()` on the result.
     pub fn getSourceCode(value: JSValue) ?bun.String {
-        var str: ZigString = undefined;
-        return if (JSC__JSFunction__getSourceCode(value, &str)) bun.String.init(str) else null;
+        var str: bun.String = .empty;
+        return if (JSC__JSFunction__getSourceCode(value, &str)) str else null;
     }
 };
 
@@ -72,4 +73,3 @@ const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSHostFn = jsc.JSHostFn;
 const JSValue = jsc.JSValue;
-const ZigString = jsc.ZigString;

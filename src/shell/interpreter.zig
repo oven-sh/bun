@@ -267,7 +267,7 @@ pub const Interpreter = struct {
     // Necessary for builtin commands.
     keep_alive: bun.Async.KeepAlive = .{},
 
-    vm_args_utf8: std.array_list.Managed(jsc.ZigString.Slice),
+    vm_args_utf8: std.array_list.Managed(bun.String.Slice),
     async_commands_executing: u32 = 0,
 
     globalThis: *jsc.JSGlobalObject,
@@ -672,10 +672,10 @@ pub const Interpreter = struct {
         syscall: Syscall.Error,
         other: ShellErrorKind,
 
-        fn toJS(this: ShellErrorCtx, globalThis: *JSGlobalObject) JSValue {
+        fn toJS(this: ShellErrorCtx, globalThis: *JSGlobalObject) bun.JSError!JSValue {
             return switch (this) {
                 .syscall => |err| err.toJS(globalThis),
-                .other => |err| bun.jsc.ZigString.fromBytes(@errorName(err)).toJS(globalThis),
+                .other => |err| bun.String.createUTF8ForJS(globalThis, @errorName(err)),
             };
         }
     };
@@ -689,7 +689,7 @@ pub const Interpreter = struct {
         for (this.vm_args_utf8.items) |arg| {
             size += arg.byteSlice().len;
         }
-        size += this.vm_args_utf8.allocatedSlice().len * @sizeOf(jsc.ZigString.Slice);
+        size += this.vm_args_utf8.allocatedSlice().len * @sizeOf(bun.String.Slice);
         return size;
     }
 
@@ -731,7 +731,7 @@ pub const Interpreter = struct {
             &export_env,
         );
 
-        const cwd_string: ?bun.jsc.ZigString.Slice = if (cwd) |c| brk: {
+        const cwd_string: ?bun.String.Slice = if (cwd) |c| brk: {
             break :brk c.toUTF8(bun.default_allocator);
         } else null;
         defer if (cwd_string) |c| c.deinit();
@@ -929,7 +929,7 @@ pub const Interpreter = struct {
                 .stderr = .pipe,
             },
 
-            .vm_args_utf8 = std.array_list.Managed(jsc.ZigString.Slice).init(bun.default_allocator),
+            .vm_args_utf8 = std.array_list.Managed(bun.String.Slice).init(bun.default_allocator),
             .__alloc_scope = if (bun.Environment.enableAllocScopes) bun.AllocationScope.init(allocator) else {},
             .globalThis = undefined,
         };
@@ -1339,7 +1339,7 @@ pub const Interpreter = struct {
             var value = object_iter.value;
             if (value.isUndefined()) continue;
 
-            const value_str = value.getZigString(globalThis);
+            const value_str = try value.toString(globalThis);
             const slice = bun.handleOom(value_str.toOwnedSlice(bun.default_allocator));
             const keyref = EnvStr.initRefCounted(keyslice);
             defer keyref.deref();

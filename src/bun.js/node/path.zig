@@ -416,20 +416,20 @@ pub fn basename(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*
     // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     try validateString(globalObject, path_ptr, "path", .{});
 
-    const pathZStr = try path_ptr.getZigString(globalObject);
-    if (pathZStr.len == 0) return path_ptr;
+    const pathZStr = try path_ptr.toString(globalObject);
+    if (pathZStr.isEmpty()) return path_ptr;
 
     var stack_fallback = std.heap.stackFallback(stack_fallback_size_small, bun.default_allocator);
     const allocator = stack_fallback.get();
 
-    const pathZSlice = pathZStr.toSlice(allocator);
+    const pathZSlice = pathZStr.toUTF8(allocator);
     defer pathZSlice.deinit();
 
-    var suffixZSlice: ?jsc.ZigString.Slice = null;
+    var suffixZSlice: ?bun.String.Slice = null;
     if (suffix_ptr) |_suffix_ptr| {
-        const suffixZStr = try _suffix_ptr.getZigString(globalObject);
-        if (suffixZStr.len > 0 and suffixZStr.len <= pathZStr.len) {
-            suffixZSlice = suffixZStr.toSlice(allocator);
+        const suffixZStr = try _suffix_ptr.toString(globalObject);
+        if (suffixZStr.length() > 0 and suffixZStr.length() <= pathZStr.length()) {
+            suffixZSlice = suffixZStr.toUTF8(allocator);
         }
     }
     defer if (suffixZSlice) |_s| _s.deinit();
@@ -605,13 +605,13 @@ pub fn dirname(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*]
     // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     try validateString(globalObject, path_ptr, "path", .{});
 
-    const pathZStr = try path_ptr.getZigString(globalObject);
-    if (pathZStr.len == 0) return bun.String.createUTF8ForJS(globalObject, CHAR_STR_DOT);
+    const pathZStr = try path_ptr.toString(globalObject);
+    if (pathZStr.isEmpty()) return bun.String.createUTF8ForJS(globalObject, CHAR_STR_DOT);
 
     var stack_fallback = std.heap.stackFallback(stack_fallback_size_small, bun.default_allocator);
     const allocator = stack_fallback.get();
 
-    const pathZSlice = pathZStr.toSlice(allocator);
+    const pathZSlice = pathZStr.toUTF8(allocator);
     defer pathZSlice.deinit();
     return dirnameJS_T(u8, globalObject, isWindows, pathZSlice.slice());
 }
@@ -801,13 +801,13 @@ pub fn extname(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*]
     // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     try validateString(globalObject, path_ptr, "path", .{});
 
-    const pathZStr = try path_ptr.getZigString(globalObject);
-    if (pathZStr.len == 0) return path_ptr;
+    const pathZStr = try path_ptr.toString(globalObject);
+    if (pathZStr.isEmpty()) return path_ptr;
 
     var stack_fallback = std.heap.stackFallback(stack_fallback_size_small, bun.default_allocator);
     const allocator = stack_fallback.get();
 
-    const pathZSlice = pathZStr.toSlice(allocator);
+    const pathZSlice = pathZStr.toUTF8(allocator);
     defer pathZSlice.deinit();
     return extnameJS_T(u8, globalObject, isWindows, pathZSlice.slice());
 }
@@ -916,7 +916,7 @@ pub fn format(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*]j
     const allocator = stack_fallback.get();
 
     var root: []const u8 = "";
-    var root_slice: ?jsc.ZigString.Slice = null;
+    var root_slice: ?bun.String.Slice = null;
     defer if (root_slice) |slice| slice.deinit();
 
     if (try pathObject_ptr.getTruthy(globalObject, "root")) |jsValue| {
@@ -924,7 +924,7 @@ pub fn format(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*]j
         root = root_slice.?.slice();
     }
     var dir: []const u8 = "";
-    var dir_slice: ?jsc.ZigString.Slice = null;
+    var dir_slice: ?bun.String.Slice = null;
     defer if (dir_slice) |slice| slice.deinit();
 
     if (try pathObject_ptr.getTruthy(globalObject, "dir")) |jsValue| {
@@ -932,7 +932,7 @@ pub fn format(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*]j
         dir = dir_slice.?.slice();
     }
     var base: []const u8 = "";
-    var base_slice: ?jsc.ZigString.Slice = null;
+    var base_slice: ?bun.String.Slice = null;
     defer if (base_slice) |slice| slice.deinit();
 
     if (try pathObject_ptr.getTruthy(globalObject, "base")) |jsValue| {
@@ -940,7 +940,7 @@ pub fn format(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*]j
         base = base_slice.?.slice();
     }
     var _name: []const u8 = "";
-    var _name_slice: ?jsc.ZigString.Slice = null;
+    var _name_slice: ?bun.String.Slice = null;
     defer if (_name_slice) |slice| slice.deinit();
 
     if (try pathObject_ptr.getTruthy(globalObject, "name")) |jsValue| {
@@ -948,7 +948,7 @@ pub fn format(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*]j
         _name = _name_slice.?.slice();
     }
     var ext: []const u8 = "";
-    var ext_slice: ?jsc.ZigString.Slice = null;
+    var ext_slice: ?bun.String.Slice = null;
     defer if (ext_slice) |slice| slice.deinit();
 
     if (try pathObject_ptr.getTruthy(globalObject, "ext")) |jsValue| {
@@ -982,19 +982,12 @@ pub fn isAbsoluteWindowsT(comptime T: type, path: []const T) bool {
             isSepWindowsT(T, path[2]));
 }
 
-pub fn isAbsolutePosixZigString(pathZStr: jsc.ZigString) bool {
-    const pathZStrTrunc = pathZStr.trunc(1);
-    return if (pathZStrTrunc.len > 0 and pathZStrTrunc.is16Bit())
-        isAbsolutePosixT(u16, pathZStrTrunc.utf16SliceAligned())
+pub fn isAbsoluteString(pathStr: bun.String, comptime isWindows: bool) bool {
+    if (pathStr.isEmpty()) return false;
+    return if (pathStr.isUTF16())
+        (if (isWindows) isAbsoluteWindowsT(u16, pathStr.utf16()) else isAbsolutePosixT(u16, pathStr.utf16()))
     else
-        isAbsolutePosixT(u8, pathZStrTrunc.slice());
-}
-
-pub fn isAbsoluteWindowsZigString(pathZStr: jsc.ZigString) bool {
-    return if (pathZStr.len > 0 and pathZStr.is16Bit())
-        isAbsoluteWindowsT(u16, @alignCast(pathZStr.utf16Slice()))
-    else
-        isAbsoluteWindowsT(u8, pathZStr.slice());
+        (if (isWindows) isAbsoluteWindowsT(u8, pathStr.latin1()) else isAbsolutePosixT(u8, pathStr.latin1()));
 }
 
 pub fn isAbsolute(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*]jsc.JSValue, args_len: u16) bun.JSError!jsc.JSValue {
@@ -1002,10 +995,10 @@ pub fn isAbsolute(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: 
     // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     try validateString(globalObject, path_ptr, "path", .{});
 
-    const pathZStr = try path_ptr.getZigString(globalObject);
-    if (pathZStr.len == 0) return .false;
-    if (isWindows) return jsc.JSValue.jsBoolean(isAbsoluteWindowsZigString(pathZStr));
-    return jsc.JSValue.jsBoolean(isAbsolutePosixZigString(pathZStr));
+    const pathStr = try path_ptr.toString(globalObject);
+    if (pathStr.isEmpty()) return .false;
+    if (isWindows) return jsc.JSValue.jsBoolean(isAbsoluteString(pathStr, true));
+    return jsc.JSValue.jsBoolean(isAbsoluteString(pathStr, false));
 }
 
 pub fn isSepPosixT(comptime T: type, byte: T) bool {
@@ -1223,8 +1216,8 @@ pub fn join(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*]jsc
     for (0..args_len, args_ptr) |i, path_ptr| {
         // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
         try validateString(globalObject, path_ptr, "paths[{d}]", .{i});
-        const pathZStr = try path_ptr.getZigString(globalObject);
-        paths[i] = if (pathZStr.len > 0) pathZStr.toSlice(allocator).slice() else "";
+        const pathZStr = try path_ptr.toString(globalObject);
+        paths[i] = if (!pathZStr.isEmpty()) pathZStr.toUTF8(allocator).slice() else "";
     }
     return joinJS_T(u8, globalObject, allocator, isWindows, paths);
 }
@@ -1620,14 +1613,13 @@ pub fn normalize(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [
     const path_ptr: jsc.JSValue = if (args_len > 0) args_ptr[0] else .js_undefined;
     // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     try validateString(globalObject, path_ptr, "path", .{});
-    const pathZStr = try path_ptr.getZigString(globalObject);
-    const len = pathZStr.len;
-    if (len == 0) return bun.String.createUTF8ForJS(globalObject, CHAR_STR_DOT);
+    const pathZStr = try path_ptr.toString(globalObject);
+    if (pathZStr.isEmpty()) return bun.String.createUTF8ForJS(globalObject, CHAR_STR_DOT);
 
     var stack_fallback = std.heap.stackFallback(stack_fallback_size_small, bun.default_allocator);
     const allocator = stack_fallback.get();
 
-    const pathZSlice = pathZStr.toSlice(allocator);
+    const pathZSlice = pathZStr.toUTF8(allocator);
     defer pathZSlice.deinit();
     return normalizeJS_T(u8, globalObject, allocator, isWindows, pathZSlice.slice());
 }
@@ -1941,13 +1933,13 @@ pub fn parse(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*]js
     // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     try validateString(globalObject, path_ptr, "path", .{});
 
-    const pathZStr = try path_ptr.getZigString(globalObject);
-    if (pathZStr.len == 0) return (PathParsed(u8){}).toJSObject(globalObject);
+    const pathZStr = try path_ptr.toString(globalObject);
+    if (pathZStr.isEmpty()) return (PathParsed(u8){}).toJSObject(globalObject);
 
     var stack_fallback = std.heap.stackFallback(stack_fallback_size_small, bun.default_allocator);
     const allocator = stack_fallback.get();
 
-    const pathZSlice = pathZStr.toSlice(allocator);
+    const pathZSlice = pathZStr.toUTF8(allocator);
     defer pathZSlice.deinit();
     return parseJS_T(u8, globalObject, isWindows, pathZSlice.slice());
 }
@@ -2303,16 +2295,16 @@ pub fn relative(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*
     // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     try validateString(globalObject, to_ptr, "to", .{});
 
-    const fromZigStr = try from_ptr.getZigString(globalObject);
-    const toZigStr = try to_ptr.getZigString(globalObject);
-    if ((fromZigStr.len + toZigStr.len) == 0) return from_ptr;
+    const fromStr = try from_ptr.toString(globalObject);
+    const toStr = try to_ptr.toString(globalObject);
+    if ((fromStr.length() + toStr.length()) == 0) return from_ptr;
 
     var stack_fallback = std.heap.stackFallback(stack_fallback_size_small, bun.default_allocator);
     const allocator = stack_fallback.get();
 
-    var fromZigSlice = fromZigStr.toSlice(allocator);
+    var fromZigSlice = fromStr.toUTF8(allocator);
     defer fromZigSlice.deinit();
-    var toZigSlice = toZigStr.toSlice(allocator);
+    var toZigSlice = toStr.toUTF8(allocator);
     defer toZigSlice.deinit();
     return relativeJS_T(u8, globalObject, allocator, isWindows, fromZigSlice.slice(), toZigSlice.slice());
 }
@@ -2919,14 +2911,13 @@ pub fn toNamespacedPath(globalObject: *jsc.JSGlobalObject, isWindows: bool, args
     //
     // Act as an identity function for non-string values and non-Windows platforms.
     if (!isWindows or !path_ptr.isString()) return path_ptr;
-    const pathZStr = try path_ptr.getZigString(globalObject);
-    const len = pathZStr.len;
-    if (len == 0) return path_ptr;
+    const pathZStr = try path_ptr.toString(globalObject);
+    if (pathZStr.isEmpty()) return path_ptr;
 
     var stack_fallback = std.heap.stackFallback(stack_fallback_size_small, bun.default_allocator);
     const allocator = stack_fallback.get();
 
-    const pathZSlice = pathZStr.toSlice(allocator);
+    const pathZSlice = pathZStr.toUTF8(allocator);
     defer pathZSlice.deinit();
     return toNamespacedPathJS_T(u8, globalObject, allocator, isWindows, pathZSlice.slice());
 }

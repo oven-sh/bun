@@ -25,23 +25,23 @@ pub fn encode(this: *TextEncoderStreamEncoder, globalObject: *jsc.JSGlobalObject
         return globalObject.throwNotEnoughArguments("TextEncoderStreamEncoder.encode", 1, arguments.len);
     }
 
-    const str = try arguments[0].getZigString(globalObject);
+    const str = try arguments[0].toString(globalObject);
 
-    if (str.is16Bit()) {
-        return this.encodeUTF16(globalObject, str.utf16SliceAligned());
+    if (str.isUTF16()) {
+        return this.encodeUTF16(globalObject, str.utf16());
     }
 
-    return this.encodeLatin1(globalObject, str.slice());
+    return this.encodeLatin1(globalObject, str.latin1());
 }
 
 pub fn encodeWithoutTypeChecks(this: *TextEncoderStreamEncoder, globalObject: *jsc.JSGlobalObject, input: *jsc.JSString) JSValue {
-    const str = input.getZigString(globalObject);
+    const str = input.toBunString(globalObject);
 
-    if (str.is16Bit()) {
-        return this.encodeUTF16(globalObject, str.utf16SliceAligned());
+    if (str.isUTF16()) {
+        return this.encodeUTF16(globalObject, str.utf16());
     }
 
-    return this.encodeLatin1(globalObject, str.slice());
+    return this.encodeLatin1(globalObject, str.latin1());
 }
 
 fn encodeLatin1(this: *TextEncoderStreamEncoder, globalObject: *JSGlobalObject, input: []const u8) JSValue {

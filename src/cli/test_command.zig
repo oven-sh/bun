@@ -1103,7 +1103,7 @@ pub const CommandLineReporter = struct {
             _ = fs.mkdirRecursive(
                 .{
                     .path = bun.jsc.Node.PathLike{
-                        .encoded_slice = jsc.ZigString.Slice.fromUTF8NeverFree(opts.reports_directory),
+                        .encoded_slice = bun.String.Slice.fromUTF8NeverFree(opts.reports_directory),
                     },
                     .always_return_none = true,
                 },
@@ -1264,7 +1264,7 @@ pub const CommandLineReporter = struct {
 };
 
 export fn BunTest__shouldGenerateCodeCoverage(test_name_str: bun.String) callconv(.c) bool {
-    var zig_slice: bun.jsc.ZigString.Slice = .{};
+    var zig_slice: bun.String.Slice = .{};
     defer zig_slice.deinit();
 
     // In this particular case, we don't actually care about non-ascii latin1 characters.
@@ -1455,7 +1455,7 @@ pub const TestCommand = struct {
         }
 
         if (TZ_NAME.len > 0) {
-            _ = vm.global.setTimeZone(&jsc.ZigString.init(TZ_NAME));
+            _ = vm.global.setTimeZone(&bun.String.borrowUTF8(TZ_NAME));
         }
 
         // Start the debugger before we scan for files
@@ -1900,8 +1900,7 @@ pub const TestCommand = struct {
             // Clear the module cache before re-running (except for the first run)
             if (repeat_index > 0) {
                 try vm.clearEntryPoint();
-                var entry = jsc.ZigString.init(file_path);
-                try vm.global.deleteModuleRegistryEntry(&entry);
+                try vm.global.deleteModuleRegistryEntry(&bun.String.borrowUTF8(file_path));
             }
 
             var bun_test_root = &jest.Jest.runner.?.bun_test_root;

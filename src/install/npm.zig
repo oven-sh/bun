@@ -1332,11 +1332,10 @@ pub const PackageManifest = struct {
         const JSValue = jsc.JSValue;
         const JSGlobalObject = jsc.JSGlobalObject;
         const CallFrame = jsc.CallFrame;
-        const ZigString = jsc.ZigString;
 
         pub fn generate(global: *JSGlobalObject) JSValue {
             const obj = JSValue.createEmptyObject(global, 1);
-            const parseManifestString = ZigString.static("parseManifest");
+            const parseManifestString = bun.String.static("parseManifest");
             obj.put(global, parseManifestString, jsc.JSFunction.create(global, "parseManifest", jsParseManifest, 2, .{}));
             return obj;
         }

@@ -32,15 +32,8 @@ pub const BuildMessage = struct {
         const text = std.fmt.allocPrint(default_allocator, "BuildMessage: {s}", .{this.msg.data.text}) catch {
             return globalThis.throwOutOfMemoryValue();
         };
-        var str = ZigString.init(text);
-        str.setOutputEncoding();
-        if (str.isUTF8()) {
-            const out = str.toJS(globalThis);
-            default_allocator.free(text);
-            return out;
-        }
-
-        return str.toExternalValue(globalThis);
+        defer default_allocator.free(text);
+        return bun.String.createUTF8ForJS(globalThis, text) catch return globalThis.throwOutOfMemoryValue();
     }
 
     pub fn create(
@@ -79,7 +72,7 @@ pub const BuildMessage = struct {
                 return jsc.JSValue.jsNull();
             }
 
-            const str = try args[0].getZigString(globalThis);
+            const str = try args[0].toString(globalThis);
             if (str.eqlComptime("default") or str.eqlComptime("string")) {
                 return this.toStringFn(globalThis);
             }
@@ -94,50 +87,50 @@ pub const BuildMessage = struct {
         _: *jsc.CallFrame,
     ) bun.JSError!jsc.JSValue {
         var object = jsc.JSValue.createEmptyObject(globalThis, 4);
-        object.put(globalThis, ZigString.static("name"), try bun.String.static("BuildMessage").toJS(globalThis));
-        object.put(globalThis, ZigString.static("position"), this.getPosition(globalThis));
-        object.put(globalThis, ZigString.static("message"), this.getMessage(globalThis));
-        object.put(globalThis, ZigString.static("level"), this.getLevel(globalThis));
+        object.put(globalThis, bun.String.static("name"), try bun.String.static("BuildMessage").toJS(globalThis));
+        object.put(globalThis, bun.String.static("position"), try this.getPosition(globalThis));
+        object.put(globalThis, bun.String.static("message"), try this.getMessage(globalThis));
+        object.put(globalThis, bun.String.static("level"), try this.getLevel(globalThis));
         return object;
     }
 
-    pub fn generatePositionObject(msg: logger.Msg, globalThis: *jsc.JSGlobalObject) jsc.JSValue {
+    pub fn generatePositionObject(msg: logger.Msg, globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
         const location = msg.data.location orelse return jsc.JSValue.jsNull();
         var object = jsc.JSValue.createEmptyObject(globalThis, 7);
 
         object.put(
             globalThis,
-            ZigString.static("lineText"),
-            ZigString.init(location.line_text orelse "").toJS(globalThis),
+            bun.String.static("lineText"),
+            try bun.String.createUTF8ForJS(globalThis, location.line_text orelse ""),
         );
         object.put(
             globalThis,
-            ZigString.static("file"),
-            ZigString.init(location.file).toJS(globalThis),
+            bun.String.static("file"),
+            try bun.String.createUTF8ForJS(globalThis, location.file),
         );
         object.put(
             globalThis,
-            ZigString.static("namespace"),
-            ZigString.init(location.namespace).toJS(globalThis),
+            bun.String.static("namespace"),
+            try bun.String.createUTF8ForJS(globalThis, location.namespace),
         );
         object.put(
             globalThis,
-            ZigString.static("line"),
+            bun.String.static("line"),
             JSValue.jsNumber(location.line),
         );
         object.put(
             globalThis,
-            ZigString.static("column"),
+            bun.String.static("column"),
             JSValue.jsNumber(location.column),
         );
         object.put(
             globalThis,
-            ZigString.static("length"),
+            bun.String.static("length"),
             JSValue.jsNumber(location.length),
         );
         object.put(
             globalThis,
-            ZigString.static("offset"),
+            bun.String.static("offset"),
             JSValue.jsNumber(location.offset),
         );
 
@@ -164,22 +157,22 @@ pub const BuildMessage = struct {
     pub fn getPosition(
         this: *BuildMessage,
         globalThis: *jsc.JSGlobalObject,
-    ) jsc.JSValue {
+    ) bun.JSError!jsc.JSValue {
         return BuildMessage.generatePositionObject(this.msg, globalThis);
     }
 
     pub fn getMessage(
         this: *BuildMessage,
         globalThis: *jsc.JSGlobalObject,
-    ) jsc.JSValue {
-        return ZigString.init(this.msg.data.text).toJS(globalThis);
+    ) bun.JSError!jsc.JSValue {
+        return try bun.String.createUTF8ForJS(globalThis, this.msg.data.text);
     }
 
     pub fn getLevel(
         this: *BuildMessage,
         globalThis: *jsc.JSGlobalObject,
-    ) jsc.JSValue {
-        return ZigString.init(this.msg.kind.string()).toJS(globalThis);
+    ) bun.JSError!jsc.JSValue {
+        return try bun.String.createUTF8ForJS(globalThis, this.msg.kind.string());
     }
 
     pub fn finalize(this: *BuildMessage) void {
@@ -199,4 +192,3 @@ const logger = bun.logger;
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
-const ZigString = jsc.ZigString;

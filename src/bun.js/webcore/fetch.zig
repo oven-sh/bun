@@ -230,7 +230,7 @@ fn fetchImpl(
     // Custom Hostname
     var hostname: ?[]u8 = null;
     var range: ?[]u8 = null;
-    var unix_socket_path: ZigString.Slice = ZigString.Slice.empty;
+    var unix_socket_path: bun.String.Slice = bun.String.Slice.empty;
 
     var url_proxy_buffer: []const u8 = "";
     const URLType = enum {
@@ -619,7 +619,7 @@ fn fetchImpl(
             if (objects_to_try[i] != .zero) {
                 if (try objects_to_try[i].get(globalThis, "verbose")) |verb| {
                     if (verb.isString()) {
-                        if ((try verb.getZigString(globalThis)).eqlComptime("curl")) {
+                        if ((try verb.toString(globalThis)).eqlComptime("curl")) {
                             break :extract_verbose .curl;
                         }
                     } else if (verb.isBoolean()) {
@@ -933,7 +933,7 @@ fn fetchImpl(
             }
 
             if (headers_.fastGet(bun.webcore.FetchHeaders.HTTPHeaderName.Upgrade)) |_upgrade| {
-                const upgrade = _upgrade.toSlice(bun.default_allocator);
+                const upgrade = _upgrade.toUTF8(bun.default_allocator);
                 defer upgrade.deinit();
                 const slice = upgrade.slice();
                 if (!bun.strings.eqlComptime(slice, "h2") and !bun.strings.eqlComptime(slice, "h2c")) {
@@ -1044,7 +1044,7 @@ fn fetchImpl(
 
             var pathlike: jsc.Node.PathOrFileDescriptor = .{
                 .path = .{
-                    .encoded_slice = ZigString.Slice.init(bun.default_allocator, try bun.default_allocator.dupe(u8, temp_file_path)),
+                    .encoded_slice = bun.String.Slice.init(bun.default_allocator, try bun.default_allocator.dupe(u8, temp_file_path)),
                 },
             };
 
@@ -1438,7 +1438,7 @@ fn fetchImpl(
     signal = null;
     ssl_config = null;
     hostname = null;
-    unix_socket_path = ZigString.Slice.empty;
+    unix_socket_path = bun.String.Slice.empty;
 
     return promise_val;
 }
@@ -1476,7 +1476,6 @@ const JSGlobalObject = jsc.JSGlobalObject;
 const JSPromise = jsc.JSPromise;
 const JSValue = jsc.JSValue;
 const VirtualMachine = jsc.VirtualMachine;
-const ZigString = jsc.ZigString;
 const JSType = jsc.C.JSType;
 
 const Body = jsc.WebCore.Body;

@@ -105,13 +105,13 @@ pub fn fromBlob(
         return Expr.init(E.String, E.String.init(list), loc);
     }
 
-    return Expr.init(
-        E.String,
-        E.String{
-            .data = try jsc.ZigString.init(bytes).toBase64DataURL(allocator),
-        },
-        loc,
-    );
+    // Encode as a base64 data URL
+    const prefix = "data:;base64,";
+    const size = std.base64.standard.Encoder.calcSize(bytes.len);
+    const buf = try allocator.alloc(u8, size + prefix.len);
+    const encoded = std.base64.url_safe.Encoder.encode(buf[prefix.len..], bytes);
+    buf[0..prefix.len].* = prefix.*;
+    return Expr.init(E.String, E.String{ .data = buf[0 .. prefix.len + encoded.len] }, loc);
 }
 
 pub inline fn initIdentifier(ref: Ref, loc: logger.Loc) Expr {

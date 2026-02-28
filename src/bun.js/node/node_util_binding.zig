@@ -220,18 +220,17 @@ pub fn parseEnv(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.
 
     var obj = jsc.JSValue.createEmptyObject(globalThis, map.map.count());
     for (map.map.keys(), map.map.values()) |k, v| {
-        obj.put(globalThis, jsc.ZigString.initUTF8(k), try bun.String.createUTF8ForJS(globalThis, v.value));
+        obj.put(globalThis, k, try bun.String.createUTF8ForJS(globalThis, v.value));
     }
     return obj;
 }
 
 const string = []const u8;
 
-const bun = @import("bun");
 const envloader = @import("../../env_loader.zig");
 const std = @import("std");
 const validators = @import("./util/validators.zig");
 const Allocator = std.mem.Allocator;
 
+const bun = @import("bun");
 const jsc = bun.jsc;
-const ZigString = jsc.ZigString;

@@ -69,15 +69,15 @@ String DOMFormData::toURLEncodedString()
     return WTF::URLParser::serialize(form);
 }
 
-extern "C" void DOMFormData__forEach(DOMFormData* form, void* context, void (*callback)(void* context, ZigString*, void*, ZigString*, uint8_t))
+extern "C" void DOMFormData__forEach(DOMFormData* form, void* context, void (*callback)(void* context, BunString*, void*, BunString*, uint8_t))
 {
     for (auto& item : form->items()) {
-        auto name = toZigString(item.name);
+        BunString name = Bun::toString(item.name);
         if (auto value = std::get_if<String>(&item.data)) {
-            auto value_ = toZigString(*value);
+            BunString value_ = Bun::toString(*value);
             callback(context, &name, &value_, nullptr, 0);
         } else if (auto value = std::get_if<RefPtr<Blob>>(&item.data)) {
-            auto filename = toZigString(value->get()->fileName());
+            BunString filename = Bun::toString(value->get()->fileName());
             callback(context, &name, value->get()->impl(), &filename, 1);
         }
     }

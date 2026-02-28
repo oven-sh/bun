@@ -792,7 +792,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             };
         }
 
-        pub fn getLocalAddress(this: *This, globalThis: *jsc.JSGlobalObject) JSValue {
+        pub fn getLocalAddress(this: *This, globalThis: *jsc.JSGlobalObject) bun.JSError!JSValue {
             if (this.socket.isDetached()) {
                 return .js_undefined;
             }
@@ -808,7 +808,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             };
 
             const text = bun.fmt.formatIp(address, &text_buf) catch unreachable;
-            return ZigString.init(text).toJS(globalThis);
+            return try bun.String.createUTF8ForJS(globalThis, text);
         }
 
         pub fn getLocalPort(this: *This, _: *jsc.JSGlobalObject) JSValue {
@@ -2141,4 +2141,3 @@ const BoringSSL = bun.BoringSSL.c;
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
-const ZigString = jsc.ZigString;

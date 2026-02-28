@@ -26,9 +26,9 @@ pub const PasswordObject = struct {
                             return globalObject.throwInvalidArgumentType("hash", "algorithm", "string");
                         }
 
-                        const algorithm_string = try algorithm_value.getZigString(globalObject);
+                        const algorithm_string = try algorithm_value.toString(globalObject);
 
-                        switch (PasswordObject.Algorithm.label.getWithEql(algorithm_string, jsc.ZigString.eqlComptime) orelse {
+                        switch (PasswordObject.Algorithm.label.getWithEql(algorithm_string, bun.String.eqlComptime) orelse {
                             return globalObject.throwInvalidArgumentType("hash", "algorithm", unknown_password_algorithm_message);
                         }) {
                             .bcrypt => {
@@ -92,9 +92,9 @@ pub const PasswordObject = struct {
                         return globalObject.throwInvalidArgumentType("hash", "options.algorithm", "string");
                     }
                 } else if (value.isString()) {
-                    const algorithm_string = try value.getZigString(globalObject);
+                    const algorithm_string = try value.toString(globalObject);
 
-                    switch (PasswordObject.Algorithm.label.getWithEql(algorithm_string, jsc.ZigString.eqlComptime) orelse {
+                    switch (PasswordObject.Algorithm.label.getWithEql(algorithm_string, bun.String.eqlComptime) orelse {
                         return globalObject.throwInvalidArgumentType("hash", "algorithm", unknown_password_algorithm_message);
                     }) {
                         .bcrypt => {
@@ -324,10 +324,10 @@ pub const JSPasswordObject = struct {
 
     pub export fn JSPasswordObject__create(globalObject: *jsc.JSGlobalObject) jsc.JSValue {
         var object = JSValue.createEmptyObject(globalObject, 4);
-        object.put(globalObject, ZigString.static("hash"), jsc.JSFunction.create(globalObject, "hash", JSPasswordObject__hash, 2, .{}));
-        object.put(globalObject, ZigString.static("hashSync"), jsc.JSFunction.create(globalObject, "hashSync", JSPasswordObject__hashSync, 2, .{}));
-        object.put(globalObject, ZigString.static("verify"), jsc.JSFunction.create(globalObject, "verify", JSPasswordObject__verify, 2, .{}));
-        object.put(globalObject, ZigString.static("verifySync"), jsc.JSFunction.create(globalObject, "verifySync", JSPasswordObject__verifySync, 2, .{}));
+        object.put(globalObject, bun.String.static("hash"), jsc.JSFunction.create(globalObject, "hash", JSPasswordObject__hash, 2, .{}));
+        object.put(globalObject, bun.String.static("hashSync"), jsc.JSFunction.create(globalObject, "hashSync", JSPasswordObject__hashSync, 2, .{}));
+        object.put(globalObject, bun.String.static("verify"), jsc.JSFunction.create(globalObject, "verify", JSPasswordObject__verify, 2, .{}));
+        object.put(globalObject, bun.String.static("verifySync"), jsc.JSFunction.create(globalObject, "verifySync", JSPasswordObject__verifySync, 2, .{}));
         return object;
     }
 
@@ -360,7 +360,7 @@ pub const JSPasswordObject = struct {
                     const error_code = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "PASSWORD{f}", .{PascalToUpperUnderscoreCaseFormatter{ .input = @errorName(this.err) }}));
                     defer bun.default_allocator.free(error_code);
                     const instance = globalObject.createErrorInstance("Password hashing failed with error \"{s}\"", .{@errorName(this.err)});
-                    instance.put(globalObject, ZigString.static("code"), jsc.ZigString.init(error_code).toJS(globalObject));
+                    instance.put(globalObject, bun.String.static("code"), bun.String.createUTF8ForJS(globalObject, error_code) catch .zero);
                     return instance;
                 }
             };
@@ -378,7 +378,7 @@ pub const JSPasswordObject = struct {
                         try promise.reject(global, error_instance);
                     },
                     .hash => |value| {
-                        const js_string = jsc.ZigString.init(value).toJS(global);
+                        const js_string = bun.String.createUTF8ForJS(global, value) catch |e| global.takeException(e);
                         bun.destroy(this);
                         try promise.resolve(global, js_string);
                     },
@@ -429,7 +429,7 @@ pub const JSPasswordObject = struct {
                     return globalObject.throwValue(error_instance);
                 },
                 .hash => |h| {
-                    return jsc.ZigString.init(h).toJS(globalObject);
+                    return try bun.String.createUTF8ForJS(globalObject, h);
                 },
             }
 
@@ -572,7 +572,7 @@ pub const JSPasswordObject = struct {
                     const error_code = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "PASSWORD{f}", .{PascalToUpperUnderscoreCaseFormatter{ .input = @errorName(this.err) }}));
                     defer bun.default_allocator.free(error_code);
                     const instance = globalObject.createErrorInstance("Password verification failed with error \"{s}\"", .{@errorName(this.err)});
-                    instance.put(globalObject, ZigString.static("code"), jsc.ZigString.init(error_code).toJS(globalObject));
+                    instance.put(globalObject, bun.String.static("code"), bun.String.createUTF8ForJS(globalObject, error_code) catch .zero);
                     return instance;
                 }
             };
@@ -648,9 +648,9 @@ pub const JSPasswordObject = struct {
                 return globalObject.throwInvalidArgumentType("verify", "algorithm", "string");
             }
 
-            const algorithm_string = try arguments[2].getZigString(globalObject);
+            const algorithm_string = try arguments[2].toString(globalObject);
 
-            algorithm = PasswordObject.Algorithm.label.getWithEql(algorithm_string, jsc.ZigString.eqlComptime) orelse {
+            algorithm = PasswordObject.Algorithm.label.getWithEql(algorithm_string, bun.String.eqlComptime) orelse {
                 if (!globalObject.hasException()) {
                     return globalObject.throwInvalidArgumentType("verify", "algorithm", unknown_password_algorithm_message);
                 }
@@ -704,9 +704,9 @@ pub const JSPasswordObject = struct {
                 return globalObject.throwInvalidArgumentType("verify", "algorithm", "string");
             }
 
-            const algorithm_string = try arguments[2].getZigString(globalObject);
+            const algorithm_string = try arguments[2].toString(globalObject);
 
-            algorithm = PasswordObject.Algorithm.label.getWithEql(algorithm_string, jsc.ZigString.eqlComptime) orelse {
+            algorithm = PasswordObject.Algorithm.label.getWithEql(algorithm_string, bun.String.eqlComptime) orelse {
                 if (!globalObject.hasException()) {
                     return globalObject.throwInvalidArgumentType("verify", "algorithm", unknown_password_algorithm_message);
                 }
@@ -754,4 +754,3 @@ const jsc = bun.jsc;
 const CallFrame = jsc.CallFrame;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
-const ZigString = jsc.ZigString;

@@ -19,7 +19,7 @@ using namespace JSC;
 extern "C" size_t Bun__getEnvCount(JSGlobalObject* globalObject, void** list_ptr);
 extern "C" size_t Bun__getEnvKey(void* list, size_t index, unsigned char** out);
 
-extern "C" bool Bun__getEnvValue(JSGlobalObject* globalObject, ZigString* name, ZigString* value);
+extern "C" bool Bun__getEnvValue(JSGlobalObject* globalObject, BunString* name, BunString* value);
 
 namespace Bun {
 
@@ -34,17 +34,17 @@ JSC_DEFINE_CUSTOM_GETTER(jsGetterEnvironmentVariable, (JSGlobalObject * globalOb
     if (!thisObject) [[unlikely]]
         return JSValue::encode(jsUndefined());
 
-    ZigString name = toZigString(propertyName.publicName());
-    ZigString value = { nullptr, 0 };
-
-    if (name.len == 0) [[unlikely]]
+    WTF::String propertyNameString = propertyName.publicName();
+    if (propertyNameString.isEmpty()) [[unlikely]]
         return JSValue::encode(jsUndefined());
+    BunString name = Bun::toString(propertyNameString);
+    BunString value = { BunStringTag::Empty, {} };
 
     if (!Bun__getEnvValue(globalObject, &name, &value)) {
         return JSValue::encode(jsUndefined());
     }
 
-    JSValue result = jsString(vm, Zig::toStringCopy(value));
+    JSValue result = jsString(vm, value.toWTFString());
     thisObject->putDirect(vm, propertyName, result, 0);
     return JSValue::encode(result);
 }
@@ -75,8 +75,9 @@ JSC_DEFINE_CUSTOM_GETTER(jsTimeZoneEnvironmentVariableGetter, (JSGlobalObject * 
 
     auto* clientData = WebCore::clientData(vm);
 
-    ZigString name = toZigString(propertyName.publicName());
-    ZigString value = { nullptr, 0 };
+    WTF::String propertyNameString = propertyName.publicName();
+    BunString name = Bun::toString(propertyNameString);
+    BunString value = { BunStringTag::Empty, {} };
 
     auto hasExistingValue = thisObject->getIfPropertyExists(globalObject, clientData->builtinNames().dataPrivateName());
     RETURN_IF_EXCEPTION(scope, {});
@@ -84,11 +85,11 @@ JSC_DEFINE_CUSTOM_GETTER(jsTimeZoneEnvironmentVariableGetter, (JSGlobalObject * 
         return JSValue::encode(hasExistingValue);
     }
 
-    if (!Bun__getEnvValue(globalObject, &name, &value) || value.len == 0) {
+    if (!Bun__getEnvValue(globalObject, &name, &value) || value.isEmpty()) {
         return JSValue::encode(jsUndefined());
     }
 
-    JSValue out = jsString(vm, Zig::toStringCopy(value));
+    JSValue out = jsString(vm, value.toWTFString());
     thisObject->putDirect(vm, clientData->builtinNames().dataPrivateName(), out, 0);
 
     return JSValue::encode(out);
@@ -163,14 +164,15 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodeTLSRejectUnauthorizedGetter, (JSGlobalObject * gl
         return JSValue::encode(result);
     }
 
-    ZigString name = toZigString(propertyName.publicName());
-    ZigString value = { nullptr, 0 };
+    WTF::String propertyNameString = propertyName.publicName();
+    BunString name = Bun::toString(propertyNameString);
+    BunString value = { BunStringTag::Empty, {} };
 
-    if (!Bun__getEnvValue(globalObject, &name, &value) || value.len == 0) {
+    if (!Bun__getEnvValue(globalObject, &name, &value) || value.isEmpty()) {
         return JSValue::encode(jsUndefined());
     }
 
-    return JSValue::encode(jsString(vm, Zig::toStringCopy(value)));
+    return JSValue::encode(jsString(vm, value.toWTFString()));
 }
 
 JSC_DEFINE_CUSTOM_SETTER(jsNodeTLSRejectUnauthorizedSetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName propertyName))
@@ -217,14 +219,15 @@ JSC_DEFINE_CUSTOM_GETTER(jsBunConfigVerboseFetchGetter, (JSGlobalObject * global
         return JSValue::encode(result);
     }
 
-    ZigString name = toZigString(propertyName.publicName());
-    ZigString value = { nullptr, 0 };
+    WTF::String propertyNameString = propertyName.publicName();
+    BunString name = Bun::toString(propertyNameString);
+    BunString value = { BunStringTag::Empty, {} };
 
-    if (!Bun__getEnvValue(globalObject, &name, &value) || value.len == 0) {
+    if (!Bun__getEnvValue(globalObject, &name, &value) || value.isEmpty()) {
         return JSValue::encode(jsUndefined());
     }
 
-    return JSValue::encode(jsString(vm, Zig::toStringCopy(value)));
+    return JSValue::encode(jsString(vm, value.toWTFString()));
 }
 
 JSC_DEFINE_CUSTOM_SETTER(jsBunConfigVerboseFetchSetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName propertyName))
@@ -339,10 +342,10 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
         // This causes strange issues when the environment variable name is an integer.
         if (chars[0] >= '0' && chars[0] <= '9') [[unlikely]] {
             if (auto index = parseIndex(identifier)) {
-                ZigString valueString = { nullptr, 0 };
-                ZigString nameStr = toZigString(name);
+                BunString valueString = { BunStringTag::Empty, {} };
+                BunString nameStr = Bun::toString(name);
                 if (Bun__getEnvValue(globalObject, &nameStr, &valueString)) {
-                    JSValue value = jsString(vm, Zig::toStringCopy(valueString));
+                    JSValue value = jsString(vm, valueString.toWTFString());
                     RETURN_IF_EXCEPTION(scope, {});
                     object->putDirectIndex(globalObject, *index, value, 0, PutDirectIndexLikePutDirect);
                     RETURN_IF_EXCEPTION(scope, {});

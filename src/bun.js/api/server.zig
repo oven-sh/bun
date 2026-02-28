@@ -140,7 +140,7 @@ pub const AnyRoute = union(enum) {
     fn bundledHTMLManifestFromJS(argument: jsc.JSValue, init_ctx: *ServerInitContext) bun.JSError!?AnyRoute {
         if (!argument.isObject()) return null;
 
-        const index = try argument.getOptional(init_ctx.global, "index", ZigString.Slice) orelse return null;
+        const index = try argument.getOptional(init_ctx.global, "index", bun.String.Slice) orelse return null;
         defer index.deinit();
 
         const files = try argument.getArray(init_ctx.global, "files") orelse return null;
@@ -697,18 +697,19 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             try this.config.appendStaticRoute(path, route, method);
         }
 
-        pub fn publish(this: *ThisServer, globalThis: *jsc.JSGlobalObject, topic: ZigString, message_value: JSValue, compress_value: ?JSValue) bun.JSError!JSValue {
+        pub fn publish(this: *ThisServer, globalThis: *jsc.JSGlobalObject, topic: bun.String, message_value: JSValue, compress_value: ?JSValue) bun.JSError!JSValue {
+            defer topic.deref();
             if (this.config.websocket == null)
                 return JSValue.jsNumber(0);
 
             const app = this.app.?;
 
-            if (topic.len == 0) {
+            if (topic.isEmpty()) {
                 httplog("publish() topic invalid", .{});
                 return globalThis.throw("publish requires a topic string", .{});
             }
 
-            var topic_slice = topic.toSlice(bun.default_allocator);
+            var topic_slice = topic.toUTF8(bun.default_allocator);
             defer topic_slice.deinit();
             if (topic_slice.len == 0) {
                 return globalThis.throw("publish requires a non-empty topic", .{});
@@ -729,7 +730,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             {
                 var js_string = try message_value.toJSString(globalThis);
                 const view = js_string.view(globalThis);
-                const slice = view.toSlice(bun.default_allocator);
+                const slice = view.toUTF8WithoutRef(bun.default_allocator);
                 defer slice.deinit();
 
                 defer js_string.ensureStillAlive();
@@ -768,8 +769,8 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                     }
                 }
 
-                var sec_websocket_protocol = ZigString.Empty;
-                var sec_websocket_extensions = ZigString.Empty;
+                var sec_websocket_protocol = bun.String.empty;
+                var sec_websocket_extensions = bun.String.empty;
 
                 if (optional) |opts| {
                     getter: {
@@ -856,41 +857,33 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             const resp = upgrader.resp.?;
             const ctx = upgrader.upgrade_context.?;
 
-            var sec_websocket_key_str = ZigString.Empty;
+            var sec_websocket_key_str = bun.String.empty;
 
-            var sec_websocket_protocol = ZigString.Empty;
+            var sec_websocket_protocol = bun.String.empty;
 
-            var sec_websocket_extensions = ZigString.Empty;
+            var sec_websocket_extensions = bun.String.empty;
 
             if (request.getFetchHeaders()) |head| {
-                sec_websocket_key_str = head.fastGet(.SecWebSocketKey) orelse ZigString.Empty;
-                sec_websocket_protocol = head.fastGet(.SecWebSocketProtocol) orelse ZigString.Empty;
-                sec_websocket_extensions = head.fastGet(.SecWebSocketExtensions) orelse ZigString.Empty;
+                sec_websocket_key_str = head.fastGet(.SecWebSocketKey) orelse bun.String.empty;
+                sec_websocket_protocol = head.fastGet(.SecWebSocketProtocol) orelse bun.String.empty;
+                sec_websocket_extensions = head.fastGet(.SecWebSocketExtensions) orelse bun.String.empty;
             }
 
             if (upgrader.req) |req| {
-                if (sec_websocket_key_str.len == 0) {
-                    sec_websocket_key_str = ZigString.init(req.header("sec-websocket-key") orelse "");
+                if (sec_websocket_key_str.isEmpty()) {
+                    sec_websocket_key_str = bun.String.borrowUTF8(req.header("sec-websocket-key") orelse "");
                 }
-                if (sec_websocket_protocol.len == 0) {
-                    sec_websocket_protocol = ZigString.init(req.header("sec-websocket-protocol") orelse "");
+                if (sec_websocket_protocol.isEmpty()) {
+                    sec_websocket_protocol = bun.String.borrowUTF8(req.header("sec-websocket-protocol") orelse "");
                 }
 
-                if (sec_websocket_extensions.len == 0) {
-                    sec_websocket_extensions = ZigString.init(req.header("sec-websocket-extensions") orelse "");
+                if (sec_websocket_extensions.isEmpty()) {
+                    sec_websocket_extensions = bun.String.borrowUTF8(req.header("sec-websocket-extensions") orelse "");
                 }
             }
 
-            if (sec_websocket_key_str.len == 0) {
+            if (sec_websocket_key_str.isEmpty()) {
                 return .false;
-            }
-
-            if (sec_websocket_protocol.len > 0) {
-                sec_websocket_protocol.markUTF8();
-            }
-
-            if (sec_websocket_extensions.len > 0) {
-                sec_websocket_extensions.markUTF8();
             }
 
             var data_value = jsc.JSValue.zero;
@@ -1007,10 +1000,12 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             const ws = ServerWebSocket.init(&this.config.websocket.?.handler, data_value, signal);
             data_value.ensureStillAlive();
 
-            var sec_websocket_protocol_str = sec_websocket_protocol.toSlice(bun.default_allocator);
+            var sec_websocket_protocol_str = sec_websocket_protocol.toUTF8(bun.default_allocator);
             defer sec_websocket_protocol_str.deinit();
-            var sec_websocket_extensions_str = sec_websocket_extensions.toSlice(bun.default_allocator);
+            var sec_websocket_extensions_str = sec_websocket_extensions.toUTF8(bun.default_allocator);
             defer sec_websocket_extensions_str.deinit();
+            var sec_websocket_key_slice = sec_websocket_key_str.toUTF8(bun.default_allocator);
+            defer sec_websocket_key_slice.deinit();
 
             resp.clearAborted();
             resp.clearOnData();
@@ -1022,7 +1017,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             _ = resp.upgrade(
                 *ServerWebSocket,
                 ws,
-                sec_websocket_key_str.slice(),
+                sec_websocket_key_slice.slice(),
                 sec_websocket_protocol_str.slice(),
                 sec_websocket_extensions_str.slice(),
                 ctx,
@@ -1160,13 +1155,13 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             jsc.markBinding(@src());
 
             if (this.config.onRequest == .zero) {
-                return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, ZigString.init("fetch() requires the server to have a fetch handler").toErrorInstance(ctx));
+                return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, bun.String.static("fetch() requires the server to have a fetch handler").toErrorInstance(ctx));
             }
 
             const arguments = callframe.arguments_old(2).slice();
             if (arguments.len == 0) {
                 const fetch_error = WebCore.Fetch.fetch_error_no_args;
-                return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, ZigString.init(fetch_error).toErrorInstance(ctx));
+                return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, bun.String.borrowUTF8(fetch_error).toErrorInstance(ctx));
             }
 
             var headers: ?*WebCore.FetchHeaders = null;
@@ -1187,7 +1182,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
                 if (temp_url_str.len == 0) {
                     const fetch_error = jsc.WebCore.Fetch.fetch_error_blank_url;
-                    return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, ZigString.init(fetch_error).toErrorInstance(ctx));
+                    return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, bun.String.borrowUTF8(fetch_error).toErrorInstance(ctx));
                 }
 
                 var url = URL.parse(temp_url_str);
@@ -1221,7 +1216,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                         if (Blob.get(ctx, body__, true, false)) |new_blob| {
                             body = .{ .Blob = new_blob };
                         } else |_| {
-                            return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, ZigString.init("fetch() received invalid body").toErrorInstance(ctx));
+                            return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, bun.String.static("fetch() received invalid body").toErrorInstance(ctx));
                         }
                     }
                 }
@@ -1260,7 +1255,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             }
 
             if (response_value.isEmptyOrUndefinedOrNull()) {
-                return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, ZigString.init("fetch() returned an empty value").toErrorInstance(ctx));
+                return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, bun.String.static("fetch() returned an empty value").toErrorInstance(ctx));
             }
 
             if (response_value.asAnyPromise() != null) {
@@ -2497,13 +2492,13 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                     old_user_routes.deinit(bun.default_allocator);
                 }
                 this.user_routes = std.ArrayListUnmanaged(UserRoute).initCapacity(bun.default_allocator, user_routes_to_build_list.items.len) catch @panic("OOM");
-                const paths_zig = bun.default_allocator.alloc(ZigString, user_routes_to_build_list.items.len) catch @panic("OOM");
-                defer bun.default_allocator.free(paths_zig);
+                const paths = bun.default_allocator.alloc(bun.String, user_routes_to_build_list.items.len) catch @panic("OOM");
+                defer bun.default_allocator.free(paths);
                 const callbacks_js = bun.default_allocator.alloc(jsc.JSValue, user_routes_to_build_list.items.len) catch @panic("OOM");
                 defer bun.default_allocator.free(callbacks_js);
 
-                for (user_routes_to_build_list.items, paths_zig, callbacks_js, 0..) |*builder, *p_zig, *cb_js, i| {
-                    p_zig.* = ZigString.init(builder.route.path);
+                for (user_routes_to_build_list.items, paths, callbacks_js, 0..) |*builder, *p, *cb_js, i| {
+                    p.* = bun.String.borrowUTF8(builder.route.path);
                     cb_js.* = builder.callback.get().?;
                     this.user_routes.appendAssumeCapacity(.{
                         .id = @truncate(i),
@@ -2512,7 +2507,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                     });
                     builder.route = .{}; // Mark as moved
                 }
-                route_list_value = Bun__ServerRouteList__create(this.globalThis, callbacks_js.ptr, paths_zig.ptr, user_routes_to_build_list.items.len);
+                route_list_value = Bun__ServerRouteList__create(this.globalThis, callbacks_js.ptr, paths.ptr, user_routes_to_build_list.items.len);
                 for (user_routes_to_build_list.items) |*builder| builder.deinit();
                 user_routes_to_build_list.deinit(bun.default_allocator);
             }
@@ -3410,7 +3405,7 @@ extern "c" fn Bun__ServerRouteList__callRoute(
 extern "c" fn Bun__ServerRouteList__create(
     globalObject: *jsc.JSGlobalObject,
     callbacks: [*]jsc.JSValue,
-    paths: [*]ZigString,
+    paths: [*]const bun.String,
     pathsLength: usize,
 ) jsc.JSValue;
 
@@ -3466,7 +3461,6 @@ const JSValue = bun.jsc.JSValue;
 const Node = bun.jsc.Node;
 const VM = bun.jsc.VM;
 const VirtualMachine = jsc.VirtualMachine;
-const ZigString = bun.jsc.ZigString;
 const host_fn = jsc.host_fn;
 
 const WebCore = bun.jsc.WebCore;

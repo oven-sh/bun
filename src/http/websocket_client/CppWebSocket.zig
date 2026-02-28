@@ -25,7 +25,7 @@ pub const CppWebSocket = opaque {
     ) void;
     extern fn WebSocket__didAbruptClose(websocket_context: *CppWebSocket, reason: ErrorCode) void;
     extern fn WebSocket__didClose(websocket_context: *CppWebSocket, code: u16, reason: *const bun.String) void;
-    extern fn WebSocket__didReceiveText(websocket_context: *CppWebSocket, clone: bool, text: *const jsc.ZigString) void;
+    extern fn WebSocket__didReceiveText(websocket_context: *CppWebSocket, text: *const bun.String) void;
     extern fn WebSocket__didReceiveBytes(websocket_context: *CppWebSocket, bytes: [*]const u8, byte_len: usize, opcode: u8) void;
     extern fn WebSocket__rejectUnauthorized(websocket_context: *CppWebSocket) bool;
     pub fn didAbruptClose(this: *CppWebSocket, reason: ErrorCode) void {
@@ -40,11 +40,11 @@ pub const CppWebSocket = opaque {
         defer loop.exit();
         WebSocket__didClose(this, code, reason);
     }
-    pub fn didReceiveText(this: *CppWebSocket, clone: bool, text: *const jsc.ZigString) void {
+    pub fn didReceiveText(this: *CppWebSocket, text: *const bun.String) void {
         const loop = jsc.VirtualMachine.get().eventLoop();
         loop.enter();
         defer loop.exit();
-        WebSocket__didReceiveText(this, clone, text);
+        WebSocket__didReceiveText(this, text);
     }
     pub fn didReceiveBytes(this: *CppWebSocket, bytes: [*]const u8, byte_len: usize, opcode: u8) void {
         const loop = jsc.VirtualMachine.get().eventLoop();

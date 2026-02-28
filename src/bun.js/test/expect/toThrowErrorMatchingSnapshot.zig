@@ -18,12 +18,12 @@ pub fn toThrowErrorMatchingSnapshot(this: *Expect, globalThis: *JSGlobalObject, 
     };
     defer bunTest_strong.deinit();
 
-    var hint_string: ZigString = ZigString.Empty;
+    var hint_string: bun.String = .empty;
     switch (arguments.len) {
         0 => {},
         1 => {
             if (arguments[0].isString()) {
-                try arguments[0].toZigString(&hint_string, globalThis);
+                hint_string = try arguments[0].toString(globalThis);
             } else {
                 return this.throw(globalThis, "", "\n\nMatcher error: Expected first argument to be a string\n", .{});
             }
@@ -31,7 +31,7 @@ pub fn toThrowErrorMatchingSnapshot(this: *Expect, globalThis: *JSGlobalObject, 
         else => return this.throw(globalThis, "", "\n\nMatcher error: Expected zero or one arguments\n", .{}),
     }
 
-    var hint = hint_string.toSlice(default_allocator);
+    var hint = hint_string.toUTF8WithoutRef(default_allocator);
     defer hint.deinit();
 
     const value: JSValue = (try this.fnToErrStringOrUndefined(globalThis, try this.getValue(globalThis, thisValue, "toThrowErrorMatchingSnapshot", "<green>properties<r><d>, <r>hint"))) orelse {
@@ -43,7 +43,6 @@ pub fn toThrowErrorMatchingSnapshot(this: *Expect, globalThis: *JSGlobalObject, 
 }
 
 const bun = @import("bun");
-const ZigString = bun.ZigString;
 const default_allocator = bun.default_allocator;
 
 const jsc = bun.jsc;

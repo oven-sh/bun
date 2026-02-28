@@ -228,7 +228,7 @@ pub fn clone(this: *const Handlers) Handlers {
 
 /// `handlers` is always `protect`ed in this struct.
 pub const SocketConfig = struct {
-    hostname_or_unix: jsc.ZigString.Slice,
+    hostname_or_unix: bun.String.Slice,
     port: ?u16 = null,
     fd: ?bun.FileDescriptor = null,
     ssl: ?SSLConfig = null,
@@ -350,5 +350,4 @@ const SocketMode = bun.api.socket.SocketMode;
 
 const jsc = bun.jsc;
 const JSValue = jsc.JSValue;
-const ZigString = jsc.ZigString;
 const BinaryType = jsc.ArrayBuffer.BinaryType;

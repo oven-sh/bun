@@ -149,7 +149,7 @@ pub const JSObject = opaque {
         return value;
     }
 
-    pub fn putRecord(this: *JSObject, global: *JSGlobalObject, key: *ZigString, values: []ZigString) bun.JSError!void {
+    pub fn putRecord(this: *JSObject, global: *JSGlobalObject, key: *const bun.String, values: []const bun.String) bun.JSError!void {
         return bun.cpp.JSC__JSObject__putRecord(this, global, key, values.ptr, values.len);
     }
 
@@ -169,4 +169,3 @@ const JSError = bun.JSError;
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
-const ZigString = jsc.ZigString;

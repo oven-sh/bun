@@ -774,11 +774,12 @@ pub const Loader = enum(u8) {
             return global.throwInvalidArguments("loader must be a string", .{});
         }
 
-        var zig_str = jsc.ZigString.init("");
-        try loader.toZigString(&zig_str, global);
-        if (zig_str.len == 0) return null;
+        const str = try loader.toString(global);
+        if (str.isEmpty()) return null;
 
-        return fromString(zig_str.slice()) orelse {
+        const slice = str.toUTF8(bun.default_allocator);
+        defer slice.deinit();
+        return fromString(slice.slice()) orelse {
             return global.throwInvalidArguments("invalid loader - must be js, jsx, tsx, ts, css, file, toml, yaml, wasm, bunsh, json, or md", .{});
         };
     }

@@ -607,24 +607,24 @@ const ParseArgsState = struct {
             };
 
             var obj = JSValue.createEmptyObject(globalThis, num_properties);
-            obj.put(globalThis, ZigString.static("kind"), kind_jsvalue);
+            obj.put(globalThis, bun.String.static("kind"), kind_jsvalue);
             switch (token_generic) {
                 .option => |token| {
-                    obj.put(globalThis, ZigString.static("index"), JSValue.jsNumber(token.index));
-                    obj.put(globalThis, ZigString.static("name"), try token.name.asJSValue(globalThis));
-                    obj.put(globalThis, ZigString.static("rawName"), try token.makeRawNameJSValue(globalThis));
+                    obj.put(globalThis, bun.String.static("index"), JSValue.jsNumber(token.index));
+                    obj.put(globalThis, bun.String.static("name"), try token.name.asJSValue(globalThis));
+                    obj.put(globalThis, bun.String.static("rawName"), try token.makeRawNameJSValue(globalThis));
 
                     // value exists only for string options, otherwise the property exists with "undefined" as value
                     var value = try token.value.asJSValue(globalThis);
-                    obj.put(globalThis, ZigString.static("value"), value);
-                    obj.put(globalThis, ZigString.static("inlineValue"), if (value.isUndefined()) .js_undefined else JSValue.jsBoolean(token.inline_value));
+                    obj.put(globalThis, bun.String.static("value"), value);
+                    obj.put(globalThis, bun.String.static("inlineValue"), if (value.isUndefined()) .js_undefined else JSValue.jsBoolean(token.inline_value));
                 },
                 .positional => |token| {
-                    obj.put(globalThis, ZigString.static("index"), JSValue.jsNumber(token.index));
-                    obj.put(globalThis, ZigString.static("value"), try token.value.asJSValue(globalThis));
+                    obj.put(globalThis, bun.String.static("index"), JSValue.jsNumber(token.index));
+                    obj.put(globalThis, bun.String.static("value"), try token.value.asJSValue(globalThis));
                 },
                 .@"option-terminator" => |token| {
-                    obj.put(globalThis, ZigString.static("index"), JSValue.jsNumber(token.index));
+                    obj.put(globalThis, bun.String.static("index"), JSValue.jsNumber(token.index));
                 },
             }
             try this.tokens.push(globalThis, obj);
@@ -736,10 +736,10 @@ pub fn parseArgs(globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
 
     var result = JSValue.createEmptyObject(globalThis, if (return_tokens) 3 else 2);
     if (return_tokens) {
-        result.put(globalThis, ZigString.static("tokens"), state.tokens);
+        result.put(globalThis, bun.String.static("tokens"), state.tokens);
     }
-    result.put(globalThis, ZigString.static("values"), state.values);
-    result.put(globalThis, ZigString.static("positionals"), state.positionals);
+    result.put(globalThis, bun.String.static("values"), state.values);
+    result.put(globalThis, bun.String.static("positionals"), state.positionals);
     return result;
 }
 
@@ -761,4 +761,3 @@ const String = bun.String;
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
-const ZigString = jsc.ZigString;

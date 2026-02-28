@@ -3,7 +3,7 @@ const debug = bun.Output.scoped(.zlib, .hidden);
 pub fn crc32(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const arguments = callframe.arguments_old(2).ptr;
 
-    const data: ZigString.Slice = blk: {
+    const data: bun.String.Slice = blk: {
         const data: jsc.JSValue = arguments[0];
 
         if (data == .zero) {
@@ -17,7 +17,7 @@ pub fn crc32(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
             defer ty_str.deinit();
             return globalThis.ERR(.INVALID_ARG_TYPE, "The \"data\" property must be an instance of Buffer, TypedArray, DataView, or ArrayBuffer. Received {s}", .{ty_str.slice()}).throw();
         };
-        break :blk ZigString.Slice.fromUTF8NeverFree(buffer.slice());
+        break :blk bun.String.Slice.fromUTF8NeverFree(buffer.slice());
     };
     defer data.deinit();
 
@@ -334,7 +334,5 @@ const std = @import("std");
 
 const bun = @import("bun");
 const Output = bun.Output;
-const Buffer = bun.api.node.Buffer;
-
 const jsc = bun.jsc;
-const ZigString = jsc.ZigString;
+const Buffer = bun.api.node.Buffer;

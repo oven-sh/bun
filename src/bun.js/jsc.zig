@@ -102,7 +102,6 @@ pub const JSRuntimeType = @import("./bindings/JSRuntimeType.zig").JSRuntimeType;
 pub const ZigStackFrameCode = @import("./bindings/ZigStackFrameCode.zig").ZigStackFrameCode;
 
 pub const ErrorableResolvedSource = Errorable(ResolvedSource);
-pub const ErrorableZigString = Errorable(ZigString);
 pub const ErrorableJSValue = Errorable(JSValue);
 pub const ErrorableString = Errorable(bun.String);
 
@@ -157,8 +156,6 @@ pub const WorkTask = EventLoop.WorkTask;
 pub const C = @import("./javascript_core_c_api.zig");
 /// Deprecated: Remove all of these please.
 pub const Sizes = @import("./bindings/sizes.zig");
-/// Deprecated: Use `bun.String`
-pub const ZigString = @import("./bindings/ZigString.zig").ZigString;
 /// Deprecated: Use `bun.webcore`
 pub const WebCore = bun.webcore;
 /// Deprecated: Use `bun.api`

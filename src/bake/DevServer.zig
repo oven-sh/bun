@@ -1443,10 +1443,7 @@ fn onFrameworkRequestWithBundle(
     // Extract route params by re-matching the URL
     var params: FrameworkRouter.MatchedParams = undefined;
     const url_bunstr = switch (req) {
-        .stack => |r| bun.String{
-            .tag = .ZigString,
-            .value = .{ .ZigString = bun.ZigString.fromUTF8(r.url()) },
-        },
+        .stack => |r| bun.String.borrowUTF8(r.url()),
         .saved => |data| brk: {
             const url = data.request.url;
             url.ref();

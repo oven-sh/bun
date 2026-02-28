@@ -416,10 +416,10 @@ pub const JestPrettyFormat = struct {
                 // Is this a react element?
                 if (js_type.isObject() and js_type != .ProxyObject) {
                     if (try value.getOwnTruthy(globalThis, "$$typeof")) |typeof_symbol| {
-                        var reactElement = ZigString.init("react.element");
-                        var react_fragment = ZigString.init("react.fragment");
+                        const react_element = bun.String.static("react.element");
+                        const react_fragment = bun.String.static("react.fragment");
 
-                        if (try typeof_symbol.isSameValue(.symbolFor(globalThis, &reactElement), globalThis) or try typeof_symbol.isSameValue(.symbolFor(globalThis, &react_fragment), globalThis)) {
+                        if (try typeof_symbol.isSameValue(.symbolFor(globalThis, &react_element), globalThis) or try typeof_symbol.isSameValue(.symbolFor(globalThis, &react_fragment), globalThis)) {
                             return .{ .tag = .JSX, .cell = js_type };
                         }
                     }
@@ -614,7 +614,7 @@ pub const JestPrettyFormat = struct {
                     };
                 }
 
-                pub inline fn writeString(self: *@This(), str: ZigString) void {
+                pub inline fn writeString(self: *@This(), str: bun.String) void {
                     self.print("{f}", .{str});
                 }
 
@@ -719,14 +719,17 @@ pub const JestPrettyFormat = struct {
                             .ctx = this.writer,
                             .failed = false,
                         };
-                        var name_str = ZigString.init("");
+                        var name_str: bun.String = .empty;
+                        defer name_str.deref();
 
                         try value.getNameProperty(globalThis, &name_str);
-                        if (name_str.len > 0 and !name_str.eqlComptime("Object")) {
+                        if (!name_str.isEmpty() and !name_str.eqlComptime("Object")) {
                             writer.print("{f} ", .{name_str});
                         } else {
+                            name_str.deref();
+                            name_str = .empty;
                             try value.getPrototype(globalThis).getNameProperty(globalThis, &name_str);
-                            if (name_str.len > 0 and !name_str.eqlComptime("Object")) {
+                            if (!name_str.isEmpty() and !name_str.eqlComptime("Object")) {
                                 writer.print("{f} ", .{name_str});
                             }
                         }
@@ -736,7 +739,8 @@ pub const JestPrettyFormat = struct {
                     this.formatter.estimated_line_length = this.formatter.indent * 2 + 1;
 
                     if (this.formatter.indent == 0) this.writer.writeAll("\n") catch {};
-                    var classname = ZigString.Empty;
+                    var classname: bun.String = .empty;
+                    defer classname.deref();
                     try value.getClassName(globalThis, &classname);
                     if (!classname.isEmpty() and !classname.eqlComptime("Object")) {
                         this.writer.print("{f} ", .{classname}) catch {};
@@ -750,14 +754,14 @@ pub const JestPrettyFormat = struct {
                 pub fn forEach(
                     globalThis: *JSGlobalObject,
                     ctx_ptr: ?*anyopaque,
-                    key_: [*c]ZigString,
+                    key_ptr: *bun.String,
                     value: JSValue,
                     is_symbol: bool,
                     is_private_symbol: bool,
                 ) callconv(.c) void {
                     if (is_private_symbol) return;
 
-                    const key = key_.?[0];
+                    const key = key_ptr.*;
                     if (key.eqlComptime("constructor")) return;
 
                     var ctx: *@This() = bun.cast(*@This(), ctx_ptr orelse return);
@@ -791,25 +795,26 @@ pub const JestPrettyFormat = struct {
                         }
                     }
 
+                    const key_len = key.length();
                     if (!is_symbol) {
 
                         // TODO: make this one pass?
-                        if (!key.is16Bit() and JSLexer.isLatin1Identifier(@TypeOf(key.slice()), key.slice())) {
-                            this.addForNewLine(key.len + 2);
+                        if (!key.isUTF16() and JSLexer.isLatin1Identifier([]const u8, key.latin1())) {
+                            this.addForNewLine(key_len + 2);
 
                             writer.print(
                                 comptime Output.prettyFmt("<r>\"{f}\"<d>:<r> ", enable_ansi_colors),
                                 .{key},
                             );
-                        } else if (key.is16Bit() and JSLexer.isLatin1Identifier(@TypeOf(key.utf16SliceAligned()), key.utf16SliceAligned())) {
-                            this.addForNewLine(key.len + 2);
+                        } else if (key.isUTF16() and JSLexer.isLatin1Identifier([]const u16, key.utf16())) {
+                            this.addForNewLine(key_len + 2);
 
                             writer.print(
                                 comptime Output.prettyFmt("<r>\"{f}\"<d>:<r> ", enable_ansi_colors),
                                 .{key},
                             );
-                        } else if (key.is16Bit()) {
-                            const utf16Slice = key.utf16SliceAligned();
+                        } else if (key.isUTF16()) {
+                            const utf16Slice = key.utf16();
 
                             this.addForNewLine(utf16Slice.len + 2);
 
@@ -824,15 +829,15 @@ pub const JestPrettyFormat = struct {
                                 .{},
                             );
                         } else {
-                            this.addForNewLine(key.len + 2);
+                            this.addForNewLine(key_len + 2);
 
                             writer.print(
                                 comptime Output.prettyFmt("<r><green>{f}<r><d>:<r> ", enable_ansi_colors),
-                                .{bun.fmt.formatJSONStringLatin1(key.slice())},
+                                .{bun.fmt.formatJSONStringLatin1(key.latin1())},
                             );
                         }
                     } else {
-                        this.addForNewLine(1 + "[Symbol()]:".len + key.len);
+                        this.addForNewLine(1 + "[Symbol()]:".len + key_len);
                         writer.print(
                             comptime Output.prettyFmt("<r><d>[<r><blue>Symbol({f})<r><d>]:<r> ", enable_ansi_colors),
                             .{
@@ -904,16 +909,15 @@ pub const JestPrettyFormat = struct {
                     this.writeWithFormatting(Writer, writer_, @TypeOf(slice), slice, this.globalThis, enable_ansi_colors);
                 },
                 .String => {
-                    var str = ZigString.init("");
-                    try value.toZigString(&str, this.globalThis);
-                    this.addForNewLine(str.len);
+                    const str = try value.toString(this.globalThis);
+                    this.addForNewLine(str.length());
 
                     if (value.jsType() == .StringObject or value.jsType() == .DerivedStringObject) {
-                        if (str.len == 0) {
+                        if (str.length() == 0) {
                             writer.writeAll("String {}");
                             return;
                         }
-                        if (this.indent == 0 and str.len > 0) {
+                        if (this.indent == 0 and str.length() > 0) {
                             writer.writeAll("\n");
                         }
                         writer.writeAll("String {\n");
@@ -921,8 +925,8 @@ pub const JestPrettyFormat = struct {
                         defer this.indent -|= 1;
                         this.resetLine();
                         this.writeIndent(Writer, writer_) catch unreachable;
-                        const length = str.len;
-                        for (str.slice(), 0..) |c, i| {
+                        const length = str.length();
+                        for (str.latin1(), 0..) |c, i| {
                             writer.print("\"{d}\": \"{c}\",\n", .{ i, c });
                             if (i != length - 1) this.writeIndent(Writer, writer_) catch unreachable;
                         }
@@ -932,7 +936,7 @@ pub const JestPrettyFormat = struct {
                     }
 
                     if (this.quote_strings and jsType != .RegExpObject) {
-                        if (str.len == 0) {
+                        if (str.length() == 0) {
                             writer.writeAll("\"\"");
                             return;
                         }
@@ -954,13 +958,13 @@ pub const JestPrettyFormat = struct {
                         writer.writeAll("\"");
                         var remaining = str;
                         while (remaining.indexOfAny("\\\r")) |i| {
-                            switch (remaining.charAt(i)) {
+                            switch (remaining.charAtU8(i)) {
                                 '\\' => {
                                     writer.print("{f}\\", .{remaining.substringWithLen(0, i)});
                                     remaining = remaining.substring(i + 1);
                                 },
                                 '\r' => {
-                                    if (i + 1 < remaining.len and remaining.charAt(i + 1) == '\n') {
+                                    if (i + 1 < remaining.length() and remaining.charAtU8(i + 1) == '\n') {
                                         writer.print("{f}", .{remaining.substringWithLen(0, i)});
                                     } else {
                                         writer.print("{f}\n", .{remaining.substringWithLen(0, i)});
@@ -982,15 +986,15 @@ pub const JestPrettyFormat = struct {
                         writer.print(comptime Output.prettyFmt("<r><red>", enable_ansi_colors), .{});
                     }
 
-                    if (str.is16Bit()) {
+                    if (str.isUTF16()) {
                         // streaming print
                         writer.print("{f}", .{str});
-                    } else if (strings.isAllASCII(str.slice())) {
+                    } else if (strings.isAllASCII(str.latin1())) {
                         // fast path
-                        writer.writeAll(str.slice());
-                    } else if (str.len > 0) {
+                        writer.writeAll(str.latin1());
+                    } else if (str.length() > 0) {
                         // slow path
-                        const buf = strings.allocateLatin1IntoUTF8(bun.default_allocator, str.slice()) catch &[_]u8{};
+                        const buf = strings.allocateLatin1IntoUTF8(bun.default_allocator, str.latin1()) catch &[_]u8{};
                         if (buf.len > 0) {
                             defer bun.default_allocator.free(buf);
                             writer.writeAll(buf);
@@ -1020,7 +1024,7 @@ pub const JestPrettyFormat = struct {
                     writer.print(comptime Output.prettyFmt("<r><yellow>{d}<r>", enable_ansi_colors), .{int});
                 },
                 .BigInt => {
-                    const out_str = (try value.getZigString(this.globalThis)).slice();
+                    const out_str = (try value.toString(this.globalThis)).latin1();
                     this.addForNewLine(out_str.len);
 
                     writer.print(comptime Output.prettyFmt("<r><yellow>{s}n<r>", enable_ansi_colors), .{out_str});
@@ -1057,17 +1061,19 @@ pub const JestPrettyFormat = struct {
                 },
                 .Symbol => {
                     const description = value.getDescription(this.globalThis);
+                    defer description.deref();
                     this.addForNewLine("Symbol".len);
 
-                    if (description.len > 0) {
-                        this.addForNewLine(description.len + "()".len);
+                    if (description.length() > 0) {
+                        this.addForNewLine(description.length() + "()".len);
                         writer.print(comptime Output.prettyFmt("<r><blue>Symbol({f})<r>", enable_ansi_colors), .{description});
                     } else {
                         writer.print(comptime Output.prettyFmt("<r><blue>Symbol<r>", enable_ansi_colors), .{});
                     }
                 },
                 .Error => {
-                    var classname = ZigString.Empty;
+                    var classname: bun.String = .empty;
+                    defer classname.deref();
                     try value.getClassName(this.globalThis, &classname);
                     var message_string = bun.String.empty;
                     defer message_string.deref();
@@ -1084,21 +1090,23 @@ pub const JestPrettyFormat = struct {
                     return;
                 },
                 .Class => {
-                    var printable = ZigString.init(&name_buf);
+                    var printable: bun.String = .empty;
+                    defer printable.deref();
                     try value.getClassName(this.globalThis, &printable);
-                    this.addForNewLine(printable.len);
+                    this.addForNewLine(printable.length());
 
-                    if (printable.len == 0) {
+                    if (printable.isEmpty()) {
                         writer.print(comptime Output.prettyFmt("<cyan>[class]<r>", enable_ansi_colors), .{});
                     } else {
                         writer.print(comptime Output.prettyFmt("<cyan>[class {f}]<r>", enable_ansi_colors), .{printable});
                     }
                 },
                 .Function => {
-                    var printable = ZigString.init(&name_buf);
+                    var printable: bun.String = .empty;
+                    defer printable.deref();
                     try value.getNameProperty(this.globalThis, &printable);
 
-                    if (printable.len == 0) {
+                    if (printable.isEmpty()) {
                         writer.print(comptime Output.prettyFmt("<cyan>[Function]<r>", enable_ansi_colors), .{});
                     } else {
                         writer.print(comptime Output.prettyFmt("<cyan>[Function: {f}]<r>", enable_ansi_colors), .{printable});
@@ -1482,9 +1490,12 @@ pub const JestPrettyFormat = struct {
                     writer.writeAll("<");
 
                     var needs_space = false;
-                    var tag_name_str = ZigString.init("");
+                    var tag_name_str: bun.String = .empty;
+                    // Backing storage for getNameProperty result; must outlive tag_name_str.
+                    var tag_name_backing: bun.String = .empty;
+                    defer tag_name_backing.deref();
 
-                    var tag_name_slice: ZigString.Slice = ZigString.Slice.empty;
+                    var tag_name_slice: bun.String.Slice = bun.String.Slice.empty;
                     var is_tag_kind_primitive = false;
 
                     defer if (tag_name_slice.isAllocated()) tag_name_slice.deinit();
@@ -1493,21 +1504,23 @@ pub const JestPrettyFormat = struct {
                         const _tag = try Tag.get(type_value, this.globalThis);
 
                         if (_tag.cell == .Symbol) {} else if (_tag.cell.isStringLike()) {
-                            try type_value.toZigString(&tag_name_str, this.globalThis);
+                            tag_name_str = try type_value.toString(this.globalThis);
                             is_tag_kind_primitive = true;
                         } else if (_tag.cell.isObject() or type_value.isCallable()) {
-                            try type_value.getNameProperty(this.globalThis, &tag_name_str);
-                            if (tag_name_str.len == 0) {
-                                tag_name_str = ZigString.init("NoName");
+                            try type_value.getNameProperty(this.globalThis, &tag_name_backing);
+                            if (tag_name_backing.isEmpty()) {
+                                tag_name_str = bun.String.static("NoName");
+                            } else {
+                                tag_name_str = tag_name_backing;
                             }
                         } else {
-                            try type_value.toZigString(&tag_name_str, this.globalThis);
+                            tag_name_str = try type_value.toString(this.globalThis);
                         }
 
-                        tag_name_slice = tag_name_str.toSlice(default_allocator);
+                        tag_name_slice = tag_name_str.toUTF8WithoutRef(default_allocator);
                         needs_space = true;
                     } else {
-                        tag_name_slice = ZigString.init("unknown").toSlice(default_allocator);
+                        tag_name_slice = bun.String.Slice.fromUTF8NeverFree("unknown");
 
                         needs_space = true;
                     }
@@ -1618,12 +1631,12 @@ pub const JestPrettyFormat = struct {
                                     print_children: {
                                         switch (tag.tag) {
                                             .String => {
-                                                const children_string = try children.getZigString(this.globalThis);
-                                                if (children_string.len == 0) break :print_children;
+                                                const children_string = try children.toString(this.globalThis);
+                                                if (children_string.length() == 0) break :print_children;
                                                 if (comptime enable_ansi_colors) writer.writeAll(comptime Output.prettyFmt("<r>", true));
 
                                                 writer.writeAll(">");
-                                                if (children_string.len < 128) {
+                                                if (children_string.length() < 128) {
                                                     writer.writeString(children_string);
                                                 } else {
                                                     this.indent += 1;
@@ -1735,7 +1748,8 @@ pub const JestPrettyFormat = struct {
                     try value.forEachPropertyOrdered(this.globalThis, &iter, Iterator.forEach);
 
                     if (iter.i == 0) {
-                        var object_name = ZigString.Empty;
+                        var object_name: bun.String = .empty;
+                        defer object_name.deref();
                         try value.getClassName(this.globalThis, &object_name);
 
                         if (!object_name.eqlComptime("Object")) {
@@ -1772,9 +1786,10 @@ pub const JestPrettyFormat = struct {
                     }
 
                     if (jsType == .Uint8Array) {
-                        var buffer_name = ZigString.Empty;
+                        var buffer_name: bun.String = .empty;
+                        defer buffer_name.deref();
                         try value.getClassName(this.globalThis, &buffer_name);
-                        if (strings.eqlComptime(buffer_name.slice(), "Buffer")) {
+                        if (buffer_name.eqlComptime("Buffer")) {
                             // special formatting for 'Buffer' snapshots only
                             if (slice.len == 0 and this.indent == 0) writer.writeAll("\n");
                             writer.writeAll("{\n");
@@ -2018,6 +2033,7 @@ pub const JestPrettyFormat = struct {
         comptime enable_ansi_colors: bool,
     ) bun.JSError!bool {
         _ = Format;
+        _ = name_buf;
 
         if (value.as(expect.ExpectAnything)) |matcher| {
             printAsymmetricMatcherPromisePrefix(matcher.flags, this, writer);
@@ -2040,9 +2056,10 @@ pub const JestPrettyFormat = struct {
                 writer.writeAll("Any<");
             }
 
-            var class_name = ZigString.init(&name_buf);
+            var class_name: bun.String = .empty;
+            defer class_name.deref();
             try constructor_value.getClassName(this.globalThis, &class_name);
-            this.addForNewLine(class_name.len);
+            this.addForNewLine(class_name.length());
             writer.print(comptime Output.prettyFmt("<cyan>{f}<r>", enable_ansi_colors), .{class_name});
             this.addForNewLine(1);
             writer.writeAll(">");
@@ -2143,4 +2160,3 @@ const CAPI = jsc.C;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSPromise = jsc.JSPromise;
 const JSValue = jsc.JSValue;
-const ZigString = jsc.ZigString;

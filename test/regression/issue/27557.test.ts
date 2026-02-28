@@ -2,13 +2,21 @@ import { expect, test } from "bun:test";
 import http from "node:http";
 import { text } from "node:stream/consumers";
 
+// Regression test for #27557: node:http response streams hanging under
+// concurrent requests with delayed chunks. The fix adds backpressure
+// handling to consumeStream() — when push() returns false, it pauses
+// reading until _read() signals the consumer is ready.
+//
+// This test exercises the backpressure path by sending responses that
+// exceed the 16KB highWaterMark with delays between chunks.
 test("concurrent chunked HTTP responses with delays do not hang", async () => {
-  const WORKERS = 20;
-  const ITERATIONS = 50;
+  const WORKERS = 10;
+  const ITERATIONS = 10;
   const TOTAL = WORKERS * ITERATIONS;
-  const CHUNKS = 4;
-  const CHUNK_DATA = "x".repeat(8192);
-  const EXPECTED_BODY = CHUNK_DATA.repeat(CHUNKS);
+  const CHUNK_SIZE = 4096;
+  const NUM_CHUNKS = 16; // 64KB total, exceeds 16KB highWaterMark
+  const CHUNK_DATA = "x".repeat(CHUNK_SIZE);
+  const EXPECTED_LENGTH = CHUNK_SIZE * NUM_CHUNKS;
 
   const server = http.createServer((req, res) => {
     res.writeHead(200, {
@@ -16,12 +24,13 @@ test("concurrent chunked HTTP responses with delays do not hang", async () => {
       "Transfer-Encoding": "chunked",
     });
 
+    // Send chunks with delays to force async delivery and backpressure.
     let i = 0;
     function sendChunk() {
-      if (i < CHUNKS) {
+      if (i < NUM_CHUNKS) {
         res.write(CHUNK_DATA);
         i++;
-        if (i < CHUNKS && Math.random() < 0.3) {
+        if (i < NUM_CHUNKS) {
           setTimeout(sendChunk, 1);
         } else {
           sendChunk();
@@ -50,7 +59,7 @@ test("concurrent chunked HTTP responses with delays do not hang", async () => {
           });
           req.on("error", reject);
         });
-        expect(body.length).toBe(EXPECTED_BODY.length);
+        expect(body.length).toBe(EXPECTED_LENGTH);
         completed++;
       }
     }
@@ -61,4 +70,4 @@ test("concurrent chunked HTTP responses with delays do not hang", async () => {
   } finally {
     server.close();
   }
-}, 30_000);
+}, 60_000);

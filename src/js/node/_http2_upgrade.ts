@@ -1,4 +1,4 @@
-const { Duplex } = require("node:stream");
+const Duplex = require("internal/streams/duplex");
 const upgradeDuplexToTLS = $newZigFunction("socket.zig", "jsUpgradeDuplexToTLS", 2);
 
 interface NativeHandle {

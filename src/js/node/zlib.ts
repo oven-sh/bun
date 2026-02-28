@@ -22,7 +22,8 @@ const isArrayBufferView = ArrayBufferIsView;
 const isAnyArrayBuffer = b => b instanceof ArrayBuffer || b instanceof SharedArrayBuffer;
 const kMaxLength = $requireMap.$get("buffer")?.exports.kMaxLength ?? BufferModule.kMaxLength;
 
-const { Transform, finished } = require("node:stream");
+const Transform = require("internal/streams/transform");
+const finished = require("internal/streams/end-of-stream");
 const owner_symbol = Symbol("owner_symbol");
 const { checkRangesOrGetDefault, validateFunction, validateFiniteNumber } = require("internal/validators");
 

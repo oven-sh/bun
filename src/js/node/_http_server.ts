@@ -1,6 +1,7 @@
 // Hardcoded module "node:_http_server"
 const EventEmitter: typeof import("node:events").EventEmitter = require("node:events");
-const { Duplex, Stream } = require("node:stream");
+const Duplex = require("internal/streams/duplex");
+const { Stream } = require("internal/streams/legacy");
 const { _checkInvalidHeaderChar: checkInvalidHeaderChar } = require("node:_http_common");
 const { validateObject, validateLinkHeaderValue, validateBoolean, validateInteger } = require("internal/validators");
 const { ConnResetException } = require("internal/shared");

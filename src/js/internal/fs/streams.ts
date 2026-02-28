@@ -1,6 +1,8 @@
 // fs.ReadStream and fs.WriteStream are lazily loaded to avoid importing 'node:stream' until required
 import type { FileSink } from "bun";
-const { Readable, Writable, finished } = require("node:stream");
+const Readable = require("internal/streams/readable");
+const Writable = require("internal/streams/writable");
+const finished = require("internal/streams/end-of-stream");
 const fs: typeof import("node:fs") = require("node:fs");
 const { read, write, fsync, writev } = fs;
 const { FileHandle, kRef, kUnref, kFd } = (fs.promises as any).$data as {

@@ -211,6 +211,73 @@ describe("bin target normalization", () => {
     }
   });
 
+  it("should not unlink directory-mode bin targets with traversal paths", async () => {
+    // Create a temp directory structure where a dependency uses directories.bin
+    // with a traversal path. After install + remove, the external directory
+    // and its files must remain untouched.
+    using dir = tempDir("bin-target-dir-unlink", {
+      "package.json": JSON.stringify({
+        name: "test-project",
+        version: "1.0.0",
+        dependencies: {
+          "dir-bin-pkg": "file:./dir-bin-pkg",
+        },
+      }),
+      "dir-bin-pkg/package.json": JSON.stringify({
+        name: "dir-bin-pkg",
+        version: "1.0.0",
+        directories: {
+          bin: "../../escape-dir",
+        },
+      }),
+      "dir-bin-pkg/index.js": "module.exports = {};",
+      // Create the external directory that the traversal would target
+      "escape-dir/some-script.js": "#!/usr/bin/env node\nconsole.log('external');",
+    });
+
+    const escapeDirPath = join(String(dir), "escape-dir");
+    const escapeFilePath = join(String(dir), "escape-dir", "some-script.js");
+
+    // Verify the escape target exists before install
+    expect(await exists(escapeFilePath)).toBe(true);
+    const statBefore = await stat(escapeFilePath);
+
+    // Run install
+    {
+      await using proc = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+        env: bunEnv,
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(exitCode).toBe(0);
+    }
+
+    // Now remove the dependency (triggers unlink path)
+    {
+      await using proc = spawn({
+        cmd: [bunExe(), "remove", "dir-bin-pkg"],
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+        env: bunEnv,
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(exitCode).toBe(0);
+    }
+
+    // The external directory and file must still exist and be unchanged
+    expect(await exists(escapeDirPath)).toBe(true);
+    expect(await exists(escapeFilePath)).toBe(true);
+    const statAfter = await stat(escapeFilePath);
+    expect(statAfter.mode).toBe(statBefore.mode);
+    expect(statAfter.size).toBe(statBefore.size);
+  });
+
   it("should normalize bin named_file target with traversal", async () => {
     // Test a package where the single "bin" field is a string (named_file case)
     // with a traversal path

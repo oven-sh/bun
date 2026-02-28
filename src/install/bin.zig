@@ -535,7 +535,7 @@ pub const Bin = extern struct {
         const matches = if (comptime !bun.Environment.isLinux)
             strings.eqlCaseInsensitiveASCII(prefix, dir, false)
         else
-            std.mem.eql(u8, prefix, dir);
+            strings.eql(prefix, dir);
 
         return matches and path.isSepAny(abs_target[dir.len]);
     }

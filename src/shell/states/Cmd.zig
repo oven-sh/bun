@@ -572,9 +572,9 @@ fn initRedirections(this: *Cmd, spawn_args: *Subprocess.SpawnArgs) bun.JSError!?
                     if (this.node.redirect.stdin) {
                         try spawn_args.stdio[stdin_no].extractBlob(global, .{ .Blob = blob }, stdin_no);
                     } else if (this.node.redirect.stdout) {
-                        try spawn_args.stdio[stdin_no].extractBlob(global, .{ .Blob = blob }, stdout_no);
+                        try spawn_args.stdio[stdout_no].extractBlob(global, .{ .Blob = blob }, stdout_no);
                     } else if (this.node.redirect.stderr) {
-                        try spawn_args.stdio[stdin_no].extractBlob(global, .{ .Blob = blob }, stderr_no);
+                        try spawn_args.stdio[stderr_no].extractBlob(global, .{ .Blob = blob }, stderr_no);
                     }
                 } else if (try jsc.WebCore.ReadableStream.fromJS(this.base.interpreter.jsobjs[val.idx], global)) |rstream| {
                     _ = rstream;

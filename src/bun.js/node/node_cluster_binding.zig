@@ -153,7 +153,14 @@ pub const InternalMsgHolder = struct {
         bun.assert(this.isReady());
         var messages = this.messages;
         this.messages = .{};
-        for (messages.items) |*strong| {
+        var i: usize = 0;
+        errdefer {
+            // Clean up remaining Strong refs and the array on error.
+            for (messages.items[i..]) |*s| s.deinit();
+            messages.deinit(bun.default_allocator);
+        }
+        while (i < messages.items.len) : (i += 1) {
+            var strong = &messages.items[i];
             if (strong.get()) |message| {
                 try this.dispatchUnsafe(message, globalThis);
             }

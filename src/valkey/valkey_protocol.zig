@@ -521,7 +521,10 @@ pub const ValkeyReader = struct {
                 }
 
                 while (i < len) : (i += 1) {
-                    entries[i] = .{ .key = try self.readValueWithDepth(allocator, depth + 1), .value = try self.readValueWithDepth(allocator, depth + 1) };
+                    var key = try self.readValueWithDepth(allocator, depth + 1);
+                    errdefer key.deinit(allocator);
+                    const value = try self.readValueWithDepth(allocator, depth + 1);
+                    entries[i] = .{ .key = key, .value = value };
                 }
                 return RESPValue{ .Map = entries };
             },
@@ -581,7 +584,8 @@ pub const ValkeyReader = struct {
                 if (len < 0 or len == 0) return error.InvalidPush;
 
                 // First element is the push type
-                const push_type = try self.readValueWithDepth(allocator, depth + 1);
+                var push_type = try self.readValueWithDepth(allocator, depth + 1);
+                defer push_type.deinit(allocator);
                 var push_type_str: []const u8 = "";
 
                 switch (push_type) {

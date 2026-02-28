@@ -169,7 +169,9 @@ it("process.env", () => {
   delete process.env.BUN_TEST_ENV_COERCE;
 
   // Symbol assignment should throw TypeError, matching Node.js
-  expect(() => { process.env.BUN_TEST_ENV_COERCE = Symbol("test"); }).toThrow(TypeError);
+  expect(() => {
+    process.env.BUN_TEST_ENV_COERCE = Symbol("test");
+  }).toThrow(TypeError);
 });
 
 it("process.env is spreadable and editable", () => {

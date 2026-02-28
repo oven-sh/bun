@@ -198,10 +198,11 @@ Examples:
         args.push(resolved);
       }
 
-      if (args.length > 1) {
-        args = [...new Set(args)];
-      }
     }
+  }
+
+  if (args.length > 1) {
+    args = [...new Set(args)];
   }
 
   if (args.length === 0) {

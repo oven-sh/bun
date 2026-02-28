@@ -316,12 +316,16 @@ const FormDataContext = struct {
 
                 const blob = value.blob;
                 const raw_content_type = if (blob.content_type.len > 0) blob.content_type else "application/octet-stream";
-                const content_type = sanitizeContentType(raw_content_type, allocator) orelse raw_content_type;
                 joiner.pushStatic("Content-Type: ");
-                if (content_type.ptr != raw_content_type.ptr) {
-                    joiner.push(content_type, allocator);
+                if (sanitizeContentType(raw_content_type, allocator)) |sanitized| {
+                    if (sanitized.len > 0) {
+                        joiner.push(sanitized, allocator);
+                    } else {
+                        allocator.free(sanitized);
+                        joiner.pushStatic("application/octet-stream");
+                    }
                 } else {
-                    joiner.pushStatic(content_type);
+                    joiner.pushStatic(raw_content_type);
                 }
                 joiner.pushStatic("\r\n\r\n");
 

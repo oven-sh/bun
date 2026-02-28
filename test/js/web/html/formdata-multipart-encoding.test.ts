@@ -111,33 +111,48 @@ describe("FormData multipart encoding hardening", () => {
 
   describe("content-type sanitization", () => {
     it("should strip CR/LF from blob content-type in multipart output", async () => {
-      const blob = new Blob(["data"], { type: "text/plain" });
+      const blob = new Blob(["data"], { type: "text/evil\r\nx-injected: true" });
       const fd = new FormData();
       fd.append("file", blob, "test.txt");
 
       const response = new Response(fd);
       const body = await response.text();
 
-      // Normal content-type should pass through fine
-      expect(body).toContain("Content-Type: text/plain");
+      // CR/LF should be stripped from the content-type value
+      const match = body.match(/Content-Type: ([^\r\n]*)/);
+      expect(match).not.toBeNull();
+      const ctValue = match![1];
+      expect(ctValue).not.toContain("\r");
+      expect(ctValue).not.toContain("\n");
+      expect(ctValue).toBe("text/evilx-injected: true");
     });
 
-    it("should not contain bare CR or LF in content-type header line", async () => {
-      // Blob constructor lowercases and validates ASCII, but we verify the
-      // multipart output does not contain unexpected line breaks in the
-      // Content-Type header region.
+    it("should fallback to application/octet-stream when content-type is all CR/LF", async () => {
+      const blob = new Blob(["data"], { type: "\r\n" });
       const fd = new FormData();
-      fd.append("file", new Blob(["data"], { type: "application/octet-stream" }), "test.bin");
+      fd.append("file", blob, "test.bin");
 
       const response = new Response(fd);
       const body = await response.text();
 
-      // Extract the Content-Type line from the multipart body
-      const lines = body.split("\r\n");
-      const ctLine = lines.find((l: string) => l.startsWith("Content-Type: "));
-      expect(ctLine).toBeDefined();
-      // The Content-Type value should not contain any CR or LF
-      const ctValue = ctLine!.slice("Content-Type: ".length);
+      // All-CR/LF content-type should fallback to application/octet-stream
+      const match = body.match(/Content-Type: ([^\r\n]*)/);
+      expect(match).not.toBeNull();
+      expect(match![1]).toBe("application/octet-stream");
+    });
+
+    it("should not contain bare CR or LF in content-type header line", async () => {
+      // Use a content-type with embedded CR/LF to exercise sanitization
+      const fd = new FormData();
+      fd.append("file", new Blob(["data"], { type: "text/plain\r\nX-Bad: header" }), "test.bin");
+
+      const response = new Response(fd);
+      const body = await response.text();
+
+      // Extract the Content-Type value using regex against the raw body
+      const match = body.match(/Content-Type: ([^\r\n]*)/);
+      expect(match).not.toBeNull();
+      const ctValue = match![1];
       expect(ctValue).not.toContain("\r");
       expect(ctValue).not.toContain("\n");
     });

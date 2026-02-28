@@ -82,12 +82,15 @@ async function withTerminalRepl(
 
   await fn({ terminal, proc, send, waitFor, allOutput });
 
-  // Clean exit — send .exit and give it time to terminate, then force-kill.
+  // Clean exit — Ctrl+C to clear any pending input, then .exit.
+  send("\x03");
   send(".exit\n");
-  const exitCode = await Promise.race([proc.exited, Bun.sleep(2000).then(() => null as number | null)]);
+  const exitCode = await Promise.race([proc.exited, Bun.sleep(5000).then(() => null as number | null)]);
   if (exitCode === null) {
     proc.kill();
+    expect().fail("REPL process did not exit within 5 seconds after sending .exit");
   }
+  expect(exitCode).toBe(0);
 }
 
 describe.todoIf(isWindows)("REPL tab completion targets correct object (#27518)", () => {

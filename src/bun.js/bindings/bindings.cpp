@@ -6244,7 +6244,10 @@ extern "C" JSC::EncodedJSValue Bun__REPL__getCompletions(
     size_t prefixLen)
 {
     auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    // Use a top-level exception scope (matching other REPL functions) so that
+    // exceptions are fully caught and cleared here, preventing stale exceptions
+    // from leaking to the Zig caller and triggering ASAN assertion failures.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     JSC::JSValue target = JSC::JSValue::decode(targetValue);
     if (!target || target.isUndefined() || target.isNull()) {
@@ -6253,7 +6256,10 @@ extern "C" JSC::EncodedJSValue Bun__REPL__getCompletions(
 
     if (!target.isObject()) {
         JSObject* boxed = target.toObject(globalObject);
-        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+        if (scope.exception()) {
+            scope.clearException();
+            return JSC::JSValue::encode(JSC::jsUndefined());
+        }
         target = boxed;
     }
 
@@ -6264,10 +6270,16 @@ extern "C" JSC::EncodedJSValue Bun__REPL__getCompletions(
     JSC::JSObject* object = target.getObject();
     JSC::PropertyNameArrayBuilder propertyNames(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
     object->getPropertyNames(globalObject, propertyNames, DontEnumPropertiesMode::Include);
-    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+    if (scope.exception()) {
+        scope.clearException();
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
 
     JSC::JSArray* completions = JSC::constructEmptyArray(globalObject, nullptr, 0);
-    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+    if (scope.exception()) {
+        scope.clearException();
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
 
     // getPropertyNames with DontEnumPropertiesMode::Include already traverses
     // the entire prototype chain, so no need to walk it again manually.
@@ -6276,7 +6288,10 @@ extern "C" JSC::EncodedJSValue Bun__REPL__getCompletions(
         WTF::String name = propertyName.string();
         if (prefix.isEmpty() || name.startsWith(prefix)) {
             completions->putDirectIndex(globalObject, completionIndex++, JSC::jsString(vm, name));
-            RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+            if (scope.exception()) {
+                scope.clearException();
+                return JSC::JSValue::encode(JSC::jsUndefined());
+            }
         }
     }
 

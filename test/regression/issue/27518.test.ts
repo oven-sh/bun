@@ -109,15 +109,19 @@ describe.todoIf(isWindows)("REPL tab completion targets correct object (#27518)"
   test("variable dot-completion shows correct properties", async () => {
     await withTerminalRepl(async ({ send, waitFor }) => {
       // First define a variable
-      send("const myObj = { fooBar: 1, fooBaz: 2 }\n");
+      send("const myObj = { xyzOne: 1, xyzTwo: 2 }\n");
+      // Wait for the REPL to finish evaluating by looking for the evaluation
+      // output (the object is printed back). Then wait for the next prompt.
+      // This ensures the cursor is past all echoed definition characters.
+      await waitFor("xyzTwo");
       await waitFor(/\u276f|> /);
-      // Now tab-complete on myObj.foo
-      send("myObj.foo\t");
-      // Should show fooBar and fooBaz
-      const output = await waitFor(/foo(Bar|Baz)/);
+      // Now tab-complete on myObj.xyz
+      send("myObj.xyz\t");
+      // Should show xyzOne and xyzTwo
+      const output = await waitFor(/xyz(One|Two)/);
       const stripped = stripAnsi(output);
-      expect(stripped).toMatch(/fooBar/);
-      expect(stripped).toMatch(/fooBaz/);
+      expect(stripped).toMatch(/xyzOne/);
+      expect(stripped).toMatch(/xyzTwo/);
     });
   });
 
@@ -147,8 +151,9 @@ describe.todoIf(isWindows)("REPL tab completion targets correct object (#27518)"
 
   test("dot-completion after assignment does not cause side effects", async () => {
     await withTerminalRepl(async ({ send, waitFor }) => {
-      // Define a variable
+      // Define a variable and wait for REPL to process it
       send("let sideEffectVar = 'original'\n");
+      await waitFor("original");
       await waitFor(/\u276f|> /);
       // Type an assignment with dot-completion — tab should NOT evaluate "sideEffectVar = {}"
       // It should only evaluate "{}" (the expression right before the dot).

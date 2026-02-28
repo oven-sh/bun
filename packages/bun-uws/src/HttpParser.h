@@ -721,7 +721,8 @@ namespace uWS
 
             /* Check for empty headers (no headers, just \r\n) */
             if (postPaddedBuffer[0] == '\r' && postPaddedBuffer[1] == '\n') {
-                /* Valid request with no headers */
+                /* Valid request with no headers - write null terminator like the normal path */
+                headers[1].key = std::string_view(nullptr, 0);
                 return HttpParserResult::success((unsigned int) ((postPaddedBuffer + 2) - start));
             }
 

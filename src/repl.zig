@@ -1909,6 +1909,50 @@ fn handleCtrlC(self: *Repl) void {
     self.refreshLine();
 }
 
+/// Scan backwards from `pos` (exclusive) to find the start of a dot-expression
+/// chain. Handles identifiers, dots, balanced brackets `[...]`, and balanced
+/// parentheses `(...)`. Returns the index of the first character of the
+/// expression. For example, given `let x = foo.bar.` with pos=17 (the trailing
+/// dot), this returns 8 (the start of `foo`).
+fn findExpressionStart(line: []const u8, pos: usize) usize {
+    var i = pos;
+    while (i > 0) {
+        const c = line[i - 1];
+        if (std.ascii.isAlphanumeric(c) or c == '_' or c == '$') {
+            // Part of an identifier — keep scanning.
+            i -= 1;
+        } else if (c == '.') {
+            // Dot access — include it and continue scanning the expression
+            // before it.
+            i -= 1;
+        } else if (c == ']') {
+            // Computed property access — find matching '['.
+            i -= 1;
+            var depth: usize = 1;
+            while (i > 0 and depth > 0) {
+                i -= 1;
+                if (line[i] == ']') depth += 1;
+                if (line[i] == '[') depth -= 1;
+            }
+            // If unbalanced, bail out.
+            if (depth != 0) return i;
+        } else if (c == ')') {
+            // Function call — find matching '('.
+            i -= 1;
+            var depth: usize = 1;
+            while (i > 0 and depth > 0) {
+                i -= 1;
+                if (line[i] == ')') depth += 1;
+                if (line[i] == '(') depth -= 1;
+            }
+            if (depth != 0) return i;
+        } else {
+            break;
+        }
+    }
+    return i;
+}
+
 fn handleTab(self: *Repl) void {
     const line = self.line_editor.getLine();
 
@@ -1957,13 +2001,15 @@ fn handleTab(self: *Repl) void {
     const prefix = line[word_start..];
 
     // Determine the target object for completions.
-    // If there's a dot before the word being completed, evaluate the expression
-    // before the dot to get the target object (e.g., for "foo.bar.b[TAB]",
-    // evaluate "foo.bar" and complete properties of that object).
+    // If there's a dot before the word being completed, extract and evaluate
+    // only the dot-expression chain before the dot (e.g., for "let x = foo.bar.b[TAB]",
+    // extract and evaluate "foo.bar", NOT "let x = foo.bar" which would have side effects).
     var target_value: jsc.JSValue = .js_undefined;
     const has_dot = word_start > 0 and line[word_start - 1] == '.';
     if (has_dot) {
-        const expr = line[0 .. word_start - 1];
+        const expr_end = word_start - 1; // position of the dot
+        const expr_start = findExpressionStart(line, expr_end);
+        const expr = line[expr_start..expr_end];
         if (expr.len > 0) {
             // Wrap in parentheses so that e.g. `{}` is parsed as an expression
             // (object literal) rather than a block statement.
@@ -1991,6 +2037,9 @@ fn handleTab(self: *Repl) void {
     );
 
     if (completions.isUndefined() or !completions.isArray()) {
+        // Clear any pending exception (e.g. from a Proxy with a throwing
+        // ownKeys trap) so it doesn't leak into subsequent evaluations.
+        global.clearException();
         self.line_editor.insert(' ') catch {};
         self.line_editor.insert(' ') catch {};
         self.refreshLine();

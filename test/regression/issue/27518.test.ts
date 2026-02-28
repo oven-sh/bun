@@ -144,4 +144,23 @@ describe.todoIf(isWindows)("REPL tab completion targets correct object (#27518)"
       expect(stripped).toContain("console");
     });
   });
+
+  test("dot-completion after assignment does not cause side effects", async () => {
+    await withTerminalRepl(async ({ send, waitFor }) => {
+      // Define a variable
+      send("let sideEffectVar = 'original'\n");
+      await waitFor(/\u276f|> /);
+      // Type an assignment with dot-completion — tab should NOT evaluate "sideEffectVar = {}"
+      // It should only evaluate "{}" (the expression right before the dot).
+      send("sideEffectVar = {}.to\t");
+      await waitFor(/to(String|LocaleString)/i);
+      // Cancel the current line
+      send("\x03");
+      await waitFor(/\u276f|> /);
+      // Verify sideEffectVar was NOT modified by the tab completion
+      send("sideEffectVar\n");
+      const output = await waitFor("original");
+      expect(stripAnsi(output)).toContain("original");
+    });
+  });
 });

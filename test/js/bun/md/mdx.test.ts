@@ -57,6 +57,52 @@ describe("Bun.mdx.compile", () => {
     expect(singleQuotedOut).toContain("{'has } brace'}");
   });
 
+  test("skips braces inside line comments", () => {
+    const src = "Result: {value\n// ignore }\n+ 1}";
+    const output = Mdx.compile(src);
+    expect(output).toContain("{value\n// ignore }\n+ 1}");
+  });
+
+  test("skips braces inside block comments", () => {
+    const src = "Result: {value /* } */ + rest}";
+    const output = Mdx.compile(src);
+    expect(output).toContain("{value /* } */ + rest}");
+  });
+
+  test("skips braces inside double-quoted strings", () => {
+    const src = 'Value: {"has } brace"}';
+    const output = Mdx.compile(src);
+    expect(output).toContain('{"has } brace"}');
+  });
+
+  test("handles template literals with ${...} containing braces", () => {
+    const src = "Value: {`${obj.a}`}";
+    const output = Mdx.compile(src);
+    expect(output).toContain("{`${obj.a}`}");
+
+    const nested = "Value: {`${fn({a:1})}`}";
+    const nestedOut = Mdx.compile(nested);
+    expect(nestedOut).toContain("{`${fn({a:1})}`}");
+  });
+
+  test("handles nested template literals", () => {
+    const src = "Value: {`outer ${`inner ${x}`}`}";
+    const output = Mdx.compile(src);
+    expect(output).toContain("{`outer ${`inner ${x}`}`}");
+  });
+
+  test("handles escaped quotes inside strings within expressions", () => {
+    const src = "Value: {'it\\'s } here'}";
+    const output = Mdx.compile(src);
+    expect(output).toContain("{'it\\'s } here'}");
+  });
+
+  test("handles comments inside template expression interpolations", () => {
+    const src = "Value: {`${value /* } */}`}";
+    const output = Mdx.compile(src);
+    expect(output).toContain("{`${value /* } */}`}");
+  });
+
   test("supports multiline top-level import statements", () => {
     const src = ["import {", "  Box,", "  Button,", '} from "./ui";', "", "# Heading"].join("\n");
 

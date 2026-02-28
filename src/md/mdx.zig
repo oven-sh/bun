@@ -230,6 +230,10 @@ pub fn replaceExpressions(
     var in_inline_code = false;
     var expr_quote: ?u8 = null;
     var expr_escaped = false;
+    var expr_in_line_comment = false;
+    var expr_in_block_comment = false;
+    var template_expr_depths: std.ArrayListUnmanaged(usize) = .{};
+    defer template_expr_depths.deinit(allocator);
 
     while (i < source.len) : (i += 1) {
         const c = source[i];
@@ -246,6 +250,19 @@ pub fn replaceExpressions(
         }
 
         if (expr_start != null) {
+            if (expr_in_line_comment) {
+                if (c == '\n') expr_in_line_comment = false;
+                continue;
+            }
+
+            if (expr_in_block_comment) {
+                if (c == '*' and i + 1 < source.len and source[i + 1] == '/') {
+                    expr_in_block_comment = false;
+                    i += 1;
+                }
+                continue;
+            }
+
             if (expr_quote) |quote| {
                 if (expr_escaped) {
                     expr_escaped = false;
@@ -261,8 +278,90 @@ pub fn replaceExpressions(
                 continue;
             }
 
-            if (c == '\'' or c == '"' or c == '`') {
+            if (template_expr_depths.items.len > 0) {
+                const top_idx = template_expr_depths.items.len - 1;
+                const top_depth = template_expr_depths.items[top_idx];
+
+                if (expr_escaped) {
+                    expr_escaped = false;
+                    continue;
+                }
+
+                if (c == '\\') {
+                    expr_escaped = true;
+                    continue;
+                }
+
+                if (top_depth == 0) {
+                    if (c == '`') {
+                        _ = template_expr_depths.pop();
+                        continue;
+                    }
+                    if (c == '$' and i + 1 < source.len and source[i + 1] == '{') {
+                        template_expr_depths.items[top_idx] = 1;
+                        i += 1;
+                    }
+                    continue;
+                }
+
+                if (c == '/' and i + 1 < source.len and source[i + 1] == '/') {
+                    expr_in_line_comment = true;
+                    i += 1;
+                    continue;
+                }
+
+                if (c == '/' and i + 1 < source.len and source[i + 1] == '*') {
+                    expr_in_block_comment = true;
+                    i += 1;
+                    continue;
+                }
+
+                if (c == '\'' or c == '"') {
+                    expr_quote = c;
+                    expr_escaped = false;
+                    continue;
+                }
+
+                if (c == '`') {
+                    try template_expr_depths.append(allocator, 0);
+                    expr_escaped = false;
+                    continue;
+                }
+
+                if (c == '{') {
+                    template_expr_depths.items[top_idx] += 1;
+                    continue;
+                }
+
+                if (c == '}') {
+                    template_expr_depths.items[top_idx] -= 1;
+                    continue;
+                }
+
+                continue;
+            }
+
+            if (c == '/' and i + 1 < source.len and source[i + 1] == '/') {
+                expr_in_line_comment = true;
+                i += 1;
+                continue;
+            }
+
+            if (c == '/' and i + 1 < source.len and source[i + 1] == '*') {
+                expr_in_block_comment = true;
+                i += 1;
+                continue;
+            }
+
+            if (c == '\'' or c == '"') {
                 expr_quote = c;
+                expr_escaped = false;
+                continue;
+            }
+
+            if (c == '`') {
+                try template_expr_depths.append(allocator, 0);
+                expr_escaped = false;
                 continue;
             }
 
@@ -281,6 +380,9 @@ pub fn replaceExpressions(
                     expr_start = null;
                     expr_quote = null;
                     expr_escaped = false;
+                    expr_in_line_comment = false;
+                    expr_in_block_comment = false;
+                    template_expr_depths.clearRetainingCapacity();
                     continue;
                 }
             }
@@ -302,6 +404,9 @@ pub fn replaceExpressions(
             depth = 1;
             expr_quote = null;
             expr_escaped = false;
+            expr_in_line_comment = false;
+            expr_in_block_comment = false;
+            template_expr_depths.clearRetainingCapacity();
             continue;
         }
 

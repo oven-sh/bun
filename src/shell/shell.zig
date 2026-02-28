@@ -2404,6 +2404,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                 .word_start = self.word_start,
                 .j = self.j,
                 .string_refs = self.string_refs,
+                .jsobjs_len = self.jsobjs_len,
             };
             sublexer.chars.state = .Normal;
             return sublexer;

@@ -148,6 +148,38 @@ pub const JSXRenderer = struct {
         }
     }
 
+    const ExprWriteMode = enum { jsx_text, attr_text, raw };
+
+    fn writeRestoringExpressions(self: *JSXRenderer, content: []const u8, mode: ExprWriteMode) !void {
+        var i: usize = 0;
+        while (i < content.len) {
+            if (content[i] == 1) {
+                const sentinel_end = bun.strings.indexOfCharPos(content, 1, i + 1) orelse
+                    return error.JSError;
+                const placeholder = content[i .. sentinel_end + 1];
+                var restored = false;
+                for (self.expression_slots) |slot| {
+                    if (bun.strings.eql(slot.placeholder, placeholder)) {
+                        try self.write("{");
+                        try self.write(slot.original);
+                        try self.write("}");
+                        restored = true;
+                        break;
+                    }
+                }
+                if (!restored) return error.JSError;
+                i = sentinel_end + 1;
+                continue;
+            }
+            switch (mode) {
+                .jsx_text => try self.writeJSXEscaped(content[i .. i + 1]),
+                .attr_text => try self.writeAttrEscaped(content[i .. i + 1]),
+                .raw => try self.writeChar(content[i]),
+            }
+            i += 1;
+        }
+    }
+
     fn enterBlock(self: *JSXRenderer, block_type: BlockType, data: u32, flags: u32) !void {
         switch (block_type) {
             .doc => {},
@@ -304,36 +336,10 @@ pub const JSXRenderer = struct {
         const in_image = self.image_nesting_level > 0;
 
         switch (text_type) {
-            .normal => {
-                var i: usize = 0;
-                while (i < content.len) {
-                    if (content[i] == 1) {
-                        const sentinel_end = bun.strings.indexOfCharPos(content, 1, i + 1) orelse break;
-                        const placeholder = content[i .. sentinel_end + 1];
-                        var restored = false;
-                        for (self.expression_slots) |slot| {
-                            if (bun.strings.eql(slot.placeholder, placeholder)) {
-                                try self.write("{");
-                                try self.write(slot.original);
-                                try self.write("}");
-                                restored = true;
-                                break;
-                            }
-                        }
-                        if (!restored) {
-                            try self.writeJSXEscaped(placeholder);
-                        }
-                        i = sentinel_end + 1;
-                        continue;
-                    }
-                    if (in_image) {
-                        try self.writeAttrEscaped(content[i .. i + 1]);
-                    } else {
-                        try self.writeJSXEscaped(content[i .. i + 1]);
-                    }
-                    i += 1;
-                }
-            },
+            .normal => try self.writeRestoringExpressions(
+                content,
+                if (in_image) .attr_text else .jsx_text,
+            ),
             .null_char => if (in_image) {
                 try self.writeAttrEscaped("\xEF\xBF\xBD");
             } else {
@@ -349,7 +355,7 @@ pub const JSXRenderer = struct {
             } else {
                 try self.write("\n");
             },
-            .html => try self.write(content),
+            .html => try self.writeRestoringExpressions(content, .raw),
             .entity => try self.write(content),
             .code => {
                 try self.write("{\"");

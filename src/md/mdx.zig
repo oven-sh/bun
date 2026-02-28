@@ -451,6 +451,9 @@ pub fn compile(src: []const u8, allocator: std.mem.Allocator, options: MdxOption
     defer renderer.deinit();
 
     try md.renderWithRenderer(preprocessed.text, allocator, options.md_options, renderer.renderer());
+    if (bun.strings.contains(renderer.getOutput(), "\x01MDXE")) {
+        return error.UnresolvedPlaceholder;
+    }
 
     var out: std.ArrayListUnmanaged(u8) = .{};
     errdefer out.deinit(allocator);

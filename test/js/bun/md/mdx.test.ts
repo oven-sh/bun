@@ -238,12 +238,53 @@ describe("Bun.mdx.compile", () => {
     });
   });
 
+  test("complex fixture compiles with deep frontmatter and no placeholder leakage", () => {
+    const src = fs.readFileSync(path.join(fixtureDir, "complex-frontmatter.mdx"), "utf8");
+    const output = Mdx.compile(src);
+    const frontmatter = JSON.parse(extractFrontmatterObjectLiteral(output));
+
+    expect(frontmatter.title).toBe("Complex Frontmatter + MDX Parse Torture Test");
+    expect(frontmatter.flags).toEqual({
+      parserStrict: true,
+      allowExperimental: false,
+    });
+    expect(frontmatter.metadata.owners).toEqual([
+      {
+        name: "Parser Bot",
+        email: "parser.bot@snyder.tech",
+        roles: ["maintainer", "reviewer"],
+      },
+      {
+        name: "Fixture Curator",
+        email: "fixture.curator@snyder.tech",
+        roles: ["author", "qa"],
+      },
+    ]);
+    expect(frontmatter.matrix).toEqual({
+      dimensions: { rows: 3, cols: 3 },
+      values: [
+        [1, 2, 3],
+        [4, 5, 6],
+        [7, 8, 9],
+      ],
+    });
+    expect(frontmatter.nullableField).toBeNull();
+    expect(frontmatter["key:with:colons"]).toBe("still valid");
+
+    expect(output).toContain("export const parserMatrix =");
+    expect(output).toContain("export const numericSequence =");
+    expect(output).toContain("export default function MDXContent");
+    expect(output).toContain("Enabled checks:");
+    expect(output).not.toContain("MDXE");
+  });
+
   test("malformed mdx throws syntax-like error", () => {
     expect(() => Mdx.compile("---\n\n{unclosed")).toThrow(/compile error|syntax|unexpected|parse/i);
   });
 
   test("compiles real fixture documents", () => {
     const expectByFile: Record<string, string[]> = {
+      "complex-frontmatter.mdx": ["export const parserMatrix =", "export const numericSequence =", "_components.table"],
       "frontmatter-and-exports.mdx": ["export const frontmatter", 'export const version = "1.0.0"'],
       "components-and-expressions.mdx": ["Box", "Button"],
       "gfm-mixed-content.mdx": ["_components.table", "_components.code"],
@@ -330,6 +371,42 @@ export const meta = { version: "2.0" };
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout.trim()).toBe("function\nHeavy\n2.0");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test("complex fixture runtime SSR contains evaluated content and no placeholders", async () => {
+    const fixture = fs.readFileSync(path.join(fixtureDir, "complex-frontmatter.mdx"), "utf8");
+    using dir = tempDir("mdx-complex-runtime", {
+      "entry.tsx": `
+        import React from "react";
+        import { renderToStaticMarkup } from "react-dom/server";
+        import Page, { frontmatter } from "./page.mdx";
+
+        const html = renderToStaticMarkup(React.createElement(Page));
+        console.log(frontmatter.title);
+        console.log("HAS_SUMMARY:" + html.includes("3/3 checks enabled"));
+        console.log("HAS_ENABLED:" + html.includes("Enabled checks: fm-title, jsx-inline, code-fence"));
+        console.log("HAS_MDXE:" + html.includes("MDXE"));
+      `,
+      "page.mdx": fixture,
+    });
+    linkNodeModules(String(dir));
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.tsx"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain("Complex Frontmatter + MDX Parse Torture Test");
+    expect(stdout).toContain("HAS_SUMMARY:true");
+    expect(stdout).toContain("HAS_ENABLED:true");
+    expect(stdout).toContain("HAS_MDXE:false");
+    expect(stdout).not.toContain("\x01MDXE");
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
@@ -604,5 +681,42 @@ describe("MDX direct serve mode", () => {
 
     const res = await fetch(urlMatch![1]);
     expect(res.status).toBe(200);
+  });
+
+  test("complex fixture direct serve bundle has no unresolved placeholders", async () => {
+    const fixture = fs.readFileSync(path.join(fixtureDir, "complex-frontmatter.mdx"), "utf8");
+    using dir = tempDir("mdx-complex-serve", {
+      "index.mdx": fixture,
+    });
+    linkNodeModules(String(dir));
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.mdx", "--port=0"],
+      cwd: String(dir),
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const output = await readUntil(proc, text => URL_REGEX.test(text));
+    expect(output).not.toContain("MDXE");
+    const urlMatch = output.match(URL_REGEX);
+    expect(urlMatch).not.toBeNull();
+    const baseUrl = urlMatch![1];
+
+    const pageRes = await fetch(baseUrl);
+    expect(pageRes.status).toBe(200);
+    const html = await pageRes.text();
+    expect(html).not.toContain("MDXE");
+
+    const scriptMatch = html.match(/<script type="module"[^>]*src="([^"]+)"/);
+    expect(scriptMatch).not.toBeNull();
+    const scriptUrl = new URL(scriptMatch![1], baseUrl).toString();
+
+    const scriptRes = await fetch(scriptUrl);
+    expect(scriptRes.status).toBe(200);
+    const js = await scriptRes.text();
+    expect(js).toContain("Enabled checks:");
+    expect(js).not.toContain("MDXE");
   });
 });

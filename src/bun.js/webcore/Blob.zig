@@ -291,6 +291,7 @@ const FormDataContext = struct {
         joiner.pushStatic("Content-Disposition: form-data; name=\"");
         const name_slice = name.toSlice(allocator);
         if (escapeFormDataNameOrFilename(name_slice.slice(), allocator)) |escaped| {
+            name_slice.deinit();
             joiner.push(escaped, allocator);
         } else {
             joiner.push(name_slice.slice(), name_slice.allocator.get());
@@ -306,6 +307,7 @@ const FormDataContext = struct {
                 joiner.pushStatic("\"; filename=\"");
                 const filename_slice = value.filename.toSlice(allocator);
                 if (escapeFormDataNameOrFilename(filename_slice.slice(), allocator)) |escaped| {
+                    filename_slice.deinit();
                     joiner.push(escaped, allocator);
                 } else {
                     joiner.push(filename_slice.slice(), filename_slice.allocator.get());

@@ -198,7 +198,6 @@ Examples:
 
         args.push(resolved);
       }
-
     }
   }
 

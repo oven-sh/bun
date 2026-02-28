@@ -102,7 +102,17 @@ fn isStatementComplete(kind: StmtKind, line: []const u8, state: StatementParseSt
 
     const last = trimmed_for_completion[trimmed_for_completion.len - 1];
     if (last == ';') return true;
-    if (kind == .import_stmt) return true;
+
+    if (kind == .import_stmt) {
+        if (std.mem.indexOf(u8, trimmed_for_completion, " from ") != null) return true;
+        if (std.mem.lastIndexOfScalar(u8, trimmed_for_completion, '}')) |close_idx| {
+            const after_close = bun.strings.trimSpaces(trimmed_for_completion[close_idx + 1 ..]);
+            if (bun.strings.hasPrefixComptime(after_close, "from")) return true;
+        }
+        return bun.strings.hasPrefixComptime(trimmed_for_completion, "import \"") or
+            bun.strings.hasPrefixComptime(trimmed_for_completion, "import '");
+    }
+
     if (last == '}' or last == ')' or last == ']') return true;
 
     return switch (last) {
@@ -155,30 +165,8 @@ pub fn extractTopLevelStatements(
     var seen_content = false;
     var in_code_fence = false;
 
-    var pending_stmt_kind: ?StmtKind = null;
-    var stmt_state: StatementParseState = .{};
-
     while (lines.next()) |line| {
         const trimmed = bun.strings.trimSpaces(line);
-
-        if (pending_stmt_kind) |kind| {
-            if (stmt_buffer.items.len > 0) {
-                try stmt_buffer.append(allocator, '\n');
-            }
-            try stmt_buffer.appendSlice(allocator, line);
-            updateStatementParseState(&stmt_state, line);
-            const is_complete = isStatementComplete(kind, line, stmt_state);
-            if (is_complete) {
-                try stmts.append(allocator, .{
-                    .text = try allocator.dupe(u8, stmt_buffer.items),
-                    .kind = kind,
-                });
-                stmt_buffer.clearRetainingCapacity();
-                pending_stmt_kind = null;
-                stmt_state = .{};
-            }
-            continue;
-        }
 
         if (bun.strings.hasPrefixComptime(trimmed, "```")) {
             in_code_fence = !in_code_fence;
@@ -189,37 +177,35 @@ pub fn extractTopLevelStatements(
             (bun.strings.hasPrefixComptime(trimmed, "export ") and !bun.strings.hasPrefixComptime(trimmed, "export default")));
 
         if (maybe_stmt) {
-            pending_stmt_kind = if (bun.strings.hasPrefixComptime(trimmed, "import")) .import_stmt else .export_stmt;
+            const kind: StmtKind = if (bun.strings.hasPrefixComptime(trimmed, "import")) .import_stmt else .export_stmt;
+            var stmt_state: StatementParseState = .{};
             stmt_buffer.clearRetainingCapacity();
-            stmt_state = .{};
 
-            try stmt_buffer.appendSlice(allocator, line);
-            updateStatementParseState(&stmt_state, line);
-            const immediate_complete = isStatementComplete(pending_stmt_kind.?, line, stmt_state);
-            if (immediate_complete) {
-                try stmts.append(allocator, .{
-                    .text = try allocator.dupe(u8, stmt_buffer.items),
-                    .kind = pending_stmt_kind.?,
-                });
-                stmt_buffer.clearRetainingCapacity();
-                pending_stmt_kind = null;
-                stmt_state = .{};
+            var stmt_line = line;
+            while (true) {
+                if (stmt_buffer.items.len > 0) {
+                    try stmt_buffer.append(allocator, '\n');
+                }
+                try stmt_buffer.appendSlice(allocator, stmt_line);
+                updateStatementParseState(&stmt_state, stmt_line);
+
+                if (isStatementComplete(kind, stmt_line, stmt_state)) {
+                    break;
+                }
+
+                stmt_line = lines.next() orelse break;
             }
+
+            try stmts.append(allocator, .{
+                .text = try allocator.dupe(u8, stmt_buffer.items),
+                .kind = kind,
+            });
             continue;
         }
 
         if (trimmed.len > 0) seen_content = true;
         try remaining.appendSlice(allocator, line);
         try remaining.append(allocator, '\n');
-    }
-
-    if (pending_stmt_kind) |kind| {
-        if (stmt_buffer.items.len > 0) {
-            try stmts.append(allocator, .{
-                .text = try allocator.dupe(u8, stmt_buffer.items),
-                .kind = kind,
-            });
-        }
     }
 
     return .{

@@ -58,37 +58,26 @@ describe("Bun.mdx.compile", () => {
   });
 
   test("supports multiline top-level import statements", () => {
-    const src = [
-      "import {",
-      "  Box,",
-      "  Button,",
-      '} from "./ui";',
-      "",
-      "# Heading",
-    ].join("\n");
+    const src = ["import {", "  Box,", "  Button,", '} from "./ui";', "", "# Heading"].join("\n");
 
     const output = Mdx.compile(src);
 
     expect(output).toContain('import {\n  Box,\n  Button,\n} from "./ui";');
     expect(output).toContain("export default function MDXContent");
     expect(output).not.toContain("<p>Box,</p>");
-    expect(output).not.toContain('<p>} from &quot;./ui&quot;;</p>');
+    expect(output).not.toContain("<p>} from &quot;./ui&quot;;</p>");
   });
 
   test("supports multiline top-level export statements with trailing comments", () => {
-    const src = [
-      "export const label =",
-      '  "hello" + // keep concatenating',
-      '  " world";',
-      "",
-      "# Heading",
-    ].join("\n");
+    const src = ["export const label =", '  "hello" + // keep concatenating', '  " world";', "", "# Heading"].join(
+      "\n",
+    );
 
     const output = Mdx.compile(src);
 
     expect(output).toContain('export const label =\n  "hello" + // keep concatenating\n  " world";');
     expect(output).toContain("export default function MDXContent");
-    expect(output).not.toContain('<p>&quot; world&quot;;</p>');
+    expect(output).not.toContain("<p>&quot; world&quot;;</p>");
   });
 
   test("typed array input accepted", () => {

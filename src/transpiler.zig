@@ -1103,7 +1103,10 @@ pub const Transpiler = struct {
                 var opts = js_parser.Parser.Options.init(jsx, loader);
 
                 opts.features.emit_decorator_metadata = this_parse.emit_decorator_metadata;
-                opts.features.standard_decorators = !loader.isTypeScript() or !this_parse.experimental_decorators;
+                // emitDecoratorMetadata implies legacy/experimental decorators, as it only
+                // makes sense with TypeScript's legacy decorator system (reflect-metadata).
+                // TC39 standard decorators have their own metadata mechanism.
+                opts.features.standard_decorators = !loader.isTypeScript() or !(this_parse.experimental_decorators or this_parse.emit_decorator_metadata);
                 opts.features.allow_runtime = transpiler.options.allow_runtime;
                 opts.features.set_breakpoint_on_first_line = this_parse.set_breakpoint_on_first_line;
                 opts.features.trim_unused_imports = transpiler.options.trim_unused_imports orelse loader.isTypeScript();

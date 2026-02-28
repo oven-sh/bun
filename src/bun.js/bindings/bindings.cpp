@@ -6246,6 +6246,7 @@ extern "C" JSC::EncodedJSValue Bun__REPL__getCompletions(
         }
     }
 
+    scope.release();
     return JSC::JSValue::encode(completions);
 }
 

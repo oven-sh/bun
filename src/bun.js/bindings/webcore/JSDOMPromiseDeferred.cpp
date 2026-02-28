@@ -152,13 +152,13 @@ void DeferredPromise::reject(Exception exception, RejectAsHandled rejectAsHandle
     auto& lexicalGlobalObject = *m_globalObject;
     JSC::VM& vm = lexicalGlobalObject.vm();
     JSC::JSLockHolder locker(vm);
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     if (exception.code() == ExistingExceptionError) {
         EXCEPTION_ASSERT(scope.exception());
         auto error = scope.exception()->value();
         bool isTerminating = handleTerminationExceptionIfNeeded(scope, lexicalGlobalObject);
-        scope.clearException();
+        (void)scope.tryClearException();
 
         if (!isTerminating)
             reject<IDLAny>(error, rejectAsHandled);
@@ -187,13 +187,13 @@ void DeferredPromise::reject(ExceptionCode ec, const String& message, RejectAsHa
     auto& lexicalGlobalObject = *m_globalObject;
     JSC::VM& vm = lexicalGlobalObject.vm();
     JSC::JSLockHolder locker(vm);
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     if (ec == ExistingExceptionError) {
         EXCEPTION_ASSERT(scope.exception());
         auto error = scope.exception()->value();
         bool isTerminating = handleTerminationExceptionIfNeeded(scope, lexicalGlobalObject);
-        scope.clearException();
+        (void)scope.tryClearException();
 
         if (!isTerminating)
             reject<IDLAny>(error, rejectAsHandled);
@@ -223,14 +223,14 @@ void DeferredPromise::reject(const JSC::PrivateName& privateName, RejectAsHandle
     reject(*lexicalGlobalObject, JSC::Symbol::create(lexicalGlobalObject->vm(), privateName.uid()), rejectAsHandled);
 }
 
-void rejectPromiseWithExceptionIfAny(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, JSPromise& promise, JSC::CatchScope& catchScope)
+void rejectPromiseWithExceptionIfAny(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, JSPromise& promise, JSC::TopExceptionScope& topExceptionScope)
 {
     UNUSED_PARAM(lexicalGlobalObject);
-    if (!catchScope.exception()) [[likely]]
+    if (!topExceptionScope.exception()) [[likely]]
         return;
 
-    JSValue error = catchScope.exception()->value();
-    catchScope.clearException();
+    JSValue error = topExceptionScope.exception()->value();
+    (void)topExceptionScope.tryClearException();
 
     DeferredPromise::create(globalObject, promise)->reject<IDLAny>(error);
 }
@@ -276,7 +276,7 @@ void fulfillPromiseWithArrayBuffer(Ref<DeferredPromise>&& promise, const void* d
     fulfillPromiseWithArrayBuffer(WTF::move(promise), ArrayBuffer::tryCreate({ reinterpret_cast<const uint8_t*>(data), length }).get());
 }
 
-bool DeferredPromise::handleTerminationExceptionIfNeeded(CatchScope& scope, JSDOMGlobalObject& lexicalGlobalObject)
+bool DeferredPromise::handleTerminationExceptionIfNeeded(TopExceptionScope& scope, JSDOMGlobalObject& lexicalGlobalObject)
 {
     auto* exception = scope.exception();
     VM& vm = scope.vm();
@@ -284,7 +284,7 @@ bool DeferredPromise::handleTerminationExceptionIfNeeded(CatchScope& scope, JSDO
     return !!exception && vm.isTerminationException(exception);
 }
 
-void DeferredPromise::handleUncaughtException(CatchScope& scope, JSDOMGlobalObject& lexicalGlobalObject)
+void DeferredPromise::handleUncaughtException(TopExceptionScope& scope, JSDOMGlobalObject& lexicalGlobalObject)
 {
     auto* exception = scope.exception();
     handleTerminationExceptionIfNeeded(scope, lexicalGlobalObject);

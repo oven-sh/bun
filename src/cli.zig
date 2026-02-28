@@ -92,6 +92,7 @@ pub const AuditCommand = @import("./cli/audit_command.zig").AuditCommand;
 pub const InitCommand = @import("./cli/init_command.zig").InitCommand;
 pub const WhyCommand = @import("./cli/why_command.zig").WhyCommand;
 pub const FuzzilliCommand = @import("./cli/fuzzilli_command.zig").FuzzilliCommand;
+pub const ReplCommand = @import("./cli/repl_command.zig").ReplCommand;
 
 pub const Arguments = @import("./cli/Arguments.zig");
 
@@ -341,6 +342,7 @@ pub const Command = struct {
         default_timeout_ms: u32 = 5 * std.time.ms_per_s,
         update_snapshots: bool = false,
         repeat_count: u32 = 0,
+        retry: u32 = 0,
         run_todo: bool = false,
         only: bool = false,
         pass_with_no_tests: bool = false,
@@ -392,6 +394,15 @@ pub const Command = struct {
             enabled: bool = false,
             name: []const u8 = "",
             dir: []const u8 = "",
+            interval: u32 = 1000,
+            md_format: bool = false,
+            json_format: bool = false,
+        } = .{},
+        heap_prof: struct {
+            enabled: bool = false,
+            text_format: bool = false,
+            name: []const u8 = "",
+            dir: []const u8 = "",
         } = .{},
     };
 
@@ -417,6 +428,9 @@ pub const Command = struct {
         filters: []const []const u8 = &.{},
         workspaces: bool = false,
         if_present: bool = false,
+        parallel: bool = false,
+        sequential: bool = false,
+        no_exit_on_error: bool = false,
 
         preloads: []const string = &.{},
         has_loaded_global_config: bool = false,
@@ -424,6 +438,8 @@ pub const Command = struct {
         pub const BundlerOptions = struct {
             outdir: []const u8 = "",
             outfile: []const u8 = "",
+            metafile: [:0]const u8 = "",
+            metafile_md: [:0]const u8 = "",
             root_dir: []const u8 = "",
             public_path: []const u8 = "",
             entry_naming: []const u8 = "[dir]/[name].[ext]",
@@ -445,7 +461,6 @@ pub const Command = struct {
             banner: []const u8 = "",
             footer: []const u8 = "",
             css_chunking: bool = false,
-
             bake: bool = false,
             bake_debug_dump_server: bool = false,
             bake_debug_disable_minify: bool = false,
@@ -463,6 +478,7 @@ pub const Command = struct {
             compile_autoload_bunfig: bool = true,
             compile_autoload_tsconfig: bool = false,
             compile_autoload_package_json: bool = false,
+            compile_executable_path: ?[]const u8 = null,
             windows: options.WindowsOptions = .{},
         };
 
@@ -684,17 +700,33 @@ pub const Command = struct {
                 var offset_for_passthrough: usize = 0;
 
                 const ctx: *ContextData = brk: {
-                    if (graph.compile_exec_argv.len > 0) {
+                    if (graph.compile_exec_argv.len > 0 or bun.bun_options_argc > 0) {
                         const original_argv_len = bun.argv.len;
                         var argv_list = std.array_list.Managed([:0]const u8).fromOwnedSlice(bun.default_allocator, bun.argv);
-                        try bun.appendOptionsEnv(graph.compile_exec_argv, &argv_list, bun.default_allocator);
-                        bun.argv = argv_list.items;
+                        if (graph.compile_exec_argv.len > 0) {
+                            try bun.appendOptionsEnv(graph.compile_exec_argv, [:0]const u8, &argv_list);
+                        }
 
-                        // Calculate offset: skip executable name + all exec argv options
-                        offset_for_passthrough = if (bun.argv.len > 1) 1 + (bun.argv.len -| original_argv_len) else 0;
+                        // Store the full argv including user arguments
+                        const full_argv = argv_list.items;
+                        const num_exec_argv_options = full_argv.len -| original_argv_len;
+
+                        // Calculate offset: skip executable name + all exec argv options + BUN_OPTIONS args
+                        const num_parsed_options = num_exec_argv_options + bun.bun_options_argc;
+                        offset_for_passthrough = if (full_argv.len > 1) 1 + num_parsed_options else 0;
+
+                        // Temporarily set bun.argv to only include executable name + exec_argv options + BUN_OPTIONS args.
+                        // This prevents user arguments like --version/--help from being intercepted
+                        // by Bun's argument parser (they should be passed through to user code).
+                        bun.argv = full_argv[0..@min(1 + num_parsed_options, full_argv.len)];
 
                         // Handle actual options to parse.
-                        break :brk try Command.init(allocator, log, .AutoCommand);
+                        const result = try Command.init(allocator, log, .AutoCommand);
+
+                        // Restore full argv so passthrough calculation works correctly
+                        bun.argv = full_argv;
+
+                        break :brk result;
                     }
 
                     context_data = .{
@@ -811,12 +843,8 @@ pub const Command = struct {
                 return;
             },
             .ReplCommand => {
-                // TODO: Put this in native code.
-                var ctx = try Command.init(allocator, log, .BunxCommand);
-                ctx.debug.run_in_bun = true; // force the same version of bun used. fixes bun-debug for example
-                var args = bun.argv[0..];
-                args[1] = "bun-repl";
-                try BunxCommand.exec(ctx, args);
+                const ctx = try Command.init(allocator, log, .RunCommand);
+                try ReplCommand.exec(ctx);
                 return;
             },
             .RemoveCommand => {
@@ -861,6 +889,13 @@ pub const Command = struct {
                 const ctx = try Command.init(allocator, log, .RunCommand);
                 ctx.args.target = .bun;
 
+                if (ctx.parallel or ctx.sequential) {
+                    MultiRun.run(ctx) catch |err| {
+                        Output.prettyErrorln("<r><red>error<r>: {s}", .{@errorName(err)});
+                        Global.exit(1);
+                    };
+                }
+
                 if (ctx.filters.len > 0 or ctx.workspaces) {
                     FilterRun.runScriptsWithFilter(ctx) catch |err| {
                         Output.prettyErrorln("<r><red>error<r>: {s}", .{@errorName(err)});
@@ -899,6 +934,13 @@ pub const Command = struct {
                     }
                 };
                 ctx.args.target = .bun;
+
+                if (ctx.parallel or ctx.sequential) {
+                    MultiRun.run(ctx) catch |err| {
+                        Output.prettyErrorln("<r><red>error<r>: {s}", .{@errorName(err)});
+                        Global.exit(1);
+                    };
+                }
 
                 if (ctx.filters.len > 0 or ctx.workspaces) {
                     FilterRun.runScriptsWithFilter(ctx) catch |err| {
@@ -1735,6 +1777,7 @@ const string = []const u8;
 
 const AddCompletions = @import("./cli/add_completions.zig");
 const FilterRun = @import("./cli/filter_run.zig");
+const MultiRun = @import("./cli/multi_run.zig");
 const PmViewCommand = @import("./cli/pm_view_command.zig");
 const fs = @import("./fs.zig");
 const options = @import("./options.zig");

@@ -24,6 +24,12 @@ client_renegotiation_window: u32 = 0,
 requires_custom_request_ctx: bool = false,
 is_using_default_ciphers: bool = true,
 low_memory_mode: bool = false,
+ref_count: RC = .init(),
+cached_hash: u64 = 0,
+
+const RC = bun.ptr.ThreadSafeRefCount(@This(), "ref_count", destroy, .{});
+pub const ref = RC.ref;
+pub const deref = RC.deref;
 
 const ReadFromBlobError = bun.JSError || error{
     NullStore,
@@ -48,7 +54,7 @@ fn readFromBlob(
     );
     const result = switch (maybe) {
         .result => |result| result,
-        .err => |err| return global.throwValue(err.toJS(global)),
+        .err => |err| return global.throwValue(try err.toJS(global)),
     };
     if (result.null_terminated.len == 0) return error.EmptyFile;
     return bun.default_allocator.dupeZ(u8, result.null_terminated);
@@ -91,22 +97,51 @@ pub fn asUSockets(this: *const SSLConfig) uws.SocketContext.BunSocketContextOpti
     return ctx_opts;
 }
 
+/// Returns socket options for client-side TLS with manual verification.
+/// Sets request_cert=1 (to receive server cert) and reject_unauthorized=0
+/// (to handle verification manually in handshake callback).
+pub fn asUSocketsForClientVerification(this: *const SSLConfig) uws.SocketContext.BunSocketContextOptions {
+    var opts = this.asUSockets();
+    opts.request_cert = 1;
+    opts.reject_unauthorized = 0;
+    return opts;
+}
+
+/// Returns a copy of this config for client-side TLS with manual verification.
+/// Sets request_cert=1 (to receive server cert) and reject_unauthorized=0
+/// (to handle verification manually in handshake callback).
+pub fn forClientVerification(this: SSLConfig) SSLConfig {
+    var copy = this;
+    copy.request_cert = 1;
+    copy.reject_unauthorized = 0;
+    return copy;
+}
+
 pub fn isSame(this: *const SSLConfig, other: *const SSLConfig) bool {
     inline for (comptime std.meta.fields(SSLConfig)) |field| {
+        if (comptime std.mem.eql(u8, field.name, "ref_count") or std.mem.eql(u8, field.name, "cached_hash")) continue;
         const first = @field(this, field.name);
         const second = @field(other, field.name);
         switch (field.type) {
             ?[*:0]const u8 => {
-                const a = first orelse return second == null;
-                const b = second orelse return false;
-                if (!stringsEqual(a, b)) return false;
+                // Compare optional single strings
+                if (first) |a| {
+                    const b = second orelse return false;
+                    if (!stringsEqual(a, b)) return false;
+                } else {
+                    if (second != null) return false;
+                }
             },
             ?[][*:0]const u8 => {
-                const slice1 = first orelse return second == null;
-                const slice2 = second orelse return false;
-                if (slice1.len != slice2.len) return false;
-                for (slice1, slice2) |a, b| {
-                    if (!stringsEqual(a, b)) return false;
+                // Compare optional arrays of strings (e.g., key, cert, ca)
+                if (first) |slice1| {
+                    const slice2 = second orelse return false;
+                    if (slice1.len != slice2.len) return false;
+                    for (slice1, slice2) |a, b| {
+                        if (!stringsEqual(a, b)) return false;
+                    }
+                } else {
+                    if (second != null) return false;
                 }
             },
             else => if (first != second) return false,
@@ -157,6 +192,8 @@ pub fn deinit(this: *SSLConfig) void {
         .requires_custom_request_ctx = {},
         .is_using_default_ciphers = {},
         .low_memory_mode = {},
+        .ref_count = {},
+        .cached_hash = {},
     });
 }
 
@@ -194,8 +231,96 @@ pub fn clone(this: *const SSLConfig) SSLConfig {
         .requires_custom_request_ctx = this.requires_custom_request_ctx,
         .is_using_default_ciphers = this.is_using_default_ciphers,
         .low_memory_mode = this.low_memory_mode,
+        .ref_count = .init(),
+        .cached_hash = 0,
     };
 }
+
+pub fn contentHash(this: *SSLConfig) u64 {
+    if (this.cached_hash != 0) return this.cached_hash;
+    var hasher = std.hash.Wyhash.init(0);
+    inline for (comptime std.meta.fields(SSLConfig)) |field| {
+        if (comptime std.mem.eql(u8, field.name, "ref_count") or std.mem.eql(u8, field.name, "cached_hash")) continue;
+        const value = @field(this, field.name);
+        switch (field.type) {
+            ?[*:0]const u8 => {
+                if (value) |s| {
+                    hasher.update(bun.asByteSlice(s));
+                }
+                hasher.update(&.{0});
+            },
+            ?[][*:0]const u8 => {
+                if (value) |slice| {
+                    for (slice) |s| {
+                        hasher.update(bun.asByteSlice(s));
+                        hasher.update(&.{0});
+                    }
+                }
+                hasher.update(&.{0});
+            },
+            else => {
+                hasher.update(std.mem.asBytes(&value));
+            },
+        }
+    }
+    const hash = hasher.final();
+    // Avoid 0 since it's the sentinel for "not computed"
+    this.cached_hash = if (hash == 0) 1 else hash;
+    return this.cached_hash;
+}
+
+/// Called by the RC mixin when refcount reaches 0.
+fn destroy(this: *SSLConfig) void {
+    GlobalRegistry.remove(this);
+    this.deinit();
+    bun.default_allocator.destroy(this);
+}
+
+pub const GlobalRegistry = struct {
+    const MapContext = struct {
+        pub fn hash(_: @This(), key: *SSLConfig) u32 {
+            return @truncate(key.contentHash());
+        }
+        pub fn eql(_: @This(), a: *SSLConfig, b: *SSLConfig, _: usize) bool {
+            return a.isSame(b);
+        }
+    };
+
+    var mutex: bun.Mutex = .{};
+    var configs: std.ArrayHashMapUnmanaged(*SSLConfig, void, MapContext, true) = .empty;
+
+    /// Takes ownership of a heap-allocated SSLConfig.
+    /// If an identical config already exists in the registry, the new one is freed
+    /// and the existing one is returned (with refcount incremented).
+    /// If no match, the new config is registered and returned.
+    pub fn intern(new_config: *SSLConfig) *SSLConfig {
+        mutex.lock();
+        defer mutex.unlock();
+
+        // Look up by content hash/equality
+        const gop = bun.handleOom(configs.getOrPutContext(bun.default_allocator, new_config, .{}));
+        if (gop.found_existing) {
+            // Identical config already exists - free the new one, return existing
+            const existing = gop.key_ptr.*;
+            new_config.ref_count.clearWithoutDestructor();
+            new_config.deinit();
+            bun.default_allocator.destroy(new_config);
+            existing.ref();
+            return existing;
+        }
+
+        // New config - it's already inserted by getOrPut
+        // refcount is already 1 from initialization
+        return new_config;
+    }
+
+    /// Remove a config from the registry. Called when refcount reaches 0.
+    fn remove(config: *SSLConfig) void {
+        mutex.lock();
+        defer mutex.unlock();
+        _ = configs.swapRemoveContext(config, .{});
+    }
+};
 
 pub const zero = SSLConfig{};
 
@@ -266,9 +391,9 @@ pub fn fromGenerated(
 
     const protocols = switch (generated.alpn_protocols) {
         .none => null,
-        .string => |*ref| ref.get().toOwnedSliceZ(bun.default_allocator),
-        .buffer => |*ref| blk: {
-            const buffer: jsc.ArrayBuffer = ref.get().asArrayBuffer();
+        .string => |*val| val.get().toOwnedSliceZ(bun.default_allocator),
+        .buffer => |*val| blk: {
+            const buffer: jsc.ArrayBuffer = val.get().asArrayBuffer();
             break :blk try bun.default_allocator.dupeZ(u8, buffer.byteSlice());
         },
     };
@@ -338,9 +463,9 @@ fn handleFile(
 ) ReadFromBlobError!?[][*:0]const u8 {
     const single = try handleSingleFile(global, switch (file.*) {
         .none => return null,
-        .string => |*ref| .{ .string = ref.get() },
-        .buffer => |*ref| .{ .buffer = ref.get() },
-        .file => |*ref| .{ .file = ref.get() },
+        .string => |*val| .{ .string = val.get() },
+        .buffer => |*val| .{ .buffer = val.get() },
+        .file => |*val| .{ .file = val.get() },
         .array => |*list| return try handleFileArray(global, list.items()),
     });
     errdefer bun.freeSensitive(bun.default_allocator, single);
@@ -363,9 +488,9 @@ fn handleFileArray(
     }
     for (elements) |*elem| {
         result.appendAssumeCapacity(try handleSingleFile(global, switch (elem.*) {
-            .string => |*ref| .{ .string = ref.get() },
-            .buffer => |*ref| .{ .buffer = ref.get() },
-            .file => |*ref| .{ .file = ref.get() },
+            .string => |*val| .{ .string = val.get() },
+            .buffer => |*val| .{ .buffer = val.get() },
+            .file => |*val| .{ .file = val.get() },
         }));
     }
     return try result.toOwnedSlice();

@@ -457,6 +457,12 @@ int us_socket_is_shut_down(int ssl, us_socket_r s) nonnull_fn_decl;
 /* Returns whether this socket has been closed. Only valid if memory has not yet been released. */
 int us_socket_is_closed(int ssl, us_socket_r s) nonnull_fn_decl;
 
+/* Returns 1 if the TLS handshake has completed, 0 otherwise. For non-SSL sockets, always returns 1. */
+int us_socket_is_ssl_handshake_finished(int ssl, us_socket_r s) nonnull_fn_decl;
+
+/* Returns 1 if the TLS handshake callback has been invoked, 0 otherwise. For non-SSL sockets, always returns 1. */
+int us_socket_ssl_handshake_callback_has_fired(int ssl, us_socket_r s) nonnull_fn_decl;
+
 /* Immediately closes the socket */
 struct us_socket_t *us_socket_close(int ssl, us_socket_r s, int code, void *reason) __attribute__((nonnull(2)));
 

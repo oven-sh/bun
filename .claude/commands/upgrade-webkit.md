@@ -6,8 +6,7 @@ To do that:
 - git fetch upstream
 - git merge upstream main
 - Fix the merge conflicts
-- cd ../../ (back to bun)
-- make jsc-build (this will take about 7 minutes)
+- bun build.ts debug
 - While it compiles, in another task review the JSC commits between the last version of Webkit and the new version. Write up a summary of the webkit changes in a file called "webkit-changes.md"
 - bun run build:local (build a build of Bun with the new Webkit, make sure it compiles)
 - After making sure it compiles, run some code to make sure things work. something like ./build/debug-local/bun-debug --print '42' should be all you need
@@ -21,3 +20,7 @@ To do that:
 - commit + push (without adding the webkit-changes.md file)
 - create PR titled "Upgrade Webkit to the <commit-sha>", paste your webkit-changes.md into the PR description
 - delete the webkit-changes.md file
+
+Things to check for a successful upgrade:
+- Did JSType in vendor/WebKit/Source/JavaScriptCore have any recent changes? Does the enum values align with whats present in src/bun.js/bindings/JSType.zig?
+- Were there any changes to the webcore code generator? If there are C++ compilation errors, check for differences in some of the generated code in like vendor/WebKit/source/WebCore/bindings/scripts/test/JS/

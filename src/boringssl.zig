@@ -167,16 +167,30 @@ pub fn checkX509ServerIdentity(
                                 if (dnsNameSlice.len > 0) {
                                     if (X509.isSafeAltName(dnsNameSlice, false)) {
                                         if (dnsNameSlice[0] == '*') {
-                                            dnsNameSlice = dnsNameSlice[1..dnsNameSlice.len];
-                                            var host = hostname;
-                                            if (hostname.len > dnsNameSlice.len) {
-                                                host = hostname[hostname.len - dnsNameSlice.len .. hostname.len];
-                                            }
-                                            if (strings.eql(dnsNameSlice, host)) {
-                                                return true;
+                                            // RFC 6125 Section 6.4.3: Wildcard must match exactly one label
+                                            // Enforce "*." prefix (wildcards must be leftmost and followed by a dot)
+                                            if (dnsNameSlice.len >= 2 and dnsNameSlice[1] == '.') {
+                                                const suffix = dnsNameSlice[2..];
+                                                // Disallow "*.tld" (suffix must contain at least one dot for proper domain hierarchy)
+                                                if (std.mem.indexOfScalar(u8, suffix, '.') != null) {
+                                                    // Host must be at least "label.suffix" (suffix_len + 1 for dot + at least 1 char for label)
+                                                    if (hostname.len > suffix.len + 1) {
+                                                        const dot_index = hostname.len - suffix.len - 1;
+                                                        // The character before suffix must be a dot, and there must be no other dots
+                                                        // in the prefix (single-label wildcard only)
+                                                        if (hostname[dot_index] == '.' and std.mem.indexOfScalar(u8, hostname[0..dot_index], '.') == null) {
+                                                            const host_suffix = hostname[dot_index + 1 ..];
+                                                            // RFC 4343: DNS names are case-insensitive
+                                                            if (strings.eqlCaseInsensitiveASCII(suffix, host_suffix, true)) {
+                                                                return true;
+                                                            }
+                                                        }
+                                                    }
+                                                }
                                             }
                                         }
-                                        if (strings.eql(dnsNameSlice, hostname)) {
+                                        // RFC 4343: DNS names are case-insensitive
+                                        if (strings.eqlCaseInsensitiveASCII(dnsNameSlice, hostname, true)) {
                                             return true;
                                         }
                                     }

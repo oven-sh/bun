@@ -33,11 +33,11 @@ DEFINE_NATIVE_MODULE(NodeProcess)
         }
 
         exportNames.append(entry);
-        auto catchScope = DECLARE_CATCH_SCOPE(vm);
+        auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         JSValue result = process->get(globalObject, entry);
-        if (catchScope.exception()) {
+        if (topExceptionScope.exception()) {
             result = jsUndefined();
-            catchScope.clearException();
+            (void)topExceptionScope.tryClearException();
         }
 
         exportValues.append(result);

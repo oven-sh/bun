@@ -445,6 +445,46 @@ for (let credentials of allCredentials) {
               }
             });
 
+            it("should be able to set content-encoding", async () => {
+              await using tmpfile = await tmp();
+              {
+                const s3file = bucket.file(tmpfile.name, options!);
+                await s3file.write("Hello Bun!", { contentEncoding: "gzip" });
+                // Use decompress: false since content isn't actually gzip-compressed
+                const response = await fetch(s3file.presign(), { decompress: false });
+                expect(response.headers.get("content-encoding")).toBe("gzip");
+              }
+              {
+                const s3file = bucket.file(tmpfile.name, options!);
+                await s3file.write("Hello Bun!", { contentEncoding: "br" });
+                // Use decompress: false since content isn't actually br-compressed
+                const response = await fetch(s3file.presign(), { decompress: false });
+                expect(response.headers.get("content-encoding")).toBe("br");
+              }
+              {
+                await bucket.write(tmpfile.name, "Hello Bun!", {
+                  ...options,
+                  contentEncoding: "identity",
+                });
+                const response = await fetch(bucket.file(tmpfile.name, options!).presign(), { decompress: false });
+                expect(response.headers.get("content-encoding")).toBe("identity");
+              }
+            });
+            it("should be able to set content-encoding in writer", async () => {
+              await using tmpfile = await tmp();
+              {
+                const s3file = bucket.file(tmpfile.name, options!);
+                const writer = s3file.writer({
+                  contentEncoding: "gzip",
+                });
+                writer.write("Hello Bun!!");
+                await writer.end();
+                // Use decompress: false since content isn't actually gzip-compressed
+                const response = await fetch(s3file.presign(), { decompress: false });
+                expect(response.headers.get("content-encoding")).toBe("gzip");
+              }
+            });
+
             it("should be able to upload large files using bucket.write + readable Request", async () => {
               await using tmpfile = await tmp();
               {
@@ -1035,7 +1075,8 @@ for (let credentials of allCredentials) {
                 await s3file.write("Hello Bun!");
                 expect.unreachable();
               } catch (e: any) {
-                expect(["ENAMETOOLONG", "ERR_S3_INVALID_PATH"]).toContain(e?.code);
+                // ERR_STRING_TOO_LONG can occur when the path is too long to convert to a JS string
+                expect(["ENAMETOOLONG", "ERR_S3_INVALID_PATH", "ERR_STRING_TOO_LONG"]).toContain(e?.code);
               }
             }),
           );
@@ -1507,5 +1548,130 @@ describe.concurrent("s3 missing credentials", () => {
     assertMissingCredentials(async () => {
       await Bun.s3.file("test").stat();
     });
+  });
+});
+
+// Archive + S3 integration tests
+describe.skipIf(!minioCredentials)("Archive with S3", () => {
+  const credentials = minioCredentials!;
+
+  it("writes archive to S3 via S3Client.write()", async () => {
+    const client = new Bun.S3Client(credentials);
+    const archive = new Bun.Archive({
+      "hello.txt": "Hello from Archive!",
+      "data.json": JSON.stringify({ test: true }),
+    });
+
+    const key = randomUUIDv7() + ".tar";
+    await client.write(key, archive);
+
+    // Verify by downloading and reading back
+    const downloaded = await client.file(key).bytes();
+    const readArchive = new Bun.Archive(downloaded);
+    const files = await readArchive.files();
+
+    expect(files.size).toBe(2);
+    expect(await files.get("hello.txt")!.text()).toBe("Hello from Archive!");
+    expect(await files.get("data.json")!.text()).toBe(JSON.stringify({ test: true }));
+
+    // Cleanup
+    await client.unlink(key);
+  });
+
+  it("writes archive to S3 via Bun.write() with s3:// URL", async () => {
+    const archive = new Bun.Archive({
+      "file1.txt": "content1",
+      "dir/file2.txt": "content2",
+    });
+
+    const key = randomUUIDv7() + ".tar";
+    const s3Url = `s3://${credentials.bucket}/${key}`;
+
+    await Bun.write(s3Url, archive, {
+      ...credentials,
+    });
+
+    // Verify by downloading
+    const s3File = Bun.file(s3Url, credentials);
+    const downloaded = await s3File.bytes();
+    const readArchive = new Bun.Archive(downloaded);
+    const files = await readArchive.files();
+
+    expect(files.size).toBe(2);
+    expect(await files.get("file1.txt")!.text()).toBe("content1");
+    expect(await files.get("dir/file2.txt")!.text()).toBe("content2");
+
+    // Cleanup
+    await s3File.delete();
+  });
+
+  it("writes archive with binary content to S3", async () => {
+    const client = new Bun.S3Client(credentials);
+    const binaryData = new Uint8Array([0x00, 0x01, 0x02, 0xff, 0xfe, 0xfd, 0x80, 0x7f]);
+    const archive = new Bun.Archive({
+      "binary.bin": binaryData,
+    });
+
+    const key = randomUUIDv7() + ".tar";
+    await client.write(key, archive);
+
+    // Verify binary data is preserved
+    const downloaded = await client.file(key).bytes();
+    const readArchive = new Bun.Archive(downloaded);
+    const files = await readArchive.files();
+    const extractedBinary = await files.get("binary.bin")!.bytes();
+
+    expect(extractedBinary).toEqual(binaryData);
+
+    // Cleanup
+    await client.unlink(key);
+  });
+
+  it("writes large archive to S3", async () => {
+    const client = new Bun.S3Client(credentials);
+
+    // Create archive with multiple files
+    const entries: Record<string, string> = {};
+    for (let i = 0; i < 50; i++) {
+      entries[`file${i.toString().padStart(3, "0")}.txt`] = `Content for file ${i}`;
+    }
+    const archive = new Bun.Archive(entries);
+
+    const key = randomUUIDv7() + ".tar";
+    await client.write(key, archive);
+
+    // Verify
+    const downloaded = await client.file(key).bytes();
+    const readArchive = new Bun.Archive(downloaded);
+    const files = await readArchive.files();
+
+    expect(files.size).toBe(50);
+    expect(await files.get("file000.txt")!.text()).toBe("Content for file 0");
+    expect(await files.get("file049.txt")!.text()).toBe("Content for file 49");
+
+    // Cleanup
+    await client.unlink(key);
+  });
+
+  it("writes archive via s3File.write()", async () => {
+    const client = new Bun.S3Client(credentials);
+    const archive = new Bun.Archive({
+      "test.txt": "Hello via s3File.write()!",
+    });
+
+    const key = randomUUIDv7() + ".tar";
+    const s3File = client.file(key);
+    await s3File.write(archive);
+
+    // Verify
+    const downloaded = await s3File.bytes();
+    const readArchive = new Bun.Archive(downloaded);
+    const files = await readArchive.files();
+
+    expect(files.size).toBe(1);
+    expect(await files.get("test.txt")!.text()).toBe("Hello via s3File.write()!");
+
+    // Cleanup
+    await s3File.delete();
   });
 });

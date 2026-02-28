@@ -1068,7 +1068,7 @@ pub const UpdateInteractiveCommand = struct {
             }) catch null;
 
         if (Environment.isPosix)
-            _ = Bun__ttySetMode(0, 1);
+            _ = bun.tty.setMode(0, .raw);
 
         defer {
             if (comptime Environment.isWindows) {
@@ -1080,7 +1080,7 @@ pub const UpdateInteractiveCommand = struct {
                 }
             }
             if (Environment.isPosix) {
-                _ = Bun__ttySetMode(0, 0);
+                _ = bun.tty.setMode(0, .normal);
             }
         }
 
@@ -1687,8 +1687,9 @@ pub const UpdateInteractiveCommand = struct {
                             }
                         }
                     } else {
-                        // Individual selection mode, just toggle current cursor package
+                        // Individual selection mode, just toggle current cursor package and select it
                         state.packages[state.cursor].use_latest = !state.packages[state.cursor].use_latest;
+                        state.selected[state.cursor] = true;
                     }
                 },
                 'j' => {
@@ -1809,9 +1810,6 @@ pub const UpdateInteractiveCommand = struct {
         }
     }
 };
-
-extern fn Bun__ttySetMode(fd: c_int, mode: c_int) c_int;
-
 const string = []const u8;
 
 pub const CatalogUpdateRequest = struct {

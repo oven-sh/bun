@@ -15,6 +15,7 @@ Plugins can register callbacks to be run at various points in the lifecycle of a
 - `onResolve()`: Run before a module is resolved
 - `onLoad()`: Run before a module is loaded
 - `onBeforeParse()`: Run zero-copy native addons in the parser thread before a file is parsed
+- `onEnd()`: Run after the bundle is complete
 
 ## Reference
 
@@ -39,6 +40,7 @@ type PluginBuilder = {
       exports?: Record<string, any>;
     },
   ) => void;
+  onEnd(callback: (result: BuildOutput) => void | Promise<void>): void;
   config: BuildConfig;
 };
 
@@ -423,3 +425,53 @@ This lifecycle callback is run immediately before a file is parsed by Bun's bund
 As input, it receives the file's contents and can optionally return new source code.
 
 <Info>This callback can be called from any thread and so the napi module implementation must be thread-safe.</Info>
+
+### onEnd
+
+```ts
+onEnd(callback: (result: BuildOutput) => void | Promise<void>): void;
+```
+
+Registers a callback to be run after the bundle is complete. The callback receives the [`BuildOutput`](/docs/bundler#outputs) object containing the build results, including output files and any build messages.
+
+```ts title="index.ts" icon="/icons/typescript.svg"
+const result = await Bun.build({
+  entrypoints: ["./app.ts"],
+  outdir: "./dist",
+  plugins: [
+    {
+      name: "onEnd example",
+      setup(build) {
+        build.onEnd(result => {
+          console.log(`Build completed with ${result.outputs.length} files`);
+          for (const log of result.logs) {
+            console.log(log);
+          }
+        });
+      },
+    },
+  ],
+});
+```
+
+The callback can return a `Promise`. The build output promise from `Bun.build()` will not resolve until all `onEnd()` callbacks have completed.
+
+```ts title="index.ts" icon="/icons/typescript.svg"
+const result = await Bun.build({
+  entrypoints: ["./app.ts"],
+  outdir: "./dist",
+  plugins: [
+    {
+      name: "Upload to S3",
+      setup(build) {
+        build.onEnd(async result => {
+          if (!result.success) return;
+          for (const output of result.outputs) {
+            await uploadToS3(output);
+          }
+        });
+      },
+    },
+  ],
+});
+```

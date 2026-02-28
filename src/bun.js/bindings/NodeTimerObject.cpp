@@ -19,7 +19,7 @@ using namespace JSC;
 static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue callbackValue, JSValue argumentsValue)
 {
     auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     JSValue restoreAsyncContext {};
     JSC::InternalFieldTuple* asyncContextData = nullptr;
@@ -61,7 +61,7 @@ static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue call
 
     if (scope.exception()) [[unlikely]] {
         auto* exception = scope.exception();
-        scope.clearException();
+        (void)scope.tryClearException();
         Bun__reportUnhandledError(globalObject, JSValue::encode(exception));
         hadException = true;
     }

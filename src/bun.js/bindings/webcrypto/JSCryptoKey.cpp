@@ -87,12 +87,11 @@ template<> JSString* convertEnumerationToJS(JSGlobalObject& lexicalGlobalObject,
 template<> std::optional<CryptoKey::Type> parseEnumeration<CryptoKey::Type>(JSGlobalObject& lexicalGlobalObject, JSValue value)
 {
     auto stringValue = value.toWTFString(&lexicalGlobalObject);
-    static constexpr std::array<std::pair<ComparableASCIILiteral, CryptoKey::Type>, 3> mappings { {
+    static constexpr SortedArrayMap enumerationMapping { std::to_array<std::pair<ComparableASCIILiteral, CryptoKey::Type>>({
         { "private"_s, CryptoKey::Type::Private },
         { "public"_s, CryptoKey::Type::Public },
         { "secret"_s, CryptoKey::Type::Secret },
-    } };
-    static constexpr SortedArrayMap enumerationMapping { mappings };
+    }) };
     if (auto* enumerationValue = enumerationMapping.tryGet(stringValue); enumerationValue) [[likely]]
         return *enumerationValue;
     return std::nullopt;

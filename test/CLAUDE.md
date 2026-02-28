@@ -107,7 +107,7 @@ When callbacks must be used and it's just a single callback, use `Promise.withRe
 
 ```ts
 const ws = new WebSocket("ws://localhost:8080");
-const { promise, resolve, reject } = Promise.withResolvers();
+const { promise, resolve, reject } = Promise.withResolvers<void>(); // Can specify any type here for resolution value
 ws.onopen = resolve;
 ws.onclose = reject;
 await promise;
@@ -153,6 +153,33 @@ To create a repetitive string, use `Buffer.alloc(count, fill).toString()` instea
 - Unit tests for specific features are organized by module (e.g., `/test/js/bun/`, `/test/js/node/`)
 - Integration tests are in `/test/integration/`
 
+### Nested/complex object equality
+
+Prefer usage of `.toEqual` rather than many `.toBe` assertions for nested or complex objects.
+
+<example>
+
+BAD (try to avoid doing this):
+
+```ts
+expect(result).toHaveLength(3);
+expect(result[0].optional).toBe(null);
+expect(result[1].optional).toBe("middle-value"); // CRITICAL: middle item's value must be preserved
+expect(result[2].optional).toBe(null);
+```
+
+**GOOD (always prefer this):**
+
+```ts
+expect(result).toEqual([
+  { optional: null },
+  { optional: "middle-value" }, // CRITICAL: middle item's value must be preserved
+  { optional: null },
+]);
+```
+
+</example>
+
 ### Common Imports from `harness`
 
 ```ts
@@ -185,6 +212,30 @@ test("handles errors", async () => {
 
   // For synchronous errors
   expect(() => someFunction()).toThrow("Expected error message");
+});
+```
+
+### Avoid dynamic import & require
+
+**Only** use dynamic import or require when the test is specifically testing something relataed to dynamic import or require. Otherwise, **always use module-scope import statements**.
+
+**BAD, do not do this**:
+
+```ts
+test("foo", async () => {
+  // BAD: Unnecessary usage of dynamic import.
+  const { readFile } = await import("node:fs");
+
+  expect(await readFile("ok.txt")).toBe("");
+});
+```
+
+**GOOD, do this:**
+
+```ts
+import { readFile } from "node:fs";
+test("foo", async () => {
+  expect(await readFile("ok.txt")).toBe("");
 });
 ```
 

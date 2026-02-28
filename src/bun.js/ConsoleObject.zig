@@ -2596,6 +2596,9 @@ pub const Formatter = struct {
                 } else if (value.as(jsc.WebCore.S3Client)) |s3client| {
                     s3client.writeFormat(ConsoleObject.Formatter, this, writer_, enable_ansi_colors) catch {};
                     return;
+                } else if (value.as(jsc.API.Archive)) |archive| {
+                    archive.writeFormat(ConsoleObject.Formatter, this, writer_, enable_ansi_colors) catch {};
+                    return;
                 } else if (value.as(bun.webcore.FetchHeaders) != null) {
                     if (try value.get(this.globalThis, "toJSON")) |toJSONFunction| {
                         this.addForNewLine("Headers ".len);

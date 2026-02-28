@@ -156,14 +156,17 @@ pub const Loader = struct {
     }
 
     pub fn getHttpProxyFor(this: *Loader, url: URL) ?URL {
-        return this.getHttpProxy(url.isHTTP(), url.hostname);
+        return this.getHttpProxy(url.isHTTP(), url.hostname, url.host);
     }
 
     pub fn hasHTTPProxy(this: *const Loader) bool {
         return this.has("http_proxy") or this.has("HTTP_PROXY") or this.has("https_proxy") or this.has("HTTPS_PROXY");
     }
 
-    pub fn getHttpProxy(this: *Loader, is_http: bool, hostname: ?[]const u8) ?URL {
+    /// Get proxy URL for HTTP/HTTPS requests, respecting NO_PROXY.
+    /// `hostname` is the host without port (e.g., "localhost")
+    /// `host` is the host with port if present (e.g., "localhost:3000")
+    pub fn getHttpProxy(this: *Loader, is_http: bool, hostname: ?[]const u8, host: ?[]const u8) ?URL {
         // TODO: When Web Worker support is added, make sure to intern these strings
         var http_proxy: ?URL = null;
 
@@ -181,38 +184,86 @@ pub const Loader = struct {
             }
         }
 
-        // NO_PROXY filter
-        // See the syntax at https://about.gitlab.com/blog/2021/01/27/we-need-to-talk-no-proxy/
         if (http_proxy != null and hostname != null) {
-            if (this.get("no_proxy") orelse this.get("NO_PROXY")) |no_proxy_text| {
-                if (no_proxy_text.len == 0 or strings.eqlComptime(no_proxy_text, "\"\"") or strings.eqlComptime(no_proxy_text, "''")) {
-                    return http_proxy;
-                }
-
-                var no_proxy_iter = std.mem.splitScalar(u8, no_proxy_text, ',');
-                while (no_proxy_iter.next()) |no_proxy_item| {
-                    var host = strings.trim(no_proxy_item, &strings.whitespace_chars);
-                    if (host.len == 0) {
-                        continue;
-                    }
-                    if (strings.eql(host, "*")) {
-                        return null;
-                    }
-                    //strips .
-                    if (strings.startsWithChar(host, '.')) {
-                        host = host[1..];
-                        if (host.len == 0) {
-                            continue;
-                        }
-                    }
-                    //hostname ends with suffix
-                    if (strings.endsWith(hostname.?, host)) {
-                        return null;
-                    }
-                }
+            if (this.isNoProxy(hostname, host)) {
+                return null;
             }
         }
         return http_proxy;
+    }
+
+    /// Returns true if the given hostname/host should bypass the proxy
+    /// according to the NO_PROXY / no_proxy environment variable.
+    pub fn isNoProxy(this: *const Loader, hostname: ?[]const u8, host: ?[]const u8) bool {
+        // NO_PROXY filter
+        // See the syntax at https://about.gitlab.com/blog/2021/01/27/we-need-to-talk-no-proxy/
+        const hn = hostname orelse return false;
+
+        const no_proxy_text = this.get("no_proxy") orelse this.get("NO_PROXY") orelse return false;
+        if (no_proxy_text.len == 0 or strings.eqlComptime(no_proxy_text, "\"\"") or strings.eqlComptime(no_proxy_text, "''")) {
+            return false;
+        }
+
+        var no_proxy_iter = std.mem.splitScalar(u8, no_proxy_text, ',');
+        while (no_proxy_iter.next()) |no_proxy_item| {
+            var no_proxy_entry = strings.trim(no_proxy_item, &strings.whitespace_chars);
+            if (no_proxy_entry.len == 0) {
+                continue;
+            }
+            if (strings.eql(no_proxy_entry, "*")) {
+                return true;
+            }
+            //strips .
+            if (strings.startsWithChar(no_proxy_entry, '.')) {
+                no_proxy_entry = no_proxy_entry[1..];
+                if (no_proxy_entry.len == 0) {
+                    continue;
+                }
+            }
+
+            // Determine if entry contains a port or is an IPv6 address
+            // IPv6 addresses contain multiple colons (e.g., "::1", "2001:db8::1")
+            // Bracketed IPv6 with port: "[::1]:8080"
+            // Host with port: "localhost:8080" (single colon)
+            const colon_count = std.mem.count(u8, no_proxy_entry, ":");
+            const is_bracketed_ipv6 = strings.startsWithChar(no_proxy_entry, '[');
+            const has_port = blk: {
+                if (is_bracketed_ipv6) {
+                    // Bracketed IPv6: check for "]:port" pattern
+                    if (std.mem.indexOf(u8, no_proxy_entry, "]:")) |_| {
+                        break :blk true;
+                    }
+                    break :blk false;
+                } else if (colon_count == 1) {
+                    // Single colon means host:port (not IPv6)
+                    break :blk true;
+                }
+                // Multiple colons without brackets = bare IPv6 literal (no port)
+                break :blk false;
+            };
+
+            if (has_port) {
+                // Entry has a port, do exact match against host:port
+                if (host) |h| {
+                    if (strings.eqlCaseInsensitiveASCII(h, no_proxy_entry, true)) {
+                        return true;
+                    }
+                }
+            } else {
+                // Entry is hostname/IPv6 only, match exact or dot-boundary suffix (case-insensitive)
+                const entry_len = no_proxy_entry.len;
+                if (hn.len == entry_len) {
+                    if (strings.eqlCaseInsensitiveASCII(hn, no_proxy_entry, true)) return true;
+                } else if (hn.len > entry_len and
+                    hn[hn.len - entry_len - 1] == '.' and
+                    strings.eqlCaseInsensitiveASCII(hn[hn.len - entry_len ..], no_proxy_entry, true))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     var did_load_ccache_path: bool = false;

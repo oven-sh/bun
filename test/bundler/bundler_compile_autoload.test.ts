@@ -168,6 +168,40 @@ console.log("PRELOAD");
     },
   });
 
+  // Regression test: standalone workers must not load .env when autoloadDotenv is disabled
+  itBundled("compile/AutoloadDotenvDisabledWorkerCLI", {
+    compile: {
+      autoloadDotenv: false,
+    },
+    backend: "cli",
+    files: {
+      "/entry.ts": /* js */ `
+        import { rmSync } from "fs";
+
+        rmSync("./worker.ts", { force: true });
+
+        const worker = new Worker("./worker.ts");
+        console.log(await new Promise(resolve => {
+          worker.onmessage = event => resolve(event.data);
+        }));
+        worker.terminate();
+      `,
+      "/worker.ts": /* js */ `
+        postMessage(process.env.TEST_VAR || "not found");
+      `,
+    },
+    entryPointsRaw: ["./entry.ts", "./worker.ts"],
+    outfile: "dist/out",
+    runtimeFiles: {
+      "/.env": `TEST_VAR=from_dotenv`,
+    },
+    run: {
+      stdout: "not found",
+      file: "dist/out",
+      setCwd: true,
+    },
+  });
+
   // Test CLI backend with autoloadDotenv: true
   itBundled("compile/AutoloadDotenvEnabledCLI", {
     compile: {
@@ -449,6 +483,84 @@ console.log("PRELOAD");
     },
     run: {
       stdout: "feature-from-cli-package-exports",
+      setCwd: true,
+    },
+  });
+
+  // Test that autoloadBunfig: false works with execArgv (regression test for #25640)
+  // When execArgv is present, bunfig should still be disabled if autoloadBunfig: false
+  itBundled("compile/AutoloadBunfigDisabledWithExecArgv", {
+    compile: {
+      autoloadBunfig: false,
+      execArgv: ["--smol"],
+    },
+    files: {
+      "/entry.ts": /* js */ `
+        console.log("ENTRY");
+      `,
+    },
+    runtimeFiles: {
+      "/bunfig.toml": `
+preload = ["./preload.ts"]
+      `,
+      "/preload.ts": `
+console.log("PRELOAD");
+      `,
+    },
+    run: {
+      // When bunfig is disabled, preload should NOT execute even with execArgv
+      stdout: "ENTRY",
+      setCwd: true,
+    },
+  });
+
+  // Test CLI backend for autoloadBunfig: false with execArgv (regression test for #25640)
+  itBundled("compile/AutoloadBunfigDisabledWithExecArgvCLI", {
+    compile: {
+      autoloadBunfig: false,
+      execArgv: ["--smol"],
+    },
+    backend: "cli",
+    files: {
+      "/entry.ts": /* js */ `
+        console.log("ENTRY");
+      `,
+    },
+    runtimeFiles: {
+      "/bunfig.toml": `
+preload = ["./preload.ts"]
+      `,
+      "/preload.ts": `
+console.log("PRELOAD");
+      `,
+    },
+    run: {
+      stdout: "ENTRY",
+      setCwd: true,
+    },
+  });
+
+  // Test that autoloadBunfig: true with execArgv still loads bunfig
+  itBundled("compile/AutoloadBunfigEnabledWithExecArgv", {
+    compile: {
+      autoloadBunfig: true,
+      execArgv: ["--smol"],
+    },
+    files: {
+      "/entry.ts": /* js */ `
+        console.log("ENTRY");
+      `,
+    },
+    runtimeFiles: {
+      "/bunfig.toml": `
+preload = ["./preload.ts"]
+      `,
+      "/preload.ts": `
+console.log("PRELOAD");
+      `,
+    },
+    run: {
+      stdout: "PRELOAD\nENTRY",
       setCwd: true,
     },
   });

@@ -928,7 +928,15 @@ pub const visible = struct {
     fn visibleUTF16WidthFn(input_: []const u16, exclude_ansi_colors: bool, ambiguousAsWide: bool) usize {
         var input = input_;
         var len: usize = 0;
+        // `prev` tracks the literal previous codepoint (including ANSI bytes) —
+        // needed for the OSC ST terminator check (ESC \ = prev==0x1b, cp=='\\').
+        // `prev_visible` tracks the last VISIBLE codepoint — used by graphemeBreak.
+        // Using `prev` for graphemeBreak was a bug: CSI bytes like 'm' would
+        // wrongly join to a following combining mark (e.g. "\x1b[1m\uFE0F?" →
+        // graphemeBreak('m', FE0F) = false → add() on uninitialized state →
+        // width 2 instead of 1).
         var prev: ?u32 = null;
+        var prev_visible: ?u32 = null;
         var break_state: grapheme.BreakState = .default;
         var grapheme_state = GraphemeState{};
         var saw_1b = false;
@@ -966,6 +974,7 @@ pub const visible = struct {
                         const last_cp: u32 = input[bulk_end - 1];
                         grapheme_state.reset(last_cp, ambiguousAsWide);
                         prev = last_cp;
+                        prev_visible = last_cp;
                         break_state = .default;
 
                         // If we consumed everything, advance and continue
@@ -1037,7 +1046,7 @@ pub const visible = struct {
                         continue;
                     }
                     if (!exclude_ansi_colors or cp != 0x1b) {
-                        if (prev) |prev_| {
+                        if (prev_visible) |prev_| {
                             const should_break = grapheme.graphemeBreak(@truncate(prev_), @truncate(cp), &break_state);
                             if (should_break) {
                                 len += grapheme_state.width();
@@ -1048,6 +1057,7 @@ pub const visible = struct {
                         } else {
                             grapheme_state.reset(@truncate(cp), ambiguousAsWide);
                         }
+                        prev_visible = cp;
                         continue;
                     }
                     saw_1b = true;
@@ -1095,7 +1105,7 @@ pub const visible = struct {
                 // Don't count this char as part of escape, treat normally below
             }
 
-            if (prev) |prev_| {
+            if (prev_visible) |prev_| {
                 const should_break = grapheme.graphemeBreak(@truncate(prev_), @truncate(cp), &break_state);
                 if (should_break) {
                     len += grapheme_state.width();
@@ -1106,6 +1116,7 @@ pub const visible = struct {
             } else {
                 grapheme_state.reset(cp, ambiguousAsWide);
             }
+            prev_visible = cp;
         }
         // Add width of final grapheme
         len += grapheme_state.width();
@@ -1172,6 +1183,25 @@ export fn Bun__visibleWidthExcludeANSI_latin1(ptr: [*]const u8, len: usize) usiz
 /// Calculate visible width of a single codepoint
 export fn Bun__codepointWidth(cp: u32, ambiguous_as_wide: bool) u8 {
     return @intCast(visibleCodepointWidth(cp, ambiguous_as_wide));
+}
+
+/// Grapheme break detection for C++ callers.
+/// Returns true if there should be a grapheme break between cp1 and cp2.
+/// `state` is an opaque u8 that must be initialized to 0 and passed between calls.
+export fn Bun__graphemeBreak(cp1: u32, cp2: u32, state_ptr: *u8) bool {
+    var state: grapheme.BreakState = @enumFromInt(state_ptr.*);
+    const result = grapheme.graphemeBreak(@truncate(cp1), @truncate(cp2), &state);
+    state_ptr.* = @intFromEnum(state);
+    return result;
+}
+
+/// Check if a codepoint has the Emoji property (using ICU).
+export fn Bun__isEmojiPresentation(cp: u32) bool {
+    if (cp < 0x203C) return false;
+    if (cp >= 0x2C00 and cp < 0x1F000) return false;
+    if (cp == 0xFE0E or cp == 0xFE0F or cp == 0x200D) return false;
+    // UCHAR_EMOJI = 57
+    return icu_hasBinaryProperty(cp, 57);
 }
 
 const bun = @import("bun");

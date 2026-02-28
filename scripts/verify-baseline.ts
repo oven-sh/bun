@@ -210,7 +210,13 @@ if (instructionFailures > 0) {
   console.error("    FAILED: Code uses unsupported CPU instructions.");
 
   // Report to Buildkite annotations tab
-  const platform = isWindows ? "Windows x64" : isAarch64 ? "Linux aarch64" : "Linux x64";
+  const platform = isWindows
+    ? isAarch64
+      ? "Windows aarch64"
+      : "Windows x64"
+    : isAarch64
+      ? "Linux aarch64"
+      : "Linux x64";
   const annotation = [
     `<details>`,
     `<summary>CPU instruction violation on ${platform} — ${instructionFailures} failed</summary>`,

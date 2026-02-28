@@ -1379,36 +1379,22 @@ pub fn spawnProcessPosix(
                     break :brk .{ pair[if (i == 0) 1 else 0], pair[if (i == 0) 0 else 1] };
                 };
 
-                if (i == 0) {
-                    // their copy of stdin should be readable
-                    _ = std.c.shutdown(@intCast(fds[1].cast()), std.posix.SHUT.WR);
-
-                    // our copy of stdin should be writable
-                    _ = std.c.shutdown(@intCast(fds[0].cast()), std.posix.SHUT.RD);
-
-                    if (comptime Environment.isMac) {
-                        // macOS seems to default to around 8 KB for the buffer size
-                        // this is comically small.
-                        // TODO: investigate if this should be adjusted on Linux.
-                        const so_recvbuf: c_int = 1024 * 512;
-                        const so_sendbuf: c_int = 1024 * 512;
+                // Note: we intentionally do NOT call shutdown() on the
+                // socketpair fds. On SOCK_STREAM socketpairs, shutdown(fd, SHUT_WR)
+                // sends a FIN to the peer, which causes programs that poll the
+                // write end for readability (e.g. Python's asyncio connect_write_pipe)
+                // to interpret it as "connection closed" and tear down their transport.
+                // The socketpair is already used unidirectionally by convention.
+                if (comptime Environment.isMac) {
+                    // macOS seems to default to around 8 KB for the buffer size
+                    // this is comically small.
+                    // TODO: investigate if this should be adjusted on Linux.
+                    const so_recvbuf: c_int = 1024 * 512;
+                    const so_sendbuf: c_int = 1024 * 512;
+                    if (i == 0) {
                         _ = std.c.setsockopt(fds[1].cast(), std.posix.SOL.SOCKET, std.posix.SO.RCVBUF, &so_recvbuf, @sizeOf(c_int));
                         _ = std.c.setsockopt(fds[0].cast(), std.posix.SOL.SOCKET, std.posix.SO.SNDBUF, &so_sendbuf, @sizeOf(c_int));
-                    }
-                } else {
-
-                    // their copy of stdout or stderr should be writable
-                    _ = std.c.shutdown(@intCast(fds[1].cast()), std.posix.SHUT.RD);
-
-                    // our copy of stdout or stderr should be readable
-                    _ = std.c.shutdown(@intCast(fds[0].cast()), std.posix.SHUT.WR);
-
-                    if (comptime Environment.isMac) {
-                        // macOS seems to default to around 8 KB for the buffer size
-                        // this is comically small.
-                        // TODO: investigate if this should be adjusted on Linux.
-                        const so_recvbuf: c_int = 1024 * 512;
-                        const so_sendbuf: c_int = 1024 * 512;
+                    } else {
                         _ = std.c.setsockopt(fds[0].cast(), std.posix.SOL.SOCKET, std.posix.SO.RCVBUF, &so_recvbuf, @sizeOf(c_int));
                         _ = std.c.setsockopt(fds[1].cast(), std.posix.SOL.SOCKET, std.posix.SO.SNDBUF, &so_sendbuf, @sizeOf(c_int));
                     }

@@ -761,6 +761,155 @@ describe.concurrent("Bun REPL", () => {
       expect(exitCode).toBe(0);
     });
   });
+
+  describe("-e / --eval and -p / --print", () => {
+    async function runReplWith(args: string[]) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "repl", ...args],
+        stdout: "pipe",
+        stderr: "pipe",
+        env: { ...bunEnv, NO_COLOR: "1" },
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stripAnsi(stdout), stderr: stripAnsi(stderr), exitCode };
+    }
+
+    test("-e evaluates and exits without printing result", async () => {
+      const { stdout, exitCode } = await runReplWith(["-e", "1 + 1"]);
+      expect(stdout).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("-e does not show welcome message", async () => {
+      const { stdout, exitCode } = await runReplWith(["-e", "1 + 1"]);
+      expect(stdout).not.toContain("Welcome to Bun");
+      expect(exitCode).toBe(0);
+    });
+
+    test("-e console.log output is shown", async () => {
+      const { stdout, exitCode } = await runReplWith(["-e", "console.log('hello from eval')"]);
+      expect(stdout).toBe("hello from eval\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("--eval works like -e", async () => {
+      const { stdout, exitCode } = await runReplWith(["--eval", "console.log(2 + 2)"]);
+      expect(stdout).toBe("4\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("-p prints the result and exits", async () => {
+      const { stdout, exitCode } = await runReplWith(["-p", "1 + 1"]);
+      expect(stdout).toBe("2\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("--print works like -p", async () => {
+      const { stdout, exitCode } = await runReplWith(["--print", "2 * 3"]);
+      expect(stdout).toBe("6\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("-p prints undefined for void expressions", async () => {
+      const { stdout, exitCode } = await runReplWith(["-p", "void 0"]);
+      expect(stdout).toBe("undefined\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("-p with empty script prints undefined and exits", async () => {
+      const { stdout, exitCode } = await runReplWith(["-p", ""]);
+      expect(stdout).toBe("undefined\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("-e supports TypeScript", async () => {
+      const { stdout, exitCode } = await runReplWith(["-p", "const x: number = 42; x * 2"]);
+      expect(stdout).toBe("84\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("-e supports top-level await", async () => {
+      const { stdout, exitCode } = await runReplWith(["-p", "await Promise.resolve(123)"]);
+      expect(stdout).toBe("123\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("-p wraps object literals", async () => {
+      const { stdout, exitCode } = await runReplWith(["-p", "{ a: 1, b: 2 }"]);
+      expect(stdout).toContain("a");
+      expect(stdout).toContain("1");
+      expect(stdout).toContain("b");
+      expect(stdout).toContain("2");
+      expect(exitCode).toBe(0);
+    });
+
+    test("-e with thrown error writes to stderr and exits with code 1", async () => {
+      const { stdout, stderr, exitCode } = await runReplWith(["-e", "throw new Error('boom')"]);
+      expect(stdout).toBe("");
+      expect(stderr).toContain("boom");
+      expect(exitCode).toBe(1);
+    });
+
+    test("-e with syntax error writes to stderr and exits with code 1", async () => {
+      const { stdout, stderr, exitCode } = await runReplWith(["-e", "const ="]);
+      expect(stdout).toBe("");
+      expect(stderr.toLowerCase()).toContain("syntaxerror");
+      expect(exitCode).toBe(1);
+    });
+
+    test("-e with rejected top-level await writes to stderr and exits with code 1", async () => {
+      const { stdout, stderr, exitCode } = await runReplWith(["-e", "await Promise.reject(new Error('async fail'))"]);
+      expect(stdout).toBe("");
+      expect(stderr).toContain("async fail");
+      expect(exitCode).toBe(1);
+    });
+
+    test("-e preserves process.exitCode set by the script", async () => {
+      const { exitCode } = await runReplWith(["-e", "process.exitCode = 42"]);
+      expect(exitCode).toBe(42);
+    });
+
+    test("-e fires process.on('beforeExit')", async () => {
+      const { stdout, exitCode } = await runReplWith([
+        "-e",
+        "process.on('beforeExit', () => console.log('beforeExit fired'))",
+      ]);
+      expect(stdout).toBe("beforeExit fired\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("-e drains event loop (timers fire before exit)", async () => {
+      const { stdout, exitCode } = await runReplWith(["-e", "setTimeout(() => console.log('from timer'), 50)"]);
+      expect(stdout).toBe("from timer\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("-p drains event loop before printing", async () => {
+      // Result should be printed after the timer output, since we drain
+      // the event loop before printing the final result.
+      const { stdout, exitCode } = await runReplWith(["-p", "setTimeout(() => console.log('timer'), 50); 'result'"]);
+      expect(stdout).toBe('timer\n"result"\n');
+      expect(exitCode).toBe(0);
+    });
+
+    test("-e supports require()", async () => {
+      const { stdout, exitCode } = await runReplWith(["-p", "require('path').posix.join('/a', 'b')"]);
+      expect(stdout).toBe('"/a/b"\n');
+      expect(exitCode).toBe(0);
+    });
+
+    test("-e supports import statements", async () => {
+      const { stdout, exitCode } = await runReplWith(["-e", "import path from 'path'; console.log(typeof path.join)"]);
+      expect(stdout).toBe("function\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("-e has access to __dirname and __filename", async () => {
+      const { stdout, exitCode } = await runReplWith(["-e", "console.log(typeof __dirname, typeof __filename)"]);
+      expect(stdout).toBe("string string\n");
+      expect(exitCode).toBe(0);
+    });
+  });
 });
 
 // Interactive terminal-based REPL tests

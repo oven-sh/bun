@@ -22,7 +22,8 @@ var print_every_i: usize = 0;
 
 // we always rewrite the entire HTTP request when write() returns EAGAIN
 // so we can reuse this buffer
-var shared_request_headers_buf: [256]picohttp.Header = undefined;
+const max_request_headers = 256;
+var shared_request_headers_buf: [max_request_headers]picohttp.Header = undefined;
 
 // this doesn't need to be stack memory because it is immediately cloned after use
 var shared_response_headers_buf: [256]picohttp.Header = undefined;
@@ -73,7 +74,7 @@ pub fn checkServerIdentity(
                     };
 
                     // we inform the user that the cert is invalid
-                    client.progressUpdate(is_ssl, if (is_ssl) &http_thread.https_context else &http_thread.http_context, socket);
+                    client.progressUpdate(is_ssl, client.getSslCtx(is_ssl), socket);
                     // continue until we are aborted or not
                     return true;
                 } else {
@@ -217,7 +218,7 @@ pub fn onClose(
     if (client.state.flags.is_redirect_pending) {
         // if the connection is closed and we are pending redirect just do the redirect
         // in this case we will re-connect or go to a different socket if needed
-        client.doRedirect(is_ssl, if (is_ssl) &http_thread.https_context else &http_thread.http_context, socket);
+        client.doRedirect(is_ssl, client.getSslCtx(is_ssl), socket);
         return;
     }
     if (in_progress) {
@@ -226,7 +227,7 @@ pub fn onClose(
                 .CHUNKED_IN_TRAILERS_LINE_HEAD, .CHUNKED_IN_TRAILERS_LINE_MIDDLE => {
                     // ignore failure if we are in the middle of trailer headers, since we processed all the chunks and trailers are ignored
                     client.state.flags.received_last_chunk = true;
-                    client.progressUpdate(comptime is_ssl, if (is_ssl) &http_thread.https_context else &http_thread.http_context, socket);
+                    client.progressUpdate(comptime is_ssl, client.getSslCtx(is_ssl), socket);
                     return;
                 },
                 // here we are in the middle of a chunk so ECONNRESET is expected
@@ -235,7 +236,7 @@ pub fn onClose(
         } else if (client.state.content_length == null and client.state.response_stage == .body) {
             // no content length informed so we are done here
             client.state.flags.received_last_chunk = true;
-            client.progressUpdate(comptime is_ssl, if (is_ssl) &http_thread.https_context else &http_thread.http_context, socket);
+            client.progressUpdate(comptime is_ssl, client.getSslCtx(is_ssl), socket);
             return;
         }
     }
@@ -481,6 +482,9 @@ flags: Flags = Flags{},
 
 state: InternalState = .{},
 tls_props: ?*SSLConfig = null,
+/// The custom SSL context used for this request (null = default context).
+/// Set by HTTPThread.connect() when using custom TLS configs.
+custom_ssl_ctx: ?*NewHTTPContext(true) = null,
 result_callback: HTTPClientResult.Callback = undefined,
 
 /// Some HTTP servers (such as npm) report Last-Modified times but ignore If-Modified-Since.
@@ -514,6 +518,11 @@ pub fn deinit(this: *HTTPClient) void {
         this.proxy_tunnel = null;
         tunnel.detachAndDeref();
     }
+    // Release our reference on the interned SSLConfig
+    if (this.tls_props) |config| {
+        config.deref();
+        this.tls_props = null;
+    }
     this.unix_socket_path.deinit();
     this.unix_socket_path = jsc.ZigString.Slice.empty;
 }
@@ -533,6 +542,16 @@ pub fn isKeepAlivePossible(this: *HTTPClient) bool {
         if (this.state.flags.allow_keepalive and !this.flags.disable_keepalive) return true;
     }
     return false;
+}
+
+/// Returns the SSL context for this client - either the custom context
+/// (for mTLS/custom TLS) or the default global context.
+pub fn getSslCtx(this: *HTTPClient, comptime is_ssl: bool) *NewHTTPContext(is_ssl) {
+    if (comptime is_ssl) {
+        return this.custom_ssl_ctx orelse &http_thread.https_context;
+    } else {
+        return &http_thread.http_context;
+    }
 }
 
 // lowercase hash header names so that we can be sure
@@ -615,26 +634,40 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
     var add_transfer_encoding = true;
     var original_content_length: ?string = null;
 
+    // Reserve slots for default headers that may be appended after user headers
+    // (Connection, User-Agent, Accept, Host, Accept-Encoding, Content-Length/Transfer-Encoding).
+    const max_default_headers = 6;
+    const max_user_headers = max_request_headers - max_default_headers;
+
     for (header_names, 0..) |head, i| {
         const name = this.headerStr(head);
         // Hash it as lowercase
         const hash = hashHeaderName(name);
+
+        // Whether this header will actually be written to the buffer.
+        // Override flags must only be set when the header is kept, otherwise
+        // the default header is suppressed but the user header is dropped,
+        // leaving the header entirely absent from the request.
+        const will_append = header_count < max_user_headers;
 
         // Skip host and connection header
         // we manage those
         switch (hash) {
             hashHeaderConst("Content-Length"),
             => {
+                // Content-Length is always consumed (never written to the buffer).
                 original_content_length = this.headerStr(header_values[i]);
                 continue;
             },
             hashHeaderConst("Connection") => {
-                override_connection_header = true;
-                const connection_value = this.headerStr(header_values[i]);
-                if (std.ascii.eqlIgnoreCase(connection_value, "close")) {
-                    this.flags.disable_keepalive = true;
-                } else if (std.ascii.eqlIgnoreCase(connection_value, "keep-alive")) {
-                    this.flags.disable_keepalive = false;
+                if (will_append) {
+                    override_connection_header = true;
+                    const connection_value = this.headerStr(header_values[i]);
+                    if (std.ascii.eqlIgnoreCase(connection_value, "close")) {
+                        this.flags.disable_keepalive = true;
+                    } else if (std.ascii.eqlIgnoreCase(connection_value, "keep-alive")) {
+                        this.flags.disable_keepalive = false;
+                    }
                 }
             },
             hashHeaderConst("if-modified-since") => {
@@ -643,29 +676,34 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
                 }
             },
             hashHeaderConst(host_header_name) => {
-                override_host_header = true;
+                if (will_append) override_host_header = true;
             },
             hashHeaderConst("Accept") => {
-                override_accept_header = true;
+                if (will_append) override_accept_header = true;
             },
             hashHeaderConst("User-Agent") => {
-                override_user_agent = true;
+                if (will_append) override_user_agent = true;
             },
             hashHeaderConst("Accept-Encoding") => {
-                override_accept_encoding = true;
+                if (will_append) override_accept_encoding = true;
             },
             hashHeaderConst("Upgrade") => {
-                const value = this.headerStr(header_values[i]);
-                if (!std.ascii.eqlIgnoreCase(value, "h2") and !std.ascii.eqlIgnoreCase(value, "h2c")) {
-                    this.flags.upgrade_state = .pending;
+                if (will_append) {
+                    const value = this.headerStr(header_values[i]);
+                    if (!std.ascii.eqlIgnoreCase(value, "h2") and !std.ascii.eqlIgnoreCase(value, "h2c")) {
+                        this.flags.upgrade_state = .pending;
+                    }
                 }
             },
             hashHeaderConst(chunked_encoded_header.name) => {
                 // We don't want to override chunked encoding header if it was set by the user
-                add_transfer_encoding = false;
+                if (will_append) add_transfer_encoding = false;
             },
             else => {},
         }
+
+        // Silently drop excess headers to stay within the fixed-size request header buffer.
+        if (!will_append) continue;
 
         request_headers_buf[header_count] = .{
             .name = name,
@@ -805,6 +843,7 @@ pub fn doRedirect(
                 this.flags.did_have_handshaking_error and !this.flags.reject_unauthorized,
                 this.connected_url.hostname,
                 this.connected_url.getPortAuto(),
+                this.tls_props,
             );
         } else {
             NewHTTPContext(is_ssl).closeSocket(socket);
@@ -942,12 +981,13 @@ fn printResponse(response: picohttp.Response) void {
 pub fn onPreconnect(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
     log("onPreconnect({})", .{this.url});
     this.unregisterAbortTracker();
-    const ctx = if (comptime is_ssl) &http_thread.https_context else &http_thread.http_context;
+    const ctx = this.getSslCtx(is_ssl);
     ctx.releaseSocket(
         socket,
         this.flags.did_have_handshaking_error and !this.flags.reject_unauthorized,
         this.url.hostname,
         this.url.getPortAuto(),
+        this.tls_props,
     );
 
     this.state.reset(this.allocator);
@@ -1220,7 +1260,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                     this.state.request_stage = .body;
                     if (this.flags.is_streaming_request_body) {
                         // lets signal to start streaming the body
-                        this.progressUpdate(is_ssl, if (is_ssl) &http_thread.https_context else &http_thread.http_context, socket);
+                        this.progressUpdate(is_ssl, this.getSslCtx(is_ssl), socket);
                     }
                 }
                 return;
@@ -1233,7 +1273,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                     this.state.request_stage = .body;
                     if (this.flags.is_streaming_request_body) {
                         // lets signal to start streaming the body
-                        this.progressUpdate(is_ssl, if (is_ssl) &http_thread.https_context else &http_thread.http_context, socket);
+                        this.progressUpdate(is_ssl, this.getSslCtx(is_ssl), socket);
                     }
                 }
                 assert(
@@ -1388,7 +1428,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                     this.state.request_stage = .proxy_body;
                     if (this.flags.is_streaming_request_body) {
                         // lets signal to start streaming the body
-                        this.progressUpdate(is_ssl, if (is_ssl) &http_thread.https_context else &http_thread.http_context, socket);
+                        this.progressUpdate(is_ssl, this.getSslCtx(is_ssl), socket);
                     }
                     assert(this.state.request_body.len > 0);
 
@@ -1779,7 +1819,7 @@ pub fn drainResponseBody(this: *HTTPClient, comptime is_ssl: bool, socket: NewHT
         return;
     }
 
-    this.sendProgressUpdateWithoutStageCheck(is_ssl, http_thread.context(is_ssl), socket);
+    this.sendProgressUpdateWithoutStageCheck(is_ssl, this.getSslCtx(is_ssl), socket);
 }
 
 fn sendProgressUpdateWithoutStageCheck(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPContext(is_ssl), socket: NewHTTPContext(is_ssl).HTTPSocket) void {
@@ -1808,6 +1848,7 @@ fn sendProgressUpdateWithoutStageCheck(this: *HTTPClient, comptime is_ssl: bool,
                     this.flags.did_have_handshaking_error and !this.flags.reject_unauthorized,
                     this.connected_url.hostname,
                     this.connected_url.getPortAuto(),
+                    this.tls_props,
                 );
             } else {
                 NewHTTPContext(is_ssl).closeSocket(socket);

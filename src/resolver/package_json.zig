@@ -1476,6 +1476,10 @@ pub const ESModule = struct {
         }
 
         pub fn parseSubpath(subpath: *[]const u8, specifier: string, subpath_buf: []u8) void {
+            if (specifier.len + 1 > subpath_buf.len) {
+                subpath.* = "";
+                return;
+            }
             subpath_buf[0] = '.';
             bun.copy(u8, subpath_buf[1..], specifier);
             subpath.* = subpath_buf[0 .. specifier.len + 1];

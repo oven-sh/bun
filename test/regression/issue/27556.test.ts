@@ -69,9 +69,9 @@ describe("REPL Unicode support (#27556)", () => {
   });
 
   test("Unicode string length is correct", async () => {
-    const { stdout, exitCode } = await runRepl(['"你好".length', ".exit"]);
+    const { stdout, exitCode } = await runRepl(['"__LEN__" + "你好".length', ".exit"]);
     const output = stripAnsi(stdout);
-    expect(output).toContain("2");
+    expect(output).toContain("__LEN__2");
     expect(exitCode).toBe(0);
   });
 });

@@ -129,10 +129,6 @@ const Key = union(enum) {
     const Multibyte = struct {
         bytes: [4]u8,
         len: u3,
-
-        fn fromLen(l: u8) u3 {
-            return @intCast(l);
-        }
     };
 
     pub fn fromByte(byte: u8) Key {
@@ -375,25 +371,40 @@ const LineEditor = struct {
     }
 
     /// Returns the byte length of the UTF-8 character at the given byte position.
+    /// Returns 1 for invalid/truncated sequences to ensure forward progress.
     fn charLenAt(self: *const LineEditor, pos: usize) usize {
         if (pos >= self.buffer.items.len) return 0;
-        const len = strings.codepointSize(u8, self.buffer.items[pos]);
-        return if (len == 0) 1 else @as(usize, len);
+        const seq_len = strings.codepointSize(u8, self.buffer.items[pos]);
+        if (seq_len < 2) return 1; // ASCII or invalid lead byte
+        const len: usize = @as(usize, seq_len);
+        // Validate: enough bytes remain and all continuation bytes are 10xxxxxx
+        if (pos + len > self.buffer.items.len) return 1;
+        for (1..len) |i| {
+            if (self.buffer.items[pos + i] & 0xC0 != 0x80) return 1;
+        }
+        return len;
     }
 
     /// Returns the byte length of the UTF-8 character ending at or before the given byte position.
+    /// Returns 1 for invalid sequences to ensure backward progress.
     fn charLenBefore(self: *const LineEditor, pos: usize) usize {
         if (pos == 0) return 0;
-        // Walk backward over continuation bytes (10xxxxxx)
+        // Walk backward over continuation bytes (10xxxxxx), up to 3 continuation bytes
         var i = pos;
-        while (i > 0) {
+        const limit = pos -| 4; // don't scan more than 4 bytes back
+        while (i > limit) {
             i -= 1;
-            // If this is not a continuation byte, it's the start of the character
             if (self.buffer.items[i] & 0xC0 != 0x80) {
-                return pos - i;
+                // Found a start byte; validate the sequence length matches
+                const expected_len = strings.codepointSize(u8, self.buffer.items[i]);
+                if (expected_len >= 2 and @as(usize, expected_len) == pos - i) {
+                    return pos - i;
+                }
+                // Mismatch: treat as single byte
+                return 1;
             }
         }
-        return pos; // fallback: treat whole prefix as one unit
+        return 1; // fallback: step back one byte
     }
 
     pub fn deleteChar(self: *LineEditor) void {
@@ -1034,7 +1045,10 @@ fn readKey(self: *Repl) ?Key {
         const len: u3 = @intCast(seq_len);
         var mb = Key.Multibyte{ .bytes = .{ byte, 0, 0, 0 }, .len = len };
         for (1..seq_len) |i| {
-            mb.bytes[i] = self.readByte() orelse return .unknown;
+            const cont = self.readByte() orelse return .unknown;
+            // Validate continuation byte (must be 10xxxxxx)
+            if (cont & 0xC0 != 0x80) return .unknown;
+            mb.bytes[i] = cont;
         }
         return .{ .multibyte = mb };
     }

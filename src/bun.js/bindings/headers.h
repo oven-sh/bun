@@ -589,7 +589,7 @@ ZIG_DECL WebSocketHTTPClient* Bun__WebSocketHTTPClient__connect(
     const ZigString* proxyAuthorization,
     ZigString* proxyHeaderNames, ZigString* proxyHeaderValues, size_t proxyHeaderCount,
     void* sslConfig, bool targetIsSecure,
-    const ZigString* targetAuthorization);
+    const ZigString* targetAuthorization, bool isUnix);
 ZIG_DECL void Bun__WebSocketHTTPClient__register(JSC::JSGlobalObject* arg0, void* arg1, void* arg2);
 ZIG_DECL size_t Bun__WebSocketHTTPClient__memoryCost(WebSocketHTTPClient* arg0);
 #endif
@@ -605,7 +605,7 @@ ZIG_DECL WebSocketHTTPSClient* Bun__WebSocketHTTPSClient__connect(
     const ZigString* proxyAuthorization,
     ZigString* proxyHeaderNames, ZigString* proxyHeaderValues, size_t proxyHeaderCount,
     void* sslConfig, bool targetIsSecure,
-    const ZigString* targetAuthorization);
+    const ZigString* targetAuthorization, bool isUnix);
 ZIG_DECL void Bun__WebSocketHTTPSClient__register(JSC::JSGlobalObject* arg0, void* arg1, void* arg2);
 ZIG_DECL size_t Bun__WebSocketHTTPSClient__memoryCost(WebSocketHTTPSClient* arg0);
 

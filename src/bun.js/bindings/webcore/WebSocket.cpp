@@ -462,8 +462,9 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
     }
 
     bool is_secure = m_url.protocolIs("wss"_s) || m_url.protocolIs("https"_s);
+    bool is_unix = m_url.protocolIs("ws+unix"_s);
 
-    if (!m_url.protocolIs("http"_s) && !m_url.protocolIs("ws"_s) && !is_secure) {
+    if (!m_url.protocolIs("http"_s) && !m_url.protocolIs("ws"_s) && !is_secure && !is_unix) {
         // context.addConsoleMessage(MessageSource::JS, MessageLevel::Error, );
         m_state = CLOSED;
         updateHasPendingActivity();
@@ -543,13 +544,63 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
     if (!protocols.isEmpty())
         protocolString = joinStrings(protocols, subprotocolSeparator());
 
-    ZigString host = Zig::toZigString(m_url.host());
-    auto resource = resourceName(m_url);
-    ZigString path = Zig::toZigString(resource);
     ZigString clientProtocolString = Zig::toZigString(protocolString);
-    uint16_t port = is_secure ? 443 : 80;
-    if (auto userPort = m_url.port()) {
-        port = userPort.value();
+    ZigString host;
+    ZigString path;
+    uint16_t port;
+
+    String requestPath;
+    String resource;
+    String socketPath;
+
+    if (is_unix) {
+        // ws+unix URL format: ws+unix://socket_path:request_path
+        // Example: ws+unix:///tmp/my-socket:/api/endpoint?foo=bar
+        //   socket_path = /tmp/my-socket
+        //   request_path = /api/endpoint?foo=bar
+        // On Windows: ws+unix:///C:/temp/socket:/api → socket_path = /C:/temp/socket
+        // https://github.com/websockets/ws/blob/master/doc/ws.md#ipc-connections
+        auto urlPath = m_url.path().toString();
+
+        // Find the colon that separates socket path from request path
+        // On Windows, skip the drive letter colon (e.g., /C:/path -> start search after position 2)
+        size_t searchStart = 0;
+        if (urlPath.length() >= 3 && urlPath[0] == '/' && isASCIIAlpha(urlPath[1]) && urlPath[2] == ':') {
+            searchStart = 3;
+        }
+        size_t colonPos = urlPath.find(':', searchStart);
+
+        String socketPathFromURL;
+        if (colonPos == notFound) {
+            socketPathFromURL = urlPath;
+            requestPath = "/"_s;
+        } else {
+            socketPathFromURL = urlPath.substring(0, colonPos);
+            requestPath = urlPath.substring(colonPos + 1);
+            if (requestPath.isEmpty())
+                requestPath = "/"_s;
+        }
+        if (!requestPath.startsWith('/'))
+            requestPath = makeString("/"_s, requestPath);
+
+        auto query = m_url.queryWithLeadingQuestionMark();
+        if (!query.isEmpty())
+            requestPath = makeString(requestPath, query);
+
+        auto fileURL = URL(makeString("file://"_s, socketPathFromURL));
+        socketPath = fileURL.fileSystemPath();
+
+        host = Zig::toZigString(socketPath);
+        path = Zig::toZigString(requestPath);
+        port = 0;
+    } else {
+        host = Zig::toZigString(m_url.host());
+        resource = resourceName(m_url);
+        path = Zig::toZigString(resource);
+        port = is_secure ? 443 : 80;
+        if (auto userPort = m_url.port()) {
+            port = userPort.value();
+        }
     }
 
     Vector<ZigString, 8> headerNames;
@@ -647,7 +698,7 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
             (hasProxy && !proxyConfig->authorization.isEmpty()) ? &proxyAuth : nullptr,
             proxyHeaderNames.begin(), proxyHeaderValues.begin(), proxyHeaderNames.size(),
             sslConfig, is_secure,
-            targetAuthorization.isEmpty() ? nullptr : &targetAuth);
+            targetAuthorization.isEmpty() ? nullptr : &targetAuth, is_unix);
     } else {
         us_socket_context_t* ctx = scriptExecutionContext()->webSocketContext<false>();
         RELEASE_ASSERT(ctx);
@@ -659,7 +710,7 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
             (hasProxy && !proxyConfig->authorization.isEmpty()) ? &proxyAuth : nullptr,
             proxyHeaderNames.begin(), proxyHeaderValues.begin(), proxyHeaderNames.size(),
             sslConfig, is_secure,
-            targetAuthorization.isEmpty() ? nullptr : &targetAuth);
+            targetAuthorization.isEmpty() ? nullptr : &targetAuth, is_unix);
     }
 
     proxyHeaderValues.clear();

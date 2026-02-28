@@ -69,6 +69,41 @@ async function start() {
   let port: number | undefined = undefined;
   let enableConsoleLog = false;
 
+  const parseHostnameAndPort = (value: string) => {
+    let parsedHostname = value;
+    let parsedPort: number | undefined = undefined;
+
+    if (parsedHostname.includes(":")) {
+      // Bracketed IPv6 host, optionally followed by :port.
+      if (parsedHostname.startsWith("[") && parsedHostname.includes("]")) {
+        const closingBracketIndex = parsedHostname.indexOf("]");
+        const host = parsedHostname.slice(1, closingBracketIndex);
+        const trailing = parsedHostname.slice(closingBracketIndex + 1);
+        parsedHostname = host;
+
+        if (trailing.startsWith(":")) {
+          const portString = trailing.slice(1);
+          if (portString.length > 0) {
+            parsedPort = parseInt(portString, 10);
+          }
+        }
+      } else {
+        // Non-bracketed host: split on the final colon so IPv6 colons are preserved.
+        const lastColonIndex = parsedHostname.lastIndexOf(":");
+        if (lastColonIndex !== -1) {
+          const host = parsedHostname.slice(0, lastColonIndex);
+          const portString = parsedHostname.slice(lastColonIndex + 1);
+          if (host.length > 0 && !host.endsWith(":") && portString.length > 0) {
+            parsedHostname = host;
+            parsedPort = parseInt(portString, 10);
+          }
+        }
+      }
+    }
+
+    return { hostname: parsedHostname, port: parsedPort };
+  };
+
   for (let i = 1, argvLength = argv.length; i < argvLength; i++) {
     const arg = argv[i];
     const isFileLikeArg =
@@ -76,20 +111,18 @@ async function start() {
 
     if (!arg.endsWith(".mdx") && !isFileLikeArg) {
       if (arg.startsWith("--hostname=")) {
-        hostname = arg.slice("--hostname=".length);
-        if (hostname.includes(":")) {
-          const [host, portString] = hostname.split(":");
-          hostname = host;
-          port = parseInt(portString, 10);
+        const parsed = parseHostnameAndPort(arg.slice("--hostname=".length));
+        hostname = parsed.hostname;
+        if (parsed.port !== undefined) {
+          port = parsed.port;
         }
       } else if (arg.startsWith("--port=")) {
         port = parseInt(arg.slice("--port=".length), 10);
       } else if (arg.startsWith("--host=")) {
-        hostname = arg.slice("--host=".length);
-        if (hostname.includes(":")) {
-          const [host, portString] = hostname.split(":");
-          hostname = host;
-          port = parseInt(portString, 10);
+        const parsed = parseHostnameAndPort(arg.slice("--host=".length));
+        hostname = parsed.hostname;
+        if (parsed.port !== undefined) {
+          port = parsed.port;
         }
       } else if (arg === "--console") {
         enableConsoleLog = true;

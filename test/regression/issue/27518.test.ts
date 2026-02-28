@@ -48,10 +48,23 @@ async function withTerminalRepl(
     while (true) {
       const all = received.join("");
       const recent = all.slice(cursor);
-      const matched = typeof pattern === "string" ? recent.includes(pattern) : pattern.test(recent);
-      if (matched) {
-        cursor = all.length;
-        return recent;
+      // Only advance cursor to the end of the match (not all.length) so that
+      // data arriving after the match in the same chunk is still visible to
+      // subsequent waitFor calls.
+      if (typeof pattern === "string") {
+        const idx = recent.indexOf(pattern);
+        if (idx !== -1) {
+          const end = idx + pattern.length;
+          cursor += end;
+          return recent.slice(0, end);
+        }
+      } else {
+        const m = pattern.exec(recent);
+        if (m) {
+          const end = m.index + m[0].length;
+          cursor += end;
+          return recent.slice(0, end);
+        }
       }
       const remaining = deadline - Date.now();
       if (remaining <= 0) {
@@ -106,15 +119,16 @@ describe.todoIf(isWindows)("REPL tab completion targets correct object (#27518)"
     await withTerminalRepl(async ({ send, waitFor }) => {
       // First define a variable
       send("const myObj = { xyzOne: 1, xyzTwo: 2 }\n");
-      // Wait for the REPL to finish evaluating by looking for the evaluation
-      // output (the object is printed back). Then wait for the next prompt.
-      // This ensures the cursor is past all echoed definition characters.
-      await waitFor("xyzTwo");
+      // Wait for the evaluation output (contains "xyzTwo: 2") then the prompt.
+      // Using "xyzTwo: 2" (with colon+space+digit) to distinguish from the
+      // tab-completion output which just shows property names.
+      await waitFor("xyzTwo: 2");
       await waitFor(/\u276f|> /);
       // Now tab-complete on myObj.xyz
       send("myObj.xyz\t");
-      // Should show xyzOne and xyzTwo
-      const output = await waitFor(/xyz(One|Two)/);
+      // Wait for the last property (alphabetically) to ensure all completions
+      // have been rendered before checking.
+      const output = await waitFor("xyzTwo");
       const stripped = stripAnsi(output);
       expect(stripped).toMatch(/xyzOne/);
       expect(stripped).toMatch(/xyzTwo/);
@@ -149,7 +163,7 @@ describe.todoIf(isWindows)("REPL tab completion targets correct object (#27518)"
     await withTerminalRepl(async ({ send, waitFor }) => {
       // Define a variable and wait for REPL to process it
       send("let sideEffectVar = 'original'\n");
-      await waitFor("original");
+      await waitFor("'original'");
       await waitFor(/\u276f|> /);
       // Type an assignment with dot-completion — tab should NOT evaluate "sideEffectVar = {}"
       // It should only evaluate "{}" (the expression right before the dot).

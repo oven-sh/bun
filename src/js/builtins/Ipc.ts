@@ -202,10 +202,12 @@ export function parseHandle(target, serialized, fd) {
     }
     case "net.Socket": {
       const socket = new net.Socket();
-      socket.once("connect", () => {
-        emit(target, serialized.message, socket);
-      });
       socket.connect({ fd });
+      // fd connections complete synchronously via doConnect, but
+      // Socket.prototype.connect incorrectly sets connecting=true
+      // after doConnect returns. Fix the state so writes aren't deferred.
+      socket.connecting = false;
+      emit(target, serialized.message, socket);
       return;
     }
     case "dgram.Socket": {

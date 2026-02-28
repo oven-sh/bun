@@ -999,7 +999,7 @@ pub fn doSend(ipc: ?*SendQueue, globalObject: *jsc.JSGlobalObject, callFrame: *j
     }
 
     if (!handle.isUndefinedOrNull()) {
-        const serialized_array: jsc.JSValue = try ipcSerialize(globalObject, message, handle);
+        const serialized_array: jsc.JSValue = try ipcSerialize(globalObject, message, handle, options_);
         if (serialized_array.isUndefinedOrNull()) {
             handle = .js_undefined;
         } else {
@@ -1487,8 +1487,8 @@ pub const IPCHandlers = struct {
     };
 };
 
-pub fn ipcSerialize(globalObject: *jsc.JSGlobalObject, message: jsc.JSValue, handle: jsc.JSValue) bun.JSError!jsc.JSValue {
-    return bun.cpp.IPCSerialize(globalObject, message, handle);
+pub fn ipcSerialize(globalObject: *jsc.JSGlobalObject, message: jsc.JSValue, handle: jsc.JSValue, options: jsc.JSValue) bun.JSError!jsc.JSValue {
+    return bun.cpp.IPCSerialize(globalObject, message, handle, options);
 }
 
 pub fn ipcParse(globalObject: *jsc.JSGlobalObject, target: jsc.JSValue, serialized: jsc.JSValue, fd: jsc.JSValue) bun.JSError!jsc.JSValue {

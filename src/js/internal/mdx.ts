@@ -71,8 +71,10 @@ async function start() {
 
   for (let i = 1, argvLength = argv.length; i < argvLength; i++) {
     const arg = argv[i];
+    const isFileLikeArg =
+      arg.includes("*") || arg.includes("**") || arg.includes("{") || arg.includes("/") || arg.includes("\\");
 
-    if (!arg.endsWith(".mdx")) {
+    if (!arg.endsWith(".mdx") && !isFileLikeArg) {
       if (arg.startsWith("--hostname=")) {
         hostname = arg.slice("--hostname=".length);
         if (hostname.includes(":")) {
@@ -119,22 +121,41 @@ Examples:
 `);
         process.exit(0);
       }
-
-      continue;
     }
+  }
 
-    if (arg.includes("*") || arg.includes("**") || arg.includes("{")) {
-      const glob = new Bun.Glob(arg);
+  for (let i = 1, argvLength = argv.length; i < argvLength; i++) {
+    const arg = argv[i];
+    const isGlobArg = arg.includes("*") || arg.includes("**") || arg.includes("{");
 
-      for (const file of glob.scanSync(cwd)) {
-        let resolved = path.resolve(cwd, file);
-        if (resolved.includes(path.sep + "node_modules" + path.sep)) {
-          continue;
+    if (arg.endsWith(".mdx") || isGlobArg) {
+      if (isGlobArg) {
+        const glob = new Bun.Glob(arg);
+
+        for (const file of glob.scanSync(cwd)) {
+          let resolved = path.resolve(cwd, file);
+          if (resolved.includes(path.sep + "node_modules" + path.sep)) {
+            continue;
+          }
+
+          try {
+            resolved = Bun.resolveSync(resolved, cwd);
+          } catch {
+            resolved = Bun.resolveSync("./" + resolved, cwd);
+          }
+
+          if (resolved.includes(path.sep + "node_modules" + path.sep)) {
+            continue;
+          }
+
+          args.push(resolved);
         }
+      } else {
+        let resolved = arg;
         try {
-          resolved = Bun.resolveSync(resolved, cwd);
+          resolved = Bun.resolveSync(arg, cwd);
         } catch {
-          resolved = Bun.resolveSync("./" + resolved, cwd);
+          resolved = Bun.resolveSync("./" + arg, cwd);
         }
 
         if (resolved.includes(path.sep + "node_modules" + path.sep)) {
@@ -143,23 +164,10 @@ Examples:
 
         args.push(resolved);
       }
-    } else {
-      let resolved = arg;
-      try {
-        resolved = Bun.resolveSync(arg, cwd);
-      } catch {
-        resolved = Bun.resolveSync("./" + arg, cwd);
+
+      if (args.length > 1) {
+        args = [...new Set(args)];
       }
-
-      if (resolved.includes(path.sep + "node_modules" + path.sep)) {
-        continue;
-      }
-
-      args.push(resolved);
-    }
-
-    if (args.length > 1) {
-      args = [...new Set(args)];
     }
   }
 

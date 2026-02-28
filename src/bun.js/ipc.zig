@@ -998,6 +998,7 @@ pub fn doSend(ipc: ?*SendQueue, globalObject: *jsc.JSGlobalObject, callFrame: *j
         return globalObject.throwInvalidArgumentTypeValueOneOf("message", "string, object, number, or boolean", message);
     }
 
+    const original_message = message;
     if (!handle.isUndefinedOrNull()) {
         const serialized_array: jsc.JSValue = try ipcSerialize(globalObject, message, handle, options_);
         if (serialized_array.isUndefinedOrNull()) {
@@ -1034,6 +1035,17 @@ pub fn doSend(ipc: ?*SendQueue, globalObject: *jsc.JSGlobalObject, callFrame: *j
             const fd = tls_socket.socket.fd();
             zig_handle = .init(fd, handle);
         }
+    }
+
+    // If JS serialization produced a NODE_HANDLE message but the native layer
+    // couldn't extract an fd (e.g. the handle was reconstructed via parseHandle
+    // and isn't a recognized native type), revert to sending the original
+    // message without a handle to avoid sending a NODE_HANDLE protocol message
+    // that the receiver can't reconstruct.
+    if (zig_handle == null and !handle.isUndefinedOrNull()) {
+        log("handle serialized but fd extraction failed, reverting to original message", .{});
+        message = original_message;
+        handle = .js_undefined;
     }
 
     const status = ipc_data.serializeAndSend(globalObject, message, .external, callback, zig_handle);

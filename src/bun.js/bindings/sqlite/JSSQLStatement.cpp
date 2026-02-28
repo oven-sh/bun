@@ -1900,6 +1900,12 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFcntlFunction, (JSC::JSGlobalObject * lex
             sqlite3_int64 resultInt64 = static_cast<sqlite3_int64>(raw);
             memcpy(resultBuf, &resultInt64, sizeof(resultInt64));
         } else {
+            double raw = resultValue.toNumber(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (!std::isfinite(raw)) {
+                throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected a finite integer for this opcode"_s));
+                return {};
+            }
             int resultInt = resultValue.toInt32(lexicalGlobalObject);
             RETURN_IF_EXCEPTION(scope, {});
             memcpy(resultBuf, &resultInt, sizeof(resultInt));

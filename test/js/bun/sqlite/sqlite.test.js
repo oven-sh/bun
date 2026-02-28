@@ -1489,6 +1489,20 @@ describe("fileControl", () => {
     db.close();
   });
 
+  it("should reject non-finite numeric arguments for int-sized opcodes", () => {
+    const dir = tempDirWithFiles("sqlite-fcntl-nan-int-test", { "empty.txt": "" });
+    const file = path.join(dir, "my.db");
+    const db = new Database(file);
+    db.exec("PRAGMA journal_mode = WAL");
+
+    // NaN and Infinity are not valid for int-sized opcodes either
+    expect(() => db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, NaN)).toThrow("Expected a finite integer");
+    expect(() => db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, Infinity)).toThrow("Expected a finite integer");
+    expect(() => db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, -Infinity)).toThrow("Expected a finite integer");
+
+    db.close();
+  });
+
   it("should reject plain objects as arguments", () => {
     const db = new Database(":memory:");
 

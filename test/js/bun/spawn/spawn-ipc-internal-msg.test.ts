@@ -25,4 +25,5 @@ it.skipIf(isWindows)("parent handles internal-format IPC message in json mode wi
 
   const message = await promise;
   expect(message).toBe("normal_after_internal");
+  expect(await child.exited).toBe(0);
 });

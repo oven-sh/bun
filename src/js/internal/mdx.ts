@@ -6,6 +6,7 @@ const argv = process.argv;
 
 const path = require("node:path");
 const fs = require("node:fs");
+const os = require("node:os");
 
 const env = Bun.env;
 
@@ -272,10 +273,11 @@ Examples:
     return servePath;
   });
 
-  const tmpRoot = path.join(cwd, `.bun-mdx-${process.pid}`);
+  const uniqueId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  const tmpRoot = path.join(os.tmpdir(), `.bun-mdx-${process.pid}-${uniqueId}`);
   ensureDir(tmpRoot);
 
-  // Clean up temp directory on exit
+  // Clean up temp directory on exit. SIGKILL cannot be handled.
   process.on("exit", () => {
     try {
       fs.rmSync(tmpRoot, { recursive: true, force: true });

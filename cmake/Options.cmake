@@ -58,23 +58,6 @@ else()
   message(FATAL_ERROR "Unsupported architecture: ${CMAKE_SYSTEM_PROCESSOR}")
 endif()
 
-# Windows Code Signing Option
-if(WIN32)
-  optionx(ENABLE_WINDOWS_CODESIGNING BOOL "Enable Windows code signing with DigiCert KeyLocker" DEFAULT OFF)
-
-  if(ENABLE_WINDOWS_CODESIGNING)
-    message(STATUS "Windows code signing: ENABLED")
-
-    # Check for required environment variables
-    if(NOT DEFINED ENV{SM_API_KEY})
-      message(WARNING "SM_API_KEY not set - code signing may fail")
-    endif()
-    if(NOT DEFINED ENV{SM_CLIENT_CERT_FILE})
-      message(WARNING "SM_CLIENT_CERT_FILE not set - code signing may fail")
-    endif()
-  endif()
-endif()
-
 if(LINUX)
   if(EXISTS "/etc/alpine-release")
     set(DEFAULT_ABI "musl")
@@ -144,7 +127,7 @@ if(ENABLE_ASAN AND ENABLE_LTO)
 endif()
 
 if(BUILDKITE_COMMIT)
-  set(DEFAULT_REVISION ${BUILDKITE_COMMIT})
+  set(DEFAULT_REVISION "${BUILDKITE_COMMIT}")
 else()
   execute_process(
     COMMAND git rev-parse HEAD
@@ -158,7 +141,7 @@ else()
   endif()
 endif()
 
-optionx(REVISION STRING "The git revision of the build" DEFAULT ${DEFAULT_REVISION})
+optionx(REVISION STRING "The git revision of the build" DEFAULT "${DEFAULT_REVISION}")
 
 # Used in process.version, process.versions.node, napi, and elsewhere
 setx(NODEJS_VERSION "24.3.0")

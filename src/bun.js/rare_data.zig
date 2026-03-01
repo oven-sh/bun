@@ -44,6 +44,58 @@ tls_default_ciphers: ?[:0]const u8 = null,
 
 #spawn_sync_event_loop: bun.ptr.Owned(?*SpawnSyncEventLoop) = .initNull(),
 
+path_buf: PathBuf = .{},
+
+/// Reusable heap buffer for path.resolve, path.relative, and path.toNamespacedPath.
+/// Three fixed-size tiers, lazily allocated on first use. Safe because JS is single-threaded.
+/// The buffer is used via a FixedBufferAllocator as the backing for a stackFallback.
+pub const PathBuf = struct {
+    const S = bun.MAX_PATH_BYTES;
+    const SmallBuf = [2 * S]u8;
+    const MediumBuf = [8 * S]u8;
+    const LargeBuf = [32 * S]u8;
+
+    small: ?*SmallBuf = null,
+    medium: ?*MediumBuf = null,
+    large: ?*LargeBuf = null,
+
+    /// Returns a StackFallbackAllocator backed by the smallest tier that
+    /// fits `min_len`, falling back to `fallback` when the buffer is exhausted.
+    pub fn get(self: *PathBuf, min_len: usize, fallback: std.mem.Allocator) bun.StackFallbackAllocator {
+        const buf: []u8 = if (min_len <= 2 * S)
+            (self.small orelse blk: {
+                self.small = bun.handleOom(bun.default_allocator.create(SmallBuf));
+                break :blk self.small.?;
+            })
+        else if (min_len <= 8 * S)
+            (self.medium orelse blk: {
+                self.medium = bun.handleOom(bun.default_allocator.create(MediumBuf));
+                break :blk self.medium.?;
+            })
+        else
+            (self.large orelse blk: {
+                self.large = bun.handleOom(bun.default_allocator.create(LargeBuf));
+                break :blk self.large.?;
+            });
+        return bun.StackFallbackAllocator.init(buf, fallback);
+    }
+
+    pub fn deinit(self: *PathBuf) void {
+        if (self.small) |p| {
+            bun.default_allocator.destroy(p);
+            self.small = null;
+        }
+        if (self.medium) |p| {
+            bun.default_allocator.destroy(p);
+            self.medium = null;
+        }
+        if (self.large) |p| {
+            bun.default_allocator.destroy(p);
+            self.large = null;
+        }
+    }
+};
+
 const PipeReadBuffer = [256 * 1024]u8;
 const DIGESTED_HMAC_256_LEN = 32;
 pub const AWSSignatureCache = struct {
@@ -552,6 +604,7 @@ pub fn deinit(this: *RareData) void {
     }
 
     this.cleanup_hooks.clearAndFree(bun.default_allocator);
+    this.path_buf.deinit();
 
     if (this.websocket_deflate) |deflate| {
         this.websocket_deflate = null;

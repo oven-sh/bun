@@ -36,3 +36,24 @@ test("exit with code propagates the exit code", async () => {
   expect(await result.text()).toBe("");
   expect(result.exitCode).toBe(42);
 });
+
+test("exit stops execution in && chain", async () => {
+  const result = await $`exit 0 && echo "should not run"`.nothrow().text();
+  expect(result).toBe("");
+});
+
+test("exit stops execution in || chain", async () => {
+  const result = await $`exit 1 || echo "should not run"`.nothrow().quiet();
+  expect(await result.text()).toBe("");
+  expect(result.exitCode).toBe(1);
+});
+
+test("exit inside if-then body stops execution", async () => {
+  const result = await $`if true; then exit 0; echo "should not run"; fi; echo "also should not run"`.nothrow().text();
+  expect(result).toBe("");
+});
+
+test("exit inside if condition stops execution", async () => {
+  const result = await $`if exit 0; then echo "should not run"; fi`.nothrow().text();
+  expect(result).toBe("");
+});

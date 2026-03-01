@@ -589,7 +589,6 @@ function expectBundled(
         dotenv ||
         typeof production !== "undefined" ||
         bundling === false ||
-        (run && target === "node") ||
         emitDCEAnnotations ||
         bundleWarnings ||
         env ||

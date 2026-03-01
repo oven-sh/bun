@@ -58,6 +58,7 @@ struct node_module;
 #include "headers-handwritten.h"
 #include "BunCommonStrings.h"
 #include "BunHttp2CommonStrings.h"
+#include "BunMarkdownTagStrings.h"
 #include "BunGlobalScope.h"
 #include <js_native_api.h>
 #include <node_api.h>
@@ -271,7 +272,6 @@ public:
 
     JSC::JSObject* performanceObject() const { return m_performanceObject.getInitializedOnMainThread(this); }
 
-    JSC::JSFunction* performMicrotaskFunction() const { return m_performMicrotaskFunction.getInitializedOnMainThread(this); }
     JSC::JSFunction* performMicrotaskVariadicFunction() const { return m_performMicrotaskVariadicFunction.getInitializedOnMainThread(this); }
 
     JSC::Structure* utilInspectOptionsStructure() const { return m_utilInspectOptionsStructure.getInitializedOnMainThread(this); }
@@ -301,6 +301,7 @@ public:
     JSObject* lazyTestModuleObject() const { return m_lazyTestModuleObject.getInitializedOnMainThread(this); }
     Structure* CommonJSModuleObjectStructure() const { return m_commonJSModuleObjectStructure.getInitializedOnMainThread(this); }
     Structure* JSSocketAddressDTOStructure() const { return m_JSSocketAddressDTOStructure.getInitializedOnMainThread(this); }
+    Structure* JSReactElementStructure() const { return m_JSReactElementStructure.getInitializedOnMainThread(this); }
     Structure* ImportMetaObjectStructure() const { return m_importMetaObjectStructure.getInitializedOnMainThread(this); }
     Structure* ImportMetaBakeObjectStructure() const { return m_importMetaBakeObjectStructure.getInitializedOnMainThread(this); }
     Structure* AsyncContextFrameStructure() const { return m_asyncBoundFunctionStructure.getInitializedOnMainThread(this); }
@@ -525,6 +526,7 @@ public:
     V(private, std::unique_ptr<WebCore::DOMConstructors>, m_constructors)                                    \
     V(private, Bun::CommonStrings, m_commonStrings)                                                          \
     V(private, Bun::Http2CommonStrings, m_http2CommonStrings)                                                \
+    V(private, Bun::MarkdownTagStrings, m_markdownTagStrings)                                                \
                                                                                                              \
     /* JSC's hashtable code-generator tries to access these properties, so we make them public. */           \
     /* However, we'd like it better if they could be protected. */                                           \
@@ -564,8 +566,8 @@ public:
     V(public, LazyClassStructure, m_JSHTTPParserClassStructure)                                              \
                                                                                                              \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_jsonlParseResultStructure)                           \
+    V(private, LazyPropertyOfGlobalObject<Structure>, m_pathParsedObjectStructure)                           \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_pendingVirtualModuleResultStructure)                 \
-    V(private, LazyPropertyOfGlobalObject<JSFunction>, m_performMicrotaskFunction)                           \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_nativeMicrotaskTrampoline)                          \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_performMicrotaskVariadicFunction)                   \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_utilInspectFunction)                                \
@@ -594,6 +596,7 @@ public:
     V(private, LazyPropertyOfGlobalObject<Structure>, m_cachedGlobalProxyStructure)                          \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_commonJSModuleObjectStructure)                       \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_JSSocketAddressDTOStructure)                         \
+    V(private, LazyPropertyOfGlobalObject<Structure>, m_JSReactElementStructure)                             \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_memoryFootprintStructure)                            \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_requireFunctionUnbound)                               \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_requireResolveFunctionUnbound)                        \
@@ -698,6 +701,7 @@ public:
     void reload();
 
     JSC::Structure* jsonlParseResultStructure() { return m_jsonlParseResultStructure.get(this); }
+    JSC::Structure* pathParsedObjectStructure() { return m_pathParsedObjectStructure.get(this); }
     JSC::Structure* pendingVirtualModuleResultStructure() { return m_pendingVirtualModuleResultStructure.get(this); }
 
     // We need to know if the napi module registered itself or we registered it.
@@ -714,6 +718,7 @@ public:
 
     Bun::CommonStrings& commonStrings() { return m_commonStrings; }
     Bun::Http2CommonStrings& http2CommonStrings() { return m_http2CommonStrings; }
+    Bun::MarkdownTagStrings& markdownTagStrings() { return m_markdownTagStrings; }
 #include "ZigGeneratedClasses+lazyStructureHeader.h"
 
     void finishCreation(JSC::VM&);

@@ -1016,6 +1016,9 @@ function checkExecSyncError(ret, args, cmd?) {
   if (ret.error) {
     err = ret.error;
     ObjectAssign(err, ret);
+    // ObjectAssign copies ret.error onto err, but err IS ret.error,
+    // creating a self-referencing cycle (err.error === err). Remove it.
+    delete err.error;
   } else if (ret.status !== 0) {
     let msg = "Command failed: ";
     msg += cmd || ArrayPrototypeJoin.$call(args, " ");

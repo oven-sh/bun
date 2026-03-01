@@ -426,6 +426,13 @@ describe.concurrent("napi", () => {
     });
   });
 
+  describe("napi_create_object", () => {
+    // https://github.com/oven-sh/bun/issues/25658
+    it("result is clonable with structuredClone", async () => {
+      await checkSameOutput("test_napi_create_object_structured_clone", []);
+    });
+  });
+
   // TODO(@190n) test allocating in a finalizer from a napi module with the right version
 
   describe("napi_wrap", () => {
@@ -796,6 +803,30 @@ describe("cleanup hooks", () => {
       // This test explores edge cases with empty/invalid napi_values
       // Bun has special handling for isEmpty() that Node doesn't have
       expect(output).toContain("napi_typeof");
+    });
+
+    it("should return napi_function for AsyncContextFrame in threadsafe callback", async () => {
+      // Test for https://github.com/oven-sh/bun/issues/25933
+      // When a threadsafe function is created inside AsyncLocalStorage.run(),
+      // the callback gets wrapped in AsyncContextFrame. napi_typeof must
+      // report it as napi_function, not napi_object.
+      const output = await checkSameOutput("test_napi_typeof_async_context_frame", []);
+      expect(output).toContain("PASS: napi_typeof returned napi_function");
+    });
+
+    it("should handle AsyncContextFrame in napi_make_callback", async () => {
+      // When a threadsafe function's call_js_cb receives an AsyncContextFrame
+      // as js_callback and passes it to napi_make_callback, it should succeed.
+      const output = await checkSameOutput("test_make_callback_with_async_context", []);
+      expect(output).toContain("PASS: napi_make_callback succeeded");
+    });
+
+    it("should accept AsyncContextFrame in napi_create_threadsafe_function with null call_js_cb", async () => {
+      // When a threadsafe function's call_js_cb receives an AsyncContextFrame
+      // and passes it to a second napi_create_threadsafe_function with
+      // call_js_cb=NULL, it should not reject with function_expected.
+      const output = await checkSameOutput("test_create_tsfn_with_async_context", []);
+      expect(output).toContain("PASS: napi_create_threadsafe_function accepted AsyncContextFrame");
     });
 
     it("should return napi_object for boxed primitives (String, Number, Boolean)", async () => {

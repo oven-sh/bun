@@ -1866,6 +1866,12 @@ pub const BundleOptions = struct {
 
     ignore_module_resolution_errors: bool = false,
 
+    /// Package names whose barrel files should be optimized.
+    /// When set, barrel files from these packages will only load submodules
+    /// that are actually imported. Also, any file with sideEffects: false
+    /// in its package.json is automatically a barrel candidate.
+    optimize_imports: ?*const bun.StringSet = null,
+
     pub const ForceNodeEnv = enum {
         unspecified,
         development,

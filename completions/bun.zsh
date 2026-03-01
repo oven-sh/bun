@@ -524,6 +524,33 @@ _bun_upgrade_completion() {
 
 }
 
+_bun_repl_completion() {
+    _arguments -s -C \
+        '1: :->cmd' \
+        '--help[Print this help menu]' \
+        '-h[Print this help menu]' \
+        '(-p --print)--eval[Evaluate argument as a script, then exit]:script' \
+        '(-p --print)-e[Evaluate argument as a script, then exit]:script' \
+        '(-e --eval)--print[Evaluate argument as a script, print the result, then exit]:script' \
+        '(-e --eval)-p[Evaluate argument as a script, print the result, then exit]:script' \
+        '--preload[Import a module before other modules are loaded]:preload' \
+        '-r[Import a module before other modules are loaded]:preload' \
+        '--smol[Use less memory, but run garbage collection more often]' \
+        '--config[Specify path to Bun config file]: :->config' \
+        '-c[Specify path to Bun config file]: :->config' \
+        '--cwd[Absolute path to resolve files & entry points from]:cwd' \
+        '--env-file[Load environment variables from the specified file(s)]:env-file' \
+        '--no-env-file[Disable automatic loading of .env files]' &&
+        ret=0
+
+    case $state in
+    config)
+        _bun_list_bunfig_toml
+
+        ;;
+    esac
+}
+
 _bun_build_completion() {
     _arguments -s -C \
         '1: :->cmd' \
@@ -788,6 +815,10 @@ _bun() {
             _bun_upgrade_completion
 
             ;;
+        repl)
+            _bun_repl_completion
+
+            ;;
         build)
             _bun_build_completion
 
@@ -869,6 +900,10 @@ _bun() {
                     ;;
                 upgrade)
                     _bun_upgrade_completion
+
+                    ;;
+                repl)
+                    _bun_repl_completion
 
                     ;;
                 build)

@@ -187,8 +187,8 @@ pub const LifecycleScriptSubprocess = struct {
             null,
         };
         if (Environment.isWindows) {
-            this.stdout.source = .{ .pipe = bun.handleOom(bun.default_allocator.create(uv.Pipe)) };
-            this.stderr.source = .{ .pipe = bun.handleOom(bun.default_allocator.create(uv.Pipe)) };
+            this.stdout.source = .{ .pipe = bun.new(uv.Pipe, std.mem.zeroes(uv.Pipe)) };
+            this.stderr.source = .{ .pipe = bun.new(uv.Pipe, std.mem.zeroes(uv.Pipe)) };
         }
         const spawn_options = bun.spawn.SpawnOptions{
             .stdin = if (this.foreground)

@@ -355,7 +355,8 @@ pub fn toUTF8FromLatin1(allocator: std.mem.Allocator, latin1: []const u8) !?std.
     if (isAllASCII(latin1))
         return null;
 
-    const list = try std.array_list.Managed(u8).initCapacity(allocator, latin1.len);
+    const utf8_len = bun.simdutf.length.utf8.from.latin1(latin1);
+    const list = try std.array_list.Managed(u8).initCapacity(allocator, utf8_len);
     return try allocateLatin1IntoUTF8WithList(list, 0, latin1);
 }
 
@@ -363,7 +364,8 @@ pub fn toUTF8FromLatin1Z(allocator: std.mem.Allocator, latin1: []const u8) !?std
     if (isAllASCII(latin1))
         return null;
 
-    const list = try std.array_list.Managed(u8).initCapacity(allocator, latin1.len + 1);
+    const utf8_len = bun.simdutf.length.utf8.from.latin1(latin1);
+    const list = try std.array_list.Managed(u8).initCapacity(allocator, utf8_len + 1);
     var list1 = try allocateLatin1IntoUTF8WithList(list, 0, latin1);
     try list1.append(0);
     return list1;
@@ -432,125 +434,24 @@ pub fn allocateLatin1IntoUTF8(allocator: std.mem.Allocator, latin1_: []const u8)
         return out;
     }
 
-    const list = try std.array_list.Managed(u8).initCapacity(allocator, latin1_.len);
+    const utf8_len = bun.simdutf.length.utf8.from.latin1(latin1_);
+    const list = try std.array_list.Managed(u8).initCapacity(allocator, utf8_len);
     var foo = try allocateLatin1IntoUTF8WithList(list, 0, latin1_);
     return try foo.toOwnedSlice();
 }
 
 pub fn allocateLatin1IntoUTF8WithList(list_: std.array_list.Managed(u8), offset_into_list: usize, latin1_: []const u8) OOM!std.array_list.Managed(u8) {
-    var latin1 = latin1_;
-    var i: usize = offset_into_list;
     var list = list_;
-    try list.ensureUnusedCapacity(latin1.len);
 
-    while (latin1.len > 0) {
-        if (comptime Environment.allow_assert) assert(i < list.capacity);
-        var buf = list.items.ptr[i..list.capacity];
+    // Use simdutf to compute exact UTF-8 length upfront and convert in a single pass.
+    // This avoids repeated buffer growth that could cause OOM for large strings with
+    // many non-ASCII characters (each Latin1 byte 128-255 becomes 2 UTF-8 bytes).
+    const utf8_len = bun.simdutf.length.utf8.from.latin1(latin1_);
+    try list.ensureTotalCapacity(offset_into_list + utf8_len);
+    const written = bun.simdutf.convert.latin1.to.utf8(latin1_, list.items.ptr[offset_into_list .. offset_into_list + utf8_len]);
+    list.items.len = offset_into_list + written;
 
-        inner: {
-            var count = latin1.len / ascii_vector_size;
-            while (count > 0) : (count -= 1) {
-                const vec: AsciiVector = latin1[0..ascii_vector_size].*;
-
-                if (@reduce(.Max, vec) > 127) {
-                    const Int = u64;
-                    const size = @sizeOf(Int);
-
-                    // zig or LLVM doesn't do @ctz nicely with SIMD
-                    if (comptime ascii_vector_size >= 8) {
-                        {
-                            const bytes = @as(Int, @bitCast(latin1[0..size].*));
-                            // https://dotat.at/@/2022-06-27-tolower-swar.html
-                            const mask = bytes & 0x8080808080808080;
-
-                            if (mask > 0) {
-                                const first_set_byte = @ctz(mask) / 8;
-                                if (comptime Environment.allow_assert) assert(latin1[first_set_byte] >= 127);
-
-                                buf[0..size].* = @as([size]u8, @bitCast(bytes));
-                                buf = buf[first_set_byte..];
-                                latin1 = latin1[first_set_byte..];
-                                break :inner;
-                            }
-
-                            buf[0..size].* = @as([size]u8, @bitCast(bytes));
-                            latin1 = latin1[size..];
-                            buf = buf[size..];
-                        }
-
-                        if (comptime ascii_vector_size >= 16) {
-                            const bytes = @as(Int, @bitCast(latin1[0..size].*));
-                            // https://dotat.at/@/2022-06-27-tolower-swar.html
-                            const mask = bytes & 0x8080808080808080;
-
-                            if (mask > 0) {
-                                const first_set_byte = @ctz(mask) / 8;
-                                if (comptime Environment.allow_assert) assert(latin1[first_set_byte] >= 127);
-
-                                buf[0..size].* = @as([size]u8, @bitCast(bytes));
-                                buf = buf[first_set_byte..];
-                                latin1 = latin1[first_set_byte..];
-                                break :inner;
-                            }
-                        }
-                    }
-                    unreachable;
-                }
-
-                buf[0..ascii_vector_size].* = @as([ascii_vector_size]u8, @bitCast(vec))[0..ascii_vector_size].*;
-                latin1 = latin1[ascii_vector_size..];
-                buf = buf[ascii_vector_size..];
-            }
-
-            while (latin1.len >= 8) {
-                const Int = u64;
-                const size = @sizeOf(Int);
-
-                const bytes = @as(Int, @bitCast(latin1[0..size].*));
-                // https://dotat.at/@/2022-06-27-tolower-swar.html
-                const mask = bytes & 0x8080808080808080;
-
-                if (mask > 0) {
-                    const first_set_byte = @ctz(mask) / 8;
-                    if (comptime Environment.allow_assert) assert(latin1[first_set_byte] >= 127);
-
-                    buf[0..size].* = @as([size]u8, @bitCast(bytes));
-                    latin1 = latin1[first_set_byte..];
-                    buf = buf[first_set_byte..];
-                    break :inner;
-                }
-
-                buf[0..size].* = @as([size]u8, @bitCast(bytes));
-                latin1 = latin1[size..];
-                buf = buf[size..];
-            }
-
-            {
-                if (comptime Environment.allow_assert) assert(latin1.len < 8);
-                const end = latin1.ptr + latin1.len;
-                while (latin1.ptr != end and latin1[0] < 128) {
-                    buf[0] = latin1[0];
-                    buf = buf[1..];
-                    latin1 = latin1[1..];
-                }
-            }
-        }
-
-        while (latin1.len > 0 and latin1[0] > 127) {
-            i = @intFromPtr(buf.ptr) - @intFromPtr(list.items.ptr);
-            list.items.len = i;
-            try list.ensureUnusedCapacity(2 + latin1.len);
-            buf = list.items.ptr[i..list.capacity];
-            buf[0..2].* = latin1ToCodepointBytesAssumeNotASCII(latin1[0]);
-            latin1 = latin1[1..];
-            buf = buf[2..];
-        }
-
-        i = @intFromPtr(buf.ptr) - @intFromPtr(list.items.ptr);
-        list.items.len = i;
-    }
-
-    log("Latin1 {d} -> UTF8 {d}", .{ latin1_.len, i });
+    log("Latin1 {d} -> UTF8 {d}", .{ latin1_.len, written });
 
     return list;
 }

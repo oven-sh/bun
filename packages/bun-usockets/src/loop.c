@@ -462,7 +462,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     #ifdef _WIN32
                       const int recv_flags = MSG_PUSH_IMMEDIATE;
                     #else
-                      const int recv_flags = MSG_DONTWAIT | MSG_NOSIGNAL;
+                      const int recv_flags = MSG_DONTWAIT;
                     #endif
 
                     int length;

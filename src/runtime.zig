@@ -257,6 +257,7 @@ pub const Runtime = struct {
             .emit_decorator_metadata,
             .standard_decorators,
             .lower_using,
+            .repl_mode,
 
             // note that we do not include .inject_jest_globals, as we bail out of the cache entirely if this is true
         };

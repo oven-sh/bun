@@ -2,7 +2,7 @@
 const EventEmitter: typeof import("node:events").EventEmitter = require("node:events");
 const { Duplex, Stream } = require("node:stream");
 const { _checkInvalidHeaderChar: checkInvalidHeaderChar } = require("node:_http_common");
-const { validateObject, validateLinkHeaderValue, validateBoolean, validateInteger } = require("internal/validators");
+const { validateObject, validateLinkHeaderValue, validateBoolean, validateInteger, validateFunction } = require("internal/validators");
 const { ConnResetException } = require("internal/shared");
 
 const { isPrimary } = require("internal/cluster/isPrimary");
@@ -285,6 +285,23 @@ Server.prototype.unref = function () {
   this[serverSymbol]?.unref?.();
   return this;
 };
+
+Server.prototype.getConnections = function (this: Server, callback) {
+  validateFunction(callback, "callback");
+  const server = this[serverSymbol];
+  // If server is not running, return 0 connections (matching net.Server behavior)
+  process.nextTick(callback, null, server ? server.pendingRequests : 0);
+  return this;
+};
+
+Object.defineProperty(Server.prototype, "connections", {
+  get(this: Server) {
+    const server = this[serverSymbol];
+    return server ? server.pendingRequests : 0;
+  },
+  configurable: true,
+  enumerable: true,
+});
 
 Server.prototype.closeAllConnections = function () {
   const server = this[serverSymbol];

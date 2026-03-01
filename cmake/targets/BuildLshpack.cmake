@@ -13,6 +13,11 @@ else()
   set(LSHPACK_INCLUDES .)
 endif()
 
+# Suppress all warnings from vendored lshpack on Windows (clang-cl)
+if(WIN32)
+  set(LSHPACK_CMAKE_ARGS "-DCMAKE_C_FLAGS=-w")
+endif()
+
 register_cmake_command(
   TARGET
     lshpack
@@ -28,6 +33,7 @@ register_cmake_command(
     #     _lshpack_enc_get_static_name in libls-hpack.a(lshpack.c.o)
     #     _update_hash in libls-hpack.a(lshpack.c.o)
     -DCMAKE_BUILD_TYPE=Release
+    ${LSHPACK_CMAKE_ARGS}
   INCLUDES
     ${LSHPACK_INCLUDES}
 )

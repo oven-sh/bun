@@ -75,6 +75,7 @@ pub const PendingValue = struct {
     onStartBuffering: ?*const fn (ctx: *anyopaque) void = null,
     onStartStreaming: ?*const fn (ctx: *anyopaque) jsc.WebCore.DrainResult = null,
     onReadableStreamAvailable: ?*const fn (ctx: *anyopaque, globalThis: *jsc.JSGlobalObject, readable: jsc.WebCore.ReadableStream) void = null,
+    onStreamCancelled: ?*const fn (ctx: ?*anyopaque) void = null,
     size_hint: Blob.SizeType = 0,
 
     deinit: bool = false,
@@ -495,6 +496,13 @@ pub const Value = union(Tag) {
                     .globalThis = globalThis,
                 });
 
+                if (locked.onStreamCancelled) |onCancelled| {
+                    if (locked.task) |task| {
+                        reader.cancel_handler = onCancelled;
+                        reader.cancel_ctx = task;
+                    }
+                }
+
                 reader.context.setup();
 
                 if (drain_result == .estimated_size) {
@@ -815,16 +823,10 @@ pub const Value = union(Tag) {
     }
 
     pub fn tryUseAsAnyBlob(this: *Value) ?AnyBlob {
-        if (this.* == .WTFStringImpl) {
-            if (this.WTFStringImpl.canUseAsUTF8()) {
-                return AnyBlob{ .WTFStringImpl = this.WTFStringImpl };
-            }
-        }
-
         const any_blob: AnyBlob = switch (this.*) {
-            .Blob => AnyBlob{ .Blob = this.Blob },
-            .InternalBlob => AnyBlob{ .InternalBlob = this.InternalBlob },
-            // .InlineBlob => AnyBlob{ .InlineBlob = this.InlineBlob },
+            .Blob => .{ .Blob = this.Blob },
+            .InternalBlob => .{ .InternalBlob = this.InternalBlob },
+            .WTFStringImpl => |str| if (str.canUseAsUTF8()) .{ .WTFStringImpl = str } else return null,
             .Locked => this.Locked.toAnyBlobAllowPromise() orelse return null,
             else => return null,
         };

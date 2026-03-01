@@ -12,6 +12,11 @@ const ImportRef = struct {
     stmt_index: u32,
 };
 
+const DeduplicatedImportResult = struct {
+    namespace_ref: Ref,
+    import_record_index: u32,
+};
+
 pub fn convertStmt(ctx: *ConvertESMExportsForHmr, p: anytype, stmt: Stmt) !void {
     const new_stmt = switch (stmt.data) {
         else => brk: {
@@ -195,7 +200,7 @@ pub fn convertStmt(ctx: *ConvertESMExportsForHmr, p: anytype, stmt: Stmt) !void 
             return; // do not emit a statement here
         },
         .s_export_from => |st| {
-            const namespace_ref = try ctx.deduplicatedImport(
+            const deduped = try ctx.deduplicatedImport(
                 p,
                 st.import_record_index,
                 st.namespace_ref,
@@ -207,13 +212,17 @@ pub fn convertStmt(ctx: *ConvertESMExportsForHmr, p: anytype, stmt: Stmt) !void 
             for (st.items) |*item| {
                 const ref = item.name.ref.?;
                 const symbol = &p.symbols.items[ref.innerIndex()];
-                if (symbol.namespace_alias == null) {
-                    symbol.namespace_alias = .{
-                        .namespace_ref = namespace_ref,
-                        .alias = item.original_name,
-                        .import_record_index = st.import_record_index,
-                    };
-                }
+                // Always set the namespace alias using the deduplicated import
+                // record. When two `export { ... } from` statements reference
+                // the same source, the second import record is marked unused
+                // and its items are merged into the first. The symbols may
+                // already have a namespace_alias from ImportScanner pointing at
+                // the now-unused record, so we must update it.
+                symbol.namespace_alias = .{
+                    .namespace_ref = deduped.namespace_ref,
+                    .alias = item.original_name,
+                    .import_record_index = deduped.import_record_index,
+                };
                 try ctx.visitRefToExport(
                     p,
                     ref,
@@ -234,7 +243,7 @@ pub fn convertStmt(ctx: *ConvertESMExportsForHmr, p: anytype, stmt: Stmt) !void 
             return;
         },
         .s_export_star => |st| {
-            const namespace_ref = try ctx.deduplicatedImport(
+            const deduped = try ctx.deduplicatedImport(
                 p,
                 st.import_record_index,
                 st.namespace_ref,
@@ -248,13 +257,13 @@ pub fn convertStmt(ctx: *ConvertESMExportsForHmr, p: anytype, stmt: Stmt) !void 
                 // 'export * as ns from' creates one named property.
                 try ctx.export_props.append(p.allocator, .{
                     .key = Expr.init(E.String, .{ .data = alias.original_name }, stmt.loc),
-                    .value = Expr.initIdentifier(namespace_ref, stmt.loc),
+                    .value = Expr.initIdentifier(deduped.namespace_ref, stmt.loc),
                 });
             } else {
                 // 'export * from' creates a spread, hoisted at the top.
                 try ctx.export_star_props.append(p.allocator, .{
                     .kind = .spread,
-                    .value = Expr.initIdentifier(namespace_ref, stmt.loc),
+                    .value = Expr.initIdentifier(deduped.namespace_ref, stmt.loc),
                 });
             }
             return;
@@ -279,7 +288,8 @@ pub fn convertStmt(ctx: *ConvertESMExportsForHmr, p: anytype, stmt: Stmt) !void 
     try ctx.stmts.append(p.allocator, new_stmt);
 }
 
-/// Deduplicates imports, returning a previously used Ref if present.
+/// Deduplicates imports, returning a previously used Ref and import record
+/// index if present.
 fn deduplicatedImport(
     ctx: *ConvertESMExportsForHmr,
     p: anytype,
@@ -289,7 +299,7 @@ fn deduplicatedImport(
     star_name_loc: ?logger.Loc,
     default_name: ?js_ast.LocRef,
     loc: logger.Loc,
-) !Ref {
+) !DeduplicatedImportResult {
     const ir = &p.import_records.items[import_record_index];
     const gop = try ctx.imports_seen.getOrPut(p.allocator, ir.path.text);
     if (gop.found_existing) {
@@ -299,6 +309,12 @@ fn deduplicatedImport(
         ir.flags.is_unused = true;
 
         const stmt = ctx.stmts.items[gop.value_ptr.stmt_index].data.s_import;
+        // The surviving record may have been marked is_unused by barrel
+        // optimization (when the first export-from statement's exports
+        // were all deferred). Since we are merging new items into it,
+        // clear is_unused so the import is actually emitted.
+        p.import_records.items[stmt.import_record_index].flags.is_unused = false;
+
         if (items.len > 0) {
             if (stmt.items.len == 0) {
                 stmt.items = items;
@@ -309,7 +325,7 @@ fn deduplicatedImport(
         if (namespace_ref.isValid()) {
             if (!stmt.namespace_ref.isValid()) {
                 stmt.namespace_ref = namespace_ref;
-                return namespace_ref;
+                return .{ .namespace_ref = namespace_ref, .import_record_index = stmt.import_record_index };
             } else {
                 // Erase this namespace ref, but since it may be used in
                 // existing AST trees, a link must be established.
@@ -327,7 +343,7 @@ fn deduplicatedImport(
         if (stmt.default_name == null) if (default_name) |dn| {
             stmt.default_name = dn;
         };
-        return stmt.namespace_ref;
+        return .{ .namespace_ref = stmt.namespace_ref, .import_record_index = stmt.import_record_index };
     }
 
     try ctx.stmts.append(p.allocator, Stmt.alloc(S.Import, .{
@@ -340,7 +356,7 @@ fn deduplicatedImport(
     }, loc));
 
     gop.value_ptr.* = .{ .stmt_index = @intCast(ctx.stmts.items.len - 1) };
-    return namespace_ref;
+    return .{ .namespace_ref = namespace_ref, .import_record_index = import_record_index };
 }
 
 fn visitBindingToExport(ctx: *ConvertESMExportsForHmr, p: anytype, binding: Binding) !void {

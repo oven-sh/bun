@@ -163,6 +163,8 @@ export interface BundlerTestInput {
   drop?: string[];
   /** Feature flags for dead-code elimination via `import { feature } from "bun:bundle"` */
   features?: string[];
+  /** Package names whose barrel files should be optimized */
+  optimizeImports?: string[];
 
   /** Use for resolve custom conditions */
   conditions?: string[];
@@ -447,6 +449,7 @@ function expectBundled(
     packages,
     drop = [],
     features = [],
+    optimizeImports,
     files,
     footer,
     format,
@@ -586,7 +589,6 @@ function expectBundled(
         dotenv ||
         typeof production !== "undefined" ||
         bundling === false ||
-        (run && target === "node") ||
         emitDCEAnnotations ||
         bundleWarnings ||
         env ||
@@ -715,6 +717,9 @@ function expectBundled(
     if (backend === "cli") {
       if (plugins) {
         throw new Error("plugins not possible in backend=CLI");
+      }
+      if (optimizeImports) {
+        throw new Error("optimizeImports not possible in backend=CLI (API-only option)");
       }
       const cmd = (
         !ESBUILD
@@ -1118,6 +1123,7 @@ function expectBundled(
           ignoreDCEAnnotations,
           drop,
           features,
+          optimizeImports,
           define: define ?? {},
           throw: _throw ?? false,
           compile,

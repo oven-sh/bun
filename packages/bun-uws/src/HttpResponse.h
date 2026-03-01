@@ -467,7 +467,9 @@ public:
             /* Write mark on first call to write */
             writeMark();
 
-            writeHeader("Transfer-Encoding", "chunked");
+            if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER)) {
+                writeHeader("Transfer-Encoding", "chunked");
+            }
             Super::write("\r\n", 2);
             httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
         }
@@ -489,7 +491,9 @@ public:
                 /* Write mark on first call to write */
                 writeMark();
 
-                writeHeader("Transfer-Encoding", "chunked");
+                if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER)) {
+                    writeHeader("Transfer-Encoding", "chunked");
+                }
                 Super::write("\r\n", 2);
                 httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
             }
@@ -558,7 +562,9 @@ public:
                 /* Write mark on first call to write */
                 writeMark();
 
-                writeHeader("Transfer-Encoding", "chunked");
+                if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER)) {
+                    writeHeader("Transfer-Encoding", "chunked");
+                }
                 Super::write("\r\n", 2);
                 httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
             }

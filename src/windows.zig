@@ -2976,8 +2976,8 @@ pub const Win32Error = enum(u16) {
         // in our Win32Error enum subset. Safely convert to avoid panic on
         // invalid enum values.
         const raw = RtlNtStatusToDosError(status);
-        const code: u16 = @truncate(raw);
-        return std.meta.intToEnum(Win32Error, code) catch .MR_MID_NOT_FOUND;
+        if (raw > std.math.maxInt(u16)) return .MR_MID_NOT_FOUND;
+        return std.meta.intToEnum(Win32Error, @as(u16, @intCast(raw))) catch .MR_MID_NOT_FOUND;
     }
 };
 

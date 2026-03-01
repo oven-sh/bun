@@ -22,7 +22,6 @@ pub noinline fn computeChunks(
 
     const entry_source_indices = this.graph.entry_points.items(.source_index);
     const css_asts = this.graph.ast.items(.css);
-    const css_chunking = this.options.css_chunking;
     var html_chunks = bun.StringArrayHashMap(Chunk).init(temp_allocator);
     const loaders = this.parse_graph.input_files.items(.loader);
     const ast_targets = this.graph.ast.items(.target);
@@ -148,10 +147,11 @@ pub noinline fn computeChunks(
             if (css_source_indices.len > 0) {
                 const order = this.findImportedFilesInCSSOrder(temp_allocator, css_source_indices.slice());
 
-                const use_content_based_key = css_chunking or has_server_html_imports;
-                const hash_to_use = if (!use_content_based_key)
-                    bun.hash(try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len)))
-                else brk: {
+                // Always use content-based hashing for CSS chunk deduplication.
+                // This ensures that when multiple JS entry points import the
+                // same CSS files, they share a single CSS output chunk rather
+                // than producing duplicates that collide on hash-based naming.
+                const hash_to_use = brk: {
                     var hasher = std.hash.Wyhash.init(5);
                     bun.writeAnyToHasher(&hasher, order.len);
                     for (order.slice()) |x| x.hash(&hasher);
@@ -322,7 +322,10 @@ pub noinline fn computeChunks(
             const remapped_css_indexes = try temp_allocator.alloc(u32, css_chunks.count());
 
             const css_chunk_values = css_chunks.values();
-            for (sorted_css_keys, js_chunks.count()..) |key, sorted_index| {
+            // Use sorted_chunks.len as the starting index because HTML chunks
+            // may be interleaved with JS chunks, so js_chunks.count() would be
+            // incorrect when HTML entry points are present.
+            for (sorted_css_keys, sorted_chunks.len..) |key, sorted_index| {
                 const index = css_chunks.getIndex(key) orelse unreachable;
                 sorted_chunks.appendAssumeCapacity(css_chunk_values[index]);
                 remapped_css_indexes[index] = @intCast(sorted_index);

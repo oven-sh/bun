@@ -136,23 +136,23 @@ private:
     bool load_functions()
     {
         CFRelease = (void (*)(CFTypeRef))dlsym(cf_handle, "CFRelease");
-        CFStringCreateWithCString = (CFStringRef(*)(CFAllocatorRef, const char*, CFStringEncoding))dlsym(cf_handle, "CFStringCreateWithCString");
-        CFDataCreate = (CFDataRef(*)(CFAllocatorRef, const UInt8*, CFIndex))dlsym(cf_handle, "CFDataCreate");
+        CFStringCreateWithCString = (CFStringRef (*)(CFAllocatorRef, const char*, CFStringEncoding))dlsym(cf_handle, "CFStringCreateWithCString");
+        CFDataCreate = (CFDataRef (*)(CFAllocatorRef, const UInt8*, CFIndex))dlsym(cf_handle, "CFDataCreate");
         CFDataGetBytePtr = (const UInt8* (*)(CFDataRef))dlsym(cf_handle, "CFDataGetBytePtr");
-        CFDataGetLength = (CFIndex(*)(CFDataRef))dlsym(cf_handle, "CFDataGetLength");
-        CFDictionaryCreateMutable = (CFMutableDictionaryRef(*)(CFAllocatorRef, CFIndex, const CFDictionaryKeyCallBacks*, const CFDictionaryValueCallBacks*))dlsym(cf_handle, "CFDictionaryCreateMutable");
+        CFDataGetLength = (CFIndex (*)(CFDataRef))dlsym(cf_handle, "CFDataGetLength");
+        CFDictionaryCreateMutable = (CFMutableDictionaryRef (*)(CFAllocatorRef, CFIndex, const CFDictionaryKeyCallBacks*, const CFDictionaryValueCallBacks*))dlsym(cf_handle, "CFDictionaryCreateMutable");
         CFDictionaryAddValue = (void (*)(CFMutableDictionaryRef, const void*, const void*))dlsym(cf_handle, "CFDictionaryAddValue");
-        CFStringGetCString = (Boolean(*)(CFStringRef, char*, CFIndex, CFStringEncoding))dlsym(cf_handle, "CFStringGetCString");
+        CFStringGetCString = (Boolean (*)(CFStringRef, char*, CFIndex, CFStringEncoding))dlsym(cf_handle, "CFStringGetCString");
         CFStringGetCStringPtr = (const char* (*)(CFStringRef, CFStringEncoding))dlsym(cf_handle, "CFStringGetCStringPtr");
-        CFStringGetLength = (CFIndex(*)(CFStringRef))dlsym(cf_handle, "CFStringGetLength");
-        CFStringGetMaximumSizeForEncoding = (CFIndex(*)(CFIndex, CFStringEncoding))dlsym(cf_handle, "CFStringGetMaximumSizeForEncoding");
+        CFStringGetLength = (CFIndex (*)(CFStringRef))dlsym(cf_handle, "CFStringGetLength");
+        CFStringGetMaximumSizeForEncoding = (CFIndex (*)(CFIndex, CFStringEncoding))dlsym(cf_handle, "CFStringGetMaximumSizeForEncoding");
 
-        SecItemAdd = (OSStatus(*)(CFDictionaryRef, CFTypeRef*))dlsym(handle, "SecItemAdd");
-        SecItemCopyMatching = (OSStatus(*)(CFDictionaryRef, CFTypeRef*))dlsym(handle, "SecItemCopyMatching");
-        SecItemUpdate = (OSStatus(*)(CFDictionaryRef, CFDictionaryRef))dlsym(handle, "SecItemUpdate");
-        SecItemDelete = (OSStatus(*)(CFDictionaryRef))dlsym(handle, "SecItemDelete");
-        SecCopyErrorMessageString = (CFStringRef(*)(OSStatus, void*))dlsym(handle, "SecCopyErrorMessageString");
-        SecAccessCreate = (OSStatus(*)(CFStringRef, CFArrayRef, SecAccessRef*))dlsym(handle, "SecAccessCreate");
+        SecItemAdd = (OSStatus (*)(CFDictionaryRef, CFTypeRef*))dlsym(handle, "SecItemAdd");
+        SecItemCopyMatching = (OSStatus (*)(CFDictionaryRef, CFTypeRef*))dlsym(handle, "SecItemCopyMatching");
+        SecItemUpdate = (OSStatus (*)(CFDictionaryRef, CFDictionaryRef))dlsym(handle, "SecItemUpdate");
+        SecItemDelete = (OSStatus (*)(CFDictionaryRef))dlsym(handle, "SecItemDelete");
+        SecCopyErrorMessageString = (CFStringRef (*)(OSStatus, void*))dlsym(handle, "SecCopyErrorMessageString");
+        SecAccessCreate = (OSStatus (*)(CFStringRef, CFArrayRef, SecAccessRef*))dlsym(handle, "SecAccessCreate");
 
         return CFRelease && CFStringCreateWithCString && CFDataCreate && CFDataGetBytePtr && CFDataGetLength && CFDictionaryCreateMutable && CFDictionaryAddValue && SecItemAdd && SecItemCopyMatching && SecItemUpdate && SecItemDelete && SecCopyErrorMessageString && SecAccessCreate && CFStringGetCString && CFStringGetCStringPtr && CFStringGetLength && CFStringGetMaximumSizeForEncoding;
     }

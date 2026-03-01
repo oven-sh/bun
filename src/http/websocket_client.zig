@@ -27,6 +27,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         ping_frame_bytes: [128 + 6]u8 = [_]u8{0} ** (128 + 6),
         ping_len: u8 = 0,
         ping_received: bool = false,
+        pong_received: bool = false,
         close_received: bool = false,
         close_frame_buffering: bool = false,
 
@@ -120,6 +121,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             this.clearReceiveBuffers(true);
             this.clearSendBuffers(true);
             this.ping_received = false;
+            this.pong_received = false;
             this.ping_len = 0;
             this.close_frame_buffering = false;
             this.receive_pending_chunk_len = 0;
@@ -136,6 +138,10 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             // Set to null FIRST to prevent re-entrancy (shutdown can trigger callbacks)
             if (this.proxy_tunnel) |tunnel| {
                 this.proxy_tunnel = null;
+                // Detach the websocket from the tunnel before shutdown so the
+                // tunnel's onClose callback doesn't dispatch a spurious 1006
+                // after we've already handled a clean close.
+                tunnel.clearConnectedWebSocket();
                 tunnel.shutdown();
                 tunnel.deref();
             }
@@ -650,14 +656,38 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                         if (data.len == 0) break;
                     },
                     .pong => {
-                        const pong_len = @min(data.len, @min(receive_body_remain, this.ping_frame_bytes.len));
+                        if (!this.pong_received) {
+                            if (receive_body_remain > 125) {
+                                this.terminate(ErrorCode.invalid_control_frame);
+                                terminated = true;
+                                break;
+                            }
+                            this.ping_len = @truncate(receive_body_remain);
+                            receive_body_remain = 0;
+                            this.pong_received = true;
+                        }
+                        const pong_len = this.ping_len;
 
-                        this.dispatchData(data[0..pong_len], .Pong);
+                        if (data.len > 0) {
+                            const total_received = @min(pong_len, receive_body_remain + data.len);
+                            const slice = this.ping_frame_bytes[6..][receive_body_remain..total_received];
+                            @memcpy(slice, data[0..slice.len]);
+                            receive_body_remain = total_received;
+                            data = data[slice.len..];
+                        }
+                        const pending_body = pong_len - receive_body_remain;
+                        if (pending_body > 0) {
+                            // wait for more data - pong payload is fragmented across TCP segments
+                            break;
+                        }
 
-                        data = data[pong_len..];
+                        const pong_data = this.ping_frame_bytes[6..][0..pong_len];
+                        this.dispatchData(pong_data, .Pong);
+
                         receive_state = .need_header;
                         receive_body_remain = 0;
                         receiving_type = last_receive_data_type;
+                        this.pong_received = false;
 
                         if (data.len == 0) break;
                     },
@@ -737,11 +767,14 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         ) bool {
             // For tunnel mode, write through the tunnel instead of direct socket
             if (this.proxy_tunnel) |tunnel| {
-                // The tunnel handles TLS encryption and buffering
-                _ = tunnel.write(bytes) catch {
+                const wrote = tunnel.write(bytes) catch {
                     this.terminate(ErrorCode.failed_to_write);
                     return false;
                 };
+                // Buffer any data the tunnel couldn't accept
+                if (wrote < bytes.len) {
+                    _ = this.copyToSendBuffer(bytes[wrote..], false);
+                }
                 return true;
             }
 
@@ -826,9 +859,11 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
                 if (do_write) {
                     if (comptime Environment.allow_assert) {
-                        bun.assert(!this.tcp.isShutdown());
-                        bun.assert(!this.tcp.isClosed());
-                        bun.assert(this.tcp.isEstablished());
+                        if (this.proxy_tunnel == null) {
+                            bun.assert(!this.tcp.isShutdown());
+                            bun.assert(!this.tcp.isClosed());
+                            bun.assert(this.tcp.isEstablished());
+                        }
                     }
                     return this.sendBuffer(this.send_buffer.readableSlice(0));
                 }
@@ -850,9 +885,11 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
             if (do_write) {
                 if (comptime Environment.allow_assert) {
-                    bun.assert(!this.tcp.isShutdown());
-                    bun.assert(!this.tcp.isClosed());
-                    bun.assert(this.tcp.isEstablished());
+                    if (this.proxy_tunnel == null) {
+                        bun.assert(!this.tcp.isShutdown());
+                        bun.assert(!this.tcp.isClosed());
+                        bun.assert(this.tcp.isEstablished());
+                    }
                 }
                 return this.sendBuffer(this.send_buffer.readableSlice(0));
             }
@@ -865,26 +902,34 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             out_buf: []const u8,
         ) bool {
             bun.assert(out_buf.len > 0);
-            // Do not set MSG_MORE, see https://github.com/oven-sh/bun/issues/4010
-            if (this.tcp.isClosed()) {
-                return false;
-            }
-            const wrote = this.tcp.write(out_buf);
-            if (wrote < 0) {
-                this.terminate(ErrorCode.failed_to_write);
-                return false;
-            }
-            const expected = @as(usize, @intCast(wrote));
+            // Do not use MSG_MORE, see https://github.com/oven-sh/bun/issues/4010
+            const wrote: usize = if (this.proxy_tunnel) |tunnel|
+                // In tunnel mode, route through the tunnel's TLS layer
+                // instead of the detached raw socket.
+                tunnel.write(out_buf) catch {
+                    this.terminate(ErrorCode.failed_to_write);
+                    return false;
+                }
+            else blk: {
+                if (this.tcp.isClosed()) {
+                    return false;
+                }
+                const w = this.tcp.write(out_buf);
+                if (w < 0) {
+                    this.terminate(ErrorCode.failed_to_write);
+                    return false;
+                }
+                break :blk @intCast(w);
+            };
             const readable = this.send_buffer.readableSlice(0);
             if (readable.ptr == out_buf.ptr) {
-                this.send_buffer.discard(expected);
+                this.send_buffer.discard(wrote);
             }
-
             return true;
         }
 
         fn sendPong(this: *WebSocket, socket: Socket) bool {
-            if (socket.isClosed() or socket.isShutdown()) {
+            if (!this.hasTCP()) {
                 this.dispatchAbruptClose(ErrorCode.ended);
                 return false;
             }
@@ -916,14 +961,17 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             body_len: usize,
         ) void {
             log("Sending close with code {d}", .{code});
-            if (socket.isClosed() or socket.isShutdown()) {
+            if (!this.hasTCP()) {
                 this.dispatchAbruptClose(ErrorCode.ended);
                 this.clearData();
                 return;
             }
             // we dont wanna shutdownRead when SSL, because SSL handshake can happen when writting
+            // For tunnel mode, shutdownRead on the detached socket is a no-op; skip it.
             if (comptime !ssl) {
-                socket.shutdownRead();
+                if (this.proxy_tunnel == null) {
+                    socket.shutdownRead();
+                }
             }
             var final_body_bytes: [128 + 8]u8 = undefined;
             var header = @as(WebsocketHeader, @bitCast(@as(u16, 0)));
@@ -990,7 +1038,9 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         }
 
         pub fn hasBackpressure(this: *const WebSocket) bool {
-            return this.send_buffer.count > 0;
+            if (this.send_buffer.count > 0) return true;
+            if (this.proxy_tunnel) |tunnel| return tunnel.hasBackpressure();
+            return false;
         }
 
         pub fn writeBinaryData(
@@ -1320,6 +1370,15 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             // Process the decrypted data as if it came from the socket
             // hasTCP() now returns true for tunnel mode, so this will work correctly
             this.handleData(this.tcp, data);
+        }
+
+        /// Called by the WebSocketProxyTunnel when the underlying socket drains.
+        /// Flushes any buffered plaintext data through the tunnel.
+        pub fn handleTunnelWritable(this: *WebSocket) void {
+            if (this.close_received) return;
+            const send_buf = this.send_buffer.readableSlice(0);
+            if (send_buf.len == 0) return;
+            _ = this.sendBuffer(send_buf);
         }
 
         pub fn finalize(this: *WebSocket) callconv(.c) void {

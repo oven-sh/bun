@@ -1314,7 +1314,7 @@ async function spawnBunTest(execPath, testPath, opts = { cwd }) {
   const isReallyTest = isTestStrict(testPath) || absPath.includes("vendor");
   const args = opts["args"] ?? [];
 
-  const testArgs = ["test", ...args, `--timeout=${perTestTimeout}`];
+  const testArgs = ["test", ...args, `--timeout=${perTestTimeout}`, "--reporter=dots"];
 
   // This will be set if a JUnit file is generated
   let junitFilePath = null;

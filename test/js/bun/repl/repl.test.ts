@@ -1072,7 +1072,7 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
 
       // Delete all content with Ctrl+U (delete to start of line) and type new code
       send("\x15"); // Ctrl+U - clear line
-      await Bun.sleep(100);
+      await waitFor(/\u276f|> /);
       send("222 + 333\n");
       await waitFor("555");
     });

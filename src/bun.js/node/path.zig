@@ -2284,8 +2284,10 @@ pub fn relativeWindowsJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, 
 }
 
 pub fn relativeJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, allocator: std.mem.Allocator, isWindows: bool, from: []const T, to: []const T) bun.JSError!jsc.JSValue {
-    // Account for CWD (up to MAX_PATH_SIZE) that resolve may prepend to relative paths.
-    const bufLen = @max(from.len + to.len + MAX_PATH_SIZE(T) + 1, PATH_SIZE(T));
+    // Account for CWD (up to MAX_PATH_SIZE) that resolve may prepend, and for
+    // worst-case ".." expansion: each 2-byte path component (e.g. "a/") generates
+    // 3 bytes of output ("/..", ~1.5x). Use 2x as a safe upper bound.
+    const bufLen = @max((from.len + MAX_PATH_SIZE(T) + 1) * 2 + to.len + MAX_PATH_SIZE(T) + 1, PATH_SIZE(T));
     // +1 for null terminator
     const buf = bun.handleOom(allocator.alloc(T, bufLen + 1));
     defer allocator.free(buf);
@@ -2307,7 +2309,7 @@ pub fn relative(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*
     if ((fromZigStr.len + toZigStr.len) == 0) return from_ptr;
 
     var sfa = globalObject.bunVM().rareData().path_buf.get(
-        @max(fromZigStr.len + toZigStr.len + MAX_PATH_SIZE(u8) + 1, PATH_SIZE(u8)) * 3 + 3,
+        @max((fromZigStr.len + MAX_PATH_SIZE(u8) + 1) * 2 + toZigStr.len + MAX_PATH_SIZE(u8) + 1, PATH_SIZE(u8)) * 3 + 3,
         bun.default_allocator,
     );
     const allocator = sfa.get();

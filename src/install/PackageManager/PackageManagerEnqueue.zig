@@ -64,6 +64,30 @@ pub fn enqueueDependencyList(
             resolution,
             false,
         ) catch |err| {
+            // For MissingPackageJSON on folder dependencies, show the folder path that's missing
+            if (err == error.MissingPackageJSON and dependency.version.tag == .folder) {
+                const folder_path = lockfile.str(&dependency.version.value.folder);
+                const dep_name = lockfile.str(&dependency.realname());
+                if (dependency.behavior.isOptional() or dependency.behavior.isPeer()) {
+                    this.log.addWarningFmt(
+                        null,
+                        .{},
+                        this.allocator,
+                        "no package.json file found for dependency \"{s}\" in {f}",
+                        .{ dep_name, bun.fmt.fmtPath(u8, folder_path, .{ .path_sep = .auto }) },
+                    ) catch unreachable;
+                } else {
+                    this.log.addErrorFmt(
+                        null,
+                        .{},
+                        this.allocator,
+                        "no package.json file found for dependency \"{s}\" in {f}",
+                        .{ dep_name, bun.fmt.fmtPath(u8, folder_path, .{ .path_sep = .auto }) },
+                    ) catch unreachable;
+                }
+                continue;
+            }
+
             const note = .{
                 .fmt = "error occurred while resolving {f}",
                 .args = .{bun.fmt.fmtPath(u8, lockfile.str(&dependency.realname()), .{

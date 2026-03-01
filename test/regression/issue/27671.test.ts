@@ -1,9 +1,14 @@
 // Test for #27671: .copy command should work with external clipboard tools
 // when OSC 52 is not supported by the terminal.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isMacOS, isWindows, tempDir } from "harness";
+import path from "path";
 
-// Helper to run REPL with piped stdin and capture output
+// The REPL tries "pbcopy" on macOS, "xclip" on Linux.
+const fakeClipboardName = isMacOS ? "pbcopy" : "xclip";
+
+// Helper to run REPL with piped stdin and capture raw output (no ANSI stripping
+// so we can inspect OSC 52 sequences when needed).
 async function runRepl(
   input: string[],
   options: {
@@ -39,15 +44,15 @@ describe("issue #27671 - .copy with external clipboard tools", () => {
 
     const clipOutputFile = `${dir}/clip-output.txt`;
 
-    // Create a fake xclip that saves stdin to a file (ignores -selection clipboard args)
-    const fakeClipboard = `${dir}/xclip`;
+    // Create a fake clipboard tool that saves stdin to a file
+    const fakeClipboard = `${dir}/${fakeClipboardName}`;
     await Bun.write(fakeClipboard, `#!/bin/sh\ncat > "${clipOutputFile}"\n`);
     const { exitCode: chmodExit } = Bun.spawnSync({
       cmd: ["chmod", "+x", fakeClipboard],
     });
     expect(chmodExit).toBe(0);
 
-    // Run the REPL with our fake xclip first in PATH
+    // Run the REPL with our fake tool first in PATH
     const { stdout, exitCode } = await runRepl([".copy 42", ".exit"], {
       env: {
         PATH: `${dir}:${process.env.PATH}`,
@@ -69,9 +74,12 @@ describe("issue #27671 - .copy with external clipboard tools", () => {
     using dir = tempDir("repl-copy-test2", {});
 
     const clipOutputFile = `${dir}/clip-output.txt`;
-    const fakeClipboard = `${dir}/xclip`;
+    const fakeClipboard = `${dir}/${fakeClipboardName}`;
     await Bun.write(fakeClipboard, `#!/bin/sh\ncat > "${clipOutputFile}"\n`);
-    Bun.spawnSync({ cmd: ["chmod", "+x", fakeClipboard] });
+    const { exitCode: chmodExit } = Bun.spawnSync({
+      cmd: ["chmod", "+x", fakeClipboard],
+    });
+    expect(chmodExit).toBe(0);
 
     const { stdout, exitCode } = await runRepl([".copy 'hello world'", ".exit"], {
       env: {
@@ -89,16 +97,19 @@ describe("issue #27671 - .copy with external clipboard tools", () => {
     expect(exitCode).toBe(0);
   });
 
-  test(".copy falls back to OSC 52 when no external tools available", async () => {
+  test.skipIf(isWindows)(".copy falls back to OSC 52 when no external tools available", async () => {
     // Use an empty temp dir as the only PATH entry - no clipboard tools found
     using dir = tempDir("repl-copy-empty", {});
 
     const { stdout, exitCode } = await runRepl([".copy 42", ".exit"], {
       env: {
-        // Only include the dir containing bun itself, plus our empty dir
-        PATH: `${dir}:${require("path").dirname(bunExe())}`,
+        // Only include bun's directory and our empty dir (no clipboard tools)
+        PATH: `${dir}:${path.dirname(bunExe())}`,
       },
     });
+
+    // Raw stdout should contain the OSC 52 escape sequence
+    expect(stdout).toContain("\x1b]52;c;");
 
     const output = Bun.stripANSI(stdout);
     // Should still report success (via OSC 52 fallback)

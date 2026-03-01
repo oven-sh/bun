@@ -7,22 +7,24 @@ import path from "node:path";
 // profile binary isn't always available, and the bug is posix-specific anyway.
 const testFn = isWindows ? test.skip : test;
 
+// macOS PATH_MAX is 1024, so CWD must stay under that. We use ~800 byte CWDs
+// and long relative paths to exceed PATH_SIZE thresholds.
+
 testFn("path.posix.resolve with long CWD and relative path doesn't crash", () => {
   // Regression test: buffer overflow when CWD + relative_path > PATH_SIZE.
-  // The buffer in resolveJS_T didn't account for the CWD that resolvePosixT
-  // prepends when all paths are relative.
   using dir = tempDir("resolve-long-cwd", {});
   const baseDir = String(dir);
 
-  // Build a deep directory (~3000 bytes) to use as CWD.
+  // Build a ~750 byte deep directory (fits under macOS PATH_MAX=1024).
   let currentDir = baseDir;
-  const segmentName = "a".repeat(200);
-  for (let i = 0; i < 15; i++) {
+  const segmentName = "a".repeat(80);
+  for (let i = 0; i < 8; i++) {
     currentDir = path.join(currentDir, segmentName);
   }
   fs.mkdirSync(currentDir, { recursive: true });
 
-  const relativePath = "b".repeat(2000);
+  // Relative path long enough that CWD + path > PATH_SIZE on all platforms.
+  const relativePath = "b".repeat(4000);
 
   const proc = Bun.spawnSync({
     cmd: [
@@ -31,13 +33,11 @@ testFn("path.posix.resolve with long CWD and relative path doesn't crash", () =>
       `const path = require("node:path");
        const result = path.posix.resolve(${JSON.stringify(relativePath)});
        const cwd = process.cwd();
-       // Verify the resolved path is correct: CWD + "/" + relativePath
        const expected = cwd + "/" + ${JSON.stringify(relativePath)};
        if (result !== expected) {
          console.log("FAIL:expected=" + expected.length + ",got=" + result.length);
          process.exit(1);
        }
-       // Do additional allocations to detect heap corruption from buffer overflow
        for (let i = 0; i < 100; i++) {
          path.posix.resolve("test" + i);
          path.posix.normalize("test" + i);
@@ -57,15 +57,15 @@ testFn("path.posix.resolve with long CWD and multiple relative paths doesn't cra
   const baseDir = String(dir);
 
   let currentDir = baseDir;
-  const segmentName = "c".repeat(150);
-  for (let i = 0; i < 10; i++) {
+  const segmentName = "c".repeat(80);
+  for (let i = 0; i < 8; i++) {
     currentDir = path.join(currentDir, segmentName);
   }
   fs.mkdirSync(currentDir, { recursive: true });
 
-  const pathA = "d".repeat(1000);
-  const pathB = "e".repeat(1000);
-  const pathC = "f".repeat(1000);
+  const pathA = "d".repeat(2000);
+  const pathB = "e".repeat(2000);
+  const pathC = "f".repeat(2000);
 
   const proc = Bun.spawnSync({
     cmd: [
@@ -74,8 +74,6 @@ testFn("path.posix.resolve with long CWD and multiple relative paths doesn't cra
       `const path = require("node:path");
        const result = path.posix.resolve(${JSON.stringify(pathA)}, ${JSON.stringify(pathB)}, ${JSON.stringify(pathC)});
        const cwd = process.cwd();
-       // The last relative path wins since none are absolute.
-       // Result should be CWD + "/" + pathA + "/" + pathB + "/" + pathC
        const expected = cwd + "/" + ${JSON.stringify(pathA)} + "/" + ${JSON.stringify(pathB)} + "/" + ${JSON.stringify(pathC)};
        if (result !== expected) {
          console.log("FAIL:expected=" + expected.length + ",got=" + result.length);
@@ -100,14 +98,14 @@ testFn("path.posix.relative with long CWD and relative paths doesn't crash", () 
   const baseDir = String(dir);
 
   let currentDir = baseDir;
-  const segmentName = "r".repeat(200);
-  for (let i = 0; i < 15; i++) {
+  const segmentName = "r".repeat(80);
+  for (let i = 0; i < 8; i++) {
     currentDir = path.join(currentDir, segmentName);
   }
   fs.mkdirSync(currentDir, { recursive: true });
 
-  const fromPath = "x".repeat(1000);
-  const toPath = "y".repeat(1000);
+  const fromPath = "x".repeat(2000);
+  const toPath = "y".repeat(2000);
 
   const proc = Bun.spawnSync({
     cmd: [
@@ -115,7 +113,6 @@ testFn("path.posix.relative with long CWD and relative paths doesn't crash", () 
       "-e",
       `const path = require("node:path");
        const result = path.posix.relative(${JSON.stringify(fromPath)}, ${JSON.stringify(toPath)});
-       // from and to resolve to different dirs under CWD, so relative should include ".."
        if (!result.includes("..")) {
          console.log("FAIL:no ..");
          process.exit(1);

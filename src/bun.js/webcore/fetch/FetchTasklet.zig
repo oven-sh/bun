@@ -78,6 +78,10 @@ pub const FetchTasklet = struct {
         bun.debugAssert(count > 0);
 
         if (count == 1) {
+            if (this.javascript_vm.isShuttingDown()) {
+                this.deinit() catch |err| switch (err) {};
+                return;
+            }
             // this is really unlikely to happen, but can happen
             // lets make sure that we always call deinit from main thread
 
@@ -231,6 +235,7 @@ pub const FetchTasklet = struct {
             response.unref();
         }
 
+        this.clearStreamCancelHandler();
         this.readable_stream_ref.deinit();
 
         this.scheduled_response_buffer.deinit();
@@ -363,6 +368,7 @@ pub const FetchTasklet = struct {
                         bun.default_allocator,
                     );
                 } else {
+                    this.clearStreamCancelHandler();
                     var prev = this.readable_stream_ref;
                     this.readable_stream_ref = .{};
                     defer prev.deinit();
@@ -865,6 +871,25 @@ pub const FetchTasklet = struct {
         };
     }
 
+    /// Clear the cancel_handler on the ByteStream.Source to prevent use-after-free.
+    /// Must be called before releasing readable_stream_ref, while the Strong ref
+    /// still keeps the ReadableStream (and thus the ByteStream.Source) alive.
+    fn clearStreamCancelHandler(this: *FetchTasklet) void {
+        if (this.readable_stream_ref.get(this.global_this)) |readable| {
+            if (readable.ptr == .Bytes) {
+                const source = readable.ptr.Bytes.parent();
+                source.cancel_handler = null;
+                source.cancel_ctx = null;
+            }
+        }
+    }
+
+    fn onStreamCancelledCallback(ctx: ?*anyopaque) void {
+        const this = bun.cast(*FetchTasklet, ctx.?);
+        if (this.ignore_data) return;
+        this.ignoreRemainingResponseBody();
+    }
+
     fn toBodyValue(this: *FetchTasklet) Body.Value {
         if (this.getAbortError()) |err| {
             return .{ .Error = err };
@@ -877,6 +902,7 @@ pub const FetchTasklet = struct {
                     .global = this.global_this,
                     .onStartStreaming = FetchTasklet.onStartStreamingHTTPResponseBodyCallback,
                     .onReadableStreamAvailable = FetchTasklet.onReadableStreamAvailable,
+                    .onStreamCancelled = FetchTasklet.onStreamCancelledCallback,
                 },
             };
             return response;
@@ -930,7 +956,8 @@ pub const FetchTasklet = struct {
         // we should not keep the process alive if we are ignoring the body
         const vm = this.javascript_vm;
         this.poll_ref.unref(vm);
-        // clean any remaining refereces
+        // clean any remaining references
+        this.clearStreamCancelHandler();
         this.readable_stream_ref.deinit();
         this.response.deinit();
 
@@ -1132,6 +1159,7 @@ pub const FetchTasklet = struct {
 
     /// This is ALWAYS called from the http thread and we cannot touch the buffer here because is locked
     pub fn onWriteRequestDataDrain(this: *FetchTasklet) void {
+        if (this.javascript_vm.isShuttingDown()) return;
         // ref until the main thread callback is called
         this.ref();
         this.javascript_vm.eventLoop().enqueueTaskConcurrent(jsc.ConcurrentTask.fromCallback(this, FetchTasklet.resumeRequestDataStream));
@@ -1360,7 +1388,8 @@ pub const FetchTasklet = struct {
                 return;
             }
         }
-
+        // will deinit when done with the http client (when is_done = true)
+        if (task.javascript_vm.isShuttingDown()) return;
         task.javascript_vm.eventLoop().enqueueTaskConcurrent(task.concurrent_task.from(task, .manual_deinit));
     }
 };

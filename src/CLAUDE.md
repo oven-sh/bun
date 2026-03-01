@@ -17,14 +17,15 @@ Conventions:
 
 | Instead of                                                   | Use                                  |
 | ------------------------------------------------------------ | ------------------------------------ |
-| `std.fs.File`                                                | `bun.sys.File`                       |
+| `std.base64`                                                 | `bun.base64`                         |
+| `std.crypto.sha{...}`                                        | `bun.sha.Hashers.{...}`              |
 | `std.fs.cwd()`                                               | `bun.FD.cwd()`                       |
-| `std.posix.open/read/write/stat/mkdir/unlink/rename/symlink` | `bun.sys.*` equivalents              |
+| `std.fs.File`                                                | `bun.sys.File`                       |
 | `std.fs.path.join/dirname/basename`                          | `bun.path.join/dirname/basename`     |
 | `std.mem.eql/indexOf/startsWith` (for strings)               | `bun.strings.eql/indexOf/startsWith` |
 | `std.posix.O` / `std.posix.mode_t` / `std.posix.fd_t`        | `bun.O` / `bun.Mode` / `bun.FD`      |
+| `std.posix.open/read/write/stat/mkdir/unlink/rename/symlink` | `bun.sys.*` equivalents              |
 | `std.process.Child`                                          | `bun.spawnSync`                      |
-| `catch bun.outOfMemory()`                                    | `bun.handleOom(...)`                 |
 
 ## `bun.sys` — System Calls (`src/sys.zig`)
 

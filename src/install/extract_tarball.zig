@@ -25,21 +25,23 @@ pub inline fn run(this: *const ExtractTarball, log: *logger.Log, bytes: []const 
     }
     var result = try this.extract(log, bytes);
 
-    // Compute and store SHA-512 integrity hash for GitHub tarballs so the
-    // lockfile can pin the exact tarball content. On subsequent installs the
-    // hash stored in the lockfile is forwarded via this.integrity and verified
+    // Compute and store SHA-512 integrity hash for GitHub / URL / local tarballs
+    // so the lockfile can pin the exact tarball content. On subsequent installs
+    // the hash stored in the lockfile is forwarded via this.integrity and verified
     // above, preventing a compromised server from silently swapping the tarball.
-    if (this.resolution.tag == .github) {
-        if (this.integrity.tag.isSupported()) {
-            // Re-installing with an existing lockfile: integrity was already
-            // verified above, propagate the known value to ExtractData so that
-            // the lockfile keeps it on re-serialisation.
-            result.integrity = this.integrity;
-        } else {
-            // First install (no integrity in the lockfile yet): compute it.
-            result.integrity = .{ .tag = .sha512 };
-            Crypto.SHA512.hash(bytes, result.integrity.value[0..Crypto.SHA512.digest]);
-        }
+    switch (this.resolution.tag) {
+        .github, .remote_tarball, .local_tarball => {
+            if (this.integrity.tag.isSupported()) {
+                // Re-installing with an existing lockfile: integrity was already
+                // verified above, propagate the known value to ExtractData so that
+                // the lockfile keeps it on re-serialisation.
+                result.integrity = this.integrity;
+            } else {
+                // First install (no integrity in the lockfile yet): compute it.
+                result.integrity = Integrity.forBytes(bytes);
+            }
+        },
+        else => {},
     }
 
     return result;
@@ -566,7 +568,6 @@ const string = []const u8;
 
 const Npm = @import("./npm.zig");
 const std = @import("std");
-const Crypto = @import("../sha.zig").Hashers;
 const FileSystem = @import("../fs.zig").FileSystem;
 const Integrity = @import("./integrity.zig").Integrity;
 const Resolution = @import("./resolution.zig").Resolution;

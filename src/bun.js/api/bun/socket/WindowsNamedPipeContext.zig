@@ -187,7 +187,7 @@ pub fn create(globalThis: *jsc.JSGlobalObject, socket: SocketType) *WindowsNamed
     });
 
     // named_pipe owns the pipe (PipeWriter owns the pipe and will close and deinit it)
-    this.named_pipe = uws.WindowsNamedPipe.from(bun.handleOom(bun.default_allocator.create(uv.Pipe)), .{
+    this.named_pipe = uws.WindowsNamedPipe.from(bun.new(uv.Pipe, std.mem.zeroes(uv.Pipe)), .{
         .ctx = this,
         .ref_ctx = @ptrCast(&WindowsNamedPipeContext.ref),
         .deref_ctx = @ptrCast(&WindowsNamedPipeContext.deref),
@@ -287,6 +287,8 @@ pub fn deinit(this: *WindowsNamedPipeContext) void {
     this.named_pipe.deinit();
     bun.destroy(this);
 }
+
+const std = @import("std");
 
 const bun = @import("bun");
 const Output = bun.Output;

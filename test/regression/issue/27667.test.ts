@@ -12,7 +12,9 @@ test.skipIf(!isLinux)(
 
     // The test script watches the directory, creates enough files to overflow
     // the 128-event buffer, then verifies the watcher continues to work by
-    // detecting a final sentinel file write.
+    // detecting a final sentinel file write. Orchestration is condition-driven:
+    // a polling write establishes watcher readiness, then the burst + sentinel
+    // follow, and a promise race enforces the timeout.
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -20,36 +22,56 @@ test.skipIf(!isLinux)(
         `
 const fs = require("fs");
 const path = require("path");
-
 const dir = process.argv[1];
 
-const watcher = fs.watch(dir, { recursive: true }, (event, filename) => {
-  if (filename === "sentinel.txt") {
-    watcher.close();
-    process.exit(0);
-  }
+const watcher = fs.watch(dir, { recursive: true });
+
+// Condition-driven: resolve when sentinel is observed.
+const sentinelDetected = new Promise((resolve) => {
+  watcher.on("change", (event, filename) => {
+    if (filename === "sentinel.txt") {
+      watcher.close();
+      resolve();
+    }
+  });
 });
 
-// Wait a moment for the watcher to be ready, then create a burst of files
-// to overflow the inotify read buffer (>128 events).
-setTimeout(() => {
-  for (let i = 0; i < 200; i++) {
-    fs.writeFileSync(path.join(dir, "file" + i + ".txt"), "data" + i);
-  }
+// Condition-driven: resolve on the first watcher event (readiness signal).
+const watcherReady = new Promise((resolve) => {
+  watcher.once("change", () => resolve());
+});
 
-  // After the burst, write a sentinel file. If read_ptr is not reset,
-  // the watcher will be stuck re-processing stale events and will never
-  // see this file, causing the test to time out.
-  setTimeout(() => {
-    fs.writeFileSync(path.join(dir, "sentinel.txt"), "done");
-  }, 500);
-}, 200);
+// Poll-write a trigger file until the watcher reports readiness.
+const interval = setInterval(() => {
+  fs.writeFileSync(path.join(dir, "trigger.txt"), String(Date.now()));
+}, 20);
 
-// Safety timeout - if the sentinel is not detected, the watcher is stuck.
-setTimeout(() => {
-  watcher.close();
-  process.exit(1);
-}, 10000);
+await watcherReady;
+clearInterval(interval);
+
+// Burst-write files to overflow the inotify event buffer (>128 events).
+for (let i = 0; i < 200; i++) {
+  fs.writeFileSync(path.join(dir, "burst" + i + ".txt"), "data" + i);
+}
+
+// Yield to the event loop so pending watcher callbacks are processed before
+// writing the sentinel, preventing the sentinel event from being coalesced
+// with the burst events.
+await new Promise((resolve) => setImmediate(resolve));
+
+// Write the sentinel. If read_ptr is not reset after the overflow, the watcher
+// is stuck re-processing stale events and will never observe this file.
+fs.writeFileSync(path.join(dir, "sentinel.txt"), "done");
+
+// Wait for sentinel detection or fail with an explicit timeout.
+await Promise.race([
+  sentinelDetected,
+  new Promise((_, reject) =>
+    setTimeout(() => reject(new Error("timeout: sentinel not detected")), 10000)
+  ),
+]);
+
+console.log("sentinel detected");
 `,
         String(dir),
       ],
@@ -61,6 +83,7 @@ setTimeout(() => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).toBe("");
+    expect(stdout).toBe("sentinel detected\n");
     expect(exitCode).toBe(0);
   },
   15000,

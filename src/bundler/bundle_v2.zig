@@ -4209,13 +4209,18 @@ pub const BundleV2 = struct {
                 });
                 result.ast.import_records = import_records;
 
-                // Set is_export_star_target for barrel optimization
+                // Set is_export_star_target for barrel optimization.
+                // In dev server mode, source_index is not saved on JS import
+                // records, so fall back to resolving via the path map.
+                const path_to_source_index_map = this.pathToSourceIndexMap(result.ast.target);
                 for (result.ast.export_star_import_records) |star_record_idx| {
                     if (star_record_idx < import_records.len) {
                         const star_ir = import_records.slice()[star_record_idx];
-                        if (star_ir.source_index.isValid()) {
-                            graph.input_files.items(.flags)[star_ir.source_index.get()].is_export_star_target = true;
-                        }
+                        const resolved_index = if (star_ir.source_index.isValid())
+                            star_ir.source_index.get()
+                        else
+                            path_to_source_index_map.getPath(&star_ir.path) orelse continue;
+                        graph.input_files.items(.flags)[resolved_index].is_export_star_target = true;
                     }
                 }
 

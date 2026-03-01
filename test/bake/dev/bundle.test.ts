@@ -550,6 +550,69 @@ devTest("barrel optimization: multi-file imports preserved across rebuilds", {
   },
 });
 
+devTest("barrel optimization: export star target not deferred (#27521)", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    // The user imports from consumer-lib, which is a non-barrel package
+    // that imports QueryClient from outer-lib.
+    "index.ts": `
+      import { useQuery } from 'consumer-lib';
+      console.log('result: ' + useQuery());
+    `,
+    // consumer-lib is NOT a barrel — it has real code that uses
+    // QueryClient from outer-lib. This mirrors @refinedev/core
+    // importing QueryClient from @tanstack/react-query.
+    "node_modules/consumer-lib/package.json": JSON.stringify({
+      name: "consumer-lib",
+      version: "1.0.0",
+      main: "./index.js",
+    }),
+    "node_modules/consumer-lib/index.js": `
+      import { QueryClient } from 'outer-lib';
+      export function useQuery() {
+        const client = new QueryClient();
+        return client instanceof QueryClient ? 'PASS' : 'FAIL';
+      }
+    `,
+    // outer-lib is a barrel with sideEffects:false that re-exports
+    // everything from inner-lib via export *. Mirrors @tanstack/react-query.
+    "node_modules/outer-lib/package.json": JSON.stringify({
+      name: "outer-lib",
+      version: "1.0.0",
+      main: "./index.js",
+      sideEffects: false,
+    }),
+    "node_modules/outer-lib/index.js": `
+      export * from 'inner-lib';
+      export { Unrelated } from './unrelated.js';
+    `,
+    "node_modules/outer-lib/unrelated.js": `export const Unrelated = "X";`,
+    // inner-lib is a barrel with sideEffects:false that re-exports
+    // from submodules. Mirrors @tanstack/query-core. Without the fix,
+    // the barrel optimizer defers queryClient.js because it doesn't
+    // know inner-lib is an export-star target (source_index is not
+    // set in dev-server mode), so QueryClient becomes undefined.
+    "node_modules/inner-lib/package.json": JSON.stringify({
+      name: "inner-lib",
+      version: "1.0.0",
+      main: "./index.js",
+      sideEffects: false,
+    }),
+    "node_modules/inner-lib/index.js": `
+      export { QueryClient } from './queryClient.js';
+      export { Other } from './other.js';
+    `,
+    "node_modules/inner-lib/queryClient.js": `
+      export class QueryClient { constructor() { this.ready = true; } }
+    `,
+    "node_modules/inner-lib/other.js": `export const Other = "OTHER";`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("result: PASS");
+  },
+});
+
 devTest("barrel optimization: two export-from blocks pointing to the same source", {
   files: {
     "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),

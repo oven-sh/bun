@@ -201,7 +201,7 @@ test("http2 request.headersDistinct returns object mapping headers to arrays of 
   expect(exitCode).toBe(0);
 });
 
-test("http2 response.headersDistinct returns object mapping headers to arrays of values", async () => {
+test("http2 server verifies headersDistinct contains client-sent custom header", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -209,19 +209,37 @@ test("http2 response.headersDistinct returns object mapping headers to arrays of
       `
       const http2 = require("node:http2");
       const server = http2.createServer((req, res) => {
-        res.setHeader("x-multi", ["val1", "val2"]);
+        const hd = req.headersDistinct;
+
+        // Verify x-custom header is present as an array
+        const xCustom = hd && hd["x-custom"];
+        if (!Array.isArray(xCustom) || !xCustom.some(v => v.includes("test-value"))) {
+          res.writeHead(500);
+          res.end("FAIL: x-custom header incorrect: " + JSON.stringify(xCustom));
+          return;
+        }
+
+        // Verify all values are arrays
+        for (const [key, val] of Object.entries(hd)) {
+          if (!Array.isArray(val)) {
+            res.writeHead(500);
+            res.end("FAIL: value for " + key + " is not an array");
+            return;
+          }
+        }
+
         res.writeHead(200);
-        res.end("hello");
+        res.end("ok");
       });
 
       server.listen(0, () => {
         const port = server.address().port;
         const client = http2.connect("http://localhost:" + port);
-        const req = client.request({ ":path": "/" });
+        const req = client.request({ ":path": "/", "x-custom": "test-value" });
         let data = "";
         req.on("data", (chunk) => data += chunk);
         req.on("end", () => {
-          console.log("ok");
+          console.log(data);
           client.close();
           server.close();
         });

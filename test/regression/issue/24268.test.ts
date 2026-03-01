@@ -139,3 +139,103 @@ test("response.headersDistinct returns object mapping headers to arrays of value
   expect(stderr.trim()).toBe("");
   expect(exitCode).toBe(0);
 });
+
+test("http2 request.headersDistinct returns object mapping headers to arrays of values", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const http2 = require("node:http2");
+      const server = http2.createServer((req, res) => {
+        const hd = req.headersDistinct;
+        const td = req.trailersDistinct;
+
+        if (typeof hd !== "object" || hd === null) {
+          res.writeHead(500);
+          res.end("headersDistinct is not an object: " + typeof hd);
+          return;
+        }
+
+        if (typeof td !== "object" || td === null) {
+          res.writeHead(500);
+          res.end("trailersDistinct is not an object: " + typeof td);
+          return;
+        }
+
+        for (const [key, val] of Object.entries(hd)) {
+          if (!Array.isArray(val)) {
+            res.writeHead(500);
+            res.end("value for " + key + " is not an array");
+            return;
+          }
+        }
+
+        res.writeHead(200);
+        res.end("ok");
+      });
+
+      server.listen(0, () => {
+        const port = server.address().port;
+        const client = http2.connect("http://localhost:" + port);
+        const req = client.request({ ":path": "/", "x-custom": "test-value" });
+        let data = "";
+        req.on("data", (chunk) => data += chunk);
+        req.on("end", () => {
+          console.log(data);
+          client.close();
+          server.close();
+        });
+        req.end();
+      });
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout.trim()).toBe("ok");
+  expect(stderr.trim()).toBe("");
+  expect(exitCode).toBe(0);
+});
+
+test("http2 response.headersDistinct returns object mapping headers to arrays of values", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const http2 = require("node:http2");
+      const server = http2.createServer((req, res) => {
+        res.setHeader("x-multi", ["val1", "val2"]);
+        res.writeHead(200);
+        res.end("hello");
+      });
+
+      server.listen(0, () => {
+        const port = server.address().port;
+        const client = http2.connect("http://localhost:" + port);
+        const req = client.request({ ":path": "/" });
+        let data = "";
+        req.on("data", (chunk) => data += chunk);
+        req.on("end", () => {
+          console.log("ok");
+          client.close();
+          server.close();
+        });
+        req.end();
+      });
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout.trim()).toBe("ok");
+  expect(stderr.trim()).toBe("");
+  expect(exitCode).toBe(0);
+});

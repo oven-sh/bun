@@ -219,9 +219,10 @@ pub const BundleV2 = struct {
             client_transpiler.options.chunk_naming = bun.options.PathTemplate.chunk.data;
             client_transpiler.options.entry_naming = "./[name]-[hash].[ext]";
 
-            // Avoid setting a public path for --compile since all the assets
-            // will be served relative to the server root.
-            client_transpiler.options.public_path = "";
+            // Use "/" so that asset URLs in HTML are absolute (e.g. "/chunk-abc.js"
+            // instead of "./chunk-abc.js"). Relative paths break when the HTML is
+            // served from a nested route like "/foo/".
+            client_transpiler.options.public_path = "/";
         }
 
         client_transpiler.setLog(this_transpiler.log);

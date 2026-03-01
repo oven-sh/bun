@@ -2334,6 +2334,9 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
         /// Not owned by this struct
         string_refs: []bun.String,
 
+        /// Number of JS object references expected (for bounds validation)
+        jsobjs_len: u32 = 0,
+
         const SubShellKind = enum {
             /// (echo hi; echo hello)
             normal,
@@ -2363,13 +2366,14 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
             delimit_quote: bool,
         };
 
-        pub fn new(alloc: Allocator, src: []const u8, strings_to_escape: []bun.String) @This() {
+        pub fn new(alloc: Allocator, src: []const u8, strings_to_escape: []bun.String, jsobjs_len: u32) @This() {
             return .{
                 .chars = Chars.init(src),
                 .tokens = ArrayList(Token).init(alloc),
                 .strpool = ArrayList(u8).init(alloc),
                 .errors = ArrayList(LexError).init(alloc),
                 .string_refs = strings_to_escape,
+                .jsobjs_len = jsobjs_len,
             };
         }
 
@@ -2400,6 +2404,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                 .word_start = self.word_start,
                 .j = self.j,
                 .string_refs = self.string_refs,
+                .jsobjs_len = self.jsobjs_len,
             };
             sublexer.chars.state = .Normal;
             return sublexer;
@@ -3358,7 +3363,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
         }
 
         fn validateJSObjRefIdx(self: *@This(), idx: usize) bool {
-            if (idx >= std.math.maxInt(u32)) {
+            if (idx >= self.jsobjs_len) {
                 self.add_error("Invalid JS object ref (out of bounds)");
                 return false;
             }
@@ -4129,7 +4134,7 @@ pub const ShellSrcBuilder = struct {
 };
 
 /// Characters that need to escaped
-const SPECIAL_CHARS = [_]u8{ '~', '[', ']', '#', ';', '\n', '*', '{', ',', '}', '`', '$', '=', '(', ')', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '|', '>', '<', '&', '\'', '"', ' ', '\\' };
+const SPECIAL_CHARS = [_]u8{ '~', '[', ']', '#', ';', '\n', '*', '{', ',', '}', '`', '$', '=', '(', ')', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '|', '>', '<', '&', '\'', '"', ' ', '\\', SPECIAL_JS_CHAR };
 const SPECIAL_CHARS_TABLE: bun.bit_set.IntegerBitSet(256) = brk: {
     var table = bun.bit_set.IntegerBitSet(256).initEmpty();
     for (SPECIAL_CHARS) |c| {
@@ -4554,15 +4559,16 @@ pub const TestingAPIs = struct {
         var script = std.array_list.Managed(u8).init(arena.allocator());
         try shellCmdFromJS(globalThis, string_args, &template_args, &jsobjs, &jsstrings, &script, marked_argument_buffer);
 
+        const jsobjs_len: u32 = @intCast(jsobjs.items.len);
         const lex_result = brk: {
             if (bun.strings.isAllASCII(script.items[0..])) {
-                var lexer = LexerAscii.new(arena.allocator(), script.items[0..], jsstrings.items[0..]);
+                var lexer = LexerAscii.new(arena.allocator(), script.items[0..], jsstrings.items[0..], jsobjs_len);
                 lexer.lex() catch |err| {
                     return globalThis.throwError(err, "failed to lex shell");
                 };
                 break :brk lexer.get_result();
             }
-            var lexer = LexerUnicode.new(arena.allocator(), script.items[0..], jsstrings.items[0..]);
+            var lexer = LexerUnicode.new(arena.allocator(), script.items[0..], jsstrings.items[0..], jsobjs_len);
             lexer.lex() catch |err| {
                 return globalThis.throwError(err, "failed to lex shell");
             };

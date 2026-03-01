@@ -515,6 +515,8 @@ pub const TransformTask = struct {
             .path = source.path,
             .virtual_source = &source,
             .replace_exports = this.replace_exports,
+            .experimental_decorators = if (this.tsconfig) |ts| ts.experimental_decorators else false,
+            .emit_decorator_metadata = if (this.tsconfig) |ts| ts.emit_decorator_metadata else false,
         };
 
         const parse_result = this.transpiler.parse(parse_options, null) orelse {
@@ -806,7 +808,8 @@ fn getParseResult(this: *JSTranspiler, allocator: std.mem.Allocator, code: []con
         .virtual_source = source,
         .replace_exports = this.config.runtime.replace_exports,
         .macro_js_ctx = macro_js_ctx,
-        // .allocator = this.
+        .experimental_decorators = if (this.config.tsconfig) |ts| ts.experimental_decorators else false,
+        .emit_decorator_metadata = if (this.config.tsconfig) |ts| ts.emit_decorator_metadata else false,
     };
 
     return this.transpiler.parse(parse_options, null);

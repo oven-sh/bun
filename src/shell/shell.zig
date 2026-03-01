@@ -3246,6 +3246,15 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
         }
 
         fn handleJSStringRef(self: *@This(), bunstr: bun.String) !void {
+            if (bunstr.length() == 0) {
+                // Empty JS string ref: emit a zero-length DoubleQuotedText token directly.
+                // The parser converts this to a quoted_empty atom, preserving the empty arg.
+                // This works regardless of the lexer's current quote state (Normal/Single/Double)
+                // because the \x08 marker is processed before quote-state handling.
+                const pos = self.j;
+                try self.tokens.append(@unionInit(Token, "DoubleQuotedText", .{ .start = pos, .end = pos }));
+                return;
+            }
             try self.appendStringToStrPool(bunstr);
         }
 
@@ -4081,11 +4090,10 @@ pub const ShellSrcBuilder = struct {
         const invalid = (bunstr.isUTF16() and !bun.simdutf.validate.utf16le(bunstr.utf16())) or (bunstr.isUTF8() and !bun.simdutf.validate.utf8(bunstr.byteSlice()));
         if (invalid) return false;
         // Empty interpolated values must still produce an argument (e.g. `${''}` should
-        // pass "" as an arg). Write literal `""` so the lexer sees an empty quoted string.
-        // Only do this for template values (allow_escape=true), not for template string
-        // parts (allow_escape=false), which are the static parts of the template literal.
+        // pass "" as an arg). Route through appendJSStrRef so the \x08 marker is recognized
+        // by the lexer regardless of quote context (e.g. inside single quotes).
         if (allow_escape and bunstr.length() == 0) {
-            try this.outbuf.appendSlice("\"\"");
+            try this.appendJSStrRef(bunstr);
             return true;
         }
         if (allow_escape) {

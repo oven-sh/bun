@@ -42,3 +42,23 @@ test("empty string between non-empty strings", async () => {
     .text();
   expect(JSON.parse(result.trim())).toEqual(["a", "", "b"]);
 });
+
+test("empty interpolation inside single quotes passes empty arg", async () => {
+  const empty = "";
+  const result = await $`${bunExe()} -e "console.log(JSON.stringify(process.argv.slice(1)))" -- ${empty}`
+    .env(bunEnv)
+    .text();
+  expect(JSON.parse(result.trim())).toEqual([""]);
+});
+
+test("tilde with empty double quotes expands to homedir", async () => {
+  const result = await $`echo ~""`.env(bunEnv).text();
+  const homedir = require("os").homedir();
+  expect(result.trim()).toBe(homedir);
+});
+
+test("tilde with empty single quotes expands to homedir", async () => {
+  const result = await $`echo ~''`.env(bunEnv).text();
+  const homedir = require("os").homedir();
+  expect(result.trim()).toBe(homedir);
+});

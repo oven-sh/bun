@@ -196,6 +196,9 @@ pub fn next(this: *Expansion) Yield {
                                     bun.handleOom(this.current_out.insert(0, '~'));
                                 },
                             }
+                        } else if (this.has_quoted_empty) {
+                            // ~"" or ~'' should expand to the home directory
+                            bun.handleOom(this.current_out.appendSlice(homedir.slice()));
                         }
                     }
 

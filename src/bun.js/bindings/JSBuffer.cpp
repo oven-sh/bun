@@ -837,11 +837,27 @@ static JSC::EncodedJSValue jsBufferConstructorFunction_concatBody(JSC::JSGlobalO
     Bun::V::validateArray(throwScope, lexicalGlobalObject, listValue, "list"_s, jsUndefined());
     RETURN_IF_EXCEPTION(throwScope, {});
 
-    auto array = JSC::jsDynamicCast<JSC::JSArray*>(listValue);
-    size_t arrayLength = array->length();
-    if (arrayLength < 1) {
+    // Note: `validateArray` uses `JSC::isArray()` which returns true for Proxy->Array.
+    // `jsDynamicCast<JSArray*>` returns nullptr for Proxy, so we must fall back to
+    // the generic get() path to match Node.js behavior.
+    auto* array = JSC::jsDynamicCast<JSC::JSArray*>(listValue);
+    uint64_t arrayLength64;
+    if (array) [[likely]] {
+        arrayLength64 = array->length();
+    } else {
+        JSValue lengthValue = listValue.get(lexicalGlobalObject, vm.propertyNames->length);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        arrayLength64 = lengthValue.toLength(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(throwScope, {});
+    }
+    if (arrayLength64 < 1) {
         RELEASE_AND_RETURN(throwScope, constructBufferEmpty(lexicalGlobalObject));
     }
+    if (arrayLength64 > std::numeric_limits<unsigned>::max()) [[unlikely]] {
+        throwOutOfMemoryError(lexicalGlobalObject, throwScope);
+        return {};
+    }
+    unsigned arrayLength = static_cast<unsigned>(arrayLength64);
 
     JSValue totalLengthValue = callFrame->argument(1);
 
@@ -857,7 +873,7 @@ static JSC::EncodedJSValue jsBufferConstructorFunction_concatBody(JSC::JSGlobalO
     }
 
     for (unsigned i = 0; i < arrayLength; i++) {
-        JSValue element = array->getIndex(lexicalGlobalObject, i);
+        JSValue element = array ? array->getIndex(lexicalGlobalObject, i) : listValue.get(lexicalGlobalObject, i);
         RETURN_IF_EXCEPTION(throwScope, {});
 
         auto* typedArray = JSC::jsDynamicCast<JSC::JSUint8Array*>(element);

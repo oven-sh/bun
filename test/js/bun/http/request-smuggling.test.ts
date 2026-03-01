@@ -561,6 +561,152 @@ describe("SPILL.TERM - invalid chunk terminators", () => {
   });
 });
 
+describe("chunked encoding size hardening", () => {
+  test("rejects extremely large chunk size hex values", async () => {
+    // Chunk sizes with many hex digits should be rejected by the overflow check.
+    // 'FFFFFFFFFFFFFFFF' sets bits in the overflow-detection region (bits 56-59),
+    // so the parser must return an error.
+    let bodyReadSucceeded = false;
+
+    await using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        try {
+          await req.text();
+          bodyReadSucceeded = true;
+        } catch {
+          // Expected to fail
+        }
+        return new Response("OK");
+      },
+    });
+
+    const client = net.connect(server.port, "127.0.0.1");
+
+    // 16 hex digits all 'F' — sets overflow bits and must be rejected
+    const maliciousRequest =
+      "POST / HTTP/1.1\r\n" +
+      "Host: localhost\r\n" +
+      "Transfer-Encoding: chunked\r\n" +
+      "\r\n" +
+      "FFFFFFFFFFFFFFFF\r\n" +
+      "data\r\n" +
+      "0\r\n" +
+      "\r\n";
+
+    await new Promise<void>(resolve => {
+      let responseData = "";
+      client.on("error", () => resolve());
+      client.on("data", data => {
+        responseData += data.toString();
+      });
+      client.on("close", () => {
+        expect(responseData).toContain("HTTP/1.1 400");
+        expect(bodyReadSucceeded).toBe(false);
+        resolve();
+      });
+      client.write(maliciousRequest);
+    });
+  });
+
+  test("large chunk size exceeding 32 bits does not produce empty body", async () => {
+    // '100000000' hex = 2^32 (4294967296). If the chunk size were truncated
+    // to 32 bits, this would become 0, and the +2 for CRLF would make it
+    // look like the end-of-chunks marker (size=2), producing an empty body.
+    // With correct 64-bit handling, the parser treats this as a large
+    // pending chunk — the body read should fail when we close the connection,
+    // because the server is still expecting ~4GB of data.
+    let receivedBody: string | null = null;
+    let bodyError = false;
+
+    const { promise: headersReceived, resolve: onHeadersReceived } = Promise.withResolvers<void>();
+    const { promise: bodyHandled, resolve: bodyDone } = Promise.withResolvers<void>();
+
+    await using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        // Signal that headers have been parsed and the fetch handler entered
+        onHeadersReceived();
+        try {
+          receivedBody = await req.text();
+        } catch {
+          bodyError = true;
+        }
+        bodyDone();
+        return new Response("OK");
+      },
+    });
+
+    const client = net.connect(server.port, "127.0.0.1");
+
+    // Send the chunk header claiming 4GB of data, followed by a few bytes,
+    // then close the connection.
+    const maliciousRequest =
+      "POST / HTTP/1.1\r\n" +
+      "Host: localhost\r\n" +
+      "Transfer-Encoding: chunked\r\n" +
+      "\r\n" +
+      "100000000\r\n" +
+      "AAAA\r\n";
+
+    client.write(maliciousRequest);
+
+    // Wait until the server has parsed headers and entered the fetch handler,
+    // then close the connection to trigger the body error (since we won't send 4GB).
+    await headersReceived;
+    client.end();
+
+    await bodyHandled;
+
+    // With correct 64-bit handling, the body read must fail because we
+    // disconnected before sending 4GB of chunk data.
+    // With truncation to 32-bit zero, the body would be "" with no error.
+    expect(bodyError).toBe(true);
+    expect(receivedBody).toBeNull();
+  });
+
+  test("accepts valid chunk sizes within normal range", async () => {
+    // Normal-sized chunks should still work fine
+    let receivedBody = "";
+
+    await using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        receivedBody = await req.text();
+        return new Response("Success");
+      },
+    });
+
+    const client = net.connect(server.port, "127.0.0.1");
+
+    // Use hex chunk sizes that are perfectly valid
+    const validRequest =
+      "POST / HTTP/1.1\r\n" +
+      "Host: localhost\r\n" +
+      "Transfer-Encoding: chunked\r\n" +
+      "\r\n" +
+      "a\r\n" + // 10 bytes
+      "0123456789\r\n" +
+      "FF\r\n" + // 255 bytes
+      Buffer.alloc(255, "A").toString() +
+      "\r\n" +
+      "0\r\n" +
+      "\r\n";
+
+    await new Promise<void>((resolve, reject) => {
+      client.on("error", reject);
+      client.on("data", data => {
+        const response = data.toString();
+        expect(response).toContain("HTTP/1.1 200");
+        expect(receivedBody).toBe("0123456789" + Buffer.alloc(255, "A").toString());
+        client.end();
+        resolve();
+      });
+      client.write(validRequest);
+    });
+  });
+});
+
 // Tests for strict RFC 7230 HEXDIG validation in chunk size parsing.
 // Chunk sizes must only contain characters from the set [0-9a-fA-F].
 // Non-HEXDIG characters must be rejected to ensure consistent parsing

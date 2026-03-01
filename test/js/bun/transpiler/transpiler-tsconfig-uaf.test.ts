@@ -39,7 +39,7 @@ describe("Transpiler tsconfig lifetime", () => {
       }),
     });
 
-    // Async transform frees tsconfig in TransformTask.deinit
+    // Before this fix, async transform freed tsconfig in TransformTask.deinit
     const result1 = await transpiler.transform("const a: string = 'hello';");
     expect(result1).toContain('const a = "hello"');
 

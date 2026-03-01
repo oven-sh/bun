@@ -702,7 +702,7 @@ endif()
 
 set(ZIG_FLAGS_BUN)
 if(NOT "${REVISION}" STREQUAL "")
-  set(ZIG_FLAGS_BUN ${ZIG_FLAGS_BUN} -Dsha=${REVISION})
+  set(ZIG_FLAGS_BUN ${ZIG_FLAGS_BUN} "-Dsha=${REVISION}")
 endif()
 
 register_command(
@@ -728,10 +728,10 @@ register_command(
       -Denable_tinycc=$<IF:$<BOOL:${ENABLE_TINYCC}>,true,false>
       -Duse_mimalloc=$<IF:$<BOOL:${USE_MIMALLOC_AS_DEFAULT_ALLOCATOR}>,true,false>
       -Dllvm_codegen_threads=${LLVM_ZIG_CODEGEN_THREADS}
-      -Dversion=${VERSION}
-      -Dreported_nodejs_version=${NODEJS_VERSION}
-      -Dcanary=${CANARY_REVISION}
-      -Dcodegen_path=${CODEGEN_PATH}
+      "-Dversion=${VERSION}"
+      "-Dreported_nodejs_version=${NODEJS_VERSION}"
+      "-Dcanary=${CANARY_REVISION}"
+      "-Dcodegen_path=${CODEGEN_PATH}"
       -Dcodegen_embed=$<IF:$<BOOL:${CODEGEN_EMBED}>,true,false>
       --prominent-compile-errors
       --summary all

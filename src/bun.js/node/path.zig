@@ -2283,39 +2283,34 @@ pub fn relativeWindowsJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, 
     };
 }
 
-pub fn relativeJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, allocator: std.mem.Allocator, isWindows: bool, from: []const T, to: []const T) bun.JSError!jsc.JSValue {
-    // Account for CWD (up to MAX_PATH_SIZE) that resolve may prepend to relative paths.
-    const bufLen = @max(from.len + to.len + MAX_PATH_SIZE(T) + 1, PATH_SIZE(T));
-    // +1 for null terminator
-    const buf = bun.handleOom(allocator.alloc(T, bufLen + 1));
-    defer allocator.free(buf);
-    const buf2 = bun.handleOom(allocator.alloc(T, bufLen + 1));
-    defer allocator.free(buf2);
-    const buf3 = bun.handleOom(allocator.alloc(T, bufLen + 1));
-    defer allocator.free(buf3);
-    return if (isWindows) relativeWindowsJS_T(T, globalObject, from, to, buf, buf2, buf3) else relativePosixJS_T(T, globalObject, from, to, buf, buf2, buf3);
-}
-
 pub fn relative(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*]jsc.JSValue, args_len: u16) bun.JSError!jsc.JSValue {
     const from_ptr: jsc.JSValue = if (args_len > 0) args_ptr[0] else .js_undefined;
-    // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     try validateString(globalObject, from_ptr, "from", .{});
     const to_ptr: jsc.JSValue = if (args_len > 1) args_ptr[1] else .js_undefined;
-    // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     try validateString(globalObject, to_ptr, "to", .{});
 
     const fromZigStr = try from_ptr.getZigString(globalObject);
     const toZigStr = try to_ptr.getZigString(globalObject);
     if ((fromZigStr.len + toZigStr.len) == 0) return from_ptr;
 
-    var stack_fallback = std.heap.stackFallback(stack_fallback_size_small, bun.default_allocator);
-    const allocator = stack_fallback.get();
-
-    var fromZigSlice = fromZigStr.toSlice(allocator);
+    const fromZigSlice = fromZigStr.toSlice(bun.default_allocator);
     defer fromZigSlice.deinit();
-    var toZigSlice = toZigStr.toSlice(allocator);
+    const toZigSlice = toZigStr.toSlice(bun.default_allocator);
     defer toZigSlice.deinit();
-    return relativeJS_T(u8, globalObject, allocator, isWindows, fromZigSlice.slice(), toZigSlice.slice());
+
+    const from = fromZigSlice.slice();
+    const to = toZigSlice.slice();
+    const bufLen = @max(from.len + to.len + MAX_PATH_SIZE(u8) + 1, PATH_SIZE(u8)) + 1;
+
+    const cache = &globalObject.bunVM().rareData().path_bufs;
+    const buf = cache.get(0, bufLen);
+    const buf2 = cache.get(1, bufLen);
+    const buf3 = cache.get(2, bufLen);
+
+    return if (isWindows)
+        relativeWindowsJS_T(u8, globalObject, from, to, buf, buf2, buf3)
+    else
+        relativePosixJS_T(u8, globalObject, from, to, buf, buf2, buf3);
 }
 
 /// Based on Node v21.6.1 path.posix.resolve:
@@ -2734,22 +2729,6 @@ pub fn resolveWindowsJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, p
     };
 }
 
-pub fn resolveJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, allocator: std.mem.Allocator, isWindows: bool, paths: []const []const T) bun.JSError!jsc.JSValue {
-    // Adding 8 bytes when Windows for the possible UNC root.
-    var bufLen: usize = if (isWindows) 8 else 0;
-    for (paths) |path| bufLen += if (bufLen > 0 and path.len > 0) path.len + 1 else path.len;
-    // When no path is absolute, the CWD (up to MAX_PATH_SIZE bytes) is prepended
-    // with a separator. Account for this to prevent buffer overflow.
-    bufLen += MAX_PATH_SIZE(T) + 1;
-    bufLen = @max(bufLen, PATH_SIZE(T));
-    // +2 to account for separator and null terminator during path resolution
-    const buf = try allocator.alloc(T, bufLen + 2);
-    defer allocator.free(buf);
-    const buf2 = try allocator.alloc(T, bufLen + 2);
-    defer allocator.free(buf2);
-    return if (isWindows) resolveWindowsJS_T(T, globalObject, paths, buf, buf2) else resolvePosixJS_T(T, globalObject, paths, buf, buf2);
-}
-
 extern "c" fn Process__getCachedCwd(*jsc.JSGlobalObject) jsc.JSValue;
 extern "c" fn PathParsedObject__create(
     *jsc.JSGlobalObject,
@@ -2761,14 +2740,12 @@ extern "c" fn PathParsedObject__create(
 ) jsc.JSValue;
 
 pub fn resolve(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*]jsc.JSValue, args_len: u16) bun.JSError!jsc.JSValue {
+    // Arena handles the variadic toOwnedSlice path string copies.
     var arena = bun.ArenaAllocator.init(bun.default_allocator);
     defer arena.deinit();
+    const arena_alloc = arena.allocator();
 
-    var stack_fallback = std.heap.stackFallback(stack_fallback_size_large, arena.allocator());
-    const allocator = stack_fallback.get();
-
-    var paths_buf = try allocator.alloc(string, args_len);
-    defer allocator.free(paths_buf);
+    var paths_buf = bun.handleOom(arena_alloc.alloc(string, args_len));
     var paths_offset: usize = args_len;
     var resolved_root = false;
 
@@ -2790,7 +2767,7 @@ pub fn resolve(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*]
         }
 
         paths_offset -= 1;
-        paths_buf[paths_offset] = try path_str.toOwnedSlice(allocator);
+        paths_buf[paths_offset] = bun.handleOom(path_str.toOwnedSlice(arena_alloc));
 
         if (!isWindows) {
             if (path_str.charAt(0) == CHAR_FORWARD_SLASH) {
@@ -2803,19 +2780,28 @@ pub fn resolve(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*]
 
     if (comptime Environment.isPosix) {
         if (!isWindows) {
-            // Micro-optimization #1: avoid creating a new string when passing no arguments or only empty strings.
             if (paths.len == 0) {
                 return Process__getCachedCwd(globalObject);
-            }
-
-            // Micro-optimization #2: path.resolve(".") and path.resolve("./") === process.cwd()
-            else if (paths.len == 1 and (strings.eqlComptime(paths[0], ".") or strings.eqlComptime(paths[0], "./"))) {
+            } else if (paths.len == 1 and (strings.eqlComptime(paths[0], ".") or strings.eqlComptime(paths[0], "./"))) {
                 return Process__getCachedCwd(globalObject);
             }
         }
     }
 
-    return resolveJS_T(u8, globalObject, allocator, isWindows, paths);
+    // Work buffers from RareData cache (lazily allocated, reused across calls).
+    var bufLen: usize = if (isWindows) 8 else 0;
+    for (paths) |p| bufLen += if (bufLen > 0 and p.len > 0) p.len + 1 else p.len;
+    bufLen += MAX_PATH_SIZE(u8) + 1;
+    bufLen = @max(bufLen, PATH_SIZE(u8)) + 2;
+
+    const cache = &globalObject.bunVM().rareData().path_bufs;
+    const buf = cache.get(0, bufLen);
+    const buf2 = cache.get(1, bufLen);
+
+    return if (isWindows)
+        resolveWindowsJS_T(u8, globalObject, paths, buf, buf2)
+    else
+        resolvePosixJS_T(u8, globalObject, paths, buf, buf2);
 }
 
 /// Based on Node v21.6.1 path.win32.toNamespacedPath:
@@ -2902,38 +2888,26 @@ pub fn toNamespacedPathWindowsJS_T(comptime T: type, globalObject: *jsc.JSGlobal
     };
 }
 
-pub fn toNamespacedPathJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, allocator: std.mem.Allocator, isWindows: bool, path: []const T) bun.JSError!jsc.JSValue {
-    if (!isWindows or path.len == 0) return bun.String.createUTF8ForJS(globalObject, path);
-    // Account for CWD (up to MAX_PATH_SIZE) that resolve may prepend to relative paths.
-    const bufLen = @max(path.len + MAX_PATH_SIZE(T) + 1, PATH_SIZE(T));
-    // +8 for possible UNC prefix, +1 for null terminator
-    const buf = try allocator.alloc(T, bufLen + 8 + 1);
-    defer allocator.free(buf);
-    const buf2 = try allocator.alloc(T, bufLen + 8 + 1);
-    defer allocator.free(buf2);
-    return toNamespacedPathWindowsJS_T(T, globalObject, path, buf, buf2);
-}
-
 pub fn toNamespacedPath(globalObject: *jsc.JSGlobalObject, isWindows: bool, args_ptr: [*]jsc.JSValue, args_len: u16) bun.JSError!jsc.JSValue {
     if (args_len == 0) return .js_undefined;
-    var path_ptr = args_ptr[0];
+    const path_ptr = args_ptr[0];
 
-    // Based on Node v21.6.1 path.win32.toNamespacedPath and path.posix.toNamespacedPath:
-    // https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L624
-    // https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1269
-    //
     // Act as an identity function for non-string values and non-Windows platforms.
     if (!isWindows or !path_ptr.isString()) return path_ptr;
     const pathZStr = try path_ptr.getZigString(globalObject);
-    const len = pathZStr.len;
-    if (len == 0) return path_ptr;
+    if (pathZStr.len == 0) return path_ptr;
 
-    var stack_fallback = std.heap.stackFallback(stack_fallback_size_small, bun.default_allocator);
-    const allocator = stack_fallback.get();
-
-    const pathZSlice = pathZStr.toSlice(allocator);
+    const pathZSlice = pathZStr.toSlice(bun.default_allocator);
     defer pathZSlice.deinit();
-    return toNamespacedPathJS_T(u8, globalObject, allocator, isWindows, pathZSlice.slice());
+    const path = pathZSlice.slice();
+
+    const bufLen = @max(path.len + MAX_PATH_SIZE(u8) + 1, PATH_SIZE(u8)) + 8 + 1;
+
+    const cache = &globalObject.bunVM().rareData().path_bufs;
+    const buf = cache.get(0, bufLen);
+    const buf2 = cache.get(1, bufLen);
+
+    return toNamespacedPathWindowsJS_T(u8, globalObject, path, buf, buf2);
 }
 
 comptime {

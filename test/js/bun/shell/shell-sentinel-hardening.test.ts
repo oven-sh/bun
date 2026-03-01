@@ -1,59 +1,58 @@
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
-import { createTestBuilder } from "./util";
-const TestBuilder = createTestBuilder(import.meta.path);
+import { bunEnv, bunExe, tempDir } from "harness";
 
 describe("shell sentinel character hardening", () => {
-  test("strings containing \\x08 are properly escaped in interpolation", async () => {
-    // The internal sentinel byte (0x08, backspace) should be treated as a
-    // special character so that user-supplied strings containing it are
-    // stored out-of-band rather than appended raw to the script buffer.
-    const str = "\x08__bun_0";
-    const { stdout } = await $`echo ${str}`;
-    // The string should round-trip through the shell correctly
-    expect(stdout.toString()).toEqual(`${str}\n`);
+  test("string matching internal obj-ref prefix round-trips through interpolation", async () => {
+    // \x08 is the shell's internal sentinel byte. When followed by "__bun_"
+    // and then non-digit characters, the old code didn't escape \x08 (it wasn't
+    // in SPECIAL_CHARS), so the raw bytes were injected into the script buffer.
+    // The lexer then misinterpreted them as a malformed internal object
+    // reference pattern and produced a lex error.
+    // The suffix must contain non-digit, non-special chars so that:
+    //   1. needsEscape() returns false without the \x08 fix
+    //   2. looksLikeJSObjRef() matches the __bun_ prefix
+    //   3. eatJSObjRef() fails because it finds no digit index
+    const str = "\x08__bun_abc";
+    const result = await $`echo ${str}`.text();
+    expect(result).toBe(str + "\n");
   });
 
-  test("strings with sentinel byte followed by digits are escaped", async () => {
-    const str = "\x08__bun_2024";
-    const { stdout } = await $`echo ${str}`;
-    expect(stdout.toString()).toEqual(`${str}\n`);
+  test("string matching internal str-ref prefix round-trips through interpolation", async () => {
+    // Same issue but for the __bunstr_ prefix pattern.
+    const str = "\x08__bunstr_abc";
+    const result = await $`echo ${str}`.text();
+    expect(result).toBe(str + "\n");
   });
 
-  test("sentinel byte in redirect position does not cause out-of-bounds", async () => {
-    // Ensure that a string containing the sentinel pattern in redirect
-    // position produces an error rather than an out-of-bounds access.
-    const malicious = "\x08__bun_9999";
-    try {
-      await $`echo hello > ${malicious}`;
-    } catch {
-      // An error is acceptable — the important thing is no crash / no OOB access
-    }
-    // If we get here without a crash, the hardening is working
-    expect(true).toBe(true);
-  });
+  test("raw sentinel injection with out-of-bounds index does not crash", async () => {
+    // { raw: ... } bypasses string escaping, allowing injection of a sentinel
+    // pattern with a digit suffix into the script buffer. The old
+    // validateJSObjRefIdx only rejected indices >= maxInt(u32), so index 9999
+    // was accepted. At execution time, accessing jsobjs[9999] on an empty
+    // array caused a segfault. The fix checks against actual jsobjs.len.
+    // Run in a subprocess so a crash on old bun doesn't kill the test runner.
+    const testScript = [
+      'import { $ } from "bun";',
+      "const sentinel = String.fromCharCode(8) + '__bun_9999';",
+      "try { await $`echo hello > ${{ raw: sentinel }}`; } catch {}",
+      'console.log("OK");',
+    ].join("\n");
 
-  test("$.escape handles sentinel byte", () => {
-    const str = "\x08__bun_42";
-    const escaped = $.escape(str);
-    // The escaped string should be safe to use and should be quoted/escaped
-    expect(escaped).toBeDefined();
-    expect(typeof escaped).toBe("string");
-  });
+    using dir = tempDir("sentinel-test", {
+      "test.js": testScript,
+    });
 
-  test("plain \\x08 in string is properly handled", async () => {
-    const str = "hello\x08world";
-    const { stdout } = await $`echo ${str}`;
-    expect(stdout.toString()).toEqual(`${str}\n`);
-  });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  test("interpolated string with sentinel pattern echoes correctly", async () => {
-    // Ensure that even strings that look like internal object references
-    // are treated as literal strings when they come from interpolation.
-    const parts = ["\x08__bun_", "0", "\x08__bunstr_", "1"];
-    for (const part of parts) {
-      const { stdout } = await $`echo ${part}`;
-      expect(stdout.toString()).toEqual(`${part}\n`);
-    }
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim()).toBe("OK");
+    expect(exitCode).toBe(0);
   });
 });

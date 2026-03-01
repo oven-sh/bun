@@ -719,4 +719,76 @@ describe("MDX direct serve mode", () => {
     expect(js).toContain("Enabled checks:");
     expect(js).not.toContain("MDXE");
   });
+
+  test("relative imports resolve from original file location", async () => {
+    using dir = tempDir("mdx-relative-import", {
+      "src/index.mdx": `
+import { Greeting } from '../components/Greeting';
+
+# Hello
+
+<Greeting name="World" />
+`,
+      "components/Greeting.tsx": `export function Greeting({ name }: { name: string }) { return <span>Hello, {name}!</span>; }`,
+    });
+    linkNodeModules(String(dir));
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "src/index.mdx", "--port=0"],
+      cwd: String(dir),
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const output = await readUntil(proc, text => URL_REGEX.test(text));
+    const urlMatch = output.match(URL_REGEX);
+    expect(urlMatch).not.toBeNull();
+
+    const response = await fetch(urlMatch![1]);
+    expect(response.status).toBe(200);
+    const html = await response.text();
+    const scriptMatch = html.match(/<script type="module"[^>]*src="([^"]+)"/);
+    expect(scriptMatch).not.toBeNull();
+    const scriptUrl = new URL(scriptMatch![1], urlMatch![1]).toString();
+    const scriptRes = await fetch(scriptUrl);
+    expect(scriptRes.status).toBe(200);
+    const js = await scriptRes.text();
+    expect(js).toContain("Hello,");
+  });
+
+  test("sibling file imports resolve from original file location", async () => {
+    using dir = tempDir("mdx-sibling-import", {
+      "index.mdx": `
+import { version } from './config';
+
+# Version: {version}
+`,
+      "config.ts": `export const version = "1.0.0";`,
+    });
+    linkNodeModules(String(dir));
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.mdx", "--port=0"],
+      cwd: String(dir),
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const output = await readUntil(proc, text => URL_REGEX.test(text));
+    const urlMatch = output.match(URL_REGEX);
+    expect(urlMatch).not.toBeNull();
+
+    const response = await fetch(urlMatch![1]);
+    expect(response.status).toBe(200);
+    const html = await response.text();
+    const scriptMatch = html.match(/<script type="module"[^>]*src="([^"]+)"/);
+    expect(scriptMatch).not.toBeNull();
+    const scriptUrl = new URL(scriptMatch![1], urlMatch![1]).toString();
+    const scriptRes = await fetch(scriptUrl);
+    expect(scriptRes.status).toBe(200);
+    const js = await scriptRes.text();
+    expect(js).toContain("1.0.0");
+  });
 });

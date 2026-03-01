@@ -2,13 +2,6 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 test("request.headersDistinct returns object mapping headers to arrays of values", async () => {
-  await using server = Bun.serve({
-    port: 0,
-    fetch(req) {
-      return new Response("ok");
-    },
-  });
-
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -74,6 +67,7 @@ test("request.headersDistinct returns object mapping headers to arrays of values
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout.trim()).toBe("ok");
+  expect(stderr.trim()).toBe("");
   expect(exitCode).toBe(0);
 });
 
@@ -131,5 +125,6 @@ test("response.headersDistinct returns object mapping headers to arrays of value
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout.trim()).toBe("ok");
+  expect(stderr.trim()).toBe("");
   expect(exitCode).toBe(0);
 });

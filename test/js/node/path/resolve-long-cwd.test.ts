@@ -1,9 +1,13 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import fs from "node:fs";
 import path from "node:path";
 
-test("path.posix.resolve with long CWD and relative path doesn't crash", () => {
+// These tests exercise posix path resolution with long CWDs. On Windows CI the
+// profile binary isn't always available, and the bug is posix-specific anyway.
+const testFn = isWindows ? test.skip : test;
+
+testFn("path.posix.resolve with long CWD and relative path doesn't crash", () => {
   // Regression test: buffer overflow when CWD + relative_path > PATH_SIZE.
   // The buffer in resolveJS_T didn't account for the CWD that resolvePosixT
   // prepends when all paths are relative.
@@ -48,7 +52,7 @@ test("path.posix.resolve with long CWD and relative path doesn't crash", () => {
   expect(proc.exitCode).toBe(0);
 });
 
-test("path.posix.resolve with long CWD and multiple relative paths doesn't crash", () => {
+testFn("path.posix.resolve with long CWD and multiple relative paths doesn't crash", () => {
   using dir = tempDir("resolve-long-cwd-multi", {});
   const baseDir = String(dir);
 
@@ -91,7 +95,7 @@ test("path.posix.resolve with long CWD and multiple relative paths doesn't crash
   expect(proc.exitCode).toBe(0);
 });
 
-test("path.posix.relative with long CWD and relative paths doesn't crash", () => {
+testFn("path.posix.relative with long CWD and relative paths doesn't crash", () => {
   using dir = tempDir("relative-long-cwd", {});
   const baseDir = String(dir);
 

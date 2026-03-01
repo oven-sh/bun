@@ -44,61 +44,64 @@ tls_default_ciphers: ?[:0]const u8 = null,
 
 #spawn_sync_event_loop: bun.ptr.Owned(?*SpawnSyncEventLoop) = .initNull(),
 
-path_bufs: PathBufs = .{},
+path_buf: PathBuf = .{},
 
-/// Reusable work buffers for path.resolve, path.relative, and path.toNamespacedPath.
+/// Reusable heap buffer for path.resolve, path.relative, and path.toNamespacedPath.
 /// Three fixed-size tiers, lazily allocated on first use. Safe because JS is single-threaded.
-pub const PathBufs = struct {
+/// The buffer is used via a FixedBufferAllocator as the backing for a stackFallback.
+pub const PathBuf = struct {
     const S = bun.MAX_PATH_BYTES;
     const SmallBuf = [2 * S]u8;
     const MediumBuf = [8 * S]u8;
     const LargeBuf = [32 * S]u8;
 
-    small: [3]?*SmallBuf = .{ null, null, null },
-    medium: [3]?*MediumBuf = .{ null, null, null },
-    large: [3]?*LargeBuf = .{ null, null, null },
+    small: ?*SmallBuf = null,
+    medium: ?*MediumBuf = null,
+    large: ?*LargeBuf = null,
 
-    /// Returns a cached buffer of at least `min_len` bytes for the given index (0-2).
-    /// Falls back to a heap allocation if `min_len` exceeds the largest tier.
-    pub fn get(self: *PathBufs, index: usize, min_len: usize) []u8 {
-        if (min_len <= @as(usize, 2 * S)) {
-            const ptr = self.small[index] orelse blk: {
-                self.small[index] = bun.handleOom(bun.default_allocator.create(SmallBuf));
-                break :blk self.small[index].?;
+    /// Returns an allocator backed by the smallest tier that fits `min_len`,
+    /// falling back to `fallback` when the fixed buffer is exhausted.
+    pub fn get(self: *PathBuf, min_len: usize, fallback: std.mem.Allocator) std.heap.StackFallbackAllocator(0) {
+        var fba: std.heap.FixedBufferAllocator = undefined;
+        if (min_len <= 2 * S) {
+            const ptr = self.small orelse blk: {
+                self.small = bun.handleOom(bun.default_allocator.create(SmallBuf));
+                break :blk self.small.?;
             };
-            return ptr;
-        }
-        if (min_len <= @as(usize, 8 * S)) {
-            const ptr = self.medium[index] orelse blk: {
-                self.medium[index] = bun.handleOom(bun.default_allocator.create(MediumBuf));
-                break :blk self.medium[index].?;
+            fba = std.heap.FixedBufferAllocator.init(ptr);
+        } else if (min_len <= 8 * S) {
+            const ptr = self.medium orelse blk: {
+                self.medium = bun.handleOom(bun.default_allocator.create(MediumBuf));
+                break :blk self.medium.?;
             };
-            return ptr;
-        }
-        if (min_len <= @as(usize, 32 * S)) {
-            const ptr = self.large[index] orelse blk: {
-                self.large[index] = bun.handleOom(bun.default_allocator.create(LargeBuf));
-                break :blk self.large[index].?;
+            fba = std.heap.FixedBufferAllocator.init(ptr);
+        } else {
+            const ptr = self.large orelse blk: {
+                self.large = bun.handleOom(bun.default_allocator.create(LargeBuf));
+                break :blk self.large.?;
             };
-            return ptr;
+            fba = std.heap.FixedBufferAllocator.init(ptr);
         }
-        // Exceeds all tiers — heap allocate (caller must not cache this).
-        return bun.handleOom(bun.default_allocator.alloc(u8, min_len));
+        return .{
+            .buffer = undefined,
+            .fallback_allocator = fallback,
+            .fixed_buffer_allocator = fba,
+        };
     }
 
-    pub fn deinit(self: *PathBufs) void {
-        for (&self.small) |*s| if (s.*) |p| {
+    pub fn deinit(self: *PathBuf) void {
+        if (self.small) |p| {
             bun.default_allocator.destroy(p);
-            s.* = null;
-        };
-        for (&self.medium) |*m| if (m.*) |p| {
+            self.small = null;
+        }
+        if (self.medium) |p| {
             bun.default_allocator.destroy(p);
-            m.* = null;
-        };
-        for (&self.large) |*l| if (l.*) |p| {
+            self.medium = null;
+        }
+        if (self.large) |p| {
             bun.default_allocator.destroy(p);
-            l.* = null;
-        };
+            self.large = null;
+        }
     }
 };
 
@@ -610,7 +613,7 @@ pub fn deinit(this: *RareData) void {
     }
 
     this.cleanup_hooks.clearAndFree(bun.default_allocator);
-    this.path_bufs.deinit();
+    this.path_buf.deinit();
 
     if (this.websocket_deflate) |deflate| {
         this.websocket_deflate = null;

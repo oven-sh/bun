@@ -111,6 +111,14 @@ test("response.headersDistinct returns object mapping headers to arrays of value
             }
           }
 
+          // x-multi header should be present as an array
+          const xMulti = hd["x-multi"];
+          if (!Array.isArray(xMulti) || xMulti.length < 1 || !xMulti.some(v => v.includes("val1") && v.includes("val2"))) {
+            console.log("FAIL: x-multi header incorrect: " + JSON.stringify(xMulti));
+            server.close();
+            return;
+          }
+
           console.log("ok");
           res.resume();
           res.on("end", () => server.close());

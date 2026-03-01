@@ -59,34 +59,25 @@ pub const PathBuf = struct {
     medium: ?*MediumBuf = null,
     large: ?*LargeBuf = null,
 
-    /// Returns an allocator backed by the smallest tier that fits `min_len`,
-    /// falling back to `fallback` when the fixed buffer is exhausted.
-    pub fn get(self: *PathBuf, min_len: usize, fallback: std.mem.Allocator) std.heap.StackFallbackAllocator(0) {
-        var fba: std.heap.FixedBufferAllocator = undefined;
-        if (min_len <= 2 * S) {
-            const ptr = self.small orelse blk: {
+    /// Returns a StackFallbackAllocator backed by the smallest tier that
+    /// fits `min_len`, falling back to `fallback` when the buffer is exhausted.
+    pub fn get(self: *PathBuf, min_len: usize, fallback: std.mem.Allocator) bun.StackFallbackAllocator {
+        const buf: []u8 = if (min_len <= 2 * S)
+            (self.small orelse blk: {
                 self.small = bun.handleOom(bun.default_allocator.create(SmallBuf));
                 break :blk self.small.?;
-            };
-            fba = std.heap.FixedBufferAllocator.init(ptr);
-        } else if (min_len <= 8 * S) {
-            const ptr = self.medium orelse blk: {
+            })
+        else if (min_len <= 8 * S)
+            (self.medium orelse blk: {
                 self.medium = bun.handleOom(bun.default_allocator.create(MediumBuf));
                 break :blk self.medium.?;
-            };
-            fba = std.heap.FixedBufferAllocator.init(ptr);
-        } else {
-            const ptr = self.large orelse blk: {
+            })
+        else
+            (self.large orelse blk: {
                 self.large = bun.handleOom(bun.default_allocator.create(LargeBuf));
                 break :blk self.large.?;
-            };
-            fba = std.heap.FixedBufferAllocator.init(ptr);
-        }
-        return .{
-            .buffer = undefined,
-            .fallback_allocator = fallback,
-            .fixed_buffer_allocator = fba,
-        };
+            });
+        return bun.StackFallbackAllocator.init(buf, fallback);
     }
 
     pub fn deinit(self: *PathBuf) void {

@@ -54,6 +54,7 @@ describe("issue #27671 - .copy with external clipboard tools", () => {
     using dir = tempDir("repl-copy-test", {});
     const clipOutputFile = await setupFakeClipboard(String(dir));
 
+    // Fake tool dir is first in PATH so it is found before any host tools.
     const { stdout, exitCode } = await runRepl([".copy 42", ".exit"], {
       env: {
         PATH: `${dir}:${process.env.PATH}`,
@@ -97,7 +98,7 @@ describe("issue #27671 - .copy with external clipboard tools", () => {
 
     const { stdout, exitCode } = await runRepl([".copy 42", ".exit"], {
       env: {
-        // Only include bun's directory and our empty dir (no clipboard tools)
+        // Only bun's directory and empty dir - no clipboard tools available
         PATH: `${dir}:${path.dirname(bunExe())}`,
       },
     });

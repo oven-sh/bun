@@ -1107,6 +1107,7 @@ pub const FetchTasklet = struct {
                 .reject_unauthorized = fetch_options.reject_unauthorized,
                 .verbose = fetch_options.verbose,
                 .tls_props = fetch_options.ssl_config,
+                .custom_method = fetch_options.custom_method,
             },
         );
         // enable streaming the write side
@@ -1289,6 +1290,7 @@ pub const FetchTasklet = struct {
         unix_socket_path: ZigString.Slice,
         ssl_config: ?*SSLConfig = null,
         upgraded_connection: bool = false,
+        custom_method: []const u8 = "",
     };
 
     pub fn queue(

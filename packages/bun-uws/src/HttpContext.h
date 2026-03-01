@@ -86,6 +86,48 @@ static constexpr auto supportedHttpMethods = makeArray<std::string_view>(
     "UNSUBSCRIBE"
 );
 
+// Same as supportedHttpMethods but also includes the "*" (ANY) method token,
+// so that handlers registered with "*" also catch unknown/custom HTTP methods
+// that don't match any known method node in the router.
+static constexpr auto supportedHttpMethodsAndAny = makeArray<std::string_view>(
+    "ACL",
+    "BIND",
+    "CHECKOUT",
+    "CONNECT",
+    "COPY",
+    "DELETE",
+    "GET",
+    "HEAD",
+    "LINK",
+    "LOCK",
+    "M-SEARCH",
+    "MERGE",
+    "MKACTIVITY",
+    "MKCALENDAR",
+    "MKCOL",
+    "MOVE",
+    "NOTIFY",
+    "OPTIONS",
+    "PATCH",
+    "POST",
+    "PROPFIND",
+    "PROPPATCH",
+    "PURGE",
+    "PUT",
+    "QUERY",
+    "REBIND",
+    "REPORT",
+    "SEARCH",
+    "SOURCE",
+    "SUBSCRIBE",
+    "TRACE",
+    "UNBIND",
+    "UNLINK",
+    "UNLOCK",
+    "UNSUBSCRIBE",
+    "*"
+);
+
 } // namespace detail
 
 template<bool> struct HttpResponse;
@@ -586,7 +628,9 @@ public:
         std::string_view method_sv_buffer;
         // When it's NOT node:http, allow the uWS default precedence ordering.
         if (method == "*" && !httpContextData->flags.useStrictMethodValidation) {
-            methods = detail::supportedHttpMethods;
+            // Register for all known methods AND the "*" (ANY) node so that
+            // unknown/custom methods also get routed to this handler.
+            methods = detail::supportedHttpMethodsAndAny;
         } else {
             method_buffer = std::string(method);
             method_sv_buffer = std::string_view(method_buffer);

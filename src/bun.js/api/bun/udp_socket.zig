@@ -96,9 +96,9 @@ fn onData(socket: *uws.udp.Socket, buf: *uws.udp.PacketBuffer, packets: c_int) c
 
         _ = callback.call(globalThis, thisValue, &.{
             thisValue,
-            udpSocket.config.binary_type.toJS(slice, globalThis) catch return, // TODO: properly propagate exception upwards
+            udpSocket.config.binary_type.toJS(slice, globalThis) catch return,
             .jsNumber(port),
-            hostname_string.transferToJS(globalThis),
+            hostname_string.transferToJS(globalThis) catch return,
         }) catch |err| {
             udpSocket.callErrorHandler(.zero, globalThis.takeException(err));
         };
@@ -310,7 +310,7 @@ pub const UDPSocket = struct {
                     .message = bun.handleOom(bun.String.createFormat("bind {s} {f}", .{ code, this.config.hostname })),
                 };
                 const error_value = sys_err.toErrorInstance(globalThis);
-                error_value.put(globalThis, "address", this.config.hostname.toJS(globalThis));
+                error_value.put(globalThis, "address", try this.config.hostname.toJS(globalThis));
 
                 return globalThis.throwValue(error_value);
             }
@@ -326,11 +326,11 @@ pub const UDPSocket = struct {
             const ret = this.socket.?.connect(address_z, connect.port);
             if (ret != 0) {
                 if (bun.sys.Maybe(void).errnoSys(ret, .connect)) |*sys_err| {
-                    return globalThis.throwValue(sys_err.err.toJS(globalThis));
+                    return globalThis.throwValue(try sys_err.err.toJS(globalThis));
                 }
 
                 if (bun.c_ares.Error.initEAI(ret)) |eai_err| {
-                    return globalThis.throwValue(eai_err.toJSWithSyscallAndHostname(globalThis, "connect", address_slice.slice()));
+                    return globalThis.throwValue(try eai_err.toJSWithSyscallAndHostname(globalThis, "connect", address_slice.slice()));
                 }
             }
             this.connect_info = .{ .port = connect.port };
@@ -822,7 +822,7 @@ pub const UDPSocket = struct {
         return JSValue.jsBoolean(this.closed);
     }
 
-    pub fn getHostname(this: *This, _: *JSGlobalObject) JSValue {
+    pub fn getHostname(this: *This, _: *JSGlobalObject) bun.JSError!JSValue {
         return this.config.hostname.toJS(this.globalThis);
     }
 
@@ -833,7 +833,7 @@ pub const UDPSocket = struct {
 
     fn createSockAddr(globalThis: *JSGlobalObject, address_bytes: []const u8, port: u16) JSValue {
         var sockaddr = SocketAddress.init(address_bytes, port) catch return .js_undefined;
-        return sockaddr.intoDTO(globalThis);
+        return sockaddr.intoDTO(globalThis) catch .js_undefined;
     }
 
     pub fn getAddress(this: *This, globalThis: *JSGlobalObject) JSValue {
@@ -861,7 +861,7 @@ pub const UDPSocket = struct {
     pub fn getBinaryType(
         this: *This,
         globalThis: *JSGlobalObject,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         return switch (this.config.binary_type) {
             .Buffer => bun.String.static("buffer").toJS(globalThis),
             .Uint8Array => bun.String.static("uint8array").toJS(globalThis),

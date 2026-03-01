@@ -241,7 +241,7 @@ fn SocketHandler(comptime ssl: bool) type {
         ) void {
             const handshakeWasSuccessful = this.#connection.doHandshake(success, ssl_error) catch |err| return this.failFmt(err, "Failed to send handshake response", .{});
             if (!handshakeWasSuccessful) {
-                this.failWithJSValue(ssl_error.toJS(this.#globalObject));
+                this.failWithJSValue(ssl_error.toJS(this.#globalObject) catch return);
             }
         }
 
@@ -421,6 +421,19 @@ pub fn createInstance(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFra
 
         break :brk b.allocatedSlice();
     };
+
+    // Reject null bytes in connection parameters to prevent protocol injection
+    // (null bytes act as field terminators in the MySQL wire protocol).
+    inline for (.{ .{ username, "username" }, .{ password, "password" }, .{ database, "database" }, .{ path, "path" } }) |entry| {
+        if (entry[0].len > 0 and std.mem.indexOfScalar(u8, entry[0], 0) != null) {
+            bun.default_allocator.free(options_buf);
+            tls_config.deinit();
+            if (tls_ctx) |tls| {
+                tls.deinit(true);
+            }
+            return globalObject.throwInvalidArguments(entry[1] ++ " must not contain null bytes", .{});
+        }
+    }
 
     const on_connect = arguments[9];
     const on_close = arguments[10];

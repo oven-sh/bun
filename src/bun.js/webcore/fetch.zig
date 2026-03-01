@@ -275,8 +275,7 @@ fn fetchImpl(
 
         if (ssl_config) |conf| {
             ssl_config = null;
-            conf.deinit();
-            bun.default_allocator.destroy(conf);
+            conf.deref();
         }
     }
 
@@ -371,19 +370,6 @@ fn fetchImpl(
         url_type = URLType.blob;
     }
     url_proxy_buffer = url.href;
-
-    if (url_str.hasPrefixComptime("data:")) {
-        var url_slice = url_str.toUTF8WithoutRef(allocator);
-        defer url_slice.deinit();
-
-        var data_url = DataURL.parseWithoutCheck(url_slice.slice()) catch {
-            const err = globalThis.createError("failed to fetch the data URL", .{});
-            return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
-        };
-        data_url.url = url_str;
-
-        return dataURLResponse(data_url, globalThis, allocator);
-    }
 
     // **Start with the harmless ones.**
 
@@ -481,7 +467,8 @@ fn fetchImpl(
                         }) |config| {
                             const ssl_config_object = bun.handleOom(bun.default_allocator.create(SSLConfig));
                             ssl_config_object.* = config;
-                            break :extract_ssl_config ssl_config_object;
+                            // Intern via GlobalRegistry for deduplication and pointer equality
+                            break :extract_ssl_config SSLConfig.GlobalRegistry.intern(ssl_config_object);
                         }
                     }
                 }
@@ -1130,7 +1117,7 @@ fn fetchImpl(
 
             const opened_fd = switch (opened_fd_res) {
                 .err => |err| {
-                    const rejected_value = JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJS(globalThis));
+                    const rejected_value = JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJS(globalThis) catch return .zero);
                     is_error = true;
                     return rejected_value;
                 },
@@ -1202,7 +1189,7 @@ fn fetchImpl(
             switch (res) {
                 .err => |err| {
                     is_error = true;
-                    const rejected_value = JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJS(globalThis));
+                    const rejected_value = JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJS(globalThis) catch return .zero);
                     body.detach();
 
                     return rejected_value;

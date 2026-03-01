@@ -179,13 +179,16 @@ fn errorUnlessFakeTimers(globalObject: *jsc.JSGlobalObject) bun.JSError!void {
 fn setFakeTimerMarker(globalObject: *jsc.JSGlobalObject, enabled: bool) void {
     const globalThis_value = globalObject.toJSValue();
     const setTimeout_fn = (globalThis_value.getOwnTruthy(globalObject, "setTimeout") catch return) orelse return;
-    // Set setTimeout.clock to indicate fake timers status.
     // testing-library/react checks Object.hasOwnProperty.call(setTimeout, 'clock')
     // to detect if fake timers are enabled.
-    // Note: We set the property to true when enabling and leave it (or set to undefined)
-    // when disabling. The hasOwnProperty check will still return true after disabling,
-    // but this is acceptable since test environments typically reset between tests.
-    setTimeout_fn.put(globalObject, "clock", jsc.JSValue.jsBoolean(enabled));
+    if (enabled) {
+        // Set setTimeout.clock = true when enabling fake timers.
+        setTimeout_fn.put(globalObject, "clock", .true);
+    } else {
+        // Delete the clock property when disabling fake timers.
+        // This ensures hasOwnProperty returns false, matching Jest/Sinon behavior.
+        _ = setTimeout_fn.deleteProperty(globalObject, "clock");
+    }
 }
 
 fn useFakeTimers(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {

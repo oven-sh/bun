@@ -1,10 +1,15 @@
 // clang-format off
-#include "ModuleLoader.h"
 #include "root.h"
+#include "ModuleLoader.h"
+#include "headers-handwritten.h"
+#include "PathInlines.h"
+#include "JSCommonJSModule.h"
 
+#include <JavaScriptCore/JSBoundFunction.h>
 #include <JavaScriptCore/PropertySlot.h>
 #include <JavaScriptCore/JSMap.h>
 #include <JavaScriptCore/JSString.h>
+#include <JavaScriptCore/SourceCode.h>
 
 #include "ZigGlobalObject.h"
 #include "InternalModuleRegistry.h"
@@ -84,4 +89,45 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__ExposeNodeModuleGlobals(Zig::Global
 
     FOREACH_EXPOSED_BUILTIN_IMR(PUT_CUSTOM_GETTER_SETTER)
 #undef PUT_CUSTOM_GETTER_SETTER
+}
+
+// Set up require(), module, __filename, __dirname on globalThis for the REPL.
+// Creates a CommonJS module object rooted at the given directory so require() resolves correctly.
+extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__REPL__setupGlobalRequire(
+    Zig::GlobalObject* globalObject,
+    const unsigned char* cwdPtr,
+    size_t cwdLen)
+{
+    using namespace JSC;
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto cwdStr = WTF::String::fromUTF8(std::span { cwdPtr, cwdLen });
+    auto* filename = jsString(vm, makeString(cwdStr, PLATFORM_SEP_s, "[repl]"_s));
+    auto* dirname = jsString(vm, WTF::String(cwdStr));
+
+    auto* moduleObject = Bun::JSCommonJSModule::create(vm,
+        globalObject->CommonJSModuleObjectStructure(),
+        filename, filename, dirname, SourceCode());
+    moduleObject->hasEvaluated = true;
+
+    auto* resolveFunction = JSBoundFunction::create(vm, globalObject,
+        globalObject->requireResolveFunctionUnbound(), filename,
+        ArgList(), 1, globalObject->commonStrings().resolveString(globalObject),
+        makeSource("resolve"_s, SourceOrigin(), SourceTaintedOrigin::Untainted));
+    RETURN_IF_EXCEPTION(scope, );
+
+    auto* requireFunction = JSBoundFunction::create(vm, globalObject,
+        globalObject->requireFunctionUnbound(), moduleObject,
+        ArgList(), 1, globalObject->commonStrings().requireString(globalObject),
+        makeSource("require"_s, SourceOrigin(), SourceTaintedOrigin::Untainted));
+    RETURN_IF_EXCEPTION(scope, );
+
+    requireFunction->putDirect(vm, vm.propertyNames->resolve, resolveFunction, 0);
+    moduleObject->putDirect(vm, WebCore::clientData(vm)->builtinNames().requirePublicName(), requireFunction, 0);
+
+    globalObject->putDirect(vm, WebCore::builtinNames(vm).requirePublicName(), requireFunction, 0);
+    globalObject->putDirect(vm, Identifier::fromString(vm, "module"_s), moduleObject, 0);
+    globalObject->putDirect(vm, Identifier::fromString(vm, "__filename"_s), filename, 0);
+    globalObject->putDirect(vm, Identifier::fromString(vm, "__dirname"_s), dirname, 0);
 }

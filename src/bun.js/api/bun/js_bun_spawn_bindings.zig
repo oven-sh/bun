@@ -50,23 +50,28 @@ fn getArgv0(globalThis: *jsc.JSGlobalObject, PATH: []const u8, cwd: []const u8, 
 
 /// `argv` for `Bun.spawn` & `Bun.spawnSync`
 fn getArgv(globalThis: *jsc.JSGlobalObject, args: JSValue, PATH: []const u8, cwd: []const u8, argv0: *?[*:0]const u8, allocator: std.mem.Allocator, argv: *std.array_list.Managed(?[*:0]const u8)) bun.JSError!void {
-    var cmds_array = try args.arrayIterator(globalThis);
-    // + 1 for argv0
-    // + 1 for null terminator
-    argv.* = try @TypeOf(argv.*).initCapacity(allocator, cmds_array.len + 2);
-
     if (args.isEmptyOrUndefinedOrNull()) {
         return globalThis.throwInvalidArguments("cmd must be an array of strings", .{});
     }
+
+    var cmds_array = try args.arrayIterator(globalThis);
 
     if (cmds_array.len == 0) {
         return globalThis.throwInvalidArguments("cmd must not be empty", .{});
     }
 
+    if (cmds_array.len > std.math.maxInt(u32) - 2) {
+        return globalThis.throwInvalidArguments("cmd array is too large", .{});
+    }
+
+    // + 1 for argv0
+    // + 1 for null terminator
+    argv.* = try @TypeOf(argv.*).initCapacity(allocator, @as(usize, cmds_array.len) + 2);
+
     const argv0_result = try getArgv0(globalThis, PATH, cwd, argv0.*, (try cmds_array.next()).?, allocator);
 
     argv0.* = argv0_result.argv0.ptr;
-    argv.appendAssumeCapacity(argv0_result.arg0.ptr);
+    try argv.append(argv0_result.arg0.ptr);
 
     var arg_index: usize = 1;
     while (try cmds_array.next()) |value| {
@@ -78,7 +83,7 @@ fn getArgv(globalThis: *jsc.JSGlobalObject, args: JSValue, PATH: []const u8, cwd
             return globalThis.ERR(.INVALID_ARG_VALUE, "The argument 'args[{d}]' must be a string without null bytes. Received \"{f}\"", .{ arg_index, arg.toZigString() }).throw();
         }
 
-        argv.appendAssumeCapacity(try arg.toOwnedSliceZ(allocator));
+        try argv.append(try arg.toOwnedSliceZ(allocator));
         arg_index += 1;
     }
 
@@ -622,7 +627,7 @@ pub fn spawnMaybeSync(
                 else => {},
             }
 
-            return globalThis.throwValue(err.toJS(globalThis));
+            return globalThis.throwValue(try err.toJS(globalThis));
         },
         .result => |result| result,
     };
@@ -767,7 +772,7 @@ pub fn spawnMaybeSync(
                 subprocess.stdio_pipes.items[@intCast(ipc_channel)].buffer,
             ).asErr()) |err| {
                 subprocess.deref();
-                return globalThis.throwValue(err.toJS(globalThis));
+                return globalThis.throwValue(try err.toJS(globalThis));
             }
             subprocess.stdio_pipes.items[@intCast(ipc_channel)] = .unavailable;
         }
@@ -845,7 +850,7 @@ pub fn spawnMaybeSync(
     if (subprocess.stdin == .buffer) {
         if (subprocess.stdin.buffer.start().asErr()) |err| {
             _ = subprocess.tryKill(subprocess.killSignal);
-            _ = globalThis.throwValue(err.toJS(globalThis)) catch {};
+            _ = globalThis.throwValue(err.toJS(globalThis) catch return error.JSError) catch {};
             return error.JSError;
         }
     }
@@ -853,7 +858,7 @@ pub fn spawnMaybeSync(
     if (subprocess.stdout == .pipe) {
         if (subprocess.stdout.pipe.start(subprocess, event_loop).asErr()) |err| {
             _ = subprocess.tryKill(subprocess.killSignal);
-            _ = globalThis.throwValue(err.toJS(globalThis)) catch {};
+            _ = globalThis.throwValue(err.toJS(globalThis) catch return error.JSError) catch {};
             return error.JSError;
         }
         if ((is_sync or !lazy) and subprocess.stdout == .pipe) {
@@ -864,7 +869,7 @@ pub fn spawnMaybeSync(
     if (subprocess.stderr == .pipe) {
         if (subprocess.stderr.pipe.start(subprocess, event_loop).asErr()) |err| {
             _ = subprocess.tryKill(subprocess.killSignal);
-            _ = globalThis.throwValue(err.toJS(globalThis)) catch {};
+            _ = globalThis.throwValue(err.toJS(globalThis) catch return error.JSError) catch {};
             return error.JSError;
         }
 

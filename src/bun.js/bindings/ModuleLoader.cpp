@@ -268,13 +268,15 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
                     loader = BunLoaderTypeTOML;
                 } else if (loaderString == "yaml"_s) {
                     loader = BunLoaderTypeYAML;
+                } else if (loaderString == "md"_s) {
+                    loader = BunLoaderTypeMD;
                 }
             }
         }
     }
 
     if (loader == BunLoaderTypeNone) [[unlikely]] {
-        throwException(globalObject, scope, createError(globalObject, "Expected loader to be one of \"js\", \"jsx\", \"object\", \"ts\", \"tsx\", \"toml\", \"yaml\", or \"json\""_s));
+        throwException(globalObject, scope, createError(globalObject, "Expected loader to be one of \"js\", \"jsx\", \"object\", \"ts\", \"tsx\", \"toml\", \"yaml\", \"json\", or \"md\""_s));
         result.value.error = scope.exception();
         (void)scope.tryClearException();
         return result;
@@ -469,7 +471,8 @@ extern "C" void Bun__onFulfillAsyncModule(
         RELEASE_AND_RETURN(scope, promise->reject(vm, globalObject, JSValue::decode(res->result.err.value)));
     }
 
-    auto specifierValue = Bun::toJS(globalObject, *specifier);
+    auto* specifierValue = Bun::toJS(globalObject, *specifier);
+    RETURN_IF_EXCEPTION(scope, );
 
     auto* map = globalObject->esmRegistryMap();
     RETURN_IF_EXCEPTION(scope, );

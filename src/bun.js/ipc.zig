@@ -663,17 +663,14 @@ pub const SendQueue = struct {
                 log("IPC call continueSend() from onAckNack retry", .{});
                 return this.continueSend(global, .new_message_appended);
             }
-            // too many retries; give up
+            // too many retries; give up - emit warning if possible
             var warning = bun.String.static("Handle did not reach the receiving process correctly");
             var warning_name = bun.String.static("SentHandleNotReceivedWarning");
-            global.emitWarning(
-                warning.transferToJS(global),
-                warning_name.transferToJS(global),
-                .js_undefined,
-                .js_undefined,
-            ) catch |e| {
-                _ = global.takeException(e);
-            };
+            if (warning.transferToJS(global)) |warning_js| {
+                if (warning_name.transferToJS(global)) |warning_name_js| {
+                    global.emitWarning(warning_js, warning_name_js, .js_undefined, .js_undefined) catch {};
+                } else |_| {}
+            } else |_| {}
             // (fall through to success code in order to consume the message and continue sending)
         }
         // consume the message and continue sending
@@ -926,13 +923,13 @@ pub const SendQueue = struct {
 
     pub fn windowsConfigureClient(this: *SendQueue, pipe_fd: bun.FileDescriptor) !void {
         log("configureClient", .{});
-        const ipc_pipe = bun.handleOom(bun.default_allocator.create(uv.Pipe));
+        const ipc_pipe = bun.new(uv.Pipe, std.mem.zeroes(uv.Pipe));
         ipc_pipe.init(uv.Loop.get(), true).unwrap() catch |err| {
-            bun.default_allocator.destroy(ipc_pipe);
+            bun.destroy(ipc_pipe);
             return err;
         };
         ipc_pipe.open(pipe_fd).unwrap() catch |err| {
-            bun.default_allocator.destroy(ipc_pipe);
+            ipc_pipe.closeAndDestroy();
             return err;
         };
         ipc_pipe.unref();
@@ -1037,7 +1034,7 @@ pub fn doSend(ipc: ?*SendQueue, globalObject: *jsc.JSGlobalObject, callFrame: *j
 
     if (status == .failure) {
         const ex = globalObject.createTypeErrorInstance("process.send() failed", .{});
-        ex.put(globalObject, jsc.ZigString.static("syscall"), bun.String.static("write").toJS(globalObject));
+        ex.put(globalObject, jsc.ZigString.static("syscall"), try bun.String.static("write").toJS(globalObject));
         return doSendErr(globalObject, callback, ex, from);
     }
 

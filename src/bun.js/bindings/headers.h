@@ -31,7 +31,7 @@ class JSString;
 class JSCell;
 class JSMap;
 class JSPromise;
-class CatchScope;
+class TopExceptionScope;
 class VM;
 class ThrowScope;
 class CallFrame;
@@ -167,6 +167,12 @@ CPP_DECL uint32_t JSC__JSInternalPromise__status(const JSC::JSInternalPromise* a
 #pragma mark - JSC::JSFunction
 
 CPP_DECL void JSC__JSFunction__optimizeSoon(JSC::EncodedJSValue JSValue0);
+
+#pragma mark - REPL Functions
+
+CPP_DECL JSC::EncodedJSValue Bun__REPL__evaluate(JSC::JSGlobalObject* globalObject, const unsigned char* sourcePtr, size_t sourceLen, const unsigned char* filenamePtr, size_t filenameLen, JSC::EncodedJSValue* exception);
+CPP_DECL JSC::EncodedJSValue Bun__REPL__getCompletions(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue targetValue, const unsigned char* prefixPtr, size_t prefixLen);
+CPP_DECL JSC::EncodedJSValue Bun__REPL__formatValue(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue valueEncoded, int32_t depth, bool colors);
 
 #pragma mark - JSC::JSGlobalObject
 
@@ -582,7 +588,8 @@ ZIG_DECL WebSocketHTTPClient* Bun__WebSocketHTTPClient__connect(
     const ZigString* proxyHost, uint16_t proxyPort,
     const ZigString* proxyAuthorization,
     ZigString* proxyHeaderNames, ZigString* proxyHeaderValues, size_t proxyHeaderCount,
-    void* sslConfig, bool targetIsSecure);
+    void* sslConfig, bool targetIsSecure,
+    const ZigString* targetAuthorization);
 ZIG_DECL void Bun__WebSocketHTTPClient__register(JSC::JSGlobalObject* arg0, void* arg1, void* arg2);
 ZIG_DECL size_t Bun__WebSocketHTTPClient__memoryCost(WebSocketHTTPClient* arg0);
 #endif
@@ -597,7 +604,8 @@ ZIG_DECL WebSocketHTTPSClient* Bun__WebSocketHTTPSClient__connect(
     const ZigString* proxyHost, uint16_t proxyPort,
     const ZigString* proxyAuthorization,
     ZigString* proxyHeaderNames, ZigString* proxyHeaderValues, size_t proxyHeaderCount,
-    void* sslConfig, bool targetIsSecure);
+    void* sslConfig, bool targetIsSecure,
+    const ZigString* targetAuthorization);
 ZIG_DECL void Bun__WebSocketHTTPSClient__register(JSC::JSGlobalObject* arg0, void* arg1, void* arg2);
 ZIG_DECL size_t Bun__WebSocketHTTPSClient__memoryCost(WebSocketHTTPSClient* arg0);
 

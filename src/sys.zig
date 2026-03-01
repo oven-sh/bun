@@ -744,10 +744,11 @@ pub fn fstatat(fd: bun.FileDescriptor, path: [:0]const u8) Maybe(bun.Stat) {
     return Maybe(bun.Stat){ .result = stat_buf };
 }
 
-/// Like fstatat but does not follow symlinks (uses AT_SYMLINK_NOFOLLOW)
+/// Like fstatat but does not follow symlinks (uses AT.SYMLINK_NOFOLLOW).
+/// This is the "at" equivalent of lstat.
 pub fn lstatat(fd: bun.FileDescriptor, path: [:0]const u8) Maybe(bun.Stat) {
     if (Environment.isWindows) {
-        // On Windows, use O.NOFOLLOW to get lstat behavior (prevents following symlinks)
+        // Use O.NOFOLLOW to not follow symlinks (FILE_OPEN_REPARSE_POINT on Windows)
         return switch (openatWindowsA(fd, path, O.NOFOLLOW, 0)) {
             .result => |file| {
                 defer file.close();
@@ -2034,10 +2035,10 @@ pub fn readAll(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
     return .{ .result = total_read };
 }
 
-const socket_flags_nonblock = c.MSG_DONTWAIT | c.MSG_NOSIGNAL;
+const send_flags_nonblock = c.MSG_DONTWAIT | c.MSG_NOSIGNAL;
 
 pub fn recvNonBlock(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
-    return recv(fd, buf, socket_flags_nonblock);
+    return recv(fd, buf, recv_flags_nonblock);
 }
 
 pub fn poll(fds: []std.posix.pollfd, timeout: i32) Maybe(usize) {
@@ -2118,7 +2119,7 @@ pub fn kevent(fd: bun.FileDescriptor, changelist: []const std.c.Kevent, eventlis
 }
 
 pub fn sendNonBlock(fd: bun.FileDescriptor, buf: []const u8) Maybe(usize) {
-    return send(fd, buf, socket_flags_nonblock);
+    return send(fd, buf, send_flags_nonblock);
 }
 
 pub fn send(fd: bun.FileDescriptor, buf: []const u8, flag: u32) Maybe(usize) {
@@ -3011,6 +3012,7 @@ pub const MemfdFlags = enum(u32) {
     const MFD_CLOEXEC: u32 = std.os.linux.MFD.CLOEXEC;
     const MFD_ALLOW_SEALING: u32 = std.os.linux.MFD.ALLOW_SEALING;
 };
+
 pub fn memfd_create(name: [:0]const u8, flags_: MemfdFlags) Maybe(bun.FileDescriptor) {
     if (comptime !Environment.isLinux) @compileError("linux only!");
     var flags: u32 = @intFromEnum(flags_);
@@ -4090,6 +4092,12 @@ pub fn copyFileZSlowWithHandle(in_handle: bun.FileDescriptor, to_dir: bun.FileDe
             _ = std.os.linux.fallocate(out_handle.cast(), 0, 0, @intCast(stat_.size));
         }
 
+        // Seek input to beginning — the caller may have written to this fd,
+        // leaving the file offset at EOF. copy_file_range / sendfile / read
+        // all use the current offset when called with null offsets.
+        // Ignore errors: the fd may be non-seekable (e.g. a pipe).
+        _ = setFileOffset(in_handle, 0);
+
         switch (bun.copyFile(in_handle, out_handle)) {
             .err => |e| return .{ .err = e },
             .result => {},
@@ -4351,10 +4359,12 @@ const bun = @import("bun");
 const Environment = bun.Environment;
 const FD = bun.FD;
 const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
-const c = bun.c; // translated c headers
 const jsc = bun.jsc;
 const libc_stat = bun.Stat;
 const darwin_nocancel = bun.darwin.nocancel;
+
+const c = bun.c; // translated c headers
+const recv_flags_nonblock = c.MSG_DONTWAIT;
 
 const windows = bun.windows;
 const kernel32 = bun.windows.kernel32;

@@ -308,7 +308,7 @@ pub fn isOK(this: *const Response) bool {
 pub fn getURL(
     this: *Response,
     globalThis: *jsc.JSGlobalObject,
-) jsc.JSValue {
+) bun.JSError!jsc.JSValue {
     // https://developer.mozilla.org/en-US/docs/Web/API/Response/url
     return this.#url.toJS(globalThis);
 }
@@ -316,7 +316,7 @@ pub fn getURL(
 pub fn getResponseType(
     this: *Response,
     globalThis: *jsc.JSGlobalObject,
-) jsc.JSValue {
+) bun.JSError!jsc.JSValue {
     if (this.#init.status_code < 200) {
         return bun.String.static("error").toJS(globalThis);
     }
@@ -327,7 +327,7 @@ pub fn getResponseType(
 pub fn getStatusText(
     this: *Response,
     globalThis: *jsc.JSGlobalObject,
-) jsc.JSValue {
+) bun.JSError!jsc.JSValue {
     // https://developer.mozilla.org/en-US/docs/Web/API/Response/statusText
     return this.#init.status_text.toJS(globalThis);
 }

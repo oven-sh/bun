@@ -880,6 +880,44 @@ for (let credentials of allCredentials) {
                   expect(SHA1).toBe(SHA1_2);
                 }
               }, 30_000);
+              it("should work with sliced files (offset 0)", async () => {
+                await using tmpfile = await tmp();
+                const s3file = s3(tmpfile.name + "-readable-stream-slice", options);
+                await s3file.write("Hello Bun!");
+                const sliced = s3file.slice(0, 5);
+                const stream = sliced.stream();
+                const reader = stream.getReader();
+                let bytes = 0;
+                let chunks: Array<Buffer> = [];
+
+                while (true) {
+                  const { done, value } = await reader.read();
+                  if (done) break;
+                  bytes += value?.length ?? 0;
+                  if (value) chunks.push(value as Buffer);
+                }
+                expect(bytes).toBe(5);
+                expect(Buffer.concat(chunks)).toEqual(Buffer.from("Hello"));
+              });
+              it("should work with sliced files (non-zero offset)", async () => {
+                await using tmpfile = await tmp();
+                const s3file = s3(tmpfile.name + "-readable-stream-slice-offset", options);
+                await s3file.write("Hello Bun!");
+                const sliced = s3file.slice(6, 10);
+                const stream = sliced.stream();
+                const reader = stream.getReader();
+                let bytes = 0;
+                let chunks: Array<Buffer> = [];
+
+                while (true) {
+                  const { done, value } = await reader.read();
+                  if (done) break;
+                  bytes += value?.length ?? 0;
+                  if (value) chunks.push(value as Buffer);
+                }
+                expect(bytes).toBe(4);
+                expect(Buffer.concat(chunks)).toEqual(Buffer.from("Bun!"));
+              });
             });
           });
         });
@@ -1075,7 +1113,8 @@ for (let credentials of allCredentials) {
                 await s3file.write("Hello Bun!");
                 expect.unreachable();
               } catch (e: any) {
-                expect(["ENAMETOOLONG", "ERR_S3_INVALID_PATH"]).toContain(e?.code);
+                // ERR_STRING_TOO_LONG can occur when the path is too long to convert to a JS string
+                expect(["ENAMETOOLONG", "ERR_S3_INVALID_PATH", "ERR_STRING_TOO_LONG"]).toContain(e?.code);
               }
             }),
           );

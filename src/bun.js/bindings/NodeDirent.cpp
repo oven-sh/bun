@@ -277,7 +277,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDirentProtoFuncIsFIFO, (JSC::JSGlobalObject * globalO
     int32_t type = getType(vm, callFrame->thisValue(), defaultGlobalObject(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
 
-    return JSValue::encode(jsBoolean(type == static_cast<int32_t>(DirEntType::NamedPipe) || type == static_cast<int32_t>(DirEntType::EventPort)));
+    return JSValue::encode(jsBoolean(type == static_cast<int32_t>(DirEntType::NamedPipe)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsDirentProtoFuncIsFile, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

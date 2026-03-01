@@ -34,6 +34,7 @@ pub const BunObject = struct {
     pub const sha = toJSCallback(host_fn.wrapStaticMethod(Crypto.SHA512_256, "hash_", true));
     pub const shellEscape = toJSCallback(Bun.shellEscape);
     pub const shrink = toJSCallback(Bun.shrink);
+    pub const stringWidth = toJSCallback(Bun.stringWidth);
     pub const sleepSync = toJSCallback(Bun.sleepSync);
     pub const spawn = toJSCallback(host_fn.wrapStaticMethod(api.Subprocess, "spawn", false));
     pub const spawnSync = toJSCallback(host_fn.wrapStaticMethod(api.Subprocess, "spawnSync", false));
@@ -63,7 +64,9 @@ pub const BunObject = struct {
     pub const SHA512 = toJSLazyPropertyCallback(Crypto.SHA512.getter);
     pub const SHA512_256 = toJSLazyPropertyCallback(Crypto.SHA512_256.getter);
     pub const JSONC = toJSLazyPropertyCallback(Bun.getJSONCObject);
+    pub const markdown = toJSLazyPropertyCallback(Bun.getMarkdownObject);
     pub const TOML = toJSLazyPropertyCallback(Bun.getTOMLObject);
+    pub const JSON5 = toJSLazyPropertyCallback(Bun.getJSON5Object);
     pub const YAML = toJSLazyPropertyCallback(Bun.getYAMLObject);
     pub const Transpiler = toJSLazyPropertyCallback(Bun.getTranspilerConstructor);
     pub const argv = toJSLazyPropertyCallback(Bun.getArgv);
@@ -130,7 +133,9 @@ pub const BunObject = struct {
         @export(&BunObject.SHA512, .{ .name = lazyPropertyCallbackName("SHA512") });
         @export(&BunObject.SHA512_256, .{ .name = lazyPropertyCallbackName("SHA512_256") });
         @export(&BunObject.JSONC, .{ .name = lazyPropertyCallbackName("JSONC") });
+        @export(&BunObject.markdown, .{ .name = lazyPropertyCallbackName("markdown") });
         @export(&BunObject.TOML, .{ .name = lazyPropertyCallbackName("TOML") });
+        @export(&BunObject.JSON5, .{ .name = lazyPropertyCallbackName("JSON5") });
         @export(&BunObject.YAML, .{ .name = lazyPropertyCallbackName("YAML") });
         @export(&BunObject.Glob, .{ .name = lazyPropertyCallbackName("Glob") });
         @export(&BunObject.Transpiler, .{ .name = lazyPropertyCallbackName("Transpiler") });
@@ -175,6 +180,7 @@ pub const BunObject = struct {
         @export(&BunObject.sha, .{ .name = callbackName("sha") });
         @export(&BunObject.shellEscape, .{ .name = callbackName("shellEscape") });
         @export(&BunObject.shrink, .{ .name = callbackName("shrink") });
+        @export(&BunObject.stringWidth, .{ .name = callbackName("stringWidth") });
         @export(&BunObject.sleepSync, .{ .name = callbackName("sleepSync") });
         @export(&BunObject.spawn, .{ .name = callbackName("spawn") });
         @export(&BunObject.spawnSync, .{ .name = callbackName("spawnSync") });
@@ -606,7 +612,7 @@ fn getMain(globalThis: *jsc.JSGlobalObject) callconv(jsc.conv) jsc.JSValue {
             }
         }
 
-        return vm.main_resolved_path.toJS(globalThis);
+        return vm.main_resolved_path.toJS(globalThis) catch .zero;
     }
 
     return ZigString.init(vm.main).toJS(globalThis);
@@ -1103,7 +1109,7 @@ pub export fn Bun__escapeHTML16(globalObject: *jsc.JSGlobalObject, input_value: 
     assert(len > 0);
     const input_slice = ptr[0..len];
     const escaped = strings.escapeHTMLForUTF16Input(globalObject.bunVM().allocator, input_slice) catch {
-        return globalObject.throwValue(bun.String.static("Out of memory").toJS(globalObject)) catch .zero;
+        return globalObject.throwValue(ZigString.init("Out of memory").toErrorInstance(globalObject)) catch return .zero;
     };
 
     return switch (escaped) {
@@ -1121,7 +1127,7 @@ pub export fn Bun__escapeHTML8(globalObject: *jsc.JSGlobalObject, input_value: J
     const allocator = if (input_slice.len <= 32) stack_allocator.get() else stack_allocator.fallback_allocator;
 
     const escaped = strings.escapeHTMLForLatin1Input(allocator, input_slice) catch {
-        return globalObject.throwValue(bun.String.static("Out of memory").toJS(globalObject)) catch .zero;
+        return globalObject.throwValue(ZigString.init("Out of memory").toErrorInstance(globalObject)) catch return .zero;
     };
 
     switch (escaped) {
@@ -1238,7 +1244,7 @@ pub fn mmapFile(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.
         .result => |map| map,
 
         .err => |err| {
-            return globalThis.throwValue(err.toJS(globalThis));
+            return globalThis.throwValue(try err.toJS(globalThis));
         },
     };
 
@@ -1265,8 +1271,15 @@ pub fn getHashObject(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSVa
 pub fn getJSONCObject(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
     return JSONCObject.create(globalThis);
 }
+pub fn getMarkdownObject(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
+    return MarkdownObject.create(globalThis);
+}
 pub fn getTOMLObject(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
     return TOMLObject.create(globalThis);
+}
+
+pub fn getJSON5Object(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
+    return JSON5Object.create(globalThis);
 }
 
 pub fn getYAMLObject(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
@@ -1371,14 +1384,8 @@ pub fn getUnsafe(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue 
     return UnsafeObject.create(globalThis);
 }
 
-pub fn stringWidth(str: bun.String, opts: gen.StringWidthOptions) usize {
-    if (str.length() == 0)
-        return 0;
-
-    if (opts.count_ansi_escape_codes)
-        return str.visibleWidth(!opts.ambiguous_is_narrow);
-
-    return str.visibleWidthExcludeANSIColors(!opts.ambiguous_is_narrow);
+pub fn stringWidth(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    return bun.String.jsGetStringWidth(globalObject, callFrame);
 }
 
 /// EnvironmentVariables is runtime defined.
@@ -2066,7 +2073,9 @@ const gen = bun.gen.BunObject;
 const api = bun.api;
 const FFIObject = bun.api.FFIObject;
 const HashObject = bun.api.HashObject;
+const JSON5Object = bun.api.JSON5Object;
 const JSONCObject = bun.api.JSONCObject;
+const MarkdownObject = bun.api.MarkdownObject;
 const TOMLObject = bun.api.TOMLObject;
 const UnsafeObject = bun.api.UnsafeObject;
 const YAMLObject = bun.api.YAMLObject;

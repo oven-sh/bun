@@ -109,8 +109,8 @@ class DockerComposeHelper {
       return;
     }
 
-    // Build the service if needed (for services like mysql_tls that need building)
-    if (service === "mysql_tls" || service === "redis_unified") {
+    // Build the service if needed (for services like mysql_tls, postgres_tls that need building)
+    if (service === "mysql_tls" || service === "redis_unified" || service === "postgres_tls") {
       const buildResult = await this.exec(["build", service]);
       if (buildResult.exitCode !== 0) {
         throw new Error(`Failed to build service ${service}: ${buildResult.stderr}`);

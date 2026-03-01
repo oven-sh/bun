@@ -11,6 +11,7 @@ pub const AllocationScopeIn = allocation_scope.AllocationScopeIn;
 pub const NullableAllocator = @import("./allocators/NullableAllocator.zig");
 pub const MaxHeapAllocator = @import("./allocators/MaxHeapAllocator.zig");
 pub const LinuxMemFdAllocator = @import("./allocators/LinuxMemFdAllocator.zig");
+pub const BufferFallbackAllocator = @import("./allocators/BufferFallbackAllocator.zig");
 pub const MaybeOwned = @import("./allocators/maybe_owned.zig").MaybeOwned;
 
 pub fn isSliceInBufferT(comptime T: type, slice: []const T, buffer: []const T) bool {

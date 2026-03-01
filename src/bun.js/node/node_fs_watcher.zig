@@ -231,7 +231,7 @@ pub const FSWatcher = struct {
             switch (this.event) {
                 inline .rename, .change => |*path, event_type| {
                     if (ctx.encoding == .utf8) {
-                        ctx.emitWithFilename(path.string.transferToJS(ctx.globalThis), event_type);
+                        ctx.emitWithFilename(path.string.transferToJS(ctx.globalThis) catch return, event_type);
                     } else {
                         const bytes = path.bytes_to_free;
                         path.bytes_to_free = "";
@@ -487,7 +487,7 @@ pub const FSWatcher = struct {
                 const globalObject = this.globalThis;
                 var args = [_]jsc.JSValue{
                     EventType.@"error".toJS(globalObject),
-                    err.toJS(globalObject),
+                    err.toJS(globalObject) catch return,
                 };
                 _ = listener.callWithGlobalThis(
                     globalObject,
@@ -518,7 +518,7 @@ pub const FSWatcher = struct {
                 filename = jsc.ZigString.fromUTF8(file_name).toJS(globalObject);
             } else {
                 // convert to desired encoding
-                filename = Encoder.toString(file_name, globalObject, this.encoding);
+                filename = Encoder.toString(file_name, globalObject, this.encoding) catch return;
             }
         }
 

@@ -19,6 +19,7 @@ pub const Parser = struct {
 
         tree_shaking: bool = false,
         bundle: bool = false,
+        code_splitting: bool = false,
         package_version: string = "",
 
         macro_context: *MacroContextType() = undefined,
@@ -37,6 +38,13 @@ pub const Parser = struct {
         /// When using react fast refresh or server components, the framework is
         /// able to customize what import sources are used.
         framework: ?*bun.bake.Framework = null,
+
+        /// REPL mode: transforms code for interactive evaluation
+        /// - Wraps lone object literals `{...}` in parentheses
+        /// - Hoists variable declarations for REPL persistence
+        /// - Wraps last expression in { value: expr } for result capture
+        /// - Wraps code with await in async IIFE
+        repl_mode: bool = false,
 
         pub fn hashForRuntimeTranspiler(this: *const Options, hasher: *std.hash.Wyhash, did_use_jsx: bool) void {
             bun.assert(!this.bundle);

@@ -114,6 +114,8 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             ssl_config: ?*SSLConfig,
             // Whether the target URL is wss:// (separate from ssl template parameter)
             target_is_secure: bool,
+            // Target URL authorization (Basic auth from ws://user:pass@host)
+            target_authorization: ?*const jsc.ZigString,
         ) callconv(.c) ?*HTTPClient {
             const vm = global.bunVM();
 
@@ -139,6 +141,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 port,
                 client_protocol,
                 extra_headers,
+                if (target_authorization) |auth| auth.slice() else null,
             ) catch return null;
 
             // Build proxy state if using proxy
@@ -695,19 +698,22 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 return;
             };
 
-            // Take the WebSocket upgrade request from proxy state (transfers ownership)
-            const upgrade_request = p.takeWebsocketRequestBuf();
-            if (upgrade_request.len == 0) {
+            // Take the WebSocket upgrade request from proxy state (transfers ownership).
+            // Store it in input_body_buf so handleWritable can retry on drain.
+            this.input_body_buf = p.takeWebsocketRequestBuf();
+            if (this.input_body_buf.len == 0) {
                 this.terminate(ErrorCode.failed_to_write);
                 return;
             }
 
-            // Send through the tunnel (will be encrypted)
+            // Send through the tunnel (will be encrypted). Buffer any unwritten
+            // portion in to_send so handleWritable retries when the socket drains.
             if (p.getTunnel()) |tunnel| {
-                _ = tunnel.write(upgrade_request) catch {
+                const wrote = tunnel.write(this.input_body_buf) catch {
                     this.terminate(ErrorCode.failed_to_write);
                     return;
                 };
+                this.to_send = this.input_body_buf[wrote..];
             } else {
                 this.terminate(ErrorCode.proxy_tunnel_failed);
             }
@@ -1014,6 +1020,17 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                     tunnel.onWritable();
                     // In .done state (after WebSocket upgrade), just handle tunnel writes
                     if (this.state == .done) return;
+
+                    // Flush any unwritten upgrade request bytes through the tunnel
+                    if (this.to_send.len == 0) return;
+                    this.ref();
+                    defer this.deref();
+                    const wrote = tunnel.write(this.to_send) catch {
+                        this.terminate(ErrorCode.failed_to_write);
+                        return;
+                    };
+                    this.to_send = this.to_send[@min(wrote, this.to_send.len)..];
+                    return;
                 }
             }
 
@@ -1170,6 +1187,7 @@ fn buildRequestBody(
     port: u16,
     client_protocol: *const jsc.ZigString,
     extra_headers: NonUTF8Headers,
+    target_authorization: ?[]const u8,
 ) std.mem.Allocator.Error![]u8 {
     const allocator = vm.allocator;
 
@@ -1177,6 +1195,7 @@ fn buildRequestBody(
     var user_host: ?jsc.ZigString = null;
     var user_key: ?jsc.ZigString = null;
     var user_protocol: ?jsc.ZigString = null;
+    var user_authorization: bool = false;
 
     for (extra_headers.names, extra_headers.values) |name, value| {
         const name_slice = name.slice();
@@ -1186,6 +1205,8 @@ fn buildRequestBody(
             user_key = value;
         } else if (user_protocol == null and strings.eqlCaseInsensitiveASCII(name_slice, "sec-websocket-protocol", true)) {
             user_protocol = value;
+        } else if (!user_authorization and strings.eqlCaseInsensitiveASCII(name_slice, "authorization", true)) {
+            user_authorization = true;
         }
     }
 
@@ -1241,6 +1262,13 @@ fn buildRequestBody(
     var extra_headers_buf = std.array_list.Managed(u8).init(allocator);
     defer extra_headers_buf.deinit();
     const writer = extra_headers_buf.writer();
+
+    // Add Authorization header from URL credentials if user didn't provide one
+    if (!user_authorization) {
+        if (target_authorization) |auth| {
+            try writer.print("Authorization: {s}\r\n", .{auth});
+        }
+    }
 
     for (extra_headers.names, extra_headers.values) |name, value| {
         const name_slice = name.slice();

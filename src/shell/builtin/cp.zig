@@ -266,8 +266,8 @@ pub const ShellCpOutputTask = OutputTask(Cp, .{
 
 const ShellCpOutputTaskVTable = struct {
     pub fn writeErr(this: *Cp, childptr: anytype, errbuf: []const u8) ?Yield {
+        this.state.exec.output_waiting += 1;
         if (this.bltn().stderr.needsIO()) |safeguard| {
-            this.state.exec.output_waiting += 1;
             return this.bltn().stderr.enqueue(childptr, errbuf, safeguard);
         }
         _ = this.bltn().writeNoIO(.stderr, errbuf);
@@ -279,8 +279,8 @@ const ShellCpOutputTaskVTable = struct {
     }
 
     pub fn writeOut(this: *Cp, childptr: anytype, output: *OutputSrc) ?Yield {
+        this.state.exec.output_waiting += 1;
         if (this.bltn().stdout.needsIO()) |safeguard| {
-            this.state.exec.output_waiting += 1;
             return this.bltn().stdout.enqueue(childptr, output.slice(), safeguard);
         }
         _ = this.bltn().writeNoIO(.stdout, output.slice());

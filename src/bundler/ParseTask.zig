@@ -31,8 +31,10 @@ tree_shaking: bool = false,
 known_target: options.Target,
 module_type: options.ModuleType = .unknown,
 emit_decorator_metadata: bool = false,
+experimental_decorators: bool = false,
 ctx: *BundleV2,
 package_version: string = "",
+package_name: string = "",
 is_entry_point: bool = false,
 
 const ParseTaskStage = union(enum) {
@@ -83,6 +85,9 @@ pub const Result = struct {
         content_hash_for_additional_file: u64 = 0,
 
         loader: Loader,
+
+        /// The package name from package.json, used for barrel optimization.
+        package_name: string = "",
     };
 
     pub const Error = struct {
@@ -118,7 +123,9 @@ pub fn init(resolve_result: *const _resolver.Result, source_index: Index, ctx: *
         .source_index = source_index,
         .module_type = resolve_result.module_type,
         .emit_decorator_metadata = resolve_result.flags.emit_decorator_metadata,
+        .experimental_decorators = resolve_result.flags.experimental_decorators,
         .package_version = if (resolve_result.package_json) |package_json| package_json.version else "",
+        .package_name = if (resolve_result.package_json) |package_json| package_json.name else "",
         .known_target = ctx.transpiler.options.target,
     };
 }
@@ -360,12 +367,39 @@ fn getAST(
             const root = try YAML.parse(source, &temp_log, allocator);
             return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, &temp_log, root, source, "")).?);
         },
+        .json5 => {
+            const trace = bun.perf.trace("Bundler.ParseJSON5");
+            defer trace.end();
+            var temp_log = bun.logger.Log.init(allocator);
+            defer {
+                bun.handleOom(temp_log.cloneToWithRecycled(log, true));
+                temp_log.msgs.clearAndFree();
+            }
+            const root = try JSON5.parse(source, &temp_log, allocator);
+            return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, &temp_log, root, source, "")).?);
+        },
         .text => {
             const root = Expr.init(E.String, E.String{
                 .data = source.contents,
             }, Logger.Loc{ .start = 0 });
             var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, source, "")).?);
-            ast.addUrlForCss(allocator, source, "text/plain", null);
+            ast.addUrlForCss(allocator, source, "text/plain", null, transpiler.options.compile_to_standalone_html);
+            return ast;
+        },
+        .md => {
+            const html = bun.md.renderToHtml(source.contents, allocator) catch {
+                log.addError(
+                    source,
+                    Logger.Loc.Empty,
+                    "Failed to render markdown to HTML",
+                ) catch |err| bun.handleOom(err);
+                return error.ParserError;
+            };
+            const root = Expr.init(E.String, E.String{
+                .data = html,
+            }, Logger.Loc{ .start = 0 });
+            var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, source, "")).?);
+            ast.addUrlForCss(allocator, source, "text/html", null, transpiler.options.compile_to_standalone_html);
             return ast;
         },
 
@@ -616,7 +650,7 @@ fn getAST(
                 .content_hash = content_hash,
             };
             var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, source, "")).?);
-            ast.addUrlForCss(allocator, source, null, unique_key);
+            ast.addUrlForCss(allocator, source, null, unique_key, transpiler.options.compile_to_standalone_html);
             return ast;
         },
     }
@@ -1184,7 +1218,11 @@ fn runWithSourceCode(
     opts.features.minify_identifiers = transpiler.options.minify_identifiers;
     opts.features.minify_keep_names = transpiler.options.keep_names;
     opts.features.minify_whitespace = transpiler.options.minify_whitespace;
-    opts.features.emit_decorator_metadata = transpiler.options.emit_decorator_metadata;
+    opts.features.emit_decorator_metadata = task.emit_decorator_metadata;
+    // emitDecoratorMetadata implies legacy/experimental decorators, as it only
+    // makes sense with TypeScript's legacy decorator system (reflect-metadata).
+    // TC39 standard decorators have their own metadata mechanism.
+    opts.features.standard_decorators = !loader.isTypeScript() or !(task.experimental_decorators or task.emit_decorator_metadata);
     opts.features.unwrap_commonjs_packages = transpiler.options.unwrap_commonjs_packages;
     opts.features.bundler_feature_flags = transpiler.options.bundler_feature_flags;
     opts.features.hot_module_reloading = output_format == .internal_bake_dev and !source.index.isRuntime();
@@ -1219,6 +1257,7 @@ fn runWithSourceCode(
     }
 
     opts.tree_shaking = if (source.index.isRuntime()) true else transpiler.options.tree_shaking;
+    opts.code_splitting = transpiler.options.code_splitting;
     opts.module_type = task.module_type;
 
     task.jsx.parse = loader.isJSX();
@@ -1263,6 +1302,7 @@ fn runWithSourceCode(
         .unique_key_for_additional_file = unique_key_for_additional_file.key,
         .side_effects = task.side_effects,
         .loader = loader,
+        .package_name = task.package_name,
 
         // Hash the files in here so that we do it in parallel.
         .content_hash_for_additional_file = if (loader.shouldCopyForBundling())
@@ -1427,6 +1467,7 @@ const default_allocator = bun.default_allocator;
 const js_parser = bun.js_parser;
 const strings = bun.strings;
 const BabyList = bun.collections.BabyList;
+const JSON5 = bun.interchange.json5.JSON5Parser;
 const TOML = bun.interchange.toml.TOML;
 const YAML = bun.interchange.yaml.YAML;
 

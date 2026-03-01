@@ -722,6 +722,7 @@ pub const ReadFileUV = struct {
                 this.buffer.ensureUnusedCapacity(this.byte_store.allocator, 4096) catch |err| {
                     this.errno = err;
                     this.onFinish();
+                    return;
                 };
             }
 
@@ -769,7 +770,7 @@ pub const ReadFileUV = struct {
         if (result.errEnum()) |errno| {
             this.errno = bun.errnoToZigErr(errno);
             this.system_error = bun.sys.Error.fromCode(errno, .read).toSystemError();
-            this.finalize();
+            this.onFinish();
             return;
         }
 

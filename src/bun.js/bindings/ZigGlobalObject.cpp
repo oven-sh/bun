@@ -2450,6 +2450,7 @@ JSC_DEFINE_CUSTOM_GETTER(getConsoleConstructor, (JSGlobalObject * globalObject, 
     if (returnedException) {
         auto scope = DECLARE_THROW_SCOPE(vm);
         throwException(globalObject, scope, returnedException.get());
+        return {};
     }
     console->putDirect(vm, property, result, 0);
     return JSValue::encode(result);

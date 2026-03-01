@@ -46,7 +46,7 @@ macro(optionx variable type description)
   set(${variable}_PREVIEW -D${variable})
 
   if(DEFINED ENV{${variable}})
-    set(${variable} $ENV{${variable}} CACHE ${${variable}_TYPE} ${description} FORCE)
+    set(${variable} "$ENV{${variable}}" CACHE ${${variable}_TYPE} ${description} FORCE)
     set(${variable}_SOURCE "environment variable")
     set(${variable}_PREVIEW ${variable})
   endif()

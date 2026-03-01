@@ -36,7 +36,7 @@ namespace uWS {
     constexpr uint64_t STATE_IS_ERROR = ~0ull;//0xFFFFFFFFFFFFFFFF;
     constexpr uint64_t STATE_SIZE_OVERFLOW = 0x0Full << (sizeof(uint64_t) * 8 - 8);//0x0F00000000000000;
 
-    inline unsigned int chunkSize(uint64_t state) {
+    inline uint64_t chunkSize(uint64_t state) {
         return state & STATE_SIZE_MASK;
     }
 
@@ -54,15 +54,19 @@ namespace uWS {
             while (data.length() && data[0] > 32 && data[0] != ';') {
 
                 unsigned char digit = (unsigned char)data[0];
-                if (digit >= 'a') {
-                    digit = (unsigned char) (digit - ('a' - ':'));
-                } else if (digit >= 'A') {
-                    digit = (unsigned char) (digit - ('A' - ':'));
+                unsigned int number;
+                if (digit >= '0' && digit <= '9') {
+                    number = digit - '0';
+                } else if (digit >= 'a' && digit <= 'f') {
+                    number = digit - 'a' + 10;
+                } else if (digit >= 'A' && digit <= 'F') {
+                    number = digit - 'A' + 10;
+                } else {
+                    state = STATE_IS_ERROR;
+                    return;
                 }
 
-                unsigned int number = ((unsigned int) digit - (unsigned int) '0');
-
-                if (number > 16 || (chunkSize(state) & STATE_SIZE_OVERFLOW)) {
+                if ((chunkSize(state) & STATE_SIZE_OVERFLOW)) {
                     state = STATE_IS_ERROR;
                     return;
                 }
@@ -135,7 +139,7 @@ namespace uWS {
         // short read
     }
 
-    inline void decChunkSize(uint64_t &state, unsigned int by) {
+    inline void decChunkSize(uint64_t &state, uint64_t by) {
 
         //unsigned int bits = state & STATE_IS_CHUNKED;
 
@@ -204,7 +208,7 @@ namespace uWS {
             }
 
             // do we have data to emit all?
-            unsigned int remaining = chunkSize(state);
+            uint64_t remaining = chunkSize(state);
             if (data.length() >= remaining) {
                 // emit all but 2 bytes then reset state to 0 and goto beginning
                 // not fin
@@ -244,7 +248,7 @@ namespace uWS {
             } else {
                 /* We will consume all our input data */
                 std::string_view emitSoon;
-                unsigned int size = chunkSize(state);
+                uint64_t size = chunkSize(state);
                 size_t len = data.length();
                 if (size > 2) {
                     uint64_t maximalAppEmit = size - 2;
@@ -280,7 +284,7 @@ namespace uWS {
                         return std::nullopt;
                     }
                 }
-                decChunkSize(state, (unsigned int) len);
+                decChunkSize(state, (uint64_t) len);
                 state |= STATE_IS_CHUNKED;
                 data.remove_prefix(len);
                 if (emitSoon.length()) {

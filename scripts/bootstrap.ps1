@@ -402,8 +402,8 @@ function Install-Bun {
   }
 
   if ($script:IsARM64) {
-    # No published ARM64 bun binary yet — download from our blob storage
-    Write-Output "Installing Bun (ARM64 from blob storage)..."
+    # ARM64 bun binary from blob storage (faster than GitHub releases for CI)
+    Write-Output "Installing Bun (ARM64)..."
     $zip = Download-File "https://buncistore.blob.core.windows.net/artifacts/bun-windows-aarch64.zip" -Name "bun-arm64.zip"
     $extractDir = "$env:TEMP\bun-arm64"
     Expand-Archive -Path $zip -DestinationPath $extractDir -Force

@@ -78,6 +78,10 @@ pub const FetchTasklet = struct {
         bun.debugAssert(count > 0);
 
         if (count == 1) {
+            if (this.javascript_vm.isShuttingDown()) {
+                this.deinit() catch |err| switch (err) {};
+                return;
+            }
             // this is really unlikely to happen, but can happen
             // lets make sure that we always call deinit from main thread
 
@@ -1155,6 +1159,7 @@ pub const FetchTasklet = struct {
 
     /// This is ALWAYS called from the http thread and we cannot touch the buffer here because is locked
     pub fn onWriteRequestDataDrain(this: *FetchTasklet) void {
+        if (this.javascript_vm.isShuttingDown()) return;
         // ref until the main thread callback is called
         this.ref();
         this.javascript_vm.eventLoop().enqueueTaskConcurrent(jsc.ConcurrentTask.fromCallback(this, FetchTasklet.resumeRequestDataStream));
@@ -1383,7 +1388,8 @@ pub const FetchTasklet = struct {
                 return;
             }
         }
-
+        // will deinit when done with the http client (when is_done = true)
+        if (task.javascript_vm.isShuttingDown()) return;
         task.javascript_vm.eventLoop().enqueueTaskConcurrent(task.concurrent_task.from(task, .manual_deinit));
     }
 };

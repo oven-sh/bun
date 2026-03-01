@@ -105,6 +105,10 @@ summary(() => {
     bench(`small (${small.length} chars) - Bun.markdown.render`, () => {
       return Bun.markdown.render(small, renderCallbacks);
     });
+
+    bench(`small (${small.length} chars) - Bun.markdown.react`, () => {
+      return Bun.markdown.react(small);
+    });
   }
 
   bench(`small (${small.length} chars) - marked`, () => {
@@ -125,6 +129,10 @@ summary(() => {
     bench(`medium (${medium.length} chars) - Bun.markdown.render`, () => {
       return Bun.markdown.render(medium, renderCallbacks);
     });
+
+    bench(`medium (${medium.length} chars) - Bun.markdown.react`, () => {
+      return Bun.markdown.react(medium);
+    });
   }
 
   bench(`medium (${medium.length} chars) - marked`, () => {
@@ -144,6 +152,10 @@ summary(() => {
 
     bench(`large (${large.length} chars) - Bun.markdown.render`, () => {
       return Bun.markdown.render(large, renderCallbacks);
+    });
+
+    bench(`large (${large.length} chars) - Bun.markdown.react`, () => {
+      return Bun.markdown.react(large);
     });
   }
 

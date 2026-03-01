@@ -161,6 +161,31 @@ test("(multi-file test) my feature", async () => {
 - `src/sql/` - SQL database integrations
 - `src/bake/` - Server-side rendering framework
 
+#### Vendored Dependencies (`vendor/`)
+
+Third-party C/C++ libraries are vendored locally and can be read from disk (these are not git submodules):
+
+- `vendor/boringssl/` - BoringSSL (TLS/crypto)
+- `vendor/brotli/` - Brotli compression
+- `vendor/cares/` - c-ares (async DNS)
+- `vendor/hdrhistogram/` - HdrHistogram (latency tracking)
+- `vendor/highway/` - Google Highway (SIMD)
+- `vendor/libarchive/` - libarchive (tar/zip)
+- `vendor/libdeflate/` - libdeflate (fast deflate)
+- `vendor/libuv/` - libuv (Windows event loop)
+- `vendor/lolhtml/` - lol-html (HTML rewriter)
+- `vendor/lshpack/` - ls-hpack (HTTP/2 HPACK)
+- `vendor/mimalloc/` - mimalloc (memory allocator)
+- `vendor/nodejs/` - Node.js headers (compatibility)
+- `vendor/picohttpparser/` - PicoHTTPParser (HTTP parsing)
+- `vendor/tinycc/` - TinyCC (FFI JIT compiler, fork: oven-sh/tinycc)
+- `vendor/WebKit/` - WebKit/JavaScriptCore (JS engine)
+- `vendor/zig/` - Zig compiler/stdlib
+- `vendor/zlib/` - zlib (compression, cloudflare fork)
+- `vendor/zstd/` - Zstandard (compression)
+
+Build configuration for these is in `cmake/targets/Build*.cmake`.
+
 ### JavaScript Class Implementation (C++)
 
 When implementing JavaScript classes in C++:

@@ -611,6 +611,82 @@ describe("Bun.Archive", () => {
         // Very deep paths might fail on some systems - that's acceptable
       }
     });
+
+    test("directory entries with path traversal components cannot escape extraction root", async () => {
+      // Manually craft a tar archive containing directory entries with "../" traversal
+      // components in their pathnames. This tests that the extraction code uses the
+      // normalized path (which strips "..") rather than the raw pathname from the tarball.
+      function createTarHeader(
+        name: string,
+        size: number,
+        type: "0" | "5", // 0=file, 5=directory
+      ): Uint8Array {
+        const header = new Uint8Array(512);
+        const enc = new TextEncoder();
+        header.set(enc.encode(name).slice(0, 100), 0);
+        header.set(enc.encode(type === "5" ? "0000755 " : "0000644 "), 100);
+        header.set(enc.encode("0000000 "), 108);
+        header.set(enc.encode("0000000 "), 116);
+        header.set(enc.encode(size.toString(8).padStart(11, "0") + " "), 124);
+        const mtime = Math.floor(Date.now() / 1000)
+          .toString(8)
+          .padStart(11, "0");
+        header.set(enc.encode(mtime + " "), 136);
+        header.set(enc.encode("        "), 148); // checksum placeholder
+        header[156] = type.charCodeAt(0);
+        header.set(enc.encode("ustar"), 257);
+        header[262] = 0;
+        header.set(enc.encode("00"), 263);
+        let checksum = 0;
+        for (let i = 0; i < 512; i++) checksum += header[i];
+        header.set(enc.encode(checksum.toString(8).padStart(6, "0") + "\0 "), 148);
+        return header;
+      }
+
+      const blocks: Uint8Array[] = [];
+      const enc = new TextEncoder();
+
+      // A legitimate directory
+      blocks.push(createTarHeader("safe_dir/", 0, "5"));
+      // A directory entry with traversal: "safe_dir/../../escaped_dir/"
+      // After normalization this becomes "escaped_dir" (safe),
+      // but the raw pathname resolves ".." via the kernel in mkdirat.
+      blocks.push(createTarHeader("safe_dir/../../escaped_dir/", 0, "5"));
+      // A normal file
+      const content = enc.encode("hello");
+      blocks.push(createTarHeader("safe_dir/file.txt", content.length, "0"));
+      blocks.push(content);
+      const pad = 512 - (content.length % 512);
+      if (pad < 512) blocks.push(new Uint8Array(pad));
+      // End-of-archive markers
+      blocks.push(new Uint8Array(1024));
+
+      const totalLen = blocks.reduce((s, b) => s + b.length, 0);
+      const tarball = new Uint8Array(totalLen);
+      let offset = 0;
+      for (const b of blocks) {
+        tarball.set(b, offset);
+        offset += b.length;
+      }
+
+      // Create a parent directory so we can check if "escaped_dir" appears outside extractDir
+      using parentDir = tempDir("archive-traversal-parent", {});
+      const extractPath = join(String(parentDir), "extract");
+      const { mkdirSync, existsSync } = require("fs");
+      mkdirSync(extractPath, { recursive: true });
+
+      const archive = new Bun.Archive(tarball);
+      await archive.extract(extractPath);
+
+      // The "escaped_dir" should NOT exist in the parent directory (outside extraction root)
+      const escapedOutside = join(String(parentDir), "escaped_dir");
+      expect(existsSync(escapedOutside)).toBe(false);
+
+      // The "safe_dir" should exist inside the extraction directory
+      expect(existsSync(join(extractPath, "safe_dir"))).toBe(true);
+      // The normalized "escaped_dir" may or may not exist inside extractPath
+      // (depending on whether normalization keeps it), but it must NOT be outside
+    });
   });
 
   describe("Archive.write()", () => {

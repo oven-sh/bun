@@ -485,6 +485,28 @@ describe("stringWidth extended", () => {
       expect(Bun.stringWidth("ก็")).toBe(1); // With maitaikhu
       expect(Bun.stringWidth("ปฏัก")).toBe(3); // ป + ฏ + ั (combining) + ก = 3 visible
     });
+
+    test("Thai spacing vowels (SARA AA and SARA AM)", () => {
+      // U+0E32 (SARA AA) and U+0E33 (SARA AM) are spacing vowels, not combining marks
+      expect(Bun.stringWidth("\u0E32")).toBe(1); // SARA AA alone
+      expect(Bun.stringWidth("\u0E33")).toBe(1); // SARA AM alone
+      expect(Bun.stringWidth("ก\u0E32")).toBe(2); // ก + SARA AA
+      expect(Bun.stringWidth("ก\u0E33")).toBe(2); // กำ (KO KAI + SARA AM)
+      expect(Bun.stringWidth("คำ")).toBe(2); // Common Thai word
+      expect(Bun.stringWidth("ทำ")).toBe(2); // Common Thai word
+      // True combining marks should still be zero-width
+      expect(Bun.stringWidth("\u0E31")).toBe(0); // MAI HAN-AKAT (combining)
+      expect(Bun.stringWidth("ก\u0E31")).toBe(1); // กั
+    });
+
+    test("Lao spacing vowels", () => {
+      // U+0EB2 and U+0EB3 are spacing vowels in Lao, similar to Thai
+      expect(Bun.stringWidth("\u0EB2")).toBe(1); // LAO VOWEL SIGN AA
+      expect(Bun.stringWidth("\u0EB3")).toBe(1); // LAO VOWEL SIGN AM
+      expect(Bun.stringWidth("ກ\u0EB2")).toBe(2); // KO + AA
+      // True combining marks should still be zero-width
+      expect(Bun.stringWidth("\u0EB1")).toBe(0); // MAI KAN (combining)
+    });
   });
 
   describe("non-ASCII in escape sequences and Indic script handling", () => {
@@ -795,6 +817,58 @@ describe("stringWidth extended", () => {
     test("Three consonants joined", () => {
       // Ka + Virama + Ka + Virama + Ka
       expect(Bun.stringWidth("क्क्क")).toBe(3); // 1+0+1+0+1
+    });
+  });
+
+  // ANSI escape sequences should NOT affect grapheme cluster state. Previously,
+  // the CSI final byte (e.g. 'm') was tracked as the "previous codepoint" for
+  // graphemeBreak, so a zero-width joiner/extender immediately after an SGR
+  // code would wrongly attach to the 'm' instead of the last visible char.
+  // Found by sliceAnsi fuzz testing.
+  describe("ANSI sequences preserve grapheme state", () => {
+    test("VS16 after SGR code has width 0 (not 1)", () => {
+      // VS16 (U+FE0F) is a zero-width variation selector. It should contribute
+      // width 0 regardless of whether an ANSI code precedes it.
+      expect(Bun.stringWidth("\uFE0F?")).toBe(1); // baseline: no ANSI
+      expect(Bun.stringWidth("\x1b[1m\uFE0F?")).toBe(1); // SGR before: same
+      expect(Bun.stringWidth("\x1b[31m\uFE0F\x1b[39m?")).toBe(1); // SGR both sides
+    });
+
+    test("combining mark after SGR attaches to previous visible char, not 'm'", () => {
+      // 'e' + SGR + U+0301 (combining acute) should form one cluster "é" (width 1).
+      // Previously the CSI 'm' byte was the graphemeBreak prev → combining mark
+      // attached to 'm' → 'e' finalized alone (width 1) + new cluster (width 0)
+      // → total 1. This happens to be correct by accident, but let's lock it in.
+      expect(Bun.stringWidth("e\u0301")).toBe(1); // baseline
+      expect(Bun.stringWidth("e\x1b[1m\u0301")).toBe(1); // SGR between base and mark
+    });
+
+    test("ZWJ after SGR doesn't break emoji cluster", () => {
+      // 👩 + SGR + ZWJ + SGR + 💻 should still be one width-2 cluster.
+      expect(Bun.stringWidth("\u{1F469}\u200D\u{1F4BB}")).toBe(2); // baseline
+      expect(Bun.stringWidth("\u{1F469}\x1b[1m\u200D\x1b[22m\u{1F4BB}")).toBe(2);
+    });
+
+    test("ANSI + VS16 + ZWJ (orphaned joiners at start) has width 0", () => {
+      // Orphaned VS16 + ZWJ at string start, with ANSI before/between.
+      // Both are zero-width; no visible chars → width 0.
+      expect(Bun.stringWidth("\uFE0F\u200D")).toBe(0); // baseline
+      expect(Bun.stringWidth("\x1b[1m\uFE0F\u200D")).toBe(0);
+      expect(Bun.stringWidth("\x1b[1m\uFE0F\x1b[31m\u200D")).toBe(0);
+    });
+
+    test("consistency: stringWidth(s) == stringWidth(stripANSI(s))", () => {
+      // The fundamental invariant: ANSI codes should be transparent to width.
+      const cases = [
+        "\x1b[1m\uFE0F?",
+        "\x1b[31me\x1b[39m\u0301",
+        "\x1b[1m\u{1F469}\x1b[22m\u200D\u{1F4BB}",
+        "\x1b[38;2;255;0;0m\u5B89\u5B81\x1b[39m",
+        "\x1b[4m\u{1F1FA}\x1b[24m\u{1F1F8}", // regional indicator pair split by SGR
+      ];
+      for (const s of cases) {
+        expect(Bun.stringWidth(s)).toBe(Bun.stringWidth(Bun.stripANSI(s)));
+      }
     });
   });
 });

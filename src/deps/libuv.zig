@@ -1414,6 +1414,25 @@ pub const Pipe = extern struct {
     pub fn asStream(this: *@This()) *uv_stream_t {
         return @ptrCast(this);
     }
+
+    /// Close the pipe handle (if needed) and then free it.
+    /// Handles all states: never-initialized (loop == null), already closing,
+    /// or active. After uv_pipe_init the handle is in the event loop's
+    /// handle_queue; freeing without uv_close corrupts that list.
+    pub fn closeAndDestroy(this: *@This()) void {
+        if (this.loop == null) {
+            // Never initialized — safe to free directly.
+            bun.destroy(this);
+        } else if (!this.isClosing()) {
+            // Initialized and not yet closing — must uv_close first.
+            this.close(&onCloseDestroy);
+        }
+        // else: already closing — the pending close callback owns the lifetime.
+    }
+
+    fn onCloseDestroy(handle: *@This()) callconv(.c) void {
+        bun.destroy(handle);
+    }
 };
 const union_unnamed_416 = extern union {
     fd: c_int,

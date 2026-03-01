@@ -1082,6 +1082,7 @@ pub fn installIsolatedPackages(
                         .local_tarball => {
                             manager.enqueueTarballForReading(
                                 dep_id,
+                                pkg_id,
                                 dep.name.slice(string_buf),
                                 &pkg_res,
                                 ctx,

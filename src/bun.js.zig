@@ -3,6 +3,17 @@ pub const webcore = @import("./bun.js/webcore.zig");
 pub const api = @import("./bun.js/api.zig");
 pub const bindgen = @import("./bun.js/bindgen.zig");
 
+pub fn applyStandaloneRuntimeFlags(b: *bun.Transpiler, graph: *const bun.StandaloneModuleGraph) void {
+    b.options.env.disable_default_env_files = graph.flags.disable_default_env_files;
+    b.options.env.behavior = if (graph.flags.disable_default_env_files)
+        .disable
+    else
+        .load_all_without_inlining;
+
+    b.resolver.opts.load_tsconfig_json = !graph.flags.disable_autoload_tsconfig;
+    b.resolver.opts.load_package_json = !graph.flags.disable_autoload_package_json;
+}
+
 pub const Run = struct {
     ctx: Command.Context,
     vm: *VirtualMachine,
@@ -82,18 +93,7 @@ pub const Run = struct {
             .unspecified => {},
         }
 
-        // If .env loading is disabled, only load process env vars
-        // Otherwise, load all .env files
-        if (graph_ptr.flags.disable_default_env_files) {
-            b.options.env.behavior = .disable;
-        } else {
-            b.options.env.behavior = .load_all_without_inlining;
-        }
-
-        // Control loading of tsconfig.json and package.json at runtime
-        // By default, these are disabled for standalone executables
-        b.resolver.opts.load_tsconfig_json = !graph_ptr.flags.disable_autoload_tsconfig;
-        b.resolver.opts.load_package_json = !graph_ptr.flags.disable_autoload_package_json;
+        applyStandaloneRuntimeFlags(b, graph_ptr);
 
         b.configureDefines() catch {
             failWithBuildError(vm);

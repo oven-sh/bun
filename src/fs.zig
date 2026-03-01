@@ -496,6 +496,13 @@ pub const FileSystem = struct {
         return path_handler.joinAbsStringBuf(f.top_level_dir, buf, parts, .loose);
     }
 
+    /// Like `absBuf`, but returns null when the joined path (after `..`/`.`
+    /// normalization) would overflow `buf`. Use when `parts` may contain
+    /// user-controlled input of arbitrary length.
+    pub fn absBufChecked(f: *@This(), parts: []const string, buf: []u8) ?string {
+        return path_handler.joinAbsStringBufChecked(f.top_level_dir, buf, parts, .loose);
+    }
+
     pub fn absBufZ(f: *@This(), parts: anytype, buf: []u8) stringZ {
         return path_handler.joinAbsStringBufZ(f.top_level_dir, buf, parts, .loose);
     }

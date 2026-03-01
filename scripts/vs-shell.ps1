@@ -17,17 +17,34 @@ if($env:VSINSTALLDIR -eq $null) {
 
   $vsDir = (& $vswhere -prerelease -latest -property installationPath)
   if ($vsDir -eq $null) {
-    $vsDir = Get-ChildItem -Path "C:\Program Files\Microsoft Visual Studio\2022" -Directory
+    # Check common VS installation paths
+    $searchPaths = @(
+      "C:\Program Files\Microsoft Visual Studio\2022",
+      "C:\Program Files (x86)\Microsoft Visual Studio\2022"
+    )
+    foreach ($searchPath in $searchPaths) {
+      if (Test-Path $searchPath) {
+        $vsDir = (Get-ChildItem -Path $searchPath -Directory | Select-Object -First 1).FullName
+        if ($vsDir -ne $null) { break }
+      }
+    }
     if ($vsDir -eq $null) {
       throw "Visual Studio directory not found."
     }
-    $vsDir = $vsDir.FullName
   }
 
   Push-Location $vsDir
   try {
     $vsShell = (Join-Path -Path $vsDir -ChildPath "Common7\Tools\Launch-VsDevShell.ps1")
-    . $vsShell -Arch $script:VsArch -HostArch $script:VsArch
+    # -HostArch only accepts "x86" or "amd64" — even on native ARM64, use "amd64"
+    $hostArch = if ($script:VsArch -eq "arm64") { "amd64" } else { $script:VsArch }
+    . $vsShell -Arch $script:VsArch -HostArch $hostArch
+
+    # VS dev shell with -HostArch amd64 sets PROCESSOR_ARCHITECTURE=AMD64,
+    # which causes CMake to misdetect the system as x64. Restore it on ARM64.
+    if ($script:IsARM64) {
+      $env:PROCESSOR_ARCHITECTURE = "ARM64"
+    }
   } finally {
     Pop-Location
   }
@@ -61,7 +78,7 @@ if ($args.Count -gt 0) {
       $displayArgs += $arg
     }
   }
-  
+
   Write-Host "$ $command $displayArgs"
   & $command $commandArgs
   exit $LASTEXITCODE

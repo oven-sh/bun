@@ -93,8 +93,8 @@ function normalizeOutput(stdout: string) {
       // displayed file sizes are in post-gzip compression, however
       // the gzip / node:zlib implementation is different in bun and node
       .replace(/\d+(\.\d+)? [km]?b/gi, data => " ".repeat(data.length))
-      // normalize "Compiled successfully in Xms" timestamps
-      .replace(/Compiled successfully in (\d|\.)+(ms|s)/gi, "Compiled successfully in 1000ms")
+      // normalize "in Xms" timestamps (e.g. "Compiled successfully in 1000ms", "in 414.5ms")
+      .replace(/\bin \d+(?:\.\d+)?m?s\b/gi, "in 1000ms")
       // normalize counter logging that may appear in different spots
       .replaceAll("\ncounter a", "")
       .split("\n")
@@ -126,7 +126,9 @@ test(
     const nextPath = "node_modules/next/dist/bin/next";
     const tmp1 = tmpdirSync();
     console.time("[bun] next build");
-    const bunBuild = Bun.spawn([bunExe(), "--bun", nextPath, "build"], {
+    // Use --webpack for deterministic build comparison (Turbopack is default in Next.js 16
+    // but produces non-deterministic output between bun and node runtimes).
+    const bunBuild = Bun.spawn([bunExe(), "--bun", nextPath, "build", "--webpack"], {
       cwd: bunDir,
       stdio: ["ignore", "pipe", "inherit"],
       env: {
@@ -141,7 +143,7 @@ test(
 
     const tmp2 = tmpdirSync();
     console.time("[node] next build");
-    const nodeBuild = Bun.spawn(["node", nextPath, "build"], {
+    const nodeBuild = Bun.spawn(["node", nextPath, "build", "--webpack"], {
       cwd: nodeDir,
       env: {
         ...bunEnv,
@@ -177,12 +179,15 @@ test(
     const bunBuildDir = join(bunDir, ".next");
     const nodeBuildDir = join(nodeDir, ".next");
 
-    // Remove some build files that Next.js does not make deterministic.
+    // Remove some build files/dirs that Next.js does not make deterministic.
     const toRemove = [
       // these have timestamps and absolute paths in them
       "trace",
+      "trace-build",
       "cache",
+      // these contain absolute paths
       "required-server-files.json",
+      "required-server-files.js",
       // these have "signing keys", not sure what they are tbh
       "prerender-manifest.json",
       // these are similar but i feel like there might be something we can fix to make them the same
@@ -192,8 +197,8 @@ test(
       "server/pages-manifest.json",
     ];
     for (const key of toRemove) {
-      rmSync(join(bunBuildDir, key), { recursive: true });
-      rmSync(join(nodeBuildDir, key), { recursive: true });
+      rmSync(join(bunBuildDir, key), { recursive: true, force: true });
+      rmSync(join(nodeBuildDir, key), { recursive: true, force: true });
     }
 
     console.log("Hashing files...");

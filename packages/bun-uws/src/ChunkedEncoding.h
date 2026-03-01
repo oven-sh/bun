@@ -32,7 +32,8 @@ namespace uWS {
     constexpr uint64_t STATE_HAS_SIZE = 1ull << (sizeof(uint64_t) * 8 - 1);//0x8000000000000000;
     constexpr uint64_t STATE_IS_CHUNKED = 1ull << (sizeof(uint64_t) * 8 - 2);//0x4000000000000000;
     constexpr uint64_t STATE_IS_CHUNKED_EXTENSION = 1ull << (sizeof(uint64_t) * 8 - 3);//0x2000000000000000;
-    constexpr uint64_t STATE_SIZE_MASK = ~(STATE_HAS_SIZE | STATE_IS_CHUNKED | STATE_IS_CHUNKED_EXTENSION);//0x1FFFFFFFFFFFFFFF;
+    constexpr uint64_t STATE_WAITING_FOR_LF = 1ull << (sizeof(uint64_t) * 8 - 4);//0x1000000000000000;
+    constexpr uint64_t STATE_SIZE_MASK = ~(STATE_HAS_SIZE | STATE_IS_CHUNKED | STATE_IS_CHUNKED_EXTENSION | STATE_WAITING_FOR_LF);//0x0FFFFFFFFFFFFFFF;
     constexpr uint64_t STATE_IS_ERROR = ~0ull;//0xFFFFFFFFFFFFFFFF;
     constexpr uint64_t STATE_SIZE_OVERFLOW = 0x0Full << (sizeof(uint64_t) * 8 - 8);//0x0F00000000000000;
 
@@ -48,6 +49,20 @@ namespace uWS {
     inline void consumeHexNumber(std::string_view &data, uint64_t &state) {
 
         /* RFC 9110: 5.5 Field Values (TLDR; anything above 31 is allowed \r, \n ; depending on context)*/
+
+        /* Resume after a lone \r was consumed on a previous call */
+        if (state & STATE_WAITING_FOR_LF) {
+            if (!data.length()) return; // need more data
+            if (data[0] == '\n') {
+                state &= ~STATE_WAITING_FOR_LF;
+                state += 2; // include the two last \r\n
+                state |= STATE_HAS_SIZE | STATE_IS_CHUNKED;
+                data.remove_prefix(1);
+                return;
+            }
+            state = STATE_IS_ERROR;
+            return;
+        }
 
         if(!isParsingChunkedExtension(state)){
             /* Consume everything higher than 32 and not ; (extension)*/
@@ -134,6 +149,12 @@ namespace uWS {
                 state |= STATE_HAS_SIZE | STATE_IS_CHUNKED;
 
                 data.remove_prefix(2);
+            } else if (data.length() == 1 && data[0] == '\r') {
+                /* Lone \r at end of buffer — consume it and wait for \n on next call.
+                 * This handles the case where a TCP segment boundary falls between
+                 * the \r and \n of the chunk-size CRLF terminator. */
+                state |= STATE_WAITING_FOR_LF;
+                data.remove_prefix(1);
             }
         }
         // short read
@@ -203,6 +224,10 @@ namespace uWS {
                     }
 
                     return std::string_view(nullptr, 0);
+                }
+                if (!hasChunkSize(state)) {
+                    /* Incomplete chunk-size line — need more data from the network. */
+                    return std::nullopt;
                 }
                 continue;
             }

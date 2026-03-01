@@ -108,6 +108,128 @@ describe.if(isPosix)("HTTP server handles chunked transfer encoding", () => {
   });
 });
 
+describe.if(isPosix)("HTTP server handles split chunk-size CRLF", () => {
+  test("handles lone CR at end of chunk-size line across TCP segments", async () => {
+    // Regression test: when a TCP segment boundary falls between the \r and \n
+    // of a chunk-size line (e.g. "5\r" in one segment, "\n..." in the next),
+    // the server must buffer and resume correctly instead of spinning.
+    const script = `
+      const server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          const body = await req.text();
+          return new Response("Got: " + body);
+        },
+      });
+      const { promise, resolve } = Promise.withResolvers();
+      const socket = await Bun.connect({
+        hostname: "localhost",
+        port: server.port,
+        socket: {
+          data(socket, data) {
+            console.log(data.toString());
+            socket.end();
+          },
+          open(socket) {
+            // Send headers
+            socket.write("PUT / HTTP/1.1\\r\\nHost: localhost\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n");
+            socket.flush();
+            // After a delay, send chunk size with lone \\r (no \\n yet)
+            setTimeout(() => {
+              socket.write("5\\r");
+              socket.flush();
+              // After another delay, send the rest: \\n, chunk data, and final chunk
+              setTimeout(() => {
+                socket.write("\\nHello\\r\\n0\\r\\n\\r\\n");
+                socket.flush();
+              }, 50);
+            }, 50);
+          },
+          error() {},
+          close() { resolve(); },
+        },
+      });
+      await promise;
+      server.stop();
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    expect(stdout).toContain("200 OK");
+    expect(stdout).toContain("Got: Hello");
+    expect(exitCode).toBe(0);
+  });
+
+  test("handles lone CR in chunk-size with extensions", async () => {
+    // Same split but with a chunk extension before the CRLF
+    const script = `
+      const server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          const body = await req.text();
+          return new Response("Got: " + body);
+        },
+      });
+      const { promise, resolve } = Promise.withResolvers();
+      const socket = await Bun.connect({
+        hostname: "localhost",
+        port: server.port,
+        socket: {
+          data(socket, data) {
+            console.log(data.toString());
+            socket.end();
+          },
+          open(socket) {
+            socket.write("PUT / HTTP/1.1\\r\\nHost: localhost\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n");
+            socket.flush();
+            setTimeout(() => {
+              // chunk size with extension, CR split from LF
+              socket.write("5;ext=val\\r");
+              socket.flush();
+              setTimeout(() => {
+                socket.write("\\nHello\\r\\n0\\r\\n\\r\\n");
+                socket.flush();
+              }, 50);
+            }, 50);
+          },
+          error() {},
+          close() { resolve(); },
+        },
+      });
+      await promise;
+      server.stop();
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    expect(stdout).toContain("200 OK");
+    expect(stdout).toContain("Got: Hello");
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe.if(isPosix)("HTTP server handles fragmented requests", () => {
   test("handles requests with tiny send buffer (regression test)", async () => {
     using server = Bun.serve({

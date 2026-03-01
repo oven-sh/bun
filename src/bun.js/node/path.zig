@@ -2284,7 +2284,8 @@ pub fn relativeWindowsJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, 
 }
 
 pub fn relativeJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, allocator: std.mem.Allocator, isWindows: bool, from: []const T, to: []const T) bun.JSError!jsc.JSValue {
-    const bufLen = @max(from.len + to.len, PATH_SIZE(T));
+    // Account for CWD (up to MAX_PATH_SIZE) that resolve may prepend to relative paths.
+    const bufLen = @max(from.len + to.len + MAX_PATH_SIZE(T) + 1, PATH_SIZE(T));
     // +1 for null terminator
     const buf = bun.handleOom(allocator.alloc(T, bufLen + 1));
     defer allocator.free(buf);
@@ -2737,6 +2738,9 @@ pub fn resolveJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, allocato
     // Adding 8 bytes when Windows for the possible UNC root.
     var bufLen: usize = if (isWindows) 8 else 0;
     for (paths) |path| bufLen += if (bufLen > 0 and path.len > 0) path.len + 1 else path.len;
+    // When no path is absolute, the CWD (up to MAX_PATH_SIZE bytes) is prepended
+    // with a separator. Account for this to prevent buffer overflow.
+    bufLen += MAX_PATH_SIZE(T) + 1;
     bufLen = @max(bufLen, PATH_SIZE(T));
     // +2 to account for separator and null terminator during path resolution
     const buf = try allocator.alloc(T, bufLen + 2);
@@ -2900,7 +2904,8 @@ pub fn toNamespacedPathWindowsJS_T(comptime T: type, globalObject: *jsc.JSGlobal
 
 pub fn toNamespacedPathJS_T(comptime T: type, globalObject: *jsc.JSGlobalObject, allocator: std.mem.Allocator, isWindows: bool, path: []const T) bun.JSError!jsc.JSValue {
     if (!isWindows or path.len == 0) return bun.String.createUTF8ForJS(globalObject, path);
-    const bufLen = @max(path.len, PATH_SIZE(T));
+    // Account for CWD (up to MAX_PATH_SIZE) that resolve may prepend to relative paths.
+    const bufLen = @max(path.len + MAX_PATH_SIZE(T) + 1, PATH_SIZE(T));
     // +8 for possible UNC prefix, +1 for null terminator
     const buf = try allocator.alloc(T, bufLen + 8 + 1);
     defer allocator.free(buf);

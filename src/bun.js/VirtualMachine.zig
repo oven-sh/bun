@@ -1616,7 +1616,7 @@ fn _resolve(
     if (strings.eqlComptime(std.fs.path.basename(specifier), Runtime.Runtime.Imports.alt_name)) {
         ret.path = Runtime.Runtime.Imports.Name;
         return;
-    } else if (strings.eqlComptime(specifier, main_file_name)) {
+    } else if (strings.eqlComptime(specifier, main_file_name) and jsc_vm.entry_point.generated) {
         ret.result = null;
         ret.path = jsc_vm.entry_point.source.path.text;
         return;
@@ -1684,9 +1684,18 @@ fn _resolve(
                     const buster_name = name: {
                         if (std.fs.path.isAbsolute(normalized_specifier)) {
                             if (std.fs.path.dirname(normalized_specifier)) |dir| {
+                                if (dir.len > specifier_cache_resolver_buf.len) {
+                                    return error.ModuleNotFound;
+                                }
                                 // Normalized without trailing slash
                                 break :name bun.strings.normalizeSlashesOnly(&specifier_cache_resolver_buf, dir, std.fs.path.sep);
                             }
+                        }
+
+                        // If the specifier is too long to join, it can't name a real
+                        // directory — skip the cache bust and fail.
+                        if (source_to_use.len + normalized_specifier.len + 4 >= specifier_cache_resolver_buf.len) {
+                            return error.ModuleNotFound;
                         }
 
                         var parts = [_]string{
@@ -2669,7 +2678,7 @@ pub fn remapZigException(
     allow_source_code_preview: bool,
 ) void {
     error_instance.toZigException(this.global, exception);
-    const enable_source_code_preview = allow_source_code_preview and
+    var enable_source_code_preview = allow_source_code_preview and
         !(bun.feature_flag.BUN_DISABLE_SOURCE_CODE_PREVIEW.get() or
             bun.feature_flag.BUN_DISABLE_TRANSPILED_SOURCE_CODE_PREVIEW.get());
 
@@ -2764,6 +2773,12 @@ pub fn remapZigException(
         }
     }
 
+    // Don't show source code preview for REPL frames - it would show the
+    // transformed IIFE wrapper code, not what the user typed.
+    if (top.source_url.eqlComptime("[repl]")) {
+        enable_source_code_preview = false;
+    }
+
     var top_source_url = top.source_url.toUTF8(bun.default_allocator);
     defer top_source_url.deinit();
 
@@ -2815,7 +2830,6 @@ pub fn remapZigException(
                 // Avoid printing "export default 'native'"
                 break :code ZigString.Slice.empty;
             }
-
             var log = logger.Log.init(bun.default_allocator);
             defer log.deinit();
 

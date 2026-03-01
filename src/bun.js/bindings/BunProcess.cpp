@@ -2812,7 +2812,11 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionsetgroups, (JSGlobalObject * globalObje
     auto groups = callFrame->argument(0);
     Bun::V::validateArray(scope, globalObject, groups, "groups"_s, jsUndefined());
     RETURN_IF_EXCEPTION(scope, {});
-    auto groupsArray = JSC::jsDynamicCast<JSC::JSArray*>(groups);
+    auto* groupsArray = JSC::jsDynamicCast<JSC::JSArray*>(groups);
+    if (!groupsArray) [[unlikely]] {
+        // validateArray uses JSC::isArray() which accepts Proxy->Array, but jsDynamicCast returns null.
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "groups"_s, "Array"_s, groups);
+    }
     auto count = groupsArray->length();
     gid_t groupsStack[64];
     if (count > 64) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, "groups.length"_s, 0, 64, groups);

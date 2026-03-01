@@ -4,7 +4,6 @@ import { basename, join, relative, resolve } from "node:path";
 import {
   formatAnnotationToHtml,
   getEnv,
-  getSecret,
   isCI,
   isWindows,
   parseAnnotations,
@@ -14,14 +13,7 @@ import {
   startGroup,
 } from "./utils.mjs";
 
-// Detect Windows ARM64 - bun may run under x64 emulation (WoW64), so check multiple indicators
-const isWindowsARM64 =
-  isWindows &&
-  (process.env.PROCESSOR_ARCHITECTURE === "ARM64" ||
-    process.env.VSCMD_ARG_HOST_ARCH === "arm64" ||
-    process.env.MSYSTEM_CARCH === "aarch64" ||
-    (process.env.PROCESSOR_IDENTIFIER || "").includes("ARMv8") ||
-    process.arch === "arm64");
+const isWindowsARM64 = isWindows && process.arch === "arm64";
 
 if (globalThis.Bun) {
   await import("./glob-sources.mjs");
@@ -57,11 +49,7 @@ async function build(args) {
   if (process.platform === "win32" && !process.env["VSINSTALLDIR"]) {
     const shellPath = join(import.meta.dirname, "vs-shell.ps1");
     const scriptPath = import.meta.filename;
-    // When cross-compiling to ARM64, tell vs-shell.ps1 to set up the x64_arm64 VS environment
-    const toolchainIdx = args.indexOf("--toolchain");
-    const requestedVsArch = toolchainIdx !== -1 && args[toolchainIdx + 1] === "windows-aarch64" ? "arm64" : undefined;
-    const env = requestedVsArch ? { ...process.env, BUN_VS_ARCH: requestedVsArch } : undefined;
-    return spawn("pwsh", ["-NoProfile", "-NoLogo", "-File", shellPath, process.argv0, scriptPath, ...args], { env });
+    return spawn("pwsh", ["-NoProfile", "-NoLogo", "-File", shellPath, process.argv0, scriptPath, ...args]);
   }
 
   if (isCI) {
@@ -175,35 +163,6 @@ async function spawn(command, args, options, label) {
   label ??= basename(command);
 
   const pipe = process.env.CI === "true";
-
-  if (isBuildkite()) {
-    if (process.env.BUN_LINK_ONLY && isWindows) {
-      env ||= options?.env || { ...process.env };
-
-      // Pass signing secrets directly to the build process
-      // The PowerShell signing script will handle certificate decoding
-      env.SM_CLIENT_CERT_PASSWORD = getSecret("SM_CLIENT_CERT_PASSWORD", {
-        redact: true,
-        required: true,
-      });
-      env.SM_CLIENT_CERT_FILE = getSecret("SM_CLIENT_CERT_FILE", {
-        redact: true,
-        required: true,
-      });
-      env.SM_API_KEY = getSecret("SM_API_KEY", {
-        redact: true,
-        required: true,
-      });
-      env.SM_KEYPAIR_ALIAS = getSecret("SM_KEYPAIR_ALIAS", {
-        redact: true,
-        required: true,
-      });
-      env.SM_HOST = getSecret("SM_HOST", {
-        redact: true,
-        required: true,
-      });
-    }
-  }
 
   const subprocess = nodeSpawn(command, effectiveArgs, {
     stdio: pipe ? "pipe" : "inherit",

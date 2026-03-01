@@ -13,8 +13,8 @@ test.skipIf(!isLinux)(
     // The test script watches the directory, creates enough files to overflow
     // the 128-event buffer, then verifies the watcher continues to work by
     // detecting a final sentinel file write. Orchestration is condition-driven:
-    // a polling write establishes watcher readiness, then the burst + sentinel
-    // follow, and a promise race enforces the timeout.
+    // polling writes establish watcher readiness and sentinel detection, and a
+    // promise race enforces the timeout.
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -42,26 +42,23 @@ const watcherReady = new Promise((resolve) => {
 });
 
 // Poll-write a trigger file until the watcher reports readiness.
-const interval = setInterval(() => {
+const triggerInterval = setInterval(() => {
   fs.writeFileSync(path.join(dir, "trigger.txt"), String(Date.now()));
 }, 20);
 
 await watcherReady;
-clearInterval(interval);
+clearInterval(triggerInterval);
 
 // Burst-write files to overflow the inotify event buffer (>128 events).
 for (let i = 0; i < 200; i++) {
   fs.writeFileSync(path.join(dir, "burst" + i + ".txt"), "data" + i);
 }
 
-// Yield to the event loop so pending watcher callbacks are processed before
-// writing the sentinel, preventing the sentinel event from being coalesced
-// with the burst events.
-await new Promise((resolve) => setImmediate(resolve));
-
-// Write the sentinel. If read_ptr is not reset after the overflow, the watcher
-// is stuck re-processing stale events and will never observe this file.
-fs.writeFileSync(path.join(dir, "sentinel.txt"), "done");
+// Poll-write the sentinel file until the watcher detects it. A single write
+// can be missed due to event coalescing, so we retry like the trigger above.
+const sentinelInterval = setInterval(() => {
+  fs.writeFileSync(path.join(dir, "sentinel.txt"), String(Date.now()));
+}, 20);
 
 // Wait for sentinel detection or fail with an explicit timeout.
 await Promise.race([
@@ -70,6 +67,7 @@ await Promise.race([
     setTimeout(() => reject(new Error("timeout: sentinel not detected")), 10000)
   ),
 ]);
+clearInterval(sentinelInterval);
 
 console.log("sentinel detected");
 `,

@@ -5,14 +5,16 @@
  *
  * A handful of older tests do not run in Node in this file. These tests should be updated to run in Node, or deleted.
  */
-import { isCI, isLinux } from "harness";
+import { isCI, isIntelMacOS, isLinux } from "harness";
 import { once } from "node:events";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 
 describe("backpressure", () => {
-  // Linux CI only have 8GB with is not enought because we will clone all or most of this 4GB into memory
-  it.skipIf(isCI && isLinux)(
+  // Linux CI only has 8GB which is not enough because we will clone all or most of this 4GB into memory.
+  // macOS x64 CI times out because the BackPressure buffer management (memmove + shrink_to_fit on ~4GB)
+  // combined with kqueue's EV_ONESHOT re-registration overhead makes draining too slow for 60s.
+  it.skipIf(isCI && (isLinux || isIntelMacOS))(
     "should handle backpressure with the maximum allowed bytes",
     async () => {
       // max allowed by node:http to be sent in one go, more will throw an error

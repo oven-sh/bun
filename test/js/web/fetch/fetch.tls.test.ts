@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, tmpdirSync } from "harness";
 import { join } from "node:path";
 import tls from "node:tls";
 
@@ -263,7 +263,7 @@ describe.concurrent("fetch-tls", () => {
     });
     const start = performance.now();
     const TIMEOUT = 200;
-    const THRESHOLD = 150;
+    const THRESHOLD = 150 * (isASAN ? 2 : 1); // ASAN can be very slow, so we need to increase the threshold for it
 
     try {
       await fetch(server.url, {

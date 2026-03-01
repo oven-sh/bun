@@ -837,11 +837,27 @@ static JSC::EncodedJSValue jsBufferConstructorFunction_concatBody(JSC::JSGlobalO
     Bun::V::validateArray(throwScope, lexicalGlobalObject, listValue, "list"_s, jsUndefined());
     RETURN_IF_EXCEPTION(throwScope, {});
 
-    auto array = JSC::jsDynamicCast<JSC::JSArray*>(listValue);
-    size_t arrayLength = array->length();
-    if (arrayLength < 1) {
+    // Note: `validateArray` uses `JSC::isArray()` which returns true for Proxy->Array.
+    // `jsDynamicCast<JSArray*>` returns nullptr for Proxy, so we must fall back to
+    // the generic get() path to match Node.js behavior.
+    auto* array = JSC::jsDynamicCast<JSC::JSArray*>(listValue);
+    uint64_t arrayLength64;
+    if (array) [[likely]] {
+        arrayLength64 = array->length();
+    } else {
+        JSValue lengthValue = listValue.get(lexicalGlobalObject, vm.propertyNames->length);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        arrayLength64 = lengthValue.toLength(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(throwScope, {});
+    }
+    if (arrayLength64 < 1) {
         RELEASE_AND_RETURN(throwScope, constructBufferEmpty(lexicalGlobalObject));
     }
+    if (arrayLength64 > std::numeric_limits<unsigned>::max()) [[unlikely]] {
+        throwOutOfMemoryError(lexicalGlobalObject, throwScope);
+        return {};
+    }
+    unsigned arrayLength = static_cast<unsigned>(arrayLength64);
 
     JSValue totalLengthValue = callFrame->argument(1);
 
@@ -857,7 +873,7 @@ static JSC::EncodedJSValue jsBufferConstructorFunction_concatBody(JSC::JSGlobalO
     }
 
     for (unsigned i = 0; i < arrayLength; i++) {
-        JSValue element = array->getIndex(lexicalGlobalObject, i);
+        JSValue element = array ? array->getIndex(lexicalGlobalObject, i) : listValue.get(lexicalGlobalObject, i);
         RETURN_IF_EXCEPTION(throwScope, {});
 
         auto* typedArray = JSC::jsDynamicCast<JSC::JSUint8Array*>(element);
@@ -1092,21 +1108,23 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_compareBody(JSC::JSGlobalOb
         break;
     }
 
-    if (targetStart > targetEndInit && targetStart <= targetEnd) {
-        return Bun::ERR::OUT_OF_RANGE(throwScope, lexicalGlobalObject, "targetStart"_s, 0, targetEndInit, targetStartValue);
-    }
-    if (targetEnd > targetEndInit && targetEnd >= targetStart) {
+    // Validate end values against their respective buffer lengths to prevent OOB access.
+    // This matches Node.js behavior where targetEnd is validated against target.length
+    // and sourceEnd is validated against source.length.
+    if (targetEnd > targetEndInit) {
         return Bun::ERR::OUT_OF_RANGE(throwScope, lexicalGlobalObject, "targetEnd"_s, 0, targetEndInit, targetEndValue);
     }
-    if (sourceStart > sourceEndInit && sourceStart <= sourceEnd) {
-        return Bun::ERR::OUT_OF_RANGE(throwScope, lexicalGlobalObject, "sourceStart"_s, 0, sourceEndInit, sourceStartValue);
-    }
-    if (sourceEnd > sourceEndInit && sourceEnd >= sourceStart) {
+    if (sourceEnd > sourceEndInit) {
         return Bun::ERR::OUT_OF_RANGE(throwScope, lexicalGlobalObject, "sourceEnd"_s, 0, sourceEndInit, sourceEndValue);
     }
 
-    targetStart = std::min(targetStart, std::min(targetEnd, targetEndInit));
-    sourceStart = std::min(sourceStart, std::min(sourceEnd, sourceEndInit));
+    // When start >= end for either side, return early per Node.js semantics.
+    // This must be checked before validating start against buffer length, because
+    // Node.js allows start > buffer.length when it forms a zero-length range.
+    if (sourceStart >= sourceEnd)
+        RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(JSC::jsNumber(targetStart >= targetEnd ? 0 : -1)));
+    if (targetStart >= targetEnd)
+        RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(JSC::jsNumber(1)));
 
     auto sourceLength = sourceEnd - sourceStart;
     auto targetLength = targetEnd - targetStart;

@@ -52,7 +52,12 @@ fn alert(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSErr
     const reader = &stdin_reader.interface;
     while (true) {
         const byte = reader.takeByte() catch break;
-        if (byte == '\n' or byte == '\r') break;
+        if (byte == '\n') break;
+        if (byte == '\r') {
+            // Consume optional trailing \n for Windows \r\n line endings
+            _ = reader.takeByte() catch {};
+            break;
+        }
     }
 
     // 8. Invoke WebDriver BiDi user prompt closed with this and true.
@@ -110,7 +115,12 @@ fn confirm(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
     // *  Not relevant in a server context.
 
     switch (first_byte) {
-        '\n', '\r' => return .false,
+        '\n' => return .false,
+        '\r' => {
+            // Consume optional trailing \n for Windows \r\n line endings
+            _ = reader.takeByte() catch {};
+            return .false;
+        },
         'y', 'Y' => {
             const next_byte = reader.takeByte() catch {
                 // They may have said yes, but the stdin is invalid.
@@ -118,9 +128,13 @@ fn confirm(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
                 return .false;
             };
 
-            if (next_byte == '\n' or next_byte == '\r') {
+            if (next_byte == '\n') {
                 // 8. If the user responded positively, return true;
                 //    otherwise, the user responded negatively: return false.
+                return .true;
+            } else if (next_byte == '\r') {
+                // Consume optional trailing \n for Windows \r\n line endings
+                _ = reader.takeByte() catch {};
                 return .true;
             }
         },
@@ -128,7 +142,11 @@ fn confirm(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
     }
 
     while (reader.takeByte()) |b| {
-        if (b == '\n' or b == '\r') break;
+        if (b == '\n') break;
+        if (b == '\r') {
+            _ = reader.takeByte() catch {};
+            break;
+        }
     } else |_| {}
 
     // 8. If the user responded positively, return true; otherwise, the user
@@ -152,9 +170,12 @@ pub const prompt = struct {
 
             const byte: u8 = try reader.readByte();
 
-            // Accept both \n and \r as line endings to support raw terminal mode
-            // (e.g. when called from the REPL where Enter sends \r instead of \n)
-            if (byte == delimiter or byte == '\r') {
+            if (byte == delimiter) {
+                return;
+            }
+            if (byte == '\r') {
+                // Consume optional trailing \n for Windows \r\n line endings
+                _ = reader.readByte() catch {};
                 return;
             }
 
@@ -172,8 +193,12 @@ pub const prompt = struct {
         while (true) {
             const byte: u8 = try reader.readByte();
 
-            // Accept both \n and \r as line endings to support raw terminal mode
-            if (byte == delimiter or byte == '\r') {
+            if (byte == delimiter) {
+                return;
+            }
+            if (byte == '\r') {
+                // Consume optional trailing \n for Windows \r\n line endings
+                _ = reader.readByte() catch {};
                 return;
             }
 
@@ -255,9 +280,15 @@ pub const prompt = struct {
             return .null;
         };
 
-        if (first_byte == '\n' or first_byte == '\r') {
+        if (first_byte == '\n') {
             // 8. Let result be null if the user aborts, or otherwise the string
             //    that the user responded with.
+            return default;
+        }
+
+        if (first_byte == '\r') {
+            // Consume optional trailing \n for Windows \r\n line endings
+            _ = reader.readByte() catch {};
             return default;
         }
 

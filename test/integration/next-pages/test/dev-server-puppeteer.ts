@@ -1,9 +1,9 @@
 import assert from "assert";
+import { which } from "bun";
 import { copyFileSync } from "fs";
 import { join } from "path";
 import type { ConsoleMessage, Page } from "puppeteer";
 import { launch } from "puppeteer";
-import { which } from "bun";
 const root = join(import.meta.dir, "../");
 
 copyFileSync(join(root, "src/Counter1.txt"), join(root, "src/Counter.tsx"));
@@ -19,9 +19,7 @@ if (!browserPath) {
 }
 
 const b = await launch({
-  // On macOS, there are issues using the new headless mode.
-  // "TargetCloseError: Protocol error (Target.setAutoAttach): Target closed"
-  headless: process.platform === "darwin" ? "shell" : true,
+  headless: true,
   // Inherit the stdout and stderr of the browser process.
   dumpio: true,
   // Prefer to use a pipe to connect to the browser, instead of a WebSocket.

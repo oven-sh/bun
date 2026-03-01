@@ -7,6 +7,7 @@ const Environment = bun.Environment;
 pub const panic = recover.panic;
 pub const std_options = std.Options{
     .enable_segfault_handler = false,
+    .cryptoRandomSeed = bun.csprng,
 };
 
 pub const io_mode = .blocking;

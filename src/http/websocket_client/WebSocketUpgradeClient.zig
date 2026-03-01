@@ -698,19 +698,22 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 return;
             };
 
-            // Take the WebSocket upgrade request from proxy state (transfers ownership)
-            const upgrade_request = p.takeWebsocketRequestBuf();
-            if (upgrade_request.len == 0) {
+            // Take the WebSocket upgrade request from proxy state (transfers ownership).
+            // Store it in input_body_buf so handleWritable can retry on drain.
+            this.input_body_buf = p.takeWebsocketRequestBuf();
+            if (this.input_body_buf.len == 0) {
                 this.terminate(ErrorCode.failed_to_write);
                 return;
             }
 
-            // Send through the tunnel (will be encrypted)
+            // Send through the tunnel (will be encrypted). Buffer any unwritten
+            // portion in to_send so handleWritable retries when the socket drains.
             if (p.getTunnel()) |tunnel| {
-                _ = tunnel.write(upgrade_request) catch {
+                const wrote = tunnel.write(this.input_body_buf) catch {
                     this.terminate(ErrorCode.failed_to_write);
                     return;
                 };
+                this.to_send = this.input_body_buf[wrote..];
             } else {
                 this.terminate(ErrorCode.proxy_tunnel_failed);
             }
@@ -1017,6 +1020,17 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                     tunnel.onWritable();
                     // In .done state (after WebSocket upgrade), just handle tunnel writes
                     if (this.state == .done) return;
+
+                    // Flush any unwritten upgrade request bytes through the tunnel
+                    if (this.to_send.len == 0) return;
+                    this.ref();
+                    defer this.deref();
+                    const wrote = tunnel.write(this.to_send) catch {
+                        this.terminate(ErrorCode.failed_to_write);
+                        return;
+                    };
+                    this.to_send = this.to_send[@min(wrote, this.to_send.len)..];
+                    return;
                 }
             }
 

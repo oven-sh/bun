@@ -1,5 +1,6 @@
 const WindowsNamedPipeContext = @This();
 
+ref_count: RefCount,
 named_pipe: uws.WindowsNamedPipe,
 socket: SocketType,
 
@@ -9,6 +10,14 @@ globalThis: *jsc.JSGlobalObject,
 task: jsc.AnyTask,
 task_event: EventState = .none,
 is_open: bool = false,
+
+const RefCount = bun.ptr.RefCount(@This(), "ref_count", scheduleDeinit, .{});
+pub const ref = RefCount.ref;
+pub const deref = RefCount.deref;
+
+fn scheduleDeinit(this: *WindowsNamedPipeContext) void {
+    this.deinitInNextTick();
+}
 
 pub const EventState = enum(u8) {
     deinit,
@@ -148,7 +157,7 @@ fn onClose(this: *WindowsNamedPipeContext) void {
         .none => {},
     }
 
-    this.deinitInNextTick();
+    this.deref();
 }
 
 fn runEvent(this: *WindowsNamedPipeContext) void {
@@ -169,6 +178,7 @@ fn deinitInNextTick(this: *WindowsNamedPipeContext) void {
 pub fn create(globalThis: *jsc.JSGlobalObject, socket: SocketType) *WindowsNamedPipeContext {
     const vm = globalThis.bunVM();
     const this = WindowsNamedPipeContext.new(.{
+        .ref_count = .init(),
         .vm = vm,
         .globalThis = globalThis,
         .task = undefined,
@@ -177,8 +187,10 @@ pub fn create(globalThis: *jsc.JSGlobalObject, socket: SocketType) *WindowsNamed
     });
 
     // named_pipe owns the pipe (PipeWriter owns the pipe and will close and deinit it)
-    this.named_pipe = uws.WindowsNamedPipe.from(bun.handleOom(bun.default_allocator.create(uv.Pipe)), .{
+    this.named_pipe = uws.WindowsNamedPipe.from(bun.new(uv.Pipe, std.mem.zeroes(uv.Pipe)), .{
         .ctx = this,
+        .ref_ctx = @ptrCast(&WindowsNamedPipeContext.ref),
+        .deref_ctx = @ptrCast(&WindowsNamedPipeContext.deref),
         .onOpen = @ptrCast(&WindowsNamedPipeContext.onOpen),
         .onData = @ptrCast(&WindowsNamedPipeContext.onData),
         .onHandshake = @ptrCast(&WindowsNamedPipeContext.onHandshake),
@@ -218,7 +230,7 @@ pub fn open(globalThis: *jsc.JSGlobalObject, fd: bun.FileDescriptor, ssl_config:
             },
             .none => {},
         }
-        this.deinitInNextTick();
+        this.deref();
     }
     try this.named_pipe.open(fd, ssl_config).unwrap();
     return &this.named_pipe;
@@ -238,7 +250,7 @@ pub fn connect(globalThis: *jsc.JSGlobalObject, path: []const u8, ssl_config: ?j
             },
             .none => {},
         }
-        this.deinitInNextTick();
+        this.deref();
     }
 
     if (path[path.len - 1] == 0) {
@@ -275,6 +287,8 @@ pub fn deinit(this: *WindowsNamedPipeContext) void {
     this.named_pipe.deinit();
     bun.destroy(this);
 }
+
+const std = @import("std");
 
 const bun = @import("bun");
 const Output = bun.Output;

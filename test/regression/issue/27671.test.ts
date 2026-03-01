@@ -38,21 +38,22 @@ async function runRepl(
   return { stdout, stderr, exitCode };
 }
 
+// Create a fake clipboard tool that writes stdin to a capture file.
+// Returns the path to the capture file.
+async function setupFakeClipboard(dir: string): Promise<string> {
+  const clipOutputFile = `${dir}/clip-output.txt`;
+  const fakeClipboard = `${dir}/${fakeClipboardName}`;
+  await Bun.write(fakeClipboard, `#!/bin/sh\ncat > "${clipOutputFile}"\n`);
+  const { exitCode } = Bun.spawnSync({ cmd: ["chmod", "+x", fakeClipboard] });
+  expect(exitCode).toBe(0);
+  return clipOutputFile;
+}
+
 describe("issue #27671 - .copy with external clipboard tools", () => {
   test.skipIf(isWindows)(".copy pipes text to external clipboard tool", async () => {
     using dir = tempDir("repl-copy-test", {});
+    const clipOutputFile = await setupFakeClipboard(String(dir));
 
-    const clipOutputFile = `${dir}/clip-output.txt`;
-
-    // Create a fake clipboard tool that saves stdin to a file
-    const fakeClipboard = `${dir}/${fakeClipboardName}`;
-    await Bun.write(fakeClipboard, `#!/bin/sh\ncat > "${clipOutputFile}"\n`);
-    const { exitCode: chmodExit } = Bun.spawnSync({
-      cmd: ["chmod", "+x", fakeClipboard],
-    });
-    expect(chmodExit).toBe(0);
-
-    // Run the REPL with our fake tool first in PATH
     const { stdout, exitCode } = await runRepl([".copy 42", ".exit"], {
       env: {
         PATH: `${dir}:${process.env.PATH}`,
@@ -72,14 +73,7 @@ describe("issue #27671 - .copy with external clipboard tools", () => {
 
   test.skipIf(isWindows)(".copy pipes string value without quotes", async () => {
     using dir = tempDir("repl-copy-test2", {});
-
-    const clipOutputFile = `${dir}/clip-output.txt`;
-    const fakeClipboard = `${dir}/${fakeClipboardName}`;
-    await Bun.write(fakeClipboard, `#!/bin/sh\ncat > "${clipOutputFile}"\n`);
-    const { exitCode: chmodExit } = Bun.spawnSync({
-      cmd: ["chmod", "+x", fakeClipboard],
-    });
-    expect(chmodExit).toBe(0);
+    const clipOutputFile = await setupFakeClipboard(String(dir));
 
     const { stdout, exitCode } = await runRepl([".copy 'hello world'", ".exit"], {
       env: {

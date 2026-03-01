@@ -173,8 +173,10 @@ pub fn SSLWrapper(comptime T: type) type {
 
         // flush buffered data and returns amount of pending data to write
         pub fn flush(this: *This) usize {
-            const ssl = this.ssl orelse return 0;
+            // handleTraffic may trigger a close callback which frees ssl,
+            // so we must not capture the ssl pointer before calling it.
             this.handleTraffic();
+            const ssl = this.ssl orelse return 0;
             const pending = BoringSSL.BIO_ctrl_pending(BoringSSL.SSL_get_wbio(ssl));
             if (pending > 0) return @intCast(pending);
             return 0;
@@ -428,6 +430,8 @@ pub fn SSLWrapper(comptime T: type) type {
                         if (read > 0) {
                             log("triggering data callback (read {d})", .{read});
                             this.triggerDataCallback(buffer[0..read]);
+                            // The data callback may have closed the connection
+                            if (this.ssl == null or this.flags.closed_notified) return false;
                         }
                         this.triggerCloseCallback();
                         return false;

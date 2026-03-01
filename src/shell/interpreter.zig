@@ -280,6 +280,17 @@ pub const Interpreter = struct {
     exit_code: ?ExitCode = 0,
     this_jsvalue: JSValue = .zero,
 
+    /// Tracks which resources have been cleaned up to avoid double-free.
+    /// When the interpreter finishes normally via finish(), it cleans up
+    /// the runtime resources (IO, shell env) and sets this to .runtime_cleaned.
+    /// The GC finalizer then only cleans up what remains (args, interpreter itself).
+    cleanup_state: enum(u8) {
+        /// Nothing has been cleaned up yet - need full cleanup
+        needs_full_cleanup,
+        /// Runtime resources (IO, shell env) have been cleaned up via finish()
+        runtime_cleaned,
+    } = .needs_full_cleanup,
+
     __alloc_scope: if (bun.Environment.enableAllocScopes) bun.AllocationScope else void,
     estimated_size_for_gc: usize = 0,
 
@@ -781,13 +792,14 @@ pub const Interpreter = struct {
         out_parser: *?bun.shell.Parser,
         out_lex_result: *?shell.LexResult,
     ) !ast.Script {
+        const jsobjs_len: u32 = @intCast(jsobjs.len);
         const lex_result = brk: {
             if (bun.strings.isAllASCII(script)) {
-                var lexer = bun.shell.LexerAscii.new(arena_allocator, script, jsstrings_to_escape);
+                var lexer = bun.shell.LexerAscii.new(arena_allocator, script, jsstrings_to_escape, jsobjs_len);
                 try lexer.lex();
                 break :brk lexer.get_result();
             }
-            var lexer = bun.shell.LexerUnicode.new(arena_allocator, script, jsstrings_to_escape);
+            var lexer = bun.shell.LexerUnicode.new(arena_allocator, script, jsstrings_to_escape, jsobjs_len);
             try lexer.lex();
             break :brk lexer.get_result();
         };
@@ -1143,7 +1155,7 @@ pub const Interpreter = struct {
         _ = callframe; // autofix
 
         if (this.setupIOBeforeRun().asErr()) |e| {
-            defer this.#deinitFromExec();
+            defer this.#derefRootShellAndIOIfNeeded(true);
             const shellerr = bun.shell.ShellErr.newSys(e);
             return try throwShellErr(&shellerr, .{ .js = globalThis.bunVM().event_loop });
         }
@@ -1222,6 +1234,11 @@ pub const Interpreter = struct {
     }
 
     fn #derefRootShellAndIOIfNeeded(this: *ThisInterpreter, free_buffered_io: bool) void {
+        // Check if already cleaned up to prevent double-free
+        if (this.cleanup_state == .runtime_cleaned) {
+            return;
+        }
+
         if (free_buffered_io) {
             // Can safely be called multiple times.
             if (this.root_shell._buffered_stderr == .owned) {
@@ -1240,10 +1257,26 @@ pub const Interpreter = struct {
         }
 
         this.this_jsvalue = .zero;
+        // Mark that runtime resources have been cleaned up
+        this.cleanup_state = .runtime_cleaned;
     }
 
     fn deinitFromFinalizer(this: *ThisInterpreter) void {
-        this.#derefRootShellAndIOIfNeeded(true);
+        log("Interpreter(0x{x}) deinitFromFinalizer (cleanup_state={s})", .{ @intFromPtr(this), @tagName(this.cleanup_state) });
+
+        switch (this.cleanup_state) {
+            .needs_full_cleanup => {
+                // The interpreter never finished normally (e.g., early error or never started),
+                // so we need to clean up IO and shell env here
+                this.root_io.deref();
+                this.root_shell.deinitImpl(false, true);
+            },
+            .runtime_cleaned => {
+                // finish() already cleaned up IO and shell env via #derefRootShellAndIOIfNeeded,
+                // nothing more to do for those resources
+            },
+        }
+
         this.keep_alive.disable();
         this.args.deinit();
         this.allocator.destroy(this);

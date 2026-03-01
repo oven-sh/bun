@@ -935,7 +935,7 @@ pub const StandaloneModuleGraph = struct {
 
                 var remain = bytes;
                 while (remain.len > 0) {
-                    switch (Syscall.write(cloned_executable_fd, bytes)) {
+                    switch (Syscall.write(cloned_executable_fd, remain)) {
                         .result => |written| remain = remain[written..],
                         .err => |err| {
                             Output.prettyErrorln("<r><red>error<r><d>:<r> failed to write to temporary file\n{f}", .{err});

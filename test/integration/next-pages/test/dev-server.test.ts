@@ -116,8 +116,16 @@ afterAll(() => {
   }
 });
 
+// Chrome for Testing doesn't provide arm64 Linux binaries, so Puppeteer's
+// downloaded Chrome won't work. Only run if a native system browser is available.
+// https://github.com/GoogleChromeLabs/chrome-for-testing/issues/1
+const hasNativeBrowser =
+  process.platform !== "linux" ||
+  process.arch !== "arm64" ||
+  !!(Bun.which("chromium-browser") || Bun.which("chromium") || Bun.which("chrome"));
+
 // https://github.com/oven-sh/bun/issues/11255
-test.skipIf(isWindows && isCI)(
+test.skipIf(!hasNativeBrowser || (isWindows && isCI))(
   "hot reloading works on the client (+ tailwind hmr)",
   async () => {
     expect(dev_server).not.toBeUndefined();

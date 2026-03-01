@@ -6,11 +6,9 @@ option(WEBKIT_LOCAL "If a local version of WebKit should be used instead of down
 option(WEBKIT_BUILD_TYPE "The build type for local WebKit (defaults to CMAKE_BUILD_TYPE)")
 
 if(NOT WEBKIT_VERSION)
-  set(WEBKIT_VERSION 8af7958ff0e2a4787569edf64641a1ae7cfe074a)
+  set(WEBKIT_VERSION 4a6a32c32c11ffb9f5a94c310b10f50130bfe6de)
 endif()
 
-# Use preview build URL for Windows ARM64 until the fix is merged to main
-set(WEBKIT_PREVIEW_PR 140)
 
 string(SUBSTRING ${WEBKIT_VERSION} 0 16 WEBKIT_VERSION_PREFIX)
 string(SUBSTRING ${WEBKIT_VERSION} 0 8 WEBKIT_VERSION_SHORT)
@@ -95,6 +93,9 @@ if(WEBKIT_LOCAL)
     -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
     -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
     -DENABLE_REMOTE_INSPECTOR=ON
+    -DENABLE_MEDIA_SOURCE=OFF
+    -DENABLE_MEDIA_STREAM=OFF
+    -DENABLE_WEB_RTC=OFF
   )
 
   if(WIN32)

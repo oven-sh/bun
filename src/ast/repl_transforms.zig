@@ -28,9 +28,6 @@ pub fn ReplTransforms(comptime P: type) type {
                 return;
             }
 
-            // Check if there's top-level await
-            const has_top_level_await = p.top_level_await_keyword.len > 0;
-
             // Collect all statements into a single array
             var all_stmts = bun.handleOom(allocator.alloc(Stmt, total_stmts_count));
             var stmt_idx: usize = 0;
@@ -38,6 +35,17 @@ pub fn ReplTransforms(comptime P: type) type {
                 for (part.stmts) |stmt| {
                     all_stmts[stmt_idx] = stmt;
                     stmt_idx += 1;
+                }
+            }
+
+            // Check if there's top-level await or imports (imports become dynamic awaited imports)
+            var has_top_level_await = p.top_level_await_keyword.len > 0;
+            if (!has_top_level_await) {
+                for (all_stmts) |stmt| {
+                    if (stmt.data == .s_import) {
+                        has_top_level_await = true;
+                        break;
+                    }
                 }
             }
 
@@ -154,6 +162,86 @@ pub fn ReplTransforms(comptime P: type) type {
                             try inner_stmts.append(stmt);
                         }
                     },
+                    .s_import => |import_data| {
+                        // Convert static imports to dynamic imports for REPL evaluation:
+                        //   import X from 'mod'      -> var X = (await import('mod')).default
+                        //   import { a, b } from 'mod' -> var {a, b} = await import('mod')
+                        //   import * as X from 'mod'   -> var X = await import('mod')
+                        //   import 'mod'              -> await import('mod')
+                        const path_str = p.import_records.items[import_data.import_record_index].path.text;
+                        const import_expr = p.newExpr(E.Import{
+                            .expr = p.newExpr(E.String{ .data = path_str }, stmt.loc),
+                            .import_record_index = std.math.maxInt(u32),
+                        }, stmt.loc);
+                        const await_expr = p.newExpr(E.Await{ .value = import_expr }, stmt.loc);
+
+                        if (import_data.star_name_loc) |_| {
+                            // import * as X from 'mod' -> var X = await import('mod')
+                            try hoisted_stmts.append(p.s(S.Local{
+                                .kind = .k_var,
+                                .decls = Decl.List.fromOwnedSlice(bun.handleOom(allocator.dupe(G.Decl, &.{
+                                    G.Decl{
+                                        .binding = p.b(B.Identifier{ .ref = import_data.namespace_ref }, stmt.loc),
+                                        .value = null,
+                                    },
+                                }))),
+                            }, stmt.loc));
+                            const assign = p.newExpr(E.Binary{
+                                .op = .bin_assign,
+                                .left = p.newExpr(E.Identifier{ .ref = import_data.namespace_ref }, stmt.loc),
+                                .right = await_expr,
+                            }, stmt.loc);
+                            try inner_stmts.append(p.s(S.SExpr{ .value = assign }, stmt.loc));
+                        } else if (import_data.default_name) |default_name| {
+                            // import X from 'mod' -> var X = (await import('mod')).default
+                            // import X, { a } from 'mod' -> var __ns = await import('mod'); var X = __ns.default; var a = __ns.a;
+                            try hoisted_stmts.append(p.s(S.Local{
+                                .kind = .k_var,
+                                .decls = Decl.List.fromOwnedSlice(bun.handleOom(allocator.dupe(G.Decl, &.{
+                                    G.Decl{
+                                        .binding = p.b(B.Identifier{ .ref = default_name.ref.? }, default_name.loc),
+                                        .value = null,
+                                    },
+                                }))),
+                            }, stmt.loc));
+
+                            if (import_data.items.len > 0) {
+                                // Share a single await import() between default and named imports.
+                                // namespace_ref is synthesized by processImportStatement for all non-star imports.
+                                try convertNamedImports(p, import_data, await_expr, &hoisted_stmts, &inner_stmts, allocator, stmt.loc);
+                                const ns_ref_expr = p.newExpr(E.Identifier{ .ref = import_data.namespace_ref }, stmt.loc);
+                                const dot_default = p.newExpr(E.Dot{
+                                    .target = ns_ref_expr,
+                                    .name = "default",
+                                    .name_loc = stmt.loc,
+                                }, stmt.loc);
+                                const assign = p.newExpr(E.Binary{
+                                    .op = .bin_assign,
+                                    .left = p.newExpr(E.Identifier{ .ref = default_name.ref.? }, default_name.loc),
+                                    .right = dot_default,
+                                }, stmt.loc);
+                                try inner_stmts.append(p.s(S.SExpr{ .value = assign }, stmt.loc));
+                            } else {
+                                const dot_default = p.newExpr(E.Dot{
+                                    .target = await_expr,
+                                    .name = "default",
+                                    .name_loc = stmt.loc,
+                                }, stmt.loc);
+                                const assign = p.newExpr(E.Binary{
+                                    .op = .bin_assign,
+                                    .left = p.newExpr(E.Identifier{ .ref = default_name.ref.? }, default_name.loc),
+                                    .right = dot_default,
+                                }, stmt.loc);
+                                try inner_stmts.append(p.s(S.SExpr{ .value = assign }, stmt.loc));
+                            }
+                        } else if (import_data.items.len > 0) {
+                            // import { a, b } from 'mod' -> destructure from await import('mod')
+                            try convertNamedImports(p, import_data, await_expr, &hoisted_stmts, &inner_stmts, allocator, stmt.loc);
+                        } else {
+                            // import 'mod' (side-effect only) -> await import('mod')
+                            try inner_stmts.append(p.s(S.SExpr{ .value = await_expr }, stmt.loc));
+                        }
+                    },
                     .s_directive => |directive| {
                         // In REPL mode, treat directives (string literals) as expressions
                         const str_expr = p.newExpr(E.String{ .data = directive.value }, stmt.loc);
@@ -192,6 +280,63 @@ pub fn ReplTransforms(comptime P: type) type {
             if (parts.items.len > 0) {
                 parts.items[0].stmts = final_stmts;
                 parts.items.len = 1;
+            }
+        }
+
+        /// Convert named imports to individual var assignments from the dynamic import
+        /// import { a, b as c } from 'mod' ->
+        ///   var a; var c;  (hoisted)
+        ///   var __mod = await import('mod'); a = __mod.a; c = __mod.b;  (inner)
+        fn convertNamedImports(
+            p: *P,
+            import_data: *const S.Import,
+            await_expr: Expr,
+            hoisted_stmts: *ListManaged(Stmt),
+            inner_stmts: *ListManaged(Stmt),
+            allocator: Allocator,
+            loc: logger.Loc,
+        ) !void {
+
+            // Store the module in the namespace ref: var __ns = await import('mod')
+            try hoisted_stmts.append(p.s(S.Local{
+                .kind = .k_var,
+                .decls = Decl.List.fromOwnedSlice(bun.handleOom(allocator.dupe(G.Decl, &.{
+                    G.Decl{
+                        .binding = p.b(B.Identifier{ .ref = import_data.namespace_ref }, loc),
+                        .value = null,
+                    },
+                }))),
+            }, loc));
+            const ns_assign = p.newExpr(E.Binary{
+                .op = .bin_assign,
+                .left = p.newExpr(E.Identifier{ .ref = import_data.namespace_ref }, loc),
+                .right = await_expr,
+            }, loc);
+            try inner_stmts.append(p.s(S.SExpr{ .value = ns_assign }, loc));
+
+            // For each named import: var name; name = __ns.originalName;
+            for (import_data.items) |item| {
+                try hoisted_stmts.append(p.s(S.Local{
+                    .kind = .k_var,
+                    .decls = Decl.List.fromOwnedSlice(bun.handleOom(allocator.dupe(G.Decl, &.{
+                        G.Decl{
+                            .binding = p.b(B.Identifier{ .ref = item.name.ref.? }, item.name.loc),
+                            .value = null,
+                        },
+                    }))),
+                }, loc));
+                const ns_ref_expr = p.newExpr(E.Identifier{ .ref = import_data.namespace_ref }, loc);
+                const prop_access = p.newExpr(E.Dot{
+                    .target = ns_ref_expr,
+                    .name = item.alias,
+                    .name_loc = item.name.loc,
+                }, loc);
+                const item_assign = p.newExpr(E.Binary{
+                    .op = .bin_assign,
+                    .left = p.newExpr(E.Identifier{ .ref = item.name.ref.? }, item.name.loc),
+                    .right = prop_access,
+                }, loc);
+                try inner_stmts.append(p.s(S.SExpr{ .value = item_assign }, loc));
             }
         }
 

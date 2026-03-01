@@ -54,15 +54,19 @@ namespace uWS {
             while (data.length() && data[0] > 32 && data[0] != ';') {
 
                 unsigned char digit = (unsigned char)data[0];
-                if (digit >= 'a') {
-                    digit = (unsigned char) (digit - ('a' - ':'));
-                } else if (digit >= 'A') {
-                    digit = (unsigned char) (digit - ('A' - ':'));
+                unsigned int number;
+                if (digit >= '0' && digit <= '9') {
+                    number = digit - '0';
+                } else if (digit >= 'a' && digit <= 'f') {
+                    number = digit - 'a' + 10;
+                } else if (digit >= 'A' && digit <= 'F') {
+                    number = digit - 'A' + 10;
+                } else {
+                    state = STATE_IS_ERROR;
+                    return;
                 }
 
-                unsigned int number = ((unsigned int) digit - (unsigned int) '0');
-
-                if (number > 16 || (chunkSize(state) & STATE_SIZE_OVERFLOW)) {
+                if ((chunkSize(state) & STATE_SIZE_OVERFLOW)) {
                     state = STATE_IS_ERROR;
                     return;
                 }

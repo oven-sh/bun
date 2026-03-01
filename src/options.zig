@@ -1833,6 +1833,7 @@ pub const BundleOptions = struct {
     debugger: bool = false,
 
     compile: bool = false,
+    compile_to_standalone_html: bool = false,
     metafile: bool = false,
     /// Path to write JSON metafile (for Bun.build API)
     metafile_json_path: []const u8 = "",
@@ -1864,6 +1865,12 @@ pub const BundleOptions = struct {
     force_node_env: ForceNodeEnv = .unspecified,
 
     ignore_module_resolution_errors: bool = false,
+
+    /// Package names whose barrel files should be optimized.
+    /// When set, barrel files from these packages will only load submodules
+    /// that are actually imported. Also, any file with sideEffects: false
+    /// in its package.json is automatically a barrel candidate.
+    optimize_imports: ?*const bun.StringSet = null,
 
     pub const ForceNodeEnv = enum {
         unspecified,

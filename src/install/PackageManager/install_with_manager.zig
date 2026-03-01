@@ -585,10 +585,17 @@ pub fn installWithManager(
         }
 
         // Resolving a peer dep can create a NEW package whose own peer deps
-        // get re-queued to `peer_dependencies`. If everything is cached and
-        // synchronous, `pendingTaskCount() == 0` and `waitForPeers` would be
-        // skipped — leaving those transitive peers unresolved. Check BOTH.
-        if (manager.pendingTaskCount() > 0 or manager.peer_dependencies.readableLength() > 0) {
+        // get re-queued to `peer_dependencies` during `drainDependencyList`.
+        // When all manifests are cached (synchronous resolution), no I/O tasks
+        // are spawned, so `pendingTaskCount() == 0`. We must drain the peer
+        // queue iteratively here — entering the event loop (`waitForPeers`)
+        // with zero pending I/O would block forever.
+        while (manager.peer_dependencies.readableLength() > 0) {
+            try manager.processPeerDependencyList();
+            manager.drainDependencyList();
+        }
+
+        if (manager.pendingTaskCount() > 0) {
             try waitForPeers(manager);
         }
 

@@ -2,7 +2,7 @@ import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, lstatSync, readlinkSync } from "fs";
 import { mkdir, readlink, rm, symlink } from "fs/promises";
-import { VerdaccioRegistry, bunEnv, bunExe, readdirSorted, runBunInstall } from "harness";
+import { VerdaccioRegistry, bunEnv, bunExe, readdirSorted, runBunInstall, tempDir } from "harness";
 import { join } from "path";
 
 const registry = new VerdaccioRegistry();
@@ -1243,38 +1243,61 @@ test("runs lifecycle scripts correctly", async () => {
 // the transitive peer's resolution unset (= invalid_package_id → filtered
 // from the install).
 test("transitive peer deps are resolved when resolution is fully synchronous", async () => {
-  // Proxy Verdaccio to inject Cache-Control headers so bun treats cached
-  // manifests as fresh (skipping async revalidation HTTP requests). This
-  // replicates the npmjs.org max-age=300 behavior that triggers the fully-
-  // synchronous path on a warm-cache install.
-  using proxy = Bun.serve({
+  const packagesDir = join(import.meta.dir, "registry", "packages");
+
+  // Self-contained HTTP server that serves package manifests & tarballs
+  // directly from the Verdaccio fixtures, with Cache-Control: max-age=300
+  // to replicate npmjs.org behavior (fully synchronous on warm cache).
+  using server = Bun.serve({
     port: 0,
     async fetch(req) {
-      const upstream = new URL(req.url);
-      upstream.host = `localhost:${registry.port}`;
-      // Tarballs: redirect straight to Verdaccio to avoid body mangling
-      if (upstream.pathname.endsWith(".tgz")) {
-        return Response.redirect(upstream.toString(), 302);
+      const url = new URL(req.url);
+      const pathname = url.pathname;
+
+      // Tarball: /<name>/-/<name>-<version>.tgz
+      if (pathname.endsWith(".tgz")) {
+        const match = pathname.match(/\/([^/]+)\/-\/(.+\.tgz)$/);
+        if (match) {
+          const tarball = file(join(packagesDir, match[1], match[2]));
+          if (await tarball.exists()) {
+            return new Response(tarball, {
+              headers: { "Content-Type": "application/octet-stream" },
+            });
+          }
+        }
+        return new Response("Not found", { status: 404 });
       }
-      // Manifests: buffer decompressed body, strip encoding headers, add
-      // Cache-Control so bun treats the cached manifest as fresh
-      const res = await fetch(upstream, { method: req.method, headers: req.headers });
-      const body = await res.arrayBuffer();
-      const headers = new Headers(res.headers);
-      headers.delete("content-encoding");
-      headers.delete("transfer-encoding");
-      headers.set("content-length", String(body.byteLength));
-      headers.set("Cache-Control", "public, max-age=300");
-      return new Response(body, { status: res.status, headers });
+
+      // Manifest: /<name>
+      const packageName = decodeURIComponent(pathname.slice(1));
+      const metaFile = file(join(packagesDir, packageName, "package.json"));
+      if (!(await metaFile.exists())) {
+        return new Response("Not found", { status: 404 });
+      }
+
+      // Rewrite tarball URLs to point at this server
+      const meta = await metaFile.json();
+      const port = server.port;
+      for (const [ver, info] of Object.entries(meta.versions ?? {}) as [string, any][]) {
+        if (info?.dist?.tarball) {
+          info.dist.tarball = `http://localhost:${port}/${packageName}/-/${packageName}-${ver}.tgz`;
+        }
+      }
+
+      return new Response(JSON.stringify(meta), {
+        headers: {
+          "Content-Type": "application/json",
+          "Cache-Control": "public, max-age=300",
+        },
+      });
     },
   });
 
-  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
-  // Override bunfig to point at the proxy instead of Verdaccio directly
-  await write(
-    join(packageDir, "bunfig.toml"),
-    `[install]\ncache = "${join(packageDir, ".bun-cache").replaceAll("\\", "\\\\")}"\nregistry = "http://localhost:${proxy.port}/"\nlinker = "isolated"\n`,
-  );
+  using packageDir = tempDir("transitive-peer-test-", {});
+  const packageJson = join(String(packageDir), "package.json");
+  const cacheDir = join(String(packageDir), ".bun-cache");
+  const bunfig = `[install]\ncache = "${cacheDir.replaceAll("\\", "\\\\")}"\nregistry = "http://localhost:${server.port}/"\nlinker = "isolated"\n`;
+  await write(join(String(packageDir), "bunfig.toml"), bunfig);
 
   await write(
     packageJson,
@@ -1291,17 +1314,17 @@ test("transitive peer deps are resolved when resolution is fully synchronous", a
     }),
   );
 
-  // First install: populates manifest cache (with max-age=300 from proxy)
-  await runBunInstall(bunEnv, packageDir, { allowWarnings: true });
+  // First install: populates manifest cache (with max-age=300 from server)
+  await runBunInstall(bunEnv, String(packageDir), { allowWarnings: true });
 
   // Second install with NO lockfile and WARM cache. Manifests are fresh
   // (within max-age) so all loads are synchronous — this is the bug trigger.
-  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
-  await rm(join(packageDir, "bun.lock"), { force: true });
-  await runBunInstall(bunEnv, packageDir, { allowWarnings: true });
+  await rm(join(String(packageDir), "node_modules"), { recursive: true, force: true });
+  await rm(join(String(packageDir), "bun.lock"), { force: true });
+  await runBunInstall(bunEnv, String(packageDir), { allowWarnings: true });
 
   // Entry names have peer hashes; find them dynamically
-  const bunDir = join(packageDir, "node_modules", ".bun");
+  const bunDir = join(String(packageDir), "node_modules", ".bun");
   const entries = await readdirSorted(bunDir);
   const strictPeerEntry = entries.find(e => e.startsWith("strict-peer-dep@1.0.0"));
   const usesStrictEntry = entries.find(e => e.startsWith("uses-strict-peer@1.0.0"));

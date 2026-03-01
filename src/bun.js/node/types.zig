@@ -613,6 +613,14 @@ pub const PathLike = union(enum) {
             }
         }
 
+        if (sliced.len >= buf.len) {
+            bun.Output.debugWarn("path too long: {d} bytes exceeds PathBuffer capacity of {d}\n", .{ sliced.len, buf.len });
+            if (comptime !force) return "";
+
+            buf[0] = 0;
+            return buf[0..0 :0];
+        }
+
         @memcpy(buf[0..sliced.len], sliced);
         buf[sliced.len] = 0;
         return buf[0..sliced.len :0];
@@ -726,12 +734,13 @@ pub const PathLike = union(enum) {
     }
 
     pub fn fromBunString(global: *jsc.JSGlobalObject, str: *bun.String, will_be_async: bool, allocator: std.mem.Allocator) !PathLike {
-        try Valid.pathStringLength(str.length(), global);
-
         if (will_be_async) {
             var sliced = try str.toThreadSafeSlice(allocator);
             errdefer sliced.deinit();
 
+            // Validate the UTF-8 byte length after conversion, since the path
+            // will be stored in a fixed-size PathBuffer.
+            try Valid.pathStringLength(sliced.slice().len, global);
             try Valid.pathNullBytes(sliced.slice(), global);
 
             sliced.reportExtraMemory(global.vm());
@@ -744,6 +753,9 @@ pub const PathLike = union(enum) {
             var sliced = str.toSlice(allocator);
             errdefer sliced.deinit();
 
+            // Validate the UTF-8 byte length after conversion, since the path
+            // will be stored in a fixed-size PathBuffer.
+            try Valid.pathStringLength(sliced.slice().len, global);
             try Valid.pathNullBytes(sliced.slice(), global);
 
             // Costs nothing to keep both around.

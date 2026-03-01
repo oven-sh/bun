@@ -127,7 +127,7 @@ if(ENABLE_ASAN AND ENABLE_LTO)
 endif()
 
 if(BUILDKITE_COMMIT)
-  set(DEFAULT_REVISION ${BUILDKITE_COMMIT})
+  set(DEFAULT_REVISION "${BUILDKITE_COMMIT}")
 else()
   execute_process(
     COMMAND git rev-parse HEAD
@@ -141,7 +141,7 @@ else()
   endif()
 endif()
 
-optionx(REVISION STRING "The git revision of the build" DEFAULT ${DEFAULT_REVISION})
+optionx(REVISION STRING "The git revision of the build" DEFAULT "${DEFAULT_REVISION}")
 
 # Used in process.version, process.versions.node, napi, and elsewhere
 setx(NODEJS_VERSION "24.3.0")

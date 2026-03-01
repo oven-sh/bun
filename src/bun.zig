@@ -191,6 +191,7 @@ pub const linux = @import("./linux.zig");
 
 /// Translated from `c-headers-for-zig.h` for the current platform.
 pub const c = @import("translated-c-headers");
+pub const tty = @import("./tty.zig");
 
 pub const sha = @import("./sha.zig");
 pub const FeatureFlags = @import("./feature_flags.zig");

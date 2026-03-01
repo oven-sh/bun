@@ -659,6 +659,9 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
     });
     errdefer {
         this.config.log.deinit();
+        if (this.config.tsconfig) |tsconfig| {
+            tsconfig.deinit();
+        }
         this.arena.deinit();
         this.ref_count.clearWithoutDestructor();
         bun.destroy(this);

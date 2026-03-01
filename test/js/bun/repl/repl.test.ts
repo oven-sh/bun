@@ -610,11 +610,26 @@ describe.concurrent("Bun REPL", () => {
       expect(exitCode).toBe(0);
     });
 
-    test("const can be redeclared across lines", async () => {
-      // REPL hoists const -> var so redeclaration works like Node's REPL.
-      const { stdout, stderr, exitCode } = await runRepl(["const x = 1", "const x = 2", "x", ".exit"]);
+    test("const cannot be redeclared across lines", async () => {
+      // const should preserve its semantics: no redeclaration allowed
+      const { stdout, stderr, exitCode } = await runRepl(["const x = 1", "const x = 2", ".exit"]);
       const output = stripAnsi(stdout + stderr);
-      expect(output).not.toMatch(/already.*declared|redeclar/i);
+      expect(output).toMatch(/duplicate variable|already.*declared/i);
+      expect(exitCode).toBe(0);
+    });
+
+    test("const cannot be reassigned", async () => {
+      const { stdout, stderr, exitCode } = await runRepl(["const x = 42", "x = 99", ".exit"]);
+      const output = stripAnsi(stdout + stderr);
+      expect(output).toMatch(/readonly|constant/i);
+      expect(exitCode).toBe(0);
+    });
+
+    test("let can be redeclared across lines", async () => {
+      // let is converted to var in REPL for redeclarability (like Node.js REPL)
+      const { stdout, stderr, exitCode } = await runRepl(["let x = 1", "let x = 2", "x", ".exit"]);
+      const output = stripAnsi(stdout + stderr);
+      expect(output).not.toMatch(/already.*declared|redeclar|duplicate/i);
       expect(output).toContain("2");
       expect(exitCode).toBe(0);
     });

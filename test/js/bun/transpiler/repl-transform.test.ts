@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import vm from "node:vm";
 
 describe("Bun.Transpiler replMode", () => {
-  describe("basic transform output", () => {
+  describe("sync path (no top-level await)", () => {
     const transpiler = new Bun.Transpiler({ loader: "tsx", replMode: true });
 
     test("simple expression wrapped in value object", () => {
@@ -10,6 +10,52 @@ describe("Bun.Transpiler replMode", () => {
       // Should contain value wrapper
       expect(result).toContain("value:");
     });
+
+    test("const preserved as const (not converted to var)", () => {
+      const result = transpiler.transformSync("const x = 42");
+      // const should stay as const for proper semantics (no-reassign, no-redeclare)
+      expect(result).toContain("const x");
+      expect(result).not.toContain("var x");
+    });
+
+    test("let becomes var for redeclarability", () => {
+      const result = transpiler.transformSync("let x = 10");
+      // let should become var to allow redeclaration across REPL lines (like Node.js REPL)
+      expect(result).toContain("var x");
+      expect(result).not.toContain("let x");
+    });
+
+    test("var stays as var", () => {
+      const result = transpiler.transformSync("var x = 5");
+      expect(result).toContain("var x");
+    });
+
+    test("no IIFE wrapper when no await", () => {
+      const result = transpiler.transformSync("var x = 1; x + 5");
+      // Should still have value wrapper for the last expression
+      expect(result).toContain("value:");
+      // Should not wrap in async when no await
+      expect(result).not.toMatch(/\(\s*async\s*\(\s*\)\s*=>/);
+      // Should not wrap in sync IIFE either (direct path)
+      expect(result).not.toMatch(/\(\s*\(\s*\)\s*=>/);
+    });
+
+    test("function declaration preserved as-is", () => {
+      const result = transpiler.transformSync("function foo() { return 42; }");
+      expect(result).toContain("function foo()");
+      // No var hoisting needed for sync path
+      expect(result).not.toContain("var foo");
+    });
+
+    test("class declaration becomes var for redeclarability", () => {
+      const result = transpiler.transformSync("class Bar { }");
+      // Class becomes var assignment so it can be redeclared across REPL lines
+      expect(result).toContain("var Bar");
+    });
+  });
+
+  describe("async path (top-level await)", () => {
+    const transpiler = new Bun.Transpiler({ loader: "tsx", replMode: true });
 
     test("variable declaration with await", () => {
       const result = transpiler.transformSync("var x = await 1");
@@ -21,25 +67,17 @@ describe("Bun.Transpiler replMode", () => {
 
     test("const becomes var with await", () => {
       const result = transpiler.transformSync("const x = await 1");
-      // const should become var for REPL persistence (becomes context property)
+      // In async path, const becomes var (same as Node.js: await invalidates const/let scoping)
       expect(result).toContain("var x");
       expect(result).not.toContain("const x");
     });
 
     test("let becomes var with await", () => {
       const result = transpiler.transformSync("let x = await 1");
-      // let should become var for REPL persistence (becomes context property)
+      // In async path, let becomes var
       expect(result).toContain("var x");
       expect(result).not.toContain("let x");
       expect(result).toContain("async");
-    });
-
-    test("no async wrapper when no await", () => {
-      const result = transpiler.transformSync("var x = 1; x + 5");
-      // Should still have value wrapper for the last expression
-      expect(result).toContain("value:");
-      // Should not wrap in async when no await
-      expect(result).not.toMatch(/\(\s*async\s*\(\s*\)\s*=>/);
     });
 
     test("function declaration with await", () => {
@@ -51,7 +89,7 @@ describe("Bun.Transpiler replMode", () => {
 
     test("class declaration with await", () => {
       const result = transpiler.transformSync("await 1; class Bar { }");
-      // Should hoist class declaration with var (not let) for vm context persistence
+      // Should hoist class declaration with var for vm context persistence
       expect(result).toContain("var Bar");
       expect(result).toContain("async");
     });

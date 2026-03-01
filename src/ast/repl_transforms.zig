@@ -2,8 +2,8 @@
 ///
 /// This module provides transformations for REPL mode:
 /// - Wraps the last expression in { value: expr } for result capture
-/// - Wraps code with await in async IIFE with variable hoisting
-/// - Hoists declarations for variable persistence across REPL lines
+/// - For async code: wraps in async IIFE with variable hoisting (const/let → var)
+/// - For sync code: preserves const/let semantics at top level
 pub fn ReplTransforms(comptime P: type) type {
     return struct {
         const Self = @This();
@@ -11,7 +11,8 @@ pub fn ReplTransforms(comptime P: type) type {
         /// Apply REPL-mode transforms to the AST.
         /// This transforms code for interactive evaluation:
         /// - Wraps the last expression in { value: expr } for result capture
-        /// - Wraps code with await in async IIFE with variable hoisting
+        /// - For async code (top-level await/imports): wraps in async IIFE with var hoisting
+        /// - For sync code: emits declarations directly at top level, preserving const semantics
         pub fn apply(p: *P, parts: *ListManaged(js_ast.Part), allocator: Allocator) !void {
             // Skip transform if there's a top-level return (indicates module pattern)
             if (p.has_top_level_return) {
@@ -49,11 +50,99 @@ pub fn ReplTransforms(comptime P: type) type {
                 }
             }
 
-            // Apply transform with is_async based on presence of top-level await
-            try transformWithHoisting(p, parts, all_stmts, allocator, has_top_level_await);
+            if (has_top_level_await) {
+                // Async path: use IIFE with var hoisting (const/let semantics lost, matches Node.js
+                // behavior where "await in REPL invalidates const/let scoping")
+                try transformWithHoisting(p, parts, all_stmts, allocator, true);
+            } else {
+                // Sync path: emit declarations directly at top level, preserving const semantics.
+                // - const stays const (enforces no-reassign, no-redeclare via global lexical env)
+                // - let becomes var (allows redeclaration across REPL lines, like Node.js REPL)
+                // - var/function/class stay at top level naturally
+                try transformDirect(p, parts, all_stmts, allocator);
+            }
         }
 
-        /// Transform code with hoisting and IIFE wrapper
+        /// Transform code directly at top level (sync path, no IIFE).
+        /// Preserves const semantics by keeping const declarations at the top level where
+        /// JSC's global lexical environment enforces no-reassign and no-redeclare.
+        /// let is converted to var for redeclarability across REPL lines (matching Node.js REPL).
+        fn transformDirect(
+            p: *P,
+            parts: *ListManaged(js_ast.Part),
+            all_stmts: []Stmt,
+            allocator: Allocator,
+        ) !void {
+            if (all_stmts.len == 0) return;
+
+            var result_stmts = ListManaged(Stmt).init(allocator);
+            try result_stmts.ensureTotalCapacity(all_stmts.len);
+
+            for (all_stmts) |stmt| {
+                switch (stmt.data) {
+                    .s_local => |local| {
+                        if (local.kind == .k_const) {
+                            // Keep const as-is: top-level const in JSC's global lexical environment
+                            // enforces no-reassign (TypeError) and no-redeclare (SyntaxError)
+                            try result_stmts.append(stmt);
+                        } else if (local.kind == .k_let) {
+                            // Convert let → var for redeclarability across REPL lines
+                            // (Node.js REPL also allows let redeclaration via V8's REPL mode)
+                            try result_stmts.append(p.s(S.Local{
+                                .kind = .k_var,
+                                .decls = local.decls,
+                                .is_export = local.is_export,
+                                .was_ts_import_equals = local.was_ts_import_equals,
+                                .was_commonjs_export = local.was_commonjs_export,
+                            }, stmt.loc));
+                        } else {
+                            // var, using, await using: keep as-is
+                            try result_stmts.append(stmt);
+                        }
+                    },
+                    .s_class => |class| {
+                        // Convert class declarations to var assignment for redeclarability:
+                        //   class Foo {} → var Foo = class Foo {};
+                        if (class.class.class_name) |name_loc| {
+                            const class_expr = p.newExpr(class.class, stmt.loc);
+                            try result_stmts.append(p.s(S.Local{
+                                .kind = .k_var,
+                                .decls = Decl.List.fromOwnedSlice(bun.handleOom(allocator.dupe(G.Decl, &.{
+                                    G.Decl{
+                                        .binding = p.b(B.Identifier{ .ref = name_loc.ref.? }, name_loc.loc),
+                                        .value = class_expr,
+                                    },
+                                }))),
+                            }, stmt.loc));
+                        } else {
+                            // Anonymous class expression — keep as-is
+                            try result_stmts.append(stmt);
+                        }
+                    },
+                    .s_directive => |directive| {
+                        // In REPL mode, treat directives (string literals) as expressions
+                        const str_expr = p.newExpr(E.String{ .data = directive.value }, stmt.loc);
+                        try result_stmts.append(p.s(S.SExpr{ .value = str_expr }, stmt.loc));
+                    },
+                    else => {
+                        // function declarations, expression statements, etc: keep as-is
+                        try result_stmts.append(stmt);
+                    },
+                }
+            }
+
+            // Wrap the last expression statement in { __proto__: null, value: expr }
+            // so the REPL can extract the result value.
+            wrapLastExpressionInPlace(p, &result_stmts, allocator);
+
+            // Update parts
+            if (parts.items.len > 0) {
+                parts.items[0].stmts = result_stmts.items;
+                parts.items.len = 1;
+            }
+        }
+
+        /// Transform code with hoisting and IIFE wrapper (async path)
         /// @param is_async: true for async IIFE (when top-level await present), false for sync IIFE
         fn transformWithHoisting(
             p: *P,
@@ -353,6 +442,29 @@ pub fn ReplTransforms(comptime P: type) type {
                             // Wrap in return { value: expr }
                             const wrapped = wrapExprInValueObject(p, expr_data.value, allocator);
                             inner_stmts.items[last_idx] = p.s(S.Return{ .value = wrapped }, last_stmt.loc);
+                            break;
+                        },
+                        else => break,
+                    }
+                }
+            }
+        }
+
+        /// Wrap the last expression in { __proto__: null, value: expr } as an expression statement.
+        /// Used by the sync (direct) path where there's no IIFE, so we use an expression
+        /// statement instead of a return statement.
+        fn wrapLastExpressionInPlace(p: *P, stmts: *ListManaged(Stmt), allocator: Allocator) void {
+            if (stmts.items.len > 0) {
+                var last_idx: usize = stmts.items.len;
+                while (last_idx > 0) {
+                    last_idx -= 1;
+                    const last_stmt = stmts.items[last_idx];
+                    switch (last_stmt.data) {
+                        .s_empty, .s_comment => continue,
+                        .s_expr => |expr_data| {
+                            // Wrap in expression statement: ({ __proto__: null, value: expr })
+                            const wrapped = wrapExprInValueObject(p, expr_data.value, allocator);
+                            stmts.items[last_idx] = p.s(S.SExpr{ .value = wrapped }, last_stmt.loc);
                             break;
                         },
                         else => break,

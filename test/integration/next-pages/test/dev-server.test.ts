@@ -116,14 +116,8 @@ afterAll(() => {
   }
 });
 
-// Chrome for Testing doesn't support arm64 yet
-//
-// https://github.com/GoogleChromeLabs/chrome-for-testing/issues/1
-// https://github.com/puppeteer/puppeteer/issues/7740
-const puppeteer_unsupported = process.platform === "linux" && process.arch === "arm64";
-
 // https://github.com/oven-sh/bun/issues/11255
-test.skipIf(puppeteer_unsupported || (isWindows && isCI))(
+test.skipIf(isWindows && isCI)(
   "hot reloading works on the client (+ tailwind hmr)",
   async () => {
     expect(dev_server).not.toBeUndefined();

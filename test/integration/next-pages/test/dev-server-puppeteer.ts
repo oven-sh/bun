@@ -19,7 +19,8 @@ if (!browserPath) {
 }
 
 const b = await launch({
-  headless: true,
+  // Use "shell" (chrome-headless-shell) on macOS where full Chrome has launch issues.
+  headless: process.platform === "darwin" ? "shell" : true,
   // Inherit the stdout and stderr of the browser process.
   dumpio: true,
   // Disable timeouts.

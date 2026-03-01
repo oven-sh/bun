@@ -147,11 +147,13 @@ describe.todoIf(isWindows)("REPL wrapped line duplication (#27670)", () => {
       // Type enough to wrap: 35 + 2 prompt = 37 > 30
       const longText = "a".repeat(35);
       send(longText);
-      await Bun.sleep(200);
+      // Wait for the full text to appear in output
+      await waitFor("a".repeat(35));
 
-      // Clear the line with Ctrl+U
+      // Clear the line with Ctrl+U, then wait for the prompt to reappear
+      // (refreshLine redraws a clean prompt after clearing the line)
       send("\x15"); // Ctrl+U
-      await Bun.sleep(200);
+      await waitFor(/\u276f|> /);
 
       // Type a short expression — it should evaluate correctly
       send("42\n");

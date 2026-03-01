@@ -549,9 +549,18 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
 
     // For a single package, run in foreground mode with interactive stdin
     // This allows interactive scripts like Expo to receive user input
-    if (is_single_package) {
+    // Skip foreground optimization when --elide-lines is explicitly set,
+    // since eliding only works in the parallel execution path
+    if (is_single_package and ctx.bundler_options.elide_lines == null) {
         for (scripts.items) |script| {
             const script_cwd = std.fs.path.dirname(script.package_json_path) orelse "";
+
+            // Inject the per-package PATH into the environment before running
+            // This is required so binaries in local node_modules/.bin can be found
+            const original_path = this_transpiler.env.map.get("PATH") orelse "";
+            bun.handleOom(this_transpiler.env.map.put("PATH", script.PATH));
+            defer bun.handleOom(this_transpiler.env.map.put("PATH", original_path));
+
             try RunCommand.runPackageScriptForeground(
                 ctx,
                 ctx.allocator,

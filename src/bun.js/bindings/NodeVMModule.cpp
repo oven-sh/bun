@@ -154,7 +154,7 @@ NodeVMModule::NodeVMModule(JSC::VM& vm, JSC::Structure* structure, WTF::String i
     : Base(vm, structure)
     , m_identifier(WTF::move(identifier))
     , m_context(context && context.isObject() ? asObject(context) : nullptr, JSC::WriteBarrierEarlyInit)
-    , m_moduleWrapper(vm, this, moduleWrapper)
+    , m_moduleWrapper(moduleWrapper, JSC::WriteBarrierEarlyInit)
 {
 }
 

@@ -1,6 +1,6 @@
 import { Subprocess } from "bun";
 import { install_test_helpers } from "bun:internal-for-testing";
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { afterAll, expect, test } from "bun:test";
 import { copyFileSync } from "fs";
 import { cp, rm } from "fs/promises";
 import { join } from "path";

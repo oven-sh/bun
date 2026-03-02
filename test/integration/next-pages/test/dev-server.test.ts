@@ -116,6 +116,15 @@ test.skipIf(!hasNativeBrowser || (isWindows && isCI))(
       throw new Error(`Failed to install dependencies: ${reason}`);
     }
 
+    // Chrome for Testing binaries are only ad-hoc signed. On macOS, if the
+    // Puppeteer cache directory has a quarantine xattr, Gatekeeper will SIGKILL
+    // the browser before it can start (Code: null, empty stderr). Strip xattrs.
+    if (process.platform === "darwin") {
+      try {
+        Bun.spawnSync(["xattr", "-cr", join(process.env.HOME!, ".cache", "puppeteer")]);
+      } catch {}
+    }
+
     try {
       await getDevServerURL();
     } catch (e) {

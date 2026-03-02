@@ -81,37 +81,48 @@ pub const JSBundler = struct {
             // For absolute specifiers, check if the specifier was produced by the HTML
             // scanner's top_level_dir join (e.g., "/virtual/foo.tsx" -> "<CWD>/virtual/foo.tsx").
             // If so, try stripping the top_level_dir prefix and looking up the original path.
+            //
+            // On Windows, both the specifier and top_level_dir may use backslashes, so we
+            // normalize both to posix before prefix-matching and map lookup.
             if (specifier.len > 0 and isAbsolutePath(specifier)) {
                 const top_level_dir = Fs.FileSystem.instance.top_level_dir;
-                if (top_level_dir.len > 0 and bun.strings.hasPrefix(specifier, top_level_dir)) {
-                    const after_prefix = specifier[top_level_dir.len..];
-                    if (after_prefix.len == 0) {
-                        // specifier == top_level_dir exactly, nothing to look up
-                    } else if (after_prefix[0] == '/' or after_prefix[0] == '\\') {
-                        // top_level_dir ended without separator, remainder starts with one.
-                        // e.g. top_level_dir="/workspace/bun", specifier="/workspace/bun/virtual/foo.tsx"
-                        //   -> after_prefix="/virtual/foo.tsx" (already a valid absolute path)
-                        if (self.map.getKey(after_prefix)) |key| {
-                            return makeResult(key);
-                        }
-                    } else if (top_level_dir[top_level_dir.len - 1] == '/' or
-                        top_level_dir[top_level_dir.len - 1] == '\\')
-                    {
-                        // top_level_dir ended with separator (e.g. "/workspace/bun/"),
-                        // so after_prefix is "virtual/foo.tsx" — prepend "/" to reconstruct
-                        // the original absolute path "/virtual/foo.tsx".
-                        const orig_buf = bun.path_buffer_pool.get();
-                        defer bun.path_buffer_pool.put(orig_buf);
-                        orig_buf[0] = '/';
-                        @memcpy(orig_buf[1..][0..after_prefix.len], after_prefix);
-                        const original_path = orig_buf[0 .. after_prefix.len + 1];
+                if (top_level_dir.len > 0) {
+                    // Normalize both specifier and top_level_dir to posix for consistent matching.
+                    const norm_spec_buf = bun.path_buffer_pool.get();
+                    defer bun.path_buffer_pool.put(norm_spec_buf);
+                    const norm_tld_buf = bun.path_buffer_pool.get();
+                    defer bun.path_buffer_pool.put(norm_tld_buf);
+                    const norm_specifier = bun.path.pathToPosixBuf(u8, specifier, norm_spec_buf);
+                    const norm_top_level_dir = bun.path.pathToPosixBuf(u8, top_level_dir, norm_tld_buf);
 
-                        if (self.map.getKey(original_path)) |key| {
-                            return makeResult(key);
+                    if (bun.strings.hasPrefix(norm_specifier, norm_top_level_dir)) {
+                        const after_prefix = norm_specifier[norm_top_level_dir.len..];
+                        if (after_prefix.len == 0) {
+                            // specifier == top_level_dir exactly, nothing to look up
+                        } else if (after_prefix[0] == '/') {
+                            // top_level_dir ended without separator, remainder starts with one.
+                            // e.g. top_level_dir="/workspace/bun", specifier="/workspace/bun/virtual/foo.tsx"
+                            //   -> after_prefix="/virtual/foo.tsx" (already a valid absolute path)
+                            if (self.map.getKey(after_prefix)) |key| {
+                                return makeResult(key);
+                            }
+                        } else if (norm_top_level_dir[norm_top_level_dir.len - 1] == '/') {
+                            // top_level_dir ended with separator (e.g. "/workspace/bun/"),
+                            // so after_prefix is "virtual/foo.tsx" — prepend "/" to reconstruct
+                            // the original absolute path "/virtual/foo.tsx".
+                            const orig_buf = bun.path_buffer_pool.get();
+                            defer bun.path_buffer_pool.put(orig_buf);
+                            orig_buf[0] = '/';
+                            @memcpy(orig_buf[1..][0..after_prefix.len], after_prefix);
+                            const original_path = orig_buf[0 .. after_prefix.len + 1];
+
+                            if (self.map.getKey(original_path)) |key| {
+                                return makeResult(key);
+                            }
                         }
+                        // else: partial segment match (e.g. "/work" matched "/workspace/..."),
+                        // not a valid top_level_dir prefix — skip this fallback.
                     }
-                    // else: partial segment match (e.g. "/work" matched "/workspace/..."),
-                    // not a valid top_level_dir prefix — skip this fallback.
                 }
             }
 

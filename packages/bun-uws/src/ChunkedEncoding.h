@@ -68,7 +68,8 @@ namespace uWS {
      *   chunk-ext-val  = token / quoted-string  (TODO: quoted-string unsupported)
      */
     inline uint64_t consumeHexNumber(std::string_view & __restrict data, uint64_t state) {
-        /* Resume: '\r' was the last byte of the previous segment. */
+        /* Resume: '\r' was the last byte of the previous segment. Rare path,
+         * use data directly to avoid the p/len load on the hot path. */
         if (state & STATE_WAITING_FOR_LF) [[unlikely]] {
             if (!data.length()) return state;
             if (data[0] != '\n') return STATE_IS_ERROR;
@@ -77,40 +78,52 @@ namespace uWS {
                    | STATE_HAS_SIZE | STATE_IS_CHUNKED;
         }
 
+        /* Load pointer+length into locals so the loops operate in registers.
+         * Without this, Clang writes back to the string_view on every iteration
+         * (store-per-iter despite __restrict). Error paths skip the writeback:
+         * HttpParser returns immediately on STATE_IS_ERROR and never reads data. */
+        const char *p = data.data();
+        size_t len = data.length();
+
         /* Hex digits. Skipped when resuming mid-extension so that extension bytes
          * like 'a' aren't misparsed as hex. */
         if (!(state & STATE_IS_CHUNKED_EXTENSION)) {
-            while (data.length()) {
-                unsigned char c = (unsigned char) data[0];
+            while (len) {
+                unsigned char c = (unsigned char) *p;
                 if (c <= 32 || c == ';') break; /* fall through to drain loop */
                 unsigned int d = c | 0x20; /* fold A-F -> a-f; '0'..'9' unchanged */
                 unsigned int n;
-                if      ((unsigned)(d - '0') < 10) n = d - '0';
-                else if ((unsigned)(d - 'a') < 6)  n = d - 'a' + 10;
+                if      ((unsigned)(d - '0') < 10) [[likely]] n = d - '0';
+                else if ((unsigned)(d - 'a') < 6)            n = d - 'a' + 10;
                 else return STATE_IS_ERROR;
                 if (chunkSize(state) & STATE_SIZE_OVERFLOW) [[unlikely]] return STATE_IS_ERROR;
                 state = ((state & STATE_SIZE_MASK) * 16ull + n) | STATE_IS_CHUNKED;
-                data.remove_prefix(1);
+                ++p; --len;
             }
         }
 
         /* Drain [;ext...] \r \n. Upstream-style forward scan for LF, with strict
          * validation: only >32 bytes (extension) and exactly one '\r' immediately
          * before '\n' are allowed. */
-        while (data.length()) {
-            unsigned char c = (unsigned char) data[0];
+        while (len) {
+            unsigned char c = (unsigned char) *p;
             if (c == '\n') return STATE_IS_ERROR; /* bare LF */
-            data.remove_prefix(1);
+            ++p; --len;
             if (c == '\r') {
-                if (!data.length()) return state | STATE_WAITING_FOR_LF;
-                if (data[0] != '\n') return STATE_IS_ERROR;
-                data.remove_prefix(1);
+                if (!len) {
+                    data = std::string_view(p, len);
+                    return state | STATE_WAITING_FOR_LF;
+                }
+                if (*p != '\n') return STATE_IS_ERROR;
+                ++p; --len;
+                data = std::string_view(p, len);
                 return ((state & ~STATE_IS_CHUNKED_EXTENSION) + 2)
                        | STATE_HAS_SIZE | STATE_IS_CHUNKED;
             }
             if (c <= 32) return STATE_IS_ERROR;
             state |= STATE_IS_CHUNKED_EXTENSION;
         }
+        data = std::string_view(p, len);
         return state; /* short read */
     }
 

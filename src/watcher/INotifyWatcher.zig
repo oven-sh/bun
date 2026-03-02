@@ -212,6 +212,7 @@ pub fn read(this: *INotifyWatcher) bun.sys.Maybe([]const *align(1) Event) {
         }
     }
 
+    this.read_ptr = null;
     return .{ .result = this.eventlist_ptrs[0..count] };
 }
 

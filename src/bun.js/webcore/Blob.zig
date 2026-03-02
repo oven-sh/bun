@@ -138,7 +138,7 @@ pub fn doReadFile(this: *Blob, comptime Function: anytype, global: *JSGlobalObje
         promise_value.ensureStillAlive();
         handler.promise.strong.set(global, promise_value);
 
-        read_file.ReadFileUV.start(handler.globalThis.bunVM().uvLoop(), this.store.?, this.offset, this.size, Handler, handler);
+        read_file.ReadFileUV.start(handler.globalThis.bunVM().eventLoop(), this.store.?, this.offset, this.size, Handler, handler);
 
         return promise_value;
     }
@@ -180,7 +180,7 @@ pub fn NewInternalReadFileHandler(comptime Context: type, comptime Function: any
 pub fn doReadFileInternal(this: *Blob, comptime Handler: type, ctx: Handler, comptime Function: anytype, global: *JSGlobalObject) void {
     if (Environment.isWindows) {
         const ReadFileHandler = NewInternalReadFileHandler(Handler, Function);
-        return read_file.ReadFileUV.start(libuv.Loop.get(), this.store.?, this.offset, this.size, ReadFileHandler, ctx);
+        return read_file.ReadFileUV.start(global.bunVM().eventLoop(), this.store.?, this.offset, this.size, ReadFileHandler, ctx);
     }
     const file_read = read_file.ReadFile.createWithCtx(
         bun.default_allocator,

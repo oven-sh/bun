@@ -617,6 +617,50 @@ describe("bundler", () => {
     },
   });
 
+  // Same as above but static and dynamic importers are in separate files.
+  // This was parse-order dependent — if the static importer's
+  // scheduleBarrelDeferredImports ran first, it seeded .partial and the dynamic
+  // importer's escalation was skipped. Now import() always escalates to .all.
+  itBundled("barrel/DynamicImportWithStaticImportSeparateFiles", {
+    files: {
+      "/static-user.js": /* js */ `
+        import { a } from "barrel2";
+        console.log(a);
+      `,
+      "/dynamic-user.js": /* js */ `
+        const run = async () => {
+          const { b } = await import("barrel2");
+          console.log(b);
+        };
+        run();
+      `,
+      "/node_modules/barrel2/package.json": JSON.stringify({
+        name: "barrel2",
+        main: "./index.js",
+        sideEffects: false,
+      }),
+      "/node_modules/barrel2/index.js": /* js */ `
+        export { a } from "./a.js";
+        export { b } from "./b.js";
+      `,
+      "/node_modules/barrel2/a.js": /* js */ `
+        export const a = "A";
+      `,
+      "/node_modules/barrel2/b.js": /* js */ `
+        export const b = "B";
+      `,
+    },
+    entryPoints: ["/static-user.js", "/dynamic-user.js"],
+    splitting: true,
+    format: "esm",
+    target: "bun",
+    outdir: "/out",
+    run: [
+      { file: "/out/static-user.js", stdout: "A" },
+      { file: "/out/dynamic-user.js", stdout: "B" },
+    ],
+  });
+
   // --- Ported from Rolldown: multiple-entries ---
   // Multiple entry points that each import different things from barrels
 

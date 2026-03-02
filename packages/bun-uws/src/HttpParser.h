@@ -504,6 +504,11 @@ namespace uWS
             return ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')) || c == '-';
         }
 
+        /* RFC 9110 Section 5.5: optional whitespace (OWS) is SP or HTAB */
+        static inline bool isHTTPHeaderValueWhitespace(unsigned char c) {
+            return c == ' ' || c == '\t';
+        }
+
         static inline int isHTTPorHTTPSPrefixForProxies(char *data, char *end) {
             // We can check 8 because:
             // 1. If it's "http://" that's 7 bytes, and it's supposed to at least have a trailing slash.
@@ -775,13 +780,13 @@ namespace uWS
                     /* Store this header, it is valid */
                     headers->value = std::string_view(preliminaryValue, (size_t) (postPaddedBuffer - preliminaryValue));
                     postPaddedBuffer += 2;
-                    /* Trim trailing whitespace (SP, HTAB) */
-                    while (headers->value.length() && headers->value.back() < 33) {
+                    /* Trim trailing whitespace (SP, HTAB) per RFC 9110 Section 5.5 */
+                    while (headers->value.length() && isHTTPHeaderValueWhitespace(headers->value.back())) {
                         headers->value.remove_suffix(1);
                     }
 
-                    /* Trim initial whitespace (SP, HTAB) */
-                    while (headers->value.length() && headers->value.front() < 33) {
+                    /* Trim initial whitespace (SP, HTAB) per RFC 9110 Section 5.5 */
+                    while (headers->value.length() && isHTTPHeaderValueWhitespace(headers->value.front())) {
                         headers->value.remove_prefix(1);
                     }
 

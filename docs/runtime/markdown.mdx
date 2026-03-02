@@ -124,22 +124,32 @@ Return a string to replace the element's rendering. Return `null` or `undefined`
 
 ### Block callbacks
 
-| Callback     | Meta                                                                                    | Description                                                                                                                                                                            |
-| ------------ | --------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `heading`    | `{ level: number, id?: string }`                                                        | Heading level 1–6. `id` is set when `headings: { ids: true }` is enabled                                                                                                               |
-| `paragraph`  | —                                                                                       | Paragraph block                                                                                                                                                                        |
-| `blockquote` | —                                                                                       | Blockquote block                                                                                                                                                                       |
-| `code`       | `{ language?: string }`                                                                 | Fenced or indented code block. `language` is the info-string when specified on the fence                                                                                               |
-| `list`       | `{ ordered: boolean, start?: number, depth: number }`                                   | Ordered or unordered list. `start` is the start number for ordered lists. `depth` is nesting level (0 = top-level)                                                                     |
-| `listItem`   | `{ index: number, depth: number, ordered: boolean, start?: number, checked?: boolean }` | List item. `index` is 0-based position within parent list. `depth` is the parent list's nesting level. `ordered`/`start` reflect the parent list. `checked` is set for task list items |
-| `hr`         | —                                                                                       | Horizontal rule                                                                                                                                                                        |
-| `table`      | —                                                                                       | Table block                                                                                                                                                                            |
-| `thead`      | —                                                                                       | Table head                                                                                                                                                                             |
-| `tbody`      | —                                                                                       | Table body                                                                                                                                                                             |
-| `tr`         | —                                                                                       | Table row                                                                                                                                                                              |
-| `th`         | `{ align?: "left" \| "center" \| "right" }`                                             | Table header cell. `align` is set when alignment is specified                                                                                                                          |
-| `td`         | `{ align?: "left" \| "center" \| "right" }`                                             | Table data cell. `align` is set when alignment is specified                                                                                                                            |
-| `html`       | —                                                                                       | Raw HTML content                                                                                                                                                                       |
+| Callback     | Meta                                          | Description                                                                              |
+| ------------ | --------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `heading`    | `{ level, id? }`                              | Heading level 1–6. `id` is set when `headings: { ids: true }` is enabled                 |
+| `paragraph`  | —                                             | Paragraph block                                                                          |
+| `blockquote` | —                                             | Blockquote block                                                                         |
+| `code`       | `{ language? }`                               | Fenced or indented code block. `language` is the info-string when specified on the fence |
+| `list`       | `{ ordered, start?, depth }`                  | `depth` is nesting level (0 = top-level). `start` is set for ordered lists               |
+| `listItem`   | `{ index, depth, ordered, start?, checked? }` | See [List item meta](#list-item-meta) below                                              |
+| `hr`         | —                                             | Horizontal rule                                                                          |
+| `table`      | —                                             | Table block                                                                              |
+| `thead`      | —                                             | Table head                                                                               |
+| `tbody`      | —                                             | Table body                                                                               |
+| `tr`         | —                                             | Table row                                                                                |
+| `th`         | `{ align? }`                                  | Table header cell. `align` is `"left"`, `"center"`, `"right"`, or absent                 |
+| `td`         | `{ align? }`                                  | Table data cell                                                                          |
+| `html`       | —                                             | Raw HTML content                                                                         |
+
+#### List item meta
+
+The `listItem` callback receives everything needed to render markers directly:
+
+- `index` — 0-based position within the parent list
+- `depth` — the parent list's nesting level (0 = top-level)
+- `ordered` — whether the parent list is ordered
+- `start` — the parent list's start number (only when `ordered` is true)
+- `checked` — task list state (only for `- [x]` / `- [ ]` items)
 
 ### Inline callbacks
 

@@ -228,6 +228,62 @@ describe.if(isPosix)("HTTP server handles split chunk-size CRLF", () => {
     expect(stdout).toContain("Got: Hello");
     expect(exitCode).toBe(0);
   });
+
+  test("rejects bare LF in chunk-size position (invalid byte not stranded)", async () => {
+    // A byte <=32 that isn't \r in chunk-size position must error immediately.
+    // Previously this could strand the byte in HttpParser's fallback buffer,
+    // corrupting header parsing on the next request.
+    const script = `
+      const server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          try {
+            await req.text();
+            return new Response("OK");
+          } catch {
+            return new Response("Body error", { status: 400 });
+          }
+        },
+      });
+      const { promise, resolve } = Promise.withResolvers();
+      let received = "";
+      const socket = await Bun.connect({
+        hostname: "localhost",
+        port: server.port,
+        socket: {
+          data(socket, data) {
+            received += data.toString();
+          },
+          open(socket) {
+            // Bare LF (0x0A) where chunk-size hex is expected
+            socket.write("PUT / HTTP/1.1\\r\\nHost: localhost\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n\\n");
+            socket.flush();
+          },
+          error() {},
+          close() {
+            console.log(received);
+            resolve();
+          },
+        },
+      });
+      await promise;
+      server.stop();
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // Server should reject with 400, not hang or accept
+    expect(stderr).toBe("");
+    expect(stdout).toContain("400");
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe.if(isPosix)("HTTP server handles fragmented requests", () => {

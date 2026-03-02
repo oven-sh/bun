@@ -1532,15 +1532,16 @@ static int64_t indexOf(JSC::JSGlobalObject* lexicalGlobalObject, ThrowScope& sco
     }
 
     // After any call that can trigger JS execution (toNumber, toWTFString,
-    // toStringOrNull), the buffer may have been detached. We must re-fetch
-    // typedVector and byteLength from the buffer right before use, and check
-    // for detachment after all JS calls in each code path are complete.
+    // toString), the buffer may have been detached. We must re-fetch typedVector
+    // and byteLength from the buffer right before use, and check for detachment
+    // after all JS calls in each code path are complete.
 
-    // Helper: re-fetch buffer state after JS calls, checking for detachment.
-    // Returns false if the buffer was detached (after throwing a TypeError).
+    // Helper: re-fetch buffer state after JS calls. Returns false if the buffer
+    // was detached; caller treats this as an empty buffer (matches Node.js: -1).
     auto refetchBufferState = [&](const uint8_t*& typedVector, size_t& len) -> bool {
         if (buffer->isDetached()) [[unlikely]] {
-            throwVMTypeError(lexicalGlobalObject, scope, "Buffer is detached"_s);
+            typedVector = nullptr;
+            len = 0;
             return false;
         }
         typedVector = buffer->typedVector();
@@ -1572,7 +1573,7 @@ static int64_t indexOf(JSC::JSGlobalObject* lexicalGlobalObject, ThrowScope& sco
         if (!encoding.has_value()) {
             return Bun::ERR::UNKNOWN_ENCODING(scope, lexicalGlobalObject, encodingString);
         }
-        auto* str = valueValue.toStringOrNull(lexicalGlobalObject);
+        auto* str = valueValue.toString(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(scope, -1);
         const uint8_t* typedVector;
         if (!refetchBufferState(typedVector, byteLength)) return -1;
@@ -1585,6 +1586,13 @@ static int64_t indexOf(JSC::JSGlobalObject* lexicalGlobalObject, ThrowScope& sco
         const uint8_t* typedVector;
         if (!refetchBufferState(typedVector, byteLength)) return -1;
         if (byteLength == 0) return -1;
+        // The needle's backing buffer may also have been detached by a
+        // valueOf/toPrimitive callback during toNumber/toWTFString above.
+        // Treat a detached needle as an empty buffer (matches Node.js:
+        // returns the computed byteOffset for a zero-length match).
+        if (array->isDetached()) [[unlikely]] {
+            return indexOfOffset(byteLength, byteOffsetD, 0, !last);
+        }
         return indexOfBuffer(lexicalGlobalObject, last, typedVector, byteLength, byteOffsetD, array, encoding.value());
     }
 

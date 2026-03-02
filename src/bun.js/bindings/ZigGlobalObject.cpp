@@ -124,6 +124,7 @@
 #include "JSSink.h"
 #include "JSSocketAddressDTO.h"
 #include "JSReactElement.h"
+#include "BunMarkdownMeta.h"
 #include "JSSQLStatement.h"
 #include "JSStringDecoder.h"
 #include "JSTextEncoder.h"
@@ -1802,6 +1803,23 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(Bun::JSReactElement::createStructure(init.vm, init.owner));
         });
 
+    m_JSMarkdownListItemMetaStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            init.set(Bun::MarkdownMeta::createListItemMetaStructure(init.vm, init.owner));
+        });
+    m_JSMarkdownListMetaStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            init.set(Bun::MarkdownMeta::createListMetaStructure(init.vm, init.owner));
+        });
+    m_JSMarkdownCellMetaStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            init.set(Bun::MarkdownMeta::createCellMetaStructure(init.vm, init.owner));
+        });
+    m_JSMarkdownLinkMetaStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            init.set(Bun::MarkdownMeta::createLinkMetaStructure(init.vm, init.owner));
+        });
+
     m_JSSQLStatementStructure.initLater(
         [](const Initializer<Structure>& init) {
             init.set(WebCore::createJSSQLStatementStructure(init.owner));
@@ -2450,6 +2468,7 @@ JSC_DEFINE_CUSTOM_GETTER(getConsoleConstructor, (JSGlobalObject * globalObject, 
     if (returnedException) {
         auto scope = DECLARE_THROW_SCOPE(vm);
         throwException(globalObject, scope, returnedException.get());
+        return {};
     }
     console->putDirect(vm, property, result, 0);
     return JSValue::encode(result);

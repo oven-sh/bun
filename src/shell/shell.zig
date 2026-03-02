@@ -1020,6 +1020,9 @@ pub const AST = struct {
         Var: []const u8,
         VarArgv: u8,
         Text: []const u8,
+        /// An empty string from a quoted context (e.g. "", '', or ${''}). Preserved as an
+        /// explicit empty argument during expansion, unlike unquoted empty text which is dropped.
+        quoted_empty,
         asterisk,
         double_asterisk,
         brace_begin,
@@ -1042,6 +1045,7 @@ pub const AST = struct {
                 .Var => false,
                 .VarArgv => false,
                 .Text => false,
+                .quoted_empty => false,
                 .asterisk => true,
                 .double_asterisk => true,
                 .brace_begin => false,
@@ -1845,6 +1849,9 @@ pub const Parser = struct {
                             if (txt.len > 0) {
                                 try atoms.append(.{ .Text = txt });
                             }
+                        } else if (txt.len == 0 and (peeked == .SingleQuotedText or peeked == .DoubleQuotedText)) {
+                            // Preserve empty quoted strings ("", '') as explicit empty arguments
+                            try atoms.append(.quoted_empty);
                         } else {
                             try atoms.append(.{ .Text = txt });
                         }
@@ -2334,6 +2341,9 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
         /// Not owned by this struct
         string_refs: []bun.String,
 
+        /// Number of JS object references expected (for bounds validation)
+        jsobjs_len: u32 = 0,
+
         const SubShellKind = enum {
             /// (echo hi; echo hello)
             normal,
@@ -2363,13 +2373,14 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
             delimit_quote: bool,
         };
 
-        pub fn new(alloc: Allocator, src: []const u8, strings_to_escape: []bun.String) @This() {
+        pub fn new(alloc: Allocator, src: []const u8, strings_to_escape: []bun.String, jsobjs_len: u32) @This() {
             return .{
                 .chars = Chars.init(src),
                 .tokens = ArrayList(Token).init(alloc),
                 .strpool = ArrayList(u8).init(alloc),
                 .errors = ArrayList(LexError).init(alloc),
                 .string_refs = strings_to_escape,
+                .jsobjs_len = jsobjs_len,
             };
         }
 
@@ -2400,6 +2411,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                 .word_start = self.word_start,
                 .j = self.j,
                 .string_refs = self.string_refs,
+                .jsobjs_len = self.jsobjs_len,
             };
             sublexer.chars.state = .Normal;
             return sublexer;
@@ -2789,10 +2801,12 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                             comptime assertSpecialChar('\'');
 
                             if (self.chars.state == .Single) {
+                                try self.break_word(false);
                                 self.chars.state = .Normal;
                                 continue;
                             }
                             if (self.chars.state == .Normal) {
+                                try self.break_word(false);
                                 self.chars.state = .Single;
                                 continue;
                             }
@@ -2888,9 +2902,12 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
         }
 
         inline fn isImmediatelyEscapedQuote(self: *@This()) bool {
-            return (self.chars.state == .Double and
+            return ((self.chars.state == .Double and
                 (self.chars.current != null and !self.chars.current.?.escaped and self.chars.current.?.char == '"') and
-                (self.chars.prev != null and !self.chars.prev.?.escaped and self.chars.prev.?.char == '"'));
+                (self.chars.prev != null and !self.chars.prev.?.escaped and self.chars.prev.?.char == '"')) or
+                (self.chars.state == .Single and
+                    (self.chars.current != null and !self.chars.current.?.escaped and self.chars.current.?.char == '\'') and
+                    (self.chars.prev != null and !self.chars.prev.?.escaped and self.chars.prev.?.char == '\'')));
         }
 
         fn break_word_impl(self: *@This(), add_delimiter: bool, in_normal_space: bool, in_operator: bool) !void {
@@ -3229,6 +3246,15 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
         }
 
         fn handleJSStringRef(self: *@This(), bunstr: bun.String) !void {
+            if (bunstr.length() == 0) {
+                // Empty JS string ref: emit a zero-length DoubleQuotedText token directly.
+                // The parser converts this to a quoted_empty atom, preserving the empty arg.
+                // This works regardless of the lexer's current quote state (Normal/Single/Double)
+                // because the \x08 marker is processed before quote-state handling.
+                const pos = self.j;
+                try self.tokens.append(@unionInit(Token, "DoubleQuotedText", .{ .start = pos, .end = pos }));
+                return;
+            }
             try self.appendStringToStrPool(bunstr);
         }
 
@@ -3358,7 +3384,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
         }
 
         fn validateJSObjRefIdx(self: *@This(), idx: usize) bool {
-            if (idx >= std.math.maxInt(u32)) {
+            if (idx >= self.jsobjs_len) {
                 self.add_error("Invalid JS object ref (out of bounds)");
                 return false;
             }
@@ -4063,6 +4089,13 @@ pub const ShellSrcBuilder = struct {
     ) bun.OOM!bool {
         const invalid = (bunstr.isUTF16() and !bun.simdutf.validate.utf16le(bunstr.utf16())) or (bunstr.isUTF8() and !bun.simdutf.validate.utf8(bunstr.byteSlice()));
         if (invalid) return false;
+        // Empty interpolated values must still produce an argument (e.g. `${''}` should
+        // pass "" as an arg). Route through appendJSStrRef so the \x08 marker is recognized
+        // by the lexer regardless of quote context (e.g. inside single quotes).
+        if (allow_escape and bunstr.length() == 0) {
+            try this.appendJSStrRef(bunstr);
+            return true;
+        }
         if (allow_escape) {
             if (needsEscapeBunstr(bunstr)) {
                 try this.appendJSStrRef(bunstr);
@@ -4129,7 +4162,7 @@ pub const ShellSrcBuilder = struct {
 };
 
 /// Characters that need to escaped
-const SPECIAL_CHARS = [_]u8{ '~', '[', ']', '#', ';', '\n', '*', '{', ',', '}', '`', '$', '=', '(', ')', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '|', '>', '<', '&', '\'', '"', ' ', '\\' };
+const SPECIAL_CHARS = [_]u8{ '~', '[', ']', '#', ';', '\n', '*', '{', ',', '}', '`', '$', '=', '(', ')', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '|', '>', '<', '&', '\'', '"', ' ', '\\', SPECIAL_JS_CHAR };
 const SPECIAL_CHARS_TABLE: bun.bit_set.IntegerBitSet(256) = brk: {
     var table = bun.bit_set.IntegerBitSet(256).initEmpty();
     for (SPECIAL_CHARS) |c| {
@@ -4554,15 +4587,16 @@ pub const TestingAPIs = struct {
         var script = std.array_list.Managed(u8).init(arena.allocator());
         try shellCmdFromJS(globalThis, string_args, &template_args, &jsobjs, &jsstrings, &script, marked_argument_buffer);
 
+        const jsobjs_len: u32 = @intCast(jsobjs.items.len);
         const lex_result = brk: {
             if (bun.strings.isAllASCII(script.items[0..])) {
-                var lexer = LexerAscii.new(arena.allocator(), script.items[0..], jsstrings.items[0..]);
+                var lexer = LexerAscii.new(arena.allocator(), script.items[0..], jsstrings.items[0..], jsobjs_len);
                 lexer.lex() catch |err| {
                     return globalThis.throwError(err, "failed to lex shell");
                 };
                 break :brk lexer.get_result();
             }
-            var lexer = LexerUnicode.new(arena.allocator(), script.items[0..], jsstrings.items[0..]);
+            var lexer = LexerUnicode.new(arena.allocator(), script.items[0..], jsstrings.items[0..], jsobjs_len);
             lexer.lex() catch |err| {
                 return globalThis.throwError(err, "failed to lex shell");
             };

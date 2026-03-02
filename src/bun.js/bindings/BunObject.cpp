@@ -77,6 +77,8 @@ BUN_DECLARE_HOST_FUNCTION(Bun__fetchPreconnect);
 BUN_DECLARE_HOST_FUNCTION(Bun__randomUUIDv7);
 BUN_DECLARE_HOST_FUNCTION(Bun__randomUUIDv5);
 
+#include "sliceAnsi.h"
+
 namespace Bun {
 JSC_DECLARE_HOST_FUNCTION(jsFunctionBunStripANSI);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionBunWrapAnsi);
@@ -1014,6 +1016,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     serve                                          BunObject_callback_serve                                            DontDelete|Function 1
     sha                                            BunObject_callback_sha                                              DontDelete|Function 1
     shrink                                         BunObject_callback_shrink                                           DontDelete|Function 1
+    sliceAnsi                                      jsFunctionBunSliceAnsi                                              DontDelete|Function 5
     sleep                                          functionBunSleep                                                    DontDelete|Function 1
     sleepSync                                      BunObject_callback_sleepSync                                        DontDelete|Function 1
     spawn                                          BunObject_callback_spawn                                            DontDelete|Function 1

@@ -2811,10 +2811,24 @@ export function toYaml(obj, indent = 0) {
         value.includes("#") ||
         value.includes("'") ||
         value.includes('"') ||
+        value.includes("\\") ||
         value.includes("\n") ||
-        value.includes("*"))
+        value.includes("*") ||
+        value.includes("&") ||
+        value.includes("!") ||
+        value.includes("|") ||
+        value.includes(">") ||
+        value.includes("%") ||
+        value.includes("@") ||
+        value.includes("`") ||
+        value.includes("{") ||
+        value.includes("}") ||
+        value.includes("[") ||
+        value.includes("]") ||
+        value.includes(",") ||
+        value.includes(";"))
     ) {
-      result += `${spaces}${key}: "${value.replace(/"/g, '\\"')}"\n`;
+      result += `${spaces}${key}: "${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"\n`;
       continue;
     }
     result += `${spaces}${key}: ${value}\n`;

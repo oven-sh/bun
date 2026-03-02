@@ -75,7 +75,7 @@
           {
             "group": "Core Runtime",
             "icon": "cog",
-            "pages": ["/runtime/index", "/runtime/watch-mode", "/runtime/debugger", "/runtime/bunfig"]
+            "pages": ["/runtime/index", "/runtime/watch-mode", "/runtime/debugger", "/runtime/repl", "/runtime/bunfig"]
           },
           {
             "group": "File & Module System",
@@ -400,6 +400,7 @@
               "/guides/http/file-uploads",
               "/guides/http/fetch-unix",
               "/guides/http/stream-iterator",
+              "/guides/http/sse",
               "/guides/http/stream-node-streams-in-bun"
             ]
           },

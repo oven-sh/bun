@@ -841,12 +841,18 @@ pub const PathWatcher = struct {
     }
 
     pub fn unrefPendingDirectory(this: *PathWatcher) void {
+        // deinit() calls setClosed() which re-locks this.mutex, and may then
+        // proceed to destroy(this). Defer it until after unlock so we don't
+        // self-deadlock or unlock() a freed mutex.
+        var should_deinit = false;
+        defer if (should_deinit) this.deinit();
+
         this.mutex.lock();
         defer this.mutex.unlock();
         this.pending_directories -= 1;
         if (this.isClosed() and this.pending_directories == 0) {
             this.has_pending_directories.store(false, .release);
-            this.deinit();
+            should_deinit = true;
         }
     }
 

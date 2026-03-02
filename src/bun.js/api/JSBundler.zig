@@ -88,6 +88,46 @@ pub const JSBundler = struct {
                 }
             }
 
+            // For absolute specifiers, check if the specifier was produced by the HTML
+            // scanner's top_level_dir join (e.g., "/virtual/foo.tsx" -> "<CWD>/virtual/foo.tsx").
+            // If so, try looking up the original path with "/" prefix.
+            if (specifier.len > 0 and (specifier[0] == '/' or
+                (specifier.len >= 3 and specifier[1] == ':' and (specifier[2] == '/' or specifier[2] == '\\'))))
+            {
+                const top_level_dir = Fs.FileSystem.instance.top_level_dir;
+                if (top_level_dir.len > 0 and bun.strings.hasPrefix(specifier, top_level_dir)) {
+                    const remainder = specifier[top_level_dir.len..];
+                    // The remainder may already start with '/' (e.g. top_level_dir="/workspace/bun"
+                    // and specifier="/workspace/bun/virtual/foo.tsx" gives remainder="/virtual/foo.tsx").
+                    // If not, prepend '/' to form the original absolute path.
+                    if (remainder.len > 0 and remainder[0] == '/') {
+                        if (self.map.getKey(remainder)) |key| {
+                            return _resolver.Result{
+                                .path_pair = .{
+                                    .primary = Fs.Path.initWithNamespace(key, "file"),
+                                },
+                                .module_type = .unknown,
+                            };
+                        }
+                    } else {
+                        const orig_buf = bun.path_buffer_pool.get();
+                        defer bun.path_buffer_pool.put(orig_buf);
+                        orig_buf[0] = '/';
+                        @memcpy(orig_buf[1..][0..remainder.len], remainder);
+                        const original_path = orig_buf[0 .. remainder.len + 1];
+
+                        if (self.map.getKey(original_path)) |key| {
+                            return _resolver.Result{
+                                .path_pair = .{
+                                    .primary = Fs.Path.initWithNamespace(key, "file"),
+                                },
+                                .module_type = .unknown,
+                            };
+                        }
+                    }
+                }
+            }
+
             // Also try with source directory joined for relative specifiers
             // Check for relative specifiers (not starting with / and not Windows absolute like C:/)
             if (specifier.len > 0 and specifier[0] != '/' and

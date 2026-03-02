@@ -78,35 +78,6 @@ async function getDevServerURL() {
   return baseUrl;
 }
 
-beforeAll(async () => {
-  await rm(root, { recursive: true, force: true });
-  await cp(join(import.meta.dir, "../"), root, { recursive: true, force: true });
-  await rm(join(root, ".next"), { recursive: true, force: true });
-  console.log("Copied to:", root);
-
-  copyFileSync(join(root, "src/Counter1.txt"), join(root, "src/Counter.tsx"));
-
-  const install = Bun.spawnSync([bunExe(), "i"], {
-    cwd: root,
-    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(root, ".bun-install") },
-    stdout: "inherit",
-    stderr: "inherit",
-    stdin: "inherit",
-  });
-  if (!install.success) {
-    const reason = install.signalCode || `code ${install.exitCode}`;
-    throw new Error(`Failed to install dependencies: ${reason}`);
-  }
-
-  try {
-    await getDevServerURL();
-  } catch (e) {
-    console.error("Failed to start dev server :/");
-    dev_server?.kill?.();
-    dev_server = undefined;
-  }
-});
-
 afterAll(() => {
   if (dev_server_pid) {
     process?.kill?.(dev_server_pid);
@@ -126,6 +97,34 @@ const hasNativeBrowser =
 test.skipIf(!hasNativeBrowser || (isWindows && isCI))(
   "hot reloading works on the client (+ tailwind hmr)",
   async () => {
+    await rm(root, { recursive: true, force: true });
+    await cp(join(import.meta.dir, "../"), root, { recursive: true, force: true });
+    await rm(join(root, ".next"), { recursive: true, force: true });
+    console.log("Copied to:", root);
+
+    copyFileSync(join(root, "src/Counter1.txt"), join(root, "src/Counter.tsx"));
+
+    const install = Bun.spawnSync([bunExe(), "i"], {
+      cwd: root,
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(root, ".bun-install") },
+      stdout: "inherit",
+      stderr: "inherit",
+      stdin: "inherit",
+    });
+    if (!install.success) {
+      const reason = install.signalCode || `code ${install.exitCode}`;
+      throw new Error(`Failed to install dependencies: ${reason}`);
+    }
+
+    try {
+      await getDevServerURL();
+    } catch (e) {
+      console.error("Failed to start dev server :/");
+      dev_server?.kill?.();
+      dev_server = undefined;
+      throw e;
+    }
+
     expect(dev_server).not.toBeUndefined();
     expect(baseUrl).not.toBeUndefined();
 

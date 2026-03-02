@@ -124,22 +124,22 @@ Return a string to replace the element's rendering. Return `null` or `undefined`
 
 ### Block callbacks
 
-| Callback     | Meta                                                                    | Description                                                                                       |
-| ------------ | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `heading`    | `{ level: number, id?: string }`                                        | Heading level 1–6. `id` is set when `headings: { ids: true }` is enabled                          |
-| `paragraph`  | —                                                                       | Paragraph block                                                                                   |
-| `blockquote` | —                                                                       | Blockquote block                                                                                  |
-| `code`       | `{ language?: string }`                                                 | Fenced or indented code block. `language` is the info-string when specified on the fence          |
-| `list`       | `{ ordered: boolean, start?: number, depth: number }`                   | Ordered or unordered list. `start` is the start number for ordered lists. `depth` is nesting level (0 = top-level) |
+| Callback     | Meta                                                                                    | Description                                                                                                                                                                            |
+| ------------ | --------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `heading`    | `{ level: number, id?: string }`                                                        | Heading level 1–6. `id` is set when `headings: { ids: true }` is enabled                                                                                                               |
+| `paragraph`  | —                                                                                       | Paragraph block                                                                                                                                                                        |
+| `blockquote` | —                                                                                       | Blockquote block                                                                                                                                                                       |
+| `code`       | `{ language?: string }`                                                                 | Fenced or indented code block. `language` is the info-string when specified on the fence                                                                                               |
+| `list`       | `{ ordered: boolean, start?: number, depth: number }`                                   | Ordered or unordered list. `start` is the start number for ordered lists. `depth` is nesting level (0 = top-level)                                                                     |
 | `listItem`   | `{ index: number, depth: number, ordered: boolean, start?: number, checked?: boolean }` | List item. `index` is 0-based position within parent list. `depth` is the parent list's nesting level. `ordered`/`start` reflect the parent list. `checked` is set for task list items |
-| `hr`         | —                                                                       | Horizontal rule                                                                                   |
-| `table`      | —                                                                       | Table block                                                                                       |
-| `thead`      | —                                                                       | Table head                                                                                        |
-| `tbody`      | —                                                                       | Table body                                                                                        |
-| `tr`         | —                                                                       | Table row                                                                                         |
-| `th`         | `{ align?: "left" \| "center" \| "right" }`                             | Table header cell. `align` is set when alignment is specified                                     |
-| `td`         | `{ align?: "left" \| "center" \| "right" }`                             | Table data cell. `align` is set when alignment is specified                                       |
-| `html`       | —                                                                       | Raw HTML content                                                                                  |
+| `hr`         | —                                                                                       | Horizontal rule                                                                                                                                                                        |
+| `table`      | —                                                                                       | Table block                                                                                                                                                                            |
+| `thead`      | —                                                                                       | Table head                                                                                                                                                                             |
+| `tbody`      | —                                                                                       | Table body                                                                                                                                                                             |
+| `tr`         | —                                                                                       | Table row                                                                                                                                                                              |
+| `th`         | `{ align?: "left" \| "center" \| "right" }`                                             | Table header cell. `align` is set when alignment is specified                                                                                                                          |
+| `td`         | `{ align?: "left" \| "center" \| "right" }`                                             | Table data cell. `align` is set when alignment is specified                                                                                                                            |
+| `html`       | —                                                                                       | Raw HTML content                                                                                                                                                                       |
 
 ### Inline callbacks
 
@@ -214,10 +214,13 @@ const result = Bun.markdown.render("1. first\n   1. sub-a\n   2. sub-b\n2. secon
   listItem: (children, { index, depth, ordered, start }) => {
     const n = (start ?? 1) + index;
     // 1. 2. 3. at depth 0, a. b. c. at depth 1, i. ii. iii. at depth 2
-    const marker = !ordered ? "-"
-      : depth === 0 ? `${n}.`
-      : depth === 1 ? `${String.fromCharCode(96 + n)}.`
-      : `${toRoman(n)}.`;
+    const marker = !ordered
+      ? "-"
+      : depth === 0
+        ? `${n}.`
+        : depth === 1
+          ? `${String.fromCharCode(96 + n)}.`
+          : `${toRoman(n)}.`;
     return "  ".repeat(depth) + marker + " " + children.trimEnd() + "\n";
   },
   // Prepend a newline so nested lists are separated from their parent item's text

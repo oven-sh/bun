@@ -256,20 +256,17 @@ describe("Bun.markdown.render", () => {
   test("listItem enables direct marker rendering (no post-processing)", () => {
     // The motivating use case: ANSI terminal renderer with depth-aware numbering.
     const toAlpha = (n: number) => String.fromCharCode(96 + n);
-    const result = Markdown.render(
-      "1. first\n   1. sub-a\n   2. sub-b\n2. second\n",
-      {
-        listItem: (c: string, m: any) => {
-          const n = (m.start ?? 1) + m.index;
-          const marker = !m.ordered ? "-" : m.depth === 0 ? `${n}.` : `${toAlpha(n)}.`;
-          const indent = "  ".repeat(m.depth);
-          return indent + marker + " " + c.trimEnd() + "\n";
-        },
-        // Nested lists are concatenated directly after the parent item's text;
-        // prefix a newline so the outer listItem's trimEnd() works correctly.
-        list: (c: string) => "\n" + c,
+    const result = Markdown.render("1. first\n   1. sub-a\n   2. sub-b\n2. second\n", {
+      listItem: (c: string, m: any) => {
+        const n = (m.start ?? 1) + m.index;
+        const marker = !m.ordered ? "-" : m.depth === 0 ? `${n}.` : `${toAlpha(n)}.`;
+        const indent = "  ".repeat(m.depth);
+        return indent + marker + " " + c.trimEnd() + "\n";
       },
-    );
+      // Nested lists are concatenated directly after the parent item's text;
+      // prefix a newline so the outer listItem's trimEnd() works correctly.
+      list: (c: string) => "\n" + c,
+    });
     expect(result).toBe("\n1. first\n  a. sub-a\n  b. sub-b\n2. second\n");
   });
 

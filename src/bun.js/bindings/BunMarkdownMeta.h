@@ -31,8 +31,8 @@ extern "C" JSC::EncodedJSValue BunMarkdownMeta__createListItem(
     uint32_t index,
     uint32_t depth,
     bool ordered,
-    EncodedJSValue start,   // jsNumber or jsUndefined
-    EncodedJSValue checked  // jsBoolean or jsUndefined
+    EncodedJSValue start, // jsNumber or jsUndefined
+    EncodedJSValue checked // jsBoolean or jsUndefined
 );
 
 // ListMeta: {ordered, start, depth}
@@ -40,15 +40,14 @@ extern "C" JSC::EncodedJSValue BunMarkdownMeta__createListItem(
 extern "C" JSC::EncodedJSValue BunMarkdownMeta__createList(
     JSGlobalObject* globalObject,
     bool ordered,
-    EncodedJSValue start,   // jsNumber or jsUndefined
-    uint32_t depth
-);
+    EncodedJSValue start, // jsNumber or jsUndefined
+    uint32_t depth);
 
 // CellMeta: {align}
 // `align` is always present (jsUndefined when no alignment).
 extern "C" JSC::EncodedJSValue BunMarkdownMeta__createCell(
     JSGlobalObject* globalObject,
-    EncodedJSValue align    // jsString or jsUndefined
+    EncodedJSValue align // jsString or jsUndefined
 );
 
 // LinkMeta / ImageMeta: {href, title} or {src, title}
@@ -58,5 +57,5 @@ extern "C" JSC::EncodedJSValue BunMarkdownMeta__createCell(
 extern "C" JSC::EncodedJSValue BunMarkdownMeta__createLink(
     JSGlobalObject* globalObject,
     EncodedJSValue href,
-    EncodedJSValue title    // jsString or jsUndefined
+    EncodedJSValue title // jsString or jsUndefined
 );

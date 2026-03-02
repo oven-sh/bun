@@ -66,12 +66,7 @@ pub const JSBundler = struct {
             // Must use getKey to return the map's owned key, not the parameter
             if (comptime !bun.Environment.isWindows) {
                 if (self.map.getKey(specifier)) |key| {
-                    return _resolver.Result{
-                        .path_pair = .{
-                            .primary = Fs.Path.initWithNamespace(key, "file"),
-                        },
-                        .module_type = .unknown,
-                    };
+                    return makeResult(key);
                 }
             } else {
                 const buf = bun.path_buffer_pool.get();
@@ -79,52 +74,44 @@ pub const JSBundler = struct {
                 const normalized_specifier = bun.path.pathToPosixBuf(u8, specifier, buf);
 
                 if (self.map.getKey(normalized_specifier)) |key| {
-                    return _resolver.Result{
-                        .path_pair = .{
-                            .primary = Fs.Path.initWithNamespace(key, "file"),
-                        },
-                        .module_type = .unknown,
-                    };
+                    return makeResult(key);
                 }
             }
 
             // For absolute specifiers, check if the specifier was produced by the HTML
             // scanner's top_level_dir join (e.g., "/virtual/foo.tsx" -> "<CWD>/virtual/foo.tsx").
-            // If so, try looking up the original path with "/" prefix.
-            if (specifier.len > 0 and (specifier[0] == '/' or
-                (specifier.len >= 3 and specifier[1] == ':' and (specifier[2] == '/' or specifier[2] == '\\'))))
-            {
+            // If so, try stripping the top_level_dir prefix and looking up the original path.
+            if (specifier.len > 0 and isAbsolutePath(specifier)) {
                 const top_level_dir = Fs.FileSystem.instance.top_level_dir;
                 if (top_level_dir.len > 0 and bun.strings.hasPrefix(specifier, top_level_dir)) {
-                    const remainder = specifier[top_level_dir.len..];
-                    // The remainder may already start with '/' (e.g. top_level_dir="/workspace/bun"
-                    // and specifier="/workspace/bun/virtual/foo.tsx" gives remainder="/virtual/foo.tsx").
-                    // If not, prepend '/' to form the original absolute path.
-                    if (remainder.len > 0 and remainder[0] == '/') {
-                        if (self.map.getKey(remainder)) |key| {
-                            return _resolver.Result{
-                                .path_pair = .{
-                                    .primary = Fs.Path.initWithNamespace(key, "file"),
-                                },
-                                .module_type = .unknown,
-                            };
+                    const after_prefix = specifier[top_level_dir.len..];
+                    if (after_prefix.len == 0) {
+                        // specifier == top_level_dir exactly, nothing to look up
+                    } else if (after_prefix[0] == '/' or after_prefix[0] == '\\') {
+                        // top_level_dir ended without separator, remainder starts with one.
+                        // e.g. top_level_dir="/workspace/bun", specifier="/workspace/bun/virtual/foo.tsx"
+                        //   -> after_prefix="/virtual/foo.tsx" (already a valid absolute path)
+                        if (self.map.getKey(after_prefix)) |key| {
+                            return makeResult(key);
                         }
-                    } else {
+                    } else if (top_level_dir[top_level_dir.len - 1] == '/' or
+                        top_level_dir[top_level_dir.len - 1] == '\\')
+                    {
+                        // top_level_dir ended with separator (e.g. "/workspace/bun/"),
+                        // so after_prefix is "virtual/foo.tsx" — prepend "/" to reconstruct
+                        // the original absolute path "/virtual/foo.tsx".
                         const orig_buf = bun.path_buffer_pool.get();
                         defer bun.path_buffer_pool.put(orig_buf);
                         orig_buf[0] = '/';
-                        @memcpy(orig_buf[1..][0..remainder.len], remainder);
-                        const original_path = orig_buf[0 .. remainder.len + 1];
+                        @memcpy(orig_buf[1..][0..after_prefix.len], after_prefix);
+                        const original_path = orig_buf[0 .. after_prefix.len + 1];
 
                         if (self.map.getKey(original_path)) |key| {
-                            return _resolver.Result{
-                                .path_pair = .{
-                                    .primary = Fs.Path.initWithNamespace(key, "file"),
-                                },
-                                .module_type = .unknown,
-                            };
+                            return makeResult(key);
                         }
                     }
+                    // else: partial segment match (e.g. "/work" matched "/workspace/..."),
+                    // not a valid top_level_dir prefix — skip this fallback.
                 }
             }
 
@@ -173,12 +160,7 @@ pub const JSBundler = struct {
                 const joined = buf[0..joined_len];
                 // Must use getKey to return the map's owned key, not the temporary buffer
                 if (self.map.getKey(joined)) |key| {
-                    return _resolver.Result{
-                        .path_pair = .{
-                            .primary = Fs.Path.initWithNamespace(key, "file"),
-                        },
-                        .module_type = .unknown,
-                    };
+                    return makeResult(key);
                 }
             }
 
@@ -200,6 +182,15 @@ pub const JSBundler = struct {
             // Windows UNC path (e.g., "\\server\share")
             if (path.len >= 2 and path[0] == '\\' and path[1] == '\\') return true;
             return false;
+        }
+
+        fn makeResult(key: []const u8) _resolver.Result {
+            return _resolver.Result{
+                .path_pair = .{
+                    .primary = Fs.Path.initWithNamespace(key, "file"),
+                },
+                .module_type = .unknown,
+            };
         }
 
         /// Parse the files option from JavaScript.

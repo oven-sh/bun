@@ -167,8 +167,18 @@ fn onClose(this: *WindowsNamedPipe) void {
     log("onClose", .{});
     if (!this.flags.is_closed) {
         this.flags.is_closed = true; // only call onClose once
+        // Stop reading and clear the timer to prevent further callbacks,
+        // but don't call deinit() here. The context (owner) will call
+        // named_pipe.deinit() when it runs its own deferred deinit.
+        // Calling deinit() synchronously here causes use-after-free when
+        // this callback is triggered from within the SSL wrapper's
+        // handleTraffic() call chain (the wrapper.deinit() frees the SSL
+        // state while we're still on the wrapper's call stack).
+        this.setTimeout(0);
+        if (this.writer.getStream()) |stream| {
+            _ = stream.readStop();
+        }
         this.handlers.onClose(this.handlers.ctx);
-        this.deinit();
     }
 }
 
@@ -585,6 +595,7 @@ pub fn deinit(this: *WindowsNamedPipe) void {
         wrapper.deinit();
         this.wrapper = null;
     }
+    this.incoming.clearAndFree(bun.default_allocator);
     var ssl_error = this.ssl_error;
     ssl_error.deinit();
     this.ssl_error = .{};

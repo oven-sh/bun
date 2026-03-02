@@ -719,9 +719,11 @@ pub const ReadFileUV = struct {
                 // non-regular files have variable sizes, so we always ensure
                 // theres at least 4096 bytes of free space. there has already
                 // been an initial allocation done for us
-                this.buffer.ensureUnusedCapacity(this.byte_store.allocator, 4096) catch |err| {
-                    this.errno = err;
+                this.buffer.ensureUnusedCapacity(this.byte_store.allocator, 4096) catch {
+                    this.errno = error.OutOfMemory;
+                    this.system_error = bun.sys.Error.fromCode(bun.sys.E.NOMEM, .read).toSystemError();
                     this.onFinish();
+                    return;
                 };
             }
 
@@ -769,7 +771,7 @@ pub const ReadFileUV = struct {
         if (result.errEnum()) |errno| {
             this.errno = bun.errnoToZigErr(errno);
             this.system_error = bun.sys.Error.fromCode(errno, .read).toSystemError();
-            this.finalize();
+            this.onFinish();
             return;
         }
 

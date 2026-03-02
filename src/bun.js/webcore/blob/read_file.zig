@@ -698,8 +698,9 @@ pub const ReadFileUV = struct {
             return;
         }
         // add an extra 16 bytes to the buffer to avoid having to resize it for trailing extra data
-        this.buffer.ensureTotalCapacityPrecise(this.byte_store.allocator, @min(this.size + 16, @as(usize, std.math.maxInt(bun.windows.ULONG)))) catch |err| {
-            this.errno = err;
+        this.buffer.ensureTotalCapacityPrecise(this.byte_store.allocator, @min(this.size + 16, @as(usize, std.math.maxInt(bun.windows.ULONG)))) catch {
+            this.errno = error.OutOfMemory;
+            this.system_error = bun.sys.Error.fromCode(bun.sys.E.NOMEM, .read).toSystemError();
             this.onFinish();
             return;
         };
@@ -726,9 +727,11 @@ pub const ReadFileUV = struct {
                 // non-regular files have variable sizes, so we always ensure
                 // theres at least 4096 bytes of free space. there has already
                 // been an initial allocation done for us
-                this.buffer.ensureUnusedCapacity(this.byte_store.allocator, 4096) catch |err| {
-                    this.errno = err;
+                this.buffer.ensureUnusedCapacity(this.byte_store.allocator, 4096) catch {
+                    this.errno = error.OutOfMemory;
+                    this.system_error = bun.sys.Error.fromCode(bun.sys.E.NOMEM, .read).toSystemError();
                     this.onFinish();
+                    return;
                 };
             }
 
@@ -757,8 +760,9 @@ pub const ReadFileUV = struct {
 
             // We are done reading.
             this.byte_store = ByteStore.init(
-                this.buffer.toOwnedSlice(this.byte_store.allocator) catch |err| {
-                    this.errno = err;
+                this.buffer.toOwnedSlice(this.byte_store.allocator) catch {
+                    this.errno = error.OutOfMemory;
+                    this.system_error = bun.sys.Error.fromCode(bun.sys.E.NOMEM, .read).toSystemError();
                     this.onFinish();
                     return;
                 },
@@ -776,15 +780,16 @@ pub const ReadFileUV = struct {
         if (result.errEnum()) |errno| {
             this.errno = bun.errnoToZigErr(errno);
             this.system_error = bun.sys.Error.fromCode(errno, .read).toSystemError();
-            this.finalize();
+            this.onFinish();
             return;
         }
 
         if (result.int() == 0) {
             // We are done reading.
             this.byte_store = ByteStore.init(
-                this.buffer.toOwnedSlice(this.byte_store.allocator) catch |err| {
-                    this.errno = err;
+                this.buffer.toOwnedSlice(this.byte_store.allocator) catch {
+                    this.errno = error.OutOfMemory;
+                    this.system_error = bun.sys.Error.fromCode(bun.sys.E.NOMEM, .read).toSystemError();
                     this.onFinish();
                     return;
                 },

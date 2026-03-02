@@ -1,7 +1,7 @@
 import { Subprocess } from "bun";
 import { install_test_helpers } from "bun:internal-for-testing";
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { copyFileSync } from "fs";
+import { copyFileSync, existsSync } from "fs";
 import { cp, rm } from "fs/promises";
 import { join } from "path";
 import { StringDecoder } from "string_decoder";
@@ -10,14 +10,7 @@ const { parseLockfile } = install_test_helpers;
 
 expect.extend({ toMatchNodeModulesAt });
 
-let root = tmpdirSync();
-
-beforeAll(async () => {
-  await rm(root, { recursive: true, force: true });
-  await cp(join(import.meta.dir, "../"), root, { recursive: true, force: true });
-  await rm(join(root, ".next"), { recursive: true, force: true });
-  console.log("Copied to:", root);
-});
+let root = tmpdirSync("next-dev-server");
 
 let dev_server: undefined | Subprocess<"ignore", "pipe", "inherit">;
 let baseUrl: string;
@@ -86,6 +79,11 @@ async function getDevServerURL() {
 }
 
 beforeAll(async () => {
+  await rm(root, { recursive: true, force: true });
+  await cp(join(import.meta.dir, "../"), root, { recursive: true, force: true });
+  await rm(join(root, ".next"), { recursive: true, force: true });
+  console.log("Copied to:", root);
+
   copyFileSync(join(root, "src/Counter1.txt"), join(root, "src/Counter.tsx"));
 
   const install = Bun.spawnSync([bunExe(), "i"], {

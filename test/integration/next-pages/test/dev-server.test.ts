@@ -93,8 +93,10 @@ const hasNativeBrowser =
   process.arch !== "arm64" ||
   !!(Bun.which("chromium-browser") || Bun.which("chromium") || Bun.which("chrome"));
 
+// Skip on macOS CI where Chrome/chrome-headless-shell has inconsistent launch failures.
 // https://github.com/oven-sh/bun/issues/11255
-test.skipIf(!hasNativeBrowser || (isWindows && isCI))(
+const isMacCI = process.platform === "darwin" && isCI;
+test.skipIf(!hasNativeBrowser || (isWindows && isCI) || isMacCI)(
   "hot reloading works on the client (+ tailwind hmr)",
   async () => {
     await rm(root, { recursive: true, force: true });

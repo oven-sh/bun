@@ -5,20 +5,11 @@ import { vitePreprocess } from "@sveltejs/vite-plugin-svelte";
 const config = {
   preprocess: vitePreprocess(),
   kit: {
-    files: {
-      appTemplate: "app/app.html",
-      errorTemplate: "app/error.html",
-      lib: "app/lib",
-      routes: "app/routes",
-      hooks: {
-        server: "app/hooks.server.ts",
-      },
-    },
     adapter: adapter({
       reusePort: true,
     }),
     alias: {
-      $assets: "./app/assets",
+      $assets: "./src/assets",
       "~shared": "./shared/",
     },
     csrf: {

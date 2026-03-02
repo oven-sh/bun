@@ -67,7 +67,7 @@ namespace uWS {
      *   chunk-ext-name = token
      *   chunk-ext-val  = token / quoted-string  (TODO: quoted-string unsupported)
      */
-    inline uint64_t consumeHexNumber(std::string_view & __restrict data, uint64_t state) {
+    inline uint64_t consumeHexNumber(std::string_view &data, uint64_t state) {
         /* Resume: '\r' was the last byte of the previous segment. Rare path,
          * use data directly to avoid the p/len load on the hot path. */
         if (state & STATE_WAITING_FOR_LF) [[unlikely]] {
@@ -79,9 +79,9 @@ namespace uWS {
         }
 
         /* Load pointer+length into locals so the loops operate in registers.
-         * Without this, Clang writes back to the string_view on every iteration
-         * (store-per-iter despite __restrict). Error paths skip the writeback:
-         * HttpParser returns immediately on STATE_IS_ERROR and never reads data. */
+         * Without this, Clang writes back to the string_view on every iteration.
+         * Error paths skip the writeback: HttpParser returns immediately on
+         * STATE_IS_ERROR and never reads data. */
         const char *p = data.data();
         size_t len = data.length();
 

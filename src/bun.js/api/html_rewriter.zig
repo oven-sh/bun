@@ -910,8 +910,8 @@ fn HandlerCallback(
                 wrapper.deref();
             }
 
-            // Use a CatchScope to properly handle exceptions from the JavaScript callback
-            var scope: bun.jsc.CatchScope = undefined;
+            // Use a TopExceptionScope to properly handle exceptions from the JavaScript callback
+            var scope: bun.jsc.TopExceptionScope = undefined;
             scope.init(this.global, @src());
             defer scope.deinit();
 

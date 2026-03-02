@@ -1129,10 +1129,16 @@ pub const H2FrameParser = struct {
             return stream;
         }
 
+        /// Returns true if the stream can still receive data from the remote peer.
+        /// Per RFC 7540 Section 5.1:
+        /// - OPEN: both endpoints can send and receive
+        /// - HALF_CLOSED_LOCAL: local sent END_STREAM, but can still receive from remote
+        /// - HALF_CLOSED_REMOTE: remote sent END_STREAM, no more data to receive
+        /// - CLOSED: stream is finished
         pub fn canReceiveData(this: *Stream) bool {
             return switch (this.state) {
-                .IDLE, .RESERVED_LOCAL, .RESERVED_REMOTE, .OPEN, .HALF_CLOSED_LOCAL => false,
-                .HALF_CLOSED_REMOTE, .CLOSED => true,
+                .IDLE, .RESERVED_LOCAL, .RESERVED_REMOTE, .OPEN, .HALF_CLOSED_LOCAL => true,
+                .HALF_CLOSED_REMOTE, .CLOSED => false,
             };
         }
 
@@ -2858,9 +2864,18 @@ pub const H2FrameParser = struct {
         if (this.usedWindowSize > windowSizeValue) {
             return globalObject.throwInvalidArguments("Expected windowSize to be greater than usedWindowSize", .{});
         }
+        const oldWindowSize = this.windowSize;
         this.windowSize = windowSizeValue;
         if (this.localSettings.initialWindowSize < windowSizeValue) {
             this.localSettings.initialWindowSize = windowSizeValue;
+        }
+        // Send a connection-level WINDOW_UPDATE frame to the peer so it knows
+        // about the increased window.  Per RFC 9113 Section 6.9, the
+        // INITIAL_WINDOW_SIZE setting only applies to stream-level windows;
+        // the connection-level window must be updated explicitly.
+        if (windowSizeValue > oldWindowSize) {
+            const increment: u31 = @truncate(windowSizeValue - oldWindowSize);
+            this.sendWindowUpdate(0, UInt31WithReserved.init(increment, false));
         }
         var it = this.streams.valueIterator();
         while (it.next()) |stream| {

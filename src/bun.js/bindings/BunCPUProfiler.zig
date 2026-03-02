@@ -3,11 +3,17 @@ pub const CPUProfilerConfig = struct {
     dir: []const u8,
     md_format: bool = false,
     json_format: bool = false,
+    interval: u32 = 1000,
 };
 
 // C++ function declarations
 extern fn Bun__startCPUProfiler(vm: *jsc.VM) void;
 extern fn Bun__stopCPUProfiler(vm: *jsc.VM, outJSON: ?*bun.String, outText: ?*bun.String) void;
+extern fn Bun__setSamplingInterval(intervalMicroseconds: c_int) void;
+
+pub fn setSamplingInterval(interval: u32) void {
+    Bun__setSamplingInterval(@intCast(interval));
+}
 
 pub fn startCPUProfiler(vm: *jsc.VM) void {
     Bun__startCPUProfiler(vm);
@@ -95,7 +101,7 @@ fn buildOutputPath(path: *bun.AutoAbsPath, config: CPUProfilerConfig, is_md_form
 
     // Append directory if specified
     if (config.dir.len > 0) {
-        path.append(config.dir);
+        path.join(&.{config.dir});
     }
 
     // Append filename

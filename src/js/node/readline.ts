@@ -79,7 +79,6 @@ const StringPrototypeEndsWith = String.prototype.endsWith;
 const StringPrototypeRepeat = String.prototype.repeat;
 const StringPrototypeStartsWith = String.prototype.startsWith;
 const StringPrototypeTrim = String.prototype.trim;
-const StringPrototypeNormalize = String.prototype.normalize;
 const NumberIsNaN = Number.isNaN;
 const NumberIsFinite = Number.isFinite;
 const MathCeil = Math.ceil;
@@ -1534,7 +1533,7 @@ var _Interface = class Interface extends InterfaceConstructor {
         prefix +
         StringPrototypeSlice.$call(this.line, this.cursor, this.line.length);
       this.cursor = this.cursor - completeOn.length + prefix.length;
-      this._refreshLine();
+      this[kRefreshLine]();
       return;
     }
 
@@ -2227,8 +2226,8 @@ Interface.prototype.question = function question(query, options, cb) {
   }
 };
 
-{
-  Interface.prototype.question[promisify.custom] = function question(query, options) {
+Interface.prototype.question[promisify.custom] = {
+  question(query, options) {
     if (options === null || typeof options !== "object") {
       options = kEmptyObject;
     }
@@ -2253,8 +2252,8 @@ Interface.prototype.question = function question(query, options, cb) {
       }
       this.question(query, options, cb);
     });
-  };
-}
+  },
+}.question;
 
 /**
  * Creates a new `readline.Interface` instance.

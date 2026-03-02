@@ -854,6 +854,9 @@ pub const CommandLineReporter = struct {
                         }
                     }
 
+                    for (sequence.flakyAttempts()) |attempt| {
+                        bun.handleOom(junit.writeTestCase(attempt.result, filename, display_label, concatenated_describe_scopes.items, 0, attempt.elapsed_ns, line_number));
+                    }
                     bun.handleOom(junit.writeTestCase(status, filename, display_label, concatenated_describe_scopes.items, assertions, elapsed_ns, line_number));
                 }
             }
@@ -945,6 +948,7 @@ pub const CommandLineReporter = struct {
                     this.printSummary();
                     Output.prettyError("\nBailed out after {d} failure{s}<r>\n", .{ this.jest.bail, if (this.jest.bail == 1) "" else "s" });
                     Output.flush();
+                    this.writeJUnitReportIfNeeded();
                     Global.exit(1);
                 }
             },
@@ -965,6 +969,20 @@ pub const CommandLineReporter = struct {
         });
 
         Output.printStartEnd(bun.start_time, std.time.nanoTimestamp());
+    }
+
+    /// Writes the JUnit reporter output file if a JUnit reporter is active and
+    /// an outfile path was configured. This must be called before any early exit
+    /// (e.g. bail) so that the report is not lost.
+    pub fn writeJUnitReportIfNeeded(this: *CommandLineReporter) void {
+        if (this.reporters.junit) |junit| {
+            if (this.jest.test_options.reporter_outfile) |outfile| {
+                if (junit.current_file.len > 0) {
+                    junit.endTestSuite() catch {};
+                }
+                junit.writeToFile(outfile) catch {};
+            }
+        }
     }
 
     pub fn generateCodeCoverage(this: *CommandLineReporter, vm: *jsc.VirtualMachine, opts: *TestCommand.CodeCoverageOptions, comptime reporters: TestCommand.Reporters, comptime enable_ansi_colors: bool) !void {
@@ -1769,12 +1787,7 @@ pub const TestCommand = struct {
         Output.prettyError("\n", .{});
         Output.flush();
 
-        if (reporter.reporters.junit) |junit| {
-            if (junit.current_file.len > 0) {
-                junit.endTestSuite() catch {};
-            }
-            junit.writeToFile(ctx.test_options.reporter_outfile.?) catch {};
-        }
+        reporter.writeJUnitReportIfNeeded();
 
         if (vm.hot_reload == .watch) {
             vm.runWithAPILock(jsc.VirtualMachine, vm, runEventLoopForWatch);
@@ -1917,6 +1930,7 @@ pub const TestCommand = struct {
                     if (reporter.jest.bail == reporter.summary().fail) {
                         reporter.printSummary();
                         Output.prettyError("\nBailed out after {d} failure{s}<r>\n", .{ reporter.jest.bail, if (reporter.jest.bail == 1) "" else "s" });
+                        reporter.writeJUnitReportIfNeeded();
 
                         vm.exit_handler.exit_code = 1;
                         vm.is_shutting_down = true;

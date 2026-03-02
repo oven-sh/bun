@@ -923,13 +923,13 @@ pub const SendQueue = struct {
 
     pub fn windowsConfigureClient(this: *SendQueue, pipe_fd: bun.FileDescriptor) !void {
         log("configureClient", .{});
-        const ipc_pipe = bun.handleOom(bun.default_allocator.create(uv.Pipe));
+        const ipc_pipe = bun.new(uv.Pipe, std.mem.zeroes(uv.Pipe));
         ipc_pipe.init(uv.Loop.get(), true).unwrap() catch |err| {
-            bun.default_allocator.destroy(ipc_pipe);
+            bun.destroy(ipc_pipe);
             return err;
         };
         ipc_pipe.open(pipe_fd).unwrap() catch |err| {
-            bun.default_allocator.destroy(ipc_pipe);
+            ipc_pipe.closeAndDestroy();
             return err;
         };
         ipc_pipe.unref();

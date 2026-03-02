@@ -263,7 +263,7 @@ pub const File = struct {
                 .path = .{
                     .encoded_slice = switch (path_like) {
                         .encoded_slice => |slice| try slice.toOwned(bun.default_allocator),
-                        else => try jsc.ZigString.init(path_like.slice()).toSliceClone(bun.default_allocator),
+                        else => try jsc.ZigString.fromUTF8(path_like.slice()).toSliceClone(bun.default_allocator),
                     },
                 },
             }, globalThis.bunVM()),
@@ -356,7 +356,7 @@ pub const S3 = struct {
         };
         const promise = jsc.JSPromise.Strong.init(globalThis);
         const value = promise.value();
-        const proxy_url = globalThis.bunVM().transpiler.env.getHttpProxy(true, null);
+        const proxy_url = globalThis.bunVM().transpiler.env.getHttpProxy(true, null, null);
         const proxy = if (proxy_url) |url| url.href else null;
         var aws_options = try this.getCredentialsWithOptions(extra_options, globalThis);
         defer aws_options.deinit();
@@ -414,7 +414,7 @@ pub const S3 = struct {
 
         const promise = jsc.JSPromise.Strong.init(globalThis);
         const value = promise.value();
-        const proxy_url = globalThis.bunVM().transpiler.env.getHttpProxy(true, null);
+        const proxy_url = globalThis.bunVM().transpiler.env.getHttpProxy(true, null, null);
         const proxy = if (proxy_url) |url| url.href else null;
         var aws_options = try this.getCredentialsWithOptions(extra_options, globalThis);
         defer aws_options.deinit();

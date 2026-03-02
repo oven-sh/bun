@@ -1,5 +1,5 @@
-ARG LLVM_VERSION="19"
-ARG REPORTED_LLVM_VERSION="19.1.7"
+ARG LLVM_VERSION="21"
+ARG REPORTED_LLVM_VERSION="21.1.8"
 ARG OLD_BUN_VERSION="1.1.38"
 ARG BUILDKITE_AGENT_TAGS="queue=linux,os=linux,arch=${TARGETARCH}"
 
@@ -26,7 +26,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
    wget curl git python3 python3-pip ninja-build \
    software-properties-common apt-transport-https \
    ca-certificates gnupg lsb-release unzip \
-   libxml2-dev ruby ruby-dev bison gawk perl make golang ccache \
+   libxml2-dev ruby ruby-dev bison gawk perl make golang ccache qemu-user-static \
    && add-apt-repository ppa:ubuntu-toolchain-r/test \
    && apt-get update \
    && apt-get install -y gcc-13 g++-13 libgcc-13-dev libstdc++-13-dev \

@@ -821,60 +821,74 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             expect(typeof settings.maxHeaderListSize).toBe("number");
             expect(typeof settings.maxHeaderSize).toBe("number");
           };
-          const { promise, resolve, reject } = Promise.withResolvers();
-          const client = http2.connect("https://www.example.com");
-          client.on("error", reject);
-          expect(client.connecting).toBeTrue();
-          expect(client.alpnProtocol).toBeUndefined();
-          expect(client.encrypted).toBeTrue();
-          expect(client.closed).toBeFalse();
-          expect(client.destroyed).toBeFalse();
-          expect(client.originSet.length).toBe(1);
-          expect(client.pendingSettingsAck).toBeTrue();
-          assertSettings(client.localSettings);
-          expect(client.remoteSettings).toBeNull();
-          const headers = { ":path": "/" };
-          const req = client.request(headers);
-          expect(req.closed).toBeFalse();
-          expect(req.destroyed).toBeFalse();
-          // we always asign a stream id to the request
-          expect(req.pending).toBeFalse();
-          expect(typeof req.id).toBe("number");
-          expect(req.session).toBeDefined();
-          expect(req.sentHeaders).toEqual({
-            ":authority": "www.example.com",
-            ":method": "GET",
-            ":path": "/",
-            ":scheme": "https",
+          const h2Server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: false });
+          h2Server.on("stream", (stream, headers) => {
+            stream.respond({ ":status": 200 });
+            stream.end("OK");
           });
-          expect(req.sentTrailers).toBeUndefined();
-          expect(req.sentInfoHeaders.length).toBe(0);
-          expect(req.scheme).toBe("https");
-          let response_headers = null;
-          req.on("response", (headers, flags) => {
-            response_headers = headers;
-          });
-          req.resume();
-          req.on("end", () => {
-            resolve();
-          });
-          await promise;
-          expect(response_headers[":status"]).toBe(200);
-          const settings = client.remoteSettings;
-          const localSettings = client.localSettings;
-          assertSettings(settings);
-          assertSettings(localSettings);
-          expect(settings).toEqual(client.remoteSettings);
-          expect(localSettings).toEqual(client.localSettings);
-          client.destroy();
-          expect(client.connecting).toBeFalse();
-          expect(client.alpnProtocol).toBe("h2");
-          expect(client.pendingSettingsAck).toBeFalse();
-          expect(client.destroyed).toBeTrue();
-          expect(client.closed).toBeTrue();
-          expect(req.closed).toBeTrue();
-          expect(req.destroyed).toBeTrue();
-          expect(req.rstCode).toBe(http2.constants.NGHTTP2_NO_ERROR);
+          const { promise: listenPromise, resolve: listenResolve } = Promise.withResolvers();
+          h2Server.listen(0, () => listenResolve());
+          await listenPromise;
+          const serverAddress = h2Server.address();
+          const serverUrl = `https://localhost:${serverAddress.port}`;
+          try {
+            const { promise, resolve, reject } = Promise.withResolvers();
+            const client = http2.connect(serverUrl, TLS_OPTIONS);
+            client.on("error", reject);
+            expect(client.connecting).toBeTrue();
+            expect(client.alpnProtocol).toBeUndefined();
+            expect(client.encrypted).toBeTrue();
+            expect(client.closed).toBeFalse();
+            expect(client.destroyed).toBeFalse();
+            expect(client.originSet.length).toBe(1);
+            expect(client.pendingSettingsAck).toBeTrue();
+            assertSettings(client.localSettings);
+            expect(client.remoteSettings).toBeNull();
+            const headers = { ":path": "/" };
+            const req = client.request(headers);
+            expect(req.closed).toBeFalse();
+            expect(req.destroyed).toBeFalse();
+            // we always asign a stream id to the request
+            expect(req.pending).toBeFalse();
+            expect(typeof req.id).toBe("number");
+            expect(req.session).toBeDefined();
+            expect(req.sentHeaders).toEqual({
+              ":authority": `localhost:${serverAddress.port}`,
+              ":method": "GET",
+              ":path": "/",
+              ":scheme": "https",
+            });
+            expect(req.sentTrailers).toBeUndefined();
+            expect(req.sentInfoHeaders.length).toBe(0);
+            expect(req.scheme).toBe("https");
+            let response_headers = null;
+            req.on("response", (headers, flags) => {
+              response_headers = headers;
+            });
+            req.resume();
+            req.on("end", () => {
+              resolve();
+            });
+            await promise;
+            expect(response_headers[":status"]).toBe(200);
+            const settings = client.remoteSettings;
+            const localSettings = client.localSettings;
+            assertSettings(settings);
+            assertSettings(localSettings);
+            expect(settings).toEqual(client.remoteSettings);
+            expect(localSettings).toEqual(client.localSettings);
+            client.destroy();
+            expect(client.connecting).toBeFalse();
+            expect(client.alpnProtocol).toBe("h2");
+            expect(client.pendingSettingsAck).toBeFalse();
+            expect(client.destroyed).toBeTrue();
+            expect(client.closed).toBeTrue();
+            expect(req.closed).toBeTrue();
+            expect(req.destroyed).toBeTrue();
+            expect(req.rstCode).toBe(http2.constants.NGHTTP2_NO_ERROR);
+          } finally {
+            h2Server.close();
+          }
         });
         it("ping events should work", async () => {
           await using server = await nodeEchoServer(paddingStrategy);

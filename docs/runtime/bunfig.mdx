@@ -298,6 +298,17 @@ This is useful for catching flaky tests or non-deterministic behavior. Each test
 
 The `--rerun-each` CLI flag will override this setting when specified.
 
+### `test.retry`
+
+Default retry count for all tests. Failed tests will be retried up to this many times. Per-test `{ retry: N }` overrides this value. Default `0` (no retries).
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+retry = 3
+```
+
+The `--retry` CLI flag will override this setting when specified.
+
 ### `test.concurrentTestGlob`
 
 Specify a glob pattern to automatically run matching test files with concurrent test execution enabled. Test files matching this pattern will behave as if the `--concurrent` flag was passed, running all tests within those files concurrently.

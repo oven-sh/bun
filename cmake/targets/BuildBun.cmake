@@ -341,6 +341,7 @@ register_command(
   SOURCES
     ${BUN_JAVASCRIPT_CODEGEN_SOURCES}
     ${BUN_CXX_SOURCES}
+    ${ESBUILD_EXECUTABLE}
   OUTPUTS
     ${BUN_CPP_OUTPUTS}
 )
@@ -362,7 +363,7 @@ register_command(
 )
 
 if(SKIP_CODEGEN)
-  # Skip JavaScript codegen - useful for Windows ARM64 debug builds where bun crashes
+  # Skip JavaScript codegen - useful for bootstrapping new platforms
   message(STATUS "SKIP_CODEGEN is ON - skipping bun-js-modules codegen")
   foreach(output ${BUN_JAVASCRIPT_OUTPUTS})
     if(NOT EXISTS ${output})
@@ -546,6 +547,7 @@ set(BUN_OBJECT_LUT_SOURCES
   ${CWD}/src/bun.js/bindings/ProcessBindingHTTPParser.cpp
   ${CWD}/src/bun.js/modules/NodeModuleModule.cpp
   ${CODEGEN_PATH}/ZigGeneratedClasses.lut.txt
+  ${CWD}/src/bun.js/bindings/webcore/JSEvent.cpp
 )
 
 set(BUN_OBJECT_LUT_OUTPUTS
@@ -560,6 +562,7 @@ set(BUN_OBJECT_LUT_OUTPUTS
   ${CODEGEN_PATH}/ProcessBindingHTTPParser.lut.h
   ${CODEGEN_PATH}/NodeModuleModule.lut.h
   ${CODEGEN_PATH}/ZigGeneratedClasses.lut.h
+  ${CODEGEN_PATH}/JSEvent.lut.h
 )
 
 macro(WEBKIT_ADD_SOURCE_DEPENDENCIES _source _deps)
@@ -593,6 +596,7 @@ foreach(i RANGE 0 ${BUN_OBJECT_LUT_SOURCES_MAX_INDEX})
       "Generating ${filename}.lut.h"
     DEPENDS
       ${BUN_OBJECT_LUT_SOURCE}
+      ${CWD}/src/codegen/create_hash_table
     COMMAND
       ${BUN_EXECUTABLE}
         ${BUN_FLAGS}
@@ -602,6 +606,7 @@ foreach(i RANGE 0 ${BUN_OBJECT_LUT_SOURCES_MAX_INDEX})
         ${BUN_OBJECT_LUT_OUTPUT}
     SOURCES
       ${BUN_OBJECT_LUT_SCRIPT}
+      ${CWD}/src/codegen/create_hash_table
       ${BUN_OBJECT_LUT_SOURCE}
     OUTPUTS
       ${BUN_OBJECT_LUT_OUTPUT}
@@ -680,8 +685,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm|ARM|arm64|ARM64|aarch64|AARCH64")
   if(APPLE)
     set(ZIG_CPU "apple_m1")
   elseif(WIN32)
-    # Windows ARM64: use a specific CPU with NEON support
-    # Zig running under x64 emulation would detect wrong CPU with "native"
+    # Windows ARM64: use a specific CPU target for consistent builds
     set(ZIG_CPU "cortex_a76")
   else()
     set(ZIG_CPU "native")
@@ -698,7 +702,7 @@ endif()
 
 set(ZIG_FLAGS_BUN)
 if(NOT "${REVISION}" STREQUAL "")
-  set(ZIG_FLAGS_BUN ${ZIG_FLAGS_BUN} -Dsha=${REVISION})
+  set(ZIG_FLAGS_BUN ${ZIG_FLAGS_BUN} "-Dsha=${REVISION}")
 endif()
 
 register_command(
@@ -724,10 +728,10 @@ register_command(
       -Denable_tinycc=$<IF:$<BOOL:${ENABLE_TINYCC}>,true,false>
       -Duse_mimalloc=$<IF:$<BOOL:${USE_MIMALLOC_AS_DEFAULT_ALLOCATOR}>,true,false>
       -Dllvm_codegen_threads=${LLVM_ZIG_CODEGEN_THREADS}
-      -Dversion=${VERSION}
-      -Dreported_nodejs_version=${NODEJS_VERSION}
-      -Dcanary=${CANARY_REVISION}
-      -Dcodegen_path=${CODEGEN_PATH}
+      "-Dversion=${VERSION}"
+      "-Dreported_nodejs_version=${NODEJS_VERSION}"
+      "-Dcanary=${CANARY_REVISION}"
+      "-Dcodegen_path=${CODEGEN_PATH}"
       -Dcodegen_embed=$<IF:$<BOOL:${CODEGEN_EMBED}>,true,false>
       --prominent-compile-errors
       --summary all
@@ -939,7 +943,7 @@ if(WIN32)
 endif()
 
 if(USE_MIMALLOC_AS_DEFAULT_ALLOCATOR)
-  target_compile_definitions(${bun} PRIVATE USE_MIMALLOC=1)
+  target_compile_definitions(${bun} PRIVATE USE_BUN_MIMALLOC=1)
 endif()
 
 target_compile_definitions(${bun} PRIVATE
@@ -1016,6 +1020,7 @@ if(NOT WIN32)
       -Wno-unused-function
       -Wno-c++23-lambda-attributes
       -Wno-nullability-completeness
+      -Wno-character-conversion
       -Werror
     )
   else()
@@ -1033,6 +1038,7 @@ if(NOT WIN32)
       -Werror=sometimes-uninitialized
       -Wno-c++23-lambda-attributes
       -Wno-nullability-completeness
+      -Wno-character-conversion
       -Werror
     )
 
@@ -1061,6 +1067,7 @@ else()
     -Wno-inconsistent-dllimport
     -Wno-incompatible-pointer-types
     -Wno-deprecated-declarations
+    -Wno-character-conversion
   )
 endif()
 
@@ -1136,6 +1143,15 @@ if(LINUX)
     -Wl,--wrap=pow
     -Wl,--wrap=powf
   )
+
+  # Disable LTO for workaround-missing-symbols.cpp to prevent LLD 21 from emitting
+  # glibc versioned symbol names (e.g. exp@GLIBC_2.17) from .symver directives into
+  # the .lto_discard assembler directive, which fails to parse the '@' character.
+  if(ENABLE_LTO)
+    set_source_files_properties(${CWD}/src/bun.js/bindings/workaround-missing-symbols.cpp
+      PROPERTIES COMPILE_OPTIONS "-fno-lto"
+    )
+  endif()
   endif()
 
   if(NOT ABI STREQUAL "musl")
@@ -1253,6 +1269,7 @@ if(WIN32)
     target_link_libraries(${bun} PRIVATE
       ${WEBKIT_LIB_PATH}/WTF.lib
       ${WEBKIT_LIB_PATH}/JavaScriptCore.lib
+      ${WEBKIT_LIB_PATH}/bmalloc.lib
       ${WEBKIT_LIB_PATH}/sicudtd.lib
       ${WEBKIT_LIB_PATH}/sicuind.lib
       ${WEBKIT_LIB_PATH}/sicuucd.lib
@@ -1261,6 +1278,7 @@ if(WIN32)
     target_link_libraries(${bun} PRIVATE
       ${WEBKIT_LIB_PATH}/WTF.lib
       ${WEBKIT_LIB_PATH}/JavaScriptCore.lib
+      ${WEBKIT_LIB_PATH}/bmalloc.lib
       ${WEBKIT_LIB_PATH}/sicudt.lib
       ${WEBKIT_LIB_PATH}/sicuin.lib
       ${WEBKIT_LIB_PATH}/sicuuc.lib
@@ -1271,12 +1289,17 @@ else()
     ${WEBKIT_LIB_PATH}/libWTF.a
     ${WEBKIT_LIB_PATH}/libJavaScriptCore.a
   )
-  if(NOT APPLE OR EXISTS ${WEBKIT_LIB_PATH}/libbmalloc.a)
+  if(WEBKIT_LOCAL OR NOT APPLE OR EXISTS ${WEBKIT_LIB_PATH}/libbmalloc.a)
     target_link_libraries(${bun} PRIVATE ${WEBKIT_LIB_PATH}/libbmalloc.a)
   endif()
 endif()
 
 include_directories(${WEBKIT_INCLUDE_PATH})
+
+# When building with a local WebKit, ensure JSC is built before compiling Bun's C++ sources.
+if(WEBKIT_LOCAL AND TARGET jsc)
+  add_dependencies(${bun} jsc)
+endif()
 
 # Include the generated dependency versions header
 include_directories(${CMAKE_BINARY_DIR})
@@ -1322,9 +1345,14 @@ if(LINUX)
     target_link_libraries(${bun} PUBLIC libatomic.so)
   endif()
 
-  target_link_libraries(${bun} PRIVATE ${WEBKIT_LIB_PATH}/libicudata.a)
-  target_link_libraries(${bun} PRIVATE ${WEBKIT_LIB_PATH}/libicui18n.a)
-  target_link_libraries(${bun} PRIVATE ${WEBKIT_LIB_PATH}/libicuuc.a)
+  if(WEBKIT_LOCAL)
+    find_package(ICU REQUIRED COMPONENTS data i18n uc)
+    target_link_libraries(${bun} PRIVATE ICU::data ICU::i18n ICU::uc)
+  else()
+    target_link_libraries(${bun} PRIVATE ${WEBKIT_LIB_PATH}/libicudata.a)
+    target_link_libraries(${bun} PRIVATE ${WEBKIT_LIB_PATH}/libicui18n.a)
+    target_link_libraries(${bun} PRIVATE ${WEBKIT_LIB_PATH}/libicuuc.a)
+  endif()
 endif()
 
 if(WIN32)
@@ -1381,47 +1409,8 @@ if(NOT BUN_CPP_ONLY)
         ${BUILD_PATH}/${bunStripExe}
     )
 
-    # Then sign both executables on Windows
-    if(WIN32 AND ENABLE_WINDOWS_CODESIGNING)
-      set(SIGN_SCRIPT "${CMAKE_SOURCE_DIR}/.buildkite/scripts/sign-windows.ps1")
-
-      # Verify signing script exists
-      if(NOT EXISTS "${SIGN_SCRIPT}")
-        message(FATAL_ERROR "Windows signing script not found: ${SIGN_SCRIPT}")
-      endif()
-
-      # Use PowerShell for Windows code signing (native Windows, no path issues)
-      find_program(POWERSHELL_EXECUTABLE
-        NAMES pwsh.exe powershell.exe
-        PATHS
-          "C:/Program Files/PowerShell/7"
-          "C:/Program Files (x86)/PowerShell/7"
-          "C:/Windows/System32/WindowsPowerShell/v1.0"
-        DOC "Path to PowerShell executable"
-      )
-
-      if(NOT POWERSHELL_EXECUTABLE)
-        set(POWERSHELL_EXECUTABLE "powershell.exe")
-      endif()
-
-      message(STATUS "Using PowerShell executable: ${POWERSHELL_EXECUTABLE}")
-
-      # Sign both bun-profile.exe and bun.exe after stripping
-      register_command(
-        TARGET
-          ${bun}
-        TARGET_PHASE
-          POST_BUILD
-        COMMENT
-          "Code signing bun-profile.exe and bun.exe with DigiCert KeyLocker"
-        COMMAND
-          "${POWERSHELL_EXECUTABLE}" "-NoProfile" "-ExecutionPolicy" "Bypass" "-File" "${SIGN_SCRIPT}" "-BunProfileExe" "${BUILD_PATH}/${bunExe}" "-BunExe" "${BUILD_PATH}/${bunStripExe}"
-        CWD
-          ${CMAKE_SOURCE_DIR}
-        SOURCES
-          ${BUILD_PATH}/${bunStripExe}
-      )
-    endif()
+    # Windows code signing happens in a dedicated Buildkite step after all
+    # Windows builds complete. See .buildkite/scripts/sign-windows-artifacts.ps1
   endif()
 
   # somehow on some Linux systems we need to disable ASLR for ASAN-instrumented binaries to run

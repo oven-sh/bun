@@ -1468,4 +1468,39 @@ describe("bundler", () => {
     outdir: "/out",
     run: { stdout: "function" },
   });
+
+  // Regression: barrel-optimized-away imports were being recorded in ESM bytecode
+  // ModuleInfo (postProcessJSChunk section 2 scanned original AST, saw the s_import
+  // with invalid source_index, and recorded the relative specifier as external).
+  // At runtime the compiled binary would crash with "Cannot find module './sub/Unused.js'".
+  itBundled("barrel/ESMBytecodeCompileSkipsDeferredImports", {
+    files: {
+      "/entry.js": /* js */ `
+        import { used } from 'barrellib';
+        console.log(used());
+      `,
+      "/node_modules/barrellib/package.json": JSON.stringify({
+        name: "barrellib",
+        type: "module",
+        sideEffects: false,
+        main: "./index.js",
+      }),
+      "/node_modules/barrellib/index.js": /* js */ `
+        import Unused from './sub/Unused.js';
+        import { used } from './sub/used.js';
+        export { Unused, used };
+      `,
+      "/node_modules/barrellib/sub/Unused.js": /* js */ `
+        export default class Unused {}
+      `,
+      "/node_modules/barrellib/sub/used.js": /* js */ `
+        export function used() { return 'ok'; }
+      `,
+    },
+    target: "bun",
+    format: "esm",
+    bytecode: true,
+    compile: true,
+    run: { stdout: "ok" },
+  });
 });

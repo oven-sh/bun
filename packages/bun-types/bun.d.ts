@@ -1193,10 +1193,20 @@ declare module "bun" {
       ordered: boolean;
       /** The start number for ordered lists. */
       start?: number;
+      /** Nesting depth. `0` for a top-level list, `1` for a list inside a list item, etc. */
+      depth: number;
     }
 
     /** Meta passed to the `listItem` callback. */
     interface ListItemMeta {
+      /** 0-based index of this item within its parent list. */
+      index: number;
+      /** Nesting depth of the parent list. `0` for items in a top-level list. */
+      depth: number;
+      /** Whether the parent list is ordered. */
+      ordered: boolean;
+      /** The start number of the parent list (only set when `ordered` is true). */
+      start?: number;
       /** Task list checked state. Set for `- [x]` / `- [ ]` items. */
       checked?: boolean;
     }
@@ -1234,8 +1244,8 @@ declare module "bun" {
       code?: (children: string, meta?: CodeBlockMeta) => string | null | undefined;
       /** Ordered or unordered list. `start` is the first item number for ordered lists. */
       list?: (children: string, meta: ListMeta) => string | null | undefined;
-      /** List item. `meta.checked` is set for task list items (`- [x]` / `- [ ]`). Only passed for task list items. */
-      listItem?: (children: string, meta?: ListItemMeta) => string | null | undefined;
+      /** List item. `meta` always includes `{index, depth, ordered}`. `meta.start` is set for ordered lists; `meta.checked` is set for task list items. */
+      listItem?: (children: string, meta: ListItemMeta) => string | null | undefined;
       /** Horizontal rule. */
       hr?: (children: string) => string | null | undefined;
       /** Table. */

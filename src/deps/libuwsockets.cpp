@@ -1338,6 +1338,7 @@ extern "C"
       }
       if (!(data->state & uWS::HttpResponseData<true>::HTTP_END_CALLED))
       {
+        uwsRes->writeMark();
         uwsRes->AsyncSocket<true>::write("\r\n", 2);
       }
       data->state |= uWS::HttpResponseData<true>::HTTP_END_CALLED;
@@ -1360,6 +1361,7 @@ extern "C"
       {
         // Some HTTP clients require the complete "<header>\r\n\r\n" to be sent.
         // If not, they may throw a ConnectionError.
+        uwsRes->writeMark();
         uwsRes->AsyncSocket<false>::write("\r\n", 2);
       }
       data->state |= uWS::HttpResponseData<false>::HTTP_END_CALLED;

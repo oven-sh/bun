@@ -130,6 +130,59 @@ jobs:
           file: ./coverage/lcov.info
 ```
 
+## Including Uncovered Files
+
+By default, coverage reports only include files that are actually imported by your tests. To also show files that aren't imported by any test (with 0% coverage), use the `collectCoverageFrom` option — similar to Jest's [`collectCoverageFrom`](https://jestjs.io/docs/configuration#collectcoveragefrom-array) configuration.
+
+### Configuration
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+collectCoverageFrom = [
+  "src/**/*.ts",
+  "src/**/*.tsx",
+  "!src/**/*.d.ts"
+]
+```
+
+This accepts glob patterns specifying which source files should be included in coverage reports, even if no test imports them. Files matching these patterns that are not loaded during tests will appear in the coverage report with 0% coverage for both functions and lines.
+
+### Example Output
+
+```bash terminal icon="terminal"
+bun test --coverage
+
+-------------|---------|---------|-------------------
+File         | % Funcs | % Lines | Uncovered Line #s
+-------------|---------|---------|-------------------
+All files    |   50.00 |   60.00 |
+ src/
+  tested.ts  |  100.00 |  100.00 |
+  untested.ts|    0.00 |    0.00 | Not imported by tests
+-------------|---------|---------|-------------------
+```
+
+Files that are not imported by any test will show "Not imported by tests" in the uncovered lines column, making it easy to identify source files that have no test coverage at all.
+
+### Common Patterns
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+# Include all TypeScript source files
+collectCoverageFrom = ["src/**/*.ts", "src/**/*.tsx"]
+
+# Include specific directories
+collectCoverageFrom = ["src/components/**/*.ts", "src/utils/**/*.ts"]
+
+# Single pattern
+collectCoverageFrom = "src/**/*.ts"
+```
+
+The `collectCoverageFrom` option works together with other coverage options:
+- Files matching `coveragePathIgnorePatterns` will still be excluded
+- If `coverageSkipTestFiles` is enabled, test files will be excluded
+- `node_modules` and hidden directories (starting with `.`) are always excluded
+
 ## Excluding Files from Coverage
 
 ### Skip Test Files
@@ -373,7 +426,16 @@ Coverage is just one metric. Also consider:
 
 ### Coverage Not Showing for Some Files
 
-If files aren't appearing in coverage reports, they might not be imported by your tests. Coverage only tracks files that are actually loaded.
+If files aren't appearing in coverage reports, they might not be imported by your tests. You have two options:
+
+1. **Use `collectCoverageFrom`** to automatically include all source files in the coverage report, even if they aren't imported by tests:
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+collectCoverageFrom = ["src/**/*.ts"]
+```
+
+2. **Import the modules** in your test files:
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
 // Make sure to import the modules you want to test

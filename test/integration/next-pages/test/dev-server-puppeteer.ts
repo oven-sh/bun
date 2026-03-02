@@ -14,13 +14,9 @@ if (process.argv.length > 2) {
 }
 
 const browserPath = which("chromium-browser") || which("chromium") || which("chrome") || undefined;
-if (!browserPath) {
-  console.warn("Since a Chromium browser was not found, it will be downloaded by Puppeteer.");
-}
 
 const b = await launch({
-  // Use "shell" (chrome-headless-shell) on macOS where full Chrome has launch issues.
-  headless: process.platform === "darwin" ? "shell" : true,
+  headless: true,
   // Inherit the stdout and stderr of the browser process.
   dumpio: true,
   // Disable timeouts.

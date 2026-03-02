@@ -35,14 +35,13 @@ namespace uWS {
     constexpr uint64_t STATE_WAITING_FOR_LF = 1ull << (sizeof(uint64_t) * 8 - 4);//0x1000000000000000;
     constexpr uint64_t STATE_SIZE_MASK = ~(STATE_HAS_SIZE | STATE_IS_CHUNKED | STATE_IS_CHUNKED_EXTENSION | STATE_WAITING_FOR_LF);//0x0FFFFFFFFFFFFFFF;
     constexpr uint64_t STATE_IS_ERROR = ~0ull;//0xFFFFFFFFFFFFFFFF;
-    constexpr uint64_t STATE_SIZE_OVERFLOW = 0x0Full << (sizeof(uint64_t) * 8 - 8);//0x0F00000000000000;
+    /* Overflow guard: if any of bits 55-59 are set before the next *16, one more
+     * hex digit (plus the +2 for the trailing CRLF of chunk-data) would carry into
+     * STATE_WAITING_FOR_LF at bit 60. Limits chunk size to 14 hex digits (~72 PB). */
+    constexpr uint64_t STATE_SIZE_OVERFLOW = 0x1Full << (sizeof(uint64_t) * 8 - 9);//0x0F80000000000000;
 
     inline uint64_t chunkSize(uint64_t state) {
         return state & STATE_SIZE_MASK;
-    }
-
-    inline bool isParsingChunkedExtension(uint64_t state) {
-        return (state & STATE_IS_CHUNKED_EXTENSION) != 0;
     }
 
     /* Parses the chunk-size line: HEXDIG+ [;ext...] CRLF

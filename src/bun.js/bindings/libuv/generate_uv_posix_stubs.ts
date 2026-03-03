@@ -1,5 +1,8 @@
 import { join } from "path";
-import { symbols, test_skipped } from "./generate_uv_posix_stubs_constants";
+import { symbols as all_symbols, test_skipped, polyfilled } from "./generate_uv_posix_stubs_constants";
+
+// Filter out functions that have real implementations in uv-posix-polyfills.c
+const symbols = all_symbols.filter(s => !polyfilled.includes(s));
 
 import Parser from "tree-sitter";
 import C from "tree-sitter-c";

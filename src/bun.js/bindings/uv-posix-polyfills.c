@@ -154,14 +154,16 @@ UV_EXTERN void uv_mutex_unlock(uv_mutex_t* mutex)
 // ═══════════════════════════════════════════════════════════════════
 
 static uv_loop_t bun__default_loop;
-static int bun__default_loop_init = 0;
+static pthread_once_t bun__default_loop_once = PTHREAD_ONCE_INIT;
+
+static void bun__default_loop_init_fn(void)
+{
+    memset(&bun__default_loop, 0, sizeof(uv_loop_t));
+}
 
 UV_EXTERN uv_loop_t* uv_default_loop(void)
 {
-    if (!bun__default_loop_init) {
-        memset(&bun__default_loop, 0, sizeof(uv_loop_t));
-        bun__default_loop_init = 1;
-    }
+    pthread_once(&bun__default_loop_once, bun__default_loop_init_fn);
     return &bun__default_loop;
 }
 
@@ -257,9 +259,14 @@ UV_EXTERN const char* uv_strerror(int err)
 //
 // A single background thread monitors all active poll/async handles
 // using epoll (Linux) or kqueue (macOS). When events fire, callbacks
-// are dispatched on the poll thread. NAPI modules like serialport
-// expect this — the Poller::onData callback runs in-process and
-// invokes JS via N-API, which is safe from any thread.
+// are dispatched directly on the poll thread.
+//
+// NOTE: In canonical libuv, callbacks run on the loop thread via
+// uv_run(). Bun does not run a traditional uv_run() event loop, so
+// there is no loop thread to dispatch to. Deferring callbacks to a
+// pending queue would cause them to never fire. NAPI consumers
+// (e.g. @serialport/bindings-cpp) already use napi_threadsafe_function
+// for the C→JS boundary, making poll-thread dispatch safe in practice.
 // ═══════════════════════════════════════════════════════════════════
 
 #define BUN_UV_MAX_POLL_HANDLES 64
@@ -334,7 +341,7 @@ static void bun__ensure_epoll(void)
     if (bun__poll_wakeup_fd < 0) abort();
 
     struct epoll_event ev = { .events = EPOLLIN, .data.fd = bun__poll_wakeup_fd };
-    epoll_ctl(bun__epoll_fd, EPOLL_CTL_ADD, bun__poll_wakeup_fd, &ev);
+    if (epoll_ctl(bun__epoll_fd, EPOLL_CTL_ADD, bun__poll_wakeup_fd, &ev) < 0) abort();
 }
 
 static int bun__uv_to_epoll(int uv_events)
@@ -433,7 +440,7 @@ static void bun__ensure_kqueue(void)
 
     struct kevent kev;
     EV_SET(&kev, bun__poll_wakeup_fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
-    kevent(bun__kqueue_fd, &kev, 1, NULL, 0, NULL);
+    if (kevent(bun__kqueue_fd, &kev, 1, NULL, 0, NULL) < 0) abort();
 }
 
 static void* bun__poll_thread_fn(void* arg)
@@ -502,22 +509,33 @@ static void* bun__poll_thread_fn(void* arg)
 
 #endif // __APPLE__
 
-static void bun__ensure_poll_thread(void)
-{
-    if (bun__poll_thread_running) return;
-    bun__poll_thread_running = 1;
+static pthread_once_t bun__poll_thread_once = PTHREAD_ONCE_INIT;
 
+static void bun__poll_thread_init(void)
+{
 #if defined(__linux__)
     bun__ensure_epoll();
 #elif defined(__APPLE__)
     bun__ensure_kqueue();
 #endif
 
+    bun__poll_thread_running = 1;
+
     pthread_attr_t attr;
     pthread_attr_init(&attr);
     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-    pthread_create(&bun__poll_thread, &attr, bun__poll_thread_fn, NULL);
+    int err = pthread_create(&bun__poll_thread, &attr, bun__poll_thread_fn, NULL);
     pthread_attr_destroy(&attr);
+
+    if (err != 0) {
+        bun__poll_thread_running = 0;
+        fprintf(stderr, "bun: failed to create poll thread: %s\n", strerror(err));
+    }
+}
+
+static void bun__ensure_poll_thread(void)
+{
+    pthread_once(&bun__poll_thread_once, bun__poll_thread_init);
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -596,7 +614,17 @@ UV_EXTERN int uv_poll_start(uv_poll_t* handle, int events, uv_poll_cb cb)
     if (epoll_ctl(bun__epoll_fd, op, entry->fd, &ev) < 0) {
         // If MOD fails, try ADD (fd may have been re-opened)
         if (was_active && errno == ENOENT) {
-            epoll_ctl(bun__epoll_fd, EPOLL_CTL_ADD, entry->fd, &ev);
+            if (epoll_ctl(bun__epoll_fd, EPOLL_CTL_ADD, entry->fd, &ev) < 0) {
+                int saved_errno = errno;
+                entry->active = 0;
+                pthread_mutex_unlock(&bun__poll_mutex);
+                return UV__ERR(saved_errno);
+            }
+        } else {
+            int saved_errno = errno;
+            entry->active = 0;
+            pthread_mutex_unlock(&bun__poll_mutex);
+            return UV__ERR(saved_errno);
         }
     }
 #elif defined(__APPLE__)
@@ -613,7 +641,12 @@ UV_EXTERN int uv_poll_start(uv_poll_t* handle, int events, uv_poll_cb cb)
         nkev++;
     }
     if (nkev > 0) {
-        kevent(bun__kqueue_fd, kev, nkev, NULL, 0, NULL);
+        if (kevent(bun__kqueue_fd, kev, nkev, NULL, 0, NULL) < 0) {
+            int saved_errno = errno;
+            entry->active = 0;
+            pthread_mutex_unlock(&bun__poll_mutex);
+            return UV__ERR(saved_errno);
+        }
     }
 #endif
 
@@ -702,11 +735,26 @@ UV_EXTERN int uv_async_init(uv_loop_t* loop, uv_async_t* async,
     // Register with epoll/kqueue
 #if defined(__linux__)
     struct epoll_event ev = { .events = EPOLLIN, .data.fd = wakeup_fd };
-    epoll_ctl(bun__epoll_fd, EPOLL_CTL_ADD, wakeup_fd, &ev);
+    if (epoll_ctl(bun__epoll_fd, EPOLL_CTL_ADD, wakeup_fd, &ev) < 0) {
+        int saved_errno = errno;
+        bun__async_count--;
+        bun__async_entries[idx].active = 0;
+        pthread_mutex_unlock(&bun__poll_mutex);
+        close(wakeup_fd);
+        return UV__ERR(saved_errno);
+    }
 #elif defined(__APPLE__)
     struct kevent kev;
     EV_SET(&kev, wakeup_fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
-    kevent(bun__kqueue_fd, &kev, 1, NULL, 0, NULL);
+    if (kevent(bun__kqueue_fd, &kev, 1, NULL, 0, NULL) < 0) {
+        int saved_errno = errno;
+        bun__async_count--;
+        bun__async_entries[idx].active = 0;
+        pthread_mutex_unlock(&bun__poll_mutex);
+        close(wakeup_fd);
+        if (wakeup_wfd >= 0) close(wakeup_wfd);
+        return UV__ERR(saved_errno);
+    }
 #endif
 
     pthread_mutex_unlock(&bun__poll_mutex);

@@ -191,10 +191,17 @@ void CrashHandler__unsupportedUVFunction(const char* name) {
 // Include the actual polyfill implementation
 // ═══════════════════════════════════════════════════════════════════
 
-// Trick: redefine OS() macro for our standalone build
+// Detect build host platform via compiler predefined macros
 #define OS(x) (OS_##x)
+#if defined(__linux__)
 #define OS_LINUX 1
 #define OS_DARWIN 0
+#elif defined(__APPLE__) && defined(__MACH__)
+#define OS_LINUX 0
+#define OS_DARWIN 1
+#else
+#error "Unsupported platform: expected Linux or macOS"
+#endif
 
 // Include the polyfill directly
 #include "src/bun.js/bindings/uv-posix-polyfills.c"

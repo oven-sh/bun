@@ -186,15 +186,9 @@ pub const PathWatcher = struct {
             .manager = manager,
         });
 
-        errdefer {
-            _ = manager.watchers.swapRemove(event_path);
-            this.manager = null;
-            this.deinit();
-        }
-
-        if (uv.uv_fs_event_init(manager.vm.uvLoop(), &this.handle).toError(.watch)) |err| {
-            return .{ .err = err };
-        }
+        // uv_fs_event_init on Windows unconditionally returns 0 (vendor/libuv/src/win/fs-event.c).
+        // bun.assert evaluates its argument before the inline early-return, so this runs in release too.
+        bun.assert(uv.uv_fs_event_init(manager.vm.uvLoop(), &this.handle) == .zero);
         this.handle.data = this;
 
         // UV_FS_EVENT_RECURSIVE only works for Windows and OSX
@@ -204,6 +198,12 @@ pub const PathWatcher = struct {
             event_path.ptr,
             if (recursive) uv.UV_FS_EVENT_RECURSIVE else 0,
         ).toError(.watch)) |err| {
+            // `errdefer` doesn't fire on `return .{ .err = ... }` (that's a successful return of a
+            // Maybe(T), not an error-union return). Clean up the map entry and the half-initialized
+            // watcher inline. See #26254.
+            _ = manager.watchers.swapRemove(event_path);
+            this.manager = null; // prevent deinit() from re-entering unregisterWatcher
+            this.deinit();
             return .{ .err = err };
         }
         // we handle this in node_fs_watcher

@@ -139,9 +139,9 @@ test("bun test should not hang with 7+ test files combining xmldom stderr and sv
       name: "stderr-hang-regression",
       private: true,
       devDependencies: {
-        "@svgr/core": "^8.1.0",
-        "@svgr/plugin-jsx": "^8.1.0",
-        "@xmldom/xmldom": "^0.9.8",
+        "@svgr/core": "8.1.0",
+        "@svgr/plugin-jsx": "8.1.0",
+        "@xmldom/xmldom": "0.9.8",
       },
     }),
     "tests/helpers.ts": HELPERS_TS,

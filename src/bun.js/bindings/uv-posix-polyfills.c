@@ -510,6 +510,7 @@ static void* bun__poll_thread_fn(void* arg)
 #endif // __APPLE__
 
 static pthread_once_t bun__poll_thread_once = PTHREAD_ONCE_INIT;
+static int bun__poll_thread_init_err = 0;
 
 static void bun__poll_thread_init(void)
 {
@@ -529,13 +530,17 @@ static void bun__poll_thread_init(void)
 
     if (err != 0) {
         bun__poll_thread_running = 0;
+        bun__poll_thread_init_err = UV__ERR(err);
         fprintf(stderr, "bun: failed to create poll thread: %s\n", strerror(err));
     }
 }
 
-static void bun__ensure_poll_thread(void)
+static int bun__ensure_poll_thread(void)
 {
     pthread_once(&bun__poll_thread_once, bun__poll_thread_init);
+    if (!bun__poll_thread_running)
+        return bun__poll_thread_init_err != 0 ? bun__poll_thread_init_err : UV_EIO;
+    return 0;
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -584,7 +589,8 @@ UV_EXTERN int uv_poll_start(uv_poll_t* handle, int events, uv_poll_cb cb)
 {
     if (!handle || !cb) return UV_EINVAL;
 
-    bun__ensure_poll_thread();
+    int thread_err = bun__ensure_poll_thread();
+    if (thread_err != 0) return thread_err;
 
     pthread_mutex_lock(&bun__poll_mutex);
 
@@ -667,13 +673,16 @@ UV_EXTERN int uv_poll_stop(uv_poll_t* handle)
             bun__poll_entries[i].active = 0;
 
 #if defined(__linux__)
-            epoll_ctl(bun__epoll_fd, EPOLL_CTL_DEL, bun__poll_entries[i].fd, NULL);
+            if (epoll_ctl(bun__epoll_fd, EPOLL_CTL_DEL, bun__poll_entries[i].fd, NULL) < 0 && errno != EBADF && errno != ENOENT) {
+                fprintf(stderr, "bun: epoll_ctl DEL fd=%d failed: %s\n", bun__poll_entries[i].fd, strerror(errno));
+            }
 #elif defined(__APPLE__)
             struct kevent kev[2];
             EV_SET(&kev[0], bun__poll_entries[i].fd, EVFILT_READ,
                    EV_DELETE, 0, 0, NULL);
             EV_SET(&kev[1], bun__poll_entries[i].fd, EVFILT_WRITE,
                    EV_DELETE, 0, 0, NULL);
+            // Best-effort: EV_DELETE may fail if filter was not registered
             kevent(bun__kqueue_fd, kev, 2, NULL, 0, NULL);
 #endif
             break;
@@ -693,7 +702,8 @@ UV_EXTERN int uv_async_init(uv_loop_t* loop, uv_async_t* async,
 {
     if (!async) return UV_EINVAL;
 
-    bun__ensure_poll_thread();
+    int thread_err = bun__ensure_poll_thread();
+    if (thread_err != 0) return thread_err;
 
     memset(async, 0, sizeof(uv_async_t));
     async->loop = loop;
@@ -825,13 +835,16 @@ UV_EXTERN void uv_close(uv_handle_t* handle, uv_close_cb close_cb)
 
                 // Remove from epoll/kqueue
 #if defined(__linux__)
-                epoll_ctl(bun__epoll_fd, EPOLL_CTL_DEL,
-                          bun__async_entries[i].wakeup_fd, NULL);
+                if (epoll_ctl(bun__epoll_fd, EPOLL_CTL_DEL,
+                              bun__async_entries[i].wakeup_fd, NULL) < 0 && errno != EBADF && errno != ENOENT) {
+                    fprintf(stderr, "bun: epoll_ctl DEL async fd=%d failed: %s\n", bun__async_entries[i].wakeup_fd, strerror(errno));
+                }
                 close(bun__async_entries[i].wakeup_fd);
 #elif defined(__APPLE__)
                 struct kevent kev;
                 EV_SET(&kev, bun__async_entries[i].wakeup_fd, EVFILT_READ,
                        EV_DELETE, 0, 0, NULL);
+                // Best-effort removal
                 kevent(bun__kqueue_fd, &kev, 1, NULL, 0, NULL);
                 close(bun__async_entries[i].wakeup_fd);
                 close(bun__async_entries[i].wakeup_wfd);

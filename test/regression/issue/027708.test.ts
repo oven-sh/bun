@@ -165,30 +165,16 @@ test("bun test should not hang with 7+ test files combining xmldom stderr and sv
   });
   expect(install.exitCode).toBe(0);
 
-  // Run bun test with a 30-second timeout
-  // Before the fix, this would hang indefinitely
-  const proc = Bun.spawn({
+  // Run bun test — before the fix, this would hang indefinitely.
+  // Non-hang is enforced by this test's 60s timeout.
+  await using proc = Bun.spawn({
     cmd: [bunExe(), "test"],
     cwd: dir,
     env: bunEnv,
-    stderr: "pipe",
-    stdout: "pipe",
+    stderr: "ignore",
+    stdout: "ignore",
   });
 
-  const timeout = 30_000;
-  const raceResult = await Promise.race([
-    proc.exited,
-    new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), timeout)),
-  ]);
-
-  if (raceResult === "timeout") {
-    proc.kill();
-    await proc.exited;
-    throw new Error(
-      `bun test hung for ${timeout / 1000}s — prepareStackTrace + ES5 Error subclass issue not fixed (issue #27708)`,
-    );
-  }
-
-  // Verify tests actually passed
-  expect(proc.exitCode).toBe(0);
+  const exitCode = await proc.exited;
+  expect(exitCode).toBe(0);
 }, 60_000); // 60s test timeout

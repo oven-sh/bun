@@ -990,15 +990,24 @@ pub const CommandLineReporter = struct {
             return;
         }
 
-        var map = coverage.ByteRangeMapping.map orelse return;
-        var iter = map.valueIterator();
-        var byte_ranges = try std.array_list.Managed(bun.SourceMap.coverage.ByteRangeMapping).initCapacity(bun.default_allocator, map.count());
+        var byte_ranges = brk: {
+            var map = coverage.ByteRangeMapping.map orelse {
+                // No coverage map exists at all. If collectCoverageFrom is set we still
+                // need to report uncovered files, so fall through with an empty slice.
+                if (opts.collect_coverage_from.len > 0) {
+                    break :brk std.array_list.Managed(bun.SourceMap.coverage.ByteRangeMapping).init(bun.default_allocator);
+                }
+                return;
+            };
+            var iter = map.valueIterator();
+            var list = try std.array_list.Managed(bun.SourceMap.coverage.ByteRangeMapping).initCapacity(bun.default_allocator, map.count());
+            while (iter.next()) |entry| {
+                list.appendAssumeCapacity(entry.*);
+            }
+            break :brk list;
+        };
 
-        while (iter.next()) |entry| {
-            byte_ranges.appendAssumeCapacity(entry.*);
-        }
-
-        if (byte_ranges.items.len == 0) {
+        if (byte_ranges.items.len == 0 and opts.collect_coverage_from.len == 0) {
             return;
         }
 
@@ -1229,7 +1238,7 @@ pub const CommandLineReporter = struct {
                     .lines = 0.0,
                     .stmts = 0.0,
                 };
-                const failed = base_fraction.functions > 0.0 or base_fraction.lines > 0.0;
+                const failed = base_fraction.functions > 0.0 or base_fraction.lines > 0.0 or base_fraction.stmts > 0.0;
 
                 CodeCoverageReport.Text.writeFormatWithValues(
                     rel_path,
@@ -1257,7 +1266,47 @@ pub const CommandLineReporter = struct {
                 lcov_writer.writeAll("TN:\n") catch continue;
                 lcov_writer.print("SF:{s}\n", .{rel_path}) catch continue;
                 lcov_writer.writeAll("FNF:0\nFNH:0\n") catch continue;
-                lcov_writer.writeAll("LF:1\nLH:0\n") catch continue;
+
+                // Read the file to count lines and emit DA:LINE,0 for each executable line
+                const abs_uncovered = bun.path.joinAbsStringZ(
+                    relative_dir,
+                    &.{rel_path},
+                    .auto,
+                );
+                const line_count: usize = count_lines: {
+                    const file_for_lines = bun.sys.File.openat(
+                        .cwd(),
+                        abs_uncovered,
+                        bun.O.RDONLY | bun.O.CLOEXEC,
+                        0,
+                    );
+                    switch (file_for_lines) {
+                        .err => break :count_lines 0,
+                        .result => |f| {
+                            defer f.close();
+                            var count: usize = 0;
+                            var read_buf: [4096]u8 = undefined;
+                            while (true) {
+                                const n = switch (f.read(&read_buf)) {
+                                    .result => |n| n,
+                                    .err => break :count_lines count,
+                                };
+                                if (n == 0) break;
+                                for (read_buf[0..n]) |byte| {
+                                    if (byte == '\n') count += 1;
+                                }
+                            }
+                            // Account for last line without trailing newline
+                            if (count == 0) count = 1;
+                            break :count_lines count;
+                        },
+                    }
+                };
+
+                for (1..line_count + 1) |line_num| {
+                    lcov_writer.print("DA:{d},0\n", .{line_num}) catch continue;
+                }
+                lcov_writer.print("LF:{d}\nLH:0\n", .{line_count}) catch continue;
                 lcov_writer.writeAll("end_of_record\n") catch continue;
             }
         }
@@ -1335,7 +1384,9 @@ fn findUncoveredFiles(
     _: []const bun.SourceMap.coverage.ByteRangeMapping,
     bundle_options: *const options.BundleOptions,
 ) ![]const string {
-    const covered_map = coverage.ByteRangeMapping.map orelse return &.{};
+    // covered_map may be null when no files were imported by tests at all.
+    // In that case, every matching file is uncovered.
+    const covered_map = coverage.ByteRangeMapping.map;
 
     var result = std.ArrayListUnmanaged(string){};
     errdefer {
@@ -1368,7 +1419,7 @@ fn findUncoveredFiles(
             if (strings.eqlComptime(dir_entry.name, "node_modules")) continue;
 
             if (dir_entry.kind == .directory) {
-                const sub_path = std.fmt.allocPrint(allocator, "{s}/{s}", .{ dir_path, dir_entry.name }) catch continue;
+                const sub_path = bun.default_allocator.dupe(u8, bun.path.join(&[_]string{ dir_path, dir_entry.name }, .auto)) catch continue;
                 dir_stack.append(allocator, sub_path) catch {
                     allocator.free(sub_path);
                     continue;
@@ -1383,7 +1434,7 @@ fn findUncoveredFiles(
             if (!bundle_options.loader(ext).isJavaScriptLike()) continue;
 
             // Build absolute path and compute relative path
-            const abs_path = std.fmt.allocPrint(allocator, "{s}/{s}", .{ dir_path, dir_entry.name }) catch continue;
+            const abs_path = bun.default_allocator.dupe(u8, bun.path.join(&[_]string{ dir_path, dir_entry.name }, .auto)) catch continue;
             defer allocator.free(abs_path);
 
             const relative_path = bun.path.relative(root_dir, abs_path);
@@ -1399,8 +1450,10 @@ fn findUncoveredFiles(
             if (!matches_collect) continue;
 
             // Check if already covered (present in ByteRangeMapping)
-            const path_hash = bun.hash(abs_path);
-            if (covered_map.contains(path_hash)) continue;
+            if (covered_map) |cmap| {
+                const path_hash = bun.hash(abs_path);
+                if (cmap.contains(path_hash)) continue;
+            }
 
             // Check if file should be ignored based on coveragePathIgnorePatterns
             var should_ignore = false;

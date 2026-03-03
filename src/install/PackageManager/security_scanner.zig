@@ -673,17 +673,6 @@ fn attemptSecurityScanWithRetry(manager: *PackageManager, security_scanner: []co
         temp_source = code.items;
     }
 
-    const packages_placeholder = "__PACKAGES_JSON__";
-    if (std.mem.indexOf(u8, temp_source, packages_placeholder)) |index| {
-        var new_code = std.array_list.Managed(u8).init(manager.allocator);
-        try new_code.appendSlice(temp_source[0..index]);
-        try new_code.appendSlice(json_data);
-        try new_code.appendSlice(temp_source[index + packages_placeholder.len ..]);
-        code.deinit();
-        code = new_code;
-        temp_source = code.items;
-    }
-
     const suppress_placeholder = "__SUPPRESS_ERROR__";
     if (std.mem.indexOf(u8, temp_source, suppress_placeholder)) |index| {
         var new_code = std.array_list.Managed(u8).init(manager.allocator);
@@ -724,6 +713,19 @@ fn attemptSecurityScanWithRetry(manager: *PackageManager, security_scanner: []co
     return try scanner.handleResults(&collector.package_paths, start_time, packages_scanned, security_scanner, security_scanner_pkg_id, command_ctx, original_cwd, is_retry);
 }
 
+fn writeAllToPipe(fd: bun.FileDescriptor, data: []const u8) void {
+    var remaining = data;
+    while (remaining.len > 0) {
+        switch (bun.sys.write(fd, remaining)) {
+            .result => |written| {
+                if (written == 0) return;
+                remaining = remaining[written..];
+            },
+            .err => return,
+        }
+    }
+}
+
 pub const SecurityScanSubprocess = struct {
     manager: *PackageManager,
     code: []const u8,
@@ -752,6 +754,17 @@ pub const SecurityScanSubprocess = struct {
             .result => |fds| fds,
         };
 
+        // Create a stdin pipe to pass package JSON data to the child process.
+        // This avoids embedding the (potentially large) JSON in the -e argument,
+        // which can exceed the OS per-argument size limit (MAX_ARG_STRLEN = 128KB on Linux).
+        const stdin_pipe_result = bun.sys.pipe();
+        const stdin_pipe_fds = switch (stdin_pipe_result) {
+            .err => {
+                return error.StdinPipeFailed;
+            },
+            .result => |fds| fds,
+        };
+
         const exec_path = try bun.selfExePath();
 
         var argv = [_]?[*:0]const u8{
@@ -771,7 +784,7 @@ pub const SecurityScanSubprocess = struct {
         const spawn_options = bun.spawn.SpawnOptions{
             .stdout = .inherit,
             .stderr = .inherit,
-            .stdin = .inherit,
+            .stdin = .{ .pipe = stdin_pipe_fds[0] },
             .cwd = spawn_cwd,
             .extra_fds = &.{.{ .pipe = pipe_fds[1] }},
             .windows = if (Environment.isWindows) .{
@@ -782,6 +795,14 @@ pub const SecurityScanSubprocess = struct {
         var spawned = try (try bun.spawn.spawnProcess(&spawn_options, @ptrCast(&argv), @ptrCast(std.os.environ.ptr))).unwrap();
 
         pipe_fds[1].close();
+        stdin_pipe_fds[0].close();
+
+        // Write JSON data to the child's stdin pipe then close it to signal EOF.
+        // The child process reads this data synchronously via fs.readFileSync(0).
+        // The write may block briefly if data exceeds the pipe buffer, but the child
+        // is already running and will drain it.
+        writeAllToPipe(stdin_pipe_fds[1], this.json_data);
+        stdin_pipe_fds[1].close();
 
         if (comptime bun.Environment.isPosix) {
             _ = bun.sys.setNonblocking(pipe_fds[0]);

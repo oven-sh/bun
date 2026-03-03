@@ -676,7 +676,17 @@ pub const RunCommand = struct {
                 while (true) {
                     inner: {
                         std.posix.symlinkZ(argv0, path) catch |err| {
-                            if (err == error.PathAlreadyExists) break :inner;
+                            if (err == error.PathAlreadyExists) {
+                                // Check if the existing symlink points to the current executable.
+                                // If not (e.g. the binary was moved), replace the stale symlink.
+                                var target_buf: bun.PathBuffer = undefined;
+                                const target = bun.sys.readlink(path, &target_buf).unwrap() catch break :inner;
+                                if (!std.mem.eql(u8, target, std.mem.span(argv0))) {
+                                    _ = bun.sys.unlink(path);
+                                    std.posix.symlinkZ(argv0, path) catch {};
+                                }
+                                break :inner;
+                            }
                             if (retried)
                                 return;
 

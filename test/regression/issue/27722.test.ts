@@ -50,6 +50,7 @@ test.skipIf(isWindows)("stale node symlink is replaced when binary path changes"
   expect(testResult.stdout.toString()).toBe("works");
   expect(testResult.exitCode).toBe(0);
 
-  // Verify the symlink now points to the actual bun binary
+  // Verify both symlinks now point to the actual bun binary
   expect(readlinkSync(nodeSymlink)).not.toBe("/nonexistent/path/to/bun");
+  expect(readlinkSync(bunSymlink)).not.toBe("/nonexistent/path/to/bun");
 });

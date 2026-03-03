@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { expect, test } from "bun:test";
 import { existsSync, readFileSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
@@ -12,13 +12,10 @@ const PACKAGE_COUNT = 850;
 const tgzPath = join(import.meta.dir, "..", "..", "cli", "install", "bar-0.0.2.tgz");
 const tgzData = readFileSync(tgzPath);
 
-let server: ReturnType<typeof Bun.serve>;
-let registryUrl: string;
-
-beforeAll(() => {
-  server = Bun.serve({
+test("security scanner works with many packages", async () => {
+  using server = Bun.serve({
     port: 0,
-    async fetch(req) {
+    fetch(req) {
       const url = new URL(req.url);
       const path = url.pathname;
 
@@ -26,7 +23,7 @@ beforeAll(() => {
         return new Response(tgzData);
       }
 
-      // Package metadata request
+      const registryUrl = `http://localhost:${server.port}/`;
       const name = decodeURIComponent(path.slice(1));
       return new Response(
         JSON.stringify({
@@ -45,14 +42,9 @@ beforeAll(() => {
       );
     },
   });
-  registryUrl = `http://localhost:${server.port}/`;
-});
 
-afterAll(() => {
-  server?.stop(true);
-});
+  const registryUrl = `http://localhost:${server.port}/`;
 
-test("security scanner works with many packages", async () => {
   using dir = tempDir("issue-27716", {
     "scanner.ts": `export const scanner = {
   version: "1",

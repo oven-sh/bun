@@ -713,15 +713,15 @@ fn attemptSecurityScanWithRetry(manager: *PackageManager, security_scanner: []co
     return try scanner.handleResults(&collector.package_paths, start_time, packages_scanned, security_scanner, security_scanner_pkg_id, command_ctx, original_cwd, is_retry);
 }
 
-fn writeAllToPipe(fd: bun.FileDescriptor, data: []const u8) void {
+fn writeAllToPipe(fd: bun.FileDescriptor, data: []const u8) !void {
     var remaining = data;
     while (remaining.len > 0) {
         switch (bun.sys.write(fd, remaining)) {
             .result => |written| {
-                if (written == 0) return;
+                if (written == 0) return error.StdinWriteFailed;
                 remaining = remaining[written..];
             },
-            .err => return,
+            .err => return error.StdinWriteFailed,
         }
     }
 }
@@ -801,7 +801,10 @@ pub const SecurityScanSubprocess = struct {
         // The child process reads this data synchronously via fs.readFileSync(0).
         // The write may block briefly if data exceeds the pipe buffer, but the child
         // is already running and will drain it.
-        writeAllToPipe(stdin_pipe_fds[1], this.json_data);
+        writeAllToPipe(stdin_pipe_fds[1], this.json_data) catch {
+            stdin_pipe_fds[1].close();
+            return error.StdinWriteFailed;
+        };
         stdin_pipe_fds[1].close();
 
         if (comptime bun.Environment.isPosix) {

@@ -1111,7 +1111,7 @@ pub const Resolver = struct {
                         import_path[import_path.len - 2] == '.' and
                         import_path[import_path.len - 1] == '.');
                 const buf = bufs(.relative_abs_path);
-                import_path = r.fs.absBuf(&.{import_path}, buf);
+                import_path = r.fs.absBufChecked(&.{import_path}, buf) orelse return .{ .not_found = {} };
                 if (ends_with_dir) {
                     buf[import_path.len] = platform.separator();
                     import_path.len += 1;
@@ -1309,8 +1309,7 @@ pub const Resolver = struct {
     }
 
     pub fn checkRelativePath(r: *ThisResolver, source_dir: string, import_path: string, kind: ast.ImportKind, global_cache: GlobalCache) Result.Union {
-        const parts = [_]string{ source_dir, import_path };
-        const abs_path = r.fs.absBuf(&parts, bufs(.relative_abs_path));
+        const abs_path = r.fs.absBufChecked(&.{ source_dir, import_path }, bufs(.relative_abs_path)) orelse return .{ .not_found = {} };
 
         if (r.opts.external.abs_paths.count() > 0 and r.opts.external.abs_paths.contains(abs_path)) {
             // If the string literal in the source text is an absolute path and has
@@ -1725,13 +1724,11 @@ pub const Resolver = struct {
             // Try looking up the path relative to the base URL
             if (tsconfig.hasBaseURL()) {
                 const base = tsconfig.base_url;
-                const paths = [_]string{ base, import_path };
-                const abs = r.fs.absBuf(&paths, bufs(.load_as_file_or_directory_via_tsconfig_base_path));
-
-                if (r.loadAsFileOrDirectory(abs, kind)) |res| {
-                    return .{ .success = res };
+                if (r.fs.absBufChecked(&.{ base, import_path }, bufs(.load_as_file_or_directory_via_tsconfig_base_path))) |abs| {
+                    if (r.loadAsFileOrDirectory(abs, kind)) |res| {
+                        return .{ .success = res };
+                    }
                 }
-                // r.allocator.free(abs);
             }
         }
 
@@ -1774,14 +1771,12 @@ pub const Resolver = struct {
         while (use_node_module_resolver) {
             // Skip directories that are themselves called "node_modules", since we
             // don't ever want to search for "node_modules/node_modules"
-            if (dir_info.hasNodeModules() or is_self_reference) {
+            if (dir_info.hasNodeModules() or is_self_reference) node_modules: {
                 any_node_modules_folder = true;
                 const abs_path = if (is_self_reference)
                     dir_info.abs_path
-                else brk: {
-                    var _parts = [_]string{ dir_info.abs_path, "node_modules", import_path };
-                    break :brk r.fs.absBuf(&_parts, bufs(.node_modules_check));
-                };
+                else
+                    r.fs.absBufChecked(&.{ dir_info.abs_path, "node_modules", import_path }, bufs(.node_modules_check)) orelse break :node_modules;
                 if (r.debug_logs) |*debug| {
                     debug.addNoteFmt("Checking for a package in the directory \"{s}\"", .{abs_path});
                 }
@@ -1896,7 +1891,7 @@ pub const Resolver = struct {
         if (node_path.len > 0) {
             var it = std.mem.tokenizeScalar(u8, node_path, if (Environment.isWindows) ';' else ':');
             while (it.next()) |path| {
-                const abs_path = r.fs.absBuf(&[_]string{ path, import_path }, bufs(.node_modules_check));
+                const abs_path = r.fs.absBufChecked(&.{ path, import_path }, bufs(.node_modules_check)) orelse continue;
                 if (r.debug_logs) |*debug| {
                     debug.addNoteFmt("Checking for a package in the NODE_PATH directory \"{s}\"", .{abs_path});
                 }
@@ -2160,8 +2155,7 @@ pub const Resolver = struct {
                             }
                         }
 
-                        var _paths = [_]string{ pkg_dir_info.abs_path, esm.subpath };
-                        const abs_path = r.fs.absBuf(&_paths, bufs(.node_modules_check));
+                        const abs_path = r.fs.absBufChecked(&.{ pkg_dir_info.abs_path, esm.subpath }, bufs(.node_modules_check)) orelse return .{ .not_found = {} };
                         if (r.debug_logs) |*debug| {
                             debug.addNoteFmt("Checking for a package in the directory \"{s}\"", .{abs_path});
                         }
@@ -2398,12 +2392,12 @@ pub const Resolver = struct {
             esm_resolution.path.len > 0 and esm_resolution.path[0] == std.fs.path.sep))
             return null;
 
-        const abs_esm_path: string = brk: {
-            var parts = [_]string{
-                abs_package_path,
-                strings.withoutLeadingPathSeparator(esm_resolution.path),
-            };
-            break :brk r.fs.absBuf(&parts, bufs(.esm_absolute_package_path_joined));
+        const abs_esm_path: string = r.fs.absBufChecked(
+            &.{ abs_package_path, strings.withoutLeadingPathSeparator(esm_resolution.path) },
+            bufs(.esm_absolute_package_path_joined),
+        ) orelse {
+            esm_resolution.status = .ModuleNotFound;
+            return null;
         };
 
         var missing_suffix: string = "";
@@ -2528,8 +2522,7 @@ pub const Resolver = struct {
         if (isPackagePath(import_path)) {
             return r.loadNodeModules(import_path, kind, source_dir_info, global_cache, false);
         } else {
-            const paths = [_]string{ source_dir_info.abs_path, import_path };
-            const resolved = r.fs.absBuf(&paths, bufs(.resolve_without_remapping));
+            const resolved = r.fs.absBufChecked(&.{ source_dir_info.abs_path, import_path }, bufs(.resolve_without_remapping)) orelse return .{ .not_found = {} };
             if (r.loadAsFileOrDirectory(resolved, kind)) |result| {
                 return .{ .success = result };
             }
@@ -2648,6 +2641,11 @@ pub const Resolver = struct {
             input_path = r.fs.top_level_dir;
         }
 
+        // A path longer than MAX_PATH_BYTES cannot name a real directory.
+        // Bailing here also prevents overflowing `dir_info_uncached_path`
+        // below when called with user-controlled absolute import paths.
+        if (input_path.len > bun.MAX_PATH_BYTES) return null;
+
         if (comptime Environment.isWindows) {
             input_path = r.fs.normalizeBuf(&win32_normalized_dir_info_cache_buf, input_path);
             // kind of a patch on the fact normalizeBuf isn't 100% perfect what we want
@@ -2713,6 +2711,10 @@ pub const Resolver = struct {
                 top_parent = result;
                 break;
             }
+            // Path has more uncached components than our fixed queue can hold.
+            // This only happens for user-controlled absolute import paths with
+            // hundreds of short components — no real directory is this deep.
+            if (@as(usize, @intCast(i)) >= bufs(.dir_entry_paths_to_resolve).len) return null;
             bufs(.dir_entry_paths_to_resolve)[@as(usize, @intCast(i))] = DirEntryResolveQueueItem{
                 .unsafe_path = top,
                 .result = result,
@@ -3079,12 +3081,13 @@ pub const Resolver = struct {
                 if (total_length != null) {
                     const suffix = std.mem.trimLeft(u8, original_path[total_length orelse original_path.len ..], "*");
                     matched_text_with_suffix_len = matched_text.len + suffix.len;
+                    if (matched_text_with_suffix_len > matched_text_with_suffix.len) continue;
                     bun.concat(u8, matched_text_with_suffix, &.{ matched_text, suffix });
                 }
 
                 // 1. Normalize the base path
                 // so that "/Users/foo/project/", "../components/*" => "/Users/foo/components/""
-                const prefix = r.fs.absBuf(&prefix_parts, bufs(.tsconfig_match_full_buf2));
+                const prefix = r.fs.absBufChecked(&prefix_parts, bufs(.tsconfig_match_full_buf2)) orelse continue;
 
                 // 2. Join the new base path with the matched result
                 // so that "/Users/foo/components/", "/foo/bar" => /Users/foo/components/foo/bar
@@ -3093,10 +3096,10 @@ pub const Resolver = struct {
                     if (matched_text_with_suffix_len > 0) std.mem.trimLeft(u8, matched_text_with_suffix[0..matched_text_with_suffix_len], "/") else "",
                     std.mem.trimLeft(u8, longest_match.suffix, "/"),
                 };
-                const absolute_original_path = r.fs.absBuf(
+                const absolute_original_path = r.fs.absBufChecked(
                     &parts,
                     bufs(.tsconfig_match_full_buf),
-                );
+                ) orelse continue;
 
                 if (r.loadAsFileOrDirectory(absolute_original_path, kind)) |res| {
                     return res;

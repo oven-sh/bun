@@ -928,8 +928,9 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetHeader, (JSGlobalObject * globalObject, CallFr
             if (valueValue.isUndefined())
                 return JSValue::encode(jsUndefined());
 
-            if (isArray(globalObject, valueValue)) {
-                auto* array = jsCast<JSArray*>(valueValue);
+            // Note: isArray() accepts Proxy->Array, but jsDynamicCast returns null for Proxy.
+            // Fall through to the single-value path in that case.
+            if (auto* array = jsDynamicCast<JSArray*>(valueValue)) {
                 unsigned length = array->length();
                 if (length > 0) {
                     JSValue item = array->getIndex(globalObject, 0);

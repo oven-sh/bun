@@ -219,9 +219,10 @@ pub const BundleV2 = struct {
             client_transpiler.options.chunk_naming = bun.options.PathTemplate.chunk.data;
             client_transpiler.options.entry_naming = "./[name]-[hash].[ext]";
 
-            // Avoid setting a public path for --compile since all the assets
-            // will be served relative to the server root.
-            client_transpiler.options.public_path = "";
+            // Use "/" so that asset URLs in HTML are absolute (e.g. "/chunk-abc.js"
+            // instead of "./chunk-abc.js"). Relative paths break when the HTML is
+            // served from a nested route like "/foo/".
+            client_transpiler.options.public_path = "/";
         }
 
         client_transpiler.setLog(this_transpiler.log);
@@ -2179,15 +2180,67 @@ pub const BundleV2 = struct {
                 output_file.is_executable = true;
             }
 
+            // Write external sourcemap files next to the compiled executable and
+            // keep them in the output array. Destroy all other non-entry-point files.
+            // With --splitting, there can be multiple sourcemap files (one per chunk).
+            var kept: usize = 0;
             for (output_files.items, 0..) |*current, i| {
-                if (i != entry_point_index) {
+                if (i == entry_point_index) {
+                    output_files.items[kept] = current.*;
+                    kept += 1;
+                } else if (result == .success and current.output_kind == .sourcemap and current.value == .buffer) {
+                    const sourcemap_bytes = current.value.buffer.bytes;
+                    if (sourcemap_bytes.len > 0) {
+                        // Derive the .map filename from the sourcemap's own dest_path,
+                        // placed in the same directory as the compiled executable.
+                        const map_basename = if (current.dest_path.len > 0)
+                            bun.path.basename(current.dest_path)
+                        else
+                            bun.path.basename(bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{s}.map", .{full_outfile_path})));
+
+                        const sourcemap_full_path = if (dirname.len == 0 or strings.eqlComptime(dirname, "."))
+                            bun.handleOom(bun.default_allocator.dupe(u8, map_basename))
+                        else
+                            bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{s}{c}{s}", .{ dirname, std.fs.path.sep, map_basename }));
+
+                        // Write the sourcemap file to disk next to the executable
+                        var pathbuf: bun.PathBuffer = undefined;
+                        const write_path = if (Environment.isWindows) sourcemap_full_path else map_basename;
+                        switch (bun.jsc.Node.fs.NodeFS.writeFileWithPathBuffer(
+                            &pathbuf,
+                            .{
+                                .data = .{ .buffer = .{
+                                    .buffer = .{
+                                        .ptr = @constCast(sourcemap_bytes.ptr),
+                                        .len = @as(u32, @truncate(sourcemap_bytes.len)),
+                                        .byte_len = @as(u32, @truncate(sourcemap_bytes.len)),
+                                    },
+                                } },
+                                .encoding = .buffer,
+                                .dirfd = .fromStdDir(root_dir),
+                                .file = .{ .path = .{
+                                    .string = bun.PathString.init(write_path),
+                                } },
+                            },
+                        )) {
+                            .err => |err| {
+                                bun.Output.err(err, "failed to write sourcemap file '{s}'", .{write_path});
+                                current.deinit();
+                            },
+                            .result => {
+                                current.dest_path = sourcemap_full_path;
+                                output_files.items[kept] = current.*;
+                                kept += 1;
+                            },
+                        }
+                    } else {
+                        current.deinit();
+                    }
+                } else {
                     current.deinit();
                 }
             }
-
-            const entry_point_output_file = output_files.swapRemove(entry_point_index);
-            output_files.items.len = 1;
-            output_files.items[0] = entry_point_output_file;
+            output_files.items.len = kept;
 
             return result;
         }
@@ -4157,13 +4210,18 @@ pub const BundleV2 = struct {
                 });
                 result.ast.import_records = import_records;
 
-                // Set is_export_star_target for barrel optimization
+                // Set is_export_star_target for barrel optimization.
+                // In dev server mode, source_index is not saved on JS import
+                // records, so fall back to resolving via the path map.
+                const path_to_source_index_map = this.pathToSourceIndexMap(result.ast.target);
                 for (result.ast.export_star_import_records) |star_record_idx| {
                     if (star_record_idx < import_records.len) {
                         const star_ir = import_records.slice()[star_record_idx];
-                        if (star_ir.source_index.isValid()) {
-                            graph.input_files.items(.flags)[star_ir.source_index.get()].is_export_star_target = true;
-                        }
+                        const resolved_index = if (star_ir.source_index.isValid())
+                            star_ir.source_index.get()
+                        else
+                            path_to_source_index_map.getPath(&star_ir.path) orelse continue;
+                        graph.input_files.items(.flags)[resolved_index].is_export_star_target = true;
                     }
                 }
 

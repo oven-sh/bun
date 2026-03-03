@@ -608,6 +608,9 @@ UV_EXTERN int uv_poll_start(uv_poll_t* handle, int events, uv_poll_cb cb)
     }
 
     int was_active = entry->active;
+#if defined(__APPLE__)
+    int prev_events = entry->events;
+#endif
     entry->events = events;
     entry->cb = cb;
     entry->active = 1;
@@ -634,8 +637,20 @@ UV_EXTERN int uv_poll_start(uv_poll_t* handle, int events, uv_poll_cb cb)
         }
     }
 #elif defined(__APPLE__)
-    struct kevent kev[2];
+    struct kevent kev[4];
     int nkev = 0;
+
+    // Remove filters that were previously registered but no longer wanted
+    if (was_active && (prev_events & UV_READABLE) && !(events & UV_READABLE)) {
+        EV_SET(&kev[nkev], entry->fd, EVFILT_READ, EV_DELETE, 0, 0, NULL);
+        nkev++;
+    }
+    if (was_active && (prev_events & UV_WRITABLE) && !(events & UV_WRITABLE)) {
+        EV_SET(&kev[nkev], entry->fd, EVFILT_WRITE, EV_DELETE, 0, 0, NULL);
+        nkev++;
+    }
+
+    // Add/enable newly requested filters
     if (events & UV_READABLE) {
         EV_SET(&kev[nkev], entry->fd, EVFILT_READ,
                EV_ADD | EV_ENABLE, 0, 0, NULL);
@@ -682,8 +697,9 @@ UV_EXTERN int uv_poll_stop(uv_poll_t* handle)
                    EV_DELETE, 0, 0, NULL);
             EV_SET(&kev[1], bun__poll_entries[i].fd, EVFILT_WRITE,
                    EV_DELETE, 0, 0, NULL);
-            // Best-effort: EV_DELETE may fail if filter was not registered
-            kevent(bun__kqueue_fd, kev, 2, NULL, 0, NULL);
+            if (kevent(bun__kqueue_fd, kev, 2, NULL, 0, NULL) < 0 && errno != ENOENT && errno != EBADF) {
+                fprintf(stderr, "bun: kevent DEL fd=%d failed: %s\n", bun__poll_entries[i].fd, strerror(errno));
+            }
 #endif
             break;
         }
@@ -844,8 +860,9 @@ UV_EXTERN void uv_close(uv_handle_t* handle, uv_close_cb close_cb)
                 struct kevent kev;
                 EV_SET(&kev, bun__async_entries[i].wakeup_fd, EVFILT_READ,
                        EV_DELETE, 0, 0, NULL);
-                // Best-effort removal
-                kevent(bun__kqueue_fd, &kev, 1, NULL, 0, NULL);
+                if (kevent(bun__kqueue_fd, &kev, 1, NULL, 0, NULL) < 0 && errno != ENOENT && errno != EBADF) {
+                    fprintf(stderr, "bun: kevent DEL async fd=%d failed: %s\n", bun__async_entries[i].wakeup_fd, strerror(errno));
+                }
                 close(bun__async_entries[i].wakeup_fd);
                 close(bun__async_entries[i].wakeup_wfd);
 #endif

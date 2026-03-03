@@ -32,22 +32,16 @@ describe("SQL should not treat URL pathname as Unix socket path (#27713)", () =>
   });
 
   afterAll(() => {
-    for (const key of Object.keys(process.env).concat(...Object.keys(Bun.env), ...Object.keys(import.meta.env))) {
-      delete process.env[key];
-      delete Bun.env[key];
-      delete import.meta.env[key];
-    }
-
-    for (const key in originalEnv) {
-      process.env[key] = originalEnv[key];
-      Bun.env[key] = originalEnv[key];
-      import.meta.env[key] = originalEnv[key];
-    }
-
     for (const key of SQL_ENV_VARS) {
-      delete process.env[key];
-      delete Bun.env[key];
-      delete import.meta.env[key];
+      if (key in originalEnv) {
+        process.env[key] = originalEnv[key]!;
+        Bun.env[key] = originalEnv[key]!;
+        import.meta.env[key] = originalEnv[key]!;
+      } else {
+        delete process.env[key];
+        delete Bun.env[key];
+        delete import.meta.env[key];
+      }
     }
   });
 
@@ -120,14 +114,15 @@ describe("SQL should not treat URL pathname as Unix socket path (#27713)", () =>
   });
 
   test.skipIf(isWindows)("unix:// protocol should still use pathname as socket path", () => {
+    const socketPath = `/tmp/bun-test-27713-${process.pid}.sock`;
     using sock = Bun.listen({
-      unix: "/tmp/bun-test-27713.sock",
+      unix: socketPath,
       socket: {
         data: () => {},
       },
     });
 
     const sql = new SQL(`unix://${sock.unix}`, { adapter: "postgres" });
-    expect(sql.options.path).toBe("/tmp/bun-test-27713.sock");
+    expect(sql.options.path).toBe(socketPath);
   });
 });

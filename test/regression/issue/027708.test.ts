@@ -62,7 +62,7 @@ const walkNode = (node: DomNode, violations: Violation[]): void => {
 
 export const validateSvg = (svg: string): ValidationResult => {
   const violations: Violation[] = [];
-  const sanitized = svg.replace(/<!DOCTYPE[^[>]*(?:\\\\[[^\\\\]]*\\\\])?\\\\s*>/gi, "").replace(/<!ENTITY[^>]*>/gi, "");
+  const sanitized = svg.replace(/<!DOCTYPE[^[>]*(?:\\[[^\\]]*\\])?\\s*>/gi, "").replace(/<!ENTITY[^>]*>/gi, "");
   if (svg !== sanitized) violations.push({ rule: "xxe-prevention", message: "DOCTYPE/ENTITY" });
   try {
     // No onError handler — xmldom defaults to console.error output

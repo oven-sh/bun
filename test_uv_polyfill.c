@@ -296,7 +296,7 @@ void test_poll(void) {
 
     TEST("uv_poll_init returns 0");
     int r = uv_poll_init(loop, &handle, pipefd[0]);
-    if (r == 0) PASS(); else FAIL("non-zero return");
+    if (r == 0) PASS(); else { FAIL("non-zero return"); close(pipefd[0]); close(pipefd[1]); return; }
 
     TEST("handle type is UV_POLL");
     if (handle.type == UV_POLL) PASS(); else FAIL("wrong type");
@@ -304,7 +304,7 @@ void test_poll(void) {
     TEST("uv_poll_start returns 0");
     poll_callback_called = 0;
     r = uv_poll_start(&handle, UV_READABLE, test_poll_cb);
-    if (r == 0) PASS(); else FAIL("non-zero return");
+    if (r == 0) PASS(); else { FAIL("non-zero return"); uv_close((uv_handle_t*)&handle, NULL); close(pipefd[0]); close(pipefd[1]); return; }
 
     TEST("callback fires on readable data");
     // Write to pipe to trigger readable event
@@ -358,7 +358,7 @@ void test_async(void) {
 
     TEST("uv_async_init returns 0");
     int r = uv_async_init(loop, &handle, test_async_cb);
-    if (r == 0) PASS(); else FAIL("non-zero return");
+    if (r == 0) PASS(); else { FAIL("non-zero return"); return; }
 
     TEST("handle type is UV_ASYNC");
     if (handle.type == UV_ASYNC) PASS(); else FAIL("wrong type");
@@ -366,7 +366,11 @@ void test_async(void) {
     TEST("callback fires on async_send from another thread");
     async_callback_called = 0;
     pthread_t tid;
-    pthread_create(&tid, NULL, async_sender_thread, &handle);
+    if (pthread_create(&tid, NULL, async_sender_thread, &handle) != 0) {
+        FAIL("pthread_create failed");
+        uv_close((uv_handle_t*)&handle, NULL);
+        return;
+    }
 
     // Wait up to 500ms for callback
     for (int i = 0; i < 50 && !async_callback_called; i++) {

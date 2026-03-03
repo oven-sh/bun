@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { createSocket, type Socket } from "node:dgram";
 
-function bindSocket(reusePort: boolean): Promise<{ ok: boolean; error: Error | null; socket: Socket }> {
+function bindSocket(reusePort: boolean, port?: number): Promise<{ ok: boolean; error: Error | null; socket: Socket }> {
   return new Promise(resolve => {
     const socket = createSocket({ type: "udp4", reuseAddr: true, reusePort });
     let done = false;
@@ -11,7 +11,7 @@ function bindSocket(reusePort: boolean): Promise<{ ok: boolean; error: Error | n
       resolve(result);
     };
     socket.once("error", (err: Error) => finish({ ok: false, error: err, socket }));
-    socket.bind(0, "0.0.0.0", () => finish({ ok: true, error: null, socket }));
+    socket.bind(port ?? 0, "0.0.0.0", () => finish({ ok: true, error: null, socket }));
   });
 }
 
@@ -30,17 +30,7 @@ test("dgram reusePort: two sockets can bind to the same port", async () => {
   const port = a.socket.address().port;
 
   // Bind second socket to the same port
-  const b = await new Promise<{ ok: boolean; error: Error | null; socket: Socket }>(resolve => {
-    const socket = createSocket({ type: "udp4", reuseAddr: true, reusePort: true });
-    let done = false;
-    const finish = (result: { ok: boolean; error: Error | null; socket: Socket }) => {
-      if (done) return;
-      done = true;
-      resolve(result);
-    };
-    socket.once("error", (err: Error) => finish({ ok: false, error: err, socket }));
-    socket.bind(port, "0.0.0.0", () => finish({ ok: true, error: null, socket }));
-  });
+  const b = await bindSocket(true, port);
 
   expect(b.ok).toBe(true);
   expect(b.error).toBeNull();

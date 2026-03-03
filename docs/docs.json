@@ -400,6 +400,7 @@
               "/guides/http/file-uploads",
               "/guides/http/fetch-unix",
               "/guides/http/stream-iterator",
+              "/guides/http/sse",
               "/guides/http/stream-node-streams-in-bun"
             ]
           },

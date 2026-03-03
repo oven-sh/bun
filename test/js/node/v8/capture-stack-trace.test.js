@@ -790,3 +790,52 @@ test("captureStackTrace with constructor function not in stack returns error str
     expect(e.stack).toBe("TypeError: bad type");
   }
 });
+
+// Regression test for https://github.com/oven-sh/bun/issues/27708
+// Error.captureStackTrace must work with ES5-style Error subclasses
+// even when Error.prepareStackTrace has been replaced (e.g. by @babel/core).
+test("captureStackTrace works with ES5 Error subclass when prepareStackTrace is set", () => {
+  // ES5-style Error subclass (no super() call, just prototype chain setup)
+  // This is the pattern used by @xmldom/xmldom's ParseError
+  function ES5Error(message) {
+    this.message = message;
+    if (Error.captureStackTrace) Error.captureStackTrace(this, ES5Error);
+  }
+  ES5Error.prototype = Object.create(Error.prototype, {
+    constructor: { value: ES5Error },
+    name: { value: "ES5Error", enumerable: true },
+  });
+
+  // Works before prepareStackTrace is replaced
+  const e1 = new ES5Error("before");
+  expect(e1.message).toBe("before");
+  expect(typeof e1.stack).toBe("string");
+  expect(e1 instanceof Error).toBe(true);
+
+  // Replace prepareStackTrace with a wrapper (like @babel/core does)
+  const original = Error.prepareStackTrace;
+  Error.prepareStackTrace = function wrappedPrepareStackTrace(err, trace) {
+    // Babel's stackTraceRewriter chains to the original prepareStackTrace
+    if (original) return original(err, trace);
+    return `${err}\n    at ${trace.join("\n    at ")}`;
+  };
+
+  // Must still work after prepareStackTrace is replaced
+  const e2 = new ES5Error("after");
+  expect(e2.message).toBe("after");
+  expect(typeof e2.stack).toBe("string");
+  expect(e2 instanceof Error).toBe(true);
+});
+
+test("captureStackTrace works with plain object when prepareStackTrace is set", () => {
+  const original = Error.prepareStackTrace;
+  Error.prepareStackTrace = function wrappedPrepareStackTrace(err, trace) {
+    if (original) return original(err, trace);
+    return `${err}\n    at ${trace.join("\n    at ")}`;
+  };
+
+  // V8 allows any object as the target for captureStackTrace
+  const obj = { message: "plain object" };
+  Error.captureStackTrace(obj);
+  expect(typeof obj.stack).toBe("string");
+});

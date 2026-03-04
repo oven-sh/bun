@@ -3,16 +3,16 @@
 Static ISA verifier for Bun baseline builds. Disassembles every instruction in
 `.text` and flags anything requiring CPU features beyond the baseline target.
 
-| Target | Baseline | Flags |
-|---|---|---|
-| x86-64 | Nehalem (`-march=nehalem`) | AVX, AVX2, AVX-512, BMI1/2, FMA, AES-NI, PCLMULQDQ, ADX, SHA-NI, RDRAND, ... |
-| aarch64 | armv8-a+crc (`-march=armv8-a+crc`) | LSE atomics, SVE, DotProd, RCPC, JSCVT, RDM, non-hint PAC |
+| Target  | Baseline                           | Flags                                                                        |
+| ------- | ---------------------------------- | ---------------------------------------------------------------------------- |
+| x86-64  | Nehalem (`-march=nehalem`)         | AVX, AVX2, AVX-512, BMI1/2, FMA, AES-NI, PCLMULQDQ, ADX, SHA-NI, RDRAND, ... |
+| aarch64 | armv8-a+crc (`-march=armv8-a+crc`) | LSE atomics, SVE, DotProd, RCPC, JSCVT, RDM, non-hint PAC                    |
 
 Architecture and format (ELF/PE) are auto-detected from the binary header.
 
 Complements the emulator-based check in `scripts/verify-baseline.ts`: the
-emulator only catches instructions the test suite *executes*. This catches
-everything the compiler *emitted*.
+emulator only catches instructions the test suite _executes_. This catches
+everything the compiler _emitted_.
 
 ## Usage
 
@@ -75,6 +75,7 @@ instead of stack-frame setup, it's a table. Allowlist the symbol.
 ## What's deliberately ignored
 
 **x64:**
+
 - **ENDBR64 / CET** — NOP-compatible on pre-CET CPUs by design.
 - **TZCNT/LZCNT** — LLVM preloads the destination with operand-width so the
   REP-BSF fallback on pre-BMI1 CPUs gives identical results.
@@ -83,16 +84,17 @@ instead of stack-frame setup, it's a table. Allowlist the symbol.
   test catches that trivially.
 
 **aarch64:**
+
 - **PACIASP / AUTIASP / BTI** — HINT-space; architecturally NOP on older CPUs.
 - **`$d`-marked data** — literal pools and inline strings in `.text` are
   skipped via ARM EABI mapping symbols.
 
 ## Symbol attribution
 
-| Binary | Primary source | Fallback |
-|---|---|---|
-| ELF | `.symtab` | `.dynsym` |
-| PE | PDB DBI module stream (`S_*PROC32`, has real sizes) → `S_PUB32` | PDB section contributions → `<lib:NAME.lib>` |
+| Binary | Primary source                                                  | Fallback                                     |
+| ------ | --------------------------------------------------------------- | -------------------------------------------- |
+| ELF    | `.symtab`                                                       | `.dynsym`                                    |
+| PE     | PDB DBI module stream (`S_*PROC32`, has real sizes) → `S_PUB32` | PDB section contributions → `<lib:NAME.lib>` |
 
 The Windows fallback handles code with no per-function PDB record (stripped
 CRT objects, anonymized staticlib helpers). Section contributions are the
@@ -116,11 +118,11 @@ A feature outside the brackets is a violation even for an allowlisted symbol.
 Widening the bracket is the explicit checkpoint for "did the gate get updated
 when the dependency did?"
 
-| File | Covers |
-|---|---|
-| `allowlist-x64.txt` | `linux-x64-baseline`, `linux-x64-musl-baseline` |
+| File                        | Covers                                                        |
+| --------------------------- | ------------------------------------------------------------- |
+| `allowlist-x64.txt`         | `linux-x64-baseline`, `linux-x64-musl-baseline`               |
 | `allowlist-x64-windows.txt` | `windows-x64-baseline` (separate: MSVC mangling, CRT symbols) |
-| `allowlist-aarch64.txt` | `linux-aarch64`, `linux-aarch64-musl` |
+| `allowlist-aarch64.txt`     | `linux-aarch64`, `linux-aarch64-musl`                         |
 
 One allowlist covers both glibc and musl because the dispatch surface is
 architecture-specific, not libc-specific. Symbols that LTO inlined away on

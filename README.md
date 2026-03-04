@@ -415,3 +415,5 @@ Before submitting a pull request, please read the [contributing guidelines](http
 ## License
 
 Refer to the [Project > License](https://bun.com/docs/project/licensing) page for information about Bun's licensing.
+
+Bun is MIT licensed. See [LICENSE](https://bun.com/docs/project/licensing) for details.

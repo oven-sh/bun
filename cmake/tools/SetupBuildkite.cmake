@@ -25,206 +25,113 @@ if(BUILDKITE)
   endif()
 endif()
 
-set(BUILDKITE_PATH ${BUILD_PATH}/buildkite)
-set(BUILDKITE_BUILDS_PATH ${BUILDKITE_PATH}/builds)
+# This runs inside the ${targetKey}-build-bun step (see .buildkite/ci.mjs), which
+# links artifacts from ${targetKey}-build-cpp and ${targetKey}-build-zig in the
+# same build. Step keys follow a fixed ${targetKey}-build-{cpp,zig,bun} pattern, so
+# we derive the sibling step keys by swapping the suffix on our own BUILDKITE_STEP_KEY.
+# That avoids having to reconstruct targetKey (which includes abi/baseline/profile
+# components) from CMake-side platform detection.
 
-if(NOT BUILDKITE_BUILD_ID)
-  # TODO: find the latest build on the main branch that passed
-  return()
+if(NOT DEFINED ENV{BUILDKITE_STEP_KEY})
+  message(FATAL_ERROR "BUILDKITE_STEP_KEY is not set (expected inside a Buildkite job)")
 endif()
+set(BUILDKITE_STEP_KEY $ENV{BUILDKITE_STEP_KEY})
 
-# Use BUILDKITE_BUILD_NUMBER for the URL if available, as the UUID format causes a 302 redirect
-# that CMake's file(DOWNLOAD) doesn't follow, resulting in empty response.
-if(BUILDKITE_BUILD_NUMBER)
-  setx(BUILDKITE_BUILD_URL https://buildkite.com/${BUILDKITE_ORGANIZATION_SLUG}/${BUILDKITE_PIPELINE_SLUG}/builds/${BUILDKITE_BUILD_NUMBER})
-else()
-  setx(BUILDKITE_BUILD_URL https://buildkite.com/${BUILDKITE_ORGANIZATION_SLUG}/${BUILDKITE_PIPELINE_SLUG}/builds/${BUILDKITE_BUILD_ID})
+if(NOT BUILDKITE_STEP_KEY MATCHES "^(.+)-build-bun$")
+  message(FATAL_ERROR "Unexpected BUILDKITE_STEP_KEY '${BUILDKITE_STEP_KEY}' (expected '<target>-build-bun')")
 endif()
-setx(BUILDKITE_BUILD_PATH ${BUILDKITE_BUILDS_PATH}/builds/${BUILDKITE_BUILD_ID})
+set(BUILDKITE_TARGET_KEY ${CMAKE_MATCH_1})
 
-file(
-  DOWNLOAD ${BUILDKITE_BUILD_URL}
-  HTTPHEADER "Accept: application/json"
-  TIMEOUT 15
-  STATUS BUILDKITE_BUILD_STATUS
-  ${BUILDKITE_BUILD_PATH}/build.json
+set(BUILDKITE_SOURCE_STEPS
+  ${BUILDKITE_TARGET_KEY}-build-cpp
+  ${BUILDKITE_TARGET_KEY}-build-zig
 )
-if(NOT BUILDKITE_BUILD_STATUS EQUAL 0)
-  message(FATAL_ERROR "No build found: ${BUILDKITE_BUILD_STATUS} ${BUILDKITE_BUILD_URL}")
-  return()
-endif()
 
-file(READ ${BUILDKITE_BUILD_PATH}/build.json BUILDKITE_BUILD)
-# CMake's string(JSON ...) interprets escape sequences like \n, \r, \t.
-# We need to escape these specific sequences while preserving valid JSON escapes like \" and \\.
-# Strategy: Use a unique placeholder to protect \\ sequences, escape \n/\r/\t, then restore \\.
-# This prevents \\n (literal backslash + n) from being corrupted to \\\n.
-set(BKSLASH_PLACEHOLDER "___BKSLASH_PLACEHOLDER_7f3a9b2c___")
-string(REPLACE "\\\\" "${BKSLASH_PLACEHOLDER}" BUILDKITE_BUILD "${BUILDKITE_BUILD}")
-string(REPLACE "\\n" "\\\\n" BUILDKITE_BUILD "${BUILDKITE_BUILD}")
-string(REPLACE "\\r" "\\\\r" BUILDKITE_BUILD "${BUILDKITE_BUILD}")
-string(REPLACE "\\t" "\\\\t" BUILDKITE_BUILD "${BUILDKITE_BUILD}")
-string(REPLACE "${BKSLASH_PLACEHOLDER}" "\\\\" BUILDKITE_BUILD "${BUILDKITE_BUILD}")
-# CMake treats semicolons as list separators in unquoted variable expansions.
-# Commit messages and other JSON string fields can contain semicolons, which would
-# cause string(JSON) to receive garbled arguments. Escape them before parsing.
-string(REPLACE ";" "\\;" BUILDKITE_BUILD "${BUILDKITE_BUILD}")
+# `buildkite-agent artifact search` lists artifacts from a sibling step in the
+# current build using the agent token — no HTTP scraping, no dependence on the
+# public buildkite.com JSON (which stopped inlining the jobs array in early 2026).
+# Output is one artifact path per line; empty if the step produced nothing.
+#
+# We only want linkable/archive artifacts. Asking the agent for each extension
+# separately and then flattening keeps us out of the brace-expansion-in-CMake
+# tarpit, and the extra round-trips are negligible (agent is local).
+set(BUILDKITE_ARTIFACT_GLOBS "*.o" "*.a" "*.lib" "*.zip" "*.tar" "*.gz")
 
-string(JSON BUILDKITE_BUILD_UUID GET "${BUILDKITE_BUILD}" id)
-string(JSON BUILDKITE_JOBS GET "${BUILDKITE_BUILD}" jobs)
-string(JSON BUILDKITE_JOBS_COUNT LENGTH "${BUILDKITE_JOBS}")
+set(BUILDKITE_STEPS_MATCHED)
+set(BUILDKITE_STEPS_EMPTY)
 
-if(NOT BUILDKITE_JOBS_COUNT GREATER 0)
-  message(FATAL_ERROR "No jobs found: ${BUILDKITE_BUILD_URL}")
-  return()
-endif()
-
-set(BUILDKITE_JOBS_FAILED)
-set(BUILDKITE_JOBS_NOT_FOUND)
-set(BUILDKITE_JOBS_NO_ARTIFACTS)
-set(BUILDKITE_JOBS_NO_MATCH)
-set(BUILDKITE_JOBS_MATCH)
-
-math(EXPR BUILDKITE_JOBS_MAX_INDEX "${BUILDKITE_JOBS_COUNT} - 1")
-foreach(i RANGE ${BUILDKITE_JOBS_MAX_INDEX})
-  string(JSON BUILDKITE_JOB GET "${BUILDKITE_JOBS}" ${i})
-  string(JSON BUILDKITE_JOB_ID GET "${BUILDKITE_JOB}" id)
-  string(JSON BUILDKITE_JOB_PASSED GET "${BUILDKITE_JOB}" passed)
-  string(JSON BUILDKITE_JOB_GROUP_ID GET "${BUILDKITE_JOB}" group_uuid)
-  string(JSON BUILDKITE_JOB_GROUP_KEY GET "${BUILDKITE_JOB}" group_identifier)
-  string(JSON BUILDKITE_JOB_NAME GET "${BUILDKITE_JOB}" step_key)
-  if(NOT BUILDKITE_JOB_NAME)
-    string(JSON BUILDKITE_JOB_NAME GET "${BUILDKITE_JOB}" name)
-  endif()
-
-  if(NOT BUILDKITE_JOB_PASSED)
-    list(APPEND BUILDKITE_JOBS_FAILED ${BUILDKITE_JOB_NAME})
-    continue()
-  endif()
-
-  if(NOT (BUILDKITE_GROUP_ID AND BUILDKITE_GROUP_ID STREQUAL BUILDKITE_JOB_GROUP_ID) AND
-     NOT (BUILDKITE_GROUP_KEY AND BUILDKITE_GROUP_KEY STREQUAL BUILDKITE_JOB_GROUP_KEY))
-    list(APPEND BUILDKITE_JOBS_NO_MATCH ${BUILDKITE_JOB_NAME})
-    continue()
-  endif()
-
-  set(BUILDKITE_ARTIFACTS_URL https://buildkite.com/organizations/${BUILDKITE_ORGANIZATION_SLUG}/pipelines/${BUILDKITE_PIPELINE_SLUG}/builds/${BUILDKITE_BUILD_UUID}/jobs/${BUILDKITE_JOB_ID}/artifacts)
-  set(BUILDKITE_ARTIFACTS_PATH ${BUILDKITE_BUILD_PATH}/artifacts/${BUILDKITE_JOB_ID}.json)
-
-  file(
-    DOWNLOAD ${BUILDKITE_ARTIFACTS_URL}
-    HTTPHEADER "Accept: application/json"
-    TIMEOUT 15
-    STATUS BUILDKITE_ARTIFACTS_STATUS
-    ${BUILDKITE_ARTIFACTS_PATH}
-  )
-
-  if(NOT BUILDKITE_ARTIFACTS_STATUS EQUAL 0)
-    list(APPEND BUILDKITE_JOBS_NOT_FOUND ${BUILDKITE_JOB_NAME})
-    continue()
-  endif()
-  
-  file(READ ${BUILDKITE_ARTIFACTS_PATH} BUILDKITE_ARTIFACTS)
-  string(REPLACE ";" "\\;" BUILDKITE_ARTIFACTS "${BUILDKITE_ARTIFACTS}")
-  string(JSON BUILDKITE_ARTIFACTS_LENGTH LENGTH "${BUILDKITE_ARTIFACTS}")
-  if(NOT BUILDKITE_ARTIFACTS_LENGTH GREATER 0)
-    list(APPEND BUILDKITE_JOBS_NO_ARTIFACTS ${BUILDKITE_JOB_NAME})
-    continue()
-  endif()
-
-  math(EXPR BUILDKITE_ARTIFACTS_MAX_INDEX "${BUILDKITE_ARTIFACTS_LENGTH} - 1")
-  foreach(i RANGE 0 ${BUILDKITE_ARTIFACTS_MAX_INDEX})
-    string(JSON BUILDKITE_ARTIFACT GET "${BUILDKITE_ARTIFACTS}" ${i})
-    string(JSON BUILDKITE_ARTIFACT_ID GET "${BUILDKITE_ARTIFACT}" id)
-    string(JSON BUILDKITE_ARTIFACT_PATH GET "${BUILDKITE_ARTIFACT}" path)
-
-    if(NOT BUILDKITE_ARTIFACT_PATH MATCHES "\\.(o|a|lib|zip|tar|gz)")
-      continue()
-    endif()
-
-    if(BUILDKITE)
-      if(BUILDKITE_ARTIFACT_PATH STREQUAL "libbun-profile.a")
-        set(BUILDKITE_ARTIFACT_PATH libbun-profile.a.gz)
-      elseif(BUILDKITE_ARTIFACT_PATH STREQUAL "libbun-asan.a")
-        set(BUILDKITE_ARTIFACT_PATH libbun-asan.a.gz)
-      endif()
-      set(BUILDKITE_DOWNLOAD_COMMAND buildkite-agent artifact download ${BUILDKITE_ARTIFACT_PATH} . --build ${BUILDKITE_BUILD_UUID} --step ${BUILDKITE_JOB_ID})
-    else()
-      set(BUILDKITE_DOWNLOAD_COMMAND curl -L -o ${BUILDKITE_ARTIFACT_PATH} ${BUILDKITE_ARTIFACTS_URL}/${BUILDKITE_ARTIFACT_ID})
-    endif()
-
-    add_custom_command(
-      COMMENT
-        "Downloading ${BUILDKITE_ARTIFACT_PATH}"
-      VERBATIM COMMAND
-        ${BUILDKITE_DOWNLOAD_COMMAND}
-      WORKING_DIRECTORY
-        ${BUILD_PATH}
-      OUTPUT
-        ${BUILD_PATH}/${BUILDKITE_ARTIFACT_PATH}
+foreach(STEP ${BUILDKITE_SOURCE_STEPS})
+  set(STEP_ARTIFACTS)
+  foreach(GLOB ${BUILDKITE_ARTIFACT_GLOBS})
+    execute_process(
+      COMMAND buildkite-agent artifact search ${GLOB} --step ${STEP} --format "%p\n" --allow-empty-results
+      OUTPUT_VARIABLE SEARCH_OUT
+      ERROR_VARIABLE SEARCH_ERR
+      RESULT_VARIABLE SEARCH_RC
+      OUTPUT_STRIP_TRAILING_WHITESPACE
     )
-    if(BUILDKITE_ARTIFACT_PATH STREQUAL "libbun-profile.a.gz")
-      add_custom_command(
-        COMMENT
-          "Unpacking libbun-profile.a.gz"
-        VERBATIM COMMAND
-          gunzip libbun-profile.a.gz
-        WORKING_DIRECTORY
-          ${BUILD_PATH}
-        OUTPUT
-          ${BUILD_PATH}/libbun-profile.a
-        DEPENDS
-          ${BUILD_PATH}/libbun-profile.a.gz
-      )
-    elseif(BUILDKITE_ARTIFACT_PATH STREQUAL "libbun-asan.a.gz")
-      add_custom_command(
-        COMMENT
-          "Unpacking libbun-asan.a.gz"
-        VERBATIM COMMAND
-          gunzip libbun-asan.a.gz
-        WORKING_DIRECTORY
-          ${BUILD_PATH}
-        OUTPUT
-          ${BUILD_PATH}/libbun-asan.a
-        DEPENDS
-          ${BUILD_PATH}/libbun-asan.a.gz
-      )
+    if(NOT SEARCH_RC EQUAL 0)
+      message(FATAL_ERROR "buildkite-agent artifact search failed for ${STEP} ${GLOB}: ${SEARCH_ERR}")
+    endif()
+    if(SEARCH_OUT)
+      string(REPLACE "\n" ";" SEARCH_OUT "${SEARCH_OUT}")
+      list(APPEND STEP_ARTIFACTS ${SEARCH_OUT})
     endif()
   endforeach()
 
-  list(APPEND BUILDKITE_JOBS_MATCH ${BUILDKITE_JOB_NAME})
+  if(NOT STEP_ARTIFACTS)
+    list(APPEND BUILDKITE_STEPS_EMPTY ${STEP})
+    continue()
+  endif()
+  list(REMOVE_DUPLICATES STEP_ARTIFACTS)
+  list(APPEND BUILDKITE_STEPS_MATCHED ${STEP})
+
+  foreach(ARTIFACT_PATH ${STEP_ARTIFACTS})
+    # build-cpp uploads libbun-*.a but the consuming step gzipped it first
+    # (upload bandwidth), so the actual artifact on the wire is the .gz.
+    # Search finds the .gz; only the bare .a needs this remap.
+    if(ARTIFACT_PATH STREQUAL "libbun-profile.a")
+      set(ARTIFACT_PATH libbun-profile.a.gz)
+    elseif(ARTIFACT_PATH STREQUAL "libbun-asan.a")
+      set(ARTIFACT_PATH libbun-asan.a.gz)
+    endif()
+
+    add_custom_command(
+      COMMENT "Downloading ${ARTIFACT_PATH} from ${STEP}"
+      VERBATIM COMMAND
+        buildkite-agent artifact download ${ARTIFACT_PATH} . --step ${STEP}
+      WORKING_DIRECTORY ${BUILD_PATH}
+      OUTPUT ${BUILD_PATH}/${ARTIFACT_PATH}
+    )
+
+    if(ARTIFACT_PATH STREQUAL "libbun-profile.a.gz")
+      add_custom_command(
+        COMMENT "Unpacking libbun-profile.a.gz"
+        VERBATIM COMMAND gunzip libbun-profile.a.gz
+        WORKING_DIRECTORY ${BUILD_PATH}
+        OUTPUT ${BUILD_PATH}/libbun-profile.a
+        DEPENDS ${BUILD_PATH}/libbun-profile.a.gz
+      )
+    elseif(ARTIFACT_PATH STREQUAL "libbun-asan.a.gz")
+      add_custom_command(
+        COMMENT "Unpacking libbun-asan.a.gz"
+        VERBATIM COMMAND gunzip libbun-asan.a.gz
+        WORKING_DIRECTORY ${BUILD_PATH}
+        OUTPUT ${BUILD_PATH}/libbun-asan.a
+        DEPENDS ${BUILD_PATH}/libbun-asan.a.gz
+      )
+    endif()
+  endforeach()
 endforeach()
 
-if(BUILDKITE_JOBS_FAILED)
-  list(SORT BUILDKITE_JOBS_FAILED COMPARE STRING)
-  list(JOIN BUILDKITE_JOBS_FAILED " " BUILDKITE_JOBS_FAILED)
-  message(WARNING "The following jobs were found, but failed: ${BUILDKITE_JOBS_FAILED}")
+if(BUILDKITE_STEPS_EMPTY)
+  list(JOIN BUILDKITE_STEPS_EMPTY " " BUILDKITE_STEPS_EMPTY)
+  message(WARNING "No linkable artifacts from: ${BUILDKITE_STEPS_EMPTY}")
 endif()
 
-if(BUILDKITE_JOBS_NOT_FOUND)
-  list(SORT BUILDKITE_JOBS_NOT_FOUND COMPARE STRING)
-  list(JOIN BUILDKITE_JOBS_NOT_FOUND " " BUILDKITE_JOBS_NOT_FOUND)
-  message(WARNING "The following jobs were found, but could not fetch their data: ${BUILDKITE_JOBS_NOT_FOUND}")
-endif()
-
-if(BUILDKITE_JOBS_NO_MATCH)
-  list(SORT BUILDKITE_JOBS_NO_MATCH COMPARE STRING)
-  list(JOIN BUILDKITE_JOBS_NO_MATCH " " BUILDKITE_JOBS_NO_MATCH)
-  message(WARNING "The following jobs were found, but did not match the group ID: ${BUILDKITE_JOBS_NO_MATCH}")
-endif()
-
-if(BUILDKITE_JOBS_NO_ARTIFACTS)
-  list(SORT BUILDKITE_JOBS_NO_ARTIFACTS COMPARE STRING)
-  list(JOIN BUILDKITE_JOBS_NO_ARTIFACTS " " BUILDKITE_JOBS_NO_ARTIFACTS)
-  message(WARNING "The following jobs were found, but had no artifacts: ${BUILDKITE_JOBS_NO_ARTIFACTS}")
-endif()
-
-if(BUILDKITE_JOBS_MATCH)
-  list(SORT BUILDKITE_JOBS_MATCH COMPARE STRING)
-  list(JOIN BUILDKITE_JOBS_MATCH " " BUILDKITE_JOBS_MATCH)
-  message(STATUS "The following jobs were found, and matched the group ID: ${BUILDKITE_JOBS_MATCH}")
-endif()
-
-if(NOT BUILDKITE_JOBS_FAILED AND NOT BUILDKITE_JOBS_NOT_FOUND AND NOT BUILDKITE_JOBS_NO_MATCH AND NOT BUILDKITE_JOBS_NO_ARTIFACTS AND NOT BUILDKITE_JOBS_MATCH)
-  message(FATAL_ERROR "Something went wrong with Buildkite?")
+if(BUILDKITE_STEPS_MATCHED)
+  list(JOIN BUILDKITE_STEPS_MATCHED " " BUILDKITE_STEPS_MATCHED)
+  message(STATUS "Found artifacts from: ${BUILDKITE_STEPS_MATCHED}")
+else()
+  message(FATAL_ERROR "No artifacts found from any of: ${BUILDKITE_SOURCE_STEPS}")
 endif()

@@ -59,6 +59,12 @@ powershell -c "irm bun.sh/install.ps1 | iex"
 # with npm
 npm install -g bun
 
+# with Scoop
+scoop install bun
+
+# with WinGet
+winget install Oven-sh.Bun
+
 # with Homebrew
 brew tap oven-sh/bun
 brew install bun

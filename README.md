@@ -410,6 +410,11 @@ bun upgrade --canary
 
 Refer to the [Project > Contributing](https://bun.com/docs/project/contributing) guide to start contributing to Bun.
 
+- [Building from source](https://bun.com/docs/project/building)
+- [Contributing guide](https://bun.com/docs/project/contributing)
+- [Report a bug](https://github.com/oven-sh/bun/issues/new)
+- [Ask for help on Discord](https://discord.com/invite/CXdq2DP29u)
+
 ## License
 
 Refer to the [Project > License](https://bun.com/docs/project/licensing) page for information about Bun's licensing.

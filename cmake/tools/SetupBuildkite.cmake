@@ -59,15 +59,17 @@ foreach(GZ ${BUILDKITE_GZ_ARTIFACTS})
 endforeach()
 
 # Artifacts are uploaded with subdirectory paths (lolhtml/release/liblolhtml.a,
-# zstd/.../libzstd.a, etc.) and the agent recreates that structure on download.
-# Recurse, but skip CMakeFiles/ (compiler detection) and cache/.
+# mimalloc/CMakeFiles/mimalloc-obj.dir/src/static.c.o, etc.) and the agent
+# recreates that structure on download. Recurse, but skip top-level CMakeFiles/
+# (our own compiler detection) and cache/ — nested CMakeFiles/ are real artifacts.
 
 file(GLOB_RECURSE BUILDKITE_LINK_ARTIFACTS
   "${BUILD_PATH}/*.o"
   "${BUILD_PATH}/*.a"
   "${BUILD_PATH}/*.lib"
 )
-list(FILTER BUILDKITE_LINK_ARTIFACTS EXCLUDE REGEX "/CMakeFiles/|/cache/")
+string(REGEX REPLACE "\\." "\\\\." BUILD_PATH_RE "${BUILD_PATH}")
+list(FILTER BUILDKITE_LINK_ARTIFACTS EXCLUDE REGEX "^${BUILD_PATH_RE}/(CMakeFiles|cache)/")
 
 if(NOT BUILDKITE_LINK_ARTIFACTS)
   message(FATAL_ERROR "No linkable artifacts found in ${BUILD_PATH} after download")

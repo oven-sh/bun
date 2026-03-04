@@ -493,4 +493,64 @@ registry=https://somehost.com/org1/npm/registry/
     // Should be empty since there's no matching token for /org1/npm/registry/
     expect(result.default_registry_token).toBe("");
   });
+
+  it("second install with both global and local npmrc does not re-fetch packages", async () => {
+    // Regression test: when both global ~/.npmrc sets registry and a local .npmrc
+    // exists, a second `bun install` should not make unnecessary network requests
+    // for packages already installed in node_modules with a valid lockfile.
+    const { packageDir, packageJson } = await registry.createTestDir();
+
+    await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
+
+    const homeDir = `${packageDir}/home_dir`;
+    await Bun.$`mkdir -p ${homeDir}`;
+
+    // Global .npmrc: sets default registry
+    const homeIni = /* ini */ `
+  registry=http://localhost:${registry.port}/
+  `;
+    await Bun.$`echo ${homeIni} > ${homeDir}/.npmrc`;
+
+    // Local .npmrc: sets scoped registry on the same host
+    const localIni = /* ini */ `
+  @types:registry=http://localhost:${registry.port}/
+  `;
+    await Bun.$`echo ${localIni} > ${packageDir}/.npmrc`;
+
+    await Bun.$`echo ${JSON.stringify({
+      name: "foo",
+      dependencies: {
+        "no-deps": "1.0.0",
+        "@types/no-deps": "1.0.0",
+      },
+    })} > package.json`.cwd(packageDir);
+
+    const installEnv = {
+      ...env,
+      XDG_CONFIG_HOME: `${homeDir}`,
+    };
+
+    // First install - should download packages
+    await Bun.$`${bunExe()} install`.env(installEnv).cwd(packageDir).throws(true);
+
+    // Verify node_modules and lockfile exist
+    expect(await Bun.file(join(packageDir, "node_modules", "no-deps", "package.json")).exists()).toBeTrue();
+    expect(await Bun.file(join(packageDir, "bun.lock")).exists()).toBeTrue();
+
+    // Second install - should not re-download anything
+    await using result2 = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      env: installEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [out2, err2, exitCode2] = await Promise.all([result2.stdout.text(), result2.stderr.text(), result2.exited]);
+
+    expect(stderrForInstall(err2)).not.toContain("error:");
+    // Second install should show "no changes" - not re-install packages
+    expect(out2).not.toContain("packages installed");
+    expect(exitCode2).toBe(0);
+  });
 });

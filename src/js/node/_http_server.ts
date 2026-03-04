@@ -416,11 +416,19 @@ Server.prototype.listen = function () {
     onListen = arguments[arguments.length - 1];
   }
 
+  // Register the onListen callback before attempting to bind. This ensures
+  // the callback survives across listen retries (e.g., when Vite retries on
+  // EADDRINUSE from within the error handler — the retry call won't pass
+  // the callback again, but the .once handler from the first call persists).
+  if ($isCallable(onListen)) {
+    this.once("listening", onListen);
+  }
+
   try {
     // listenInCluster
 
     if (isPrimary) {
-      server[kRealListen](tls, port, host, socketPath, false, onListen);
+      server[kRealListen](tls, port, host, socketPath, false);
       return this;
     }
 
@@ -460,7 +468,7 @@ Server.prototype.listen = function () {
       sendHelper(message, null);
     });
 
-    server[kRealListen](tls, port, host, socketPath, true, onListen);
+    server[kRealListen](tls, port, host, socketPath, true);
   } catch (err) {
     setTimeout(() => server.emit("error", err), 1);
   }
@@ -468,7 +476,7 @@ Server.prototype.listen = function () {
   return this;
 };
 
-Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort, onListen) {
+Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort) {
   {
     const ResponseClass = this[optionsSymbol].ServerResponse || ServerResponse;
     const RequestClass = this[optionsSymbol].IncomingMessage || IncomingMessage;
@@ -718,10 +726,6 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
 
     if (this?._unref) {
       this[serverSymbol]?.unref?.();
-    }
-
-    if ($isCallable(onListen)) {
-      this.once("listening", onListen);
     }
 
     if (this[kDeferredTimeouts]) {

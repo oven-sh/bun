@@ -47,9 +47,12 @@ pub const PathWatcherManager = struct {
         this.mutex.lock();
         defer this.mutex.unlock();
         this.pending_tasks -= 1;
-        if (this.deinit_on_last_task and this.pending_tasks == 0) {
+        if (this.pending_tasks == 0) {
+            // Clear unconditionally: if tasks drain to zero before deinit() runs,
+            // gating this on deinit_on_last_task leaves the flag stale-true and
+            // deinit() keeps deferring on a count that is already zero.
             this.has_pending_tasks.store(false, .release);
-            should_deinit = true;
+            if (this.deinit_on_last_task) should_deinit = true;
         }
     }
 
@@ -850,9 +853,14 @@ pub const PathWatcher = struct {
         this.mutex.lock();
         defer this.mutex.unlock();
         this.pending_directories -= 1;
-        if (this.isClosed() and this.pending_directories == 0) {
+        if (this.pending_directories == 0) {
+            // Clear unconditionally: if the scan drains to zero before close()
+            // runs (the common case — scan is fast, close happens later),
+            // gating this on isClosed() leaves the flag stale-true. deinit()
+            // then early-returns on hasPendingDirectories() forever,
+            // unregisterWatcher never runs, and every fd the scan opened leaks.
             this.has_pending_directories.store(false, .release);
-            should_deinit = true;
+            if (this.isClosed()) should_deinit = true;
         }
     }
 

@@ -410,6 +410,8 @@ bun upgrade --canary
 
 Refer to the [Project > Contributing](https://bun.com/docs/project/contributing) guide to start contributing to Bun.
 
+Before submitting a pull request, please read the [contributing guidelines](https://bun.com/docs/project/contributing) and ensure your changes include relevant tests.
+
 ## License
 
 Refer to the [Project > License](https://bun.com/docs/project/licensing) page for information about Bun's licensing.

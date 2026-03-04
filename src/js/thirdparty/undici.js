@@ -438,7 +438,7 @@ function assertCacheKey(key) {
     }
   }
   if (key.headers !== undefined && typeof key.headers !== "object") {
-    throw new TypeError(`expected headers to be object, got ${typeof key}`);
+    throw new TypeError(`expected headers to be object, got ${typeof key.headers}`);
   }
 }
 

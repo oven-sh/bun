@@ -410,6 +410,10 @@ bun upgrade --canary
 
 Refer to the [Project > Contributing](https://bun.com/docs/project/contributing) guide to start contributing to Bun.
 
+### Building from source
+
+Bun is written primarily in Zig, C++, and JavaScript. To build from source, see the [Development guide](https://bun.com/docs/project/development).
+
 ## License
 
 Refer to the [Project > License](https://bun.com/docs/project/licensing) page for information about Bun's licensing.

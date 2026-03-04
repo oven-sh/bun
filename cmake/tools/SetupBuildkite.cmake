@@ -64,7 +64,7 @@ foreach(STEP ${BUILDKITE_SOURCE_STEPS})
   set(STEP_ARTIFACTS)
   foreach(GLOB ${BUILDKITE_ARTIFACT_GLOBS})
     execute_process(
-      COMMAND buildkite-agent artifact search ${GLOB} --step ${STEP} --format "%p\n" --allow-empty-results
+      COMMAND buildkite-agent artifact search ${GLOB} --step ${STEP} --format "%p\\n" --allow-empty-results
       OUTPUT_VARIABLE SEARCH_OUT
       ERROR_VARIABLE SEARCH_ERR
       RESULT_VARIABLE SEARCH_RC

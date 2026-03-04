@@ -66,9 +66,13 @@ pub fn CompressionStream(comptime T: type) type {
 
             const this_value = callframe.this();
 
-            bun.assert(!arguments[0].isUndefined()); // must provide flush value
+            if (arguments[0].isUndefined()) {
+                return globalThis.ERR(.INVALID_ARG_VALUE, "flush value is required", .{}).throw();
+            }
             flush = arguments[0].toU32();
-            _ = std.meta.intToEnum(bun.zlib.FlushValue, flush) catch bun.assert(false); // Invalid flush value
+            _ = std.meta.intToEnum(bun.zlib.FlushValue, flush) catch {
+                return globalThis.ERR(.INVALID_ARG_VALUE, "Invalid flush value", .{}).throw();
+            };
 
             if (arguments[1].isNull()) {
                 // just a flush
@@ -76,21 +80,33 @@ pub fn CompressionStream(comptime T: type) type {
                 in_len = 0;
                 in_off = 0;
             } else {
-                const in_buf = arguments[1].asArrayBuffer(globalThis).?;
+                const in_buf = arguments[1].asArrayBuffer(globalThis) orelse {
+                    return globalThis.ERR(.INVALID_ARG_TYPE, "The \"in\" argument must be a TypedArray or DataView", .{}).throw();
+                };
                 in_off = arguments[2].toU32();
                 in_len = arguments[3].toU32();
-                bun.assert(in_buf.byte_len >= in_off + in_len);
+                if (in_buf.byte_len < @as(usize, in_off) + @as(usize, in_len)) {
+                    return globalThis.ERR(.OUT_OF_RANGE, "in_off + in_len ({d}) exceeds input buffer length ({d})", .{ @as(usize, in_off) + @as(usize, in_len), in_buf.byte_len }).throw();
+                }
                 in = in_buf.byteSlice()[in_off..][0..in_len];
             }
 
-            const out_buf = arguments[4].asArrayBuffer(globalThis).?;
+            const out_buf = arguments[4].asArrayBuffer(globalThis) orelse {
+                return globalThis.ERR(.INVALID_ARG_TYPE, "The \"out\" argument must be a TypedArray or DataView", .{}).throw();
+            };
             out_off = arguments[5].toU32();
             out_len = arguments[6].toU32();
-            bun.assert(out_buf.byte_len >= out_off + out_len);
+            if (out_buf.byte_len < @as(usize, out_off) + @as(usize, out_len)) {
+                return globalThis.ERR(.OUT_OF_RANGE, "out_off + out_len ({d}) exceeds output buffer length ({d})", .{ @as(usize, out_off) + @as(usize, out_len), out_buf.byte_len }).throw();
+            }
             out = out_buf.byteSlice()[out_off..][0..out_len];
 
-            bun.assert(!this.write_in_progress);
-            bun.assert(!this.pending_close);
+            if (this.write_in_progress) {
+                return globalThis.ERR(.INVALID_STATE, "Write already in progress", .{}).throw();
+            }
+            if (this.pending_close) {
+                return globalThis.ERR(.INVALID_STATE, "Pending close", .{}).throw();
+            }
             this.write_in_progress = true;
             this.ref();
 
@@ -170,9 +186,13 @@ pub fn CompressionStream(comptime T: type) type {
             var in: ?[]const u8 = null;
             var out: ?[]u8 = null;
 
-            bun.assert(!arguments[0].isUndefined()); // must provide flush value
+            if (arguments[0].isUndefined()) {
+                return globalThis.ERR(.INVALID_ARG_VALUE, "flush value is required", .{}).throw();
+            }
             flush = arguments[0].toU32();
-            _ = std.meta.intToEnum(bun.zlib.FlushValue, flush) catch bun.assert(false); // Invalid flush value
+            _ = std.meta.intToEnum(bun.zlib.FlushValue, flush) catch {
+                return globalThis.ERR(.INVALID_ARG_VALUE, "Invalid flush value", .{}).throw();
+            };
 
             if (arguments[1].isNull()) {
                 // just a flush
@@ -180,21 +200,33 @@ pub fn CompressionStream(comptime T: type) type {
                 in_len = 0;
                 in_off = 0;
             } else {
-                const in_buf = arguments[1].asArrayBuffer(globalThis).?;
+                const in_buf = arguments[1].asArrayBuffer(globalThis) orelse {
+                    return globalThis.ERR(.INVALID_ARG_TYPE, "The \"in\" argument must be a TypedArray or DataView", .{}).throw();
+                };
                 in_off = arguments[2].toU32();
                 in_len = arguments[3].toU32();
-                bun.assert(in_buf.byte_len >= in_off + in_len);
+                if (in_buf.byte_len < @as(usize, in_off) + @as(usize, in_len)) {
+                    return globalThis.ERR(.OUT_OF_RANGE, "in_off + in_len ({d}) exceeds input buffer length ({d})", .{ @as(usize, in_off) + @as(usize, in_len), in_buf.byte_len }).throw();
+                }
                 in = in_buf.byteSlice()[in_off..][0..in_len];
             }
 
-            const out_buf = arguments[4].asArrayBuffer(globalThis).?;
+            const out_buf = arguments[4].asArrayBuffer(globalThis) orelse {
+                return globalThis.ERR(.INVALID_ARG_TYPE, "The \"out\" argument must be a TypedArray or DataView", .{}).throw();
+            };
             out_off = arguments[5].toU32();
             out_len = arguments[6].toU32();
-            bun.assert(out_buf.byte_len >= out_off + out_len);
+            if (out_buf.byte_len < @as(usize, out_off) + @as(usize, out_len)) {
+                return globalThis.ERR(.OUT_OF_RANGE, "out_off + out_len ({d}) exceeds output buffer length ({d})", .{ @as(usize, out_off) + @as(usize, out_len), out_buf.byte_len }).throw();
+            }
             out = out_buf.byteSlice()[out_off..][0..out_len];
 
-            bun.assert(!this.write_in_progress);
-            bun.assert(!this.pending_close);
+            if (this.write_in_progress) {
+                return globalThis.ERR(.INVALID_STATE, "Write already in progress", .{}).throw();
+            }
+            if (this.pending_close) {
+                return globalThis.ERR(.INVALID_STATE, "Pending close", .{}).throw();
+            }
             this.write_in_progress = true;
             this.ref();
 

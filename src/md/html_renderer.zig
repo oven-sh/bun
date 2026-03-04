@@ -486,22 +486,27 @@ pub const HtmlRenderer = struct {
     }
 
     pub fn writeHtmlEscaped(self: *HtmlRenderer, txt: []const u8) void {
-        var start: usize = 0;
-        for (txt, 0..) |c, i| {
-            const replacement: ?[]const u8 = switch (c) {
-                '&' => "&amp;",
-                '<' => "&lt;",
-                '>' => "&gt;",
-                '"' => "&quot;",
-                else => null,
+        var i: usize = 0;
+        const needle = "&<>\"";
+
+        while (true) {
+            const next = bun.strings.indexOfAny(txt[i..], needle) orelse {
+                self.write(txt[i..]);
+                return;
             };
-            if (replacement) |r| {
-                if (i > start) self.write(txt[start..i]);
-                self.write(r);
-                start = i + 1;
+            const pos = i + next;
+            if (pos > i)
+                self.write(txt[i..pos]);
+            const c = txt[pos];
+            switch (c) {
+                '&' => self.write("&amp;"),
+                '<' => self.write("&lt;"),
+                '>' => self.write("&gt;"),
+                '"' => self.write("&quot;"),
+                else => unreachable,
             }
+            i = pos + 1;
         }
-        if (start < txt.len) self.write(txt[start..]);
     }
 
     fn writeUrlEscaped(self: *HtmlRenderer, txt: []const u8) void {

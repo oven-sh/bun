@@ -8,7 +8,7 @@ pub fn ParseTypescript(
         const is_typescript_enabled = P.is_typescript_enabled;
 
         pub fn parseTypeScriptDecorators(p: *P) ![]ExprNodeIndex {
-            if (!is_typescript_enabled) {
+            if (!is_typescript_enabled and !p.options.features.standard_decorators) {
                 return &([_]ExprNodeIndex{});
             }
 
@@ -16,20 +16,104 @@ pub fn ParseTypescript(
             while (p.lexer.token == T.t_at) {
                 try p.lexer.next();
 
-                // Parse a new/call expression with "exprFlagTSDecorator" so we ignore
-                // EIndex expressions, since they may be part of a computed property:
-                //
-                //   class Foo {
-                //     @foo ['computed']() {}
-                //   }
-                //
-                // This matches the behavior of the TypeScript compiler.
-                try decorators.ensureUnusedCapacity(1);
-                try p.parseExprWithFlags(.new, Expr.EFlags.ts_decorator, &decorators.unusedCapacitySlice()[0]);
-                decorators.items.len += 1;
+                if (p.options.features.standard_decorators) {
+                    // TC39 standard decorator grammar:
+                    //   @Identifier
+                    //   @Identifier.member
+                    //   @Identifier.member(args)
+                    //   @(Expression)
+                    try decorators.ensureUnusedCapacity(1);
+                    decorators.unusedCapacitySlice()[0] = try p.parseStandardDecorator();
+                    decorators.items.len += 1;
+                } else {
+                    // Parse a new/call expression with "exprFlagTSDecorator" so we ignore
+                    // EIndex expressions, since they may be part of a computed property:
+                    //
+                    //   class Foo {
+                    //     @foo ['computed']() {}
+                    //   }
+                    //
+                    // This matches the behavior of the TypeScript compiler.
+                    try decorators.ensureUnusedCapacity(1);
+                    try p.parseExprWithFlags(.new, Expr.EFlags.ts_decorator, &decorators.unusedCapacitySlice()[0]);
+                    decorators.items.len += 1;
+                }
             }
 
             return decorators.items;
+        }
+
+        /// Parse a standard (TC39) decorator expression following the `@` token.
+        ///
+        /// DecoratorExpression:
+        ///   @ IdentifierReference
+        ///   @ DecoratorMemberExpression
+        ///   @ DecoratorCallExpression
+        ///   @ DecoratorParenthesizedExpression
+        pub fn parseStandardDecorator(p: *P) !ExprNodeIndex {
+            const loc = p.lexer.loc();
+
+            // @(Expression) — parenthesized, any expression allowed
+            if (p.lexer.token == .t_open_paren) {
+                try p.lexer.next();
+                const expr = try p.parseExpr(.lowest);
+                try p.lexer.expect(.t_close_paren);
+                return expr;
+            }
+
+            // Must start with an identifier
+            if (p.lexer.token != .t_identifier) {
+                try p.lexer.expect(.t_identifier);
+                return error.SyntaxError;
+            }
+
+            var expr = p.newExpr(E.Identifier{ .ref = try p.storeNameInRef(p.lexer.identifier) }, loc);
+            try p.lexer.next();
+
+            // Skip TypeScript type arguments after the identifier (e.g., @foo<T>)
+            if (is_typescript_enabled) {
+                _ = try p.skipTypeScriptTypeArguments(false);
+            }
+
+            // DecoratorMemberExpression: Identifier (.Identifier)*
+            while (p.lexer.token == .t_dot or p.lexer.token == .t_question_dot) {
+                // Forbid optional chaining in decorators
+                if (p.lexer.token == .t_question_dot) {
+                    try p.log.addError(p.source, p.lexer.loc(), "Optional chaining is not allowed in decorator expressions");
+                    return error.SyntaxError;
+                }
+
+                try p.lexer.next();
+
+                if (!p.lexer.isIdentifierOrKeyword()) {
+                    try p.lexer.expect(.t_identifier);
+                    return error.SyntaxError;
+                }
+
+                const name = p.lexer.identifier;
+                const name_loc = p.lexer.loc();
+                try p.lexer.next();
+
+                expr = p.newExpr(E.Dot{ .target = expr, .name = name, .name_loc = name_loc }, loc);
+
+                // Skip TypeScript type arguments after member access (e.g., @foo.bar<T>)
+                if (is_typescript_enabled) {
+                    _ = try p.skipTypeScriptTypeArguments(false);
+                }
+            }
+
+            // DecoratorCallExpression: DecoratorMemberExpression Arguments
+            // Only a single call is allowed, no chaining after the call
+            if (p.lexer.token == .t_open_paren) {
+                const args = try p.parseCallArgs();
+                expr = p.newExpr(E.Call{
+                    .target = expr,
+                    .args = args.list,
+                    .close_paren_loc = args.loc,
+                }, loc);
+            }
+
+            return expr;
         }
 
         pub fn parseTypeScriptNamespaceStmt(p: *P, loc: logger.Loc, opts: *ParseStatementOptions) anyerror!Stmt {

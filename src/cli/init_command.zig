@@ -38,9 +38,6 @@ pub const InitCommand = struct {
             return input.items[0 .. input.items.len - 1 :0];
         }
     }
-
-    extern fn Bun__ttySetMode(fd: i32, mode: i32) i32;
-
     fn processRadioButton(label: string, comptime Choices: type) !Choices {
         const colors = Output.enable_ansi_colors_stdout;
         const choices = switch (colors) {
@@ -190,7 +187,7 @@ pub const InitCommand = struct {
             }) catch null;
 
         if (Environment.isPosix)
-            _ = Bun__ttySetMode(0, 1);
+            _ = bun.tty.setMode(0, .raw);
 
         defer {
             if (comptime Environment.isWindows) {
@@ -202,7 +199,7 @@ pub const InitCommand = struct {
                 }
             }
             if (Environment.isPosix) {
-                _ = Bun__ttySetMode(0, 0);
+                _ = bun.tty.setMode(0, .normal);
             }
         }
 

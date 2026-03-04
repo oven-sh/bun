@@ -1,8 +1,11 @@
 import { dlopen, linkSymbols } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { isMusl } from "harness";
+import { isArm64, isMusl, isWindows } from "harness";
 
-describe("FFI error messages", () => {
+// TinyCC (and all of bun:ffi) is disabled on Windows ARM64
+const isFFIUnavailable = isWindows && isArm64;
+
+describe.skipIf(isFFIUnavailable)("FFI error messages", () => {
   test("dlopen shows library name when library cannot be opened", () => {
     // Try to open a non-existent library
     try {

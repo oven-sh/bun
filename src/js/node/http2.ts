@@ -73,6 +73,7 @@ const H2FrameParser = $zig("h2_frame_parser.zig", "H2FrameParserConstructor");
 const assertSettings = $newZigFunction("h2_frame_parser.zig", "jsAssertSettings", 1);
 const getPackedSettings = $newZigFunction("h2_frame_parser.zig", "jsGetPackedSettings", 1);
 const getUnpackedSettings = $newZigFunction("h2_frame_parser.zig", "jsGetUnpackedSettings", 1);
+const { upgradeRawSocketToH2 } = require("node:_http2_upgrade");
 
 const sensitiveHeaders = Symbol.for("nodejs.http2.sensitiveHeaders");
 const bunHTTP2Native = Symbol.for("::bunhttp2native::");
@@ -3881,6 +3882,7 @@ Http2Server.prototype[EventEmitter.captureRejectionSymbol] = function (err, even
 function onErrorSecureServerSession(err, socket) {
   if (!this.emit("clientError", err, socket)) socket.destroy(err);
 }
+
 function emitFrameErrorEventNT(stream, frameType, errorCode) {
   stream.emit("frameError", frameType, errorCode);
 }
@@ -3917,6 +3919,15 @@ class Http2SecureServer extends tls.Server {
       this.on("request", onRequestHandler);
     }
     this.on("tlsClientError", onErrorSecureServerSession);
+  }
+  emit(event: string, ...args: any[]) {
+    if (event === "connection") {
+      const socket = args[0];
+      if (socket && !(socket instanceof TLSSocket)) {
+        return upgradeRawSocketToH2(connectionListener, this, socket);
+      }
+    }
+    return super.emit(event, ...args);
   }
   setTimeout(ms, callback) {
     this.timeout = ms;

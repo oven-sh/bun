@@ -414,6 +414,10 @@ Refer to the [Project > Contributing](https://bun.com/docs/project/contributing)
 
 Bun is written primarily in Zig, C++, and JavaScript. To build from source, see the [Development guide](https://bun.com/docs/project/development).
 
+### Getting help
+
+If you run into problems or have questions, join the [Bun Discord](https://bun.com/discord) community.
+
 ## License
 
 Refer to the [Project > License](https://bun.com/docs/project/licensing) page for information about Bun's licensing.

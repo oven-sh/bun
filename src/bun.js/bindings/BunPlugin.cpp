@@ -714,7 +714,8 @@ DEFINE_VISIT_CHILDREN(JSModuleMock);
 
 EncodedJSValue BunPlugin::OnLoad::run(JSC::JSGlobalObject* globalObject, BunString* namespaceString, BunString* path)
 {
-    Group* groupPtr = this->group(namespaceString ? namespaceString->toWTFString(BunString::ZeroCopy) : String());
+    auto nsString = namespaceString ? namespaceString->toWTFString(BunString::ZeroCopy) : String();
+    Group* groupPtr = this->group(nsString);
     if (groupPtr == nullptr) {
         return JSValue::encode(jsUndefined());
     }
@@ -732,11 +733,14 @@ EncodedJSValue BunPlugin::OnLoad::run(JSC::JSGlobalObject* globalObject, BunStri
     auto scope = DECLARE_THROW_SCOPE(vm);
     scope.assertNoExceptionExceptTermination();
 
-    JSC::JSObject* paramsObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 1);
+    JSC::JSObject* paramsObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
     const auto& builtinNames = WebCore::builtinNames(vm);
     paramsObject->putDirect(
         vm, builtinNames.pathPublicName(),
         jsString(vm, pathString));
+    paramsObject->putDirect(
+        vm, Identifier::fromString(vm, "namespace"_s),
+        jsString(vm, nsString.isEmpty() ? String("file"_s) : nsString));
     arguments.append(paramsObject);
 
     auto result = AsyncContextFrame::call(globalObject, function, JSC::jsUndefined(), arguments);

@@ -455,7 +455,7 @@ function assertCacheValue(value) {
     throw new TypeError(`expected value.statusMessage to be string, got ${typeof value.statusMessage}`);
   }
   if (value.headers != null && typeof value.headers !== "object") {
-    throw new TypeError(`expected value.rawHeaders to be object, got ${typeof value.headers}`);
+    throw new TypeError(`expected value.headers to be object, got ${typeof value.headers}`);
   }
   if (value.vary !== undefined && typeof value.vary !== "object") {
     throw new TypeError(`expected value.vary to be object, got ${typeof value.vary}`);

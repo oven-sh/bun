@@ -47,6 +47,8 @@ Bun supports Linux (x64 & arm64), macOS (x64 & Apple Silicon) and Windows (x64 &
 
 > **Linux users** — Kernel version 5.6 or higher is strongly recommended, but the minimum is 5.1.
 
+> **Windows users** — Bun supports Windows 10 version 1809 and later.
+
 > **x64 users** — if you see "illegal instruction" or similar errors, check our [CPU requirements](https://bun.com/docs/installation#cpu-requirements-and-baseline-builds)
 
 ```sh

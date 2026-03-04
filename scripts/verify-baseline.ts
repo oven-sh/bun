@@ -164,6 +164,51 @@ async function runTest(label: string, binaryArgs: string[], options?: RunTestOpt
   return false;
 }
 
+// Phase 0: Static instruction scan (no emulation — disassembles the binary).
+// Catches instructions in code paths the emulator test below never executes.
+// Soft-skipped if the checker isn't built (dev without cargo).
+const staticCheckerExe = isWindows ? "verify-baseline-static.exe" : "verify-baseline-static";
+const staticChecker = join(scriptDir, "verify-baseline-static", "target", "release", staticCheckerExe);
+const staticAllowlistName = isWindows
+  ? "allowlist-x64-windows.txt"
+  : isAarch64
+    ? "allowlist-aarch64.txt"
+    : "allowlist-x64.txt";
+const staticAllowlist = join(scriptDir, "verify-baseline-static", staticAllowlistName);
+let staticViolations = "";
+
+if (await Bun.file(staticChecker).exists()) {
+  console.log("+++ Static instruction scan");
+  const start = performance.now();
+  const proc = Bun.spawn([staticChecker, "--binary", binary, "--allowlist", staticAllowlist], {
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, code] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const elapsed = ((performance.now() - start) / 1000).toFixed(1);
+  console.log(stdout);
+
+  if (code === 0) {
+    console.log(`    PASS (${elapsed}s)`);
+    passed++;
+  } else if (code === 1) {
+    // Pull just the VIOLATIONS block for the annotation — full stdout is in the log.
+    const m = stdout.match(/^VIOLATIONS[^\n]*\n([\s\S]*?)\n(?:ALLOWLISTED|STALE|SUMMARY)/m);
+    staticViolations = m ? m[1].trimEnd() : stdout;
+    console.log(`    FAIL: static scan found post-baseline instructions outside the allowlist (${elapsed}s)`);
+    instructionFailures++;
+    failedTests.push("Static instruction scan");
+  } else {
+    console.log(`    WARN: checker exited ${code} (${elapsed}s, tool error)`);
+    otherFailures++;
+  }
+  console.log();
+} else {
+  console.log("--- Skipping static instruction scan (not built)");
+  console.log("    cargo build --release --manifest-path scripts/verify-baseline-static/Cargo.toml");
+  console.log();
+}
+
 // Phase 1: SIMD code path verification (always runs)
 const simdTestPath = join(repoRoot, "test", "js", "bun", "jsc-stress", "fixtures", "simd-baseline.test.ts");
 await runTest("SIMD baseline tests", ["test", simdTestPath], { live: true });
@@ -217,13 +262,30 @@ if (instructionFailures > 0) {
     : isAarch64
       ? "Linux aarch64"
       : "Linux x64";
-  const annotation = [
-    `<details>`,
-    `<summary>CPU instruction violation on ${platform} — ${instructionFailures} failed</summary>`,
-    `<p>The baseline build uses instructions not available on <code>${config.cpuDesc}</code>.</p>`,
+  const parts = [
+    `<details open>`,
+    `<summary>❌ CPU instruction violation on <b>${platform}</b> — ${instructionFailures} check(s) failed</summary>`,
+    `<p>The baseline build contains instructions not available on <code>${config.cpuDesc}</code>.</p>`,
     `<ul>${failedTests.map(t => `<li><code>${t}</code></li>`).join("")}</ul>`,
-    `</details>`,
-  ].join("\n");
+  ];
+  if (staticViolations) {
+    // Cap the inline block so a -march= leak (thousands of symbols) doesn't
+    // produce a multi-MB annotation. Full output is in the step log.
+    const lines = staticViolations.split("\n");
+    const shown =
+      lines.length > 80 ? [...lines.slice(0, 80), `... ${lines.length - 80} more lines (see step log)`] : lines;
+    parts.push(
+      `<h4>Static scan violations</h4>`,
+      `<pre><code>${shown.join("\n").replace(/</g, "&lt;")}</code></pre>`,
+      `<p><b>If these are runtime-dispatched behind a CPUID gate:</b> add each symbol to`,
+      `<code>scripts/verify-baseline-static/${staticAllowlistName}</code> with a comment pointing at the gate.`,
+      `Feature ceilings (the <code>[FEAT, ...]</code> bracket) should list what the gate checks.</p>`,
+      `<p><b>If there's no gate:</b> this is a real bug — a <code>-march</code> leaked into a subbuild.`,
+      `Find the translation unit and fix its compile flags.</p>`,
+    );
+  }
+  parts.push(`</details>`);
+  const annotation = parts.join("\n");
 
   Bun.spawnSync(["buildkite-agent", "annotate", "--append", "--style", "error", "--context", "verify-baseline"], {
     stdin: new Blob([annotation]),

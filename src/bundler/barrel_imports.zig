@@ -309,10 +309,9 @@ pub fn scheduleBarrelDeferredImports(this: *BundleV2, result: *ParseTask.Result.
     // Handle import records without named bindings (not in named_imports).
     // - `import "x"` (bare statement): tree-shakeable with sideEffects: false — skip.
     // - `require("x")`: synchronous, needs full module — always mark as .all.
-    // - `import("x")`: mark as .all ONLY if the barrel has no prior requests,
-    //   meaning this is the sole reference. If the barrel already has a .partial
-    //   entry from a static import, the dynamic import is likely a secondary
-    //   (possibly circular) reference and should not escalate requirements.
+    // - `import("x")`: returns the full module namespace at runtime — consumer
+    //   can destructure or access any export. Must mark as .all. We cannot
+    //   safely assume which exports will be used.
     for (file_import_records.slice(), 0..) |ir, idx| {
         const target = if (ir.source_index.isValid())
             ir.source_index.get()
@@ -327,10 +326,9 @@ pub fn scheduleBarrelDeferredImports(this: *BundleV2, result: *ParseTask.Result.
             const gop = try this.requested_exports.getOrPut(this.allocator(), target);
             gop.value_ptr.* = .all;
         } else if (ir.kind == .dynamic) {
-            // Only escalate to .all if no prior requests exist for this target.
-            if (!this.requested_exports.contains(target)) {
-                try this.requested_exports.put(this.allocator(), target, .all);
-            }
+            // import() returns the full module namespace — must preserve all exports.
+            const gop = try this.requested_exports.getOrPut(this.allocator(), target);
+            gop.value_ptr.* = .all;
         }
     }
 
@@ -362,8 +360,8 @@ pub fn scheduleBarrelDeferredImports(this: *BundleV2, result: *ParseTask.Result.
         }
     }
 
-    // Add bare require/dynamic-import targets to BFS as star imports (matching
-    // the seeding logic above — require always, dynamic only when sole reference).
+    // Add bare require/dynamic-import targets to BFS as star imports — both
+    // always need the full namespace.
     for (file_import_records.slice(), 0..) |ir, idx| {
         const target = if (ir.source_index.isValid())
             ir.source_index.get()
@@ -374,8 +372,7 @@ pub fn scheduleBarrelDeferredImports(this: *BundleV2, result: *ParseTask.Result.
         if (ir.flags.is_internal) continue;
         if (named_ir_indices.contains(@intCast(idx))) continue;
         if (ir.flags.was_originally_bare_import) continue;
-        const is_all = if (this.requested_exports.get(target)) |re| re == .all else false;
-        const should_add = ir.kind == .require or (ir.kind == .dynamic and is_all);
+        const should_add = ir.kind == .require or ir.kind == .dynamic;
         if (should_add) {
             try queue.append(queue_alloc, .{ .barrel_source_index = target, .alias = "", .is_star = true });
         }

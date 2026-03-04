@@ -17,6 +17,8 @@
   <a href="https://github.com/oven-sh/bun/issues/new">Issues</a>
   <span>&nbsp;&nbsp;•&nbsp;&nbsp;</span>
   <a href="https://github.com/oven-sh/bun/issues/159">Roadmap</a>
+  <span>&nbsp;&nbsp;•&nbsp;&nbsp;</span>
+  <a href="https://bun.com/blog">Blog</a>
   <br />
 </div>
 

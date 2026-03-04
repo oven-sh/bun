@@ -20,67 +20,65 @@ if(NOT BUILDKITE_STEP_KEY MATCHES "^(.+)-build-bun$")
 endif()
 set(BUILDKITE_TARGET_KEY ${CMAKE_MATCH_1})
 
-# scripts/build.mjs deletes CMakeCache.txt on every invocation, so configure
-# always runs fresh. If artifacts are already on disk (Buildkite retry on a
-# warm agent), skip the download — the .a is several GB.
+# Clear any stale artifacts from a previous build (macOS agents are not
+# ephemeral). Always download fresh — correctness over saving bandwidth
+# on the rare within-build retry.
 
 file(MAKE_DIRECTORY ${BUILD_PATH})
+file(GLOB BUILDKITE_STALE_ARTIFACTS
+  "${BUILD_PATH}/*.o"
+  "${BUILD_PATH}/*.a"
+  "${BUILD_PATH}/*.lib"
+  "${BUILD_PATH}/*.gz"
+)
+if(BUILDKITE_STALE_ARTIFACTS)
+  file(REMOVE ${BUILDKITE_STALE_ARTIFACTS})
+endif()
+
+# The agent scopes to the current build via $BUILDKITE_BUILD_ID; --step
+# resolves by key within that build.
+
+foreach(SUFFIX cpp zig)
+  set(STEP ${BUILDKITE_TARGET_KEY}-build-${SUFFIX})
+  message(STATUS "Downloading artifacts from ${STEP}")
+  execute_process(
+    COMMAND buildkite-agent artifact download * . --step ${STEP}
+    WORKING_DIRECTORY ${BUILD_PATH}
+    RESULT_VARIABLE DOWNLOAD_RC
+    ERROR_VARIABLE DOWNLOAD_ERR
+  )
+  if(NOT DOWNLOAD_RC EQUAL 0)
+    message(FATAL_ERROR "buildkite-agent artifact download from ${STEP} failed: ${DOWNLOAD_ERR}")
+  endif()
+endforeach()
+
+# libbun-profile.a and libbun-asan.a are gzipped before upload (see
+# register_command's ARTIFACTS handling in Globals.cmake). Windows .lib
+# files are not gzipped, so this glob is empty there.
+
+file(GLOB BUILDKITE_GZ_ARTIFACTS "${BUILD_PATH}/*.gz")
+foreach(GZ ${BUILDKITE_GZ_ARTIFACTS})
+  message(STATUS "Unpacking ${GZ}")
+  execute_process(
+    COMMAND gunzip -f ${GZ}
+    RESULT_VARIABLE GUNZIP_RC
+    ERROR_VARIABLE GUNZIP_ERR
+  )
+  if(NOT GUNZIP_RC EQUAL 0)
+    message(FATAL_ERROR "gunzip ${GZ} failed: ${GUNZIP_ERR}")
+  endif()
+endforeach()
 
 file(GLOB BUILDKITE_LINK_ARTIFACTS
   "${BUILD_PATH}/*.o"
   "${BUILD_PATH}/*.a"
   "${BUILD_PATH}/*.lib"
 )
-
-if(BUILDKITE_LINK_ARTIFACTS)
-  list(LENGTH BUILDKITE_LINK_ARTIFACTS BUILDKITE_LINK_COUNT)
-  message(STATUS "Found ${BUILDKITE_LINK_COUNT} linkable artifacts already in ${BUILD_PATH}, skipping download")
-else()
-  # The agent scopes to the current build via $BUILDKITE_BUILD_ID; --step
-  # resolves by key within that build.
-
-  foreach(SUFFIX cpp zig)
-    set(STEP ${BUILDKITE_TARGET_KEY}-build-${SUFFIX})
-    message(STATUS "Downloading artifacts from ${STEP}")
-    execute_process(
-      COMMAND buildkite-agent artifact download * . --step ${STEP}
-      WORKING_DIRECTORY ${BUILD_PATH}
-      RESULT_VARIABLE DOWNLOAD_RC
-      ERROR_VARIABLE DOWNLOAD_ERR
-    )
-    if(NOT DOWNLOAD_RC EQUAL 0)
-      message(FATAL_ERROR "buildkite-agent artifact download from ${STEP} failed: ${DOWNLOAD_ERR}")
-    endif()
-  endforeach()
-
-  # libbun-profile.a and libbun-asan.a are gzipped before upload (see
-  # register_command's ARTIFACTS handling in Globals.cmake). Windows .lib
-  # files are not gzipped, so this glob is empty there.
-
-  file(GLOB BUILDKITE_GZ_ARTIFACTS "${BUILD_PATH}/*.gz")
-  foreach(GZ ${BUILDKITE_GZ_ARTIFACTS})
-    message(STATUS "Unpacking ${GZ}")
-    execute_process(
-      COMMAND gunzip -f ${GZ}
-      RESULT_VARIABLE GUNZIP_RC
-      ERROR_VARIABLE GUNZIP_ERR
-    )
-    if(NOT GUNZIP_RC EQUAL 0)
-      message(FATAL_ERROR "gunzip ${GZ} failed: ${GUNZIP_ERR}")
-    endif()
-  endforeach()
-
-  file(GLOB BUILDKITE_LINK_ARTIFACTS
-    "${BUILD_PATH}/*.o"
-    "${BUILD_PATH}/*.a"
-    "${BUILD_PATH}/*.lib"
-  )
-  if(NOT BUILDKITE_LINK_ARTIFACTS)
-    message(FATAL_ERROR "No linkable artifacts found in ${BUILD_PATH} after download")
-  endif()
-  list(LENGTH BUILDKITE_LINK_ARTIFACTS BUILDKITE_LINK_COUNT)
-  message(STATUS "Downloaded ${BUILDKITE_LINK_COUNT} linkable artifacts from ${BUILDKITE_TARGET_KEY}-build-{cpp,zig}")
+if(NOT BUILDKITE_LINK_ARTIFACTS)
+  message(FATAL_ERROR "No linkable artifacts found in ${BUILD_PATH} after download")
 endif()
+list(LENGTH BUILDKITE_LINK_ARTIFACTS BUILDKITE_LINK_COUNT)
+message(STATUS "Downloaded ${BUILDKITE_LINK_COUNT} linkable artifacts from ${BUILDKITE_TARGET_KEY}-build-{cpp,zig}")
 
 # Register a no-op custom command for each linkable artifact so register_command
 # (Globals.cmake) sees them as GENERATED and shims its own output to

@@ -410,6 +410,8 @@ bun upgrade --canary
 
 Refer to the [Project > Contributing](https://bun.com/docs/project/contributing) guide to start contributing to Bun.
 
+To build Bun from source, refer to the [Project > Building](https://bun.com/docs/project/building) guide.
+
 ## License
 
 Refer to the [Project > License](https://bun.com/docs/project/licensing) page for information about Bun's licensing.

@@ -712,7 +712,7 @@ void JSModuleMock::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(JSModuleMock);
 
-EncodedJSValue BunPlugin::OnLoad::run(JSC::JSGlobalObject* globalObject, BunString* namespaceString, BunString* path)
+EncodedJSValue BunPlugin::OnLoad::run(JSC::JSGlobalObject* globalObject, BunString* namespaceString, BunString* path, BunString* importer)
 {
     auto nsString = namespaceString ? namespaceString->toWTFString(BunString::ZeroCopy) : String();
     Group* groupPtr = this->group(nsString);
@@ -733,7 +733,7 @@ EncodedJSValue BunPlugin::OnLoad::run(JSC::JSGlobalObject* globalObject, BunStri
     auto scope = DECLARE_THROW_SCOPE(vm);
     scope.assertNoExceptionExceptTermination();
 
-    JSC::JSObject* paramsObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
+    JSC::JSObject* paramsObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 3);
     const auto& builtinNames = WebCore::builtinNames(vm);
     paramsObject->putDirect(
         vm, builtinNames.pathPublicName(),
@@ -741,6 +741,17 @@ EncodedJSValue BunPlugin::OnLoad::run(JSC::JSGlobalObject* globalObject, BunStri
     paramsObject->putDirect(
         vm, Identifier::fromString(vm, "namespace"_s),
         jsString(vm, nsString.isEmpty() ? String("file"_s) : nsString));
+    {
+        String importerString;
+        if (importer && importer->tag != BunStringTag::Dead) {
+            importerString = importer->toWTFString(BunString::ZeroCopy);
+            if (importerString == "undefined"_s)
+                importerString = String(emptyString());
+        }
+        paramsObject->putDirect(
+            vm, builtinNames.importerPublicName(),
+            jsString(vm, importerString));
+    }
     arguments.append(paramsObject);
 
     auto result = AsyncContextFrame::call(globalObject, function, JSC::jsUndefined(), arguments);
@@ -877,9 +888,9 @@ extern "C" JSC::EncodedJSValue Bun__runOnResolvePlugins(Zig::GlobalObject* globa
     return globalObject->onResolvePlugins.run(globalObject, namespaceString, path, from);
 }
 
-extern "C" JSC::EncodedJSValue Bun__runOnLoadPlugins(Zig::GlobalObject* globalObject, BunString* namespaceString, BunString* path, BunPluginTarget target)
+extern "C" JSC::EncodedJSValue Bun__runOnLoadPlugins(Zig::GlobalObject* globalObject, BunString* namespaceString, BunString* path, BunString* importer, BunPluginTarget target)
 {
-    return globalObject->onLoadPlugins.run(globalObject, namespaceString, path);
+    return globalObject->onLoadPlugins.run(globalObject, namespaceString, path, importer);
 }
 
 namespace Bun {
@@ -889,10 +900,10 @@ Structure* createModuleMockStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObj
     return Zig::JSModuleMock::createStructure(vm, globalObject, prototype);
 }
 
-JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specifier, bool& wasModuleMock)
+JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specifier, BunString* referrer, bool& wasModuleMock)
 {
     auto fallback = [&]() -> JSC::JSValue {
-        return JSValue::decode(Bun__runVirtualModule(globalObject, specifier));
+        return JSValue::decode(Bun__runVirtualModule(globalObject, specifier, referrer));
     };
 
     if (!globalObject->onLoadPlugins.hasVirtualModules()) {

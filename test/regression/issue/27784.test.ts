@@ -20,8 +20,10 @@ blocker.listen(0, host, () => {
   const server = http.createServer();
 
   const promise = new Promise((resolve, reject) => {
+    let retried = false;
     const onError = (e) => {
-      if (e.code === 'EADDRINUSE') {
+      if (e.code === 'EADDRINUSE' && !retried) {
+        retried = true;
         // Retry on next port (Vite pattern)
         server.listen(blockedPort + 1, host);
       } else {

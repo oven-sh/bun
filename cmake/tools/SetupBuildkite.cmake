@@ -20,23 +20,12 @@ if(NOT BUILDKITE_STEP_KEY MATCHES "^(.+)-build-bun$")
 endif()
 set(BUILDKITE_TARGET_KEY ${CMAKE_MATCH_1})
 
-# Clear any stale artifacts from a previous build (macOS agents are not
-# ephemeral). Always download fresh — correctness over saving bandwidth
-# on the rare within-build retry.
+# Download all artifacts from both sibling steps. The agent scopes to the
+# current build via $BUILDKITE_BUILD_ID; --step resolves by key within it.
+# git clean -ffxdq runs between builds (BUILDKITE_GIT_CLEAN_FLAGS), so
+# ${BUILD_PATH} starts clean.
 
 file(MAKE_DIRECTORY ${BUILD_PATH})
-file(GLOB BUILDKITE_STALE_ARTIFACTS
-  "${BUILD_PATH}/*.o"
-  "${BUILD_PATH}/*.a"
-  "${BUILD_PATH}/*.lib"
-  "${BUILD_PATH}/*.gz"
-)
-if(BUILDKITE_STALE_ARTIFACTS)
-  file(REMOVE ${BUILDKITE_STALE_ARTIFACTS})
-endif()
-
-# The agent scopes to the current build via $BUILDKITE_BUILD_ID; --step
-# resolves by key within that build.
 
 foreach(SUFFIX cpp zig)
   set(STEP ${BUILDKITE_TARGET_KEY}-build-${SUFFIX})
@@ -69,16 +58,22 @@ foreach(GZ ${BUILDKITE_GZ_ARTIFACTS})
   endif()
 endforeach()
 
-file(GLOB BUILDKITE_LINK_ARTIFACTS
+# Artifacts are uploaded with subdirectory paths (lolhtml/release/liblolhtml.a,
+# zstd/.../libzstd.a, etc.) and the agent recreates that structure on download.
+# Recurse, but skip CMakeFiles/ (compiler detection) and cache/.
+
+file(GLOB_RECURSE BUILDKITE_LINK_ARTIFACTS
   "${BUILD_PATH}/*.o"
   "${BUILD_PATH}/*.a"
   "${BUILD_PATH}/*.lib"
 )
+list(FILTER BUILDKITE_LINK_ARTIFACTS EXCLUDE REGEX "/CMakeFiles/|/cache/")
+
 if(NOT BUILDKITE_LINK_ARTIFACTS)
   message(FATAL_ERROR "No linkable artifacts found in ${BUILD_PATH} after download")
 endif()
 list(LENGTH BUILDKITE_LINK_ARTIFACTS BUILDKITE_LINK_COUNT)
-message(STATUS "Downloaded ${BUILDKITE_LINK_COUNT} linkable artifacts from ${BUILDKITE_TARGET_KEY}-build-{cpp,zig}")
+message(STATUS "Registered ${BUILDKITE_LINK_COUNT} linkable artifacts from ${BUILDKITE_TARGET_KEY}-build-{cpp,zig}")
 
 # Register a no-op custom command for each linkable artifact so register_command
 # (Globals.cmake) sees them as GENERATED and shims its own output to

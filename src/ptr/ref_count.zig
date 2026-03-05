@@ -319,6 +319,102 @@ pub fn ThreadSafeRefCount(T: type, field_name: []const u8, destructor: fn (*T) v
     };
 }
 
+/// Thread-safe split-count reference counting (Rust Arc/Weak pattern).
+///
+/// Strong and weak references are tracked separately:
+///   strong 1->0 -> drop_contents() is called, then the collective weak ref is released
+///   weak   1->0 -> free_memory() is called
+///
+/// weak_count == (weak holders) + (1 if strong_count > 0). The +1 is the
+/// "collective" weak ref held on behalf of all strong refs; it keeps the
+/// allocation alive during the strong 1->0 -> drop_contents() window so that
+/// upgrade() is memory-safe as long as any weak ref is held.
+///
+/// `drop_contents` should destruct/deinit the object's fields but NOT free the
+/// struct itself. `free_memory` should free the struct (e.g. allocator.destroy).
+///
+/// Avoid this over plain ThreadSafeRefCount unless you need weak references.
+pub fn ThreadSafeWeakableRefCount(
+    T: type,
+    field_name: []const u8,
+    drop_contents: fn (*T) void,
+    free_memory: fn (*T) void,
+    options: Options,
+) type {
+    return struct {
+        strong: std.atomic.Value(u32),
+        weak: std.atomic.Value(u32),
+
+        const debug_name = options.debug_name orelse bun.meta.typeBaseName(@typeName(T));
+        pub const scope = bun.Output.Scoped(debug_name, .hidden);
+
+        pub fn init() @This() {
+            return .{ .strong = .init(1), .weak = .init(1) };
+        }
+
+        pub fn ref(self: *T) void {
+            const rc = getRefCount(self);
+            const old = rc.strong.fetchAdd(1, .seq_cst);
+            if (comptime bun.Environment.enable_logs) {
+                scope.log("0x{x}   ref {d} -> {d}", .{ @intFromPtr(self), old, old + 1 });
+            }
+            bun.debugAssert(old > 0);
+        }
+
+        pub fn deref(self: *T) void {
+            const rc = getRefCount(self);
+            const old = rc.strong.fetchSub(1, .seq_cst);
+            if (comptime bun.Environment.enable_logs) {
+                scope.log("0x{x} deref {d} -> {d}", .{ @intFromPtr(self), old, old - 1 });
+            }
+            bun.debugAssert(old > 0);
+            if (old == 1) {
+                drop_contents(self);
+                weakDeref(self);
+            }
+        }
+
+        pub fn weakRef(self: *T) void {
+            const rc = getRefCount(self);
+            const old = rc.weak.fetchAdd(1, .seq_cst);
+            bun.debugAssert(old > 0);
+        }
+
+        pub fn weakDeref(self: *T) void {
+            const rc = getRefCount(self);
+            const old = rc.weak.fetchSub(1, .seq_cst);
+            bun.debugAssert(old > 0);
+            if (old == 1) {
+                free_memory(self);
+            }
+        }
+
+        /// Attempt to acquire a strong ref from a weak ref. CAS-loops on the
+        /// strong count, only incrementing if currently > 0. Returns true on
+        /// success, false if strong is 0 (contents are or will be dropped).
+        ///
+        /// Safe to call as long as ANY weak ref is held: weak > 0 guarantees the
+        /// struct allocation is live, even if strong is 0 and drop_contents is
+        /// running concurrently.
+        pub fn upgrade(self: *T) bool {
+            const rc = getRefCount(self);
+            var current = rc.strong.load(.seq_cst);
+            while (current > 0) {
+                current = rc.strong.cmpxchgWeak(current, current + 1, .seq_cst, .seq_cst) orelse return true;
+            }
+            return false;
+        }
+
+        pub fn strongCount(rc: *const @This()) u32 {
+            return rc.strong.load(.seq_cst);
+        }
+
+        fn getRefCount(self: *T) *@This() {
+            return &@field(self, field_name);
+        }
+    };
+}
+
 /// A pointer to an object implementing `RefCount` or `ThreadSafeRefCount`
 /// The benefit of this over `T*` is that instances of `RefPtr` are tracked.
 ///

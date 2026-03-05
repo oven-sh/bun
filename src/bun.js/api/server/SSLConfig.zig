@@ -24,27 +24,30 @@ client_renegotiation_window: u32 = 0,
 requires_custom_request_ctx: bool = false,
 is_using_default_ciphers: bool = true,
 low_memory_mode: bool = false,
-/// Set when this config is inserted into GlobalRegistry (which holds a +1 ref)
-is_interned: bool = false,
-ref_count: RC = .init(),
 cached_hash: u64 = 0,
+ref_count: RC = .init(),
 
-const RC = bun.ptr.ThreadSafeRefCount(@This(), "ref_count", destroy, .{});
+// Split strong/weak refcounting (Arc/Weak). The GlobalRegistry holds a WEAK
+// ref on interned entries; upgrade() lets it safely try to revive one without
+// risking a 0->1 strong resurrection race.
+const RC = bun.ptr.ThreadSafeWeakableRefCount(@This(), "ref_count", dropContents, freeMemory, .{});
 pub const ref = RC.ref;
+pub const deref = RC.deref;
+const weakRef = RC.weakRef;
+const weakDeref = RC.weakDeref;
+const upgrade = RC.upgrade;
 
-/// Drops a reference. When an interned config drops to a single remaining ref
-/// (the one held by GlobalRegistry), attempts to evict it from the registry,
-/// which releases the registry's ref and triggers destruction.
-pub fn deref(self: *SSLConfig) void {
-    const old = self.ref_count.raw_count.fetchSub(1, .seq_cst);
-    bun.debugAssert(old > 0);
-    if (old == 1) {
-        destroy(self);
-        return;
-    }
-    if (old == 2 and self.is_interned) {
-        GlobalRegistry.releaseIfUnreferenced(self);
-    }
+/// strong 1->0. Evict from the weak registry while content is still intact
+/// (map eql/hash read it), then destruct field contents. The mixin drops the
+/// collective weak ref after this returns.
+fn dropContents(this: *SSLConfig) void {
+    GlobalRegistry.remove(this);
+    this.deinit();
+}
+
+/// weak 1->0. Struct allocation is no longer observable by anyone.
+fn freeMemory(this: *SSLConfig) void {
+    bun.default_allocator.destroy(this);
 }
 
 const ReadFromBlobError = bun.JSError || error{
@@ -135,7 +138,7 @@ pub fn forClientVerification(this: SSLConfig) SSLConfig {
 
 pub fn isSame(this: *const SSLConfig, other: *const SSLConfig) bool {
     inline for (comptime std.meta.fields(SSLConfig)) |field| {
-        if (comptime std.mem.eql(u8, field.name, "ref_count") or std.mem.eql(u8, field.name, "cached_hash") or std.mem.eql(u8, field.name, "is_interned")) continue;
+        if (comptime std.mem.eql(u8, field.name, "ref_count") or std.mem.eql(u8, field.name, "cached_hash")) continue;
         const first = @field(this, field.name);
         const second = @field(other, field.name);
         switch (field.type) {
@@ -210,7 +213,6 @@ pub fn deinit(this: *SSLConfig) void {
         .low_memory_mode = {},
         .ref_count = {},
         .cached_hash = {},
-        .is_interned = {},
     });
 }
 
@@ -250,7 +252,6 @@ pub fn clone(this: *const SSLConfig) SSLConfig {
         .low_memory_mode = this.low_memory_mode,
         .ref_count = .init(),
         .cached_hash = 0,
-        .is_interned = false,
     };
 }
 
@@ -258,7 +259,7 @@ pub fn contentHash(this: *SSLConfig) u64 {
     if (this.cached_hash != 0) return this.cached_hash;
     var hasher = std.hash.Wyhash.init(0);
     inline for (comptime std.meta.fields(SSLConfig)) |field| {
-        if (comptime std.mem.eql(u8, field.name, "ref_count") or std.mem.eql(u8, field.name, "cached_hash") or std.mem.eql(u8, field.name, "is_interned")) continue;
+        if (comptime std.mem.eql(u8, field.name, "ref_count") or std.mem.eql(u8, field.name, "cached_hash")) continue;
         const value = @field(this, field.name);
         switch (field.type) {
             ?[*:0]const u8 => {
@@ -287,14 +288,10 @@ pub fn contentHash(this: *SSLConfig) u64 {
     return this.cached_hash;
 }
 
-/// Called by the RC mixin when refcount reaches 0. Interned configs are removed
-/// from the registry before reaching this point (via releaseIfUnreferenced).
-fn destroy(this: *SSLConfig) void {
-    bun.debugAssert(!this.is_interned);
-    this.deinit();
-    bun.default_allocator.destroy(this);
-}
-
+/// Weak dedup cache. Each map entry holds a WEAK ref on its key.
+/// Safety: upgrade() is memory-safe without the mutex (weak ref keeps the
+/// struct allocated). The mutex only protects map structure and the invariant
+/// that entry content is intact while in the map.
 pub const GlobalRegistry = struct {
     const MapContext = struct {
         pub fn hash(_: @This(), key: *SSLConfig) u32 {
@@ -308,61 +305,46 @@ pub const GlobalRegistry = struct {
     var mutex: bun.Mutex = .{};
     var configs: std.ArrayHashMapUnmanaged(*SSLConfig, void, MapContext, true) = .empty;
 
-    /// Takes ownership of a heap-allocated SSLConfig.
-    /// If an identical config already exists in the registry, the new one is freed
-    /// and the existing one is returned (with refcount incremented).
-    /// If no match, the new config is registered and returned.
-    /// The registry holds a strong (+1) reference on every entry. This guarantees
-    /// that any entry found during intern() has refcount >= 1 and can be safely
-    /// ref()'d without racing against destruction.
+    /// Takes ownership of a heap-allocated SSLConfig (strong=1, weak=1). Returns
+    /// either an existing equivalent (strong ref'd) or the passed config.
+    /// Either way the caller owns exactly one strong ref on the result.
     pub fn intern(new_config: *SSLConfig) *SSLConfig {
         mutex.lock();
         defer mutex.unlock();
 
-        // Look up by content hash/equality
         const gop = bun.handleOom(configs.getOrPutContext(bun.default_allocator, new_config, .{}));
         if (gop.found_existing) {
-            // Identical config already in registry. Registry holds a ref, so
-            // existing count >= 1: safe to ref unconditionally.
             const existing = gop.key_ptr.*;
-            existing.ref();
-            new_config.ref_count.clearWithoutDestructor();
-            new_config.deinit();
-            bun.default_allocator.destroy(new_config);
-            return existing;
+            // Registry holds a weak ref on existing, so its allocation is live.
+            // If strong > 0, CAS it up and we have a real ref.
+            if (existing.upgrade()) {
+                // new_config is sole-owned by us; bypass refcount and free directly.
+                new_config.deinit();
+                bun.default_allocator.destroy(new_config);
+                return existing;
+            }
+            // strong==0: existing is dying. Its deref() is blocked in remove()
+            // waiting for this mutex, so content is still intact (deinit hasn't
+            // run). Replace the slot and transfer the registry's weak ref from
+            // existing to new_config.
+            existing.weakDeref();
+            gop.key_ptr.* = new_config;
         }
-
-        // Newly inserted. Registry takes its own +1 ref; caller keeps the
-        // original +1. Total refcount = 2.
-        new_config.is_interned = true;
-        new_config.ref();
+        // Registry takes a weak ref on the (new or replacement) entry.
+        new_config.weakRef();
         return new_config;
     }
 
-    /// Called when an interned config's refcount drops to 1 (only the
-    /// registry's ref remains). Removes from the map and releases that ref.
-    /// Re-checks the count under the lock: intern() may have handed out a new
-    /// ref in the meantime.
-    fn releaseIfUnreferenced(config: *SSLConfig) void {
+    /// Called from deref() at strong 1->0, before deinit(). If intern() replaced
+    /// our slot while we blocked on the mutex, the pointer-identity check fails
+    /// and we skip (intern already dropped our weak ref).
+    fn remove(config: *SSLConfig) void {
         mutex.lock();
-        if (config.ref_count.raw_count.load(.seq_cst) != 1) {
-            mutex.unlock();
-            return;
-        }
-        // Count is 1 and we hold the lock. intern() cannot hand out new refs.
-        // No external holder can call ref() (they'd need a ref to do so, but
-        // count==1 means only the registry has one).
-        const idx = configs.getIndexContext(config, .{}) orelse {
-            // Shouldn't happen with is_interned set, but be defensive.
-            mutex.unlock();
-            return;
-        };
-        bun.debugAssert(configs.keys()[idx] == config);
+        defer mutex.unlock();
+        const idx = configs.getIndexContext(config, .{}) orelse return;
+        if (configs.keys()[idx] != config) return;
         configs.swapRemoveAt(idx);
-        config.is_interned = false;
-        mutex.unlock();
-        // Drop the registry's ref: 1 -> 0 -> destroy().
-        config.deref();
+        config.weakDeref();
     }
 };
 

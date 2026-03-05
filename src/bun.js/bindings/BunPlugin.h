@@ -64,18 +64,29 @@ public:
     class OnLoad final : public Base {
 
     public:
+        struct ModuleMockChange {
+            String path;
+            JSC::Strong<JSC::JSObject> previousValue;
+            bool hadPreviousValue { false };
+        };
+
         OnLoad()
             : Base()
         {
         }
 
         VirtualModuleMap* _Nullable virtualModules = nullptr;
+        VirtualModuleMap* _Nullable moduleMocks = nullptr;
         bool mustDoExpensiveRelativeLookup = false;
+        WTF::Vector<ModuleMockChange> moduleMockChanges = {};
+        WTF::Vector<size_t> moduleMockScopeMarkers = {};
         JSC::EncodedJSValue run(JSC::JSGlobalObject* globalObject, BunString* namespaceString, BunString* path);
 
-        bool hasVirtualModules() const { return virtualModules != nullptr; }
+        bool hasVirtualModules() const { return virtualModules != nullptr || moduleMocks != nullptr; }
 
         void addModuleMock(JSC::VM& vm, const String& path, JSC::JSObject* mock);
+        void beginModuleMockingScope();
+        void endModuleMockingScope(JSC::JSGlobalObject* globalObject);
 
         std::optional<String> resolveVirtualModule(const String& path, const String& from);
 
@@ -83,6 +94,9 @@ public:
         {
             if (virtualModules) {
                 delete virtualModules;
+            }
+            if (moduleMocks) {
+                delete moduleMocks;
             }
         }
     };

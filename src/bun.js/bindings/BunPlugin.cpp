@@ -392,12 +392,99 @@ void BunPlugin::OnLoad::addModuleMock(JSC::VM& vm, const String& path, JSC::JSOb
 {
     Zig::GlobalObject* globalObject = defaultGlobalObject(mockObject->globalObject());
 
-    if (globalObject->onLoadPlugins.virtualModules == nullptr) {
-        globalObject->onLoadPlugins.virtualModules = new BunPlugin::VirtualModuleMap;
+    if (globalObject->onLoadPlugins.moduleMocks == nullptr) {
+        globalObject->onLoadPlugins.moduleMocks = new BunPlugin::VirtualModuleMap;
     }
-    auto* virtualModules = globalObject->onLoadPlugins.virtualModules;
+    auto* moduleMocks = globalObject->onLoadPlugins.moduleMocks;
 
-    virtualModules->set(path, JSC::Strong<JSC::JSObject> { vm, mockObject });
+    if (!globalObject->onLoadPlugins.moduleMockScopeMarkers.isEmpty()) {
+        size_t marker = globalObject->onLoadPlugins.moduleMockScopeMarkers.last();
+        bool alreadyTrackedInScope = false;
+        for (size_t i = globalObject->onLoadPlugins.moduleMockChanges.size(); i > marker; --i) {
+            if (globalObject->onLoadPlugins.moduleMockChanges[i - 1].path == path) {
+                alreadyTrackedInScope = true;
+                break;
+            }
+        }
+
+        if (!alreadyTrackedInScope) {
+            BunPlugin::OnLoad::ModuleMockChange change;
+            change.path = path;
+            if (auto previous = moduleMocks->get(path)) {
+                change.previousValue = JSC::Strong<JSC::JSObject> { vm, previous.get() };
+                change.hadPreviousValue = true;
+            }
+            globalObject->onLoadPlugins.moduleMockChanges.append(WTF::move(change));
+        }
+    }
+
+    moduleMocks->set(path, JSC::Strong<JSC::JSObject> { vm, mockObject });
+}
+
+void BunPlugin::OnLoad::beginModuleMockingScope()
+{
+    moduleMockScopeMarkers.append(moduleMockChanges.size());
+}
+
+void BunPlugin::OnLoad::endModuleMockingScope(JSC::JSGlobalObject* globalObject)
+{
+    if (moduleMockScopeMarkers.isEmpty()) {
+        return;
+    }
+
+    size_t marker = moduleMockScopeMarkers.takeLast();
+    if (!moduleMocks) {
+        moduleMockChanges.shrink(marker);
+        return;
+    }
+
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* zigGlobalObject = static_cast<Zig::GlobalObject*>(globalObject);
+    auto* requireMap = zigGlobalObject->requireMap();
+    if (scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        requireMap = nullptr;
+    }
+    auto* esmRegistry = zigGlobalObject->esmRegistryMap();
+    if (scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        esmRegistry = nullptr;
+    }
+
+    for (size_t i = moduleMockChanges.size(); i > marker; --i) {
+        const auto& change = moduleMockChanges[i - 1];
+
+        if (change.hadPreviousValue) {
+            moduleMocks->set(change.path, change.previousValue);
+        } else {
+            moduleMocks->remove(change.path);
+        }
+
+        auto* specifier = jsString(vm, change.path);
+        if (requireMap) {
+            requireMap->remove(globalObject, specifier);
+            if (scope.exception()) [[unlikely]] {
+                (void)scope.tryClearException();
+            }
+        }
+        if (esmRegistry) {
+            esmRegistry->remove(globalObject, specifier);
+            if (scope.exception()) [[unlikely]] {
+                (void)scope.tryClearException();
+            }
+        }
+    }
+
+    moduleMockChanges.shrink(marker);
+
+    if (moduleMocks->isEmpty()) {
+        delete moduleMocks;
+        moduleMocks = nullptr;
+        if (virtualModules == nullptr) {
+            mustDoExpensiveRelativeLookup = false;
+        }
+    }
 }
 
 class JSModuleMock final : public JSC::JSNonFinalObject {
@@ -765,7 +852,14 @@ EncodedJSValue BunPlugin::OnLoad::run(JSC::JSGlobalObject* globalObject, BunStri
 
 std::optional<String> BunPlugin::OnLoad::resolveVirtualModule(const String& path, const String& from)
 {
-    ASSERT(virtualModules);
+    ASSERT(moduleMocks || virtualModules);
+
+    auto resolveFromMap = [](VirtualModuleMap* map, const String& key) -> std::optional<String> {
+        if (!map) {
+            return std::nullopt;
+        }
+        return map->contains(key) ? std::optional<String> { key } : std::nullopt;
+    };
 
     if (this->mustDoExpensiveRelativeLookup) {
         String joinedPath = path;
@@ -776,10 +870,18 @@ std::optional<String> BunPlugin::OnLoad::resolveVirtualModule(const String& path
             joinedPath = URL(url, path).fileSystemPath();
         }
 
-        return virtualModules->contains(joinedPath) ? std::optional<String> { joinedPath } : std::nullopt;
+        if (auto resolution = resolveFromMap(moduleMocks, joinedPath)) {
+            return resolution;
+        }
+
+        return resolveFromMap(virtualModules, joinedPath);
     }
 
-    return virtualModules->contains(path) ? std::optional<String> { path } : std::nullopt;
+    if (auto resolution = resolveFromMap(moduleMocks, path)) {
+        return resolution;
+    }
+
+    return resolveFromMap(virtualModules, path);
 }
 
 EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, BunString* namespaceString, BunString* path, BunString* importer)
@@ -878,6 +980,16 @@ extern "C" JSC::EncodedJSValue Bun__runOnLoadPlugins(Zig::GlobalObject* globalOb
     return globalObject->onLoadPlugins.run(globalObject, namespaceString, path);
 }
 
+extern "C" void Bun__beginTestModuleMockingScope(Zig::GlobalObject* globalObject)
+{
+    globalObject->onLoadPlugins.beginModuleMockingScope();
+}
+
+extern "C" void Bun__endTestModuleMockingScope(Zig::GlobalObject* globalObject)
+{
+    globalObject->onLoadPlugins.endModuleMockingScope(globalObject);
+}
+
 namespace Bun {
 
 Structure* createModuleMockStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -894,10 +1006,25 @@ JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specif
     if (!globalObject->onLoadPlugins.hasVirtualModules()) {
         return fallback();
     }
-    auto& virtualModules = *globalObject->onLoadPlugins.virtualModules;
     WTF::String specifierString = specifier->toWTFString(BunString::ZeroCopy);
 
-    if (auto virtualModuleFn = virtualModules.get(specifierString)) {
+    JSC::Strong<JSC::JSObject> virtualModuleFn = [&]() -> JSC::Strong<JSC::JSObject> {
+        if (auto* moduleMocks = globalObject->onLoadPlugins.moduleMocks) {
+            if (auto fn = moduleMocks->get(specifierString)) {
+                return fn;
+            }
+        }
+
+        if (auto* virtualModules = globalObject->onLoadPlugins.virtualModules) {
+            if (auto fn = virtualModules->get(specifierString)) {
+                return fn;
+            }
+        }
+
+        return {};
+    }();
+
+    if (virtualModuleFn) {
         auto& vm = JSC::getVM(globalObject);
         JSC::JSObject* function = virtualModuleFn.get();
         auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -955,6 +1082,11 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionBunPluginClear, (JSC::JSGlobalObject * global
 
     delete global->onLoadPlugins.virtualModules;
     global->onLoadPlugins.virtualModules = nullptr;
+    delete global->onLoadPlugins.moduleMocks;
+    global->onLoadPlugins.moduleMocks = nullptr;
+    global->onLoadPlugins.moduleMockChanges.clear();
+    global->onLoadPlugins.moduleMockScopeMarkers.clear();
+    global->onLoadPlugins.mustDoExpensiveRelativeLookup = false;
 
     return JSC::JSValue::encode(JSC::jsUndefined());
 }

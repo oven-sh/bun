@@ -2,8 +2,19 @@
 
 Index of guides for working with Bun.
 
-## Runtime
+## Categories
 
-- HTTP server
-- WebSockets
-- File system
+- [Binary data](./binary/)
+- [Deployment](./deployment/)
+- [Ecosystem](./ecosystem/)
+- [HTMLRewriter](./html-rewriter/)
+- [HTTP](./http/)
+- [Package manager](./install/)
+- [Processes](./process/)
+- [Reading files](./read-file/)
+- [Runtime](./runtime/)
+- [Streams](./streams/)
+- [Test runner](./test/)
+- [Utilities](./util/)
+- [WebSocket](./websocket/)
+- [Writing files](./write-file/)

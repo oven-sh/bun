@@ -30,9 +30,10 @@ base one without editing it.
 
 Exit `0` = clean, `1` = violations, `2` = tool error.
 
-Use the `-profile` artifact (has symbols). The stripped release binary works
-but attribution degrades. Windows needs the companion `.pdb` — auto-discovered
-at `<binary>.pdb`, or pass `--pdb`.
+Use the `-profile` artifact. The stripped release binary has no `.symtab`
+(ELF) and no companion `.pdb` (PE) — every violation becomes `<no-symbol@addr>`
+and nothing in the allowlist matches. Windows auto-discovers `<binary>.pdb`
+if present, or pass `--pdb` explicitly.
 
 ## When it fails
 
@@ -101,6 +102,11 @@ CRT objects, anonymized staticlib helpers). Section contributions are the
 linker-map data in structured form — they say which `.obj`/`.lib` every byte
 came from. Attribution is by library basename, which doesn't move when
 unrelated code shifts the link layout.
+
+PDB coverage for the same code can vary across linker versions — a function
+that gets an `S_LPROC32` record on one toolchain may fall through to `<lib:>`
+on another. If a symbol flips between a mangled name and `<lib:NAME.lib>`
+across CI runs, allowlist both forms.
 
 Rust v0 mangled names carry a crate-hash (`Cs[base62]_`) that changes across
 target triples and toolchain versions. The allowlist uses `<rust-hash>` as a

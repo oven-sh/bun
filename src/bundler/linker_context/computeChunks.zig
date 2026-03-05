@@ -29,10 +29,14 @@ pub noinline fn computeChunks(
     const code_splitting = this.graph.code_splitting;
     const could_be_browser_target_from_server_build = this.options.target.isServerSide() and this.parse_graph.html_imports.html_source_indices.len > 0;
     const has_server_html_imports = this.parse_graph.html_imports.server_source_indices.len > 0;
+    const entry_point_kinds = this.graph.files.items(.entry_point_kind);
 
     // Create chunks for entry points
     for (entry_source_indices, 0..) |source_index, entry_id_| {
         const entry_bit = @as(Chunk.EntryPoint.ID, @truncate(entry_id_));
+
+        // Skip dead dynamic-import entries that were demoted during tree-shaking.
+        if (!entry_point_kinds[source_index].isEntryPoint()) continue;
 
         var entry_bits = &this.graph.files.items(.entry_bits)[source_index];
         entry_bits.set(entry_bit);

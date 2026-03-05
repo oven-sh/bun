@@ -575,6 +575,7 @@ pub const LinkerContext = struct {
         const css_reprs = c.graph.ast.items(.css);
         const side_effects = c.parse_graph.input_files.items(.side_effects);
         const entry_point_kinds = c.graph.files.items(.entry_point_kind);
+        const entry_points = c.graph.entry_points.items(.source_index);
         const distances = c.graph.files.items(.distance_from_entry_point);
 
         {
@@ -582,12 +583,9 @@ pub const LinkerContext = struct {
             defer trace2.end();
 
             // Tree shaking: Each entry point marks all files reachable from itself.
-            //
-            // Dynamic-import entry points are deferred to a second fixpoint pass so
-            // that orphan chunks (whose only `import()` call sites were DCE'd) are
-            // not emitted. Without this, an `await import()` inside a tree-shaken
-            // helper function would still produce a chunk with zero inbound refs.
-            for (c.graph.entry_points.items(.source_index)) |entry_point| {
+            // Dynamic-import entry points are deferred so that orphan chunks whose
+            // only import() call sites were DCE'd are not emitted.
+            for (entry_points) |entry_point| {
                 if (entry_point_kinds[entry_point] == .dynamic_import) continue;
                 c.markFileLiveForTreeShaking(
                     entry_point,
@@ -599,89 +597,40 @@ pub const LinkerContext = struct {
                 );
             }
 
-            if (c.graph.code_splitting) sweep: {
-                // Pre-collect the set of (part, target) edges where a dynamic
-                // import record targets a .dynamic_import entry point. This set is
-                // small (one entry per lazy `import()` call site), so the fixpoint
-                // below iterates over a handful of edges rather than re-scanning
-                // every file/part/record on each pass.
-                const DynImportEdge = struct { part: *Part, target: Index.Int };
-                var edges: std.ArrayListUnmanaged(DynImportEdge) = .{};
-                defer edges.deinit(c.allocator());
+            // Fixpoint: promote dynamic-import entries that a live part references.
+            // Promoting a target marks its parts live, which may enable further
+            // promotions (transitive import() chains). On completion, demote any
+            // remaining .dynamic_import entries to .none so they are not treated as
+            // entry points (no chunk emitted, isExternalDynamicImport returns false).
+            if (c.graph.code_splitting) {
+                var promoted = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(c.allocator(), c.graph.files.len);
+                defer promoted.deinit(c.allocator());
 
-                for (c.graph.reachable_files) |source_index| {
-                    const id = source_index.get();
-                    for (parts[id].slice()) |*part| {
-                        for (part.import_record_indices.slice()) |import_record_index| {
-                            const record = import_records[id].at(import_record_index);
-                            if (record.kind != .dynamic) continue;
-                            if (!record.source_index.isValid()) continue;
-                            const target = record.source_index.get();
-                            if (entry_point_kinds[target] != .dynamic_import) continue;
-                            try edges.append(c.allocator(), .{ .part = part, .target = target });
+                var changed = true;
+                while (changed) {
+                    changed = false;
+                    for (c.graph.reachable_files) |source_index| {
+                        const id = source_index.get();
+                        for (parts[id].slice()) |part| {
+                            if (!part.is_live) continue;
+                            for (part.import_record_indices.slice()) |import_record_index| {
+                                const record = import_records[id].at(import_record_index);
+                                if (record.kind != .dynamic or !record.source_index.isValid()) continue;
+                                const target = record.source_index.get();
+                                if (entry_point_kinds[target] != .dynamic_import or promoted.isSet(target)) continue;
+                                promoted.set(target);
+                                c.markFileLiveForTreeShaking(target, side_effects, parts, import_records, entry_point_kinds, css_reprs);
+                                changed = true;
+                            }
                         }
                     }
                 }
-                if (edges.items.len == 0) break :sweep;
-
-                // Track which .dynamic_import entry points are referenced by a live
-                // `import()` expression. We can't use `files_live` for this because a
-                // file may be live via a static import yet have no live dynamic import.
-                var live_dynamic_entries = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(c.allocator(), c.graph.files.len);
-                defer live_dynamic_entries.deinit(c.allocator());
-
-                // Fixpoint over the pre-collected edges. Promoting a target may make
-                // parts live that enable further edges (transitive `import()` chains).
-                //
-                // Termination: each iteration that continues must set >=1 new bit in
-                // live_dynamic_entries (the isSet guard ensures any_promoted=true only
-                // for targets not yet promoted). Bits never clear. Therefore the loop
-                // runs at most edges.len + 1 times — the for-range makes this explicit.
-                for (0..edges.items.len + 1) |_| {
-                    var any_promoted = false;
-                    for (edges.items) |edge| {
-                        if (live_dynamic_entries.isSet(edge.target)) continue;
-                        if (!edge.part.is_live) continue;
-
-                        live_dynamic_entries.set(edge.target);
-                        c.markFileLiveForTreeShaking(
-                            edge.target,
-                            side_effects,
-                            parts,
-                            import_records,
-                            entry_point_kinds,
-                            css_reprs,
-                        );
-                        any_promoted = true;
-                    }
-                    if (!any_promoted) break;
+                for (entry_points) |ep| {
+                    if (entry_point_kinds[ep] == .dynamic_import and !promoted.isSet(ep))
+                        entry_point_kinds[ep] = .none;
                 }
-
-                // Sweep: remove .dynamic_import entry points with no live references.
-                // Also reset their kind to .none so `isExternalDynamicImport` returns
-                // false for any remaining (dead) records pointing at them.
-                const src_indices = c.graph.entry_points.items(.source_index);
-                const out_paths = c.graph.entry_points.items(.output_path);
-                const out_auto = c.graph.entry_points.items(.output_path_was_auto_generated);
-                var write: usize = 0;
-                for (0..c.graph.entry_points.len) |read| {
-                    const src = src_indices[read];
-                    if (entry_point_kinds[src] == .dynamic_import and !live_dynamic_entries.isSet(src)) {
-                        entry_point_kinds[src] = .none;
-                        continue;
-                    }
-                    if (write != read) {
-                        src_indices[write] = src_indices[read];
-                        out_paths[write] = out_paths[read];
-                        out_auto[write] = out_auto[read];
-                    }
-                    write += 1;
-                }
-                c.graph.entry_points.len = write;
             }
         }
-
-        const entry_points = c.graph.entry_points.items(.source_index);
 
         {
             const trace2 = bun.perf.trace("Bundler.markFileReachableForCodeSplitting");
@@ -703,6 +652,7 @@ pub const LinkerContext = struct {
             // between live parts within the same file. All liveness has to be computed
             // first before determining which entry points can reach which files.
             for (entry_points, 0..) |entry_point, i| {
+                if (!entry_point_kinds[entry_point].isEntryPoint()) continue;
                 c.markFileReachableForCodeSplitting(
                     entry_point,
                     i,

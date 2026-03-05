@@ -647,8 +647,10 @@ wcsnlen                     [AVX, AVX2]
 
 
 # ----------------------------------------------------------------------------
-# Rust std memchr AVX2 kernel, misattributed by the PDB to the lolhtml
-# call site that inlined it. Gate: is_x86_feature_detected!.
-# (1 symbols)
+# Rust std memchr AVX2 kernel inlined into lolhtml. Gate: is_x86_feature_detected!.
+# PDB attribution varies by toolchain — sometimes a hashbrown call-site symbol,
+# sometimes no symbol at all (falls through to section-contribution <lib:> name).
+# (2 symbols)
 # ----------------------------------------------------------------------------
 _RINvYNtNt<rust-hash>9hashbrown6hasher18DefaultHashBuilderNtNt<rust-hash>4core4hash11BuildHasher8hash_oneRNtNtNt<rust-hash>8lol_html4html10local_name9LocalNameEB1R_  [AVX, AVX2]
+<lib:lolhtml.lib>                                                                                                                                                     [AVX, AVX2]

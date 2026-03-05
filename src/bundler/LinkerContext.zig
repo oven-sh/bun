@@ -599,44 +599,60 @@ pub const LinkerContext = struct {
                 );
             }
 
-            if (c.graph.code_splitting) {
+            if (c.graph.code_splitting) sweep: {
+                // Pre-collect the set of (part, target) edges where a dynamic
+                // import record targets a .dynamic_import entry point. This set is
+                // small (one entry per lazy `import()` call site), so the fixpoint
+                // below iterates over a handful of edges rather than re-scanning
+                // every file/part/record on each pass.
+                const DynImportEdge = struct { part: *Part, target: Index.Int };
+                var edges: std.ArrayListUnmanaged(DynImportEdge) = .{};
+                defer edges.deinit(c.allocator());
+
+                for (c.graph.reachable_files) |source_index| {
+                    const id = source_index.get();
+                    for (parts[id].slice()) |*part| {
+                        for (part.import_record_indices.slice()) |import_record_index| {
+                            const record = import_records[id].at(import_record_index);
+                            if (record.kind != .dynamic) continue;
+                            if (!record.source_index.isValid()) continue;
+                            const target = record.source_index.get();
+                            if (entry_point_kinds[target] != .dynamic_import) continue;
+                            try edges.append(c.allocator(), .{ .part = part, .target = target });
+                        }
+                    }
+                }
+                if (edges.items.len == 0) break :sweep;
+
                 // Track which .dynamic_import entry points are referenced by a live
                 // `import()` expression. We can't use `files_live` for this because a
                 // file may be live via a static import yet have no live dynamic import.
                 var live_dynamic_entries = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(c.allocator(), c.graph.files.len);
                 defer live_dynamic_entries.deinit(c.allocator());
 
-                // Fixpoint: promote dynamic-import entry points referenced by a live
-                // part's `import()` record, then re-scan. Promoting one entry point may
-                // make new parts live that reference further entry points (transitive
-                // `import()` chains). Converges in O(chain depth) iterations.
-                while (true) {
+                // Fixpoint over the pre-collected edges. Promoting a target may make
+                // parts live that enable further edges (transitive `import()` chains).
+                //
+                // Termination: each iteration that continues must set >=1 new bit in
+                // live_dynamic_entries (the isSet guard ensures any_promoted=true only
+                // for targets not yet promoted). Bits never clear. Therefore the loop
+                // runs at most edges.len + 1 times — the for-range makes this explicit.
+                for (0..edges.items.len + 1) |_| {
                     var any_promoted = false;
-                    for (c.graph.reachable_files) |source_index| {
-                        const id = source_index.get();
-                        if (!c.graph.files_live.isSet(id)) continue;
-                        for (parts[id].slice()) |*part| {
-                            if (!part.is_live) continue;
-                            for (part.import_record_indices.slice()) |import_record_index| {
-                                const record = import_records[id].at(import_record_index);
-                                if (record.kind != .dynamic) continue;
-                                if (!record.source_index.isValid()) continue;
-                                const target = record.source_index.get();
-                                if (entry_point_kinds[target] != .dynamic_import) continue;
-                                if (live_dynamic_entries.isSet(target)) continue;
+                    for (edges.items) |edge| {
+                        if (live_dynamic_entries.isSet(edge.target)) continue;
+                        if (!edge.part.is_live) continue;
 
-                                live_dynamic_entries.set(target);
-                                c.markFileLiveForTreeShaking(
-                                    target,
-                                    side_effects,
-                                    parts,
-                                    import_records,
-                                    entry_point_kinds,
-                                    css_reprs,
-                                );
-                                any_promoted = true;
-                            }
-                        }
+                        live_dynamic_entries.set(edge.target);
+                        c.markFileLiveForTreeShaking(
+                            edge.target,
+                            side_effects,
+                            parts,
+                            import_records,
+                            entry_point_kinds,
+                            css_reprs,
+                        );
+                        any_promoted = true;
                     }
                     if (!any_promoted) break;
                 }

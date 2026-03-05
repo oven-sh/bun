@@ -1085,7 +1085,12 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionBunPluginClear, (JSC::JSGlobalObject * global
     delete global->onLoadPlugins.moduleMocks;
     global->onLoadPlugins.moduleMocks = nullptr;
     global->onLoadPlugins.moduleMockChanges.clear();
-    global->onLoadPlugins.moduleMockScopeMarkers.clear();
+    // Preserve the number of active scope markers so that mock.module() calls
+    // made after mock.restore() within the same test file are still tracked and
+    // can be rolled back by endModuleMockingScope(). Reset each marker to 0
+    // since moduleMockChanges is now empty.
+    for (auto& marker : global->onLoadPlugins.moduleMockScopeMarkers)
+        marker = 0;
     global->onLoadPlugins.mustDoExpensiveRelativeLookup = false;
 
     return JSC::JSValue::encode(JSC::jsUndefined());

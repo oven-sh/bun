@@ -184,7 +184,7 @@ if (await Bun.file(staticChecker).exists()) {
     stdout: "pipe",
     stderr: "inherit",
   });
-  const [stdout, code] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
   const elapsed = ((performance.now() - start) / 1000).toFixed(1);
   console.log(stdout);
 

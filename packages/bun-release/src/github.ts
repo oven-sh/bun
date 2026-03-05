@@ -69,11 +69,18 @@ export async function downloadAssetContent(assetId: number): Promise<Buffer> {
   const url = `https://api.github.com/repos/${owner}/${repo}/releases/assets/${assetId}`;
   const token = process.env["GITHUB_TOKEN"];
   const response = await fetch(url, {
+    assert: false,
     headers: {
       Accept: "application/octet-stream",
       ...(token ? { Authorization: `token ${token}` } : {}),
     },
   });
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    throw new Error(
+      `Failed to download asset ${assetId}: ${response.status} ${response.statusText}${body ? ` - ${body}` : ""}`,
+    );
+  }
   return Buffer.from(await response.arrayBuffer());
 }
 

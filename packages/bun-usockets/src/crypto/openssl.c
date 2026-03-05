@@ -894,6 +894,7 @@ int us_ssl_ctx_use_privatekey_content(SSL_CTX *ctx, const char *content,
   int reason_code, ret = 0;
   BIO *in;
   EVP_PKEY *pkey = NULL;
+  if (content == NULL) return 0;
   in = BIO_new_mem_buf(content, strlen(content));
   if (in == NULL) {
     OPENSSL_PUT_ERROR(SSL, ERR_R_BUF_LIB);
@@ -963,6 +964,7 @@ int us_ssl_ctx_use_certificate_chain(SSL_CTX *ctx, const char *content) {
 
   ERR_clear_error(); // clear error stack for SSL_CTX_use_certificate()
 
+  if (content == NULL) return 0;
   in = BIO_new_mem_buf(content, strlen(content));
   if (in == NULL) {
     OPENSSL_PUT_ERROR(SSL, ERR_R_BUF_LIB);

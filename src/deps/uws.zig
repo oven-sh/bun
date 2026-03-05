@@ -70,6 +70,7 @@ pub const create_bun_socket_error_t = enum(c_int) {
     invalid_ca_file,
     invalid_ca,
     invalid_ciphers,
+    failed_to_create_context,
 
     pub fn message(this: create_bun_socket_error_t) ?[]const u8 {
         return switch (this) {
@@ -78,6 +79,7 @@ pub const create_bun_socket_error_t = enum(c_int) {
             .invalid_ca_file => "Invalid CA file",
             .invalid_ca => "Invalid CA",
             .invalid_ciphers => "Invalid ciphers",
+            .failed_to_create_context => "Failed to create SSL context",
         };
     }
 
@@ -91,6 +93,7 @@ pub const create_bun_socket_error_t = enum(c_int) {
             .invalid_ca_file => globalObject.ERR(.BORINGSSL, "Invalid CA file", .{}).toJS(),
             .invalid_ca => globalObject.ERR(.BORINGSSL, "Invalid CA", .{}).toJS(),
             .invalid_ciphers => globalObject.ERR(.BORINGSSL, "Invalid ciphers", .{}).toJS(),
+            .failed_to_create_context => globalObject.ERR(.BORINGSSL, "Failed to create SSL context", .{}).toJS(),
         };
     }
 };

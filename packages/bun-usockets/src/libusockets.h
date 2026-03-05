@@ -263,6 +263,7 @@ enum create_bun_socket_error_t {
   CREATE_BUN_SOCKET_ERROR_INVALID_CA_FILE,
   CREATE_BUN_SOCKET_ERROR_INVALID_CA,
   CREATE_BUN_SOCKET_ERROR_INVALID_CIPHERS,
+  CREATE_BUN_SOCKET_ERROR_FAILED_TO_CREATE_CONTEXT,
 };
 
 struct us_socket_context_t *us_create_bun_ssl_socket_context(struct us_loop_t *loop,

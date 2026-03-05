@@ -761,6 +761,9 @@ SSL_CTX *
 create_ssl_context_from_options(struct us_socket_context_options_t options) {
   /* Create the context */
   SSL_CTX *ssl_context = SSL_CTX_new(TLS_method());
+  if (!ssl_context) {
+    return NULL;
+  }
 
   /* Default options we rely on - changing these will break our logic */
   SSL_CTX_set_read_ahead(ssl_context, 1);
@@ -1140,6 +1143,10 @@ SSL_CTX *create_ssl_context_from_bun_options(
 
   /* Create the context */
   SSL_CTX *ssl_context = SSL_CTX_new(TLS_method());
+  if (!ssl_context) {
+    *err = CREATE_BUN_SOCKET_ERROR_FAILED_TO_CREATE_CONTEXT;
+    return NULL;
+  }
 
   /* Default options we rely on - changing these will break our logic */
   SSL_CTX_set_read_ahead(ssl_context, 1);

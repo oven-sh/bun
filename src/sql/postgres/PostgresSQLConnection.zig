@@ -1,5 +1,24 @@
 const PostgresSQLConnection = @This();
 const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
+
+/// Maximum buffer size for COPY data accumulation (256MB)
+const MAX_COPY_BUFFER_SIZE: usize = 256 * 1024 * 1024;
+
+/// Hard upper bound for COPY buffer size to avoid unbounded memory growth.
+/// This is intentionally conservative; raising it should require explicit opt-in.
+const MAX_COPY_BUFFER_SIZE_HARD_CAP: usize = 1024 * 1024 * 1024; // 1 GiB
+
+/// Threshold for shrinking the COPY buffer after operation completes (64MB)
+/// If buffer capacity exceeds this after COPY, we shrink it to avoid wasting memory
+const COPY_BUFFER_SHRINK_THRESHOLD: usize = 64 * 1024 * 1024;
+
+/// Default COPY operation timeout in milliseconds.
+/// 0 means no COPY timeout.
+const DEFAULT_COPY_TIMEOUT_MS: u32 = 0;
+
+/// PostgreSQL binary COPY format signature: "PGCOPY\n\xff\r\n\0"
+const COPY_BINARY_SIGNATURE = [_]u8{ 'P', 'G', 'C', 'O', 'P', 'Y', '\n', 0xff, '\r', '\n', 0 };
+
 socket: Socket,
 status: Status = Status.connecting,
 ref_count: RefCount = RefCount.init(),
@@ -43,6 +62,10 @@ connection_timeout_ms: u32 = 0,
 
 flags: ConnectionFlags = .{},
 
+/// Promise used by `awaitWritable()` to await socket writability.
+/// Stored strongly on the connection so it is kept alive until resolved/rejected.
+await_writable_promise: jsc.Strong.Optional = .empty,
+
 /// Before being connected, this is a connection timeout timer.
 /// After being connected, this is an idle timeout timer.
 timer: bun.api.Timer.EventLoopTimer = .{
@@ -60,8 +83,173 @@ max_lifetime_timer: bun.api.Timer.EventLoopTimer = .{
 },
 auto_flusher: AutoFlusher = .{},
 
+/// COPY protocol state tracking
+copy_state: enum {
+    none,
+    copy_in_progress, // COPY FROM STDIN
+    copy_out_progress, // COPY TO STDOUT
+} = .none,
+copy_format: u8 = 0, // 0=text, 1=binary
+copy_column_formats: []u16 = &.{},
+copy_data_buffer: std.array_list.Managed(u8) = std.array_list.Managed(u8).init(bun.default_allocator),
+max_copy_buffer_size: usize = MAX_COPY_BUFFER_SIZE,
+
+/// The query that owns the currently active COPY operation.
+/// This is set when COPY starts (CopyInResponse / CopyOutResponse) and is used to
+/// deterministically reject the correct request on COPY failures.
+copy_owner: ?*PostgresSQLQuery = null,
+
+/// COPY progress tracking
+copy_bytes_transferred: u64 = 0,
+copy_chunks_processed: u64 = 0,
+/// If true, do not accumulate COPY TO data in memory; only emit streaming chunks to JS
+copy_streaming_mode: bool = false,
+/// Whether JavaScript has registered an onCopyChunk handler for this connection.
+/// This is used to prevent enabling streaming mode when there is nowhere to deliver chunks.
+copy_chunk_handler_registered: bool = false,
+/// Track if we're currently processing a streaming callback to prevent reentrant calls
+copy_callback_in_progress: bool = false,
+/// COPY-specific timeout in milliseconds.
+/// 0 means no COPY timeout.
+copy_timeout_ms: u32 = 0,
+/// Timestamp when COPY operation started (for timeout tracking)
+copy_start_timestamp_ms: u64 = 0,
+/// Track if we've validated the binary COPY header
+copy_binary_header_validated: bool = false,
+
 pub const ref = RefCount.ref;
 pub const deref = RefCount.deref;
+
+fn effectiveMaxCopyBufferSize(this: *const PostgresSQLConnection) usize {
+    return if (this.max_copy_buffer_size == 0) std.math.maxInt(usize) else this.max_copy_buffer_size;
+}
+
+fn resolveAwaitWritable(this: *PostgresSQLConnection, globalObject: *jsc.JSGlobalObject) void {
+    const promise_value = this.await_writable_promise.swap();
+    if (promise_value == .zero) return;
+
+    const promise = promise_value.asInternalPromise() orelse return;
+    promise.resolve(globalObject, .js_undefined) catch {};
+}
+
+fn rejectAwaitWritable(this: *PostgresSQLConnection, globalObject: *jsc.JSGlobalObject, message: []const u8) void {
+    const promise_value = this.await_writable_promise.swap();
+    if (promise_value == .zero) return;
+
+    const promise = promise_value.asInternalPromise() orelse return;
+    const err = globalObject.createErrorInstance("{s}", .{message});
+    promise.rejectAsHandled(globalObject, err);
+}
+
+/// JS: PostgresSQLConnection.setCopyStreamingMode(enable: boolean)
+pub fn setCopyStreamingMode(this: *PostgresSQLConnection, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    _ = globalObject;
+    const args = callframe.arguments();
+    const enable = if (args.len > 0) args[0].toBoolean() else true;
+    this.copy_streaming_mode = enable;
+    return .js_undefined;
+}
+
+/// JS: PostgresSQLConnection.setCopyTimeout(ms: number)
+pub fn setCopyTimeout(this: *PostgresSQLConnection, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    const args = callframe.arguments();
+    if (args.len < 1) {
+        return globalObject.throwNotEnoughArguments("setCopyTimeout", 1, args.len);
+    }
+    const n = try args[0].toNumber(globalObject);
+    var ms: u32 = 0;
+    if (std.math.isFinite(n) and n > 0) {
+        const cap_f64: f64 = @floatFromInt(std.math.maxInt(u32));
+        const clamped: f64 = @min(n, cap_f64);
+        const n_u64: u64 = @intFromFloat(clamped);
+        ms = @intCast(n_u64);
+    }
+    this.copy_timeout_ms = ms;
+    return .js_undefined;
+}
+
+/// JS: PostgresSQLConnection.setMaxCopyBufferSize(bytes: number)
+///
+/// This method is intentionally capped to `MAX_COPY_BUFFER_SIZE` (256MB) to avoid
+/// unbounded memory growth when callers pass very large values (for example, via
+/// JS clamping to 0xffffffff).
+///
+/// To opt into larger limits (up to `MAX_COPY_BUFFER_SIZE_HARD_CAP`), use
+/// `setMaxCopyBufferSizeUnsafe()`.
+pub fn setMaxCopyBufferSize(this: *PostgresSQLConnection, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    const args = callframe.arguments();
+    if (args.len < 1) {
+        return globalObject.throwNotEnoughArguments("setMaxCopyBufferSize", 1, args.len);
+    }
+    const n = try args[0].toNumber(globalObject);
+
+    // Default to the safe cap (256MB). Non-finite and <= 0 values disable limits (0),
+    // matching the documented semantics used elsewhere for COPY limits.
+    var bytes: usize = MAX_COPY_BUFFER_SIZE;
+    if (!std.math.isFinite(n) or n <= 0) {
+        bytes = 0;
+    } else {
+        const cap_f64: f64 = @floatFromInt(@as(u64, MAX_COPY_BUFFER_SIZE));
+        const clamped: f64 = @min(n, cap_f64);
+        const n_u64: u64 = @intFromFloat(clamped);
+        bytes = @intCast(@min(n_u64, @as(u64, MAX_COPY_BUFFER_SIZE)));
+    }
+
+    this.max_copy_buffer_size = bytes;
+    return .js_undefined;
+}
+
+/// JS: PostgresSQLConnection.setMaxCopyBufferSizeUnsafe(bytes: number)
+///
+/// Explicit opt-in to larger COPY buffer sizes, capped to `MAX_COPY_BUFFER_SIZE_HARD_CAP`.
+pub fn setMaxCopyBufferSizeUnsafe(this: *PostgresSQLConnection, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    const args = callframe.arguments();
+    if (args.len < 1) {
+        return globalObject.throwNotEnoughArguments("setMaxCopyBufferSizeUnsafe", 1, args.len);
+    }
+    const n = try args[0].toNumber(globalObject);
+
+    var bytes: usize = 0;
+    if (std.math.isFinite(n) and n > 0) {
+        const cap_f64: f64 = @floatFromInt(@as(u64, MAX_COPY_BUFFER_SIZE_HARD_CAP));
+        const clamped: f64 = @min(n, cap_f64);
+        const n_u64: u64 = @intFromFloat(clamped);
+        bytes = @intCast(@min(n_u64, @as(u64, MAX_COPY_BUFFER_SIZE_HARD_CAP)));
+    }
+
+    this.max_copy_buffer_size = bytes;
+    return .js_undefined;
+}
+
+/// JS: PostgresSQLConnection.awaitWritable()
+/// Returns a Promise that resolves once the socket becomes writable.
+/// If there is no backpressure, it resolves immediately.
+pub fn awaitWritable(this: *PostgresSQLConnection, globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    // If the connection is not connected, fail immediately.
+    if (this.status != .connected) {
+        return globalObject.throw("Cannot await writable: connection is {s}. The connection must be open.", .{@tagName(this.status)});
+    }
+
+    // Fast path: if there is no backpressure, resolve immediately.
+    if (!this.flags.has_backpressure) {
+        return jsc.JSInternalPromise.resolvedPromise(globalObject, .js_undefined).asValue();
+    }
+
+    // Reuse an existing pending promise if present.
+    if (this.await_writable_promise.get()) |existing| {
+        return existing;
+    }
+
+    const promise_value = jsc.JSValue.createInternalPromise(globalObject);
+    if (promise_value.asInternalPromise() == null) {
+        return globalObject.throw("Failed to create internal promise for awaitWritable", .{});
+    }
+
+    // Store strongly on the connection so it is kept alive until resolved/rejected.
+    this.await_writable_promise.set(globalObject, promise_value);
+
+    return promise_value;
+}
 
 pub fn onAutoFlush(this: *@This()) bool {
     if (this.flags.has_backpressure) {
@@ -347,7 +535,14 @@ pub fn fail(this: *PostgresSQLConnection, message: []const u8, err: AnyPostgresE
 }
 
 pub fn onClose(this: *PostgresSQLConnection) void {
+    // Reject any pending awaitWritable promise first so callers do not hang on remote close.
+    // Do this early to avoid races with cleanup and socket teardown.
+    this.rejectAwaitWritable(this.globalObject, "Connection closed");
+
     this.unregisterAutoFlusher();
+
+    // Clean up COPY state if connection closes during COPY operation
+    this.cleanupCopyState();
 
     if (this.vm.isShuttingDown()) {
         defer this.updateHasPendingActivity();
@@ -459,6 +654,18 @@ pub fn onTimeout(this: *PostgresSQLConnection) void {
 pub fn onDrain(this: *PostgresSQLConnection) void {
     debug("onDrain", .{});
     this.flags.has_backpressure = false;
+
+    // Resolve any pending awaitWritable promise first.
+    this.resolveAwaitWritable(this.globalObject);
+
+    // Notify any pending awaitWritable callback (use connection as thisArg)
+    var vm = jsc.VirtualMachine.get();
+    if (vm.rareData().postgresql_context.onWritableFn.get()) |callback_writable| {
+        const event_loop = vm.eventLoop();
+        // Pass the PostgresSQLConnection JS wrapper as 'this' so JS can dispatch per-connection
+        event_loop.runCallback(callback_writable, this.globalObject, this.js_value, &.{});
+    }
+
     // Don't send any other messages while we're waiting for TLS.
     if (this.tls_status == .message_sent) {
         if (this.tls_status.message_sent < 8) {
@@ -875,6 +1082,8 @@ pub fn doFlush(this: *PostgresSQLConnection, _: *jsc.JSGlobalObject, _: *jsc.Cal
 }
 
 fn close(this: *@This()) void {
+    // Reject any pending awaitWritable promise before tearing down the socket.
+    this.rejectAwaitWritable(this.globalObject, "Connection closed");
     this.disconnect();
     this.unregisterAutoFlusher();
     this.write_buffer.clearAndFree(bun.default_allocator);
@@ -884,6 +1093,403 @@ pub fn doClose(this: *@This(), globalObject: *jsc.JSGlobalObject, _: *jsc.CallFr
     _ = globalObject;
     this.close();
     return .js_undefined;
+}
+
+/// Helper: send COPY data from a JSValue (string or ArrayBuffer/TypedArray)
+pub fn copySendDataFromJSValue(this: *PostgresSQLConnection, globalObject: *jsc.JSGlobalObject, data_value: jsc.JSValue) bun.JSError!void {
+    // Validate connection state
+    if (this.status != .connected) {
+        return globalObject.throw("Cannot send COPY data: connection is {s}. Ensure the connection is open before sending COPY data.", .{@tagName(this.status)});
+    }
+    if (this.copy_state != .copy_in_progress) {
+        return globalObject.throw("Cannot send COPY data: not in COPY FROM STDIN mode (current state: {s}). You must execute a 'COPY ... FROM STDIN' command first.", .{@tagName(this.copy_state)});
+    }
+
+    // Enforce COPY timeout for COPY FROM as well (0 disables COPY timeout).
+    if (this.copy_timeout_ms > 0 and this.copy_start_timestamp_ms > 0) {
+        const now = std.time.milliTimestamp();
+        const elapsed = @as(u64, @intCast(now)) -| this.copy_start_timestamp_ms;
+        const timeout_u64: u64 = @intCast(this.copy_timeout_ms);
+        if (elapsed > timeout_u64) {
+            this.abortCopyAndFailConnection(error.CopyTimeout, "COPY aborted: timeout");
+            return globalObject.throw("COPY aborted: timeout", .{});
+        }
+    }
+
+    const max_copy_buffer_size = this.effectiveMaxCopyBufferSize();
+
+    // Extract payload as bytes (ArrayBuffer/TypedArray) or UTF-8 from string.
+    // IMPORTANT: When converting a string to UTF-8, the resulting slice is only valid
+    // while the UTF-8 buffer is alive. Write CopyData inside the same scope.
+    if (data_value.asArrayBuffer(globalObject)) |buf| {
+        const slice = buf.byteSlice();
+
+        // Guard against excessively large chunks (0 disables limit)
+        if (slice.len > max_copy_buffer_size) {
+            return globalObject.throw("COPY data chunk too large: {d} bytes exceeds maximum of {d} bytes. Consider sending smaller chunks.", .{ slice.len, max_copy_buffer_size });
+        }
+
+        // Write CopyData
+        var copy_data = protocol.CopyData{
+            .data = .{ .temporary = slice },
+        };
+        copy_data.writeInternal(PostgresSQLConnection.Writer, this.writer()) catch |err| {
+            this.abortCopyAndFailConnection(error.CopyWriteFailed, "COPY aborted: write failed");
+            return globalObject.throw("Failed to send COPY data ({d} bytes): {s}. The connection may have been closed or the socket buffer may be full.", .{ slice.len, @errorName(err) });
+        };
+        this.flushData();
+
+        // Progress tracking (saturating add)
+        this.copy_bytes_transferred = this.copy_bytes_transferred +| @as(u64, @intCast(slice.len));
+        this.copy_chunks_processed = this.copy_chunks_processed +| 1;
+    } else {
+        const data_str = try data_value.toBunString(globalObject);
+        defer data_str.deref();
+
+        var data_utf8 = data_str.toUTF8(bun.default_allocator);
+        defer data_utf8.deinit();
+
+        const slice = data_utf8.slice();
+
+        // Guard against excessively large chunks (0 disables limit)
+        if (slice.len > max_copy_buffer_size) {
+            return globalObject.throw("COPY data chunk too large: {d} bytes exceeds maximum of {d} bytes. Consider sending smaller chunks.", .{ slice.len, max_copy_buffer_size });
+        }
+
+        // Write CopyData while `data_utf8` is still alive.
+        var copy_data = protocol.CopyData{
+            .data = .{ .temporary = slice },
+        };
+        copy_data.writeInternal(PostgresSQLConnection.Writer, this.writer()) catch |err| {
+            this.abortCopyAndFailConnection(error.CopyWriteFailed, "COPY aborted: write failed");
+            return globalObject.throw("Failed to send COPY data ({d} bytes): {s}. The connection may have been closed or the socket buffer may be full.", .{ slice.len, @errorName(err) });
+        };
+        this.flushData();
+
+        // Progress tracking (saturating add)
+        this.copy_bytes_transferred = this.copy_bytes_transferred +| @as(u64, @intCast(slice.len));
+        this.copy_chunks_processed = this.copy_chunks_processed +| 1;
+    }
+}
+
+/// Helper: send COPY done (validates state)
+fn copySendDone(this: *PostgresSQLConnection, globalObject: *jsc.JSGlobalObject) bun.JSError!void {
+    // Validate connection state
+    if (this.status != .connected) {
+        return globalObject.throw("Cannot send COPY done: connection is {s}. The connection must be open to complete the COPY operation.", .{@tagName(this.status)});
+    }
+    if (this.copy_state != .copy_in_progress) {
+        return globalObject.throw("Cannot send COPY done: not in COPY FROM STDIN mode (current state: {s}). You must be in an active COPY FROM STDIN operation.", .{@tagName(this.copy_state)});
+    }
+
+    this.writer().write(&protocol.CopyDone) catch |err| {
+        this.abortCopyAndFailConnection(error.CopyWriteFailed, "COPY aborted: write failed");
+        return globalObject.throw("Failed to send COPY done signal: {s}. This may indicate a network error or closed connection.", .{@errorName(err)});
+    };
+    this.flushData();
+}
+
+/// Helper: send COPY fail with a message from a JSValue
+pub fn copySendFailFromJSValue(this: *PostgresSQLConnection, globalObject: *jsc.JSGlobalObject, message_value: jsc.JSValue) bun.JSError!void {
+    // Validate connection state
+    if (this.status != .connected) {
+        return globalObject.throw("Cannot send COPY fail: connection is {s}. The connection must be open to abort the COPY operation.", .{@tagName(this.status)});
+    }
+    if (this.copy_state != .copy_in_progress) {
+        return globalObject.throw("Cannot send COPY fail: not in COPY FROM STDIN mode (current state: {s}). You must be in an active COPY FROM STDIN operation to abort it.", .{@tagName(this.copy_state)});
+    }
+
+    if (!message_value.isEmptyOrUndefinedOrNull()) {
+        const message_string = try message_value.toBunString(globalObject);
+        defer message_string.deref();
+
+        var message = message_string.toUTF8(bun.default_allocator);
+        defer message.deinit();
+
+        var fail_message = protocol.CopyFail{
+            .message = .{ .temporary = message.slice() },
+        };
+        fail_message.writeInternal(PostgresSQLConnection.Writer, this.writer()) catch |err| {
+            this.abortCopyAndFailConnection(error.CopyWriteFailed, "COPY aborted: write failed");
+            return globalObject.throw("Failed to send COPY fail message to server: {s}. The COPY operation may have already ended or the connection may be closed.", .{@errorName(err)});
+        };
+        this.flushData();
+    } else {
+        var fail_message = protocol.CopyFail{
+            .message = .{ .temporary = "" },
+        };
+        fail_message.writeInternal(PostgresSQLConnection.Writer, this.writer()) catch |err| {
+            this.abortCopyAndFailConnection(error.CopyWriteFailed, "COPY aborted: write failed");
+            return globalObject.throw("Failed to send COPY fail message to server: {s}. The COPY operation may have already ended or the connection may be closed.", .{@errorName(err)});
+        };
+        this.flushData();
+    }
+
+    // Clean up all COPY state
+    this.cleanupCopyState();
+}
+
+/// Public: PostgresSQLConnection.sendCopyData(data)
+pub fn sendCopyData(this: *PostgresSQLConnection, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    const args = callframe.arguments();
+    if (args.len < 1) {
+        return globalObject.throwNotEnoughArguments("sendCopyData", 1, args.len);
+    }
+    try this.copySendDataFromJSValue(globalObject, args[0]);
+    return .js_undefined;
+}
+
+/// Public: PostgresSQLConnection.sendCopyDone()
+pub fn sendCopyDone(this: *PostgresSQLConnection, globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    try this.copySendDone(globalObject);
+    return .js_undefined;
+}
+
+/// Public: PostgresSQLConnection.sendCopyFail(message?)
+pub fn sendCopyFail(this: *PostgresSQLConnection, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    const args = callframe.arguments();
+    const message_value: jsc.JSValue = if (args.len > 0) args[0] else .js_undefined;
+    try this.copySendFailFromJSValue(globalObject, message_value);
+    return .js_undefined;
+}
+
+/// Clean up all COPY protocol state
+///
+/// This function is called in the following scenarios:
+/// - Normal completion: After CommandComplete is received and data is returned to JS
+/// - Error during COPY: When ErrorResponse is received during an active COPY operation
+/// - Connection failure: When the connection is closed or fails during COPY
+/// - Write failure: When sending CopyData, CopyDone, or CopyFail fails
+/// - State validation failure: When concurrent COPY operations are detected
+///
+/// This function is idempotent and safe to call multiple times.
+fn abortCopyAndFailConnection(this: *PostgresSQLConnection, err: AnyPostgresError, comptime message: [:0]const u8) void {
+    // Reject the query that owns this COPY operation (preferred) or fall back to the current request.
+    if (this.copy_owner) |request| {
+        this.finishRequest(request);
+        request.onError(.{ .postgres_error = err }, this.globalObject);
+    } else if (this.current()) |request| {
+        this.finishRequest(request);
+        request.onError(.{ .postgres_error = err }, this.globalObject);
+    }
+
+    this.cleanupCopyState();
+    this.fail(message, err);
+}
+
+fn cleanupCopyState(this: *PostgresSQLConnection) void {
+    // Early exit if already cleaned up
+    if (this.copy_state == .none and
+        this.copy_column_formats.len == 0 and
+        this.copy_data_buffer.items.len == 0 and
+        this.copy_owner == null)
+    {
+        return;
+    }
+
+    debug("cleanupCopyState: state={s} bytes={} chunks={}", .{
+        @tagName(this.copy_state),
+        this.copy_bytes_transferred,
+        this.copy_chunks_processed,
+    });
+
+    // Reset state flags
+    this.copy_state = .none;
+    this.copy_format = 0;
+
+    // Clear COPY owner
+    this.copy_owner = null;
+
+    // Free column formats array if allocated
+    if (this.copy_column_formats.len > 0) {
+        bun.default_allocator.free(this.copy_column_formats);
+        this.copy_column_formats = &.{};
+    }
+
+    // Clear data buffer and shrink if it grew too large
+    const buffer_capacity = this.copy_data_buffer.capacity;
+    this.copy_data_buffer.clearRetainingCapacity();
+
+    // If buffer capacity exceeds threshold, shrink it to save memory
+    if (buffer_capacity > COPY_BUFFER_SHRINK_THRESHOLD) {
+        debug("cleanupCopyState: shrinking buffer from {} to 0", .{buffer_capacity});
+        this.copy_data_buffer.clearAndFree();
+    }
+
+    // Reset progress counters
+    this.copy_bytes_transferred = 0;
+    this.copy_chunks_processed = 0;
+    // Reset streaming mode and callback flags
+    this.copy_streaming_mode = false;
+    this.copy_callback_in_progress = false;
+
+    // Reset timeout tracking
+    this.copy_start_timestamp_ms = 0;
+
+    // Reset binary validation flag
+    this.copy_binary_header_validated = false;
+}
+
+/// Helper to initialize COPY state for COPY FROM (is_out=false) or COPY TO (is_out=true)
+fn startCopy(this: *PostgresSQLConnection, overall_format: u8, column_format_codes: []const u16, is_out: bool) AnyPostgresError!void {
+    // Prevent concurrent COPY operations
+    if (this.copy_state != .none) {
+        this.cleanupCopyState();
+        return error.UnexpectedMessage;
+    }
+
+    // Record which query owns this COPY operation (deterministic rejection on failure)
+    this.copy_owner = this.current() orelse return error.ExpectedRequest;
+
+    // Duplicate column formats up-front
+    const new_column_formats = bun.default_allocator.dupe(u16, column_format_codes) catch |err| {
+        return err;
+    };
+
+    // Update state
+    this.copy_state = if (is_out) .copy_out_progress else .copy_in_progress;
+    this.copy_format = overall_format;
+    this.copy_start_timestamp_ms = @intCast(std.time.milliTimestamp());
+
+    // Replace column formats
+    if (this.copy_column_formats.len > 0) {
+        bun.default_allocator.free(this.copy_column_formats);
+    }
+    this.copy_column_formats = new_column_formats;
+
+    // Reset binary header validation; clear buffer for COPY TO
+    this.copy_binary_header_validated = false;
+    if (is_out) {
+        this.copy_data_buffer.clearRetainingCapacity();
+    }
+
+    // Fire onCopyStart callback if registered
+    var vm = jsc.VirtualMachine.get();
+    if (vm.rareData().postgresql_context.onCopyStartFn.get()) |callback| {
+        const event_loop = vm.eventLoop();
+        event_loop.runCallback(callback, this.globalObject, this.js_value, &.{});
+
+        if (this.globalObject.hasException()) {
+            this.cleanupCopyState();
+            this.fail("onCopyStart callback threw an exception", error.JSError);
+            this.globalObject.reportActiveExceptionAsUnhandled(error.JSError);
+            return error.JSError;
+        }
+    }
+
+    // Tightened semantics:
+    // For COPY TO, if streaming mode was requested but JavaScript did not register a per-connection
+    // chunk handler, fall back to accumulation to avoid silently discarding data.
+    if (is_out and this.copy_streaming_mode and !this.copy_chunk_handler_registered) {
+        this.copy_streaming_mode = false;
+    }
+}
+
+fn emitChunkToJS(this: *PostgresSQLConnection, data: []const u8) AnyPostgresError!void {
+    var vm = jsc.VirtualMachine.get();
+    if (vm.rareData().postgresql_context.onCopyChunkFn.get()) |callback| {
+        this.copy_callback_in_progress = true;
+        defer this.copy_callback_in_progress = false;
+
+        const loop = vm.eventLoop();
+        var js_chunk: jsc.JSValue = .zero;
+
+        if (this.copy_format == 0) {
+            js_chunk = bun.String.createUTF8ForJS(this.globalObject, data) catch |e| {
+                this.cleanupCopyState();
+                this.globalObject.reportActiveExceptionAsUnhandled(e);
+                this.fail("Failed to create chunk data for COPY callback", error.OutOfMemory);
+                return error.OutOfMemory;
+            };
+        } else {
+            js_chunk = jsc.ArrayBuffer.create(this.globalObject, data, .ArrayBuffer) catch |e| {
+                this.cleanupCopyState();
+                this.globalObject.reportActiveExceptionAsUnhandled(e);
+                this.fail("Failed to create chunk data for COPY callback", error.OutOfMemory);
+                return error.OutOfMemory;
+            };
+        }
+
+        loop.runCallback(callback, this.globalObject, this.js_value, &.{js_chunk});
+
+        if (this.globalObject.hasException()) {
+            this.cleanupCopyState();
+            this.fail("COPY chunk callback threw an exception", error.JSError);
+            this.globalObject.reportActiveExceptionAsUnhandled(error.JSError);
+            return error.JSError;
+        }
+    }
+}
+
+fn flushBufferedChunkToJS(this: *PostgresSQLConnection) AnyPostgresError!void {
+    if (this.copy_data_buffer.items.len == 0) return;
+    try this.emitChunkToJS(this.copy_data_buffer.items);
+    this.copy_data_buffer.clearRetainingCapacity();
+}
+
+fn finishCopy(this: *PostgresSQLConnection, request: *PostgresSQLQuery, command_tag_str: []const u8) AnyPostgresError!void {
+    debug("finishCopy: state={s} bytes={}", .{ @tagName(this.copy_state), this.copy_data_buffer.items.len });
+
+    // For COPY TO (copy_out_progress), emit any pending buffered data (streaming mode) and onCopyEnd callback.
+    if (this.copy_state == .copy_out_progress) {
+        // Streaming-mode binary guard: ensure header was validated before any flush/callback/early-return.
+        if (this.copy_streaming_mode and this.copy_format == 1 and !this.copy_binary_header_validated) {
+            debug("finishCopy: streaming binary COPY completed without validated header", .{});
+            this.cleanupCopyState();
+            this.fail("Binary COPY operation completed without valid header signature", error.InvalidBinaryData);
+            return error.InvalidBinaryData;
+        }
+
+        // Late flush of any pending buffered data (streaming mode)
+        if (this.copy_streaming_mode and this.copy_data_buffer.items.len > 0) {
+            try this.flushBufferedChunkToJS();
+        }
+
+        // Emit streaming end callback if registered
+        var vm = jsc.VirtualMachine.get();
+        if (vm.rareData().postgresql_context.onCopyEndFn.get()) |callback_end| {
+            const loop = vm.eventLoop();
+            loop.runCallback(callback_end, this.globalObject, this.js_value, &.{});
+        }
+
+        if (this.copy_streaming_mode) {
+            // In streaming mode, do not return accumulated buffer (we did not accumulate).
+            this.cleanupCopyState();
+            request.onResult(command_tag_str, this.globalObject, this.js_value, false);
+            return;
+        }
+
+        // Binary COPY header validation guard: ensure header was validated before returning data
+        if (this.copy_format == 1 and !this.copy_binary_header_validated) {
+            debug("finishCopy: binary COPY completed without validated header", .{});
+            this.cleanupCopyState();
+            this.fail("Binary COPY operation completed without valid header signature", error.InvalidBinaryData);
+            return error.InvalidBinaryData;
+        }
+
+        const max_copy_buffer_size = this.effectiveMaxCopyBufferSize();
+
+        // Non-streaming: pass COPY TO accumulated data to JavaScript (even if empty), with safety guard
+        if (this.copy_data_buffer.items.len > max_copy_buffer_size) {
+            const err_msg = std.fmt.allocPrint(
+                bun.default_allocator,
+                "COPY buffer exceeded limit at completion: {d} bytes (limit: {d} bytes)",
+                .{ this.copy_data_buffer.items.len, max_copy_buffer_size },
+            ) catch "COPY buffer too large";
+            defer if (err_msg.ptr != "COPY buffer too large".ptr) bun.default_allocator.free(err_msg);
+            this.cleanupCopyState();
+            this.fail(err_msg, error.CopyBufferTooLarge);
+            return error.CopyBufferTooLarge;
+        }
+
+        // onCopyResult will convert buffer -> JS value, cleanup copy state, and call onResult
+        this.onCopyResult(request, command_tag_str);
+        return;
+    }
+
+    // For COPY FROM (copy_in_progress) or unknown/none, cleanup and complete
+    this.cleanupCopyState();
+    request.onResult(command_tag_str, this.globalObject, this.js_value, false);
 }
 
 pub fn stopTimers(this: *PostgresSQLConnection) void {
@@ -908,6 +1514,12 @@ pub fn deinit(this: *@This()) void {
     this.read_buffer.deinit(bun.default_allocator);
     this.backend_parameters.deinit();
 
+    // Clean up COPY state
+    if (this.copy_column_formats.len > 0) {
+        bun.default_allocator.free(this.copy_column_formats);
+    }
+    this.copy_data_buffer.deinit();
+
     bun.freeSensitive(bun.default_allocator, this.options_buf);
 
     this.tls_config.deinit();
@@ -915,6 +1527,9 @@ pub fn deinit(this: *@This()) void {
 }
 
 fn cleanUpRequests(this: *@This(), js_reason: ?jsc.JSValue) void {
+    // Ensure COPY state is cleaned up when clearing all requests
+    this.cleanupCopyState();
+
     while (this.current()) |request| {
         switch (request.status) {
             // pending we will fail the request and the stmt will be marked as error ConnectionClosed too
@@ -966,12 +1581,84 @@ fn refAndClose(this: *@This(), js_reason: ?jsc.JSValue) void {
 }
 
 pub fn disconnect(this: *@This()) void {
+    this.rejectAwaitWritable(this.globalObject, "Connection disconnected");
     this.stopTimers();
     this.unregisterAutoFlusher();
     if (this.status == .connected) {
         this.status = .disconnected;
         this.refAndClose(null);
     }
+}
+
+fn onCopyResult(this: *PostgresSQLConnection, request: *PostgresSQLQuery, command_tag_str: []const u8) void {
+    // Validate we're in a valid COPY state before proceeding
+    if (this.copy_state == .none) {
+        debug("onCopyResult called but copy_state is none - this shouldn't happen", .{});
+        request.onError(.{ .postgres_error = AnyPostgresError.UnexpectedMessage }, this.globalObject);
+        return;
+    }
+
+    // Only process for copy_out_progress (COPY TO STDOUT)
+    if (this.copy_state != .copy_out_progress) {
+        debug("onCopyResult called but not in copy_out_progress state: {s}", .{@tagName(this.copy_state)});
+        this.cleanupCopyState();
+        request.onError(.{ .postgres_error = AnyPostgresError.UnexpectedMessage }, this.globalObject);
+        return;
+    }
+
+    // Create a JSValue from the copy data buffer
+    const copy_data = this.copy_data_buffer.items;
+
+    // For text format COPY, return as a string
+    // For binary format, return as ArrayBuffer
+    const result_value = if (this.copy_format == 0) blk: {
+        // Text format - return as string
+        break :blk bun.String.createUTF8ForJS(this.globalObject, copy_data) catch |err| {
+            this.cleanupCopyState();
+            request.onJSError(this.globalObject.takeException(err), this.globalObject);
+            return;
+        };
+    } else blk: {
+        // Binary format - return as ArrayBuffer
+        const array_buffer = jsc.ArrayBuffer.create(this.globalObject, copy_data, .ArrayBuffer) catch |err| {
+            this.cleanupCopyState();
+            request.onJSError(this.globalObject.takeException(err), this.globalObject);
+            return;
+        };
+        break :blk array_buffer;
+    };
+
+    // Get the existing pending value (SQLResultArray) and push the COPY data into it
+    const thisValue = request.thisValue.tryGet() orelse return;
+    const pending_value = PostgresSQLQuery.js.pendingValueGetCached(thisValue) orelse .zero;
+
+    if (pending_value != .zero) {
+        // Push the COPY data as the first (and only) element in the result array
+        pending_value.push(this.globalObject, result_value) catch |err| {
+            this.cleanupCopyState();
+            request.onJSError(this.globalObject.takeException(err), this.globalObject);
+            return;
+        };
+    } else {
+        // No pending array yet: create a new SQLResultArray, push the result, and cache it
+        const new_array = jsc.JSValue.createEmptyArray(this.globalObject, 0) catch |err| {
+            this.cleanupCopyState();
+            request.onJSError(this.globalObject.takeException(err), this.globalObject);
+            return;
+        };
+        new_array.push(this.globalObject, result_value) catch |err| {
+            this.cleanupCopyState();
+            request.onJSError(this.globalObject.takeException(err), this.globalObject);
+            return;
+        };
+        PostgresSQLQuery.js.pendingValueSetCached(thisValue, this.globalObject, new_array);
+    }
+
+    // Clear COPY state before completing the request
+    this.cleanupCopyState();
+
+    // Call onResult to complete the query
+    request.onResult(command_tag_str, this.globalObject, this.js_value, false);
 }
 
 fn current(this: *PostgresSQLConnection) ?*PostgresSQLQuery {
@@ -1446,7 +2133,182 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
         .CopyData => {
             var copy_data: protocol.CopyData = undefined;
             try copy_data.decodeInternal(Context, reader);
-            copy_data.data.deinit();
+            defer copy_data.data.deinit();
+
+            if (this.copy_state == .copy_out_progress) {
+                // COPY TO STDOUT
+                const data_slice = copy_data.data.slice();
+                debug("CopyData: received {} bytes", .{data_slice.len});
+
+                // Check COPY operation timeout
+                if (this.copy_timeout_ms > 0 and this.copy_start_timestamp_ms > 0) {
+                    const now = std.time.milliTimestamp();
+                    const elapsed = @as(u64, @intCast(now)) -| this.copy_start_timestamp_ms;
+                    const timeout_u64: u64 = @intCast(this.copy_timeout_ms);
+                    if (elapsed > timeout_u64) {
+                        debug("CopyData: timeout after {}ms (limit: {}ms)", .{ elapsed, timeout_u64 });
+                        this.abortCopyAndFailConnection(error.CopyTimeout, "COPY aborted: timeout");
+                        return error.CopyTimeout;
+                    }
+                }
+
+                // Validate/accumulate binary COPY header (supports fragmented first chunks)
+                if (this.copy_format == 1 and !this.copy_binary_header_validated) {
+                    if (this.copy_streaming_mode) {
+                        const max_copy_buffer_size = this.effectiveMaxCopyBufferSize();
+
+                        // In streaming mode, buffer until we have at least the signature, then validate and emit buffered bytes
+                        if (data_slice.len > max_copy_buffer_size) {
+                            this.abortCopyAndFailConnection(error.CopyBufferTooLarge, "COPY aborted: buffer limit exceeded");
+                            return error.CopyBufferTooLarge;
+                        }
+                        const new_total_stream = this.copy_data_buffer.items.len + data_slice.len;
+                        if (new_total_stream > max_copy_buffer_size) {
+                            this.abortCopyAndFailConnection(error.CopyBufferTooLarge, "COPY aborted: buffer limit exceeded");
+                            return error.CopyBufferTooLarge;
+                        }
+                        this.copy_data_buffer.appendSlice(data_slice) catch |err| {
+                            this.cleanupCopyState();
+                            return err;
+                        };
+
+                        if (this.copy_data_buffer.items.len < COPY_BINARY_SIGNATURE.len) {
+                            // Not enough bytes yet; just track progress and wait for more
+                            this.copy_bytes_transferred = this.copy_bytes_transferred +| @as(u64, @intCast(data_slice.len));
+                            this.copy_chunks_processed = this.copy_chunks_processed +| 1;
+                            return;
+                        }
+
+                        const has_valid_signature = std.mem.eql(u8, this.copy_data_buffer.items[0..COPY_BINARY_SIGNATURE.len], &COPY_BINARY_SIGNATURE);
+                        if (!has_valid_signature) {
+                            debug("CopyData: invalid binary COPY signature", .{});
+                            this.abortCopyAndFailConnection(error.InvalidBinaryData, "COPY aborted: invalid binary format");
+                            return error.InvalidBinaryData;
+                        }
+                        this.copy_binary_header_validated = true;
+
+                        // If a chunk callback is running, keep buffering and return
+                        if (this.copy_callback_in_progress) {
+                            this.copy_bytes_transferred = this.copy_bytes_transferred +| @as(u64, @intCast(data_slice.len));
+                            this.copy_chunks_processed = this.copy_chunks_processed +| 1;
+                            return;
+                        }
+
+                        // Emit the buffered header+data as a single chunk
+                        try this.emitChunkToJS(this.copy_data_buffer.items);
+
+                        // Clear buffered header/data after emission and update progress
+                        this.copy_data_buffer.clearRetainingCapacity();
+                        this.copy_bytes_transferred = this.copy_bytes_transferred +| @as(u64, @intCast(data_slice.len));
+                        this.copy_chunks_processed = this.copy_chunks_processed +| 1;
+                        return;
+                    } else {
+                        // Non-streaming: allow fragmented first chunk; validate once we have enough bytes across buffer + incoming chunk
+                        const sig_len: usize = COPY_BINARY_SIGNATURE.len;
+                        const buffered_len: usize = this.copy_data_buffer.items.len;
+                        if (buffered_len == 0) {
+                            // Fast-path: entire signature is in this chunk
+                            if (data_slice.len >= sig_len) {
+                                const has_valid_signature = std.mem.eql(u8, data_slice[0..sig_len], &COPY_BINARY_SIGNATURE);
+                                if (!has_valid_signature) {
+                                    debug("CopyData: invalid binary COPY signature", .{});
+                                    this.abortCopyAndFailConnection(error.InvalidBinaryData, "COPY aborted: invalid binary format");
+                                    return error.InvalidBinaryData;
+                                }
+                                this.copy_binary_header_validated = true;
+                            }
+                        } else if (buffered_len < sig_len and buffered_len + data_slice.len >= sig_len) {
+                            // Signature split across previous buffer and this chunk; stitch minimal prefix into scratch and validate
+                            var scratch: [COPY_BINARY_SIGNATURE.len]u8 = undefined;
+                            // Copy already-buffered prefix
+                            @memcpy(scratch[0..buffered_len], this.copy_data_buffer.items[0..buffered_len]);
+                            // Copy needed bytes from the head of the new chunk
+                            const need: usize = sig_len - buffered_len;
+                            @memcpy(scratch[buffered_len .. buffered_len + need], data_slice[0..need]);
+                            const has_valid_signature = std.mem.eql(u8, scratch[0..sig_len], &COPY_BINARY_SIGNATURE);
+                            if (!has_valid_signature) {
+                                debug("CopyData: invalid binary COPY signature (split across frames)", .{});
+                                this.abortCopyAndFailConnection(error.InvalidBinaryData, "COPY aborted: invalid binary format");
+                                return error.InvalidBinaryData;
+                            }
+                            this.copy_binary_header_validated = true;
+                        }
+                        // Otherwise, wait for next chunk to accumulate enough bytes (handled by normal buffering)
+                    }
+                }
+
+                // If a previous callback is still in progress, buffer and return safely (streaming mode)
+                if (this.copy_streaming_mode and this.copy_callback_in_progress) {
+                    const max_copy_buffer_size = this.effectiveMaxCopyBufferSize();
+                    const new_total_pending = this.copy_data_buffer.items.len + data_slice.len;
+                    if (new_total_pending > max_copy_buffer_size) {
+                        this.abortCopyAndFailConnection(error.CopyBufferTooLarge, "COPY aborted: buffer limit exceeded");
+                        return error.CopyBufferTooLarge;
+                    }
+                    this.copy_data_buffer.appendSlice(data_slice) catch |err| {
+                        this.cleanupCopyState();
+                        return err;
+                    };
+                    this.copy_bytes_transferred = this.copy_bytes_transferred +| @as(u64, @intCast(data_slice.len));
+                    this.copy_chunks_processed = this.copy_chunks_processed +| 1;
+                    return;
+                }
+
+                // In streaming mode, enforce a per-chunk limit to avoid allocating huge ArrayBuffers
+                if (this.copy_streaming_mode) {
+                    const effective_limit: usize = if (this.max_copy_buffer_size == 0) std.math.maxInt(usize) else this.max_copy_buffer_size;
+                    const per_chunk_limit: usize = @min(effective_limit, 64 * 1024 * 1024);
+
+                    if (data_slice.len > per_chunk_limit) {
+                        this.abortCopyAndFailConnection(error.CopyChunkTooLarge, "COPY aborted: chunk too large");
+                        return error.CopyChunkTooLarge;
+                    }
+                }
+
+                if (!this.copy_streaming_mode) {
+                    const max_copy_buffer_size = this.effectiveMaxCopyBufferSize();
+
+                    // Validate individual chunk size (0 disables limit)
+                    if (data_slice.len > max_copy_buffer_size) {
+                        this.abortCopyAndFailConnection(error.CopyBufferTooLarge, "COPY aborted: buffer limit exceeded");
+                        return error.CopyBufferTooLarge;
+                    }
+
+                    // Check buffer size limit to prevent excessive memory usage
+                    const new_total = this.copy_data_buffer.items.len + data_slice.len;
+                    if (new_total > max_copy_buffer_size) {
+                        this.abortCopyAndFailConnection(error.CopyBufferTooLarge, "COPY aborted: buffer limit exceeded");
+                        return error.CopyBufferTooLarge;
+                    }
+
+                    this.copy_data_buffer.appendSlice(data_slice) catch |err| {
+                        // Allocation failed - abort COPY, reject the owner, and fail the connection
+                        this.abortCopyAndFailConnection(error.OutOfMemory, "COPY aborted: out of memory");
+                        return err;
+                    };
+                }
+
+                // Track progress (with overflow protection)
+                this.copy_bytes_transferred = this.copy_bytes_transferred +| @as(u64, @intCast(data_slice.len));
+                this.copy_chunks_processed = this.copy_chunks_processed +| @as(u64, 1);
+
+                // Streaming mode: flush any pending buffered bytes then emit this chunk.
+                // - For text COPY (copy_format == 0), we can flush immediately.
+                // - For binary COPY (copy_format == 1), only flush once the header has been validated.
+                if (this.copy_streaming_mode) {
+                    if (this.copy_data_buffer.items.len > 0 and !this.copy_callback_in_progress and (this.copy_format == 0 or this.copy_binary_header_validated)) {
+                        try this.flushBufferedChunkToJS();
+                    }
+                    try this.emitChunkToJS(data_slice);
+                }
+            } else if (this.copy_state == .copy_in_progress) {
+                // For COPY FROM STDIN, we shouldn't receive CopyData from server
+                debug("CopyData: unexpected in copy_in_progress state", .{});
+                this.abortCopyAndFailConnection(error.UnexpectedCopyData, "COPY aborted: unexpected server data");
+                return error.UnexpectedCopyData;
+            } else {
+                debug("CopyData: received outside COPY operation", .{});
+            }
         },
         .ParameterStatus => {
             var parameter_status: protocol.ParameterStatus = undefined;
@@ -1488,7 +2350,13 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
             debug("-> {s}", .{cmd.command_tag.slice()});
             defer this.updateRef();
 
-            request.onResult(cmd.command_tag.slice(), this.globalObject, this.js_value, false);
+            // Check if this is completing a COPY operation
+            if (this.copy_state != .none) {
+                debug("CommandComplete: COPY operation completed with {} bytes", .{this.copy_data_buffer.items.len});
+                try this.finishCopy(request, cmd.command_tag.slice());
+            } else {
+                request.onResult(cmd.command_tag.slice(), this.globalObject, this.js_value, false);
+            }
         },
         .BindComplete => {
             try reader.eatMessage(protocol.BindComplete);
@@ -1741,16 +2609,20 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
                 return;
             }
 
-            var request = this.current() orelse {
+            // During an active COPY operation, prefer rejecting the COPY-owning query.
+            // This ensures deterministic attribution of server errors during COPY.
+            var request = (if (this.copy_owner) |owner| owner else this.current()) orelse {
                 debug("ErrorResponse: {f}", .{err});
                 return error.ExpectedRequest;
             };
+
             var is_error_owned = true;
             defer {
                 if (is_error_owned) {
                     err.deinit();
                 }
             }
+
             if (request.statement) |stmt| {
                 if (stmt.status == PostgresSQLStatement.Status.parsing) {
                     stmt.status = PostgresSQLStatement.Status.failed;
@@ -1765,6 +2637,13 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
             this.finishRequest(request);
             this.updateRef();
             request.onError(.{ .protocol = err }, this.globalObject);
+
+            // Clean up COPY state if we were in the middle of a COPY operation.
+            // This is done after routing the error so `copy_owner` is still available.
+            if (this.copy_state != .none) {
+                debug("ErrorResponse during COPY operation - cleaning up state", .{});
+                this.cleanupCopyState();
+            }
         },
         .PortalSuspended => {
             // try reader.eatMessage(&protocol.PortalSuspended);
@@ -1779,7 +2658,14 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
             request.onResult("CLOSECOMPLETE", this.globalObject, this.js_value, false);
         },
         .CopyInResponse => {
-            debug("TODO CopyInResponse", .{});
+            var resp: protocol.CopyInResponse = undefined;
+            try resp.decodeInternal(Context, reader);
+            defer resp.deinit();
+
+            debug("CopyInResponse: format={} columns={}", .{ resp.overall_format(), resp.column_format_codes().len });
+            // Initialize COPY FROM state
+            try this.startCopy(resp.overall_format(), resp.column_format_codes(), false);
+            debug("CopyInResponse: ready to accept COPY data", .{});
         },
         .NoticeResponse => {
             debug("UNSUPPORTED NoticeResponse", .{});
@@ -1795,13 +2681,61 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
             request.onResult("", this.globalObject, this.js_value, false);
         },
         .CopyOutResponse => {
-            debug("TODO CopyOutResponse", .{});
+            var resp: protocol.CopyOutResponse = undefined;
+            try resp.decodeInternal(Context, reader);
+            defer resp.deinit();
+
+            debug("CopyOutResponse: format={} columns={}", .{ resp.overall_format(), resp.column_format_codes().len });
+            // Initialize COPY TO state
+            try this.startCopy(resp.overall_format(), resp.column_format_codes(), true);
+            debug("CopyOutResponse: ready to stream COPY data", .{});
         },
         .CopyDone => {
-            debug("TODO CopyDone", .{});
+            try reader.eatMessage(protocol.CopyDone);
+
+            debug("CopyDone: received {} bytes total", .{this.copy_data_buffer.items.len});
+
+            const max_copy_buffer_size = this.effectiveMaxCopyBufferSize();
+
+            // Safety guard: if not streaming and accumulated buffer somehow exceeds limit, abort
+            if (!this.copy_streaming_mode and this.copy_data_buffer.items.len > max_copy_buffer_size) {
+                const err_msg = std.fmt.allocPrint(
+                    bun.default_allocator,
+                    "COPY buffer exceeded limit at end: {d} bytes (limit: {d} bytes)",
+                    .{ this.copy_data_buffer.items.len, max_copy_buffer_size },
+                ) catch "COPY buffer too large";
+                defer if (err_msg.ptr != "COPY buffer too large".ptr) bun.default_allocator.free(err_msg);
+                this.cleanupCopyState();
+                this.fail(err_msg, error.CopyBufferTooLarge);
+                return error.CopyBufferTooLarge;
+            }
+
+            // Validate we're in the correct state
+            if (this.copy_state != .copy_out_progress) {
+                debug("CopyDone: unexpected - not in copy_out_progress state (current: {s})", .{@tagName(this.copy_state)});
+                this.cleanupCopyState();
+                this.fail("Received CopyDone from server but not in COPY TO STDOUT operation", error.UnexpectedMessage);
+                return error.UnexpectedMessage;
+            }
+
+            _ = this.current() orelse return error.ExpectedRequest;
+
+            // Keep copy_state active - it will be cleared in CommandComplete
+            // The accumulated data will be returned when CommandComplete arrives
+            debug("CopyDone: waiting for CommandComplete", .{});
         },
         .CopyBothResponse => {
-            debug("TODO CopyBothResponse", .{});
+            var resp: protocol.CopyBothResponse = undefined;
+            try resp.decodeInternal(Context, reader);
+            defer resp.deinit();
+
+            debug("CopyBothResponse: format={} columns={} (streaming replication)", .{ resp.overall_format(), resp.column_format_codes().len });
+
+            // CopyBothResponse is used for streaming replication
+            // Not implemented yet
+            this.cleanupCopyState();
+            this.fail("CopyBoth (streaming replication) is not implemented", error.CopyBothNotImplemented);
+            return error.CopyBothNotImplemented;
         },
         else => @compileError("Unknown message type: " ++ @tagName(MessageType)),
     }

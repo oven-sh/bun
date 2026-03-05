@@ -1,7 +1,6 @@
 import { confirm, exit, log, stdin, warn } from "../src/console";
-import { fetch } from "../src/fetch";
 import { basename, blob, hash, join, rm, tmp, write } from "../src/fs";
-import { getRelease, uploadAsset } from "../src/github";
+import { downloadAssetContent, getRelease, uploadAsset } from "../src/github";
 import { spawn } from "../src/spawn";
 
 const [tag, ...paths] = process.argv.slice(2);
@@ -18,12 +17,11 @@ await confirm();
 
 log("Hashing assets...\n");
 const existing: Map<string, string> = new Map();
-for (const { name, browser_download_url } of assets) {
+for (const { name, id } of assets) {
   if (name.startsWith("SHASUMS256.txt")) {
     continue;
   }
-  const response = await fetch(browser_download_url);
-  const buffer = Buffer.from(await response.arrayBuffer());
+  const buffer = await downloadAssetContent(id);
   existing.set(name, await hash(buffer));
 }
 const updated: Map<string, string> = new Map();

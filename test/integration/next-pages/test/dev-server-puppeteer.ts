@@ -48,6 +48,10 @@ const launchOptions = {
 
     // Fixes: "Navigating frame was detached"
     "--disable-features=site-per-process",
+
+    // Prevent GPU-related crashes in headless CI environments (especially macOS ARM64).
+    "--disable-gpu",
+    "--disable-software-rasterizer",
   ],
 };
 

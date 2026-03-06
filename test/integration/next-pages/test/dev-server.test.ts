@@ -70,7 +70,7 @@ async function getDevServerURL() {
         if (match) {
           baseUrl = match[0];
         }
-        if (accumulated.toLowerCase().includes("ready")) {
+        if (accumulated.toLowerCase().includes("ready") && baseUrl) {
           hasLoaded = true;
           loaded();
         }

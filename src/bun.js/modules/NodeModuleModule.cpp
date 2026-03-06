@@ -22,6 +22,7 @@
 
 #include "GeneratedNodeModuleModule.h"
 #include "ZigGeneratedClasses.h"
+#include "DOMURL.h"
 
 namespace Bun {
 
@@ -599,22 +600,32 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionFindPackageJSON, (JSGlobalObject * globalObje
     // Get the 'base' argument (optional - absolute location of containing module)
     JSValue baseValue = callFrame->argument(1);
 
-    // Validate specifier: must be string or URL (or undefined for backward compat)
-    // Reject invalid types - numbers, booleans, plain objects
+    // Validate specifier: must be string, URL, or undefined
+    // Check for valid URL object using jsDynamicCast
+    bool specifierIsURL = specifierValue.isObject() && 
+        jsDynamicCast<JSDOMURL*>(specifierValue);
     if (specifierValue.isNumber() || specifierValue.isBoolean() || 
-        (specifierValue.isObject() && !specifierValue.isStringObject())) {
-        if (!specifierValue.isUndefined()) {
-            scope.throwException(globalObject, JSC::createTypeError(globalObject, "specifier must be a string or URL"_s));
-            return JSValue::encode(jsUndefined());
-        }
+        (specifierValue.isObject() && !specifierValue.isStringObject() && !specifierIsURL)) {
+        scope.throwException(globalObject, JSC::createTypeError(globalObject, "specifier must be a string or URL"_s));
+        return JSValue::encode(jsUndefined());
     }
 
     // Validate base: must be string, URL, or undefined
+    bool baseIsURL = baseValue.isObject() && 
+        jsDynamicCast<JSDOMURL*>(baseValue);
     if (!baseValue.isString() && !baseValue.isUndefined() &&
         (baseValue.isNumber() || baseValue.isBoolean() ||
-         (baseValue.isObject() && !baseValue.isStringObject()))) {
+         (baseValue.isObject() && !baseValue.isStringObject() && !baseIsURL))) {
         scope.throwException(globalObject, JSC::createTypeError(globalObject, "base must be a string, URL, or undefined"_s));
         return JSValue::encode(jsUndefined());
+    }
+
+    // One-time warning that this function is not yet implemented
+    static bool hasWarned = false;
+    if (!hasWarned) {
+        hasWarned = true;
+        // TODO: Emit warning via Bun's console mechanism when available
+        // For now, the undefined return indicates unimplemented
     }
 
     // TODO: Implement actual filesystem lookup to walk parent directories

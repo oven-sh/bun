@@ -2,6 +2,7 @@ import { RedisClient } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, dockerExe } from "harness";
 import * as net from "node:net";
+import * as dockerCompose from "../../docker/index.ts";
 
 let REDIS_HOST: string;
 let REDIS_PORT: number;
@@ -26,7 +27,6 @@ const dockerAvailable =
   })();
 
 if (dockerAvailable) {
-  const dockerCompose = await import("../../docker/index.ts");
   const redisInfo = await dockerCompose.ensure("redis_unified");
   REDIS_HOST = redisInfo.host;
   REDIS_PORT = redisInfo.ports[6379];
@@ -110,56 +110,63 @@ describe.skipIf(!dockerAvailable)("RedisClient reconnect", () => {
       enableAutoPipelining: true,
     });
 
-    await redis.connect();
+    try {
+      await redis.connect();
 
-    // Verify connection works
-    await redis.set("test:27861", "hello");
-    expect(await redis.get("test:27861")).toBe("hello");
+      // Verify connection works
+      await redis.set("test:27861", "hello");
+      expect(await redis.get("test:27861")).toBe("hello");
 
-    // Fire off several pipelined commands that will be in-flight when we kill the
-    // connection. These should all reject (not silently resolve with wrong data).
-    const promises: Promise<any>[] = [];
-    for (let i = 0; i < 10; i++) {
-      promises.push(redis.set(`test:27861:${i}`, `value-${i}`));
-      promises.push(redis.get(`test:27861:${i}`));
-    }
-
-    // Kill the proxy connection immediately — the commands above are pipelined and
-    // likely still in-flight.
-    proxy.disconnectAll();
-
-    // All in-flight commands should reject with a connection error
-    const results = await Promise.allSettled(promises);
-    const rejected = results.filter(r => r.status === "rejected");
-    // At least some of the in-flight commands should have been rejected.
-    // (Some may have completed before the disconnect.)
-    expect(rejected.length).toBeGreaterThan(0);
-
-    // Wait for auto-reconnect to complete (up to 5s)
-    let reconnected = false;
-    for (let i = 0; i < 50; i++) {
-      try {
-        const pong = await redis.send("PING", []);
-        if (pong === "PONG") {
-          reconnected = true;
-          break;
-        }
-      } catch {
-        await Bun.sleep(100);
+      // Fire off several pipelined commands that will be in-flight when we kill the
+      // connection. These should all reject (not silently resolve with wrong data).
+      const promises: Promise<any>[] = [];
+      for (let i = 0; i < 10; i++) {
+        promises.push(redis.set(`test:27861:${i}`, `value-${i}`));
+        promises.push(redis.get(`test:27861:${i}`));
       }
-    }
-    expect(reconnected).toBe(true);
 
-    // After reconnection, commands should work correctly — no response mismatches.
-    for (let i = 0; i < 10; i++) {
-      await redis.set(`test:27861:post:${i}`, `post-value-${i}`);
-    }
-    for (let i = 0; i < 10; i++) {
-      const val = await redis.get(`test:27861:post:${i}`);
-      expect(val).toBe(`post-value-${i}`);
-    }
+      // Kill the proxy connection immediately — the commands above are pipelined and
+      // likely still in-flight.
+      proxy.disconnectAll();
 
-    redis.close();
-    proxy.stop();
+      // All in-flight commands should reject with a connection error
+      const results = await Promise.allSettled(promises);
+      const rejected = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+      // At least some of the in-flight commands should have been rejected.
+      // (Some may have completed before the disconnect.)
+      expect(rejected.length).toBeGreaterThan(0);
+
+      // Verify rejections are from our reconnect path, not unrelated errors
+      for (const r of rejected) {
+        expect(String(r.reason)).toContain("Connection lost; reconnecting");
+      }
+
+      // Wait for auto-reconnect to complete (up to 5s)
+      let reconnected = false;
+      for (let i = 0; i < 50; i++) {
+        try {
+          const pong = await redis.send("PING", []);
+          if (pong === "PONG") {
+            reconnected = true;
+            break;
+          }
+        } catch {
+          await Bun.sleep(100);
+        }
+      }
+      expect(reconnected).toBe(true);
+
+      // After reconnection, commands should work correctly — no response mismatches.
+      for (let i = 0; i < 10; i++) {
+        await redis.set(`test:27861:post:${i}`, `post-value-${i}`);
+      }
+      for (let i = 0; i < 10; i++) {
+        const val = await redis.get(`test:27861:post:${i}`);
+        expect(val).toBe(`post-value-${i}`);
+      }
+    } finally {
+      redis.close();
+      proxy.stop();
+    }
   }, 30_000);
 });

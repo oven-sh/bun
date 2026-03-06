@@ -15,7 +15,11 @@ pub fn writeBind(
     try writer.String(cursor_name);
     try writer.string(name);
 
-    const len: u32 = @truncate(parameter_fields.len);
+    if (parameter_fields.len > max_parameters) {
+        return error.TooManyParameters;
+    }
+
+    const len: u16 = @intCast(parameter_fields.len);
 
     // The number of parameter format codes that follow (denoted C
     // below). This can be zero to indicate that there are no
@@ -168,6 +172,9 @@ pub fn writeBind(
     }
 
     if (any_non_text_fields) {
+        if (result_fields.len > max_parameters) {
+            return error.TooManyParameters;
+        }
         try writer.short(result_fields.len);
         for (result_fields) |field| {
             try writer.short(
@@ -339,6 +346,9 @@ const types = @import("./PostgresTypes.zig");
 const AnyPostgresError = @import("./PostgresTypes.zig").AnyPostgresError;
 const int4 = types.int4;
 const short = types.short;
+
+/// The PostgreSQL wire protocol uses 16-bit integers for parameter and column counts.
+const max_parameters = std.math.maxInt(u16);
 
 const bun = @import("bun");
 const String = bun.String;

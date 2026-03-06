@@ -931,6 +931,7 @@ int add_ca_cert_to_ctx_store(SSL_CTX *ctx, const char *content,
   X509 *x = NULL;
   ERR_clear_error(); // clear error stack for SSL_CTX_use_certificate()
   int count = 0;
+  if (content == NULL) return 0;
   BIO *in = BIO_new_mem_buf(content, strlen(content));
   if (in == NULL) {
     OPENSSL_PUT_ERROR(SSL, ERR_R_BUF_LIB);

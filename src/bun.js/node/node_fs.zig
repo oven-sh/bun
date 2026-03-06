@@ -5502,7 +5502,12 @@ pub const NodeFS = struct {
                     .path = args.path.slice(),
                 } };
 
-            var buf = bun.span(req.ptrAs([*:0]u8));
+            const result_ptr: ?[*:0]u8 = req.ptrAs(?[*:0]u8);
+            var buf = bun.span(result_ptr orelse return .{ .err = Syscall.Error{
+                .errno = @intFromEnum(bun.C.E.NOENT),
+                .syscall = .realpath,
+                .path = args.path.slice(),
+            } });
 
             if (variant == .emulated) {
                 // remove the trailing slash

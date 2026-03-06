@@ -25,7 +25,8 @@ const b = await launch({
   // Inherit the stdout and stderr of the browser process.
   dumpio: true,
   // Prefer to use a pipe to connect to the browser, instead of a WebSocket.
-  pipe: true,
+  // On macOS, pipe mode causes TargetCloseError during browser launch.
+  pipe: process.platform !== "darwin",
   // Disable timeouts.
   timeout: 0,
   protocolTimeout: 0,

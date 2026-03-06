@@ -620,18 +620,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionFindPackageJSON, (JSGlobalObject * globalObje
         return JSValue::encode(jsUndefined());
     }
 
-    // One-time warning that this function is not yet implemented
-    static bool hasWarned = false;
-    if (!hasWarned) {
-        hasWarned = true;
-        // TODO: Emit warning via Bun's console mechanism when available
-        // For now, the undefined return indicates unimplemented
-    }
-
-    // TODO: Implement actual filesystem lookup to walk parent directories
-    // and find the closest package.json file
-    // Return: string (path to package.json) or undefined if not found
-
+    // Throw error: findPackageJSON is not yet implemented
+    // Returning undefined would confuse callers (undistinguishable from "not found")
+    scope.throwException(globalObject, JSC::createError(globalObject, "findPackageJSON is not implemented yet"_s, JSC::ErrorType::RangeError));
     return JSValue::encode(jsUndefined());
 }
 

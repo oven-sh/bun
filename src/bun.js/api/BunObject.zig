@@ -823,23 +823,51 @@ fn doResolve(globalThis: *jsc.JSGlobalObject, arguments: []const JSValue) bun.JS
     return doResolveWithArgs(globalThis, specifier_str, from_str, is_esm, false, false);
 }
 
-/// Check if a `from` path looks like a file path (as opposed to a directory).
-/// Returns true if the last path component contains a dot (file extension),
-/// e.g., "/path/to/main.ts" or "/path/to/file.svelte".
-/// Returns false for directory-like paths: "/path/to/dir/", "/path/to/dir",
-/// or "import.meta.dir"-style paths without extensions.
+/// Determine whether the `from` argument to Bun.resolveSync/Bun.resolve is a
+/// file path (e.g., `args.importer` in plugin onResolve hooks) or a directory.
+///
+/// Strategy:
+///   1. If the path ends with a separator, it is a directory.
+///   2. Attempt a filesystem stat — if the path exists, use the result.
+///   3. If the path does not exist on disk, fall back to a heuristic:
+///      treat it as a file if the last component contains a file extension.
 fn fromLooksLikeFilePath(from: bun.String) bool {
     const len = from.length();
     if (len == 0) return false;
 
-    // Scan backwards: find a dot before we find a separator.
-    // If we find a dot first, the last component has an extension → file path.
-    // If we find a separator first (or reach the start), no extension → directory.
+    const last_char: u8 = @truncate(from.charAt(len - 1));
+    if (bun.path.isSepAny(last_char)) return false;
+
+    // Convert to a null-terminated path for stat.
+    const from_utf8 = from.toUTF8(bun.default_allocator);
+    defer from_utf8.deinit();
+    const slice = from_utf8.slice();
+
+    if (slice.len == 0 or slice.len >= bun.MAX_PATH_BYTES) return false;
+
+    var path_buf: bun.PathBuffer = undefined;
+    @memcpy(path_buf[0..slice.len], slice);
+    path_buf[slice.len] = 0;
+    const path_z: [:0]const u8 = path_buf[0..slice.len :0];
+
+    switch (bun.sys.stat(path_z)) {
+        .result => |stat| {
+            return !bun.S.ISDIR(stat.mode);
+        },
+        .err => {},
+    }
+
+    // Path does not exist — use a heuristic: scan backwards for a dot
+    // before a separator. If the last component has an extension
+    // (e.g., "main.ts", "App.svelte"), treat it as a file path.
+    // Explicit relative dir names like "." and ".." are not file paths.
+    if (std.mem.eql(u8, slice, ".") or std.mem.eql(u8, slice, "..")) return false;
+
     var i = len;
     while (i > 0) {
         i -= 1;
         const c: u8 = @truncate(from.charAt(i));
-        if (c == '.') return true;
+        if (c == '.') return i + 1 < len; // dot must not be trailing
         if (bun.path.isSepAny(c)) return false;
     }
     return false;

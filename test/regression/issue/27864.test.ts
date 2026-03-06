@@ -26,6 +26,17 @@ describe("Bun.resolveSync with file path as second argument", () => {
     expect(result).toBe(join(String(dir), "target.ts"));
   });
 
+  test("resolves when 'from' is a directory path without trailing slash", () => {
+    using dir = tempDir("resolve-dir-no-slash", {
+      "target.ts": "export const x = 1;",
+    });
+
+    // import.meta.dir returns a directory path without trailing slash.
+    // This must continue to work as a directory, not be mistaken for a file.
+    const result = Bun.resolveSync("./target.ts", String(dir));
+    expect(result).toBe(join(String(dir), "target.ts"));
+  });
+
   test("resolves newly created files when 'from' is a file path", () => {
     using dir = tempDir("resolve-new-file", {
       "importer.ts": "export {}",
@@ -58,5 +69,16 @@ describe("Bun.resolveSync with file path as second argument", () => {
     // Resolving the newly created file using a directory path should work
     const result = Bun.resolveSync("./new-module.ts", String(dir) + "/");
     expect(result).toBe(newFilePath);
+  });
+
+  test("resolves with directory containing dots in its name", () => {
+    using dir = tempDir("resolve-dir.with.dots", {
+      "target.ts": "export const x = 1;",
+    });
+
+    // A directory whose name contains dots should be treated as a directory,
+    // not as a file path. The stat check handles this correctly.
+    const result = Bun.resolveSync("./target.ts", String(dir) + "/");
+    expect(result).toBe(join(String(dir), "target.ts"));
   });
 });

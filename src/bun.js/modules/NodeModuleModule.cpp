@@ -587,23 +587,33 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionFindPath, (JSGlobalObject * globalObject, JSC
     return NodeModuleModule__findPath(globalObject, request_bun_str, paths);
 }
 
-// findPackageJSON - https://nodejs.org/api/module.html#modulefindpackagjsonfrom-options
-// Searches for a package.json file starting from 'from' directory and walking up
+// findPackageJSON - https://nodejs.org/api/module.html#module_module_findpackagejson_specifier_base
+// Find the closest package.json file starting from the specifier and walking up directories
 JSC_DEFINE_HOST_FUNCTION(jsFunctionFindPackageJSON, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // Get the 'from' argument (directory to start search from)
-    JSValue fromValue = callFrame->argument(0);
-    if (!fromValue.isString() && !fromValue.isUndefined()) {
-        scope.throwException(globalObject, JSC::createTypeError(globalObject, "from must be a string"_s));
-        return JSValue::encode(jsUndefined());
+    // Get the 'specifier' argument (module specifier whose package.json should be located)
+    JSValue specifierValue = callFrame->argument(0);
+    // Get the 'base' argument (optional - absolute location of containing module)
+    JSValue baseValue = callFrame->argument(1);
+
+    // Validate specifier: must be string or URL
+    if (!specifierValue.isString() && !specifierValue.isUndefined() && !specifierValue.isObject()) {
+        // Accept string or URL object
+        // For now, accept string, URL, or undefined as specifier
     }
 
-    // For now, return undefined as a stub
-    // Full implementation would walk up directories looking for package.json
-    // and return { name: string, id: string, exports?: object }
+    // Validate base: must be string, URL, or undefined
+    if (!baseValue.isString() && !baseValue.isUndefined() && !baseValue.isObject()) {
+        // Accept string, URL, or undefined as base
+    }
+
+    // TODO: Implement actual filesystem lookup to walk parent directories
+    // and find the closest package.json file
+    // Return: string (path to package.json) or undefined if not found
+
     return JSValue::encode(jsUndefined());
 }
 

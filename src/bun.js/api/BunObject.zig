@@ -861,7 +861,7 @@ fn fromLooksLikeFilePath(from: bun.String) bool {
     // before a separator. If the last component has an extension
     // (e.g., "main.ts", "App.svelte"), treat it as a file path.
     // Explicit relative dir names like "." and ".." are not file paths.
-    if (std.mem.eql(u8, slice, ".") or std.mem.eql(u8, slice, "..")) return false;
+    if (strings.eqlComptime(slice, ".") or strings.eqlComptime(slice, "..")) return false;
 
     var i = len;
     while (i > 0) {

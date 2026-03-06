@@ -76,9 +76,9 @@ describe("Bun.resolveSync with file path as second argument", () => {
       "target.ts": "export const x = 1;",
     });
 
-    // A directory whose name contains dots should be treated as a directory,
-    // not as a file path. The stat check handles this correctly.
-    const result = Bun.resolveSync("./target.ts", String(dir) + "/");
+    // A directory whose name contains dots (no trailing slash) should be
+    // correctly identified as a directory via stat, not misclassified as a file.
+    const result = Bun.resolveSync("./target.ts", String(dir));
     expect(result).toBe(join(String(dir), "target.ts"));
   });
 });

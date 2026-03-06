@@ -45,6 +45,7 @@ pub const ProcessHandle = struct {
 
     fn start(this: *This) !void {
         this.state.remaining_scripts += 1;
+        this.state.running_count += 1;
         const handle = this;
 
         var argv = [_:null]?[*:0]const u8{ this.state.shell_bin, if (Environment.isPosix) "-c" else "exec", this.config.combined, null };
@@ -146,6 +147,8 @@ const State = struct {
     handles: []ProcessHandle,
     event_loop: *bun.jsc.MiniEventLoop,
     remaining_scripts: usize = 0,
+    running_count: usize = 0,
+    max_concurrency: ?usize = null,
     // buffer for batched output
     draw_buf: std.array_list.Managed(u8) = std.array_list.Managed(u8).init(bun.default_allocator),
     last_lines_written: usize = 0,
@@ -195,14 +198,32 @@ const State = struct {
 
     fn processExit(this: *This, handle: *ProcessHandle) !void {
         this.remaining_scripts -= 1;
+        this.running_count -= 1;
         if (!this.aborted) {
             for (handle.dependents.items) |dependent| {
                 dependent.remaining_dependencies -= 1;
                 if (dependent.remaining_dependencies == 0) {
+                    if (this.max_concurrency) |max| {
+                        if (this.running_count >= max) continue;
+                    }
                     dependent.start() catch {
                         Output.prettyErrorln("<r><red>error<r>: Failed to start process", .{});
                         Global.exit(1);
                     };
+                }
+            }
+            // Start any other ready handles that were waiting for a concurrency slot
+            if (this.max_concurrency != null) {
+                for (this.handles) |*h| {
+                    if (this.max_concurrency) |max| {
+                        if (this.running_count >= max) break;
+                    }
+                    if (h.remaining_dependencies == 0 and h.process == null and h != handle) {
+                        h.start() catch {
+                            Output.prettyErrorln("<r><red>error<r>: Failed to start process", .{});
+                            Global.exit(1);
+                        };
+                    }
                 }
             }
         }
@@ -548,6 +569,7 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
         .pretty_output = if (Environment.isWindows) windowsIsTerminal() and Output.enable_ansi_colors_stdout else Output.enable_ansi_colors_stdout,
         .shell_bin = shell_bin,
         .env = this_transpiler.env,
+        .max_concurrency = ctx.concurrency,
     };
 
     // Check if elide-lines is used in a non-terminal environment
@@ -623,9 +645,12 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
         }
     }
 
-    // start inital scripts
+    // start initial scripts (respecting concurrency limit)
     for (state.handles) |*handle| {
         if (handle.remaining_dependencies == 0) {
+            if (state.max_concurrency) |max| {
+                if (state.running_count >= max) continue;
+            }
             handle.start() catch {
                 // todo this should probably happen in "start"
                 Output.prettyErrorln("<r><red>error<r>: Failed to start process", .{});

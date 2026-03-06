@@ -72,6 +72,7 @@ pub const ProcessHandle = struct {
 
     fn start(this: *This) !void {
         this.state.remaining_scripts += 1;
+        this.state.running_count += 1;
 
         var argv = [_:null]?[*:0]const u8{
             this.state.shell_bin,
@@ -164,6 +165,8 @@ const State = struct {
     handles: []ProcessHandle,
     event_loop: *bun.jsc.MiniEventLoop,
     remaining_scripts: usize = 0,
+    running_count: usize = 0,
+    max_concurrency: ?usize = null,
     max_label_len: usize,
     shell_bin: [:0]const u8,
     aborted: bool = false,
@@ -230,6 +233,7 @@ const State = struct {
 
     fn processExit(this: *This, handle: *ProcessHandle) std.Io.Writer.Error!void {
         this.remaining_scripts -= 1;
+        this.running_count -= 1;
 
         // Flush remaining buffers (stdout first, then stderr)
         try this.flushPipeBuffer(handle, &handle.stdout_reader);
@@ -294,14 +298,31 @@ const State = struct {
         }
     }
 
-    fn startDependents(_: *This, dependents: []*ProcessHandle) void {
+    fn startDependents(this: *This, dependents: []*ProcessHandle) void {
         for (dependents) |dependent| {
             dependent.remaining_dependencies -= 1;
             if (dependent.remaining_dependencies == 0) {
+                if (this.max_concurrency) |max| {
+                    if (this.running_count >= max) continue;
+                }
                 dependent.start() catch {
                     Output.prettyErrorln("<r><red>error<r>: Failed to start process", .{});
                     Global.exit(1);
                 };
+            }
+        }
+        // Start any other ready handles that were waiting for a concurrency slot
+        if (this.max_concurrency != null) {
+            for (this.handles) |*h| {
+                if (this.max_concurrency) |max| {
+                    if (this.running_count >= max) break;
+                }
+                if (h.remaining_dependencies == 0 and h.process == null) {
+                    h.start() catch {
+                        Output.prettyErrorln("<r><red>error<r>: Failed to start process", .{});
+                        Global.exit(1);
+                    };
+                }
             }
         }
     }
@@ -743,6 +764,7 @@ pub fn run(ctx: Command.Context) !noreturn {
         .no_exit_on_error = ctx.no_exit_on_error,
         .env = this_transpiler.env,
         .use_colors = use_colors,
+        .max_concurrency = ctx.concurrency,
     };
 
     // Initialize handles
@@ -796,9 +818,12 @@ pub fn run(ctx: Command.Context) !noreturn {
         }
     }
 
-    // Start handles with no dependencies
+    // Start handles with no dependencies (respecting concurrency limit)
     for (state.handles) |*handle| {
         if (handle.remaining_dependencies == 0) {
+            if (state.max_concurrency) |max| {
+                if (state.running_count >= max) continue;
+            }
             handle.start() catch {
                 Output.prettyErrorln("<r><red>error<r>: Failed to start process", .{});
                 Global.exit(1);

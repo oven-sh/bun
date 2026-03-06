@@ -1,10 +1,13 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { unlinkSync, writeFileSync } from "node:fs";
+
+const crontabPath = Bun.which("crontab");
+const hasCrontab = !!crontabPath;
 
 function readCrontab(): string {
   const result = Bun.spawnSync({
-    cmd: ["/usr/bin/crontab", "-l"],
+    cmd: [crontabPath!, "-l"],
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -15,7 +18,7 @@ function writeCrontab(content: string) {
   const tmpFile = `/tmp/bun-cron-${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`;
   writeFileSync(tmpFile, content);
   try {
-    Bun.spawnSync({ cmd: ["/usr/bin/crontab", tmpFile] });
+    Bun.spawnSync({ cmd: [crontabPath!, tmpFile] });
   } finally {
     try {
       unlinkSync(tmpFile);
@@ -23,17 +26,13 @@ function writeCrontab(content: string) {
   }
 }
 
-let savedCrontab: string | null = null;
-
-function saveCrontab() {
-  savedCrontab = readCrontab();
-}
-
-function restoreCrontab() {
-  if (savedCrontab !== null) {
-    writeCrontab(savedCrontab);
-    savedCrontab = null;
-  }
+function saveCrontabState(): Disposable {
+  const saved = readCrontab();
+  return {
+    [Symbol.dispose]() {
+      writeCrontab(saved);
+    },
+  };
 }
 
 // ==========================================================================
@@ -100,11 +99,9 @@ describe("Bun.cron API", () => {
 // Registration (Linux only — uses crontab)
 // ==========================================================================
 
-describe.skipIf(!isLinux)("cron registration", () => {
-  beforeEach(saveCrontab);
-  afterEach(restoreCrontab);
-
+describe.skipIf(!hasCrontab)("cron registration", () => {
   test("accepts valid cron expressions", async () => {
+    using _restore = saveCrontabState();
     using dir = tempDir("bun-cron-test", {
       "job.ts": `export default { scheduled() {} };`,
     });
@@ -125,6 +122,7 @@ describe.skipIf(!isLinux)("cron registration", () => {
     expect(namedLine).not.toContain("Monday");
   });
   test("registers a crontab entry with absolute path", async () => {
+    using _restore = saveCrontabState();
     using dir = tempDir("bun-cron-test", {
       "job.ts": `export default { scheduled() {} };`,
     });
@@ -139,6 +137,7 @@ describe.skipIf(!isLinux)("cron registration", () => {
   });
 
   test("crontab entry contains correct format", async () => {
+    using _restore = saveCrontabState();
     using dir = tempDir("bun-cron-test", {
       "job.ts": `export default { scheduled() {} };`,
     });
@@ -158,6 +157,7 @@ describe.skipIf(!isLinux)("cron registration", () => {
   });
 
   test("replaces existing entry with same title", async () => {
+    using _restore = saveCrontabState();
     using dir = tempDir("bun-cron-test", {
       "job.ts": `export default { scheduled() {} };`,
     });
@@ -173,6 +173,7 @@ describe.skipIf(!isLinux)("cron registration", () => {
   });
 
   test("registers multiple different cron jobs", async () => {
+    using _restore = saveCrontabState();
     using dir = tempDir("bun-cron-test", {
       "a.ts": `export default { scheduled() {} };`,
       "b.ts": `export default { scheduled() {} };`,
@@ -189,9 +190,10 @@ describe.skipIf(!isLinux)("cron registration", () => {
   });
 
   test("preserves existing non-bun crontab entries", async () => {
+    using _restore = saveCrontabState();
     // Add a manual crontab entry first
     await using setup = Bun.spawn({
-      cmd: ["/usr/bin/crontab", "-"],
+      cmd: [crontabPath!, "-"],
       stdin: "pipe",
     });
     setup.stdin.write("0 0 * * * /usr/bin/some-other-job\n");
@@ -209,6 +211,7 @@ describe.skipIf(!isLinux)("cron registration", () => {
   });
 
   test("returns a promise that resolves", async () => {
+    using _restore = saveCrontabState();
     using dir = tempDir("bun-cron-test", {
       "job.ts": `export default { scheduled() {} };`,
     });
@@ -222,10 +225,9 @@ describe.skipIf(!isLinux)("cron registration", () => {
 // Removal
 // ==========================================================================
 
-describe.skipIf(!isLinux)("cron removal", () => {
-  beforeEach(saveCrontab);
-  afterEach(restoreCrontab);
+describe.skipIf(!hasCrontab)("cron removal", () => {
   test("removes an existing cron entry", async () => {
+    using _restore = saveCrontabState();
     using dir = tempDir("bun-cron-test", {
       "job.ts": `export default { scheduled() {} };`,
     });
@@ -243,11 +245,13 @@ describe.skipIf(!isLinux)("cron removal", () => {
   });
 
   test("removing non-existent entry resolves without error", async () => {
+    using _restore = saveCrontabState();
     const result = await Bun.cron.remove("rm-nonexistent");
     expect(result).toBeUndefined();
   });
 
   test("removes only the targeted entry", async () => {
+    using _restore = saveCrontabState();
     using dir = tempDir("bun-cron-test", {
       "a.ts": `export default { scheduled() {} };`,
       "b.ts": `export default { scheduled() {} };`,
@@ -264,6 +268,7 @@ describe.skipIf(!isLinux)("cron removal", () => {
   });
 
   test("register after remove works", async () => {
+    using _restore = saveCrontabState();
     using dir = tempDir("bun-cron-test", {
       "job.ts": `export default { scheduled() {} };`,
     });

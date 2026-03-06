@@ -103,11 +103,11 @@ console.log(favicon);
             "files": [
               {
                 "input": "client.html",
-                "path": "./client-s249t5qg.js",
+                "path": "./client-b5m4ng86.js",
                 "loader": "js",
                 "isEntry": true,
                 "headers": {
-                  "etag": "fxoJ6L-0X3o",
+                  "etag": "Ax71YVYyZQc",
                   "content-type": "text/javascript;charset=utf-8"
                 }
               },

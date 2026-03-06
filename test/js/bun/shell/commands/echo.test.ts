@@ -61,11 +61,7 @@ describe("echo error handling", async () => {
 });
 
 describe("echo special cases", async () => {
-  TestBuilder.command`echo -n -n hello`
-    .exitCode(0)
-    .stdout("-n hello")
-    .stderr("")
-    .runAsTest("-n flag with -n as argument");
+  TestBuilder.command`echo -n -n hello`.exitCode(0).stdout("hello").stderr("").runAsTest("-n flag with -n as argument");
 
   TestBuilder.command`echo -- -n hello`
     .exitCode(0)

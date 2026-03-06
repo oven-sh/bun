@@ -346,7 +346,7 @@ fn handleAddress(alloc: std.mem.Allocator, tokens: []const Token, depth: u32) Pa
                 if (!text_quoted_buf[idx] and std.mem.indexOfScalar(u8, text_buf[idx], '@') != null) {
                     // Fix Bug 1: if the token contains spaces, extract just the email part
                     const token = text_buf[idx];
-                    if (std.mem.indexOfAny(u8, token, " \t") != null) {
+                    if (bun.strings.indexOfAny(token, " \t") != null) {
                         // Split: find the word containing @
                         var words_iter = std.mem.splitAny(u8, token, " \t");
                         var remaining_parts: [64][]const u8 = undefined;

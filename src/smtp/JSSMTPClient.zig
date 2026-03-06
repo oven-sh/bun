@@ -237,7 +237,7 @@ fn onReady(ctx: *anyopaque) void {
     if (js.sendPromiseGetCached(this_js)) |pv| {
         js.sendPromiseSetCached(this_js, go, .zero);
         if (pv.asPromise()) |p| {
-            p.resolve(go, jsc.JSValue.true) catch {};
+            p.resolve(go, .true) catch {};
         }
     }
     this.updatePollRef();
@@ -468,6 +468,14 @@ fn constructFromOpts(globalObject: *jsc.JSGlobalObject, arg0: jsc.JSValue) bun.J
 
     const alloc = bun.default_allocator;
 
+    // Collect all UTF8 slices so they outlive the StringBuilder that reads them.
+    // Each toUTF8WithoutRef() returns a Slice backed by temporary memory;
+    // we must keep them alive until after sb.append() copies their contents.
+    const UTF8Slice = bun.ZigString.Slice;
+    var utf8_slices: [16]UTF8Slice = .{UTF8Slice{}} ** 16;
+    var utf8_count: usize = 0;
+    defer for (utf8_slices[0..utf8_count]) |*s| s.deinit();
+
     if (arg0.isString()) {
         const s = try arg0.toBunString(globalObject);
         defer s.deref();
@@ -541,7 +549,8 @@ fn constructFromOpts(globalObject: *jsc.JSGlobalObject, arg0: jsc.JSValue) bun.J
         const s = try v.toBunString(globalObject);
         defer s.deref();
         const u = s.toUTF8WithoutRef(alloc);
-        defer u.deinit();
+        utf8_slices[utf8_count] = u;
+        utf8_count += 1;
         host_str = u.slice();
     }
     if (try opts.getTruthy(globalObject, "port")) |v| {
@@ -559,7 +568,8 @@ fn constructFromOpts(globalObject: *jsc.JSGlobalObject, arg0: jsc.JSValue) bun.J
         const s = try v.toBunString(globalObject);
         defer s.deref();
         const u = s.toUTF8WithoutRef(alloc);
-        defer u.deinit();
+        utf8_slices[utf8_count] = u;
+        utf8_count += 1;
         local_hostname = u.slice();
     }
     var sock_timeout: u32 = 600_000;
@@ -569,7 +579,8 @@ fn constructFromOpts(globalObject: *jsc.JSGlobalObject, arg0: jsc.JSValue) bun.J
         const s = try v.toBunString(globalObject);
         defer s.deref();
         const u = s.toUTF8WithoutRef(alloc);
-        defer u.deinit();
+        utf8_slices[utf8_count] = u;
+        utf8_count += 1;
         mid_hostname = u.slice();
     }
     var auth_method: []const u8 = "";
@@ -583,28 +594,32 @@ fn constructFromOpts(globalObject: *jsc.JSGlobalObject, arg0: jsc.JSValue) bun.J
                 const s = try v.toBunString(globalObject);
                 defer s.deref();
                 const u = s.toUTF8WithoutRef(alloc);
-                defer u.deinit();
+                utf8_slices[utf8_count] = u;
+                utf8_count += 1;
                 auth_user = u.slice();
             }
             if (try ao.getTruthy(globalObject, "pass")) |v| {
                 const s = try v.toBunString(globalObject);
                 defer s.deref();
                 const u = s.toUTF8WithoutRef(alloc);
-                defer u.deinit();
+                utf8_slices[utf8_count] = u;
+                utf8_count += 1;
                 auth_pass = u.slice();
             }
             if (try ao.getTruthy(globalObject, "method")) |v| {
                 const s = try v.toBunString(globalObject);
                 defer s.deref();
                 const u = s.toUTF8WithoutRef(alloc);
-                defer u.deinit();
+                utf8_slices[utf8_count] = u;
+                utf8_count += 1;
                 auth_method = u.slice();
             }
             if (try ao.getTruthy(globalObject, "xoauth2")) |v| {
                 const s = try v.toBunString(globalObject);
                 defer s.deref();
                 const u = s.toUTF8WithoutRef(alloc);
-                defer u.deinit();
+                utf8_slices[utf8_count] = u;
+                utf8_count += 1;
                 auth_xoauth2_token = u.slice();
             }
         }
@@ -622,7 +637,8 @@ fn constructFromOpts(globalObject: *jsc.JSGlobalObject, arg0: jsc.JSValue) bun.J
             const s = try v.toBunString(globalObject);
             defer s.deref();
             const u = s.toUTF8WithoutRef(alloc);
-            defer u.deinit();
+            utf8_slices[utf8_count] = u;
+            utf8_count += 1;
             sendmail_path_str = u.slice();
         } else if (v.toBoolean()) {
             sendmail_path_str = "/usr/sbin/sendmail";
@@ -639,12 +655,14 @@ fn constructFromOpts(globalObject: *jsc.JSGlobalObject, arg0: jsc.JSValue) bun.J
     var proxy_host_str: []const u8 = "";
     var proxy_port_val: u16 = 0;
     var proxy_auth_str: []const u8 = "";
+    var proxy_auth_buf: [512]u8 = undefined;
     if (try opts.getTruthy(globalObject, "proxy")) |v| {
         if (v.isString()) {
             const s = try v.toBunString(globalObject);
             defer s.deref();
             const u = s.toUTF8WithoutRef(alloc);
-            defer u.deinit();
+            utf8_slices[utf8_count] = u;
+            utf8_count += 1;
             const proxy_raw = u.slice();
             // Parse proxy URL using Bun's URL parser
             if (URL.fromUTF8(alloc, proxy_raw)) |purl| {
@@ -659,8 +677,7 @@ fn constructFromOpts(globalObject: *jsc.JSGlobalObject, arg0: jsc.JSValue) bun.J
                 // Combine username:password for Proxy-Authorization
                 if (purl.username.len > 0) {
                     if (purl.password.len > 0) {
-                        var auth_buf: [512]u8 = undefined;
-                        proxy_auth_str = std.fmt.bufPrint(&auth_buf, "{s}:{s}", .{ purl.username, purl.password }) catch "";
+                        proxy_auth_str = std.fmt.bufPrint(&proxy_auth_buf, "{s}:{s}", .{ purl.username, purl.password }) catch "";
                     } else {
                         proxy_auth_str = purl.username;
                     }
@@ -902,7 +919,7 @@ pub fn verify(this: *JSSMTPClient, globalObject: *jsc.JSGlobalObject, _: *jsc.Ca
     const promise_js = promise_ptr.toJS();
 
     if (state == .ready or state == .rset) {
-        try promise_ptr.resolve(globalObject, jsc.JSValue.true);
+        try promise_ptr.resolve(globalObject, .true);
         return promise_js;
     }
 
@@ -1129,15 +1146,17 @@ fn failWithError(this: *JSSMTPClient, message: []const u8, code: SMTPConnection.
 // ========== Helpers ==========
 
 fn applyDkim(this: *JSSMTPClient, globalObject: *jsc.JSGlobalObject, dkim_obj: jsc.JSValue) !void {
-    var dc: dkim.DKIMConfig = undefined;
-    var have = false;
+    var dc: dkim.DKIMConfig = .{
+        .domain_name = "",
+        .key_selector = "",
+        .private_key_pem = "",
+    };
     if (try dkim_obj.getTruthy(globalObject, "domainName")) |v| {
         const s = try v.toBunString(globalObject);
         defer s.deref();
         const u = s.toUTF8WithoutRef(this.allocator);
         defer u.deinit();
         dc.domain_name = try this.allocator.dupe(u8, u.slice());
-        have = true;
     }
     if (try dkim_obj.getTruthy(globalObject, "keySelector")) |v| {
         const s = try v.toBunString(globalObject);
@@ -1153,14 +1172,14 @@ fn applyDkim(this: *JSSMTPClient, globalObject: *jsc.JSGlobalObject, dkim_obj: j
         defer u.deinit();
         dc.private_key_pem = try this.allocator.dupe(u8, u.slice());
     }
-    if (have) {
+    if (dc.domain_name.len > 0) {
         if (dkim.signMessage(this.allocator, this.message_data_buf, dc)) |signed| {
             this.allocator.free(@constCast(this.message_data_buf));
             this.message_data_buf = signed;
         } else |_| {}
         this.allocator.free(@constCast(dc.domain_name));
-        this.allocator.free(@constCast(dc.key_selector));
-        this.allocator.free(@constCast(dc.private_key_pem));
+        if (dc.key_selector.len > 0) this.allocator.free(@constCast(dc.key_selector));
+        if (dc.private_key_pem.len > 0) this.allocator.free(@constCast(dc.private_key_pem));
     }
 }
 

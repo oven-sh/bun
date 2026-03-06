@@ -599,15 +599,22 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionFindPackageJSON, (JSGlobalObject * globalObje
     // Get the 'base' argument (optional - absolute location of containing module)
     JSValue baseValue = callFrame->argument(1);
 
-    // Validate specifier: must be string or URL
-    if (!specifierValue.isString() && !specifierValue.isUndefined() && !specifierValue.isObject()) {
-        // Accept string or URL object
-        // For now, accept string, URL, or undefined as specifier
+    // Validate specifier: must be string or URL (or undefined for backward compat)
+    // Reject invalid types - numbers, booleans, plain objects
+    if (specifierValue.isNumber() || specifierValue.isBoolean() || 
+        (specifierValue.isObject() && !specifierValue.isStringObject())) {
+        if (!specifierValue.isUndefined()) {
+            scope.throwException(globalObject, JSC::createTypeError(globalObject, "specifier must be a string or URL"_s));
+            return JSValue::encode(jsUndefined());
+        }
     }
 
     // Validate base: must be string, URL, or undefined
-    if (!baseValue.isString() && !baseValue.isUndefined() && !baseValue.isObject()) {
-        // Accept string, URL, or undefined as base
+    if (!baseValue.isString() && !baseValue.isUndefined() &&
+        (baseValue.isNumber() || baseValue.isBoolean() ||
+         (baseValue.isObject() && !baseValue.isStringObject()))) {
+        scope.throwException(globalObject, JSC::createTypeError(globalObject, "base must be a string, URL, or undefined"_s));
+        return JSValue::encode(jsUndefined());
     }
 
     // TODO: Implement actual filesystem lookup to walk parent directories

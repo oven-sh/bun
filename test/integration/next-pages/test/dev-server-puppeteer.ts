@@ -77,8 +77,7 @@ async function main() {
   }
 
   const console_promise = waitForConsoleMessage(p, /counter a/);
-  p.goto(url);
-  await console_promise;
+  await Promise.all([p.goto(url), console_promise]);
 
   console.error("Loaded page");
   assert.strictEqual(await p.$eval("code.font-bold", x => x.innerText), Bun.version);
@@ -110,8 +109,7 @@ async function main() {
   // Set up the console listener BEFORE triggering reload to avoid a race
   // where the page reloads and fires the message before the listener is attached.
   const reload_promise = waitForConsoleMessage(p, /counter a/);
-  p.reload({});
-  await reload_promise;
+  await Promise.all([p.reload({}), reload_promise]);
 
   assert.strictEqual(await p.$eval("code.font-bold", x => x.innerText), Bun.version);
 

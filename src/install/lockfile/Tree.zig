@@ -752,9 +752,13 @@ fn hoistDependency(
         if (!dependency.behavior.isPeer() and dependency.version.tag == .npm) {
             const resolution: Resolution = builder.lockfile.packages.items(.resolution)[res_id];
             if (resolution.tag == .npm) {
-                const version = dependency.version.value.npm.version;
-                if (version.satisfies(resolution.value.npm.version, builder.buf(), builder.buf())) {
-                    return .{ .hoist_with_resolve = res_id }; // 1
+                const dep_real_name = dependency.version.value.npm.name;
+                const res_pkg_name = builder.lockfile.packages.items(.name)[res_id];
+                if (dep_real_name.eql(res_pkg_name, builder.buf(), builder.buf())) {
+                    const version = dependency.version.value.npm.version;
+                    if (version.satisfies(resolution.value.npm.version, builder.buf(), builder.buf())) {
+                        return .{ .hoist_with_resolve = res_id };
+                    }
                 }
             }
         }

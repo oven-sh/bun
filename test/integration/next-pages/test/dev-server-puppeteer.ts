@@ -98,6 +98,14 @@ async function main() {
 
   let counter_root = (await p.$("#counter-fixture"))!;
   console.error("Loaded counter");
+
+  // Wait for Tailwind CSS to be applied before checking computed styles.
+  // On slow CI machines, stylesheets may not be loaded when the page first renders.
+  await p.waitForFunction(() => {
+    const el = document.querySelector("#counter-fixture");
+    return el && getComputedStyle(el).borderBottomLeftRadius === "9999px";
+  });
+
   {
     const [has_class, style_json_string] = await counter_root.evaluate(
       x => [(x as HTMLElement).classList.contains("rounded-bl-full"), JSON.stringify(getComputedStyle(x))] as const,

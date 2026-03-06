@@ -852,7 +852,7 @@ fn fromLooksLikeFilePath(from: bun.String) bool {
 
     switch (bun.sys.stat(path_z)) {
         .result => |stat| {
-            return !bun.S.ISDIR(stat.mode);
+            return !bun.S.ISDIR(@intCast(stat.mode));
         },
         .err => {},
     }

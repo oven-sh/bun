@@ -6,7 +6,7 @@ option(WEBKIT_LOCAL "If a local version of WebKit should be used instead of down
 option(WEBKIT_BUILD_TYPE "The build type for local WebKit (defaults to CMAKE_BUILD_TYPE)")
 
 if(NOT WEBKIT_VERSION)
-  set(WEBKIT_VERSION 9f081042b3cc058d081d1d9209b0821c1a7f2236)
+  set(WEBKIT_VERSION 4a6a32c32c11ffb9f5a94c310b10f50130bfe6de)
 endif()
 
 

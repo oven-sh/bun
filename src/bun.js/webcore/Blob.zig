@@ -3191,6 +3191,11 @@ pub fn resolveSize(this: *Blob) void {
                 this.size = store_size -| offset;
                 return;
             }
+
+            // For non-seekable files (pipes, FIFOs) or files where stat
+            // failed, the size is genuinely unknown — leave it as max_size
+            // so that stream readers don't treat it as an empty file.
+            return;
         }
 
         this.size = 0;

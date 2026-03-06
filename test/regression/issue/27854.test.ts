@@ -9,7 +9,12 @@ import path from "node:path";
 // null check so Bun returns ENOENT instead of panicking.
 
 test("fs.realpathSync does not crash on non-existent path", () => {
-  expect(() => fs.realpathSync("/this/path/definitely/does/not/exist")).toThrow();
+  try {
+    fs.realpathSync("/this/path/definitely/does/not/exist");
+    expect.unreachable();
+  } catch (err: any) {
+    expect(err.code).toBe("ENOENT");
+  }
 });
 
 test("fs.realpath does not crash on non-existent path", async () => {

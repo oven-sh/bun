@@ -63,6 +63,7 @@ pub const ProcessHandle = struct {
     end_time: ?std.time.Instant = null,
 
     remaining_dependencies: usize = 0,
+    skipped: bool = false,
     /// Dependents within the same script group (pre->main->post chain).
     /// These are NOT started if this handle fails, even with --no-exit-on-error.
     group_dependents: std.array_list.Managed(*This) = std.array_list.Managed(*This).init(bun.default_allocator),
@@ -310,7 +311,7 @@ const State = struct {
             if (this.max_concurrency) |max| {
                 if (this.running_count >= max) break;
             }
-            if (h.remaining_dependencies == 0 and h.process == null) {
+            if (!h.skipped and h.remaining_dependencies == 0 and h.process == null) {
                 h.start() catch {
                     Output.prettyErrorln("<r><red>error<r>: Failed to start process", .{});
                     Global.exit(1);
@@ -323,6 +324,7 @@ const State = struct {
     /// failed. Recursively skip their group dependents too.
     fn skipDependents(this: *This, dependents: []*ProcessHandle) void {
         for (dependents) |dependent| {
+            dependent.skipped = true;
             dependent.remaining_dependencies -= 1;
             if (dependent.remaining_dependencies == 0) {
                 this.skipDependents(dependent.group_dependents.items);

@@ -210,6 +210,12 @@ if(LINUX AND ABI STREQUAL "musl")
   set(WEBKIT_SUFFIX "-musl")
 endif()
 
+# Baseline builds target older CPUs without AVX/AVX2 (using -march=nehalem).
+# They require a WebKit library also compiled without AVX/AVX2 instructions.
+if(ENABLE_BASELINE AND WEBKIT_ARCH STREQUAL "amd64")
+  set(WEBKIT_SUFFIX "${WEBKIT_SUFFIX}-baseline")
+endif()
+
 if(DEBUG)
   set(WEBKIT_SUFFIX "${WEBKIT_SUFFIX}-debug")
 elseif(ENABLE_LTO)

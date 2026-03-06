@@ -219,4 +219,7 @@ test("bun add should deduplicate transitive deps when upgrading a root package (
 
   // Nested copy SHOULD exist since 2.0.0 does NOT satisfy ^1.0.0
   expect(await exists(join(packageDir, "node_modules", "consumer", "node_modules", "shared-dep"))).toBe(true);
+  expect(
+    await Bun.file(join(packageDir, "node_modules", "consumer", "node_modules", "shared-dep", "package.json")).json(),
+  ).toMatchObject({ version: "1.1.0" });
 });

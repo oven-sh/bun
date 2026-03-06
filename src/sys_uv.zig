@@ -152,7 +152,7 @@ pub fn readlink(file_path: [:0]const u8, buf: []u8) Maybe([:0]u8) {
         // Seems like `rc` does not contain the size?
         bun.assert(rc.int() == 0);
         const result_ptr: ?[*:0]u8 = req.ptrAs(?[*:0]u8);
-        const slice = bun.span(result_ptr orelse return .{ .err = .{ .errno = @intFromEnum(bun.C.E.NOENT), .syscall = .readlink, .path = file_path } });
+        const slice = bun.span(result_ptr orelse return .{ .err = .{ .errno = @intFromEnum(bun.sys.E.NOENT), .syscall = .readlink, .path = file_path } });
         if (slice.len > buf.len) {
             log("uv readlink({s}) = {d}, {s} TRUNCATED", .{ file_path, rc.int(), slice });
             return .{ .err = .{ .errno = @intFromEnum(bun.sys.E.NOMEM), .syscall = .readlink, .path = file_path } };

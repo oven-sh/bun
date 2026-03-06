@@ -5504,7 +5504,7 @@ pub const NodeFS = struct {
 
             const result_ptr: ?[*:0]u8 = req.ptrAs(?[*:0]u8);
             var buf = bun.span(result_ptr orelse return .{ .err = Syscall.Error{
-                .errno = @intFromEnum(bun.C.E.NOENT),
+                .errno = @intFromEnum(bun.sys.E.NOENT),
                 .syscall = .realpath,
                 .path = args.path.slice(),
             } });

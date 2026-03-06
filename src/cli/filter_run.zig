@@ -196,36 +196,28 @@ const State = struct {
         }
     }
 
+    fn startReadyHandles(this: *This) void {
+        for (this.handles) |*h| {
+            if (this.max_concurrency) |max| {
+                if (this.running_count >= max) break;
+            }
+            if (h.remaining_dependencies == 0 and h.process == null) {
+                h.start() catch {
+                    Output.prettyErrorln("<r><red>error<r>: Failed to start process", .{});
+                    Global.exit(1);
+                };
+            }
+        }
+    }
+
     fn processExit(this: *This, handle: *ProcessHandle) !void {
         this.remaining_scripts -= 1;
         this.running_count -= 1;
         if (!this.aborted) {
             for (handle.dependents.items) |dependent| {
                 dependent.remaining_dependencies -= 1;
-                if (dependent.remaining_dependencies == 0) {
-                    if (this.max_concurrency) |max| {
-                        if (this.running_count >= max) continue;
-                    }
-                    dependent.start() catch {
-                        Output.prettyErrorln("<r><red>error<r>: Failed to start process", .{});
-                        Global.exit(1);
-                    };
-                }
             }
-            // Start any other ready handles that were waiting for a concurrency slot
-            if (this.max_concurrency != null) {
-                for (this.handles) |*h| {
-                    if (this.max_concurrency) |max| {
-                        if (this.running_count >= max) break;
-                    }
-                    if (h.remaining_dependencies == 0 and h.process == null and h != handle) {
-                        h.start() catch {
-                            Output.prettyErrorln("<r><red>error<r>: Failed to start process", .{});
-                            Global.exit(1);
-                        };
-                    }
-                }
-            }
+            this.startReadyHandles();
         }
         if (this.pretty_output) {
             this.redraw(false) catch {};

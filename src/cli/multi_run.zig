@@ -301,28 +301,20 @@ const State = struct {
     fn startDependents(this: *This, dependents: []*ProcessHandle) void {
         for (dependents) |dependent| {
             dependent.remaining_dependencies -= 1;
-            if (dependent.remaining_dependencies == 0) {
-                if (this.max_concurrency) |max| {
-                    if (this.running_count >= max) continue;
-                }
-                dependent.start() catch {
+        }
+        this.startReadyHandles();
+    }
+
+    fn startReadyHandles(this: *This) void {
+        for (this.handles) |*h| {
+            if (this.max_concurrency) |max| {
+                if (this.running_count >= max) break;
+            }
+            if (h.remaining_dependencies == 0 and h.process == null) {
+                h.start() catch {
                     Output.prettyErrorln("<r><red>error<r>: Failed to start process", .{});
                     Global.exit(1);
                 };
-            }
-        }
-        // Start any other ready handles that were waiting for a concurrency slot
-        if (this.max_concurrency != null) {
-            for (this.handles) |*h| {
-                if (this.max_concurrency) |max| {
-                    if (this.running_count >= max) break;
-                }
-                if (h.remaining_dependencies == 0 and h.process == null) {
-                    h.start() catch {
-                        Output.prettyErrorln("<r><red>error<r>: Failed to start process", .{});
-                        Global.exit(1);
-                    };
-                }
             }
         }
     }

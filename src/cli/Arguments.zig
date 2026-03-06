@@ -134,7 +134,7 @@ pub const auto_or_run_params = [_]ParamType{
     clap.parseParam("--parallel                        Run multiple scripts concurrently with Foreman-style output") catch unreachable,
     clap.parseParam("--sequential                      Run multiple scripts sequentially with Foreman-style output") catch unreachable,
     clap.parseParam("--no-exit-on-error                Continue running other scripts when one fails (with --parallel/--sequential)") catch unreachable,
-    clap.parseParam("--concurrency <NUMBER>            Maximum number of scripts to run concurrently with --filter (default: unlimited)") catch unreachable,
+    clap.parseParam("--concurrency <NUMBER>            Maximum number of scripts to run concurrently with --filter, --parallel, or --sequential (default: unlimited)") catch unreachable,
 };
 
 pub const auto_only_params = [_]ParamType{

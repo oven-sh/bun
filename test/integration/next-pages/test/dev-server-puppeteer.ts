@@ -1,9 +1,9 @@
 import assert from "assert";
+import { which } from "bun";
 import { copyFileSync } from "fs";
 import { join } from "path";
 import type { ConsoleMessage, Page } from "puppeteer";
 import { launch } from "puppeteer";
-import { which } from "bun";
 const root = join(import.meta.dir, "../");
 
 copyFileSync(join(root, "src/Counter1.txt"), join(root, "src/Counter.tsx"));
@@ -107,8 +107,11 @@ async function main() {
   await counter_root.$eval(".dec", x => (x as HTMLElement).click());
   assert.strictEqual(await getCount(), "Count A: 1");
 
+  // Set up the console listener BEFORE triggering reload to avoid a race
+  // where the page reloads and fires the message before the listener is attached.
+  const reload_promise = waitForConsoleMessage(p, /counter a/);
   p.reload({});
-  await waitForConsoleMessage(p, /counter a/);
+  await reload_promise;
 
   assert.strictEqual(await p.$eval("code.font-bold", x => x.innerText), Bun.version);
 
@@ -122,8 +125,19 @@ async function main() {
   await counter_root.$eval(".dec", x => (x as HTMLElement).click());
   assert.strictEqual(await getCount(), "Count A: 1");
 
+  // Set up listener BEFORE triggering HMR to avoid missing the message.
+  const hmr_promise = waitForConsoleMessage(p, /counter b loaded/);
   copyFileSync(join(root, "src/Counter2.txt"), join(root, "src/Counter.tsx"));
-  await waitForConsoleMessage(p, /counter b loaded/);
+  await hmr_promise;
+
+  // After HMR, the DOM is rebuilt — wait for it to reflect the new component
+  // and re-query the element handle since the old one may be stale.
+  await p.waitForFunction(() => {
+    const el = document.querySelector("#counter-fixture p");
+    return el && el.textContent?.startsWith("Count B:");
+  });
+  counter_root = (await p.$("#counter-fixture"))!;
+
   assert.strictEqual(await getCount(), "Count B: 1");
   await counter_root.$eval(".inc", x => (x as HTMLElement).click());
   assert.strictEqual(await getCount(), "Count B: 3");

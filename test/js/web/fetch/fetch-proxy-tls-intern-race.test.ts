@@ -1,11 +1,11 @@
 import { expect, test } from "bun:test";
 import { tls as tlsCert } from "harness";
-import { Worker } from "node:worker_threads";
 import { once } from "node:events";
 import net from "node:net";
+import { Worker } from "node:worker_threads";
 
 async function createConnectProxy() {
-  const server = net.createServer((client) => {
+  const server = net.createServer(client => {
     let head = Buffer.alloc(0);
     const onData = (chunk: Buffer) => {
       head = Buffer.concat([head, chunk]);
@@ -76,11 +76,11 @@ test("SSLConfig intern/deref race does not cause use-after-free", async () => {
     });
     workers.push(w);
     promises.push(
-      new Promise<number>((resolve) => {
+      new Promise<number>(resolve => {
         w.on("message", (data: number) => resolve(data));
         w.on("error", () => resolve(0));
         w.on("exit", () => resolve(0));
-      })
+      }),
     );
   }
 

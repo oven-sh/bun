@@ -18,10 +18,10 @@ if (!browserPath) {
   console.warn("Since a Chromium browser was not found, it will be downloaded by Puppeteer.");
 }
 
-const b = await launch({
+const launchOptions = {
   // On macOS, there are issues using the new headless mode.
   // "TargetCloseError: Protocol error (Target.setAutoAttach): Target closed"
-  headless: process.platform === "darwin" ? "shell" : true,
+  headless: process.platform === "darwin" ? ("shell" as const) : (true as const),
   // Inherit the stdout and stderr of the browser process.
   dumpio: true,
   // Prefer to use a pipe to connect to the browser, instead of a WebSocket.
@@ -32,7 +32,7 @@ const b = await launch({
   protocolTimeout: 0,
   // Specify that chrome should be used, for consistent test results.
   // If a browser path is not found, it will be downloaded.
-  browser: "chrome",
+  browser: "chrome" as const,
   executablePath: browserPath,
   args: [
     // On Linux, there are issues with the sandbox, so disable it.
@@ -47,7 +47,20 @@ const b = await launch({
     // Fixes: "Navigating frame was detached"
     "--disable-features=site-per-process",
   ],
-});
+};
+
+// Retry browser launch up to 3 times — Chrome intermittently fails to start
+// on macOS CI with "Failed to launch the browser process!"
+let b;
+for (let attempt = 1; attempt <= 3; attempt++) {
+  try {
+    b = await launch(launchOptions);
+    break;
+  } catch (e) {
+    console.error(`Browser launch attempt ${attempt}/3 failed:`, e);
+    if (attempt === 3) throw e;
+  }
+}
 
 process.on("beforeExit", async reason => {
   await b?.close?.();

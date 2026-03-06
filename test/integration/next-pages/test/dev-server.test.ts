@@ -1,6 +1,6 @@
 import { Subprocess } from "bun";
 import { install_test_helpers } from "bun:internal-for-testing";
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { afterAll, expect, test } from "bun:test";
 import { copyFileSync } from "fs";
 import { cp, rm } from "fs/promises";
 import { join } from "path";
@@ -10,14 +10,7 @@ const { parseLockfile } = install_test_helpers;
 
 expect.extend({ toMatchNodeModulesAt });
 
-let root = tmpdirSync();
-
-beforeAll(async () => {
-  await rm(root, { recursive: true, force: true });
-  await cp(join(import.meta.dir, "../"), root, { recursive: true, force: true });
-  await rm(join(root, ".next"), { recursive: true, force: true });
-  console.log("Copied to:", root);
-});
+let root = tmpdirSync("next-dev-server");
 
 let dev_server: undefined | Subprocess<"ignore", "pipe", "inherit">;
 let baseUrl: string;
@@ -85,30 +78,6 @@ async function getDevServerURL() {
   return baseUrl;
 }
 
-beforeAll(async () => {
-  copyFileSync(join(root, "src/Counter1.txt"), join(root, "src/Counter.tsx"));
-
-  const install = Bun.spawnSync([bunExe(), "i"], {
-    cwd: root,
-    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(root, ".bun-install") },
-    stdout: "inherit",
-    stderr: "inherit",
-    stdin: "inherit",
-  });
-  if (!install.success) {
-    const reason = install.signalCode || `code ${install.exitCode}`;
-    throw new Error(`Failed to install dependencies: ${reason}`);
-  }
-
-  try {
-    await getDevServerURL();
-  } catch (e) {
-    console.error("Failed to start dev server :/");
-    dev_server?.kill?.();
-    dev_server = undefined;
-  }
-});
-
 afterAll(() => {
   if (dev_server_pid) {
     process?.kill?.(dev_server_pid);
@@ -116,16 +85,55 @@ afterAll(() => {
   }
 });
 
-// Chrome for Testing doesn't support arm64 yet
-//
+// Chrome for Testing doesn't provide arm64 Linux binaries, so Puppeteer's
+// downloaded Chrome won't work. Only run if a native system browser is available.
 // https://github.com/GoogleChromeLabs/chrome-for-testing/issues/1
-// https://github.com/puppeteer/puppeteer/issues/7740
-const puppeteer_unsupported = process.platform === "linux" && process.arch === "arm64";
+const hasNativeBrowser =
+  process.platform !== "linux" ||
+  process.arch !== "arm64" ||
+  !!(Bun.which("chromium-browser") || Bun.which("chromium") || Bun.which("chrome"));
 
 // https://github.com/oven-sh/bun/issues/11255
-test.skipIf(puppeteer_unsupported || (isWindows && isCI))(
+test.skipIf(!hasNativeBrowser || (isWindows && isCI))(
   "hot reloading works on the client (+ tailwind hmr)",
   async () => {
+    await rm(root, { recursive: true, force: true });
+    await cp(join(import.meta.dir, "../"), root, { recursive: true, force: true });
+    await rm(join(root, ".next"), { recursive: true, force: true });
+    console.log("Copied to:", root);
+
+    copyFileSync(join(root, "src/Counter1.txt"), join(root, "src/Counter.tsx"));
+
+    const install = Bun.spawnSync([bunExe(), "i"], {
+      cwd: root,
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(root, ".bun-install") },
+      stdout: "inherit",
+      stderr: "inherit",
+      stdin: "inherit",
+    });
+    if (!install.success) {
+      const reason = install.signalCode || `code ${install.exitCode}`;
+      throw new Error(`Failed to install dependencies: ${reason}`);
+    }
+
+    // Chrome for Testing binaries are only ad-hoc signed. On macOS, if the
+    // Puppeteer cache directory has a quarantine xattr, Gatekeeper will SIGKILL
+    // the browser before it can start (Code: null, empty stderr). Strip xattrs.
+    if (process.platform === "darwin") {
+      try {
+        Bun.spawnSync(["xattr", "-cr", join(process.env.HOME!, ".cache", "puppeteer")]);
+      } catch {}
+    }
+
+    try {
+      await getDevServerURL();
+    } catch (e) {
+      console.error("Failed to start dev server :/");
+      dev_server?.kill?.();
+      dev_server = undefined;
+      throw e;
+    }
+
     expect(dev_server).not.toBeUndefined();
     expect(baseUrl).not.toBeUndefined();
 

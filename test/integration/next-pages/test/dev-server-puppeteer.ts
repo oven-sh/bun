@@ -1,9 +1,9 @@
 import assert from "assert";
+import { which } from "bun";
 import { copyFileSync } from "fs";
 import { join } from "path";
 import type { ConsoleMessage, Page } from "puppeteer";
 import { launch } from "puppeteer";
-import { which } from "bun";
 const root = join(import.meta.dir, "../");
 
 copyFileSync(join(root, "src/Counter1.txt"), join(root, "src/Counter.tsx"));
@@ -14,18 +14,11 @@ if (process.argv.length > 2) {
 }
 
 const browserPath = which("chromium-browser") || which("chromium") || which("chrome") || undefined;
-if (!browserPath) {
-  console.warn("Since a Chromium browser was not found, it will be downloaded by Puppeteer.");
-}
 
 const b = await launch({
-  // On macOS, there are issues using the new headless mode.
-  // "TargetCloseError: Protocol error (Target.setAutoAttach): Target closed"
-  headless: process.platform === "darwin" ? "shell" : true,
+  headless: true,
   // Inherit the stdout and stderr of the browser process.
   dumpio: true,
-  // Prefer to use a pipe to connect to the browser, instead of a WebSocket.
-  pipe: true,
   // Disable timeouts.
   timeout: 0,
   protocolTimeout: 0,
@@ -133,6 +126,16 @@ async function main() {
   assert.strictEqual(await getCount(), "Count B: 3");
 
   {
+    // Wait for Tailwind CSS HMR to apply the new styles. The JS HMR (counter b loaded)
+    // fires before the CSS is regenerated with the new Tailwind classes.
+    await p.waitForFunction(
+      () => {
+        const el = document.getElementById("counter-fixture");
+        return el && getComputedStyle(el).borderBottomRightRadius === "9999px";
+      },
+      { timeout: 10000 },
+    );
+
     const [has_class, style_json_string] = await counter_root.evaluate(
       x => [(x as HTMLElement).classList.contains("rounded-br-full"), JSON.stringify(getComputedStyle(x))] as const,
     );

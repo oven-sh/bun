@@ -813,17 +813,7 @@ pub fn run(ctx: Command.Context) !noreturn {
     }
 
     // Start handles with no dependencies (respecting concurrency limit)
-    for (state.handles) |*handle| {
-        if (handle.remaining_dependencies == 0) {
-            if (state.max_concurrency) |max| {
-                if (state.running_count >= max) continue;
-            }
-            handle.start() catch {
-                Output.prettyErrorln("<r><red>error<r>: Failed to start process", .{});
-                Global.exit(1);
-            };
-        }
-    }
+    state.startReadyHandles();
 
     AbortHandler.install();
 

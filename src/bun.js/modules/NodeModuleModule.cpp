@@ -622,7 +622,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionFindPackageJSON, (JSGlobalObject * globalObje
 
     // Throw error: findPackageJSON is not yet implemented
     // Returning undefined would confuse callers (undistinguishable from "not found")
-    scope.throwException(globalObject, JSC::createError(globalObject, "findPackageJSON is not implemented yet"_s, JSC::ErrorType::RangeError));
+    scope.throwException(globalObject, JSC::createError(globalObject, "findPackageJSON is not implemented yet"_s));
     return JSValue::encode(jsUndefined());
 }
 

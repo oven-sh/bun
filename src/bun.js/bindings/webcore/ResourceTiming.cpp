@@ -97,11 +97,11 @@ ResourceTiming ResourceTiming::isolatedCopy() const&
 ResourceTiming ResourceTiming::isolatedCopy() &&
 {
     return ResourceTiming {
-        WTFMove(m_url).isolatedCopy(),
-        WTFMove(m_initiatorType).isolatedCopy(),
-        // WTFMove(m_resourceLoadTiming).isolatedCopy(),
-        WTFMove(m_networkLoadMetrics).isolatedCopy(),
-        crossThreadCopy(WTFMove(m_serverTiming))
+        WTF::move(m_url).isolatedCopy(),
+        WTF::move(m_initiatorType).isolatedCopy(),
+        // WTF::move(m_resourceLoadTiming).isolatedCopy(),
+        WTF::move(m_networkLoadMetrics).isolatedCopy(),
+        crossThreadCopy(WTF::move(m_serverTiming))
     };
 }
 

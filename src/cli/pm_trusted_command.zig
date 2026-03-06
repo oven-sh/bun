@@ -37,8 +37,8 @@ pub const UntrustedCommand = struct {
 
             // called alias because a dependency name is not always the package name
             const alias = dep.name.slice(buf);
-
-            if (!pm.lockfile.hasTrustedDependency(alias)) {
+            const resolution = &resolutions[package_id];
+            if (!pm.lockfile.hasTrustedDependency(alias, resolution)) {
                 try untrusted_dep_ids.put(ctx.allocator, dep_id, {});
             }
         }
@@ -191,8 +191,8 @@ pub const TrustCommand = struct {
             if (package_id == Install.invalid_package_id) continue;
 
             const alias = dep.name.slice(buf);
-
-            if (!pm.lockfile.hasTrustedDependency(alias)) {
+            const resolution = &resolutions[package_id];
+            if (!pm.lockfile.hasTrustedDependency(alias, resolution)) {
                 try untrusted_dep_ids.put(ctx.allocator, dep_id, {});
             }
         }
@@ -263,7 +263,7 @@ pub const TrustCommand = struct {
                             if (trust_all) break :brk false;
 
                             for (packages_to_trust.items) |package_name_from_cli| {
-                                if (strings.eqlLong(package_name_from_cli, alias, true) and !pm.lockfile.hasTrustedDependency(alias)) {
+                                if (strings.eqlLong(package_name_from_cli, alias, true) and !pm.lockfile.hasTrustedDependency(alias, resolution)) {
                                     break :brk false;
                                 }
                             }

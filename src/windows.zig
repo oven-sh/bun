@@ -3416,6 +3416,11 @@ pub fn GetFinalPathNameByHandle(
         return error.FileNotFound;
     }
 
+    if (return_length >= out_buffer.len) {
+        bun.sys.syslog("GetFinalPathNameByHandleW({*p}) = NAMETOOLONG (needed {d}, have {d})", .{ hFile, return_length, out_buffer.len });
+        return error.NameTooLong;
+    }
+
     var ret = out_buffer[0..@intCast(return_length)];
 
     bun.sys.syslog("GetFinalPathNameByHandleW({*p}) = {f}", .{ hFile, bun.fmt.utf16(ret) });
@@ -3478,6 +3483,7 @@ pub const ENABLE_PROCESSED_OUTPUT = 0x0001;
 
 pub extern fn SetStdHandle(nStdHandle: u32, hHandle: *anyopaque) u32;
 pub extern fn GetConsoleOutputCP() u32;
+pub extern fn GetConsoleCP() u32;
 pub extern "kernel32" fn SetConsoleCP(wCodePageID: std.os.windows.UINT) callconv(.winapi) std.os.windows.BOOL;
 
 pub const DeleteFileOptions = struct {

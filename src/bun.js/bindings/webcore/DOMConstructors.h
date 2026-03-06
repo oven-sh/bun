@@ -860,11 +860,12 @@ enum class DOMConstructorID : uint16_t {
     Cookie,
     CookieMap,
     EventEmitter,
+    URLPattern,
 };
 
 static constexpr unsigned numberOfDOMConstructorsBase = 848;
 
-static constexpr unsigned bunExtraConstructors = 3;
+static constexpr unsigned bunExtraConstructors = 4;
 
 static constexpr unsigned numberOfDOMConstructors = numberOfDOMConstructorsBase + bunExtraConstructors;
 

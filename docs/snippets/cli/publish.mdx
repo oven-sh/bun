@@ -25,7 +25,7 @@ bun publish --access public
 
 </ParamField>
 
-<ParamField path="--tag" type="string"  default="latest">
+<ParamField path="--tag" type="string" default="latest">
 Set the tag of the package version being published. By default, the tag is `latest`. The initial version of a package is always given the `latest` tag in addition to the specified tag.
 
 ```sh terminal icon="terminal"
@@ -34,7 +34,7 @@ bun publish --tag alpha
 
 `--tag` can also be set in the `publishConfig` field of your `package.json`.
 
-```json package.json file="file-json"
+```json package.json icon="file-json"
 {
   "publishConfig": {
     "tag": "next" // [!code ++]

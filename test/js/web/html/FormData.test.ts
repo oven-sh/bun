@@ -277,6 +277,23 @@ describe("FormData", () => {
     expect(fd.toJSON()).toEqual({ "1": "1" });
   });
 
+  test("FormData.from throws on very large input instead of crashing", () => {
+    // This test verifies that FormData.from throws an exception instead of crashing
+    // when given input larger than WebKit's String::MaxLength (INT32_MAX ~= 2GB).
+    // We use a smaller test case with the synthetic limit to avoid actually allocating 2GB+.
+    const { setSyntheticAllocationLimitForTesting } = require("bun:internal-for-testing");
+    // Set a small limit so we can test the boundary without allocating gigabytes
+    const originalLimit = setSyntheticAllocationLimitForTesting(1024 * 1024); // 1MB limit
+    try {
+      // Create a buffer larger than the limit
+      const largeBuffer = new Uint8Array(2 * 1024 * 1024); // 2MB
+      // @ts-expect-error - FormData.from is a Bun extension
+      expect(() => FormData.from(largeBuffer)).toThrow("Cannot create a string longer than");
+    } finally {
+      setSyntheticAllocationLimitForTesting(originalLimit);
+    }
+  });
+
   it("should throw on bad boundary", async () => {
     const response = new Response('foo\r\nContent-Disposition: form-data; name="foo"\r\n\r\nbar\r\n', {
       headers: {

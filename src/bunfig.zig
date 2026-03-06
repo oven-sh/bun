@@ -399,7 +399,20 @@ pub const Bunfig = struct {
 
                     if (test_.get("rerunEach")) |expr| {
                         try this.expect(expr, .e_number);
+                        if (this.ctx.test_options.retry != 0) {
+                            try this.addError(expr.loc, "\"rerunEach\" cannot be used with \"retry\"");
+                            return;
+                        }
                         this.ctx.test_options.repeat_count = expr.data.e_number.toU32();
+                    }
+
+                    if (test_.get("retry")) |expr| {
+                        try this.expect(expr, .e_number);
+                        if (this.ctx.test_options.repeat_count != 0) {
+                            try this.addError(expr.loc, "\"retry\" cannot be used with \"rerunEach\"");
+                            return;
+                        }
+                        this.ctx.test_options.retry = expr.data.e_number.toU32();
                     }
 
                     if (test_.get("concurrentTestGlob")) |expr| {
@@ -741,12 +754,12 @@ pub const Bunfig = struct {
 
                     if (install_obj.get("minimumReleaseAge")) |min_age| {
                         switch (min_age.data) {
-                            .e_number => |days| {
-                                if (days.value < 0) {
+                            .e_number => |seconds| {
+                                if (seconds.value < 0) {
                                     try this.addError(min_age.loc, "Expected positive number of seconds for minimumReleaseAge");
                                     return;
                                 }
-                                install.minimum_release_age_ms = days.value * std.time.ms_per_s;
+                                install.minimum_release_age_ms = seconds.value * std.time.ms_per_s;
                             },
                             else => {
                                 try this.addError(min_age.loc, "Expected number of seconds for minimumReleaseAge");

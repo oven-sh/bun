@@ -90,6 +90,7 @@ test/cli/install/bun-lockb.test.ts
 test/cli/install/bun-patch.test.ts
 test/cli/install/bun-pm.test.ts
 test/cli/install/bun-repl.test.ts
+test/js/bun/repl/repl.test.ts
 test/cli/install/bun-update.test.ts
 test/cli/install/bun-workspaces.test.ts
 test/cli/install/bunx.test.ts
@@ -193,7 +194,8 @@ test/regression/issue/02499/02499.test.ts
 test/js/node/test/parallel/test-http-server-stale-close.js
 test/js/third_party/comlink/comlink.test.ts
 test/regression/issue/22635/22635.test.ts
-
+test/js/node/test/parallel/test-http-url.parse-https.request.js
+test/bundler/bundler_compile_autoload.test.ts
 
 # Bun::JSNodeHTTPServerSocket::clearSocketData
 test/js/node/test/parallel/test-http-server-keep-alive-max-requests-null.js
@@ -429,3 +431,5 @@ test/js/bun/test/parallel/test-http-should-not-accept-untrusted-certificates.ts
 # Need to run the event loop once more to ensure sockets close
 test/js/node/test/parallel/test-https-localaddress-bind-error.js
 test/js/node/test/parallel/test-crypto-op-during-process-exit.js
+
+test/js/third_party/prisma/prisma.test.ts

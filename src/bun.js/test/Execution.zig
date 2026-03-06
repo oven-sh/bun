@@ -78,6 +78,8 @@ pub const ExecutionSequence = struct {
     test_entry: ?*ExecutionEntry,
     remaining_repeat_count: u32,
     remaining_retry_count: u32,
+    flaky_attempt_count: usize = 0,
+    flaky_attempts_buf: [MAX_FLAKY_ATTEMPTS]FlakyAttempt = std.mem.zeroes([MAX_FLAKY_ATTEMPTS]FlakyAttempt),
     result: Result = .pending,
     executing: bool = false,
     started_at: bun.timespec = .epoch,
@@ -104,6 +106,17 @@ pub const ExecutionSequence = struct {
             .remaining_repeat_count = cfg.repeat_count,
             .remaining_retry_count = cfg.retry_count,
         };
+    }
+
+    pub const MAX_FLAKY_ATTEMPTS: usize = 16;
+
+    pub const FlakyAttempt = struct {
+        result: Result,
+        elapsed_ns: u64,
+    };
+
+    pub fn flakyAttempts(this: *const ExecutionSequence) []const FlakyAttempt {
+        return this.flaky_attempts_buf[0..this.flaky_attempt_count];
     }
 
     fn entryMode(this: ExecutionSequence) bun_test.ScopeMode {
@@ -192,7 +205,7 @@ pub fn handleTimeout(this: *Execution, globalThis: *jsc.JSGlobalObject) bun.JSEr
         if (sequences.len == 1) {
             const sequence = sequences[0];
             if (sequence.active_entry) |entry| {
-                const now = bun.timespec.now();
+                const now = bun.timespec.now(.force_real_time);
                 if (entry.timespec.order(&now) == .lt) {
                     const kill_count = globalThis.bunVM().auto_killer.kill();
                     if (kill_count.processes > 0) {
@@ -212,7 +225,7 @@ pub fn step(buntest_strong: bun_test.BunTestPtr, globalThis: *jsc.JSGlobalObject
     defer groupLog.end();
     const buntest = buntest_strong.get();
     const this = &buntest.execution;
-    var now = bun.timespec.now();
+    var now = bun.timespec.now(.force_real_time);
 
     switch (data) {
         .start => {
@@ -385,7 +398,7 @@ fn stepSequenceOne(buntest_strong: bun_test.BunTestPtr, globalThis: *jsc.JSGloba
         groupLog.log("runSequence queued callback: {f}", .{callback_data});
 
         if (BunTest.runTestCallback(buntest_strong, globalThis, cb.get(), next_item.has_done_parameter, callback_data, &next_item.timespec) != null) {
-            now.* = bun.timespec.now();
+            now.* = bun.timespec.now(.force_real_time);
             _ = next_item.evaluateTimeout(sequence, now);
 
             // the result is available immediately; advance the sequence and run again.
@@ -480,6 +493,14 @@ fn advanceSequence(this: *Execution, sequence: *ExecutionSequence, group: *Concu
 
         // Handle retry logic: if test failed and we have retries remaining, retry it
         if (test_failed and sequence.remaining_retry_count > 0) {
+            if (sequence.flaky_attempt_count < ExecutionSequence.MAX_FLAKY_ATTEMPTS) {
+                const elapsed_ns = if (sequence.started_at.eql(&.epoch)) 0 else sequence.started_at.sinceNow(.force_real_time);
+                sequence.flaky_attempts_buf[sequence.flaky_attempt_count] = .{
+                    .result = sequence.result,
+                    .elapsed_ns = elapsed_ns,
+                };
+                sequence.flaky_attempt_count += 1;
+            }
             sequence.remaining_retry_count -= 1;
             this.resetSequence(sequence);
             return;
@@ -514,7 +535,7 @@ fn onGroupCompleted(_: *Execution, _: *ConcurrentGroup, globalThis: *jsc.JSGloba
 fn onSequenceStarted(_: *Execution, sequence: *ExecutionSequence) void {
     if (sequence.test_entry) |entry| if (entry.callback == null) return;
 
-    sequence.started_at = bun.timespec.now();
+    sequence.started_at = bun.timespec.now(.force_real_time);
 
     if (sequence.test_entry) |entry| {
         log("Running test: \"{f}\"", .{std.zig.fmtString(entry.base.name orelse "(unnamed)")});
@@ -535,7 +556,7 @@ fn onEntryStarted(_: *Execution, entry: *ExecutionEntry) void {
     defer groupLog.end();
     if (entry.timeout != 0) {
         groupLog.log("-> entry.timeout: {}", .{entry.timeout});
-        entry.timespec = bun.timespec.msFromNow(entry.timeout);
+        entry.timespec = bun.timespec.msFromNow(.force_real_time, entry.timeout);
     } else {
         groupLog.log("-> entry.timeout: 0", .{});
         entry.timespec = .epoch;
@@ -543,7 +564,7 @@ fn onEntryStarted(_: *Execution, entry: *ExecutionEntry) void {
 }
 fn onEntryCompleted(_: *Execution, _: *ExecutionEntry) void {}
 fn onSequenceCompleted(this: *Execution, sequence: *ExecutionSequence) void {
-    const elapsed_ns = if (sequence.started_at.eql(&.epoch)) 0 else sequence.started_at.sinceNow();
+    const elapsed_ns = if (sequence.started_at.eql(&.epoch)) 0 else sequence.started_at.sinceNow(.force_real_time);
     switch (sequence.expect_assertions) {
         .not_set => {},
         .at_least_one => if (sequence.expect_call_count == 0 and sequence.result.isPass(.pending_is_pass)) {
@@ -604,13 +625,17 @@ pub fn resetSequence(this: *Execution, sequence: *ExecutionSequence) void {
         }
     }
 
-    // Preserve the current remaining_repeat_count and remaining_retry_count
+    // Preserve retry/repeat counts and flaky attempt history across reset
+    const saved_flaky_attempt_count = sequence.flaky_attempt_count;
+    const saved_flaky_attempts_buf = sequence.flaky_attempts_buf;
     sequence.* = .init(.{
         .first_entry = sequence.first_entry,
         .test_entry = sequence.test_entry,
         .retry_count = sequence.remaining_retry_count,
         .repeat_count = sequence.remaining_repeat_count,
     });
+    sequence.flaky_attempt_count = saved_flaky_attempt_count;
+    sequence.flaky_attempts_buf = saved_flaky_attempts_buf;
     _ = this;
 }
 

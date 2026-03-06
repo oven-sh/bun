@@ -1191,3 +1191,17 @@ recursiveFunction();
 
   expect(exitCode).toBe(0);
 });
+
+it("handles exceptions during empty stream creation", () => {
+  expect(() => {
+    function foo() {
+      try {
+        foo();
+      } catch (e) {}
+      const v8 = new Blob();
+      v8.stream();
+    }
+    foo();
+    throw new Error("not stack overflow");
+  }).toThrow("not stack overflow");
+});

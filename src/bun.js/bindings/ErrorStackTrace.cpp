@@ -12,7 +12,7 @@
 #include "JavaScriptCore/JSType.h"
 #include "wtf/text/OrdinalNumber.h"
 
-#include <JavaScriptCore/CatchScope.h>
+#include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/DebuggerPrimitives.h>
 #include <JavaScriptCore/Exception.h>
 #include <JavaScriptCore/JSCInlines.h>
@@ -258,7 +258,7 @@ JSCStackTrace JSCStackTrace::getStackTraceForThrownValue(JSC::VM& vm, JSC::JSVal
 {
     const WTF::Vector<JSC::StackFrame>* jscStackTrace = nullptr;
 
-    JSC::Exception* currentException = DECLARE_CATCH_SCOPE(vm).exception();
+    JSC::Exception* currentException = DECLARE_TOP_EXCEPTION_SCOPE(vm).exception();
     if (currentException && currentException->value() == thrownValue) {
         jscStackTrace = &currentException->stack();
     } else {
@@ -631,7 +631,7 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::
     // First try the "name" property.
     {
         WTF::String name;
-        auto catchScope = DECLARE_CATCH_SCOPE(vm);
+        auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
         if (object->getOwnNonIndexPropertySlot(vm, object->structure(), vm.propertyNames->name, slot)) {
             if (!slot.isAccessor()) {
@@ -644,17 +644,17 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::
                 }
             }
         }
-        if (catchScope.exception()) [[unlikely]] {
-            catchScope.clearException();
+        if (topExceptionScope.exception()) [[unlikely]] {
+            (void)topExceptionScope.tryClearException();
         }
     }
 
     {
         // Then try the "displayName" property (what this does internally)
-        auto catchScope = DECLARE_CATCH_SCOPE(vm);
+        auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         functionName = JSC::getCalculatedDisplayName(vm, object);
-        if (catchScope.exception()) [[unlikely]] {
-            catchScope.clearException();
+        if (topExceptionScope.exception()) [[unlikely]] {
+            (void)topExceptionScope.tryClearException();
         }
     }
 
@@ -680,10 +680,10 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::
     return functionName;
 }
 
-String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const JSC::StackFrame& frame, bool isInFinalizer, unsigned int* flags)
+String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const JSC::StackFrame& frame, FinalizerSafety finalizerSafety, unsigned int* flags)
 {
     bool isConstructor = false;
-    if (isInFinalizer) {
+    if (finalizerSafety == FinalizerSafety::MustNotTriggerGC) {
 
         if (auto* callee = frame.callee()) {
             if (auto* object = callee->getObject()) {
@@ -763,8 +763,7 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const
             isConstructor = true;
         }
 
-        // We cannot run this in FinalizeUnconditionally, as we cannot call getters there
-        if (!isInFinalizer) {
+        if (finalizerSafety == FinalizerSafety::NotInFinalizer) {
             auto codeType = codeblock->codeType();
             switch (codeType) {
             case JSC::CodeType::FunctionCode:

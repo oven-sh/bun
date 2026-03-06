@@ -76,6 +76,9 @@ const Z_DEFAULT_MEM_LEVEL = 8;
 // Buffer size for compression/decompression operations
 const COMPRESSION_BUFFER_SIZE = 4096;
 
+// Maximum decompressed message size (128 MB)
+const MAX_DECOMPRESSED_SIZE: usize = 128 * 1024 * 1024;
+
 // DEFLATE trailer bytes added by Z_SYNC_FLUSH
 const DEFLATE_TRAILER = [_]u8{ 0x00, 0x00, 0xff, 0xff };
 
@@ -136,13 +139,17 @@ fn canUseLibDeflate(len: usize) bool {
     return len < RareData.stack_buffer_size;
 }
 
-pub fn decompress(self: *PerMessageDeflate, in_buf: []const u8, out: *std.array_list.Managed(u8)) error{ InflateFailed, OutOfMemory }!void {
+pub fn decompress(self: *PerMessageDeflate, in_buf: []const u8, out: *std.array_list.Managed(u8)) error{ InflateFailed, OutOfMemory, TooLarge }!void {
+    const initial_len = out.items.len;
 
     // First we try with libdeflate, which is both faster and doesn't need the trailing deflate bytes
     if (canUseLibDeflate(in_buf.len)) {
         const result = self.rare_data.decompressor().deflate(in_buf, out.unusedCapacitySlice());
         if (result.status == .success) {
             out.items.len += result.written;
+            if (out.items.len - initial_len > MAX_DECOMPRESSED_SIZE) {
+                return error.TooLarge;
+            }
             return;
         }
     }
@@ -162,6 +169,11 @@ pub fn decompress(self: *PerMessageDeflate, in_buf: []const u8, out: *std.array_
 
         const res = zlib.inflate(&self.decompress_stream, zlib.FlushValue.NoFlush);
         out.items.len += out.unusedCapacitySlice().len - self.decompress_stream.avail_out;
+
+        // Check for decompression bomb
+        if (out.items.len - initial_len > MAX_DECOMPRESSED_SIZE) {
+            return error.TooLarge;
+        }
 
         if (res == .StreamEnd) {
             break;

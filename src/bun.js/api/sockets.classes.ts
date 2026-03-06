@@ -46,6 +46,10 @@ function generate(ssl) {
         fn: "disableRenegotiation",
         length: 0,
       },
+      isSessionReused: {
+        fn: "isSessionReused",
+        length: 0,
+      },
       setVerifyMode: {
         fn: "setVerifyMode",
         length: 2,

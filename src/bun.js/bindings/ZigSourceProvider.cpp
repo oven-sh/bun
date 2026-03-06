@@ -75,6 +75,14 @@ Ref<SourceProvider> SourceProvider::create(
     JSC::SourceProviderSourceType sourceType,
     bool isBuiltin)
 {
+    // Use BunTranspiledModule when module_info is present.
+    // This allows JSC to skip parsing during the analyze phase (uses pre-computed imports/exports).
+    // Bytecode cache (if present) is used separately during the evaluate phase.
+    if (resolvedSource.module_info != nullptr) {
+        ASSERT(!resolvedSource.isCommonJSModule);
+        sourceType = JSC::SourceProviderSourceType::BunTranspiledModule;
+    }
+
     auto string = resolvedSource.source_code.toWTFString(BunString::ZeroCopy);
     auto sourceURLString = resolvedSource.source_url.toWTFString(BunString::ZeroCopy);
 
@@ -91,6 +99,18 @@ Ref<SourceProvider> SourceProvider::create(
         // https://github.com/oven-sh/bun/issues/9521
     }
 
+    // Compute source origin: use explicit bytecode_origin_path if provided, otherwise derive from source_url.
+    // bytecode_origin_path is used for bytecode cache validation where the origin must match
+    // exactly what was used at build time.
+    const auto getSourceOrigin = [&]() -> SourceOrigin {
+        auto bytecodeOriginPath = resolvedSource.bytecode_origin_path.toWTFString(BunString::ZeroCopy);
+        if (!bytecodeOriginPath.isNull() && !bytecodeOriginPath.isEmpty()) {
+            // Convert file path to file:// URL (same as build time)
+            return SourceOrigin(WTF::URL::fileURLWithFileSystemPath(bytecodeOriginPath));
+        }
+        return toSourceOrigin(sourceURLString, isBuiltin);
+    };
+
     const auto getProvider = [&]() -> Ref<SourceProvider> {
         if (resolvedSource.bytecode_cache != nullptr) {
             const auto destructorPtr = [](const void* ptr) {
@@ -101,16 +121,18 @@ Ref<SourceProvider> SourceProvider::create(
             };
             const auto destructor = resolvedSource.needsDeref ? destructorPtr : destructorNoOp;
 
+            auto origin = getSourceOrigin();
+
             Ref<JSC::CachedBytecode> bytecode = JSC::CachedBytecode::create(std::span<uint8_t>(resolvedSource.bytecode_cache, resolvedSource.bytecode_cache_size), destructor, {});
             auto provider = adoptRef(*new SourceProvider(
                 globalObject->isThreadLocalDefaultGlobalObject ? globalObject : nullptr,
                 resolvedSource,
                 string.isNull() ? *StringImpl::empty() : *string.impl(),
                 JSC::SourceTaintedOrigin::Untainted,
-                toSourceOrigin(sourceURLString, isBuiltin),
+                origin,
                 sourceURLString.impl(), TextPosition(),
                 sourceType));
-            provider->m_cachedBytecode = WTFMove(bytecode);
+            provider->m_cachedBytecode = WTF::move(bytecode);
             return provider;
         }
 
@@ -119,7 +141,7 @@ Ref<SourceProvider> SourceProvider::create(
             resolvedSource,
             string.isNull() ? *StringImpl::empty() : *string.impl(),
             JSC::SourceTaintedOrigin::Untainted,
-            toSourceOrigin(sourceURLString, isBuiltin),
+            getSourceOrigin(),
             sourceURLString.impl(), TextPosition(),
             sourceType));
     };
@@ -189,6 +211,8 @@ extern "C" bool generateCachedModuleByteCodeFromSourceCode(BunString* sourceProv
 
     auto key = JSC::sourceCodeKeyForSerializedModule(vm, sourceCode);
 
+    dataLogLnIf(JSC::Options::verboseDiskCache(), "[Bytecode Build] generateModule url=", sourceProviderURL->toWTFString(), " origin=", sourceCode.provider()->sourceOrigin().url().string(), " sourceSize=", inputSourceCodeSize, " keyHash=", key.hash());
+
     RefPtr<JSC::CachedBytecode> cachedBytecode = JSC::encodeCodeBlock(vm, key, unlinkedCodeBlock);
     if (!cachedBytecode)
         return false;
@@ -221,6 +245,8 @@ extern "C" bool generateCachedCommonJSProgramByteCodeFromSourceCode(BunString* s
         return false;
 
     auto key = JSC::sourceCodeKeyForSerializedProgram(vm, sourceCode);
+
+    dataLogLnIf(JSC::Options::verboseDiskCache(), "[Bytecode Build] generateCJS url=", sourceProviderURL->toWTFString(), " origin=", sourceCode.provider()->sourceOrigin().url().string(), " sourceSize=", inputSourceCodeSize, " keyHash=", key.hash());
 
     RefPtr<JSC::CachedBytecode> cachedBytecode = JSC::encodeCodeBlock(vm, key, unlinkedCodeBlock);
     if (!cachedBytecode)
@@ -348,11 +374,11 @@ int SourceProvider::readCache(JSC::VM& vm, const JSC::SourceCode& sourceCode)
     // if (fileTotalSize == 0)
     //     return 0;
 
-    // Ref<JSC::CachedBytecode> cachedBytecode = JSC::CachedBytecode::create(WTFMove(mappedFile));
+    // Ref<JSC::CachedBytecode> cachedBytecode = JSC::CachedBytecode::create(WTF::move(mappedFile));
     // // auto key = JSC::sourceCodeKeyForSerializedModule(vm, sourceCode);
     // // if (isCachedBytecodeStillValid(vm, cachedBytecode.copyRef(), key,
     // //                                JSC::SourceCodeType::ModuleType)) {
-    // m_cachedBytecode = WTFMove(cachedBytecode);
+    // m_cachedBytecode = WTF::move(cachedBytecode);
     // return 1;
     // } else {
     //   FileSystem::truncateFile(fd, 0);

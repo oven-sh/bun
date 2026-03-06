@@ -11,7 +11,7 @@ public:
     using Base = JSDOMWrapper<Cookie>;
     static JSCookie* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<Cookie>&& impl)
     {
-        JSCookie* ptr = new (NotNull, JSC::allocateCell<JSCookie>(globalObject->vm())) JSCookie(structure, *globalObject, WTFMove(impl));
+        JSCookie* ptr = new (NotNull, JSC::allocateCell<JSCookie>(globalObject->vm())) JSCookie(structure, *globalObject, WTF::move(impl));
         ptr->finishCreation(globalObject->vm());
         return ptr;
     }

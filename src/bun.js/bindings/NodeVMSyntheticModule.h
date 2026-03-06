@@ -52,9 +52,9 @@ private:
     WTF::HashSet<String> m_exportNames;
 
     NodeVMSyntheticModule(JSC::VM& vm, JSC::Structure* structure, WTF::String identifier, JSValue context, JSValue moduleWrapper, WTF::HashSet<String> exportNames, JSValue syntheticEvaluationSteps)
-        : Base(vm, structure, WTFMove(identifier), context, moduleWrapper)
-        , m_exportNames(WTFMove(exportNames))
-        , m_syntheticEvaluationSteps(vm, this, syntheticEvaluationSteps)
+        : Base(vm, structure, WTF::move(identifier), context, moduleWrapper)
+        , m_exportNames(WTF::move(exportNames))
+        , m_syntheticEvaluationSteps(syntheticEvaluationSteps, JSC::WriteBarrierEarlyInit)
     {
     }
 

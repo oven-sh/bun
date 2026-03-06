@@ -56,21 +56,19 @@ pub fn fromJS(globalThis: *jsc.JSGlobalObject, input: jsc.JSValue) bun.JSError!j
     var log = logger.Log.init(allocator);
 
     if (input.isString()) {
-        var input_str = input.toSliceCloneWithAllocator(
+        var input_str = try input.toSliceCloneWithAllocator(
             globalThis,
             allocator,
-        ) orelse return .zero;
+        );
         if (input_str.len > 0)
             try all_positionals.append(input_str.slice());
     } else if (input.isArray()) {
         var iter = try input.arrayIterator(globalThis);
         while (try iter.next()) |item| {
-            const slice = item.toSliceCloneWithAllocator(globalThis, allocator) orelse return .zero;
-            if (globalThis.hasException()) return .zero;
+            const slice = try item.toSliceCloneWithAllocator(globalThis, allocator);
             if (slice.len == 0) continue;
             try all_positionals.append(slice.slice());
         }
-        if (globalThis.hasException()) return .zero;
     } else {
         return .js_undefined;
     }
@@ -96,7 +94,7 @@ pub fn fromJS(globalThis: *jsc.JSGlobalObject, input: jsc.JSValue) bun.JSError!j
 
     var object = jsc.JSValue.createEmptyObject(globalThis, 2);
     var name_str = bun.String.init(update_requests[0].name);
-    object.put(globalThis, "name", name_str.transferToJS(globalThis));
+    object.put(globalThis, "name", try name_str.transferToJS(globalThis));
     object.put(globalThis, "version", try update_requests[0].version.toJS(update_requests[0].version_buf, globalThis));
     return object;
 }

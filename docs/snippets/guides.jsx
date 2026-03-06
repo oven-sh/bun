@@ -202,6 +202,10 @@ export const GuidesList = () => {
             href: "/guides/http/stream-iterator",
           },
           {
+            title: "Server-Sent Events (SSE)",
+            href: "/guides/http/sse",
+          },
+          {
             title: "Streaming HTTP Server with Node.js Streams",
             href: "/guides/http/stream-node-streams-in-bun",
           },
@@ -406,6 +410,10 @@ export const GuidesList = () => {
           {
             title: "Set a code coverage threshold with the Bun test runner",
             href: "/guides/test/coverage-threshold",
+          },
+          {
+            title: "Selectively run tests concurrently with glob patterns",
+            href: "/guides/test/concurrent-test-glob",
           },
           {
             title: "Generate code coverage reports with the Bun test runner",

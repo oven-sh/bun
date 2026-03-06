@@ -332,10 +332,10 @@ pub fn fromBlobCopyRef(globalThis: *JSGlobalObject, blob: *const Blob, recommend
         .s3 => |*s3| {
             const credentials = s3.getCredentials();
             const path = s3.path();
-            const proxy = globalThis.bunVM().transpiler.env.getHttpProxy(true, null);
+            const proxy = globalThis.bunVM().transpiler.env.getHttpProxy(true, null, null);
             const proxy_url = if (proxy) |p| p.href else null;
 
-            return bun.S3.readableStream(credentials, path, blob.offset, if (blob.size != Blob.max_size) blob.size else null, proxy_url, globalThis);
+            return bun.S3.readableStream(credentials, path, blob.offset, if (blob.size != Blob.max_size) blob.size else null, proxy_url, s3.request_payer, globalThis);
         },
     }
 }
@@ -391,13 +391,12 @@ pub fn fromPipe(
 
 pub fn empty(globalThis: *JSGlobalObject) bun.JSError!jsc.JSValue {
     jsc.markBinding(@src());
-    return bun.jsc.fromJSHostCall(globalThis, @src(), ReadableStream__empty, .{globalThis});
+    return bun.cpp.ReadableStream__empty(globalThis);
 }
 
-pub fn used(globalThis: *JSGlobalObject) jsc.JSValue {
+pub fn used(globalThis: *JSGlobalObject) bun.JSError!jsc.JSValue {
     jsc.markBinding(@src());
-
-    return ReadableStream__used(globalThis);
+    return bun.cpp.ReadableStream__used(globalThis);
 }
 
 pub const StreamTag = enum(usize) {
@@ -443,6 +442,8 @@ pub fn NewSource(
         close_handler: ?*const fn (?*anyopaque) void = null,
         close_ctx: ?*anyopaque = null,
         close_jsvalue: jsc.Strong.Optional = .empty,
+        cancel_handler: ?*const fn (?*anyopaque) void = null,
+        cancel_ctx: ?*anyopaque = null,
         globalThis: *JSGlobalObject = undefined,
         this_jsvalue: jsc.JSValue = .zero,
         is_closed: bool = false,
@@ -494,6 +495,10 @@ pub fn NewSource(
 
             this.cancelled = true;
             onCancel(&this.context);
+            if (this.cancel_handler) |handler| {
+                this.cancel_handler = null;
+                handler(this.cancel_ctx);
+            }
         }
 
         pub fn onClose(this: *This) void {
@@ -648,7 +653,7 @@ pub fn NewSource(
                     .ready => return JSValue.jsNumber(16384),
                     .chunk_size => |size| return JSValue.jsNumber(size),
                     .err => |err| {
-                        return globalThis.throwValue(err.toJS(globalThis));
+                        return globalThis.throwValue(try err.toJS(globalThis));
                     },
                     else => |rc| {
                         return rc.toJS(globalThis);
@@ -665,7 +670,7 @@ pub fn NewSource(
                 switch (result) {
                     .err => |err| {
                         if (err == .Error) {
-                            return globalThis.throwValue(err.Error.toJS(globalThis));
+                            return globalThis.throwValue(try err.Error.toJS(globalThis));
                         } else {
                             const js_err = err.JSValue;
                             js_err.ensureStillAlive();

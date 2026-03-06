@@ -3,6 +3,17 @@ pub const webcore = @import("./bun.js/webcore.zig");
 pub const api = @import("./bun.js/api.zig");
 pub const bindgen = @import("./bun.js/bindgen.zig");
 
+pub fn applyStandaloneRuntimeFlags(b: *bun.Transpiler, graph: *const bun.StandaloneModuleGraph) void {
+    b.options.env.disable_default_env_files = graph.flags.disable_default_env_files;
+    b.options.env.behavior = if (graph.flags.disable_default_env_files)
+        .disable
+    else
+        .load_all_without_inlining;
+
+    b.resolver.opts.load_tsconfig_json = !graph.flags.disable_autoload_tsconfig;
+    b.resolver.opts.load_package_json = !graph.flags.disable_autoload_package_json;
+}
+
 pub const Run = struct {
     ctx: Command.Context,
     vm: *VirtualMachine,
@@ -13,21 +24,18 @@ pub const Run = struct {
 
     var run: Run = undefined;
 
-    pub fn bootStandalone(ctx: Command.Context, entry_path: string, graph: bun.StandaloneModuleGraph) !void {
+    pub fn bootStandalone(ctx: Command.Context, entry_path: string, graph_ptr: *bun.StandaloneModuleGraph) !void {
         jsc.markBinding(@src());
         bun.jsc.initialize(false);
         bun.analytics.Features.standalone_executable += 1;
-
-        const graph_ptr = try bun.default_allocator.create(bun.StandaloneModuleGraph);
-        graph_ptr.* = graph;
-        graph_ptr.set();
 
         js_ast.Expr.Data.Store.create();
         js_ast.Stmt.Data.Store.create();
         const arena = Arena.init();
 
         // Load bunfig.toml unless disabled by compile flags
-        if (!ctx.debug.loaded_bunfig and !graph.flags.disable_autoload_bunfig) {
+        // Note: config loading with execArgv is handled earlier in cli.zig via loadConfig
+        if (!ctx.debug.loaded_bunfig and !graph_ptr.flags.disable_autoload_bunfig) {
             try bun.cli.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand);
         }
 
@@ -38,6 +46,9 @@ pub const Run = struct {
                 .args = ctx.args,
                 .graph = graph_ptr,
                 .is_main_thread = true,
+                .smol = ctx.runtime_options.smol,
+                .debugger = ctx.runtime_options.debugger,
+                .dns_result_order = DNSResolver.Order.fromStringOrDie(ctx.runtime_options.dns_result_order),
             }),
             .arena = arena,
             .ctx = ctx,
@@ -82,13 +93,7 @@ pub const Run = struct {
             .unspecified => {},
         }
 
-        // If .env loading is disabled, only load process env vars
-        // Otherwise, load all .env files
-        if (graph.flags.disable_default_env_files) {
-            b.options.env.behavior = .disable;
-        } else {
-            b.options.env.behavior = .load_all_without_inlining;
-        }
+        applyStandaloneRuntimeFlags(b, graph_ptr);
 
         b.configureDefines() catch {
             failWithBuildError(vm);
@@ -278,8 +283,25 @@ pub const Run = struct {
             vm.cpu_profiler_config = CPUProfiler.CPUProfilerConfig{
                 .name = cpu_prof_opts.name,
                 .dir = cpu_prof_opts.dir,
+                .md_format = cpu_prof_opts.md_format,
+                .json_format = cpu_prof_opts.json_format,
+                .interval = cpu_prof_opts.interval,
             };
+            CPUProfiler.setSamplingInterval(cpu_prof_opts.interval);
             CPUProfiler.startCPUProfiler(vm.jsc_vm);
+            bun.analytics.Features.cpu_profile += 1;
+        }
+
+        // Set up heap profiler config if enabled (actual profiling happens on exit)
+        if (this.ctx.runtime_options.heap_prof.enabled) {
+            const heap_prof_opts = this.ctx.runtime_options.heap_prof;
+
+            vm.heap_profiler_config = HeapProfiler.HeapProfilerConfig{
+                .name = heap_prof_opts.name,
+                .dir = heap_prof_opts.dir,
+                .text_format = heap_prof_opts.text_format,
+            };
+            bun.analytics.Features.heap_snapshot += 1;
         }
 
         this.addConditionalGlobals();
@@ -341,8 +363,8 @@ pub const Run = struct {
         var printed_sourcemap_warning_and_version = false;
 
         if (vm.loadEntryPoint(this.entry_path)) |promise| {
-            if (promise.status(vm.global.vm()) == .rejected) {
-                const handled = vm.uncaughtException(vm.global, promise.result(vm.global.vm()), true);
+            if (promise.status() == .rejected) {
+                const handled = vm.uncaughtException(vm.global, promise.result(), true);
                 promise.setHandled(vm.global.vm());
 
                 if (vm.hot_reload != .none or handled) {
@@ -366,7 +388,7 @@ pub const Run = struct {
                 }
             }
 
-            _ = promise.result(vm.global.vm());
+            _ = promise.result();
 
             if (vm.log.msgs.items.len > 0) {
                 dumpBuildError(vm);
@@ -436,7 +458,7 @@ pub const Run = struct {
                     const to_print = brk: {
                         const result: jsc.JSValue = vm.entry_point_result.value.get() orelse .js_undefined;
                         if (result.asAnyPromise()) |promise| {
-                            switch (promise.status(vm.jsc_vm)) {
+                            switch (promise.status()) {
                                 .pending => {
                                     result.then2(vm.global, .js_undefined, Bun__onResolveEntryPointResult, Bun__onRejectEntryPointResult) catch {}; // TODO: properly propagate exception upwards
 
@@ -543,6 +565,7 @@ const VirtualMachine = jsc.VirtualMachine;
 const string = []const u8;
 
 const CPUProfiler = @import("./bun.js/bindings/BunCPUProfiler.zig");
+const HeapProfiler = @import("./bun.js/bindings/BunHeapProfiler.zig");
 const options = @import("./options.zig");
 const std = @import("std");
 const Command = @import("./cli.zig").Command;

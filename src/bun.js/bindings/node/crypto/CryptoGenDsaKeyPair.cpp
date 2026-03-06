@@ -32,7 +32,7 @@ extern "C" void Bun__DsaKeyPairJobCtx__runFromJS(DsaKeyPairJobCtx* ctx, JSGlobal
 extern "C" DsaKeyPairJob* Bun__DsaKeyPairJob__create(JSGlobalObject* globalObject, DsaKeyPairJobCtx* ctx, EncodedJSValue callback);
 DsaKeyPairJob* DsaKeyPairJob::create(JSGlobalObject* globalObject, DsaKeyPairJobCtx&& ctx, JSValue callback)
 {
-    DsaKeyPairJobCtx* ctxCopy = new DsaKeyPairJobCtx(WTFMove(ctx));
+    DsaKeyPairJobCtx* ctxCopy = new DsaKeyPairJobCtx(WTF::move(ctx));
     return Bun__DsaKeyPairJob__create(globalObject, ctxCopy, JSValue::encode(callback));
 }
 
@@ -45,7 +45,7 @@ void DsaKeyPairJob::schedule()
 extern "C" void Bun__DsaKeyPairJob__createAndSchedule(JSGlobalObject* globalObject, DsaKeyPairJobCtx* ctx, EncodedJSValue callback);
 void DsaKeyPairJob::createAndSchedule(JSGlobalObject* globalObject, DsaKeyPairJobCtx&& ctx, JSValue callback)
 {
-    DsaKeyPairJobCtx* ctxCopy = new DsaKeyPairJobCtx(WTFMove(ctx));
+    DsaKeyPairJobCtx* ctxCopy = new DsaKeyPairJobCtx(WTF::move(ctx));
     Bun__DsaKeyPairJob__createAndSchedule(globalObject, ctxCopy, JSValue::encode(callback));
 }
 

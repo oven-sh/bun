@@ -331,7 +331,7 @@ public:
         
 
         /* Adopting a socket invalidates it, do not rely on it directly to carry any data */
-        us_socket_t *usSocket = us_socket_context_adopt_socket(SSL, (us_socket_context_t *) webSocketContext, (us_socket_t *) this, sizeof(WebSocketData) + sizeof(UserData));
+        us_socket_t *usSocket = us_socket_context_adopt_socket(SSL, (us_socket_context_t *) webSocketContext, (us_socket_t *) this, sizeof(HttpResponseData<SSL>), sizeof(WebSocketData) + sizeof(UserData));
         WebSocket<SSL, true, UserData> *webSocket = (WebSocket<SSL, true, UserData> *) usSocket;
 
         /* For whatever reason we were corked, update cork to the new socket */
@@ -467,7 +467,9 @@ public:
             /* Write mark on first call to write */
             writeMark();
 
-            writeHeader("Transfer-Encoding", "chunked");
+            if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER)) {
+                writeHeader("Transfer-Encoding", "chunked");
+            }
             Super::write("\r\n", 2);
             httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
         }
@@ -489,7 +491,9 @@ public:
                 /* Write mark on first call to write */
                 writeMark();
 
-                writeHeader("Transfer-Encoding", "chunked");
+                if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER)) {
+                    writeHeader("Transfer-Encoding", "chunked");
+                }
                 Super::write("\r\n", 2);
                 httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
             }
@@ -558,7 +562,9 @@ public:
                 /* Write mark on first call to write */
                 writeMark();
 
-                writeHeader("Transfer-Encoding", "chunked");
+                if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER)) {
+                    writeHeader("Transfer-Encoding", "chunked");
+                }
                 Super::write("\r\n", 2);
                 httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
             }

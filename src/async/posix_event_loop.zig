@@ -150,6 +150,7 @@ pub const FilePoll = struct {
     const StaticPipeWriter = Subprocess.StaticPipeWriter.Poll;
     const ShellStaticPipeWriter = bun.shell.ShellSubprocess.StaticPipeWriter.Poll;
     const FileSink = jsc.WebCore.FileSink.Poll;
+    const TerminalPoll = bun.api.Terminal.Poll;
     const DNSResolver = bun.api.dns.Resolver;
     const GetAddrInfoRequest = bun.api.dns.GetAddrInfoRequest;
     const Request = bun.api.dns.internal.Request;
@@ -181,6 +182,7 @@ pub const FilePoll = struct {
         // LifecycleScriptSubprocessOutputReader,
         Process,
         ShellBufferedWriter, // i do not know why, but this has to be here otherwise compiler will complain about dependency loop
+        TerminalPoll,
     });
 
     pub const AllocatorType = enum {
@@ -412,6 +414,12 @@ pub const FilePoll = struct {
                 log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {f}) InternalDNSRequest", .{poll.fd});
                 const loader: *Request = ptr.as(Request);
                 Request.MacAsyncDNS.onMachportChange(loader);
+            },
+
+            @field(Owner.Tag, @typeName(TerminalPoll)) => {
+                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {f}) Terminal", .{poll.fd});
+                var handler: *TerminalPoll = ptr.as(TerminalPoll);
+                handler.onPoll(size_or_offset, poll.flags.contains(.hup));
             },
 
             else => {

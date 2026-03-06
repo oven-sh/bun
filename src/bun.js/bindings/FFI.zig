@@ -100,16 +100,6 @@ pub inline fn BOOLEAN_TO_JSVALUE(arg_val: @"bool") EncodedJSValue {
     res.asInt64 = @as(i64, @bitCast(@as(c_longlong, if (@as(c_int, @intFromBool(val)) != 0) (@as(c_int, 2) | @as(c_int, 4)) | @as(c_int, 1) else (@as(c_int, 2) | @as(c_int, 4)) | @as(c_int, 0))));
     return res;
 }
-pub inline fn PTR_TO_JSVALUE(arg_ptr: ?*anyopaque) EncodedJSValue {
-    const ptr = arg_ptr;
-    var val: EncodedJSValue = undefined;
-    val.asInt64 = @as(i64, @intCast(@intFromPtr(ptr))) + (@as(c_longlong, 1) << @as(@import("std").math.Log2Int(c_longlong), @intCast(49)));
-    return val;
-}
-pub inline fn JSVALUE_TO_PTR(arg_val: EncodedJSValue) ?*anyopaque {
-    const val = arg_val;
-    return @as(?*anyopaque, @ptrFromInt(val.asInt64 - (@as(c_longlong, 1) << @as(@import("std").math.Log2Int(c_longlong), @intCast(49)))));
-}
 pub inline fn JSVALUE_TO_INT32(arg_val: EncodedJSValue) i32 {
     const val = arg_val;
     return @as(i32, @bitCast(@as(c_int, @truncate(val.asInt64))));

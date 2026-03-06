@@ -91,7 +91,7 @@ jobs:
           commit-message: "deps: update hdrhistogram to ${{ steps.check-version.outputs.tag }} (${{ steps.check-version.outputs.latest }})"
           title: "deps: update hdrhistogram to ${{ steps.check-version.outputs.tag }}"
           delete-branch: true
-          branch: deps/update-hdrhistogram-${{ github.run_number }}
+          branch: deps/update-hdrhistogram
           body: |
             ## What does this PR do?
 

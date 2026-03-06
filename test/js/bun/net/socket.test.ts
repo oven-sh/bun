@@ -293,10 +293,6 @@ describe.concurrent("socket", () => {
     });
   });
 
-  it("should not leak memory when connect() fails again", async () => {
-    await expectMaxObjectTypeCount(expect, "TCPSocket", 5, 50);
-  });
-
   it("socket.timeout works", async () => {
     try {
       const { promise, resolve } = Promise.withResolvers<any>();
@@ -342,6 +338,10 @@ describe.concurrent("socket", () => {
   it("should allow large amounts of data to be sent and received", async () => {
     expect([fileURLToPath(new URL("./socket-huge-fixture.js", import.meta.url))]).toRun();
   }, 60_000);
+
+  it.skipIf(isWindows)("kqueue should not dispatch spurious drain events on readable", async () => {
+    expect([fileURLToPath(new URL("./kqueue-filter-coalesce-fixture.ts", import.meta.url))]).toRun();
+  });
 
   it("it should not crash when getting a ReferenceError on client socket open", async () => {
     using server = Bun.serve({
@@ -777,4 +777,8 @@ it("should not leak memory", async () => {
   await expectMaxObjectTypeCount(expect, "Listener", 2);
   await expectMaxObjectTypeCount(expect, "TCPSocket", isWindows ? 3 : 2);
   await expectMaxObjectTypeCount(expect, "TLSSocket", isWindows ? 3 : 2);
+});
+
+it("should not leak memory when connect() fails again", async () => {
+  await expectMaxObjectTypeCount(expect, "TCPSocket", 5, 50);
 });

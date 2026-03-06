@@ -615,7 +615,6 @@ const NativeStackFrame = ({
       <div
         title={StackFrameScope[scope]}
         className="BunError-StackFrame-identifier"
-        // @ts-expect-error Custom CSS variables are not known by TypeScript
         style={{ "--max-length": `${maxLength}ch` }}
       >
         {getNativeStackFrameIdentifier(frame)}

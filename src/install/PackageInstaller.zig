@@ -623,6 +623,17 @@ pub const PackageInstaller = struct {
         //     else => unreachable,
         // };
 
+        // If a newly computed integrity hash is available (e.g. for a GitHub
+        // tarball) and the lockfile doesn't already have one, persist it so
+        // the lockfile gets re-saved with the hash.
+        if (data.integrity.tag.isSupported()) {
+            var pkg_metas = this.lockfile.packages.items(.meta);
+            if (!pkg_metas[package_id].integrity.tag.isSupported()) {
+                pkg_metas[package_id].integrity = data.integrity;
+                this.manager.options.enable.force_save_lockfile = true;
+            }
+        }
+
         if (this.manager.task_queue.fetchRemove(task_id)) |removed| {
             var callbacks = removed.value;
             defer callbacks.deinit(this.manager.allocator);
@@ -1000,6 +1011,7 @@ pub const PackageInstaller = struct {
                     .local_tarball => {
                         this.manager.enqueueTarballForReading(
                             dependency_id,
+                            package_id,
                             alias.slice(this.lockfile.buffers.string_bytes.items),
                             resolution,
                             context,
@@ -1152,7 +1164,7 @@ pub const PackageInstaller = struct {
                     const truncated_dep_name_hash: TruncatedPackageNameHash = @truncate(dep.name_hash);
                     const is_trusted, const is_trusted_through_update_request = brk: {
                         if (this.trusted_dependencies_from_update_requests.contains(truncated_dep_name_hash)) break :brk .{ true, true };
-                        if (this.lockfile.hasTrustedDependency(alias.slice(this.lockfile.buffers.string_bytes.items))) break :brk .{ true, false };
+                        if (this.lockfile.hasTrustedDependency(alias.slice(this.lockfile.buffers.string_bytes.items), resolution)) break :brk .{ true, false };
                         break :brk .{ false, false };
                     };
 

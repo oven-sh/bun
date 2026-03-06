@@ -14,10 +14,12 @@ param(
   [Switch]$DownloadWithoutCurl = $false
 );
 
-# filter out 32 bit + ARM
-if (-not ((Get-CimInstance Win32_ComputerSystem)).SystemType -match "x64-based") {
+# Detect real CPU architecture from registry — works even under x64 emulation on ARM64.
+# Win32_ComputerSystem.SystemType can be unreliable under WoW64.
+$Arch = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment').PROCESSOR_ARCHITECTURE
+if (-not ($Arch -eq "AMD64" -or $Arch -eq "ARM64")) {
   Write-Output "Install Failed:"
-  Write-Output "Bun for Windows is currently only available for x86 64-bit Windows.`n"
+  Write-Output "Bun for Windows is only available for x86 64-bit and ARM64 Windows.`n"
   return 1
 }
 
@@ -103,13 +105,17 @@ function Install-Bun {
     $Version = "bun-$Version"
   }
 
-  $Arch = "x64"
-  $IsBaseline = $ForceBaseline
-  if (!$IsBaseline) {
-    $IsBaseline = !( `
-      Add-Type -MemberDefinition '[DllImport("kernel32.dll")] public static extern bool IsProcessorFeaturePresent(int ProcessorFeature);' `
-        -Name 'Kernel32' -Namespace 'Win32' -PassThru `
-    )::IsProcessorFeaturePresent(40);
+  $IsARM64 = $Arch -eq "ARM64"
+  $BunArch = if ($IsARM64) { "aarch64" } else { "x64" }
+  $IsBaseline = $false
+  if (-not $IsARM64) {
+    $IsBaseline = $ForceBaseline
+    if (!$IsBaseline) {
+      $IsBaseline = !( `
+        Add-Type -MemberDefinition '[DllImport("kernel32.dll")] public static extern bool IsProcessorFeaturePresent(int ProcessorFeature);' `
+          -Name 'Kernel32' -Namespace 'Win32' -PassThru `
+      )::IsProcessorFeaturePresent(40);
+    }
   }
 
   $BunRoot = if ($env:BUN_INSTALL) { $env:BUN_INSTALL } else { "${Home}\.bun" }
@@ -134,9 +140,9 @@ function Install-Bun {
     return 1
   }
 
-  $Target = "bun-windows-$Arch"
+  $Target = "bun-windows-$BunArch"
   if ($IsBaseline) {
-    $Target = "bun-windows-$Arch-baseline"
+    $Target = "bun-windows-$BunArch-baseline"
   }
   $BaseURL = "https://github.com/oven-sh/bun/releases"
   $URL = "$BaseURL/$(if ($Version -eq "latest") { "latest/download" } else { "download/$Version" })/$Target.zip"
@@ -219,7 +225,8 @@ function Install-Bun {
     # I want to keep this error message in for a few months to ensure that
     # if someone somehow runs into this, it can be reported.
     Write-Output "Install Failed - You are missing a DLL required to run bun.exe"
-    Write-Output "This can be solved by installing the Visual C++ Redistributable from Microsoft:`nSee https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist`nDirect Download -> https://aka.ms/vs/17/release/vc_redist.x64.exe`n`n"
+    $VCRedistUrl = if ($IsARM64) { "https://aka.ms/vs/17/release/vc_redist.arm64.exe" } else { "https://aka.ms/vs/17/release/vc_redist.x64.exe" }
+    Write-Output "This can be solved by installing the Visual C++ Redistributable from Microsoft:`nSee https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist`nDirect Download -> ${VCRedistUrl}`n`n"
     Write-Output "The error above should be unreachable as Bun does not depend on this library. Please comment in https://github.com/oven-sh/bun/issues/8598 or open a new issue.`n`n"
     Write-Output "The command '${BunBin}\bun.exe --revision' exited with code ${LASTEXITCODE}`n"
     return 1

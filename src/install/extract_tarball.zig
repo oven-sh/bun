@@ -23,7 +23,28 @@ pub inline fn run(this: *const ExtractTarball, log: *logger.Log, bytes: []const 
             return error.IntegrityCheckFailed;
         }
     }
-    return this.extract(log, bytes);
+    var result = try this.extract(log, bytes);
+
+    // Compute and store SHA-512 integrity hash for GitHub / URL / local tarballs
+    // so the lockfile can pin the exact tarball content. On subsequent installs
+    // the hash stored in the lockfile is forwarded via this.integrity and verified
+    // above, preventing a compromised server from silently swapping the tarball.
+    switch (this.resolution.tag) {
+        .github, .remote_tarball, .local_tarball => {
+            if (this.integrity.tag.isSupported()) {
+                // Re-installing with an existing lockfile: integrity was already
+                // verified above, propagate the known value to ExtractData so that
+                // the lockfile keeps it on re-serialisation.
+                result.integrity = this.integrity;
+            } else {
+                // First install (no integrity in the lockfile yet): compute it.
+                result.integrity = Integrity.forBytes(bytes);
+            }
+        },
+        else => {},
+    }
+
+    return result;
 }
 
 pub fn buildURL(
@@ -169,7 +190,7 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
 
         var esimated_output_size: usize = 0;
 
-        const time_started_for_verbose_logs: u64 = if (PackageManager.verbose_install) bun.getRoughTickCount().ns() else 0;
+        const time_started_for_verbose_logs: u64 = if (PackageManager.verbose_install) bun.getRoughTickCount(.allow_mocked_time).ns() else 0;
 
         {
             // Last 4 bytes of a gzip-compressed file are the uncompressed size.
@@ -220,7 +241,7 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
         }
 
         if (PackageManager.verbose_install) {
-            const decompressing_ended_at: u64 = bun.getRoughTickCount().ns();
+            const decompressing_ended_at: u64 = bun.getRoughTickCount(.allow_mocked_time).ns();
             const elapsed = decompressing_ended_at - time_started_for_verbose_logs;
             Output.prettyErrorln("[{s}] Extract {s}<r> (decompressed {f} tgz file in {D})", .{ name, tmpname, bun.fmt.size(tgz_bytes.len, .{}), elapsed });
         }
@@ -283,7 +304,7 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
         }
 
         if (PackageManager.verbose_install) {
-            const elapsed = bun.getRoughTickCount().ns() - time_started_for_verbose_logs;
+            const elapsed = bun.getRoughTickCount(.allow_mocked_time).ns() - time_started_for_verbose_logs;
             Output.prettyErrorln("[{s}] Extracted to {s} ({D})<r>", .{ name, tmpname, elapsed });
             Output.flush();
         }

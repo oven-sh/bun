@@ -17,6 +17,8 @@ extern "C" void us_socket_free_stream_buffer(us_socket_stream_buffer_t* streamBu
 extern "C" uint64_t uws_res_get_remote_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
 extern "C" uint64_t uws_res_get_local_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
 extern "C" EncodedJSValue us_socket_buffered_js_write(void* socket, bool is_ssl, bool ended, us_socket_stream_buffer_t* streamBuffer, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue data, JSC::EncodedJSValue encoding);
+extern "C" int us_socket_is_ssl_handshake_finished(int ssl, struct us_socket_t* s);
+extern "C" int us_socket_ssl_handshake_callback_has_fired(int ssl, struct us_socket_t* s);
 
 namespace Bun {
 
@@ -72,13 +74,29 @@ bool JSNodeHTTPServerSocket::isAuthorized() const
     // is secure means that tls was established successfully
     if (!is_ssl || !socket)
         return false;
-    auto* context = us_socket_context(is_ssl, socket);
-    if (!context)
-        return false;
-    auto* data = (uWS::HttpContextData<true>*)us_socket_context_ext(is_ssl, context);
-    if (!data)
-        return false;
-    return data->flags.isAuthorized;
+
+    // Check if the handshake callback has fired. If so, use the isAuthorized flag
+    // which reflects the actual certificate verification result.
+    if (us_socket_ssl_handshake_callback_has_fired(is_ssl, socket)) {
+        auto* httpResponseData = reinterpret_cast<uWS::HttpResponseData<true>*>(us_socket_ext(is_ssl, socket));
+        if (!httpResponseData)
+            return false;
+        return httpResponseData->isAuthorized;
+    }
+
+    // The handshake callback hasn't fired yet, but we're in an HTTP handler,
+    // which means we received HTTP data. Check if the TLS handshake has actually
+    // completed using OpenSSL's state (SSL_is_init_finished).
+    //
+    // If the handshake is complete but the callback hasn't fired, we're in a race
+    // condition. The callback will fire shortly and either:
+    // 1. Set isAuthorized = true (success)
+    // 2. Close the socket (if rejectUnauthorized and verification failed)
+    //
+    // Since we're in an HTTP handler and the socket isn't closed, we can safely
+    // assume the handshake will succeed. If it fails, the socket will be closed
+    // and subsequent operations will fail appropriately.
+    return us_socket_is_ssl_handshake_finished(is_ssl, socket);
 }
 
 JSNodeHTTPServerSocket::~JSNodeHTTPServerSocket()
@@ -172,7 +190,7 @@ void JSNodeHTTPServerSocket::onDrain()
     auto bufferedSize = this->streamBuffer.bufferedSize();
     if (bufferedSize > 0) {
         auto* globalObject = defaultGlobalObject(this->globalObject());
-        auto scope = DECLARE_CATCH_SCOPE(globalObject->vm());
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
         us_socket_buffered_js_write(this->socket, this->is_ssl, this->ended, &this->streamBuffer, globalObject, JSValue::encode(JSC::jsUndefined()), JSValue::encode(JSC::jsUndefined()));
         if (scope.exception()) {
             globalObject->reportUncaughtExceptionAtEventLoop(globalObject, scope.exception());
@@ -223,7 +241,7 @@ void JSNodeHTTPServerSocket::onData(const char* data, int length, bool last)
     WebCore::ScriptExecutionContext* scriptExecutionContext = globalObject->scriptExecutionContext();
 
     if (scriptExecutionContext) {
-        auto scope = DECLARE_CATCH_SCOPE(globalObject->vm());
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
         JSC::JSUint8Array* buffer = WebCore::createBuffer(globalObject, std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(data), length));
         auto chunk = JSC::JSValue(buffer);
         if (scope.exception()) {

@@ -149,7 +149,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:v8`](https://nodejs.org/api/v8.html)
 
-🟡 `writeHeapSnapshot` and `getHeapSnapshot` are implemented. `serialize` and `deserialize` use JavaScriptCore's wire format instead of V8's. Other methods are not implemented. For profiling, use [`bun:jsc`](/project/benchmarking#bunjsc) instead.
+🟡 `writeHeapSnapshot` and `getHeapSnapshot` are implemented. `serialize` and `deserialize` use JavaScriptCore's wire format instead of V8's. Other methods are not implemented. For profiling, use [`bun:jsc`](/project/benchmarking#javascript-heap-stats) instead.
 
 ### [`node:vm`](https://nodejs.org/api/vm.html)
 
@@ -165,7 +165,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:inspector`](https://nodejs.org/api/inspector.html)
 
-🔴 Not implemented.
+🟡 Partially implemented. `Profiler` API is supported (`Profiler.enable`, `Profiler.disable`, `Profiler.start`, `Profiler.stop`, `Profiler.setSamplingInterval`). Other inspector APIs are not yet implemented.
 
 ### [`node:repl`](https://nodejs.org/api/repl.html)
 

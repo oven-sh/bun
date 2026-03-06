@@ -1414,6 +1414,25 @@ pub const Pipe = extern struct {
     pub fn asStream(this: *@This()) *uv_stream_t {
         return @ptrCast(this);
     }
+
+    /// Close the pipe handle (if needed) and then free it.
+    /// Handles all states: never-initialized (loop == null), already closing,
+    /// or active. After uv_pipe_init the handle is in the event loop's
+    /// handle_queue; freeing without uv_close corrupts that list.
+    pub fn closeAndDestroy(this: *@This()) void {
+        if (this.loop == null) {
+            // Never initialized — safe to free directly.
+            bun.destroy(this);
+        } else if (!this.isClosing()) {
+            // Initialized and not yet closing — must uv_close first.
+            this.close(&onCloseDestroy);
+        }
+        // else: already closing — the pending close callback owns the lifetime.
+    }
+
+    fn onCloseDestroy(handle: *@This()) callconv(.c) void {
+        bun.destroy(handle);
+    }
 };
 const union_unnamed_416 = extern union {
     fd: c_int,
@@ -2880,6 +2899,21 @@ pub const ReturnCode = enum(c_int) {
                 UV_ECANCELED => @intFromEnum(bun.sys.E.CANCELED),
                 UV_ECHARSET => @intFromEnum(bun.sys.E.CHARSET),
                 UV_EOF => @intFromEnum(bun.sys.E.EOF),
+                UV_UNKNOWN => @intFromEnum(bun.sys.E.UNKNOWN),
+                UV_EAI_ADDRFAMILY => @intFromEnum(bun.sys.E.UV_EAI_ADDRFAMILY),
+                UV_EAI_AGAIN => @intFromEnum(bun.sys.E.UV_EAI_AGAIN),
+                UV_EAI_BADFLAGS => @intFromEnum(bun.sys.E.UV_EAI_BADFLAGS),
+                UV_EAI_BADHINTS => @intFromEnum(bun.sys.E.UV_EAI_BADHINTS),
+                UV_EAI_CANCELED => @intFromEnum(bun.sys.E.UV_EAI_CANCELED),
+                UV_EAI_FAIL => @intFromEnum(bun.sys.E.UV_EAI_FAIL),
+                UV_EAI_FAMILY => @intFromEnum(bun.sys.E.UV_EAI_FAMILY),
+                UV_EAI_MEMORY => @intFromEnum(bun.sys.E.UV_EAI_MEMORY),
+                UV_EAI_NODATA => @intFromEnum(bun.sys.E.UV_EAI_NODATA),
+                UV_EAI_NONAME => @intFromEnum(bun.sys.E.UV_EAI_NONAME),
+                UV_EAI_OVERFLOW => @intFromEnum(bun.sys.E.UV_EAI_OVERFLOW),
+                UV_EAI_PROTOCOL => @intFromEnum(bun.sys.E.UV_EAI_PROTOCOL),
+                UV_EAI_SERVICE => @intFromEnum(bun.sys.E.UV_EAI_SERVICE),
+                UV_EAI_SOCKTYPE => @intFromEnum(bun.sys.E.UV_EAI_SOCKTYPE),
                 else => null,
             }
         else

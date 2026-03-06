@@ -223,7 +223,7 @@ for (let withOverridenBufferWrite of [false, true]) {
       it("length overflow", () => {
         // Verify the maximum Uint8Array size. There is no concrete limit by spec. The
         // internal limits should be updated if this fails.
-        expect(() => new Uint8Array(2 ** 32 + 1)).toThrow(/length/);
+        expect(() => new Uint8Array(2 ** 32 + 1)).toThrow(/Out of memory/);
       });
 
       it("truncate input values", () => {
@@ -885,6 +885,68 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(f.length).toBe(2);
         expect(f[0]).toBe(0x66);
         expect(f[1]).toBe(0x6f);
+      });
+
+      it("slice() with fractional offsets truncates toward zero", () => {
+        const buf = Buffer.from([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+
+        // -0.1 should truncate to 0, not -1
+        const a = buf.slice(-0.1);
+        expect(a.length).toBe(10);
+        expect(a[0]).toBe(0);
+
+        // -1.9 should truncate to -1, not -2
+        const b = buf.slice(-1.9);
+        expect(b.length).toBe(1);
+        expect(b[0]).toBe(9);
+
+        // 1.9 should truncate to 1
+        const c = buf.slice(1.9, 4.1);
+        expect(c.length).toBe(3);
+        expect(c[0]).toBe(1);
+        expect(c[1]).toBe(2);
+        expect(c[2]).toBe(3);
+
+        // NaN should be treated as 0
+        const d = buf.slice(NaN, NaN);
+        expect(d.length).toBe(0);
+
+        const e = buf.slice(NaN);
+        expect(e.length).toBe(10);
+      });
+
+      it("slice() on detached buffer throws TypeError", () => {
+        const ab = new ArrayBuffer(10);
+        const buf = Buffer.from(ab);
+        // Detach the ArrayBuffer by transferring it
+        structuredClone(ab, { transfer: [ab] });
+        expect(() => buf.slice(0, 5)).toThrow(TypeError);
+      });
+
+      it("subarray() on detached buffer throws TypeError", () => {
+        const ab = new ArrayBuffer(10);
+        const buf = Buffer.from(ab);
+        structuredClone(ab, { transfer: [ab] });
+        expect(() => buf.subarray(0, 5)).toThrow(TypeError);
+      });
+
+      it("slice() on resizable ArrayBuffer returns fixed-length view", () => {
+        const rab = new ArrayBuffer(10, { maxByteLength: 20 });
+        const buf = Buffer.from(rab);
+        buf[0] = 1;
+        buf[1] = 2;
+        buf[2] = 3;
+        buf[3] = 4;
+        buf[4] = 5;
+
+        const sliced = buf.slice(0, 5);
+        expect(sliced.length).toBe(5);
+        expect(sliced[0]).toBe(1);
+        expect(sliced[4]).toBe(5);
+
+        // Growing the buffer should NOT change the slice length
+        rab.resize(20);
+        expect(sliced.length).toBe(5);
       });
 
       function forEachUnicode(label, test) {
@@ -2865,6 +2927,16 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(buf.hexSlice(3, 4)).toStrictEqual("33");
       });
 
+      // Regression test: large buffers that would produce strings exceeding max string length
+      it("Buffer.hexSlice() throws for large buffers", () => {
+        const { MAX_STRING_LENGTH } = require("buffer").constants;
+        // Hex output is 2x input size, so buffer size > MAX_STRING_LENGTH/2 will overflow
+        const largeBuffer = Buffer.allocUnsafe(Math.floor(MAX_STRING_LENGTH / 2) + 1);
+        expect(() => largeBuffer.hexSlice()).toThrow(
+          `Cannot create a string longer than ${MAX_STRING_LENGTH} characters`,
+        );
+      });
+
       it("Buffer.ucs2Slice()", () => {
         const buf = Buffer.from("あいうえお", "ucs2");
 
@@ -3125,5 +3197,52 @@ describe("ERR_BUFFER_OUT_OF_BOUNDS", () => {
         );
       });
     }
+  }
+});
+
+describe("*Write methods with NaN/invalid offset and length", () => {
+  // Regression test: NaN offset/length values must be handled safely.
+  // NaN offset should be treated as 0, and length should be clamped to buffer size.
+  // This matches Node.js behavior where V8's IntegerValue converts NaN to 0.
+  const writeMethods = [
+    "utf8Write",
+    "utf16leWrite",
+    "latin1Write",
+    "asciiWrite",
+    "base64Write",
+    "base64urlWrite",
+    "hexWrite",
+  ];
+
+  for (const method of writeMethods) {
+    it(`${method} should handle NaN offset and custom length via ToNumber coercion`, () => {
+      // F1 is a function - ToNumber(F1) returns NaN, which should be treated as 0
+      function F1() {
+        if (!new.target) {
+          throw "must be called with new";
+        }
+      }
+      // C3 is a class constructor with Symbol.toPrimitive - ToNumber(C3) returns 215
+      class C3 {}
+      C3[Symbol.toPrimitive] = function () {
+        return 215;
+      };
+      const buf = Buffer.from("string");
+      // F1 as offset -> NaN -> 0, C3 as length -> 215 -> clamped to buf.length
+      // This should NOT crash, and should write to the buffer starting at offset 0
+      const result = buf[method]("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", F1, C3);
+      // Result should be clamped to buffer size
+      expect(result).toBeLessThanOrEqual(buf.length);
+    });
+
+    it(`${method} should throw on length larger than available buffer space`, () => {
+      const buf = Buffer.from("string");
+      // Length 1000 with valid offset 0 should throw ERR_BUFFER_OUT_OF_BOUNDS
+      expect(() => buf[method]("test".repeat(100), 0, 1000)).toThrow(
+        expect.objectContaining({
+          code: "ERR_BUFFER_OUT_OF_BOUNDS",
+        }),
+      );
+    });
   }
 });

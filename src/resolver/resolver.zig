@@ -141,36 +141,39 @@ pub const Result = struct {
 
     package_json: ?*PackageJSON = null,
 
-    is_external: bool = false,
-
-    is_external_and_rewrite_import_path: bool = false,
-
-    is_standalone_module: bool = false,
-
-    // This is true when the package was loaded from within the node_modules directory.
-    is_from_node_modules: bool = false,
-
     diff_case: ?Fs.FileSystem.Entry.Lookup.DifferentCase = null,
 
     // If present, any ES6 imports to this file can be considered to have no side
     // effects. This means they should be removed if unused.
     primary_side_effects_data: SideEffects = SideEffects.has_side_effects,
 
-    // If true, unused imports are retained in TypeScript code. This matches the
-    // behavior of the "importsNotUsedAsValues" field in "tsconfig.json" when the
-    // value is not "remove".
-    preserve_unused_imports_ts: bool = false,
-
     // This is the "type" field from "package.json"
     module_type: options.ModuleType = options.ModuleType.unknown,
-
-    emit_decorator_metadata: bool = false,
 
     debug_meta: ?DebugMeta = null,
 
     dirname_fd: FD = .invalid,
     file_fd: FD = .invalid,
     import_kind: ast.ImportKind = undefined,
+
+    /// Pack boolean flags to reduce padding overhead.
+    /// Previously 6 separate bool fields caused ~42+ bytes of padding waste.
+    flags: Flags = .{},
+
+    pub const Flags = packed struct(u8) {
+        is_external: bool = false,
+        is_external_and_rewrite_import_path: bool = false,
+        is_standalone_module: bool = false,
+        // This is true when the package was loaded from within the node_modules directory.
+        is_from_node_modules: bool = false,
+        // If true, unused imports are retained in TypeScript code. This matches the
+        // behavior of the "importsNotUsedAsValues" field in "tsconfig.json" when the
+        // value is not "remove".
+        preserve_unused_imports_ts: bool = false,
+        emit_decorator_metadata: bool = false,
+        experimental_decorators: bool = false,
+        _padding: u1 = 0,
+    };
 
     pub const Union = union(enum) {
         success: Result,
@@ -205,7 +208,7 @@ pub const Result = struct {
     // checking package.json may not be relevant
     pub fn isLikelyNodeModule(this: *const Result) bool {
         const path_ = this.pathConst() orelse return false;
-        return this.is_from_node_modules or strings.indexOf(path_.text, "/node_modules/") != null;
+        return this.flags.is_from_node_modules or strings.indexOf(path_.text, "/node_modules/") != null;
     }
 
     // Most NPM modules are CommonJS
@@ -688,9 +691,9 @@ pub const Resolver = struct {
                         .path_pair = PathPair{
                             .primary = Path.init(import_path),
                         },
-                        .is_external = true,
                         .module_type = .cjs,
                         .primary_side_effects_data = .no_side_effects__pure_data,
+                        .flags = .{ .is_external = true },
                     },
                 };
             }
@@ -723,8 +726,8 @@ pub const Resolver = struct {
                     .path_pair = PathPair{
                         .primary = Path.init(import_path),
                     },
-                    .is_external = true,
                     .module_type = if (!kind.isFromCSS()) .esm else .unknown,
+                    .flags = .{ .is_external = true },
                 },
             };
         }
@@ -755,7 +758,7 @@ pub const Resolver = struct {
             return .{
                 .success = Result{
                     .path_pair = PathPair{ .primary = Path.initWithNamespace(import_path, "dataurl") },
-                    .is_external = true,
+                    .flags = .{ .is_external = true },
                 },
             };
         }
@@ -777,8 +780,8 @@ pub const Resolver = struct {
                                 .path_pair = PathPair{
                                     .primary = Path.init(import_path),
                                 },
-                                .is_standalone_module = true,
                                 .module_type = .esm,
+                                .flags = .{ .is_standalone_module = true },
                             },
                         };
                     }
@@ -797,8 +800,8 @@ pub const Resolver = struct {
                                     .path_pair = PathPair{
                                         .primary = Path.init(file.name),
                                     },
-                                    .is_standalone_module = true,
                                     .module_type = .esm,
+                                    .flags = .{ .is_standalone_module = true },
                                 },
                             };
                         }
@@ -871,7 +874,7 @@ pub const Resolver = struct {
 
         switch (tmp) {
             .success => |*result| {
-                if (!strings.eqlComptime(result.path_pair.primary.namespace, "node") and !result.is_standalone_module)
+                if (!strings.eqlComptime(result.path_pair.primary.namespace, "node") and !result.flags.is_standalone_module)
                     r.finalizeResult(result, kind) catch |err| return .{ .failure = err };
 
                 r.flushDebugLogs(.success) catch {};
@@ -936,9 +939,9 @@ pub const Resolver = struct {
                         return .{
                             .import_kind = kind,
                             .path_pair = .{ .primary = Fs.Path.initWithNamespace(import_path, "node") },
-                            .is_external = false,
                             .module_type = .esm,
                             .primary_side_effects_data = .no_side_effects__pure_data,
+                            .flags = .{ .is_external = false },
                         };
                     },
                     .import => |path| return r.resolve(r.fs.top_level_dir, path, .entry_point_build),
@@ -957,7 +960,7 @@ pub const Resolver = struct {
     });
 
     pub fn finalizeResult(r: *ThisResolver, result: *Result, kind: ast.ImportKind) !void {
-        if (result.is_external) return;
+        if (result.flags.is_external) return;
 
         var iter = result.path_pair.iter();
         var module_type = result.module_type;
@@ -997,7 +1000,8 @@ pub const Resolver = struct {
 
             if (dir.enclosing_tsconfig_json) |tsconfig| {
                 result.jsx = tsconfig.mergeJSX(result.jsx);
-                result.emit_decorator_metadata = result.emit_decorator_metadata or tsconfig.emit_decorator_metadata;
+                result.flags.emit_decorator_metadata = result.flags.emit_decorator_metadata or tsconfig.emit_decorator_metadata;
+                result.flags.experimental_decorators = result.flags.experimental_decorators or tsconfig.experimental_decorators;
             }
 
             // If you use mjs or mts, then you're using esm
@@ -1107,7 +1111,7 @@ pub const Resolver = struct {
                         import_path[import_path.len - 2] == '.' and
                         import_path[import_path.len - 1] == '.');
                 const buf = bufs(.relative_abs_path);
-                import_path = r.fs.absBuf(&.{import_path}, buf);
+                import_path = r.fs.absBufChecked(&.{import_path}, buf) orelse return .{ .not_found = {} };
                 if (ends_with_dir) {
                     buf[import_path.len] = platform.separator();
                     import_path.len += 1;
@@ -1153,7 +1157,7 @@ pub const Resolver = struct {
                 return .{
                     .success = Result{
                         .path_pair = .{ .primary = Path.init(import_path) },
-                        .is_external = true,
+                        .flags = .{ .is_external = true },
                     },
                 };
             }
@@ -1216,7 +1220,7 @@ pub const Resolver = struct {
                     result.path_pair.primary = fallback_module.path;
                     result.module_type = .cjs;
                     result.package_json = @as(*PackageJSON, @ptrFromInt(@intFromPtr(fallback_module.package_json)));
-                    result.is_from_node_modules = true;
+                    result.flags.is_from_node_modules = true;
                     return .{ .success = result };
                 }
 
@@ -1232,7 +1236,7 @@ pub const Resolver = struct {
                     result.path_pair.primary.name = Fs.PathName.init(import_path_without_node_prefix);
                     result.module_type = .cjs;
                     result.path_pair.primary.is_disabled = true;
-                    result.is_from_node_modules = true;
+                    result.flags.is_from_node_modules = true;
                     result.primary_side_effects_data = .no_side_effects__pure_data;
                     return .{ .success = result };
                 }
@@ -1247,7 +1251,7 @@ pub const Resolver = struct {
                     result.path_pair.primary.name = Fs.PathName.init(import_path_without_node_prefix);
                     result.module_type = .cjs;
                     result.path_pair.primary.is_disabled = true;
-                    result.is_from_node_modules = true;
+                    result.flags.is_from_node_modules = true;
                     result.primary_side_effects_data = .no_side_effects__pure_data;
                     return .{ .success = result };
                 }
@@ -1267,7 +1271,7 @@ pub const Resolver = struct {
                         return .{
                             .success = Result{
                                 .path_pair = .{ .primary = Path.init(query) },
-                                .is_external = true,
+                                .flags = .{ .is_external = true },
                             },
                         };
                     }
@@ -1305,8 +1309,7 @@ pub const Resolver = struct {
     }
 
     pub fn checkRelativePath(r: *ThisResolver, source_dir: string, import_path: string, kind: ast.ImportKind, global_cache: GlobalCache) Result.Union {
-        const parts = [_]string{ source_dir, import_path };
-        const abs_path = r.fs.absBuf(&parts, bufs(.relative_abs_path));
+        const abs_path = r.fs.absBufChecked(&.{ source_dir, import_path }, bufs(.relative_abs_path)) orelse return .{ .not_found = {} };
 
         if (r.opts.external.abs_paths.count() > 0 and r.opts.external.abs_paths.contains(abs_path)) {
             // If the string literal in the source text is an absolute path and has
@@ -1319,7 +1322,7 @@ pub const Resolver = struct {
 
             return .{ .success = .{
                 .path_pair = .{ .primary = Path.init(bun.handleOom(r.fs.dirname_store.append(@TypeOf(abs_path), abs_path))) },
-                .is_external = true,
+                .flags = .{ .is_external = true },
             } };
         }
 
@@ -1347,16 +1350,18 @@ pub const Resolver = struct {
                         }
 
                         switch (r.resolveWithoutRemapping(import_dir_info, remap, kind, global_cache)) {
-                            .success => |result| {
+                            .success => |match_result| {
                                 return .{ .success = .{
-                                    .path_pair = result.path_pair,
-                                    .diff_case = result.diff_case,
-                                    .dirname_fd = result.dirname_fd,
+                                    .path_pair = match_result.path_pair,
+                                    .diff_case = match_result.diff_case,
+                                    .dirname_fd = match_result.dirname_fd,
                                     .package_json = pkg,
                                     .jsx = r.opts.jsx,
-                                    .module_type = result.module_type,
-                                    .is_external = result.is_external,
-                                    .is_external_and_rewrite_import_path = result.is_external,
+                                    .module_type = match_result.module_type,
+                                    .flags = .{
+                                        .is_external = match_result.is_external,
+                                        .is_external_and_rewrite_import_path = match_result.is_external,
+                                    },
                                 } };
                             },
                             else => {},
@@ -1489,13 +1494,13 @@ pub const Resolver = struct {
                 result.file_fd = res.file_fd;
                 result.package_json = res.package_json;
                 result.diff_case = res.diff_case;
-                result.is_from_node_modules = result.is_from_node_modules or res.is_node_module;
+                result.flags.is_from_node_modules = result.flags.is_from_node_modules or res.is_node_module;
                 result.jsx = r.opts.jsx;
                 result.module_type = res.module_type;
-                result.is_external = res.is_external;
+                result.flags.is_external = res.is_external;
                 // Potentially rewrite the import path if it's external that
                 // was remapped to a different path
-                result.is_external_and_rewrite_import_path = result.is_external;
+                result.flags.is_external_and_rewrite_import_path = result.flags.is_external;
 
                 if (res.path_pair.primary.is_disabled and res.path_pair.secondary == null) {
                     return .{ .success = result };
@@ -1521,13 +1526,13 @@ pub const Resolver = struct {
                                         result.package_json = remapped.package_json;
                                         result.diff_case = remapped.diff_case;
                                         result.module_type = remapped.module_type;
-                                        result.is_external = remapped.is_external;
+                                        result.flags.is_external = remapped.is_external;
 
                                         // Potentially rewrite the import path if it's external that
                                         // was remapped to a different path
-                                        result.is_external_and_rewrite_import_path = result.is_external;
+                                        result.flags.is_external_and_rewrite_import_path = result.flags.is_external;
 
-                                        result.is_from_node_modules = result.is_from_node_modules or remapped.is_node_module;
+                                        result.flags.is_from_node_modules = result.flags.is_from_node_modules or remapped.is_node_module;
                                         return .{ .success = result };
                                     },
                                     else => {},
@@ -1719,13 +1724,11 @@ pub const Resolver = struct {
             // Try looking up the path relative to the base URL
             if (tsconfig.hasBaseURL()) {
                 const base = tsconfig.base_url;
-                const paths = [_]string{ base, import_path };
-                const abs = r.fs.absBuf(&paths, bufs(.load_as_file_or_directory_via_tsconfig_base_path));
-
-                if (r.loadAsFileOrDirectory(abs, kind)) |res| {
-                    return .{ .success = res };
+                if (r.fs.absBufChecked(&.{ base, import_path }, bufs(.load_as_file_or_directory_via_tsconfig_base_path))) |abs| {
+                    if (r.loadAsFileOrDirectory(abs, kind)) |res| {
+                        return .{ .success = res };
+                    }
                 }
-                // r.allocator.free(abs);
             }
         }
 
@@ -1768,14 +1771,12 @@ pub const Resolver = struct {
         while (use_node_module_resolver) {
             // Skip directories that are themselves called "node_modules", since we
             // don't ever want to search for "node_modules/node_modules"
-            if (dir_info.hasNodeModules() or is_self_reference) {
+            if (dir_info.hasNodeModules() or is_self_reference) node_modules: {
                 any_node_modules_folder = true;
                 const abs_path = if (is_self_reference)
                     dir_info.abs_path
-                else brk: {
-                    var _parts = [_]string{ dir_info.abs_path, "node_modules", import_path };
-                    break :brk r.fs.absBuf(&_parts, bufs(.node_modules_check));
-                };
+                else
+                    r.fs.absBufChecked(&.{ dir_info.abs_path, "node_modules", import_path }, bufs(.node_modules_check)) orelse break :node_modules;
                 if (r.debug_logs) |*debug| {
                     debug.addNoteFmt("Checking for a package in the directory \"{s}\"", .{abs_path});
                 }
@@ -1890,7 +1891,7 @@ pub const Resolver = struct {
         if (node_path.len > 0) {
             var it = std.mem.tokenizeScalar(u8, node_path, if (Environment.isWindows) ';' else ':');
             while (it.next()) |path| {
-                const abs_path = r.fs.absBuf(&[_]string{ path, import_path }, bufs(.node_modules_check));
+                const abs_path = r.fs.absBufChecked(&.{ path, import_path }, bufs(.node_modules_check)) orelse continue;
                 if (r.debug_logs) |*debug| {
                     debug.addNoteFmt("Checking for a package in the NODE_PATH directory \"{s}\"", .{abs_path});
                 }
@@ -2154,8 +2155,7 @@ pub const Resolver = struct {
                             }
                         }
 
-                        var _paths = [_]string{ pkg_dir_info.abs_path, esm.subpath };
-                        const abs_path = r.fs.absBuf(&_paths, bufs(.node_modules_check));
+                        const abs_path = r.fs.absBufChecked(&.{ pkg_dir_info.abs_path, esm.subpath }, bufs(.node_modules_check)) orelse return .{ .not_found = {} };
                         if (r.debug_logs) |*debug| {
                             debug.addNoteFmt("Checking for a package in the directory \"{s}\"", .{abs_path});
                         }
@@ -2392,12 +2392,12 @@ pub const Resolver = struct {
             esm_resolution.path.len > 0 and esm_resolution.path[0] == std.fs.path.sep))
             return null;
 
-        const abs_esm_path: string = brk: {
-            var parts = [_]string{
-                abs_package_path,
-                strings.withoutLeadingPathSeparator(esm_resolution.path),
-            };
-            break :brk r.fs.absBuf(&parts, bufs(.esm_absolute_package_path_joined));
+        const abs_esm_path: string = r.fs.absBufChecked(
+            &.{ abs_package_path, strings.withoutLeadingPathSeparator(esm_resolution.path) },
+            bufs(.esm_absolute_package_path_joined),
+        ) orelse {
+            esm_resolution.status = .ModuleNotFound;
+            return null;
         };
 
         var missing_suffix: string = "";
@@ -2522,8 +2522,7 @@ pub const Resolver = struct {
         if (isPackagePath(import_path)) {
             return r.loadNodeModules(import_path, kind, source_dir_info, global_cache, false);
         } else {
-            const paths = [_]string{ source_dir_info.abs_path, import_path };
-            const resolved = r.fs.absBuf(&paths, bufs(.resolve_without_remapping));
+            const resolved = r.fs.absBufChecked(&.{ source_dir_info.abs_path, import_path }, bufs(.resolve_without_remapping)) orelse return .{ .not_found = {} };
             if (r.loadAsFileOrDirectory(resolved, kind)) |result| {
                 return .{ .success = result };
             }
@@ -2642,6 +2641,11 @@ pub const Resolver = struct {
             input_path = r.fs.top_level_dir;
         }
 
+        // A path longer than MAX_PATH_BYTES cannot name a real directory.
+        // Bailing here also prevents overflowing `dir_info_uncached_path`
+        // below when called with user-controlled absolute import paths.
+        if (input_path.len > bun.MAX_PATH_BYTES) return null;
+
         if (comptime Environment.isWindows) {
             input_path = r.fs.normalizeBuf(&win32_normalized_dir_info_cache_buf, input_path);
             // kind of a patch on the fact normalizeBuf isn't 100% perfect what we want
@@ -2707,6 +2711,10 @@ pub const Resolver = struct {
                 top_parent = result;
                 break;
             }
+            // Path has more uncached components than our fixed queue can hold.
+            // This only happens for user-controlled absolute import paths with
+            // hundreds of short components — no real directory is this deep.
+            if (@as(usize, @intCast(i)) >= bufs(.dir_entry_paths_to_resolve).len) return null;
             bufs(.dir_entry_paths_to_resolve)[@as(usize, @intCast(i))] = DirEntryResolveQueueItem{
                 .unsafe_path = top,
                 .result = result,
@@ -3073,12 +3081,13 @@ pub const Resolver = struct {
                 if (total_length != null) {
                     const suffix = std.mem.trimLeft(u8, original_path[total_length orelse original_path.len ..], "*");
                     matched_text_with_suffix_len = matched_text.len + suffix.len;
+                    if (matched_text_with_suffix_len > matched_text_with_suffix.len) continue;
                     bun.concat(u8, matched_text_with_suffix, &.{ matched_text, suffix });
                 }
 
                 // 1. Normalize the base path
                 // so that "/Users/foo/project/", "../components/*" => "/Users/foo/components/""
-                const prefix = r.fs.absBuf(&prefix_parts, bufs(.tsconfig_match_full_buf2));
+                const prefix = r.fs.absBufChecked(&prefix_parts, bufs(.tsconfig_match_full_buf2)) orelse continue;
 
                 // 2. Join the new base path with the matched result
                 // so that "/Users/foo/components/", "/foo/bar" => /Users/foo/components/foo/bar
@@ -3087,10 +3096,10 @@ pub const Resolver = struct {
                     if (matched_text_with_suffix_len > 0) std.mem.trimLeft(u8, matched_text_with_suffix[0..matched_text_with_suffix_len], "/") else "",
                     std.mem.trimLeft(u8, longest_match.suffix, "/"),
                 };
-                const absolute_original_path = r.fs.absBuf(
+                const absolute_original_path = r.fs.absBufChecked(
                     &parts,
                     bufs(.tsconfig_match_full_buf),
-                );
+                ) orelse continue;
 
                 if (r.loadAsFileOrDirectory(absolute_original_path, kind)) |res| {
                     return res;
@@ -4122,30 +4131,32 @@ pub const Resolver = struct {
         }
 
         // Record if this directory has a package.json file
-        if (entries.getComptimeQuery("package.json")) |lookup| {
-            const entry = lookup.entry;
-            if (entry.kind(rfs, r.store_fd) == .file) {
-                info.package_json = if (r.usePackageManager() and !info.hasNodeModules() and !info.isNodeModules())
-                    r.parsePackageJSON(path, if (FeatureFlags.store_file_descriptors) fd else .invalid, package_id, true) catch null
-                else
-                    r.parsePackageJSON(path, if (FeatureFlags.store_file_descriptors) fd else .invalid, null, false) catch null;
+        if (r.opts.load_package_json) {
+            if (entries.getComptimeQuery("package.json")) |lookup| {
+                const entry = lookup.entry;
+                if (entry.kind(rfs, r.store_fd) == .file) {
+                    info.package_json = if (r.usePackageManager() and !info.hasNodeModules() and !info.isNodeModules())
+                        r.parsePackageJSON(path, if (FeatureFlags.store_file_descriptors) fd else .invalid, package_id, true) catch null
+                    else
+                        r.parsePackageJSON(path, if (FeatureFlags.store_file_descriptors) fd else .invalid, null, false) catch null;
 
-                if (info.package_json) |pkg| {
-                    if (pkg.browser_map.count() > 0) {
-                        info.enclosing_browser_scope = result.index;
-                        info.package_json_for_browser_field = pkg;
-                    }
+                    if (info.package_json) |pkg| {
+                        if (pkg.browser_map.count() > 0) {
+                            info.enclosing_browser_scope = result.index;
+                            info.package_json_for_browser_field = pkg;
+                        }
 
-                    if (pkg.name.len > 0 or r.care_about_bin_folder)
-                        info.enclosing_package_json = pkg;
+                        if (pkg.name.len > 0 or r.care_about_bin_folder)
+                            info.enclosing_package_json = pkg;
 
-                    if (pkg.dependencies.map.count() > 0 or pkg.package_manager_package_id != Install.invalid_package_id)
-                        info.package_json_for_dependencies = pkg;
+                        if (pkg.dependencies.map.count() > 0 or pkg.package_manager_package_id != Install.invalid_package_id)
+                            info.package_json_for_dependencies = pkg;
 
-                    if (r.debug_logs) |*logs| {
-                        logs.addNoteFmt("Resolved package.json in \"{s}\"", .{
-                            path,
-                        });
+                        if (r.debug_logs) |*logs| {
+                            logs.addNoteFmt("Resolved package.json in \"{s}\"", .{
+                                path,
+                            });
+                        }
                     }
                 }
             }

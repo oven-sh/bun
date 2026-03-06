@@ -394,7 +394,7 @@ const ServePlugins = struct {
         if (!result.isEmptyOrUndefinedOrNull()) {
             // handle the case where js returns a promise
             if (result.asAnyPromise()) |promise| {
-                switch (promise.status(global.vm())) {
+                switch (promise.status()) {
                     // promise not fulfilled yet
                     .pending => {
                         this.ref();
@@ -815,10 +815,14 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
                             if (fetch_headers_to_use.fastGet(.SecWebSocketProtocol)) |protocol| {
                                 sec_websocket_protocol = protocol;
+                                // Remove from headers so it's not written twice (once here and once by upgrade())
+                                fetch_headers_to_use.fastRemove(.SecWebSocketProtocol);
                             }
 
                             if (fetch_headers_to_use.fastGet(.SecWebSocketExtensions)) |protocol| {
                                 sec_websocket_extensions = protocol;
+                                // Remove from headers so it's not written twice (once here and once by upgrade())
+                                fetch_headers_to_use.fastRemove(.SecWebSocketExtensions);
                             }
                             if (nodeHttpResponse.raw_response) |raw_response| {
                                 // we must write the status first so that 200 OK isn't written
@@ -946,10 +950,14 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
                         if (fetch_headers_to_use.?.fastGet(.SecWebSocketProtocol)) |protocol| {
                             sec_websocket_protocol = protocol;
+                            // Remove from headers so it's not written twice (once here and once by upgrade())
+                            fetch_headers_to_use.?.fastRemove(.SecWebSocketProtocol);
                         }
 
                         if (fetch_headers_to_use.?.fastGet(.SecWebSocketExtensions)) |protocol| {
                             sec_websocket_extensions = protocol;
+                            // Remove from headers so it's not written twice (once here and once by upgrade())
+                            fetch_headers_to_use.?.fastRemove(.SecWebSocketExtensions);
                         }
                     }
 
@@ -1322,7 +1330,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             return jsc.JSValue.jsNumber(@as(i32, @intCast(@as(u31, @truncate(this.activeSocketsCount())))));
         }
 
-        pub fn getAddress(this: *ThisServer, globalThis: *JSGlobalObject) jsc.JSValue {
+        pub fn getAddress(this: *ThisServer, globalThis: *JSGlobalObject) bun.JSError!jsc.JSValue {
             switch (this.config.address) {
                 .unix => |unix| {
                     var value = bun.String.cloneUTF8(unix);
@@ -1421,7 +1429,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             @panic("unreachable");
         }
 
-        pub fn getProtocol(this: *ThisServer, globalThis: *JSGlobalObject) jsc.JSValue {
+        pub fn getProtocol(this: *ThisServer, globalThis: *JSGlobalObject) bun.JSError!jsc.JSValue {
             _ = this;
             return bun.String.static(if (ssl_enabled) "https" else "http").toJS(globalThis);
         }
@@ -1776,7 +1784,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                             else => |e| {
                                 var sys_err = bun.sys.Error.fromCode(e, .listen);
                                 sys_err.path = unix;
-                                error_instance = sys_err.toJS(globalThis);
+                                error_instance = sys_err.toJS(globalThis) catch return;
                             },
                         }
                     },
@@ -1919,13 +1927,13 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 }
 
                 if (result.asAnyPromise()) |promise| {
-                    if (promise.status(globalThis.vm()) == .pending) {
+                    if (promise.status() == .pending) {
                         strong_promise.set(globalThis, result);
                         needs_to_drain = false;
                         vm.drainMicrotasks();
                     }
 
-                    switch (promise.status(globalThis.vm())) {
+                    switch (promise.status()) {
                         .fulfilled => {
                             globalThis.handleRejectedPromises();
                             break :brk .{ .success = {} };

@@ -4,6 +4,7 @@ endif()
 
 optionx(BUN_LINK_ONLY BOOL "If only the linking step should be built" DEFAULT OFF)
 optionx(BUN_CPP_ONLY BOOL "If only the C++ part of Bun should be built" DEFAULT OFF)
+optionx(SKIP_CODEGEN BOOL "Skip JavaScript codegen (useful for bootstrapping new platforms)" DEFAULT OFF)
 
 optionx(BUILDKITE BOOL "If Buildkite is enabled" DEFAULT OFF)
 optionx(GITHUB_ACTIONS BOOL "If GitHub Actions is enabled" DEFAULT OFF)
@@ -49,29 +50,12 @@ else()
   message(FATAL_ERROR "Unsupported operating system: ${CMAKE_SYSTEM_NAME}")
 endif()
 
-if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|arm")
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64")
   setx(ARCH "aarch64")
 elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "amd64|x86_64|x64|AMD64")
   setx(ARCH "x64")
 else()
   message(FATAL_ERROR "Unsupported architecture: ${CMAKE_SYSTEM_PROCESSOR}")
-endif()
-
-# Windows Code Signing Option
-if(WIN32)
-  optionx(ENABLE_WINDOWS_CODESIGNING BOOL "Enable Windows code signing with DigiCert KeyLocker" DEFAULT OFF)
-
-  if(ENABLE_WINDOWS_CODESIGNING)
-    message(STATUS "Windows code signing: ENABLED")
-
-    # Check for required environment variables
-    if(NOT DEFINED ENV{SM_API_KEY})
-      message(WARNING "SM_API_KEY not set - code signing may fail")
-    endif()
-    if(NOT DEFINED ENV{SM_CLIENT_CERT_FILE})
-      message(WARNING "SM_CLIENT_CERT_FILE not set - code signing may fail")
-    endif()
-  endif()
 endif()
 
 if(LINUX)
@@ -143,7 +127,7 @@ if(ENABLE_ASAN AND ENABLE_LTO)
 endif()
 
 if(BUILDKITE_COMMIT)
-  set(DEFAULT_REVISION ${BUILDKITE_COMMIT})
+  set(DEFAULT_REVISION "${BUILDKITE_COMMIT}")
 else()
   execute_process(
     COMMAND git rev-parse HEAD
@@ -157,7 +141,7 @@ else()
   endif()
 endif()
 
-optionx(REVISION STRING "The git revision of the build" DEFAULT ${DEFAULT_REVISION})
+optionx(REVISION STRING "The git revision of the build" DEFAULT "${DEFAULT_REVISION}")
 
 # Used in process.version, process.versions.node, napi, and elsewhere
 setx(NODEJS_VERSION "24.3.0")
@@ -198,6 +182,16 @@ endif()
 optionx(USE_WEBKIT_ICU BOOL "Use the ICU libraries from WebKit" DEFAULT ${DEFAULT_WEBKIT_ICU})
 
 optionx(ERROR_LIMIT STRING "Maximum number of errors to show when compiling C++ code" DEFAULT "100")
+
+# TinyCC is used for FFI JIT compilation
+# Disable on Windows ARM64 where it's not yet supported
+if(WIN32 AND ARCH STREQUAL "aarch64")
+  set(DEFAULT_ENABLE_TINYCC OFF)
+else()
+  set(DEFAULT_ENABLE_TINYCC ON)
+endif()
+
+optionx(ENABLE_TINYCC BOOL "Enable TinyCC for FFI JIT compilation" DEFAULT ${DEFAULT_ENABLE_TINYCC})
 
 # This is not an `option` because setting this variable to OFF is experimental
 # and unsupported. This replaces the `use_mimalloc` variable previously in

@@ -259,7 +259,7 @@ pub const Scripts = extern struct {
         resolution: *const Resolution,
     ) !?Package.Scripts.List {
         if (this.hasAny()) {
-            const add_node_gyp_rebuild_script = if (lockfile.hasTrustedDependency(folder_name) and
+            const add_node_gyp_rebuild_script = if (lockfile.hasTrustedDependency(folder_name, resolution) and
                 this.install.isEmpty() and
                 this.preinstall.isEmpty())
             brk: {

@@ -32,12 +32,8 @@ const server = Bun.serve({
     // Redirect from /blog/hello to /blog/hello/world
     "/blog/hello": Response.redirect("/blog/hello/world"),
 
-    // Serve a file by buffering it in memory
-    "/favicon.ico": new Response(await Bun.file("./favicon.ico").bytes(), {
-      headers: {
-        "Content-Type": "image/x-icon",
-      },
-    }),
+    // Serve a file by lazily loading it into memory
+    "/favicon.ico": Bun.file("./favicon.ico"),
   },
 
   // (optional) fallback for unmatched routes:
@@ -126,7 +122,7 @@ bun --port=4002 server.ts
 - `BUN_PORT` environment variable
 
 ```sh
-bun_PORT=4002 bun server.ts
+BUN_PORT=4002 bun server.ts
 ```
 
 - `PORT` environment variable
@@ -175,12 +171,14 @@ Unlike unix domain sockets, abstract namespace sockets are not bound to the file
 
 ## idleTimeout
 
-To configure the idle timeout, set the `idleTimeout` field in Bun.serve.
+By default, `Bun.serve` closes connections after **10 seconds** of inactivity. A connection is considered idle when there is no data being sent or received — this includes in-flight requests where your handler is still running but hasn't written any bytes to the response yet. Browsers and `fetch()` clients will see this as a connection reset.
+
+To configure this, set the `idleTimeout` field (in seconds). The maximum value is `255`, and `0` disables the timeout entirely.
 
 ```ts
 Bun.serve({
-  // 10 seconds:
-  idleTimeout: 10,
+  // 30 seconds (default is 10)
+  idleTimeout: 30,
 
   fetch(req) {
     return new Response("Bun!");
@@ -188,7 +186,11 @@ Bun.serve({
 });
 ```
 
-This is the maximum amount of time a connection is allowed to be idle before the server closes it. A connection is idling if there is no data sent or received.
+<Note>
+  **Streaming & Server-Sent Events** — The idle timer applies while a response is being streamed. If your stream goes
+  quiet for longer than `idleTimeout`, the connection will be closed mid-response. For long-lived streams, disable the
+  timeout for that request with [`server.timeout(req, 0)`](#server-timeout-request-seconds).
+</Note>
 
 ---
 
@@ -197,14 +199,16 @@ This is the maximum amount of time a connection is allowed to be idle before the
 Thus far, the examples on this page have used the explicit `Bun.serve` API. Bun also supports an alternate syntax.
 
 ```ts server.ts
-import { type Serve } from "bun";
+import type { Serve } from "bun";
 
 export default {
   fetch(req) {
     return new Response("Bun!");
   },
-} satisfies Serve;
+} satisfies Serve.Options<undefined>;
 ```
+
+The type parameter `<undefined>` represents WebSocket data — if you add a `websocket` handler with custom data attached via `server.upgrade(req, { data: ... })`, replace `undefined` with your data type.
 
 Instead of passing the server options into `Bun.serve`, `export default` it. This file can be executed as-is; when Bun sees a file with a `default` export containing a `fetch` handler, it passes it into `Bun.serve` under the hood.
 
@@ -298,12 +302,12 @@ This is useful for development and hot reloading. Only `fetch`, `error`, and `ro
 
 ### `server.timeout(Request, seconds)`
 
-Set a custom idle timeout for individual requests:
+Override the idle timeout for an individual request. Pass `0` to disable the timeout entirely for that request.
 
 ```ts
 const server = Bun.serve({
   async fetch(req, server) {
-    // Set 60 second timeout for this request
+    // Give this request up to 60 seconds of inactivity instead of the default 10
     server.timeout(req, 60);
 
     // If they take longer than 60 seconds to send the body, the request will be aborted
@@ -314,7 +318,28 @@ const server = Bun.serve({
 });
 ```
 
-Pass `0` to disable the timeout for a request.
+This is the recommended way to keep long-lived streaming responses (like Server-Sent Events) alive without raising the global `idleTimeout` for every request:
+
+```ts
+Bun.serve({
+  routes: {
+    "/events": (req, server) => {
+      // Disable the idle timeout for this streaming response.
+      // Otherwise the connection will be closed if no bytes
+      // are sent for 10 seconds (the default idleTimeout).
+      server.timeout(req, 0);
+
+      return new Response(
+        async function* () {
+          yield "data: hello\n\n";
+          // events can arrive sporadically without the connection being killed
+        },
+        { headers: { "Content-Type": "text/event-stream" } },
+      );
+    },
+  },
+});
+```
 
 ### `server.requestIP(Request)`
 

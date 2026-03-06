@@ -187,8 +187,8 @@ pub const LifecycleScriptSubprocess = struct {
             null,
         };
         if (Environment.isWindows) {
-            this.stdout.source = .{ .pipe = bun.handleOom(bun.default_allocator.create(uv.Pipe)) };
-            this.stderr.source = .{ .pipe = bun.handleOom(bun.default_allocator.create(uv.Pipe)) };
+            this.stdout.source = .{ .pipe = bun.new(uv.Pipe, std.mem.zeroes(uv.Pipe)) };
+            this.stderr.source = .{ .pipe = bun.new(uv.Pipe, std.mem.zeroes(uv.Pipe)) };
         }
         const spawn_options = bun.spawn.SpawnOptions{
             .stdin = if (this.foreground)
@@ -226,7 +226,7 @@ pub const LifecycleScriptSubprocess = struct {
         };
 
         this.remaining_fds = 0;
-        this.started_at = bun.timespec.now().ns();
+        this.started_at = bun.timespec.now(.allow_mocked_time).ns();
         this.manager.active_lifecycle_scripts.insert(this);
         var spawned = try (try bun.spawn.spawnProcess(&spawn_options, @ptrCast(&argv), this.envp)).unwrap();
 
@@ -348,7 +348,7 @@ pub const LifecycleScriptSubprocess = struct {
                     if (this.optional) {
                         if (this.ctx) |ctx| {
                             ctx.installer.store.entries.items(.step)[ctx.entry_id.get()].store(.done, .release);
-                            ctx.installer.onTaskComplete(ctx.entry_id, .fail);
+                            ctx.installer.onTaskComplete(ctx.entry_id, .skipped);
                         }
                         this.decrementPendingScriptTasks();
                         this.deinitAndDeletePackage();
@@ -454,7 +454,7 @@ pub const LifecycleScriptSubprocess = struct {
                 if (this.optional) {
                     if (this.ctx) |ctx| {
                         ctx.installer.store.entries.items(.step)[ctx.entry_id.get()].store(.done, .release);
-                        ctx.installer.onTaskComplete(ctx.entry_id, .fail);
+                        ctx.installer.onTaskComplete(ctx.entry_id, .skipped);
                     }
                     this.decrementPendingScriptTasks();
                     this.deinitAndDeletePackage();

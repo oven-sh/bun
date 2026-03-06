@@ -155,7 +155,7 @@ const LibC = struct {
         ) catch |err| bun.handleOom(err);
         const promise_value = request.head.promise.value();
 
-        var io = bun.handleOom(GetAddrInfoRequest.Task.createOnJSThread(this.vm.allocator, globalThis, request));
+        var io = GetAddrInfoRequest.Task.createOnJSThread(this.vm.allocator, globalThis, request);
 
         io.schedule();
         this.requestSent(globalThis.bunVM());
@@ -1303,7 +1303,7 @@ pub const internal = struct {
         // However, we're almost out of time to use 32 bit timestamps for anything
         // So we set the epoch to January 1st, 2024 instead.
         pub fn getCacheTimestamp() u32 {
-            return @truncate(bun.getRoughTickCountMs() / 1000);
+            return @truncate(bun.getRoughTickCountMs(.allow_mocked_time) / 1000);
         }
 
         fn isNearlyFull(this: *This) bool {
@@ -2018,7 +2018,7 @@ pub const Resolver = struct {
         }
 
         this.ref();
-        this.event_loop_timer.next = (now orelse &timespec.now()).addMs(1000);
+        this.event_loop_timer.next = (now orelse &timespec.now(.allow_mocked_time)).addMs(1000);
         this.vm.timer.incrementTimerRef(1);
         this.vm.timer.insert(&this.event_loop_timer);
         return true;
@@ -2659,7 +2659,7 @@ pub const Resolver = struct {
         const channel: *c_ares.Channel = switch (this.getChannel()) {
             .result => |res| res,
             .err => |err| {
-                return globalThis.throwValue(err.toJSWithSyscallAndHostname(globalThis, "getHostByAddr", ip));
+                return globalThis.throwValue(try err.toJSWithSyscallAndHostname(globalThis, "getHostByAddr", ip));
             },
         };
 
@@ -3038,7 +3038,7 @@ pub const Resolver = struct {
         var channel: *c_ares.Channel = switch (this.getChannel()) {
             .result => |res| res,
             .err => |err| {
-                return globalThis.throwValue(err.toJSWithSyscall(globalThis, "query" ++ &[_]u8{std.ascii.toUpper(type_name[0])} ++ type_name[1..]));
+                return globalThis.throwValue(try err.toJSWithSyscall(globalThis, "query" ++ &[_]u8{std.ascii.toUpper(type_name[0])} ++ type_name[1..]));
             },
         };
 

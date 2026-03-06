@@ -383,6 +383,7 @@ const PackageCollector = struct {
         const root_pkg_id: PackageID = 0;
         const root_deps = pkg_dependencies[root_pkg_id];
 
+        // collect all npm deps from the root package
         for (root_deps.begin()..root_deps.end()) |_dep_id| {
             const dep_id: DependencyID = @intCast(_dep_id);
             const dep_pkg_id = this.manager.lockfile.buffers.resolutions.items[dep_id];
@@ -408,6 +409,39 @@ const PackageCollector = struct {
                 .dep_path = dep_path_buf,
             });
         }
+
+        // and collect npm deps from workspace packages
+        for (0..pkgs.len) |pkg_idx| {
+            const pkg_id: PackageID = @intCast(pkg_idx);
+            if (pkg_resolutions[pkg_id].tag != .workspace) continue;
+
+            const workspace_deps = pkg_dependencies[pkg_id];
+            for (workspace_deps.begin()..workspace_deps.end()) |_dep_id| {
+                const dep_id: DependencyID = @intCast(_dep_id);
+                const dep_pkg_id = this.manager.lockfile.buffers.resolutions.items[dep_id];
+
+                if (dep_pkg_id == invalid_package_id) continue;
+
+                const dep_res = pkg_resolutions[dep_pkg_id];
+                if (dep_res.tag != .npm) continue;
+
+                if ((try this.dedupe.getOrPut(dep_pkg_id)).found_existing) continue;
+
+                var pkg_path_buf = std.array_list.Managed(PackageID).init(this.manager.allocator);
+                try pkg_path_buf.append(pkg_id);
+                try pkg_path_buf.append(dep_pkg_id);
+
+                var dep_path_buf = std.array_list.Managed(DependencyID).init(this.manager.allocator);
+                try dep_path_buf.append(dep_id);
+
+                try this.queue.writeItem(.{
+                    .pkg_id = dep_pkg_id,
+                    .dep_id = dep_id,
+                    .pkg_path = pkg_path_buf,
+                    .dep_path = dep_path_buf,
+                });
+            }
+        }
     }
 
     pub fn collectUpdatePackages(this: *PackageCollector) !void {
@@ -427,7 +461,7 @@ const PackageCollector = struct {
                 for (0..pkgs.len) |_pkg_id| update_dep_id: {
                     const pkg_id: PackageID = @intCast(_pkg_id);
                     const pkg_res = pkg_resolutions[pkg_id];
-                    if (pkg_res.tag != .root) continue;
+                    if (pkg_res.tag != .root and pkg_res.tag != .workspace) continue;
 
                     const pkg_deps = pkg_dependencies[pkg_id];
                     for (pkg_deps.begin()..pkg_deps.end()) |_dep_id| {

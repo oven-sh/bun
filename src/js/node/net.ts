@@ -253,7 +253,9 @@ const SocketHandlers: SocketHandler = {
     const { checkServerIdentity } = self[bunTLSConnectOptions];
     if (!verifyError && typeof checkServerIdentity === "function" && self.servername) {
       const cert = self.getPeerCertificate(true);
-      verifyError = checkServerIdentity(self.servername, cert);
+      if (cert) {
+        verifyError = checkServerIdentity(self.servername, cert);
+      }
     }
     if (self._requestCert || self._rejectUnauthorized) {
       if (verifyError) {
@@ -467,7 +469,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
       }
     }
     SocketHandlers.error(socket, error, true);
-    data.server.emit("clientError", error, data);
+    this.server?.emit("clientError", error, data);
   },
   timeout(socket) {
     SocketHandlers.timeout(socket);
@@ -563,7 +565,9 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     const { checkServerIdentity } = self[bunTLSConnectOptions];
     if (!verifyError && typeof checkServerIdentity === "function" && self.servername) {
       const cert = self.getPeerCertificate(true);
-      verifyError = checkServerIdentity(self.servername, cert);
+      if (cert) {
+        verifyError = checkServerIdentity(self.servername, cert);
+      }
     }
     if (self._requestCert || self._rejectUnauthorized) {
       if (verifyError) {

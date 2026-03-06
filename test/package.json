@@ -11,13 +11,15 @@
   "dependencies": {
     "@astrojs/node": "9.1.3",
     "@azure/service-bus": "7.9.4",
-    "@duckdb/node-api": "1.1.3-alpha.7",
-    "@electric-sql/pglite": "0.2.17",
+    "@bufbuild/protobuf": "2.10.2",
+    "@connectrpc/connect": "2.1.1",
+    "@connectrpc/connect-node": "2.0.0",
+    "@electric-sql/pglite": "0.3.15",
     "@fastify/websocket": "11.0.2",
     "@grpc/grpc-js": "1.12.0",
     "@grpc/proto-loader": "0.7.10",
     "@happy-dom/global-registrator": "17.0.3",
-    "@napi-rs/canvas": "0.1.65",
+    "@napi-rs/canvas": "0.1.91",
     "@nestjs/common": "11.0.3",
     "@nestjs/core": "11.0.3",
     "@prisma/client": "5.8.0",
@@ -41,7 +43,6 @@
     "commander": "12.1.0",
     "detect-libc": "2.0.3",
     "devalue": "5.1.1",
-    "duckdb": "1.3.1",
     "es-module-lexer": "1.3.0",
     "esbuild": "0.18.6",
     "express": "4.18.2",
@@ -51,7 +52,7 @@
     "happy-dom": "17.0.3",
     "hono": "4.7.2",
     "http2-wrapper": "2.2.1",
-    "https-proxy-agent": "7.0.5",
+    "https-proxy-agent": "7.0.6",
     "iconv-lite": "0.6.3",
     "immutable": "5.1.3",
     "isbot": "5.1.13",
@@ -62,7 +63,6 @@
     "jws": "4.0.0",
     "lodash": "4.17.21",
     "mongodb": "6.0.0",
-    "msgpackr-extract": "3.0.2",
     "msw": "2.3.0",
     "mysql2": "3.7.0",
     "node-gyp": "10.0.1",
@@ -83,7 +83,7 @@
     "reflect-metadata": "0.2.2",
     "rollup": "4.4.1",
     "sass": "1.79.4",
-    "sharp": "0.33.0",
+    "sharp": "0.34.5",
     "sinon": "6.0.0",
     "socket.io": "4.7.1",
     "socket.io-adapter": "2.5.5",
@@ -119,7 +119,13 @@
     "bd:v": "(bun run --silent --cwd=../ build:debug &> /tmp/bun.debug.build.log || (cat /tmp/bun.debug.build.log && rm -rf /tmp/bun.debug.build.log && exit 1)) && rm -f /tmp/bun.debug.build.log && ../build/debug/bun-debug",
     "bd": "BUN_DEBUG_QUIET_LOGS=1 bun --silent bd:v"
   },
+  "optionalDependencies": {
+    "duckdb": "1.3.1",
+    "@duckdb/node-api": "1.1.3-alpha.7",
+    "msgpackr-extract": "3.0.2"
+  },
   "resolutions": {
-    "react": "../node_modules/react"
+    "react": "../node_modules/react",
+    "@types/node": "25.0.0"
   }
 }

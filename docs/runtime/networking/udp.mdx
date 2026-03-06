@@ -127,3 +127,54 @@ const socket = await Bun.udpSocket({
   },
 });
 ```
+
+### Socket options
+
+UDP sockets support setting various socket options:
+
+```ts
+const socket = await Bun.udpSocket({});
+
+// Enable broadcasting to send packets to a broadcast address
+socket.setBroadcast(true);
+
+// Set the IP TTL (time to live) for outgoing packets
+socket.setTTL(64);
+```
+
+### Multicast
+
+Bun supports multicast operations for UDP sockets. Use `addMembership` and `dropMembership` to join and leave multicast groups:
+
+```ts
+const socket = await Bun.udpSocket({});
+
+// Join a multicast group
+socket.addMembership("224.0.0.1");
+
+// Join with a specific interface
+socket.addMembership("224.0.0.1", "192.168.1.100");
+
+// Leave a multicast group
+socket.dropMembership("224.0.0.1");
+```
+
+Additional multicast options:
+
+```ts
+// Set TTL for multicast packets (number of network hops)
+socket.setMulticastTTL(2);
+
+// Control whether multicast packets loop back to the local socket
+socket.setMulticastLoopback(true);
+
+// Specify which interface to use for outgoing multicast packets
+socket.setMulticastInterface("192.168.1.100");
+```
+
+For source-specific multicast (SSM), use `addSourceSpecificMembership` and `dropSourceSpecificMembership`:
+
+```ts
+socket.addSourceSpecificMembership("10.0.0.1", "232.0.0.1");
+socket.dropSourceSpecificMembership("10.0.0.1", "232.0.0.1");
+```

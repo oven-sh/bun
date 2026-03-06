@@ -185,7 +185,7 @@ pub fn reportSlowLifecycleScripts(this: *PackageManager) void {
             return;
         }
         this.cached_tick_for_slow_lifecycle_script_logging = this.event_loop.iterationNumber();
-        const current_time = bun.timespec.now().ns();
+        const current_time = bun.timespec.now(.allow_mocked_time).ns();
         const time_running = current_time -| active_lifecycle_script_running_for_the_longest_amount_of_time.started_at;
         const interval: u64 = if (log_level.isVerbose()) std.time.ns_per_s * 5 else std.time.ns_per_s * 30;
         if (time_running > interval and current_time -| this.last_reported_slow_lifecycle_script_at > interval) {

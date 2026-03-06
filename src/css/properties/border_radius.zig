@@ -220,7 +220,7 @@ pub const BorderRadiusHandler = struct {
             if (logical_supported) {
                 bun.handleOom(d.append(ctx.allocator, v));
             } else {
-                const prefix = ctx.targets.prefixes(css.VendorPrefix{}, css.prefixes.Feature.border_radius);
+                const prefix = ctx.targets.prefixes(css.VendorPrefix{ .none = true }, css.prefixes.Feature.border_radius);
                 switch (v) {
                     .@"border-start-start-radius",
                     .@"border-start-end-radius",
@@ -236,8 +236,8 @@ pub const BorderRadiusHandler = struct {
                     .unparsed => |unparsed| {
                         ctx.addLogicalRule(
                             ctx.allocator,
-                            Property{ .unparsed = unparsed.withPropertyId(ctx.allocator, .{ .@"border-top-left-radius" = prefix }) },
-                            Property{ .unparsed = unparsed.withPropertyId(ctx.allocator, .{ .@"border-top-right-radius" = prefix }) },
+                            Property{ .unparsed = unparsed.withPropertyId(ctx.allocator, @unionInit(css.PropertyId, ltr, prefix)) },
+                            Property{ .unparsed = unparsed.withPropertyId(ctx.allocator, @unionInit(css.PropertyId, rtl, prefix)) },
                         );
                     },
                     else => {},

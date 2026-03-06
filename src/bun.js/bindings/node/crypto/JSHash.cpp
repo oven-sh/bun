@@ -251,15 +251,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
 
     // Only compute the digest if it hasn't been cached yet
     if (!hash->m_digest && len > 0) {
-
-        const EVP_MD* md = hash->m_ctx.getDigest();
-        uint32_t bufLen = len;
-        if (md == EVP_sha512_224()) {
-            // SHA-512/224 expects buffer length of length % 8. can be truncated afterwards
-            bufLen = SHA512_224_DIGEST_BUFFER_LENGTH;
-        }
-
-        auto data = hash->m_ctx.digestFinal(bufLen);
+        auto data = hash->m_ctx.digestFinal(len);
         if (!data) {
             throwCryptoError(lexicalGlobalObject, scope, ERR_get_error(), "Failed to finalize digest"_s);
             return {};
@@ -325,7 +317,7 @@ JSC_DEFINE_HOST_FUNCTION(constructHash, (JSC::JSGlobalObject * globalObject, JSC
         WTF::String algorithm = algorithmOrHashInstanceValue.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
 
-        md = ncrypto::getDigestByName(algorithm, true);
+        md = ncrypto::getDigestByName(algorithm);
         if (!md) {
             zigHasher = ExternZigHash::getByName(zigGlobalObject, algorithm);
         }

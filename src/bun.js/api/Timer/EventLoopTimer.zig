@@ -6,6 +6,7 @@ state: State = .PENDING,
 tag: Tag,
 /// Internal heap fields.
 heap: bun.io.heap.IntrusiveField(Self) = .{},
+in_heap: enum { none, regular, fake } = .none,
 
 pub fn initPaused(tag: Tag) Self {
     return .{
@@ -94,6 +95,17 @@ pub const Tag = enum {
             .DateHeaderTimer => jsc.API.Timer.DateHeaderTimer,
             .BunTest => jsc.Jest.bun_test.BunTest,
             .EventLoopDelayMonitor => jsc.API.Timer.EventLoopDelayMonitor,
+        };
+    }
+
+    pub fn allowFakeTimers(self: Tag) bool {
+        return switch (self) {
+            .WTFTimer, // internal
+            .BunTest, // for test timeouts
+            .EventLoopDelayMonitor, // probably important
+            .StatWatcherScheduler,
+            => false,
+            else => true,
         };
     }
 };

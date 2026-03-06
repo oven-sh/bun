@@ -1,6 +1,7 @@
 import { spawn } from "bun";
+import { jscDescribe } from "bun:jsc";
 import { beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isBroken, isMusl, isWindows, nodeExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isBroken, isMusl, isWindows, nodeExe, tmpdirSync } from "harness";
 import assert from "node:assert";
 import fs from "node:fs/promises";
 import { basename, join } from "path";
@@ -124,114 +125,141 @@ describe.todoIf(isBroken && isMusl)("node:v8", () => {
 
   describe("module lifecycle", () => {
     it("can call a basic native function", async () => {
-      await checkSameOutput("test_v8_native_call", []);
+      await checkSameOutput("test_v8_native_call");
     });
   });
 
   describe("primitives", () => {
     it("can create and distinguish between null, undefined, true, and false", async () => {
-      await checkSameOutput("test_v8_primitives", []);
+      await checkSameOutput("test_v8_primitives");
     });
   });
 
+  describe("Value type checks", () => {
+    it("Math.fround returns a double-encoded value", () => {
+      // If this fails, you need to find a new way to make a JSValue which uses the double encoding
+      // but holds an int32 value (maybe Float64Array?)
+      expect(jscDescribe(Math.fround(1))).toBe("Double: 4607182418800017408, 1.000000");
+    });
+
+    it.each([
+      // Each entry should eval() to an array of arguments
+      "[new Map()]",
+      "[[]]",
+      "[42]",
+      "[2 ** 31 - 1]", // INT32_MAX
+      "[2 ** 31]", // INT32_MAX + 1 (should not be Int32)
+      "[-(2 ** 31)]", // INT32_MIN
+      "[-(2 ** 31) - 1]", // INT32_MIN - 1 (should not be Int32)
+      "[2 ** 32 - 1]", // UINT32_MAX
+      "[2 ** 32]", // UINT32_MAX + 1
+      "[Math.fround(1)]", // Value represented as a double but whose numeric value fits in the int32 range (should be int32)
+      "[123n]",
+      "[3.14]",
+      "['string']",
+      "[{}]",
+    ])("matches Node for IsMap/IsArray/IsInt32/IsBigInt on %s", async args => {
+      await checkSameOutput("test_v8_value_type_checks", args);
+    });
+  });
   describe("Number", () => {
     it("can create small integer", async () => {
-      await checkSameOutput("test_v8_number_int", []);
+      await checkSameOutput("test_v8_number_int");
     });
     // non-i32 v8::Number is not implemented yet
     it("can create large integer", async () => {
-      await checkSameOutput("test_v8_number_large_int", []);
+      await checkSameOutput("test_v8_number_large_int");
     });
     it("can create fraction", async () => {
-      await checkSameOutput("test_v8_number_fraction", []);
+      await checkSameOutput("test_v8_number_fraction");
     });
   });
 
   describe("String", () => {
     it("can create and read back strings with only ASCII characters", async () => {
-      await checkSameOutput("test_v8_string_ascii", []);
+      await checkSameOutput("test_v8_string_ascii");
     });
     // non-ASCII strings are not implemented yet
     it("can create and read back strings with UTF-8 characters", async () => {
-      await checkSameOutput("test_v8_string_utf8", []);
+      await checkSameOutput("test_v8_string_utf8");
     });
     it("handles replacement correctly in strings with invalid UTF-8 sequences", async () => {
-      await checkSameOutput("test_v8_string_invalid_utf8", []);
+      await checkSameOutput("test_v8_string_invalid_utf8");
     });
     it("can create strings from null-terminated Latin-1 data", async () => {
-      await checkSameOutput("test_v8_string_latin1", []);
+      await checkSameOutput("test_v8_string_latin1");
     });
     describe("WriteUtf8", () => {
       it("truncates the string correctly", async () => {
-        await checkSameOutput("test_v8_string_write_utf8", []);
+        await checkSameOutput("test_v8_string_write_utf8");
       });
     });
   });
 
   describe("External", () => {
     it("can create an external and read back the correct value", async () => {
-      await checkSameOutput("test_v8_external", []);
+      await checkSameOutput("test_v8_external");
     });
   });
 
   describe("Value", () => {
     it("can compare values using StrictEquals", async () => {
-      await checkSameOutput("test_v8_strict_equals", []);
+      await checkSameOutput("test_v8_strict_equals");
     });
   });
 
   describe("Object", () => {
     it("can create an object and set properties", async () => {
-      await checkSameOutput("test_v8_object", []);
+      await checkSameOutput("test_v8_object");
     });
     it("can get properties by key using Object::Get(context, key)", async () => {
-      await checkSameOutput("test_v8_object_get_by_key", []);
+      await checkSameOutput("test_v8_object_get_by_key");
     });
     it("can get array elements by index using Object::Get(context, index)", async () => {
-      await checkSameOutput("test_v8_object_get_by_index", []);
+      await checkSameOutput("test_v8_object_get_by_index");
     });
     it("correctly handles exceptions from get and set", async () => {
-      await checkSameOutput("test_v8_object_get_set_exceptions", []);
+      await checkSameOutput("test_v8_object_get_set_exceptions");
     });
   });
   describe("Array", () => {
     it("can create an array from a C array of Locals", async () => {
-      await checkSameOutput("test_v8_array_new", []);
+      await checkSameOutput("test_v8_array_new");
     });
     it("can create an array with a specific length", async () => {
-      await checkSameOutput("test_v8_array_new_with_length", []);
+      await checkSameOutput("test_v8_array_new_with_length");
     });
     it("can create an array from a callback", async () => {
-      await checkSameOutput("test_v8_array_new_with_callback", []);
+      await checkSameOutput("test_v8_array_new_with_callback");
     });
     it("correctly reports array length", async () => {
-      await checkSameOutput("test_v8_array_length", []);
+      await checkSameOutput("test_v8_array_length");
     });
     it("can iterate over array elements with callbacks", async () => {
-      await checkSameOutput("test_v8_array_iterate", []);
+      await checkSameOutput("test_v8_array_iterate");
     });
   });
 
   describe("ObjectTemplate", () => {
     it("creates objects with internal fields", async () => {
-      await checkSameOutput("test_v8_object_template", []);
+      await checkSameOutput("test_v8_object_template");
     });
   });
 
   describe("FunctionTemplate", () => {
     it("keeps the data parameter alive", async () => {
-      await checkSameOutput("test_v8_function_template", []);
+      await checkSameOutput("test_v8_function_template");
     });
   });
 
   describe("Function", () => {
     it("correctly receives all its arguments from JS", async () => {
-      await checkSameOutput("print_values_from_js", [5.0, true, null, false, "async meow", {}]);
-      await checkSameOutput("print_native_function", []);
+      await checkSameOutput("print_values_from_js", "[5.0, true, null, false, 'async meow', {}]");
+      await checkSameOutput("print_native_function");
     });
 
     it("correctly receives the this value from JS", async () => {
-      await checkSameOutput("call_function_with_weird_this_values", []);
+      await checkSameOutput("call_function_with_weird_this_values");
     });
   });
 
@@ -251,45 +279,51 @@ describe.todoIf(isBroken && isMusl)("node:v8", () => {
 
   describe("Global", () => {
     it("can create, modify, and read the value from global handles", async () => {
-      await checkSameOutput("test_v8_global", []);
+      await checkSameOutput("test_v8_global");
     });
   });
 
   describe("HandleScope", () => {
     it("can hold a lot of locals", async () => {
-      await checkSameOutput("test_many_v8_locals", []);
+      await checkSameOutput("test_many_v8_locals");
     });
-    it("keeps GC objects alive", async () => {
-      await checkSameOutput("test_handle_scope_gc", []);
-    }, 10000);
+    // Skip on ASAN: false positives due to dynamic library boundary crossing where
+    // Bun is built with ASAN+UBSAN but the native addon is not
+    it.skipIf(isASAN)(
+      "keeps GC objects alive",
+      async () => {
+        await checkSameOutput("test_handle_scope_gc");
+      },
+      10000,
+    );
   });
 
   describe("EscapableHandleScope", () => {
     it("keeps handles alive in the outer scope", async () => {
-      await checkSameOutput("test_v8_escapable_handle_scope", []);
+      await checkSameOutput("test_v8_escapable_handle_scope");
     });
   });
 
   describe("MaybeLocal", () => {
     it("correctly handles ToLocal and ToLocalChecked operations", async () => {
-      await checkSameOutput("test_v8_maybe_local", []);
+      await checkSameOutput("test_v8_maybe_local");
     });
   });
 
   describe("uv_os_getpid", () => {
     it.skipIf(isWindows)("returns the same result as getpid on POSIX", async () => {
-      await checkSameOutput("test_uv_os_getpid", []);
+      await checkSameOutput("test_uv_os_getpid");
     });
   });
 
   describe("uv_os_getppid", () => {
     it.skipIf(isWindows)("returns the same result as getppid on POSIX", async () => {
-      await checkSameOutput("test_uv_os_getppid", []);
+      await checkSameOutput("test_uv_os_getppid");
     });
   });
 });
 
-async function checkSameOutput(testName: string, args: any[], thisValue?: any) {
+async function checkSameOutput(testName: string, args?: string, thisValue?: any) {
   const [nodeResultResolution, bunReleaseResultResolution, bunDebugResultResolution] = await Promise.allSettled([
     runOn(Runtime.node, BuildMode.release, testName, args, thisValue),
     runOn(Runtime.bun, BuildMode.release, testName, args, thisValue),
@@ -317,7 +351,11 @@ async function checkSameOutput(testName: string, args: any[], thisValue?: any) {
   return nodeResult;
 }
 
-async function runOn(runtime: Runtime, buildMode: BuildMode, testName: string, jsArgs: any[], thisValue?: any) {
+/**
+ * @param jsArgs should eval() to an array
+ * @param thisValue will be JSON stringified
+ */
+async function runOn(runtime: Runtime, buildMode: BuildMode, testName: string, jsArgs?: string, thisValue?: any) {
   if (runtime == Runtime.node) {
     assert(buildMode == BuildMode.release);
   }
@@ -334,7 +372,7 @@ async function runOn(runtime: Runtime, buildMode: BuildMode, testName: string, j
     ...(runtime == Runtime.bun ? ["--smol"] : []),
     join(baseDir, "main.js"),
     testName,
-    JSON.stringify(jsArgs),
+    jsArgs ?? "[]",
     JSON.stringify(thisValue ?? null),
   ];
   if (buildMode == BuildMode.debug) {

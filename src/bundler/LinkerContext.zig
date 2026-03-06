@@ -4,6 +4,7 @@ pub const LinkerContext = struct {
 
     pub const OutputFileListBuilder = @import("./linker_context/OutputFileListBuilder.zig");
     pub const StaticRouteVisitor = @import("./linker_context/StaticRouteVisitor.zig");
+    pub const MetafileBuilder = @import("./linker_context/MetafileBuilder.zig");
 
     parse_graph: *Graph = undefined,
     graph: LinkerGraph = undefined,
@@ -67,8 +68,15 @@ pub const LinkerContext = struct {
         banner: []const u8 = "",
         footer: []const u8 = "",
         css_chunking: bool = false,
+        compile_to_standalone_html: bool = false,
         source_maps: options.SourceMapOption = .none,
         target: options.Target = .browser,
+        compile: bool = false,
+        metafile: bool = false,
+        /// Path to write JSON metafile (for Bun.build API)
+        metafile_json_path: []const u8 = "",
+        /// Path to write markdown metafile (for Bun.build API)
+        metafile_markdown_path: []const u8 = "",
 
         mode: Mode = .bundle,
 
@@ -503,7 +511,7 @@ pub const LinkerContext = struct {
                     const loader = loaders[record.source_index.get()];
 
                     switch (loader) {
-                        .jsx, .js, .ts, .tsx, .napi, .sqlite, .json, .jsonc, .yaml, .html, .sqlite_embedded => {
+                        .jsx, .js, .ts, .tsx, .napi, .sqlite, .json, .jsonc, .json5, .yaml, .html, .sqlite_embedded, .md => {
                             log.addErrorFmt(
                                 source,
                                 record.range.loc,
@@ -885,7 +893,7 @@ pub const LinkerContext = struct {
         // any import to be considered different if the import's output path has changed.
         hasher.write(chunk.template.data);
 
-        const public_path = if (chunk.is_browser_chunk_from_server_build)
+        const public_path = if (chunk.flags.is_browser_chunk_from_server_build)
             @as(*bundler.BundleV2, @fieldParentPtr("linker", c)).transpilerForTarget(.browser).options.public_path
         else
             c.options.public_path;
@@ -1179,6 +1187,10 @@ pub const LinkerContext = struct {
         ast: *const JSAst,
     ) !bool {
         const record = ast.import_records.at(import_record_index);
+        // Barrel optimization: deferred import records should be dropped
+        if (record.flags.is_unused) {
+            return true;
+        }
         // Is this an external import?
         if (!record.source_index.isValid()) {
             // Keep the "import" statement if import statements are supported
@@ -1723,7 +1735,7 @@ pub const LinkerContext = struct {
                         entry_point_kinds,
                         css_reprs,
                     );
-                } else if (record.is_external_without_side_effects) {
+                } else if (record.flags.is_external_without_side_effects) {
                     // This can be removed if it's unused
                     continue;
                 }
@@ -2308,6 +2320,14 @@ pub const LinkerContext = struct {
         // Is this an external file?
         const record: *const ImportRecord = import_records.at(named_import.import_record_index);
         if (!record.source_index.isValid()) {
+            return .{
+                .value = .{},
+                .status = .external,
+            };
+        }
+
+        // Barrel optimization: deferred import records point to empty ASTs
+        if (record.flags.is_unused) {
             return .{
                 .value = .{},
                 .status = .external,

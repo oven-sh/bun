@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { readFileSync, unlinkSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isArm64, isWindows, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 describe.if(isWindows)("PE codesigning integrity", () => {
@@ -119,8 +119,8 @@ describe.if(isWindows)("PE codesigning integrity", () => {
       // Read the .bun section data
       const sectionData = new Uint8Array(this.buffer, bunSection.pointerToRawData, bunSection.sizeOfRawData);
 
-      // First 4 bytes should be the data size
-      const dataSize = new DataView(sectionData.buffer, bunSection.pointerToRawData).getUint32(0, true);
+      // First 8 bytes should be the data size (u64 for 8-byte alignment)
+      const dataSize = Number(new DataView(sectionData.buffer, bunSection.pointerToRawData).getBigUint64(0, true));
 
       // Validate the size is reasonable - it should match or be close to virtual size
       if (dataSize > bunSection.sizeOfRawData || dataSize === 0) {
@@ -133,8 +133,8 @@ describe.if(isWindows)("PE codesigning integrity", () => {
         throw new Error(`Invalid .bun section: data size ${dataSize} exceeds virtual size ${bunSection.virtualSize}`);
       }
 
-      // Extract the actual embedded data (skip the 4-byte size header)
-      const embeddedData = sectionData.slice(4, 4 + dataSize);
+      // Extract the actual embedded data (skip the 8-byte size header)
+      const embeddedData = sectionData.slice(8, 8 + dataSize);
 
       return {
         section: bunSection,
@@ -215,7 +215,7 @@ console.log("Test data:", JSON.stringify(data));
 
     // Validate PE header
     expect(validation.pe.signature).toBe(0x00004550); // "PE\0\0"
-    expect(validation.pe.machine).toBe(0x8664); // x64
+    expect(validation.pe.machine).toBe(isArm64 ? 0xaa64 : 0x8664); // arm64 or x64
     expect(validation.pe.numberOfSections).toBeGreaterThan(0);
 
     // Validate optional header

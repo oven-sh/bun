@@ -103,6 +103,7 @@ fn JSONLikeParser_(
         log: *logger.Log,
         allocator: std.mem.Allocator,
         list_allocator: std.mem.Allocator,
+        stack_check: bun.StackCheck,
 
         pub fn init(allocator: std.mem.Allocator, source_: *const logger.Source, log: *logger.Log) !Parser {
             return initWithListAllocator(allocator, allocator, source_, log);
@@ -117,6 +118,7 @@ fn JSONLikeParser_(
                 .allocator = allocator,
                 .log = log,
                 .list_allocator = list_allocator,
+                .stack_check = bun.StackCheck.init(),
             };
         }
 
@@ -127,6 +129,10 @@ fn JSONLikeParser_(
         const Parser = @This();
 
         pub fn parseExpr(p: *Parser, comptime maybe_auto_quote: bool, comptime force_utf8: bool) anyerror!Expr {
+            if (!p.stack_check.isSafeToRecurse()) {
+                try bun.throwStackOverflow();
+            }
+
             const loc = p.lexer.loc();
 
             switch (p.lexer.token) {
@@ -318,6 +324,7 @@ pub const PackageJSONVersionChecker = struct {
     log: *logger.Log,
     allocator: std.mem.Allocator,
     depth: usize = 0,
+    stack_check: bun.StackCheck,
 
     found_version_buf: [1024]u8 = undefined,
     found_name_buf: [1024]u8 = undefined,
@@ -343,12 +350,17 @@ pub const PackageJSONVersionChecker = struct {
             .allocator = allocator,
             .log = log,
             .source = source,
+            .stack_check = bun.StackCheck.init(),
         };
     }
 
     const Parser = @This();
 
     pub fn parseExpr(p: *Parser) anyerror!Expr {
+        if (!p.stack_check.isSafeToRecurse()) {
+            try bun.throwStackOverflow();
+        }
+
         const loc = p.lexer.loc();
 
         if (p.has_found_name and p.has_found_version) return newExpr(E.Missing{}, loc);

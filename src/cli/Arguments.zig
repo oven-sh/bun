@@ -827,14 +827,20 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             ctx.runtime_options.dns_result_order = order;
         }
 
-        if (args.option("--cron-title")) |t| {
+        const has_cron_title = args.option("--cron-title");
+        const has_cron_period = args.option("--cron-period");
+        if (has_cron_title) |t| {
             ctx.runtime_options.cron_title = t;
         }
-        if (args.option("--cron-period")) |p| {
+        if (has_cron_period) |p| {
             ctx.runtime_options.cron_period = p;
         }
-        if ((ctx.runtime_options.cron_title.len > 0) != (ctx.runtime_options.cron_period.len > 0)) {
+        if ((has_cron_title != null) != (has_cron_period != null)) {
             Output.errGeneric("--cron-title and --cron-period must be provided together", .{});
+            Global.exit(1);
+        }
+        if (has_cron_title != null and (ctx.runtime_options.cron_title.len == 0 or ctx.runtime_options.cron_period.len == 0)) {
+            Output.errGeneric("--cron-title and --cron-period must not be empty", .{});
             Global.exit(1);
         }
 

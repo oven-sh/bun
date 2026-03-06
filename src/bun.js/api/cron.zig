@@ -488,17 +488,42 @@ pub const CronRegisterJob = struct {
             return;
         };
 
-        var argv = [_:null]?[*:0]const u8{
-            "schtasks",                                              "/create",
-            "/tn",                                                   task_name.ptr,
-            "/tr",                                                   tr_cmd.ptr,
-            "/sc",                                                   schtasks_params.sc,
-            "/mo",                                                   schtasks_params.mo,
-            if (schtasks_params.start_time != null) "/st" else null, schtasks_params.start_time,
-            if (schtasks_params.day_spec != null) "/d" else null,    schtasks_params.day_spec,
-            "/f",                                                    null,
-        };
-        this.spawnCmd(&argv, .ignore, .ignore);
+        var argv_buf: [16:null]?[*:0]const u8 = .{null} ** 16;
+        var argc: usize = 0;
+        argv_buf[argc] = "schtasks";
+        argc += 1;
+        argv_buf[argc] = "/create";
+        argc += 1;
+        argv_buf[argc] = "/tn";
+        argc += 1;
+        argv_buf[argc] = task_name.ptr;
+        argc += 1;
+        argv_buf[argc] = "/tr";
+        argc += 1;
+        argv_buf[argc] = tr_cmd.ptr;
+        argc += 1;
+        argv_buf[argc] = "/sc";
+        argc += 1;
+        argv_buf[argc] = schtasks_params.sc;
+        argc += 1;
+        argv_buf[argc] = "/mo";
+        argc += 1;
+        argv_buf[argc] = schtasks_params.mo;
+        argc += 1;
+        if (schtasks_params.start_time) |st| {
+            argv_buf[argc] = "/st";
+            argc += 1;
+            argv_buf[argc] = st;
+            argc += 1;
+        }
+        if (schtasks_params.day_spec) |d| {
+            argv_buf[argc] = "/d";
+            argc += 1;
+            argv_buf[argc] = d;
+            argc += 1;
+        }
+        argv_buf[argc] = "/f";
+        this.spawnCmd(&argv_buf, .ignore, .ignore);
     }
 };
 
@@ -804,6 +829,9 @@ fn spawnCmdGeneric(comptime Self: type, this: *Self, argv: anytype, stdin_opt: b
         .stdin = stdin_opt,
         .stdout = stdout_opt,
         .stderr = .ignore,
+        .windows = if (comptime bun.Environment.isWindows) .{
+            .loop = jsc.EventLoopHandle.init(jsc.VirtualMachine.get().eventLoop()),
+        },
     };
 
     // Inherit parent environment: on POSIX pass libc environ, on Windows pass null (libuv inherits)
@@ -906,7 +934,8 @@ fn resolvePath(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, pat
     defer srcloc.str.deref();
     const caller_utf8 = srcloc.str.toUTF8(bun.default_allocator);
     defer caller_utf8.deinit();
-    const source_dir = std.fs.path.dirname(caller_utf8.slice()) orelse ".";
+    const raw_dir = bun.path.dirname(caller_utf8.slice(), .auto);
+    const source_dir = if (raw_dir.len == 0) "." else raw_dir;
     var resolved = vm.transpiler.resolver.resolve(source_dir, path, .entry_point_run) catch return error.ModuleNotFound;
     const entry_path = resolved.path() orelse return error.ModuleNotFound;
     return bun.default_allocator.dupeZ(u8, entry_path.text);
@@ -993,7 +1022,8 @@ fn cronToCalendarInterval(schedule: []const u8) ![]const u8 {
         }
         try result.appendSlice("    </dict>");
     } else {
-        // Cartesian product: emit one <dict> per combination
+        // Cartesian product: emit one <dict> per combination, wrapped in <array>
+        try result.appendSlice("    <array>\n");
         const iter_mins: []const i32 = if (mins.len > 0) mins else &.{0};
         const iter_hrs: []const i32 = if (hrs.len > 0) hrs else &.{0};
         const iter_days: []const i32 = if (days.len > 0) days else &.{0};
@@ -1016,9 +1046,7 @@ fn cronToCalendarInterval(schedule: []const u8) ![]const u8 {
                 }
             }
         }
-        // Remove trailing newline
-        if (result.items.len > 0 and result.items[result.items.len - 1] == '\n')
-            _ = result.pop();
+        try result.appendSlice("    </array>");
     }
     return result.toOwnedSlice();
 }
@@ -1080,8 +1108,12 @@ fn cronToSchtasks(schedule: []const u8) !SchtasksParams {
     if (bun.strings.eql(hour, "*") and bun.strings.eql(dom, "*") and
         bun.strings.eql(month, "*") and bun.strings.eql(dow, "*"))
     {
-        _ = std.fmt.parseInt(u32, minute, 10) catch return error.UnsupportedSchedule;
-        return .{ .sc = "HOURLY", .mo = "1" };
+        const m = std.fmt.parseInt(u32, minute, 10) catch return error.UnsupportedSchedule;
+        const static_hourly_st = struct {
+            var buf: [6:0]u8 = undefined;
+        };
+        _ = std.fmt.bufPrintZ(&static_hourly_st.buf, "00:{d:0>2}", .{m}) catch return error.UnsupportedSchedule;
+        return .{ .sc = "HOURLY", .mo = "1", .start_time = &static_hourly_st.buf };
     }
 
     // Daily: N N * * *
@@ -1095,11 +1127,11 @@ fn cronToSchtasks(schedule: []const u8) !SchtasksParams {
         return .{ .sc = "DAILY", .mo = "1", .start_time = &static_st.buf };
     }
 
-    // Weekly: N N * * N
+    // Weekly: N N * * N (or named weekday like MON)
     if (bun.strings.eql(dom, "*") and bun.strings.eql(month, "*")) {
         const m = std.fmt.parseInt(u32, minute, 10) catch return error.UnsupportedSchedule;
         const h = std.fmt.parseInt(u32, hour, 10) catch return error.UnsupportedSchedule;
-        const d = std.fmt.parseInt(u32, dow, 10) catch return error.UnsupportedSchedule;
+        const d = std.fmt.parseInt(u32, dow, 10) catch resolveWeekdayName(dow) catch return error.UnsupportedSchedule;
         const static_st = struct {
             var buf: [6:0]u8 = undefined;
         };
@@ -1109,6 +1141,20 @@ fn cronToSchtasks(schedule: []const u8) !SchtasksParams {
         return .{ .sc = "WEEKLY", .mo = "1", .start_time = &static_st.buf, .day_spec = day_names[d] };
     }
 
+    return error.UnsupportedSchedule;
+}
+
+/// Resolve a named weekday (e.g. "MON", "mon", "Monday") to its numeric value (0=SUN..6=SAT).
+fn resolveWeekdayName(name: []const u8) !u32 {
+    const prefixes = [_][]const u8{ "SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT" };
+    if (name.len < 3) return error.UnsupportedSchedule;
+    var upper: [3]u8 = undefined;
+    for (name[0..3], &upper) |c, *u| {
+        u.* = std.ascii.toUpper(c);
+    }
+    for (prefixes, 0..) |prefix, i| {
+        if (std.mem.eql(u8, &upper, prefix)) return @intCast(i);
+    }
     return error.UnsupportedSchedule;
 }
 

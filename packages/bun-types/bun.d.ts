@@ -7351,7 +7351,6 @@ declare module "bun" {
    * Validated at runtime by the cron parser.
    */
   type CronWithAutocomplete =
-    | "* * * * *"
     | "@yearly"
     | "@annually"
     | "@monthly"
@@ -7359,6 +7358,13 @@ declare module "bun" {
     | "@daily"
     | "@midnight"
     | "@hourly"
+    | "* * * * *"
+    | "0 * * * *"
+    | "0 0 * * *"
+    | "0 0 * * 0"
+    | "0 0 1 * *"
+    | "0 0 1 1 *"
+    | `${string} ${string} ${string} ${string} ${string}`
     | (string & {});
 
   /**
@@ -7437,8 +7443,9 @@ declare module "bun" {
      * const next = Bun.cron.parse("30 9 * * MON-FRI");
      *
      * // Chain calls to get a sequence
+     * const from = new Date();
      * const first = Bun.cron.parse("@hourly", from);
-     * const second = Bun.cron.parse("@hourly", first);
+     * const second = first ? Bun.cron.parse("@hourly", first) : null;
      *
      * // With a specific starting point
      * const nextJan1 = Bun.cron.parse("0 0 1 JAN *", Date.UTC(2025, 0, 1));

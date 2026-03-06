@@ -334,6 +334,9 @@ pub const Queue = bun.LinearFifo(*PostgresSQLQuery, .Dynamic);
 
 const debug = bun.Output.scoped(.Postgres, .visible);
 
+/// The PostgreSQL wire protocol uses 16-bit integers for parameter and column counts.
+const max_parameters = std.math.maxInt(u16);
+
 const PostgresSQLConnection = @import("./PostgresSQLConnection.zig");
 const PostgresSQLQuery = @import("./PostgresSQLQuery.zig");
 const PostgresSQLStatement = @import("./PostgresSQLStatement.zig");
@@ -346,9 +349,6 @@ const types = @import("./PostgresTypes.zig");
 const AnyPostgresError = @import("./PostgresTypes.zig").AnyPostgresError;
 const int4 = types.int4;
 const short = types.short;
-
-/// The PostgreSQL wire protocol uses 16-bit integers for parameter and column counts.
-const max_parameters = std.math.maxInt(u16);
 
 const bun = @import("bun");
 const String = bun.String;

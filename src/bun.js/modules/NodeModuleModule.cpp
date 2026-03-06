@@ -32,6 +32,7 @@ BUN_DECLARE_HOST_FUNCTION(Bun__JSSourceMap__find);
 BUN_DECLARE_HOST_FUNCTION(Resolver__nodeModulePathsForJS);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionDebugNoop);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionFindPath);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionFindPackageJSON);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionIsBuiltinModule);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeModuleModuleConstructor);
@@ -586,6 +587,26 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionFindPath, (JSGlobalObject * globalObject, JSC
     return NodeModuleModule__findPath(globalObject, request_bun_str, paths);
 }
 
+// findPackageJSON - https://nodejs.org/api/module.html#modulefindpackagjsonfrom-options
+// Searches for a package.json file starting from 'from' directory and walking up
+JSC_DEFINE_HOST_FUNCTION(jsFunctionFindPackageJSON, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Get the 'from' argument (directory to start search from)
+    JSValue fromValue = callFrame->argument(0);
+    if (!fromValue.isString() && !fromValue.isUndefined()) {
+        scope.throwException(globalObject, JSC::createTypeError(globalObject, "from must be a string"_s));
+        return JSValue::encode(jsUndefined());
+    }
+
+    // For now, return undefined as a stub
+    // Full implementation would walk up directories looking for package.json
+    // and return { name: string, id: string, exports?: object }
+    return JSValue::encode(jsUndefined());
+}
+
 // These two setters are only used if you directly hit
 // `Module.prototype.require` or `module.require`. When accessing the cjs
 // require argument, this is a bound version of `require`, which calls into the
@@ -910,6 +931,7 @@ builtinModules          getBuiltinModulesObject           PropertyCallback
 constants               getConstantsObject                PropertyCallback
 createRequire           jsFunctionNodeModuleCreateRequire Function 1
 enableCompileCache      jsFunctionEnableCompileCache      Function 0
+findPackageJSON        jsFunctionFindPackageJSON        Function 2
 findSourceMap           Bun__JSSourceMap__find           Function 1
 getCompileCacheDir      jsFunctionGetCompileCacheDir      Function 0
 globalPaths             getGlobalPathsObject              PropertyCallback

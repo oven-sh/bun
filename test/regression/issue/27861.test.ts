@@ -1,22 +1,36 @@
 import { RedisClient } from "bun";
-import { beforeAll, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, dockerExe } from "harness";
 import * as net from "node:net";
-import * as dockerCompose from "../../docker/index.ts";
 
 let REDIS_HOST: string;
 let REDIS_PORT: number;
-let dockerAvailable = false;
 
-beforeAll(async () => {
-  try {
-    const redisInfo = await dockerCompose.ensure("redis_unified");
-    REDIS_HOST = redisInfo.host;
-    REDIS_PORT = redisInfo.ports[6379];
-    dockerAvailable = true;
-  } catch {
-    // Docker not available — tests will be skipped
-  }
-});
+// Synchronous Docker availability check (same pattern as valkey test-utils)
+const dockerCLI = dockerExe() as string;
+const dockerAvailable =
+  !!dockerCLI &&
+  (() => {
+    try {
+      const info = Bun.spawnSync({
+        cmd: [dockerCLI, "info"],
+        stdout: "pipe",
+        stderr: "pipe",
+        env: bunEnv,
+        timeout: 5_000,
+      });
+      return info.exitCode === 0 && !info.signalCode;
+    } catch {
+      return false;
+    }
+  })();
+
+if (dockerAvailable) {
+  const dockerCompose = await import("../../docker/index.ts");
+  const redisInfo = await dockerCompose.ensure("redis_unified");
+  REDIS_HOST = redisInfo.host;
+  REDIS_PORT = redisInfo.ports[6379];
+}
 
 /**
  * A minimal TCP proxy that allows us to forcibly kill the connection between
@@ -25,14 +39,13 @@ beforeAll(async () => {
 class TcpProxy {
   private server: net.Server | null = null;
   private connections: Set<{ client: net.Socket; upstream: net.Socket }> = new Set();
-  readonly port: number;
+  port: number = 0;
   private targetHost: string;
   private targetPort: number;
 
-  constructor(targetHost: string, targetPort: number, listenPort: number) {
+  constructor(targetHost: string, targetPort: number) {
     this.targetHost = targetHost;
     this.targetPort = targetPort;
-    this.port = listenPort;
   }
 
   async start(): Promise<void> {
@@ -64,7 +77,10 @@ class TcpProxy {
       });
 
       this.server.on("error", reject);
-      this.server.listen(this.port, "127.0.0.1", () => resolve());
+      this.server.listen(0, "127.0.0.1", () => {
+        this.port = (this.server!.address() as net.AddressInfo).port;
+        resolve();
+      });
     });
   }
 
@@ -84,19 +100,12 @@ class TcpProxy {
   }
 }
 
-test.skipIf(!dockerAvailable)(
-  "in-flight commands are rejected on auto-reconnect, not mismatched",
-  async () => {
-    // Use port 0 trick: find a free port first
-    const tmpServer = net.createServer();
-    await new Promise<void>(resolve => tmpServer.listen(0, "127.0.0.1", resolve));
-    const proxyPort = (tmpServer.address() as net.AddressInfo).port;
-    tmpServer.close();
-
-    const proxy = new TcpProxy(REDIS_HOST, REDIS_PORT, proxyPort);
+describe.skipIf(!dockerAvailable)("RedisClient reconnect", () => {
+  test("in-flight commands are rejected on auto-reconnect, not mismatched", async () => {
+    const proxy = new TcpProxy(REDIS_HOST, REDIS_PORT);
     await proxy.start();
 
-    const redis = new RedisClient(`redis://127.0.0.1:${proxyPort}`, {
+    const redis = new RedisClient(`redis://127.0.0.1:${proxy.port}`, {
       enableAutoReconnect: true,
       enableAutoPipelining: true,
     });
@@ -152,6 +161,5 @@ test.skipIf(!dockerAvailable)(
 
     redis.close();
     proxy.stop();
-  },
-  30_000,
-);
+  }, 30_000);
+});

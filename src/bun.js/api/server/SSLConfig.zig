@@ -271,6 +271,8 @@ pub fn contentHash(this: *SSLConfig) u64 {
 
 /// Called by the RC mixin when refcount reaches 0.
 fn destroy(this: *SSLConfig) void {
+    const log = bun.Output.scoped(.SSLConfig, .hidden);
+    log("destroy 0x{x}: strong reached 0, freeing", .{@intFromPtr(this)});
     GlobalRegistry.remove(this);
     this.deinit();
     bun.default_allocator.destroy(this);
@@ -302,6 +304,9 @@ pub const GlobalRegistry = struct {
         if (gop.found_existing) {
             // Identical config already exists - free the new one, return existing
             const existing = gop.key_ptr.*;
+            const old_count = existing.ref_count.raw_count.load(.seq_cst);
+            const log = bun.Output.scoped(.SSLConfig, .hidden);
+            log("intern: found existing 0x{x}, refcount={d} before ref", .{ @intFromPtr(existing), old_count });
             new_config.ref_count.clearWithoutDestructor();
             new_config.deinit();
             bun.default_allocator.destroy(new_config);

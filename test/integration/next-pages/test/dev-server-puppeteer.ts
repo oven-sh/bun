@@ -19,9 +19,11 @@ if (!browserPath) {
 }
 
 const launchOptions = {
-  // On macOS, there are issues using the new headless mode.
-  // "TargetCloseError: Protocol error (Target.setAutoAttach): Target closed"
-  headless: process.platform === "darwin" ? ("shell" as const) : (true as const),
+  // Use the new built-in headless mode on all platforms.
+  // The old "shell" mode (chrome-headless-shell) fails to launch on macOS 13 ARM64.
+  // The previous TargetCloseError with headless:true on macOS was caused by pipe
+  // mode, which is now disabled on macOS.
+  headless: true as const,
   // Inherit the stdout and stderr of the browser process.
   dumpio: true,
   // Prefer to use a pipe to connect to the browser, instead of a WebSocket.

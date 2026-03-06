@@ -261,6 +261,18 @@ pub const CronRegisterJob = struct {
             return;
         };
 
+        const launch_agents_dir = std.fmt.allocPrint(bun.default_allocator, "{s}/Library/LaunchAgents", .{home}) catch {
+            this.setErr("Out of memory", .{});
+            this.finish();
+            return;
+        };
+        defer bun.default_allocator.free(launch_agents_dir);
+        bun.makePath(std.fs.cwd(), launch_agents_dir) catch {
+            this.setErr("Failed to create ~/Library/LaunchAgents directory", .{});
+            this.finish();
+            return;
+        };
+
         const plist_path = allocPrintZ(bun.default_allocator, "{s}/Library/LaunchAgents/bun.cron.{s}.plist", .{ home, this.title }) catch {
             this.setErr("Out of memory", .{});
             this.finish();
@@ -481,8 +493,8 @@ pub const CronRegisterJob = struct {
         };
         defer bun.default_allocator.free(tr_cmd);
 
-        // Parse cron to schtasks params (use raw schedule, not normalized)
-        const schtasks_params = cronToSchtasks(this.raw_schedule) catch {
+        // Parse cron to schtasks params using normalized schedule (nicknames already expanded to 5 fields)
+        const schtasks_params = cronToSchtasks(this.schedule) catch {
             this.setErr("Cannot convert this cron expression to a Windows scheduled task. Only simple patterns are supported.", .{});
             this.finish();
             return;
@@ -573,7 +585,12 @@ pub const CronRemoveJob = struct {
         const status = this.exit_status orelse return;
         switch (status) {
             .exited => |exited| {
-                if (exited.code != 0 and !(this.state == .reading_crontab and exited.code == 1) and this.state != .booting_out) {
+                const is_acceptable_nonzero = (this.state == .reading_crontab and exited.code == 1) or
+                    this.state == .booting_out or
+                    // On Windows, schtasks /delete exits non-zero when the task doesn't exist;
+                    // removal of a non-existent job should resolve without error.
+                    (if (comptime bun.Environment.isWindows) this.state == .installing_crontab else false);
+                if (exited.code != 0 and !is_acceptable_nonzero) {
                     this.setErr("Process exited with code {d}", .{exited.code});
                     this.finish();
                     return;
@@ -779,8 +796,8 @@ pub fn getCronObject(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSVa
     const cron_fn = jsc.JSFunction.create(globalThis, "cron", CronRegisterJob.cronRegister, 3, .{});
     const remove_fn = jsc.JSFunction.create(globalThis, "remove", CronRemoveJob.cronRemove, 1, .{});
     const parse_fn = jsc.JSFunction.create(globalThis, "parse", cronParse, 1, .{});
-    cron_fn.put(globalThis, jsc.ZigString.static("remove"), remove_fn);
-    cron_fn.put(globalThis, jsc.ZigString.static("parse"), parse_fn);
+    cron_fn.put(globalThis, bun.String.static("remove"), remove_fn);
+    cron_fn.put(globalThis, bun.String.static("parse"), parse_fn);
     return cron_fn;
 }
 
@@ -834,9 +851,8 @@ fn spawnCmdGeneric(comptime Self: type, this: *Self, argv: anytype, stdin_opt: b
         },
     };
 
-    // Inherit parent environment: on POSIX pass libc environ, on Windows pass null (libuv inherits)
-    var null_envp = [_:null]?[*:0]const u8{null};
-    const envp: [*:null]?[*:0]const u8 = if (comptime bun.Environment.isPosix) @ptrCast(@constCast(std.c.environ)) else @ptrCast(&null_envp);
+    // Inherit parent environment via libc environ (available on all platforms bun links libc)
+    const envp: [*:null]?[*:0]const u8 = @ptrCast(@constCast(std.c.environ));
     var spawned = (bun.spawn.spawnProcess(&spawn_options, @ptrCast(argv), envp) catch {
         this.setErr("Failed to spawn process", .{});
         this.finish();
@@ -995,23 +1011,29 @@ fn cronToCalendarInterval(schedule: []const u8) ![]const u8 {
         fv.* = try vals.toOwnedSlice();
     }
 
-    // Generate one <dict> per combination of specified values.
+    // Generate StartCalendarInterval dicts.
     // For wildcard fields, omit the key entirely (launchd treats missing = all).
+    //
+    // POSIX cron OR semantics: when BOTH day-of-month and day-of-week are non-wildcard,
+    // the job fires when EITHER matches. launchd ANDs keys within a single dict, so we
+    // emit two separate sets of dicts: one with Day (no Weekday) and one with Weekday
+    // (no Day). launchd fires when ANY dict matches, achieving OR behavior.
     var result = std.array_list.Managed(u8).init(bun.default_allocator);
     errdefer result.deinit();
-    const plist_keys = [_][]const u8{ "Minute", "Hour", "Day", "Month", "Weekday" };
-    const mins = field_values[0] orelse &.{};
-    const hrs = field_values[1] orelse &.{};
-    const days = field_values[2] orelse &.{};
-    const mons = field_values[3] orelse &.{};
-    const wdays = field_values[4] orelse &.{};
 
-    // If no field has multiple values, emit a single dict
+    const has_dom = field_values[2] != null;
+    const has_dow = field_values[4] != null;
+    const needs_or_split = has_dom and has_dow;
+
+    // Determine if we need an <array> wrapper (multiple dicts or OR split)
     const needs_product = for (field_values) |fv| {
         if (fv) |v| if (v.len > 1) break true;
     } else false;
+    const needs_array = needs_product or needs_or_split;
 
-    if (!needs_product) {
+    if (!needs_array) {
+        // Single dict, no product needed
+        const plist_keys = [_][]const u8{ "Minute", "Hour", "Day", "Month", "Weekday" };
         try result.appendSlice("    <dict>\n");
         for (field_values, plist_keys) |fv, key| {
             if (fv) |vals| {
@@ -1022,30 +1044,19 @@ fn cronToCalendarInterval(schedule: []const u8) ![]const u8 {
         }
         try result.appendSlice("    </dict>");
     } else {
-        // Cartesian product: emit one <dict> per combination, wrapped in <array>
         try result.appendSlice("    <array>\n");
-        const iter_mins: []const i32 = if (mins.len > 0) mins else &.{0};
-        const iter_hrs: []const i32 = if (hrs.len > 0) hrs else &.{0};
-        const iter_days: []const i32 = if (days.len > 0) days else &.{0};
-        const iter_mons: []const i32 = if (mons.len > 0) mons else &.{0};
-        const iter_wdays: []const i32 = if (wdays.len > 0) wdays else &.{0};
-        for (iter_mins) |m| {
-            for (iter_hrs) |h| {
-                for (iter_days) |d| {
-                    for (iter_mons) |mo| {
-                        for (iter_wdays) |w| {
-                            try result.appendSlice("    <dict>\n");
-                            if (field_values[0] != null) try appendCalendarKey(&result, plist_keys[0], m);
-                            if (field_values[1] != null) try appendCalendarKey(&result, plist_keys[1], h);
-                            if (field_values[2] != null) try appendCalendarKey(&result, plist_keys[2], d);
-                            if (field_values[3] != null) try appendCalendarKey(&result, plist_keys[3], mo);
-                            if (field_values[4] != null) try appendCalendarKey(&result, plist_keys[4], w);
-                            try result.appendSlice("    </dict>\n");
-                        }
-                    }
-                }
-            }
+
+        if (needs_or_split) {
+            // OR split: emit day-of-month dicts (no Weekday), then day-of-week dicts (no Day)
+            // Pass 1: Day + time fields (minute, hour, day, month — no weekday)
+            try emitCalendarDicts(&result, field_values, .exclude_weekday);
+            // Pass 2: Weekday + time fields (minute, hour, weekday, month — no day)
+            try emitCalendarDicts(&result, field_values, .exclude_day);
+        } else {
+            // Normal Cartesian product: all fields together
+            try emitCalendarDicts(&result, field_values, .include_all);
         }
+
         try result.appendSlice("    </array>");
     }
     return result.toOwnedSlice();
@@ -1055,6 +1066,47 @@ fn appendCalendarKey(result: *std.array_list.Managed(u8), key: []const u8, val: 
     const line = try std.fmt.allocPrint(bun.default_allocator, "        <key>{s}</key>\n        <integer>{d}</integer>\n", .{ key, val });
     defer bun.default_allocator.free(line);
     try result.appendSlice(line);
+}
+
+const EmitMode = enum { include_all, exclude_weekday, exclude_day };
+
+/// Emit Cartesian-product <dict> entries for the given field values.
+/// In exclude_weekday mode, day-of-week (index 4) is treated as wildcard.
+/// In exclude_day mode, day-of-month (index 2) is treated as wildcard.
+fn emitCalendarDicts(result: *std.array_list.Managed(u8), field_values: [5]?[]const i32, mode: EmitMode) !void {
+    const plist_keys = [_][]const u8{ "Minute", "Hour", "Day", "Month", "Weekday" };
+
+    // Build effective field values based on mode
+    var effective: [5]?[]const i32 = field_values;
+    switch (mode) {
+        .exclude_weekday => effective[4] = null,
+        .exclude_day => effective[2] = null,
+        .include_all => {},
+    }
+
+    const iter_mins: []const i32 = if (effective[0]) |v| v else &.{0};
+    const iter_hrs: []const i32 = if (effective[1]) |v| v else &.{0};
+    const iter_days: []const i32 = if (effective[2]) |v| v else &.{0};
+    const iter_mons: []const i32 = if (effective[3]) |v| v else &.{0};
+    const iter_wdays: []const i32 = if (effective[4]) |v| v else &.{0};
+
+    for (iter_mins) |m| {
+        for (iter_hrs) |h| {
+            for (iter_days) |d| {
+                for (iter_mons) |mo| {
+                    for (iter_wdays) |w| {
+                        try result.appendSlice("    <dict>\n");
+                        if (effective[0] != null) try appendCalendarKey(result, plist_keys[0], m);
+                        if (effective[1] != null) try appendCalendarKey(result, plist_keys[1], h);
+                        if (effective[2] != null) try appendCalendarKey(result, plist_keys[2], d);
+                        if (effective[3] != null) try appendCalendarKey(result, plist_keys[3], mo);
+                        if (effective[4] != null) try appendCalendarKey(result, plist_keys[4], w);
+                        try result.appendSlice("    </dict>\n");
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Convert a cron expression to schtasks /sc and /mo parameters.
@@ -1089,13 +1141,11 @@ fn cronToSchtasks(schedule: []const u8) !SchtasksParams {
         bun.strings.eql(hour, "*") and bun.strings.eql(dom, "*") and
         bun.strings.eql(month, "*") and bun.strings.eql(dow, "*"))
     {
-        const n = minute[2..];
-        _ = std.fmt.parseInt(u32, n, 10) catch return error.UnsupportedSchedule;
+        const val = std.fmt.parseInt(u32, minute[2..], 10) catch return error.UnsupportedSchedule;
         const static_min = struct {
             var buf: [16:0]u8 = undefined;
         };
-        @memcpy(static_min.buf[0..n.len], n);
-        static_min.buf[n.len] = 0;
+        _ = std.fmt.bufPrintZ(&static_min.buf, "{d}", .{val}) catch return error.UnsupportedSchedule;
         return .{ .sc = "MINUTE", .mo = &static_min.buf };
     }
 
@@ -1137,8 +1187,12 @@ fn cronToSchtasks(schedule: []const u8) !SchtasksParams {
         };
         _ = std.fmt.bufPrintZ(&static_st.buf, "{d:0>2}:{d:0>2}", .{ h, m }) catch return error.UnsupportedSchedule;
         const day_names = [_][*:0]const u8{ "SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT" };
-        if (d > 6) return error.UnsupportedSchedule;
-        return .{ .sc = "WEEKLY", .mo = "1", .start_time = &static_st.buf, .day_spec = day_names[d] };
+        const day_idx: usize = switch (d) {
+            0...6 => d,
+            7 => 0, // 7 is also Sunday in POSIX cron
+            else => return error.UnsupportedSchedule,
+        };
+        return .{ .sc = "WEEKLY", .mo = "1", .start_time = &static_st.buf, .day_spec = day_names[day_idx] };
     }
 
     return error.UnsupportedSchedule;
@@ -1153,7 +1207,7 @@ fn resolveWeekdayName(name: []const u8) !u32 {
         u.* = std.ascii.toUpper(c);
     }
     for (prefixes, 0..) |prefix, i| {
-        if (std.mem.eql(u8, &upper, prefix)) return @intCast(i);
+        if (bun.strings.eql(&upper, prefix)) return @intCast(i);
     }
     return error.UnsupportedSchedule;
 }

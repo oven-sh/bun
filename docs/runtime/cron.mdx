@@ -217,12 +217,12 @@ Bun uses [launchd](https://developer.apple.com/library/archive/documentation/Mac
 ~/Library/LaunchAgents/bun.cron.<title>.plist
 ```
 
-The plist uses `StartCalendarInterval` to define the schedule. Only simple expressions (single values and `*`) are supported on macOS — complex patterns with ranges, lists, or steps will be rejected.
+The plist uses `StartCalendarInterval` to define the schedule. Complex patterns with ranges, lists, or steps are supported — Bun expands them into multiple `StartCalendarInterval` dicts via Cartesian product.
 
 **Viewing registered jobs:**
 
 ```sh
-launchctl list | grep sh.bun.cron
+launchctl list | grep bun.cron
 ```
 
 **Logs:** stdout and stderr are written to:

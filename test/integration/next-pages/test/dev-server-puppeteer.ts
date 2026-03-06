@@ -18,38 +18,32 @@ if (!browserPath) {
   console.warn("Since a Chromium browser was not found, it will be downloaded by Puppeteer.");
 }
 
-const launchOptions = {
-  // Use the new built-in headless mode on all platforms.
-  // The old "shell" mode (chrome-headless-shell) fails to launch on macOS 13 ARM64.
-  // The previous TargetCloseError with headless:true on macOS was caused by pipe
-  // mode, which is now disabled on macOS.
-  headless: true as const,
-  // Inherit the stdout and stderr of the browser process.
+// On macOS ARM64 CI, Chrome for Testing sometimes fails to launch because
+// macOS quarantines downloaded binaries. Try to remove the quarantine attribute.
+if (process.platform === "darwin") {
+  try {
+    const { execSync } = require("child_process");
+    const cachePath = join(process.env.HOME || "~", ".cache", "puppeteer");
+    execSync(`xattr -rd com.apple.quarantine "${cachePath}" 2>/dev/null || true`, { stdio: "ignore" });
+  } catch {}
+}
+
+const launchOptions: Parameters<typeof launch>[0] = {
+  headless: true,
   dumpio: true,
-  // Prefer to use a pipe to connect to the browser, instead of a WebSocket.
   // On macOS, pipe mode causes TargetCloseError during browser launch.
   pipe: process.platform !== "darwin",
-  // Disable timeouts.
   timeout: 0,
   protocolTimeout: 0,
-  // Specify that chrome should be used, for consistent test results.
-  // If a browser path is not found, it will be downloaded.
-  browser: "chrome" as const,
-  executablePath: browserPath,
+  browser: "chrome",
+  // Only pass executablePath if we found a system browser — otherwise let
+  // Puppeteer use its own managed Chrome without interference.
+  ...(browserPath ? { executablePath: browserPath } : {}),
   args: [
-    // On Linux, there are issues with the sandbox, so disable it.
-    // On macOS, this fixes: "dock_plist is not an NSDictionary"
     "--no-sandbox",
     "--disable-setuid-sandbox",
-
-    // On Docker, the default /dev/shm is too small for Chrome, which causes
-    // crashes when rendering large pages, so disable it.
     "--disable-dev-shm-usage",
-
-    // Fixes: "Navigating frame was detached"
     "--disable-features=site-per-process",
-
-    // Prevent GPU-related crashes in headless CI environments (especially macOS ARM64).
     "--disable-gpu",
     "--disable-software-rasterizer",
   ],
@@ -62,9 +56,11 @@ for (let attempt = 1; attempt <= 3; attempt++) {
   try {
     b = await launch(launchOptions);
     break;
-  } catch (e) {
-    console.error(`Browser launch attempt ${attempt}/3 failed:`, e);
+  } catch (e: any) {
+    console.error(`Browser launch attempt ${attempt}/3 failed: ${e?.message || e}`);
     if (attempt === 3) throw e;
+    // Wait briefly before retrying
+    await new Promise(r => setTimeout(r, 1000));
   }
 }
 

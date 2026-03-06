@@ -165,10 +165,10 @@ test("bun add should deduplicate transitive deps when upgrading a root package (
     env,
   });
 
-  const [stderr1, stdout1] = await Promise.all([proc1.stderr.text(), proc1.stdout.text()]);
+  const [stdout1, stderr1, exitCode1] = await Promise.all([proc1.stdout.text(), proc1.stderr.text(), proc1.exited]);
   expect(stderr1).toContain("Saved lockfile");
   expect(stderr1).not.toContain("error:");
-  expect(await proc1.exited).toBe(0);
+  expect(exitCode1).toBe(0);
 
   // shared-dep@1.0.0 should be hoisted (no nested copy)
   expect(await Bun.file(join(packageDir, "node_modules", "shared-dep", "package.json")).json()).toMatchObject({
@@ -185,10 +185,10 @@ test("bun add should deduplicate transitive deps when upgrading a root package (
     env,
   });
 
-  const [stderr2, stdout2] = await Promise.all([proc2.stderr.text(), proc2.stdout.text()]);
+  const [stdout2, stderr2, exitCode2] = await Promise.all([proc2.stdout.text(), proc2.stderr.text(), proc2.exited]);
   expect(stderr2).toContain("Saved lockfile");
   expect(stderr2).not.toContain("error:");
-  expect(await proc2.exited).toBe(0);
+  expect(exitCode2).toBe(0);
 
   // Root should have the new version
   expect(await Bun.file(join(packageDir, "node_modules", "shared-dep", "package.json")).json()).toMatchObject({
@@ -207,10 +207,10 @@ test("bun add should deduplicate transitive deps when upgrading a root package (
     env,
   });
 
-  const [stderr3, stdout3] = await Promise.all([proc3.stderr.text(), proc3.stdout.text()]);
+  const [stdout3, stderr3, exitCode3] = await Promise.all([proc3.stdout.text(), proc3.stderr.text(), proc3.exited]);
   expect(stderr3).toContain("Saved lockfile");
   expect(stderr3).not.toContain("error:");
-  expect(await proc3.exited).toBe(0);
+  expect(exitCode3).toBe(0);
 
   // Root should have 2.0.0
   expect(await Bun.file(join(packageDir, "node_modules", "shared-dep", "package.json")).json()).toMatchObject({

@@ -28,7 +28,7 @@ import { once } from "node:events";
 import net from "node:net";
 
 async function createConnectProxy() {
-  const server = net.createServer((client) => {
+  const server = net.createServer(client => {
     let head = Buffer.alloc(0);
     const onData = (chunk: Buffer) => {
       head = Buffer.concat([head, chunk]);
@@ -36,9 +36,7 @@ async function createConnectProxy() {
       if (headerEnd === -1) return;
       client.removeListener("data", onData);
 
-      const firstLine = head
-        .subarray(0, head.indexOf("\r\n"))
-        .toString("latin1");
+      const firstLine = head.subarray(0, head.indexOf("\r\n")).toString("latin1");
       const [, hostPort] = firstLine.split(" ");
       const colon = hostPort!.lastIndexOf(":");
       const host = hostPort!.slice(0, colon);
@@ -81,7 +79,7 @@ test("SSLConfig intern/deref race does not cause use-after-free", async () => {
       // No `ca` → requires_custom_request_ctx=false → no SSL ctx cache ref
       // → only HTTPClient holds a ref → deref goes 1→0 on completion.
       tls: { rejectUnauthorized: false },
-    }).then((r) => r.text());
+    }).then(r => r.text());
 
   // Fire many concurrent requests in waves. Each wave's requests share the
   // same interned config. When a wave completes, refcount drops to 0 →
@@ -91,9 +89,7 @@ test("SSLConfig intern/deref race does not cause use-after-free", async () => {
 
   for (let wave = 0; wave < WAVES; wave++) {
     const results = await Promise.all(
-      Array.from({ length: PER_WAVE }, () =>
-        makeRequest().catch((e: Error) => `ERR:${e.message}`)
-      )
+      Array.from({ length: PER_WAVE }, () => makeRequest().catch((e: Error) => `ERR:${e.message}`)),
     );
     for (const r of results) {
       expect(r).toBe("ok");

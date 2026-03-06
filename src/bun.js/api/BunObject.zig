@@ -808,14 +808,41 @@ fn doResolve(globalThis: *jsc.JSGlobalObject, arguments: []const JSValue) bun.JS
     defer specifier_str.deref();
     const from_str = try from.toBunString(globalThis);
     defer from_str.deref();
-    return doResolveWithArgs(
-        globalThis,
-        specifier_str,
-        from_str,
-        is_esm,
-        false,
-        false,
-    );
+
+    // Auto-detect whether `from` is a file path or directory path.
+    // Plugin onResolve hooks pass `args.importer` which is a file path
+    // (e.g., "/path/to/main.ts"), while users may also pass directory paths
+    // (e.g., "/path/to/dir/" or import.meta.dir which has no trailing slash).
+    // When it's a file path, the resolver needs to extract the directory;
+    // when it's already a directory, use it as-is.
+    // Heuristic: if the last path component has a file extension (dot after
+    // the last separator), treat it as a file path.
+    if (fromLooksLikeFilePath(from_str)) {
+        return doResolveWithArgs(globalThis, specifier_str, from_str, is_esm, true, false);
+    }
+    return doResolveWithArgs(globalThis, specifier_str, from_str, is_esm, false, false);
+}
+
+/// Check if a `from` path looks like a file path (as opposed to a directory).
+/// Returns true if the last path component contains a dot (file extension),
+/// e.g., "/path/to/main.ts" or "/path/to/file.svelte".
+/// Returns false for directory-like paths: "/path/to/dir/", "/path/to/dir",
+/// or "import.meta.dir"-style paths without extensions.
+fn fromLooksLikeFilePath(from: bun.String) bool {
+    const len = from.length();
+    if (len == 0) return false;
+
+    // Scan backwards: find a dot before we find a separator.
+    // If we find a dot first, the last component has an extension → file path.
+    // If we find a separator first (or reach the start), no extension → directory.
+    var i = len;
+    while (i > 0) {
+        i -= 1;
+        const c: u8 = @truncate(from.charAt(i));
+        if (c == '.') return true;
+        if (bun.path.isSepAny(c)) return false;
+    }
+    return false;
 }
 
 fn doResolveWithArgs(ctx: *jsc.JSGlobalObject, specifier: bun.String, from: bun.String, is_esm: bool, comptime is_file_path: bool, is_user_require_resolve: bool) bun.JSError!jsc.JSValue {

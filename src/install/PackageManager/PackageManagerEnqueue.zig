@@ -1306,6 +1306,11 @@ pub fn enqueueGitCheckout(
                     *FileSystem.FilenameStore,
                     FileSystem.FilenameStore.instance,
                 ) catch unreachable,
+                .path = strings.StringOrTinyString.initAppendIfNeeded(
+                    this.lockfile.str(&resolution.value.git.path),
+                    *FileSystem.FilenameStore,
+                    FileSystem.FilenameStore.instance,
+                ) catch unreachable,
                 .env = Repository.shared_env.get(this.allocator, this.env),
             },
         },

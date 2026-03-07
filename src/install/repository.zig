@@ -105,6 +105,7 @@ pub const Repository = extern struct {
     committish: String = .{},
     resolved: String = .{},
     package_name: String = .{},
+    path: String = .{},
 
     pub var shared_env: struct {
         env: ?DotEnv.Map = null,
@@ -150,10 +151,16 @@ pub const Repository = extern struct {
             remain = remain["git+".len..];
         }
         if (strings.lastIndexOfChar(remain, '#')) |hash| {
-            return .{
+            const fragment = remain[hash + 1 ..];
+            const path_split = splitPathFromFragment(fragment);
+            var result: Repository = .{
                 .repo = try buf.append(remain[0..hash]),
-                .committish = try buf.append(remain[hash + 1 ..]),
+                .committish = try buf.append(path_split.committish),
             };
+            if (path_split.path) |p| {
+                result.path = try buf.append(p);
+            }
+            return result;
         }
         return .{
             .repo = try buf.append(remain),
@@ -169,8 +176,12 @@ pub const Repository = extern struct {
         var slash: usize = 0;
         for (remain, 0..) |c, i| {
             switch (c) {
-                '/' => slash = i,
-                '#' => hash = i,
+                '/' => if (hash == 0) {
+                    slash = i;
+                },
+                '#' => if (hash == 0) {
+                    hash = i;
+                },
                 else => {},
             }
         }
@@ -183,10 +194,43 @@ pub const Repository = extern struct {
         };
 
         if (hash != 0) {
-            result.committish = try buf.append(remain[hash + 1 ..]);
+            const fragment = remain[hash + 1 ..];
+            const path_split = splitPathFromFragment(fragment);
+            result.committish = try buf.append(path_split.committish);
+            if (path_split.path) |p| {
+                result.path = try buf.append(p);
+            }
         }
 
         return result;
+    }
+
+    pub const PathSplit = struct {
+        committish: string,
+        path: ?string,
+    };
+
+    pub fn splitPathFromFragment(fragment: string) PathSplit {
+        if (strings.indexOf(fragment, "&path:")) |path_idx| {
+            const raw_path = fragment[path_idx + "&path:".len ..];
+            return .{
+                .committish = fragment[0..path_idx],
+                .path = normalizePath(raw_path),
+            };
+        }
+        return .{
+            .committish = fragment,
+            .path = null,
+        };
+    }
+
+    fn normalizePath(raw: string) ?string {
+        // Strip leading and trailing slashes
+        const p = strings.trim(raw, "/");
+        if (p.len == 0) return null;
+        // Reject path traversal
+        if (strings.indexOf(p, "..") != null) return null;
+        return p;
     }
 
     pub fn createDependencyNameFromVersionLiteral(
@@ -197,10 +241,18 @@ pub const Repository = extern struct {
     ) []u8 {
         const buf = lockfile.buffers.string_bytes.items;
         const dep = lockfile.buffers.dependencies.items[dep_id];
-        const repo_name = repository.repo;
-        const repo_name_str = lockfile.str(&repo_name);
 
-        const name = brk: {
+        // If a path is specified, derive the name from the path's basename
+        const path_str = repository.path.slice(buf);
+        const name = if (path_str.len > 0) brk: {
+            const trimmed = strings.trim(path_str, "/");
+            if (strings.lastIndexOfChar(trimmed, '/')) |slash_index| {
+                break :brk trimmed[slash_index + 1 ..];
+            }
+            break :brk trimmed;
+        } else brk: {
+            const repo_name = repository.repo;
+            const repo_name_str = lockfile.str(&repo_name);
             var remain = repo_name_str;
 
             if (strings.indexOfChar(remain, '#')) |hash_index| {
@@ -234,8 +286,9 @@ pub const Repository = extern struct {
         if (owner_order != .eq) return owner_order;
         const repo_order = lhs.repo.order(&rhs.repo, lhs_buf, rhs_buf);
         if (repo_order != .eq) return repo_order;
-
-        return lhs.committish.order(&rhs.committish, lhs_buf, rhs_buf);
+        const committish_order = lhs.committish.order(&rhs.committish, lhs_buf, rhs_buf);
+        if (committish_order != .eq) return committish_order;
+        return lhs.path.order(&rhs.path, lhs_buf, rhs_buf);
     }
 
     pub fn count(this: *const Repository, buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) void {
@@ -244,6 +297,7 @@ pub const Repository = extern struct {
         builder.count(this.committish.slice(buf));
         builder.count(this.resolved.slice(buf));
         builder.count(this.package_name.slice(buf));
+        builder.count(this.path.slice(buf));
     }
 
     pub fn clone(this: *const Repository, buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) Repository {
@@ -253,12 +307,14 @@ pub const Repository = extern struct {
             .committish = builder.append(String, this.committish.slice(buf)),
             .resolved = builder.append(String, this.resolved.slice(buf)),
             .package_name = builder.append(String, this.package_name.slice(buf)),
+            .path = builder.append(String, this.path.slice(buf)),
         };
     }
 
     pub fn eql(lhs: *const Repository, rhs: *const Repository, lhs_buf: []const u8, rhs_buf: []const u8) bool {
         if (!lhs.owner.eql(rhs.owner, lhs_buf, rhs_buf)) return false;
         if (!lhs.repo.eql(rhs.repo, lhs_buf, rhs_buf)) return false;
+        if (!lhs.path.eql(rhs.path, lhs_buf, rhs_buf)) return false;
         if (lhs.resolved.isEmpty() or rhs.resolved.isEmpty()) return lhs.committish.eql(rhs.committish, lhs_buf, rhs_buf);
         return lhs.resolved.eql(rhs.resolved, lhs_buf, rhs_buf);
     }
@@ -306,6 +362,11 @@ pub const Repository = extern struct {
                 try writer.writeByte('+'); // this would be '#' but it's not valid on windows
                 try writer.print("{f}", .{this.repo.committish.fmtStorePath(this.string_buf)});
             }
+
+            if (!this.repo.path.isEmpty()) {
+                try writer.writeAll("+path+");
+                try writer.print("{f}", .{this.repo.path.fmtStorePath(this.string_buf)});
+            }
         }
     };
 
@@ -344,6 +405,11 @@ pub const Repository = extern struct {
             } else if (!formatter.repository.committish.isEmpty()) {
                 try writer.writeAll("#");
                 try writer.writeAll(formatter.repository.committish.slice(formatter.buf));
+            }
+
+            if (!formatter.repository.path.isEmpty()) {
+                try writer.writeAll("&path:");
+                try writer.writeAll(formatter.repository.path.slice(formatter.buf));
             }
         }
     };
@@ -587,6 +653,48 @@ pub const Repository = extern struct {
         }, " \t\r\n");
     }
 
+    /// After git checkout, move the contents of a subdirectory to the root of the cache folder.
+    /// This ensures that node_modules linking only sees the sub-package.
+    fn promoteSubdirectory(dir: std.fs.Dir, subdir_path: string, folder_name: stringZ, cache_dir: std.fs.Dir) !void {
+        // Null-terminate the subdir path for openDir
+        var subdir_z_buf: bun.PathBuffer = undefined;
+        const subdir_z = bun.path.joinZBuf(&subdir_z_buf, &[_]string{subdir_path}, .auto);
+
+        // Verify the subdirectory exists
+        var sub_dir = bun.openDir(dir, subdir_z) catch {
+            return error.InstallFailed;
+        };
+        sub_dir.close();
+
+        // Use a temporary name for the swap
+        var tmp_name_buf: bun.PathBuffer = undefined;
+        const tmp_name = std.fmt.bufPrintZ(&tmp_name_buf, "{s}.__subdir_tmp__", .{folder_name}) catch unreachable;
+
+        // Rename subdir to a temp location in the cache dir
+        var join_buf: bun.PathBuffer = undefined;
+        if (bun.sys.renameat(
+            .fromStdDir(cache_dir),
+            bun.path.joinZBuf(&join_buf, &[_]string{ folder_name, subdir_path }, .auto),
+            .fromStdDir(cache_dir),
+            tmp_name,
+        ).asErr()) |_| {
+            return error.InstallFailed;
+        }
+
+        // Delete the original checkout directory
+        cache_dir.deleteTree(folder_name) catch {};
+
+        // Move the temp dir to the original location
+        if (bun.sys.renameat(
+            .fromStdDir(cache_dir),
+            tmp_name,
+            .fromStdDir(cache_dir),
+            folder_name,
+        ).asErr()) |_| {
+            return error.InstallFailed;
+        }
+    }
+
     pub fn checkout(
         allocator: std.mem.Allocator,
         env: DotEnv.Map,
@@ -596,9 +704,10 @@ pub const Repository = extern struct {
         name: string,
         url: string,
         resolved: string,
+        subdir_path: string,
     ) !ExtractData {
         bun.analytics.Features.git_dependencies += 1;
-        const folder_name = PackageManager.cachedGitFolderNamePrint(&folder_name_buf, resolved, null);
+        const folder_name = PackageManager.cachedGitFolderNamePrint(&folder_name_buf, resolved, null, subdir_path);
 
         var package_dir = bun.openDir(cache_dir, folder_name) catch |not_found| brk: {
             if (not_found != error.ENOENT) return not_found;
@@ -645,6 +754,20 @@ pub const Repository = extern struct {
                 defer git_tag.close();
                 git_tag.writeAll(resolved) catch {
                     dir.deleteFileZ(".bun-tag") catch {};
+                };
+            }
+
+            // If a subdirectory path is specified, promote it to the root of the cache dir
+            if (subdir_path.len > 0) {
+                promoteSubdirectory(dir, subdir_path, folder_name, cache_dir) catch |err| {
+                    log.addErrorFmt(
+                        null,
+                        logger.Loc.Empty,
+                        allocator,
+                        "path '{s}' not found in repository '{s}'",
+                        .{ subdir_path, name },
+                    ) catch unreachable;
+                    return err;
                 };
             }
 
@@ -698,6 +821,7 @@ pub const Repository = extern struct {
 };
 
 const string = []const u8;
+const stringZ = [:0]const u8;
 
 const Dependency = @import("./dependency.zig");
 const DotEnv = @import("../env_loader.zig");

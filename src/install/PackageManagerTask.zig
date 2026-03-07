@@ -229,6 +229,7 @@ pub fn callback(task: *ThreadPool.Task) void {
                 git_checkout.name.slice(),
                 git_checkout.url.slice(),
                 git_checkout.resolved.slice(),
+                git_checkout.path.slice(),
             ) catch |err| {
                 this.err = err;
                 this.status = Status.fail;
@@ -351,6 +352,7 @@ pub const Request = union {
         name: strings.StringOrTinyString,
         url: strings.StringOrTinyString,
         resolved: strings.StringOrTinyString,
+        path: strings.StringOrTinyString = .{},
         resolution: Resolution,
         env: DotEnv.Map,
     },

@@ -128,60 +128,72 @@ test("SSLConfig intern/deref race does not cause use-after-free", async () => {
 
   const probeWorkers: Worker[] = [];
   const probePromises: Promise<number>[] = [];
-  for (let i = 0; i < NUM_PROBES; i++) {
-    const w = new Worker(probe, {
+  let d: Worker | undefined;
+
+  try {
+    for (let i = 0; i < NUM_PROBES; i++) {
+      const w = new Worker(probe, {
+        eval: true,
+        workerData: { bp: backend.port, pp: proxy.port, stopBuf },
+      });
+      probeWorkers.push(w);
+      probePromises.push(
+        new Promise<number>(resolve => {
+          w.on("message", (n: number) => resolve(n));
+          w.on("error", () => resolve(-1));
+          w.on("exit", (code: number) => {
+            if (code !== 0) resolve(-1);
+          });
+        }),
+      );
+    }
+
+    d = new Worker(driver, {
       eval: true,
-      workerData: { bp: backend.port, pp: proxy.port, stopBuf },
+      workerData: { bp: backend.port, pp: proxy.port, n: DRIVER_ITERATIONS },
     });
-    probeWorkers.push(w);
-    probePromises.push(
-      new Promise<number>(resolve => {
-        w.on("message", (n: number) => resolve(n));
-        w.on("error", () => resolve(-1));
-        w.on("exit", (code: number) => {
-          if (code !== 0) resolve(-1);
-        });
-      }),
-    );
-  }
-
-  const d = new Worker(driver, {
-    eval: true,
-    workerData: { bp: backend.port, pp: proxy.port, n: DRIVER_ITERATIONS },
-  });
-  const driverPromise = new Promise<number>(resolve => {
-    d.on("message", (n: number) => resolve(n));
-    d.on("error", () => resolve(-1));
-    d.on("exit", (code: number) => {
-      if (code !== 0) resolve(-1);
+    const driverPromise = new Promise<number>(resolve => {
+      d!.on("message", (n: number) => resolve(n));
+      d!.on("error", () => resolve(-1));
+      d!.on("exit", (code: number) => {
+        if (code !== 0) resolve(-1);
+      });
     });
-  });
 
-  // Hard cap: if neither the race nor the driver finishes quickly, stop
-  // probes anyway so the test completes in bounded time. This handles
-  // the case where probe congestion stalls the driver.
-  const capTimer = setTimeout(() => Atomics.store(stopFlag, 0, 1), HARD_CAP_MS);
+    // Hard cap: if neither the race nor the driver finishes quickly, stop
+    // probes anyway so the test completes in bounded time. This handles
+    // the case where probe congestion stalls the driver.
+    const capTimer = setTimeout(() => Atomics.store(stopFlag, 0, 1), HARD_CAP_MS);
 
-  const driverOk = await Promise.race([
-    driverPromise,
-    new Promise<number>(resolve => setTimeout(() => resolve(-2), HARD_CAP_MS)),
-  ]);
-  clearTimeout(capTimer);
-  // Signal probes to stop now that the driver is done (or capped).
-  Atomics.store(stopFlag, 0, 1);
-  const probeCounts = await Promise.all(probePromises);
+    const driverOk = await Promise.race([
+      driverPromise,
+      new Promise<number>(resolve => setTimeout(() => resolve(-2), HARD_CAP_MS)),
+    ]);
+    clearTimeout(capTimer);
+    // Signal probes to stop now that the driver is done (or capped).
+    Atomics.store(stopFlag, 0, 1);
+    const probeCounts = await Promise.all(probePromises);
 
-  // If we reach this point without crashing, the race didn't trigger.
-  // Under probe congestion the driver may not finish (-2), but that's fine —
-  // the real assertion is that we didn't crash. Only verify driver success
-  // if it actually completed.
-  if (driverOk >= 0) {
-    expect(driverOk).toBeGreaterThanOrEqual(DRIVER_ITERATIONS * 0.8);
+    // If we reach this point without crashing, the race didn't trigger.
+    // Under probe congestion the driver may not finish (-2), but that's fine —
+    // the real assertion is that we didn't crash. Only verify driver success
+    // if it actually completed.
+    if (driverOk >= 0) {
+      expect(driverOk).toBeGreaterThanOrEqual(DRIVER_ITERATIONS * 0.8);
+    }
+    // Probes should have fired (sanity check they were actually running).
+    for (const count of probeCounts) {
+      expect(count).toBeGreaterThan(50);
+    }
+  } finally {
+    // Ensure workers stop even if an assertion failed before the stopFlag was set.
+    // terminate() and server.close() are fire-and-forget — aborted probe
+    // fetches leave connections/tasks in various states that can block
+    // awaited cleanup indefinitely.
+    Atomics.store(stopFlag, 0, 1);
+    d?.terminate();
+    for (const w of probeWorkers) w.terminate();
+    proxy.server.close();
+    proxy.server.unref();
   }
-  // Probes should have fired (sanity check they were actually running).
-  for (const count of probeCounts) {
-    expect(count).toBeGreaterThan(50);
-  }
-
-  proxy.server.close();
 }, 30_000);

@@ -125,12 +125,8 @@ class CString extends String {
         : "",
     );
     this.ptr = typeof ptr === "number" ? ptr : 0;
-    if (typeof byteOffset !== "undefined") {
-      this.byteOffset = byteOffset;
-    }
-    if (typeof byteLength !== "undefined") {
-      this.byteLength = byteLength;
-    }
+    this.byteOffset = typeof byteOffset === "number" ? byteOffset : 0;
+    this.byteLength = typeof byteLength === "number" ? byteLength : super.length;
   }
 
   ptr;

@@ -1,29 +1,23 @@
 // Regression test: SSLConfig intern/deref race (UAF) — see PR #27838, #27863
 //
 // Non-deterministic by nature: the race window between deref()'s fetchSub(1→0)
-// and destroy()'s mutex.lock() is ~10 CPU cycles in release. This test creates
-// the conditions for the race but won't catch it every run. Its value is:
-//   - On unfixed code: occasionally crashes (assert in debug, segfault in release+ASAN)
-//   - On fixed code: never crashes (upgrade() refuses 0→1 CAS)
-//   - Regression detection: if the fix is ever reverted, this test will catch it
-//     eventually across enough CI runs.
+// and destroy()'s mutex.lock() is ~10 CPU cycles in release. On debug+ASAN
+// builds, debug.deinit() in ref_count.zig widens the window enough for ~60%
+// catch rate without special env vars. On release builds, this is a best-effort
+// regression guard that will catch reintroduction across enough CI runs.
 //
-// For a deterministic reproduction (debug+ASAN with BUN_DEBUG_SSLConfig=1
-// widening the window via stderr logging), see #27863.
+// For deterministic reproduction (debug+ASAN + BUN_DEBUG_SSLConfig=1), see #27863.
 //
-// Pattern:
-//   - Driver worker: serial proxy+TLS fetches with 1ms gaps. With keepalive:false
-//     and no ca/cert/key (requires_custom_request_ctx=false), the SSL context
-//     cache doesn't hold a ref, so refcount cycles through 0 each iteration.
-//   - Probe workers: setImmediate loop firing fetch+immediate-abort. Each tick
-//     calls intern() then abort triggers a fast deref. These probe the race
-//     window whenever driver's deref happens.
+// Structure: subprocess (the fixture) runs the actual race stress. If the race
+// triggers, the subprocess crashes (debugAssert / assertValid / ASAN) → non-zero
+// exit → test fails. Workers inside the fixture are required because the
+// GlobalRegistry is process-local and the race needs independent JS threads.
 
 import { expect, test } from "bun:test";
-import { tls as tlsCert } from "harness";
+import { bunEnv, bunExe, tls as tlsCert } from "harness";
 import { once } from "node:events";
 import net from "node:net";
-import { Worker } from "node:worker_threads";
+import { join } from "node:path";
 
 async function createConnectProxy() {
   const server = net.createServer(client => {
@@ -66,133 +60,50 @@ test("SSLConfig intern/deref race does not cause use-after-free", async () => {
 
   const proxy = await createConnectProxy();
 
-  // Driver: serial fetches with gaps → cycles refcount through 0 repeatedly.
-  const driver = `
-    const { workerData, parentPort } = require("worker_threads");
-    async function run() {
-      let ok = 0;
-      for (let i = 0; i < workerData.n; i++) {
-        try {
-          const r = await fetch("https://127.0.0.1:" + workerData.bp + "/", {
-            proxy: "http://127.0.0.1:" + workerData.pp,
-            keepalive: false,
-            tls: { rejectUnauthorized: false },
-          });
-          if ((await r.text()) === "ok") ok++;
-        } catch {}
-        await Bun.sleep(1);
-      }
-      parentPort.postMessage(ok);
-    }
-    run();
-  `;
-
-  // Probe: tight intern() loop via fetch+abort. setImmediate keeps the JS
-  // event loop ticking fast so intern calls probe the race window constantly.
-  // Stops when the driver signals completion via SharedArrayBuffer.
-  const probe = `
-    const { workerData, parentPort } = require("worker_threads");
-    const stopFlag = new Int32Array(workerData.stopBuf);
-    let probes = 0;
-    function tick() {
-      if (Atomics.load(stopFlag, 0) !== 0) {
-        parentPort.postMessage(probes);
-        return;
-      }
-      const ac = new AbortController();
-      fetch("https://127.0.0.1:" + workerData.bp + "/", {
-        proxy: "http://127.0.0.1:" + workerData.pp,
-        keepalive: false,
-        tls: { rejectUnauthorized: false },
-        signal: ac.signal,
-      }).catch(() => {});
-      ac.abort();
-      probes++;
-      setImmediate(tick);
-    }
-    tick();
-  `;
-
-  const DRIVER_ITERATIONS = 100;
-  const NUM_PROBES = 2;
-  const HARD_CAP_MS = 15000;
-
-  // NOTE: For deterministic reproduction on debug+ASAN builds, run with
-  // BUN_DEBUG_SSLConfig=1. That enables scoped stderr logging in
-  // ref_count.zig's deref() and SSLConfig.zig's destroy(), widening the
-  // race window from ~10 CPU cycles to ~100μs+ via stderr write syscalls.
-  // See PR #27863 for the full deterministic repro recipe.
-
-  const stopBuf = new SharedArrayBuffer(4);
-  const stopFlag = new Int32Array(stopBuf);
-
-  const probeWorkers: Worker[] = [];
-  const probePromises: Promise<number>[] = [];
-  let d: Worker | undefined;
-
   try {
-    for (let i = 0; i < NUM_PROBES; i++) {
-      const w = new Worker(probe, {
-        eval: true,
-        workerData: { bp: backend.port, pp: proxy.port, stopBuf },
-      });
-      probeWorkers.push(w);
-      probePromises.push(
-        new Promise<number>(resolve => {
-          w.on("message", (n: number) => resolve(n));
-          w.on("error", () => resolve(-1));
-          w.on("exit", (code: number) => {
-            if (code !== 0) resolve(-1);
-          });
-        }),
-      );
-    }
-
-    d = new Worker(driver, {
-      eval: true,
-      workerData: { bp: backend.port, pp: proxy.port, n: DRIVER_ITERATIONS },
-    });
-    const driverPromise = new Promise<number>(resolve => {
-      d!.on("message", (n: number) => resolve(n));
-      d!.on("error", () => resolve(-1));
-      d!.on("exit", (code: number) => {
-        if (code !== 0) resolve(-1);
-      });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "fetch-proxy-tls-intern-race-fixture.ts")],
+      env: {
+        ...bunEnv,
+        BACKEND_PORT: String(backend.port),
+        PROXY_PORT: String(proxy.port),
+        DRIVER_ITERATIONS: "100",
+        NUM_PROBES: "2",
+        HARD_CAP_MS: "15000",
+        // bunEnv strips BUN_DEBUG_* vars. On debug builds, this scoped log
+        // widens the race window from ~10 cycles to ~100μs+ via stderr
+        // writes in deref()/destroy(). No-op in release builds (enable_logs
+        // is compile-time false).
+        BUN_DEBUG_SSLConfig: "1",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
     });
 
-    // Hard cap: if neither the race nor the driver finishes quickly, stop
-    // probes anyway so the test completes in bounded time. This handles
-    // the case where probe congestion stalls the driver.
-    const capTimer = setTimeout(() => Atomics.store(stopFlag, 0, 1), HARD_CAP_MS);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    const driverOk = await Promise.race([
-      driverPromise,
-      new Promise<number>(resolve => setTimeout(() => resolve(-2), HARD_CAP_MS)),
-    ]);
-    clearTimeout(capTimer);
-    // Signal probes to stop now that the driver is done (or capped).
-    Atomics.store(stopFlag, 0, 1);
-    const probeCounts = await Promise.all(probePromises);
-
-    // If we reach this point without crashing, the race didn't trigger.
-    // Under probe congestion the driver may not finish (-2), but that's fine —
-    // the real assertion is that we didn't crash. Only verify driver success
-    // if it actually completed.
-    if (driverOk >= 0) {
-      expect(driverOk).toBeGreaterThanOrEqual(DRIVER_ITERATIONS * 0.8);
+    // If the race triggered, the subprocess crashed (non-zero exit).
+    // Surface stderr for debugging before asserting the exit code.
+    if (exitCode !== 0) {
+      console.error("Fixture stderr:", stderr);
     }
-    // Probes should have fired (sanity check they were actually running).
-    for (const count of probeCounts) {
+    expect(exitCode).toBe(0);
+
+    // Sanity-check the fixture actually ran. Scoped debug logging goes to
+    // stdout in debug builds, so the JSON result is on the last line.
+    const lines = stdout.trim().split("\n");
+    const result = JSON.parse(lines[lines.length - 1]);
+    expect(Array.isArray(result.probeCounts)).toBe(true);
+    // If the driver completed (not hard-capped or errored), it should have
+    // gotten most of its responses through.
+    if (result.driverOk >= 0) {
+      expect(result.driverOk).toBeGreaterThanOrEqual(80);
+    }
+    // Probes should have fired (verifies they were actually racing).
+    for (const count of result.probeCounts) {
       expect(count).toBeGreaterThan(50);
     }
   } finally {
-    // Ensure workers stop even if an assertion failed before the stopFlag was set.
-    // terminate() and server.close() are fire-and-forget — aborted probe
-    // fetches leave connections/tasks in various states that can block
-    // awaited cleanup indefinitely.
-    Atomics.store(stopFlag, 0, 1);
-    d?.terminate();
-    for (const w of probeWorkers) w.terminate();
     proxy.server.close();
     proxy.server.unref();
   }

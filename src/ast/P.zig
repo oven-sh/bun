@@ -558,17 +558,21 @@ pub fn NewParser_(
                         p.allocator,
                         "This " ++ kind ++ " expression will not be bundled because the argument is not a string literal",
                         .{},
-                        "The specifier shape \"{s}\" does not match any --allow-unresolved pattern",
-                        .{display},
+                        "The specifier shape \"{s}\" does not match any --allow-unresolved pattern. " ++
+                            "To allow it, add a matching pattern: Bun.build({{ allowUnresolved: [\"{s}\"] }}) or --allow-unresolved '{s}'",
+                        .{ display, display, display },
                         r,
                     ) catch bun.outOfMemory();
                 } else {
-                    p.log.addRangeErrorFmt(
+                    p.log.addRangeErrorFmtWithNote(
                         p.source,
                         r,
                         p.allocator,
                         "This " ++ kind ++ " expression will not be bundled because the argument is not a string literal",
                         .{},
+                        "To allow opaque dynamic specifiers, use Bun.build({{ allowUnresolved: [\"\"] }}) or pass --allow-unresolved with an empty-string pattern",
+                        .{},
+                        r,
                     ) catch bun.outOfMemory();
                 }
             }

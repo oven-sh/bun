@@ -225,9 +225,15 @@ pub const Repository = extern struct {
     }
 
     fn normalizePath(raw: string) error{InvalidPath}!string {
+        // Reject Windows-style backslashes anywhere in the input
+        if (strings.containsChar(raw, '\\')) return error.InvalidPath;
+
         // Strip leading and trailing slashes
         const p = strings.trim(raw, "/");
         if (p.len == 0) return error.InvalidPath;
+
+        // Reject Windows drive-letter prefixes (e.g. "C:" or "c:")
+        if (p.len >= 2 and p[1] == ':' and std.ascii.isAlphabetic(p[0])) return error.InvalidPath;
 
         // Validate each segment: reject empty segments, ".", and ".."
         var it = std.mem.splitScalar(u8, p, '/');

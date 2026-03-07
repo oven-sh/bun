@@ -6,17 +6,21 @@ import { join } from "path";
 // nicolo-ribaudo/babel-polyfills is a real monorepo with packages/ subdirectories.
 // Pinned to a specific commit for reproducibility.
 const MONOREPO = "github:nicolo-ribaudo/babel-polyfills";
+const MONOREPO_GIT_URL = "git+https://github.com/nicolo-ribaudo/babel-polyfills.git";
 const COMMIT = "67d188090d3e94d9b03babc518e5fcdbc43ac206";
 const SUB_PATH = "packages/babel-helper-define-polyfill-provider";
+const SUB_PATH_2 = "packages/babel-plugin-polyfill-corejs2";
 const SUB_PKG_NAME = "@babel/helper-define-polyfill-provider";
+const SUB_PKG_NAME_2 = "babel-plugin-polyfill-corejs2";
 
 describe("git dependency &path: subdirectory support", () => {
-  test("installs sub-package from monorepo via &path:", async () => {
+  test("installs sub-packages from monorepo via &path: (git+https URL)", async () => {
     using installDir = tempDir("git-path-install", {
       "package.json": JSON.stringify({
         name: "test-project",
         dependencies: {
-          [SUB_PKG_NAME]: `${MONOREPO}#${COMMIT}&path:${SUB_PATH}`,
+          [SUB_PKG_NAME]: `${MONOREPO_GIT_URL}#${COMMIT}&path:${SUB_PATH}`,
+          [SUB_PKG_NAME_2]: `${MONOREPO_GIT_URL}#${COMMIT}&path:${SUB_PATH_2}`,
         },
       }),
     });
@@ -31,7 +35,7 @@ describe("git dependency &path: subdirectory support", () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    // Verify the sub-package was installed with correct package.json
+    // Verify the first sub-package was installed with correct package.json
     const installedPkgJson = join(
       String(installDir),
       "node_modules",
@@ -43,6 +47,13 @@ describe("git dependency &path: subdirectory support", () => {
 
     const pkg = JSON.parse(readFileSync(installedPkgJson, "utf8"));
     expect(pkg.name).toBe(SUB_PKG_NAME);
+
+    // Verify the second sub-package was installed with correct package.json
+    const installedPkgJson2 = join(String(installDir), "node_modules", SUB_PKG_NAME_2, "package.json");
+    expect(existsSync(installedPkgJson2)).toBeTrue();
+
+    const pkg2 = JSON.parse(readFileSync(installedPkgJson2, "utf8"));
+    expect(pkg2.name).toBe(SUB_PKG_NAME_2);
 
     expect(exitCode).toBe(0);
   });
@@ -66,7 +77,9 @@ describe("git dependency &path: subdirectory support", () => {
       stdout: "pipe",
     });
 
-    await Promise.all([proc1.stdout.text(), proc1.stderr.text(), proc1.exited]);
+    const [stdout1, stderr1, exitCode1] = await Promise.all([proc1.stdout.text(), proc1.stderr.text(), proc1.exited]);
+
+    expect(exitCode1).toBe(0);
 
     // Check lockfile contains &path:
     const lockPath = join(String(installDir), "bun.lock");
@@ -123,6 +136,9 @@ describe("git dependency &path: subdirectory support", () => {
     });
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // Verify the failure is specifically due to the invalid path diagnostic
+    expect(stderr).toContain("Invalid git subdirectory path");
 
     // The package directory should not have been created
     expect(existsSync(join(String(installDir), "node_modules", "evil-pkg"))).toBeFalse();

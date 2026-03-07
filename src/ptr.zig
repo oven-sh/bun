@@ -20,7 +20,6 @@ pub const ref_count = @import("./ptr/ref_count.zig");
 pub const RefCount = ref_count.RefCount;
 /// Deprecated; use `AtomicShared(*T)`.
 pub const ThreadSafeRefCount = ref_count.ThreadSafeRefCount;
-pub const ThreadSafeWeakableRefCount = ref_count.ThreadSafeWeakableRefCount;
 /// Deprecated; use `Shared(*T)`.
 pub const RefPtr = ref_count.RefPtr;
 

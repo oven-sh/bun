@@ -461,17 +461,49 @@ void BunPlugin::OnLoad::endModuleMockingScope(JSC::JSGlobalObject* globalObject)
             moduleMocks->remove(change.path);
         }
 
-        auto* specifier = jsString(vm, change.path);
-        if (requireMap) {
-            requireMap->remove(globalObject, specifier);
-            if (scope.exception()) [[unlikely]] {
-                (void)scope.tryClearException();
+        if (change.patchedNamespace) {
+            // The namespace was patched in-place by mock.module() because the module was
+            // already loaded. Restore the original export values so that all cached modules
+            // whose live bindings point at this namespace object see real values again.
+            // We do NOT evict the esmRegistry entry: the namespace is still valid and
+            // keeping it avoids forcing a redundant re-evaluation of the module.
+            auto* ns = jsDynamicCast<JSC::JSModuleNamespaceObject*>(change.patchedNamespace.get());
+            auto* snapshot = change.originalExportSnapshot.get();
+            if (ns && snapshot) {
+                JSC::PropertyNameArrayBuilder snapshotNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+                JSObject::getOwnPropertyNames(snapshot, globalObject, snapshotNames, DontEnumPropertiesMode::Exclude);
+                if (scope.exception()) [[unlikely]] {
+                    (void)scope.tryClearException();
+                } else {
+                    for (auto& name : snapshotNames) {
+                        JSValue val = snapshot->get(globalObject, name);
+                        if (scope.exception()) [[unlikely]] {
+                            (void)scope.tryClearException();
+                            continue;
+                        }
+                        ns->overrideExportValue(globalObject, name, val);
+                        if (scope.exception()) [[unlikely]] {
+                            (void)scope.tryClearException();
+                        }
+                    }
+                }
             }
-        }
-        if (esmRegistry) {
-            esmRegistry->remove(globalObject, specifier);
-            if (scope.exception()) [[unlikely]] {
-                (void)scope.tryClearException();
+        } else {
+            // The module was not yet loaded when mock.module() was called, so the mock
+            // factory was invoked lazily and its result cached in esmRegistry. Evict that
+            // cached entry so the next import gets a fresh, real module.
+            auto* specifier = jsString(vm, change.path);
+            if (requireMap) {
+                requireMap->remove(globalObject, specifier);
+                if (scope.exception()) [[unlikely]] {
+                    (void)scope.tryClearException();
+                }
+            }
+            if (esmRegistry) {
+                esmRegistry->remove(globalObject, specifier);
+                if (scope.exception()) [[unlikely]] {
+                    (void)scope.tryClearException();
+                }
             }
         }
     }
@@ -708,6 +740,11 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
     bool removeFromESM = false;
     bool removeFromCJS = false;
 
+    // When the namespace is patched in-place we save these so the change record
+    // can restore the original exports when the test-file scope ends.
+    JSC::JSModuleNamespaceObject* patchedNamespaceObject = nullptr;
+    JSObject* exportSnapshotObject = nullptr;
+
     JSValue entryValue = esm->get(globalObject, specifierString);
     RETURN_IF_EXCEPTION(scope, {});
     if (entryValue) {
@@ -731,6 +768,23 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
                             JSObject::getOwnPropertyNames(object, globalObject, names, DontEnumPropertiesMode::Exclude);
                             RETURN_IF_EXCEPTION(scope, {});
 
+                            // Snapshot original exports before patching so that
+                            // endModuleMockingScope() can restore them in-place.
+                            // This ensures other cached modules whose live bindings
+                            // point at this namespace object see the real values again
+                            // after the test file finishes.
+                            unsigned inlineCapacity = std::min(static_cast<unsigned>(names.size()), JSFinalObject::maxInlineCapacity);
+                            JSObject* snapshot = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), inlineCapacity);
+                            for (auto& name : names) {
+                                auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+                                JSValue originalValue = moduleNamespaceObject->get(globalObject, name);
+                                if (topExceptionScope.exception()) [[unlikely]] {
+                                    (void)topExceptionScope.tryClearException();
+                                    originalValue = jsUndefined();
+                                }
+                                snapshot->putDirect(vm, name, originalValue, 0);
+                            }
+
                             for (auto& name : names) {
                                 // consistent with regular esm handling code
                                 auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -742,6 +796,9 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
                                 moduleNamespaceObject->overrideExportValue(globalObject, name, value);
                                 RETURN_IF_EXCEPTION(scope, {});
                             }
+
+                            patchedNamespaceObject = moduleNamespaceObject;
+                            exportSnapshotObject = snapshot;
 
                         } else {
                             // if it's not an object, I guess we just set the default export?
@@ -783,6 +840,21 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
     }
 
     globalObject->onLoadPlugins.addModuleMock(vm, specifier, mock);
+
+    // If we patched the namespace in-place, store the namespace and snapshot in the
+    // change record so endModuleMockingScope() can restore the original exports.
+    if (patchedNamespaceObject && exportSnapshotObject
+        && !globalObject->onLoadPlugins.moduleMockScopeMarkers.isEmpty()) {
+        size_t marker = globalObject->onLoadPlugins.moduleMockScopeMarkers.last();
+        auto& changes = globalObject->onLoadPlugins.moduleMockChanges;
+        for (size_t i = changes.size(); i > marker; --i) {
+            if (changes[i - 1].path == specifier) {
+                changes[i - 1].patchedNamespace.set(vm, patchedNamespaceObject);
+                changes[i - 1].originalExportSnapshot.set(vm, exportSnapshotObject);
+                break;
+            }
+        }
+    }
 
     return JSValue::encode(jsUndefined());
 }

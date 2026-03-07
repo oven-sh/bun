@@ -68,6 +68,13 @@ public:
             String path;
             JSC::Strong<JSC::JSObject> previousValue;
             bool hadPreviousValue { false };
+            // Set when mock.module() finds the module already loaded in esmRegistry and patches
+            // its namespace in-place via overrideExportValue(). endModuleMockingScope() uses
+            // these to restore the original exports rather than evicting the registry entry,
+            // so that other cached modules whose live bindings point at this namespace object
+            // also see the restored (real) values.
+            JSC::Strong<JSC::JSObject> patchedNamespace;
+            JSC::Strong<JSC::JSObject> originalExportSnapshot;
         };
 
         OnLoad()

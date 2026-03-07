@@ -2584,7 +2584,7 @@ declare module "bun" {
     // manifest?: boolean; // whether to return manifest
     external?: string[];
     /**
-     * Control whether dynamic `import()` / `require()` specifiers (non-literal
+     * Control whether dynamic `import()`, `require()`, or `require.resolve()` specifiers (non-literal
      * arguments like `` `./locales/${lang}.json` ``) are allowed to pass through
      * to runtime without being bundled.
      *

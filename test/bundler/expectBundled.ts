@@ -723,6 +723,9 @@ function expectBundled(
       if (optimizeImports) {
         throw new Error("optimizeImports not possible in backend=CLI (API-only option)");
       }
+      if (ESBUILD && allowUnresolved !== undefined) {
+        throw new Error("allowUnresolved not possible in esbuild backend");
+      }
       const cmd = (
         !ESBUILD
           ? [
@@ -749,7 +752,10 @@ function expectBundled(
               `--target=${target}`,
               `--format=${format}`,
               external && external.map(x => ["--external", x]),
-              allowUnresolved && allowUnresolved.map(x => ["--allow-unresolved", x]),
+              allowUnresolved !== undefined &&
+                (allowUnresolved.length === 0
+                  ? "--reject-unresolved"
+                  : allowUnresolved.map(x => ["--allow-unresolved", x === "" ? '""' : x])),
               packages && ["--packages", packages],
               conditions && conditions.map(x => ["--conditions", x]),
               minifyIdentifiers && `--minify-identifiers`,

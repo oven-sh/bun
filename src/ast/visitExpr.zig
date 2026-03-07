@@ -1357,7 +1357,7 @@ pub fn VisitExpr(
                         p.log.addRangeDebug(p.source, r, "This call to \"require\" will not be bundled because it has multiple arguments") catch unreachable;
                     }
 
-                    if (e_.args.len == 1) {
+                    if (e_.args.len >= 1) {
                         p.checkDynamicSpecifier(e_.args.slice()[0], e_.target.loc, "require()");
                     }
 
@@ -1391,8 +1391,10 @@ pub fn VisitExpr(
                             },
                             else => {},
                         }
+                    }
 
-                        p.checkDynamicSpecifier(first, e_.target.loc, "require.resolve()");
+                    if (e_.args.len >= 1) {
+                        p.checkDynamicSpecifier(e_.args.slice()[0], e_.target.loc, "require.resolve()");
                     }
 
                     return expr;

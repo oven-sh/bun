@@ -146,6 +146,7 @@ describe("bundler", () => {
   itBundled("allow-unresolved/RequireTryCatchDoesNotBypass", {
     files: {
       "/entry.js": /* js */ `
+        const someVar = "./dynamic.js";
         try { require(someVar) } catch {}
       `,
     },
@@ -195,5 +196,34 @@ describe("bundler", () => {
     },
     outdir: "/out",
     allowUnresolved: ["./locales/*", "*"],
+  });
+
+  // 15. CLI path: empty array rejects (--reject-unresolved)
+  itBundled("allow-unresolved/CLIRejectUnresolved", {
+    files: {
+      "/entry.js": /* js */ `
+        const x = "foo";
+        import(\`./a/\${x}.js\`);
+      `,
+    },
+    outdir: "/out",
+    backend: "cli",
+    allowUnresolved: [],
+    bundleErrors: {
+      "/entry.js": ["will not be bundled"],
+    },
+  });
+
+  // 16. CLI path: matching pattern allows
+  itBundled("allow-unresolved/CLIMatchingPatternAllows", {
+    files: {
+      "/entry.js": /* js */ `
+        const x = "en";
+        import(\`./locales/\${x}.json\`);
+      `,
+    },
+    outdir: "/out",
+    backend: "cli",
+    allowUnresolved: ["./locales/*.json"],
   });
 });

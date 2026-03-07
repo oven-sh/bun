@@ -185,6 +185,7 @@ pub const build_only_params = [_]ParamType{
     clap.parseParam("--public-path <STR>              A prefix to be appended to any import paths in bundled code") catch unreachable,
     clap.parseParam("-e, --external <STR>...          Exclude module from transpilation (can use * wildcards). ex: -e react") catch unreachable,
     clap.parseParam("--allow-unresolved <STR>...      Allow unresolved dynamic import()/require() specifiers matching these glob patterns. Default is '*' (allow all).") catch unreachable,
+    clap.parseParam("--reject-unresolved              Fail the build on any dynamic import()/require() specifier that cannot be resolved at build time.") catch unreachable,
     clap.parseParam("--packages <STR>                 Add dependencies to bundle or keep them external. \"external\", \"bundle\" is supported. Defaults to \"bundle\".") catch unreachable,
     clap.parseParam("--entry-naming <STR>             Customize entry point filenames. Defaults to \"[dir]/[name].[ext]\"") catch unreachable,
     clap.parseParam("--chunk-naming <STR>             Customize chunk filenames. Defaults to \"[name]-[hash].[ext]\"") catch unreachable,
@@ -1031,7 +1032,9 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             opts.external = externals;
         }
 
-        if (args.options("--allow-unresolved").len > 0) {
+        if (args.flag("--reject-unresolved")) {
+            ctx.bundler_options.allow_unresolved = &.{};
+        } else if (args.options("--allow-unresolved").len > 0) {
             const raw = args.options("--allow-unresolved");
             var allow = try allocator.alloc([]const u8, raw.len);
             for (raw, 0..) |val, i| {

@@ -529,7 +529,7 @@ pub fn NewParser_(
                         .cooked => |*tail| {
                             buf.appendSlice(tail.slice(p.allocator)) catch bun.outOfMemory();
                         },
-                        .raw => {},
+                        .raw => return "", // raw tail — treat as opaque
                     }
                 }
                 return buf.items;
@@ -541,6 +541,7 @@ pub fn NewParser_(
             if (!p.options.bundle or p.options.allow_unresolved.* == .all) return;
 
             var shape_buf = std.array_list.Managed(u8).init(p.allocator);
+            defer shape_buf.deinit();
             const shape = p.extractDynamicSpecifierShape(arg, &shape_buf);
             if (!p.options.allow_unresolved.allows(shape)) {
                 const r = js_lexer.rangeOfIdentifier(p.source, loc);

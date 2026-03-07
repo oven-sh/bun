@@ -769,6 +769,7 @@ fn removeFromWorkspacePackageJSONs_filterMatches(
     const path_buf = bun.path_buffer_pool.get();
     defer bun.path_buffer_pool.put(path_buf);
 
+    var matched = false;
     for (manager.options.filter_patterns) |pattern| {
         const filter = WorkspaceFilter.init(manager.allocator, pattern, original_cwd, path_buf[0..]) catch continue;
         defer filter.deinit(manager.allocator);
@@ -776,16 +777,22 @@ fn removeFromWorkspacePackageJSONs_filterMatches(
         const match_pattern, const name_or_path = switch (filter) {
             .name => |p| .{ p, pkg_name },
             .path => |p| .{ p, workspace_path },
-            .all => return true,
+            .all => {
+                matched = true;
+                continue;
+            },
         };
 
         switch (bun.glob.match(match_pattern, name_or_path)) {
-            .match, .negate_match => return true,
-            .negate_no_match => return false,
+            .match, .negate_match => matched = true,
+            .negate_no_match => {
+                matched = false;
+                break;
+            },
             .no_match => {},
         }
     }
-    return false;
+    return matched;
 }
 
 /// Remove dependencies from workspace package.json files that match the given filter/recursive options.
@@ -796,7 +803,16 @@ fn removeFromWorkspacePackageJSONs(
     original_cwd: string,
 ) !bool {
     const top_level_dir = strings.withoutTrailingSlash(FileSystem.instance.top_level_dir);
-    const root_package_json_path = manager.original_package_json_path;
+    // Use top_level_dir (which is resolved to the workspace root during init)
+    // rather than original_package_json_path (which may point to a child workspace
+    // package.json when running from a subdirectory).
+    var root_pkg_json_buf: bun.PathBuffer = undefined;
+    const root_package_json_path = bun.path.joinAbsStringBuf(
+        top_level_dir,
+        &root_pkg_json_buf,
+        &[_]string{"package.json"},
+        .auto,
+    );
 
     // Build workspace filters from --filter patterns
     const path_buf = bun.path_buffer_pool.get();

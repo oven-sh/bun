@@ -697,34 +697,6 @@ pub fn updatePackageJSONAndInstall(
 
 const string = []const u8;
 
-const std = @import("std");
-
-const bun = @import("bun");
-const Environment = bun.Environment;
-const Global = bun.Global;
-const JSON = bun.json;
-const JSPrinter = bun.js_printer;
-const Output = bun.Output;
-const default_allocator = bun.default_allocator;
-const logger = bun.logger;
-const strings = bun.strings;
-const Command = bun.cli.Command;
-const File = bun.sys.File;
-const PackageNameHash = bun.install.PackageNameHash;
-
-const Semver = bun.Semver;
-const String = Semver.String;
-
-const Fs = bun.fs;
-const FileSystem = Fs.FileSystem;
-const js_ast = bun.ast;
-const Expr = js_ast.Expr;
-
-const Lockfile = bun.install.Lockfile;
-const WorkspaceFilter = PackageManager.WorkspaceFilter;
-const WorkspaceMap = Lockfile.Package.WorkspaceMap;
-const WorkspacePackageJSONCache = PackageManager.WorkspacePackageJSONCache;
-
 /// Remove the given dependencies from all dependency sections of a package.json AST.
 /// Returns true if any changes were made.
 fn removeDepsFromPackageJSON(root: *Expr, updates: []const UpdateRequest) bool {
@@ -941,10 +913,39 @@ fn saveWorkspacePackageJSON(
     };
 }
 
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Global = bun.Global;
+const JSON = bun.json;
+const JSPrinter = bun.js_printer;
+const Output = bun.Output;
+const default_allocator = bun.default_allocator;
+const logger = bun.logger;
+const strings = bun.strings;
+const Command = bun.cli.Command;
+const File = bun.sys.File;
+
+const Semver = bun.Semver;
+const String = Semver.String;
+
+const js_ast = bun.ast;
+const Expr = js_ast.Expr;
+
+const Fs = bun.fs;
+const FileSystem = Fs.FileSystem;
+
+const Lockfile = bun.install.Lockfile;
+const PackageNameHash = bun.install.PackageNameHash;
+const WorkspaceMap = Lockfile.Package.WorkspaceMap;
+
 const PackageManager = bun.install.PackageManager;
 const CommandLineArguments = PackageManager.CommandLineArguments;
 const PackageJSONEditor = PackageManager.PackageJSONEditor;
 const PatchCommitResult = PackageManager.PatchCommitResult;
 const Subcommand = PackageManager.Subcommand;
 const UpdateRequest = PackageManager.UpdateRequest;
+const WorkspaceFilter = PackageManager.WorkspaceFilter;
+const WorkspacePackageJSONCache = PackageManager.WorkspacePackageJSONCache;
 const attemptToCreatePackageJSON = PackageManager.attemptToCreatePackageJSON;

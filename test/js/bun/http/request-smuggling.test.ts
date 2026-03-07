@@ -719,6 +719,7 @@ describe("chunk size strict hex digit validation", () => {
     const request =
       "POST / HTTP/1.1\r\n" +
       "Host: localhost\r\n" +
+      "Connection: close\r\n" +
       "Transfer-Encoding: chunked\r\n" +
       "\r\n" +
       chunkSizeLine +
@@ -737,10 +738,7 @@ describe("chunk size strict hex digit validation", () => {
       client.on("close", () => {
         resolve(responseData);
       });
-      client.write(request, () => {
-        // Give the server time to process before half-closing
-        setTimeout(() => client.end(), 100);
-      });
+      client.write(request);
     });
   }
 

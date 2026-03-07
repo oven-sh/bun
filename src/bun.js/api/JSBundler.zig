@@ -234,6 +234,7 @@ pub const JSBundler = struct {
         emit_dce_annotations: ?bool = null,
         names: Names = .{},
         external: bun.StringSet = bun.StringSet.init(bun.default_allocator),
+        allow_unresolved: ?bun.StringSet = null,
         source_map: options.SourceMapOption = .none,
         public_path: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         conditions: bun.StringSet = bun.StringSet.init(bun.default_allocator),
@@ -806,6 +807,23 @@ pub const JSBundler = struct {
                 }
             }
 
+            if (try config.getOwn(globalThis, "allowUnresolved")) |allow_unresolved_val| {
+                if (!allow_unresolved_val.isUndefined() and !allow_unresolved_val.isNull()) {
+                    if (!allow_unresolved_val.jsTypeLoose().isArray()) {
+                        return globalThis.throwInvalidArguments("allowUnresolved must be an array", .{});
+                    }
+                    this.allow_unresolved = bun.StringSet.init(bun.default_allocator);
+                    if (try allow_unresolved_val.getLength(globalThis) > 0) {
+                        var iter = try allow_unresolved_val.arrayIterator(globalThis);
+                        while (try iter.next()) |entry| {
+                            var slice = try entry.toSliceOrNull(globalThis);
+                            defer slice.deinit();
+                            try this.allow_unresolved.?.insert(slice.slice());
+                        }
+                    }
+                }
+            }
+
             if (try config.getOwnArray(globalThis, "drop")) |drops| {
                 var iter = try drops.arrayIterator(globalThis);
                 while (try iter.next()) |entry| {
@@ -1106,6 +1124,7 @@ pub const JSBundler = struct {
         pub fn deinit(self: *Config, allocator: std.mem.Allocator) void {
             self.entry_points.deinit();
             self.external.deinit();
+            if (self.allow_unresolved) |*a| a.deinit();
             self.define.deinit();
             self.dir.deinit();
             self.serve.deinit(allocator);

@@ -65,4 +65,10 @@ test("workspace install succeeds when nested workspace member has patchedDepende
   const installResult = await $`${bunExe()} install`.env(bunEnv).cwd(filedir).throws(false);
   expect(installResult.stderr.toString()).not.toContain("Couldn't find patch file");
   expect(installResult.exitCode).toBe(0);
+
+  // Verify the nested member's patch was NOT applied (since only root
+  // patchedDependencies should be honored, and the root has none)
+  const runResult = await $`${bunExe()} run index.ts`.env(bunEnv).cwd(`${filedir}/packages/lib`).throws(false);
+  expect(runResult.stdout.toString()).not.toContain("PATCHED");
+  expect(runResult.exitCode).toBe(0);
 });

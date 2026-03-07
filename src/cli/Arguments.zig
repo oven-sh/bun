@@ -1032,7 +1032,10 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             opts.external = externals;
         }
 
-        if (args.flag("--reject-unresolved")) {
+        if (args.flag("--reject-unresolved") and args.options("--allow-unresolved").len > 0) {
+            Output.prettyErrorln("<r><red>error<r>: --reject-unresolved and --allow-unresolved cannot be used together", .{});
+            Global.crash();
+        } else if (args.flag("--reject-unresolved")) {
             ctx.bundler_options.allow_unresolved = &.{};
         } else if (args.options("--allow-unresolved").len > 0) {
             const raw = args.options("--allow-unresolved");

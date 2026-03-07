@@ -228,6 +228,10 @@ pub const Repository = extern struct {
         // Reject Windows-style backslashes anywhere in the input
         if (strings.containsChar(raw, '\\')) return error.InvalidPath;
 
+        // Reject '#' — it is used as the fragment delimiter in git URLs,
+        // so paths containing '#' cannot round-trip through format/parse.
+        if (strings.containsChar(raw, '#')) return error.InvalidPath;
+
         // Strip leading and trailing slashes
         const p = strings.trim(raw, "/");
         if (p.len == 0) return error.InvalidPath;
@@ -676,13 +680,29 @@ pub const Repository = extern struct {
     /// After git checkout, move the contents of a subdirectory to the root of the cache folder.
     /// This ensures that node_modules linking only sees the sub-package.
     fn promoteSubdirectory(dir: std.fs.Dir, subdir_path: string, folder_name: stringZ, cache_dir: std.fs.Dir) !void {
-        // Null-terminate the subdir path for openDir
-        var subdir_z_buf: bun.PathBuffer = undefined;
-        const subdir_z = bun.path.joinZBuf(&subdir_z_buf, &[_]string{subdir_path}, .auto);
+        // Verify the subdirectory exists and no path segment is a symlink.
+        // Walk each segment with O_NOFOLLOW to prevent symlink escapes.
+        {
+            const dir_fd = bun.FD.fromStdDir(dir);
+            var parent_fd: ?bun.FileDescriptor = null;
+            defer if (parent_fd) |fd| fd.close();
 
-        // Verify the subdirectory exists
-        var sub_dir = try bun.openDir(dir, subdir_z);
-        sub_dir.close();
+            var it = std.mem.splitScalar(u8, subdir_path, '/');
+            while (it.next()) |segment| {
+                if (segment.len == 0) continue;
+                var seg_buf: [bun.MAX_PATH_BYTES:0]u8 = undefined;
+                if (segment.len > bun.MAX_PATH_BYTES) return error.InstallFailed;
+                @memcpy(seg_buf[0..segment.len], segment);
+                seg_buf[segment.len] = 0;
+                const seg_z: [:0]const u8 = seg_buf[0..segment.len :0];
+                const base = parent_fd orelse dir_fd;
+                const fd = bun.sys.openat(base, seg_z, bun.O.DIRECTORY | bun.O.RDONLY | bun.O.CLOEXEC | bun.O.NOFOLLOW, 0).unwrap() catch {
+                    return error.InstallFailed;
+                };
+                if (parent_fd) |old| old.close();
+                parent_fd = fd;
+            }
+        }
 
         // Use a temporary name for the swap
         var tmp_name_buf: bun.PathBuffer = undefined;
@@ -784,6 +804,7 @@ pub const Repository = extern struct {
             // If a subdirectory path is specified, promote it to the root of the cache dir
             if (subdir_path.len > 0) {
                 promoteSubdirectory(dir, subdir_path, folder_name, cache_dir) catch |err| {
+                    dir.close();
                     log.addErrorFmt(
                         null,
                         logger.Loc.Empty,

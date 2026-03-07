@@ -190,15 +190,20 @@ const https = require("https");
 const port = ${server.port};
 const ca = ${JSON.stringify(localhostOnlyTls.cert)};
 
-// Custom lookup that returns only the IP without using dns module at all.
-// This is the most direct reproduction of the bug: hostname -> IP mapping.
+// Custom lookup using dns.lookup — exercises the real resolution path
+// (including /etc/hosts) where hostname is resolved to IP, reproducing
+// the exact issue #27890 scenario.
+const dns = require("dns");
 function customLookup(hostname, options, callback) {
-  const addr = "127.0.0.1";
-  if (options && options.all) {
-    callback(null, [{ address: addr, family: 4 }]);
-  } else {
-    callback(null, addr, 4);
-  }
+  dns.lookup(hostname, { all: true }, (err, addresses) => {
+    if (err) { callback(err); return; }
+    if (options && options.all) {
+      callback(null, addresses);
+    } else {
+      const first = addresses[0];
+      callback(null, first.address, first.family);
+    }
+  });
 }
 
 const req = https.request("https://localhost:" + port, {

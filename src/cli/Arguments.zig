@@ -1041,7 +1041,8 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             const raw = args.options("--allow-unresolved");
             var allow = try allocator.alloc([]const u8, raw.len);
             for (raw, 0..) |val, i| {
-                allow[i] = val;
+                // "<empty>" sentinel represents the empty-string pattern (for matching opaque specifiers)
+                allow[i] = if (strings.eqlComptime(val, "<empty>")) "" else val;
             }
             ctx.bundler_options.allow_unresolved = allow;
         }

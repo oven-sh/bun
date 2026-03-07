@@ -548,6 +548,7 @@ pub fn NewParser_(
                 if (shape.len > 0) {
                     // Print a human-readable shape: replace \x00 with *
                     const display = p.allocator.dupe(u8, shape) catch bun.outOfMemory();
+                    defer p.allocator.free(display);
                     for (display) |*c| if (c.* == 0) {
                         c.* = '*';
                     };

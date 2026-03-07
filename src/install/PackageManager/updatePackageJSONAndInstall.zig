@@ -959,14 +959,14 @@ fn saveWorkspacePackageJSON(
         path_z,
         bun.O.RDWR,
         0,
-    ).unwrap()).handle.stdFile();
+    ).unwrap());
     defer workspace_pkg_json_file.close();
 
-    workspace_pkg_json_file.pwriteAll(new_source, 0) catch |err| {
-        Output.errGeneric("failed to write package.json at \"{s}\": {s}", .{ pkg_json_path, @errorName(err) });
+    workspace_pkg_json_file.pwriteAll(new_source, 0).unwrap() catch {
+        Output.errGeneric("failed to write package.json at \"{s}\"", .{pkg_json_path});
         Global.crash();
     };
-    std.posix.ftruncate(workspace_pkg_json_file.handle, new_source.len) catch {};
+    _ = bun.sys.ftruncate(workspace_pkg_json_file.handle, @intCast(new_source.len));
 }
 
 const std = @import("std");

@@ -240,7 +240,7 @@ fn fetchImpl(
     };
     var url_type = URLType.remote;
 
-    var ssl_config: ?*SSLConfig = null;
+    var ssl_config: ?SSLConfig.SharedPtr = null;
     var reject_unauthorized = vm.getTLSRejectUnauthorized();
     var check_server_identity: JSValue = .zero;
 
@@ -273,9 +273,9 @@ fn fetchImpl(
             range = null;
         }
 
-        if (ssl_config) |conf| {
+        if (ssl_config) |*conf| {
+            conf.deinit();
             ssl_config = null;
-            conf.deref();
         }
     }
 

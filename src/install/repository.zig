@@ -699,8 +699,12 @@ pub const Repository = extern struct {
             return error.InstallFailed;
         }
 
-        // Delete the original checkout directory
-        try cache_dir.deleteTree(folder_name);
+        // Delete the original checkout directory. If this fails, clean up
+        // the temp directory to avoid leaving it orphaned.
+        cache_dir.deleteTree(folder_name) catch |err| {
+            cache_dir.deleteTree(tmp_name) catch {};
+            return err;
+        };
 
         // Move the temp dir to the original location
         if (bun.sys.renameat(
@@ -709,6 +713,8 @@ pub const Repository = extern struct {
             .fromStdDir(cache_dir),
             folder_name,
         ).asErr()) |_| {
+            // Clean up the orphaned temp directory on rename failure
+            cache_dir.deleteTree(tmp_name) catch {};
             return error.InstallFailed;
         }
     }

@@ -145,14 +145,14 @@ pub const Repository = extern struct {
         .{ "gitlab", ".com" },
     });
 
-    pub fn parseAppendGit(input: string, buf: *String.Buf) OOM!Repository {
+    pub fn parseAppendGit(input: string, buf: *String.Buf) (OOM || error{InvalidPath})!Repository {
         var remain = input;
         if (strings.hasPrefixComptime(remain, "git+")) {
             remain = remain["git+".len..];
         }
         if (strings.lastIndexOfChar(remain, '#')) |hash| {
             const fragment = remain[hash + 1 ..];
-            const path_split = splitPathFromFragment(fragment);
+            const path_split = try splitPathFromFragment(fragment);
             var result: Repository = .{
                 .repo = try buf.append(remain[0..hash]),
                 .committish = try buf.append(path_split.committish),
@@ -167,7 +167,7 @@ pub const Repository = extern struct {
         };
     }
 
-    pub fn parseAppendGithub(input: string, buf: *String.Buf) OOM!Repository {
+    pub fn parseAppendGithub(input: string, buf: *String.Buf) (OOM || error{InvalidPath})!Repository {
         var remain = input;
         if (strings.hasPrefixComptime(remain, "github:")) {
             remain = remain["github:".len..];
@@ -195,7 +195,7 @@ pub const Repository = extern struct {
 
         if (hash != 0) {
             const fragment = remain[hash + 1 ..];
-            const path_split = splitPathFromFragment(fragment);
+            const path_split = try splitPathFromFragment(fragment);
             result.committish = try buf.append(path_split.committish);
             if (path_split.path) |p| {
                 result.path = try buf.append(p);
@@ -210,12 +210,12 @@ pub const Repository = extern struct {
         path: ?string,
     };
 
-    pub fn splitPathFromFragment(fragment: string) PathSplit {
+    pub fn splitPathFromFragment(fragment: string) error{InvalidPath}!PathSplit {
         if (strings.indexOf(fragment, "&path:")) |path_idx| {
             const raw_path = fragment[path_idx + "&path:".len ..];
             return .{
                 .committish = fragment[0..path_idx],
-                .path = normalizePath(raw_path),
+                .path = try normalizePath(raw_path),
             };
         }
         return .{
@@ -224,12 +224,20 @@ pub const Repository = extern struct {
         };
     }
 
-    fn normalizePath(raw: string) ?string {
+    fn normalizePath(raw: string) error{InvalidPath}!string {
         // Strip leading and trailing slashes
         const p = strings.trim(raw, "/");
-        if (p.len == 0) return null;
-        // Reject path traversal
-        if (strings.indexOf(p, "..") != null) return null;
+        if (p.len == 0) return error.InvalidPath;
+
+        // Validate each segment: reject empty segments, ".", and ".."
+        var it = std.mem.splitScalar(u8, p, '/');
+        while (it.next()) |segment| {
+            const trimmed = strings.trim(segment, " ");
+            if (trimmed.len == 0) return error.InvalidPath;
+            if (strings.eqlComptime(trimmed, ".")) return error.InvalidPath;
+            if (strings.eqlComptime(trimmed, "..")) return error.InvalidPath;
+        }
+
         return p;
     }
 
@@ -769,6 +777,10 @@ pub const Repository = extern struct {
                     ) catch unreachable;
                     return err;
                 };
+                // The rename/delete/rename sequence in promoteSubdirectory invalidated
+                // the old dir handle. Reopen it to point at the promoted directory.
+                dir.close();
+                dir = try bun.openDir(cache_dir, folder_name);
             }
 
             break :brk dir;

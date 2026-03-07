@@ -28,6 +28,7 @@ pub fn ResolutionType(comptime SemverIntType: type) type {
         const FromTextLockfileError = OOM || error{
             UnexpectedResolution,
             InvalidSemver,
+            InvalidPath,
         };
 
         pub fn fromTextLockfile(res_str: string, string_buf: *String.Buf) FromTextLockfileError!This {
@@ -100,7 +101,7 @@ pub fn ResolutionType(comptime SemverIntType: type) type {
             };
         }
 
-        const FromPnpmLockfileError = OOM || error{InvalidPnpmLockfile};
+        const FromPnpmLockfileError = OOM || error{ InvalidPnpmLockfile, InvalidPath };
 
         pub fn fromPnpmLockfile(res_str: []const u8, string_buf: *String.Buf) FromPnpmLockfileError!Resolution {
             if (strings.withoutPrefixIfPossibleComptime(res_str, "https://codeload.github.com/")) |user_repo_tar_committish| {

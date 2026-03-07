@@ -68,6 +68,7 @@ const MigratePnpmLockfileError = OOM || error{
     PnpmLockfileInvalidPatchedDependency,
     PnpmLockfileMissingCatalogEntry,
     PnpmLockfileUnresolvableDependency,
+    InvalidPath,
 };
 
 pub fn migratePnpmLockfile(

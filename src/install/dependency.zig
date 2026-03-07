@@ -1029,7 +1029,7 @@ pub fn parseWithTag(
 
             if (hash_index) |index| {
                 const fragment = input[index + 1 ..];
-                const path_split = Repository.splitPathFromFragment(fragment);
+                const path_split = Repository.splitPathFromFragment(fragment) catch return null;
                 const committish = sliced.sub(path_split.committish).value();
                 const path_value = if (path_split.path) |p| blk: {
                     const p_idx = strings.indexOf(dependency, p);
@@ -1081,7 +1081,7 @@ pub fn parseWithTag(
             const raw_committish_str = info.committish orelse "";
 
             // Split &path: from committish if present
-            const path_split = Repository.splitPathFromFragment(raw_committish_str);
+            const path_split = Repository.splitPathFromFragment(raw_committish_str) catch return null;
             const committish_str = path_split.committish;
 
             // Find owner in dependency string

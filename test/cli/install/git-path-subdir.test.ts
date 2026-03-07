@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, readFileSync } from "fs";
+import { existsSync, readFileSync, rmSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
@@ -76,7 +76,7 @@ describe("git dependency &path: subdirectory support", () => {
 
     // Delete node_modules and reinstall from frozen lockfile
     const nmDir = join(String(installDir), "node_modules");
-    Bun.spawnSync({ cmd: ["rm", "-rf", nmDir] });
+    rmSync(nmDir, { recursive: true, force: true });
 
     await using proc2 = Bun.spawn({
       cmd: [bunExe(), "install", "--frozen-lockfile"],
@@ -124,10 +124,15 @@ describe("git dependency &path: subdirectory support", () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    // Path traversal should be rejected by normalizePath stripping `..`
-    // The package should NOT contain files from outside the repo
+    // The package directory should not have been created
+    expect(existsSync(join(String(installDir), "node_modules", "evil-pkg"))).toBeFalse();
+
+    // Extra safety: no files from outside the repo should be present
     const etcPasswd = join(String(installDir), "node_modules", "evil-pkg", "passwd");
     expect(existsSync(etcPasswd)).toBeFalse();
+
+    // Path traversal should be rejected — install must fail
+    expect(exitCode).not.toBe(0);
   });
 
   test("normal git dep without &path: still works (backward compat)", async () => {

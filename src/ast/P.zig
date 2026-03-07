@@ -511,6 +511,73 @@ pub fn NewParser_(
             return p.options.bundle and p.source.index.isRuntime();
         }
 
+        /// Extracts a matchable "shape" from a dynamic import argument.
+        /// Template literals: static parts joined by \x00 placeholders.
+        /// Everything else: empty string.
+        fn extractDynamicSpecifierShape(p: *P, arg: Expr, buf: *std.array_list.Managed(u8)) []const u8 {
+            if (arg.data.as(.e_template)) |tmpl| {
+                if (tmpl.tag != null) return ""; // tagged template — opaque
+                switch (tmpl.head) {
+                    .cooked => |*head| {
+                        buf.appendSlice(head.slice(p.allocator)) catch bun.outOfMemory();
+                    },
+                    .raw => return "", // shouldn't happen post-visit but be safe
+                }
+                for (tmpl.parts) |*part| {
+                    buf.append(0) catch bun.outOfMemory(); // \x00 placeholder per interpolation
+                    switch (part.tail) {
+                        .cooked => |*tail| {
+                            buf.appendSlice(tail.slice(p.allocator)) catch bun.outOfMemory();
+                        },
+                        .raw => return "", // raw tail — treat as opaque
+                    }
+                }
+                return buf.items;
+            }
+            return "";
+        }
+
+        pub fn checkDynamicSpecifier(p: *P, arg: Expr, loc: logger.Loc, comptime kind: []const u8) void {
+            if (!p.options.bundle or p.options.allow_unresolved.* == .all) return;
+
+            var shape_buf = std.array_list.Managed(u8).init(p.allocator);
+            defer shape_buf.deinit();
+            const shape = p.extractDynamicSpecifierShape(arg, &shape_buf);
+            if (!p.options.allow_unresolved.allows(shape)) {
+                const r = js_lexer.rangeOfIdentifier(p.source, loc);
+                if (shape.len > 0) {
+                    // Print a human-readable shape: replace \x00 with *
+                    const display = p.allocator.dupe(u8, shape) catch bun.outOfMemory();
+                    defer p.allocator.free(display);
+                    for (display) |*c| if (c.* == 0) {
+                        c.* = '*';
+                    };
+                    p.log.addRangeErrorFmtWithNote(
+                        p.source,
+                        r,
+                        p.allocator,
+                        "This " ++ kind ++ " expression will not be bundled because the argument is not a string literal",
+                        .{},
+                        "The specifier shape \"{s}\" does not match any --allow-unresolved pattern. " ++
+                            "To allow it, add a matching pattern: Bun.build({{ allowUnresolved: [\"{s}\"] }}) or --allow-unresolved '{s}'",
+                        .{ display, display, display },
+                        r,
+                    ) catch bun.outOfMemory();
+                } else {
+                    p.log.addRangeErrorFmtWithNote(
+                        p.source,
+                        r,
+                        p.allocator,
+                        "This " ++ kind ++ " expression will not be bundled because the argument is not a string literal",
+                        .{},
+                        "To allow opaque dynamic specifiers, use Bun.build({{ allowUnresolved: [\"\"] }}) or pass --allow-unresolved with an empty-string pattern",
+                        .{},
+                        r,
+                    ) catch bun.outOfMemory();
+                }
+            }
+        }
+
         pub fn transposeImport(noalias p: *P, arg: Expr, state: *const TransposeState) Expr {
             // The argument must be a string
             if (arg.data.as(.e_string)) |str| {
@@ -543,6 +610,8 @@ pub fn NewParser_(
                 p.log.addRangeDebug(p.source, r, "This \"import\" expression cannot be bundled because the argument is not a string literal") catch unreachable;
             }
 
+            p.checkDynamicSpecifier(arg, state.loc, "import()");
+
             return p.newExpr(E.Import{
                 .expr = arg,
                 .options = state.import_options,
@@ -561,6 +630,8 @@ pub fn NewParser_(
                 const r = js_lexer.rangeOfIdentifier(p.source, arg.loc);
                 p.log.addRangeDebug(p.source, r, "This \"require.resolve\" expression cannot be bundled because the argument is not a string literal") catch unreachable;
             }
+
+            p.checkDynamicSpecifier(arg, arg.loc, "require.resolve()");
 
             const args = p.allocator.alloc(Expr, 1) catch unreachable;
             args[0] = arg;
@@ -673,6 +744,7 @@ pub fn NewParser_(
                     return p.newExpr(E.RequireString{ .import_record_index = import_record_index }, arg.loc);
                 },
                 else => {
+                    p.checkDynamicSpecifier(arg, arg.loc, "require()");
                     p.recordUsageOfRuntimeRequire();
                     const args = p.allocator.alloc(Expr, 1) catch unreachable;
                     args[0] = arg;

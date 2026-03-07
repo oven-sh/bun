@@ -1006,6 +1006,7 @@ pub const CommandLineReporter = struct {
             }
             break :brk list;
         };
+        defer byte_ranges.deinit();
 
         if (byte_ranges.items.len == 0 and opts.collect_coverage_from.len == 0) {
             return;
@@ -1285,6 +1286,8 @@ pub const CommandLineReporter = struct {
                         .result => |f| {
                             defer f.close();
                             var count: usize = 0;
+                            var saw_any_bytes = false;
+                            var ends_with_newline = false;
                             var read_buf: [4096]u8 = undefined;
                             while (true) {
                                 const n = switch (f.read(&read_buf)) {
@@ -1292,12 +1295,15 @@ pub const CommandLineReporter = struct {
                                     .err => break :count_lines count,
                                 };
                                 if (n == 0) break;
+                                saw_any_bytes = true;
                                 for (read_buf[0..n]) |byte| {
                                     if (byte == '\n') count += 1;
                                 }
+                                ends_with_newline = read_buf[n - 1] == '\n';
                             }
-                            // Account for last line without trailing newline
-                            if (count == 0) count = 1;
+                            // Add 1 for the last line if the file has content but
+                            // doesn't end with a newline.
+                            if (saw_any_bytes and !ends_with_newline) count += 1;
                             break :count_lines count;
                         },
                     }
@@ -1419,7 +1425,7 @@ fn findUncoveredFiles(
             if (strings.eqlComptime(dir_entry.name, "node_modules")) continue;
 
             if (dir_entry.kind == .directory) {
-                const sub_path = bun.default_allocator.dupe(u8, bun.path.join(&[_]string{ dir_path, dir_entry.name }, .auto)) catch continue;
+                const sub_path = allocator.dupe(u8, bun.path.join(&[_]string{ dir_path, dir_entry.name }, .auto)) catch continue;
                 dir_stack.append(allocator, sub_path) catch {
                     allocator.free(sub_path);
                     continue;
@@ -1434,7 +1440,7 @@ fn findUncoveredFiles(
             if (!bundle_options.loader(ext).isJavaScriptLike()) continue;
 
             // Build absolute path and compute relative path
-            const abs_path = bun.default_allocator.dupe(u8, bun.path.join(&[_]string{ dir_path, dir_entry.name }, .auto)) catch continue;
+            const abs_path = allocator.dupe(u8, bun.path.join(&[_]string{ dir_path, dir_entry.name }, .auto)) catch continue;
             defer allocator.free(abs_path);
 
             const relative_path = bun.path.relative(root_dir, abs_path);

@@ -124,6 +124,7 @@
 #include "JSSink.h"
 #include "JSSocketAddressDTO.h"
 #include "JSReactElement.h"
+#include "BunMarkdownMeta.h"
 #include "JSSQLStatement.h"
 #include "JSStringDecoder.h"
 #include "JSTextEncoder.h"
@@ -1800,6 +1801,23 @@ void GlobalObject::finishCreation(VM& vm)
     m_JSReactElementStructure.initLater(
         [](const Initializer<Structure>& init) {
             init.set(Bun::JSReactElement::createStructure(init.vm, init.owner));
+        });
+
+    m_JSMarkdownListItemMetaStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            init.set(Bun::MarkdownMeta::createListItemMetaStructure(init.vm, init.owner));
+        });
+    m_JSMarkdownListMetaStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            init.set(Bun::MarkdownMeta::createListMetaStructure(init.vm, init.owner));
+        });
+    m_JSMarkdownCellMetaStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            init.set(Bun::MarkdownMeta::createCellMetaStructure(init.vm, init.owner));
+        });
+    m_JSMarkdownLinkMetaStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            init.set(Bun::MarkdownMeta::createLinkMetaStructure(init.vm, init.owner));
         });
 
     m_JSSQLStatementStructure.initLater(

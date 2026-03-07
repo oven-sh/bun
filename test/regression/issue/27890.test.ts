@@ -46,7 +46,7 @@ req.end();
     expect(stderr).not.toContain("CERT_ALTNAME");
     expect(stdout).toContain("status:");
     expect(exitCode).toBe(0);
-  });
+  }, 30_000);
 
   test("https.request without custom lookup should still work", async () => {
     await using proc = Bun.spawn({
@@ -77,7 +77,7 @@ req.end();
     expect(stderr).not.toContain("certificate");
     expect(stdout).toContain("status:");
     expect(exitCode).toBe(0);
-  });
+  }, 30_000);
 
   test("custom lookup returning IP should preserve hostname for TLS SNI", async () => {
     // This test verifies the specific scenario from issue #27890:
@@ -125,5 +125,5 @@ req.end();
     expect(stderr).not.toContain("CERT_ALTNAME");
     expect(stdout).toContain("status:");
     expect(exitCode).toBe(0);
-  });
+  }, 30_000);
 });

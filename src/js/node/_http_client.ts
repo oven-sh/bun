@@ -528,7 +528,7 @@ function ClientRequest(input, options, cb) {
         }
 
         if (!this.hasHeader("Host")) {
-          this.setHeader("Host", `${host}${this[kUseDefaultPort] ? "" : ":" + port}`);
+          this.setHeader("Host", `${host}${this[kUseDefaultPort] ? "" : ":" + this[kPort]}`);
         }
 
         // When custom lookup resolves hostname to IP, preserve the original

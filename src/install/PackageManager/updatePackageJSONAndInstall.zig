@@ -139,11 +139,25 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
         .remove => {
             // if we're removing, they don't have to specify where it is installed in the dependencies list
             // they can even put it multiple times and we will just remove all of them
-            any_changes = removeDepsFromPackageJSON(&current_package_json.root, updates.*);
+
+            // When --filter is used (without --recursive), only modify root if filter matches the root package name.
+            // With --recursive or no filter, always modify root.
+            const should_modify_root = if (manager.options.filter_patterns.len > 0 and !manager.options.do.recursive) blk: {
+                const root_name = if (current_package_json.root.asProperty("name")) |name_prop|
+                    (if (name_prop.expr.data == .e_string) name_prop.expr.data.e_string.data else "")
+                else
+                    "";
+                break :blk removeFromWorkspacePackageJSONs_filterMatches(manager, root_name, "", original_cwd);
+            } else true;
+
+            if (should_modify_root) {
+                any_changes = removeDepsFromPackageJSON(&current_package_json.root, updates.*);
+            }
 
             // When --filter or --recursive is used, also remove from matching workspace package.json files
             if (is_workspace_remove) {
-                try removeFromWorkspacePackageJSONs(manager, updates.*, original_cwd);
+                const workspace_changes = try removeFromWorkspacePackageJSONs(manager, updates.*, original_cwd);
+                any_changes = any_changes or workspace_changes;
             }
         },
 
@@ -742,12 +756,45 @@ fn removeDepsFromPackageJSON(root: *Expr, updates: []const UpdateRequest) bool {
     return changed;
 }
 
+/// Check if the given name/path matches the manager's --filter patterns.
+/// Used to determine whether the root package should be modified.
+fn removeFromWorkspacePackageJSONs_filterMatches(
+    manager: *PackageManager,
+    pkg_name: string,
+    workspace_path: string,
+    original_cwd: string,
+) bool {
+    if (manager.options.filter_patterns.len == 0) return true;
+
+    const path_buf = bun.path_buffer_pool.get();
+    defer bun.path_buffer_pool.put(path_buf);
+
+    for (manager.options.filter_patterns) |pattern| {
+        const filter = WorkspaceFilter.init(manager.allocator, pattern, original_cwd, path_buf[0..]) catch continue;
+        defer filter.deinit(manager.allocator);
+
+        const match_pattern, const name_or_path = switch (filter) {
+            .name => |p| .{ p, pkg_name },
+            .path => |p| .{ p, workspace_path },
+            .all => return true,
+        };
+
+        switch (bun.glob.match(match_pattern, name_or_path)) {
+            .match, .negate_match => return true,
+            .negate_no_match => return false,
+            .no_match => {},
+        }
+    }
+    return false;
+}
+
 /// Remove dependencies from workspace package.json files that match the given filter/recursive options.
+/// Returns true if any workspace package.json files were modified.
 fn removeFromWorkspacePackageJSONs(
     manager: *PackageManager,
     updates: []const UpdateRequest,
     original_cwd: string,
-) !void {
+) !bool {
     const top_level_dir = strings.withoutTrailingSlash(FileSystem.instance.top_level_dir);
     const root_package_json_path = manager.original_package_json_path;
 
@@ -776,7 +823,7 @@ fn removeFromWorkspacePackageJSONs(
         manager.log,
         root_package_json_path,
         .{},
-    ).unwrap() catch return;
+    ).unwrap() catch return false;
 
     const workspaces_array = if (root_entry.root.asProperty("workspaces")) |prop| switch (prop.expr.data) {
         .e_array => |arr| arr,
@@ -787,7 +834,7 @@ fn removeFromWorkspacePackageJSONs(
         else => null,
     } else null;
 
-    if (workspaces_array == null) return;
+    if (workspaces_array == null) return false;
 
     var workspace_names = WorkspaceMap.init(manager.allocator);
     defer workspace_names.map.deinit();
@@ -803,9 +850,10 @@ fn removeFromWorkspacePackageJSONs(
         &root_entry.source,
         logger.Loc{},
         null,
-    ) catch return;
+    ) catch return false;
 
     // Iterate over discovered workspaces and remove matching dependencies.
+    var any_workspace_changes = false;
     var filepath_buf: bun.PathBuffer = undefined;
     for (workspace_names.keys(), workspace_names.values()) |rel_path, entry| {
         // Build absolute package.json path for this workspace
@@ -838,8 +886,10 @@ fn removeFromWorkspacePackageJSONs(
         // Remove the requested dependencies
         if (removeDepsFromPackageJSON(&pkg_json.root, updates)) {
             try saveWorkspacePackageJSON(manager, pkg_json, abs_pkg_json_path);
+            any_workspace_changes = true;
         }
     }
+    return any_workspace_changes;
 }
 
 /// Check if a workspace matches the given filters by name or path.

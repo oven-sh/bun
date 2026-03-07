@@ -2583,6 +2583,21 @@ declare module "bun" {
     plugins?: BunPlugin[];
     // manifest?: boolean; // whether to return manifest
     external?: string[];
+    /**
+     * Control whether dynamic `import()`, `require()`, or `require.resolve()` specifiers (non-literal
+     * arguments like `` `./locales/${lang}.json` ``) are allowed to pass through
+     * to runtime without being bundled.
+     *
+     * - `["*"]` (default) — allow all dynamic specifiers
+     * - `[]` — fail the build on any dynamic specifier
+     * - `["./locales/*.json", ...]` — allow only specifiers whose static
+     *   template parts match one of these glob patterns
+     *
+     * Add `""` to the list to allow fully opaque specifiers like `import(fn())`.
+     *
+     * @default ["*"]
+     */
+    allowUnresolved?: string[];
     packages?: "bundle" | "external";
     publicPath?: string;
     define?: Record<string, string>;

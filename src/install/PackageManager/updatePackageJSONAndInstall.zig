@@ -951,16 +951,22 @@ fn saveWorkspacePackageJSON(
 
     const new_source = try manager.allocator.dupe(u8, package_json_writer.ctx.writtenWithoutTrailingZero());
 
-    const file = std.fs.cwd().createFile(pkg_json_path, .{}) catch |err| {
-        Output.errGeneric("failed to write package.json at \"{s}\": {s}", .{ pkg_json_path, @errorName(err) });
-        Global.crash();
-    };
-    defer file.close();
+    const path_z = try manager.allocator.dupeZ(u8, pkg_json_path);
+    defer manager.allocator.free(path_z);
 
-    file.writeAll(new_source) catch |err| {
+    const workspace_pkg_json_file = (try bun.sys.File.openat(
+        .cwd(),
+        path_z,
+        bun.O.RDWR,
+        0,
+    ).unwrap()).handle.stdFile();
+    defer workspace_pkg_json_file.close();
+
+    workspace_pkg_json_file.pwriteAll(new_source, 0) catch |err| {
         Output.errGeneric("failed to write package.json at \"{s}\": {s}", .{ pkg_json_path, @errorName(err) });
         Global.crash();
     };
+    std.posix.ftruncate(workspace_pkg_json_file.handle, new_source.len) catch {};
 }
 
 const std = @import("std");

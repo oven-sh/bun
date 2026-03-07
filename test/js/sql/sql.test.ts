@@ -12366,24 +12366,18 @@ CREATE TABLE ${table_name} (
       await using db = postgres(options);
       const tableName = `test_${randomUUIDv7("hex").replaceAll("-", "")}`;
 
-      await db`CREATE TEMPORARY TABLE ${db(tableName)} (a INT, b INT, c INT, d INT, e INT, f INT, g INT, h INT, i INT, j INT)`;
+      await db`CREATE TEMPORARY TABLE ${db(tableName)} (a INT, b INT, c INT)`;
 
-      // 10 columns * 7000 rows = 70000 parameters, exceeding the 65535 limit
-      const rows = Array.from({ length: 7000 }, (_, i) => ({
-        a: i,
-        b: i,
-        c: i,
-        d: i,
-        e: i,
-        f: i,
-        g: i,
-        h: i,
-        i: i,
-        j: i,
-      }));
+      // 3 columns * 21845 rows = 65535 parameters, exactly at the limit - should succeed
+      const maxRows = Array.from({ length: 21845 }, (_, i) => ({ a: i, b: i, c: i }));
+      await db`INSERT INTO ${db(tableName)} ${db(maxRows)}`;
+      const [{ count }] = await db`SELECT count(*)::int as count FROM ${db(tableName)}`;
+      expect(count).toBe(21845);
 
+      // 3 columns * 21846 rows = 65538 parameters, just over the limit - should throw
+      const overLimitRows = Array.from({ length: 21846 }, (_, i) => ({ a: i, b: i, c: i }));
       try {
-        await db`INSERT INTO ${db(tableName)} ${db(rows)}`;
+        await db`INSERT INTO ${db(tableName)} ${db(overLimitRows)}`;
         expect.unreachable("should have thrown");
       } catch (e: any) {
         expect(e.code).toBe("ERR_POSTGRES_TOO_MANY_PARAMETERS");

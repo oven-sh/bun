@@ -488,6 +488,15 @@ void BunPlugin::OnLoad::endModuleMockingScope(JSC::JSGlobalObject* globalObject)
                     }
                 }
             }
+            // Also evict the CJS requireMap entry, since mock.module() patches
+            // the CommonJS module's exports in-place and we don't snapshot/restore those.
+            auto* specifier = jsString(vm, change.path);
+            if (requireMap) {
+                requireMap->remove(globalObject, specifier);
+                if (scope.exception()) [[unlikely]] {
+                    (void)scope.tryClearException();
+                }
+            }
         } else {
             // The module was not yet loaded when mock.module() was called, so the mock
             // factory was invoked lazily and its result cached in esmRegistry. Evict that
@@ -850,7 +859,11 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
         for (size_t i = changes.size(); i > marker; --i) {
             if (changes[i - 1].path == specifier) {
                 changes[i - 1].patchedNamespace.set(vm, patchedNamespaceObject);
-                changes[i - 1].originalExportSnapshot.set(vm, exportSnapshotObject);
+                // Only set the snapshot on the first mock.module() call for this
+                // specifier in this scope. A second call would snapshot the
+                // already-mocked exports, losing the real originals.
+                if (!changes[i - 1].originalExportSnapshot)
+                    changes[i - 1].originalExportSnapshot.set(vm, exportSnapshotObject);
                 break;
             }
         }
@@ -1154,6 +1167,75 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionBunPluginClear, (JSC::JSGlobalObject * global
 
     delete global->onLoadPlugins.virtualModules;
     global->onLoadPlugins.virtualModules = nullptr;
+
+    // Replay undo actions for all tracked mock changes before clearing
+    // bookkeeping. This ensures patched namespaces are restored and cached
+    // entries in esmRegistry/requireMap are evicted, so endModuleMockingScope()
+    // (which runs later via defer) doesn't need to do anything.
+    if (!global->onLoadPlugins.moduleMockChanges.isEmpty()) {
+        auto& vm = JSC::getVM(globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        auto* requireMap = global->requireMap();
+        if (scope.exception()) [[unlikely]] {
+            (void)scope.tryClearException();
+            requireMap = nullptr;
+        }
+        auto* esmRegistry = global->esmRegistryMap();
+        if (scope.exception()) [[unlikely]] {
+            (void)scope.tryClearException();
+            esmRegistry = nullptr;
+        }
+
+        for (size_t i = global->onLoadPlugins.moduleMockChanges.size(); i > 0; --i) {
+            const auto& change = global->onLoadPlugins.moduleMockChanges[i - 1];
+
+            if (change.patchedNamespace) {
+                auto* ns = jsDynamicCast<JSC::JSModuleNamespaceObject*>(change.patchedNamespace.get());
+                auto* snapshot = change.originalExportSnapshot.get();
+                if (ns && snapshot) {
+                    JSC::PropertyNameArrayBuilder snapshotNames(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
+                    JSC::JSObject::getOwnPropertyNames(snapshot, globalObject, snapshotNames, JSC::DontEnumPropertiesMode::Exclude);
+                    if (scope.exception()) [[unlikely]] {
+                        (void)scope.tryClearException();
+                    } else {
+                        for (auto& name : snapshotNames) {
+                            JSC::JSValue val = snapshot->get(globalObject, name);
+                            if (scope.exception()) [[unlikely]] {
+                                (void)scope.tryClearException();
+                                continue;
+                            }
+                            ns->overrideExportValue(globalObject, name, val);
+                            if (scope.exception()) [[unlikely]] {
+                                (void)scope.tryClearException();
+                            }
+                        }
+                    }
+                }
+                auto* specifier = jsString(vm, change.path);
+                if (requireMap) {
+                    requireMap->remove(globalObject, specifier);
+                    if (scope.exception()) [[unlikely]] {
+                        (void)scope.tryClearException();
+                    }
+                }
+            } else {
+                auto* specifier = jsString(vm, change.path);
+                if (requireMap) {
+                    requireMap->remove(globalObject, specifier);
+                    if (scope.exception()) [[unlikely]] {
+                        (void)scope.tryClearException();
+                    }
+                }
+                if (esmRegistry) {
+                    esmRegistry->remove(globalObject, specifier);
+                    if (scope.exception()) [[unlikely]] {
+                        (void)scope.tryClearException();
+                    }
+                }
+            }
+        }
+    }
+
     delete global->onLoadPlugins.moduleMocks;
     global->onLoadPlugins.moduleMocks = nullptr;
     global->onLoadPlugins.moduleMockChanges.clear();

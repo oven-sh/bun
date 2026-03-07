@@ -882,6 +882,7 @@ pub fn scan(this: *JSTranspiler, globalThis: *jsc.JSGlobalObject, callframe: *js
     const named_imports_value = try namedImportsToJS(
         globalThis,
         parse_result.ast.import_records.slice(),
+        this.config.trim_unused_imports orelse false,
     );
 
     const named_exports_value = try namedExportsToJS(
@@ -1068,20 +1069,30 @@ fn namedExportsToJS(global: *JSGlobalObject, named_exports: *JSAst.Ast.NamedExpo
     return bun.String.toJSArray(global, names);
 }
 
-fn namedImportsToJS(global: *JSGlobalObject, import_records: []const ImportRecord) bun.JSError!jsc.JSValue {
+fn namedImportsToJS(global: *JSGlobalObject, import_records: []const ImportRecord, trim_unused_imports: bool) bun.JSError!jsc.JSValue {
     const path_label = jsc.ZigString.static("path");
     const kind_label = jsc.ZigString.static("kind");
 
-    const array = try jsc.JSValue.createEmptyArray(global, import_records.len);
+    var count: u32 = 0;
+    for (import_records) |record| {
+        if (record.flags.is_internal) continue;
+        if (trim_unused_imports and record.flags.is_unused) continue;
+        count += 1;
+    }
+
+    const array = try jsc.JSValue.createEmptyArray(global, count);
     array.ensureStillAlive();
 
-    for (import_records, 0..) |record, i| {
+    var i: u32 = 0;
+    for (import_records) |record| {
         if (record.flags.is_internal) continue;
+        if (trim_unused_imports and record.flags.is_unused) continue;
 
         array.ensureStillAlive();
         const path = jsc.ZigString.init(record.path.text).toJS(global);
         const kind = jsc.ZigString.init(record.kind.label()).toJS(global);
-        try array.putIndex(global, @as(u32, @truncate(i)), try jsc.JSValue.createObject2(global, path_label, kind_label, path, kind));
+        try array.putIndex(global, i, try jsc.JSValue.createObject2(global, path_label, kind_label, path, kind));
+        i += 1;
     }
 
     return array;
@@ -1173,6 +1184,7 @@ pub fn scanImports(this: *JSTranspiler, globalThis: *jsc.JSGlobalObject, callfra
     const named_imports_value = try namedImportsToJS(
         globalThis,
         this.scan_pass_result.import_records.items,
+        this.config.trim_unused_imports orelse false,
     );
     return named_imports_value;
 }

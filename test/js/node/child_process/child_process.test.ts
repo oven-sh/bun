@@ -414,7 +414,7 @@ it("it accepts stdio passthrough", async () => {
     }),
   );
 
-  const installProc = Bun.spawn({
+  await using installProc = Bun.spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
     stdio: ["inherit", "pipe", "pipe"],
@@ -425,7 +425,7 @@ it("it accepts stdio passthrough", async () => {
     throw new Error(`bun install failed with exit code ${installExitCode}:\n${installStderr}`);
   }
 
-  const runProc = Bun.spawn({
+  await using runProc = Bun.spawn({
     cmd: [bunExe(), "--bun", "run", "all"],
     cwd: package_dir,
     stdio: ["ignore", "pipe", "pipe"],

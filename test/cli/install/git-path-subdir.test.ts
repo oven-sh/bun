@@ -118,37 +118,41 @@ describe("git dependency &path: subdirectory support", () => {
   });
 
   test("path traversal is rejected", async () => {
-    using installDir = tempDir("git-path-traversal", {
-      "package.json": JSON.stringify({
-        name: "test-traversal",
-        dependencies: {
-          "evil-pkg": `${MONOREPO}#${COMMIT}&path:../../etc/passwd`,
-        },
-      }),
-    });
+    const maliciousPaths = [
+      { name: "evil-pkg-dotdot", path: "../../etc/passwd" },
+      { name: "evil-pkg-win", path: "..\\\\..\\\\etc\\\\passwd" },
+      { name: "evil-pkg-drive", path: "C:/tmp/pkg" },
+    ];
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "install"],
-      env: bunEnv,
-      cwd: String(installDir),
-      stderr: "pipe",
-      stdout: "pipe",
-    });
+    for (const { name, path } of maliciousPaths) {
+      using installDir = tempDir("git-path-traversal", {
+        "package.json": JSON.stringify({
+          name: "test-traversal",
+          dependencies: {
+            [name]: `${MONOREPO}#${COMMIT}&path:${path}`,
+          },
+        }),
+      });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        env: bunEnv,
+        cwd: String(installDir),
+        stderr: "pipe",
+        stdout: "pipe",
+      });
 
-    // Verify the failure is specifically due to the invalid path diagnostic
-    expect(stderr).toContain("Invalid git subdirectory path");
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    // The package directory should not have been created
-    expect(existsSync(join(String(installDir), "node_modules", "evil-pkg"))).toBeFalse();
+      // Verify the failure is specifically due to the invalid path diagnostic
+      expect(stderr).toContain("Invalid git subdirectory path");
 
-    // Extra safety: no files from outside the repo should be present
-    const etcPasswd = join(String(installDir), "node_modules", "evil-pkg", "passwd");
-    expect(existsSync(etcPasswd)).toBeFalse();
+      // The package directory should not have been created
+      expect(existsSync(join(String(installDir), "node_modules", name))).toBeFalse();
 
-    // Path traversal should be rejected — install must fail
-    expect(exitCode).not.toBe(0);
+      // Path traversal should be rejected — install must fail
+      expect(exitCode).not.toBe(0);
+    }
   });
 
   test("normal git dep without &path: still works (backward compat)", async () => {
@@ -156,7 +160,7 @@ describe("git dependency &path: subdirectory support", () => {
       "package.json": JSON.stringify({
         name: "test-backward-compat",
         dependencies: {
-          "is-number": "github:jonschlinkert/is-number#98e8ff1",
+          "is-number": "git+https://github.com/jonschlinkert/is-number.git#98e8ff1",
         },
       }),
     });

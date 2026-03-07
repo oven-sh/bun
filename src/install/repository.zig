@@ -409,8 +409,10 @@ pub const Repository = extern struct {
             }
             try writer.writeAll(repo);
 
+            var has_fragment = false;
             if (!formatter.repository.resolved.isEmpty()) {
                 try writer.writeAll("#");
+                has_fragment = true;
                 var resolved = formatter.repository.resolved.slice(formatter.buf);
                 if (strings.lastIndexOfChar(resolved, '-')) |i| {
                     resolved = resolved[i + 1 ..];
@@ -418,10 +420,14 @@ pub const Repository = extern struct {
                 try writer.writeAll(resolved);
             } else if (!formatter.repository.committish.isEmpty()) {
                 try writer.writeAll("#");
+                has_fragment = true;
                 try writer.writeAll(formatter.repository.committish.slice(formatter.buf));
             }
 
             if (!formatter.repository.path.isEmpty()) {
+                if (!has_fragment) {
+                    try writer.writeAll("#");
+                }
                 try writer.writeAll("&path:");
                 try writer.writeAll(formatter.repository.path.slice(formatter.buf));
             }
@@ -675,9 +681,7 @@ pub const Repository = extern struct {
         const subdir_z = bun.path.joinZBuf(&subdir_z_buf, &[_]string{subdir_path}, .auto);
 
         // Verify the subdirectory exists
-        var sub_dir = bun.openDir(dir, subdir_z) catch {
-            return error.InstallFailed;
-        };
+        var sub_dir = try bun.openDir(dir, subdir_z);
         sub_dir.close();
 
         // Use a temporary name for the swap
@@ -696,7 +700,7 @@ pub const Repository = extern struct {
         }
 
         // Delete the original checkout directory
-        cache_dir.deleteTree(folder_name) catch {};
+        try cache_dir.deleteTree(folder_name);
 
         // Move the temp dir to the original location
         if (bun.sys.renameat(

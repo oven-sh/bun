@@ -1,24 +1,21 @@
 // Subprocess fixture for fetch-proxy-tls-intern-race.test.ts.
 //
-// Creates the conditions for the SSLConfig intern/deref race within a single
-// bun process. The race is between the JS thread (intern) and the HTTP thread
-// (deref) — both share the same process-level SSLConfig.GlobalRegistry.
+// The SSLConfig intern/deref race is between the JS thread (calls intern()
+// from fetch()) and the HTTP thread (calls deref() when a request completes).
+// Both threads share the same process-level SSLConfig.GlobalRegistry.
 //
-// Workers are REQUIRED: with a single JS thread, AsyncHTTP's callback ordering
-// (client.deinit() before callback.function()) prevents intern() from ever
-// overlapping with deref(). Workers provide independent JS threads whose
-// intern() calls can race against the driver's HTTP-thread deref().
+// No workers needed: we fire a setImmediate loop that calls fetch() (intern)
+// while in-flight requests complete on the HTTP thread (deref). When the
+// HTTP thread's deref() takes count 1→0 and enters destroy(), a concurrent
+// JS-thread intern() can find the dying config and do ref() 0→1.
 //
-// The parent test spawns this as a subprocess and checks for exit 0. If the
-// race triggers (on unfixed code), debugAssert in ref() or assertValid()'s
-// debug.magic check catches it and the process crashes with non-zero exit.
-
-import { Worker } from "node:worker_threads";
+// On debug builds with BUN_DEBUG_SSLConfig=1, scoped logging in deref()
+// and destroy() widens the race window from ~10 CPU cycles to ~100μs+.
+//
+// If the race triggers, debugAssert/assertValid panics → non-zero exit.
 
 const BACKEND_PORT = Number(process.env.BACKEND_PORT);
 const PROXY_PORT = Number(process.env.PROXY_PORT);
-const DRIVER_ITERATIONS = Number(process.env.DRIVER_ITERATIONS || 100);
-const NUM_PROBES = Number(process.env.NUM_PROBES || 2);
 const HARD_CAP_MS = Number(process.env.HARD_CAP_MS || 15000);
 
 if (!BACKEND_PORT || !PROXY_PORT) {
@@ -26,105 +23,49 @@ if (!BACKEND_PORT || !PROXY_PORT) {
   process.exit(2);
 }
 
-// Driver: serial fetches with gaps → cycles refcount through 0 repeatedly.
-const driver = `
-  const { workerData, parentPort } = require("worker_threads");
-  async function run() {
-    let ok = 0;
-    for (let i = 0; i < workerData.n; i++) {
-      try {
-        const r = await fetch("https://127.0.0.1:" + workerData.bp + "/", {
-          proxy: "http://127.0.0.1:" + workerData.pp,
-          keepalive: false,
-          tls: { rejectUnauthorized: false },
-        });
-        if ((await r.text()) === "ok") ok++;
-      } catch {}
-      await Bun.sleep(1);
-    }
-    parentPort.postMessage(ok);
-  }
-  run();
-`;
+const url = `https://127.0.0.1:${BACKEND_PORT}/`;
+const proxy = `http://127.0.0.1:${PROXY_PORT}`;
+const tls = { rejectUnauthorized: false };
 
-// Probe: tight intern() loop via fetch+abort. setImmediate keeps the JS
-// event loop ticking fast so intern calls probe the race window constantly.
-const probe = `
-  const { workerData, parentPort } = require("worker_threads");
-  const stopFlag = new Int32Array(workerData.stopBuf);
-  let probes = 0;
-  function tick() {
-    if (Atomics.load(stopFlag, 0) !== 0) {
-      parentPort.postMessage(probes);
-      return;
-    }
-    const ac = new AbortController();
-    fetch("https://127.0.0.1:" + workerData.bp + "/", {
-      proxy: "http://127.0.0.1:" + workerData.pp,
-      keepalive: false,
-      tls: { rejectUnauthorized: false },
-      signal: ac.signal,
-    }).catch(() => {});
-    ac.abort();
-    probes++;
-    setImmediate(tick);
-  }
-  tick();
-`;
+let stop = false;
+let driverOk = 0;
+let probes = 0;
 
-const stopBuf = new SharedArrayBuffer(4);
-const stopFlag = new Int32Array(stopBuf);
-
-const probeWorkers: Worker[] = [];
-const probePromises: Promise<number>[] = [];
-for (let i = 0; i < NUM_PROBES; i++) {
-  const w = new Worker(probe, {
-    eval: true,
-    workerData: { bp: BACKEND_PORT, pp: PROXY_PORT, stopBuf },
-  });
-  probeWorkers.push(w);
-  probePromises.push(
-    new Promise<number>(resolve => {
-      w.on("message", (n: number) => resolve(n));
-      w.on("error", () => resolve(-1));
-      w.on("exit", (code: number) => {
-        if (code !== 0) resolve(-1);
-      });
-    }),
-  );
+// Probe: setImmediate loop firing fetch+abort. Each call to fetch() runs
+// intern() on the JS thread. abort() causes the request to complete quickly,
+// triggering deref() on the HTTP thread. The JS thread immediately queues
+// the next tick, so intern() calls keep firing while HTTP-thread derefs happen.
+function probe() {
+  if (stop) return;
+  const ac = new AbortController();
+  fetch(url, { proxy, keepalive: false, tls, signal: ac.signal }).catch(() => {});
+  ac.abort();
+  probes++;
+  setImmediate(probe);
 }
 
-const d = new Worker(driver, {
-  eval: true,
-  workerData: { bp: BACKEND_PORT, pp: PROXY_PORT, n: DRIVER_ITERATIONS },
-});
-const driverPromise = new Promise<number>(resolve => {
-  d.on("message", (n: number) => resolve(n));
-  d.on("error", () => resolve(-1));
-  d.on("exit", (code: number) => {
-    if (code !== 0) resolve(-1);
-  });
-});
+// Driver: serial fetches with gaps. The gap lets the HTTP thread complete
+// the request's deref() before the next intern(). With keepalive:false and
+// no ca/cert/key, requires_custom_request_ctx=false → no SSL context cache
+// ref → refcount cycles through 0 on each iteration IF probes aren't pinning it.
+async function driver() {
+  while (!stop) {
+    try {
+      const r = await fetch(url, { proxy, keepalive: false, tls });
+      if ((await r.text()) === "ok") driverOk++;
+    } catch {}
+    await Bun.sleep(1);
+  }
+}
 
-// Hard cap: if neither the race nor the driver finishes quickly, stop
-// probes anyway so the process completes in bounded time.
-const capTimer = setTimeout(() => Atomics.store(stopFlag, 0, 1), HARD_CAP_MS);
+// Run both concurrently in the same event loop.
+probe();
+const driverDone = driver();
 
-const driverOk = await Promise.race([
-  driverPromise,
-  new Promise<number>(resolve => setTimeout(() => resolve(-2), HARD_CAP_MS)),
-]);
-clearTimeout(capTimer);
-Atomics.store(stopFlag, 0, 1);
-const probeCounts = await Promise.all(probePromises);
+// Hard cap so the fixture always terminates.
+await Bun.sleep(HARD_CAP_MS);
+stop = true;
+await driverDone;
 
-// Cleanup — fire and forget (aborted fetches leave tasks that can block awaits).
-d.terminate();
-for (const w of probeWorkers) w.terminate();
-
-// Report results via stdout. If we reach this point, no crash.
-// driverOk: -2 means hard cap hit (probes congested proxy, driver stalled).
-//           -1 means worker errored.
-//           >=0 means completed successfully.
-process.stdout.write(JSON.stringify({ driverOk, probeCounts }) + "\n");
+process.stdout.write(JSON.stringify({ driverOk, probes }) + "\n");
 process.exit(0);

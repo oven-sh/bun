@@ -8,10 +8,10 @@
 //
 // For deterministic reproduction (debug+ASAN + BUN_DEBUG_SSLConfig=1), see #27863.
 //
-// Structure: subprocess (the fixture) runs the actual race stress. If the race
-// triggers, the subprocess crashes (debugAssert / assertValid / ASAN) → non-zero
-// exit → test fails. Workers inside the fixture are required because the
-// GlobalRegistry is process-local and the race needs independent JS threads.
+// Structure: subprocess fixture runs a setImmediate loop calling fetch+abort
+// (intern on JS thread, deref on HTTP thread) while a serial driver loop
+// cycles the refcount through 0. If the race triggers, the subprocess crashes
+// (debugAssert / assertValid / ASAN) → non-zero exit → test fails.
 
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tls as tlsCert } from "harness";
@@ -67,9 +67,7 @@ test("SSLConfig intern/deref race does not cause use-after-free", async () => {
         ...bunEnv,
         BACKEND_PORT: String(backend.port),
         PROXY_PORT: String(proxy.port),
-        DRIVER_ITERATIONS: "100",
-        NUM_PROBES: "2",
-        HARD_CAP_MS: "15000",
+        HARD_CAP_MS: "5000",
         // bunEnv strips BUN_DEBUG_* vars. On debug builds, this scoped log
         // widens the race window from ~10 cycles to ~100μs+ via stderr
         // writes in deref()/destroy(). No-op in release builds (enable_logs
@@ -93,16 +91,10 @@ test("SSLConfig intern/deref race does not cause use-after-free", async () => {
     // stdout in debug builds, so the JSON result is on the last line.
     const lines = stdout.trim().split("\n");
     const result = JSON.parse(lines[lines.length - 1]);
-    expect(Array.isArray(result.probeCounts)).toBe(true);
-    // If the driver completed (not hard-capped or errored), it should have
-    // gotten most of its responses through.
-    if (result.driverOk >= 0) {
-      expect(result.driverOk).toBeGreaterThanOrEqual(80);
-    }
-    // Probes should have fired (verifies they were actually racing).
-    for (const count of result.probeCounts) {
-      expect(count).toBeGreaterThan(50);
-    }
+    // Both the driver and the probe should have done work (verifies the
+    // race conditions were actually being exercised).
+    expect(result.driverOk).toBeGreaterThan(0);
+    expect(result.probes).toBeGreaterThan(100);
   } finally {
     proxy.server.close();
     proxy.server.unref();

@@ -25,29 +25,31 @@ requires_custom_request_ctx: bool = false,
 is_using_default_ciphers: bool = true,
 low_memory_mode: bool = false,
 cached_hash: u64 = 0,
-ref_count: RC = .init(),
 
-// Split strong/weak refcounting (Arc/Weak). The GlobalRegistry holds a WEAK
-// ref on interned entries; upgrade() lets it safely try to revive one without
-// risking a 0->1 strong resurrection race.
-const RC = bun.ptr.ThreadSafeWeakableRefCount(@This(), "ref_count", dropContents, freeMemory, .{});
-pub const ref = RC.ref;
-pub const deref = RC.deref;
-const weakRef = RC.weakRef;
-const weakDeref = RC.weakDeref;
-const upgrade = RC.upgrade;
+/// Atomic shared pointer with weak support. Refcounting and allocation are
+/// managed non-intrusively by `bun.ptr.shared`; the SSLConfig struct itself
+/// has no refcount field.
+pub const SharedPtr = bun.ptr.shared.WithOptions(*SSLConfig, .{
+    .atomic = true,
+    .allow_weak = true,
+});
 
-/// strong 1->0. Evict from the weak registry while content is still intact
-/// (map eql/hash read it), then destruct field contents. The mixin drops the
-/// collective weak ref after this returns.
-fn dropContents(this: *SSLConfig) void {
-    GlobalRegistry.remove(this);
-    this.deinit();
+const WeakPtr = SharedPtr.Weak;
+
+/// Increments the strong refcount. `this` MUST have originated from
+/// `GlobalRegistry.intern()` (i.e., it points inside a `SharedPtr` allocation).
+/// Calling this on a stack-allocated or directly-heap-allocated SSLConfig is UB.
+pub fn ref(this: *SSLConfig) void {
+    var cloned = SharedPtr.cloneFromRawUnsafe(this);
+    _ = cloned.leak();
 }
 
-/// weak 1->0. Struct allocation is no longer observable by anyone.
-fn freeMemory(this: *SSLConfig) void {
-    bun.default_allocator.destroy(this);
+/// Decrements the strong refcount. Same precondition as `ref()`.
+/// When the last strong ref drops, shared.zig calls `deinit()` on this struct,
+/// which removes it from the registry and frees the string fields.
+pub fn deref(this: *SSLConfig) void {
+    var adopted = SharedPtr.adoptRawUnsafe(this);
+    adopted.deinit();
 }
 
 const ReadFromBlobError = bun.JSError || error{
@@ -138,7 +140,7 @@ pub fn forClientVerification(this: SSLConfig) SSLConfig {
 
 pub fn isSame(this: *const SSLConfig, other: *const SSLConfig) bool {
     inline for (comptime std.meta.fields(SSLConfig)) |field| {
-        if (comptime std.mem.eql(u8, field.name, "ref_count") or std.mem.eql(u8, field.name, "cached_hash")) continue;
+        if (comptime std.mem.eql(u8, field.name, "cached_hash")) continue;
         const first = @field(this, field.name);
         const second = @field(other, field.name);
         switch (field.type) {
@@ -190,7 +192,15 @@ fn freeString(string: *?[*:0]const u8) void {
     string.* = null;
 }
 
+/// Destructor. Called by `bun.ptr.shared` on strong 1->0 for interned configs,
+/// and directly on value-type configs (e.g. `ServerConfig.ssl_config`).
+///
+/// For interned configs, we MUST remove from the registry before freeing the
+/// string fields, since concurrent `intern()` calls may read those fields for
+/// content comparison while we're still in the map. For non-interned configs,
+/// `remove()` is a cheap no-op (pointer-identity check fails).
 pub fn deinit(this: *SSLConfig) void {
+    GlobalRegistry.remove(this);
     bun.meta.useAllFields(SSLConfig, .{
         .server_name = freeString(&this.server_name),
         .key_file_name = freeString(&this.key_file_name),
@@ -211,7 +221,6 @@ pub fn deinit(this: *SSLConfig) void {
         .requires_custom_request_ctx = {},
         .is_using_default_ciphers = {},
         .low_memory_mode = {},
-        .ref_count = {},
         .cached_hash = {},
     });
 }
@@ -250,7 +259,6 @@ pub fn clone(this: *const SSLConfig) SSLConfig {
         .requires_custom_request_ctx = this.requires_custom_request_ctx,
         .is_using_default_ciphers = this.is_using_default_ciphers,
         .low_memory_mode = this.low_memory_mode,
-        .ref_count = .init(),
         .cached_hash = 0,
     };
 }
@@ -259,7 +267,7 @@ pub fn contentHash(this: *SSLConfig) u64 {
     if (this.cached_hash != 0) return this.cached_hash;
     var hasher = std.hash.Wyhash.init(0);
     inline for (comptime std.meta.fields(SSLConfig)) |field| {
-        if (comptime std.mem.eql(u8, field.name, "ref_count") or std.mem.eql(u8, field.name, "cached_hash")) continue;
+        if (comptime std.mem.eql(u8, field.name, "cached_hash")) continue;
         const value = @field(this, field.name);
         switch (field.type) {
             ?[*:0]const u8 => {
@@ -288,10 +296,11 @@ pub fn contentHash(this: *SSLConfig) u64 {
     return this.cached_hash;
 }
 
-/// Weak dedup cache. Each map entry holds a WEAK ref on its key.
-/// Safety: upgrade() is memory-safe without the mutex (weak ref keeps the
-/// struct allocated). The mutex only protects map structure and the invariant
-/// that entry content is intact while in the map.
+/// Weak dedup cache. Each map entry stores a weak pointer on its key's
+/// backing allocation. `upgrade()` on that weak pointer is memory-safe
+/// because the weak ref keeps the allocation alive (even if strong==0 and
+/// `deinit()` is running on another thread). The mutex only protects map
+/// structure and the invariant that entry content is intact while in the map.
 pub const GlobalRegistry = struct {
     const MapContext = struct {
         pub fn hash(_: @This(), key: *SSLConfig) u32 {
@@ -303,48 +312,61 @@ pub const GlobalRegistry = struct {
     };
 
     var mutex: bun.Mutex = .{};
-    var configs: std.ArrayHashMapUnmanaged(*SSLConfig, void, MapContext, true) = .empty;
+    var configs: std.ArrayHashMapUnmanaged(*SSLConfig, WeakPtr, MapContext, true) = .empty;
 
-    /// Takes ownership of a heap-allocated SSLConfig (strong=1, weak=1). Returns
-    /// either an existing equivalent (strong ref'd) or the passed config.
-    /// Either way the caller owns exactly one strong ref on the result.
-    pub fn intern(new_config: *SSLConfig) *SSLConfig {
+    /// Takes a by-value SSLConfig, wraps it in a `SharedPtr` (strong=1), and
+    /// either returns an existing equivalent (upgraded) or the new one. Either
+    /// way, caller owns exactly one strong ref on the result (leaked as a raw
+    /// pointer for ergonomic passing through the fetch/http layers).
+    ///
+    /// The returned `*SSLConfig` must eventually be `deref()`d.
+    pub fn intern(config: SSLConfig) *SSLConfig {
+        var new_shared = SharedPtr.new(config);
+        const new_ptr = new_shared.get();
+
+        // Deferred cleanup MUST run after `mutex.unlock()` (deinit re-locks
+        // the registry mutex via `SSLConfig.deinit -> remove`).
+        var dispose_new: ?SharedPtr = null;
+        var dispose_old_weak: ?WeakPtr = null;
+        defer if (dispose_new) |*s| s.deinit();
+        defer if (dispose_old_weak) |*w| w.deinit();
+
         mutex.lock();
         defer mutex.unlock();
 
-        const gop = bun.handleOom(configs.getOrPutContext(bun.default_allocator, new_config, .{}));
+        const gop = bun.handleOom(configs.getOrPutContext(bun.default_allocator, new_ptr, .{}));
         if (gop.found_existing) {
-            const existing = gop.key_ptr.*;
-            // Registry holds a weak ref on existing, so its allocation is live.
-            // If strong > 0, CAS it up and we have a real ref.
-            if (existing.upgrade()) {
-                // new_config is sole-owned by us; bypass refcount and free directly.
-                new_config.deinit();
-                bun.default_allocator.destroy(new_config);
-                return existing;
+            if (gop.value_ptr.upgrade()) |existing_shared| {
+                // Existing config is still alive; dispose the new duplicate.
+                dispose_new = new_shared;
+                var upgraded = existing_shared;
+                return upgraded.leak();
             }
-            // strong==0: existing is dying. Its deref() is blocked in remove()
-            // waiting for this mutex, so content is still intact (deinit hasn't
-            // run). Replace the slot and transfer the registry's weak ref from
-            // existing to new_config.
-            existing.weakDeref();
-            gop.key_ptr.* = new_config;
+            // strong==0: existing is dying. Its `deinit()` is blocked in
+            // `remove()` waiting for this mutex, so content is still intact
+            // (fields not yet freed). Replace the slot; the dying config's
+            // `remove()` will pointer-mismatch and no-op when it runs.
+            dispose_old_weak = gop.value_ptr.*;
+            gop.key_ptr.* = new_ptr;
         }
-        // Registry takes a weak ref on the (new or replacement) entry.
-        new_config.weakRef();
-        return new_config;
+        gop.value_ptr.* = new_shared.cloneWeak();
+        return new_shared.leak();
     }
 
-    /// Called from deref() at strong 1->0, before deinit(). If intern() replaced
-    /// our slot while we blocked on the mutex, the pointer-identity check fails
-    /// and we skip (intern already dropped our weak ref).
+    /// Called from `SSLConfig.deinit()` on strong 1->0. If `intern()` replaced
+    /// our slot while we blocked on the mutex, the pointer-identity check
+    /// fails and we skip (intern already disposed our weak ref).
+    ///
+    /// No-op for configs that were never interned.
     fn remove(config: *SSLConfig) void {
         mutex.lock();
         defer mutex.unlock();
+        if (configs.count() == 0) return;
         const idx = configs.getIndexContext(config, .{}) orelse return;
         if (configs.keys()[idx] != config) return;
+        var weak = configs.values()[idx];
         configs.swapRemoveAt(idx);
-        config.weakDeref();
+        weak.deinit();
     }
 };
 

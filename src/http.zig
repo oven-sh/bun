@@ -481,7 +481,7 @@ progress_node: ?*Progress.Node = null,
 flags: Flags = Flags{},
 
 state: InternalState = .{},
-tls_props: ?*SSLConfig = null,
+tls_props: ?SSLConfig.SharedPtr = null,
 /// The custom SSL context used for this request (null = default context).
 /// Set by HTTPThread.connect() when using custom TLS configs.
 custom_ssl_ctx: ?*NewHTTPContext(true) = null,
@@ -518,11 +518,9 @@ pub fn deinit(this: *HTTPClient) void {
         this.proxy_tunnel = null;
         tunnel.detachAndDeref();
     }
-    // Release our reference on the interned SSLConfig
-    if (this.tls_props) |config| {
-        config.deref();
-        this.tls_props = null;
-    }
+    // Release our strong ref on the interned SSLConfig
+    if (this.tls_props) |*tls| tls.deinit();
+    this.tls_props = null;
     this.unix_socket_path.deinit();
     this.unix_socket_path = jsc.ZigString.Slice.empty;
 }
@@ -1454,7 +1452,7 @@ pub fn closeAndFail(this: *HTTPClient, err: anyerror, comptime is_ssl: bool, soc
 fn startProxyHandshake(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket, start_payload: []const u8) void {
     log("startProxyHandshake", .{});
     // if we have options we pass them (ca, reject_unauthorized, etc) otherwise use the default
-    const ssl_options = if (this.tls_props != null) this.tls_props.?.* else jsc.API.ServerConfig.SSLConfig.zero;
+    const ssl_options = if (this.tls_props) |tls| tls.get().* else jsc.API.ServerConfig.SSLConfig.zero;
     ProxyTunnel.start(this, is_ssl, socket, ssl_options, start_payload);
 }
 

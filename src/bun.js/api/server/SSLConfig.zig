@@ -36,20 +36,10 @@ pub const SharedPtr = bun.ptr.shared.WithOptions(*SSLConfig, .{
 
 const WeakPtr = SharedPtr.Weak;
 
-/// Increments the strong refcount. `this` MUST have originated from
-/// `GlobalRegistry.intern()` (i.e., it points inside a `SharedPtr` allocation).
-/// Calling this on a stack-allocated or directly-heap-allocated SSLConfig is UB.
-pub fn ref(this: *SSLConfig) void {
-    var cloned = SharedPtr.cloneFromRawUnsafe(this);
-    _ = cloned.leak();
-}
-
-/// Decrements the strong refcount. Same precondition as `ref()`.
-/// When the last strong ref drops, shared.zig calls `deinit()` on this struct,
-/// which removes it from the registry and frees the string fields.
-pub fn deref(this: *SSLConfig) void {
-    var adopted = SharedPtr.adoptRawUnsafe(this);
-    adopted.deinit();
+/// Extract the raw `*SSLConfig` from an optional SharedPtr for pointer-equality
+/// comparison (interned configs have stable addresses).
+pub inline fn rawPtr(maybe_shared: ?SharedPtr) ?*SSLConfig {
+    return if (maybe_shared) |s| s.get() else null;
 }
 
 const ReadFromBlobError = bun.JSError || error{
@@ -316,11 +306,10 @@ pub const GlobalRegistry = struct {
 
     /// Takes a by-value SSLConfig, wraps it in a `SharedPtr` (strong=1), and
     /// either returns an existing equivalent (upgraded) or the new one. Either
-    /// way, caller owns exactly one strong ref on the result (leaked as a raw
-    /// pointer for ergonomic passing through the fetch/http layers).
+    /// way, caller owns exactly one strong ref on the result.
     ///
-    /// The returned `*SSLConfig` must eventually be `deref()`d.
-    pub fn intern(config: SSLConfig) *SSLConfig {
+    /// The returned `SharedPtr` must eventually be `.deinit()`d.
+    pub fn intern(config: SSLConfig) SharedPtr {
         var new_shared = SharedPtr.new(config);
         const new_ptr = new_shared.get();
 
@@ -339,8 +328,7 @@ pub const GlobalRegistry = struct {
             if (gop.value_ptr.upgrade()) |existing_shared| {
                 // Existing config is still alive; dispose the new duplicate.
                 dispose_new = new_shared;
-                var upgraded = existing_shared;
-                return upgraded.leak();
+                return existing_shared;
             }
             // strong==0: existing is dying. Its `deinit()` is blocked in
             // `remove()` waiting for this mutex, so content is still intact
@@ -350,7 +338,7 @@ pub const GlobalRegistry = struct {
             gop.key_ptr.* = new_ptr;
         }
         gop.value_ptr.* = new_shared.cloneWeak();
-        return new_shared.leak();
+        return new_shared;
     }
 
     /// Called from `SSLConfig.deinit()` on strong 1->0. If `intern()` replaced

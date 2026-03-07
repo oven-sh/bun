@@ -176,6 +176,7 @@ export interface BundlerTestInput {
   extensionOrder?: string[];
   /** Replaces "{{root}}" with the file root */
   external?: string[];
+  allowUnresolved?: string[];
   /** Defaults to "bundle" */
   packages?: "bundle" | "external";
   /** Defaults to "esm" */
@@ -446,6 +447,7 @@ function expectBundled(
     entryPointsRaw,
     env,
     external,
+    allowUnresolved,
     packages,
     drop = [],
     features = [],
@@ -747,6 +749,7 @@ function expectBundled(
               `--target=${target}`,
               `--format=${format}`,
               external && external.map(x => ["--external", x]),
+              allowUnresolved && allowUnresolved.map(x => ["--allow-unresolved", x]),
               packages && ["--packages", packages],
               conditions && conditions.map(x => ["--conditions", x]),
               minifyIdentifiers && `--minify-identifiers`,
@@ -1094,6 +1097,7 @@ function expectBundled(
         const buildConfig: BuildConfig = {
           entrypoints: [...entryPaths, ...(entryPointsRaw ?? [])],
           external,
+          allowUnresolved,
           banner,
           format,
           footer,

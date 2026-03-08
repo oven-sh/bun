@@ -973,16 +973,15 @@ fn saveWorkspacePackageJSON(
     const workspace_pkg_json_file = (try bun.sys.File.openat(
         .cwd(),
         path_z,
-        bun.O.RDWR,
-        0,
+        bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC,
+        0o644,
     ).unwrap());
     defer workspace_pkg_json_file.close();
 
-    workspace_pkg_json_file.pwriteAll(new_source, 0).unwrap() catch {
+    workspace_pkg_json_file.writeAll(new_source).unwrap() catch {
         Output.errGeneric("failed to write package.json at \"{s}\"", .{pkg_json_path});
         Global.crash();
     };
-    _ = bun.sys.ftruncate(workspace_pkg_json_file.handle, @intCast(new_source.len));
 }
 
 const std = @import("std");

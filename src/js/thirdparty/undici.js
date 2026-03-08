@@ -491,13 +491,15 @@ async function _doRequest(origin, opts) {
     inputBody = $Buffer.concat(chunks);
   }
 
+  const maxRedirections = opts.maxRedirections;
+
   let resp;
   const { status: statusCode, headers } = (resp = await fetch(url, {
     method,
     headers: inputHeaders,
     body: inputBody,
     signal,
-    redirect: "manual",
+    redirect: maxRedirections !== undefined && maxRedirections > 0 ? "follow" : "manual",
     keepalive: !opts.reset,
   }));
 
@@ -545,9 +547,18 @@ class Pool extends Dispatcher {
     this.#closed = false;
   }
 
-  async request(opts) {
+  async request(opts, callback) {
     if (this.#closed) {
-      throw new ClientClosedError("The pool is closed");
+      const err = new ClientClosedError("The pool is closed");
+      if ($isCallable(callback)) { callback(err, null); return; }
+      throw err;
+    }
+    if ($isCallable(callback)) {
+      _doRequest(this.#origin, opts).then(
+        data => callback(null, data),
+        err => callback(err, null),
+      );
+      return;
     }
     return _doRequest(this.#origin, opts);
   }
@@ -575,9 +586,18 @@ class Client extends Dispatcher {
     this.#closed = false;
   }
 
-  async request(opts) {
+  async request(opts, callback) {
     if (this.#closed) {
-      throw new ClientClosedError("The client is closed");
+      const err = new ClientClosedError("The client is closed");
+      if ($isCallable(callback)) { callback(err, null); return; }
+      throw err;
+    }
+    if ($isCallable(callback)) {
+      _doRequest(this.#origin, opts).then(
+        data => callback(null, data),
+        err => callback(err, null),
+      );
+      return;
     }
     return _doRequest(this.#origin, opts);
   }

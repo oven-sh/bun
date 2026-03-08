@@ -5,6 +5,14 @@ import { bunEnv, bunExe, tempDir } from "harness";
 // Decorator field initializers must be injected AFTER parameter property
 // assignments in the constructor body.
 
+function filterStderr(stderr: string) {
+  return stderr
+    .split("\n")
+    .filter(line => !line.startsWith("WARNING: ASAN"))
+    .join("\n")
+    .trim();
+}
+
 test("decorator field initializers run after TS parameter properties are assigned", async () => {
   using dir = tempDir("issue-27922", {
     "tsconfig.json": JSON.stringify({ compilerOptions: {} }),
@@ -38,6 +46,7 @@ test("decorator field initializers run after TS parameter properties are assigne
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout).toBe("pfx-default\npfx-\n");
+  expect(filterStderr(stderr)).toBe("");
   expect(exitCode).toBe(0);
 });
 
@@ -75,6 +84,7 @@ test("decorator field initializers run after multiple TS parameter properties", 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout).toBe("13\n1\n2\n");
+  expect(filterStderr(stderr)).toBe("");
   expect(exitCode).toBe(0);
 });
 
@@ -118,5 +128,6 @@ test("decorator field initializers with super() and TS parameter properties", as
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout).toBe("hello-world\ntrue\nhello-\n");
+  expect(filterStderr(stderr)).toBe("");
   expect(exitCode).toBe(0);
 });

@@ -722,7 +722,7 @@ fn removeDepsFromPackageJSON(root: *Expr, updates: []const UpdateRequest) bool {
                     var dependencies = query.expr.data.e_object.properties.slice();
                     var i: usize = 0;
                     var new_len = dependencies.len;
-                    while (i < dependencies.len) : (i += 1) {
+                    while (i < new_len) {
                         if (dependencies[i].key.?.data == .e_string) {
                             if (dependencies[i].key.?.data.e_string.eql(string, request.name)) {
                                 if (new_len > 1) {
@@ -731,10 +731,12 @@ fn removeDepsFromPackageJSON(root: *Expr, updates: []const UpdateRequest) bool {
                                 } else {
                                     new_len = 0;
                                 }
-
                                 changed = true;
+                                // Don't increment i: re-check the swapped element
+                                continue;
                             }
                         }
+                        i += 1;
                     }
 
                     const deps_changed = new_len != dependencies.len;
@@ -839,6 +841,7 @@ fn removeFromWorkspacePackageJSONs(
         manager.log,
         root_package_json_path,
         .{},
+        // If root package.json can't be read/parsed, there are no workspaces to process.
     ).unwrap() catch return false;
 
     const workspaces_array = if (root_entry.root.asProperty("workspaces")) |prop| switch (prop.expr.data) {
@@ -889,7 +892,8 @@ fn removeFromWorkspacePackageJSONs(
                 continue;
         }
 
-        // Load workspace package.json from cache (it was added by processNamesArray)
+        // Load workspace package.json from cache (it was added by processNamesArray).
+        // Skip workspaces whose package.json can't be read/parsed rather than failing the entire operation.
         var pkg_json = manager.workspace_package_json_cache.getWithPath(
             manager.allocator,
             manager.log,

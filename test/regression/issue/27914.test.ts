@@ -55,7 +55,7 @@ test("readdirSync with withFileTypes and encoding 'buffer' recursive returns Dir
 
   const entries = readdirSync(String(dir), { withFileTypes: true, encoding: "buffer", recursive: true });
 
-  expect(entries.length).toBeGreaterThanOrEqual(3); // a.txt, sub, sub/b.txt
+  expect(entries.length).toBe(3); // a.txt, sub, sub/b.txt
 
   for (const entry of entries) {
     expect(entry.name).toBeInstanceOf(Buffer);
@@ -72,7 +72,7 @@ test("readdir (async) with withFileTypes and encoding 'buffer' recursive returns
 
   const entries = await readdir(String(dir), { withFileTypes: true, encoding: "buffer", recursive: true });
 
-  expect(entries.length).toBeGreaterThanOrEqual(3); // a.txt, sub, sub/b.txt
+  expect(entries.length).toBe(3); // a.txt, sub, sub/b.txt
 
   const names = entries.map((e: any) => e.name.toString()).sort();
   expect(names).toContain("a.txt");

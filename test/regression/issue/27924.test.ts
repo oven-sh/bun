@@ -1,12 +1,15 @@
 import { spawn } from "bun";
 import { expect, test } from "bun:test";
-import { bunExe, bunEnv as env, runBunInstall, tempDir } from "harness";
+import { bunExe, bunEnv as env, isMusl, runBunInstall, tempDir } from "harness";
 import { join } from "path";
 
 // Test that shebangs with env flags like -S are parsed correctly during bin linking.
 // On Windows, the shebang is parsed to create a .bunx metadata file. Previously,
 // the parser would treat "-S" as the program name instead of skipping it.
-test("bin linking handles shebang with env -S flag", async () => {
+// On non-Windows, bun run delegates to the OS shebang handling, so this test
+// requires the system's env to support -S (GNU coreutils). Alpine/musl uses
+// BusyBox env which lacks -S support.
+test.skipIf(isMusl)("bin linking handles shebang with env -S flag", async () => {
   using dir = tempDir("issue-27924", {
     "pkg/package.json": JSON.stringify({
       name: "test-env-s-shebang",
@@ -48,7 +51,7 @@ test("bin linking handles shebang with env -S flag", async () => {
   expect(exitCode).toBe(0);
 });
 
-test("bin linking handles shebang with env -S and additional args", async () => {
+test.skipIf(isMusl)("bin linking handles shebang with env -S and additional args", async () => {
   using dir = tempDir("issue-27924-args", {
     "pkg/package.json": JSON.stringify({
       name: "test-env-s-args",
@@ -86,7 +89,7 @@ test("bin linking handles shebang with env -S and additional args", async () => 
   expect(exitCode).toBe(0);
 });
 
-test("bin linking handles shebang with env -S bun", async () => {
+test.skipIf(isMusl)("bin linking handles shebang with env -S bun", async () => {
   using dir = tempDir("issue-27924-bun", {
     "pkg/package.json": JSON.stringify({
       name: "test-env-s-bun",

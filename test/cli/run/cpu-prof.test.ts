@@ -363,6 +363,102 @@ describe.concurrent("--cpu-prof", () => {
     expect(profileContent).toContain("# CPU Profile");
   });
 
+  test("--cpu-prof with --compile --sourcemap shows sourcemapped paths", async () => {
+    using dir = tempDir("cpu-prof-compile-sourcemap", {
+      "src/index.ts": `
+        import { heavyWork } from "./worker";
+
+        function main() {
+          const now = performance.now();
+          while (now + 100 > performance.now()) {
+            heavyWork();
+          }
+        }
+
+        main();
+      `,
+      "src/worker.ts": `
+        export function heavyWork() {
+          let sum = 0;
+          for (let i = 0; i < 10000; i++) {
+            sum += Math.sqrt(i);
+          }
+          return sum;
+        }
+      `,
+    });
+
+    const appName = process.platform === "win32" ? "app.exe" : "app";
+
+    // Build with --compile --sourcemap
+    await using buildProc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "--compile",
+        "--sourcemap",
+        "--outfile",
+        join(String(dir), appName),
+        join(String(dir), "src/index.ts"),
+      ],
+      cwd: String(dir),
+      env: bunEnv,
+      stderr: "pipe",
+    });
+
+    const buildStderr = await buildProc.stderr.text();
+    const buildExitCode = await buildProc.exited;
+    expect(buildStderr).not.toContain("error");
+    expect(buildExitCode).toBe(0);
+
+    // Run the compiled binary with cpu-prof flags via BUN_OPTIONS env var
+    // (standalone binaries don't parse runtime args, but do parse BUN_OPTIONS)
+    await using runProc = Bun.spawn({
+      cmd: [join(String(dir), appName)],
+      cwd: String(dir),
+      env: { ...bunEnv, BUN_OPTIONS: "--cpu-prof --cpu-prof-md" },
+      stderr: "pipe",
+    });
+
+    const runStderr = await runProc.stderr.text();
+    const runExitCode = await runProc.exited;
+    expect(runExitCode).toBe(0);
+
+    // Check JSON profile (.cpuprofile)
+    const files = readdirSync(String(dir));
+    const profileFiles = files.filter(f => f.endsWith(".cpuprofile"));
+    expect(profileFiles.length).toBeGreaterThan(0);
+
+    const profile = JSON.parse(readFileSync(join(String(dir), profileFiles[0]), "utf-8"));
+
+    // Collect all URLs with line numbers from profile nodes (frames with expression info)
+    const framesWithLocation: { url: string; line: number }[] = profile.nodes
+      .map((n: any) => ({ url: n.callFrame.url, line: n.callFrame.lineNumber }))
+      .filter((f: { url: string; line: number }) => f.url.length > 0 && f.line >= 0);
+
+    // Frames WITH line info should NOT contain /$bunfs/ paths or chunk- names
+    // (frames without line info may still show the binary name, which is expected)
+    const bunfsPaths = framesWithLocation.filter(
+      (f: { url: string }) => f.url.includes("$bunfs") || f.url.includes("chunk-"),
+    );
+    expect(bunfsPaths).toEqual([]);
+
+    // Should contain original source file names
+    const allUrls = framesWithLocation.map((f: { url: string }) => f.url);
+    const hasWorkerTs = allUrls.some((u: string) => u.includes("worker.ts"));
+    const hasIndexTs = allUrls.some((u: string) => u.includes("index.ts"));
+    expect(hasWorkerTs || hasIndexTs).toBe(true);
+
+    // Check Markdown profile (.md)
+    const mdFiles = files.filter(f => f.endsWith(".md") && f.startsWith("CPU."));
+    expect(mdFiles.length).toBeGreaterThan(0);
+
+    const mdContent = readFileSync(join(String(dir), mdFiles[0]), "utf-8");
+
+    // Should contain original source filenames in markdown
+    expect(mdContent.includes("worker.ts") || mdContent.includes("index.ts")).toBe(true);
+  });
+
   test("--cpu-prof and --cpu-prof-md together creates both files", async () => {
     using dir = tempDir("cpu-prof-both-formats", {
       "test.js": `

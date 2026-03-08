@@ -3,6 +3,7 @@
 #include "ZigGlobalObject.h"
 #include "helpers.h"
 #include "BunString.h"
+#include "headers-handwritten.h"
 #include <JavaScriptCore/SamplingProfiler.h>
 #include <JavaScriptCore/VM.h>
 #include <JavaScriptCore/JSGlobalObject.h>
@@ -71,6 +72,35 @@ struct ProfileNode {
     int hitCount;
     WTF::Vector<int> children;
 };
+
+// Remap a source URL and line/column through sourcemaps.
+// This handles both `bun build --sourcemap` and `bun build --compile --sourcemap`,
+// resolving bundled paths like `/$bunfs/root/chunk-xyz.js:123` back to the original
+// source file and line number (e.g., `src/myfile.ts:45`).
+// lineNumber and columnNumber use 1-based convention on both input and output.
+static void remapSourceLocation(JSC::VM& vm, WTF::String& url, int& lineNumber, int& columnNumber)
+{
+    if (url.isEmpty() || lineNumber < 0)
+        return;
+
+    ZigStackFrame frame = {};
+    frame.source_url = Bun::toStringRef(url);
+    // Convert from 1-based to 0-based for ZigStackFrame
+    frame.position.line_zero_based = lineNumber > 0 ? lineNumber - 1 : 0;
+    frame.position.column_zero_based = columnNumber > 0 ? columnNumber - 1 : 0;
+    frame.remapped = false;
+
+    Bun__remapStackFramePositions(Bun::vm(vm), &frame, 1);
+
+    if (frame.remapped) {
+        WTF::String remappedUrl = frame.source_url.toWTFString();
+        if (!remappedUrl.isEmpty())
+            url = remappedUrl;
+        // Convert back to 1-based
+        lineNumber = frame.position.line().oneBasedInt();
+        columnNumber = frame.position.column().oneBasedInt();
+    }
+}
 
 WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
 {
@@ -172,48 +202,30 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
                 if (provider) {
                     url = provider->sourceURL();
                     scriptId = static_cast<int>(provider->asID());
-
-                    // Convert absolute paths to file:// URLs
-                    // Check for:
-                    // - Unix absolute path: /path/to/file
-                    // - Windows drive letter: C:\path or C:/path
-                    // - Windows UNC path: \\server\share
-                    bool isAbsolutePath = false;
-                    if (!url.isEmpty()) {
-                        if (url[0] == '/') {
-                            // Unix absolute path
-                            isAbsolutePath = true;
-                        } else if (url.length() >= 2 && url[1] == ':') {
-                            // Windows drive letter (e.g., C:\)
-                            char firstChar = url[0];
-                            if ((firstChar >= 'A' && firstChar <= 'Z') || (firstChar >= 'a' && firstChar <= 'z')) {
-                                isAbsolutePath = true;
-                            }
-                        } else if (url.length() >= 2 && url[0] == '\\' && url[1] == '\\') {
-                            // Windows UNC path (e.g., \\server\share)
-                            isAbsolutePath = true;
-                        }
-                    }
-
-                    if (isAbsolutePath) {
-                        url = WTF::URL::fileURLWithFileSystemPath(url).string();
-                    }
                 }
 
                 if (frame.hasExpressionInfo()) {
-                    // Apply sourcemap if available
-                    JSC::LineColumn sourceMappedLineColumn = frame.semanticLocation.lineColumn;
-                    if (provider) {
-#if USE(BUN_JSC_ADDITIONS)
-                        auto& fn = vm.computeLineColumnWithSourcemap();
-                        if (fn) {
-                            fn(vm, provider, sourceMappedLineColumn);
-                        }
-#endif
-                    }
-                    lineNumber = static_cast<int>(sourceMappedLineColumn.line);
-                    columnNumber = static_cast<int>(sourceMappedLineColumn.column);
+                    lineNumber = static_cast<int>(frame.semanticLocation.lineColumn.line);
+                    columnNumber = static_cast<int>(frame.semanticLocation.lineColumn.column);
+                    // Remap through sourcemaps (updates url, lineNumber, columnNumber)
+                    remapSourceLocation(vm, url, lineNumber, columnNumber);
                 }
+
+                // Convert absolute paths to file:// URLs (after sourcemap remapping)
+                bool isAbsolutePath = false;
+                if (!url.isEmpty()) {
+                    if (url[0] == '/')
+                        isAbsolutePath = true;
+                    else if (url.length() >= 2 && url[1] == ':') {
+                        char firstChar = url[0];
+                        if ((firstChar >= 'A' && firstChar <= 'Z') || (firstChar >= 'a' && firstChar <= 'z'))
+                            isAbsolutePath = true;
+                    } else if (url.length() >= 2 && url[0] == '\\' && url[1] == '\\')
+                        isAbsolutePath = true;
+                }
+
+                if (isAbsolutePath)
+                    url = WTF::URL::fileURLWithFileSystemPath(url).string();
             }
 
             // Create a unique key for this frame based on parent + callFrame
@@ -647,35 +659,30 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                     if (provider) {
                         url = provider->sourceURL();
                         scriptId = static_cast<int>(provider->asID());
-
-                        bool isAbsolutePath = false;
-                        if (!url.isEmpty()) {
-                            if (url[0] == '/')
-                                isAbsolutePath = true;
-                            else if (url.length() >= 2 && url[1] == ':') {
-                                char firstChar = url[0];
-                                if ((firstChar >= 'A' && firstChar <= 'Z') || (firstChar >= 'a' && firstChar <= 'z'))
-                                    isAbsolutePath = true;
-                            } else if (url.length() >= 2 && url[0] == '\\' && url[1] == '\\')
-                                isAbsolutePath = true;
-                        }
-
-                        if (isAbsolutePath)
-                            url = WTF::URL::fileURLWithFileSystemPath(url).string();
                     }
 
                     if (frame.hasExpressionInfo()) {
-                        JSC::LineColumn sourceMappedLineColumn = frame.semanticLocation.lineColumn;
-                        if (provider) {
-#if USE(BUN_JSC_ADDITIONS)
-                            auto& fn = vm.computeLineColumnWithSourcemap();
-                            if (fn)
-                                fn(vm, provider, sourceMappedLineColumn);
-#endif
-                        }
-                        lineNumber = static_cast<int>(sourceMappedLineColumn.line);
-                        columnNumber = static_cast<int>(sourceMappedLineColumn.column);
+                        lineNumber = static_cast<int>(frame.semanticLocation.lineColumn.line);
+                        columnNumber = static_cast<int>(frame.semanticLocation.lineColumn.column);
+                        // Remap through sourcemaps (updates url, lineNumber, columnNumber)
+                        remapSourceLocation(vm, url, lineNumber, columnNumber);
                     }
+
+                    // Convert absolute paths to file:// URLs (after sourcemap remapping)
+                    bool isAbsolutePath = false;
+                    if (!url.isEmpty()) {
+                        if (url[0] == '/')
+                            isAbsolutePath = true;
+                        else if (url.length() >= 2 && url[1] == ':') {
+                            char firstChar = url[0];
+                            if ((firstChar >= 'A' && firstChar <= 'Z') || (firstChar >= 'a' && firstChar <= 'z'))
+                                isAbsolutePath = true;
+                        } else if (url.length() >= 2 && url[0] == '\\' && url[1] == '\\')
+                            isAbsolutePath = true;
+                    }
+
+                    if (isAbsolutePath)
+                        url = WTF::URL::fileURLWithFileSystemPath(url).string();
                 }
 
                 WTF::StringBuilder keyBuilder;
@@ -817,35 +824,31 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                 if (frame.frameType == JSC::SamplingProfiler::FrameType::Executable && frame.executable) {
                     auto sourceProviderAndID = frame.sourceProviderAndID();
                     auto* provider = std::get<0>(sourceProviderAndID);
-                    if (provider) {
+                    if (provider)
                         url = provider->sourceURL();
 
-                        bool isAbsolutePath = false;
-                        if (!url.isEmpty()) {
-                            if (url[0] == '/')
-                                isAbsolutePath = true;
-                            else if (url.length() >= 2 && url[1] == ':') {
-                                char firstChar = url[0];
-                                if ((firstChar >= 'A' && firstChar <= 'Z') || (firstChar >= 'a' && firstChar <= 'z'))
-                                    isAbsolutePath = true;
-                            } else if (url.length() >= 2 && url[0] == '\\' && url[1] == '\\')
-                                isAbsolutePath = true;
-                        }
-                        if (isAbsolutePath)
-                            url = WTF::URL::fileURLWithFileSystemPath(url).string();
+                    if (frame.hasExpressionInfo()) {
+                        int columnNumber = -1;
+                        lineNumber = static_cast<int>(frame.semanticLocation.lineColumn.line);
+                        columnNumber = static_cast<int>(frame.semanticLocation.lineColumn.column);
+                        // Remap through sourcemaps (updates url, lineNumber, columnNumber)
+                        remapSourceLocation(vm, url, lineNumber, columnNumber);
                     }
 
-                    if (frame.hasExpressionInfo()) {
-                        JSC::LineColumn sourceMappedLineColumn = frame.semanticLocation.lineColumn;
-                        if (provider) {
-#if USE(BUN_JSC_ADDITIONS)
-                            auto& fn = vm.computeLineColumnWithSourcemap();
-                            if (fn)
-                                fn(vm, provider, sourceMappedLineColumn);
-#endif
-                        }
-                        lineNumber = static_cast<int>(sourceMappedLineColumn.line);
+                    // Convert absolute paths to file:// URLs (after sourcemap remapping)
+                    bool isAbsolutePath = false;
+                    if (!url.isEmpty()) {
+                        if (url[0] == '/')
+                            isAbsolutePath = true;
+                        else if (url.length() >= 2 && url[1] == ':') {
+                            char firstChar = url[0];
+                            if ((firstChar >= 'A' && firstChar <= 'Z') || (firstChar >= 'a' && firstChar <= 'z'))
+                                isAbsolutePath = true;
+                        } else if (url.length() >= 2 && url[0] == '\\' && url[1] == '\\')
+                            isAbsolutePath = true;
                     }
+                    if (isAbsolutePath)
+                        url = WTF::URL::fileURLWithFileSystemPath(url).string();
                 }
 
                 WTF::String location = formatLocation(url, lineNumber);

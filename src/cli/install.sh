@@ -146,10 +146,14 @@ if [[ ! -d $bin_dir ]]; then
         error "Failed to create install directory \"$bin_dir\""
 fi
 
-curl --fail --location --progress-bar --output "$exe.zip" "$bun_uri" ||
+# Download to the same directory, rather than where we will install, since curl
+# may be in a security sandbox - and thus can not write to protected directories.
+temp_zip_file=bun.zip
+
+curl --fail --location --progress-bar --output "$temp_zip_file" "$bun_uri" ||
     error "Failed to download bun from \"$bun_uri\""
 
-unzip -oqd "$bin_dir" "$exe.zip" ||
+unzip -oqd "$bin_dir" "$temp_zip_file" ||
     error 'Failed to extract bun'
 
 mv "$bin_dir/bun-$target/$exe_name" "$exe" ||
@@ -158,7 +162,7 @@ mv "$bin_dir/bun-$target/$exe_name" "$exe" ||
 chmod +x "$exe" ||
     error 'Failed to set permissions on bun executable'
 
-rm -r "$bin_dir/bun-$target" "$exe.zip"
+rm -r "$bin_dir/bun-$target" "$temp_zip_file"
 
 tildify() {
     if [[ $1 = $HOME/* ]]; then

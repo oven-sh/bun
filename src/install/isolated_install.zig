@@ -57,6 +57,12 @@ pub fn installIsolatedPackages(
         var visited_parent_node_ids: std.array_list.Managed(Store.Node.Id) = .init(lockfile.allocator);
         defer visited_parent_node_ids.deinit();
 
+        // Cache for isFilteredDependencyOrWorkspace results keyed by (dep_id, parent_pkg_id).
+        // The result depends on both the dep_id and the parent package context,
+        // so we use a composite key to avoid incorrect reuse across different parents.
+        var filtered_dep_cache: std.AutoHashMapUnmanaged(struct { DependencyID, PackageID }, bool) = .empty;
+        defer filtered_dep_cache.deinit(lockfile.allocator);
+
         // First pass: create full dependency tree with resolved peers
         next_node: while (node_queue.readItem()) |entry| {
             check_cycle: {
@@ -216,14 +222,21 @@ pub fn installIsolatedPackages(
                 }
 
                 for (dep_ids_sort_buf.items) |dep_id| {
-                    if (Tree.isFilteredDependencyOrWorkspace(
-                        dep_id,
-                        entry.pkg_id,
-                        workspace_filters,
-                        install_root_dependencies,
-                        manager,
-                        lockfile,
-                    )) {
+                    const is_filtered = is_filtered: {
+                        const cache_key = .{ dep_id, entry.pkg_id };
+                        if (filtered_dep_cache.get(cache_key)) |cached| break :is_filtered cached;
+                        const result = Tree.isFilteredDependencyOrWorkspace(
+                            dep_id,
+                            entry.pkg_id,
+                            workspace_filters,
+                            install_root_dependencies,
+                            manager,
+                            lockfile,
+                        );
+                        try filtered_dep_cache.put(lockfile.allocator, cache_key, result);
+                        break :is_filtered result;
+                    };
+                    if (is_filtered) {
                         continue;
                     }
 

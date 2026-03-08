@@ -368,6 +368,7 @@ extern "C" JSC::EncodedJSValue Bun__Dirent__toJS(Zig::GlobalObject* globalObject
             auto utf8 = nameString.utf8();
             nameValue = WebCore::createBuffer(globalObject, utf8.data(), utf8.length());
         }
+        RETURN_IF_EXCEPTION(scope, {});
     } else {
         auto nameString = name->transferToWTFString();
         nameValue = jsString(vm, WTF::move(nameString));

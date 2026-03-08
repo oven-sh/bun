@@ -358,9 +358,16 @@ extern "C" JSC::EncodedJSValue Bun__Dirent__toJS(Zig::GlobalObject* globalObject
 
     JSValue nameValue;
     if (nameAsBuffer) {
+        // The name was stored as Latin-1 to preserve raw filesystem bytes.
+        // Read the 8-bit data directly to avoid lossy UTF-8 round-tripping.
         auto nameString = name->transferToWTFString();
-        auto utf8 = nameString.utf8();
-        nameValue = WebCore::createBuffer(globalObject, utf8.data(), utf8.length());
+        if (nameString.is8Bit()) {
+            auto span = nameString.span8();
+            nameValue = WebCore::createBuffer(globalObject, reinterpret_cast<const char*>(span.data()), span.size());
+        } else {
+            auto utf8 = nameString.utf8();
+            nameValue = WebCore::createBuffer(globalObject, utf8.data(), utf8.length());
+        }
     } else {
         auto nameString = name->transferToWTFString();
         nameValue = jsString(vm, WTF::move(nameString));

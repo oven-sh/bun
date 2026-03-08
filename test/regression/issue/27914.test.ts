@@ -64,6 +64,28 @@ test("readdirSync with withFileTypes and encoding 'buffer' recursive returns Dir
   }
 });
 
+test("readdir (async) with withFileTypes and encoding 'buffer' recursive returns Dirent with Buffer name", async () => {
+  using dir = tempDir("readdir-buffer-dirent-async-recursive", {
+    "a.txt": "hello",
+    "sub/b.txt": "world",
+  });
+
+  const entries = await readdir(String(dir), { withFileTypes: true, encoding: "buffer", recursive: true });
+
+  expect(entries.length).toBeGreaterThanOrEqual(3); // a.txt, sub, sub/b.txt
+
+  const names = entries.map((e: any) => e.name.toString()).sort();
+  expect(names).toContain("a.txt");
+  expect(names).toContain("sub");
+  expect(names).toContain("b.txt");
+
+  for (const entry of entries) {
+    expect(entry.name).toBeInstanceOf(Buffer);
+    expect(entry.name.length).toBeGreaterThan(0);
+    expect(typeof entry.parentPath).toBe("string");
+  }
+});
+
 test("readdirSync with withFileTypes without encoding 'buffer' still returns string names", () => {
   using dir = tempDir("readdir-dirent-string", {
     "test.txt": "content",

@@ -126,7 +126,7 @@ pub const S3ListObjectsV2Result = struct {
                 }
 
                 if (item.checksum_algorithme) |checksum_algorithme| {
-                    objectInfo.put(globalObject, jsc.ZigString.static("checksumAlgorithme"), try bun.String.createUTF8ForJS(globalObject, checksum_algorithme));
+                    objectInfo.put(globalObject, jsc.ZigString.static("checksumAlgorithm"), try bun.String.createUTF8ForJS(globalObject, checksum_algorithme));
                 }
 
                 if (item.checksum_type) |checksum_type| {

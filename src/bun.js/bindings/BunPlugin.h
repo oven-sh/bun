@@ -94,6 +94,7 @@ public:
         void addModuleMock(JSC::VM& vm, const String& path, JSC::JSObject* mock);
         void beginModuleMockingScope();
         void endModuleMockingScope(JSC::JSGlobalObject* globalObject);
+        void revertMockChanges(JSC::JSGlobalObject* globalObject, size_t fromIndex);
 
         std::optional<String> resolveVirtualModule(const String& path, const String& from);
 

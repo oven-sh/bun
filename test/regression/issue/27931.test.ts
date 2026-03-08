@@ -7,54 +7,46 @@ import { bunEnv, bunExe, tempDir } from "harness";
 test("workers processing many tasks do not crash on exit", async () => {
   using dir = tempDir("issue-27931", {
     "main.js": `
-const { Worker } = require("worker_threads");
+const { Worker, isMainThread, parentPort, workerData } = require("worker_threads");
 const path = require("path");
 
-const NUM_WORKERS = 4;
-const NUM_TASKS = 40;
-
-async function main() {
-  let completedTasks = 0;
-
-  const promises = [];
-  for (let i = 0; i < NUM_WORKERS; i++) {
-    promises.push(new Promise((resolve, reject) => {
-      const worker = new Worker(path.join(__dirname, "worker.js"), {
-        workerData: { start: i, step: NUM_WORKERS, total: NUM_TASKS }
-      });
-      worker.on("message", () => { completedTasks++; });
-      worker.on("exit", (code) => { code === 0 ? resolve() : reject(new Error("worker exited with code " + code)); });
-      worker.on("error", reject);
-    }));
+if (!isMainThread) {
+  const crypto = require("crypto");
+  for (let i = workerData.start; i < workerData.total; i += workerData.step) {
+    const hash = crypto.createHash("md5").update(crypto.randomBytes(4096)).digest("hex");
+    parentPort.postMessage({ id: i, hash });
   }
-
-  await Promise.all(promises);
-  console.log("completed:" + completedTasks);
-}
-
-main().catch(e => { console.error(e); process.exit(1); });
-`,
-    "worker.js": `
-const { parentPort, workerData } = require("worker_threads");
-const crypto = require("crypto");
-
-const { start, step, total } = workerData;
-for (let i = start; i < total; i += step) {
-  const hash = crypto.createHash("md5").update(crypto.randomBytes(4096)).digest("hex");
-  parentPort.postMessage({ id: i, hash });
+} else {
+  const NUM_WORKERS = 4;
+  const NUM_TASKS = 40;
+  let completed = 0;
+  let exited = 0;
+  for (let i = 0; i < NUM_WORKERS; i++) {
+    const w = new Worker(path.join(__dirname, "main.js"), {
+      workerData: { start: i, step: NUM_WORKERS, total: NUM_TASKS }
+    });
+    w.on("message", () => { completed++; });
+    w.on("exit", (code) => {
+      if (++exited === NUM_WORKERS) {
+        console.log("completed:" + completed);
+      }
+    });
+  }
 }
 `,
   });
 
-  const result = Bun.spawnSync({
+  await using proc = Bun.spawn({
     cmd: [bunExe(), "main.js"],
     cwd: String(dir),
     env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
   });
 
-  const stdout = result.stdout.toString();
-  const stderr = result.stderr.toString();
+  const exitCode = await proc.exited;
+  const stdout = await new Response(proc.stdout).text();
 
   expect(stdout).toContain("completed:40");
-  expect(result.exitCode).toBe(0);
+  expect(exitCode).toBe(0);
 }, 30_000);

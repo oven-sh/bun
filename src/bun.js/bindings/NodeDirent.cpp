@@ -20,6 +20,7 @@
 #include <JavaScriptCore/Structure.h>
 #include <JavaScriptCore/PropertyNameArray.h>
 #include "ZigGlobalObject.h"
+#include "JSBuffer.h"
 
 namespace Bun {
 
@@ -328,7 +329,7 @@ extern "C" JSC::EncodedJSValue Bun__JSDirentObjectConstructor(Zig::GlobalObject*
     return JSValue::encode(globalobject->m_JSDirentClassStructure.constructor(globalobject));
 }
 
-extern "C" JSC::EncodedJSValue Bun__Dirent__toJS(Zig::GlobalObject* globalObject, int type, BunString* name, BunString* path, JSString** previousPath)
+extern "C" JSC::EncodedJSValue Bun__Dirent__toJS(Zig::GlobalObject* globalObject, int type, BunString* name, BunString* path, JSString** previousPath, bool nameAsBuffer)
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -355,8 +356,15 @@ extern "C" JSC::EncodedJSValue Bun__Dirent__toJS(Zig::GlobalObject* globalObject
         }
     }
 
-    auto nameString = name->transferToWTFString();
-    auto nameValue = jsString(vm, WTF::move(nameString));
+    JSValue nameValue;
+    if (nameAsBuffer) {
+        auto nameString = name->transferToWTFString();
+        auto utf8 = nameString.utf8();
+        nameValue = WebCore::createBuffer(globalObject, utf8.data(), utf8.length());
+    } else {
+        auto nameString = name->transferToWTFString();
+        nameValue = jsString(vm, WTF::move(nameString));
+    }
     auto typeValue = jsNumber(type);
     object->putDirectOffset(vm, 0, nameValue);
     object->putDirectOffset(vm, 1, pathValue);

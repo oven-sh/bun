@@ -2204,12 +2204,10 @@ pub const Arguments = struct {
         }
 
         pub fn tag(this: *const Readdir) Return.Readdir.Tag {
+            if (this.with_file_types) return .with_file_types;
             return switch (this.encoding) {
                 .buffer => .buffers,
-                else => if (this.with_file_types)
-                    .with_file_types
-                else
-                    .files,
+                else => .files,
             };
         }
 
@@ -4512,6 +4510,7 @@ pub const NodeFS = struct {
                             .name = jsc.WebCore.encoding.toBunString(utf8_name, args.encoding),
                             .path = dirent_path,
                             .kind = kind,
+                            .name_as_buffer = args.encoding == .buffer,
                         }) catch |err| bun.handleOom(err);
                     },
                     Buffer => {
@@ -4531,6 +4530,7 @@ pub const NodeFS = struct {
                             .name = bun.String.cloneUTF16(utf16_name),
                             .path = dirent_path,
                             .kind = current.kind,
+                            .name_as_buffer = args.encoding == .buffer,
                         }) catch |err| bun.handleOom(err);
                     },
                     bun.String => switch (args.encoding) {
@@ -4693,6 +4693,7 @@ pub const NodeFS = struct {
                         .name = bun.String.cloneUTF8(utf8_name),
                         .path = dirent_path_prev,
                         .kind = effective_kind,
+                        .name_as_buffer = args.encoding == .buffer,
                     }) catch |err| bun.handleOom(err);
                 },
                 Buffer => {
@@ -4853,6 +4854,7 @@ pub const NodeFS = struct {
                             .name = jsc.WebCore.encoding.toBunString(utf8_name, args.encoding),
                             .path = dirent_path_prev,
                             .kind = effective_kind,
+                            .name_as_buffer = args.encoding == .buffer,
                         }) catch |err| bun.handleOom(err);
                     },
                     Buffer => {

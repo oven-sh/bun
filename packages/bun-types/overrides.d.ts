@@ -1918,3 +1918,60 @@ declare namespace Bun {
     children: ProfileNode[];
   }
 }
+
+// Add Metrics types
+declare namespace Bun {
+  interface Metrics {
+    /**
+     * CPU usage percentage.
+     */
+    cpuUsage: number;
+    
+    /**
+     * Memory usage in bytes.
+     */
+    memoryUsage: number;
+    
+    /**
+     * Event loop delay in milliseconds.
+     */
+    eventLoopDelay: number;
+    
+    /**
+     * Active handles count.
+     */
+    activeHandles: number;
+    
+    /**
+     * Active requests count.
+     */
+    activeRequests: number;
+    
+    /**
+     * Gets current metrics.
+     */
+    getMetrics(): Metrics;
+  }
+  
+  interface MetricCounter {
+    /**
+     * Increments counter.
+     */
+    increment(value?: number): void;
+    
+    /**
+     * Decrements counter.
+     */
+    decrement(value?: number): void;
+    
+    /**
+     * Resets counter.
+     */
+    reset(): void;
+    
+    /**
+     * Gets counter value.
+     */
+    getValue(): number;
+  }
+}

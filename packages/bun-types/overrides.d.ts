@@ -3229,3 +3229,58 @@ declare namespace Bun {
   
   type FormDataEntryValue = File | string;
 }
+
+// Add Headers types
+declare namespace Bun {
+  interface Headers {
+    /**
+     * Appends header value.
+     */
+    append(name: string, value: string): void;
+    
+    /**
+     * Deletes header.
+     */
+    delete(name: string): void;
+    
+    /**
+     * Gets header value.
+     */
+    get(name: string): string | null;
+    
+    /**
+     * Checks if header exists.
+     */
+    has(name: string): boolean;
+    
+    /**
+     * Sets header value.
+     */
+    set(name: string, value: string): void;
+    
+    /**
+     * Iterates over headers.
+     */
+    forEach(callbackfn: (value: string, key: string, parent: Headers) => void, thisArg?: any): void;
+    
+    /**
+     * Headers entries.
+     */
+    entries(): IterableIterator<[string, string]>;
+    
+    /**
+     * Header keys.
+     */
+    keys(): IterableIterator<string>;
+    
+    /**
+     * Header values.
+     */
+    values(): IterableIterator<string>;
+    
+    /**
+     * Headers iterator.
+     */
+    readonly [Symbol.iterator]: () => IterableIterator<[string, string]>;
+  }
+}

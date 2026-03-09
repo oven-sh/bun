@@ -6192,3 +6192,53 @@ declare namespace NodeJS {
     (line: string): CompleterResult | Promise<CompleterResult>;
   }
 }
+
+// Add Module and Require types
+declare namespace NodeJS {
+  interface Module {
+    /**
+     * Module exports.
+     */
+    exports: any;
+    
+    /**
+     * Module ID.
+     */
+    id: string;
+    
+    /**
+     * Module filename.
+     */
+    filename: string | null;
+    
+    /**
+     * Module loaded.
+     */
+    loaded: boolean;
+    
+    /**
+     * Module children.
+     */
+    children: Module[];
+    
+    /**
+     * Module parent.
+     */
+    parent: Module | null;
+    
+    /**
+     * Module paths.
+     */
+    paths: string[];
+    
+    /**
+     * Require function.
+     */
+    require(id: string): any;
+    
+    /**
+     * Finds package.json.
+     */
+    findPackageJSON(request: string): string | null;
+  }
+}

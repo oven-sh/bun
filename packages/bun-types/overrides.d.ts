@@ -13716,3 +13716,58 @@ declare module "node:util" {
     isWeakSet(value: any): value is WeakSet<any>;
   };
 }
+
+// assert API types
+declare module "node:assert" {
+  export interface AssertionErrorOptions {
+    message?: string;
+    actual?: any;
+    expected?: any;
+    operator?: string;
+    stackStartFn?: Function;
+  }
+  
+  export class AssertionError extends Error {
+    actual: any;
+    expected: any;
+    operator: string;
+    generatedMessage: boolean;
+    code: string;
+  }
+  
+  export class CallTracker {
+    calls(func: Function, specifics?: any): Function;
+    report(): CallTrackerReportInformation[];
+    reset(): void;
+    verify(): void;
+  }
+  
+  export interface CallTrackerReportInformation {
+    message: string;
+    actual: number;
+    expected: number;
+    operator: string;
+    stack: Function;
+  }
+  
+  export function assert(value: any, message?: string | Error): asserts value;
+  export function fail(message?: string | Error): never;
+  export function ok(value: any, message?: string | Error): asserts value;
+  export function equal(actual: any, expected: any, message?: string | Error): void;
+  export function notEqual(actual: any, expected: any, message?: string | Error): void;
+  export function deepEqual(actual: any, expected: any, message?: string | Error): void;
+  export function notDeepEqual(actual: any, expected: any, message?: string | Error): void;
+  export function strictEqual(actual: any, expected: any, message?: string | Error): void;
+  export function notStrictEqual(actual: any, expected: any, message?: string | Error): void;
+  export function deepStrictEqual(actual: any, expected: any, message?: string | Error): void;
+  export function notDeepStrictEqual(actual: any, expected: any, message?: string | Error): void;
+  export function match(value: string, regexp: RegExp, message?: string | Error): void;
+  export function doesNotMatch(value: string, regexp: RegExp, message?: string | Error): void;
+  export function throws(block: Function, message?: string | Error): void;
+  export function throws(block: Function, error: RegExp | Function | any, message?: string | Error): void;
+  export function doesNotThrow(block: Function, message?: string | Error): void;
+  export function ifError(value: any): void;
+  export function rejects(block: Function | Promise<any>, message?: string | Error): Promise<void>;
+  export function rejects(block: Function | Promise<any>, error: RegExp | Function | any, message?: string | Error): Promise<void>;
+  export function doesNotReject(block: Function | Promise<any>, message?: string | Error): Promise<void>;
+}

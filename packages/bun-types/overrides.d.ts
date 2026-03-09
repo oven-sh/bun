@@ -11016,3 +11016,34 @@ declare global {
   
   type FormDataEntryValue = File | string;
 }
+
+// Web API: File additional types
+declare global {
+  class File extends Blob {
+    constructor(fileBits: BlobPart[], fileName: string, options?: FilePropertyBag);
+    readonly lastModified: number;
+    readonly name: string;
+  }
+  
+  interface FilePropertyBag extends BlobPropertyBag {
+    lastModified?: number;
+  }
+  
+  type BlobPart = Buffer | Blob | string;
+  
+  interface BlobPropertyBag {
+    type?: string;
+    endings?: "transparent" | "native";
+  }
+  
+  class Blob {
+    constructor(blobParts?: BlobPart[], options?: BlobPropertyBag);
+    readonly size: number;
+    readonly type: string;
+    arrayBuffer(): Promise<ArrayBuffer>;
+    bytes(): Promise<Uint8Array>;
+    slice(start?: number, end?: number, contentType?: string): Blob;
+    stream(): ReadableStream;
+    text(): Promise<string>;
+  }
+}

@@ -14965,3 +14965,9 @@ declare global {
     total?: number;
   }
 }
+
+// atob/btoa additional types
+declare global {
+  function atob(data: string): string;
+  function btoa(data: string): string;
+}

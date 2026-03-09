@@ -2959,3 +2959,43 @@ declare namespace Bun {
     onmessageerror: ((this: MessagePort, ev: MessageEvent) => any) | null;
   }
 }
+
+// Add Storage API types
+declare namespace Bun {
+  interface Storage {
+    /**
+     * Storage length.
+     */
+    readonly length: number;
+    
+    /**
+     * Gets item by key.
+     */
+    getItem(key: string): string | null;
+    
+    /**
+     * Sets item.
+     */
+    setItem(key: string, value: string): void;
+    
+    /**
+     * Removes item.
+     */
+    removeItem(key: string): void;
+    
+    /**
+     * Clears all items.
+     */
+    clear(): void;
+    
+    /**
+     * Gets key at index.
+     */
+    key(index: number): string | null;
+    
+    /**
+     * Iterates over items.
+     */
+    forEach(callbackfn: (value: string, key: string, parent: Storage) => void, thisArg?: any): void;
+  }
+}

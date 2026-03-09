@@ -2682,3 +2682,75 @@ declare namespace Bun {
     delete(key: K): boolean;
   }
 }
+
+// Add URL and URLPattern types
+declare namespace Bun {
+  interface URL {
+    /**
+     * Protocol scheme.
+     */
+    protocol: string;
+    
+    /**
+     * Hostname.
+     */
+    hostname: string;
+    
+    /**
+     * Port number.
+     */
+    port: string;
+    
+    /**
+     * Pathname.
+     */
+    pathname: string;
+    
+    /**
+     * Query string.
+     */
+    search: string;
+    
+    /**
+     * Hash fragment.
+     */
+    hash: string;
+    
+    /**
+     * Username.
+     */
+    username: string;
+    
+    /**
+     * Password.
+     */
+    password: string;
+    
+    /**
+     * Origin.
+     */
+    origin: string;
+    
+    /**
+     * Full href.
+     */
+    href: string;
+  }
+  
+  interface URLPattern {
+    /**
+     * Tests if URL matches pattern.
+     */
+    test(url: string | URL): boolean;
+    
+    /**
+     * Executes pattern match.
+     */
+    exec(url: string | URL): URLPatternResult | null;
+    
+    /**
+     * Pattern string.
+     */
+    readonly pattern: string;
+  }
+}

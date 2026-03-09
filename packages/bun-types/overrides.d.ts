@@ -2327,3 +2327,30 @@ declare namespace Bun {
     notify(typedArray: ArrayBufferView, index: number, count?: number): number;
   }
 }
+
+// Add SharedArrayBuffer types
+declare namespace Bun {
+  interface SharedArrayBuffer {
+    /**
+     * Buffer length in bytes.
+     */
+    readonly byteLength: number;
+    
+    /**
+     * Shared memory reference.
+     */
+    readonly shared: true;
+    
+    /**
+     * Slices the buffer.
+     */
+    slice(begin?: number, end?: number): SharedArrayBuffer;
+  }
+  
+  interface SharedArrayBufferConstructor {
+    /**
+     * Creates shared buffer.
+     */
+    new(byteLength: number): SharedArrayBuffer;
+  }
+}

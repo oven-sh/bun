@@ -7435,3 +7435,119 @@ declare namespace NodeJS {
     silent?: boolean;
   }
 }
+
+// Add HTTP/2 Server types
+declare namespace NodeJS {
+  interface Http2Server extends EventEmitter {
+    /**
+     * Server session.
+     */
+    readonly session: ServerHttp2Session;
+    
+    /**
+     * Server socket.
+     */
+    readonly socket: Socket;
+    
+    /**
+     * Server timeout.
+     */
+    timeout: number;
+    
+    /**
+     * Server max session memory.
+     */
+    maxSessionMemory: number;
+    
+    /**
+     * Max session invalid.
+     */
+    maxSessionInvalid?: number;
+    
+    /**
+     * Max settings count.
+     */
+    maxSettingsCount?: number;
+    
+    /**
+     * Creates server.
+     */
+    static create(options?: ServerOptions): Http2Server;
+    
+    /**
+     * Creates secure server.
+     */
+    static createSecureServer(options?: SecureServerOptions): Http2SecureServer;
+  }
+  
+  interface Http2SecureServer extends Http2Server {
+    /**
+     * Secure server.
+     */
+    readonly server: Server;
+  }
+  
+  interface ServerOptions {
+    /**
+     * Max concurrent streams.
+     */
+    maxConcurrentStreams?: number;
+    
+    /**
+     * Max header table size.
+     */
+    maxHeaderTableSize?: number;
+    
+    /**
+     * Max header size.
+     */
+    maxHeaderSize?: number;
+    
+    /**
+     * Max settings count.
+     */
+    maxSettingsCount?: number;
+    
+    /**
+     * Max session memory.
+     */
+    maxSessionMemory?: number;
+    
+    /**
+     * Stream timeout.
+     */
+    streamTimeout?: number;
+  }
+  
+  interface SecureServerOptions extends ServerOptions {
+    /**
+     * Private key.
+     */
+    key: string | Buffer | Array<string | Buffer>;
+    
+    /**
+     * Certificate.
+     */
+    cert: string | Buffer | Array<string | Buffer>;
+    
+    /**
+     * CA certificates.
+     */
+    ca?: string | Buffer | Array<string | Buffer>;
+    
+    /**
+     * Passphrase.
+     */
+    passphrase?: string;
+    
+    /**
+     * Reject unauthorized.
+     */
+    rejectUnauthorized?: boolean;
+    
+    /**
+     * Servername.
+     */
+    servername?: string;
+  }
+}

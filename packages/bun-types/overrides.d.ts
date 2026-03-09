@@ -8296,3 +8296,148 @@ declare namespace NodeJS {
     birthtimeMs: bigint;
   }
 }
+
+// Add Crypto constants types
+declare namespace NodeJS {
+  interface CryptoConstants {
+    /**
+     * OpenSSL options.
+     */
+    OPENSSL_VERSION_NUMBER: number;
+    
+    /**
+     * SSL_OP_NO_SSLv2.
+     */
+    SSL_OP_NO_SSLv2: number;
+    
+    /**
+     * SSL_OP_NO_SSLv3.
+     */
+    SSL_OP_NO_SSLv3: number;
+    
+    /**
+     * SSL_OP_NO_TLSv1.
+     */
+    SSL_OP_NO_TLSv1: number;
+    
+    /**
+     * SSL_OP_NO_TLSv1_1.
+     */
+    SSL_OP_NO_TLSv1_1: number;
+    
+    /**
+     * SSL_OP_NO_TLSv1_2.
+     */
+    SSL_OP_NO_TLSv1_2: number;
+    
+    /**
+     * SSL_OP_NO_TLSv1_3.
+     */
+    SSL_OP_NO_TLSv1_3: number;
+    
+    /**
+     * ENGINE_METHOD_RSA.
+     */
+    ENGINE_METHOD_RSA: string;
+    
+    /**
+     * ENGINE_METHOD_DSA.
+     */
+    ENGINE_METHOD_DSA: string;
+    
+    /**
+     * ENGINE_METHOD_DH.
+     */
+    ENGINE_METHOD_DH: string;
+    
+    /**
+     * ENGINE_METHOD_RAND.
+     */
+    ENGINE_METHOD_RAND: string;
+    
+    /**
+     * ENGINE_METHOD_EC.
+     */
+    ENGINE_METHOD_EC: string;
+    
+    /**
+     * ENGINE_METHOD_CIPHERS.
+     */
+    ENGINE_METHOD_CIPHERS: string;
+    
+    /**
+     * ENGINE_METHOD_DIGESTS.
+     */
+    ENGINE_METHOD_DIGESTS: string;
+    
+    /**
+     * ENGINE_METHOD_PKEY_METHS.
+     */
+    ENGINE_METHOD_PKEY_METHS: string;
+    
+    /**
+     * ENGINE_METHOD_STORE.
+     */
+    ENGINE_METHOD_STORE: number;
+    
+    /**
+     * ENGINE_METHOD_ALL.
+     */
+    ENGINE_METHOD_ALL: number;
+    
+    /**
+     * DH_CHECK_PUBKEY.
+     */
+    DH_CHECK_PUBKEY_ALWAYS: number;
+    
+    /**
+     * DH_CHECK_PUBKEY_NEVER.
+     */
+    DH_CHECK_PUBKEY_NEVER: number;
+    
+    /**
+     * DH_CHECK_PUBKEY_SOMETIMES.
+     */
+    DH_CHECK_PUBKEY_SOMETIMES: number;
+    
+    /**
+     * RSA_PKCS1_PADDING.
+     */
+    RSA_PKCS1_PADDING: number;
+    
+    /**
+     * RSA_SSLV23_PADDING.
+     */
+    RSA_SSLV23_PADDING: number;
+    
+    /**
+     * RSA_NO_PADDING.
+     */
+    RSA_NO_PADDING: number;
+    
+    /**
+     * RSA_PKCS1_OAEP_PADDING.
+     */
+    RSA_PKCS1_OAEP_PADDING: number;
+    
+    /**
+     * RSA_X931_PADDING.
+     */
+    RSA_X931_PADDING: number;
+    
+    /**
+     * RSA_X509_PADDING.
+     */
+    RSA_X509_PADDING: number;
+    
+    /**
+     * POINT_CONVERSION_COMPRESSED.
+     */
+    POINT_CONVERSION_COMPRESSED: number;
+    
+    /**
+     * POINT_CONVERSION_UNCOMPRESSED.
+     */
+    POINT_CONVERSION_UNCOMPRESSED: number;
+  }
+}

@@ -14591,3 +14591,32 @@ declare global {
   
   type EventListenerOrEventListenerObject = EventListener | EventListenerObject;
 }
+
+// ReadableStream additional types
+declare global {
+  interface ReadableStreamDefaultController<T> {
+    readonly desiredSize: number | null;
+    close(): void;
+    enqueue(chunk: T): void;
+    error(e?: any): void;
+  }
+  
+  interface ReadableStreamDefaultReader<R> {
+    readonly closed: Promise<undefined>;
+    cancel(reason?: any): Promise<void>;
+    read(): Promise<ReadableStreamReadResult<R>>;
+    releaseLock(): void;
+  }
+  
+  type ReadableStreamReadResult<T> = ReadableStreamReadValueResult<T> | ReadableStreamReadDoneResult;
+  
+  interface ReadableStreamReadValueResult<T> {
+    done: false;
+    value: T;
+  }
+  
+  interface ReadableStreamReadDoneResult {
+    done: true;
+    value?: undefined;
+  }
+}

@@ -8493,3 +8493,60 @@ declare namespace NodeJS {
     path?: string;
   }
 }
+
+// Add Addons types
+declare namespace NodeJS {
+  interface Addon extends EventEmitter {
+    /**
+     * Addon path.
+     */
+    path: string;
+    
+    /**
+     * Exports addon.
+     */
+    exports: any;
+    
+    /**
+     * Loads addon.
+     */
+    load(callback?: Function): void;
+    
+    /**
+     * Event: load.
+     */
+    on(event: 'load', listener: (addon: any) => void): this;
+    
+    /**
+     * Event: error.
+     */
+    on(event: error, listener: (err: Error) => void): this;
+  }
+  
+  interface AddonOptions {
+    /**
+     * Exports path.
+     */
+    exports?: Record<string, any>;
+    
+    /**
+     * Global flag.
+     */
+    global?: boolean;
+    
+    /**
+     * Root path.
+     */
+    root?: string;
+    
+    /**
+     * Verbose?
+     */
+    verbose?: boolean;
+    
+    /**
+     * NAPI version.
+     */
+    napiVersion?: number;
+  }
+}

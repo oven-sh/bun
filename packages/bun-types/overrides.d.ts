@@ -12138,3 +12138,24 @@ declare global {
     }
     var Int16Array: Int16ArrayConstructor;
 }
+
+// Web API: Uint16Array additional types
+declare global {
+    interface Uint16ArrayConstructor {
+        new(length?: number): Uint16Array;
+        new(array: ArrayLike<number> | ArrayBufferLike): Uint16Array;
+        new(buffer: ArrayBufferLike, byteOffset?: number, length?: number): Uint16Array;
+        readonly prototype: Uint16Array;
+        BYTES_PER_ELEMENT: number;
+    }
+    var Uint16Array: Uint16ArrayConstructor;
+    
+    interface Int32ArrayConstructor {
+        new(length?: number): Int32Array;
+        new(array: ArrayLike<number> | ArrayBufferLike): Int32Array;
+        new(buffer: ArrayBufferLike, byteOffset?: number, length?: number): Int32Array;
+        readonly prototype: Int32Array;
+        BYTES_PER_ELEMENT: number;
+    }
+    var Int32Array: Int32ArrayConstructor;
+}

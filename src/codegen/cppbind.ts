@@ -553,7 +553,7 @@ async function processFile(parser: CppParser, file: string, allFunctions: CppFn[
 
       queryFoundLines.add(lineInfo.get(zigExportAttr.from).line);
 
-      // disabled because lezer parses (extern "C") seperately to the function definition / block
+      // disabled because lezer parses (extern "C") separately to the function definition / block
       /* const linkage = closest(fnNode, "LinkageSpecification");
       const linkageString = linkage?.getChild("String");
       if (!linkage || !linkageString || text(linkageString, ctx) !== '"C"') {

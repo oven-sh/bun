@@ -14413,3 +14413,25 @@ declare module "bun:test" {
     todo?: boolean;
   }
 }
+
+// Web globals additional types
+declare global {
+  function atob(data: string): string;
+  function btoa(data: string): string;
+  
+  function setTimeout(handler: TimerHandler, timeout?: number, ...arguments: any[]): number;
+  function setInterval(handler: TimerHandler, timeout?: number, ...arguments: any[]): number;
+  function clearTimeout(timeoutId: number): void;
+  function clearInterval(intervalId: number): void;
+  function queueMicrotask(callback: Function): void;
+  
+  type TimerHandler = string | Function;
+  
+  function structuredClone<T>(value: T, options?: StructuredSerializeOptions): T;
+  
+  interface StructuredSerializeOptions {
+    transfer?: any[];
+  }
+  
+  var console: Console;
+}

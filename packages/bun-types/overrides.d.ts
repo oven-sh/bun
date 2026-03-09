@@ -8769,3 +8769,90 @@ declare namespace NodeJS {
     objectMode?: boolean;
   }
 }
+
+// Add Process Signal types
+declare namespace NodeJS {
+  interface Signals {
+    /**
+     * Signals map.
+     */
+    readonly [signal: string]: number;
+  }
+  
+  interface SignalConstants {
+    /**
+     * SIGHUP signal.
+     */
+    SIGHUP: number;
+    
+    /**
+     * SIGINT signal.
+     */
+    SIGINT: number;
+    
+    /**
+     * SIGQUIT signal.
+     */
+    SIGQUIT: number;
+    
+    /**
+     * SIGILL signal.
+     */
+    SIGILL: number;
+    
+    /**
+     * SIGTRAP signal.
+     */
+    SIGTRAP: number;
+    
+    /**
+     * SIGABRT signal.
+     */
+    SIGABRT: number;
+    
+    /**
+     * SIGBUS signal.
+     */
+    SIGBUS: number;
+    
+    /**
+     * SIGFPE signal.
+     */
+    SIGFPE: number;
+    
+    /**
+     * SIGKILL signal.
+     */
+    SIGKILL: number;
+    
+    /**
+     * SIGUSR1 signal.
+     */
+    SIGUSR1: number;
+    
+    /**
+     * SIGUSR2 signal.
+     */
+    SIGUSR2: number;
+    
+    /**
+     * SIGSEGV signal.
+     */
+    SIGSEGV: number;
+    
+    /**
+     * SIGTERM signal.
+     */
+    SIGTERM: number;
+    
+    /**
+     * SIGCHLD signal.
+     */
+    SIGCHLD: number;
+    
+    /**
+     * SIGSTOP signal.
+     */
+    SIGSTOP: number;
+  }
+}

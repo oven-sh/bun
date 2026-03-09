@@ -14393,3 +14393,23 @@ declare module "console" {
     warn(...data: any[]): void;
   }
 }
+
+// bun:test additional API types
+declare module "bun:test" {
+  export interface TestContext {
+    [key: string]: any;
+  }
+  
+  export interface TestOptions {
+    only?: boolean;
+    skip?: boolean;
+    todo?: boolean;
+    timeout?: number;
+  }
+  
+  export interface DescribeOptions {
+    only?: boolean;
+    skip?: boolean;
+    todo?: boolean;
+  }
+}

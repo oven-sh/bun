@@ -1057,3 +1057,40 @@ declare namespace Bun {
     onerror: (error: Error) => void;
   }
 }
+
+// Add crypto types
+declare namespace Bun {
+  interface CryptoHash {
+    /**
+     * Updates hash with data.
+     */
+    update(data: string | Buffer | ArrayBuffer): CryptoHash;
+    
+    /**
+     * Returns digest as hex string.
+     */
+    digest(type: 'hex'): string;
+    
+    /**
+     * Returns digest as base64.
+     */
+    digest(type: 'base64'): string;
+    
+    /**
+     * Returns digest as Buffer.
+     */
+    digest(type: 'buffer'): Buffer;
+  }
+  
+  interface Crypto {
+    /**
+     * Creates a hash instance.
+     */
+    createHash(algorithm: string): CryptoHash;
+    
+    /**
+     * One-shot hash function.
+     */
+    hash(algorithm: string, data: string | Buffer | ArrayBuffer, outputType?: 'hex' | 'base64' | 'buffer'): string | Buffer;
+  }
+}

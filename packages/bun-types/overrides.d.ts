@@ -851,3 +851,55 @@ declare global {
     delay(ms: number): Promise<void>;
   }
 }
+
+// Add File system utility types
+declare namespace Bun {
+  interface FileBlob {
+    /**
+     * Reads file as text.
+     */
+    text(): Promise<string>;
+    
+    /**
+     * Reads file as ArrayBuffer.
+     */
+    arrayBuffer(): Promise<ArrayBuffer>;
+    
+    /**
+     * Gets file size.
+     */
+    size: number;
+    
+    /**
+     * Gets file type (MIME).
+     */
+    type: string;
+    
+    /**
+     * Gets last modified time.
+     */
+    lastModified: number;
+    
+    /**
+     * Writes data to file.
+     */
+    write(data: string | Buffer | Blob): Promise<number>;
+  }
+  
+  interface FileSink {
+    /**
+     * Writes data to the sink.
+     */
+    write(data: string | Buffer | Uint8Array): Promise<number>;
+    
+    /**
+     * Flushes buffered data.
+     */
+    flush(): Promise<void>;
+    
+    /**
+     * Closes the sink.
+     */
+    close(): Promise<void>;
+  }
+}

@@ -418,6 +418,23 @@ function ClientRequest(input, options, cb) {
             const statusMatch = statusLine.match(/^HTTP\/(\d+\.\d+)\s+(\d+)\s*(.*)/);
             const statusCode = statusMatch ? parseInt(statusMatch[2], 10) : 0;
 
+            // Guard against unparseable status lines — emit error rather
+            // than letting the Response constructor throw on invalid codes.
+            if (!statusCode) {
+              upgradeSocket.destroy();
+              this[kClearTimeout]();
+              const err = new Error(`Parse Error: Invalid HTTP status line: ${statusLine}`);
+              if (softFail) {
+                reject(err);
+              } else if (!this.destroyed) {
+                this.emit("error", err);
+                resolve();
+              } else {
+                resolve();
+              }
+              return;
+            }
+
             // Parse response headers (preserve originals in rawHeaders)
             const responseHeaders: Record<string, string | string[]> = {};
             const rawHeaders: string[] = [];

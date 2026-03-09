@@ -13821,3 +13821,56 @@ declare module "node:path/win32" {
   export function isAbsolute(path: string): boolean;
   export function toNamespacedPath(path: string): string;
 }
+
+// fs additional API types
+declare module "node:fs" {
+  export interface StatsBase<T> {
+    isFile(): boolean;
+    isDirectory(): boolean;
+    isBlockDevice(): boolean;
+    isCharacterDevice(): boolean;
+    isSymbolicLink(): boolean;
+    isFIFO(): boolean;
+    isSocket(): boolean;
+    dev: T;
+    ino: T;
+    mode: T;
+    nlink: T;
+    uid: T;
+    gid: T;
+    rdev: T;
+    size: T;
+    blksize: T;
+    blocks: T;
+    atimeMs: T;
+    mtimeMs: T;
+    ctimeMs: T;
+    birthtimeMs: T;
+    atime: Date;
+    mtime: Date;
+    ctime: Date;
+    birthtime: Date;
+  }
+  
+  export interface Stats extends StatsBase<number> {}
+  
+  export interface BigIntStats extends StatsBase<bigint> {}
+  
+  export interface OpenOptions {
+    flags?: string | number;
+    mode?: number;
+    fs?: any;
+  }
+  
+  export interface OpenDirOptions {
+    encoding?: BufferEncoding | null;
+    bufferSize?: number;
+  }
+  
+  export interface ReadSyncOptions {
+    buffer?: Buffer;
+    offset?: number;
+    length?: number;
+    position?: number;
+  }
+}

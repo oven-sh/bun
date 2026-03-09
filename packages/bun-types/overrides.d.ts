@@ -11319,3 +11319,37 @@ declare global {
     readonly size: number;
   }
 }
+
+// Web API: Performance additional types
+declare global {
+  interface Performance {
+    readonly timeOrigin: number;
+    clearMarks(markName?: string): void;
+    clearMeasures(measureName?: string): void;
+    clearResourceTimings(): void;
+    getEntries(): PerformanceEntry[];
+    getEntriesByName(name: string, type?: string): PerformanceEntry[];
+    getEntriesByType(type: string): PerformanceEntry[];
+    mark(name: string): void;
+    measure(name: string, startMark?: string, endMark?: string): void;
+    now(): number;
+    setResourceTimingBufferSize(maxSize: number): void;
+    toJSON(): any;
+  }
+  
+  interface PerformanceEntry {
+    readonly duration: number;
+    readonly entryType: string;
+    readonly name: string;
+    readonly startTime: number;
+    toJSON(): any;
+  }
+  
+  interface PerformanceMark extends PerformanceEntry {
+    readonly entryType: "mark";
+  }
+  
+  interface PerformanceMeasure extends PerformanceEntry {
+    readonly entryType: "measure";
+  }
+}

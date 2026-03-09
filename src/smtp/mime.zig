@@ -768,7 +768,7 @@ fn writeAttachmentWithOpts(writer: anytype, alloc: std.mem.Allocator, globalObje
 
     try writer.writeAll("\r\n");
 
-    const is_base64 = std.mem.eql(u8, use_cte, "base64");
+    const is_base64 = bun.strings.eql(use_cte, "base64");
 
     if (try att.getTruthy(globalObject, "content")) |content_val| {
         if (content_val.isString()) {
@@ -796,10 +796,10 @@ fn writeAttachmentWithOpts(writer: anytype, alloc: std.mem.Allocator, globalObje
         const path_str = utf8.slice();
 
         if (bun.strings.hasPrefixComptime(path_str, "data:")) {
-            if (std.mem.indexOf(u8, path_str, ",")) |comma_pos| {
+            if (bun.strings.indexOf(path_str, ",")) |comma_pos| {
                 const header = path_str[5..comma_pos];
                 const data_part = path_str[comma_pos + 1 ..];
-                if (std.mem.indexOf(u8, header, ";base64") != null) {
+                if (bun.strings.indexOf(header, ";base64") != null) {
                     var pos: usize = 0;
                     while (pos < data_part.len) {
                         const end = @min(pos + 76, data_part.len);

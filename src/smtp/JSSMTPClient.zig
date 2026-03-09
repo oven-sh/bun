@@ -171,10 +171,10 @@ fn processQueuedSend(this: *JSSMTPClient, msg: jsc.JSValue) !void {
         defer this.allocator.free(parsed);
         const raw_email = if (parsed.len > 0) extractAddrFromParsed(parsed[0]) else null;
         const email = raw_email orelse mime.extractEmail(u.slice());
-        if (!isCleanEmail(email)) return;
+        if (!isCleanEmail(email)) return error.InvalidEnvelope;
         this.envelope_from_buf = try this.allocator.dupe(u8, email);
         this.conn.envelope_from = this.envelope_from_buf;
-    } else return;
+    } else return error.InvalidEnvelope;
 
     var sfb = std.heap.stackFallback(@sizeOf([]const u8) * 32, this.allocator);
     const sfb_alloc = sfb.get();
@@ -185,7 +185,7 @@ fn processQueuedSend(this: *JSSMTPClient, msg: jsc.JSValue) !void {
         try this.collectRecipients(globalObject, msg, "cc", sfb_alloc, &to_list);
         try this.collectRecipients(globalObject, msg, "bcc", sfb_alloc, &to_list);
     }
-    if (to_list.items.len == 0) return;
+    if (to_list.items.len == 0) return error.InvalidEnvelope;
 
     this.freeEnvelopeTo();
     const to_slice = try this.allocator.alloc([]const u8, to_list.items.len);
@@ -1105,7 +1105,8 @@ fn extractMessageId(message: []const u8, go: *jsc.JSGlobalObject) jsc.JSValue {
     // Find "Message-ID: <...>" in the message
     if (bun.strings.indexOf(message, "Message-ID: <")) |start| {
         const id_start = start + 13; // skip "Message-ID: <"
-        if (std.mem.indexOfPos(u8, message, id_start, ">")) |end| {
+        if (bun.strings.indexOf(message[id_start..], ">")) |rel_end| {
+            const end = id_start + rel_end;
             const mid = message[id_start - 1 .. end + 1]; // include < and >
             const s = bun.String.createFormat("{s}", .{mid}) catch return .js_undefined;
             return s.toJS(go) catch .js_undefined;

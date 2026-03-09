@@ -61,8 +61,8 @@ fn parseWithDepth(alloc: std.mem.Allocator, input: []const u8, depth: u32) Parse
 
 /// Extract just the email address from a potentially complex address string.
 pub fn extractEmail(addr: []const u8) []const u8 {
-    if (std.mem.lastIndexOfScalar(u8, addr, '<')) |start| {
-        if (std.mem.indexOfScalarPos(u8, addr, start, '>')) |end| {
+    if (bun.strings.lastIndexOfChar(addr, '<')) |start| {
+        if (bun.strings.indexOfCharPos(addr, '>', start)) |end| {
             return addr[start + 1 .. end];
         }
     }
@@ -311,7 +311,7 @@ fn handleAddress(alloc: std.mem.Allocator, tokens: []const Token, depth: u32) Pa
         if (addr_count > 0) {
             // Fix Bug 2: strip content before last '<' in address
             var raw_addr = addr_buf[0];
-            if (std.mem.lastIndexOfScalar(u8, raw_addr, '<')) |lt| {
+            if (bun.strings.lastIndexOfChar(raw_addr, '<')) |lt| {
                 raw_addr = std.mem.trim(u8, raw_addr[lt + 1 ..], " \t");
             }
             address = raw_addr;
@@ -343,7 +343,7 @@ fn handleAddress(alloc: std.mem.Allocator, tokens: []const Token, depth: u32) Pa
             var idx: usize = if (address.len > 0) 0 else text_count;
             while (idx > 0) {
                 idx -= 1;
-                if (!text_quoted_buf[idx] and std.mem.indexOfScalar(u8, text_buf[idx], '@') != null) {
+                if (!text_quoted_buf[idx] and bun.strings.indexOfChar(text_buf[idx], '@') != null) {
                     // Fix Bug 1: if the token contains spaces, extract just the email part
                     const token = text_buf[idx];
                     if (bun.strings.indexOfAny(token, " \t") != null) {
@@ -353,7 +353,7 @@ fn handleAddress(alloc: std.mem.Allocator, tokens: []const Token, depth: u32) Pa
                         var remaining_count: usize = 0;
                         var found_email: ?[]const u8 = null;
                         while (words_iter.next()) |word| {
-                            if (found_email == null and std.mem.indexOfScalar(u8, word, '@') != null) {
+                            if (found_email == null and bun.strings.indexOfChar(word, '@') != null) {
                                 found_email = word;
                             } else if (word.len > 0) {
                                 if (remaining_count < remaining_parts.len) {
@@ -402,7 +402,7 @@ fn handleAddress(alloc: std.mem.Allocator, tokens: []const Token, depth: u32) Pa
                 }
                 if (all_quoted and text_count > 0) {
                     for (text_buf[0..text_count], 0..) |t, ti| {
-                        if (std.mem.indexOfScalar(u8, t, '@') != null) {
+                        if (bun.strings.indexOfChar(t, '@') != null) {
                             address = t;
                             var j = ti;
                             while (j + 1 < text_count) : (j += 1) {
@@ -424,8 +424,8 @@ fn handleAddress(alloc: std.mem.Allocator, tokens: []const Token, depth: u32) Pa
             name = try alloc.dupe(u8, comment_buf[0]);
         }
 
-        if (std.mem.eql(u8, name, address)) {
-            if (std.mem.indexOfScalar(u8, address, '@') != null) {
+        if (bun.strings.eql(name, address)) {
+            if (bun.strings.indexOfChar(address, '@') != null) {
                 result[0] = .{ .address = .{ .name = "", .address = address } };
             } else {
                 result[0] = .{ .address = .{ .name = name, .address = "" } };

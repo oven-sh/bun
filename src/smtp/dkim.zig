@@ -115,7 +115,7 @@ fn findHeader(headers: []const u8, name: []const u8) ?[]const u8 {
     var pos: usize = 0;
     while (pos < headers.len) {
         // Handle both \r\n and \n line endings
-        var line_end = std.mem.indexOfPos(u8, headers, pos, "\n") orelse headers.len;
+        var line_end = bun.strings.indexOfCharPos(headers, '\n', pos) orelse headers.len;
         var skip: usize = 1; // skip \n
         if (line_end > pos and headers[line_end - 1] == '\r') {
             line_end -= 1; // exclude \r
@@ -131,7 +131,7 @@ fn findHeader(headers: []const u8, name: []const u8) ?[]const u8 {
                 var val_end = @min(line_end + skip, headers.len);
                 while (val_end < headers.len and (headers[val_end] == ' ' or headers[val_end] == '\t')) {
                     // This is a continuation line — extend val_end to its end
-                    val_end = std.mem.indexOfPos(u8, headers, val_end, "\n") orelse headers.len;
+                    val_end = bun.strings.indexOfCharPos(headers, '\n', val_end) orelse headers.len;
                     if (val_end < headers.len) val_end += 1; // skip \n
                 }
                 var val_start = name.len + 1;
@@ -179,7 +179,7 @@ fn canonicalizeBodyRelaxed(alloc: std.mem.Allocator, body: []const u8) ![]const 
 
     var line_start: usize = 0;
     while (line_start < body.len) {
-        const line_end = std.mem.indexOfPos(u8, body, line_start, "\r\n") orelse body.len;
+        const line_end = if (bun.strings.indexOf(body[line_start..], "\r\n")) |rel| line_start + rel else body.len;
         const line = body[line_start..line_end];
 
         // Write canonicalized line: compress WSP, trim trailing WSP

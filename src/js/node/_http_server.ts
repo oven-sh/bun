@@ -62,6 +62,7 @@ const sendHelper = $newZigFunction("node_cluster_binding.zig", "sendHelperChild"
 
 const kServerResponse = Symbol("ServerResponse");
 const kRejectNonStandardBodyWrites = Symbol("kRejectNonStandardBodyWrites");
+const kPendingListenCallback = Symbol("kPendingListenCallback");
 const GlobalPromise = globalThis.Promise;
 const kEmptyBuffer = Buffer.alloc(0);
 const ObjectKeys = Object.keys;
@@ -414,12 +415,13 @@ Server.prototype.listen = function () {
 
   if ($isCallable(arguments[arguments.length - 1])) {
     onListen = arguments[arguments.length - 1];
+    this[kPendingListenCallback] = onListen;
+  } else if (this[kPendingListenCallback]) {
+    // Re-use callback from a previous failed listen() call (e.g., Vite retries
+    // on EADDRINUSE without passing the callback again).
+    onListen = this[kPendingListenCallback];
   }
 
-  // Register the onListen callback before attempting to bind. This ensures
-  // the callback survives across listen retries (e.g., when Vite retries on
-  // EADDRINUSE from within the error handler — the retry call won't pass
-  // the callback again, but the .once handler from the first call persists).
   if ($isCallable(onListen)) {
     this.once("listening", onListen);
   }
@@ -470,6 +472,9 @@ Server.prototype.listen = function () {
 
     server[kRealListen](tls, port, host, socketPath, true);
   } catch (err) {
+    if ($isCallable(onListen)) {
+      this.removeListener("listening", onListen);
+    }
     setTimeout(() => server.emit("error", err), 1);
   }
 
@@ -735,6 +740,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
       delete this[kDeferredTimeouts];
     }
 
+    delete this[kPendingListenCallback];
     setTimeout(emitListeningNextTick, 1, this, this[serverSymbol]?.hostname, this[serverSymbol]?.port);
   }
 };

@@ -603,3 +603,30 @@ declare module "node:crypto" {
     shake256(): Hash;
   }
 }
+
+// Add File and PathLike union types
+declare namespace Bun {
+  type PathLike = string | Buffer | URL;
+  
+  interface FileLike {
+    /**
+     * Reads file content as text.
+     */
+    text(): Promise<string>;
+    
+    /**
+     * Reads file content as ArrayBuffer.
+     */
+    arrayBuffer(): Promise<ArrayBuffer>;
+    
+    /**
+     * Gets file size in bytes.
+     */
+    size: number;
+    
+    /**
+     * Gets last modified time.
+     */
+    lastModified: number;
+  }
+}

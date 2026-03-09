@@ -6953,3 +6953,128 @@ declare namespace NodeJS {
     setPlaintextLength(length: number): void;
   }
 }
+
+// Add DNS types
+declare namespace NodeJS {
+  interface LookupAddress {
+    /**
+     * IP address.
+     */
+    address: string;
+    
+    /**
+     * Address family.
+     */
+    family: 'IPv4' | 'IPv6';
+  }
+  
+  interface LookupOptions {
+    /**
+     * Family.
+     */
+    family?: number | string;
+    
+    /**
+     * Hints.
+     */
+    hints?: number;
+    
+    /**
+     * All addresses?
+     */
+    all?: boolean;
+    
+    /**
+     * Verbatim?
+     */
+    verbatim?: boolean;
+    
+    /**
+     * DNS order.
+     */
+    dnsOrder?: string;
+  }
+  
+  interface LookupOneOptions extends LookupOptions {
+    /**
+     * Not all addresses.
+     */
+    all?: false;
+  }
+  
+  interface LookupAllOptions extends LookupOptions {
+    /**
+     * All addresses.
+     */
+    all: true;
+  }
+  
+  interface Resolver extends EventEmitter {
+    /**
+     * Resolves hostname.
+     */
+    resolve(hostname: string, rrtype: string, callback?: (err: Error | null, addresses: string[]) => void): void;
+    
+    /**
+     * Resolves A records.
+     */
+    resolve4(hostname: string, callback?: (err: Error | null, addresses: string[]) => void): void;
+    
+    /**
+     * Resolves AAAA records.
+     */
+    resolve6(hostname: string, callback?: (err: Error | null, addresses: string[]) => void): void;
+    
+    /**
+     * Resolves CNAME records.
+     */
+    resolveCname(hostname: string, callback?: (err: Error | null, addresses: string[]) => void);
+    
+    /**
+     * Resolves MX records.
+     */
+    resolveMx(hostname: string, callback?: (err: Error | null, addresses: string[]) => void);
+    
+    /**
+     * Resolves NS records.
+     */
+    resolveNs(hostname: string, callback?: (err: Error | null, addresses: string[]) => void);
+    
+    /**
+     * Resolves TXT records.
+     */
+    resolveTxt(hostname: string, callback?: (err: Error | null, addresses: string[][]) => void);
+    
+    /**
+     * Resolves SRV records.
+     */
+    resolveSrv(hostname: string, callback?: (err: Error | null, records: DnsSrvRecord[]) => void);
+    
+    /**
+     * Reverses address.
+     */
+    reverse(ip: string, callback?: (err: Error | null, hostnames: string[]) => void);
+  }
+  
+  interface DnsSrvRecord {
+    /**
+     * Priority.
+     */
+    priority: number;
+    
+    /**
+     * Weight.
+     */
+    weight: number;
+    
+    /**
+     * Port.
+     */
+    port: number;
+    
+    /**
+     * Target.
+     */
+    target: string;
+  }
+}

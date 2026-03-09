@@ -97,17 +97,14 @@ void JSCTaskScheduler::cancelAllPendingWork(void* bunVM)
 {
     Locker<Lock> holder { m_lock };
 
-    int eventLoopTickets = 0;
-    m_pendingTicketsKeepingEventLoopAlive.removeIf([&eventLoopTickets](auto& ticket) {
-        ticket->cancelAndClear();
-        eventLoopTickets++;
-        return true;
-    });
+    int eventLoopTickets = static_cast<int>(m_pendingTicketsKeepingEventLoopAlive.size());
 
-    m_pendingTicketsOther.removeIf([](auto& ticket) {
-        ticket->cancelAndClear();
-        return true;
-    });
+    // Clear both ticket sets. Dropping the Ref releases our hold on each ticket;
+    // the TicketData destructor will run if no other reference exists, which
+    // automatically clears the weak back-reference in the GlobalObject's
+    // m_weakTickets set so the GC won't visit stale JSCell* dependencies.
+    m_pendingTicketsKeepingEventLoopAlive.clear();
+    m_pendingTicketsOther.clear();
 
     holder.unlockEarly();
 

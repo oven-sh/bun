@@ -630,3 +630,45 @@ declare namespace Bun {
     lastModified: number;
   }
 }
+
+// Add Shell configuration types
+declare namespace Bun {
+  interface ShellOptions {
+    /**
+     * Working directory for shell commands.
+     */
+    cwd?: string;
+    
+    /**
+     * Environment variables.
+     */
+    env?: Record<string, string>;
+    
+    /**
+     * Whether to use quiet mode (no output).
+     */
+    quiet?: boolean;
+  }
+  
+  interface ShellResult {
+    /**
+     * Exit code of the shell command.
+     */
+    exitCode: number;
+    
+    /**
+     * Standard output text.
+     */
+    stdout: string;
+    
+    /**
+     * Standard error text.
+     */
+    stderr: string;
+    
+    /**
+     * Whether the command succeeded.
+     */
+    success: boolean;
+  }
+}

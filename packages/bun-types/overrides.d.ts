@@ -5774,3 +5774,60 @@ declare namespace NodeJS {
     };
   }
 }
+
+// Add FS.promises types
+declare namespace NodeJS {
+  interface FileHandle {
+    /**
+     * Reads file.
+     */
+    read(buffer: Buffer, offset?: number, length?: number, position?: number): Promise<{ bytesRead: number; buffer: Buffer }>;
+    
+    /**
+     * Writes file.
+     */
+    write(buffer: Buffer | string, offset?: number, length?: number, position?: number): Promise<{ bytesWritten: number; buffer: Buffer }>;
+    
+    /**
+     * Gets file stats.
+     */
+    stat(): Promise<Stats>;
+    
+    /**
+     * Truncates file.
+     */
+    truncate(len?: number): Promise<void>;
+    
+    /**
+     * Chmods file.
+     */
+    chmod(mode: number): Promise<void>;
+    
+    /**
+     * Chowns file.
+     */
+    chown(uid: number, gid: number): Promise<void>;
+    
+    /**
+     * Closes file handle.
+     */
+    close(): Promise<void>;
+  }
+  
+  interface StatWatcher extends EventEmitter {
+    /**
+     * File path.
+     */
+    path: string;
+    
+    /**
+     * Stops watching.
+     */
+    stop(): void;
+    
+    /**
+     * Event: change.
+     */
+    on(event: 'change', listener: (current: Stats, previous: Stats) => void): this;
+  }
+}

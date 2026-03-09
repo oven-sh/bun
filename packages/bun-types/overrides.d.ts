@@ -2754,3 +2754,40 @@ declare namespace Bun {
     readonly pattern: string;
   }
 }
+
+// Add Error types
+declare namespace Bun {
+  interface Error {
+    /**
+     * Error name.
+     */
+    name: string;
+    
+    /**
+     * Error message.
+     */
+    message: string;
+    
+    /**
+     * Stack trace.
+     */
+    stack?: string;
+    
+    /**
+     * Error cause.
+     */
+    cause?: unknown;
+    
+    /**
+     * Error code.
+     */
+    code?: string | number;
+  }
+  
+  interface ErrorConstructor {
+    /**
+     * Creates error instance.
+     */
+    new(message?: string, options?: { cause?: unknown }): Error;
+  }
+}

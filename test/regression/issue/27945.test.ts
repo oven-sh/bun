@@ -34,16 +34,21 @@ test("rejecting thenable should fail the test", async () => {
   expect(stderr).toContain("thenable rejected");
 });
 
-test("resolving thenable should pass the test", async () => {
+test("resolving thenable should pass the test and invoke .then", async () => {
   using dir = tempDir("issue-27945", {
     "thenable.test.js": `
-      const { test, expect } = require("bun:test");
+      const { test, expect, afterAll } = require("bun:test");
+      let thenCalled = false;
       test("resolving thenable", () => {
         return {
           then(resolve, reject) {
+            thenCalled = true;
             resolve("ok");
           }
         };
+      });
+      afterAll(() => {
+        expect(thenCalled).toBe(true);
       });
     `,
   });

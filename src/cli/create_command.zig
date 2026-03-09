@@ -432,7 +432,15 @@ pub const CreateCommand = struct {
                         defer dest_dir.close();
 
                         var iter = dest_dir.iterate();
-                        if (iter.next() catch null) |_| {
+                        const has_conflict = while (iter.next() catch null) |entry| {
+                            // Skip entries that never conflict (same list used by remote templates)
+                            const dominated = inline for (never_conflict) |nc| {
+                                if (strings.eqlComptime(entry.name, nc)) break true;
+                            } else false;
+                            if (!dominated) break true;
+                        } else false;
+
+                        if (has_conflict) {
                             node.end();
                             progress.refresh();
 
@@ -446,7 +454,15 @@ pub const CreateCommand = struct {
                             Output.prettyErrorln("<r>\n<d>To overwrite it anyway, use --force<r>", .{});
                             Global.exit(1);
                         }
-                    } else |_| {}
+                    } else |e| switch (e) {
+                        error.FileNotFound => {},
+                        else => {
+                            node.end();
+                            progress.refresh();
+                            Output.prettyErrorln("<r><red>{s}<r>: opening dir {s}", .{ @errorName(e), destination });
+                            Global.exit(1);
+                        },
+                    }
                 }
 
                 std.fs.deleteTreeAbsolute(destination) catch {};

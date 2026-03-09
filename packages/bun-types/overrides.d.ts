@@ -13091,3 +13091,17 @@ declare module "node:dgram" {
   
   export function createSocket(type: "udp4" | "udp6", callback?: (msg: Buffer, rinfo: RemoteInfo) => void): Socket;
 }
+
+// diagnostics_channel API types
+declare module "node:diagnostics_channel" {
+  import { EventEmitter } from "node:events";
+  
+  export interface Channel extends EventEmitter {
+    readonly name: string;
+    hasSubscribers(): boolean;
+    publish<T>(value: T): boolean;
+  }
+  
+  export function channel(name: string): Channel;
+  export function hasSubscribers(name: string): boolean;
+}

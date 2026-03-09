@@ -10752,3 +10752,61 @@ declare module "node:fs" {
     buffers: Buffer[];
   }
 }
+
+// dns module additional types
+declare module "node:dns" {
+  export interface LookupOptions {
+    family?: number;
+    hints?: number;
+    all?: boolean;
+    verbatim?: boolean;
+  }
+  
+  export interface LookupOneAddress {
+    address: string;
+    family: number;
+  }
+  
+  export interface LookupAllAddresses {
+    address: string;
+    family: number;
+  }
+  
+  export interface RecordWithTtl {
+    address: string;
+    ttl: number;
+  }
+  
+  export interface AnyRecord {
+    type: string;
+    value: any;
+  }
+  
+  export interface ResolveOptions {
+    ttl?: boolean;
+  }
+  
+  export interface ResolveWithTtlOptions extends ResolveOptions {
+    ttl: true;
+  }
+  
+  export interface ResolverOptions {
+    timeout?: number;
+    tries?: number;
+  }
+  
+  export function lookup(hostname: string, callback: (err: NodeJS.ErrnoException | null, address: string, family: number) => void): void;
+  export function lookup(hostname: string, options: LookupOptions, callback: (err: NodeJS.ErrnoException | null, address: string | LookupOneAddress[], family: number) => void): void;
+  export function resolve(hostname: string, callback: (err: NodeJS.ErrnoException | null, addresses: string[]) => void): void;
+  export function resolve(hostname: string, rrtype: string, callback: (err: NodeJS.ErrnoException | null, addresses: string[] | AnyRecord[]) => void): void;
+  export function resolveAny(hostname: string, callback: (err: NodeJS.ErrnoException | null, addresses: AnyRecord[]) => void): void;
+  export function resolve4(hostname: string, callback: (err: NodeJS.ErrnoException | null, addresses: string[]) => void): void;
+  export function resolve6(hostname: string, callback: (err: NodeJS.ErrnoException | null, addresses: string[]) => void): void;
+  export function resolveCname(hostname: string, callback: (err: NodeJS.ErrnoException | null, addresses: string[]) => void): void;
+  export function resolveMx(hostname: string, callback: (err: NodeJS.ErrnoException | null, addresses: any[]) => void): void;
+  export function resolveNs(hostname: string, callback: (err: NodeJS.ErrnoException | null, addresses: string[]) => void): void;
+  export function resolveTxt(hostname: string, callback: (err: NodeJS.ErrnoException | null, addresses: string[][]) => void): void;
+  export function resolveSrv(hostname: string, callback: (err: NodeJS.ErrnoException | null, addresses: any[]) => void): void;
+  export function resolvePtr(hostname: string, callback: (err: NodeJS.ErrnoException | null, addresses: string[]) => void): void;
+  export function reverse(ip: string, callback: (err: NodeJS.ErrnoException | null, hostnames: string[]) => void): void;
+}

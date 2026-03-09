@@ -427,6 +427,10 @@ pub const Command = struct {
 
         filters: []const []const u8 = &.{},
         workspaces: bool = false,
+        affected: bool = false,
+        base_ref: []const u8 = "main",
+        head_ref: []const u8 = "HEAD",
+        list_affected: bool = false,
         if_present: bool = false,
         parallel: bool = false,
         sequential: bool = false,

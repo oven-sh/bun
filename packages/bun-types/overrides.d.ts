@@ -2590,3 +2590,53 @@ declare namespace Bun {
     throw(e: any): Promise<IteratorResult<T, TReturn>>;
   }
 }
+
+// Add Set and Map collection types
+declare namespace Bun {
+  interface Set<T> {
+    /**
+     * Adds value to set.
+     */
+    add(value: T): this;
+    
+    /**
+     * Checks if value exists.
+     */
+    has(value: T): boolean;
+    
+    /**
+     * Deletes value from set.
+     */
+    delete(value: T): boolean;
+    
+    /**
+     * Clears all values.
+     */
+    clear(): void;
+    
+    /**
+     * Gets set size.
+     */
+    readonly size: number;
+    
+    /**
+     * Iterates over values.
+     */
+    forEach(callbackfn: (value: T, value2: T, set: Set<T>) => void, thisArg?: any): void;
+    
+    /**
+     * Returns values iterator.
+     */
+    keys(): IterableIterator<T>;
+    
+    /**
+     * Returns values iterator.
+     */
+    values(): IterableIterator<T>;
+    
+    /**
+     * Returns entries iterator.
+     */
+    entries(): IterableIterator<[T, T]>;
+  }
+}

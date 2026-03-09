@@ -6118,3 +6118,77 @@ declare namespace NodeJS {
     readonly resource: object;
   }
 }
+
+// Add Readline types
+declare namespace NodeJS {
+  interface ReadLine extends EventEmitter {
+    /**
+     * Prompt string.
+     */
+    prompt: string;
+    
+    /**
+     * Gets line.
+     */
+    question(query: string, callback?: (answer: string) => void): void;
+    
+    /**
+     * Pauses readline.
+     */
+    pause(): this;
+    
+    /**
+     * Resumes readline.
+     */
+    resume(): this;
+    
+    /**
+     * Closes interface.
+     */
+    close(): void;
+    
+    /**
+     * Writes to output.
+     */
+    write(data: string | Buffer, key?: string): void;
+    
+    /**
+     * Event: line.
+     */
+    on(event: 'line', listener: (input: string) => void): this;
+    
+    /**
+     * Event: close.
+     */
+    on(event: 'close', listener: () => void): this;
+    
+    /**
+     * Event: pause.
+     */
+    on(event: 'pause', listener: () => void): this;
+    
+    /**
+     * Event: resume.
+     */
+    on(event: 'resume', listener: () => void): this;
+    
+    /**
+     * Event: SIGCONT.
+     */
+    on(event: 'SIGCONT', listener: () => void): this;
+  }
+  
+  interface CompleterResult extends Array<string | string[]> {
+    /**
+     * Is a completer result?
+     */
+    completer: true;
+  }
+  
+  interface Completer {
+    /**
+     * Completes line.
+     */
+    (line: string): CompleterResult | Promise<CompleterResult>;
+  }
+}

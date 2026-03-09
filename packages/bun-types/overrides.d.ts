@@ -2240,3 +2240,40 @@ declare namespace Bun {
     boolean(): boolean;
   }
 }
+
+// Add Text encoder/decoder types
+declare namespace Bun {
+  interface TextEncoder {
+    /**
+     * Encodes string to UTF-8 bytes.
+     */
+    encode(input?: string): Uint8Array;
+    
+    /**
+     * Encoding name.
+     */
+    readonly encoding: 'utf-8';
+  }
+  
+  interface TextDecoder {
+    /**
+     * Decodes bytes to string.
+     */
+    decode(input?: BufferSource | ArrayBuffer, options?: { stream?: boolean }): string;
+    
+    /**
+     * Encoding name.
+     */
+    readonly encoding: string;
+    
+    /**
+     * Fatal flag.
+     */
+    readonly fatal: boolean;
+    
+    /**
+     * Ignore BOM flag.
+     */
+    readonly ignoreBOM: boolean;
+  }
+}

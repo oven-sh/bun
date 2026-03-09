@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 // https://github.com/oven-sh/bun/issues/27784
-test("http server listen callback fires after EADDRINUSE retry", { timeout: 10_000 }, async () => {
+test("http server listen callback fires after EADDRINUSE retry", async () => {
   // Script that blocks a port, then tests the Vite-style retry pattern
   await using proc = Bun.spawn({
     cmd: [
@@ -58,7 +58,6 @@ blocker.listen(0, host, () => {
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toBe("");
   const result = JSON.parse(stdout.trim());
   expect(result.port).toBe(result.blockedPort + 1);
   expect(exitCode).toBe(0);

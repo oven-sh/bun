@@ -9688,3 +9688,65 @@ declare module "node:assert" {
   export function rejects(block: Function | Promise<any>, error: RegExp | Function | any, message?: string | Error): Promise<void>;
   export function doesNotReject(block: Function | Promise<any>, message?: string | Error): Promise<void>;
 }
+
+// util module additional types
+declare module "node:util" {
+  export function format(format?: any, ...param: any[]): string;
+  export function formatWithOptions(inspectOptions: any, format?: any, ...param: any[]): string;
+  export function inspect(object: any, options?: any): string;
+  export function isArray(value: any): value is any[];
+  export function isBoolean(value: any): value is boolean;
+  export function isNull(value: any): value is null;
+  export function isNullOrUndefined(value: any): value is null | undefined;
+  export function isNumber(value: any): value is number;
+  export function isString(value: any): value is string;
+  export function isSymbol(value: any): value is symbol;
+  export function isUndefined(value: any): value is undefined;
+  export function isObject(value: any): value is object;
+  export function isError(e: any): e is Error;
+  export function isFunction(value: any): value is Function;
+  export function isRegExp(value: any): value is RegExp;
+  export function isPrimitive(value: any): boolean;
+  export function isBuffer(value: any): value is Buffer;
+  export function isDeepStrictEqual(val1: any, val2: any): boolean;
+  export function promisify<T>(fn: Function): T;
+  export function callbackify(fn: Function): Function;
+  export function types: {
+    isAnyArrayBuffer(value: any): value is ArrayBuffer;
+    isArrayBufferView(value: any): value is any;
+    isArgumentsObject(value: any): boolean;
+    isBigInt64Array(value: any): value is BigInt64Array;
+    isBigUint64Array(value: any): value is BigUint64Array;
+    isBooleanObject(value: any): value is Boolean;
+    isBoxedPrimitive(value: any): boolean;
+    isDataView(value: any): value is DataView;
+    isDate(value: any): value is Date;
+    isFloat32Array(value: any): value is Float32Array;
+    isFloat64Array(value: any): value is Float64Array;
+    isGeneratorFunction(value: any): value is GeneratorFunction;
+    isGeneratorObject(value: any): boolean;
+    isInt8Array(value: any): value is Int8Array;
+    isInt16Array(value: any): value is Int16Array;
+    isInt32Array(value: any): value is Int32Array;
+    isMap(value: any): value is Map<any, any>;
+    isMapIterator(value: any): boolean;
+    isModuleNamespaceObject(value: any): boolean;
+    isNativeError(value: any): value is Error;
+    isNumberObject(value: any): value is Number;
+    isPromise(value: any): value is Promise<any>;
+    isProxy(value: any): boolean;
+    isRegExp(value: any): value is RegExp;
+    isSet(value: any): value is Set<any>;
+    isSetIterator(value: any): boolean;
+    isSharedArrayBuffer(value: any): value is SharedArrayBuffer;
+    isStringObject(value: any): value is String;
+    isSymbolObject(value: any): value is Symbol;
+    isTypedArray(value: any): value is any;
+    isUint8Array(value: any): value is Uint8Array;
+    isUint8ClampedArray(value: any): value is Uint8ClampedArray;
+    isUint16Array(value: any): value is Uint16Array;
+    isUint32Array(value: any): value is Uint32Array;
+    isWeakMap(value: any): value is WeakMap<any, any>;
+    isWeakSet(value: any): value is WeakSet<any>;
+  };
+}

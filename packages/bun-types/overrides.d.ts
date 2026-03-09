@@ -13038,3 +13038,56 @@ declare module "node:cluster" {
   const cluster: Cluster;
   export default cluster;
 }
+
+// dgram API types
+declare module "node:dgram" {
+  import { EventEmitter } from "node:events";
+  import { AddressInfo } from "node:net";
+  
+  export interface RemoteInfo {
+    address: string;
+    family: "IPv4" | "IPv6";
+    port: number;
+    size: number;
+  }
+  
+  export interface BindOptions {
+    port?: number;
+    address?: string;
+    exclusive?: boolean;
+    fd?: number;
+  }
+  
+  export class Socket extends EventEmitter {
+    readonly type: "udp4" | "udp6";
+    send(
+      msg: Buffer | string | Uint8Array,
+      port: number,
+      address?: string,
+      callback?: (error: Error | null, bytes: number) => void
+    ): void;
+    send(
+      msg: Buffer | string | Uint8Array,
+      offset: number,
+      length: number,
+      port: number,
+      address?: string,
+      callback?: (error: Error | null, bytes: number) => void
+    ): void;
+    bind(port?: number, address?: string, callback?: () => void): this;
+    bind(options: BindOptions, callback?: () => void): this;
+    close(callback?: () => void): void;
+    address(): AddressInfo | string;
+    setBroadcast(flag: boolean): void;
+    setTTL(ttl: number): void;
+    setMulticastTTL(ttl: number): void;
+    setMulticastInterface(multicastInterface: string): void;
+    setMulticastLoopback(flag: boolean): void;
+    addMembership(multicastAddress: string, multicastInterface?: string): void;
+    dropMembership(multicastAddress: string, multicastInterface?: string): void;
+    ref(): this;
+    unref(): this;
+  }
+  
+  export function createSocket(type: "udp4" | "udp6", callback?: (msg: Buffer, rinfo: RemoteInfo) => void): Socket;
+}

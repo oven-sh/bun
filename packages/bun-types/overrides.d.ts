@@ -978,3 +978,35 @@ declare namespace Bun {
     BUN_DEBUG?: '1' | '0' | 'true' | 'false';
   }
 }
+
+// Add REPL types
+declare namespace Bun {
+  interface REPLServer {
+    /**
+     * Starts the REPL server.
+     */
+    start(): void;
+    
+    /**
+     * Evaluates code in the REPL context.
+     */
+    eval(code: string): any;
+    
+    /**
+     * Completes input for tab completion.
+     */
+    complete(input: string): string[];
+  }
+  
+  interface REPOptions {
+    /**
+     * Whether to use the global context.
+     */
+    useGlobal?: boolean;
+    
+    /**
+     * Whether to ignore undefined results.
+     */
+    ignoreUndefined?: boolean;
+  }
+}

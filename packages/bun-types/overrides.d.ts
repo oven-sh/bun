@@ -3636,3 +3636,74 @@ declare namespace NodeJS {
     isTTY: boolean;
   }
 }
+
+// Add Module types
+declare namespace NodeJS {
+  interface Module {
+    /**
+     * Module exports.
+     */
+    exports: any;
+    
+    /**
+     * Module ID.
+     */
+    id: string;
+    
+    /**
+     * Module filename.
+     */
+    filename: string | null;
+    
+    /**
+     * Module loaded status.
+     */
+    loaded: boolean;
+    
+    /**
+     * Parent module.
+     */
+    parent: Module | null;
+    
+    /**
+     * Child modules.
+     */
+    children: Module[];
+    
+    /**
+     * Module paths.
+     */
+    paths: string[];
+    
+    /**
+     * Require function.
+     */
+    require(id: string): any;
+  }
+  
+  interface Require {
+    /**
+     * Requires module.
+     */
+    (id: string): any;
+    
+    /**
+     * Resolves module path.
+     */
+    resolve(id: string): string;
+    
+    /**
+     * Resolves module paths.
+     */
+    paths(): string[];
+    
+    /**
+     * Cache of modules.
+     */
+    cache: RequireCache;
+  }
+  
+  interface RequireCache {
+    [id: string]: any;
+  }
+}

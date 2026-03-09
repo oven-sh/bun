@@ -502,3 +502,13 @@ declare module "node:diagnostics_channel" {
     hasSubscribers: boolean;
   }
 }
+
+// Add undici.Agent.close() method
+declare module "undici" {
+  interface Agent {
+    /**
+     * Asynchronously closes the agent and all associated connections.
+     */
+    close(): Promise<void>;
+  }
+}

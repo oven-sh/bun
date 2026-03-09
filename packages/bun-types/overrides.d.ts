@@ -9491,3 +9491,65 @@ declare module "node:v8" {
   export function serialize(value: any): Buffer;
   export function deserialize(buffer: Buffer): any;
 }
+
+// os module additional types
+declare module "node:os" {
+  export interface CpuInfo {
+    model: string;
+    speed: number;
+    times: {
+      user: number;
+      nice: number;
+      sys: number;
+      idle: number;
+      irq: number;
+    };
+  }
+  
+  export interface NetworkInterfaceBase {
+    address: string;
+    netmask: string;
+    mac: string;
+    internal: boolean;
+    cidr: string | null;
+  }
+  
+  export interface NetworkInterfaceInfoIPv4 extends NetworkInterfaceBase {
+    family: "IPv4";
+  }
+  
+  export interface NetworkInterfaceInfoIPv6 extends NetworkInterfaceBase {
+    family: "IPv6";
+    scopeid: number;
+  }
+  
+  export type NetworkInterfaceInfo = NetworkInterfaceInfoIPv4 | NetworkInterfaceInfoIPv6;
+  
+  export interface UserInfo<T = string> {
+    username: T;
+    uid: number;
+    gid: number;
+    shell: T;
+    homedir: T;
+  }
+  
+  export function hostname(): string;
+  export function loadavg(): number[];
+  export function uptime(): number;
+  export function freemem(): number;
+  export function totalmem(): number;
+  export function cpus(): CpuInfo[];
+  export function type(): string;
+  export function release(): string;
+  export function networkInterfaces(): Record<string, NetworkInterfaceInfo[]>;
+  export function homedir(): string;
+  export function tmpdir(): string;
+  export function userInfo(options?: { encoding: BufferEncoding }): UserInfo<string>;
+  export function constants: {
+    UV_UDP_REUSEADDR: number;
+    signals: Record<string, number>;
+    errno: Record<string, number>;
+    windows: Record<string, number> | null;
+    priority: Record<string, number>;
+  };
+}

@@ -828,3 +828,26 @@ declare namespace Bun {
     meta: Record<string, any>;
   }
 }
+
+// Add Promise utility types
+declare global {
+  interface PromiseConstructor {
+    /**
+     * Creates a promise that rejects with a reason.
+     * @param reason - The rejection reason
+     */
+    reject<T = never>(reason?: any): Promise<T>;
+    
+    /**
+     * Creates a promise that resolves with a value.
+     * @param value - The resolution value
+     */
+    resolve<T>(value: T | PromiseLike<T>): Promise<T>;
+    
+    /**
+     * Creates a promise that resolves after a delay.
+     * @param ms - Milliseconds to delay
+     */
+    delay(ms: number): Promise<void>;
+  }
+}

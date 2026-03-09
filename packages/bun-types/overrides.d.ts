@@ -2443,3 +2443,43 @@ declare namespace Bun {
     createZonedDateTime(year: number, month: number, day: number, hour: number, minute: number, timeZone: string): Temporal.ZonedDateTime;
   }
 }
+
+// Add Reflect types
+declare namespace Bun {
+  interface Reflect {
+    /**
+     * Gets property descriptor.
+     */
+    getDescriptor(target: object, key: string | symbol): PropertyDescriptor | undefined;
+    
+    /**
+     * Gets property descriptors.
+     */
+    getDescriptors(target: object): Record<string, PropertyDescriptor>;
+    
+    /**
+     * Gets prototype.
+     */
+    getPrototypeOf(target: object): object | null;
+    
+    /**
+     * Sets prototype.
+     */
+    setPrototypeOf(target: object, prototype: object | null): boolean;
+    
+    /**
+     * Deletes property.
+     */
+    deleteProperty(target: object, key: string | symbol): boolean;
+    
+    /**
+     * Applies function.
+     */
+    apply(target: Function, thisArgument: any, argumentsList: any[]): any;
+    
+    /**
+     * Constructs object.
+     */
+    construct(target: Function, argumentsList: any[], newTarget?: Function): object;
+  }
+}

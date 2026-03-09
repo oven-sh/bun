@@ -12991,3 +12991,50 @@ declare module "node:readline" {
   
   export function createInterface(options: ReadLineOptions): Interface;
 }
+
+// cluster API types
+declare module "node:cluster" {
+  import { EventEmitter } from "node:events";
+  import { ChildProcess } from "node:child_process";
+  
+  export interface ClusterSettings {
+    exec?: string;
+    args?: string[];
+    silent?: boolean;
+    execArgv?: string[];
+    cwd?: string;
+    inspectPort?: number | (() => number);
+  }
+  
+  export interface Worker extends ChildProcess {
+    readonly id: number;
+    readonly process: ChildProcess;
+    send(message: any, sendHandle?: any, options?: any, callback?: (error: Error | null) => void): boolean;
+    kill(signal?: string): void;
+    disconnect(): void;
+    isConnected(): boolean;
+    isDead(): boolean;
+    exitedAfterDisconnect: boolean;
+  }
+  
+  export interface Cluster extends EventEmitter {
+    readonly Worker: typeof Worker;
+    readonly workers: Record<number, Worker>;
+    readonly isMaster: boolean;
+    readonly isWorker: boolean;
+    readonly settings: ClusterSettings;
+    readonly worker?: Worker;
+    readonly id?: number;
+    fork(env?: any): Worker;
+    disconnect(callback?: () => void): void;
+    setupMaster(settings?: ClusterSettings): void;
+    schedulingPolicy: number;
+    settings: ClusterSettings;
+  }
+  
+  export const SCHED_NONE: number;
+  export const SCHED_RR: number;
+  
+  const cluster: Cluster;
+  export default cluster;
+}

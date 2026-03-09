@@ -525,7 +525,7 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
 
     // If --affected is set, filter scripts to only affected packages
     if (ctx.affected) {
-        Affected.filterAffectedScripts(ctx.allocator, &scripts, resolve_root, ctx.base_ref, ctx.head_ref) catch |err| {
+        Affected.filterAffectedScripts(ctx.allocator, &scripts, resolve_root, ctx.base_ref, ctx.head_ref, ctx.explicit_refs) catch |err| {
             Output.prettyErrorln("<r><red>error<r>: Failed to detect affected packages: {s}", .{@errorName(err)});
             Global.exit(1);
         };

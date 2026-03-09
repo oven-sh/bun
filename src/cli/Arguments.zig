@@ -470,9 +470,11 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
 
         if (args.option("--base")) |base| {
             ctx.base_ref = base;
+            ctx.explicit_refs = true;
         }
         if (args.option("--head")) |head| {
             ctx.head_ref = head;
+            ctx.explicit_refs = true;
         }
 
         if (args.option("--elide-lines")) |elide_lines| {

@@ -34,6 +34,7 @@ pub fn filterAffectedScripts(
     resolve_root: []const u8,
     base_ref: []const u8,
     head_ref: []const u8,
+    explicit_refs: bool,
 ) !void {
     // Phase 1: Get changed files via git
     var changed_files = std.array_list.Managed([]const u8).init(allocator);
@@ -47,8 +48,7 @@ pub fn filterAffectedScripts(
 
     // Include working tree changes only when using default refs (local dev workflow).
     // When custom --base/--head are provided, only committed diffs matter (CI use case).
-    const is_default_refs = strings.eql(base_ref, "main") and strings.eql(head_ref, "HEAD");
-    if (is_default_refs) {
+    if (!explicit_refs) {
         // Uncommitted changes (staged + unstaged vs HEAD)
         try collectGitLines(allocator, &changed_files, &.{ "git", "diff", "--name-only", "--no-renames", "--relative", "HEAD" }, resolve_root);
 

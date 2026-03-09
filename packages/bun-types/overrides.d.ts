@@ -11929,3 +11929,34 @@ declare global {
         toJSON(key?: string): string;
     }
 }
+
+// Web API: RegExp additional types
+declare global {
+    interface RegExp {
+        exec(string: string): RegExpExecArray | null;
+        test(string: string): boolean;
+        compile(pattern: string, flags?: string): this;
+        readonly dotAll: boolean;
+        readonly flags: string;
+        readonly global: boolean;
+        readonly hasIndices: boolean;
+        readonly ignoreCase: boolean;
+        readonly lastIndex: number;
+        readonly multiline: boolean;
+        readonly source: string;
+        readonly sticky: boolean;
+        readonly unicode: boolean;
+        readonly unicodeSets: boolean;
+        [Symbol.match](string: string): RegExpMatchArray | null;
+        [Symbol.matchAll](string: string): RegExpStringIterator;
+        [Symbol.replace](string: string, replaceValue: string): string;
+        [Symbol.replace](string: string, replaceValue: (substring: string, ...args: any[]) => string): string;
+        [Symbol.search](string: string): number;
+        [Symbol.split](string: string, limit?: number): string[];
+    }
+    interface RegExpConstructor {
+        (pattern: RegExp | string, flags?: string): RegExp;
+        readonly prototype: RegExp;
+    }
+    var RegExp: RegExpConstructor;
+}

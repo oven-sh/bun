@@ -548,3 +548,25 @@ declare namespace Bun {
     }>;
   }
 }
+
+// Add Database constructor options
+declare namespace Bun {
+  interface DatabaseOptions {
+    /**
+     * Whether to create parent directories if they don't exist.
+     * @default true
+     */
+    createPath?: boolean;
+    
+    /**
+     * Whether to open the database in read-only mode.
+     * @default false
+     */
+    readonly?: boolean;
+    
+    /**
+     * File mode permissions (Unix-style octal).
+     */
+    mode?: number;
+  }
+}

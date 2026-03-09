@@ -2354,3 +2354,25 @@ declare namespace Bun {
     new(byteLength: number): SharedArrayBuffer;
   }
 }
+
+// Add WeakRef and FinalizationRegistry types
+declare namespace Bun {
+  interface WeakRef<T extends object> {
+    /**
+     * Gets referenced object or undefined if garbage collected.
+     */
+    deref(): T | undefined;
+  }
+  
+  interface FinalizationRegistry {
+    /**
+     * Registers target for cleanup callback.
+     */
+    register(target: object, heldValue: any, unregisterToken?: object): void;
+    
+    /**
+     * Unregisters target.
+     */
+    unregister(unregisterToken: object): boolean;
+  }
+}

@@ -6853,3 +6853,103 @@ declare namespace NodeJS {
     setRawMode(fd: number, mode: boolean): void;
   }
 }
+
+// Add Cipher and Decipher types
+declare namespace NodeJS {
+  interface Cipher extends NodeJS.ReadableStream, NodeJS.WritableStream {
+    /**
+     * Updates cipher.
+     */
+    update(data: Buffer | string, inputEncoding?: BufferEncoding, outputEncoding?: BufferEncoding): this;
+    
+    /**
+     * Finalizes cipher.
+     */
+    final(outputEncoding?: BufferEncoding): Buffer;
+    
+    /**
+     * Sets auth tag.
+     */
+    setAuthTag(tag: Buffer, encoding?: BufferEncoding): void;
+    
+    /**
+     * Sets auto padding.
+     */
+    setAutoPadding(autoPadding: boolean): void;
+    
+    /**
+     * Gets IV.
+     */
+    getIV(): Buffer;
+    
+    /**
+     * Gets auth tag.
+     */
+    getAuthTag(): Buffer;
+  }
+  
+  interface Decipher extends NodeJS.ReadableStream, NodeJS.WritableStream {
+    /**
+     * Updates decipher.
+     */
+    update(data: Buffer | string, inputEncoding?: BufferEncoding, outputEncoding?: BufferEncoding): this;
+    
+    /**
+     * Finalizes decipher.
+     */
+    final(outputEncoding?: BufferEncoding): Buffer;
+    
+    /**
+     * Sets auth tag.
+     */
+    setAuthTag(tag: Buffer, encoding?: BufferEncoding): void;
+    
+    /**
+     * Sets auto padding.
+     */
+    setAutoPadding(autoPadding: boolean): void;
+  }
+  
+  interface CipherCCM extends Cipher {
+    /**
+     * Sets IV.
+     */
+    setIV(iv: Buffer): void;
+    
+    /**
+     * Sets nonce.
+     */
+    setNonce(nonce: Buffer): void;
+    
+    /**
+     * Sets plaintext length.
+     */
+    setPlaintextLength(length: number): void;
+    /**
+     * Gets auth tag.
+     */
+    getAuthTag(): Buffer;
+  }
+  
+  interface DecipherCCM extends Decipher {
+    /**
+     * Sets IV.
+     */
+    setIV(iv: Buffer): void;
+    
+    /**
+     * Sets nonce.
+     */
+    setNonce(nonce: Buffer): void;
+    
+    /**
+     * Sets auth tag.
+     */
+    setAuthTag(tag: Buffer, encoding?: BufferEncoding): void;
+    
+    /**
+     * Sets plaintext length.
+     */
+    setPlaintextLength(length: number): void;
+  }
+}

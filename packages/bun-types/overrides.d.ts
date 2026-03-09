@@ -488,3 +488,17 @@ declare global {
     get date(): string | null;
   }
 }
+
+<tool_call>exec<arg_key>command</arg_key><arg_value>cd /root/.openclaw/workspace/bun-fork && cat >> packages/bun-types/overrides.d.ts << 'EOF'
+
+//</tool_call>
+
+// Add tracingChannel types
+declare module "node:diagnostics_channel" {
+  interface TracingChannel {
+    /**
+     * Check if the channel has any subscribers.
+     */
+    hasSubscribers: boolean;
+  }
+}

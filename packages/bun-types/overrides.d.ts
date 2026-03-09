@@ -1975,3 +1975,50 @@ declare namespace Bun {
     getValue(): number;
   }
 }
+
+// Add Configuration types
+declare namespace Bun {
+  interface Config {
+    /**
+     * Log level.
+     */
+    logLevel?: 'debug' | 'info' | 'warn' | 'error';
+    
+    /**
+     * TZ (timezone).
+     */
+    tz?: string;
+    
+    /**
+     * Locale.
+     */
+    locale?: string;
+    
+    /**
+     * Max threads.
+     */
+    maxThreads?: number;
+    
+    /**
+     * GC threshold.
+     */
+    gcThreshold?: number;
+  }
+  
+  interface EnvironmentConfig {
+    /**
+     * Development mode?
+     */
+    development?: boolean;
+    
+    /**
+     * Test mode?
+     */
+    test?: boolean;
+    
+    /**
+     * Production mode?
+     */
+    production?: boolean;
+  }
+}

@@ -10057,3 +10057,28 @@ declare module "node:child_process" {
     signal?: NodeJS.Signals;
   }
 }
+
+// module module additional types
+declare module "node:module" {
+  export interface Module extends NodeModule {}
+  
+  export interface ModuleNamespace {
+    [key: string]: any;
+  }
+  
+  export interface SourceMap {
+    file: string;
+    sourceRoot: string;
+    sources: string[];
+    sourcesContent: string[];
+    names: string[];
+    mappings: string;
+    version: number;
+  }
+  
+  export function createRequire(path: string | URL): NodeRequire;
+  export function createRequireFromPath(path: string): NodeRequire;
+  export function syncBuiltinESMExports(): void;
+  export function isBuiltin(moduleName: string): boolean;
+  export function register(specifier: string | URL, parentURL?: string | URL): void;
+}

@@ -10977,3 +10977,22 @@ declare global {
   type ReferrerPolicy = "" | "no-referrer" | "no-referrer-when-downgrade" | "same-origin" | "origin" | "strict-origin" | "origin-when-cross-origin" | "strict-origin-when-cross-origin" | "unsafe-url";
   type RequestDestination = "" | "audio" | "audioworklet" | "document" | "embed" | "font" | "frame" | "iframe" | "image" | "manifest" | "object" | "paintworklet" | "script" | "style" | "track" | "video" | "worker" | "xslt";
 }
+
+// Web API: Headers additional types
+declare global {
+  class Headers {
+    constructor(init?: HeadersInit);
+    append(name: string, value: string): void;
+    delete(name: string): void;
+    get(name: string): string | null;
+    has(name: string): boolean;
+    set(name: string, value: string): void;
+    forEach(callback: (value: string, key: string, parent: Headers) => void, thisArg?: any): void;
+    entries(): IterableIterator<[string, string]>;
+    keys(): IterableIterator<string>;
+    values(): IterableIterator<string>;
+    readonly [Symbol.iterator](): IterableIterator<[string, string]>;
+  }
+  
+  type HeadersInit = Headers | string[][] | Record<string, string>;
+}

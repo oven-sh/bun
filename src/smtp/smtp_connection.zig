@@ -250,7 +250,7 @@ pub fn processIncomingData(this: *SMTPConnection, data: []const u8) void {
 
     while (true) {
         const buf = this.read_buffer.slice();
-        const nl = std.mem.indexOf(u8, buf, "\r\n") orelse return;
+        const nl = bun.strings.indexOf(buf, "\r\n") orelse return;
         const line = buf[0..nl];
         if (line.len >= 4 and line[3] == '-') {
             this.ehlo_lines.appendSlice(line) catch {};
@@ -497,15 +497,15 @@ pub fn sendProxyConnect(this: *SMTPConnection) void {
 fn handleProxyResponse(this: *SMTPConnection) void {
     const buf = this.read_buffer.slice();
     // Look for the end of HTTP headers
-    const header_end = std.mem.indexOf(u8, buf, "\r\n\r\n") orelse return; // Need more data
+    const header_end = bun.strings.indexOf(buf, "\r\n\r\n") orelse return; // Need more data
 
     // Extract first line to check status code: "HTTP/1.x 200 ..."
-    const first_line_end = std.mem.indexOf(u8, buf[0..header_end], "\r\n") orelse header_end;
+    const first_line_end = bun.strings.indexOf(buf[0..header_end], "\r\n") orelse header_end;
     const first_line = buf[0..first_line_end];
 
     // Parse status code - find first space, then read 3 digits
     var ok = false;
-    if (std.mem.indexOf(u8, first_line, " ")) |space_idx| {
+    if (bun.strings.indexOf(first_line, " ")) |space_idx| {
         if (space_idx + 1 < first_line.len and first_line[space_idx + 1] == '2') {
             ok = true; // 2xx response
         }
@@ -596,6 +596,11 @@ fn startAuth(this: *SMTPConnection) void {
     } else {
         // AUTH PLAIN (default)
         this.state = .auth_plain;
+        const payload_len = 1 + this.auth_user.len + 1 + this.auth_pass.len;
+        if (payload_len > 1024) {
+            this.onErrorWithCode("AUTH PLAIN credentials too long", .EAUTH);
+            return;
+        }
         var plain: [1024]u8 = undefined;
         var p: usize = 0;
         plain[p] = 0;
@@ -791,6 +796,8 @@ pub fn deinit(this: *SMTPConnection) void {
     this.ehlo_lines.deinit();
     this.read_buffer.deinit();
     this.write_buffer.deinit(bun.default_allocator);
+    this.accepted_indices.deinit(bun.default_allocator);
+    this.rejected_indices.deinit(bun.default_allocator);
 }
 
 const bun = @import("bun");

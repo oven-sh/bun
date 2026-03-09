@@ -251,7 +251,7 @@ pub fn foldHeader(alloc: std.mem.Allocator, header: []const u8) ![]const u8 {
         while (word_end < header.len and header[word_end] != ' ' and header[word_end] != '\t') : (word_end += 1) {}
         const word = header[i..word_end];
 
-        if (line_len > 0 and line_len + 1 + word.len > 76 and line_len > 0) {
+        if (line_len > 0 and line_len + 1 + word.len > 76) {
             try w.writeAll("\r\n ");
             line_len = 1;
         } else if (line_len > 0 and i > 0 and (header[i - 1] == ' ' or header[i - 1] == '\t')) {
@@ -409,7 +409,7 @@ fn writeStringField(writer: anytype, alloc: std.mem.Allocator, globalObject: *js
 }
 
 fn writeDateHeader(writer: anytype) !void {
-    const epoch_secs: u64 = @intCast(std.time.timestamp());
+    const epoch_secs: u64 = @intCast(@max(0, std.time.timestamp()));
     const epoch_day = epoch_secs / 86400;
     const day_secs = epoch_secs % 86400;
     const hours = day_secs / 3600;

@@ -11,8 +11,12 @@ pub fn lookup(key: []const u8) ?ServiceConfig {
     // Normalize: lowercase, strip non-alnum except . and -
     var buf: [128]u8 = undefined;
     var len: usize = 0;
+    var truncated = false;
     for (key) |c| {
-        if (len >= buf.len) break;
+        if (len >= buf.len) {
+            truncated = true;
+            break;
+        }
         if (c >= 'A' and c <= 'Z') {
             buf[len] = c + 32;
             len += 1;
@@ -21,6 +25,8 @@ pub fn lookup(key: []const u8) ?ServiceConfig {
             len += 1;
         }
     }
+    // If the key was truncated, don't match against a potentially wrong service
+    if (truncated) return null;
     const normalized = buf[0..len];
 
     return services.get(normalized);

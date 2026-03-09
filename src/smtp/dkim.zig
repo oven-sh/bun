@@ -106,8 +106,8 @@ pub fn signMessage(alloc: std.mem.Allocator, message: []const u8, config: DKIMCo
 
 const SepResult = struct { pos: usize, len: usize };
 fn findHeaderBodySeparator(message: []const u8) SepResult {
-    if (std.mem.indexOf(u8, message, "\r\n\r\n")) |pos| return .{ .pos = pos, .len = 4 };
-    if (std.mem.indexOf(u8, message, "\n\n")) |pos| return .{ .pos = pos, .len = 2 };
+    if (bun.strings.indexOf(message, "\r\n\r\n")) |pos| return .{ .pos = pos, .len = 4 };
+    if (bun.strings.indexOf(message, "\n\n")) |pos| return .{ .pos = pos, .len = 2 };
     return .{ .pos = message.len, .len = 0 };
 }
 
@@ -205,13 +205,13 @@ fn canonicalizeBodyRelaxed(alloc: std.mem.Allocator, body: []const u8) ![]const 
 
     // Remove trailing empty lines
     var slice = result.slice();
-    while (slice.len >= 4 and std.mem.eql(u8, slice[slice.len - 4 ..], "\r\n\r\n")) {
+    while (slice.len >= 4 and bun.strings.eql(slice[slice.len - 4 ..], "\r\n\r\n")) {
         result.list.items.len -= 2;
         slice = result.slice();
     }
 
     // Ensure ends with \r\n
-    if (slice.len == 0 or !std.mem.endsWith(u8, slice, "\r\n")) {
+    if (slice.len == 0 or !bun.strings.endsWith(slice, "\r\n")) {
         try writer.writeAll("\r\n");
     }
 

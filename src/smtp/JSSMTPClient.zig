@@ -92,6 +92,7 @@ fn onSendComplete(ctx: *anyopaque, response: []const u8) void {
     if (this.auto_close) {
         this.conn.closeSocket();
         this.updatePollRef();
+        this.clearThisValue();
         return;
     }
     // Pool: process queued send if any
@@ -1102,7 +1103,7 @@ fn resolveSendPromise(this: *JSSMTPClient, response: []const u8) void {
 
 fn extractMessageId(message: []const u8, go: *jsc.JSGlobalObject) jsc.JSValue {
     // Find "Message-ID: <...>" in the message
-    if (std.mem.indexOf(u8, message, "Message-ID: <")) |start| {
+    if (bun.strings.indexOf(message, "Message-ID: <")) |start| {
         const id_start = start + 13; // skip "Message-ID: <"
         if (std.mem.indexOfPos(u8, message, id_start, ">")) |end| {
             const mid = message[id_start - 1 .. end + 1]; // include < and >
@@ -1141,6 +1142,7 @@ fn failWithError(this: *JSSMTPClient, message: []const u8, code: SMTPConnection.
     const vm = this.globalObject.bunVM();
     if (this.timer.state == .ACTIVE) vm.timer.remove(&this.timer);
     this.poll_ref.unref(vm);
+    if (this.auto_close) this.clearThisValue();
 }
 
 // ========== Helpers ==========
@@ -1184,13 +1186,18 @@ fn applyDkim(this: *JSSMTPClient, globalObject: *jsc.JSGlobalObject, dkim_obj: j
 }
 
 fn sendViaSendmail(this: *JSSMTPClient, globalObject: *jsc.JSGlobalObject, promise_ptr: *jsc.JSPromise, promise_js: jsc.JSValue) bun.JSError!jsc.JSValue {
-    _ = promise_ptr;
     // Build sendmail args: sendmail -i -f <from> <to1> <to2> ...
     // Use JS Bun.spawn to run the sendmail binary
-    const spawn_fn = (try globalObject.toJSValue().getPropertyValue(globalObject, "Bun")) orelse return promise_js;
-    const bun_spawn = (try spawn_fn.getPropertyValue(globalObject, "spawn")) orelse return promise_js;
+    const spawn_fn = (try globalObject.toJSValue().getPropertyValue(globalObject, "Bun")) orelse {
+        try promise_ptr.reject(globalObject, globalObject.createErrorInstance("Bun global not available", .{}));
+        return promise_js;
+    };
+    const bun_spawn = (try spawn_fn.getPropertyValue(globalObject, "spawn")) orelse {
+        try promise_ptr.reject(globalObject, globalObject.createErrorInstance("Bun.spawn not available", .{}));
+        return promise_js;
+    };
 
-    // Build cmd array: [sendmail_path, "-i", "-f", from, ...to_addrs]
+    // Build cmd array: [sendmail_path, "-i", "-f<from>", ...to_addrs]
     const to_len = this.conn.envelope_to.len;
     const cmd = jsc.JSValue.createEmptyArray(globalObject, @intCast(3 + to_len)) catch return promise_js;
     const path_str = bun.String.createFormat("{s}", .{this.sendmail_path}) catch bun.String.empty;
@@ -1213,6 +1220,7 @@ fn sendViaSendmail(this: *JSSMTPClient, globalObject: *jsc.JSGlobalObject, promi
 
     // Spawn the process
     const proc = bun_spawn.call(globalObject, spawn_fn, &.{spawn_opts}) catch {
+        try promise_ptr.reject(globalObject, globalObject.createErrorInstance("Failed to spawn sendmail process", .{}));
         return promise_js;
     };
 
@@ -1225,11 +1233,22 @@ fn sendViaSendmail(this: *JSSMTPClient, globalObject: *jsc.JSGlobalObject, promi
     const end_fn = (try stdin.getPropertyValue(globalObject, "end")) orelse return promise_js;
     _ = end_fn.call(globalObject, stdin, &.{}) catch {};
 
-    // Return proc.exited.then(() => result)
+    // Resolve/reject the cached promise when the process exits, then clean up
     const exited = (try proc.getPropertyValue(globalObject, "exited")) orelse return promise_js;
     const then_fn = (try exited.getPropertyValue(globalObject, "then")) orelse return promise_js;
     const resolve_cb = jsc.JSFunction.create(globalObject, bun.String.static(""), sendmailResolveCb, 1, .{});
-    return then_fn.call(globalObject, exited, &.{resolve_cb});
+    const reject_cb = jsc.JSFunction.create(globalObject, bun.String.static(""), sendmailResolveCb, 1, .{});
+    _ = then_fn.call(globalObject, exited, &.{ resolve_cb, reject_cb }) catch {};
+
+    // The cached promise is resolved/rejected by the callback above.
+    // Clean up auto_close clients after spawning since the sendmail
+    // callback doesn't have a reference to the client.
+    this.messages_sent += 1;
+    if (this.auto_close) {
+        this.clearThisValue();
+    }
+
+    return promise_js;
 }
 
 fn sendmailResolveCb(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
@@ -1322,6 +1341,13 @@ fn freeMessageData(this: *JSSMTPClient) void {
     }
 }
 
+/// Release the strong GC reference to the JS wrapper.
+/// Called after auto_close sends complete so the client can be collected.
+fn clearThisValue(this: *JSSMTPClient) void {
+    this.this_value.deinit();
+    this.this_value = jsc.JSRef.empty();
+}
+
 fn deinit(this: *JSSMTPClient) void {
     this.conn.closeSocket();
     this.conn.deinit();
@@ -1329,6 +1355,8 @@ fn deinit(this: *JSSMTPClient) void {
     this.freeEnvelopeTo();
     this.freeMessageData();
     if (this.connection_strings.len > 0) this.allocator.free(this.connection_strings);
+    this.pool_queue.deinit();
+    this.clearThisValue();
     const vm = this.globalObject.bunVM();
     if (this.timer.state == .ACTIVE) vm.timer.remove(&this.timer);
     this.poll_ref.unref(vm);

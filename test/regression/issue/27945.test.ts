@@ -69,13 +69,18 @@ test("resolving thenable should pass the test and invoke .then", async () => {
 test("async resolving thenable should pass the test", async () => {
   using dir = tempDir("issue-27945", {
     "thenable.test.js": `
-      const { test, expect } = require("bun:test");
+      const { test, expect, afterAll } = require("bun:test");
+      let thenCalled = false;
       test("async resolving thenable", () => {
         return {
           then(resolve, reject) {
+            thenCalled = true;
             setTimeout(() => resolve("ok"), 10);
           }
         };
+      });
+      afterAll(() => {
+        expect(thenCalled).toBe(true);
       });
     `,
   });

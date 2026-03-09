@@ -3854,3 +3854,27 @@ declare namespace NodeJS {
     on(event: 'unpipe', listener: (src: ReadableStream) => void): this;
   }
 }
+
+// Add Duplex and Transform stream types
+declare namespace NodeJS {
+  interface DuplexStream extends ReadableStream, WritableStream {
+    /**
+     * Allows half-open streams.
+     */
+    allowHalfOpen: boolean;
+  }
+  
+  interface TransformStream extends DuplexStream {
+    /**
+     * Transforms data.
+     */
+    _transform(chunk: any, encoding: BufferEncoding, callback: Function): void;
+    
+    /**
+     * Flushes data.
+     */
+    _flush(callback: Function): void;
+  }
+  
+  interface PassThrough extends TransformStream {}
+}

@@ -13001,3 +13001,28 @@ declare global {
     function escape(str: string): string;
     function unescape(str: string): string;
 }
+
+// NodeJS Platform types
+declare global {
+    namespace NodeJS {
+        type Platform = "aix" | "darwin" | "freebsd" | "linux" | "openbsd" | "sunos" | "win32" | "android";
+        
+        interface Architecture {
+            [index: number]: string;
+            "x64": string;
+            "arm": string;
+            "arm64": string;
+            "ia32": string;
+            "mips": string;
+            "mipsel": string;
+            "ppc": string;
+            "ppc64": string;
+            "s390": string;
+            "s390x": string;
+            "x86": string;
+        }
+        
+        const platform: Platform;
+        const arch: string;
+    }
+}

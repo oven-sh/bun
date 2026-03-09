@@ -1999,6 +1999,7 @@ pub const BundleV2 = struct {
             transpiler.options.inlining = config.minify.syntax;
             transpiler.options.source_map = config.source_map;
             transpiler.options.packages = config.packages;
+            transpiler.options.allow_unresolved = if (config.allow_unresolved) |*a| options.AllowUnresolved.fromStrings(a.keys()) else .all;
             transpiler.options.code_splitting = config.code_splitting;
             transpiler.options.emit_dce_annotations = config.emit_dce_annotations orelse !config.minify.whitespace;
             transpiler.options.ignore_dce_annotations = config.ignore_dce_annotations;

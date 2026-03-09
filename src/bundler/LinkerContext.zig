@@ -1698,6 +1698,25 @@ pub const LinkerContext = struct {
             return;
         }
 
+        // HTML files can reference non-JS/CSS assets (favicons, images, etc.)
+        // via .url kind import records. Follow all import records for HTML files
+        // so these assets are marked live and included in the manifest.
+        if (c.parse_graph.input_files.items(.loader)[source_index] == .html) {
+            for (import_records[source_index].slice()) |*record| {
+                if (record.source_index.isValid()) {
+                    c.markFileLiveForTreeShaking(
+                        record.source_index.get(),
+                        side_effects,
+                        parts,
+                        import_records,
+                        entry_point_kinds,
+                        css_reprs,
+                    );
+                }
+            }
+            return;
+        }
+
         for (parts[source_index].slice(), 0..) |part, part_index| {
             var can_be_removed_if_unused = part.can_be_removed_if_unused;
 

@@ -7290,3 +7290,148 @@ declare namespace NodeJS {
     maxHeaderSize?: number;
   }
 }
+
+// Add HTTP/2 Stream types
+declare namespace NodeJS {
+  interface ClientHttp2Session extends Http2Session {
+    /**
+     * Requests new stream.
+     */
+    request(headers?: Headers, options?: StreamPriorityOptions): ClientHttp2Stream;
+    
+    /**
+     * Connects to host.
+     */
+    connect(authority: string | URL, listener?: (session: ClientHttp2Session, socket: Socket) => void);
+  }
+  
+  interface ServerHttp2Session extends Http2Session {
+    /**
+     * Server type.
+     */
+    readonly server: Http2Server;
+    
+    /**
+     * Spawned session.
+     */
+    readonly socket: Socket;
+  }
+  
+  interface Http2Stream extends EventEmitter {
+    /**
+     * Stream ID.
+     */
+    readonly id: number;
+    
+    /**
+     * Session.
+     */
+    readonly session: Http2Session;
+    
+    /**
+     * Stream destroyed?
+     */
+    readonly destroyed: boolean;
+    
+    /**
+     * Stream state.
+     */
+    readonly state: number;
+    
+    /**
+     * Stream headers.
+     */
+    readonly headers: Headers;
+    
+    /**
+     * Sends headers.
+     */
+    respond(headers?: Headers): void;
+    
+    /**
+     * Closes stream.
+     */
+    close(callback?: Function): void;
+    
+    /**
+     * Destroys stream.
+     */
+    destroy(error?: Error, callback?: Function): void;
+    
+    /**
+     * Gets priority.
+     */
+    priority(): StreamPriority;
+    
+    /**
+     * Sets priority.
+     */
+    setPriority(priority: StreamPriority): void;
+    
+    /**
+     * Sends data.
+     */
+    write(chunk: Buffer | string): boolean;
+    
+    /**
+     * Ends stream.
+     */
+    end(callback?: Function): void;
+    
+    /**
+     * Event: data.
+     */
+    on(event: 'data', listener: (chunk: Buffer) => void): this;
+    
+    /**
+     * Event: finish.
+     */
+    on(event: 'finish', listener: () => void): this;
+    
+    /**
+     * Event: close.
+     */
+    on(event: 'close', listener: () => void): this;
+    
+    /**
+     * Event: error.
+     */
+    on(event: 'error', listener: (err: Error) => void): this;
+  }
+  
+  interface ClientHttp2Stream extends Http2Stream {
+    /**
+     * ClientHttp2Stream.
+     */
+  }
+  
+  interface ServerHttp2Stream extends Http2Stream {
+    /**
+     * ServerHttp2Stream.
+     */
+  }
+  
+  interface StreamPriority {
+    /**
+     * Stream weight.
+     */
+    weight?: number;
+    
+    /**
+     * Stream dependency.
+     */
+    parent?: number;
+    
+    /**
+     * Stream exclusive.
+     */
+    exclusive?: boolean;
+  }
+  
+  interface StreamPriorityOptions extends StreamPriority {
+    /**
+     * Stream silent.
+     */
+    silent?: boolean;
+  }
+}

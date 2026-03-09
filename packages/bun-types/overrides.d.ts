@@ -11613,3 +11613,29 @@ declare global {
     function setPrototypeOf(target: any, proto: any): boolean;
   }
 }
+
+// Web API: Symbol additional types
+declare global {
+    interface Symbol {
+        readonly description: string | undefined;
+    }
+    interface SymbolConstructor {
+        (description?: string | number): symbol;
+        readonly asyncIterator: symbol;
+        readonly hasInstance: symbol;
+        readonly isConcatSpreadable: symbol;
+        readonly iterator: symbol;
+        readonly match: symbol;
+        readonly matchAll: symbol;
+        readonly replace: symbol;
+        readonly search: symbol;
+        readonly species: symbol;
+        readonly split: symbol;
+        readonly toPrimitive: symbol;
+        readonly toStringTag: symbol;
+        readonly unscopables: symbol;
+        for(key: string): symbol;
+        keyFor(sym: symbol): string | undefined;
+    }
+    var Symbol: SymbolConstructor;
+}

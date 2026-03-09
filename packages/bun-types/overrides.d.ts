@@ -6463,3 +6463,76 @@ declare namespace NodeJS {
     sharedMemorySize: number;
   }
 }
+
+// Add Global types
+declare namespace NodeJS {
+  interface Global {
+    /**
+     * Global object.
+     */
+    global: Global;
+    
+    /**
+     * Console.
+     */
+    console: typeof console;
+    
+    /**
+     * Process.
+     */
+    process: Process;
+    
+    /**
+     * Buffer.
+     */
+    Buffer: {
+      new(size: number): Buffer;
+      from(str: string, encoding?: BufferEncoding): Buffer;
+      alloc(size: number, fill?: string | Buffer | number): Buffer;
+      allocUnsafe(size: number): Buffer;
+      isBuffer(obj: any): obj is Buffer;
+      byteLength(str: string, encoding?: BufferEncoding): number;
+      concat(list: Buffer[] | Buffer[][], totalLength?: number): Buffer;
+    };
+    
+    /**
+     * setTimeout.
+     */
+    setTimeout(callback: Function, delay: number, ...args: any[]): NodeJS.Timeout;
+    
+    /**
+     * clearTimeout.
+     */
+    clearTimeout(timeoutId: NodeJS.Timeout): void;
+    
+    /**
+     * setInterval.
+     */
+    setInterval(callback: Function, delay: number, ...args: any[]): NodeJS.Timeout;
+    
+    /**
+     * clearInterval.
+     */
+    clearInterval(intervalId: NodeJS.Timeout): void;
+    
+    /**
+     * setImmediate.
+     */
+    setImmediate(callback: Function, ...args: any[]): NodeJS.Immediate;
+    
+    /**
+     * clearImmediate.
+     */
+    clearImmediate(immediateId: NodeJS.Immediate): void;
+    
+    /**
+     * queueMicrotask.
+     */
+    queueMicrotask(callback: Function): void;
+    
+    /**
+     * fetch.
+     */
+    fetch(input: string | URL, init?: RequestInit): Promise<Response>;
+  }
+}

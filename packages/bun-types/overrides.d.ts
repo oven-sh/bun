@@ -13874,3 +13874,56 @@ declare module "node:fs" {
     position?: number;
   }
 }
+
+// net additional API types
+declare module "node:net" {
+  export interface SocketAddressOpts {
+    host?: string;
+    port?: number;
+    flowlabel?: number;
+  }
+  
+  export interface LookupFunction {
+    (hostname: string, options: LookupAllOptions, callback: (err: NodeJS.ErrnoException | null, addresses: LookupAddress[]) => void): void;
+    (hostname: string, options: LookupOneOptions, callback: (err: NodeJS.ErrnoException | null, address: string, family: number) => void): void;
+    (hostname: string, options: LookupOptions, callback: (err: NodeJS.ErrnoException | null, address: string | LookupAddress[], family?: number) => void): void;
+    (hostname: string, callback: (err: NodeJS.ErrnoException | null, address: string, family: number) => void): void;
+  }
+  
+  export interface LookupOptions extends LookupOneOptions, LookupAllOptions {}
+  
+  export interface LookupOneOptions {
+    family?: number;
+    hints?: number;
+  }
+  
+  export interface LookupAllOptions {
+    all: true;
+    family?: number;
+    hints?: number;
+  }
+  
+  export interface LookupAddress {
+    address: string;
+    family: number;
+  }
+  
+  export interface TcpSocketConnectOpts {
+    port: number;
+    host?: string;
+    localAddress?: string;
+    localPort?: number;
+    family?: number;
+    hints?: number;
+    lookup?: LookupFunction;
+    noDelay?: boolean;
+    keepAlive?: boolean;
+    keepAliveInitialDelay?: number;
+  }
+  
+  export interface IpcSocketConnectOpts {
+    path: string;
+  }
+  
+  export type SocketConnectOpts = TcpSocketConnectOpts | IpcSocketConnectOpts;
+}

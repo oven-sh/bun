@@ -1094,3 +1094,65 @@ declare namespace Bun {
     hash(algorithm: string, data: string | Buffer | ArrayBuffer, outputType?: 'hex' | 'base64' | 'buffer'): string | Buffer;
   }
 }
+
+// Add HTTP server types
+declare namespace Bun {
+  interface IncomingMessage {
+    /**
+     * HTTP method.
+     */
+    method: string;
+    
+    /**
+     * Request URL.
+     */
+    url: string;
+    
+    /**
+     * Request headers.
+     */
+    headers: Headers;
+    
+    /**
+     * Request body as text.
+     */
+    text(): Promise<string>;
+    
+    /**
+     * Request body as JSON.
+     */
+    json(): Promise<any>;
+    
+    /**
+     * Request body as ArrayBuffer.
+     */
+    arrayBuffer(): Promise<ArrayBuffer>;
+  }
+  
+  interface ServerResponse {
+    /**
+     * HTTP status code.
+     */
+    status: number;
+    
+    /**
+     * Response headers.
+     */
+    headers: Headers;
+    
+    /**
+     * Sets response status code.
+     */
+    setStatus(code: number): void;
+    
+    /**
+     * Sends response body.
+     */
+    send(body: string | Buffer | ReadableStream): void;
+    
+    /**
+     * Ends response.
+     */
+    end(): void;
+  }
+}

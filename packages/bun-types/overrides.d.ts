@@ -13468,3 +13468,37 @@ declare module "node:perf_hooks" {
   
   export function createHistogram(): PerformanceHistogram;
 }
+
+// v8 API types
+declare module "node:v8" {
+  export interface HeapSpaceStatistics {
+    space_name: string;
+    space_size: number;
+    space_used_size: number;
+    space_available_size: number;
+    physical_space_size: number;
+  }
+  
+  export interface HeapCodeStatistics {
+    code_and_metadata_size: number;
+    bytecode_and_metadata_size: number;
+    external_script_source_size: number;
+  }
+  
+  export interface HeapSnapshotOptions {
+    exposeInternals?: boolean;
+    exposeNumericValues?: boolean;
+  }
+  
+  export interface SerializeDeserializeOptions {
+    serialization?: any;
+  }
+  
+  export function writeHeapSnapshot(heapSnapshotOptions?: HeapSnapshotOptions): string;
+  export function getHeapStatistics(): HeapStatistics;
+  export function getHeapSpaceStatistics(): HeapSpaceStatistics[];
+  export function getHeapCodeStatistics(): HeapCodeStatistics;
+  export function setFlagsFromString(flags: string): void;
+  export function serialize(value: any): Buffer;
+  export function deserialize(buffer: Buffer): any;
+}

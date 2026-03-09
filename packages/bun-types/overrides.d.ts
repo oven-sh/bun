@@ -1409,3 +1409,52 @@ declare namespace Bun {
     runSync(command: string, args?: string[]): number;
   }
 }
+
+// Add Network types
+declare namespace Bun {
+  interface IPAddress {
+    /**
+     * IP address string.
+     */
+    address: string;
+    
+    /**
+     * IP version.
+     */
+    version: 'IPv4' | 'IPv6';
+    
+    /**
+     * Port number.
+     */
+    port?: number;
+  }
+  
+  interface NetworkInterface {
+    /**
+     * Interface name.
+     */
+    name: string;
+    
+    /**
+     * Interface addresses.
+     */
+    addresses: IPAddress[];
+    
+    /**
+     * Is interface up?
+     */
+    up: boolean;
+    
+    /**
+     * MAC address.
+     */
+    mac?: string;
+  }
+  
+  interface Network {
+    /**
+     * Gets network interfaces.
+     */
+    interfaces(): Record<string, NetworkInterface>;
+  }
+}

@@ -4218,3 +4218,150 @@ declare namespace NodeJS {
     setRawMode(mode: boolean): this;
   }
 }
+
+// Add Child Process types
+declare namespace NodeJS {
+  interface ChildProcess extends EventEmitter {
+    /**
+     * Process ID.
+     */
+    readonly pid: number;
+    
+    /**
+     * Stdin stream.
+     */
+    readonly stdin: WritableStream;
+    
+    /**
+     * Stdout stream.
+     */
+    readonly stdout: ReadableStream;
+    
+    /**
+     * Stderr stream.
+     */
+    readonly stderr: ReadableStream;
+    
+    /**
+     * Connected?
+     */
+    readonly connected: boolean;
+    
+    /**
+     * Exit code.
+     */
+    readonly exitCode: number | null;
+    
+    /**
+     * Signal received.
+     */
+    readonly signalCode: string | null;
+    
+    /**
+     * Spawn arguments.
+     */
+    readonly spawnargs: string[];
+    
+    /**
+     * Kills process.
+     */
+    kill(signal?: string): void;
+    
+    /**
+     * Sends signal.
+     */
+    send(message: any, handle?: any, callback?: Function): boolean;
+    
+    /**
+     * Disconnects IPC.
+     */
+    disconnect(): void;
+    
+    /**
+     * Refs process.
+     */
+    ref(): this;
+    
+    /**
+     * Unrefs process.
+     */
+    unref(): this;
+    
+    /**
+     * Event: close.
+     */
+    on(event: 'close', listener: (code: number, signal: string) => void): this;
+    
+    /**
+     * Event: disconnect.
+     */
+    on(event: 'disconnect', listener: () => void): this;
+    
+    /**
+     * Event: error.
+     */
+    on(event: 'error', listener: (err: Error) => void): this;
+    
+    /**
+     * Event: exit.
+     */
+    on(event: 'exit', listener: (code: number | null, signal: string | null) => void): this;
+    
+    /**
+     * Event: message.
+     */
+    on(event: 'message', listener: (message: any) => void): this;
+  }
+  
+  interface SpawnOptions {
+    /**
+     * Command line arguments.
+     */
+    args?: string[];
+    
+    /**
+     * Working directory.
+     */
+    cwd?: string;
+    
+    /**
+     * Environment variables.
+     */
+    env?: Record<string, string>;
+    
+    /**
+     * Stdio configuration.
+     */
+    stdio?: Array<string | Stream | 'pipe' | 'inherit' | 'ignore' | number>;
+    
+    /**
+     * Detached?
+     */
+    detached?: boolean;
+    
+    /**
+     * UID.
+     */
+    uid?: number;
+    
+    /**
+     * GID.
+     */
+    gid?: number;
+    
+    /**
+     * Shell option.
+     */
+    shell?: boolean | string;
+    
+    /**
+     * Windows flag.
+     */
+    windowsVerbatimArguments?: boolean;
+    
+    /**
+     * Windows hide.
+     */
+    windowsHide?: boolean;
+  }
+}

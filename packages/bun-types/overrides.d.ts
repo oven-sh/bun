@@ -12884,3 +12884,18 @@ declare module "node:trace_events" {
   
   export function createTracing(options?: TracingOptions): Tracing;
 }
+
+// string_decoder API types
+declare module "node:string_decoder" {
+  export interface StringDecoderOptions {
+    encoding?: BufferEncoding;
+  }
+  
+  export class StringDecoder {
+    constructor(encoding?: BufferEncoding);
+    constructor(options?: StringDecoderOptions);
+    write(buffer: Buffer): string;
+    end(buffer?: Buffer): string;
+    readonly encoding: BufferEncoding;
+  }
+}

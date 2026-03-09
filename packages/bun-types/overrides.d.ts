@@ -12871,3 +12871,51 @@ declare global {
         poolSize: number;
     };
 }
+
+// process global types
+declare global {
+    namespace NodeJS {
+        interface ProcessEnv {
+            [key: string]: string | undefined;
+        }
+        
+        interface ProcessRelease {
+            name: string;
+            sourceUrl?: string;
+            headersUrl?: string;
+            libUrl?: string;
+            lts?: string;
+        }
+        
+        interface ProcessVersions {
+            node: string;
+            bun: string;
+            v8: string;
+            uv: string;
+            zlib: string;
+            brotli: string;
+            ares: string;
+            modules: string;
+            openssl: string;
+        }
+        
+        interface HRTime {
+            (time?: number[]): [number, number];
+        }
+        
+        interface CpuUsage {
+            user: number;
+            system: number;
+        }
+        
+        interface MemoryUsage {
+            rss: number;
+            heapTotal: number;
+            heapUsed: number;
+            external: number;
+            arrayBuffers: number;
+        }
+    }
+    
+    var process: NodeJS.Process;
+}

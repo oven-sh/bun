@@ -6024,3 +6024,97 @@ declare namespace NodeJS {
     tid: number;
   }
 }
+
+// Add AsyncHooks and AsyncResource types
+declare namespace NodeJS {
+  interface HookCallbacks {
+    /**
+     * Init callback.
+     */
+    init?(asyncId: number, type: string, triggerAsyncId: number, resource: object): void;
+    
+    /**
+     * Before callback.
+     */
+    before?(asyncId: number): void;
+    
+    /**
+     * After callback.
+     */
+    after?(asyncId: number): void;
+    
+    /**
+     * Destroy callback.
+     */
+    destroy?(asyncId: number): void;
+    
+    /**
+     * PromiseResolve callback.
+     */
+    promiseResolve?(asyncId: number): void;
+  }
+  
+  interface AsyncHook {
+    /**
+     * Enables hooks.
+     */
+    enable(): void;
+    
+    /**
+     * Disables hooks.
+     */
+    disable(): void;
+    
+    /**
+     * Adds callbacks.
+     */
+    addCallbacks(callbacks: HookCallbacks): void;
+    
+    /**
+     * Removes callbacks.
+     */
+    removeCallbacks(callbacks: HookCallbacks): void;
+  }
+  
+  interface AsyncResource {
+    /**
+     * Async ID.
+     */
+    readonly asyncId: number;
+    
+    /**
+     * Trigger async ID.
+     */
+    readonly triggerAsyncId: number;
+    
+    /**
+     * Async resource type.
+     */
+    readonly type: string;
+    
+    /**
+     * Runs function in async context.
+     */
+    run<T>(fn: () => T): T;
+    
+    /**
+     * Runs function in async context (async).
+     */
+    runAsync<T>(fn: () => Promise<T>): Promise<T>;
+    
+    /**
+     * Emits init.
+     */
+    emitInit(): void;
+    
+    /**
+     * Emits destroy.
+     */
+    emitDestroy(): void;
+    
+    /**
+     * Async resource.
+     */
+    readonly resource: object;
+  }
+}

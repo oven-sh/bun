@@ -13093,3 +13093,25 @@ declare global {
         onerror: (this: Worker, event: ErrorEvent) => void;
     }
 }
+
+// Test types
+declare global {
+    namespace test {
+        interface TestContext {
+            [key: string]: any;
+        }
+        
+        interface TestOptions {
+            only?: boolean;
+            skip?: boolean;
+            todo?: boolean;
+            timeout?: number;
+        }
+        
+        interface DescribeOptions {
+            only?: boolean;
+            skip?: boolean;
+            todo?: boolean;
+        }
+    }
+}

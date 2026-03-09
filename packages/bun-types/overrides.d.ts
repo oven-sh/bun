@@ -10682,3 +10682,73 @@ declare module "node:crypto" {
   export function createSign(algorithm: string): Sign;
   export function createVerify(algorithm: string): Verify;
 }
+
+// fs additional types
+declare module "node:fs" {
+  export interface StatsBase<T> {
+    isFile(): boolean;
+    isDirectory(): boolean;
+    isBlockDevice(): boolean;
+    isCharacterDevice(): boolean;
+    isSymbolicLink(): boolean;
+    isFIFO(): boolean;
+    isSocket(): boolean;
+    dev: T;
+    ino: T;
+    mode: T;
+    nlink: T;
+    uid: T;
+    gid: T;
+    rdev: T;
+    size: T;
+    blksize: T;
+    blocks: T;
+    atimeMs: T;
+    mtimeMs: T;
+    ctimeMs: T;
+    birthtimeMs: T;
+    atime: Date;
+    mtime: Date;
+    ctime: Date;
+    birthtime: Date;
+  }
+  
+  export interface Stats extends StatsBase<number> {}
+  
+  export interface BigIntStats extends StatsBase<bigint> {}
+  
+  export interface OpenOptions {
+    flags?: string | number;
+    mode?: number;
+    fs?: any;
+  }
+  
+  export interface OpenDirOptions {
+    encoding?: BufferEncoding | null;
+    bufferSize?: number;
+  }
+  
+  export interface ReadSyncOptions {
+    buffer?: Buffer;
+    offset?: number;
+    length?: number;
+    position?: number;
+  }
+  
+  export interface WriteSyncOptions {
+    buffer?: Buffer;
+    offset?: number;
+    length?: number;
+    position?: number;
+  }
+  
+  export interface ReadVResult {
+    bytesRead: number;
+    buffers: Buffer[];
+  }
+  
+  export interface WriteVResult {
+    bytesWritten: number;
+    buffers: Buffer[];
+  }
+}

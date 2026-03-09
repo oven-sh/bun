@@ -157,6 +157,7 @@ fn applyBarrelOptimizationImpl(this: *BundleV2, parse_result: *ParseTask.Result)
             if (!needed_records.contains(imp.import_record_index)) {
                 if (imp.import_record_index < ast.import_records.len) {
                     ast.import_records.slice()[imp.import_record_index].flags.is_unused = true;
+                    ast.import_records.slice()[imp.import_record_index].flags.is_barrel_deferred = true;
                     has_deferrals = true;
                 }
             }
@@ -190,12 +191,14 @@ fn applyBarrelOptimizationImpl(this: *BundleV2, parse_result: *ParseTask.Result)
     }
 }
 
-/// Clear is_unused on a deferred barrel record. Returns true if the record was un-deferred.
+/// Clear is_unused and is_barrel_deferred on a deferred barrel record.
+/// Returns true if the record was un-deferred.
 fn unDeferRecord(import_records: *ImportRecord.List, record_idx: u32) bool {
     if (record_idx >= import_records.len) return false;
     const rec = &import_records.slice()[record_idx];
     if (rec.flags.is_internal or !rec.flags.is_unused) return false;
     rec.flags.is_unused = false;
+    rec.flags.is_barrel_deferred = false;
     return true;
 }
 

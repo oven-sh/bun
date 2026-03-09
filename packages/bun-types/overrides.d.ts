@@ -4637,3 +4637,96 @@ declare namespace NodeJS {
     readonly utf8: true;
   }
 }
+
+// Add Crypto types
+declare namespace NodeJS {
+  interface Crypto {
+    /**
+     * Generates random bytes.
+     */
+    randomBytes(size: number, callback?: (err: Error | null, buf: Buffer) => void): Buffer;
+    
+    /**
+     * Generates random UUID.
+     */
+    randomUUID(callback?: (err: Error | null, uuid: string) => void): string;
+    
+    /**
+     * Pseudo-random bytes.
+     */
+    prng(size: number, callback?: (err: Error | null, buf: Buffer) => void): Buffer;
+    
+    /**
+     * Random int.
+     */
+    randomInt(min: number, max: number): number;
+    
+    /**
+     * Scramble bytes.
+     */
+    scrypt(password: string, salt: string, keylen: number, cost: number, callback?: (err: Error | null, derivedKey: Buffer) => void): Buffer;
+  }
+  
+  interface Hash extends NodeJS.ReadableStream {
+    /**
+     * Updates hash.
+     */
+    update(data: string | Buffer | ArrayBuffer, encoding?: BufferEncoding): this;
+    
+    /**
+     * Returns digest.
+     */
+    digest(encoding?: BufferEncoding): Buffer;
+    
+    /**
+     * Copies hash.
+     */
+    copy(): Hash;
+  }
+  
+  interface Hmac extends NodeJS.ReadableStream {
+    /**
+     * Updates HMAC.
+     */
+    update(data: string | Buffer | ArrayBuffer, encoding?: BufferEncoding): this;
+    
+    /**
+     * Returns digest.
+     */
+    digest(encoding?: BufferEncoding): Buffer;
+  }
+  
+  interface Cipher extends NodeJS.ReadableStream, NodeJS.WritableStream {
+    /**
+     * Updates cipher.
+     */
+    update(data: string | Buffer | ArrayBuffer, encoding?: BufferEncoding): this;
+    
+    /**
+     * Finalizes cipher.
+     */
+    final(encoding?: BufferEncoding): Buffer;
+    
+    /**
+     * Sets auth tag.
+     */
+    setAuthTag(tag: Buffer): this;
+  }
+  
+  interface Decipher extends NodeJS.ReadableStream, NodeJS.WritableStream {
+    /**
+     * Updates decipher.
+     */
+    update(data: string | Buffer | ArrayBuffer, encoding?: BufferEncoding): this;
+    
+    /**
+     * Finalizes decipher.
+     */
+    final(encoding?: BufferEncoding): Buffer;
+    
+    /**
+     * Gets auth tag.
+     */
+    getAuthTag(): Buffer;
+  }
+}

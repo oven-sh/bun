@@ -12423,3 +12423,29 @@ declare global {
         (...args: string[]): AsyncGeneratorFunction;
     }
 }
+
+// Proxy types
+declare global {
+    interface ProxyHandler<T extends object> {
+        getPrototypeOf?: (target: T) => object | null;
+        setPrototypeOf?: (target: T, v: any) => boolean;
+        isExtensible?: (target: T) => boolean;
+        preventExtensions?: (target: T) => boolean;
+        getOwnPropertyDescriptor?: (target: T, p: PropertyKey) => PropertyDescriptor | undefined;
+        defineProperty?: (target: T, p: PropertyKey, attributes: PropertyDescriptor) => boolean;
+        has?: (target: T, p: PropertyKey) => boolean;
+        get?: (target: T, p: PropertyKey, receiver: any) => any;
+        set?: (target: T, p: PropertyKey, value: any, receiver: any) => boolean;
+        deleteProperty?: (target: T, p: PropertyKey) => boolean;
+        ownKeys?: (target: T) => Array<PropertyKey>;
+        apply?: (target: T, thisArg: any, argArray: any[]) => any;
+        construct?: (target: T, argArray: any[], newTarget: Function) => object;
+    }
+    
+    interface ProxyConstructor {
+        revocable<T extends object>(target: T, handler: ProxyHandler<T>): { proxy: T; revoke: () => void; };
+        new<T extends object>(target: T, handler: ProxyHandler<T>): T;
+    }
+    
+    var Proxy: ProxyConstructor;
+}

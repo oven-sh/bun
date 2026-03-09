@@ -6613,3 +6613,100 @@ declare namespace NodeJS {
     doesNotMatch(value: string, regexp: RegExp, message?: string | Error): void;
   }
 }
+
+// Add Path types
+declare namespace NodeJS {
+  interface Path {
+    /**
+     * Separator.
+     */
+    readonly sep: string;
+    
+    /**
+     * Delimiter.
+     */
+    readonly delimiter: string;
+    
+    /**
+     * Normalize path.
+     */
+    normalize(path: string): string;
+    
+    /**
+     * Join paths.
+     */
+    join(...paths: string[]): string;
+    
+    /**
+     * Resolve path.
+     */
+    resolve(...paths: string[]): string;
+    
+    /**
+     * Is absolute?
+     */
+    isAbsolute(path: string): boolean;
+    
+    /**
+     * Get dirname.
+     */
+    dirname(path: string): string;
+    
+    /**
+     * Get basename.
+     */
+    basename(path: string, ext?: string): string;
+    
+    /**
+     * Get extname.
+     */
+    extname(path: string): string;
+    
+    /**
+     * Parse path.
+     */
+    parse(path: string): ParsedPath;
+    
+    /**
+     * Format path.
+     */
+    format(pathObject: ParsedPath): string;
+    
+    /**
+     * Get relative path.
+     */
+    relative(from: string, to: string): string;
+    
+    /**
+     * Get directory names.
+     */
+    dirname(path: string): string;
+  }
+  
+  interface ParsedPath {
+    /**
+     * Root.
+     */
+    root: string;
+    
+    /**
+     * Directory.
+     */
+    dir: string;
+    
+    /**
+     * Base.
+     */
+    base: string;
+    
+    /**
+     * Ext.
+     */
+    ext: string;
+    
+    /**
+     * Name.
+     */
+    name: string;
+  }
+}

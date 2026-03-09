@@ -9311,3 +9311,74 @@ declare module "node:http" {
     writeHead(statusCode: number, headers?: any): void;
   }
 }
+
+// https module types
+declare module "node:https" {
+  import { RequestOptions } from "node:http";
+  import { Server as HttpServer } from "node:http";
+  import { TLSSocket } from "node:tls";
+  
+  export interface ServerOptions {
+    pfx?: string | Buffer | string[] | Buffer[] | any[];
+    key?: string | Buffer | string[] | Buffer[] | any[];
+    passphrase?: string;
+    cert?: string | Buffer | string[] | Buffer[];
+    ca?: string | Buffer | string[] | Buffer[];
+    ciphers?: string;
+    honorCipherOrder?: boolean;
+    ecdhCurve?: string;
+    clientCertEngine?: string;
+    crl?: string | string[] | Buffer | Buffer[];
+    dhparam?: string | Buffer;
+    secureProtocol?: string;
+    secureOptions?: number;
+    sessionTimeout?: number;
+    ticketKeys?: Buffer;
+    sessionIdContext?: string;
+    requestCert?: boolean;
+    rejectUnauthorized?: boolean;
+    NPNProtocols?: string[] | Buffer[] | Uint8Array[] | Buffer;
+    ALPNProtocols?: string[] | Buffer[] | Uint8Array[] | Buffer;
+    SNICallback?: (servername: string, cb: (err: Error | null, ctx?: any) => void) => void;
+  }
+  
+  export interface RequestOptions extends RequestOptions {
+    pfx?: string | Buffer | string[] | Buffer[] | any[];
+    key?: string | Buffer | string[] | Buffer[] | any[];
+    passphrase?: string;
+    cert?: string | Buffer | string[] | Buffer[];
+    ca?: string | Buffer | string[] | Buffer[];
+    ciphers?: string;
+    honorCipherOrder?: boolean;
+    ecdhCurve?: string;
+    clientCertEngine?: string;
+    crl?: string | string[] | Buffer | Buffer[];
+    dhparam?: string | Buffer;
+    secureProtocol?: string;
+    secureOptions?: number;
+    sessionTimeout?: number;
+    ticketKeys?: Buffer;
+    sessionIdContext?: string;
+    rejectUnauthorized?: boolean;
+    NPNProtocols?: string[] | Buffer[] | Uint8Array[] | Buffer;
+    ALPNProtocols?: string[] | Buffer[] | Uint8Array[] | Buffer;
+    SNICallback?: (servername: string, cb: (err: Error | null, ctx?: any) => void) => void;
+    servername?: string;
+    checkServerIdentity?: (hostname: string, cert: any) => Error | undefined;
+    minDHSize?: number;
+    agent?: any;
+  }
+  
+  export interface Server extends HttpServer {
+    addContext(hostName: string, credentials: any): void;
+    removeContext(hostName: string): void;
+    setSecureContext(options: any): void;
+  }
+  
+  export function request(options: RequestOptions, callback?: (res: any) => void): any;
+  export function request(url: string | URL, options: RequestOptions, callback?: (res: any) => void): any;
+  export function get(options: RequestOptions, callback?: (res: any) => void): any;
+  export function get(url: string | URL, options: RequestOptions, callback?: (res: any) => void): any;
+  export function createServer(options: ServerOptions, requestListener?: (req: any, res: any) => void): Server;
+  export const globalAgent: any;
+}

@@ -12309,3 +12309,31 @@ declare global {
         new<T = any>(type: string, eventInitDict?: CustomEventInit<T>): CustomEvent<T>;
     };
 }
+
+// Atomics types
+declare global {
+    namespace Atomics {
+        function add(typedArray: BigInt64Array | BigUint64Array, index: number, value: bigint): bigint;
+        function add(typedArray: Int8Array | Uint8Array | Int16Array | Uint16Array | Int32Array | Uint32Array, index: number, value: number): number;
+        function and(typedArray: BigInt64Array | BigUint64Array, index: number, value: bigint): bigint;
+        function and(typedArray: Int8Array | Uint8Array | Int16Array | Uint16Array | Int32Array | Uint32Array, index: number, value: number): number;
+        function compareExchange(typedArray: BigInt64Array | BigUint64Array, index: number, expectedValue: bigint, replacementValue: bigint): bigint;
+        function compareExchange(typedArray: Int8Array | Uint8Array | Int16Array | Uint16Array | Int32Array | Uint32Array, index: number, expectedValue: number, replacementValue: number): number;
+        function exchange(typedArray: BigInt64Array | BigUint64Array, index: number, value: bigint): bigint;
+        function exchange(typedArray: Int8Array | Uint8Array | Int16Array | Uint16Array | Int32Array | Uint32Array, index: number, value: number): number;
+        function isLockFree(size: number): boolean;
+        function load(typedArray: BigInt64Array | BigUint64Array, index: number): bigint;
+        function load(typedArray: Int8Array | Uint8Array | Int16Array | Uint16Array | Int32Array | Uint32Array, index: number): number;
+        function or(typedArray: BigInt64Array | BigUint64Array, index: number, value: bigint): bigint;
+        function or(typedArray: Int8Array | Uint8Array | Int16Array | Uint16Array | Int32Array | Uint32Array, index: number, value: number): number;
+        function store(typedArray: BigInt64Array | BigUint64Array, index: number, value: bigint): bigint;
+        function store(typedArray: Int8Array | Uint8Array | Int16Array | Uint16Array | Int32Array | Uint32Array, index: number, value: number): number;
+        function sub(typedArray: BigInt64Array | BigUint64Array, index: number, value: bigint): bigint;
+        function sub(typedArray: Int8Array | Uint8Array | Int16Array | Uint16Array | Int32Array | Uint32Array, index: number, value: number): number;
+        function wait(typedArray: Int32Array, index: number, value: number, timeout?: number): "ok" | "not-equal" | "timed-out";
+        function waitAsync(typedArray: Int32Array, index: number, value: number, timeout?: number): { async: true; value: Promise<"ok" | "not-equal" | "timed-out">; } | { async: false; value: "ok" | "not-equal" | "timed-out"; };
+        function notify(typedArray: Int32Array, index: number, count?: number): number;
+        function xor(typedArray: BigInt64Array | BigUint64Array, index: number, value: bigint): bigint;
+        function xor(typedArray: Int8Array | Uint8Array | Int16Array | Uint16Array | Int32Array | Uint32Array, index: number, value: number): number;
+    }
+}

@@ -8876,3 +8876,46 @@ declare namespace NodeJS {
     readonly BUFFER_POOL_SIZE: number;
   }
 }
+
+// readline module types
+declare module "node:readline" {
+  import { EventEmitter } from "node:events";
+  
+  export interface ReadLineOptions {
+    input: NodeJS.ReadableStream;
+    output?: NodeJS.WritableStream;
+    completer?: Completer | AsyncCompleter;
+    terminal?: boolean;
+    history?: string[];
+    historySize?: number;
+    prompt?: string;
+    crlfDelay?: number;
+    removeHistoryDuplicates?: boolean;
+    escapeCodeTimeout?: number;
+  }
+  
+  export type Completer = (line: string) => [string[], string];
+  export type AsyncCompleter = (line: string, callback: (err?: null | Error, result?: [string[], string]) => void) => void;
+  
+  export interface Key {
+    sequence?: string;
+    name?: string;
+    ctrl?: boolean;
+    meta?: boolean;
+    shift?: boolean;
+  }
+  
+  export class Interface extends EventEmitter {
+    readonly terminal: boolean;
+    prompt(): void;
+    pause(): this;
+    resume(): this;
+    write(data: string | Buffer, key?: Key): void;
+    question(query: string, callback: (answer: string) => void): void;
+    close(): void;
+    readonly line: string;
+    readonly cursor: number;
+  }
+  
+  export function createInterface(options: ReadLineOptions): Interface;
+}

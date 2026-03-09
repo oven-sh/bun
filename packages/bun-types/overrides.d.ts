@@ -2917,3 +2917,45 @@ declare namespace Bun {
     timeout?: number;
   }
 }
+
+// Add MessageChannel and MessagePort types
+declare namespace Bun {
+  interface MessageChannel {
+    /**
+     * Port 1.
+     */
+    readonly port1: MessagePort;
+    
+    /**
+     * Port 2.
+     */
+    readonly port2: MessagePort;
+  }
+  
+  interface MessagePort extends EventTarget {
+    /**
+     * Posts message.
+     */
+    postMessage(message: any, transfer?: any[]): void;
+    
+    /**
+     * Starts port.
+     */
+    start(): void;
+    
+    /**
+     * Closes port.
+     */
+    close(): void;
+    
+    /**
+     * Event: onmessage.
+     */
+    onmessage: ((this: MessagePort, ev: MessageEvent) => any) | null;
+    
+    /**
+     * Event: onmessageerror.
+     */
+    onmessageerror: ((this: MessagePort, ev: MessageEvent) => any) | null;
+  }
+}

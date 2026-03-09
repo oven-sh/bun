@@ -1823,3 +1823,41 @@ declare namespace Bun {
     toObject(): Record<string, string>;
   }
 }
+
+// Add Inspector/Debugger types
+declare namespace Bun {
+  interface Inspector {
+    /**
+     * Opens inspector.
+     */
+    open(port?: number): void;
+    
+    /**
+     * Closes inspector.
+     */
+    close(): void;
+    
+    /**
+     * Gets inspector URL.
+     */
+    url(): string;
+  }
+  
+  interface Breakpoint {
+    /**
+     * Breakpoint location.
+     */
+    line: number;
+    column?: number;
+    
+    /**
+     * Breakpoint condition.
+     */
+    condition?: string;
+    
+    /**
+     * Is breakpoint enabled?
+     */
+    enabled: boolean;
+  }
+}

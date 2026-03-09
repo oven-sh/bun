@@ -11104,3 +11104,47 @@ declare global {
   
   type EventListenerOrEventListenerObject = EventListener | EventListenerObject;
 }
+
+// Web API: ReadableStream additional types
+declare global {
+  interface ReadableStreamDefaultController<T> {
+    readonly desiredSize: number | null;
+    close(): void;
+    enqueue(chunk: T): void;
+    error(e?: any): void;
+  }
+  
+  interface ReadableStreamDefaultReader<R> {
+    readonly closed: Promise<undefined>;
+    cancel(reason?: any): Promise<void>;
+    read(): Promise<ReadableStreamReadResult<R>>;
+    releaseLock(): void;
+  }
+  
+  type ReadableStreamReadResult<T> = ReadableStreamReadValueResult<T> | ReadableStreamReadDoneResult;
+  
+  interface ReadableStreamReadValueResult<T> {
+    done: false;
+    value: T;
+  }
+  
+  interface ReadableStreamReadDoneResult {
+    done: true;
+    value?: undefined;
+  }
+  
+  interface ReadableByteStreamController {
+    readonly byobRequest: any;
+    readonly desiredSize: number | null;
+    close(): void;
+    enqueue(chunk: Buffer): void;
+    error(e?: any): void;
+  }
+  
+  interface ReadableStreamBYOBReader {
+    readonly closed: Promise<undefined>;
+    cancel(reason?: any): Promise<void>;
+    read(view: Buffer): Promise<ReadableStreamReadResult<Buffer>>;
+    releaseLock(): void;
+  }
+}

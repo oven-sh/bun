@@ -6242,3 +6242,224 @@ declare namespace NodeJS {
     findPackageJSON(request: string): string | null;
   }
 }
+
+// Add Process types
+declare namespace NodeJS {
+  interface Process extends EventEmitter {
+    /**
+     * Process ID.
+     */
+    readonly pid: number;
+    
+    /**
+     * Platform.
+     */
+    readonly platform: string;
+    
+    /**
+     * Architecture.
+     */
+    readonly arch: string;
+    
+    /**
+     * Node version.
+     */
+    readonly version: string;
+    
+    /**
+     * Versions.
+     */
+    readonly versions: Record<string, string>;
+    
+    /**
+     * Release.
+     */
+    readonly release: Record<string, string>;
+    
+    /**
+     * Environment.
+     */
+    readonly env: ProcessEnv;
+    
+    /**
+     * Exec arguments.
+     */
+    readonly execArgv: string[];
+    
+    /**
+     * Exec path.
+     */
+    readonly execPath: string;
+    
+    /**
+     * Title.
+     */
+    title: string;
+    
+    /**
+     * Abort controller.
+     */
+    readonly abortController: AbortController;
+    
+    /**
+     * Features.
+     */
+    readonly features: Record<string, boolean>;
+    
+    /**
+     * Main module.
+     */
+    readonly mainModule?: Module;
+    
+    /**
+     * Standard input.
+     */
+    readonly stdin: ReadStream;
+    
+    /**
+     * Standard output.
+     */
+    readonly stdout: WriteStream;
+    
+    /**
+     * Standard error.
+     */
+    readonly stderr: WriteStream;
+    
+    /**
+     * Connected.
+     */
+    readonly connected: boolean;
+    
+    /**
+     * Exits process.
+     */
+    exit(code?: number): never;
+    
+    /**
+     * Sends signal.
+     */
+    kill(pid: number, signal?: string | number): void;
+    
+    /**
+     * CWD.
+     */
+    cwd(): string;
+    
+    /**
+     * Changes CWD.
+     */
+    chdir(directory: string): void;
+    
+    /**
+     * Umask.
+     */
+    umask(mask?: number): number;
+    
+    /**
+     * Gets uptime.
+     */
+    uptime(): number;
+    
+    /**
+     * Gets memory usage.
+     */
+    memoryUsage(): MemoryUsage;
+    
+    /**
+     * Gets CPU usage.
+     */
+    cpuUsage(previousValue?: CpuUsage): CpuUsage;
+    
+    /**
+     * Next tick.
+     */
+    nextTick(callback: Function, ...args: any[]): void;
+    
+    /**
+     * HR time.
+     */
+    hrtime(time?: [number, number]): [number, number];
+    
+    /**
+     * Dlopen.
+     */
+    dlopen(module: string): any;
+    
+    /**
+     * Uptime in seconds.
+     */
+    uptimeS(): number;
+    
+    /**
+     * Gets resource usage.
+     */
+    resourceUsage(): ResourceUsage;
+    
+    /**
+     * Binding.
+     */
+    binding(binding: string): any;
+  }
+  
+  interface MemoryUsage {
+    /**
+     * RSS in bytes.
+     */
+    rss: number;
+    
+    /**
+     * Heap total.
+     */
+    heapTotal: number;
+    
+    /**
+     * Heap used.
+     */
+    heapUsed: number;
+    
+    /**
+     * External.
+     */
+    external: number;
+    
+    /**
+     * Array buffers.
+     */
+    arrayBuffers: number;
+  }
+  
+  interface CpuUsage {
+    /**
+     * User CPU time.
+     */
+    user: number;
+    
+    /**
+     * System CPU time.
+     */
+    system: number;
+  }
+  
+  interface ResourceUsage {
+    /**
+     * User time.
+     */
+    userCPUTime: number;
+    
+    /**
+     * System time.
+     */
+    systemCPUTime: number;
+    
+    /**
+     * Max RSS.
+     */
+    maxRSS: number;
+    
+    /**
+     * Shared memory size.
+     */
+    sharedMemorySize: number;
+  }
+}

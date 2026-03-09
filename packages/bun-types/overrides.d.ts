@@ -2119,3 +2119,35 @@ declare namespace Bun {
     decompress(data: Buffer | ArrayBuffer): Buffer;
   }
 }
+
+// Add Hash types
+declare namespace Bun {
+  interface Hash {
+    /**
+     * Updates hash with data.
+     */
+    update(data: string | Buffer | ArrayBuffer): Hash;
+    
+    /**
+     * Returns digest as specified format.
+     */
+    digest(encoding?: 'hex' | 'base64' | 'buffer'): string | Buffer;
+    
+    /**
+     * Copies hash instance.
+     */
+    copy(): Hash;
+  }
+  
+  interface Hasher {
+    /**
+     * Creates hash instance.
+     */
+    create(algorithm: 'md5' | 'sha1' | 'sha256' | 'sha512' | 'shake128' | 'shake256'): Hash;
+    
+    /**
+     * One-shot hash function.
+     */
+    hash(algorithm: string, data: string | Buffer | ArrayBuffer, encoding?: 'hex' | 'base64' | 'buffer'): string | Buffer;
+  }
+}

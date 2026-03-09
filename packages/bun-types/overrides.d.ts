@@ -10251,3 +10251,20 @@ declare module "node:constants" {
   export const SSL_OP_TLS_D5_BUG: number;
   export const SSL_OP_TLS_ROLLBACK_BUG: number;
 }
+
+// timers/promises module types
+declare module "node:timers/promises" {
+  export interface Abortable {
+    signal: AbortSignal;
+  }
+  
+  export interface TimerOptions extends Abortable {
+    ref?: boolean;
+  }
+  
+  export function setTimeout(ms: number, value?: any): Promise<void>;
+  export function setTimeout(ms: number, value: any, options: TimerOptions): Promise<void>;
+  export function setImmediate(value?: any): Promise<void>;
+  export function setImmediate(value: any, options: TimerOptions): Promise<void>;
+  export function setInterval(ms: number, value?: any): AsyncIterable<any>;
+}

@@ -10526,3 +10526,98 @@ declare module "node:buffer" {
   
   export const INSPECT_MAX_BYTES: number;
 }
+
+// stream additional types
+declare module "node:stream" {
+  export interface ReadableOptions {
+    highWaterMark?: number;
+    encoding?: BufferEncoding;
+    objectMode?: boolean;
+    read?: (this: Readable, size: number) => void;
+    destroy?: (this: Readable, error: Error | null, callback: (error: Error | null) => void) => void;
+  }
+  
+  export interface WritableOptions {
+    highWaterMark?: number;
+    decodeStrings?: boolean;
+    defaultEncoding?: BufferEncoding;
+    objectMode?: boolean;
+    emitClose?: boolean;
+    write?: (this: Writable, chunk: any, encoding: BufferEncoding, callback: (error?: Error | null) => void) => boolean;
+    writev?: (this: Writable, chunks: Array<{ chunk: any; encoding: BufferEncoding }>, callback: (error?: Error | null) => void) => boolean;
+    destroy?: (this: Writable, error: Error | null, callback: (error: Error | null) => void) => void;
+    final?: (this: Writable, callback: (error?: Error | null) => void) => void;
+  }
+  
+  export interface DuplexOptions extends ReadableOptions, WritableOptions {
+    allowHalfOpen?: boolean;
+    readableObjectMode?: boolean;
+    writableObjectMode?: boolean;
+  }
+  
+  export interface TransformOptions extends DuplexOptions {
+    transform?: (this: Transform, chunk: any, encoding: BufferEncoding, callback: TransformCallback) => void;
+    flush?: (this: Transform, callback: TransformCallback) => void;
+  }
+  
+  export type TransformCallback = (error?: Error | null, data?: any) => void;
+  
+  export class Readable extends EventEmitter implements NodeJS.ReadableStream {
+    readable: boolean;
+    readonly readableEncoding: BufferEncoding | null;
+    readonly readableEnded: boolean;
+    readonly readableFlowing: boolean | null;
+    readonly readableHighWaterMark: number;
+    readonly readableLength: number;
+    readonly readableObjectMode: boolean;
+    readonly destroyed: boolean;
+    read(size?: number): any;
+    setEncoding(encoding: BufferEncoding): this;
+    pause(): this;
+    resume(): this;
+    isPaused(): boolean;
+    unpipe(destination?: NodeJS.WritableStream): this;
+    unshift(chunk: any, encoding?: BufferEncoding): void;
+    wrap(oldStream: NodeJS.ReadableStream): this;
+    push(chunk: any, encoding?: BufferEncoding): boolean;
+    destroy(error?: Error): void;
+    _destroy(error: Error | null, callback: (error: Error | null) => void): void;
+  }
+  
+  export class Writable extends EventEmitter implements NodeJS.WritableStream {
+    writable: boolean;
+    readonly writableEnded: boolean;
+    readonly writableFinished: boolean;
+    readonly writableHighWaterMark: number;
+    readonly writableObjectMode: boolean;
+    readonly writableCorked: number;
+    readonly destroyed: boolean;
+    write(chunk: any, cb?: (error: Error | null) => void): boolean;
+    write(chunk: any, encoding: BufferEncoding, cb?: (error: Error | null) => void): boolean;
+    setDefaultEncoding(encoding: BufferEncoding): this;
+    cork(): void;
+    uncork(): void;
+    end(cb?: () => void): void;
+    end(chunk: any, cb?: () => void): void;
+    end(chunk: any, encoding: BufferEncoding, cb?: () => void): void;
+    destroy(error?: Error): void;
+    _destroy(error: Error | null, callback: (error: Error | null) => void): void;
+  }
+  
+  export class Duplex extends Readable implements NodeJS.ReadWriteStream {
+    readonly writable: boolean;
+    readonly writableEnded: boolean;
+    readonly writableFinished: boolean;
+    readonly writableHighWaterMark: number;
+    readonly writableObjectMode: boolean;
+    readonly writableCorked: number;
+    allowHalfOpen: boolean;
+  }
+  
+  export class Transform extends Duplex {}
+  
+  export class PassThrough extends Transform {}
+  
+  export function finished(stream: NodeJS.ReadableStream | NodeJS.WritableStream | NodeJS.ReadWriteStream, options: any, callback: (err?: Error | null) => void): () => void;
+  export function pipeline(...streams: Array<NodeJS.ReadableStream | NodeJS.WritableStream | Function>): NodeJS.WritableStream;
+}

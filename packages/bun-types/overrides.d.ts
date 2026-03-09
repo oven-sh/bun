@@ -1320,3 +1320,45 @@ declare namespace Bun {
     stat(path: string | PathLike): Promise<FileStat>;
   }
 }
+
+// Add Plugin types
+declare namespace Bun {
+  interface Plugin {
+    /**
+     * Plugin name.
+     */
+    name: string;
+    
+    /**
+     * Setup function called when plugin loads.
+     */
+    setup(build: any): void | Promise<void>;
+    
+    /**
+     * Teardown function called when plugin unloads.
+     */
+    teardown?(): void | Promise<void>;
+    
+    /**
+     * onLoad callback for module loading.
+     */
+    onLoad?(args: { path: string }): any;
+    
+    /**
+     * onEnd callback after build completes.
+     */
+    onEnd?(result: any): void | Promise<void>;
+  }
+  
+  interface PluginBuilder {
+    /**
+     * Adds a plugin to the build.
+     */
+    plugin(plugin: Plugin): this;
+    
+    /**
+     * Configures the build.
+     */
+    config(options: any): this;
+  }
+}

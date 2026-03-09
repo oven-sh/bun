@@ -1075,6 +1075,62 @@ interface SharedArrayBuffer {
   grow(size: number): SharedArrayBuffer;
 }
 
+interface Map<K, V> {
+  /**
+   * If the key already exists in the map, return the existing value. Otherwise,
+   * insert the given default value and return it.
+   *
+   * ```ts
+   * const m = new Map<string, number>();
+   * m.getOrInsert("a", 1); // 1
+   * m.getOrInsert("a", 2); // 1
+   * ```
+   *
+   * @param key - The key to look up.
+   * @param defaultValue - The value to insert if the key doesn't exist.
+   * @returns The existing value if the key exists, otherwise the inserted default value.
+   */
+  getOrInsert(key: K, defaultValue: V): V;
+
+  /**
+   * If the key already exists in the map, return the existing value. Otherwise,
+   * call the callback function to compute a value, insert it, and return it.
+   *
+   * ```ts
+   * const m = new Map<string, string>();
+   * m.getOrInsertComputed("key", (k) => k + "_value"); // "key_value"
+   * m.getOrInsertComputed("key", (k) => k + "_other"); // "key_value"
+   * ```
+   *
+   * @param key - The key to look up.
+   * @param callbackFunction - A function that receives the key and returns the value to insert.
+   * @returns The existing value if the key exists, otherwise the computed and inserted value.
+   */
+  getOrInsertComputed(key: K, callbackFunction: (key: K) => V): V;
+}
+
+interface WeakMap<K extends WeakKey, V> {
+  /**
+   * If the key already exists in the weak map, return the existing value. Otherwise,
+   * insert the given default value and return it.
+   *
+   * @param key - The key to look up.
+   * @param defaultValue - The value to insert if the key doesn't exist.
+   * @returns The existing value if the key exists, otherwise the inserted default value.
+   */
+  getOrInsert(key: K, defaultValue: V): V;
+
+  /**
+   * If the key already exists in the weak map, return the existing value. Otherwise,
+   * call the callback function to compute a value, insert it, and return it.
+   *
+   * @param key - The key to look up.
+   * @param callbackFunction - A function that receives the key and returns the value to insert.
+   * @returns The existing value if the key exists, otherwise the computed and inserted value.
+   */
+  getOrInsertComputed(key: K, callbackFunction: (key: K) => V): V;
+}
+
 interface ArrayConstructor {
   /**
    * Create an array from an iterable or async iterable object.

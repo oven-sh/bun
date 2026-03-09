@@ -10871,3 +10871,41 @@ declare module "node:http2" {
     readonly server: any;
   }
 }
+
+// tls additional types (extended)
+declare module "node:tls" {
+  export interface SecureContext {
+    context: any;
+  }
+  
+  export interface SecureContextOptions {
+    key?: string | Buffer | string[] | Buffer[] | any[];
+    cert?: string | Buffer | string[] | Buffer[];
+    ca?: string | Buffer | string[] | Buffer[];
+    capath?: string;
+    ciphers?: string;
+    clientCertEngine?: string;
+    crl?: string | string[] | Buffer | Buffer[];
+    dhparam?: string | Buffer;
+    ecdhCurve?: string;
+    honorCipherOrder?: boolean;
+    minDHSize?: number;
+    passphrase?: string;
+    pfx?: string | Buffer | string[] | Buffer[] | any[];
+    secureOptions?: number;
+    secureProtocol?: string;
+    sessionIdContext?: string;
+    sessionTimeout?: number;
+    privateKeyIdentifier?: string;
+    privateKeyEngine?: string;
+    ticketKeys?: Buffer;
+  }
+  
+  export function createSecureContext(options: SecureContextOptions): SecureContext;
+  export function createSecurePair(credentials?: any, isServer?: boolean, requestCert?: boolean, rejectUnauthorized?: boolean): any;
+  
+  export const DEFAULT_ECDH_CURVE: string;
+  export const DEFAULT_CIPHERS: string;
+  export const CLIENT_RENEG_LIMIT: number;
+  export const CLIENT_RENEG_WINDOW: number;
+}

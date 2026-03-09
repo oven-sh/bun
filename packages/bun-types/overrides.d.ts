@@ -13297,3 +13297,11 @@ declare module "node:inspector" {
   export function url(): string;
   export const console: Console;
 }
+
+// stream/consumers API types
+declare module "node:stream/consumers" {
+  export function buffer(stream: NodeJS.ReadableStream): Promise<Buffer>;
+  export function text(stream: NodeJS.ReadableStream): Promise<string>;
+  export function arrayBuffer(stream: NodeJS.ReadableStream): Promise<ArrayBuffer>;
+  export function json(stream: NodeJS.ReadableStream): Promise<any>;
+}

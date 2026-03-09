@@ -165,7 +165,9 @@ describe("SMTPClient", () => {
 
     test("rejects on connection failure", async () => {
       const { stdout, exitCode } = await runSmtp(`
-        const client = new Bun.SMTPClient({ host: "127.0.0.1", port: 62542 });
+        const srv = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+        const badPort = srv.port; srv.stop(true);
+        const client = new Bun.SMTPClient({ host: "127.0.0.1", port: badPort });
         try {
           await client.send({ from: "a@b.com", to: "c@d.com", text: "hi" });
         } catch(e) { console.log("rejected:", e.message.substring(0, 60)); }

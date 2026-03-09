@@ -200,7 +200,7 @@ describe("ReDoS protection (mail-composer-test.js #35-46)", () => {
       const c = new Bun.SMTPClient({ host: "127.0.0.1", port });
       const start = Date.now();
       await c.send({ from: "a@b.com", to: "c@d.com", text: "x",
-        attachments: [{ filename: "t.txt", path: "data:;" + ";".repeat(60000) + ",test" }] });
+        attachments: [{ filename: "t.txt", path: "data:;" + Buffer.alloc(60000, ";").toString() + ",test" }] });
       console.log(JSON.stringify({ fast: Date.now() - start < 5000 }));
       c.close(); server.stop();
     `);
@@ -247,7 +247,7 @@ describe("ReDoS protection (mail-composer-test.js #35-46)", () => {
       const c = new Bun.SMTPClient({ host: "127.0.0.1", port });
       const start = Date.now();
       await c.send({ from: "a@b.com", to: "c@d.com", text: "x",
-        attachments: [{ filename: "big.txt", path: "data:text/plain;base64," + "A".repeat(200000) }] });
+        attachments: [{ filename: "big.txt", path: "data:text/plain;base64," + Buffer.alloc(200000, "A").toString() }] });
       console.log(JSON.stringify({ fast: Date.now() - start < 10000 }));
       c.close(); server.stop();
     `);

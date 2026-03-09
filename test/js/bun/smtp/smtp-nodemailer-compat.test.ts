@@ -519,7 +519,9 @@ describe("Nodemailer Compatibility - verify() (from smtp-transport-test.js)", ()
 
   test("should reject verify on connection failure", async () => {
     const { stdout, exitCode } = await runSmtp(`
-      const client = new Bun.SMTPClient({ host: "127.0.0.1", port: 62542 });
+      const srv = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+      const badPort = srv.port; srv.stop(true);
+      const client = new Bun.SMTPClient({ host: "127.0.0.1", port: badPort });
       try { await client.verify(); console.log("ERROR: should have thrown"); }
       catch(e) { console.log("rejected:", e.message.substring(0, 40)); }
       client.close();

@@ -594,7 +594,9 @@ describe("SMTP Protocol (nodemailer smtp-transport-test.js)", () => {
 
   test("should fail verify on bad port", async () => {
     const { stdout, exitCode } = await run(`
-      const c = new Bun.SMTPClient({ host: "127.0.0.1", port: 62542 });
+      const srv = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+      const badPort = srv.port; srv.stop(true);
+      const c = new Bun.SMTPClient({ host: "127.0.0.1", port: badPort });
       try { await c.verify(); console.log("NO_ERROR"); }
       catch(e) { console.log("ERR"); }
       c.close();
@@ -902,7 +904,9 @@ describe("Error Codes (nodemailer errors-test.js)", () => {
 
   test("connection failure should have code ECONNECTION", async () => {
     const { stdout, exitCode } = await run(`
-      const c = new Bun.SMTPClient({ host: "127.0.0.1", port: 62542 });
+      const srv = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+      const badPort = srv.port; srv.stop(true);
+      const c = new Bun.SMTPClient({ host: "127.0.0.1", port: badPort });
       try {
         await c.send({ from: "a@b.com", to: "c@d.com", text: "x" });
       } catch(e) { console.log(JSON.stringify({ code: e.code })); }

@@ -278,7 +278,7 @@ describe("Large Message Body", () => {
       const { server, sessions, port } = mock();
       const c = new Bun.SMTPClient({ host: "127.0.0.1", port });
       // Generate a 100KB message body
-      const body = "A".repeat(100 * 1024);
+      const body = Buffer.alloc(100 * 1024, "A").toString();
       await c.send({ from: "a@b.com", to: "c@d.com", text: body });
       const m = sessions[0].msg;
       // Count how many 'A' characters are in the message (QP might encode some)

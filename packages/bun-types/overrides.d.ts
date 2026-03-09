@@ -14140,3 +14140,56 @@ declare module "node:module" {
   export function isBuiltin(moduleName: string): boolean;
   export function register(specifier: string | URL, parentURL?: string | URL): void;
 }
+
+// url additional API types
+declare module "node:url" {
+  export interface UrlObject {
+    protocol?: string | null;
+    slashes?: boolean | null;
+    auth?: string | null;
+    host?: string | null;
+    port?: string | number | null;
+    hostname?: string | null;
+    hash?: string | null;
+    search?: string | null;
+    query?: string | null | any;
+    pathname?: string | null;
+    path?: string | null;
+    href?: string | null;
+  }
+  
+  export interface Url {
+    protocol: string | null;
+    slashes: boolean | null;
+    auth: string | null;
+    host: string | null;
+    port: string | null;
+    hostname: string | null;
+    hash: string | null;
+    search: string | null;
+    query: string | null | any;
+    pathname: string | null;
+    path: string | null;
+    href: string;
+  }
+  
+  export interface ParseOptions {
+    decodeQueryString?: boolean;
+  }
+  
+  export interface FormatOptions {
+    auth?: boolean;
+    fragment?: boolean;
+    search?: boolean;
+    unicode?: boolean;
+  }
+  
+  export function parse(url: string, parseQueryString?: boolean, slashesDenoteHost?: boolean): Url;
+  export function format(urlObject: UrlObject | string, options?: FormatOptions): string;
+  export function resolve(from: string, to: string): string;
+  export function resolveObject(from: string, to: string): Url;
+  export function domainToASCII(domain: string): string;
+  export function domainToUnicode(domain: string): string;
+  export function pathToFileURL(path: string): URL;
+  export function fileURLToPath(url: string | URL): string;
+}

@@ -13564,3 +13564,64 @@ declare module "node:os" {
     priority: Record<string, number>;
   };
 }
+
+// crypto additional API types
+declare module "node:crypto" {
+  export interface CipherOptions {
+    authTagLength?: number;
+  }
+  
+  export interface BinaryLike {}
+  export interface CipherKey {}
+  
+  export class Cipher {
+    update(data: BinaryLike): Buffer;
+    update(data: BinaryLike, inputEncoding: BufferEncoding, outputEncoding: BufferEncoding): string;
+    update(data: BinaryLike, inputEncoding: BufferEncoding): Buffer;
+    final(): Buffer;
+    final(outputEncoding: BufferEncoding): string;
+    setAutoPadding(autoPadding?: boolean): this;
+    getAuthTag(): Buffer;
+    setAuthTag(buffer: Buffer): void;
+  }
+  
+  export class Decipher {
+    update(data: BinaryLike): Buffer;
+    update(data: BinaryLike, inputEncoding: BufferEncoding, outputEncoding: BufferEncoding): string;
+    update(data: BinaryLike, inputEncoding: BufferEncoding): Buffer;
+    final(): Buffer;
+    final(outputEncoding: BufferEncoding): string;
+    setAuthTag(buffer: Buffer): void;
+    setAutoPadding(autoPadding?: boolean): this;
+  }
+  
+  export class Hash {
+    update(data: BinaryLike): Hash;
+    update(data: BinaryLike, encoding: BufferEncoding): Hash;
+    digest(): Buffer;
+    digest(encoding: BufferEncoding): string;
+  }
+  
+  export class Hmac extends Hash {}
+  
+  export class Sign {
+    update(data: BinaryLike): Sign;
+    update(data: BinaryLike, encoding: BufferEncoding): Sign;
+    sign(privateKey: CipherKey): Buffer;
+    sign(privateKey: CipherKey, outputFormat: BufferEncoding): string;
+  }
+  
+  export class Verify {
+    update(data: BinaryLike): Verify;
+    update(data: BinaryLike, encoding: BufferEncoding): Verify;
+    verify(object: CipherKey, signature: BinaryLike): boolean;
+    verify(object: CipherKey, signature: BinaryLike, signatureFormat: BufferEncoding): boolean;
+  }
+  
+  export function createCipher(algorithm: string, password: BinaryLike): Cipher;
+  export function createDecipher(algorithm: string, password: BinaryLike): Decipher;
+  export function createHash(algorithm: string): Hash;
+  export function createHmac(algorithm: string, key: CipherKey): Hmac;
+  export function createSign(algorithm: string): Sign;
+  export function createVerify(algorithm: string): Verify;
+}

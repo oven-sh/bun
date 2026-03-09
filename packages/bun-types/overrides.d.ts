@@ -14016,3 +14016,41 @@ declare module "node:https" {
     agent?: any;
   }
 }
+
+// http2 additional API types
+declare module "node:http2" {
+  export interface ServerOptions {
+    maxDeflateDynamicTableSize?: number;
+    maxSessionMemory?: number;
+    maxHeaderListPairs?: number;
+    maxOutstandingPings?: number;
+    maxSendHeaderBlockLength?: number;
+    maxConcurrentStreams?: number;
+    settings?: any;
+    onSessionHandlers?: any;
+  }
+  
+  export interface SessionOptions {
+    maxDeflateDynamicTableSize?: number;
+    maxSessionMemory?: number;
+    maxHeaderListPairs?: number;
+    maxOutstandingPings?: number;
+    maxSendHeaderBlockLength?: number;
+    settings?: any;
+  }
+  
+  export interface ClientSessionOptions extends SessionOptions {
+    maxReservedRemoteStreams?: number;
+    createConnection?: any;
+  }
+  
+  export interface ClientOptions extends ClientSessionOptions {
+    protocol?: string;
+    authority?: string;
+  }
+  
+  export interface StatOptions {
+    offset?: number;
+    length?: number;
+  }
+}

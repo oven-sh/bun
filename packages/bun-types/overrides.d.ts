@@ -9085,3 +9085,94 @@ declare module "node:repl" {
   export const REPL_MODE_SLOPPY: symbol;
   export const REPL_MODE_STRICT: symbol;
 }
+
+// tls module types
+declare module "node:tls" {
+  import { Duplex } from "node:stream";
+  import { EventEmitter } from "node:events";
+  import { Server as NetServer, Socket } from "node:net";
+  import { Credentials } from "node:crypto";
+  
+  export interface TlsOptions {
+    host?: string;
+    port?: number;
+    path?: string;
+    socket?: Socket;
+    rejectUnauthorized?: boolean;
+    NPNProtocols?: string[];
+    ALPNProtocols?: string[] | Buffer[] | Uint8Array[] | Buffer;
+    SNICallback?: (servername: string, cb: (err: Error | null, ctx?: any) => void) => void;
+    servername?: string;
+    checkServerIdentity?: (hostname: string, cert: any) => Error | undefined;
+    session?: Buffer;
+    minDHSize?: number;
+    ciphers?: string;
+    honorCipherOrder?: boolean;
+    ecdhCurve?: string;
+    clientCertEngine?: string;
+    crl?: string | string[] | Buffer | Buffer[];
+    dhparam?: string | Buffer;
+    secureProtocol?: string;
+    secureOptions?: number;
+    sessionIdContext?: string;
+  }
+  
+  export interface ConnectionOptions extends TlsOptions {
+    enableTrace?: boolean;
+    lookup?: any;
+  }
+  
+  export interface ServerOptions {
+    key?: string | Buffer | string[] | Buffer[] | any[];
+    cert?: string | Buffer | string[] | Buffer[];
+    ca?: string | Buffer | string[] | Buffer[];
+    passphrase?: string;
+    pfx?: string | Buffer | string[] | Buffer[];
+    rejectUnauthorized?: boolean;
+    requestCert?: boolean;
+    NPNProtocols?: string[] | Buffer[] | Uint8Array[] | Buffer;
+    ALPNProtocols?: string[] | Buffer[] | Uint8Array[] | Buffer;
+    SNICallback?: (servername: string, cb: (err: Error | null, ctx?: any) => void) => void;
+    sessionIdContext?: string;
+    ticketKeys?: Buffer;
+    sessionTimeout?: number;
+    minDHSize?: number;
+    handshakeTimeout?: number;
+    clientCertEngine?: string;
+    crl?: string | string[] | Buffer | Buffer[];
+    ciphers?: string;
+    ecdhCurve?: string;
+    honorCipherOrder?: boolean;
+    secureProtocol?: string;
+    secureOptions?: number;
+  }
+  
+  export interface TLSSocket extends Duplex {
+    authorized: boolean;
+    authorizationError: Error;
+    encrypted: boolean;
+    getProtocol(): string;
+    getCipher(): { name: string; version: string; };
+    getPeerCertificate(detailed?: boolean): any;
+    getPeerFinished(): Buffer;
+    getSession(): Buffer;
+    getSessionReused(): boolean;
+    renegotiate(options: any, callback: () => void): void;
+    setMaxSendFragment(size: number): boolean;
+    disableRenegotiation(): void;
+  }
+  
+  export interface Server extends NetServer {
+    addContext(hostName: string, credentials: Credentials): void;
+    removeContext(hostName: string): void;
+    setSecureContext(options: Credentials): void;
+  }
+  
+  export function connect(options: ConnectionOptions, secureConnectListener?: () => void): TLSSocket;
+  export function createServer(options: ServerOptions, secureConnectionListener?: (socket: TLSSocket) => void): Server;
+  export function createSecurePair(credentials?: Credentials, isServer?: boolean, requestCert?: boolean, rejectUnauthorized?: boolean): any;
+  export const CLIENT_RENEG_LIMIT: number;
+  export const CLIENT_RENEG_WINDOW: number;
+  export const DEFAULT_CIPHERS: string;
+  export const DEFAULT_ECDH_CURVE: string;
+}

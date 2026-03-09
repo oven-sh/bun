@@ -5955,3 +5955,72 @@ declare namespace NodeJS {
     size: number;
   }
 }
+
+// Add Trace Events types
+declare namespace NodeJS {
+  interface TracingChannel {
+    /**
+     * Channel subscribers.
+     */
+    readonly hasSubscribers: boolean;
+    
+    /**
+     * Subscribes to channel.
+     */
+    subscribe(subscriber: TracingChannelSubscriber): void;
+    
+    /**
+     * Unsubscribes from channel.
+     */
+    unsubscribe(subscriber: TracingChannelSubscriber): void;
+    
+    /**
+     * Publishes to channel.
+     */
+    publish(message: any): void;
+  }
+  
+  interface TracingChannelSubscriber {
+    /**
+     * Channel name.
+     */
+    readonly channel: string;
+    
+    /**
+     * Subscriber callback.
+     */
+    on(message: any): void;
+  }
+  
+  interface TraceEvent {
+    /**
+     * Timestamp.
+     */
+    timestamp: number;
+    
+    /**
+     * Category.
+     */
+    category: string;
+    
+    /**
+     * Event name.
+     */
+    name: string;
+    
+    /**
+     * Event data.
+     */
+    data: any;
+    
+    /**
+     * Process ID.
+     */
+    pid: number;
+    
+    /**
+     * Thread ID.
+     */
+    tid: number;
+  }
+}

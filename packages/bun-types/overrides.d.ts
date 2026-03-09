@@ -2413,3 +2413,33 @@ declare namespace Bun {
     valueOf(): bigint;
   }
 }
+
+// Add Temporal (Date) types
+declare namespace Bun {
+  interface Temporal {
+    /**
+     * Gets current instant.
+     */
+    now(): Temporal.Instant;
+    
+    /**
+     * Creates plain date.
+     */
+    createDate(year: number, month: number, day: number): Temporal.PlainDate;
+    
+    /**
+     * Creates plain time.
+     */
+    createTime(hour: number, minute: number, second?: number, millisecond?: number, microsecond?: number, nanosecond?: number): Temporal.PlainTime;
+    
+    /**
+     * Creates plain datetime.
+     */
+    createDateTime(year: number, month: number, day: number, hour: number, minute: number, second?: number): Temporal.PlainDateTime;
+    
+    /**
+     * Creates zoned datetime.
+     */
+    createZonedDateTime(year: number, month: number, day: number, hour: number, minute: number, timeZone: string): Temporal.ZonedDateTime;
+  }
+}

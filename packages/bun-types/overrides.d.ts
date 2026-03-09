@@ -4040,3 +4040,57 @@ declare namespace NodeJS {
     birthtime: Date;
   }
 }
+
+// Add PathLike and Buffer types
+declare namespace NodeJS {
+  type PathLike = string | Buffer | URL;
+  
+  interface Buffer extends Uint8Array {
+    /**
+     * Writes string to buffer.
+     */
+    write(string: string, offset?: number, length?: number, encoding?: BufferEncoding): number;
+    
+    /**
+     * Concatenates buffers.
+     */
+    concat(list: Buffer[] | Buffer[][], totalLength?: number): Buffer;
+    
+    /**
+     * Allocates buffer.
+     */
+    alloc(size: number, fill?: string | Buffer | number, encoding?: BufferEncoding): Buffer;
+    
+    /**
+     * Allocates uninitialized buffer.
+     */
+    allocUnsafe(size: number): Buffer;
+    
+    /**
+     * Allocates uninitialized slow buffer.
+     */
+    allocUnsafeSlow(size: number): Buffer;
+    
+    /**
+     * Creates buffer from string.
+     */
+    from(string: string | Buffer | ArrayBuffer, encoding?: BufferEncoding): Buffer;
+    
+    /**
+     * Checks if is buffer.
+     */
+    isBuffer(obj: any): obj is Buffer;
+    
+    /**
+     * Byte length.
+     */
+    byteLength(string: string, encoding?: BufferEncoding): number;
+    
+    /**
+     * Converts to JSON.
+     */
+    toJSON(): { type: 'Buffer', data: number[] };
+  }
+  
+  type BufferEncoding = 'ascii' | 'base64' | 'base64url' | 'hex' | 'utf8' | 'utf-8' | 'binary' | 'ucs2' | 'ucs-2' | 'utf16le' | 'utf-16le';
+}

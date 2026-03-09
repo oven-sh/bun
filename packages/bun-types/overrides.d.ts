@@ -12741,3 +12741,72 @@ declare global {
         }
     }
 }
+
+// Compression API types
+declare module "node:zlib" {
+  import { Transform, TransformOptions } from "node:stream";
+  
+  export interface ZlibOptions extends TransformOptions {
+    flush?: number;
+    finishFlush?: number;
+    chunkSize?: number;
+    windowBits?: number;
+    level?: number;
+    memLevel?: number;
+    strategy?: number;
+    dictionary?: Buffer | Buffer[] | any;
+    info?: boolean;
+  }
+  
+  export interface BrotliOptions extends TransformOptions {
+    chunkSize?: number;
+    flush?: number;
+    finishFlush?: number;
+    params?: {
+      [key: number]: number;
+    };
+    maxOutputLength?: number;
+  }
+  
+  export class Zlib extends Transform {
+    readonly closed: boolean;
+    close(): void;
+  }
+  
+  export class Gzip extends Zlib {
+    params(level: number, strategy: number): void;
+  }
+  
+  export class Gunzip extends Zlib {}
+  export class Deflate extends Zlib {
+    params(level: number, strategy: number): void;
+  }
+  
+  export class Inflate extends Zlib {}
+  export class DeflateRaw extends Zlib {
+    params(level: number, strategy: number): void;
+  }
+  
+  export class InflateRaw extends Zlib {}
+  export class Unzip extends Zlib {}
+  
+  export class BrotliCompress extends Transform {
+    readonly closed: boolean;
+    close(): void;
+  }
+  
+  export class BrotliDecompress extends Transform {
+    readonly closed: boolean;
+    close(): void;
+  }
+  
+  export function createGzip(options?: ZlibOptions): Gzip;
+  export function createGunzip(options?: ZlibOptions): Gunzip;
+  export function createDeflate(options?: ZlibOptions): Deflate;
+  export function createInflate(options?: ZlibOptions): Inflate;
+  export function createDeflateRaw(options?: ZlibOptions): DeflateRaw;
+  export function createInflateRaw(options?: ZlibOptions): InflateRaw;
+  export function createUnzip(options?: ZlibOptions): Unzip;
+  export function createBrotliCompress(options?: BrotliOptions): BrotliCompress;
+  export function createBrotliDecompress(options?: BrotliOptions): BrotliDecompress;
+}

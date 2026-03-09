@@ -12899,3 +12899,52 @@ declare module "node:string_decoder" {
     readonly encoding: BufferEncoding;
   }
 }
+
+// REPL API types
+declare module "node:repl" {
+  import { Interface as ReadlineInterface } from "node:readline";
+  import { Context } from "node:vm";
+  import { EventEmitter } from "node:events";
+  
+  export interface REPLEval {
+    (code: string, context: Context, filename: string, callback: (err: Error | null, result: any) => void): any;
+  }
+  
+  export interface ReplOptions {
+    prompt?: string;
+    input?: NodeJS.ReadableStream;
+    output?: NodeJS.WritableStream;
+    terminal?: boolean;
+    eval?: REPLEval;
+    useColors?: boolean;
+    useGlobal?: boolean;
+    ignoreUndefined?: boolean;
+    writer?: (obj: any) => string;
+    completer?: any;
+    replMode?: any;
+    breakEvalOnSigint?: boolean;
+    preview?: boolean;
+  }
+  
+  export interface REPLServerAction {
+    final: any;
+    mid: any;
+    err: any;
+  }
+  
+  export interface REPLServer extends ReadlineInterface {
+    context: Context;
+    readonly input: NodeJS.ReadableStream;
+    readonly output: NodeJS.WritableStream;
+    readonly terminal: boolean;
+    defineCommand(keyword: string, cmd: string | { help: string; action: (this: REPLServer) => void }): void;
+    displayPrompt(preserveCursor?: boolean): void;
+    clearBufferedCommand(): void;
+    parseREPLKeyword(keyword: string, rest: string): REPLServerAction | void;
+    setupHistory(path: string, callback: (err: Error | null, repl: this) => void): void;
+  }
+  
+  export function start(options?: ReplOptions): REPLServer;
+  export const REPL_MODE_SLOPPY: symbol;
+  export const REPL_MODE_STRICT: symbol;
+}

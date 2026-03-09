@@ -4462,3 +4462,85 @@ declare namespace NodeJS {
     workers?: number;
   }
 }
+
+// Add Worker types
+declare namespace NodeJS {
+  interface Worker extends EventEmitter {
+    /**
+     * Worker thread ID.
+     */
+    readonly threadId: number;
+    
+    /**
+     * Is active?
+     */
+    readonly isActive: boolean;
+    
+    /**
+     * Worker resource limits.
+     */
+    readonly resourceLimits?: ResourceLimits;
+    
+    /**
+     * Posts message.
+     */
+    postMessage(value: any, transferList?: any[]): void;
+    
+    /**
+     * Terminates worker.
+     */
+    terminate(): void;
+    
+    /**
+     * Refs worker.
+     */
+    ref(): void;
+    
+    /**
+     * Unrefs worker.
+     */
+    unref(): void;
+    
+    /**
+     * Event: message.
+     */
+    on(event: 'message', listener: (value: any) => void): this;
+    
+    /**
+     * Event: online.
+     */
+    on(event: 'online', listener: () => void): this;
+    
+    /**
+     * Event: exit.
+     */
+    on(event: 'exit', listener: (exitCode: number) => void): this;
+    
+    /**
+     * Event: error.
+     */
+    on(event: 'error', listener: (err: Error) => void): this;
+  }
+  
+  interface ResourceLimits {
+    /**
+     * Max size of young generation heap in MiB.
+     */
+    maxYoungGenerationSizeMb?: number;
+    
+    /**
+     * Max size of old generation heap in MiB.
+     */
+    maxOldGenerationSizeMb?: number;
+    
+    /**
+     * Max size of code space in MiB.
+     */
+    codeSizeMb?: number;
+    
+    /**
+     * Max stack size in MiB.
+     */
+    stackSizeMb?: number;
+  }
+}

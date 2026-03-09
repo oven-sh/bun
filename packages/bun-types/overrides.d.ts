@@ -2022,3 +2022,33 @@ declare namespace Bun {
     production?: boolean;
   }
 }
+
+// Add Clipboard types
+declare namespace Bun {
+  interface Clipboard {
+    /**
+     * Reads text from clipboard.
+     */
+    readText(): Promise<string>;
+    
+    /**
+     * Writes text to clipboard.
+     */
+    writeText(text: string): Promise<void>;
+    
+    /**
+     * Reads data from clipboard.
+     */
+    read(format?: 'text' | 'image' | 'html'): Promise<string | Buffer>;
+    
+    /**
+     * Writes data to clipboard.
+     */
+    write(data: string | Buffer, format?: 'text' | 'image' | 'html'): Promise<void>;
+    
+    /**
+     * Clears clipboard.
+     */
+    clear(): Promise<void>;
+  }
+}

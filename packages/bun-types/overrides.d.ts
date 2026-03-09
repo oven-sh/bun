@@ -2151,3 +2151,30 @@ declare namespace Bun {
     hash(algorithm: string, data: string | Buffer | ArrayBuffer, encoding?: 'hex' | 'base64' | 'buffer'): string | Buffer;
   }
 }
+
+// Add HMAC types
+declare namespace Bun {
+  interface HMAC {
+    /**
+     * Updates HMAC with data.
+     */
+    update(data: string | Buffer | ArrayBuffer): HMAC;
+    
+    /**
+     * Returns digest as specified format.
+     */
+    digest(encoding?: 'hex' | 'base64' | 'buffer'): string | Buffer;
+  }
+  
+  interface HMACer {
+    /**
+     * Creates HMAC instance.
+     */
+    create(algorithm: string, key: string | Buffer): HMAC;
+    
+    /**
+     * One-shot HMAC function.
+     */
+    hmac(algorithm: string, key: string | Buffer, data: string | Buffer | ArrayBuffer, encoding?: 'hex' | 'base64' | 'buffer'): string | Buffer;
+  }
+}

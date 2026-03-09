@@ -6789,3 +6789,30 @@ declare namespace NodeJS {
     input: string;
   }
 }
+
+// Add String Decoder types
+declare namespace NodeJS {
+  interface StringDecoder {
+    /**
+     * Decodes buffer.
+     */
+    write(buffer: Buffer): string;
+    
+    /**
+     * Ends decoding.
+     */
+    end(buffer?: Buffer): string;
+    
+    /**
+     * Text encoding.
+     */
+    readonly text: string;
+  }
+  
+  interface StringDecoderConstructor {
+    /**
+     * Creates decoder.
+     */
+    new(encoding?: BufferEncoding, defaultEncoding?: string): StringDecoder;
+  }
+}

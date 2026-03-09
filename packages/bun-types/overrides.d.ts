@@ -903,3 +903,50 @@ declare namespace Bun {
     close(): Promise<void>;
   }
 }
+
+// Add Test runner types
+declare namespace Bun {
+  interface TestOptions {
+    /**
+     * Test timeout in milliseconds.
+     */
+    timeout?: number;
+    
+    /**
+     * Whether to skip this test.
+     */
+    skip?: boolean;
+    
+    /**
+     * Whether this test is expected to fail.
+     */
+    todo?: boolean;
+    
+    /**
+     * Number of times to retry the test on failure.
+     */
+    retry?: number;
+    
+    /**
+     * Test-only flag.
+     */
+    only?: boolean;
+  }
+  
+  interface TestContext {
+    /**
+     * Skips the current test.
+     */
+    skip(): void;
+    
+    /**
+     * Marks test as todo.
+     */
+    todo(): void;
+    
+    /**
+     * Gets test metadata.
+     */
+    readonly name: string;
+  }
+}

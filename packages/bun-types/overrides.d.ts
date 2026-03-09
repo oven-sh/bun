@@ -12688,3 +12688,37 @@ declare global {
         };
     }
 }
+
+// Intl API: Segmenter types
+declare global {
+    namespace Intl {
+        type Granularity = "grapheme" | "word" | "sentence";
+        
+        interface SegmenterOptions {
+            localeMatcher?: "lookup" | "best fit";
+            granularity?: Granularity;
+        }
+        
+        interface Segment {
+            readonly segment: string;
+            readonly index: number;
+            readonly input: string;
+            readonly isWordLike: boolean;
+        }
+        
+        interface Segments {
+            readonly [Symbol.iterator](): IterableIterator<Segment>;
+            containing(index: number): Segment | undefined;
+        }
+        
+        interface Segmenter {
+            segment(input: string): Segments;
+            resolvedOptions(): ResolvedSegmenterOptions;
+        }
+        
+        var Segmenter: {
+            new(locales?: string | string[], options?: SegmenterOptions): Segmenter;
+            supportedLocalesOf(locales: string | string[], options?: SegmenterOptions): string[];
+        };
+    }
+}

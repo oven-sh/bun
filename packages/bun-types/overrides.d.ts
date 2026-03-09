@@ -7551,3 +7551,144 @@ declare namespace NodeJS {
     servername?: string;
   }
 }
+
+// Add V8 types
+declare namespace NodeJS {
+  interface HeapInfo {
+    /**
+     * Total heap size.
+     */
+    total_heap_size: number;
+    
+    /**
+     * Total heap size limit.
+     */
+    total_heap_size_limit: number;
+    
+    /**
+     * Total available size.
+     */
+    total_available_size: number;
+    
+    /**
+     * Used heap size.
+     */
+    used_heap_size: number;
+    
+    /**
+     * Heap size limit.
+     */
+    heap_size_limit: number;
+    
+    /**
+     * Malloced memory.
+     */
+    mallocated_memory: number;
+    
+    /**
+     * Peak malloced memory.
+     */
+    peak_malloced_memory: number;
+    
+    /**
+     * Does zapping garbage?
+     */
+    does_zap_garbage: number;
+    
+    /**
+     * Number of native contexts.
+     */
+    number_of_native_contexts: number;
+    
+    /**
+     * Number of detached contexts.
+     */
+    number_of_detached_contexts: number;
+  }
+  
+  interface V8 {
+    /**
+     * Gets heap statistics.
+     */
+    getHeapStatistics(): HeapInfo;
+    
+    /**
+     * Gets heap snapshot.
+     */
+    getHeapSnapshot(): string;
+    
+    /**
+     * Writes heap snapshot.
+     */
+    writeHeapSnapshot(filename: string): void;
+    
+    /**
+     * Gets heap code statistics.
+     */
+    getHeapCodeStatistics(): HeapCodeStatistics;
+    
+    /**
+     * Gets heap space statistics.
+     */
+    getHeapSpaceStatistics(): HeapSpaceStatistics[];
+    
+    /**
+     * Sets flags.
+     */
+    setFlags(flags: string): void;
+    
+    /**
+     * Takes heap snapshot.
+     */
+    takeCoverage(): void;
+    
+    /**
+     * Stops coverage.
+     */
+    stopCoverage(): void;
+  }
+  
+  interface HeapCodeStatistics {
+    /**
+     * Code statistics.
+     */
+    code_and_metadata_size: number;
+    
+    /**
+     * Bytecode and metadata size.
+     */
+    bytecode_and_metadata_size: number;
+    
+    /**
+     * External script source size.
+     */
+    external_script_source_size: number;
+  }
+  
+  interface HeapSpaceStatistics {
+    /**
+     * Space name.
+     */
+    space_name: string;
+    
+    /**
+     * Space size.
+     */
+    space_size: number;
+    
+    /**
+     * Space used size.
+     */
+    space_used_size: number;
+    
+    /**
+     * Space available size.
+     */
+    space_available_size: number;
+    
+    /**
+     * Physical space size.
+     */
+    physical_space_size: number;
+  }
+}

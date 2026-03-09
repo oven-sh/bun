@@ -93,6 +93,28 @@ static void runPendingWork(void* bunVM, Bun::JSCTaskScheduler& scheduler, JSCDef
     delete job;
 }
 
+void JSCTaskScheduler::cancelAllPendingWork(void* bunVM)
+{
+    Locker<Lock> holder { m_lock };
+
+    int eventLoopTickets = 0;
+    m_pendingTicketsKeepingEventLoopAlive.removeIf([&eventLoopTickets](auto& ticket) {
+        ticket->cancelAndClear();
+        eventLoopTickets++;
+        return true;
+    });
+
+    m_pendingTicketsOther.removeIf([](auto& ticket) {
+        ticket->cancelAndClear();
+        return true;
+    });
+
+    holder.unlockEarly();
+
+    if (eventLoopTickets > 0)
+        Bun__eventLoop__incrementRefConcurrently(bunVM, -eventLoopTickets);
+}
+
 extern "C" void Bun__runDeferredWork(Bun::JSCDeferredWorkTask* job)
 {
     auto& vm = job->vm();

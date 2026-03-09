@@ -20,6 +20,9 @@ public:
     static void onScheduleWorkSoon(WebCore::JSVMClientData* clientData, JSC::DeferredWorkTimer::Ticket ticket, JSC::DeferredWorkTimer::Task&& task);
     static void onCancelPendingWork(WebCore::JSVMClientData* clientData, JSC::DeferredWorkTimer::Ticket ticket);
 
+    // Cancel all pending tickets, used during VM shutdown to prevent GC from visiting stale dependencies
+    void cancelAllPendingWork(void* bunVM);
+
 public:
     Lock m_lock;
     UncheckedKeyHashSet<Ref<JSC::DeferredWorkTimer::TicketData>> m_pendingTicketsKeepingEventLoopAlive;

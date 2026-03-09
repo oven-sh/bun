@@ -9553,3 +9553,30 @@ declare module "node:os" {
     priority: Record<string, number>;
   };
 }
+
+// path module additional types
+declare module "node:path" {
+  export interface PathObject {
+    dir: string;
+    root: string;
+    base: string;
+    name: string;
+    ext: string;
+  }
+  
+  export function basename(path: string, ext?: string): string;
+  export function dirname(path: string): string;
+  export function extname(path: string): string;
+  export function format(pathObject: PathObject): string;
+  export function join(...paths: string[]): string;
+  export function normalize(path: string): string;
+  export function parse(path: string): PathObject;
+  export function relative(from: string, to: string): string;
+  export function resolve(...pathSegments: string[]): string;
+  export function sep: string;
+  export function delimiter: string;
+  export function win32: typeof import("node:path");
+  export function posix: typeof import("node:path");
+  export function isAbsolute(path: string): boolean;
+  export function toNamespacedPath(path: string): string;
+}

@@ -4151,3 +4151,70 @@ declare namespace NodeJS {
     members: Array<EventEmitter>;
   }
 }
+
+// Add TTY types
+declare namespace NodeJS {
+  interface ReadStream extends ReadableStream {
+    /**
+     * Is a TTY?
+     */
+    isTTY: boolean;
+    
+    /**
+     * Gets/set columns.
+     */
+    columns: number;
+    
+    /**
+     * Gets/set rows.
+     */
+    rows: number;
+    
+    /**
+     * Window size.
+     */
+    getWindowSize(): [columns: number, rows: number];
+  }
+  
+  interface WriteStream extends WritableStream {
+    /**
+     * Is a TTY?
+     */
+    isTTY: boolean;
+    
+    /**
+     * Gets/set columns.
+     */
+    columns: number;
+    
+    /**
+     * Gets/set rows.
+     */
+    rows: number;
+    
+    /**
+     * Moves cursor.
+     */
+    moveCursor(dx: number, dy: number, callback?: Function): void;
+    
+    /**
+     * Clears line.
+     */
+    clearLine(dir: number, callback?: Function): void;
+    
+    /**
+     * Clears screen down.
+     */
+    clearScreenDown(callback?: Function): void;
+    
+    /**
+     * Gets window size.
+     */
+    getWindowSize(): [columns: number, rows: number];
+    
+    /**
+     * Gets/set raw mode.
+     */
+    setRawMode(mode: boolean): this;
+  }
+}

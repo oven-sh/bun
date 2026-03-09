@@ -11811,3 +11811,32 @@ declare global {
         valueOf(): string;
     }
 }
+
+// Web API: Number additional types
+declare global {
+    interface Number {
+        toExponential(fractionDigits?: number): string;
+        toFixed(fractionDigits?: number): string;
+        toLocaleString(locales?: string | string[], options?: Intl.NumberFormatOptions): string;
+        toPrecision(precision?: number): string;
+        toString(radix?: number): string;
+        valueOf(): number;
+    }
+    interface NumberConstructor {
+        (value: any): number;
+        readonly EPSILON: number;
+        readonly MAX_SAFE_INTEGER: number;
+        readonly MAX_VALUE: number;
+        readonly MIN_SAFE_INTEGER: number;
+        readonly MIN_VALUE: number;
+        readonly NaN: number;
+        readonly NEGATIVE_INFINITY: number;
+        readonly POSITIVE_INFINITY: number;
+        isFinite(number: number): boolean;
+        isInteger(number: number): boolean;
+        isNaN(number: number): boolean;
+        isSafeInteger(number: number): boolean;
+        parseFloat(string: string): number;
+        parseInt(string: string, radix?: number): number;
+    }
+}

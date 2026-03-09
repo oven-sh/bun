@@ -2548,3 +2548,45 @@ declare namespace Bun {
     construct?(target: T, argArray: any, newTarget?: Function): object;
   }
 }
+
+// Add Generator and Iterator types
+declare namespace Bun {
+  interface Generator<T = any, TReturn = any, TNext = unknown> extends Iterator<T, TReturn, TNext> {
+    /**
+     * Next iteration.
+     */
+    next(...args: [] | [TNext]): IteratorResult<T, TReturn>;
+    
+    /**
+     * Returns value and completes generator.
+     */
+    return(value: TReturn): IteratorResult<T, TReturn>;
+    
+    /**
+     * Throws error into generator.
+     */
+    throw(e: any): IteratorResult<T, TReturn>;
+    
+    /**
+     * Generator symbol.
+     */
+    readonly [Symbol.toStringTag]: string;
+  }
+  
+  interface AsyncGenerator<T = any, TReturn = any, TNext = unknown> extends AsyncIterator<T, TReturn, TNext> {
+    /**
+     * Next iteration.
+     */
+    next(...args: [] | [TNext]): Promise<IteratorResult<T, TReturn>>;
+    
+    /**
+     * Returns value and completes generator.
+     */
+    return(value: TReturn): Promise<IteratorResult<T, TReturn>>;
+    
+    /**
+     * Throws error into generator.
+     */
+    throw(e: any): Promise<IteratorResult<T, TReturn>>;
+  }
+}

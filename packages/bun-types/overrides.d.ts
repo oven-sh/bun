@@ -392,3 +392,15 @@ interface Map<K, V> {
    */
   getOrInsertComputed(key: K, fn: () => V): V;
 }
+
+// Add missing performance.timerify type
+declare module "node:perf_hooks" {
+  interface Performance {
+    /**
+     * Wraps a function to measure its execution time.
+     * @param fn - The function to wrap
+     * @returns A wrapped version of the function that measures execution time
+     */
+    timerify<T extends (...args: any[]) => any>(fn: T): T;
+  }
+}

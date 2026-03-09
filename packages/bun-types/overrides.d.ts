@@ -11281,3 +11281,41 @@ declare global {
   
   type BinaryType = "blob" | "arraybuffer";
 }
+
+// Web API: URL and URLSearchParams additional types
+declare global {
+  class URL {
+    constructor(url: string, base?: string | URL);
+    hash: string;
+    host: string;
+    hostname: string;
+    href: string;
+    readonly origin: string;
+    password: string;
+    pathname: string;
+    port: string;
+    protocol: string;
+    search: string;
+    readonly searchParams: URLSearchParams;
+    username: string;
+    toJSON(): string;
+    toString(): string;
+  }
+  
+  class URLSearchParams {
+    constructor(init?: string[][] | Record<string, string> | string | URLSearchParams);
+    append(name: string, value: string): void;
+    delete(name: string): void;
+    entries(): IterableIterator<[string, string]>;
+    forEach(callback: (value: string, key: string, searchParams: this) => void): void;
+    get(name: string): string | null;
+    getAll(name: string): string[];
+    has(name: string): boolean;
+    keys(): IterableIterator<string>;
+    set(name: string, value: string): void;
+    sort(): void;
+    toString(): string;
+    values(): IterableIterator<string>;
+    readonly size: number;
+  }
+}

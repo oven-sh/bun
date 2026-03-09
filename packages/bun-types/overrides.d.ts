@@ -4979,3 +4979,143 @@ declare namespace NodeJS {
     destroy(): void;
   }
 }
+
+// Add Socket and Net types
+declare namespace NodeJS {
+  interface Socket extends ReadableStream, WritableStream {
+    /**
+     * Socket ID.
+     */
+    readonly id: number;
+    
+    /**
+     * Is ready?
+     */
+    readonly readyState: string;
+    
+    /**
+     * Buffer size.
+     */
+    bufferSize: number;
+    
+    /**
+     * Is paused?
+     */
+    readonly isPaused: boolean;
+    
+    /**
+     * Local address.
+     */
+    readonly localAddress: string;
+    
+    /**
+     * Local port.
+     */
+    readonly localPort: number;
+    
+    /**
+     * Remote address.
+     */
+    readonly remoteAddress?: string;
+    
+    /**
+     * Remote port.
+     */
+    readonly remotePort?: number;
+    
+    /**
+     * Remote family.
+     */
+    readonly remoteFamily?: string;
+    
+    /**
+     * Bytes read.
+     */
+    readonly bytesRead: number;
+    
+    /**
+     * Bytes written.
+     */
+    readonly bytesWritten: number;
+    
+    /**
+     * Timeout.
+     */
+    timeout: number;
+    
+    /**
+     * Sets encoding.
+     */
+    setEncoding(encoding?: BufferEncoding): this;
+    
+    /**
+     * Pauses socket.
+     */
+    pause(): this;
+    
+    /**
+     * Resumes socket.
+     */
+    resume(): this;
+    
+    /**
+     * Sets timeout.
+     */
+    setTimeout(timeout: number, callback?: Function): this;
+    
+    /**
+     * Writes data.
+     */
+    write(buffer: Buffer | string): boolean;
+    
+    /**
+     * Ends socket.
+     */
+    end(callback?: Function): void;
+    
+    /**
+     * Destroys socket.
+     */
+    destroy(error?: Error): void;
+    
+    /**
+     * Refs socket.
+     */
+    ref(): this;
+    
+    /**
+     * Unrefs socket.
+     */
+    unref(): this;
+    
+    /**
+     * Event: connect.
+     */
+    on(event: 'connect', listener: () => void): this;
+    
+    /**
+     * Event: data.
+     */
+    on(event: 'data', listener: (data: Buffer) => void): this;
+    
+    /**
+     * Event: end.
+     */
+    on(event: 'end', listener: () => void): this;
+    
+    /**
+     * Event: close.
+     */
+    on(event: 'close', listener: (hadError: boolean) => void): this;
+    
+    /**
+     * Event: error.
+     */
+    on(event: 'error', listener: (err: Error) => void): this;
+    
+    /**
+     * Event: timeout.
+     */
+    on(event: 'timeout', listener: () => void): this;
+  }
+}

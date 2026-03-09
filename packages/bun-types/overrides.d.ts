@@ -3162,3 +3162,70 @@ declare namespace Bun {
     handleEvent(object: Event): void;
   }
 }
+
+// Add FormData types
+declare namespace Bun {
+  interface FormData {
+    /**
+     * Appends value.
+     */
+    append(name: string, value: string | Blob): void;
+    
+    /**
+     * Appends value with filename.
+     */
+    append(name: string, value: string | Blob, filename?: string): void;
+    
+    /**
+     * Deletes value.
+     */
+    delete(name: string): void;
+    
+    /**
+     * Gets value.
+     */
+    get(name: string): FormDataEntryValue | null;
+    
+    /**
+     * Gets all values.
+     */
+    getAll(name: string): FormDataEntryValue[];
+    
+    /**
+     * Checks if key exists.
+     */
+    has(name: string): boolean;
+    
+    /**
+     * Sets value.
+     */
+    set(name: string, value: string | Blob): void;
+    
+    /**
+     * Iterates over entries.
+     */
+    forEach(callbackfn: (value: FormDataEntryValue, key: string, parent: FormData) => void, thisArg?: any): void;
+    
+    /**
+     * Form data entries.
+     */
+    entries(): IterableIterator<[string, FormDataEntryValue]>;
+    
+    /**
+     * Form data keys.
+     */
+    keys(): IterableIterator<string>;
+    
+    /**
+     * Form data values.
+     */
+    values(): IterableIterator<FormDataEntryValue>;
+    
+    /**
+     * Form data length.
+     */
+    readonly [Symbol.iterator]: () => IterableIterator<[string, FormDataEntryValue]>;
+  }
+  
+  type FormDataEntryValue = File | string;
+}

@@ -5178,3 +5178,104 @@ declare namespace NodeJS {
     send(command: any): void;
   }
 }
+
+// Add VM types
+declare namespace NodeJS {
+  interface Script {
+    /**
+     * Cached data.
+     */
+    cachedData?: Buffer;
+    
+    /**
+     * Produces cached data.
+     */
+    produceCachedData?: Buffer;
+    
+    /**
+     * Script source.
+     */
+    readonly source: string;
+  }
+  
+  interface Context extends EventEmitter {
+    /**
+     * Sandbox object.
+     */
+    readonly sandbox: Record<string, any>;
+    
+    /**
+     * Compiles code.
+     */
+    compileFunction(code: string, params?: string[], options?: CompilationOptions): Function;
+    
+    /**
+     * Runs code.
+     */
+    run(code: string, options?: RunningCodeOptions): any;
+    
+    /**
+     * Event: error.
+     */
+    on(event: 'error', listener: (err: Error) => void): this;
+  }
+  
+  interface RunningCodeOptions {
+    /**
+     * Filename.
+     */
+    filename?: string;
+    
+    /**
+     * Line offset.
+     */
+    lineOffset?: number;
+    
+    /**
+     * Column offset.
+     */
+    columnOffset?: number;
+    
+    /**
+     * Display errors.
+     */
+    displayErrors?: boolean;
+    
+    /**
+     * Timeout.
+     */
+    timeout?: number;
+    
+    /**
+     * Break on sigint.
+     */
+    breakOnSigint?: boolean;
+  }
+  
+  interface CompilationOptions {
+    /**
+     * Filename.
+     */
+    filename?: string;
+    
+    /**
+     * Line offset.
+     */
+    lineOffset?: number;
+    
+    /**
+     * Column offset.
+     */
+    columnOffset?: number;
+    
+    /**
+     * Cached data.
+     */
+    cachedData?: Buffer;
+    
+    /**
+     * Produce cached data.
+     */
+    produceCachedData?: boolean;
+  }
+}

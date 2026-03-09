@@ -7153,3 +7153,140 @@ declare namespace NodeJS {
     on(event: 'error', listener: (err: Error) => void): this;
   }
 }
+
+// Add HTTP/2 types
+declare namespace NodeJS {
+  interface Http2Session extends EventEmitter {
+    /**
+     * Session destroyed?
+     */
+    readonly destroyed: boolean;
+    
+    /**
+     * Session local settings.
+     */
+    readonly localSettings: Settings;
+    
+    /**
+     * Session remote settings.
+     */
+    readonly remoteSettings: Settings;
+    
+    /**
+     * Session socket.
+     */
+    readonly socket: Socket;
+    
+    /**
+     * Session origin.
+     */
+    readonly origin: string;
+    
+    /**
+     * Session state.
+     */
+    readonly state: number;
+    
+    /**
+     * Session streams.
+     */
+    readonly stream: Stream;
+    
+    /**
+     * Closes session.
+     */
+    close(callback?: Function): void;
+    
+    /**
+     * Destroys session.
+     */
+    destroy(error?: Error, callback?: Function): void;
+    
+    /**
+     * Goaways session.
+     */
+    goaway(code?: number, lastStreamID?: number, opaqueData?: Buffer): void;
+    
+    /**
+     * Pings session.
+     */
+    ping(callback?: Function): void;
+    
+    /**
+     * Sets timeout.
+     */
+    setTimeout(msecs: number, callback?: Function): this;
+    
+    /**
+     * Event: close.
+     */
+    on(event: 'close', listener: () => void): this;
+    
+    /**
+     * Event: error.
+     */
+    on(event: 'error', listener: (err: Error) => void): this;
+    
+    /**
+     * Event: frame error.
+     */
+    on(event: 'frameError', listener: (frameType: number, errorCode: number, streamID: number) => void): this;
+    
+    /**
+     * Event: goaway.
+     */
+    on(event: 'goaway', listener: (errorCode: number, lastStreamID: number, opaqueData: Buffer) => void): this;
+    
+    /**
+     * Event: local settings.
+     */
+    on(event: 'localSettings', listener: (settings: Settings) => void): this;
+    
+    /**
+     * Event: remote settings.
+     */
+    on(event: 'remoteSettings', listener: (settings: Settings) => void): this;
+  }
+  
+  interface Settings {
+    /**
+     * Header table size.
+     */
+    headerTableSize?: number;
+    
+    /**
+     * Enable push?
+     */
+    enablePush?: boolean;
+    
+    /**
+     * Initial window size.
+     */
+    initialWindowSize?: number;
+    
+    /**
+     * Max frame size.
+     */
+    maxFrameSize?: number;
+    
+    /**
+     * Max concurrent streams.
+     */
+    maxConcurrentStreams?: number;
+    
+    /**
+     * Max header list size.
+     */
+    maxHeaderListSize?: number;
+    
+    /**
+     * Enable push?
+     */
+    enableConnectProtocol?: boolean;
+    
+    /**
+     * Max header size.
+     */
+    maxHeaderSize?: number;
+  }
+}

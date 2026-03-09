@@ -10082,3 +10082,71 @@ declare module "node:module" {
   export function isBuiltin(moduleName: string): boolean;
   export function register(specifier: string | URL, parentURL?: string | URL): void;
 }
+
+// zlib module additional types
+declare module "node:zlib" {
+  import { Transform, TransformOptions } from "node:stream";
+  
+  export interface ZlibOptions extends TransformOptions {
+    flush?: number;
+    finishFlush?: number;
+    chunkSize?: number;
+    windowBits?: number;
+    level?: number;
+    memLevel?: number;
+    strategy?: number;
+    dictionary?: Buffer | Buffer[] | any;
+    info?: boolean;
+  }
+  
+  export interface BrotliOptions extends TransformOptions {
+    chunkSize?: number;
+    flush?: number;
+    finishFlush?: number;
+    params?: {
+      [key: number]: number;
+    };
+    maxOutputLength?: number;
+  }
+  
+  export interface CompressionOptions {
+    level?: number;
+    windowBits?: number;
+    memLevel?: number;
+    strategy?: number;
+    dictionary?: Buffer | Buffer[];
+  }
+  
+  export class ZlibBase extends Transform {}
+  
+  export class Zlib extends ZlibBase {}
+  export class Gzip extends Zlib {}
+  export class Gunzip extends Zlib {}
+  export class Deflate extends Zlib {}
+  export class Inflate extends Zlib {}
+  export class DeflateRaw extends Zlib {}
+  export class InflateRaw extends Zlib {}
+  export class Unzip extends Zlib {}
+  
+  export class BrotliCompress extends Transform {}
+  export class BrotliDecompress extends Transform {}
+  
+  export function createGzip(options?: ZlibOptions): Gzip;
+  export function createGunzip(options?: ZlibOptions): Gunzip;
+  export function createDeflate(options?: ZlibOptions): Deflate;
+  export function createInflate(options?: ZlibOptions): Inflate;
+  export function createDeflateRaw(options?: ZlibOptions): DeflateRaw;
+  export function createInflateRaw(options?: ZlibOptions): InflateRaw;
+  export function createUnzip(options?: ZlibOptions): Unzip;
+  export function createBrotliCompress(options?: BrotliOptions): BrotliCompress;
+  export function createBrotliDecompress(options?: BrotliOptions): BrotliDecompress;
+  
+  export function gzip(buffer: Buffer | string, options?: ZlibOptions, callback: (error: Error | null, result: Buffer) => void): void;
+  export function gzipSync(buffer: Buffer | string, options?: ZlibOptions): Buffer;
+  export function gunzip(buffer: Buffer | string, options?: ZlibOptions, callback: (error: Error | null, result: Buffer) => void): void;
+  export function gunzipSync(buffer: Buffer | string, options?: ZlibOptions): Buffer;
+  export function deflate(buffer: Buffer | string, options?: ZlibOptions, callback: (error: Error | null, result: Buffer) => void): void;
+  export function deflateSync(buffer: Buffer | string, options?: ZlibOptions): Buffer;
+  export function inflate(buffer: Buffer | string, options?: ZlibOptions, callback: (error: Error | null, result: Buffer) => void): void;
+  export function inflateSync(buffer: Buffer | string, options?: ZlibOptions): Buffer;
+}

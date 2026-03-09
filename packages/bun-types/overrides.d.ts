@@ -2640,3 +2640,45 @@ declare namespace Bun {
     entries(): IterableIterator<[T, T]>;
   }
 }
+
+// Add WeakSet and WeakMap types
+declare namespace Bun {
+  interface WeakSet<T extends object> {
+    /**
+     * Adds value to weak set.
+     */
+    add(value: T): this;
+    
+    /**
+     * Checks if value exists.
+     */
+    has(value: T): boolean;
+    
+    /**
+     * Deletes value from weak set.
+     */
+    delete(value: T): boolean;
+  }
+  
+  interface WeakMap<K extends object, V> {
+    /**
+     * Sets value in weak map.
+     */
+    set(key: K, value: V): this;
+    
+    /**
+     * Gets value from weak map.
+     */
+    get(key: K): V | undefined;
+    
+    /**
+     * Checks if key exists.
+     */
+    has(key: K): boolean;
+    
+    /**
+     * Deletes key from weak map.
+     */
+    delete(key: K): boolean;
+  }
+}

@@ -14,7 +14,6 @@ pub const PathWatcherManager = struct {
     deinit_on_last_watcher: bool = false,
     pending_tasks: u32 = 0,
     deinit_on_last_task: bool = false,
-    has_pending_tasks: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
     mutex: Mutex,
     const PathInfo = struct {
         fd: FD = .invalid,
@@ -30,7 +29,6 @@ pub const PathWatcherManager = struct {
         defer this.mutex.unlock();
         if (this.deinit_on_last_task) return false;
         this.pending_tasks += 1;
-        this.has_pending_tasks.store(true, .release);
         return true;
     }
 
@@ -43,12 +41,8 @@ pub const PathWatcherManager = struct {
         this.mutex.lock();
         defer this.mutex.unlock();
         this.pending_tasks -= 1;
-        if (this.pending_tasks == 0) {
-            // Clear unconditionally: if tasks drain to zero before deinit() runs,
-            // gating this on deinit_on_last_task leaves the flag stale-true and
-            // deinit() keeps deferring on a count that is already zero.
-            this.has_pending_tasks.store(false, .release);
-            if (this.deinit_on_last_task) should_deinit = true;
+        if (this.pending_tasks == 0 and this.deinit_on_last_task) {
+            should_deinit = true;
         }
     }
 
@@ -164,6 +158,17 @@ pub const PathWatcherManager = struct {
 
         for (events) |event| {
             if (event.index >= file_paths.len) continue;
+
+            // Skip entries pending eviction — their file_path may be a dangling
+            // pointer if _decrementPathRefNoLock freed the string after remove()
+            // queued the eviction but before flushEvictions() ran.
+            const dominated = std.mem.indexOfScalar(
+                Watcher.WatchItemIndex,
+                ctx.evict_list[0..ctx.evict_list_i],
+                event.index,
+            ) != null;
+            if (dominated) continue;
+
             const file_path = file_paths[event.index];
             const update_count = counts[event.index] + 1;
             counts[event.index] = update_count;
@@ -692,10 +697,16 @@ pub const PathWatcherManager = struct {
                 this.deinit_on_last_task = true;
                 return;
             }
-            this.has_pending_tasks.store(false, .release);
         }
 
+        // Save thread handle before deinit(false) signals the thread to stop,
+        // because the thread calls allocator.destroy on the Watcher when it exits.
+        const watcher_thread = this.main_watcher.thread;
         this.main_watcher.deinit(false);
+        // Wait for the File Watcher thread to finish before freeing paths.
+        // Without this, the thread may still be in onFileUpdate reading
+        // file_paths data when we free it below → use-after-free.
+        watcher_thread.join();
 
         if (this.watcher_count > 0) {
             while (this.watchers.pop()) |watcher| {
@@ -738,7 +749,6 @@ pub const PathWatcher = struct {
     pending_directories: u32 = 0,
     // only used on macOS
     resolved_path: ?string = null,
-    has_pending_directories: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
     closed: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
     pub const ChangeEvent = struct {
         hash: Watcher.HashType = 0,
@@ -831,7 +841,6 @@ pub const PathWatcher = struct {
         defer this.mutex.unlock();
         if (this.isClosed()) return false;
         this.pending_directories += 1;
-        this.has_pending_directories.store(true, .release);
         return true;
     }
 
@@ -850,13 +859,8 @@ pub const PathWatcher = struct {
         this.mutex.lock();
         defer this.mutex.unlock();
         this.pending_directories -= 1;
-        if (this.pending_directories == 0) {
-            // Clear unconditionally: if the scan drains to zero before close()
-            // runs (the common case — scan is fast, close happens later),
-            // gating this on isClosed() leaves the flag stale-true, and
-            // unregisterWatcher never runs, leaking every fd the scan opened.
-            this.has_pending_directories.store(false, .release);
-            if (this.isClosed()) should_deinit = true;
+        if (this.pending_directories == 0 and this.isClosed()) {
+            should_deinit = true;
         }
     }
 
@@ -914,7 +918,6 @@ pub const PathWatcher = struct {
                 // Will be freed by the last unrefPendingDirectory call.
                 return;
             }
-            this.has_pending_directories.store(false, .release);
         }
 
         if (this.manager) |manager| {

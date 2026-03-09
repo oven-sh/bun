@@ -13927,3 +13927,34 @@ declare module "node:net" {
   
   export type SocketConnectOpts = TcpSocketConnectOpts | IpcSocketConnectOpts;
 }
+
+// http additional API types
+declare module "node:http" {
+  export interface ServerOptions {
+    IncomingMessage?: typeof IncomingMessage;
+    ServerResponse?: typeof ServerResponse;
+    maxHeaderSize?: number;
+    insecureHTTPParser?: boolean;
+    keepAliveTimeout?: number;
+    headersTimeout?: number;
+    requestTimeout?: number;
+  }
+  
+  export interface RequestOptions {
+    method?: string;
+    headers?: any;
+    auth?: string;
+    protocol?: string;
+    host?: string;
+    hostname?: string;
+    port?: number;
+    path?: string;
+    agent?: any;
+    defaultPort?: number;
+    family?: number;
+    lookup?: any;
+    timeout?: number;
+    setHost?: boolean;
+    createConnection?: any;
+  }
+}

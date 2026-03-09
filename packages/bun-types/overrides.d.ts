@@ -11653,3 +11653,58 @@ declare global {
     }
     var Promise: PromiseConstructor;
 }
+
+// Web API: Array additional types
+declare global {
+    interface ArrayConstructor {
+        from<T>(arrayLike: ArrayLike<T> | Iterable<T>): T[];
+        from<T, U>(arrayLike: ArrayLike<T> | Iterable<T>, mapfn: (v: T, k: number) => U, thisArg?: any): U[];
+        of<T>(...items: T[]): T[];
+        isArray(arg: any): arg is any[];
+    }
+    interface Array<T> {
+        at(index: number): T | undefined;
+        concat(...items: ConcatArray<T>[]): T[];
+        concat(...items: (T | ConcatArray<T>)[]): T[];
+        copyWithin(target: number, start: number, end?: number): this;
+        entries(): IterableIterator<[number, T]>;
+        every(callbackfn: (value: T, index: number, array: T[]) => boolean, thisArg?: any): boolean;
+        fill(value: T, start?: number, end?: number): this;
+        filter(callbackfn: (value: T, index: number, array: T[]) => any, thisArg?: any): T[];
+        find(callbackfn: (value: T, index: number, obj: T[]) => boolean, thisArg?: any): T | undefined;
+        findIndex(callbackfn: (value: T, index: number, obj: T[]) => boolean, thisArg?: any): number;
+        findLast(callbackfn: (value: T, index: number, array: T[]) => boolean, thisArg?: any): T | undefined;
+        findLastIndex(callbackfn: (value: T, index: number, array: T[]) => boolean, thisArg?: any): number;
+        flat<U>(this: U[][][][][], depth: 4): U[];
+        flat<U>(this: U[][][], depth: 3): U[];
+        flat<U>(this: U[][], depth: 2): U[];
+        flat<U>(this: U[], depth: 1): U[];
+        flat<U>(this: U[][], depth?: 1): U[];
+        flatMap<U, This>(callback: (this: This, value: T, index: number, array: T[]) => U | ReadonlyArray<U>, thisArg?: This): U[];
+        forEach(callbackfn: (value: T, index: number, array: T[]) => void, thisArg?: any): void;
+        includes(searchElement: T, fromIndex?: number): boolean;
+        indexOf(searchElement: T, fromIndex?: number): number;
+        join(separator?: string): string;
+        keys(): IterableIterator<number>;
+        lastIndexOf(searchElement: T, fromIndex?: number): number;
+        map<U>(callbackfn: (value: T, index: number, array: T[]) => U, thisArg?: any): U[];
+        pop(): T | undefined;
+        push(...items: T[]): number;
+        reduce(callbackfn: (previousValue: T, currentValue: T, currentIndex: number, array: T[]) => T): T;
+        reduce(callbackfn: (previousValue: T, currentValue: T, currentIndex: number, array: T[]) => T, initialValue: T): T;
+        reduce<U>(callbackfn: (previousValue: U, currentValue: T, currentIndex: number, array: T[]) => U, initialValue: U): U;
+        reduceRight(callbackfn: (previousValue: T, currentValue: T, currentIndex: number, array: T[]) => T): T;
+        reduceRight(callbackfn: (previousValue: T, currentValue: T, currentIndex: number, array: T[]) => T, initialValue: T): T;
+        reduceRight<U>(callbackfn: (previousValue: U, currentValue: T, currentIndex: number, array: T[]) => U, initialValue: U): U;
+        reverse(): T[];
+        shift(): T | undefined;
+        slice(start?: number, end?: number): T[];
+        some(callbackfn: (value: T, index: number, array: T[]) => boolean, thisArg?: any): boolean;
+        sort(compareFn?: (a: T, b: T) => number): this;
+        splice(start: number, deleteCount?: number, ...items: T[]): T[];
+        toLocaleString(): string;
+        toString(): string;
+        unshift(...items: T[]): number;
+        values(): IterableIterator<T>;
+    }
+}

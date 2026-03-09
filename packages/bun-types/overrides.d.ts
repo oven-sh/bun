@@ -12117,3 +12117,24 @@ declare global {
     }
     var Uint8Array: Uint8ArrayConstructor;
 }
+
+// Web API: Uint8ClampedArray additional types
+declare global {
+    interface Uint8ClampedArrayConstructor {
+        new(length?: number): Uint8ClampedArray;
+        new(array: ArrayLike<number> | ArrayBufferLike): Uint8ClampedArray;
+        new(buffer: ArrayBufferLike, byteOffset?: number, length?: number): Uint8ClampedArray;
+        readonly prototype: Uint8ClampedArray;
+        BYTES_PER_ELEMENT: number;
+    }
+    var Uint8ClampedArray: Uint8ClampedArrayConstructor;
+    
+    interface Int16ArrayConstructor {
+        new(length?: number): Int16Array;
+        new(array: ArrayLike<number> | ArrayBufferLike): Int16Array;
+        new(buffer: ArrayBufferLike, byteOffset?: number, length?: number): Int16Array;
+        readonly prototype: Int16Array;
+        BYTES_PER_ELEMENT: number;
+    }
+    var Int16Array: Int16ArrayConstructor;
+}

@@ -1711,3 +1711,40 @@ declare namespace Bun {
     concat(...buffers: Buffer[]): Buffer;
   }
 }
+
+// Add MIME type utilities
+declare namespace Bun {
+  interface MIMEType {
+    /**
+     * MIME type string.
+     */
+    type: string;
+    
+    /**
+     * MIME subtype.
+     */
+    subtype: string;
+    
+    /**
+     * MIME parameters.
+     */
+    parameters: Record<string, string>;
+    
+    /**
+     * Full MIME string.
+     */
+    toString(): string;
+  }
+  
+  interface MIME {
+    /**
+     * Gets MIME type for extension.
+     */
+    getType(extension: string): string | null;
+    
+    /**
+     * Gets extension for MIME type.
+     */
+    getExtension(mimeType: string): string | null;
+  }
+}

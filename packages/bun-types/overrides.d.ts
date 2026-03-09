@@ -10422,3 +10422,75 @@ declare module "node:readline/promises" {
   
   export function createInterface(options: ReadLineOptions): Interface;
 }
+
+// process additional types
+declare global {
+  namespace NodeJS {
+    interface ProcessEnv {
+      [key: string]: string | undefined;
+    }
+    
+    interface ProcessRelease {
+      name: string;
+      sourceUrl?: string;
+      headersUrl?: string;
+      libUrl?: string;
+      lts?: string;
+    }
+    
+    interface ProcessVersions {
+      node: string;
+      bun: string;
+      v8: string;
+      uv: string;
+      zlib: string;
+      brotli: string;
+      ares: string;
+      modules: string;
+      openssl: string;
+    }
+    
+    interface ProcessReport {
+      writeReport(fileName?: string, err?: Error): string;
+      getReport(err?: Error): string;
+      directory: string;
+      filename: string;
+      compact: boolean;
+      triggerReport(signal: string, filename?: string): boolean;
+      onSignal(signal: string): void;
+    }
+    
+    interface Process extends EventEmitter {
+      report?: ProcessReport;
+      allowedNodeEnvironmentFlags: Set<string>;
+      arch: string;
+      argv: string[];
+      argv0: string;
+      config: any;
+      connected: boolean;
+      debugPort: number;
+      env: ProcessEnv;
+      execArgv: string[];
+      execPath: string;
+      exitCode: number;
+      mainModule?: Module;
+      noDeprecation: boolean;
+      pid: number;
+      ppid: number;
+      platform: NodeJS.Platform;
+      release: ProcessRelease;
+      title: string;
+      version: string;
+      versions: ProcessVersions;
+      on(event: "beforeExit", listener: (exitCode: number) => void): this;
+      on(event: "disconnect", listener: () => void): this;
+      on(event: "exit", listener: (exitCode: number) => void): this;
+      on(event: "message", listener: (message: any) => void): this;
+      on(event: "multipleResolves", listener: (type: string, promise: Promise<any>, value: any) => void): this;
+      on(event: "rejectionHandled", listener: (promise: Promise<any>) => void): this;
+      on(event: "uncaughtException", listener: (error: Error) => void): this;
+      on(event: "unhandledRejection", listener: (reason: any, promise: Promise<any>) => void): this;
+      on(event: "warning", listener: (warning: Error) => void): this;
+    }
+  }
+}

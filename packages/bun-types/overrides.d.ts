@@ -8550,3 +8550,40 @@ declare namespace NodeJS {
     napiVersion?: number;
   }
 }
+
+// Adding Export and Import types
+declare namespace NodeJS {
+  interface ExportInfo {
+    /**
+     * Export name.
+     */
+    name: string;
+    
+    /**
+     * Export kind.
+     */
+    kind: 'type' | 'const' | 'let' | 'var';
+    
+    /**
+     * Export value.
+     */
+    value: any;
+  }
+  
+  interface ImportAttributes {
+    /**
+     * Import type.
+     */
+    type?: string;
+    
+    /**
+     * Import query.
+     */
+    query?: string;
+    
+    /**
+     * Import fragment.
+     */
+    fragment?: string;
+  }
+}

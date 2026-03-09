@@ -7078,3 +7078,78 @@ declare namespace NodeJS {
     target: string;
   }
 }
+
+// Add Net Server types
+declare namespace NodeJS {
+  interface Server extends Socket {
+    /**
+     * Server listening?
+     */
+    readonly listening: boolean;
+    
+    /**
+     * Server max connections.
+     */
+    maxConnections: number;
+    
+    /**
+     * Server connections count.
+     */
+    connections: number;
+    
+    /**
+     * Server timeout.
+     */
+    timeout: number;
+    
+    /**
+     * Server keep alive timeout.
+     */
+    keepAliveTimeout: number;
+    
+    /**
+     * Server headers timeout.
+     */
+    headersTimeout: number;
+    
+    /**
+     * Listens on port.
+     */
+    listen(port?: number, hostname?: string, backlog?: number, callback?: Function): this;
+    
+    /**
+     * Closes server.
+     */
+    close(callback?: Function): this;
+    
+    /**
+     * Refs server.
+     */
+    ref(): this;
+    
+    /**
+     * Unrefs server.
+     */
+    unref(): this;
+    
+    /**
+     * Event: connection.
+     */
+    on(event: 'connection', listener: (socket: Socket) => void): this;
+    
+    /**
+     * Event: listening.
+     */
+    on(event: 'listening', listener: () => void): this;
+    
+    /**
+     * Event: close.
+     */
+    on(event: 'close', listener: () => void): this;
+    
+    /**
+     * Event: error.
+     */
+    on(event: 'error', listener: (err: Error) => void): this;
+  }
+}

@@ -8092,3 +8092,207 @@ declare namespace NodeJS {
     readonly _onImmediate: Function;
   }
 }
+
+// Add File System Stats types
+declare namespace NodeJS {
+  interface StatsBase<T> {
+    /**
+     * Is directory?
+     */
+    isDirectory(): this is T;
+    
+    /**
+     * Is file?
+     */
+    isFile(): this is T;
+    
+    /**
+     * Is block device?
+     */
+    isBlockDevice(): this is T;
+    
+    /**
+     * Is character device?
+     */
+    isCharacterDevice(): this is T;
+    
+    /**
+     * Is symbolic link?
+     */
+    isSymbolicLink(): this is T;
+    
+    /**
+     * Is FIFO?
+     */
+    isFIFO(): this is T;
+    
+    /**
+     * Is socket?
+     */
+    isSocket(): this is T;
+  }
+  
+  interface Stats extends StatsBase<BigInt> {
+    /**
+     * Device ID.
+     */
+    dev: number;
+    
+    /**
+     * Inode.
+     */
+    ino: number;
+    
+    /**
+     * Mode.
+     */
+    mode: number;
+    
+    /**
+     * Nlink.
+     */
+    nlink: number;
+    
+    /**
+     * UID.
+     */
+    uid: number;
+    
+    /**
+     * GID.
+     */
+    gid: number;
+    
+    /**
+     * Rdev.
+     */
+    rdev: number;
+    
+    /**
+     * Size.
+     */
+    size: number;
+    
+    /**
+     * Blksize.
+     */
+    blksize: number;
+    
+    /**
+     * Blocks.
+     */
+    blocks: number;
+    
+    /**
+     * Atime.
+     */
+    atimeMs: number;
+    
+    /**
+     * Mtime.
+     */
+    mtimeMs: number;
+    
+    /**
+     * Ctime.
+     */
+    ctimeMs: number;
+    
+    /**
+     * Birthtime.
+     */
+    birthtimeMs: number;
+    
+    /**
+     * Atime.
+     */
+    atime: Date;
+    
+    /**
+     * Mtime.
+     */
+    mtime: Date;
+    
+    /**
+     * Ctime.
+     */
+    ctime: Date;
+    
+    /**
+     * Birthtime.
+     */
+    birthtime: Date;
+  }
+  
+  interface BigIntStats extends StatsBase<BigInt> {
+    /**
+     * Dev.
+     */
+    dev: bigint;
+    
+    /**
+     * Ino.
+     */
+    ino: bigint;
+    
+    /**
+     * Mode.
+     */
+    mode: bigint;
+    
+    /**
+     * Nlink.
+     */
+    nlink: bigint;
+    
+    /**
+     * UID.
+     */
+    uid: bigint;
+    
+    /**
+     * GID.
+     */
+    gid: bigint;
+    
+    /**
+     * Rdev.
+     */
+    rdev: bigint;
+    
+    /**
+     * Size.
+     */
+    size: bigint;
+    
+    /**
+     * Blksize.
+     */
+    blksize: bigint;
+    
+    /**
+     * Blocks.
+     */
+    blocks: bigint;
+    
+    /**
+     * AtimeMs.
+     */
+    atimeMs: bigint;
+    
+    /**
+     * MtimeMs.
+     */
+    mtimeMs: bigint;
+    
+    /**
+     * CtimeMs.
+     */
+    ctimeMs: bigint;
+    
+    /**
+     * BirthtimeMs.
+     */
+    birthtimeMs: bigint;
+  }
+}

@@ -13078,3 +13078,18 @@ declare global {
     const $R: any;
     const $w: any;
 }
+
+// Web Worker types
+declare global {
+    class WorkerEventMap extends EventMap {
+        message: MessageEvent;
+        messageerror: MessageEvent;
+        error: ErrorEvent;
+    }
+    
+    interface WorkerEventHandlers extends EventHandlers {
+        onmessage: (this: Worker, event: MessageEvent) => void;
+        onmessageerror: (this: Worker, event: MessageEvent) => void;
+        onerror: (this: Worker, event: ErrorEvent) => void;
+    }
+}

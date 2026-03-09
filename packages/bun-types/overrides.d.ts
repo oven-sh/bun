@@ -13033,3 +13033,16 @@ declare global {
         type Signals = "SIGABRT" | "SIGALRM" | "SIGBUS" | "SIGCHLD" | "SIGCONT" | "SIGFPE" | "SIGHUP" | "SIGILL" | "SIGINT" | "SIGIO" | "SIGIOT" | "SIGKILL" | "SIGPIPE" | "SIGPOLL" | "SIGPROF" | "SIGPWR" | "SIGQUIT" | "SIGSEGV" | "SIGSTKFLT" | "SIGSTOP" | "SIGSYS" | "SIGTERM" | "SIGTRAP" | "SIGTSTP" | "SIGTTIN" | "SIGTTOU" | "SIGURG" | "SIGUSR1" | "SIGUSR2" | "SIGVTALRM" | "SIGWINCH" | "SIGXCPU" | "SIGXFSZ" | "SIGBREAK" | "SIGLOST" | "SIGINFO";
     }
 }
+
+// NodeJS constants types
+declare global {
+    namespace NodeJS {
+        const constants: {
+            UV_UDP_REUSEADDR: number;
+            signals: Record<string, number>;
+            errno: Record<string, number>;
+            windows: Record<string, number> | null;
+            priority: Record<string, number>;
+        };
+    }
+}

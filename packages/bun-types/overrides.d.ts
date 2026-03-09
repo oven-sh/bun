@@ -423,3 +423,19 @@ declare module "node:process" {
     threadCpuUsage(user?: boolean): { user: number; system: number };
   }
 }
+
+</tool_call><tool_call>exec<arg_key>command</arg_key><arg_value>cd /root/.openclaw/workspace/bun-fork && cat >> packages/bun-types/overrides.d.ts << 'EOF'
+
+//</tool_call>
+
+// Add module.findPackageJSON type
+declare module "node:module" {
+  interface Module {
+    /**
+     * Finds the package.json file for a given module.
+     * @param request - The module request path
+     * @returns The package.json path or null if not found
+     */
+    findPackageJSON(request: string): string | null;
+  }
+}

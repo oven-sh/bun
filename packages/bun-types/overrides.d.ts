@@ -13268,3 +13268,32 @@ declare module "node:vm" {
   export function runInThisContext(code: string, options?: RunningCodeOptions): any;
   export function compileFunction(code: string, params?: string[], options?: CompileOptions): Function;
 }
+
+// inspector API types
+declare module "node:inspector" {
+  import { EventEmitter } from "node:events";
+  
+  export class Console {
+    constructor();
+    log(...args: any[]): void;
+    warn(...args: any[]): void;
+    error(...args: any[]): void;
+    dir(object: any, options?: any): void;
+    time(label?: string): void;
+    timeEnd(label?: string): void;
+    trace(): void;
+    assert(expression: any, ...args: any[]): void;
+  }
+  
+  export class Session extends EventEmitter {
+    connect(): void;
+    connect(mainSession: Session): void;
+    disconnect(): void;
+    post(method: string, params?: any, callback?: (err: Error | null, result: any) => void): void;
+    post(method: string, callback?: (err: Error | null, result: any) => void): void;
+  }
+  
+  export function open(port?: number, host?: string, wait?: boolean): void;
+  export function url(): string;
+  export const console: Console;
+}

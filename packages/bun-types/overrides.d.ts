@@ -12650,3 +12650,41 @@ declare global {
         };
     }
 }
+
+// Intl API: Locale types
+declare global {
+    namespace Intl {
+        type LocaleUnicodeExtensionType = "ca" | "cu" | "ho" | "kf" | "kn" | "nu";
+        
+        interface LocaleOptions {
+            localeMatcher?: "lookup" | "best fit";
+        }
+        
+        interface LocaleInfo {
+            locale: string;
+            calendar: string | null;
+            caseFirst: string | null;
+            collation: string | null;
+            hourCycle: string | null;
+            numberingSystem: string | null;
+            numeric: boolean;
+        }
+        
+        interface Locale {
+            readonly locale: string;
+            readonly calendar: string | null;
+            readonly collation: string | null;
+            readonly hourCycle: string | null;
+            readonly numberingSystem: string | null;
+            readonly numeric: boolean;
+            maximize(): Locale;
+            minimize(): Locale;
+            toString(): string;
+        }
+        
+        var Locale: {
+            new(tag: string | string[], options?: LocaleOptions): Locale;
+            (tag: string | string[], options?: LocaleOptions): Locale;
+        };
+    }
+}

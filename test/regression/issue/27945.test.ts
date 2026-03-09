@@ -74,8 +74,10 @@ test("async resolving thenable should pass the test", async () => {
       test("async resolving thenable", () => {
         return {
           then(resolve, reject) {
-            thenCalled = true;
-            setTimeout(() => resolve("ok"), 10);
+            Promise.resolve().then(() => {
+              thenCalled = true;
+              resolve("ok");
+            });
           }
         };
       });
@@ -105,7 +107,7 @@ test("async rejecting thenable should fail the test", async () => {
       test("async rejecting thenable", () => {
         return {
           then(resolve, reject) {
-            setTimeout(() => reject(new Error("async thenable rejected")), 10);
+            Promise.resolve().then(() => reject(new Error("async thenable rejected")));
           }
         };
       });

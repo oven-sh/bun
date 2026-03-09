@@ -4544,3 +4544,47 @@ declare namespace NodeJS {
     stackSizeMb?: number;
   }
 }
+
+// Add QueryString types
+declare namespace NodeJS {
+  interface QueryString {
+    /**
+     * Stringifies object.
+     */
+    stringify(obj?: any, sep?: string, eq?: string, options?: QueryStringifyOptions): string;
+    
+    /**
+     * Parses query string.
+     */
+    parse(str: string, sep?: string, eq?: string, options?: QueryStringParseOptions): any;
+    
+    /**
+     * Escapes query string.
+     */
+    escape(str: string): string;
+    
+    /**
+     * Unescapes query string.
+     */
+    unescape(str: string): string;
+  }
+  
+  interface QueryStringifyOptions {
+    /**
+     * URL encode?
+     */
+    encodeURIComponent?: Function;
+  }
+  
+  interface QueryStringParseOptions {
+    /**
+     * Max keys.
+     */
+    maxKeys?: number;
+    
+    /**
+     * DecodeURIComponent function.
+     */
+    decodeURIComponent?: Function;
+  }
+}

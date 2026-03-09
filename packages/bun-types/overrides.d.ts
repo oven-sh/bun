@@ -13200,3 +13200,71 @@ declare module "node:worker_threads" {
     terminate(): Promise<number>;
   }
 }
+
+// vm API types
+declare module "node:vm" {
+  export interface Context extends any {}
+  
+  export interface RunningCodeOptions {
+    filename?: string;
+    lineOffset?: number;
+    columnOffset?: number;
+    displayErrors?: boolean;
+    timeout?: number;
+    breakOnSigint?: boolean;
+  }
+  
+  export interface CompileOptions extends RunningCodeOptions {
+    produceCachedData?: boolean;
+    cachedData?: Buffer;
+  }
+  
+  export interface ScriptOptions extends CompileOptions {
+    filename?: string;
+    columnOffset?: number;
+    lineOffset?: number;
+  }
+  
+  export interface CreateContextOptions {
+    name?: string;
+    origin?: string;
+    codeGeneration?: {
+      strings?: boolean;
+      wasm?: boolean;
+    };
+  }
+  
+  export interface MeasureMemoryOptions {
+    mode?: "summary" | "detailed";
+  }
+  
+  export interface MeasureMemory {
+    memory: MeasureMemoryMemoryUsage;
+  }
+  
+  export interface MeasureMemoryMemoryUsage {
+    total: {
+      jsMemoryEstimate: number;
+      jsMemoryRange: [number, number];
+    };
+  }
+  
+  export class Script {
+    constructor(code: string, options?: ScriptOptions);
+    runInContext(contextifiedObject: Context, options?: RunningCodeOptions): any;
+    runInNewContext(sandbox?: Context, options?: RunningCodeOptions): any;
+    runInThisContext(options?: RunningCodeOptions): any;
+    createCachedData(): Buffer;
+    cachedDataProduced?: boolean;
+    cachedDataRejected?: boolean;
+    cachedData?: Buffer;
+    sourceMapURL?: string;
+  }
+  
+  export function createContext(sandbox?: Context, options?: CreateContextOptions): Context;
+  export function isContext(sandbox: Context): boolean;
+  export function runInContext(code: string, contextifiedObject: Context, options?: RunningCodeOptions): any;
+  export function runInNewContext(code: string, sandbox?: Context, options?: RunningCodeOptions): any;
+  export function runInThisContext(code: string, options?: RunningCodeOptions): any;
+  export function compileFunction(code: string, params?: string[], options?: CompileOptions): Function;
+}

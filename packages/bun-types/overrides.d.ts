@@ -13339,3 +13339,30 @@ declare module "node:timers/promises" {
   export function setImmediate(value: any, options: TimerOptions): Promise<void>;
   export function setInterval(ms: number, value?: any): AsyncIterable<any>;
 }
+
+// readline/promises API types
+declare module "node:readline/promises" {
+  import { Interface as ReadlineInterface } from "node:readline";
+  
+  export interface ReadLineOptions {
+    input: NodeJS.ReadableStream;
+    output?: NodeJS.WritableStream;
+    completer?: Completer | AsyncCompleter;
+    terminal?: boolean;
+    history?: string[];
+    historySize?: number;
+    prompt?: string;
+    crlfDelay?: number;
+    removeHistoryDuplicates?: boolean;
+    escapeCodeTimeout?: number;
+  }
+  
+  export type Completer = (line: string) => [string[], string];
+  export type AsyncCompleter = (line: string) => Promise<[string[], string]>;
+  
+  export class Interface extends ReadlineInterface {
+    question(query: string): Promise<string>;
+  }
+  
+  export function createInterface(options: ReadLineOptions): Interface;
+}

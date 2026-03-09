@@ -11536,3 +11536,12 @@ declare global {
   
   var console: Console;
 }
+
+// Web API: JSON additional types
+declare global {
+  interface JSON {
+    parse(text: string, reviver?: (key: any, value: any) => any): any;
+    stringify(value: any, replacer?: (this: any, key: string, value: any) => any, space?: string | number): string | undefined;
+    stringify(value: any, replacer?: (number | string)[] | null, space?: string | number): string | undefined;
+  }
+}

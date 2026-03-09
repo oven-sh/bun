@@ -12096,3 +12096,24 @@ declare global {
     }
     var DataView: DataViewConstructor;
 }
+
+// Web API: Int8Array additional types
+declare global {
+    interface Int8ArrayConstructor {
+        new(length?: number): Int8Array;
+        new(array: ArrayLike<number> | ArrayBufferLike): Int8Array;
+        new(buffer: ArrayBufferLike, byteOffset?: number, length?: number): Int8Array;
+        readonly prototype: Int8Array;
+        BYTES_PER_ELEMENT: number;
+    }
+    var Int8Array: Int8ArrayConstructor;
+    
+    interface Uint8ArrayConstructor {
+        new(length?: number): Uint8Array;
+        new(array: ArrayLike<number> | ArrayBufferLike): Uint8Array;
+        new(buffer: ArrayBufferLike, byteOffset?: number, length?: number): Uint8Array;
+        readonly prototype: Uint8Array;
+        BYTES_PER_ELEMENT: number;
+    }
+    var Uint8Array: Uint8ArrayConstructor;
+}

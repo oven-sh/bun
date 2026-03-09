@@ -2215,3 +2215,28 @@ declare namespace Bun {
     getAuthTag(): Buffer;
   }
 }
+
+// Add Random number generator types
+declare namespace Bun {
+  interface Random {
+    /**
+     * Generates random bytes.
+     */
+    bytes(length: number): Buffer;
+    
+    /**
+     * Generates random number.
+     */
+    number(max?: number): number;
+    
+    /**
+     * Generates random UUID.
+     */
+    uuid(): string;
+    
+    /**
+     * Generates random boolean.
+     */
+    boolean(): boolean;
+  }
+}

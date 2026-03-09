@@ -9382,3 +9382,20 @@ declare module "node:https" {
   export function createServer(options: ServerOptions, requestListener?: (req: any, res: any) => void): Server;
   export const globalAgent: any;
 }
+
+// stream/promises module types
+declare module "node:stream/promises" {
+  export interface FinishedOptions {
+    error?: boolean;
+    readable?: boolean;
+    writable?: boolean;
+  }
+  
+  export interface PipelineOptions {
+    end?: boolean;
+    signal?: AbortSignal;
+  }
+  
+  export function finished(stream: NodeJS.ReadableStream | NodeJS.WritableStream | NodeJS.ReadWriteStream, options?: FinishedOptions): Promise<void>;
+  export function pipeline(...streams: Array<NodeJS.ReadableStream | NodeJS.WritableStream | any>): Promise<any>;
+}

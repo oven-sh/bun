@@ -10190,3 +10190,20 @@ declare module "node:perf_hooks" {
   
   export function createHistogram(): PerformanceHistogram;
 }
+
+// trace_events module types
+declare module "node:trace_events" {
+  export interface TracingOptions {
+    categories?: string[];
+    filename?: string;
+  }
+  
+  export interface Tracing {
+    enabled: boolean;
+    categories: string[];
+    enable(): void;
+    disable(): void;
+  }
+  
+  export function createTracing(options?: TracingOptions): Tracing;
+}

@@ -11978,3 +11978,36 @@ declare global {
     }
     var Function: FunctionConstructor;
 }
+
+// Web API: Error additional types
+declare global {
+    interface Error {
+        name: string;
+        message: string;
+        stack?: string;
+        cause?: unknown;
+    }
+    interface ErrorConstructor {
+        (message?: string): Error;
+        readonly prototype: Error;
+    }
+    var Error: ErrorConstructor;
+    
+    interface EvalError extends Error {}
+    var EvalError: ErrorConstructor;
+    
+    interface RangeError extends Error {}
+    var RangeError: ErrorConstructor;
+    
+    interface ReferenceError extends Error {}
+    var ReferenceError: ErrorConstructor;
+    
+    interface SyntaxError extends Error {}
+    var SyntaxError: ErrorConstructor;
+    
+    interface TypeError extends Error {}
+    var TypeError: ErrorConstructor;
+    
+    interface URIError extends Error {}
+    var URIError: ErrorConstructor;
+}

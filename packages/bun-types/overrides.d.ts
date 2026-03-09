@@ -6816,3 +6816,40 @@ declare namespace NodeJS {
     new(encoding?: BufferEncoding, defaultEncoding?: string): StringDecoder;
   }
 }
+
+// Add Stopwatch and TTY types
+declare namespace NodeJS {
+  interface Stopwatch {
+    /**
+     * Starts timer.
+     */
+    start(): void;
+    
+    /**
+     * Stops timer.
+     */
+    stop(): void;
+    
+    /**
+     * Resets timer.
+     */
+    reset(): void;
+    
+    /**
+     * Gets elapsed time.
+     */
+    elapsed(): number;
+  }
+  
+  interface TTY {
+    /**
+     * Is TTY?
+     */
+    isatty(fd: number): boolean;
+    
+    /**
+     * Sets raw mode.
+     */
+    setRawMode(fd: number, mode: boolean): void;
+  }
+}

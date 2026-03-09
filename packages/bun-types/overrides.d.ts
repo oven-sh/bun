@@ -2376,3 +2376,40 @@ declare namespace Bun {
     unregister(unregisterToken: object): boolean;
   }
 }
+
+// Add BigInt utilities
+declare namespace Bun {
+  interface BigIntConstructor {
+    /**
+     * Parses bigint from string.
+     */
+    parseFloat(str: string): bigint;
+    
+    /**
+     * Converts bigint to string.
+     */
+    toString(bigint: bigint, radix?: number): string;
+    
+    /**
+     * Creates bigint from random bytes.
+     */
+    randomBytes(length: number): bigint;
+  }
+  
+  interface BigInt {
+    /**
+     * Converts to number.
+     */
+    toNumber(): number;
+    
+    /**
+     * Converts to string.
+     */
+    toString(radix?: number): string;
+    
+    /**
+     * Gets bigint value.
+     */
+    valueOf(): bigint;
+  }
+}

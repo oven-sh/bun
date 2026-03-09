@@ -1582,3 +1582,60 @@ declare namespace Bun {
     callback: () => void;
   }
 }
+
+// Add Cache types
+declare namespace Bun {
+  interface CacheEntry {
+    /**
+     * Cache key.
+     */
+    key: string;
+    
+    /**
+     * Cache value.
+     */
+    value: any;
+    
+    /**
+     * Entry TTL in milliseconds.
+     */
+    ttl?: number;
+    
+    /**
+     * Entry creation time.
+     */
+    created: number;
+    
+    /**
+     * Last access time.
+     */
+    accessed: number;
+  }
+  
+  interface Cache {
+    /**
+     * Gets value from cache.
+     */
+    get(key: string): Promise<any>;
+    
+    /**
+     * Sets value in cache.
+     */
+    set(key: string, value: any, ttl?: number): Promise<void>;
+    
+    /**
+     * Deletes value from cache.
+     */
+    delete(key: string): Promise<boolean>;
+    
+    /**
+     * Clears all cache.
+     */
+    clear(): Promise<void>;
+    
+    /**
+     * Checks if key exists.
+     */
+    has(key: string): Promise<boolean>;
+  }
+}

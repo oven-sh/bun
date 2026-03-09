@@ -3099,3 +3099,66 @@ declare namespace Bun {
     composedPath(): EventTarget[];
   }
 }
+
+// Add EventTarget types
+declare namespace Bun {
+  interface EventTarget {
+    /**
+     * Adds event listener.
+     */
+    addEventListener(type: string, listener: EventListenerOrEventListenerObject | null, options?: boolean | AddEventListenerOptions): void;
+    
+    /**
+     * Removes event listener.
+     */
+    removeEventListener(type: string, listener: EventListenerOrEventListenerObject | null, options?: boolean | EventListenerOptions): void;
+    
+    /**
+     * Dispatches event.
+     */
+    dispatchEvent(event: Event): boolean;
+  }
+  
+  interface EventListenerOptions {
+    /**
+     * Capture phase.
+     */
+    capture?: boolean;
+    
+    /**
+     * Once flag.
+     */
+    once?: boolean;
+    
+    /**
+     * Passive flag.
+     */
+    passive?: boolean;
+    
+    /**
+     * Signal.
+     */
+    signal?: AbortSignal;
+  }
+  
+  interface AddEventListenerOptions extends EventListenerOptions {
+    /**
+     * Listener object.
+     */
+    once?: boolean;
+    /**
+     * Passive flag.
+     */
+    passive?: boolean;
+  }
+  
+  type EventListenerOrEventListenerObject = EventListener | EventListenerObject;
+  
+  interface EventListener {
+    (evt: Event): void;
+  }
+  
+  interface EventListenerObject {
+    handleEvent(object: Event): void;
+  }
+}

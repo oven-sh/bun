@@ -13366,3 +13366,21 @@ declare module "node:readline/promises" {
   
   export function createInterface(options: ReadLineOptions): Interface;
 }
+
+// domain API types (deprecated)
+declare module "node:domain" {
+  import { EventEmitter } from "node:events";
+  
+  export class Domain extends EventEmitter {
+    readonly members: any[];
+    run(fn: Function): void;
+    add(emitter: EventEmitter): void;
+    remove(emitter: EventEmitter): void;
+    bind(fn: Function): Function;
+    intercept(fn: Function): Function;
+    enter(): void;
+    exit(): void;
+  }
+  
+  export function create(): Domain;
+}

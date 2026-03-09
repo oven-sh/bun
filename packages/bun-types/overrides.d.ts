@@ -12180,3 +12180,24 @@ declare global {
     }
     var Float32Array: Float32ArrayConstructor;
 }
+
+// Web API: Float64Array and BigInt64Array types
+declare global {
+    interface Float64ArrayConstructor {
+        new(length?: number): Float64Array;
+        new(array: ArrayLike<number> | ArrayBufferLike): Float64Array;
+        new(buffer: ArrayBufferLike, byteOffset?: number, length?: number): Float64Array;
+        readonly prototype: Float64Array;
+        BYTES_PER_ELEMENT: number;
+    }
+    var Float64Array: Float64ArrayConstructor;
+    
+    interface BigInt64ArrayConstructor {
+        new(length?: number): BigInt64Array;
+        new(array: ArrayLike<bigint> | ArrayBufferLike): BigInt64Array;
+        new(buffer: ArrayBufferLike, byteOffset?: number, length?: number): BigInt64Array;
+        readonly prototype: BigInt64Array;
+        BYTES_PER_ELEMENT: number;
+    }
+    var BigInt64Array: BigInt64ArrayConstructor;
+}

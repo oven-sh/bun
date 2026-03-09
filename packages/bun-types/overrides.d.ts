@@ -1861,3 +1861,60 @@ declare namespace Bun {
     enabled: boolean;
   }
 }
+
+// Add Profiler types
+declare namespace Bun {
+  interface Profiler {
+    /**
+     * Starts profiling.
+     */
+    start(): void;
+    
+    /**
+     * Stops profiling.
+     */
+    stop(): void;
+    
+    /**
+     * Gets profile data.
+     */
+    getProfile(): any;
+    
+    /**
+     * Clears profile data.
+     */
+    clear(): void;
+  }
+  
+  interface ProfileNode {
+    /**
+     * Function name.
+     */
+    name: string;
+    
+    /**
+     * Script URL.
+     */
+    url: string;
+    
+    /**
+     * Line number.
+     */
+    line: number;
+    
+    /**
+     * Column number.
+     */
+    column: number;
+    
+    /**
+     * Execution time.
+     */
+    duration: number;
+    
+    /**
+     * Child nodes.
+     */
+    children: ProfileNode[];
+  }
+}

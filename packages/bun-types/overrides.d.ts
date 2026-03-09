@@ -8030,3 +8030,65 @@ declare namespace NodeJS {
     idle: number;
   }
 }
+
+// Add Timers types
+declare namespace NodeJS {
+  interface Timeout extends Timer {
+    /**
+     * Refreshest timer.
+     */
+    refresh(): this;
+    
+    /**
+     * Has ref?
+     */
+    hasRef(): boolean;
+    
+    /**
+     * Refs timer.
+     */
+    ref(): this;
+    
+    /**
+     * Unrefs timer.
+     */
+    unref(): this;
+    
+    /**
+     * Throws if active.
+     */
+    throwOnError(): void;
+    
+    /**
+     * Clears timeout.
+     */
+    [Symbol.dispose](): void;
+    
+    /**
+     * Timeout number.
+     */
+    readonly [Symbol.toPrimitive](): number;
+  }
+  
+  interface Immediate extends Timer {
+    /**
+     * Has ref?
+     */
+    hasRef(): boolean;
+    
+    /**
+     * Refs immediate.
+     */
+    ref(): this;
+    
+    /**
+     * Unrefs immediate.
+     */
+    unref(): this;
+    
+    /**
+     * Immediate callback.
+     */
+    readonly _onImmediate: Function;
+  }
+}

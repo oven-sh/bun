@@ -701,6 +701,40 @@ pub const BunTest = struct {
                         return cfg_data;
                     },
                 }
+            } else if (result.isObject()) {
+                // Check for non-native thenables (objects with a callable .then method).
+                // This handles libraries like supertest that return custom thenable objects
+                // rather than native Promises. Per the Promises/A+ spec and Jest's behavior,
+                // any object with a .then() method should be awaited.
+                const then_fn = result.getPropertyValue(globalThis, "then") catch |err| switch (err) {
+                    error.JSError => {
+                        this.onUncaughtException(globalThis, globalThis.tryTakeException(), false, cfg_data);
+                        return cfg_data;
+                    },
+                    error.OutOfMemory, error.JSTerminated => return cfg_data,
+                };
+                if (then_fn) |tfn| {
+                    if (tfn.isCell() and tfn.isCallable()) {
+                        group.log("callTestCallback -> thenable: data {f}", .{cfg_data});
+
+                        // Wrap the thenable in a native Promise. JSPromise.resolve() follows
+                        // the Promise resolution procedure, calling the thenable's .then()
+                        // method via a microtask to resolve/reject the wrapper promise.
+                        const wrapper_promise = jsc.JSPromise.create(globalThis);
+                        wrapper_promise.resolve(globalThis, result) catch {
+                            globalThis.clearTerminationException();
+                            return cfg_data;
+                        };
+
+                        // The wrapper promise is still pending (thenable unwrapping is async).
+                        // Register then/catch handlers to capture the eventual result.
+                        const wrapper_value = wrapper_promise.toJS();
+                        defer wrapper_value.ensureStillAlive();
+                        const this_ref: *RefData = if (dcb_ref) |dcb_ref_value| dcb_ref_value.dupe() else ref(this_strong, cfg_data);
+                        wrapper_value.then(globalThis, this_ref, bunTestThen, bunTestCatch) catch {};
+                        return null;
+                    }
+                }
             }
         }
 

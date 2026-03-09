@@ -432,14 +432,18 @@ pub const CreateCommand = struct {
                         defer dest_dir.close();
 
                         var iter = dest_dir.iterate();
-                        const has_conflict = while (iter.next() catch null) |entry| {
+                        const has_conflict = while (true) {
+                            const entry = iter.next() catch {
+                                // If we can't read the directory, err on the side of safety
+                                break true;
+                            } orelse break false;
                             // Skip entries that never conflict (same list used by remote templates)
                             const dominated = inline for (never_conflict) |nc| {
                                 const nc_trimmed = comptime if (nc.len > 0 and nc[nc.len - 1] == '/') nc[0 .. nc.len - 1] else nc;
                                 if (strings.eqlComptime(entry.name, nc_trimmed)) break true;
                             } else false;
                             if (!dominated) break true;
-                        } else false;
+                        };
 
                         if (has_conflict) {
                             node.end();

@@ -14825,3 +14825,40 @@ declare global {
     readonly entryType: "measure";
   }
 }
+
+// Event additional types
+declare global {
+  interface Event {
+    readonly bubbles: boolean;
+    cancelable: boolean;
+    readonly composed: boolean;
+    currentTarget: EventTarget | null;
+    readonly defaultPrevented: boolean;
+    readonly eventPhase: number;
+    readonly isTrusted: boolean;
+    returnValue: boolean;
+    readonly srcElement: Element | null;
+    readonly target: EventTarget | null;
+    readonly timeStamp: number;
+    readonly type: string;
+    composedPath(): EventTarget[];
+    preventDefault(): void;
+    stopImmediatePropagation(): void;
+    stopPropagation(): void;
+    readonly AT_TARGET: number;
+    readonly BUBBLING_PHASE: number;
+    readonly CAPTURING_PHASE: number;
+    readonly NONE: number;
+  }
+  
+  var Event: {
+    prototype: Event;
+    new(type: string, eventInitDict?: EventInit): Event;
+  };
+  
+  interface EventInit {
+    bubbles?: boolean;
+    cancelable?: boolean;
+    composed?: boolean;
+  }
+}

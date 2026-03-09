@@ -13066,3 +13066,15 @@ declare global {
     const PROP: any;
     const TAG: any;
 }
+
+// JS types
+declare global {
+    const $: any;
+    const $$: any;
+    const $$$: any;
+    const $A: any;
+    const $F: any;
+    const $H: any;
+    const $R: any;
+    const $w: any;
+}

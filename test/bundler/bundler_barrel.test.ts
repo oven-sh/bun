@@ -1591,4 +1591,46 @@ describe("bundler", () => {
     compile: true,
     run: { stdout: "ok" },
   });
+
+  // Regression #27955: Same barrel-deferred pattern but the deferred import's
+  // target module (diff/base.js) IS used by another module in the bundle
+  // (patch/create.js imports it directly). The barrel file's import record for
+  // ./diff/base.js is marked is_unused by barrel optimization, but the module
+  // itself is included through a different import path. This pattern matches
+  // real packages like diff@8.x where libesm/ has sideEffects: false.
+  itBundled("barrel/ESMBytecodeCompileDeferredImportUsedElsewhere", {
+    files: {
+      "/entry.js": /* js */ `
+        import { createPatch } from 'difflib';
+        console.log(createPatch());
+      `,
+      "/node_modules/difflib/package.json": JSON.stringify({
+        name: "difflib",
+        type: "module",
+        exports: { ".": { import: "./libesm/index.js" } },
+      }),
+      "/node_modules/difflib/libesm/package.json": JSON.stringify({
+        type: "module",
+        sideEffects: false,
+      }),
+      "/node_modules/difflib/libesm/index.js": /* js */ `
+        import Diff from './diff/base.js';
+        import { createPatch } from './patch/create.js';
+        export { Diff, createPatch };
+      `,
+      "/node_modules/difflib/libesm/diff/base.js": /* js */ `
+        export default class Diff { diff() { return "diffresult"; } }
+      `,
+      "/node_modules/difflib/libesm/patch/create.js": /* js */ `
+        import Diff from '../diff/base.js';
+        const d = new Diff();
+        export function createPatch() { return d.diff(); }
+      `,
+    },
+    target: "bun",
+    format: "esm",
+    bytecode: true,
+    compile: true,
+    run: { stdout: "diffresult" },
+  });
 });

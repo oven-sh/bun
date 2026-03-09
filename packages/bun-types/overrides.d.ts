@@ -4365,3 +4365,100 @@ declare namespace NodeJS {
     windowsHide?: boolean;
   }
 }
+
+// Add Cluster types
+declare namespace NodeJS {
+  interface Cluster extends EventEmitter {
+    /**
+     * Worker instances.
+     */
+    readonly workers: Worker[];
+    
+    /**
+     * Is primary?
+     */
+    readonly isPrimary: boolean;
+    
+    /**
+     * Is master?
+     */
+    readonly isMaster: boolean;
+    
+    /**
+     * Is worker?
+     */
+    readonly isWorker: boolean;
+    
+    /**
+     * Worker ID.
+     */
+    readonly id?: number;
+    
+    /**
+     * Cluster settings.
+     */
+    readonly settings: ClusterSettings;
+    
+    /**
+     * Forks worker.
+     */
+    fork(env?: Record<string, string>): Worker;
+    
+    /**
+     * Disconnects cluster.
+     */
+    disconnect(callback?: Function): void;
+    
+    /**
+     * Sets up worker.
+     */
+    setupPrimary(settings?: ClusterSettings): void;
+    
+    /**
+     * Sets up worker.
+     */
+    setupWorker(settings?: ClusterSettings): void;
+    
+    /**
+     * Event: fork.
+     */
+    on(event: 'fork', listener: (worker: Worker) => void): this;
+    
+    /**
+     * Event: online.
+     */
+    on(event: 'online', listener: (worker: Worker) => void): this;
+    
+    /**
+     * Event: listening.
+     */
+    on(event: 'listening', listener: (worker: Worker) => void): this;
+    
+    /**
+     * Event: exit.
+     */
+    on(event: 'exit', listener: (worker: Worker, code: number, signal: string) => void): this;
+  }
+  
+  interface ClusterSettings {
+    /**
+     * Exec path.
+     */
+    exec?: string;
+    
+    /**
+     * Arguments.
+     */
+    args?: string[];
+    
+    /**
+     * Silent mode.
+     */
+    silent?: boolean;
+    
+    /**
+     * Workers count.
+     */
+    workers?: number;
+  }
+}

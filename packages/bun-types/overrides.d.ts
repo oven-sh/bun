@@ -12995,3 +12995,9 @@ declare global {
         transfer?: any[];
     }
 }
+
+// Text types
+declare global {
+    function escape(str: string): string;
+    function unescape(str: string): string;
+}

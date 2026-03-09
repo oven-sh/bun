@@ -14193,3 +14193,46 @@ declare module "node:url" {
   export function pathToFileURL(path: string): URL;
   export function fileURLToPath(url: string | URL): string;
 }
+
+// DNS additional API types
+declare module "node:dns" {
+  export interface LookupOptions {
+    family?: number;
+    hints?: number;
+    all?: boolean;
+    verbatim?: boolean;
+  }
+  
+  export interface LookupOneAddress {
+    address: string;
+    family: number;
+  }
+  
+  export interface LookupAllAddresses {
+    address: string;
+    family: number;
+  }
+  
+  export interface RecordWithTtl {
+    address: string;
+    ttl: number;
+  }
+  
+  export interface AnyRecord {
+    type: string;
+    value: any;
+  }
+  
+  export interface ResolveOptions {
+    ttl?: boolean;
+  }
+  
+  export interface ResolveWithTtlOptions extends ResolveOptions {
+    ttl: true;
+  }
+  
+  export interface ResolverOptions {
+    timeout?: number;
+    tries?: number;
+  }
+}

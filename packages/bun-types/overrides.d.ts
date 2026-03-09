@@ -1362,3 +1362,50 @@ declare namespace Bun {
     config(options: any): this;
   }
 }
+
+// Add CLI types
+declare namespace Bun {
+  interface CLIOption {
+    /**
+     * Option name.
+     */
+    name: string;
+    
+    /**
+     * Option type.
+     */
+    type: 'string' | 'number' | 'boolean';
+    
+    /**
+     * Short flag.
+     */
+    short?: string;
+    
+    /**
+     * Option description.
+     */
+    description?: string;
+    
+    /**
+     * Default value.
+     */
+    default?: any;
+    
+    /**
+     * Is required?
+     */
+    required?: boolean;
+  }
+  
+  interface CLI {
+    /**
+     * Runs a CLI command.
+     */
+    run(command: string, args?: string[]): Promise<number>;
+    
+    /**
+     * Runs a command synchronously.
+     */
+    runSync(command: string, args?: string[]): number;
+  }
+}

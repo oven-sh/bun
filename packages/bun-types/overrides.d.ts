@@ -14534,3 +14534,30 @@ declare global {
     text(): Promise<string>;
   }
 }
+
+// AbortController additional types
+declare global {
+  class AbortController {
+    constructor();
+    readonly signal: AbortSignal;
+    abort(reason?: any): void;
+  }
+  
+  interface AbortSignalEventMap {
+    abort: any;
+  }
+  
+  interface AbortSignal extends EventTarget {
+    readonly aborted: boolean;
+    readonly reason: any;
+    onabort: ((this: AbortSignal, ev: Event) => any) | null;
+    throwIfAborted(): void;
+  }
+  
+  var AbortSignal: {
+    prototype: AbortSignal;
+    new(): AbortSignal;
+    abort(reason?: any): AbortSignal;
+    timeout(ms: number): AbortSignal;
+  };
+}

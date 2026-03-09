@@ -12986,3 +12986,12 @@ declare global {
     function setInterval(callback: (...args: any[]) => void, ms: number, ...args: any[]): NodeJS.Timeout;
     function setTimeout(callback: (...args: any[]) => void, ms: number, ...args: any[]): NodeJS.Timeout;
 }
+
+// StructuredClone global type
+declare global {
+    function structuredClone<T>(value: T, options?: StructuredSerializeOptions): T;
+    
+    interface StructuredSerializeOptions {
+        transfer?: any[];
+    }
+}

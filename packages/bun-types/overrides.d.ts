@@ -2483,3 +2483,68 @@ declare namespace Bun {
     construct(target: Function, argumentsList: any[], newTarget?: Function): object;
   }
 }
+
+// Add Proxy types
+declare namespace Bun {
+  interface ProxyHandler<T extends object> {
+    /**
+     * Gets trap.
+     */
+    get?(target: T, key: string | symbol, receiver: any): any;
+    
+    /**
+     * Sets trap.
+     */
+    set?(target: T, key: string | symbol, value: any, receiver: any): boolean;
+    
+    /**
+     * Has trap.
+     */
+    has?(target: T, key: string | symbol): boolean;
+    
+    /**
+     * Delete property trap.
+     */
+    deleteProperty?(target: T, key: string | symbol): boolean;
+    
+    /**
+     * Own keys trap.
+     */
+    ownKeys?(target: T): ArrayLike<string | symbol>;
+    
+    /**
+     * Get prototype trap.
+     */
+    getPrototypeOf?(target: T): object | null;
+    
+    /**
+     * Set prototype trap.
+     */
+    setPrototypeOf?(target: T, prototype: object | null): boolean;
+    
+    /**
+     * Is extensible trap.
+     */
+    isExtensible?(target: T): boolean;
+    
+    /**
+     * Prevent extensions trap.
+     */
+    preventExtensions?(target: T): boolean;
+    
+    /**
+     * Get descriptor trap.
+     */
+    getOwnPropertyDescriptor?(target: T, key: string | symbol): PropertyDescriptor | undefined;
+    
+    /**
+     * Apply trap.
+     */
+    apply?(target: T, thisArg: any, argArray?: any): any;
+    
+    /**
+     * Construct trap.
+     */
+    construct?(target: T, argArray: any, newTarget?: Function): object;
+  }
+}

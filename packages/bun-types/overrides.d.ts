@@ -9909,3 +9909,77 @@ declare module "node:worker_threads" {
     terminate(): Promise<number>;
   }
 }
+
+// fs/promises module types
+declare module "node:fs/promises" {
+  import { Stats } from "node:fs";
+  import { ReadableStream } from "node:stream/web";
+  
+  export interface FileReadResult<T extends ArrayBufferView = Buffer> {
+    bytesRead: number;
+    buffer: T;
+  }
+  
+  export interface FileReadOptions {
+    buffer?: ArrayBufferView;
+    offset?: number;
+    length?: number;
+    position?: number | null;
+  }
+  
+  export interface ReadableWebStreamOptions {
+    type?: "bytes";
+  }
+  
+  export function readFile(path: any, options?: any): Promise<Buffer>;
+  export function readFile(path: any, encoding: BufferEncoding): Promise<string>;
+  export function writeFile(path: any, data: any, options?: any): Promise<void>;
+  export function appendFile(path: any, data: any, options?: any): Promise<void>;
+  export function copyFile(src: any, dest: any, flags?: number): Promise<void>;
+  export function stat(path: any, options?: any): Promise<Stats>;
+  export function lstat(path: any, options?: any): Promise<Stats>;
+  export function realpath(path: any, options?: any): Promise<string>;
+  export function mkdir(path: any, options?: any): Promise<string | undefined>;
+  export function readdir(path: any, options?: any): Promise<string[]>;
+  export function readdir(path: any, options: { withFileTypes: true }): Promise<Dirent[]>;
+  export function readlink(path: any, options?: any): Promise<string>;
+  export function symlink(target: any, path: any, type?: any): Promise<void>;
+  export function unlink(path: any): Promise<void>;
+  export function rmdir(path: any): Promise<void>;
+  export function rename(oldPath: any, newPath: any): Promise<void>;
+  export function truncate(path: any, len?: number): Promise<void>;
+  export function chmod(path: any, mode: number | string): Promise<void>;
+  export function lchmod(path: any, mode: number | string): Promise<void>;
+  export function chown(path: any, uid: number, gid: number): Promise<void>;
+  export function lchown(path: any, uid: number, gid: number): Promise<void>;
+  export function utimes(path: any, atime: number | string | Date, mtime: number | string | Date): Promise<void>;
+  export function lutimes(path: any, atime: number | string | Date, mtime: number | string | Date): Promise<void>;
+  export function open(path: any, flags: string | number, mode?: number | string): Promise<FileHandle>;
+  export function mkdtemp(prefix: string, options?: any): Promise<string>;
+  export class Dirent {
+    readonly name: string;
+    isFile(): boolean;
+    isDirectory(): boolean;
+    isBlockDevice(): boolean;
+    isCharacterDevice(): boolean;
+    isSymbolicLink(): boolean;
+    isFIFO(): boolean;
+    isSocket(): boolean;
+  }
+  export class FileHandle {
+    readonly fd: number;
+    appendFile(data: any, options?: any): Promise<void>;
+    chmod(mode: number | string): Promise<void>;
+    chown(uid: number, gid: number): Promise<void>;
+    close(): Promise<void>;
+    datasync(): Promise<void>;
+    read<T extends ArrayBufferView>(buffer: T, offset?: number, length?: number, position?: number): Promise<FileReadResult<T>>;
+    readableWebStream(options?: ReadableWebStreamOptions): ReadableStream;
+    stat(options?: any): Promise<Stats>;
+    sync(): Promise<void>;
+    truncate(len?: number): Promise<void>;
+    utimes(atime: number | string | Date, mtime: number | string | Date): Promise<void>;
+    write(buffer: ArrayBufferView, offset?: number, length?: number, position?: number): Promise<{ bytesWritten: number; buffer: ArrayBufferView }>;
+    write(data: string, position?: number, encoding?: BufferEncoding): Promise<{ bytesWritten: number; buffer: string }>;
+  }
+}

@@ -6710,3 +6710,82 @@ declare namespace NodeJS {
     name: string;
   }
 }
+
+// Add URL types
+declare namespace NodeJS {
+  interface URL extends URL {
+    /**
+     * Path.
+     */
+    path: string;
+  }
+  
+  interface Url {
+    /**
+     * Protocol.
+     */
+    protocol: string;
+    
+    /**
+     * Slashes.
+     */
+    slashes: boolean | null;
+    
+    /**
+     * Auth.
+     */
+    auth: string | null;
+    
+    /**
+     * Host.
+     */
+    host: string | null;
+    
+    /**
+     * Port.
+     */
+    port: string | null;
+    
+    /**
+     * Hostname.
+     */
+    hostname: string | null;
+    
+    /**
+     * Hash.
+     */
+    hash: string | null;
+    
+    /**
+     * Search.
+     */
+    search: string | null;
+    
+    /**
+     * Query.
+     */
+    query: string | null;
+    
+    /**
+     * Pathname.
+     */
+    pathname: string | null;
+    
+    /**
+     * Path.
+     */
+    path: string | null;
+    
+    /**
+     * Href.
+     */
+    href: string | null;
+  }
+  
+  interface URLFormatException extends Error {
+    /**
+     * Input.
+     */
+    input: string;
+  }
+}

@@ -7880,3 +7880,153 @@ declare namespace NodeJS {
     readonly port2: MessagePort;
   }
 }
+
+// Add Performance API types
+declare namespace NodeJS {
+  interface Performance extends EventEmitter {
+    /**
+     * Gets current time.
+     */
+    now(): number;
+    
+    /**
+     * Clears marks.
+     */
+    clearMarks(name?: string): void;
+    
+    /**
+     * Clears measures.
+     */
+    clearMeasures(name?: string): void;
+    
+    /**
+     * Clears resource timings.
+     */
+    clearResourceTimings(): void;
+    
+    /**
+     * Gets marks.
+     */
+    getEntries(): PerformanceEntry[];
+    
+    /**
+     * Gets entries by type.
+     */
+    getEntriesByType(type: string): PerformanceEntry[];
+    
+    /**
+     * Gets entries by name.
+     */
+    getEntriesByName(name: string, type?: string): PerformanceEntry[];
+    
+    /**
+     * Marks performance.
+     */
+    mark(name: string): void;
+    
+    /**
+     * Measures performance.
+     */
+    measure(name: string, startMark?: string, endMark?: string): void;
+    
+    /**
+     * Event loop timing.
+     */
+    eventLoopUtilization(): Utilization;
+    
+    /**
+     * Event loop timing detail.
+     */
+    eventLoopUtilizationRaw(): NodeJS.EventLoopUtilization;
+    
+    /**
+     * Timerify.
+     */
+    timerify<T extends Function>(fn: T): T;
+  }
+  
+  interface PerformanceEntry {
+    /**
+     * Entry name.
+     */
+    name: string;
+    
+    /**
+     * Entry type.
+     */
+    entryType: string;
+    
+    /**
+     * Start time.
+     */
+    startTime: number;
+    
+    /**
+     * Duration.
+     */
+    duration: number;
+    
+    /**
+     * Detail.
+     */
+    detail?: any;
+  }
+  
+  interface PerformanceMark extends PerformanceEntry {
+    /**
+     * Entry type is mark.
+     */
+    entryType: 'mark';
+  }
+  
+  interface PerformanceMeasure extends PerformanceEntry {
+    /**
+     * Entry type is measure.
+     */
+    entryType: 'measure';
+    
+    /**
+     * Start mark.
+     */
+    start: string;
+    
+    /**
+     * End mark.
+     */
+    end: string;
+  }
+  
+  interface Utilization {
+    /**
+     * Active utilization.
+     */
+    active: number;
+    
+    /**
+     * Idle utilization.
+     */
+    idle: number;
+    
+    /**
+     * Utilization.
+     */
+    utilization: number;
+  }
+  
+  interface EventLoopUtilization extends Utilization {
+    /**
+     * Utilization in idle.
+     */
+    utilization: number;
+    
+    /**
+     * Active utilization.
+     */
+    active: number;
+    
+    /**
+     * Idle utilization.
+     */
+    idle: number;
+  }
+}

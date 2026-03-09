@@ -11960,3 +11960,21 @@ declare global {
     }
     var RegExp: RegExpConstructor;
 }
+
+// Web API: Function additional types
+declare global {
+    interface Function {
+        apply(this: Function, thisArg: any, argArray?: any): any;
+        call(this: Function, thisArg: any, ...argArray: any[]): any;
+        bind(this: Function, thisArg: any, ...argArray: any[]): any;
+        toString(): string;
+        readonly prototype: any;
+        readonly length: number;
+        readonly name: string;
+    }
+    interface FunctionConstructor {
+        (...args: string[]): Function;
+        readonly prototype: Function;
+    }
+    var Function: FunctionConstructor;
+}

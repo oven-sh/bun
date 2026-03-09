@@ -11490,3 +11490,9 @@ declare global {
     total?: number;
   }
 }
+
+// Web API: atob/btoa additional types
+declare global {
+  function atob(data: string): string;
+  function btoa(data: string): string;
+}

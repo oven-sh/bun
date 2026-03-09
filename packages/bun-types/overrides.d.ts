@@ -451,3 +451,16 @@ declare module "console" {
     assert(value: unknown, message?: string | Error): void;
   }
 }
+
+// Add describe() with function support for bun:test
+declare module "bun:test" {
+  interface Test {
+    /**
+     * Define a test suite using the function name.
+     * @param fn - The test function (name is used as test name)
+     * @param fn - Optional test callback
+     */
+    describe(name: string, fn?: (this: Test) => void): void;
+    describe(fn: (this: Test) => void, callback?: (this: Test) => void): void;
+  }
+}

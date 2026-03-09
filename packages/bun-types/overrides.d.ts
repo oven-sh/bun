@@ -1788,3 +1788,38 @@ declare namespace Bun {
     resolve(...paths: string[]): string;
   }
 }
+
+// Add URL utilities
+declare namespace Bun {
+  interface URLSearchParams {
+    /**
+     * Gets parameter value.
+     */
+    get(name: string): string | null;
+    
+    /**
+     * Sets parameter value.
+     */
+    set(name: string, value: string): void;
+    
+    /**
+     * Deletes parameter.
+     */
+    delete(name: string): void;
+    
+    /**
+     * Checks if parameter exists.
+     */
+    has(name: string): boolean;
+    
+    /**
+     * Appends parameter.
+     */
+    append(name: string, value: string): void;
+    
+    /**
+     * Converts to object.
+     */
+    toObject(): Record<string, string>;
+  }
+}

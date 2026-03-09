@@ -1639,3 +1639,45 @@ declare namespace Bun {
     has(key: string): Promise<boolean>;
   }
 }
+
+// Add Queue types
+declare namespace Bun {
+  interface Queue {
+    /**
+     * Adds item to queue.
+     */
+    enqueue(item: any): void;
+    
+    /**
+     * Removes and returns item from queue.
+     */
+    dequeue(): any;
+    
+    /**
+     * Peeks at front item.
+     */
+    peek(): any;
+    
+    /**
+     * Gets queue size.
+     */
+    size: number;
+    
+    /**
+     * Checks if queue is empty.
+     */
+    isEmpty(): boolean;
+    
+    /**
+     * Clears queue.
+     */
+    clear(): void;
+  }
+  
+  interface PriorityQueue extends Queue {
+    /**
+     * Adds item with priority.
+     */
+    enqueue(item: any, priority: number): void;
+  }
+}

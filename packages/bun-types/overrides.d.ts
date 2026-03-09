@@ -10494,3 +10494,35 @@ declare global {
     }
   }
 }
+
+// buffer module additional types
+declare module "node:buffer" {
+  export interface BufferConstructor {
+    alloc(size: number): Buffer;
+    alloc(size: number, fill: string, encoding?: BufferEncoding): Buffer;
+    alloc(size: number, fill: number): Buffer;
+    alloc(size: number, fill: Buffer): Buffer;
+    allocUnsafe(size: number): Buffer;
+    allocUnsafeSlow(size: number): Buffer;
+    byteLength(string: string | Buffer | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, encoding?: BufferEncoding): number;
+    compare(a: Buffer, b: Buffer): number;
+    concat(list: Buffer[], totalLength?: number): Buffer;
+    from(array: number[]): Buffer;
+    from(arrayBuffer: ArrayBuffer | SharedArrayBuffer, byteOffset?: number, length?: number): Buffer;
+    from(buffer: Buffer): Buffer;
+    from(data: any, encoding?: BufferEncoding): Buffer;
+    from(string: string, encoding?: BufferEncoding): Buffer;
+    isBuffer(obj: any): obj is Buffer;
+    isEncoding(encoding: string): encoding is BufferEncoding;
+    poolSize: number;
+  }
+  
+  export const Buffer: BufferConstructor;
+  
+  export const constants: {
+    MAX_LENGTH: number;
+    MAX_STRING_LENGTH: number;
+  };
+  
+  export const INSPECT_MAX_BYTES: number;
+}

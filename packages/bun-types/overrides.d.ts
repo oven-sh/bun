@@ -2092,3 +2092,30 @@ declare namespace Bun {
     onclose?: () => void;
   }
 }
+
+// Add Compression types
+declare namespace Bun {
+  interface CompressionStream {
+    /**
+     * Creates compression stream.
+     */
+    create(format?: 'gzip' | 'deflate' | 'brotli'): ReadableStream;
+    
+    /**
+     * Compresses data.
+     */
+    compress(data: Buffer | ArrayBuffer): Buffer;
+  }
+  
+  interface DecompressionStream {
+    /**
+     * Creates decompression stream.
+     */
+    create(format?: 'gzip' | 'deflate' | 'brotli'): ReadableStream;
+    
+    /**
+     * Decompresses data.
+     */
+    decompress(data: Buffer | ArrayBuffer): Buffer;
+  }
+}

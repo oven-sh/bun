@@ -9848,3 +9848,64 @@ declare module "node:async_hooks" {
   export function executionAsyncId(): number;
   export function triggerAsyncId(): number;
 }
+
+// worker_threads module additional types
+declare module "node:worker_threads" {
+  export interface WorkerOptions {
+    eval?: boolean;
+    filename?: string;
+    workerData?: any;
+    stdin?: boolean;
+    stdout?: boolean;
+    stderr?: boolean;
+    env?: Record<string, string>;
+    execArgv?: string[];
+    resourceLimits?: ResourceLimits;
+    argv?: string[];
+    trackUnmanagedFds?: boolean;
+  }
+  
+  export interface ResourceLimits {
+    maxYoungGenerationSizeMb?: number;
+    maxOldGenerationSizeMb?: number;
+    codeRangeSizeMb?: number;
+  }
+  
+  export interface WorkerPerformance {
+    duration: number;
+    nodeStartTime: number;
+  }
+  
+  export interface BroadcastChannel extends NodeJS.EventEmitter {
+    readonly name: string;
+    postMessage(message: any): void;
+    close(): void;
+    onmessage: (message: any) => void;
+    onmessageerror: (error: Error) => void;
+  }
+  
+  export class MessagePort extends EventEmitter {
+    postMessage(value: any, transferList?: any[]): void;
+    start(): void;
+    close(): void;
+    ref(): void;
+    unref(): void;
+    setMaxListeners(n: number): this;
+    getMaxListeners(): number;
+  }
+  
+  export class MessageChannel {
+    readonly port1: MessagePort;
+    readonly port2: MessagePort;
+  }
+  
+  export class Worker extends EventEmitter {
+    readonly stdin: any;
+    readonly stdout: any;
+    readonly stderr: any;
+    readonly threadId: number;
+    readonly resourceLimits?: ResourceLimits;
+    postMessage(value: any, transferList?: any[]): void;
+    terminate(): Promise<number>;
+  }
+}

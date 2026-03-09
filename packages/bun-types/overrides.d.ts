@@ -4588,3 +4588,52 @@ declare namespace NodeJS {
     decodeURIComponent?: Function;
   }
 }
+
+// Add URL types
+declare namespace NodeJS {
+  interface URL extends URL {
+    /**
+     * Path to file.
+     */
+    path: string;
+  }
+  
+  interface TextDecoder {
+    /**
+     * Decodes input.
+     */
+    decode(input?: BufferSource | ArrayBuffer, options?: { stream?: boolean }): string;
+    
+    /**
+     * Encoding.
+     */
+    readonly encoding: string;
+    
+    /**
+     * Fatal flag.
+     */
+    readonly fatal: boolean;
+    
+    /**
+     * Ignore BOM flag.
+     */
+    readonly ignoreBOM: boolean;
+  }
+  
+  interface TextEncoder {
+    /**
+     * Encodes input.
+     */
+    encode(input?: string): Uint8Array;
+    
+    /**
+     * Encoding.
+     */
+    readonly encoding: 'utf-8';
+    
+    /**
+     * Is UTF-8?
+     */
+    readonly utf8: true;
+  }
+}

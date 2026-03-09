@@ -14862,3 +14862,20 @@ declare global {
     composed?: boolean;
   }
 }
+
+// CustomEvent additional types
+declare global {
+  interface CustomEventInit<T = any> extends EventInit {
+    detail?: T;
+  }
+  
+  interface CustomEvent<T = any> extends Event {
+    readonly detail: T;
+    initCustomEvent(type: string, bubbles?: boolean, cancelable?: boolean, detail?: T): void;
+  }
+  
+  var CustomEvent: {
+    prototype: CustomEvent;
+    new<T = any>(type: string, eventInitDict?: CustomEventInit<T>): CustomEvent<T>;
+  };
+}

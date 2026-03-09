@@ -13384,3 +13384,47 @@ declare module "node:domain" {
   
   export function create(): Domain;
 }
+
+// constants API types
+declare module "node:constants" {
+  export const EE_SEP: string;
+  export const ERROR_PURGE_CUTOFF: number;
+  export const SSL_OP_ALL: number;
+  export const SSL_OP_ALLOW_UNSAFE_LEGACY_RENEGOTIATION: number;
+  export const SSL_OP_CIPHER_SERVER_PREFERENCE: number;
+  export const SSL_OP_CISCO_ANYCONNECT: number;
+  export const SSL_OP_COOKIE_EXCHANGE: number;
+  export const SSL_OP_CRYPTOPRO_TLSEXT_BUG: number;
+  export const SSL_OP_DONT_INSERT_EMPTY_FRAGMENTS: number;
+  export const SSL_OP_EPHEMERAL_RSA: number;
+  export const SSL_OP_LEGACY_SERVER_CONNECT: number;
+  export const SSL_OP_MICROSOFT_BIG_SSLV3_BUFFER: number;
+  export const SSL_OP_MICROSOFT_SESS_ID_BUG: number;
+  export const SSL_OP_MSIE_SSLV2_RSA_PADDING: number;
+  export const SSL_OP_NETSCAPE_CA_DN_BUG: number;
+  export const SSL_OP_NETSCAPE_CHALLENGE_BUG: number;
+  export const SSL_OP_NETSCAPE_DEMO_CIPHER_CHANGE_BUG: number;
+  export const SSL_OP_NETSCAPE_REUSE_CIPHER_CHANGE_BUG: number;
+  export const SSL_OP_NO_CLIENT_RENEGOTIATION: number;
+  export const SSL_OP_NO_COMPRESSION: number;
+  export const SSL_OP_NO_QUERY_MTU: number;
+  export const SSL_OP_NO_RENEGOTIATION: number;
+  export const SSL_OP_NO_SESSION_RESUMPTION_ON_RENEGOTIATION: number;
+  export const SSL_OP_NO_SSLv2: number;
+  export const SSL_OP_NO_SSLv3: number;
+  export const SSL_OP_NO_TICKET: number;
+  export const SSL_OP_NO_TLSv1: number;
+  export const SSL_OP_NO_TLSv1_1: number;
+  export const SSL_OP_NO_TLSv1_2: number;
+  export const SSL_OP_NO_TLSv1_3: number;
+  export const SSL_OP_PKCS1_CHECK_1: number;
+  export const SSL_OP_PKCS1_CHECK_2: number;
+  export const SSL_OP_PRIORITIZE_CHACHA: number;
+  export const SSL_OP_SINGLE_DH_USE: number;
+  export const SSL_OP_SINGLE_ECDH_USE: number;
+  export const SSL_OP_SSLEAY_080_CLIENT_DH_BUG: number;
+  export const SSL_OP_SSLREF2_REUSE_CERT_TYPE_BUG: number;
+  export const SSL_OP_TLS_BLOCK_PADDING_BUG: number;
+  export const SSL_OP_TLS_D5_BUG: number;
+  export const SSL_OP_TLS_ROLLBACK_BUG: number;
+}

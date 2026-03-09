@@ -8441,3 +8441,55 @@ declare namespace NodeJS {
     POINT_CONVERSION_UNCOMPRESSED: number;
   }
 }
+
+// Add Exceptions types
+declare namespace NodeJS {
+  interface SystemError extends Error {
+    /**
+     * Error code.
+     */
+    code: string;
+    
+    /**
+     * Error number.
+     */
+    errno: number;
+    
+    /**
+     * System call.
+     */
+    syscall: string;
+    
+    /**
+     * Path.
+     */
+    path?: string;
+    
+    /**
+     * Destination path.
+     */
+    dest?: string;
+  }
+  
+  interface ErrnoException extends SystemError {
+    /**
+     * Error code.
+     */
+    code?: string;
+    
+    /**
+     * Error number.
+     */
+    errno?: number;
+    
+    /**
+     * System call.
+     */
+    syscall?: string;
+    
+    /**
+     * Path.
+     */
+    path?: string;
+  }
+}

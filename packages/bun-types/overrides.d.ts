@@ -7692,3 +7692,134 @@ declare namespace NodeJS {
     physical_space_size: number;
   }
 }
+
+// Add VM Script types
+declare namespace NodeJS {
+  interface Script extends Context {
+    /**
+     * Cached data.
+     */
+    cachedData?: Buffer;
+    
+    /**
+     * Cached data produced.
+     */
+    cachedDataProduced?: Buffer;
+    
+    /**
+     * Script source.
+     */
+    readonly source: string;
+    
+    /**
+     * Script filename.
+     */
+    readonly filename: string;
+    
+    /**
+     * Runs script.
+     */
+    runInContext(contextifiedSandbox: object, options?: RunningCodeOptions): any;
+    
+    /**
+     * Runs in new context.
+     */
+    runInNewContext(sandbox?: object, options?: RunningCodeOptions): any;
+    
+    /**
+     * Compiles code.
+     */
+    compileCodeInContext(code: string, contextifiedSandbox: object, options?: CompilationOptions): Function;
+  }
+  
+  interface Context extends EventEmitter {
+    /**
+     * Sandbox object.
+     */
+    readonly sandbox: Record<string, any>;
+    
+    /**
+     * Context script.
+     */
+    readonly script: Script | null;
+    
+    /**
+     * Compiles function.
+     */
+    compileFunction(code: string, params?: string[], options?: CompilationOptions): Function;
+    
+    /**
+     * Runs code.
+     */
+    run(code: string, options?: RunningCodeOptions): any;
+    
+    /**
+     * Gets context.
+     */
+    get(context: object, key: string): any;
+    
+    /**
+     * Sets context.
+     */
+    set(context: object, key: string, value: any): boolean;
+  }
+  
+  interface RunningCodeOptions {
+    /**
+     * Filename.
+     */
+    filename?: string;
+    
+    /**
+     * Line offset.
+     */
+    lineOffset?: number;
+    
+    /**
+     * Column offset.
+     */
+    columnOffset?: number;
+    
+    /**
+     * Display errors.
+     */
+    displayErrors?: boolean;
+    
+    /**
+     * Timeout.
+     */
+    timeout?: number;
+    
+    /**
+     * Break on signal.
+     */
+    breakOnSigint?: boolean;
+  }
+  
+  interface CompilationOptions {
+    /**
+     * Filename.
+     */
+    filename?: string;
+    
+    /**
+     * Line offset.
+     */
+    lineOffset?: number;
+    
+    /**
+     * Column offset.
+     */
+    columnOffset?: number;
+    
+    /**
+     * Cached data.
+     */
+    cachedData?: Buffer;
+    
+    /**
+     * Produce cached data.
+     */
+    produceCachedData?: boolean;
+  }
+}

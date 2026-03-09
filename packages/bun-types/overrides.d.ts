@@ -512,3 +512,25 @@ declare module "undici" {
     close(): Promise<void>;
   }
 }
+
+//
+
+// Add FetchResult type improvements
+declare namespace Bun {
+  interface FetchResult {
+    /**
+     * The response object.
+     */
+    response: Response;
+    
+    /**
+     * Whether the response was served from cache.
+     */
+    fromCache?: boolean;
+    
+    /**
+     * The time it took to fetch the resource in milliseconds.
+     */
+    timing?: number;
+  }
+}

@@ -2052,3 +2052,43 @@ declare namespace Bun {
     clear(): Promise<void>;
   }
 }
+
+// Add Notification types
+declare namespace Bun {
+  interface Notification {
+    /**
+     * Notification title.
+     */
+    title: string;
+    
+    /**
+     * Notification body.
+     */
+    body?: string;
+    
+    /**
+     * Notification icon.
+     */
+    icon?: string;
+    
+    /**
+     * Shows notification.
+     */
+    show(): void;
+    
+    /**
+     * Closes notification.
+     */
+    close(): void;
+    
+    /**
+     * Event: on click.
+     */
+    onclick?: () => void;
+    
+    /**
+     * Event: on close.
+     */
+    onclose?: () => void;
+  }
+}

@@ -11074,3 +11074,33 @@ declare global {
     timeout(ms: number): AbortSignal;
   };
 }
+
+// Web API: EventTarget additional types
+declare global {
+  class EventTarget {
+    constructor();
+    addEventListener(type: string, callback: EventListenerOrEventListenerObject | null, options?: AddEventListenerOptions | boolean): void;
+    dispatchEvent(event: Event): boolean;
+    removeEventListener(type: string, callback: EventListenerOrEventListenerObject | null, options?: EventListenerOptions | boolean): void;
+  }
+  
+  interface EventListenerOptions {
+    capture?: boolean;
+  }
+  
+  interface AddEventListenerOptions extends EventListenerOptions {
+    once?: boolean;
+    passive?: boolean;
+    signal?: AbortSignal;
+  }
+  
+  interface EventListener {
+    (evt: Event): void;
+  }
+  
+  interface EventListenerObject {
+    handleEvent(object: Event): void;
+  }
+  
+  type EventListenerOrEventListenerObject = EventListener | EventListenerObject;
+}

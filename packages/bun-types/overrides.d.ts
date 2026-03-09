@@ -8666,3 +8666,32 @@ declare namespace NodeJS {
     windowsHide?: boolean;
   }
 }
+
+//加添加中文注释示例类型
+declare namespace Bun {
+  /**
+   * 中文示例类型
+   * Chinese example types
+   */
+  interface 中文示例 {
+    /**
+     * 名称。
+     */
+    名称: string;
+    
+    /**
+     * 年龄。
+     */
+    年龄: number;
+    
+    /**
+     * 邮箱。
+     */
+    邮箱: string;
+    
+    /**
+     * 获取信息。
+     */
+    获取信息(): string;
+  }
+}

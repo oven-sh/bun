@@ -80,6 +80,7 @@ const eventIds = {
   error: 4,
   ping: 5,
   pong: 6,
+  upgrade: 7,
 };
 
 const emittedWarnings = new Set();
@@ -261,7 +262,7 @@ class BunWebSocket extends EventEmitter {
   }
 
   #onOrOnce(event, listener, once) {
-    if (event === "unexpected-response" || event === "upgrade" || event === "redirect") {
+    if (event === "redirect") {
       emitWarning(event, "ws.WebSocket '" + event + "' event is not implemented in bun");
     }
     const mask = 1 << eventIds[event];
@@ -275,7 +276,35 @@ class BunWebSocket extends EventEmitter {
       if (!once) {
         this.#eventId |= mask;
       }
-      if (event === "open") {
+      if (event === "upgrade") {
+        // Emit 'upgrade' with a synthetic response just before 'open'.
+        // Bun's native WebSocket handles the HTTP upgrade internally, so we
+        // build a minimal http.IncomingMessage-like object from what we know.
+        this.#ws.addEventListener(
+          "open",
+          () => {
+            const ws = this.#ws;
+            const rawHeaders = ["Upgrade", "websocket", "Connection", "Upgrade"];
+            if (ws.protocol) {
+              rawHeaders.push("Sec-WebSocket-Protocol", ws.protocol);
+            }
+            if (ws.extensions) {
+              rawHeaders.push("Sec-WebSocket-Extensions", ws.extensions);
+            }
+            const headers = {};
+            for (let i = 0; i < rawHeaders.length; i += 2) {
+              headers[rawHeaders[i].toLowerCase()] = rawHeaders[i + 1];
+            }
+            this.emit("upgrade", {
+              statusCode: 101,
+              statusMessage: "Switching Protocols",
+              headers,
+              rawHeaders,
+            });
+          },
+          onceObject,
+        );
+      } else if (event === "open") {
         this.#ws.addEventListener(
           "open",
           () => {

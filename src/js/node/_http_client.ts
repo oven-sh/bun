@@ -323,164 +323,186 @@ function ClientRequest(input, options, cb) {
         const originalHost = this.getHeader("host") || this[kHost] || connectHost;
         const headerSizeLimit = this[kMaxHeaderSize] || 16384; // Node.js default: 16 KiB
 
-        const onSocketConnect = () => {
-          const reqPath = (parsedUrl.pathname || "/") + (parsedUrl.search || "");
-          const headers = this.getHeaders();
-          let raw = `${method} ${reqPath} HTTP/1.1\r\n`;
-          // Only add Host if not already in user-provided headers
-          if (!headers["host"] && !headers["Host"]) {
-            raw += `Host: ${originalHost}${this[kUseDefaultPort] ? "" : ":" + this[kPort]}\r\n`;
-          }
-          for (const [key, val] of Object.entries(headers)) {
-            if (Array.isArray(val)) {
-              for (const v of val) raw += `${key}: ${v}\r\n`;
-            } else if (val != null) {
-              raw += `${key}: ${val}\r\n`;
+        // Return a Promise so the happy-eyeballs iterator can .catch(iterate)
+        // on connection failures and fall back to the next address.
+        return new Promise((resolve, reject) => {
+          const onSocketConnect = () => {
+            const reqPath = (parsedUrl.pathname || "/") + (parsedUrl.search || "");
+            const headers = this.getHeaders();
+            let raw = `${method} ${reqPath} HTTP/1.1\r\n`;
+            // Only add Host if not already in user-provided headers
+            if (!headers["host"] && !headers["Host"]) {
+              raw += `Host: ${originalHost}${this[kUseDefaultPort] ? "" : ":" + this[kPort]}\r\n`;
             }
-          }
-          raw += "\r\n";
-          upgradeSocket.write(raw);
-        };
-
-        let upgradeSocket;
-        if (protocol === "https:") {
-          const tls = require("tls");
-          // Use originalHost for SNI (servername), connectHost for TCP target
-          const tlsOpts = this[kTls]
-            ? { ...this[kTls], servername: this[kTls].servername || originalHost }
-            : { servername: originalHost };
-          upgradeSocket = tls.connect({ host: connectHost, port: connectPort, ...tlsOpts }, onSocketConnect);
-        } else {
-          const net = require("net");
-          upgradeSocket = net.createConnection({ host: connectHost, port: connectPort }, onSocketConnect);
-        }
-
-        let buf = Buffer.alloc(0);
-        const detachListeners = () => {
-          upgradeSocket.removeListener("data", onData);
-          upgradeSocket.removeListener("error", onError);
-          upgradeSocket.removeListener("close", onClose);
-        };
-        const onError = (err) => {
-          detachListeners();
-          upgradeSocket.destroy();
-          this[kClearTimeout]();
-          if (!this.destroyed) {
-            this.emit("error", err);
-          }
-        };
-        const onClose = () => {
-          // Server closed before sending complete headers
-          if (buf.indexOf("\r\n\r\n") === -1) {
-            detachListeners();
-            this[kClearTimeout]();
-            if (!this.destroyed) {
-              this.emit("error", new Error("Connection closed before upgrade response received"));
-            }
-          }
-        };
-        const onData = (chunk: Buffer) => {
-          buf = Buffer.concat([buf, chunk]);
-
-          // Enforce header size limit to prevent unbounded allocation
-          if (buf.length > headerSizeLimit) {
-            detachListeners();
-            upgradeSocket.destroy();
-            this.emit("error", new Error(`Parse Error: Header size exceeds ${headerSizeLimit} bytes`));
-            return;
-          }
-
-          const headerEnd = buf.indexOf("\r\n\r\n");
-          if (headerEnd === -1) return; // incomplete headers
-
-          // Detach all internal listeners before handing socket to user code
-          detachListeners();
-
-          const headerPart = buf.subarray(0, headerEnd).toString();
-          const head = buf.subarray(headerEnd + 4);
-          const [statusLine, ...headerLines] = headerPart.split("\r\n");
-          const statusMatch = statusLine.match(/^HTTP\/(\d+\.\d+)\s+(\d+)\s*(.*)/);
-          const statusCode = statusMatch ? parseInt(statusMatch[2], 10) : 0;
-
-          // Parse response headers (preserve originals in rawHeaders)
-          const responseHeaders: Record<string, string | string[]> = {};
-          const rawHeaders: string[] = [];
-          for (const line of headerLines) {
-            const colonIdx = line.indexOf(":");
-            if (colonIdx === -1) continue;
-            const key = line.substring(0, colonIdx).trim();
-            const value = line.substring(colonIdx + 1).trim();
-            const lowerKey = key.toLowerCase();
-            rawHeaders.push(key, value);
-            // Preserve duplicate headers (e.g. set-cookie) as arrays
-            const existing = responseHeaders[lowerKey];
-            if (existing !== undefined) {
-              responseHeaders[lowerKey] = Array.isArray(existing) ? [...existing, value] : [existing, value];
-            } else {
-              responseHeaders[lowerKey] = value;
-            }
-          }
-
-          if (statusCode === 101) {
-            // Build IncomingMessage directly — cannot use new Response() for
-            // 101 because the Fetch spec rejects 1xx in synthetic Responses.
-            const res = Object.create(IncomingMessage.prototype);
-            res.statusCode = statusCode;
-            res.statusMessage = statusMatch?.[3] || "Switching Protocols";
-            res.headers = responseHeaders;
-            res.rawHeaders = rawHeaders;
-            res.httpVersion = statusMatch?.[1] || "1.1";
-            res.complete = true;
-            res.socket = upgradeSocket;
-            res.req = this;
-            res._consuming = false;
-            res._dumped = false;
-            res._closed = false;
-
-            this[kUpgradeOrConnect] = true;
-            this[kClearTimeout]();
-            this.emit("upgrade", res, upgradeSocket, head);
-          } else if (statusCode >= 100 && statusCode < 200) {
-            // Other 1xx informational responses (100 Continue, 102 Processing,
-            // 103 Early Hints) — the Fetch Response constructor rejects 1xx,
-            // and these are unexpected during an upgrade handshake.
-            upgradeSocket.destroy();
-            this[kClearTimeout]();
-            this.emit("error", new Error(`Unexpected informational response ${statusCode} during upgrade`));
-          } else {
-            // Non-101 response: emit as regular 'response' per Node.js
-            // semantics — servers may legitimately decline upgrades with
-            // normal HTTP status codes (200, 401, 426, etc.).
-            const prevIsHTTPS = getIsNextIncomingMessageHTTPS();
-            setIsNextIncomingMessageHTTPS(protocol === "https:");
-            const res = new IncomingMessage(new Response(null, {
-              status: statusCode,
-              statusText: statusMatch?.[3] || "",
-            }), {
-              [typeSymbol]: NodeHTTPIncomingRequestType.FetchResponse,
-              [reqSymbol]: this,
-            });
-            setIsNextIncomingMessageHTTPS(prevIsHTTPS);
-            res.headers = responseHeaders;
-            res.rawHeaders = rawHeaders;
-            res.httpVersion = statusMatch?.[1] || "1.1";
-            res.socket = upgradeSocket;
-            this.res = res;
-            this[kClearTimeout]();
-            // Push any remaining body data and let it drain
-            if (head.length > 0) res.push(head);
-            process.nextTick(() => {
-              if (!this.aborted && !this.emit("response", res)) {
-                res._dump();
+            for (const [key, val] of Object.entries(headers)) {
+              if ($isJSArray(val)) {
+                for (const v of val) raw += `${key}: ${v}\r\n`;
+              } else if (val != null) {
+                raw += `${key}: ${val}\r\n`;
               }
-            });
-          }
-        };
+            }
+            raw += "\r\n";
+            upgradeSocket.write(raw);
+          };
 
-        upgradeSocket.on("data", onData);
-        upgradeSocket.on("error", onError);
-        upgradeSocket.once("close", onClose);
-        return;
+          let upgradeSocket;
+          if (protocol === "https:") {
+            const tls = require("tls");
+            // Use originalHost for SNI (servername), connectHost for TCP target
+            const tlsOpts = this[kTls]
+              ? { ...this[kTls], servername: this[kTls].servername || originalHost }
+              : { servername: originalHost };
+            upgradeSocket = tls.connect({ host: connectHost, port: connectPort, ...tlsOpts }, onSocketConnect);
+          } else {
+            const net = require("net");
+            upgradeSocket = net.createConnection({ host: connectHost, port: connectPort }, onSocketConnect);
+          }
+
+          let buf = Buffer.alloc(0);
+          const detachListeners = () => {
+            upgradeSocket.removeListener("data", onData);
+            upgradeSocket.removeListener("error", onError);
+            upgradeSocket.removeListener("close", onClose);
+          };
+          const onError = (err) => {
+            detachListeners();
+            upgradeSocket.destroy();
+            this[kClearTimeout]();
+            if (softFail) {
+              // Let the happy-eyeballs iterator try the next address
+              reject(err);
+            } else if (!this.destroyed) {
+              this.emit("error", err);
+              resolve();
+            } else {
+              resolve();
+            }
+          };
+          const onClose = () => {
+            // Server closed before sending complete headers
+            if (buf.indexOf("\r\n\r\n") === -1) {
+              detachListeners();
+              this[kClearTimeout]();
+              const err = new Error("Connection closed before upgrade response received");
+              if (softFail) {
+                reject(err);
+              } else if (!this.destroyed) {
+                this.emit("error", err);
+                resolve();
+              } else {
+                resolve();
+              }
+            }
+          };
+          const onData = (chunk: Buffer) => {
+            buf = Buffer.concat([buf, chunk]);
+
+            // Enforce header size limit to prevent unbounded allocation
+            if (buf.length > headerSizeLimit) {
+              detachListeners();
+              upgradeSocket.destroy();
+              this.emit("error", new Error(`Parse Error: Header size exceeds ${headerSizeLimit} bytes`));
+              resolve();
+              return;
+            }
+
+            const headerEnd = buf.indexOf("\r\n\r\n");
+            if (headerEnd === -1) return; // incomplete headers
+
+            // Detach all internal listeners before handing socket to user code
+            detachListeners();
+
+            const headerPart = buf.subarray(0, headerEnd).toString();
+            const head = buf.subarray(headerEnd + 4);
+            const [statusLine, ...headerLines] = headerPart.split("\r\n");
+            const statusMatch = statusLine.match(/^HTTP\/(\d+\.\d+)\s+(\d+)\s*(.*)/);
+            const statusCode = statusMatch ? parseInt(statusMatch[2], 10) : 0;
+
+            // Parse response headers (preserve originals in rawHeaders)
+            const responseHeaders: Record<string, string | string[]> = {};
+            const rawHeaders: string[] = [];
+            for (const line of headerLines) {
+              const colonIdx = line.indexOf(":");
+              if (colonIdx === -1) continue;
+              const key = line.substring(0, colonIdx).trim();
+              const value = line.substring(colonIdx + 1).trim();
+              const lowerKey = key.toLowerCase();
+              rawHeaders.push(key, value);
+              // Preserve duplicate headers (e.g. set-cookie) as arrays
+              const existing = responseHeaders[lowerKey];
+              if (existing !== undefined) {
+                responseHeaders[lowerKey] = $isJSArray(existing) ? [...existing, value] : [existing, value];
+              } else {
+                responseHeaders[lowerKey] = value;
+              }
+            }
+
+            if (statusCode === 101) {
+              // Build IncomingMessage directly — cannot use new Response() for
+              // 101 because the Fetch spec rejects 1xx in synthetic Responses.
+              // Use IncomingMessage constructor with null to get proper
+              // EventEmitter/Readable initialization, then override fields.
+              const res = new IncomingMessage(null);
+              res.statusCode = statusCode;
+              res.statusMessage = statusMatch?.[3] || "Switching Protocols";
+              res.headers = responseHeaders;
+              res.rawHeaders = rawHeaders;
+              res.httpVersion = statusMatch?.[1] || "1.1";
+              res.complete = true;
+              res.socket = upgradeSocket;
+              res.req = this;
+
+              this[kUpgradeOrConnect] = true;
+              this[kClearTimeout]();
+              this.emit("upgrade", res, upgradeSocket, head);
+              resolve();
+            } else if (statusCode >= 100 && statusCode < 200) {
+              // Other 1xx informational responses (100 Continue, 102 Processing,
+              // 103 Early Hints) — the Fetch Response constructor rejects 1xx,
+              // and these are unexpected during an upgrade handshake.
+              upgradeSocket.destroy();
+              this[kClearTimeout]();
+              this.emit("error", new Error(`Unexpected informational response ${statusCode} during upgrade`));
+              resolve();
+            } else {
+              // Non-101 response: emit as regular 'response' per Node.js
+              // semantics — servers may legitimately decline upgrades with
+              // normal HTTP status codes (200, 401, 426, etc.).
+              const prevIsHTTPS = getIsNextIncomingMessageHTTPS();
+              setIsNextIncomingMessageHTTPS(protocol === "https:");
+              const res = new IncomingMessage(new Response(null, {
+                status: statusCode,
+                statusText: statusMatch?.[3] || "",
+              }), {
+                [typeSymbol]: NodeHTTPIncomingRequestType.FetchResponse,
+                [reqSymbol]: this,
+              });
+              setIsNextIncomingMessageHTTPS(prevIsHTTPS);
+              res.headers = responseHeaders;
+              res.rawHeaders = rawHeaders;
+              res.httpVersion = statusMatch?.[1] || "1.1";
+              res.socket = upgradeSocket;
+              this.res = res;
+              this[kClearTimeout]();
+              // Push any remaining body data and pipe the rest of the
+              // socket into res so the full response body is available.
+              if (head.length > 0) res.push(head);
+              upgradeSocket.on("data", (chunk) => res.push(chunk));
+              upgradeSocket.on("end", () => res.push(null));
+              upgradeSocket.on("error", (err) => res.destroy(err));
+              process.nextTick(() => {
+                if (!this.aborted && !this.emit("response", res)) {
+                  res._dump();
+                }
+              });
+              resolve();
+            }
+          };
+
+          upgradeSocket.on("data", onData);
+          upgradeSocket.on("error", onError);
+          upgradeSocket.once("close", onClose);
+        });
       }
 
       const tls =

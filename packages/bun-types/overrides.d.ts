@@ -14682,3 +14682,40 @@ declare global {
     readonly writable: WritableStream<I>;
   }
 }
+
+// TextEncoder/TextDecoder additional types
+declare global {
+  class TextEncoder {
+    constructor();
+    readonly encoding: "utf-8";
+    encode(input?: string): Uint8Array;
+    encodeInto(input: string, dest: Uint8Array): TextEncoderEncodeIntoResult;
+  }
+  
+  interface TextEncoderEncodeIntoResult {
+    read?: number;
+    written: number;
+  }
+  
+  class TextDecoder {
+    constructor(label?: string, options?: TextDecoderOptions);
+    readonly encoding: string;
+    readonly fatal: boolean;
+    readonly ignoreBOM: boolean;
+    decode(input?: Buffer | ArrayBuffer | ArrayBufferView, options?: StreamDecodeOptions): string;
+  }
+  
+  interface TextDecoderOptions {
+    fatal?: boolean;
+    ignoreBOM?: boolean;
+  }
+  
+  interface StreamDecodeOptions {
+    stream?: boolean;
+  }
+  
+  var TextDecoder: {
+    prototype: TextDecoder;
+    new(label?: string, options?: TextDecoderOptions): TextDecoder;
+  };
+}

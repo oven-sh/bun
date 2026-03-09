@@ -14054,3 +14054,64 @@ declare module "node:http2" {
     length?: number;
   }
 }
+
+// child_process additional API types
+declare module "node:child_process" {
+  import { EventEmitter } from "node:events";
+  import { Readable, Writable } from "node:stream";
+  
+  export interface ChildProcess extends EventEmitter {
+    readonly stdin: Writable | null;
+    readonly stdout: Readable | null;
+    readonly stderr: Readable | null;
+    readonly readonly stdin: Readable | null;
+    readonly readonly stdout: Readable | null;
+    readonly readonly stderr: Readable | null;
+    readonly pid: number;
+    readonly connected: boolean;
+    readonly exitCode: number | null;
+    readonly signalCode: NodeJS.Signals | null;
+    readonly spawnargs: string[];
+    readonly spawnfile: string;
+    kill(signal?: NodeJS.Signals | number): boolean;
+    send(message: any, sendHandle?: any, options?: any, callback?: (error: Error | null) => void): boolean;
+    disconnect(): void;
+    unref(): void;
+    ref(): void;
+  }
+  
+  export interface SpawnOptions {
+    cwd?: string;
+    env?: Record<string, string>;
+    argv0?: string;
+    stdio?: any;
+    detached?: boolean;
+    shell?: boolean | string;
+    uid?: number;
+    gid?: number;
+    windowsHide?: boolean;
+    windowsVerbatimArguments?: boolean;
+  }
+  
+  export interface SpawnOptionsWithStdioTuple<Stdin, Stdout, Stderr> extends SpawnOptions {
+    stdio: [Stdin, Stdout, Stderr];
+  }
+  
+  export interface ExecOptions extends SpawnOptions {
+    shell?: string;
+    maxBuffer?: number;
+    killSignal?: NodeJS.Signals | number;
+    timeout?: number;
+  }
+  
+  export interface ExecSyncOptions extends ExecOptions {
+    input?: string | Buffer;
+    encoding?: BufferEncoding;
+  }
+  
+  export interface ForkOptions extends SpawnOptions {
+    silent?: boolean;
+    execPath?: string;
+    execArgv?: string[];
+  }
+}

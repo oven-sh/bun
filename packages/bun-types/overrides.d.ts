@@ -5710,3 +5710,67 @@ declare namespace NodeJS {
     colors?: boolean;
   }
 }
+
+// Add Worker Threads types
+declare namespace NodeJS {
+  interface WorkerOptions {
+    /**
+     * Worker filename.
+     */
+    filename?: string;
+    
+    /**
+     * Worker name.
+     */
+    name?: string;
+    
+    /**
+     * Worker type.
+     */
+    type?: 'classic' | 'module';
+    
+    /**
+     * Eval.
+     */
+    eval?: boolean;
+    
+    /**
+     * Exec argv.
+     */
+    execArgv?: string[];
+    
+    /**
+     * Worker arguments.
+     */
+    workerData?: any;
+    
+    /**
+     * Resource limits.
+     */
+    resourceLimits?: ResourceLimits;
+    
+    /**
+     * Track managed objects.
+     */
+      trackUnmanagedFds?: boolean;
+  }
+  
+  interface WorkerInfo {
+    /**
+     * Worker thread ID.
+     */
+    threadId: number;
+    
+    /**
+     * Worker resource usage.
+     */
+    resourceUsage?: {
+      userCPUTime: number;
+      systemCPUTime: number;
+      maxRSS: number;
+      userCPUTimeDelta: number;
+      systemCPUTimeDelta: number;
+      rssDelta: number;
+    };
+  }
+}

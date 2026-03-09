@@ -10394,3 +10394,31 @@ declare module "node:punycode" {
   };
   export function version: string;
 }
+
+// readline/promises module types
+declare module "node:readline/promises" {
+  import { Interface as ReadlineInterface } from "node:readline";
+  
+  export interface ReadLineOptions {
+    input: NodeJS.ReadableStream;
+    output?: NodeJS.WritableStream;
+    completer?: Completer | AsyncCompleter;
+    terminal?: boolean;
+    history?: string[];
+    historySize?: number;
+    prompt?: string;
+    crlfDelay?: number;
+    removeHistoryDuplicates?: boolean;
+    escapeCodeTimeout?: number;
+    tabSize?: number;
+  }
+  
+  export type Completer = (line: string) => [string[], string];
+  export type AsyncCompleter = (line: string) => Promise<[string[], string]>;
+  
+  export class Interface extends ReadlineInterface {
+    question(query: string): Promise<string>;
+  }
+  
+  export function createInterface(options: ReadLineOptions): Interface;
+}

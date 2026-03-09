@@ -10946,3 +10946,34 @@ declare module "node:url" {
     readonly size: number;
   }
 }
+
+// Web API: Fetch additional types
+declare global {
+  interface RequestInit {
+    method?: string;
+    headers?: any;
+    body?: BodyInit | null;
+    referrer?: string;
+    referrerPolicy?: ReferrerPolicy;
+    mode?: RequestMode;
+    credentials?: RequestCredentials;
+    redirect?: RequestRedirect;
+    integrity?: string;
+    keepalive?: boolean;
+    signal?: AbortSignal | null;
+    window?: null;
+    duplex?: any;
+  }
+  
+  interface ResponseInit {
+    status?: number;
+    statusText?: string;
+    headers?: any;
+  }
+  
+  type RequestMode = "navigate" | "same-origin" | "no-cors" | "cors";
+  type RequestCredentials = "omit" | "same-origin" | "include";
+  type RequestRedirect = "follow" | "error" | "manual";
+  type ReferrerPolicy = "" | "no-referrer" | "no-referrer-when-downgrade" | "same-origin" | "origin" | "strict-origin" | "origin-when-cross-origin" | "strict-origin-when-cross-origin" | "unsafe-url";
+  type RequestDestination = "" | "audio" | "audioworklet" | "document" | "embed" | "font" | "frame" | "iframe" | "image" | "manifest" | "object" | "paintworklet" | "script" | "style" | "track" | "video" | "worker" | "xslt";
+}

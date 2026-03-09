@@ -13322,3 +13322,20 @@ declare module "node:stream/promises" {
   export function finished(stream: NodeJS.ReadableStream | NodeJS.WritableStream | NodeJS.ReadWriteStream, options?: FinishedOptions): Promise<void>;
   export function pipeline(...streams: Array<NodeJS.ReadableStream | NodeJS.WritableStream | any>): Promise<any>;
 }
+
+// timers/promises API types
+declare module "node:timers/promises" {
+  export interface Abortable {
+    signal: AbortSignal;
+  }
+  
+  export interface TimerOptions extends Abortable {
+    ref?: boolean;
+  }
+  
+  export function setTimeout(ms: number, value?: any): Promise<void>;
+  export function setTimeout(ms: number, value: any, options: TimerOptions): Promise<void>;
+  export function setImmediate(value?: any): Promise<void>;
+  export function setImmediate(value: any, options: TimerOptions): Promise<void>;
+  export function setInterval(ms: number, value?: any): AsyncIterable<any>;
+}

@@ -14236,3 +14236,39 @@ declare module "node:dns" {
     tries?: number;
   }
 }
+
+// stream additional API types
+declare module "node:stream" {
+  export interface ReadableOptions {
+    highWaterMark?: number;
+    encoding?: BufferEncoding;
+    objectMode?: boolean;
+    read?: (this: Readable, size: number) => void;
+    destroy?: (this: Readable, error: Error | null, callback: (error: Error | null) => void) => void;
+  }
+  
+  export interface WritableOptions {
+    highWaterMark?: number;
+    decodeStrings?: boolean;
+    defaultEncoding?: BufferEncoding;
+    objectMode?: boolean;
+    emitClose?: boolean;
+    write?: (this: Writable, chunk: any, encoding: BufferEncoding, callback: (error?: Error | null) => void) => boolean;
+    writev?: (this: Writable, chunks: Array<{ chunk: any; encoding: BufferEncoding }>, callback: (error?: Error | null) => void) => boolean;
+    destroy?: (this: Writable, error: Error | null, callback: (error: Error | null) => void) => void;
+    final?: (this: Writable, callback: (error?: Error | null) => void) => void;
+  }
+  
+  export interface DuplexOptions extends ReadableOptions, WritableOptions {
+    allowHalfOpen?: boolean;
+    readableObjectMode?: boolean;
+    writableObjectMode?: boolean;
+  }
+  
+  export interface TransformOptions extends DuplexOptions {
+    transform?: (this: Transform, chunk: any, encoding: BufferEncoding, callback: TransformCallback) => void;
+    flush?: (this: Transform, callback: TransformCallback) => void;
+  }
+  
+  export type TransformCallback = (error?: Error | null, data?: any) => void;
+}

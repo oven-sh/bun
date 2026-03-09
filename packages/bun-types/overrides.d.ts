@@ -439,3 +439,15 @@ declare module "node:module" {
     findPackageJSON(request: string): string | null;
   }
 }
+
+// Add console.assert proper type with message
+declare module "console" {
+  interface Console {
+    /**
+     * Asserts that an expression is true. If not, prints an error message.
+     * @param value - The value to assert
+     * @param message - Optional message to display if assertion fails
+     */
+    assert(value: unknown, message?: string | Error): void;
+  }
+}

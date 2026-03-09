@@ -8695,3 +8695,77 @@ declare namespace Bun {
     获取信息(): string;
   }
 }
+
+// Add Stream result types
+declare namespace NodeJS {
+  interface StreamResult<T> {
+    /**
+     * Result data.
+     */
+    data: T;
+    
+    /**
+     * Result bytes.
+     */
+    bytes: number;
+    
+    /**
+     * Result done flag.
+     */
+    done: boolean;
+    
+    /**
+     * Result error.
+     */
+    error?: Error;
+  }
+  
+  interface ReadStreamOptions {
+    /**
+     * HighWaterMark.
+     */
+    highWaterMark?: number;
+    
+    /**
+     * Encoding.
+     */
+    encoding?: BufferEncoding;
+    
+    /**
+     * Object mode?
+     */
+    objectMode?: boolean;
+    
+    /**
+     * Read start.
+     */
+    start?: number;
+    
+    /**
+     * Read end.
+     */
+    end?: number;
+  }
+  
+  interface WriteStreamOptions {
+    /**
+     * HighWaterMark.
+     */
+    highWaterMark?: number;
+    
+    /**
+     * DecodeStrings.
+     */
+    decodeStrings?: boolean;
+    
+    /**
+     * Default encoding.
+     */
+    defaultEncoding?: BufferEncoding;
+    
+    /**
+     * Object mode?
+     */
+    objectMode?: boolean;
+  }
+}

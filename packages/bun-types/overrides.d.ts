@@ -3284,3 +3284,80 @@ declare namespace Bun {
     readonly [Symbol.iterator]: () => IterableIterator<[string, string]>;
   }
 }
+
+// Add Request and Response types
+declare namespace Bun {
+  interface Request {
+    /**
+     * Request URL.
+     */
+    readonly url: string;
+    
+    /**
+     * Request method.
+     */
+    readonly method: string;
+    
+    /**
+     * Request headers.
+     */
+    readonly headers: Headers;
+    
+    /**
+     * Request body.
+     */
+    readonly body: ReadableStream | null;
+    
+    /**
+     * Request mode.
+     */
+    readonly mode: RequestMode;
+    
+    /**
+     * Request credentials.
+     */
+    readonly credentials: RequestCredentials;
+    
+    /**
+     * Request cache.
+     */
+    readonly cache: RequestCache;
+    
+    /**
+     * Request redirect.
+     */
+    readonly redirect: RequestRedirect;
+    
+    /**
+     * Request referrer.
+     */
+    readonly referrer: string;
+    
+    /**
+     * Request referrer policy.
+     */
+    readonly referrerPolicy: ReferrerPolicy;
+    
+    /**
+     * Clones request.
+     */
+    clone(): Request;
+  }
+  
+  interface ResponseInit {
+    /**
+     * Response status.
+     */
+    status?: number;
+    
+    /**
+     * Response status text.
+     */
+    statusText?: string;
+    
+    /**
+     * Response headers.
+     */
+    headers?: HeadersInit;
+  }
+}

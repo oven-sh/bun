@@ -5374,3 +5374,72 @@ declare namespace NodeJS {
     close(callback?: Function): void;
   }
 }
+
+// Add REPL types
+declare namespace NodeJS {
+  interface REPLServer extends EventEmitter {
+    /**
+     * REPL context.
+     */
+    readonly context: Record<string, any>;
+    
+    /**
+     * Input stream.
+     */
+    readonly inputStream: NodeJS.ReadableStream;
+    
+    /**
+     * Output stream.
+     */
+    readonly outputStream: NodeJS.WritableStream;
+    
+    /**
+     * REPL prompt.
+     */
+    prompt: string;
+    
+    /**
+     * Eval function.
+     */
+    eval: Function;
+    
+    /**
+     * Completes input.
+     */
+    complete(keyword: string): Array<{ snippet: string; type: string }>;
+    
+    /**
+     * Displays prompt.
+     */
+    displayPrompt(preserveCursor?: boolean): this;
+    
+    /**
+     * Clears context.
+     */
+    clearContext(): void;
+    
+    /**
+     * Defines command.
+     */
+    defineCommand(keyword: string, cmd: REPLCommand): void;
+  }
+  
+  interface REPLCommand {
+    /**
+     * Command help.
+     */
+    help: string;
+    
+    /**
+     * Command action.
+     */
+    action: string | Function;
+  }
+  
+  interface REPLEval {
+    /**
+     * Evaluates code.
+     */
+    (code: string, context: Record<string, any>, file: string, cb: Function): any;
+  }
+}

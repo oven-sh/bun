@@ -4094,3 +4094,60 @@ declare namespace NodeJS {
   
   type BufferEncoding = 'ascii' | 'base64' | 'base64url' | 'hex' | 'utf8' | 'utf-8' | 'binary' | 'ucs2' | 'ucs-2' | 'utf16le' | 'utf-16le';
 }
+
+// Add ERRORS and domain types
+declare namespace NodeJS {
+  interface ErrnoException extends Error {
+    /**
+     * Error code.
+     */
+    code?: string;
+    
+    /**
+     * Error number.
+     */
+    errno?: number;
+    
+    /**
+     * System call.
+     */
+    syscall?: string;
+    
+    /**
+     * Path.
+     */
+    path?: string;
+    
+    /**
+     * Destination path.
+     */
+    dest?: string;
+  }
+  
+  interface Domain extends EventEmitter {
+    /**
+     * Runs code in domain context.
+     */
+    run(fn: Function): void;
+    
+    /**
+     * Adds member to domain.
+     */
+    add(emitter: EventEmitter): void;
+    
+    /**
+     * Removes member from domain.
+     */
+    remove(emitter: EventEmitter): void;
+    
+    /**
+     * Binds to domain.
+     */
+    bind(emitter: EventEmitter): void;
+    
+    /**
+     * Domain members.
+     */
+    members: Array<EventEmitter>;
+  }
+}

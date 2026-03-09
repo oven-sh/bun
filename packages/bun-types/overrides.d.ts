@@ -672,3 +672,20 @@ declare namespace Bun {
     success: boolean;
   }
 }
+
+// Add TOML configuration types
+declare namespace Bun {
+  interface TOML {
+    /**
+     * Loads a TOML file and returns the parsed object.
+     * @param path - Path to the TOML file
+     */
+    load(path: string | PathLike): Promise<Record<string, any>>;
+    
+    /**
+     * Synchronously loads a TOML file.
+     * @param path - Path to the TOML file
+     */
+    loadSync(path: string | PathLike): Record<string, any>;
+  }
+}

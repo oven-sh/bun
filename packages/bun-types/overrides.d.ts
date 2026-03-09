@@ -9794,3 +9794,17 @@ declare module "node:string_decoder" {
     readonly encoding: BufferEncoding;
   }
 }
+
+// diagnostics_channel module types
+declare module "node:diagnostics_channel" {
+  import { EventEmitter } from "node:events";
+  
+  export interface Channel extends EventEmitter {
+    readonly name: string;
+    hasSubscribers(): boolean;
+    publish<T>(value: T): boolean;
+  }
+  
+  export function channel(name: string): Channel;
+  export function hasSubscribers(name: string): boolean;
+}

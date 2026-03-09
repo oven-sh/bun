@@ -1010,3 +1010,50 @@ declare namespace Bun {
     ignoreUndefined?: boolean;
   }
 }
+
+// Add Worker types
+declare namespace Bun {
+  interface WorkerOptions {
+    /**
+     * Worker type: 'js' | 'ts'
+     */
+    type?: 'js' | 'ts';
+    
+    /**
+     * Whether to use bun runtime.
+     */
+    bun?: boolean;
+    
+    /**
+     * Worker name for debugging.
+     */
+    name?: string;
+    
+    /**
+     * Whether to share the environment.
+     */
+    env?: Record<string, string>;
+  }
+  
+  interface Worker {
+    /**
+     * Sends a message to the worker.
+     */
+    postMessage(data: any): void;
+    
+    /**
+     * Terminates the worker.
+     */
+    terminate(): void;
+    
+    /**
+     * Event fired when worker sends a message.
+     */
+    onmessage: (event: { data: any }) => void;
+    
+    /**
+     * Event fired on error.
+     */
+    onerror: (error: Error) => void;
+  }
+}

@@ -1748,3 +1748,43 @@ declare namespace Bun {
     getExtension(mimeType: string): string | null;
   }
 }
+
+// Add Path utilities
+declare namespace Bun {
+  interface Path {
+    /**
+     * Joins path segments.
+     */
+    join(...paths: string[]): string;
+    
+    /**
+     * Normalizes path.
+     */
+    normalize(path: string): string;
+    
+    /**
+     * Gets directory name.
+     */
+    dirname(path: string): string;
+    
+    /**
+     * Gets base name.
+     */
+    basename(path: string, ext?: string): string;
+    
+    /**
+     * Gets file extension.
+     */
+    extname(path: string): string;
+    
+    /**
+     * Checks if path is absolute.
+     */
+    isAbsolute(path: string): boolean;
+    
+    /**
+     * Resolves path to absolute.
+     */
+    resolve(...paths: string[]): string;
+  }
+}

@@ -2277,3 +2277,53 @@ declare namespace Bun {
     readonly ignoreBOM: boolean;
   }
 }
+
+// Add Atomics types
+declare namespace Bun {
+  interface Atomics {
+    /**
+     * Adds value to array element.
+     */
+    add(typedArray: ArrayBufferView, index: number, value: number): number;
+    
+    /**
+     * Subtracts value from array element.
+     */
+    sub(typedArray: ArrayBufferView, index: number, value: number): number;
+    
+    /**
+     * Performs bitwise AND.
+     */
+    and(typedArray: ArrayBufferView, index: number, value: number): number;
+    
+    /**
+     * Performs bitwise OR.
+     */
+    or(typedArray: ArrayBufferView, index: number, value: number): number;
+    
+    /**
+     * Performs bitwise XOR.
+     */
+    xor(typedArray: ArrayBufferView, index: number, value: number): number;
+    
+    /**
+     * Compares and exchanges value.
+     */
+    compareExchange(typedArray: ArrayBufferView, index: number, expectedValue: number, replacementValue: number): number;
+    
+    /**
+     * Exchanges value.
+     */
+    exchange(typedArray: ArrayBufferView, index: number, value: number): number;
+    
+    /**
+     * Waits for value to change.
+     */
+    wait(typedArray: ArrayBufferView, index: number, value: number, timeout?: number): 'ok' | 'not-equal' | 'timed-out';
+    
+    /**
+     * Wakes up waiting agent.
+     */
+    notify(typedArray: ArrayBufferView, index: number, count?: number): number;
+  }
+}

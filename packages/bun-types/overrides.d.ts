@@ -3361,3 +3361,83 @@ declare namespace Bun {
     headers?: HeadersInit;
   }
 }
+
+// Add WebSocket types
+declare namespace Bun {
+  interface WebSocket {
+    /**
+     * WebSocket URL.
+     */
+    readonly url: string;
+    
+    /**
+     * Connection state.
+     */
+    readonly readyState: number;
+    
+    /**
+     * CONNECTING = 0
+     */
+    readonly CONNECTING: 0;
+    
+    /**
+     * OPEN = 1
+     */
+    readonly OPEN: 1;
+    
+    /**
+     * CLOSING = 2
+     */
+    readonly CLOSING: 2;
+    
+    /**
+     * CLOSED = 3
+     */
+    readonly CLOSED: 3;
+    
+    /**
+     * Buffered amount.
+     */
+    readonly bufferedAmount: number;
+    
+    /**
+     * Extensions.
+     */
+    readonly extensions: string;
+    
+    /**
+     * Protocol.
+     */
+    readonly protocol: string;
+    
+    /**
+     * Sends data.
+     */
+    send(data: string | Buffer | ArrayBuffer): void;
+    
+    /**
+     * Closes connection.
+     */
+    close(code?: number, reason?: string): void;
+    
+    /**
+     * Event: onopen.
+     */
+    onopen: ((this: WebSocket, ev: Event) => any) | null;
+    
+    /**
+     * Event: onmessage.
+     */
+    onmessage: ((this: WebSocket, ev: MessageEvent) => any) | null;
+    
+    /**
+     * Event: onerror.
+     */
+    onerror: ((this: WebSocket, ev: Event) => any) | null;
+    
+    /**
+     * Event: onclose.
+     */
+    onclose: ((this: WebSocket, ev: CloseEvent) => any) | null;
+  }
+}

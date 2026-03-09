@@ -11452,3 +11452,41 @@ declare global {
   
   type MessageEventSource = Window | MessagePort;
 }
+
+// Web API: CloseEvent additional types
+declare global {
+  interface CloseEvent extends Event {
+    readonly code: number;
+    readonly reason: string;
+    readonly wasClean: boolean;
+  }
+  
+  var CloseEvent: {
+    prototype: CloseEvent;
+    new(type: string, eventInitDict?: CloseEventInit): CloseEvent;
+  };
+  
+  interface CloseEventInit extends EventInit {
+    code?: number;
+    reason?: string;
+    wasClean?: boolean;
+  }
+  
+  interface ProgressEvent<T = any> extends Event {
+    readonly lengthComputable: boolean;
+    readonly loaded: number;
+    readonly total: number;
+    readonly target: T;
+  }
+  
+  var ProgressEvent: {
+    prototype: ProgressEvent;
+    new<T = any>(type: string, eventInitDict?: ProgressEventInit<T>): ProgressEvent<T>;
+  };
+  
+  interface ProgressEventInit<T = any> extends EventInit {
+    lengthComputable?: boolean;
+    loaded?: number;
+    total?: number;
+  }
+}

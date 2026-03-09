@@ -761,3 +761,70 @@ declare namespace Bun {
     publish(topic: string, data: string | Buffer): void;
   }
 }
+
+// Add Build and bundler types
+declare namespace Bun {
+  interface BuildOptions {
+    /**
+     * Entry point(s) for the build.
+     */
+    entrypoints: string | string[] | Record<string, string>;
+    
+    /**
+     * Output directory.
+     */
+    outdir?: string;
+    
+    /**
+     * Target name.
+     */
+    name?: string;
+    
+    /**
+     * Bundle format: 'esm' | 'cjs' | 'iife'
+     */
+    format?: 'esm' | 'cjs' | 'iife';
+    
+    /**
+     * Target platform: 'browser' | 'node' | 'bun'
+     */
+    target?: 'browser' | 'node' | 'bun';
+    
+    /**
+     * Whether to minify output.
+     */
+    minify?: boolean;
+    
+    /**
+     * Whether to generate source maps.
+     */
+    sourcemap?: boolean | 'inline' | 'external';
+    
+    /**
+     * External modules to exclude from bundle.
+     */
+    external?: string[];
+    
+    /**
+     * Plugins to use during build.
+     */
+    plugins?: any[];
+  }
+  
+  interface BuildOutput {
+    /**
+     * Path to the output file.
+     */
+    path: string;
+    
+    /**
+     * Output file contents.
+     */
+    outputs: Record<string, { size: number; hash: string }>;
+    
+    /**
+     * Build metadata.
+     */
+    meta: Record<string, any>;
+  }
+}

@@ -14971,3 +14971,14 @@ declare global {
   function atob(data: string): string;
   function btoa(data: string): string;
 }
+
+// timer additional types
+declare global {
+  function setTimeout(handler: TimerHandler, timeout?: number, ...arguments: any[]): number;
+  function setInterval(handler: TimerHandler, timeout?: number, ...arguments: any[]): number;
+  function clearTimeout(timeoutId: number): void;
+  function clearInterval(intervalId: number): void;
+  function queueMicrotask(callback: Function): void;
+  
+  type TimerHandler = string | Function;
+}

@@ -477,3 +477,14 @@ declare namespace Bun {
     (args: string[], context: { cwd: string }): string[];
   }
 }
+
+// Add Date header to Response type
+declare global {
+  interface Response {
+    /**
+     * Gets the Date header value.
+     * Returns the date string or null if not set.
+     */
+    get date(): string | null;
+  }
+}

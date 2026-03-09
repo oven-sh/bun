@@ -15183,3 +15183,42 @@ declare global {
     values(): IterableIterator<T>;
   }
 }
+
+// Map/Set additional types
+declare global {
+  interface MapConstructor {
+    new(): Map<any, any>;
+    new<K, V>(entries?: readonly (readonly [K, V])[] | null): Map<K, V>;
+  }
+  interface Map<K, V> {
+    readonly size: number;
+    clear(): void;
+    delete(key: K): boolean;
+    forEach(callbackfn: (value: V, key: K, map: Map<K, V>) => void, thisArg?: any): void;
+    get(key: K): V | undefined;
+    has(key: K): boolean;
+    set(key: K, value: V): this;
+    entries(): IterableIterator<[K, V]>;
+    keys(): IterableIterator<K>;
+    values(): IterableIterator<V>;
+    [Symbol.iterator](): IterableIterator<[K, V]>;
+  }
+  interface SetConstructor {
+    new(): Set<any>;
+    new<T>(values?: readonly T[] | null): Set<T>;
+  }
+  interface Set<T> {
+    readonly size: number;
+    add(value: T): this;
+    clear(): void;
+    delete(value: T): boolean;
+    forEach(callbackfn: (value: T, value2: T, set: Set<T>) => void, thisArg?: any): void;
+    has(value: T): boolean;
+    entries(): IterableIterator<[T, T]>;
+    keys(): IterableIterator<T>;
+    values(): IterableIterator<T>;
+    [Symbol.iterator](): IterableIterator<T>;
+  }
+  var Map: MapConstructor;
+  var Set: SetConstructor;
+}

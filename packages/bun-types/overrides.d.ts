@@ -13105,3 +13105,43 @@ declare module "node:diagnostics_channel" {
   export function channel(name: string): Channel;
   export function hasSubscribers(name: string): boolean;
 }
+
+// async_hooks API types
+declare module "node:async_hooks" {
+  export interface AsyncResourceOptions {
+    triggerAsyncId?: number;
+    requireManualDestroy?: boolean;
+  }
+  
+  export interface HookCallbacks {
+    init(asyncId: number, type: string, triggerAsyncId: number, resource: object): void;
+    before(asyncId: number): void;
+    after(asyncId: number): void;
+    destroy(asyncId: number): void;
+    promiseResolve(asyncId: number): void;
+  }
+  
+  export interface AsyncHook {
+    enable(): this;
+    disable(): this;
+  }
+  
+  export class AsyncResource {
+    constructor(type: string, options?: AsyncResourceOptions);
+    readonly asyncId: number;
+    readonly triggerAsyncId: number;
+    emitBefore(asyncId: number, type: string, triggerAsyncId: number): void;
+    emitAfter(asyncId: number): void;
+    emitDestroy(): void;
+    asyncId(): number;
+    triggerAsyncId(): number;
+    runInAsyncScope<This, Result>(fn: (this: This) => Result, thisArg?: This, ...args: any[]): Result;
+    runInAsyncScope<This, Result>(fn: (this: This, ...args: any[]) => Result, thisArg?: This, ...args: any[]): Result;
+    bindToCurrentContext(): this;
+  }
+  
+  export function createHook(callbacks: HookCallbacks): AsyncHook;
+  export function executionAsyncResource(): object;
+  export function executionAsyncId(): number;
+  export function triggerAsyncId(): number;
+}

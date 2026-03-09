@@ -3538,3 +3538,42 @@ declare namespace Bun {
     readonly state: any;
   }
 }
+
+// Add additional Node.js global types
+declare namespace NodeJS {
+  interface ProcessEnv {
+    /**
+     * NODE_ENV environment variable.
+     */
+    NODE_ENV?: 'development' | 'production' | 'test';
+    
+    /**
+     * BUN_DEBUG environment variable.
+     */
+    BUN_DEBUG?: '1' | '0';
+    
+    /**
+     * TZ (timezone) environment variable.
+     */
+    TZ?: string;
+  }
+  
+  interface Timeout extends Timer {
+    /**
+     * Refreshest timer.
+     */
+    refresh(): this;
+    
+    /**
+     * Gets timer value.
+     */
+    [Symbol.toPrimitive](): number;
+  }
+  
+  interface Immediate extends Timer {
+    /**
+     * Clears immediate.
+     */
+    _onImmediate: Function;
+  }
+}

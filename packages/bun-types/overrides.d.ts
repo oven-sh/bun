@@ -9779,3 +9779,18 @@ declare module "node:events" {
   export function getMaxListeners(emitter: EventEmitter | DOMEventTarget): number;
   export function listenerCount(emitter: EventEmitter, eventName: string | symbol): number;
 }
+
+// string_decoder module types
+declare module "node:string_decoder" {
+  export interface StringDecoderOptions {
+    encoding?: BufferEncoding;
+  }
+  
+  export class StringDecoder {
+    constructor(encoding?: BufferEncoding);
+    constructor(options?: StringDecoderOptions);
+    write(buffer: Buffer): string;
+    end(buffer?: Buffer): string;
+    readonly encoding: BufferEncoding;
+  }
+}

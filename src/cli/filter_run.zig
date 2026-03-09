@@ -484,7 +484,7 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
 
         for (&[3][]const u8{ pre_script_name, script_name, post_script_name }, 0..) |name, i| {
             const original_content = pkgscripts.get(name) orelse {
-                if (i == 1 and ctx.workspaces and !ctx.if_present) {
+                if (i == 1 and ctx.workspaces and !ctx.if_present and !ctx.affected) {
                     Output.errGeneric("Missing '{s}' script at '{s}'", .{ script_name, path });
                     Global.exit(1);
                 }

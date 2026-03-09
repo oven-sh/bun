@@ -1234,3 +1234,108 @@ test("runs lifecycle scripts correctly", async () => {
   expect(lifecyclePostinstallDir).toEqual(["lifecycle-postinstall"]);
   expect(allLifecycleScriptsDir).toEqual(["all-lifecycle-scripts"]);
 });
+
+describe("warm installs in monorepo", () => {
+  test("warm install with workspaces and shared transitive dependencies does not hang", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "monorepo-warm-install",
+          workspaces: ["packages/*"],
+          dependencies: {
+            "no-deps": "1.0.0",
+          },
+        }),
+        "packages/pkg-a/package.json": JSON.stringify({
+          name: "pkg-a",
+          version: "1.0.0",
+          dependencies: {
+            "a-dep": "1.0.1",
+            "no-deps": "1.0.0",
+            "pkg-b": "workspace:*",
+          },
+        }),
+        "packages/pkg-b/package.json": JSON.stringify({
+          name: "pkg-b",
+          version: "1.0.0",
+          dependencies: {
+            "b-dep-a": "1.0.0",
+            "no-deps": "1.0.0",
+          },
+        }),
+      },
+    });
+
+    // Cold install (no lockfile, no node_modules)
+    await runBunInstall(bunEnv, packageDir);
+
+    // Verify structure after cold install
+    expect(existsSync(join(packageDir, "bun.lock"))).toBeTrue();
+    expect(existsSync(join(packageDir, "node_modules", ".bun"))).toBeTrue();
+    expect(readlinkSync(join(packageDir, "node_modules", "no-deps"))).toBe(
+      join(".bun", "no-deps@1.0.0", "node_modules", "no-deps"),
+    );
+
+    // Warm install (with lockfile and node_modules) - this is the scenario that could hang
+    await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+
+    // Verify structure is still correct after warm install
+    expect(readlinkSync(join(packageDir, "node_modules", "no-deps"))).toBe(
+      join(".bun", "no-deps@1.0.0", "node_modules", "no-deps"),
+    );
+    expect(existsSync(join(packageDir, "packages", "pkg-a", "node_modules", "a-dep"))).toBeTrue();
+    expect(existsSync(join(packageDir, "packages", "pkg-a", "node_modules", "pkg-b"))).toBeTrue();
+    expect(existsSync(join(packageDir, "packages", "pkg-b", "node_modules", "b-dep-a"))).toBeTrue();
+
+    // Third install (fully warm) to double-check stability
+    await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+
+    expect(readlinkSync(join(packageDir, "node_modules", "no-deps"))).toBe(
+      join(".bun", "no-deps@1.0.0", "node_modules", "no-deps"),
+    );
+  });
+
+  test("warm install after removing node_modules preserves correct dependency tree", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "monorepo-warm-reinstall",
+          workspaces: ["packages/*"],
+        }),
+        "packages/pkg-a/package.json": JSON.stringify({
+          name: "pkg-a",
+          version: "1.0.0",
+          dependencies: {
+            "a-dep": "1.0.1",
+          },
+        }),
+        "packages/pkg-b/package.json": JSON.stringify({
+          name: "pkg-b",
+          version: "1.0.0",
+          dependencies: {
+            "b-dep-a": "1.0.0",
+          },
+        }),
+      },
+    });
+
+    // Cold install
+    await runBunInstall(bunEnv, packageDir);
+
+    const bunDir = await readdirSorted(join(packageDir, "node_modules", ".bun"));
+
+    // Remove node_modules but keep lockfile (warm with lockfile only)
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    await rm(join(packageDir, "packages", "pkg-a", "node_modules"), { recursive: true, force: true });
+    await rm(join(packageDir, "packages", "pkg-b", "node_modules"), { recursive: true, force: true });
+
+    await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+
+    // Verify the dependency tree is identical
+    expect(await readdirSorted(join(packageDir, "node_modules", ".bun"))).toEqual(bunDir);
+    expect(existsSync(join(packageDir, "packages", "pkg-a", "node_modules", "a-dep"))).toBeTrue();
+    expect(existsSync(join(packageDir, "packages", "pkg-b", "node_modules", "b-dep-a"))).toBeTrue();
+  });
+});

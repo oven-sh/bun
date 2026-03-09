@@ -3878,3 +3878,165 @@ declare namespace NodeJS {
   
   interface PassThrough extends TransformStream {}
 }
+
+// Add FileHandle and File system types
+declare namespace NodeJS {
+  interface FileHandle {
+    /**
+     * File descriptor.
+     */
+    readonly fd: number;
+    
+    /**
+     * Reads file.
+     */
+    read(buffer: Buffer, offset?: number, length?: number, position?: number): Promise<{ bytesRead: number; buffer: Buffer }>;
+    
+    /**
+     * Writes file.
+     */
+    write(buffer: Buffer, offset?: number, length?: number, position?: number): Promise<{ bytesWritten: number; buffer: Buffer }>;
+    
+    /**
+     * Gets file stats.
+     */
+    stat(): Promise<Stats>;
+    
+    /**
+     * Truncates file.
+     */
+    truncate(len?: number): Promise<void>;
+    
+    /**
+     * Closes file handle.
+     */
+    close(): Promise<void>;
+  }
+  
+  interface Stats {
+    /**
+     * Is directory?
+     */
+    isDirectory(): boolean;
+    
+    /**
+     * Is file?
+     */
+    isFile(): boolean;
+    
+    /**
+     * Is symbolic link?
+     */
+    isSymbolicLink(): boolean;
+    
+    /**
+     * Is block device?
+     */
+    isBlockDevice(): boolean;
+    
+    /**
+     * Is character device?
+     */
+    isCharacterDevice(): boolean;
+    
+    /**
+     * Is FIFO?
+     */
+    isFIFO(): boolean;
+    
+    /**
+     * Is socket?
+     */
+    isSocket(): boolean;
+    
+    /**
+     * Device ID.
+     */
+    dev: number;
+    
+    /**
+     * Inode number.
+     */
+    ino: number;
+    
+    /**
+     * Mode.
+     */
+    mode: number;
+    
+    /**
+     * Number of hard links.
+     */
+    nlink: number;
+    
+    /**
+     * User ID.
+     */
+    uid: number;
+    
+    /**
+     * Group ID.
+     */
+    gid: number;
+    
+    /**
+     * Device ID (if special file).
+     */
+    rdev: number;
+    
+    /**
+     * Size in bytes.
+     */
+    size: number;
+    
+    /**
+     * Block size for I/O.
+     */
+    blksize: number;
+    
+    /**
+     * Number of 512-byte blocks allocated.
+     */
+    blocks: number;
+    
+    /**
+     * Last access time.
+     */
+    atimeMs: number;
+    
+    /**
+     * Last modification time.
+     */
+    mtimeMs: number;
+    
+    /**
+     * Last change time.
+     */
+    ctimeMs: number;
+    
+    /**
+     * Birth time.
+     */
+    birthtimeMs: number;
+    
+    /**
+     * Last access time Date.
+     */
+    atime: Date;
+    
+    /**
+     * Last modification time Date.
+     */
+    mtime: Date;
+    
+    /**
+     * Last change time Date.
+     */
+    ctime: Date;
+    
+    /**
+     * Birth time Date.
+     */
+    birthtime: Date;
+  }
+}

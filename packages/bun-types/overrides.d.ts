@@ -11181,3 +11181,32 @@ declare global {
     (chunk: W, controller: WritableStreamDefaultController): Promise<void> | void;
   }
 }
+
+// Web API: TransformStream additional types
+declare global {
+  interface TransformStreamDefaultController<O> {
+    readonly desiredSize: number | null;
+    enqueue(chunk: O): void;
+    error(reason?: any): void;
+    terminate(): void;
+  }
+  
+  interface Transformer<I = any, O = any> {
+    start?: TransformerStartCallback<O>;
+    transform?: TransformerTransformCallback<I, O>;
+    flush?: TransformerFlushCallback<O>;
+    readableType?: any;
+    writableType?: any;
+  }
+  
+  type TransformerStartCallback<O> = (controller: TransformStreamDefaultController<O>) => void | PromiseLike<void>;
+  
+  type TransformerTransformCallback<I, O> = (chunk: I, controller: TransformStreamDefaultController<O>) => void | PromiseLike<void>;
+  
+  type TransformerFlushCallback<O> = (controller: TransformStreamDefaultController<O>) => void | PromiseLike<void>;
+  
+  interface TransformStreamI<I = any, O = any> {
+    readonly readable: ReadableStream<O>;
+    readonly writable: WritableStream<I>;
+  }
+}

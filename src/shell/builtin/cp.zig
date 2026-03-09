@@ -249,9 +249,17 @@ pub fn printShellCpTask(this: *Cp, task: *ShellCpTask) Yield {
         .state = .waiting_write_err,
     });
     if (bun.take(&task.err)) |err| {
-        this.state.exec.err = err;
-        const error_string = this.bltn().taskErrorToString(.cp, this.state.exec.err.?);
-        return output_task.start(error_string);
+        if (this.state == .exec) {
+            this.state.exec.err = err;
+            const error_string = this.bltn().taskErrorToString(.cp, this.state.exec.err.?);
+            return output_task.start(error_string);
+        } else {
+            var e = err;
+            defer e.deinit(bun.default_allocator);
+            this.state.ebusy.main_exit_code = 1;
+            const error_string = this.bltn().taskErrorToString(.cp, e);
+            return output_task.start(error_string);
+        }
     }
     return output_task.start(null);
 }
@@ -266,7 +274,7 @@ pub const ShellCpOutputTask = OutputTask(Cp, .{
 
 const ShellCpOutputTaskVTable = struct {
     pub fn writeErr(this: *Cp, childptr: anytype, errbuf: []const u8) ?Yield {
-        this.state.exec.output_waiting += 1;
+        if (this.state == .exec) this.state.exec.output_waiting += 1;
         if (this.bltn().stderr.needsIO()) |safeguard| {
             return this.bltn().stderr.enqueue(childptr, errbuf, safeguard);
         }
@@ -275,11 +283,11 @@ const ShellCpOutputTaskVTable = struct {
     }
 
     pub fn onWriteErr(this: *Cp) void {
-        this.state.exec.output_done += 1;
+        if (this.state == .exec) this.state.exec.output_done += 1;
     }
 
     pub fn writeOut(this: *Cp, childptr: anytype, output: *OutputSrc) ?Yield {
-        this.state.exec.output_waiting += 1;
+        if (this.state == .exec) this.state.exec.output_waiting += 1;
         if (this.bltn().stdout.needsIO()) |safeguard| {
             return this.bltn().stdout.enqueue(childptr, output.slice(), safeguard);
         }
@@ -288,7 +296,7 @@ const ShellCpOutputTaskVTable = struct {
     }
 
     pub fn onWriteOut(this: *Cp) void {
-        this.state.exec.output_done += 1;
+        if (this.state == .exec) this.state.exec.output_done += 1;
     }
 
     pub fn onDone(this: *Cp) Yield {

@@ -1156,3 +1156,52 @@ declare namespace Bun {
     end(): void;
   }
 }
+
+// Add Stream types
+declare namespace Bun {
+  interface ReadableStream {
+    /**
+     * Reads from stream.
+     */
+    read(): Promise<IteratorResult<any>>;
+    
+    /**
+     * Pipes stream to destination.
+     */
+    pipe(destination: WritableStream): void;
+    
+    /**
+     * Cancels the stream.
+     */
+    cancel(): Promise<void>;
+    
+    /**
+     * Locks the stream.
+     */
+    lock(): void;
+    
+    /**
+     * Unlocks the stream.
+     */
+    unlock(): void;
+  }
+  
+  interface WritableStream {
+    /**
+     * Writes to stream.
+     */
+    write(chunk: any): Promise<void>;
+    
+    /**
+     * Closes the stream.
+     */
+    close(): Promise<void>;
+    
+    /**
+     * Aborts the stream.
+     */
+    abort(reason?: any): Promise<void>;
+  }
+  
+  interface TransformStream extends ReadableStream, WritableStream {}
+}

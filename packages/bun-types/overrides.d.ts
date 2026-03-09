@@ -13046,3 +13046,23 @@ declare global {
         };
     }
 }
+
+// BOM types
+declare global {
+    const COM: any;
+    const JAVA: any;
+    const SYSTEM: any;
+    const SUN: any;
+    const CLASS: any;
+    const COUNTER: any;
+    const DEBUG: any;
+    const ERRNO: any;
+    const FLAG: any;
+    const FRAMES: any;
+    const STACK: any;
+    const LOAD: any;
+    const NATIVE: any;
+    const OP: any;
+    const PROP: any;
+    const TAG: any;
+}

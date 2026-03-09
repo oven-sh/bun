@@ -8856,3 +8856,23 @@ declare namespace NodeJS {
     SIGSTOP: number;
   }
 }
+
+// Add Buffer constants types
+declare namespace NodeJS {
+  interface BufferConstants {
+    /**
+     * Buffer constants.
+     */
+    readonly MAX_LENGTH: number;
+    
+    /**
+     * Max string length.
+     */
+    readonly MAX_STRING_LENGTH: number;
+    
+    /**
+     * Buffer pool size.
+     */
+    readonly BUFFER_POOL_SIZE: number;
+  }
+}

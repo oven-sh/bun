@@ -4872,3 +4872,110 @@ declare namespace NodeJS {
     hasHeader(name: string): boolean;
   }
 }
+
+// Add HTTP Server and Agent types
+declare namespace NodeJS {
+  interface HttpServer extends EventEmitter {
+    /**
+     * Server listening?
+     */
+    readonly listening: boolean;
+    
+    /**
+     * Max connections.
+     */
+    maxConnections: number;
+    
+    /**
+     * Connections count.
+     */
+    connections: number;
+    
+    /**
+     * Timeout.
+     */
+    timeout: number;
+    
+    /**
+     * Keep alive timeout.
+     */
+    keepAliveTimeout: number;
+    
+    /**
+     * Headers timeout.
+     */
+    headersTimeout: number;
+    
+    /**
+     * Listens on port.
+     */
+    listen(port?: number, hostname?: string, backlog?: number, callback?: Function): this;
+    
+    /**
+     * Closes server.
+     */
+    close(callback?: Function): this;
+    
+    /**
+     * Refs server.
+     */
+    ref(): this;
+    
+    /**
+     * Unrefs server.
+     */
+    unref(): this;
+    
+    /**
+     * Event: request.
+     */
+    on(event: 'request', listener: (req: IncomingMessage, res: ServerResponse) => void): this;
+    
+    /**
+     * Event: connection.
+     */
+    on(event: 'connection', listener: (socket: Socket) => void): this;
+    
+    /**
+     * Event: close.
+     */
+    on(event: 'close', listener: () => void): this;
+    
+    /**
+     * Event: error.
+     */
+    on(event: 'error', listener: (err: Error) => void): this;
+  }
+  
+  interface Agent {
+    /**
+     * Max sockets.
+     */
+    maxSockets: number;
+    
+    /**
+     * Max free sockets.
+     */
+    maxFreeSockets: number;
+    
+    /**
+     * Free sockets.
+     */
+    readonly freeSockets: number;
+    
+    /**
+     * Sockets count.
+     */
+    readonly sockets: number;
+    
+    /**
+     * Requests count.
+     */
+    readonly requests: number;
+    
+    /**
+     * Destroys agent.
+     */
+    destroy(): void;
+  }
+}

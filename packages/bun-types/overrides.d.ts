@@ -1510,3 +1510,38 @@ declare namespace Bun {
     colorize?: boolean;
   }
 }
+
+// Add Event Emitter types
+declare namespace Bun {
+  interface EventEmitter {
+    /**
+     * Adds event listener.
+     */
+    on(event: string, listener: (...args: any[]) => void): this;
+    
+    /**
+     * Adds one-time event listener.
+     */
+    once(event: string, listener: (...args: any[]) => void): this;
+    
+    /**
+     * Removes event listener.
+     */
+    off(event: string, listener: (...args: any[]) => void): this;
+    
+    /**
+     * Emits event.
+     */
+    emit(event: string, ...args: any[]): boolean;
+    
+    /**
+     * Removes all listeners.
+     */
+    removeAllListeners(event?: string): this;
+    
+    /**
+     * Gets listener count.
+     */
+    listenerCount(event: string): number;
+  }
+}

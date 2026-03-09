@@ -6536,3 +6536,80 @@ declare namespace NodeJS {
     fetch(input: string | URL, init?: RequestInit): Promise<Response>;
   }
 }
+
+// Add Assert types
+declare namespace NodeJS {
+  interface AssertionError extends Error {
+    /**
+     * Expected value.
+     */
+    expected: any;
+    
+    /**
+     * Actual value.
+     */
+    actual: any;
+    
+    /**
+     * Operator.
+     */
+    operator: string;
+    
+    /**
+     * Generated message.
+     */
+    generatedMessage: string;
+  }
+  
+  interface Assert {
+    /**
+     * Asserts value is truthy.
+     */
+    (value: any, message?: string | Error): asserts value;
+    
+    /**
+     * Asserts deep equality.
+     */
+    deepStrictEqual(actual: any, expected: any, message?: string | Error): void;
+    
+    /**
+     * Asserts not deep equality.
+     */
+    notDeepStrictEqual(actual: any, expected: any, message?: string | Error): void;
+    
+    /**
+     * Asserts strict equality.
+     */
+    strictEqual(actual: any, expected: any, message?: string | Error): void;
+    
+    /**
+     * Asserts not strict equality.
+     */
+    notStrictEqual(actual: any, expected: any, message?: string | Error): void;
+    
+    /**
+     * Asserts throws.
+     */
+    throws(block: Function, error?: Function | Error | RegExp, message?: string | Error): void;
+    
+    /**
+     * Asserts rejects.
+     */
+    rejects(block: Function | Promise<any>, error?: Function | Error | RegExp, message?: string | Error): Promise<void>;
+    
+    /**
+     * Asserts fails.
+     */
+    fail(message?: string | Error): void;
+    
+    /**
+     * Asserts match.
+     */
+    match(value: string, regexp: RegExp, message?: string | Error): void;
+    
+    /**
+     * Asserts not match.
+     */
+    doesNotMatch(value: string, regexp: RegExp, message?: string | Error): void;
+  }
+}

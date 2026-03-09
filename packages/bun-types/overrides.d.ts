@@ -13305,3 +13305,20 @@ declare module "node:stream/consumers" {
   export function arrayBuffer(stream: NodeJS.ReadableStream): Promise<ArrayBuffer>;
   export function json(stream: NodeJS.ReadableStream): Promise<any>;
 }
+
+// stream/promises API types
+declare module "node:stream/promises" {
+  export interface FinishedOptions {
+    error?: boolean;
+    readable?: boolean;
+    writable?: boolean;
+  }
+  
+  export interface PipelineOptions {
+    end?: boolean;
+    signal?: AbortSignal;
+  }
+  
+  export function finished(stream: NodeJS.ReadableStream | NodeJS.WritableStream | NodeJS.ReadWriteStream, options?: FinishedOptions): Promise<void>;
+  export function pipeline(...streams: Array<NodeJS.ReadableStream | NodeJS.WritableStream | any>): Promise<any>;
+}

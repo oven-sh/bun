@@ -5443,3 +5443,90 @@ declare namespace NodeJS {
     (code: string, context: Record<string, any>, file: string, cb: Function): any;
   }
 }
+
+// Add TLS/SSL types
+declare namespace NodeJS {
+  interface TlsOptions {
+    /**
+     * Private key.
+     */
+    key?: string | Buffer | Array<Buffer | string>;
+    
+    /**
+     * Certificate.
+     */
+    cert?: string | Buffer | Array<string | Buffer>;
+    
+    /**
+     * CA certificates.
+     */
+    ca?: string | Buffer | Array<string | Buffer>;
+    
+    /**
+     * CRL (Certificate Revocation List).
+     */
+    crl?: string | Buffer | Array<string | Buffer>;
+    
+    /**
+     * Passphrase.
+     */
+    passphrase?: string;
+    
+    /**
+     * PFX certificate.
+     */
+    pfx?: string | Buffer;
+    
+    /**
+     * PFX passphrase.
+     */
+    passphrasePFX?: string;
+    
+    /**
+     * Servername.
+     */
+    servername?: string;
+    
+    /**
+     * Check server identity?
+     */
+    checkServerIdentity?: (servername: string, cert: any) => boolean;
+    
+    /**
+     * Min DH size.
+     */
+    minDHSize?: number;
+    
+    /**
+     * Reject unauthorized?
+     */
+    rejectUnauthorized?: boolean;
+    
+    /**
+     * ALPN protocols.
+     */
+    ALPNProtocols?: string[];
+    
+    /**
+     * SNICallback.
+     */
+    SNICallback?: (servername: string) => any;
+    
+    /**
+     * Session timeout.
+     */
+    sessionTimeout?: number;
+  }
+  
+  interface SecureContext extends EventEmitter {
+    /**
+     * Closes context.
+     */
+    close(callback?: Function): void;
+    
+    /**
+     * Initializes context.
+     */
+    init(): void;
+  }
+}

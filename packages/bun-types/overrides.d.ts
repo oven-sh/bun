@@ -464,3 +464,16 @@ declare module "bun:test" {
     describe(fn: (this: Test) => void, callback?: (this: Test) => void): void;
   }
 }
+
+// Add shell completion types
+declare namespace Bun {
+  interface ShellCompletionResolver {
+    /**
+     * Provides shell completions for a command.
+     * @param args - Command arguments
+     * @param context - Completion context
+     * @returns Array of completion options
+     */
+    (args: string[], context: { cwd: string }): string[];
+  }
+}

@@ -424,6 +424,61 @@ pub const CreateCommand = struct {
                     Global.exit(1);
                 };
 
+                if (!create_options.overwrite) {
+                    // Check if destination directory exists and contains files that would conflict
+                    if (std.fs.openDirAbsolute(destination, .{ .iterate = true })) |dest_dir_| {
+                        var dest_dir = dest_dir_;
+                        defer dest_dir.close();
+
+                        const Walker = @import("../walker_skippable.zig");
+                        var template_walker = try Walker.walk(.fromStdDir(template_dir), ctx.allocator, skip_files, skip_dirs);
+                        defer template_walker.deinit();
+
+                        var conflicting_files = bun.StringArrayHashMap(void).init(ctx.allocator);
+                        defer conflicting_files.deinit();
+
+                        while (try template_walker.next().unwrap()) |entry| {
+                            if (entry.kind != .file) continue;
+
+                            // Skip files that never conflict
+                            var dominated = false;
+                            inline for (never_conflict) |never_conflict_path| {
+                                if (strings.eqlComptime(entry.path, never_conflict_path)) {
+                                    dominated = true;
+                                }
+                            }
+                            if (dominated) continue;
+
+                            if (dest_dir.statFile(entry.path)) |_| {
+                                conflicting_files.put(entry.path, {}) catch {};
+                            } else |_| {}
+                        }
+
+                        if (conflicting_files.count() > 0) {
+                            node.end();
+                            progress.refresh();
+
+                            Output.prettyErrorln(
+                                "<r>\n<red>error<r><d>: <r>The directory <b><blue>{s}<r>/ contains files that could conflict:\n\n",
+                                .{
+                                    std.fs.path.basename(destination),
+                                },
+                            );
+                            for (conflicting_files.keys()) |path| {
+                                if (strings.endsWith(path, std.fs.path.sep_str)) {
+                                    Output.prettyError("<r>  <blue>{s}<r>", .{path[0 .. @max(path.len, 1) - 1]});
+                                    Output.prettyErrorln(std.fs.path.sep_str, .{});
+                                } else {
+                                    Output.prettyErrorln("<r>  {s}", .{path});
+                                }
+                            }
+
+                            Output.prettyErrorln("<r>\n<d>To create {s} anyway, use --force<r>", .{template});
+                            Global.exit(1);
+                        }
+                    } else |_| {}
+                }
+
                 std.fs.deleteTreeAbsolute(destination) catch {};
                 const destination_dir__ = std.fs.cwd().makeOpenPath(destination, .{}) catch |err| {
                     node.end();

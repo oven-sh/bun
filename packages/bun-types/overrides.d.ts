@@ -9407,3 +9407,53 @@ declare module "node:stream/consumers" {
   export function arrayBuffer(stream: NodeJS.ReadableStream): Promise<ArrayBuffer>;
   export function json(stream: NodeJS.ReadableStream): Promise<any>;
 }
+
+// stream/web additional types
+declare module "node:stream/web" {
+  export interface ReadableStreamGenericTransform {
+    writable: any;
+    readable: any;
+  }
+  
+  export interface ReadableWritablePair<R = any, W = any> {
+    readable: ReadableStream<R>;
+    writable: WritableStream<W>;
+  }
+  
+  export interface StreamPipeOptions {
+    preventClose?: boolean;
+    preventAbort?: boolean;
+    preventCancel?: boolean;
+    signal?: AbortSignal;
+  }
+  
+  export interface TransformStreamI<T = any, U = any> {
+    readonly readable: ReadableStream<U>;
+    readonly writable: WritableStream<T>;
+  }
+  
+  export interface TransformStreamOptions<T = any, U = any> {
+    transform?: Transformer<T, U>;
+    flush?: TransformerFlushCallback<U>;
+    readableType?: any;
+    writableType?: any;
+  }
+  
+  export interface Transformer<T = any, U = any> {
+    start?: TransformerStartCallback<U>;
+    transform?: TransformerTransformCallback<T, U>;
+    flush?: TransformerFlushCallback<U>;
+    cancel?: TransformerCancelCallback;
+  }
+  
+  export type TransformerStartCallback<O> = (controller: TransformStreamDefaultController<O>) => void | PromiseLike<void>;
+  export type TransformerTransformCallback<I, O> = (chunk: I, controller: TransformStreamDefaultController<O>) => void | PromiseLike<void>;
+  export type TransformerFlushCallback<O> = (controller: TransformStreamDefaultController<O>) => void | PromiseLike<void>;
+  export type TransformerCancelCallback = (reason: any) => void | PromiseLike<void>;
+  
+  export class TransformStream<T = any, U = any> implements TransformStreamI<T, U> {
+    constructor(transformer?: Transformer<T, U>, writableStrategy?: QueuingStrategy<U>, readableStrategy?: QueuingStrategy<T>);
+    readonly readable: ReadableStream<U>;
+    readonly writable: WritableStream<T>;
+  }
+}

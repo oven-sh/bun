@@ -2791,3 +2791,75 @@ declare namespace Bun {
     new(message?: string, options?: { cause?: unknown }): Error;
   }
 }
+
+// Add Performance API types
+declare namespace Bun {
+  interface Performance {
+    /**
+     * Gets current time in milliseconds.
+     */
+    now(): number;
+    
+    /**
+     * Measures time from mark.
+     */
+    measure(name: string, startMark?: string, endMark?: string): PerformanceMeasure;
+    
+    /**
+     * Creates performance mark.
+     */
+    mark(name: string): void;
+    
+    /**
+     * Clears marks.
+     */
+    clearMarks(name?: string): void;
+    
+    /**
+     * Clears measures.
+     */
+    clearMeasures(name?: string): void;
+    
+    /**
+     * Clears resource timings.
+     */
+    clearResourceTimings(): void;
+    
+    /**
+     * Gets performance entries.
+     */
+    getEntries(): PerformanceEntry[];
+    
+    /**
+     * Gets entries by type.
+     */
+    getEntriesByType(type: string): PerformanceEntry[];
+    
+    /**
+     * Gets entry by name.
+     */
+    getEntriesByName(name: string, type?: string): PerformanceEntry[];
+  }
+  
+  interface PerformanceEntry {
+    /**
+     * Entry name.
+     */
+    name: string;
+    
+    /**
+     * Entry type.
+     */
+    entryType: string;
+    
+    /**
+     * Start time.
+     */
+    startTime: number;
+    
+    /**
+     * Duration.
+     */
+    duration: number;
+  }
+}

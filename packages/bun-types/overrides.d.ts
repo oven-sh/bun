@@ -4730,3 +4730,145 @@ declare namespace NodeJS {
     getAuthTag(): Buffer;
   }
 }
+
+// Add HTTP types
+declare namespace NodeJS {
+  interface IncomingMessage extends ReadableStream {
+    /**
+     * HTTP version.
+     */
+    readonly httpVersion: string;
+    
+    /**
+     * HTTP version major.
+     */
+    readonly httpVersionMajor: string;
+    
+    /**
+     * HTTP version minor.
+     */
+    readonly httpVersionMinor: string;
+    
+    /**
+     * Complete headers.
+     */
+    readonly headers: IncomingHttpHeaders;
+    
+    /**
+     * Raw headers.
+     */
+    readonly rawHeaders: string[];
+    
+    /**
+     * trailers.
+     */
+    readonly trailers: IncomingHttpHeaders;
+    
+    /**
+     * Method (request only).
+     */
+    readonly method?: string;
+    
+    /**
+     * URL (request only).
+     */
+    readonly url?: string;
+    
+    /**
+     * Status code (response only).
+     */
+    readonly statusCode?: number;
+    
+    /**
+     * Status message (response only).
+     */
+    readonly statusMessage?: string;
+    
+    /**
+     * Socket.
+     */
+    readonly socket: Socket;
+    
+    /**
+     * Aborts connection.
+     */
+    abort(): void;
+    
+    /**
+     * Destroys message.
+     */
+    destroy(error?: Error): void;
+  }
+  
+  interface ServerResponse extends WritableStream {
+    /**
+     * Status code.
+     */
+    statusCode: number;
+    
+    /**
+     * Status message.
+     */
+    statusMessage: string;
+    
+    /**
+     * Headers.
+     */
+    readonly headers: OutgoingHttpHeaders;
+    
+    /**
+     * Trailers.
+     */
+    readonly trailers: OutgoingHttpHeaders;
+    
+    /**
+     * Send date header?
+     */
+    sendDate: boolean;
+    
+    /**
+     * Finished?
+     */
+    readonly finished: boolean;
+    
+    /**
+     * Writes head.
+     */
+    writeHead(statusCode: number, statusMessage?: string, headers?: OutgoingHttpHeaders): this;
+    
+    /**
+     * Writes continue.
+     */
+    writeContinue(): void;
+    
+    /**
+     * Adds trailer.
+     */
+    addTrailers(trailers: OutgoingHttpHeaders): void;
+    
+    /**
+     * Removes header.
+     */
+    removeHeader(name: string): void;
+    
+    /**
+     * Gets header.
+     */
+    getHeader(name: string): string | string[] | undefined;
+    
+    /**
+     * Sets header.
+     */
+    setHeader(name: string, value: string | string[]): this;
+    
+    /**
+     * Gets header names.
+     */
+    getHeaderNames(): string[];
+    
+    /**
+     * Has header.
+     */
+    hasHeader(name: string): boolean;
+  }
+}

@@ -9750,3 +9750,32 @@ declare module "node:util" {
     isWeakSet(value: any): value is WeakSet<any>;
   };
 }
+
+// events module additional types
+declare module "node:events" {
+  export interface EventEmitterOptions {
+    captureRejections?: boolean;
+  }
+  
+  export interface EventEmitterAsyncResource extends EventEmitter {
+    asyncResource: any;
+    asyncId: number;
+    triggerAsyncId: number;
+  }
+  
+  export interface NodeEventTarget {
+    once(eventName: string | symbol, listener: (...args: any[]) => void): this;
+  }
+  
+  export interface DOMEventTarget {
+    addEventListener(eventName: string, listener: (...args: any[]) => void, opts?: any): any;
+    removeEventListener(eventName: string, listener: (...args: any[]) => void, opts?: any): any;
+  }
+  
+  export function on(emitter: EventEmitter, eventName: string): AsyncIterableIterator<any>;
+  export function once(emitter: NodeEventTarget, eventName: string | symbol): Promise<any[]>;
+  export function once(emitter: DOMEventTarget, eventName: string): Promise<any[]>;
+  export function getEventListeners(emitter: EventEmitter | DOMEventTarget, name: string | symbol): Function[];
+  export function getMaxListeners(emitter: EventEmitter | DOMEventTarget): number;
+  export function listenerCount(emitter: EventEmitter, eventName: string | symbol): number;
+}

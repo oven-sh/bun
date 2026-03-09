@@ -1258,3 +1258,65 @@ declare namespace Bun {
     onerror: (error: Error) => void;
   }
 }
+
+// Add FileSystem types
+declare namespace Bun {
+  interface FileStat {
+    /**
+     * Is directory?
+     */
+    isDirectory(): boolean;
+    
+    /**
+     * Is file?
+     */
+    isFile(): boolean;
+    
+    /**
+     * Is symbolic link?
+     */
+    isSymbolicLink(): boolean;
+    
+    /**
+     * File size in bytes.
+     */
+    size: number;
+    
+    /**
+     * Last modified time.
+     */
+    mtimeMs: number;
+    
+    /**
+     * Creation time.
+     */
+    birthtimeMs: number;
+    
+    /**
+     * File mode (Unix).
+     */
+    mode: number;
+  }
+  
+  interface FileSystem {
+    /**
+     * Reads file content.
+     */
+    readFile(path: string | PathLike): Promise<Buffer>;
+    
+    /**
+     * Writes file content.
+     */
+    writeFile(path: string | PathLike, data: string | Buffer): Promise<void>;
+    
+    /**
+     * Checks if file exists.
+     */
+    exists(path: string | PathLike): Promise<boolean>;
+    
+    /**
+     * Gets file stats.
+     */
+    stat(path: string | PathLike): Promise<FileStat>;
+  }
+}

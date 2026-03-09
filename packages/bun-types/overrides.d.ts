@@ -3441,3 +3441,100 @@ declare namespace Bun {
     onclose: ((this: WebSocket, ev: CloseEvent) => any) | null;
   }
 }
+
+// Add Location and History types
+declare namespace Bun {
+  interface Location {
+    /**
+     * Full href.
+     */
+    href: string;
+    
+    /**
+     * Protocol.
+     */
+    protocol: string;
+    
+    /**
+     * Hostname.
+     */
+    hostname: string;
+    
+    /**
+     * Port.
+     */
+    port: string;
+    
+    /**
+     * Pathname.
+     */
+    pathname: string;
+    
+    /**
+     * Search string.
+     */
+    search: string;
+    
+    /**
+     * Hash fragment.
+     */
+    hash: string;
+    
+    /**
+     * Origin.
+     */
+    readonly origin: string;
+    
+    /**
+     * Assigns new URL.
+     */
+    assign(url: string): void;
+    
+    /**
+     * Replaces URL.
+     */
+    replace(url: string): void;
+    
+    /**
+     * Reloads page.
+     */
+    reload(): void;
+  }
+  
+  interface History {
+    /**
+     * History length.
+     */
+    readonly length: number;
+    
+    /**
+     * Goes back.
+     */
+    back(): void;
+    
+    /**
+     * Goes forward.
+     */
+    forward(): void;
+    
+    /**
+     * Goes to delta.
+     */
+    go(delta?: number): void;
+    
+    /**
+     * Pushes state.
+     */
+    pushState(state: any, title: string, url?: string): void;
+    
+    /**
+     * Replaces state.
+     */
+    replaceState(state: any, title: string, url?: string): void;
+    
+    /**
+     * Gets current state.
+     */
+    readonly state: any;
+  }
+}

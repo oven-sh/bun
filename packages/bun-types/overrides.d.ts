@@ -12973,3 +12973,16 @@ declare global {
         parseInt: (string: string, radix?: number) => number;
     }
 }
+
+// queueMicrotask global type
+declare global {
+    function queueMicrotask(callback: () => void): void;
+    
+    function clearImmediate(immediateId: NodeJS.Immediate): void;
+    function setImmediate(callback: (...args: any[]) => void, ...args: any[]): NodeJS.Immediate;
+    
+    function clearInterval(intervalId: NodeJS.Timeout): void;
+    function clearTimeout(timeoutId: NodeJS.Timeout): void;
+    function setInterval(callback: (...args: any[]) => void, ms: number, ...args: any[]): NodeJS.Timeout;
+    function setTimeout(callback: (...args: any[]) => void, ms: number, ...args: any[]): NodeJS.Timeout;
+}

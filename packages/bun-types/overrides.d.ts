@@ -586,3 +586,20 @@ declare module "bun:test" {
     todo(name: string, fn?: (this: Test) => void): void;
   }
 }
+
+//</tool_call>
+
+// Add crypto hash algorithm aliases
+declare module "node:crypto" {
+  interface Hash {
+    /**
+     * Updates the hash with the shake-128 algorithm.
+     */
+    shake128(): Hash;
+    
+    /**
+     * Updates the hash with the shake-256 algorithm.
+     */
+    shake256(): Hash;
+  }
+}

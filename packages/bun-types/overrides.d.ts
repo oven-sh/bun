@@ -11507,3 +11507,32 @@ declare global {
   
   type TimerHandler = string | Function;
 }
+
+// Web API: console additional types
+declare global {
+  namespace NodeJS {
+    interface Console {
+      Console: console.ConsoleConstructor;
+      assert(value: any, message?: string, ...optionalParams: any[]): void;
+      dir(obj: any, options?: any): void;
+      error(message?: any, ...optionalParams: any[]): void;
+      info(message?: any, ...optionalParams: any[]): void;
+      log(message?: any, ...optionalParams: any[]): void;
+      time(label?: string): void;
+      timeEnd(label?: string): void;
+      timeLog(label?: string, ...data: any[]): void;
+      trace(message?: any, ...optionalParams: any[]): void;
+      warn(message?: any, ...optionalParams: any[]): void;
+      debug(message?: any, ...optionalParams: any[]): void;
+      clear(): void;
+      count(label?: string): void;
+      countReset(label?: string): void;
+      group(...label: any[]): void;
+      groupCollapsed(...label: any[]): void;
+      groupEnd(): void;
+      table(tabularData?: any, properties?: string[]): void;
+    }
+  }
+  
+  var console: Console;
+}

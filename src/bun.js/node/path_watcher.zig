@@ -681,12 +681,18 @@ pub const PathWatcherManager = struct {
             return;
         }
 
-        if (this.hasPendingTasks()) {
+        // Combine checking pending_tasks and setting deinit_on_last_task
+        // under a single mutex hold to prevent a race where the last task
+        // completes between the lockless hasPendingTasks() check and the
+        // mutex acquisition, causing neither thread to proceed with cleanup.
+        {
             this.mutex.lock();
             defer this.mutex.unlock();
-            // deinit when all tasks are done
-            this.deinit_on_last_task = true;
-            return;
+            if (this.pending_tasks > 0) {
+                this.deinit_on_last_task = true;
+                return;
+            }
+            this.has_pending_tasks.store(false, .release);
         }
 
         this.main_watcher.deinit(false);
@@ -905,10 +911,21 @@ pub const PathWatcher = struct {
     }
 
     pub fn deinit(this: *PathWatcher) void {
-        this.setClosed();
-        if (this.hasPendingDirectories()) {
-            // will be freed on last directory
-            return;
+        // Combine setting closed and checking pending_directories under a
+        // single mutex hold to prevent a double-deinit race: without this,
+        // a worker thread in unrefPendingDirectory() can observe closed=true
+        // and pending_directories==0 between our setClosed() and
+        // hasPendingDirectories() calls, causing both threads to proceed
+        // with destroy().
+        {
+            this.mutex.lock();
+            defer this.mutex.unlock();
+            this.closed.store(true, .release);
+            if (this.pending_directories > 0) {
+                // Will be freed by the last unrefPendingDirectory call.
+                return;
+            }
+            this.has_pending_directories.store(false, .release);
         }
 
         if (this.manager) |manager| {

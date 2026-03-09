@@ -10996,3 +10996,23 @@ declare global {
   
   type HeadersInit = Headers | string[][] | Record<string, string>;
 }
+
+// Web API: FormData additional types
+declare global {
+  class FormData {
+    constructor(form?: HTMLFormElement);
+    append(name: string, value: string | Blob, fileName?: string): void;
+    delete(name: string): void;
+    get(name: string): FormDataEntryValue | null;
+    getAll(name: string): FormDataEntryValue[];
+    has(name: string): boolean;
+    set(name: string, value: string | Blob, fileName?: string): void;
+    forEach(callback: (value: FormDataEntryValue, key: string, parent: FormData) => void, thisArg?: any): void;
+    entries(): IterableIterator<[string, FormDataEntryValue]>;
+    keys(): IterableIterator<string>;
+    values(): IterableIterator<FormDataEntryValue>;
+    readonly [Symbol.iterator](): IterableIterator<[string, FormDataEntryValue]>;
+  }
+  
+  type FormDataEntryValue = File | string;
+}

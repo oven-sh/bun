@@ -11404,3 +11404,51 @@ declare global {
     detail?: T;
   }
 }
+
+// Web API: ErrorEvent additional types
+declare global {
+  interface ErrorEvent extends Event {
+    readonly colno: number;
+    readonly error: any;
+    readonly filename: string;
+    readonly lineno: number;
+    readonly message: string;
+  }
+  
+  var ErrorEvent: {
+    prototype: ErrorEvent;
+    new(type: string, eventInitDict?: ErrorEventInit): ErrorEvent;
+  };
+  
+  interface ErrorEventInit extends EventInit {
+    colno?: number;
+    error?: any;
+    filename?: string;
+    lineno?: number;
+    message?: string;
+  }
+  
+  interface MessageEvent<T = any> extends Event {
+    readonly data: T;
+    readonly lastEventId: string;
+    readonly origin: string;
+    readonly ports: MessagePort[] | null;
+    readonly source: MessageEventSource | null;
+    initMessageEvent(type: string, bubbles?: boolean, cancelable?: boolean, data?: any, origin?: string, lastEventId?: string): void;
+  }
+  
+  var MessageEvent: {
+    prototype: MessageEvent;
+    new<T = any>(type: string, eventInitDict?: MessageEventInit<T>): MessageEvent<T>;
+  };
+  
+  interface MessageEventInit<T = any> extends EventInit {
+    data?: T;
+    lastEventId?: string;
+    origin?: string;
+    ports?: MessagePort[];
+    source?: MessageEventSource | null;
+  }
+  
+  type MessageEventSource = Window | MessagePort;
+}

@@ -12854,3 +12854,16 @@ declare module "node:querystring" {
   export function escape(str: string): string;
   export function unescape(str: string): string;
 }
+
+// punycode API types (deprecated)
+declare module "node:punycode" {
+  export function decode(input: string): string;
+  export function encode(input: string): string;
+  export function toASCII(input: string): string;
+  export function toUnicode(input: string): string;
+  export const ucs2: {
+    decode(input: string): number[];
+    encode(codePoints: number[]): string;
+  };
+  export const version: string;
+}

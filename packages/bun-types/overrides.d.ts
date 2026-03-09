@@ -1545,3 +1545,40 @@ declare namespace Bun {
     listenerCount(event: string): number;
   }
 }
+
+// Add Timer types
+declare namespace Bun {
+  interface Timer {
+    /**
+     * Clears the timer.
+     */
+    clear(): void;
+    
+    /**
+     * Refreshes the timer.
+     */
+    refresh(): void;
+    
+    /**
+     * Gets remaining time.
+     */
+    remaining(): number;
+  }
+  
+  interface TimerOptions {
+    /**
+     * Delay in milliseconds.
+     */
+    delay: number;
+    
+    /**
+     * Should timer repeat?
+     */
+    repeat?: boolean;
+    
+    /**
+     * Timer callback.
+     */
+    callback: () => void;
+  }
+}

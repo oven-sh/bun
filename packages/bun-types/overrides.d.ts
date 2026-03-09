@@ -2999,3 +2999,103 @@ declare namespace Bun {
     forEach(callbackfn: (value: string, key: string, parent: Storage) => void, thisArg?: any): void;
   }
 }
+
+// Add CustomEvent types
+declare namespace Bun {
+  interface CustomEventInit<T = any> {
+    /**
+     * Event detail data.
+     */
+    detail?: T;
+    
+    /**
+     * Event bubbles.
+     */
+    bubbles?: boolean;
+    
+    /**
+     * Event cancelable.
+     */
+    cancelable?: boolean;
+    
+    /**
+     * Event composed.
+     */
+    composed?: boolean;
+  }
+  
+  interface CustomEvent<T = any> extends Event {
+    /**
+     * Event detail.
+     */
+    readonly detail: T;
+    
+    /**
+     * Initializes event.
+     */
+    initCustomEvent(type: string, options?: CustomEventInit<T>): void;
+  }
+  
+  interface EventInit {
+    bubbles?: boolean;
+    cancelable?: boolean;
+    composed?: boolean;
+  }
+  
+  interface Event {
+    /**
+     * Event type.
+     */
+    readonly type: string;
+    
+    /**
+     * Event target.
+     */
+    readonly target: EventTarget | null;
+    
+    /**
+     * Current target.
+     */
+    readonly currentTarget: EventTarget | null;
+    
+    /**
+     * Event bubbles.
+     */
+    readonly bubbles: boolean;
+    
+    /**
+     * Event cancelable.
+     */
+    readonly cancelable: boolean;
+    
+    /**
+     * Event default prevented.
+     */
+    readonly defaultPrevented: boolean;
+    
+    /**
+     * Event timestamp.
+     */
+    readonly timeStamp: number;
+    
+    /**
+     * Stops propagation.
+     */
+    stopPropagation(): void;
+    
+    /**
+     * Stops immediate propagation.
+     */
+    stopImmediatePropagation(): void;
+    
+    /**
+     * Prevents default.
+     */
+    preventDefault(): void;
+    
+    /**
+     * Composed path.
+     */
+    composedPath(): EventTarget[];
+  }
+}

@@ -39,12 +39,20 @@ pub const PathWatcherManager = struct {
     }
 
     fn unrefPendingTask(this: *PathWatcherManager) void {
+        // deinit() may destroy(this). Defer it until after unlock so we don't
+        // unlock() a freed mutex.
+        var should_deinit = false;
+        defer if (should_deinit) this.deinit();
+
         this.mutex.lock();
         defer this.mutex.unlock();
         this.pending_tasks -= 1;
-        if (this.deinit_on_last_task and this.pending_tasks == 0) {
+        if (this.pending_tasks == 0) {
+            // Clear unconditionally: if tasks drain to zero before deinit() runs,
+            // gating this on deinit_on_last_task leaves the flag stale-true and
+            // deinit() keeps deferring on a count that is already zero.
             this.has_pending_tasks.store(false, .release);
-            this.deinit();
+            if (this.deinit_on_last_task) should_deinit = true;
         }
     }
 
@@ -449,8 +457,13 @@ pub const PathWatcherManager = struct {
 
                 {
                     watcher.mutex.lock();
-                    defer watcher.mutex.unlock();
-                    watcher.file_paths.append(bun.default_allocator, child_path.path) catch |err| {
+                    const append_result = watcher.file_paths.append(bun.default_allocator, child_path.path);
+                    watcher.mutex.unlock();
+                    // On error, drop the ref we took in _fdFromAbsolutePathZ. Must do
+                    // this AFTER releasing watcher.mutex: _decrementPathRef acquires
+                    // manager.mutex, and unregisterWatcher acquires manager.mutex before
+                    // watcher.mutex — inverting here would AB/BA deadlock.
+                    append_result catch |err| {
                         manager._decrementPathRef(entry_path_z);
                         return switch (err) {
                             error.OutOfMemory => .{ .err = .{
@@ -604,17 +617,22 @@ pub const PathWatcherManager = struct {
         this._decrementPathRefNoLock(file_path);
     }
 
-    // unregister is always called form main thread
+    // unregister is always called from main thread
     fn unregisterWatcher(this: *PathWatcherManager, watcher: *PathWatcher) void {
+        // Must defer deinit() to AFTER releasing this.mutex, for two reasons:
+        // 1. deinit() re-acquires this.mutex at line ~670 when hasPendingTasks() is
+        //    true. os_unfair_lock is non-recursive, so calling deinit() while holding
+        //    the lock self-deadlocks in __ulock_wait2.
+        // 2. deinit() may destroy(this). Unlocking a freed mutex is UAF.
+        // Zig defers fire LIFO, so registering this defer before the lock/unlock
+        // pair makes it fire last.
+        var should_deinit = false;
+        defer if (should_deinit) this.deinit();
+
         this.mutex.lock();
         defer this.mutex.unlock();
 
         var watchers = this.watchers.slice();
-        defer {
-            if (this.deinit_on_last_watcher and this.watcher_count == 0) {
-                this.deinit();
-            }
-        }
 
         for (watchers, 0..) |w, i| {
             if (w) |item| {
@@ -644,6 +662,8 @@ pub const PathWatcherManager = struct {
                 }
             }
         }
+
+        should_deinit = this.deinit_on_last_watcher and this.watcher_count == 0;
     }
 
     fn deinit(this: *PathWatcherManager) void {
@@ -661,12 +681,18 @@ pub const PathWatcherManager = struct {
             return;
         }
 
-        if (this.hasPendingTasks()) {
+        // Combine checking pending_tasks and setting deinit_on_last_task
+        // under a single mutex hold to prevent a race where the last task
+        // completes between the lockless hasPendingTasks() check and the
+        // mutex acquisition, causing neither thread to proceed with cleanup.
+        {
             this.mutex.lock();
             defer this.mutex.unlock();
-            // deinit when all tasks are done
-            this.deinit_on_last_task = true;
-            return;
+            if (this.pending_tasks > 0) {
+                this.deinit_on_last_task = true;
+                return;
+            }
+            this.has_pending_tasks.store(false, .release);
         }
 
         this.main_watcher.deinit(false);
@@ -824,12 +850,23 @@ pub const PathWatcher = struct {
     }
 
     pub fn unrefPendingDirectory(this: *PathWatcher) void {
+        // deinit() calls setClosed() which re-locks this.mutex, and may then
+        // proceed to destroy(this). Defer it until after unlock so we don't
+        // self-deadlock or unlock() a freed mutex.
+        var should_deinit = false;
+        defer if (should_deinit) this.deinit();
+
         this.mutex.lock();
         defer this.mutex.unlock();
         this.pending_directories -= 1;
-        if (this.isClosed() and this.pending_directories == 0) {
+        if (this.pending_directories == 0) {
+            // Clear unconditionally: if the scan drains to zero before close()
+            // runs (the common case — scan is fast, close happens later),
+            // gating this on isClosed() leaves the flag stale-true. deinit()
+            // then early-returns on hasPendingDirectories() forever,
+            // unregisterWatcher never runs, and every fd the scan opened leaks.
             this.has_pending_directories.store(false, .release);
-            this.deinit();
+            if (this.isClosed()) should_deinit = true;
         }
     }
 
@@ -874,10 +911,21 @@ pub const PathWatcher = struct {
     }
 
     pub fn deinit(this: *PathWatcher) void {
-        this.setClosed();
-        if (this.hasPendingDirectories()) {
-            // will be freed on last directory
-            return;
+        // Combine setting closed and checking pending_directories under a
+        // single mutex hold to prevent a double-deinit race: without this,
+        // a worker thread in unrefPendingDirectory() can observe closed=true
+        // and pending_directories==0 between our setClosed() and
+        // hasPendingDirectories() calls, causing both threads to proceed
+        // with destroy().
+        {
+            this.mutex.lock();
+            defer this.mutex.unlock();
+            this.closed.store(true, .release);
+            if (this.pending_directories > 0) {
+                // Will be freed by the last unrefPendingDirectory call.
+                return;
+            }
+            this.has_pending_directories.store(false, .release);
         }
 
         if (this.manager) |manager| {

@@ -10150,3 +10150,43 @@ declare module "node:zlib" {
   export function inflate(buffer: Buffer | string, options?: ZlibOptions, callback: (error: Error | null, result: Buffer) => void): void;
   export function inflateSync(buffer: Buffer | string, options?: ZlibOptions): Buffer;
 }
+
+// perf_hooks module types
+declare module "node:perf_hooks" {
+  export interface PerformanceEntry {
+    readonly name: string;
+    readonly entryType: string;
+    readonly startTime: number;
+    readonly duration: number;
+    readonly kind?: number;
+  }
+  
+  export interface PerformanceEntryEntrylist {
+    getEntries(): PerformanceEntry[];
+    getEntriesByName(name: string, type?: string): PerformanceEntry[];
+    getEntriesByType(type: string): PerformanceEntry[];
+  }
+  
+  export interface PerformanceNodeTiming extends PerformanceEntry {
+    readonly bootstrapComplete: number;
+    readonly environment: number;
+    readonly idleTime: number;
+    readonly loopStart: number;
+    const loopExit?: number;
+    readonly v8Start: number;
+  }
+  
+  export interface Performance {
+    readonly nodeTiming: PerformanceNodeTiming;
+    now(): number;
+    clearMarks(name?: string): void;
+    clearMeasures(name?: string): void;
+    getEntries(): PerformanceEntry[];
+    getEntriesByName(name: string, type?: string): PerformanceEntry[];
+    getEntriesByType(type: string): PerformanceEntry[];
+    mark(name: string): void;
+    measure(name: string, startMarkOrMeasure: string, endMarkOrMeasure?: string): void;
+  }
+  
+  export function createHistogram(): PerformanceHistogram;
+}

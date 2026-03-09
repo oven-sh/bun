@@ -534,3 +534,17 @@ declare namespace Bun {
     timing?: number;
   }
 }
+
+// Add S3 checksumAlgorithm fix
+declare namespace Bun {
+  interface S3ListObjectsResponse {
+    contents: Array<{
+      key: string;
+      size: number;
+      /**
+       * Checksum algorithm used (note: property name was 'checksumAlgorithmE' in some versions)
+       */
+      checksumAlgorithm?: string;
+    }>;
+  }
+}

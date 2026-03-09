@@ -11772,3 +11772,42 @@ declare global {
     var WeakMap: WeakMapConstructor;
     var WeakSet: WeakSetConstructor;
 }
+
+// Web API: String additional types
+declare global {
+    interface String {
+        at(index: number): string | undefined;
+        charAt(pos: number): string;
+        charCodeAt(index: number): number;
+        codePointAt(pos: number): number | undefined;
+        concat(...strings: string[]): string;
+        endsWith(searchString: string, endPosition?: number): boolean;
+        includes(searchString: string, position?: number): boolean;
+        indexOf(searchString: string, position?: number): number;
+        lastIndexOf(searchString: string, position?: number): number;
+        localeCompare(that: string): number;
+        match(regexp: string | RegExp): RegExpMatchArray | null;
+        matchAll(regexp: RegExp): RegExpStringIterator;
+        padEnd(maxLength: number, fillString?: string): string;
+        padStart(maxLength: number, fillString?: string): string;
+        repeat(count: number): string;
+        replace(searchValue: string | RegExp, replaceValue: string): string;
+        replace(searchValue: string | RegExp, replaceValue: (substring: string, ...args: any[]) => string): string;
+        replaceAll(searchValue: string | RegExp, replaceValue: string): string;
+        replaceAll(searchValue: string | RegExp, replaceValue: (substring: string) => string): string;
+        search(regexp: string | RegExp): number;
+        slice(start?: number, end?: number): string;
+        split(separator: string | RegExp, limit?: number): string[];
+        startsWith(searchString: string, position?: number): boolean;
+        substring(start: number, end?: number): string;
+        toLocaleLowerCase(locales?: string | string[]): string;
+        toLocaleUpperCase(locales?: string | string[]): string;
+        toLowerCase(): string;
+        toString(): string;
+        toUpperCase(): string;
+        trim(): string;
+        trimEnd(): string;
+        trimStart(): string;
+        valueOf(): string;
+    }
+}

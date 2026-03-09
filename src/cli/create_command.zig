@@ -435,7 +435,8 @@ pub const CreateCommand = struct {
                         const has_conflict = while (iter.next() catch null) |entry| {
                             // Skip entries that never conflict (same list used by remote templates)
                             const dominated = inline for (never_conflict) |nc| {
-                                if (strings.eqlComptime(entry.name, nc)) break true;
+                                const nc_trimmed = comptime if (nc.len > 0 and nc[nc.len - 1] == '/') nc[0 .. nc.len - 1] else nc;
+                                if (strings.eqlComptime(entry.name, nc_trimmed)) break true;
                             } else false;
                             if (!dominated) break true;
                         } else false;

@@ -250,8 +250,11 @@ pub fn printShellCpTask(this: *Cp, task: *ShellCpTask) Yield {
     });
     if (bun.take(&task.err)) |err| {
         if (this.state == .exec) {
+            if (this.state.exec.err) |*prev_err| {
+                prev_err.deinit(bun.default_allocator);
+            }
             this.state.exec.err = err;
-            const error_string = this.bltn().taskErrorToString(.cp, this.state.exec.err.?);
+            const error_string = this.bltn().taskErrorToString(.cp, err);
             return output_task.start(error_string);
         } else {
             var e = err;

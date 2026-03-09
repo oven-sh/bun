@@ -2863,3 +2863,57 @@ declare namespace Bun {
     duration: number;
   }
 }
+
+// Add AbortController types
+declare namespace Bun {
+  interface AbortController {
+    /**
+     * Abort signal.
+     */
+    readonly signal: AbortSignal;
+    
+    /**
+     * Aborts async operation.
+     */
+    abort(reason?: any): void;
+  }
+  
+  interface AbortSignal extends EventTarget {
+    /**
+     * Is aborted?
+     */
+    readonly aborted: boolean;
+    
+    /**
+     * Abort reason.
+     */
+    readonly reason: any;
+    
+    /**
+     * Event: onabort.
+     */
+    onabort: ((this: AbortSignal, ev: Event) => any) | null;
+    
+    /**
+     * Throws if aborted.
+     */
+    throwIfAborted(): void;
+    
+    /**
+     * Static timeout method.
+     */
+    static timeout(ms: number): AbortSignal;
+  }
+  
+  interface AbortOptions {
+    /**
+     * Abort signal.
+     */
+    signal?: AbortSignal;
+    
+    /**
+     * Timeout in milliseconds.
+     */
+    timeout?: number;
+  }
+}

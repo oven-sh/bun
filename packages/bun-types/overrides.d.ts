@@ -5119,3 +5119,62 @@ declare namespace NodeJS {
     on(event: 'timeout', listener: () => void): this;
   }
 }
+
+// Add Inspector and Debugger types
+declare namespace NodeJS {
+  interface Inspector {
+    /**
+     * Opens inspector.
+     */
+    open(port?: number, host?: string, wait?: boolean): void;
+    
+    /**
+     * Closes inspector.
+     */
+    close(): void;
+    
+    /**
+     * URL for inspector.
+     */
+    url(): string;
+    
+    /**
+     * Console.
+     */
+    console: any;
+  }
+  
+  interface ConsoleConstructor {
+    /**
+     * Creates new console.
+     */
+    new(stdout: WritableStream, stderr?: WritableStream, ignoreErrors?: boolean): Console;
+  }
+  
+  interface Debug extends EventEmitter {
+    /**
+     * Debugger port.
+     */
+    readonly port: number;
+    
+    /**
+     * Debugger host.
+     */
+    readonly host: string;
+    
+    /**
+     * Sets breakpoint.
+     */
+    setBreakpoint(script: string, line: number, condition?: string, callback?: Function): number;
+    
+    /**
+     * Clears breakpoint.
+     */
+    clearBreakpoint(script: string, line: number): void;
+    
+    /**
+     * Sends command.
+     */
+    send(command: any): void;
+  }
+}

@@ -5279,3 +5279,98 @@ declare namespace NodeJS {
     produceCachedData?: boolean;
   }
 }
+
+// Add Zlib types
+declare namespace NodeJS {
+  interface ZlibOptions {
+    /**
+     * Compression level.
+     */
+    level?: number;
+    
+    /**
+     * Window size.
+     */
+    windowBits?: number;
+    
+    /**
+     * Memory level.
+     */
+    memLevel?: number;
+    
+    /**
+     * Strategy.
+     */
+    strategy?: number;
+    
+    /**
+     * Dictionary.
+     */
+    dictionary?: Buffer | NodeJS.ArrayBufferView;
+  }
+  
+  interface BrotliOptions extends ZlibOptions {
+    /**
+     * Brotli quality.
+     */
+    quality?: number;
+    
+    /**
+     * Brotli window size.
+     */
+    lgwin?: number;
+    
+    /**
+     * Brotli block size.
+     */
+    lgblock?: number;
+  }
+  
+  interface Gzip extends NodeJS.ReadableStream, NodeJS.WritableStream {
+    /**
+     * Flushes data.
+     */
+    flush(callback?: Function): void;
+    
+    /**
+     * Closes stream.
+     */
+    close(callback?: Function): void;
+  }
+  
+  interface Gunzip extends NodeJS.ReadableStream, NodeJS.WritableStream {
+    /**
+     * Flushes data.
+     */
+    flush(callback?: Function): void;
+    
+    /**
+     * Closes stream.
+     */
+    close(callback?: Function): void;
+  }
+  
+  interface Deflate extends NodeJS.ReadableStream, NodeJS.WritableStream {
+    /**
+     * Flushes data.
+     */
+    flush(callback?: Function): void;
+    
+    /**
+     * Closes stream.
+     */
+    close(callback?: Function): void;
+  }
+  
+  interface Inflate extends NodeJS.ReadableStream, NodeJS.WritableStream {
+    /**
+     * Flushes data.
+     */
+    flush(callback?: Function): void;
+    
+    /**
+     * Closes stream.
+     */
+    close(callback?: Function): void;
+  }
+}

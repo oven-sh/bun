@@ -11353,3 +11353,54 @@ declare global {
     readonly entryType: "measure";
   }
 }
+
+// Web API: Event additional types
+declare global {
+  interface Event {
+    readonly bubbles: boolean;
+    cancelable: boolean;
+    readonly composed: boolean;
+    currentTarget: EventTarget | null;
+    readonly defaultPrevented: boolean;
+    readonly eventPhase: number;
+    readonly isTrusted: boolean;
+    returnValue: boolean;
+    readonly srcElement: Element | null;
+    readonly target: EventTarget | null;
+    readonly timeStamp: number;
+    readonly type: string;
+    composedPath(): EventTarget[];
+    preventDefault(): void;
+    stopImmediatePropagation(): void;
+    stopPropagation(): void;
+    readonly AT_TARGET: number;
+    readonly BUBBLING_PHASE: number;
+    readonly CAPTURING_PHASE: number;
+    readonly NONE: number;
+  }
+  
+  var Event: {
+    prototype: Event;
+    new(type: string, eventInitDict?: EventInit): Event;
+  };
+  
+  interface EventInit {
+    bubbles?: boolean;
+    cancelable?: boolean;
+    composed?: boolean;
+  }
+  
+  interface CustomEvent<T = any> extends Event {
+    readonly detail: T;
+    initCustomEvent(type: string, bubbles?: boolean, cancelable?: boolean, detail?: T): void;
+  }
+  
+  var CustomEvent: {
+    prototype: CustomEvent;
+    new<T = any>(type: string, eventInitDict?: CustomEventInit<T>): CustomEvent<T>;
+  };
+  
+  interface CustomEventInit<T = any> extends EventInit {
+    detail?: T;
+  }
+}

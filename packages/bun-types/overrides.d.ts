@@ -12837,3 +12837,20 @@ declare module "node:path" {
   export function isAbsolute(path: string): boolean;
   export function toNamespacedPath(path: string): string;
 }
+
+// Query String API types
+declare module "node:querystring" {
+  export interface StringifyOptions {
+    encodeURIComponent?: (str: string) => string;
+  }
+  
+  export interface ParseOptions {
+    maxKeys?: number;
+    decodeURIComponent?: (str: string) => string;
+  }
+  
+  export function stringify(obj: Record<string, any>, options?: StringifyOptions): string;
+  export function parse(str: string, options?: ParseOptions): Record<string, any>;
+  export function escape(str: string): string;
+  export function unescape(str: string): string;
+}

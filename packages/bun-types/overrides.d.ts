@@ -689,3 +689,75 @@ declare namespace Bun {
     loadSync(path: string | PathLike): Record<string, any>;
   }
 }
+
+// Add Server configuration types
+declare namespace Bun {
+  interface ServerOptions<T extends typeof Bun.file = typeof Bun.file> {
+    /**
+     * Fetch handler for incoming requests.
+     */
+    fetch: (req: Request) => Response | Promise<Response>;
+    
+    /**
+     * Base URL for the server.
+     */
+    baseURL?: string;
+    
+    /**
+     * Whether to use TLS/SSL.
+     */
+    tls?: {
+      key: string | Buffer;
+      cert: string | Buffer;
+    };
+    
+    /**
+     * WebSocket handler.
+     */
+    websocket?: {
+      message: (ws: ServerWebSocket, message: string | Buffer) => void;
+      open: (ws: ServerWebSocket) => void;
+      close: (ws: ServerWebSocket, code: number, reason: string) => void;
+    };
+    
+    /**
+     * Static file serving configuration.
+     */
+    static?: {
+      dir: string;
+      prefix?: string;
+    };
+    
+    /**
+     * Port number to listen on.
+     */
+    port?: number;
+    
+    /**
+     * Hostname to bind to.
+     */
+    hostname?: string;
+  }
+  
+  interface ServerWebSocket {
+    /**
+     * Sends data to the WebSocket client.
+     */
+    send(data: string | Buffer): void;
+    
+    /**
+     * Closes the WebSocket connection.
+     */
+    close(code?: number, reason?: string): void;
+    
+    /**
+     * Subscribe to a topic.
+     */
+    subscribe(topic: string): void;
+    
+    /**
+     * Publish to a topic.
+     */
+    publish(topic: string, data: string | Buffer): void;
+  }
+}

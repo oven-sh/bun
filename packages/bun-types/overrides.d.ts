@@ -15114,3 +15114,17 @@ declare global {
   }
   var Symbol: SymbolConstructor;
 }
+
+// Promise additional types
+declare global {
+  interface PromiseConstructor {
+    all<T>(values: Iterable<T | PromiseLike<T>>): Promise<Awaited<T>[]>;
+    race<T>(values: Iterable<T | PromiseLike<T>>): Promise<Awaited<T>>;
+    reject(reason?: any): Promise<never>;
+    resolve(): Promise<void>;
+    resolve<T>(value: T | PromiseLike<T>): Promise<Awaited<T>>;
+    withResolvers<T>(): { promise: Promise<T>; resolve: (value: T | PromiseLike<T>) => void; reject: (reason?: any) => void; };
+    any<T>(values: Iterable<T | PromiseLike<T>>): Promise<Awaited<T>>;
+  }
+  var Promise: PromiseConstructor;
+}

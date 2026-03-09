@@ -2178,3 +2178,40 @@ declare namespace Bun {
     hmac(algorithm: string, key: string | Buffer, data: string | Buffer | ArrayBuffer, encoding?: 'hex' | 'base64' | 'buffer'): string | Buffer;
   }
 }
+
+// Add Cipher types
+declare namespace Bun {
+  interface Cipher {
+    /**
+     * Encrypts data.
+     */
+    encrypt(data: Buffer | ArrayBuffer | string): Buffer;
+    
+    /**
+     * Finalizes encryption.
+     */
+    final(): Buffer;
+    
+    /**
+     * Sets authentication tag.
+     */
+    setAuthTag(tag: Buffer): void;
+  }
+  
+  interface Decipher {
+    /**
+     * Decrypts data.
+     */
+    decrypt(data: Buffer | ArrayBuffer | string): Buffer;
+    
+    /**
+     * Finalizes decryption.
+     */
+    final(): Buffer;
+    
+    /**
+     * Gets authentication tag.
+     */
+    getAuthTag(): Buffer;
+  }
+}

@@ -43,6 +43,8 @@ function setupGitWorkspace() {
 
   // Initialize git repo with a baseline commit
   git(cwd, "init");
+  git(cwd, "config", "user.name", "Bun Test");
+  git(cwd, "config", "user.email", "test@bun.sh");
   git(cwd, "add", "-A");
   git(cwd, 'commit', '-m', '"initial"');
   git(cwd, "branch", "-M", "main");
@@ -75,6 +77,7 @@ describe("bun run --affected", () => {
     expect(output).toContain("pkg-b");
     // pkg-c has no changes and no dependency on pkg-a
     expect(output).not.toContain("pkg-c");
+    expect(result.exitCode).toBe(0);
   });
 
   test("exits with 0 when no packages are affected", () => {
@@ -138,6 +141,7 @@ describe("bun run --affected", () => {
     expect(stdout).toContain("pkg-a");
     expect(stdout).toContain("pkg-b");
     expect(stdout).toContain("pkg-c");
+    expect(result.exitCode).toBe(0);
   });
 
   test("--affected and --filter cannot be used together", () => {
@@ -196,5 +200,6 @@ describe("bun run --affected", () => {
     expect(stdout).toContain("pkg-c");
     // pkg-a was changed before HEAD~1, so should not be affected
     expect(stdout).not.toContain("pkg-a");
+    expect(result.exitCode).toBe(0);
   });
 });

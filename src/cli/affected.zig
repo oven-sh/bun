@@ -40,16 +40,21 @@ pub fn filterAffectedScripts(
     defer changed_files.deinit();
 
     // Get merge-base for accurate diff on diverged branches
-    const merge_base = runGitOneLine(allocator, &.{ "git", "merge-base", base_ref, head_ref }, resolve_root) orelse base_ref;
+    const merge_base = try runGitOneLine(allocator, &.{ "git", "merge-base", base_ref, head_ref }, resolve_root);
 
     // Committed changes: merge-base..head
-    try collectGitLines(allocator, &changed_files, &.{ "git", "diff", "--name-only", "--no-renames", "--relative", merge_base, head_ref }, resolve_root);
+    try collectGitLines(allocator, &changed_files, &.{ "git", "diff", "--name-only", "--no-renames", "--relative", merge_base orelse base_ref, head_ref }, resolve_root);
 
-    // Uncommitted changes (staged + unstaged vs HEAD)
-    try collectGitLines(allocator, &changed_files, &.{ "git", "diff", "--name-only", "--no-renames", "--relative", "HEAD" }, resolve_root);
+    // Include working tree changes only when using default refs (local dev workflow).
+    // When custom --base/--head are provided, only committed diffs matter (CI use case).
+    const is_default_refs = strings.eql(base_ref, "main") and strings.eql(head_ref, "HEAD");
+    if (is_default_refs) {
+        // Uncommitted changes (staged + unstaged vs HEAD)
+        try collectGitLines(allocator, &changed_files, &.{ "git", "diff", "--name-only", "--no-renames", "--relative", "HEAD" }, resolve_root);
 
-    // Untracked files
-    try collectGitLines(allocator, &changed_files, &.{ "git", "ls-files", "--others", "--exclude-standard" }, resolve_root);
+        // Untracked files
+        try collectGitLines(allocator, &changed_files, &.{ "git", "ls-files", "--others", "--exclude-standard" }, resolve_root);
+    }
 
     // Phase 2: Check for global file changes
     for (changed_files.items) |file| {
@@ -164,8 +169,12 @@ pub fn listAffectedAndExit(
 
     for (scripts.items) |script| {
         if (!seen.contains(script.package_name)) {
-            seen.put(script.package_name, {}) catch {};
-            names.append(script.package_name) catch {};
+            seen.put(script.package_name, {}) catch |err| switch (err) {
+                error.OutOfMemory => bun.outOfMemory(),
+            };
+            names.append(script.package_name) catch |err| switch (err) {
+                error.OutOfMemory => bun.outOfMemory(),
+            };
         }
     }
 
@@ -194,7 +203,7 @@ fn isRootLevel(path: []const u8, basename: []const u8) bool {
 }
 
 fn makeRelative(abs_path: []const u8, root: []const u8) []const u8 {
-    if (std.mem.startsWith(u8, abs_path, root)) {
+    if (strings.hasPrefix(abs_path, root)) {
         var rel = abs_path[root.len..];
         if (rel.len > 0 and rel[0] == '/') {
             rel = rel[1..];
@@ -216,9 +225,12 @@ fn mapFileToPackage(file_path: []const u8, package_roots: *const bun.StringHashM
     return null;
 }
 
-/// Run a git command and return a single trimmed line of output.
-fn runGitOneLine(allocator: std.mem.Allocator, argv: []const []const u8, cwd: []const u8) ?[]const u8 {
-    const output = runGitSync(allocator, argv, cwd, true) catch return null;
+/// Run a git command and return a single trimmed line of output, or null if empty.
+fn runGitOneLine(allocator: std.mem.Allocator, argv: []const []const u8, cwd: []const u8) !?[]const u8 {
+    const output = runGitSync(allocator, argv, cwd, true) catch |err| {
+        Output.warn("git command failed: {s}\n", .{@errorName(err)});
+        return null;
+    };
     const trimmed = std.mem.trimRight(u8, output, "\n\r ");
     if (trimmed.len == 0) return null;
     return trimmed;
@@ -231,7 +243,10 @@ fn collectGitLines(
     argv: []const []const u8,
     cwd: []const u8,
 ) !void {
-    const output = runGitSync(allocator, argv, cwd, false) catch return;
+    const output = runGitSync(allocator, argv, cwd, false) catch |err| {
+        Output.warn("git command failed: {s}\n", .{@errorName(err)});
+        return;
+    };
     var lines = std.mem.splitScalar(u8, output, '\n');
     while (lines.next()) |line| {
         const trimmed = std.mem.trimRight(u8, line, "\r ");
@@ -257,7 +272,12 @@ fn runGitSync(allocator: std.mem.Allocator, argv: []const []const u8, cwd: []con
     try child.collectOutput(allocator, &stdout, &stderr, 1024 * 1024);
     const term = try child.wait();
 
-    if (term.Exited != 0 and !allow_non_zero) {
+    const exit_code = switch (term) {
+        .Exited => |code| code,
+        .Signal, .Stopped, .Unknown => 1,
+    };
+
+    if (exit_code != 0 and !allow_non_zero) {
         stdout.deinit(allocator);
         return error.GitCommandFailed;
     }

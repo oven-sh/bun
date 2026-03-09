@@ -9399,3 +9399,11 @@ declare module "node:stream/promises" {
   export function finished(stream: NodeJS.ReadableStream | NodeJS.WritableStream | NodeJS.ReadWriteStream, options?: FinishedOptions): Promise<void>;
   export function pipeline(...streams: Array<NodeJS.ReadableStream | NodeJS.WritableStream | any>): Promise<any>;
 }
+
+// stream/consumers module types
+declare module "node:stream/consumers" {
+  export function buffer(stream: NodeJS.ReadableStream): Promise<Buffer>;
+  export function text(stream: NodeJS.ReadableStream): Promise<string>;
+  export function arrayBuffer(stream: NodeJS.ReadableStream): Promise<ArrayBuffer>;
+  export function json(stream: NodeJS.ReadableStream): Promise<any>;
+}

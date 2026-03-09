@@ -1205,3 +1205,56 @@ declare namespace Bun {
   
   interface TransformStream extends ReadableStream, WritableStream {}
 }
+
+// Add Socket types
+declare namespace Bun {
+  interface Socket {
+    /**
+     * Socket address.
+     */
+    readonly address: {
+      address: string;
+      family: 'IPv4' | 'IPv6';
+      port: number;
+    };
+    
+    /**
+     * Remote address.
+     */
+    readonly remoteAddress: {
+      address: string;
+      family: 'IPv4' | 'IPv6';
+      port: number;
+    };
+    
+    /**
+     * Is socket ready?
+     */
+    readonly readyState: 'opening' | 'open' | 'closing' | 'closed';
+    
+    /**
+     * Sends data.
+     */
+    send(data: string | Buffer | Uint8Array): void;
+    
+    /**
+     * Closes socket.
+     */
+    close(): void;
+    
+    /**
+     * Event: data received.
+     */
+    ondata: (data: Buffer) => void;
+    
+    /**
+     * Event: socket closed.
+     */
+    onclose: () => void;
+    
+    /**
+     * Event: error occurred.
+     */
+    onerror: (error: Error) => void;
+  }
+}

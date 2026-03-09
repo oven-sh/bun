@@ -7823,3 +7823,60 @@ declare namespace NodeJS {
     produceCachedData?: boolean;
   }
 }
+
+// Add Worker threads Communication types
+declare namespace NodeJS {
+  interface MessagePort extends EventEmitter {
+    /**
+     * Sends message.
+     */
+    postMessage(value: any, transferList?: any[]): void;
+    
+    /**
+     * Closes port.
+     */
+    close(): void;
+    
+    /**
+     * Refs port.
+     */
+    ref(): void;
+    
+    /**
+     * Unrefs port.
+     */
+    unref(): void;
+    
+    /**
+     * Starts port.
+     */
+    start(): void;
+    
+    /**
+     * Event: message.
+     */
+    on(event: 'message', listener: (value: any) => void): this;
+    
+    /**
+     * Event: close.
+     */
+    on(event: 'close', listener: () => void): this;
+    
+    /**
+     * Event: messageerror.
+     */
+    on(event: 'messageerror', listener: (error: Error) => void): this;
+  }
+  
+  interface MessageChannel {
+    /**
+     * Port 1.
+     */
+    readonly port1: MessagePort;
+    
+    /**
+     * Port 2.
+     */
+    readonly port2: MessagePort;
+  }
+}

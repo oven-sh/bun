@@ -14719,3 +14719,37 @@ declare global {
     new(label?: string, options?: TextDecoderOptions): TextDecoder;
   };
 }
+
+// WebSocket additional types
+declare global {
+  class WebSocket extends EventTarget {
+    constructor(url: string | URL, protocols?: string | string[]);
+    readonly binaryType: BinaryType;
+    readonly bufferedAmount: number;
+    readonly extensions: string;
+    onclose: ((this: WebSocket, ev: CloseEvent) => any) | null;
+    onerror: ((this: WebSocket, ev: Event) => any) | null;
+    onmessage: ((this: WebSocket, ev: MessageEvent) => any) | null;
+    onopen: ((this: WebSocket, ev: Event) => any) | null;
+    readonly protocol: string;
+    readonly readyState: number;
+    readonly url: string;
+    close(code?: number, reason?: string): void;
+    send(data: string | Buffer | ArrayBuffer | ArrayBufferView): void;
+    readonly CLOSED: number;
+    readonly CLOSING: number;
+    CONNECTING: number;
+    readonly OPEN: number;
+    addEventListener<K extends keyof WebSocketEventMap>(type: K, listener: (this: WebSocket, ev: WebSocketEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void;
+    addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void;
+  }
+  
+  interface WebSocketEventMap {
+    close: CloseEvent;
+    error: Event;
+    message: MessageEvent;
+    open: Event;
+  }
+  
+  type BinaryType = "blob" | "arraybuffer";
+}

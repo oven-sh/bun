@@ -1458,3 +1458,55 @@ declare namespace Bun {
     interfaces(): Record<string, NetworkInterface>;
   }
 }
+
+// Add Logger types
+declare namespace Bun {
+  interface Logger {
+    /**
+     * Logs debug message.
+     */
+    debug(message: string, ...args: any[]): void;
+    
+    /**
+     * Logs info message.
+     */
+    info(message: string, ...args: any[]): void;
+    
+    /**
+     * Logs warning message.
+     */
+    warn(message: string, ...args: any[]): void;
+    
+    /**
+     * Logs error message.
+     */
+    error(message: string, ...args: any[]): void;
+    
+    /**
+     * Logs trace message.
+     */
+    trace(message: string, ...args: any[]): void;
+    
+    /**
+     * Sets log level.
+     */
+    setLevel(level: 'debug' | 'info' | 'warn' | 'error'): void;
+  }
+  
+  interface LoggerOptions {
+    /**
+     * Log level.
+     */
+    level?: 'debug' | 'info' | 'warn' | 'error';
+    
+    /**
+     * Include timestamp?
+     */
+    timestamp?: boolean;
+    
+    /**
+     * Colorize output?
+     */
+    colorize?: boolean;
+  }
+}

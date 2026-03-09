@@ -11148,3 +11148,36 @@ declare global {
     releaseLock(): void;
   }
 }
+
+// Web API: WritableStream additional types
+declare global {
+  interface WritableStreamDefaultController {
+    error(e?: any): void;
+  }
+  
+  interface WritableStreamDefaultWriter {
+    readonly closed: Promise<undefined>;
+    readonly desiredSize: number | null;
+    readonly ready: Promise<undefined>;
+    abort(reason?: any): Promise<void>;
+    close(): Promise<void>;
+    releaseLock(): void;
+    write(chunk: any): Promise<void>;
+  }
+  
+  interface UnderlyingSinkAbortCallback {
+    (reason: any): Promise<void> | void;
+  }
+  
+  interface UnderlyingSinkCloseCallback {
+    (): Promise<void> | void;
+  }
+  
+  interface UnderlyingSinkStartCallback {
+    (controller: WritableStreamDefaultController): any;
+  }
+  
+  interface UnderlyingSinkWriteCallback<W> {
+    (chunk: W, controller: WritableStreamDefaultController): Promise<void> | void;
+  }
+}

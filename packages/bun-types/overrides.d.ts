@@ -374,3 +374,21 @@ declare module "console" {
     [Symbol.asyncIterator](): AsyncIterableIterator<string>;
   }
 }
+
+interface Map<K, V> {
+  /**
+   * Gets the value for a key, or inserts a default value if the key does not exist.
+   * @param key - The key to look up
+   * @param value - The value to insert if the key does not exist
+   * @returns The existing value for the key, or the newly inserted value
+   */
+  getOrInsert(key: K, value: V): V;
+
+  /**
+   * Gets the value for a key, or computes and inserts a default value if the key does not exist.
+   * @param key - The key to look up
+   * @param fn - A function that computes the default value
+   * @returns The existing value for the key, or the newly computed and inserted value
+   */
+  getOrInsertComputed(key: K, fn: () => V): V;
+}

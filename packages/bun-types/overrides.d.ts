@@ -441,16 +441,7 @@ declare module "node:module" {
 }
 
 // Add console.assert proper type with message
-declare module "console" {
-  interface Console {
-    /**
-     * Asserts that an expression is true. If not, prints an error message.
-     * @param value - The value to assert
-     * @param message - Optional message to display if assertion fails
-     */
-    assert(value: unknown, message?: string | Error): void;
-  }
-}
+
 
 // Add describe() with function support for bun:test
 declare module "bun:test" {
@@ -576,16 +567,7 @@ declare namespace Bun {
 //</tool_call>
 
 // Add Test.todo function signature
-declare module "bun:test" {
-  interface Test {
-    /**
-     * Marks a test as a TODO (skipped test).
-     * @param name - The test name
-     * @param fn - Optional test function (should be empty or contain todo.skip())
-     */
-    todo(name: string, fn?: (this: Test) => void): void;
-  }
-}
+
 
 //</tool_call>
 
@@ -9087,95 +9069,7 @@ declare module "node:repl" {
 }
 
 // tls module types
-declare module "node:tls" {
-  import { Duplex } from "node:stream";
-  import { EventEmitter } from "node:events";
-  import { Server as NetServer, Socket } from "node:net";
-  import { Credentials } from "node:crypto";
-  
-  export interface TlsOptions {
-    host?: string;
-    port?: number;
-    path?: string;
-    socket?: Socket;
-    rejectUnauthorized?: boolean;
-    NPNProtocols?: string[];
-    ALPNProtocols?: string[] | Buffer[] | Uint8Array[] | Buffer;
-    SNICallback?: (servername: string, cb: (err: Error | null, ctx?: any) => void) => void;
-    servername?: string;
-    checkServerIdentity?: (hostname: string, cert: any) => Error | undefined;
-    session?: Buffer;
-    minDHSize?: number;
-    ciphers?: string;
-    honorCipherOrder?: boolean;
-    ecdhCurve?: string;
-    clientCertEngine?: string;
-    crl?: string | string[] | Buffer | Buffer[];
-    dhparam?: string | Buffer;
-    secureProtocol?: string;
-    secureOptions?: number;
-    sessionIdContext?: string;
-  }
-  
-  export interface ConnectionOptions extends TlsOptions {
-    enableTrace?: boolean;
-    lookup?: any;
-  }
-  
-  export interface ServerOptions {
-    key?: string | Buffer | string[] | Buffer[] | any[];
-    cert?: string | Buffer | string[] | Buffer[];
-    ca?: string | Buffer | string[] | Buffer[];
-    passphrase?: string;
-    pfx?: string | Buffer | string[] | Buffer[];
-    rejectUnauthorized?: boolean;
-    requestCert?: boolean;
-    NPNProtocols?: string[] | Buffer[] | Uint8Array[] | Buffer;
-    ALPNProtocols?: string[] | Buffer[] | Uint8Array[] | Buffer;
-    SNICallback?: (servername: string, cb: (err: Error | null, ctx?: any) => void) => void;
-    sessionIdContext?: string;
-    ticketKeys?: Buffer;
-    sessionTimeout?: number;
-    minDHSize?: number;
-    handshakeTimeout?: number;
-    clientCertEngine?: string;
-    crl?: string | string[] | Buffer | Buffer[];
-    ciphers?: string;
-    ecdhCurve?: string;
-    honorCipherOrder?: boolean;
-    secureProtocol?: string;
-    secureOptions?: number;
-  }
-  
-  export interface TLSSocket extends Duplex {
-    authorized: boolean;
-    authorizationError: Error;
-    encrypted: boolean;
-    getProtocol(): string;
-    getCipher(): { name: string; version: string; };
-    getPeerCertificate(detailed?: boolean): any;
-    getPeerFinished(): Buffer;
-    getSession(): Buffer;
-    getSessionReused(): boolean;
-    renegotiate(options: any, callback: () => void): void;
-    setMaxSendFragment(size: number): boolean;
-    disableRenegotiation(): void;
-  }
-  
-  export interface Server extends NetServer {
-    addContext(hostName: string, credentials: Credentials): void;
-    removeContext(hostName: string): void;
-    setSecureContext(options: Credentials): void;
-  }
-  
-  export function connect(options: ConnectionOptions, secureConnectListener?: () => void): TLSSocket;
-  export function createServer(options: ServerOptions, secureConnectionListener?: (socket: TLSSocket) => void): Server;
-  export function createSecurePair(credentials?: Credentials, isServer?: boolean, requestCert?: boolean, rejectUnauthorized?: boolean): any;
-  export const CLIENT_RENEG_LIMIT: number;
-  export const CLIENT_RENEG_WINDOW: number;
-  export const DEFAULT_CIPHERS: string;
-  export const DEFAULT_ECDH_CURVE: string;
-}
+
 
 // net module additional types
 declare module "node:net" {
@@ -9796,18 +9690,7 @@ declare module "node:string_decoder" {
 }
 
 // diagnostics_channel module types
-declare module "node:diagnostics_channel" {
-  import { EventEmitter } from "node:events";
-  
-  export interface Channel extends EventEmitter {
-    readonly name: string;
-    hasSubscribers(): boolean;
-    publish<T>(value: T): boolean;
-  }
-  
-  export function channel(name: string): Channel;
-  export function hasSubscribers(name: string): boolean;
-}
+
 
 // async_hooks module types
 declare module "node:async_hooks" {
@@ -9911,78 +9794,7 @@ declare module "node:worker_threads" {
 }
 
 // fs/promises module types
-declare module "node:fs/promises" {
-  import { Stats } from "node:fs";
-  import { ReadableStream } from "node:stream/web";
-  
-  export interface FileReadResult<T extends ArrayBufferView = Buffer> {
-    bytesRead: number;
-    buffer: T;
-  }
-  
-  export interface FileReadOptions {
-    buffer?: ArrayBufferView;
-    offset?: number;
-    length?: number;
-    position?: number | null;
-  }
-  
-  export interface ReadableWebStreamOptions {
-    type?: "bytes";
-  }
-  
-  export function readFile(path: any, options?: any): Promise<Buffer>;
-  export function readFile(path: any, encoding: BufferEncoding): Promise<string>;
-  export function writeFile(path: any, data: any, options?: any): Promise<void>;
-  export function appendFile(path: any, data: any, options?: any): Promise<void>;
-  export function copyFile(src: any, dest: any, flags?: number): Promise<void>;
-  export function stat(path: any, options?: any): Promise<Stats>;
-  export function lstat(path: any, options?: any): Promise<Stats>;
-  export function realpath(path: any, options?: any): Promise<string>;
-  export function mkdir(path: any, options?: any): Promise<string | undefined>;
-  export function readdir(path: any, options?: any): Promise<string[]>;
-  export function readdir(path: any, options: { withFileTypes: true }): Promise<Dirent[]>;
-  export function readlink(path: any, options?: any): Promise<string>;
-  export function symlink(target: any, path: any, type?: any): Promise<void>;
-  export function unlink(path: any): Promise<void>;
-  export function rmdir(path: any): Promise<void>;
-  export function rename(oldPath: any, newPath: any): Promise<void>;
-  export function truncate(path: any, len?: number): Promise<void>;
-  export function chmod(path: any, mode: number | string): Promise<void>;
-  export function lchmod(path: any, mode: number | string): Promise<void>;
-  export function chown(path: any, uid: number, gid: number): Promise<void>;
-  export function lchown(path: any, uid: number, gid: number): Promise<void>;
-  export function utimes(path: any, atime: number | string | Date, mtime: number | string | Date): Promise<void>;
-  export function lutimes(path: any, atime: number | string | Date, mtime: number | string | Date): Promise<void>;
-  export function open(path: any, flags: string | number, mode?: number | string): Promise<FileHandle>;
-  export function mkdtemp(prefix: string, options?: any): Promise<string>;
-  export class Dirent {
-    readonly name: string;
-    isFile(): boolean;
-    isDirectory(): boolean;
-    isBlockDevice(): boolean;
-    isCharacterDevice(): boolean;
-    isSymbolicLink(): boolean;
-    isFIFO(): boolean;
-    isSocket(): boolean;
-  }
-  export class FileHandle {
-    readonly fd: number;
-    appendFile(data: any, options?: any): Promise<void>;
-    chmod(mode: number | string): Promise<void>;
-    chown(uid: number, gid: number): Promise<void>;
-    close(): Promise<void>;
-    datasync(): Promise<void>;
-    read<T extends ArrayBufferView>(buffer: T, offset?: number, length?: number, position?: number): Promise<FileReadResult<T>>;
-    readableWebStream(options?: ReadableWebStreamOptions): ReadableStream;
-    stat(options?: any): Promise<Stats>;
-    sync(): Promise<void>;
-    truncate(len?: number): Promise<void>;
-    utimes(atime: number | string | Date, mtime: number | string | Date): Promise<void>;
-    write(buffer: ArrayBufferView, offset?: number, length?: number, position?: number): Promise<{ bytesWritten: number; buffer: ArrayBufferView }>;
-    write(data: string, position?: number, encoding?: BufferEncoding): Promise<{ bytesWritten: number; buffer: string }>;
-  }
-}
+
 
 // child_process module additional types
 declare module "node:child_process" {
@@ -10059,29 +9871,7 @@ declare module "node:child_process" {
 }
 
 // module module additional types
-declare module "node:module" {
-  export interface Module extends NodeModule {}
-  
-  export interface ModuleNamespace {
-    [key: string]: any;
-  }
-  
-  export interface SourceMap {
-    file: string;
-    sourceRoot: string;
-    sources: string[];
-    sourcesContent: string[];
-    names: string[];
-    mappings: string;
-    version: number;
-  }
-  
-  export function createRequire(path: string | URL): NodeRequire;
-  export function createRequireFromPath(path: string): NodeRequire;
-  export function syncBuiltinESMExports(): void;
-  export function isBuiltin(moduleName: string): boolean;
-  export function register(specifier: string | URL, parentURL?: string | URL): void;
-}
+
 
 // zlib module additional types
 declare module "node:zlib" {
@@ -10152,44 +9942,7 @@ declare module "node:zlib" {
 }
 
 // perf_hooks module types
-declare module "node:perf_hooks" {
-  export interface PerformanceEntry {
-    readonly name: string;
-    readonly entryType: string;
-    readonly startTime: number;
-    readonly duration: number;
-    readonly kind?: number;
-  }
-  
-  export interface PerformanceEntryEntrylist {
-    getEntries(): PerformanceEntry[];
-    getEntriesByName(name: string, type?: string): PerformanceEntry[];
-    getEntriesByType(type: string): PerformanceEntry[];
-  }
-  
-  export interface PerformanceNodeTiming extends PerformanceEntry {
-    readonly bootstrapComplete: number;
-    readonly environment: number;
-    readonly idleTime: number;
-    readonly loopStart: number;
-    const loopExit?: number;
-    readonly v8Start: number;
-  }
-  
-  export interface Performance {
-    readonly nodeTiming: PerformanceNodeTiming;
-    now(): number;
-    clearMarks(name?: string): void;
-    clearMeasures(name?: string): void;
-    getEntries(): PerformanceEntry[];
-    getEntriesByName(name: string, type?: string): PerformanceEntry[];
-    getEntriesByType(type: string): PerformanceEntry[];
-    mark(name: string): void;
-    measure(name: string, startMarkOrMeasure: string, endMarkOrMeasure?: string): void;
-  }
-  
-  export function createHistogram(): PerformanceHistogram;
-}
+
 
 // trace_events module types
 declare module "node:trace_events" {
@@ -10623,65 +10376,7 @@ declare module "node:stream" {
 }
 
 // crypto additional types
-declare module "node:crypto" {
-  export interface CipherOptions {
-    authTagLength?: number;
-  }
-  
-  export interface BinaryLike { }
-  export interface CipherKey { }
-  
-  export class Cipher {
-    update(data: BinaryLike): Buffer;
-    update(data: BinaryLike, inputEncoding: BufferEncoding, outputEncoding: BufferEncoding): string;
-    update(data: BinaryLike, inputEncoding: BufferEncoding): Buffer;
-    final(): Buffer;
-    final(outputEncoding: BufferEncoding): string;
-    setAutoPadding(autoPadding?: boolean): this;
-    getAuthTag(): Buffer;
-    setAuthTag(buffer: Buffer): void;
-  }
-  
-  export class Decipher {
-    update(data: BinaryLike): Buffer;
-    update(data: BinaryLike, inputEncoding: BufferEncoding, outputEncoding: BufferEncoding): string;
-    update(data: BinaryLike, inputEncoding: BufferEncoding): Buffer;
-    final(): Buffer;
-    final(outputEncoding: BufferEncoding): string;
-    setAuthTag(buffer: Buffer): void;
-    setAutoPadding(autoPadding?: boolean): this;
-  }
-  
-  export class Hash {
-    update(data: BinaryLike): Hash;
-    update(data: BinaryLike, encoding: BufferEncoding): Hash;
-    digest(): Buffer;
-    digest(encoding: BufferEncoding): string;
-  }
-  
-  export class Hmac extends Hash {}
-  
-  export class Sign {
-    update(data: BinaryLike): Sign;
-    update(data: BinaryLike, encoding: BufferEncoding): Sign;
-    sign(privateKey: CipherKey): Buffer;
-    sign(privateKey: CipherKey, outputFormat: BufferEncoding): string;
-  }
-  
-  export class Verify {
-    update(data: BinaryLike): Verify;
-    update(data: BinaryLike, encoding: BufferEncoding): Verify;
-    verify(object: CipherKey, signature: BinaryLike): boolean;
-    verify(object: CipherKey, signature: BinaryLike, signatureFormat: BufferEncoding): boolean;
-  }
-  
-  export function createCipher(algorithm: string, password: BinaryLike): Cipher;
-  export function createDecipher(algorithm: string, password: BinaryLike): Decipher;
-  export function createHash(algorithm: string): Hash;
-  export function createHmac(algorithm: string, key: CipherKey): Hmac;
-  export function createSign(algorithm: string): Sign;
-  export function createVerify(algorithm: string): Verify;
-}
+
 
 // fs additional types
 declare module "node:fs" {
@@ -10873,79 +10568,10 @@ declare module "node:http2" {
 }
 
 // tls additional types (extended)
-declare module "node:tls" {
-  export interface SecureContext {
-    context: any;
-  }
-  
-  export interface SecureContextOptions {
-    key?: string | Buffer | string[] | Buffer[] | any[];
-    cert?: string | Buffer | string[] | Buffer[];
-    ca?: string | Buffer | string[] | Buffer[];
-    capath?: string;
-    ciphers?: string;
-    clientCertEngine?: string;
-    crl?: string | string[] | Buffer | Buffer[];
-    dhparam?: string | Buffer;
-    ecdhCurve?: string;
-    honorCipherOrder?: boolean;
-    minDHSize?: number;
-    passphrase?: string;
-    pfx?: string | Buffer | string[] | Buffer[] | any[];
-    secureOptions?: number;
-    secureProtocol?: string;
-    sessionIdContext?: string;
-    sessionTimeout?: number;
-    privateKeyIdentifier?: string;
-    privateKeyEngine?: string;
-    ticketKeys?: Buffer;
-  }
-  
-  export function createSecureContext(options: SecureContextOptions): SecureContext;
-  export function createSecurePair(credentials?: any, isServer?: boolean, requestCert?: boolean, rejectUnauthorized?: boolean): any;
-  
-  export const DEFAULT_ECDH_CURVE: string;
-  export const DEFAULT_CIPHERS: string;
-  export const CLIENT_RENEG_LIMIT: number;
-  export const CLIENT_RENEG_WINDOW: number;
-}
+
 
 // url module additional types (extended)
-declare module "node:url" {
-  export interface URL {
-    hash: string;
-    host: string;
-    hostname: string;
-    href: string;
-    readonly origin: string;
-    password: string;
-    pathname: string;
-    port: string;
-    protocol: string;
-    search: string;
-    readonly searchParams: URLSearchParams;
-    username: string;
-    toJSON(): string;
-    toString(): string;
-  }
-  
-  export class URLSearchParams {
-    constructor(init?: string[][] | Record<string, string> | string | URLSearchParams);
-    append(name: string, value: string): void;
-    delete(name: string): void;
-    entries(): IterableIterator<[string, string]>;
-    forEach(callback: (value: string, name: string, searchParams: this) => void): void;
-    get(name: string): string | null;
-    getAll(name: string): string[];
-    has(name: string): boolean;
-    keys(): IterableIterator<string>;
-    set(name: string, value: string): void;
-    sort(): void;
-    toString(): string;
-    values(): IterableIterator<string>;
-    readonly size: number;
-  }
-}
+
 
 // Web API: Fetch additional types
 declare global {

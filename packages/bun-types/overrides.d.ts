@@ -10810,3 +10810,64 @@ declare module "node:dns" {
   export function resolvePtr(hostname: string, callback: (err: NodeJS.ErrnoException | null, addresses: string[]) => void): void;
   export function reverse(ip: string, callback: (err: NodeJS.ErrnoException | null, hostnames: string[]) => void): void;
 }
+
+// http2 module additional types
+declare module "node:http2" {
+  export interface ServerOptions {
+    maxDeflateDynamicTableSize?: number;
+    maxSessionMemory?: number;
+    maxHeaderListPairs?: number;
+    maxOutstandingPings?: number;
+    maxSendHeaderBlockLength?: number;
+    maxConcurrentStreams?: number;
+    settings?: any;
+    onSessionHandlers?: any;
+  }
+  
+  export interface SessionOptions {
+    maxDeflateDynamicTableSize?: number;
+    maxSessionMemory?: number;
+    maxHeaderListPairs?: number;
+    maxOutstandingPings?: number;
+    maxSendHeaderBlockLength?: number;
+    settings?: any;
+  }
+  
+  export interface ClientSessionOptions extends SessionOptions {
+    maxReservedRemoteStreams?: number;
+    createConnection?: any;
+  }
+  
+  export interface ClientOptions extends ClientSessionOptions {
+    protocol?: string;
+    authority?: string;
+  }
+  
+  export interface StatOptions {
+    offset?: number;
+    length?: number;
+  }
+  
+  export class Http2Session extends EventEmitter {
+    readonly alpnProtocol: string;
+    readonly closed: boolean;
+    readonly destroyed: boolean;
+    readonly localSettings: any;
+    readonly remoteSettings: any;
+    readonly originSet: string[];
+    readonly socket: any;
+    readonly type: number;
+    readonly unackedPingCount: number;
+    close(callback?: () => void): void;
+    destroy(error?: Error, code?: number): void;
+    goaway(code?: number, lastStreamID?: number, opaqueData?: Buffer): void;
+    ping(callback?: (err: Error | null, duration: number, payload: Buffer) => void): boolean;
+    ref(): void;
+    unref(): void;
+    settings(settings: any): void;
+  }
+  
+  export class ServerHttp2Session extends Http2Session {
+    readonly server: any;
+  }
+}

@@ -3577,3 +3577,62 @@ declare namespace NodeJS {
     _onImmediate: Function;
   }
 }
+
+// Add Console constructor types
+declare namespace NodeJS {
+  interface ConsoleConstructor {
+    /**
+     * Standard output stream.
+     */
+    stdout: WriteStream;
+    
+    /**
+     * Standard error stream.
+     */
+    stderr: WriteStream;
+    
+    /**
+     * Creates new Console instance.
+     */
+    new(options?: ConsoleConstructorOptions): Console;
+    
+    /**
+     * Creates console with stdout and stderr.
+     */
+    new(stdout: WritableStream, stderr?: WritableStream): Console;
+  }
+  
+  interface ConsoleConstructorOptions {
+    /**
+     * Ignore errors?
+     */
+    ignoreErrors?: boolean;
+    
+    /**
+     * Use color?
+     */
+    colorMode?: boolean | 'auto';
+    
+    /**
+     * Inspect options.
+     */
+    inspectOptions?: InspectOptions;
+    
+    /**
+     * Group indent level.
+     */
+    groupIndentLevel?: number;
+  }
+  
+  interface WriteStream extends Writable {
+    /**
+     * File descriptor.
+     */
+    fd: number;
+    
+    /**
+     * Is a TTY?
+     */
+    isTTY: boolean;
+  }
+}

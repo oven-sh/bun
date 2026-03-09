@@ -8587,3 +8587,82 @@ declare namespace NodeJS {
     fragment?: string;
   }
 }
+
+// Add CLI options types
+declare namespace NodeJS {
+  interface ExecSyncOptions {
+    /**
+     * Encoding.
+     */
+    encoding?: BufferEncoding;
+    
+    /**
+     * Timeout.
+     */
+    timeout?: number;
+    
+    /**
+     * Max buffer.
+     */
+    maxBuffer?: number;
+    
+    /**
+     * Windows hide.
+     */
+    windowsHide?: boolean;
+  }
+  
+  interface ExecOptions extends ExecSyncOptions {
+    /**
+     * CWD.
+     */
+    cwd?: string;
+    
+    /**
+     * Environment.
+     */
+    env?: Record<string, string>;
+    
+    /**
+     * Shell.
+     */
+    shell?: string | boolean;
+    
+    /**
+     * UID.
+     */
+    uid?: number;
+    
+    /**
+     * GID.
+     */
+    gid?: number;
+  }
+  
+  interface SpawnOptions extends ExecOptions {
+    /**
+     * Arguments.
+     */
+    args?: string[];
+    
+    /**
+     * Detached.
+     */
+    detached?: boolean;
+    
+    /**
+     * Stdio.
+     */
+    stdio?: Array<string | Stream | 'pipe' | 'inherit' | 'ignore' | number>;
+    
+    /**
+     * Windows verbatim arguments.
+     */
+    windowsVerbatimArguments?: boolean;
+    
+    /**
+     * Windows hide.
+     */
+    windowsHide?: boolean;
+  }
+}

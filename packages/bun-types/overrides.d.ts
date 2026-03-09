@@ -5628,3 +5628,85 @@ declare namespace NodeJS {
     shell: string | null;
   }
 }
+
+// Add Util types
+declare namespace NodeJS {
+  interface InspectOptions {
+    /**
+     * Show hidden properties.
+     */
+    showHidden?: boolean;
+    
+    /**
+     * Inspection depth.
+     */
+    depth?: number | null;
+    
+    /**
+     * Colors.
+     */
+    colors?: boolean;
+    
+    /**
+     * Custom inspect.
+     */
+    customInspect?: boolean;
+    
+    /**
+     * Show proxy.
+     */
+    showProxy?: boolean;
+    
+    /**
+     * Max array length.
+     */
+    maxArrayLength?: number | null;
+    
+    /**
+     * Max string length.
+     */
+    maxStringLength?: number | null;
+    
+    /**
+     * Break length.
+     */
+    breakLength?: number;
+    
+    /**
+     * Compact.
+     */
+    compact?: boolean;
+    
+    /**
+     * Sorted.
+     */
+    sorted?: boolean;
+    
+    /**
+     * getters.
+     */
+    getters?: boolean;
+    
+    /**
+     * setters.
+     */
+    setters?: boolean;
+    
+    /**
+     * Numeric separators.
+     */
+    numericSeparator?: boolean;
+  }
+  
+  interface TextFormatOptions {
+    /**
+     * Format options.
+     */
+    format?: Function;
+    
+    /**
+     * Colors.
+     */
+    colors?: boolean;
+  }
+}

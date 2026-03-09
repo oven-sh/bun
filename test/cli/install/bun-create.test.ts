@@ -132,8 +132,7 @@ it("should error when local template destination exists with conflicting files",
   const [err, exitCode] = await Promise.all([stderr.text(), exited]);
 
   // Should fail with conflict error
-  expect(err).toContain("contains files that could conflict");
-  expect(err).toContain("index.js");
+  expect(err).toContain("already exists and is not empty");
   expect(err).toContain("--force");
   expect(exitCode).toBe(1);
 

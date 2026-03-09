@@ -425,55 +425,25 @@ pub const CreateCommand = struct {
                 };
 
                 if (!create_options.overwrite) {
-                    // Check if destination directory exists and contains files that would conflict
+                    // Check if destination directory already exists and contains files.
+                    // Refuse to overwrite unless --force is passed to prevent accidental data loss.
                     if (std.fs.openDirAbsolute(destination, .{ .iterate = true })) |dest_dir_| {
                         var dest_dir = dest_dir_;
                         defer dest_dir.close();
 
-                        const Walker = @import("../walker_skippable.zig");
-                        var template_walker = try Walker.walk(.fromStdDir(template_dir), ctx.allocator, skip_files, skip_dirs);
-                        defer template_walker.deinit();
-
-                        var conflicting_files = bun.StringArrayHashMap(void).init(ctx.allocator);
-                        defer conflicting_files.deinit();
-
-                        while (try template_walker.next().unwrap()) |entry| {
-                            if (entry.kind != .file) continue;
-
-                            // Skip files that never conflict
-                            var dominated = false;
-                            inline for (never_conflict) |never_conflict_path| {
-                                if (strings.eqlComptime(entry.path, never_conflict_path)) {
-                                    dominated = true;
-                                }
-                            }
-                            if (dominated) continue;
-
-                            if (dest_dir.statFile(entry.path)) |_| {
-                                conflicting_files.put(entry.path, {}) catch {};
-                            } else |_| {}
-                        }
-
-                        if (conflicting_files.count() > 0) {
+                        var iter = dest_dir.iterate();
+                        if (iter.next() catch null) |_| {
                             node.end();
                             progress.refresh();
 
                             Output.prettyErrorln(
-                                "<r>\n<red>error<r><d>: <r>The directory <b><blue>{s}<r>/ contains files that could conflict:\n\n",
+                                "<r>\n<red>error<r><d>: <r>The directory <b><blue>{s}<r>/ already exists and is not empty.",
                                 .{
                                     std.fs.path.basename(destination),
                                 },
                             );
-                            for (conflicting_files.keys()) |path| {
-                                if (strings.endsWith(path, std.fs.path.sep_str)) {
-                                    Output.prettyError("<r>  <blue>{s}<r>", .{path[0 .. @max(path.len, 1) - 1]});
-                                    Output.prettyErrorln(std.fs.path.sep_str, .{});
-                                } else {
-                                    Output.prettyErrorln("<r>  {s}", .{path});
-                                }
-                            }
 
-                            Output.prettyErrorln("<r>\n<d>To create {s} anyway, use --force<r>", .{template});
+                            Output.prettyErrorln("<r>\n<d>To overwrite it anyway, use --force<r>", .{});
                             Global.exit(1);
                         }
                     } else |_| {}

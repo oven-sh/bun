@@ -10268,3 +10268,21 @@ declare module "node:timers/promises" {
   export function setImmediate(value: any, options: TimerOptions): Promise<void>;
   export function setInterval(ms: number, value?: any): AsyncIterable<any>;
 }
+
+// domain module types (deprecated)
+declare module "node:domain" {
+  import { EventEmitter } from "node:events";
+  
+  export class Domain extends EventEmitter {
+    readonly members: any[];
+    run(fn: Function): void;
+    add(emitter: EventEmitter): void;
+    remove(emitter: EventEmitter): void;
+    bind(fn: Function): Function;
+    intercept(fn: Function): Function;
+    enter(): void;
+    exit(): void;
+  }
+  
+  export function create(): Domain;
+}

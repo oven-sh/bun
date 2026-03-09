@@ -36,7 +36,7 @@ pub fn filterAffectedScripts(
     head_ref: []const u8,
 ) !void {
     // Phase 1: Get changed files via git
-    var changed_files = std.ArrayList([]const u8).init(allocator);
+    var changed_files = std.array_list.Managed([]const u8).init(allocator);
     defer changed_files.deinit();
 
     // Get merge-base for accurate diff on diverged branches
@@ -63,7 +63,7 @@ pub fn filterAffectedScripts(
     }
 
     // Build package_roots map: relative dir path → package name
-    var package_roots = std.StringHashMap([]const u8).init(allocator);
+    var package_roots = bun.StringHashMap([]const u8).init(allocator);
     defer package_roots.deinit();
 
     for (scripts.items) |*script| {
@@ -75,7 +75,7 @@ pub fn filterAffectedScripts(
     }
 
     // Map changed files → directly changed packages
-    var directly_changed = std.StringHashMap(void).init(allocator);
+    var directly_changed = bun.StringHashMap(void).init(allocator);
     defer directly_changed.deinit();
 
     for (changed_files.items) |file| {
@@ -85,7 +85,7 @@ pub fn filterAffectedScripts(
     }
 
     // Phase 3: Build reverse dependency graph
-    var workspace_names = std.StringHashMap(void).init(allocator);
+    var workspace_names = bun.StringHashMap(void).init(allocator);
     defer workspace_names.deinit();
     for (scripts.items) |*script| {
         if (!workspace_names.contains(script.package_name)) {
@@ -93,7 +93,7 @@ pub fn filterAffectedScripts(
         }
     }
 
-    var reverse_deps = std.StringHashMap(std.ArrayList([]const u8)).init(allocator);
+    var reverse_deps = bun.StringHashMap(std.array_list.Managed([]const u8)).init(allocator);
     defer {
         var rev_iter = reverse_deps.valueIterator();
         while (rev_iter.next()) |list| {
@@ -110,7 +110,7 @@ pub fn filterAffectedScripts(
             if (workspace_names.contains(dep_name)) {
                 const res = try reverse_deps.getOrPut(dep_name);
                 if (!res.found_existing) {
-                    res.value_ptr.* = std.ArrayList([]const u8).init(allocator);
+                    res.value_ptr.* = std.array_list.Managed([]const u8).init(allocator);
                 }
                 try res.value_ptr.append(script.package_name);
             }
@@ -118,10 +118,10 @@ pub fn filterAffectedScripts(
     }
 
     // Phase 4: BFS from directly changed packages
-    var affected = std.StringHashMap(void).init(allocator);
+    var affected = bun.StringHashMap(void).init(allocator);
     defer affected.deinit();
 
-    var queue = std.ArrayList([]const u8).init(allocator);
+    var queue = std.array_list.Managed([]const u8).init(allocator);
     defer queue.deinit();
 
     var dc_iter = directly_changed.keyIterator();
@@ -159,8 +159,8 @@ pub fn listAffectedAndExit(
     allocator: std.mem.Allocator,
     scripts: *const std.array_list.Managed(ScriptConfig),
 ) noreturn {
-    var seen = std.StringHashMap(void).init(allocator);
-    var names = std.ArrayList([]const u8).init(allocator);
+    var seen = bun.StringHashMap(void).init(allocator);
+    var names = std.array_list.Managed([]const u8).init(allocator);
 
     for (scripts.items) |script| {
         if (!seen.contains(script.package_name)) {
@@ -204,7 +204,7 @@ fn makeRelative(abs_path: []const u8, root: []const u8) []const u8 {
     return abs_path;
 }
 
-fn mapFileToPackage(file_path: []const u8, package_roots: *const std.StringHashMap([]const u8)) ?[]const u8 {
+fn mapFileToPackage(file_path: []const u8, package_roots: *const bun.StringHashMap([]const u8)) ?[]const u8 {
     var current = file_path;
     while (true) {
         current = std.fs.path.dirname(current) orelse break;
@@ -227,7 +227,7 @@ fn runGitOneLine(allocator: std.mem.Allocator, argv: []const []const u8, cwd: []
 /// Run a git command and add each output line to the list.
 fn collectGitLines(
     allocator: std.mem.Allocator,
-    out: *std.ArrayList([]const u8),
+    out: *std.array_list.Managed([]const u8),
     argv: []const []const u8,
     cwd: []const u8,
 ) !void {
@@ -246,7 +246,7 @@ fn runGitSync(allocator: std.mem.Allocator, argv: []const []const u8, cwd: []con
     var child = std.process.Child.init(argv, allocator);
     child.cwd = cwd;
     child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Ignore;
+    child.stderr_behavior = .Pipe;
 
     try child.spawn();
 
@@ -257,17 +257,9 @@ fn runGitSync(allocator: std.mem.Allocator, argv: []const []const u8, cwd: []con
     try child.collectOutput(allocator, &stdout, &stderr, 1024 * 1024);
     const term = try child.wait();
 
-    switch (term) {
-        .Exited => |code| {
-            if (code != 0 and !allow_non_zero) {
-                stdout.deinit(allocator);
-                return error.GitCommandFailed;
-            }
-        },
-        else => {
-            stdout.deinit(allocator);
-            return error.GitCommandFailed;
-        },
+    if (term.Exited != 0 and !allow_non_zero) {
+        stdout.deinit(allocator);
+        return error.GitCommandFailed;
     }
 
     return stdout.items;

@@ -3707,3 +3707,150 @@ declare namespace NodeJS {
     [id: string]: any;
   }
 }
+
+// Add Readable and Writable stream base types
+declare namespace NodeJS {
+  interface ReadableStream extends EventEmitter {
+    /**
+     * Is paused?
+     */
+    readable: boolean;
+    
+    /**
+     * Is flowing?
+     */
+    readableFlowing: boolean | null;
+    
+    /**
+     * Is destroyed?
+     */
+    readableDestroyed: boolean;
+    
+    /**
+     * Reads data.
+     */
+    read(size?: number): any;
+    
+    /**
+     * Sets encoding.
+     */
+    setEncoding(encoding: BufferEncoding): this;
+    
+    /**
+     * Pauses stream.
+     */
+    pause(): this;
+    
+    /**
+     * Resumes stream.
+     */
+    resume(): this;
+    
+    /**
+     * Is stream paused?
+     */
+    isPaused(): boolean;
+    
+    /**
+     * Pipes to destination.
+     */
+    pipe<T extends WritableStream>(destination: T, options?: { end?: boolean }): T;
+    
+    /**
+     * Unpipes.
+     */
+    unpipe(destination?: WritableStream): this;
+    
+    /**
+     * Destroys stream.
+     */
+    destroy(error?: Error): void;
+    
+    /**
+     * Event: data.
+     */
+    on(event: 'data', listener: (chunk: any) => void): this;
+    
+    /**
+     * Event: end.
+     */
+    on(event: 'end', listener: () => void): this;
+    
+    /**
+     * Event: error.
+     */
+    on(event: 'error', listener: (err: Error) => void): this;
+    
+    /**
+     * Event: close.
+     */
+    on(event: 'close', listener: () => void): this;
+  }
+  
+  interface WritableStream extends EventEmitter {
+    /**
+     * Is writable?
+     */
+    writable: boolean;
+    
+    /**
+     * Is destroyed?
+     */
+    writableDestroyed: boolean;
+    
+    /**
+     * Writes data.
+     */
+    write(chunk: any, encoding?: BufferEncoding | callback, callback?: Function): boolean;
+    
+    /**
+     * Writes multiple chunks.
+     */
+    writev(chunks: Array<{ chunk: any; encoding: BufferEncoding }>, callback?: Function): boolean;
+    
+    /**
+     * Ends stream.
+     */
+    end(chunk?: any, encoding?: BufferEncoding | callback, callback?: Function): void;
+    
+    /**
+     * Sets default encoding.
+     */
+    setDefaultEncoding(encoding: BufferEncoding): this;
+    
+    /**
+     * Closes stream.
+     */
+    destroy(error?: Error): void;
+    
+    /**
+     * Event: drain.
+     */
+    on(event: 'drain', listener: () => void): this;
+    
+    /**
+     * Event: finish.
+     */
+    on(event: 'finish', listener: () => void): this;
+    
+    /**
+     * Event: error.
+     */
+    on(event: 'error', listener: (err: Error) => void): this;
+    
+    /**
+     * Event: close.
+     */
+    on(event: 'close', listener: () => void): this;
+    
+    /**
+     * Event: pipe.
+     */
+    on(event: 'pipe', listener: (src: ReadableStream) => void): this;
+    
+    /**
+     * Event: unpipe.
+     */
+    on(event: 'unpipe', listener: (src: ReadableStream) => void): this;
+  }
+}

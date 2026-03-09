@@ -5831,3 +5831,127 @@ declare namespace NodeJS {
     on(event: 'change', listener: (current: Stats, previous: Stats) => void): this;
   }
 }
+
+// Add Dgram (UDP) types
+declare namespace NodeJS {
+  interface Socket extends EventEmitter {
+    /**
+     * Socket address.
+     */
+    readonly address: AddressInfo;
+    
+    /**
+     * Sends data.
+     */
+    send(msg: Buffer, port: number, address?: string, callback?: Function): void;
+    
+    /**
+     * Binds socket.
+     */
+    bind(port?: number, address?: string, callback?: Function): void;
+    
+    /**
+     * Closes socket.
+     */
+    close(callback?: Function): void;
+    
+    /**
+     * Sets broadcast.
+     */
+    setBroadcast(flag: boolean): void;
+    
+    /**
+     * Sets TTL.
+     */
+    setTTL(ttl: number): void;
+    
+    /**
+     * Sets multicast TTL.
+     */
+    setMulticastTTL(ttl: number): void;
+    
+    /**
+     * Sets multicast interface.
+     */
+    setMulticastInterface(multicastInterface: string): void;
+    
+    /**
+     * Adds membership.
+     */
+    addMembership(multicastAddress: string, multicastInterface?: string): void;
+    
+    /**
+     * Drops membership.
+     */
+    dropMembership(multicastAddress: string, multicastInterface?: string): void;
+    
+    /**
+     * Refs socket.
+     */
+    ref(): this;
+    
+    /**
+     * Unrefs socket.
+     */
+    unref(): this;
+    
+    /**
+     * Event: message.
+     */
+    on(event: 'message', listener: (msg: Buffer, rinfo: RemoteInfo) => void): this;
+    
+    /**
+     * Event: listening.
+     */
+    on(event: 'listening', listener: () => void): this;
+    
+    /**
+     * Event: close.
+     */
+    on(event: 'close', listener: () => void): this;
+    
+    /**
+     * Event: error.
+     */
+    on(event: 'error', listener: (err: Error) => void): this;
+  }
+  
+  interface AddressInfo {
+    /**
+     * Address.
+     */
+    address: string;
+    
+    /**
+     * Family.
+     */
+    family: string;
+    
+    /**
+     * Port.
+     */
+    port: number;
+  }
+  
+  interface RemoteInfo {
+    /**
+     * Address.
+     */
+    address: string;
+    
+    /**
+     * Family.
+     */
+    family: string;
+    
+    /**
+     * Port.
+     */
+    port: number;
+    
+    /**
+     * Size.
+     */
+    size: number;
+  }
+}

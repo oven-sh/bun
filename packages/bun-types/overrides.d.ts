@@ -950,3 +950,31 @@ declare namespace Bun {
     readonly name: string;
   }
 }
+
+// Add Environment variable types
+declare namespace Bun {
+  interface Env {
+    /**
+     * NODE_ENV environment variable.
+     */
+    NODE_ENV?: 'development' | 'production' | 'test';
+    
+    /**
+     * BUN_DEBUG environment variable.
+     */
+    BUN_DEBUG?: '1' | '0' | 'true' | 'false';
+    
+    /**
+     * BUN_CONFIG_ prefixed environment variables.
+     */
+    [key: `BUN_CONFIG_${string}`]: string | undefined;
+  }
+  
+  /**
+   * Process.env with Bun-specific variables.
+   */
+  interface ProcessEnv extends NodeJS.ProcessEnv {
+    NODE_ENV?: 'development' | 'production' | 'test';
+    BUN_DEBUG?: '1' | '0' | 'true' | 'false';
+  }
+}

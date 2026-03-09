@@ -10381,3 +10381,16 @@ declare module "node:inspector" {
   export function url(): string;
   export const console: Console;
 }
+
+// punycode module types (deprecated)
+declare module "node:punycode" {
+  export function decode(input: string): string;
+  export function encode(input: string): string;
+  export function toASCII(input: string): string;
+  export function toUnicode(input: string): string;
+  export const ucs2: {
+    decode(input: string): number[];
+    encode(codePoints: number[]): string;
+  };
+  export function version: string;
+}

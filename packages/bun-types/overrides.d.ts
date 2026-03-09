@@ -404,3 +404,22 @@ declare module "node:perf_hooks" {
     timerify<T extends (...args: any[]) => any>(fn: T): T;
   }
 }
+
+// Add missing type for process.initgroups
+declare module "node:process" {
+  interface Process {
+    /**
+     * Initializes the group access list.
+     * @param user - The user name or numeric ID
+     * @param extraGroup - A group name or ID
+     */
+    initgroups(user: string | number, extraGroup: string | number): void;
+    
+    /**
+     * Returns the CPU time used by the current thread.
+     * @param user - If true, returns user time; if false, returns system time
+     * @returns An object with user and system CPU time in microseconds
+     */
+    threadCpuUsage(user?: boolean): { user: number; system: number };
+  }
+}

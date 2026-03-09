@@ -9229,3 +9229,85 @@ declare module "node:net" {
   
   export type SocketConnectOpts = TcpSocketConnectOpts | IpcSocketConnectOpts;
 }
+
+// http module additional types
+declare module "node:http" {
+  export interface ServerOptions {
+    IncomingMessage?: typeof IncomingMessage;
+    ServerResponse?: typeof ServerResponse;
+    maxHeaderSize?: number;
+    insecureHTTPParser?: boolean;
+    keepAliveTimeout?: number;
+    headersTimeout?: number;
+    requestTimeout?: number;
+  }
+  
+  export interface RequestOptions {
+    method?: string;
+    headers?: any;
+    auth?: string;
+    protocol?: string;
+    host?: string;
+    hostname?: string;
+    port?: number;
+    path?: string;
+    agent?: any;
+    defaultPort?: number;
+    family?: number;
+    lookup?: any;
+    timeout?: number;
+    setHost?: boolean;
+    createConnection?: any;
+  }
+  
+  export interface IncomingMessage extends NodeJS.ReadableStream {
+    httpVersion: string;
+    httpVersionMajor: number;
+    httpVersionMinor: number;
+    complete: boolean;
+    readonly headers: any;
+    readonly rawHeaders: string[];
+    readonly trailers: any;
+    readonly rawTrailers: string[];
+    setTimeout(msecs: number, callback?: () => void): this;
+    readonly method?: string;
+    readonly url?: string;
+    readonly statusCode?: number;
+    readonly statusMessage?: string;
+    readonly socket: any;
+    readonly connection: any;
+  }
+  
+  export interface OutgoingMessage extends NodeJS.WritableStream {
+    writableFinished: boolean;
+    chunkedEncoding: boolean;
+    shouldKeepAlive: boolean;
+    useChunkedEncodingByDefault: boolean;
+    sendDate: boolean;
+    finished: boolean;
+    headersSent: boolean;
+    connection: any;
+    socket: any;
+    setTimeout(msecs: number, callback?: () => void): this;
+    setHeader(name: string, value: string | string[]): void;
+    getHeader(name: string): string | string[] | undefined;
+    getHeaders(): any;
+    getHeaderNames(): string[];
+    hasHeader(name: string): boolean;
+    removeHeader(name: string): void;
+    addTrailers(headers: any): void;
+    flushHeaders(): void;
+  }
+  
+  export interface ServerResponse extends OutgoingMessage {
+    statusCode: number;
+    statusMessage: string;
+    readonly headersSent: boolean;
+    readonly finished: boolean;
+    assignSocket(socket: any): void;
+    detachSocket(socket: any): void;
+    writeContinue(callback?: () => void): void;
+    writeHead(statusCode: number, statusMessage?: string, headers?: any): void;
+    writeHead(statusCode: number, headers?: any): void;
+  }
+}

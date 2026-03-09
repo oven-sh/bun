@@ -1681,3 +1681,33 @@ declare namespace Bun {
     enqueue(item: any, priority: number): void;
   }
 }
+
+// Add Buffer utilities
+declare namespace Bun {
+  interface Buffer extends Uint8Array {
+    /**
+     * Converts buffer to hex string.
+     */
+    toString(encoding: 'hex'): string;
+    
+    /**
+     * Converts buffer to base64.
+     */
+    toString(encoding: 'base64'): string;
+    
+    /**
+     * Converts buffer to UTF-8 string.
+     */
+    toString(encoding: 'utf-8'): string;
+    
+    /**
+     * Creates buffer from string.
+     */
+    from(str: string, encoding?: 'utf-8' | 'hex' | 'base64'): Buffer;
+    
+    /**
+     * Concatenates buffers.
+     */
+    concat(...buffers: Buffer[]): Buffer;
+  }
+}

@@ -5530,3 +5530,101 @@ declare namespace NodeJS {
     init(): void;
   }
 }
+
+// Add OS types
+declare namespace NodeJS {
+  interface Cpus {
+    /**
+     * CPU model.
+     */
+    model: string;
+    
+    /**
+     * CPU speed in MHz.
+     */
+    speed: number;
+    
+    /**
+     * User time.
+     */
+    times: {
+      user: number;
+      nice: number;
+      sys: number;
+      idle: number;
+      irq: number;
+    };
+  }
+  
+  interface NetworkInterfaces {
+    [name: string]: NetworkInterfaceBase[];
+  }
+  
+  interface NetworkInterfaceBase {
+    /**
+     * Interface address.
+     */
+    address: string;
+    
+    /**
+     * Netmask.
+     */
+    netmask: string;
+    
+    /**
+     * Family.
+     */
+    family: 'IPv4' | 'IPv6';
+    
+    /**
+     * MAC address.
+     */
+    mac: string;
+    
+    /**
+     * Is internal?
+     */
+    internal: boolean;
+    
+    /**
+     * Is loopback?
+     */
+    loopback: boolean;
+    
+    /**
+     * Scope ID.
+     */
+    scopeid?: number;
+    /**
+     * CIDR.
+     */
+    cidr?: string;
+  }
+  
+  interface UserInfo {
+    /**
+     * User ID.
+     */
+    uid: number;
+    
+    /**
+     * Group ID.
+     */
+    gid: number;
+    
+    /**
+     * Username.
+     */
+    username: string;
+    
+    /**
+     * Home directory.
+     */
+    homedir: string;
+    
+    /**
+     * Shell.
+     */
+    shell: string | null;
+  }
+}

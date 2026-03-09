@@ -570,3 +570,19 @@ declare namespace Bun {
     mode?: number;
   }
 }
+
+<tool_call>exec<arg_key>command</arg_key><arg_value>cd /root/.openclaw/workspace/bun-fork && cat >> packages/bun-types/overrides.d.ts << 'EOF'
+
+//</tool_call>
+
+// Add Test.todo function signature
+declare module "bun:test" {
+  interface Test {
+    /**
+     * Marks a test as a TODO (skipped test).
+     * @param name - The test name
+     * @param fn - Optional test function (should be empty or contain todo.skip())
+     */
+    todo(name: string, fn?: (this: Test) => void): void;
+  }
+}

@@ -16436,3 +16436,9 @@ declare global {
   function clearImmediate(immediateId: NodeJS.Immediate): void;
   function setImmediate(callback: (...args: any[]) => void, ...args: any[]): NodeJS.Immediate;
 }
+
+// clearInterval and clearTimeout additional types
+declare global {
+  function clearInterval(intervalId: NodeJS.Timeout): void;
+  function clearTimeout(timeoutId: NodeJS.Timeout): void;
+}

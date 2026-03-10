@@ -15332,3 +15332,26 @@ declare global {
   }
   var BigInt: BigIntConstructor;
 }
+
+// Object additional types
+declare global {
+  interface ObjectConstructor {
+    assign<T extends object>(target: T, ...sources: any[]): T;
+    create(o: object | null): any;
+    defineProperties<T>(o: T, properties: PropertyDescriptorMap & ThisType<T>): T;
+    defineProperty<T>(o: T, p: PropertyKey, attributes: PropertyDescriptor & ThisType<any>): T;
+    entries(o: object): [string, any][];
+    freeze<T>(a: T): Readonly<T>;
+    getOwnPropertyDescriptor(o: any, p: PropertyKey): PropertyDescriptor | undefined;
+    getOwnPropertyNames(o: any): string[];
+    getOwnPropertySymbols(o: any): symbol[];
+    getPrototypeOf(o: any): any;
+    groupBy(items: Iterable<any>, keySelector: (item: any, index: number) => unknown): Record<string, any[]>;
+    is(value1: any, value2: any): boolean;
+    keys(o: object): string[];
+    preventExtensions<T>(a: T): T;
+    seal<T>(a: T): T;
+    setPrototypeOf(o: any, proto: object | null): any;
+    values(o: object): any[];
+  }
+}

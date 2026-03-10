@@ -334,7 +334,8 @@ function ClientRequest(input, options, cb) {
             if (!headers["host"] && !headers["Host"]) {
               raw += `Host: ${originalHost}${this[kUseDefaultPort] ? "" : ":" + this[kPort]}\r\n`;
             }
-            for (const [key, val] of Object.entries(headers)) {
+            for (const key in headers) {
+              const val = headers[key];
               if ($isJSArray(val)) {
                 for (const v of val) raw += `${key}: ${v}\r\n`;
               } else if (val != null) {
@@ -343,6 +344,15 @@ function ClientRequest(input, options, cb) {
             }
             raw += "\r\n";
             upgradeSocket.write(raw);
+
+            // Flush any buffered body chunks queued via req.write() / req.end()
+            // before the upgrade socket connected (e.g. CONNECT tunnels with payloads).
+            if (this[kBodyChunks]?.length > 0) {
+              for (const chunk of this[kBodyChunks]) {
+                upgradeSocket.write(chunk);
+              }
+              this[kBodyChunks].length = 0;
+            }
           };
 
           let upgradeSocket;

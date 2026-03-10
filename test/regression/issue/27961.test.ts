@@ -6,7 +6,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 // is active" when overwriting a running .exe (EBUSY error).
 describe.if(process.platform === "win32")("cp over running exe on Windows", () => {
   test("does not panic when overwriting a running executable", async () => {
-    using dir = tempDir("cp-ebusy-27961");
+    using dir = tempDir("cp-ebusy-27961", {});
     const dummyExe = String(dir) + "\\dummy-process.exe";
 
     // Copy bun to create a dummy executable

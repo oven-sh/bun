@@ -15907,3 +15907,39 @@ declare global {
   
   var Proxy: ProxyConstructor;
 }
+
+// Intl.DateTimeFormat additional types
+declare global {
+  namespace Intl {
+    interface DateTimeFormatOptions {
+      formatMatcher?: "basic" | "best fit";
+      hour12?: boolean;
+      weekday?: "long" | "short" | "narrow";
+      era?: "long" | "short" | "narrow";
+      year?: "numeric" | "2-digit";
+      month?: "numeric" | "2-digit" | "long" | "short" | "narrow";
+      day?: "numeric" | "2-digit";
+      hour?: "numeric" | "2-digit";
+      minute?: "numeric" | "2-digit";
+      second?: "numeric" | "2-digit";
+      timeZoneName?: "long" | "short";
+      formatMatcher?: "basic" | "best fit";
+      timeZone?: string;
+      calendar?: string;
+      numberingSystem?: string;
+      localeMatcher?: "lookup" | "best fit";
+    }
+    
+    interface DateTimeFormat {
+      format(date?: Date | number): string;
+      formatToParts(date?: Date | number): DateTimeFormatPart[];
+      resolvedOptions(): ResolvedDateTimeFormatOptions;
+    }
+    
+    var DateTimeFormat: {
+      new(locales?: string | string[], options?: DateTimeFormatOptions): DateTimeFormat;
+      (locales?: string | string[], options?: DateTimeFormatOptions): string;
+      supportedLocalesOf(locales: string | string[], options?: DateTimeFormatOptions): string[];
+    };
+  }
+}

@@ -15688,3 +15688,21 @@ declare global {
   }
   var BigUint64Array: BigUint64ArrayConstructor;
 }
+
+// globalThis properties additional types
+declare global {
+  var NaN: number;
+  var Infinity: number;
+  var undefined: any;
+  var eval: (x: string) => any;
+  var parseInt: (string: string, radix?: number) => number;
+  var parseFloat: (string: string) => number;
+  var isNaN: (number: number) => boolean;
+  var isFinite: (number: number) => boolean;
+  var decodeURI: (encodedURI: string) => string;
+  var decodeURIComponent: (encodedURIComponent: string) => string;
+  var encodeURI: (uri: string) => string;
+  var encodeURIComponent: (uriComponent: string) => string;
+  var escape: (string: string) => string;
+  var unescape: (string: string) => string;
+}

@@ -16179,3 +16179,20 @@ declare global {
     };
   }
 }
+
+// NodeJS.ReadableStream additional types
+declare global {
+  namespace NodeJS {
+    interface ReadableStream {
+      read(size?: number): any;
+      setEncoding(encoding: BufferEncoding): this;
+      pause(): this;
+      resume(): this;
+      pipe<T extends WritableStream>(destination: T, options?: { end?: boolean }): T;
+      unpipe(destination?: WritableStream): this;
+      unshift(chunk: any, encoding?: BufferEncoding): void;
+      wrap(oldStream: ReadableStream): this;
+      [Symbol.asyncIterator](): AsyncIterableIterator<any>;
+    }
+  }
+}

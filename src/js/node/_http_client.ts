@@ -315,6 +315,15 @@ function ClientRequest(input, options, cb) {
       // See: https://github.com/oven-sh/bun/issues/9911
       const upgradeHeader = this.getHeader("upgrade");
       if (upgradeHeader && this.listenerCount("upgrade") > 0) {
+        // Proxy and Unix socket paths are not supported for upgrade connections.
+        // Detect early and throw a clear error rather than silently ignoring.
+        if (proxy) {
+          throw new Error("HTTP upgrade through a proxy is not supported");
+        }
+        if (this[kSocketPath]) {
+          throw new Error("HTTP upgrade over a Unix socket path is not supported");
+        }
+
         const parsedUrl = new URL(url);
         const connectHost = parsedUrl.hostname;
         const connectPort = parseInt(parsedUrl.port || (protocol === "https:" ? "443" : "80"), 10);
@@ -368,11 +377,27 @@ function ClientRequest(input, options, cb) {
             upgradeSocket = net.createConnection({ host: connectHost, port: connectPort }, onSocketConnect);
           }
 
+          // Wire upgradeSocket into the request's abort/destroy lifecycle so
+          // that req.destroy() / req.abort() tears down the real TCP connection.
+          this[kAbortController] ??= new AbortController();
+          const abortSignal = this[kAbortController].signal;
+          const onAbortUpgrade = () => {
+            detachListeners();
+            upgradeSocket.destroy();
+            this[kClearTimeout]();
+            resolve();
+          };
+          abortSignal.addEventListener("abort", onAbortUpgrade, { once: true });
+          const cleanupAbortListener = () => {
+            abortSignal.removeEventListener("abort", onAbortUpgrade);
+          };
+
           let buf = Buffer.alloc(0);
           const detachListeners = () => {
             upgradeSocket.removeListener("data", onData);
             upgradeSocket.removeListener("error", onError);
             upgradeSocket.removeListener("close", onClose);
+            cleanupAbortListener();
           };
           const onError = (err) => {
             detachListeners();

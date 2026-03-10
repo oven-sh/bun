@@ -16425,3 +16425,8 @@ declare global {
     parseInt: (string: string, radix?: number) => number;
   }
 }
+
+// queueMicrotask additional types
+declare global {
+  function queueMicrotask(callback: () => void): void;
+}

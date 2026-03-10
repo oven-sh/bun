@@ -1047,13 +1047,43 @@ pub const FileSystemFlags = enum(c_int) {
         .{ "SA+", O.APPEND | O.CREAT | O.RDWR | O.SYNC },
     });
 
+    /// On Windows, fs.constants exposes CRT/libuv-style O_* values (from <fcntl.h>),
+    /// but FileSystemFlags internally uses bun.O (Linux-style) values.
+    /// This converts user-supplied CRT numeric flags to bun.O format so that
+    /// fromBunO() in libuv.zig can correctly translate them for uv_fs_open.
+    fn fromCrtFlags(crt: i32) i32 {
+        if (comptime !Environment.isWindows) @compileError("fromCrtFlags is Windows-only");
+
+        const uv = windows.libuv;
+        var result: i32 = 0;
+
+        // Access mode bits (same value in both CRT and bun.O)
+        if (crt & uv.UV_FS_O_WRONLY != 0) result |= O.WRONLY;
+        if (crt & uv.UV_FS_O_RDWR != 0) result |= O.RDWR;
+
+        // Creation/status flags (values differ between CRT and bun.O)
+        if (crt & uv.UV_FS_O_CREAT != 0) result |= O.CREAT;
+        if (crt & uv.UV_FS_O_EXCL != 0) result |= O.EXCL;
+        if (crt & uv.UV_FS_O_TRUNC != 0) result |= O.TRUNC;
+        if (crt & uv.UV_FS_O_APPEND != 0) result |= O.APPEND;
+
+        // UV_FS_O_FILEMAP is a libuv-specific Windows flag (0x20000000).
+        // Pass through as-is; fromBunO() checks it directly.
+        if (crt & uv.UV_FS_O_FILEMAP != 0) result |= uv.UV_FS_O_FILEMAP;
+
+        return result;
+    }
+
     pub fn fromJS(ctx: *jsc.JSGlobalObject, val: jsc.JSValue) bun.JSError!?FileSystemFlags {
         if (val.isNumber()) {
             if (!val.isInt32()) {
                 return ctx.throwValue(ctx.ERR(.OUT_OF_RANGE, "The value of \"flags\" is out of range. It must be an integer. Received {d}", .{val.asNumber()}).toJS());
             }
             const number = try val.coerce(i32, ctx);
-            return @as(FileSystemFlags, @enumFromInt(@max(number, 0)));
+            const flags = @max(number, 0);
+            return @as(FileSystemFlags, @enumFromInt(
+                if (comptime Environment.isWindows) fromCrtFlags(flags) else flags,
+            ));
         }
 
         const jsType = val.jsType();

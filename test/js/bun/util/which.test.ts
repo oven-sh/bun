@@ -129,6 +129,14 @@ test("Bun.which does not look in the current directory for bins on POSIX", async
     if (isWindows) {
       // On Windows, cmd.exe checks cwd before PATH, so Bun matches that behavior
       expect(which("some_program_name")).toBe(join(dir, "some_program_name.cmd"));
+
+      // Verify CWD takes priority over PATH even when the same name exists on PATH
+      const dir2 = tempDirWithFiles("which-path", {
+        "some_program_name.cmd": "@echo PATH_COPY\n@exit 0\n",
+      });
+      expect(which("some_program_name", { PATH: dir2 + ";" + process.env.PATH })).toBe(
+        join(dir, "some_program_name.cmd"),
+      );
     } else {
       expect(which("some_program_name")).toBe(null);
       expect((await $`some_program_name`).exitCode).not.toBe(0);

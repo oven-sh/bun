@@ -210,6 +210,12 @@ if(LINUX AND ABI STREQUAL "musl")
   set(WEBKIT_SUFFIX "-musl")
 endif()
 
+# Baseline builds target older CPUs without AVX/AVX2 (using -march=nehalem).
+# They require a WebKit library also compiled without AVX/AVX2 instructions.
+if(ENABLE_BASELINE AND WEBKIT_ARCH STREQUAL "amd64")
+  set(WEBKIT_SUFFIX "${WEBKIT_SUFFIX}-baseline")
+endif()
+
 if(DEBUG)
   set(WEBKIT_SUFFIX "${WEBKIT_SUFFIX}-debug")
 elseif(ENABLE_LTO)
@@ -249,7 +255,30 @@ file(
   STATUS WEBKIT_DOWNLOAD_STATUS
 )
 if(NOT "${WEBKIT_DOWNLOAD_STATUS}" MATCHES "^0;")
-  message(FATAL_ERROR "Failed to download WebKit: ${WEBKIT_DOWNLOAD_STATUS}")
+  # If a baseline WebKit build was requested but not available, fall back to the
+  # non-baseline build. This avoids breaking builds until baseline WebKit artifacts
+  # are published from oven-sh/WebKit. Once available, the baseline build will be
+  # downloaded automatically.
+  if(ENABLE_BASELINE AND WEBKIT_ARCH STREQUAL "amd64")
+    message(WARNING
+      "Baseline WebKit not available (${WEBKIT_DOWNLOAD_URL}), "
+      "falling back to non-baseline WebKit. "
+      "SIGILL crashes may occur on CPUs without AVX support."
+    )
+    file(REMOVE ${CACHE_PATH}/${WEBKIT_FILENAME})
+    string(REPLACE "-baseline" "" WEBKIT_FALLBACK_NAME "${WEBKIT_NAME}")
+    set(WEBKIT_FALLBACK_FILENAME ${WEBKIT_FALLBACK_NAME}.tar.gz)
+    set(WEBKIT_FALLBACK_URL https://github.com/oven-sh/WebKit/releases/download/${WEBKIT_TAG}/${WEBKIT_FALLBACK_FILENAME})
+    file(
+      DOWNLOAD ${WEBKIT_FALLBACK_URL} ${CACHE_PATH}/${WEBKIT_FILENAME} SHOW_PROGRESS
+      STATUS WEBKIT_DOWNLOAD_STATUS
+    )
+    if(NOT "${WEBKIT_DOWNLOAD_STATUS}" MATCHES "^0;")
+      message(FATAL_ERROR "Failed to download WebKit: ${WEBKIT_DOWNLOAD_STATUS}")
+    endif()
+  else()
+    message(FATAL_ERROR "Failed to download WebKit: ${WEBKIT_DOWNLOAD_STATUS}")
+  endif()
 endif()
 
 file(ARCHIVE_EXTRACT INPUT ${CACHE_PATH}/${WEBKIT_FILENAME} DESTINATION ${CACHE_PATH} TOUCH)

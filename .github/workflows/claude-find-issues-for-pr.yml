@@ -30,6 +30,6 @@ jobs:
         with:
           prompt: "/find-issues ${{ github.repository }}/pull/${{ github.event.pull_request.number || inputs.pr_number }}"
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          claude_args: "--model claude-opus-4-6"
+          claude_args: "--model claude-opus-4-6[1m]"
           claude_env: |
             GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -15814,3 +15814,37 @@ declare global {
     deref(): object | undefined;
   }
 }
+
+// Iterator and AsyncIterator additional types
+declare global {
+  interface Iterator {
+    next(...args: any[]): IteratorResult;
+    return?(value?: any): IteratorResult;
+    throw?(e?: any): IteratorResult;
+  }
+  
+  interface IteratorResult<T = any, TReturn = any> {
+    done?: boolean;
+    value: T | TReturn;
+  }
+  
+  interface Generator extends Iterator {
+    next(...args: any[]): IteratorResult;
+    return(value: any): IteratorResult;
+    throw(e: any): IteratorResult;
+    [Symbol.iterator](): Generator;
+  }
+  
+  interface AsyncIterator {
+    next(...args: any[]): Promise<IteratorResult>;
+    return?(value?: any): Promise<IteratorResult>;
+    throw?(e?: any): Promise<IteratorResult>;
+  }
+  
+  interface AsyncGenerator extends AsyncIterator {
+    next(...args: any[]): Promise<IteratorResult>;
+    return(value: any): Promise<IteratorResult>;
+    throw(e: any): Promise<IteratorResult>;
+    [Symbol.asyncIterator](): AsyncGenerator;
+  }
+}

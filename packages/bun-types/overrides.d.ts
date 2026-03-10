@@ -16222,3 +16222,15 @@ declare global {
     }
   }
 }
+
+// NodeJS.Immediate additional types
+declare global {
+  namespace NodeJS {
+    interface Immediate {
+      ref(): this;
+      unref(): this;
+      hasRef(): boolean;
+      _onImmediate: Function;
+    }
+  }
+}

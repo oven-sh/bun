@@ -121,25 +121,7 @@ pub fn exit(code: u32) noreturn {
         .mac => std.c.exit(@bitCast(code)),
         .windows => {
             Bun__onExit();
-            // Use TerminateProcess instead of ExitProcess to skip
-            // DLL_PROCESS_DETACH notifications. ExitProcess terminates all
-            // threads first, then calls DllMain(DLL_PROCESS_DETACH) for every
-            // loaded DLL. Native addons (NAPI modules such as skia-canvas)
-            // can crash during this phase because their worker threads have
-            // been killed and GC-dependent buffer finalizers haven't run.
-            // TerminateProcess skips DLL cleanup entirely, matching the
-            // behavior on Linux where quick_exit() also skips library
-            // teardown. Bun's own cleanup has already run via Bun__onExit().
-            const rc = std.os.windows.kernel32.TerminateProcess(
-                std.os.windows.kernel32.GetCurrentProcess(),
-                code,
-            );
-            // TerminateProcess should not return on the current process, but
-            // if it somehow fails, fall back to ExitProcess.
-            if (rc == 0) {
-                std.os.windows.kernel32.ExitProcess(code);
-            }
-            unreachable;
+            std.os.windows.kernel32.ExitProcess(code);
         },
         else => {
             if (Environment.enable_asan) {

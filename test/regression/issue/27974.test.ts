@@ -56,6 +56,21 @@ test("fs.openSync with string flags still works after numeric fix", () => {
   expect(readFileSync(filePath, "utf8")).toBe("string flags work");
 });
 
+test("fs.openSync with UV_FS_O_FILEMAP combined flags works", () => {
+  // This is the exact flag combination from the issue that caused EINVAL on Windows.
+  // On non-Windows, UV_FS_O_FILEMAP is 0 so this is equivalent to O_CREAT|O_TRUNC|O_WRONLY.
+  using dir = tempDir("issue-27974", {});
+  const filePath = path.join(String(dir), "test-filemap.txt");
+
+  const flag = constants.UV_FS_O_FILEMAP | constants.O_CREAT | constants.O_TRUNC | constants.O_WRONLY;
+  const fd = openSync(filePath, flag, 0o666);
+  expect(fd).toBeGreaterThan(0);
+  writeSync(fd, "hello world");
+  closeSync(fd);
+
+  expect(readFileSync(filePath, "utf8")).toBe("hello world");
+});
+
 test("UV_FS_O_FILEMAP constant has correct value", () => {
   if (isWindows) {
     expect(constants.UV_FS_O_FILEMAP).toBe(536870912);

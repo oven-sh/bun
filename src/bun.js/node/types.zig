@@ -1047,10 +1047,18 @@ pub const FileSystemFlags = enum(c_int) {
         .{ "SA+", O.APPEND | O.CREAT | O.RDWR | O.SYNC },
     });
 
-    /// On Windows, fs.constants exposes CRT/libuv-style O_* values (from <fcntl.h>),
-    /// but FileSystemFlags internally uses bun.O (Linux-style) values.
+    /// On Windows, fs.constants exposes CRT/libuv-style O_* values (from mingw-w64
+    /// <fcntl.h>), but FileSystemFlags internally uses bun.O (Linux-style) values.
     /// This converts user-supplied CRT numeric flags to bun.O format so that
     /// fromBunO() in libuv.zig can correctly translate them for uv_fs_open.
+    ///
+    /// Only flags that exist in the Windows CRT headers are translated here:
+    /// O_RDONLY, O_WRONLY, O_RDWR, O_CREAT, O_EXCL, O_TRUNC, O_APPEND.
+    /// Flags like O_SYNC, O_DIRECTORY, O_NOFOLLOW, O_DIRECT, O_NONBLOCK are not
+    /// defined in mingw-w64 <fcntl.h> and are not exposed via fs.constants on
+    /// Windows, so users cannot pass them as numeric values.
+    /// UV_FS_O_FILEMAP (0x20000000) is a libuv-specific Windows flag that is
+    /// passed through as-is; fromBunO() in libuv.zig checks it directly.
     fn fromCrtFlags(crt: i32) i32 {
         if (comptime !Environment.isWindows) @compileError("fromCrtFlags is Windows-only");
 
@@ -1067,8 +1075,7 @@ pub const FileSystemFlags = enum(c_int) {
         if (crt & uv.UV_FS_O_TRUNC != 0) result |= O.TRUNC;
         if (crt & uv.UV_FS_O_APPEND != 0) result |= O.APPEND;
 
-        // UV_FS_O_FILEMAP is a libuv-specific Windows flag (0x20000000).
-        // Pass through as-is; fromBunO() checks it directly.
+        // UV_FS_O_FILEMAP is a libuv-specific Windows flag passed through as-is.
         if (crt & uv.UV_FS_O_FILEMAP != 0) result |= uv.UV_FS_O_FILEMAP;
 
         return result;

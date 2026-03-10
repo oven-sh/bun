@@ -489,7 +489,7 @@ pub const PathWatcherManager = struct {
                         options.Loader.file,
                         .invalid,
                         null,
-                        false,
+                        true,
                     )) {
                         .err => |err| return .{ .err = err },
                         .result => {},
@@ -537,7 +537,7 @@ pub const PathWatcherManager = struct {
     // this should only be called if thread pool is not null
     fn _addDirectory(this: *PathWatcherManager, watcher: *PathWatcher, path: PathInfo) bun.sys.Maybe(void) {
         const fd = path.fd;
-        switch (this.main_watcher.addDirectory(fd, path.path, path.hash, false)) {
+        switch (this.main_watcher.addDirectory(fd, path.path, path.hash, true)) {
             .err => |err| return .{ .err = err.withPath(path.path) },
             .result => {},
         }
@@ -580,7 +580,7 @@ pub const PathWatcherManager = struct {
 
         const path = watcher.path;
         if (path.is_file) {
-            try this.main_watcher.addFile(path.fd, path.path, path.hash, .file, .invalid, null, false).unwrap();
+            try this.main_watcher.addFile(path.fd, path.path, path.hash, .file, .invalid, null, true).unwrap();
         } else {
             if (comptime Environment.isMac) {
                 if (watcher.fsevents_watcher != null) {
@@ -650,34 +650,43 @@ pub const PathWatcherManager = struct {
                     }
                     this.watcher_count -= 1;
 
-                    this._decrementPathRefNoLock(watcher.path.path);
-                    if (comptime Environment.isMac) {
-                        if (watcher.fsevents_watcher != null) {
-                            break;
-                        }
-                    }
+                    should_deinit = this.deinit_on_last_watcher and this.watcher_count == 0;
 
-                    {
-                        watcher.mutex.lock();
-                        defer watcher.mutex.unlock();
-                        while (watcher.file_paths.pop()) |file_path| {
-                            this._decrementPathRefNoLock(file_path);
+                    // When this is the last watcher triggering deinit, skip
+                    // freeing paths here. deinit() will stop the watcher thread
+                    // first (setting running=false), then free ALL paths. Freeing
+                    // paths here while the thread is still running could cause it
+                    // to read freed PathWatcherManager state during onFileUpdate.
+                    if (!should_deinit) {
+                        this._decrementPathRefNoLock(watcher.path.path);
+                        if (comptime Environment.isMac) {
+                            if (watcher.fsevents_watcher != null) {
+                                break;
+                            }
+                        }
+
+                        {
+                            watcher.mutex.lock();
+                            defer watcher.mutex.unlock();
+                            while (watcher.file_paths.pop()) |file_path| {
+                                this._decrementPathRefNoLock(file_path);
+                            }
                         }
                     }
                     break;
                 }
             }
         }
-
-        should_deinit = this.deinit_on_last_watcher and this.watcher_count == 0;
     }
 
     fn deinit(this: *PathWatcherManager) void {
         // enable to create a new manager
-        default_manager_mutex.lock();
-        defer default_manager_mutex.unlock();
-        if (default_manager == this) {
-            default_manager = null;
+        {
+            default_manager_mutex.lock();
+            defer default_manager_mutex.unlock();
+            if (default_manager == this) {
+                default_manager = null;
+            }
         }
 
         // Check watcher_count, pending_tasks, and set deferred-deinit flags
@@ -699,14 +708,19 @@ pub const PathWatcherManager = struct {
             }
         }
 
-        // Save thread handle before deinit(false) signals the thread to stop,
-        // because the thread calls allocator.destroy on the Watcher when it exits.
-        const watcher_thread = this.main_watcher.thread;
+        // deinit(false) sets running=false under main_watcher.mutex.
+        // The watcher thread checks running inside processINotifyEventBatch /
+        // processKEvent under the same mutex, so after this returns the thread
+        // won't START a new onFileUpdate call.
         this.main_watcher.deinit(false);
-        // Wait for the File Watcher thread to finish before freeing paths.
-        // Without this, the thread may still be in onFileUpdate reading
-        // file_paths data when we free it below → use-after-free.
-        watcher_thread.join();
+
+        // The thread reads file_paths only inside onFileUpdate, which holds
+        // this.mutex (PathWatcherManager's mutex). Acquire it to wait for any
+        // in-progress onFileUpdate to finish before freeing paths below.
+        // We use our OWN mutex rather than main_watcher.mutex because the
+        // thread may call allocator.destroy() on the Watcher after seeing
+        // running=false, making the Watcher's mutex inaccessible.
+        this.mutex.lock();
 
         if (this.watcher_count > 0) {
             while (this.watchers.pop()) |watcher| {
@@ -728,6 +742,9 @@ pub const PathWatcherManager = struct {
         this.file_paths.deinit();
         this.watchers.deinit(bun.default_allocator);
         this.current_fd_task.deinit();
+
+        // Release our own mutex before destroying ourselves.
+        this.mutex.unlock();
         bun.default_allocator.destroy(this);
     }
 };

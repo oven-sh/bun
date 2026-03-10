@@ -5,7 +5,7 @@ description: Find GitHub issues that a PR might fix
 
 # Find issues for PR command
 
-Find up to 5 open GitHub issues that a pull request might fix.
+Find open GitHub issues that a pull request might fix. Include all likely matches — do not artificially limit the number of results.
 
 To do this, follow these steps precisely:
 
@@ -21,7 +21,7 @@ To do this, follow these steps precisely:
    - Agent 4: Search using keywords from the PR title and description
    - Agent 5: Search using broader terms related to the area of code changed
 4. Next, feed the results from Steps 2 and 3 into another agent, so that it can filter out false positives that are likely not actually related to the PR's changes. Exclude issues already referenced in the PR body (e.g. "fixes #123", "closes #456", "resolves #789"). Only keep issues where the PR changes are clearly relevant to the issue. If there are no related issues remaining, do not proceed.
-5. Finally, comment on the PR with a list of up to 5 related open issues (or zero, if there are no likely matches)
+5. Finally, comment on the PR with all related open issues found (or zero, if there are no likely matches). Do not cap the number — list every issue that is a likely match.
 
 Notes (be sure to tell this to your agents, too):
 

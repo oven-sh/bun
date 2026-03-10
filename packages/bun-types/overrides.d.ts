@@ -15634,3 +15634,24 @@ declare global {
   }
   var Int32Array: Int32ArrayConstructor;
 }
+
+// Uint32Array and Float32Array additional types
+declare global {
+  interface Uint32ArrayConstructor {
+    new(length?: number): Uint32Array;
+    new(array: ArrayLike<number> | ArrayBufferLike): Uint32Array;
+    new(buffer: ArrayBufferLike, byteOffset?: number, length?: number): Uint32Array;
+    readonly prototype: Uint32Array;
+    BYTES_PER_ELEMENT: number;
+  }
+  var Uint32Array: Uint32ArrayConstructor;
+  
+  interface Float32ArrayConstructor {
+    new(length?: number): Float32Array;
+    new(array: ArrayLike<number> | ArrayBufferLike): Float32Array;
+    new(buffer: ArrayBufferLike, byteOffset?: number, length?: number): Float32Array;
+    readonly prototype: Float32Array;
+    BYTES_PER_ELEMENT: number;
+  }
+  var Float32Array: Float32ArrayConstructor;
+}

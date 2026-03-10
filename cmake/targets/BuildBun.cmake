@@ -1380,9 +1380,11 @@ if(NOT BUN_CPP_ONLY)
     # and other dependencies. We build lolhtml with abort on panic, so it
     # shouldn't be including these in the first place.
     set(CMAKE_STRIP_FLAGS --remove-section=__TEXT,__eh_frame --remove-section=__TEXT,__unwind_info --remove-section=__TEXT,__gcc_except_tab)
-  elseif(LINUX AND NOT ABI STREQUAL "musl")
+  elseif(LINUX AND NOT ABI STREQUAL "musl" AND ENABLE_LTO)
     # When you use llvm-strip to do this, it doesn't delete it from the binary and instead keeps it as [LOAD #2 [R]]
     # So, we must use GNU strip to do this.
+    # Only safe when ENABLE_LTO is set, because that's when we link with --no-eh-frame-hdr.
+    # Without it, stripping .eh_frame leaves a dangling PT_GNU_EH_FRAME -> _Unwind_Find_FDE crash.
     set(CMAKE_STRIP_FLAGS -R .eh_frame -R .gcc_except_table)
   endif()
 

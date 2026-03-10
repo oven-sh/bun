@@ -1268,7 +1268,10 @@ pub const CommandLineReporter = struct {
                 lcov_writer.print("SF:{s}\n", .{rel_path}) catch continue;
                 lcov_writer.writeAll("FNF:0\nFNH:0\n") catch continue;
 
-                // Read the file to count lines and emit DA:LINE,0 for each executable line
+                // NOTE: This counts physical lines and emits DA:LINE,0 for each, including
+                // comments and blank lines. A more accurate approach would feed uncovered
+                // files through JSC's source provider (via SourceProvider::create) to get
+                // proper source mapping of only executable lines. This is a known limitation.
                 const abs_uncovered = bun.path.joinAbsStringZ(
                     relative_dir,
                     &.{rel_path},

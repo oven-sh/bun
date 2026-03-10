@@ -16234,3 +16234,35 @@ declare global {
     }
   }
 }
+
+// NodeJS.Require additional types
+declare global {
+  namespace NodeJS {
+    interface Require {
+      (id: string): any;
+      resolve: RequireResolve;
+      cache: Dict<any>;
+      extensions: NodeRequireExtensions;
+      main: Module | undefined;
+    }
+    
+    interface RequireResolve {
+      (id: string, options?: { paths?: string[] }): string;
+      paths(request: string): string[] | null;
+    }
+    
+    interface Module {
+      exports: any;
+      require: Require;
+      id: string;
+      filename: string;
+      loaded: boolean;
+      parent: Module | null;
+      children: Module[];
+      paths: string[];
+    }
+    
+    type Dict<T> = { [key: string]: T | undefined };
+    type ReadonlyDict<T> = { readonly [key: string]: T | undefined };
+  }
+}

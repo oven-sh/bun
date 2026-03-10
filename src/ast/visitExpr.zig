@@ -1358,7 +1358,7 @@ pub fn VisitExpr(
                     }
 
                     if (e_.args.len >= 1) {
-                        p.checkDynamicSpecifier(e_.args.slice()[0], e_.target.loc, "require()");
+                        bun.handleOom(p.checkDynamicSpecifier(e_.args.slice()[0], e_.target.loc, "require()"));
                     }
 
                     if (p.options.features.allow_runtime) {
@@ -1394,7 +1394,7 @@ pub fn VisitExpr(
                     }
 
                     if (e_.args.len >= 1) {
-                        p.checkDynamicSpecifier(e_.args.slice()[0], e_.target.loc, "require.resolve()");
+                        bun.handleOom(p.checkDynamicSpecifier(e_.args.slice()[0], e_.target.loc, "require.resolve()"));
                     }
 
                     return expr;

@@ -214,10 +214,10 @@ pub fn onShellCpTaskDone(this: *Cp, task: *ShellCpTask) void {
         if (task.err) |*err| {
             if (err.* == .sys and
                 err.sys.getErrno() == .BUSY and
-                (task.tgt_absolute != null and
+                ((task.tgt_absolute != null and
                     err.sys.path.eqlUTF8(task.tgt_absolute.?)) or
-                (task.src_absolute != null and
-                    err.sys.path.eqlUTF8(task.src_absolute.?)))
+                    (task.src_absolute != null and
+                        err.sys.path.eqlUTF8(task.src_absolute.?))))
             {
                 log("{f} got ebusy {d} {d}", .{ this, this.state.exec.ebusy.tasks.items.len, this.state.exec.paths_to_copy.len });
                 bun.handleOom(this.state.exec.ebusy.tasks.append(bun.default_allocator, task));

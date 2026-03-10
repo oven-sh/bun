@@ -16196,3 +16196,18 @@ declare global {
     }
   }
 }
+
+// NodeJS.WritableStream additional types
+declare global {
+  namespace NodeJS {
+    interface WritableStream {
+      write(chunk: any, cb?: (err: Error | null) => void): boolean;
+      write(chunk: any, encoding: BufferEncoding, cb?: (err: Error | null) => void): boolean;
+      end(cb?: () => void): void;
+      end(chunk: any, cb?: () => void): void;
+      end(chunk: any, encoding: BufferEncoding, cb?: () => void): void;
+      cork(): void;
+      uncork(): void;
+    }
+  }
+}

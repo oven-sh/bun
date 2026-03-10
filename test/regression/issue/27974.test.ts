@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
+import { isWindows, tempDir } from "harness";
 import { closeSync, constants, open as openCb, openSync, readFileSync, writeSync } from "node:fs";
 import { open } from "node:fs/promises";
 import { join } from "node:path";
-import { isWindows, tempDir } from "harness";
 
 test("fs.openSync with numeric O_CREAT | O_TRUNC | O_WRONLY flags", () => {
   const { O_CREAT, O_TRUNC, O_WRONLY } = constants;

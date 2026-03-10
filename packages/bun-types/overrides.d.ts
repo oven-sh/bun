@@ -15740,3 +15740,15 @@ declare global {
     onmessageerror: ((this: MessagePort, ev: MessageEvent) => any) | null;
   }
 }
+
+// BroadcastChannel additional types
+declare global {
+  class BroadcastChannel extends EventTarget {
+    constructor(name: string);
+    readonly name: string;
+    postMessage(message: any): void;
+    close(): void;
+    onmessage: ((this: BroadcastChannel, ev: MessageEvent) => any) | null;
+    onmessageerror: ((this: BroadcastChannel, ev: MessageEvent) => any) | null;
+  }
+}

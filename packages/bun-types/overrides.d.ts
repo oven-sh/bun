@@ -15848,3 +15848,36 @@ declare global {
     [Symbol.asyncIterator](): AsyncGenerator;
   }
 }
+
+// Generator and AsyncGenerator additional types
+declare global {
+  interface GeneratorFunction {
+    (...args: any[]): Generator;
+    readonly prototype: Generator;
+    readonly length: number;
+    readonly name: string;
+  }
+  
+  var GeneratorFunction: GeneratorFunctionConstructor;
+  
+  interface GeneratorFunctionConstructor {
+    readonly prototype: GeneratorFunction;
+    new(...args: string[]): GeneratorFunction;
+    (...args: string[]): GeneratorFunction;
+  }
+  
+  interface AsyncGeneratorFunction {
+    (...args: any[]): AsyncGenerator;
+    readonly prototype: AsyncGenerator;
+    readonly length: number;
+    readonly name: string;
+  }
+  
+  var AsyncGeneratorFunction: AsyncGeneratorFunctionConstructor;
+  
+  interface AsyncGeneratorFunctionConstructor {
+    readonly prototype: AsyncGeneratorFunction;
+    new(...args: string[]): AsyncGeneratorFunction;
+    (...args: string[]): AsyncGeneratorFunction;
+  }
+}

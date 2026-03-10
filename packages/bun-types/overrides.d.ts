@@ -16302,3 +16302,26 @@ declare global {
     }
   }
 }
+
+// Buffer global additional types
+declare global {
+  const Buffer: {
+    new(size: number): Buffer;
+    new(str: string, encoding?: BufferEncoding): Buffer;
+    new(buffer: Buffer): Buffer;
+    isBuffer(obj: any): obj is Buffer;
+    from(array: number[]): Buffer;
+    from(arrayBuffer: ArrayBuffer, byteOffset?: number, length?: number): Buffer;
+    from(buffer: Buffer): Buffer;
+    from(data: any, encoding?: BufferEncoding): Buffer;
+    from(string: string, encoding?: BufferEncoding): Buffer;
+    alloc(size: number, fill?: string | Buffer | number, encoding?: BufferEncoding): Buffer;
+    allocUnsafe(size: number): Buffer;
+    allocUnsafeSlow(size: number): Buffer;
+    byteLength(string: string, encoding?: BufferEncoding): number;
+    compare(buf1: Buffer, buf2: Buffer): number;
+    concat(list: Buffer[], totalLength?: number): Buffer;
+    isEncoding(encoding: string): encoding is BufferEncoding;
+    poolSize: number;
+  };
+}

@@ -532,15 +532,16 @@ export function findMsvcLinker(arch: Arch): string | undefined {
   // Pick the latest MSVC toolset version across all editions. Usually
   // there's only one edition installed, but BuildTools + Community can
   // coexist on CI.
+  let latestVer: string | undefined;
   let latestToolset: string | undefined;
   for (const edition of readdirSync(vsBase)) {
     const msvcDir = join(vsBase, edition, "VC/Tools/MSVC");
     if (!existsSync(msvcDir)) continue;
     for (const ver of readdirSync(msvcDir)) {
-      const toolset = join(msvcDir, ver);
       // Lexicographic comparison works for MSVC versions (14.xx.yyyyy).
-      if (latestToolset === undefined || ver > latestToolset.split("/").pop()!) {
-        latestToolset = toolset;
+      if (latestVer === undefined || ver > latestVer) {
+        latestVer = ver;
+        latestToolset = join(msvcDir, ver);
       }
     }
   }

@@ -16033,3 +16033,27 @@ declare global {
     };
   }
 }
+
+// Intl.RelativeTimeFormat additional types
+declare global {
+  namespace Intl {
+    type RelativeTimeFormatUnit = "year" | "years" | "quarter" | "quarters" | "month" | "months" | "week" | "weeks" | "day" | "days" | "hour" | "hours" | "minute" | "minutes" | "second" | "seconds";
+    
+    interface RelativeTimeFormatOptions {
+      localeMatcher?: "lookup" | "best fit";
+      numeric?: "always" | "auto";
+      style?: "long" | "short" | "narrow";
+    }
+    
+    interface RelativeTimeFormat {
+      format(value: number, unit: RelativeTimeFormatUnit): string;
+      formatToParts(value: number, unit: RelativeTimeFormatUnit): RelativeTimeFormatPart[];
+      resolvedOptions(): ResolvedRelativeTimeFormatOptions;
+    }
+    
+    var RelativeTimeFormat: {
+      new(locales?: string | string[], options?: RelativeTimeFormatOptions): RelativeTimeFormat;
+      supportedLocalesOf(locales: string | string[], options?: RelativeTimeFormatOptions): string[];
+    };
+  }
+}

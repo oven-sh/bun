@@ -14,6 +14,9 @@ pub fn writeInternal(
     writer: NewWriter(Context),
 ) !void {
     const parameters = this.params;
+    if (parameters.len > std.math.maxInt(u16)) {
+        return error.TooManyParameters;
+    }
     const count: usize = @sizeOf((u32)) + @sizeOf(u16) + (parameters.len * @sizeOf(u32)) + @max(zCount(this.name), 1) + @max(zCount(this.query), 1);
     const header = [_]u8{
         'P',

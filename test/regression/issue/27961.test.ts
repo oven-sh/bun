@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { copyFile } from "node:fs/promises";
 import { join } from "node:path";
-import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 
 // https://github.com/oven-sh/bun/issues/27961
 test.if(isWindows)("shell cp reports EBUSY instead of panicking when overwriting a running exe", async () => {

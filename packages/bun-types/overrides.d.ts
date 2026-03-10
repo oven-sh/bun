@@ -16430,3 +16430,9 @@ declare global {
 declare global {
   function queueMicrotask(callback: () => void): void;
 }
+
+// clearImmediate and setImmediate additional types
+declare global {
+  function clearImmediate(immediateId: NodeJS.Immediate): void;
+  function setImmediate(callback: (...args: any[]) => void, ...args: any[]): NodeJS.Immediate;
+}

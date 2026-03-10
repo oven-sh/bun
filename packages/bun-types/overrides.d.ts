@@ -15520,3 +15520,25 @@ declare global {
     toLocaleString(): string;
   }
 }
+
+// ArrayBuffer and SharedArrayBuffer additional types
+declare global {
+  interface ArrayBuffer {
+    readonly byteLength: number;
+    slice(begin?: number, end?: number): ArrayBuffer;
+  }
+  interface ArrayBufferConstructor {
+    new(byteLength: number): ArrayBuffer;
+    isView(arg: any): arg is any;
+  }
+  var ArrayBuffer: ArrayBufferConstructor;
+  
+  interface SharedArrayBuffer {
+    readonly byteLength: number;
+    slice(begin?: number, end?: number): SharedArrayBuffer;
+  }
+  interface SharedArrayBufferConstructor {
+    new(byteLength: number): SharedArrayBuffer;
+  }
+  var SharedArrayBuffer: SharedArrayBufferConstructor;
+}

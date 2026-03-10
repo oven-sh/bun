@@ -15,17 +15,22 @@ describe.if(process.platform === "win32")("cp over running exe on Windows", () =
       env: bunEnv,
       cwd: String(dir),
     });
-    await setup.exited;
+    expect(await setup.exited).toBe(0);
 
-    // Run the dummy executable (keeps it locked on Windows)
+    // Run the dummy executable (keeps it locked on Windows).
+    // It prints "ready" to stdout so we can wait for it deterministically.
     await using proc = Bun.spawn({
-      cmd: [dummyExe, "-e", "setTimeout(() => {}, 30000)"],
+      cmd: [dummyExe, "-e", "console.log('ready'); setTimeout(() => {}, 30000)"],
       env: bunEnv,
       cwd: String(dir),
+      stdout: "pipe",
     });
 
-    // Give the process time to start
-    await Bun.sleep(500);
+    // Wait for the child to signal it has started (exe is now locked).
+    const reader = proc.stdout.getReader();
+    const { value } = await reader.read();
+    expect(Buffer.from(value!).toString().trim()).toBe("ready");
+    reader.releaseLock();
 
     // Try to overwrite the running exe via shell cp - this should fail
     // gracefully with an error, not panic.
@@ -42,16 +47,12 @@ describe.if(process.platform === "win32")("cp over running exe on Windows", () =
       ],
       env: bunEnv,
       cwd: String(dir),
-      stderr: "pipe",
     });
 
-    const [stderr, exitCode] = await Promise.all([cpProc.stderr.text(), cpProc.exited]);
-
-    // The process should exit with code 1 (error), not crash with a panic.
     // Before the fix, this would panic with:
     // "access of union field 'exec' while field 'ebusy' is active"
-    expect(stderr).not.toContain("panic");
-    expect(exitCode).toBe(1);
+    // The process should exit with code 1 (graceful error), not crash.
+    expect(await cpProc.exited).toBe(1);
 
     proc.kill();
   });

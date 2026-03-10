@@ -851,8 +851,10 @@ fn spawnCmdGeneric(comptime Self: type, this: *Self, argv: anytype, stdin_opt: b
         },
     };
 
-    // Inherit parent environment via libc environ (available on all platforms bun links libc)
-    const envp: [*:null]?[*:0]const u8 = @ptrCast(@constCast(std.c.environ));
+    const envp: [*:null]?[*:0]const u8 = if (comptime bun.Environment.isPosix)
+        @ptrCast(@constCast(std.c.environ))
+    else
+        undefined; // cron is POSIX-only; this path is never reached on Windows
     var spawned = (bun.spawn.spawnProcess(&spawn_options, @ptrCast(argv), envp) catch {
         this.setErr("Failed to spawn process", .{});
         this.finish();

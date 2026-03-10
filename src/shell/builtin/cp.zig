@@ -99,6 +99,10 @@ pub fn ignoreEbusyErrorIfPossible(this: *Cp) Yield {
     if (!bun.Environment.isWindows) @compileError("dont call this plz");
 
     var exit_code = this.state.ebusy.main_exit_code;
+    // Collect error output for non-ignorable EBUSY tasks. We write errors
+    // directly here instead of going through printShellCpTask, which
+    // accesses the .exec union field that is no longer active.
+    var error_buf: std.ArrayListUnmanaged(u8) = .{};
 
     for (this.state.ebusy.state.tasks.items) |task_| {
         const task: *ShellCpTask = task_;
@@ -109,17 +113,23 @@ pub fn ignoreEbusyErrorIfPossible(this: *Cp) Yield {
 
         if (!can_ignore) {
             exit_code = 1;
-            // Write error directly instead of going through printShellCpTask,
-            // which accesses the .exec union field that is no longer active.
             if (task.err) |cp_err| {
                 const error_string = this.bltn().taskErrorToString(.cp, cp_err);
-                _ = this.bltn().writeNoIO(.stderr, error_string);
+                bun.handleOom(error_buf.appendSlice(bun.default_allocator, error_string));
             }
         }
         task.deinit();
     }
 
     this.state.ebusy.state.deinit();
+
+    if (error_buf.items.len > 0) {
+        defer error_buf.deinit(bun.default_allocator);
+        // Use writeFailingError which handles both sync and async
+        // (fd-backed) stderr correctly.
+        return this.writeFailingError(error_buf.items, exit_code);
+    }
+
     this.state = .done;
     return this.bltn().done(exit_code);
 }

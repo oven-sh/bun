@@ -16461,3 +16461,9 @@ declare global {
     transfer?: any[];
   }
 }
+
+// escape and unescape additional types
+declare global {
+  function escape(str: string): string;
+  function unescape(str: string): string;
+}

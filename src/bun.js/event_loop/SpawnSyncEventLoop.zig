@@ -31,6 +31,13 @@ original_event_loop_handle: @FieldType(jsc.VirtualMachine, "event_loop_handle") 
 uv_timer: if (bun.Environment.isWindows) ?*bun.windows.libuv.Timer else void = if (bun.Environment.isWindows) null else {},
 did_timeout: bool = false,
 
+/// Reentrancy guard. spawnSync can be called recursively if a queued JS
+/// callback (e.g. an async subprocess's completion handler) runs during
+/// tickWithTimeout and itself calls spawnSync. Without this counter, the
+/// nested prepare() would overwrite original_event_loop_handle with the
+/// already-overridden value, and both cleanups would restore the wrong loop.
+nesting_depth: u32 = 0,
+
 /// Minimal handler for the isolated loop
 const Handler = struct {
     pub fn wakeup(loop: *uws.Loop) callconv(.c) void {
@@ -95,12 +102,22 @@ pub fn prepare(this: *SpawnSyncEventLoop, vm: *jsc.VirtualMachine) void {
     this.did_timeout = false;
     this.event_loop.virtual_machine = vm;
 
+    // Only save/override on the outermost call. Nested calls are no-ops
+    // because the isolated loop is already active.
+    defer this.nesting_depth += 1;
+    if (this.nesting_depth > 0) return;
+
     this.original_event_loop_handle = vm.event_loop_handle;
     vm.event_loop_handle = if (bun.Environment.isPosix) this.uws_loop else this.uws_loop.uv_loop;
 }
 
 /// Restore the original event loop handle after spawnSync completes
 pub fn cleanup(this: *SpawnSyncEventLoop, vm: *jsc.VirtualMachine, prev_event_loop: *jsc.EventLoop) void {
+    // Only restore on the outermost call. Inner cleanups skip restoration
+    // so the outer spawnSync keeps running on the isolated loop.
+    this.nesting_depth -= 1;
+    if (this.nesting_depth > 0) return;
+
     vm.event_loop_handle = this.original_event_loop_handle;
     vm.event_loop = prev_event_loop;
 

@@ -546,13 +546,27 @@ pub fn spawnMaybeSync(
     else
         jsc_vm.eventLoop();
 
+    // Save the original event loop handle on THIS stack frame. The singleton's
+    // `original_event_loop_handle` field is not nesting-safe: if a queued JS
+    // callback runs during sync_loop.tickWithTimeout() and calls spawnSync again,
+    // the nested prepare() overwrites the singleton field with the already-
+    // overridden handle, and both cleanups then restore the wrong value. Saving
+    // on each caller's stack frame means LIFO defer order restores correctly.
+    const saved_event_loop_handle = if (comptime is_sync) jsc_vm.event_loop_handle else {};
+    const saved_event_loop_ptr = if (comptime is_sync) jsc_vm.event_loop else {};
+
     if (comptime is_sync) {
         jsc_vm.rareData().spawnSyncEventLoop(jsc_vm).prepare(jsc_vm);
     }
 
     defer {
         if (comptime is_sync) {
-            jsc_vm.rareData().spawnSyncEventLoop(jsc_vm).cleanup(jsc_vm, jsc_vm.eventLoop());
+            // Call cleanup first for its other bookkeeping (Windows timer stop).
+            // Its handle restore may be wrong if nesting occurred — we overwrite it below.
+            jsc_vm.rareData().spawnSyncEventLoop(jsc_vm).cleanup(jsc_vm, saved_event_loop_ptr);
+            // Authoritative restore from OUR stack frame, not the (possibly corrupted) singleton.
+            jsc_vm.event_loop_handle = saved_event_loop_handle;
+            jsc_vm.event_loop = saved_event_loop_ptr;
         }
     }
 

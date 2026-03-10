@@ -632,7 +632,7 @@ pub const FSWatcher = struct {
         const file_path: [:0]const u8 = brk: {
             var slice = args.path.slice();
             if (bun.strings.startsWith(slice, "file://")) {
-                slice = slice[6..];
+                slice = slice["file://".len..];
             }
 
             const cwd = bun.fs.FileSystem.instance.top_level_dir;

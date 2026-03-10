@@ -15724,3 +15724,19 @@ declare global {
     name?: string;
   }
 }
+
+// MessageChannel and MessagePort additional types
+declare global {
+  class MessageChannel {
+    readonly port1: MessagePort;
+    readonly port2: MessagePort;
+  }
+  
+  interface MessagePort extends EventTarget {
+    postMessage(message: any, transfer?: any[]): void;
+    close(): void;
+    start(): void;
+    onmessage: ((this: MessagePort, ev: MessageEvent) => any) | null;
+    onmessageerror: ((this: MessagePort, ev: MessageEvent) => any) | null;
+  }
+}

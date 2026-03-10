@@ -15315,3 +15315,20 @@ declare global {
     parseInt(string: string, radix?: number): number;
   }
 }
+
+// BigInt additional types
+declare global {
+  interface BigInt {
+    toString(radix?: number): string;
+    valueOf(): bigint;
+    readonly [Symbol.toStringTag]: "BigInt";
+  }
+  interface BigIntConstructor {
+    (value: bigint | boolean | number | string): bigint;
+    readonly prototype: BigInt;
+    asIntN(bits: number, bigint: bigint): bigint;
+    asUintN(bits: number, bigint: bigint): bigint;
+    toString(): string;
+  }
+  var BigInt: BigIntConstructor;
+}

@@ -16211,3 +16211,14 @@ declare global {
     }
   }
 }
+
+// NodeJS.Timeout additional types
+declare global {
+  namespace NodeJS {
+    interface Timeout {
+      ref(): this;
+      unref(): this;
+      hasRef(): boolean;
+    }
+  }
+}

@@ -399,6 +399,10 @@ fn appendFileAssumeCapacity(
         bun.asByteSlice(bun.handleOom(this.allocator.dupeZ(u8, file_path)))
     else
         file_path;
+    var should_free_file_path = comptime clone_file_path;
+    defer if (should_free_file_path) {
+        this.allocator.free(@constCast(file_path_.ptr[0 .. file_path_.len + 1]));
+    };
 
     var item = WatchItem{
         .file_path = file_path_,
@@ -428,6 +432,7 @@ fn appendFileAssumeCapacity(
     }
 
     this.watchlist.appendAssumeCapacity(item);
+    should_free_file_path = false; // ownership transferred to watchlist
     return .success;
 }
 fn appendDirectoryAssumeCapacity(
@@ -458,6 +463,10 @@ fn appendDirectoryAssumeCapacity(
         bun.asByteSlice(bun.handleOom(this.allocator.dupeZ(u8, file_path)))
     else
         file_path;
+    var should_free_file_path = comptime clone_file_path;
+    defer if (should_free_file_path) {
+        this.allocator.free(@constCast(file_path_.ptr[0 .. file_path_.len + 1]));
+    };
 
     const parent_hash = getHash(bun.fs.PathName.init(file_path_).dirWithTrailingSlash());
 
@@ -531,6 +540,7 @@ fn appendDirectoryAssumeCapacity(
     }
 
     this.watchlist.appendAssumeCapacity(item);
+    should_free_file_path = false; // ownership transferred to watchlist
     return .{
         .result = @as(WatchItemIndex, @truncate(this.watchlist.len - 1)),
     };

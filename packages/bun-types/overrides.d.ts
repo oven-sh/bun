@@ -16442,3 +16442,8 @@ declare global {
   function clearInterval(intervalId: NodeJS.Timeout): void;
   function clearTimeout(timeoutId: NodeJS.Timeout): void;
 }
+
+// setInterval additional types
+declare global {
+  function setInterval(callback: (...args: any[]) => void, ms: number, ...args: any[]): NodeJS.Timeout;
+}

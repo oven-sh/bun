@@ -15943,3 +15943,39 @@ declare global {
     };
   }
 }
+
+// Intl.NumberFormat additional types
+declare global {
+  namespace Intl {
+    interface NumberFormatOptions {
+      localeMatcher?: "lookup" | "best fit";
+      style?: "decimal" | "currency" | "percent" | "unit";
+      currency?: string;
+      currencyDisplay?: "symbol" | "narrowSymbol" | "code" | "name";
+      currencySign?: "standard" | "accounting";
+      unit?: string;
+      unitDisplay?: "short" | "narrow" | "long";
+      useGrouping?: boolean;
+      minimumIntegerDigits?: number;
+      minimumFractionDigits?: number;
+      maximumFractionDigits?: number;
+      minimumSignificantDigits?: number;
+      maximumSignificantDigits?: number;
+      notation?: "standard" | "scientific" | "engineering" | "compact";
+      compactDisplay?: "short" | "long";
+      signDisplay?: "auto" | "always" | "never" | "exceptZero";
+    }
+    
+    interface NumberFormat {
+      format(number: number): string;
+      formatToParts(number: number): NumberFormatPart[];
+      resolvedOptions(): ResolvedNumberFormatOptions;
+    }
+    
+    var NumberFormat: {
+      new(locales?: string | string[], options?: NumberFormatOptions): NumberFormat;
+      (locales?: string | string[], options?: NumberFormatOptions): string;
+      supportedLocalesOf(locales: string | string[], options?: NumberFormatOptions): string[];
+    };
+  }
+}

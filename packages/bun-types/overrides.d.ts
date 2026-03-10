@@ -16371,3 +16371,57 @@ declare global {
     }
   }
 }
+
+// global global additional types
+declare global {
+  var global: typeof globalThis;
+  
+  interface Global {
+    Array: typeof Array;
+    ArrayBuffer: typeof ArrayBuffer;
+    BigInt: typeof BigInt;
+    BigInt64Array: typeof BigInt64Array;
+    Boolean: typeof Boolean;
+    DataView: typeof DataView;
+    Date: typeof Date;
+    Error: typeof Error;
+    EvalError: typeof EvalError;
+    Float32Array: typeof Float32Array;
+    Float64Array: typeof Float64Array;
+    Function: typeof Function;
+    Int8Array: typeof Int8Array;
+    Int16Array: typeof Int16Array;
+    Int32Array: typeof Int32Array;
+    Map: typeof Map;
+    NaN: number;
+    Infinity: number;
+    undefined: any;
+    Number: typeof Number;
+    Object: typeof Object;
+    Promise: typeof Promise;
+    RangeError: typeof RangeError;
+    ReferenceError: typeof ReferenceError;
+    RegExp: typeof RegExp;
+    Set: typeof Set;
+    String: typeof String;
+    Symbol: typeof Symbol;
+    SyntaxError: typeof SyntaxError;
+    TypeError: typeof TypeError;
+    Uint8Array: typeof Uint8Array;
+    Uint8ClampedArray: typeof Uint8ClampedArray;
+    Uint16Array: typeof Uint16Array;
+    Uint32Array: typeof Uint32Array;
+    URIError: typeof URIError;
+    WeakMap: typeof WeakMap;
+    WeakSet: typeof WeakSet;
+    decodeURI: (encodedURI: string) => string;
+    decodeURIComponent: (encodedURIComponent: string) => string;
+    encodeURI: (uri: string) => string;
+    encodeURIComponent: (uriComponent: string) => string;
+    eval: (x: string) => any;
+    isFinite: (number: number) => boolean;
+    isNaN: (number: number) => boolean;
+    parseFloat: (string: string) => number;
+    parseInt: (string: string, radix?: number) => number;
+  }
+}

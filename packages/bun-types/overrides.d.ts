@@ -15979,3 +15979,29 @@ declare global {
     };
   }
 }
+
+// Intl.Collator additional types
+declare global {
+  namespace Intl {
+    interface CollatorOptions {
+      localeMatcher?: "lookup" | "best fit";
+      usage?: "sort" | "search";
+      sensitivity?: "base" | "accent" | "case" | "variant";
+      ignorePunctuation?: boolean;
+      numeric?: boolean;
+      caseFirst?: "upper" | "lower" | "false";
+      collation?: string;
+    }
+    
+    interface Collator {
+      compare(x: string, y: string): number;
+      resolvedOptions(): ResolvedCollatorOptions;
+    }
+    
+    var Collator: {
+      new(locales?: string | string[], options?: CollatorOptions): Collator;
+      (locales?: string | string[], options?: CollatorOptions): number;
+      supportedLocalesOf(locales: string | string[], options?: CollatorOptions): string[];
+    };
+  }
+}

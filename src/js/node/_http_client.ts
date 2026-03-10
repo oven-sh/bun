@@ -528,7 +528,13 @@ function ClientRequest(input, options, cb) {
         }
 
         if (!this.hasHeader("Host")) {
-          this.setHeader("Host", `${host}:${port}`);
+          this.setHeader("Host", `${host}${this[kUseDefaultPort] ? "" : ":" + this[kPort]}`);
+        }
+
+        // When custom lookup resolves hostname to IP, preserve the original
+        // hostname for TLS SNI and certificate verification.
+        if (protocol === "https:" && !this[kTls]?.servername) {
+          this._ensureTls().servername = host;
         }
 
         // We want to try all possible addresses, beginning with the IPv6 ones, until one succeeds.

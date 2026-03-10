@@ -3776,3 +3776,56 @@ describe("numeric flags produce same result as string flags", () => {
     expect(() => openSync(file, numericFlag, 0o666)).toThrow();
   });
 });
+
+describe("synchronous I/O string flags", () => {
+  it("'rs' opens existing file for reading", () => {
+    using dir = tempDir("sync-flags", {
+      "existing.txt": "sync content",
+    });
+
+    const fd = openSync(join(String(dir), "existing.txt"), "rs");
+    const buf = Buffer.alloc(20);
+    const bytesRead = readSync(fd, buf);
+    closeSync(fd);
+
+    expect(buf.slice(0, bytesRead).toString("utf8")).toBe("sync content");
+  });
+
+  it("'rs+' opens existing file for read-write", () => {
+    using dir = tempDir("sync-flags", {
+      "existing.txt": "original",
+    });
+    const file = join(String(dir), "existing.txt");
+
+    const fd = openSync(file, "rs+");
+    writeSync(fd, "replaced");
+    closeSync(fd);
+
+    expect(readFileSync(file, "utf8")).toBe("replaced");
+  });
+
+  it("'as' creates and appends to file", () => {
+    using dir = tempDir("sync-flags", {});
+    const file = join(String(dir), "appended.txt");
+
+    const fd = openSync(file, "as");
+    writeSync(fd, "sync-append");
+    closeSync(fd);
+
+    expect(readFileSync(file, "utf8")).toBe("sync-append");
+  });
+
+  it("'as+' creates and appends with read access", () => {
+    using dir = tempDir("sync-flags", {});
+    const file = join(String(dir), "appended-rw.txt");
+
+    const fd = openSync(file, "as+");
+    writeSync(fd, "hello");
+
+    const buf = Buffer.alloc(10);
+    const bytesRead = readSync(fd, buf, 0, 10, 0);
+    closeSync(fd);
+
+    expect(buf.toString("utf8", 0, bytesRead)).toBe("hello");
+  });
+});

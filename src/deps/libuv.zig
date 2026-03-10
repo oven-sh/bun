@@ -206,8 +206,15 @@ pub const O = struct {
         if (c_flags & bun.O.TRUNC != 0) flags |= TRUNC;
         if (c_flags & bun.O.APPEND != 0) flags |= APPEND;
         if (c_flags & bun.O.NONBLOCK != 0) flags |= NONBLOCK;
-        if (c_flags & bun.O.DSYNC != 0) flags |= DSYNC;
-        if (c_flags & bun.O.SYNC != 0) flags |= SYNC;
+        // SYNC and DSYNC must be mutually exclusive for libuv on Windows.
+        // On Linux, bun.O.SYNC (0o4010000) is a superset of bun.O.DSYNC
+        // (0o10000), so checking SYNC first ensures we emit only UV_FS_O_SYNC
+        // when both bits are present. libuv's fs__open rejects having both set.
+        if (c_flags & bun.O.SYNC != 0) {
+            flags |= SYNC;
+        } else if (c_flags & bun.O.DSYNC != 0) {
+            flags |= DSYNC;
+        }
         if (c_flags & bun.O.NOFOLLOW != 0) flags |= NOFOLLOW;
         if (c_flags & bun.O.DIRECT != 0) flags |= DIRECT;
         if (c_flags & FILEMAP != 0) flags |= FILEMAP;
@@ -233,8 +240,12 @@ pub const O = struct {
         if (uv_flags & EXCL != 0) flags |= bun.O.EXCL;
         if (uv_flags & TRUNC != 0) flags |= bun.O.TRUNC;
         if (uv_flags & APPEND != 0) flags |= bun.O.APPEND;
-        if (uv_flags & DSYNC != 0) flags |= bun.O.DSYNC;
-        if (uv_flags & SYNC != 0) flags |= bun.O.SYNC;
+        // SYNC takes priority over DSYNC (see fromBunO comment).
+        if (uv_flags & SYNC != 0) {
+            flags |= bun.O.SYNC;
+        } else if (uv_flags & DSYNC != 0) {
+            flags |= bun.O.DSYNC;
+        }
         if (uv_flags & DIRECT != 0) flags |= bun.O.DIRECT;
         if (uv_flags & FILEMAP != 0) flags |= FILEMAP;
 

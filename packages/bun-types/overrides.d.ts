@@ -16005,3 +16005,31 @@ declare global {
     };
   }
 }
+
+// Intl.PluralRules additional types
+declare global {
+  namespace Intl {
+    type PluralRuleType = "cardinal" | "ordinal";
+    type LDMLPluralRule = "zero" | "one" | "two" | "few" | "many" | "other";
+    
+    interface PluralRulesOptions {
+      localeMatcher?: "lookup" | "best fit";
+      type?: PluralRuleType;
+      minimumIntegerDigits?: number;
+      minimumFractionDigits?: number;
+      maximumFractionDigits?: number;
+      minimumSignificantDigits?: number;
+      maximumSignificantDigits?: number;
+    }
+    
+    interface PluralRules {
+      select(n: number): LDMLPluralRule;
+      resolvedOptions(): ResolvedPluralRulesOptions;
+    }
+    
+    var PluralRules: {
+      new(locales?: string | string[], options?: PluralRulesOptions): PluralRules;
+      supportedLocalesOf(locales: string | string[], options?: PluralRulesOptions): string[];
+    };
+  }
+}

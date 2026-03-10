@@ -15486,3 +15486,37 @@ declare global {
   interface URIError extends Error {}
   var URIError: ErrorConstructor;
 }
+
+// TypedArray additional types
+declare global {
+  interface TypedArray {
+    readonly buffer: ArrayBuffer;
+    readonly byteLength: number;
+    readonly byteOffset: number;
+    readonly length: number;
+    subarray(begin?: number, end?: number): any;
+    at(index: number): number;
+    every(callbackfn: (value: number, index: number, array: any) => boolean, thisArg?: any): boolean;
+    fill(value: number, start?: number, end?: number): this;
+    filter(callbackfn: (value: number, index: number, array: any) => any, thisArg?: any): any;
+    find(callbackfn: (value: number, index: number, array: any) => boolean, thisArg?: any): number | undefined;
+    findIndex(callbackfn: (value: number, index: number, array: any) => boolean, thisArg?: any): number;
+    forEach(callbackfn: (value: number, index: number, array: any) => void, thisArg?: any): void;
+    includes(searchElement: number, fromIndex?: number): boolean;
+    indexOf(searchElement: number, fromIndex?: number): number;
+    join(separator?: string): string;
+    lastIndexOf(searchElement: number, fromIndex?: number): number;
+    map(callbackfn: (value: number, index: number, array: any) => number, thisArg?: any): any;
+    reduce(callbackfn: (previousValue: number, currentValue: number, currentIndex: number, array: any) => number): number;
+    reduce(callbackfn: (previousValue: number, currentValue: number, currentIndex: number, array: any) => number, initialValue: number): number;
+    reduceRight(callbackfn: (previousValue: number, currentValue: number, currentIndex: number, array: any) => number): number;
+    reduceRight(callbackfn: (previousValue: number, currentValue: number, currentIndex: number, array: any) => number, initialValue: number): number;
+    reverse(): this;
+    set(array: ArrayLike<number>, offset?: number): void;
+    slice(start?: number, end?: number): any;
+    some(callbackfn: (value: number, index: number, array: any) => boolean, thisArg?: any): boolean;
+    sort(compareFn?: (a: number, b: number) => number): this;
+    at(index: number): number;
+    toLocaleString(): string;
+  }
+}

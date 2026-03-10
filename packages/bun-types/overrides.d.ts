@@ -15795,3 +15795,22 @@ declare global {
     function xor(typedArray: Int8Array | Uint8Array | Int16Array | Uint16Array | Int32Array | Uint32Array, index: number, value: number): number;
   }
 }
+
+// FinalizationRegistry and WeakRef additional types
+declare global {
+  interface FinalizationRegistry {
+    unregister(unregisterToken: object): boolean;
+  }
+  
+  interface FinalizationRegistryConstructor {
+    new(finalizationCallback: (heldValue: any) => void): FinalizationRegistry;
+    prototype: FinalizationRegistry;
+  }
+  
+  var FinalizationRegistry: FinalizationRegistryConstructor;
+  
+  class WeakRef {
+    constructor(target: object);
+    deref(): object | undefined;
+  }
+}

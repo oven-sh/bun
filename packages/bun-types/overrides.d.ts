@@ -16447,3 +16447,8 @@ declare global {
 declare global {
   function setInterval(callback: (...args: any[]) => void, ms: number, ...args: any[]): NodeJS.Timeout;
 }
+
+// setTimeout additional types
+declare global {
+  function setTimeout(callback: (...args: any[]) => void, ms: number, ...args: any[]): NodeJS.Timeout;
+}

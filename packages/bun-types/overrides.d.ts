@@ -16057,3 +16057,28 @@ declare global {
     };
   }
 }
+
+// Intl.ListFormat additional types
+declare global {
+  namespace Intl {
+    type ListFormatType = "conjunction" | "disjunction" | "unit";
+    type ListFormatStyle = "long" | "short" | "narrow";
+    
+    interface ListFormatOptions {
+      localeMatcher?: "lookup" | "best fit";
+      type?: ListFormatType;
+      style?: ListFormatStyle;
+    }
+    
+    interface ListFormat {
+      format(elements: string[]): string;
+      formatToParts(elements: string[]): ListFormatPart[];
+      resolvedOptions(): ResolvedListFormatOptions;
+    }
+    
+    var ListFormat: {
+      new(locales?: string | string[], options?: ListFormatOptions): ListFormat;
+      supportedLocalesOf(locales: string | string[], options?: ListFormatOptions): string[];
+    };
+  }
+}

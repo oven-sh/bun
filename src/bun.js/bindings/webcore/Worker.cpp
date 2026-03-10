@@ -263,9 +263,10 @@ ExceptionOr<void> Worker::postMessage(JSC::JSGlobalObject& state, JSC::JSValue m
 void Worker::terminate()
 {
     // m_contextProxy.terminateWorkerGlobalScope();
-    if (m_terminationFlags & TerminatedFlag)
+    // Use fetch_or to atomically set TerminateRequestedFlag and check the old value.
+    // If either flag was already set, we've already initiated or completed termination.
+    if (m_terminationFlags.fetch_or(TerminateRequestedFlag) & (TerminateRequestedFlag | TerminatedFlag))
         return;
-    m_terminationFlags.fetch_or(TerminateRequestedFlag);
     WebWorker__notifyNeedTermination(impl_);
 }
 

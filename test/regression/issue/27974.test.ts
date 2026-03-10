@@ -13,9 +13,12 @@ test("fs.openSync with numeric O_CREAT | O_WRONLY | O_TRUNC flags creates file",
   const filePath = path.join(String(dir), "test-numeric-flags.txt");
 
   const fd = openSync(filePath, constants.O_CREAT | constants.O_WRONLY | constants.O_TRUNC, 0o666);
-  expect(fd).toBeGreaterThan(0);
-  writeSync(fd, "hello world");
-  closeSync(fd);
+  try {
+    expect(fd).toBeGreaterThan(0);
+    writeSync(fd, "hello world");
+  } finally {
+    closeSync(fd);
+  }
 
   expect(readFileSync(filePath, "utf8")).toBe("hello world");
 });
@@ -28,7 +31,7 @@ test("fs.openSync with numeric O_CREAT | O_EXCL flags throws on existing file", 
 
   expect(() => {
     openSync(filePath, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o666);
-  }).toThrow();
+  }).toThrow(expect.objectContaining({ code: "EEXIST" }));
 });
 
 test("fs.openSync with numeric O_APPEND flag appends", () => {
@@ -38,8 +41,11 @@ test("fs.openSync with numeric O_APPEND flag appends", () => {
   writeFileSync(filePath, "hello");
 
   const fd = openSync(filePath, constants.O_APPEND | constants.O_WRONLY);
-  writeSync(fd, " world");
-  closeSync(fd);
+  try {
+    writeSync(fd, " world");
+  } finally {
+    closeSync(fd);
+  }
 
   expect(readFileSync(filePath, "utf8")).toBe("hello world");
 });
@@ -49,9 +55,12 @@ test("fs.openSync with string flags still works after numeric fix", () => {
   const filePath = path.join(String(dir), "test-string.txt");
 
   const fd = openSync(filePath, "w");
-  expect(fd).toBeGreaterThan(0);
-  writeSync(fd, "string flags work");
-  closeSync(fd);
+  try {
+    expect(fd).toBeGreaterThan(0);
+    writeSync(fd, "string flags work");
+  } finally {
+    closeSync(fd);
+  }
 
   expect(readFileSync(filePath, "utf8")).toBe("string flags work");
 });
@@ -64,9 +73,12 @@ test("fs.openSync with UV_FS_O_FILEMAP combined flags works", () => {
 
   const flag = constants.UV_FS_O_FILEMAP | constants.O_CREAT | constants.O_TRUNC | constants.O_WRONLY;
   const fd = openSync(filePath, flag, 0o666);
-  expect(fd).toBeGreaterThan(0);
-  writeSync(fd, "hello world");
-  closeSync(fd);
+  try {
+    expect(fd).toBeGreaterThan(0);
+    writeSync(fd, "hello world");
+  } finally {
+    closeSync(fd);
+  }
 
   expect(readFileSync(filePath, "utf8")).toBe("hello world");
 });

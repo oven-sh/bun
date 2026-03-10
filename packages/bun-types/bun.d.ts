@@ -610,6 +610,83 @@ declare module "bun" {
    */
   function stripANSI(input: string): string;
 
+  interface SliceAnsiOptions {
+    /**
+     * If set, and content was cut at either edge of the requested range,
+     * insert this string at the cut edge(s). The ellipsis is counted against
+     * the visible-width budget and is emitted *inside* any active SGR styles
+     * (color, bold, etc.) so it inherits them, but *outside* any active OSC 8
+     * hyperlink.
+     *
+     * This turns `sliceAnsi` into a drop-in `cli-truncate` replacement:
+     * - truncate-end: `sliceAnsi(str, 0, max, { ellipsis: "\u2026" })`
+     * - truncate-start: `sliceAnsi(str, -max, undefined, { ellipsis: "\u2026" })`
+     */
+    ellipsis?: string;
+
+    /**
+     * Count characters with East Asian Width "Ambiguous" as 1 column (narrow)
+     * instead of 2 (wide). Affects Greek, Cyrillic, some symbols, etc. that
+     * render wide in CJK-encoded terminals but narrow in Western ones.
+     *
+     * Matches the option of the same name in {@link stringWidth} and
+     * {@link wrapAnsi}.
+     *
+     * @default true
+     */
+    ambiguousIsNarrow?: boolean;
+  }
+
+  /**
+   * Slice a string by visible column width, preserving ANSI escape codes.
+   *
+   * Like `String.prototype.slice`, but indices are terminal column widths
+   * (accounting for wide CJK characters, emoji grapheme clusters, and
+   * zero-width joiners), and ANSI escape sequences (SGR colors, OSC 8
+   * hyperlinks, etc.) are preserved and correctly re-opened/closed at the
+   * slice boundaries.
+   *
+   * @category Utilities
+   *
+   * @param input The string to slice
+   * @param start Starting column (default 0). Negative counts from end.
+   * @param end Ending column, exclusive (default end of string). Negative counts from end.
+   * @param options Optional behavior flags (e.g. `ellipsis` for truncation)
+   * @returns The sliced string with ANSI codes intact
+   *
+   * @example
+   * ```ts
+   * import { sliceAnsi } from "bun";
+   *
+   * // Plain slice (replaces the `slice-ansi` npm package)
+   * sliceAnsi("hello", 1, 4);                              // "ell"
+   * sliceAnsi("\u001b[31mhello\u001b[39m", 1, 4);          // "\u001b[31mell\u001b[39m"
+   * sliceAnsi("\u5b89\u5b81\u54c8", 0, 4);                 // "\u5b89\u5b81" (CJK: width 2 each)
+   *
+   * // Truncation (replaces the `cli-truncate` npm package)
+   * sliceAnsi("unicorn", 0, 4, "\u2026");           // "uni\u2026"
+   * sliceAnsi("unicorn", -4, undefined, "\u2026");  // "\u2026orn"
+   * ```
+   */
+  function sliceAnsi(
+    input: string,
+    start?: number,
+    end?: number,
+    /**
+     * Shorthand for common options (avoids `{}` allocation):
+     * - `string` → ellipsis (equivalent to `{ ellipsis: string }`)
+     * - `boolean` → ambiguousIsNarrow (equivalent to `{ ambiguousIsNarrow: boolean }`)
+     * - `SliceAnsiOptions` → full options object
+     */
+    options?: string | boolean | SliceAnsiOptions,
+    /**
+     * ambiguousIsNarrow as a positional arg, usable when the 4th arg is an
+     * ellipsis string (or `undefined`). Lets you pass both options without
+     * an object: `sliceAnsi(s, 0, n, "\u2026", false)`.
+     */
+    ambiguousIsNarrow?: boolean,
+  ): string;
+
   interface WrapAnsiOptions {
     /**
      * If `true`, break words in the middle if they don't fit on a line.
@@ -1116,10 +1193,20 @@ declare module "bun" {
       ordered: boolean;
       /** The start number for ordered lists. */
       start?: number;
+      /** Nesting depth. `0` for a top-level list, `1` for a list inside a list item, etc. */
+      depth: number;
     }
 
     /** Meta passed to the `listItem` callback. */
     interface ListItemMeta {
+      /** 0-based index of this item within its parent list. */
+      index: number;
+      /** Nesting depth of the parent list. `0` for items in a top-level list. */
+      depth: number;
+      /** Whether the parent list is ordered. */
+      ordered: boolean;
+      /** The start number of the parent list (only set when `ordered` is true). */
+      start?: number;
       /** Task list checked state. Set for `- [x]` / `- [ ]` items. */
       checked?: boolean;
     }
@@ -1157,8 +1244,8 @@ declare module "bun" {
       code?: (children: string, meta?: CodeBlockMeta) => string | null | undefined;
       /** Ordered or unordered list. `start` is the first item number for ordered lists. */
       list?: (children: string, meta: ListMeta) => string | null | undefined;
-      /** List item. `meta.checked` is set for task list items (`- [x]` / `- [ ]`). Only passed for task list items. */
-      listItem?: (children: string, meta?: ListItemMeta) => string | null | undefined;
+      /** List item. `meta` always includes `{index, depth, ordered}`. `meta.start` is set for ordered lists; `meta.checked` is set for task list items. */
+      listItem?: (children: string, meta: ListItemMeta) => string | null | undefined;
       /** Horizontal rule. */
       hr?: (children: string) => string | null | undefined;
       /** Table. */
@@ -2496,6 +2583,21 @@ declare module "bun" {
     plugins?: BunPlugin[];
     // manifest?: boolean; // whether to return manifest
     external?: string[];
+    /**
+     * Control whether dynamic `import()`, `require()`, or `require.resolve()` specifiers (non-literal
+     * arguments like `` `./locales/${lang}.json` ``) are allowed to pass through
+     * to runtime without being bundled.
+     *
+     * - `["*"]` (default) — allow all dynamic specifiers
+     * - `[]` — fail the build on any dynamic specifier
+     * - `["./locales/*.json", ...]` — allow only specifiers whose static
+     *   template parts match one of these glob patterns
+     *
+     * Add `""` to the list to allow fully opaque specifiers like `import(fn())`.
+     *
+     * @default ["*"]
+     */
+    allowUnresolved?: string[];
     packages?: "bundle" | "external";
     publicPath?: string;
     define?: Record<string, string>;

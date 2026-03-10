@@ -219,9 +219,10 @@ pub const BundleV2 = struct {
             client_transpiler.options.chunk_naming = bun.options.PathTemplate.chunk.data;
             client_transpiler.options.entry_naming = "./[name]-[hash].[ext]";
 
-            // Avoid setting a public path for --compile since all the assets
-            // will be served relative to the server root.
-            client_transpiler.options.public_path = "";
+            // Use "/" so that asset URLs in HTML are absolute (e.g. "/chunk-abc.js"
+            // instead of "./chunk-abc.js"). Relative paths break when the HTML is
+            // served from a nested route like "/foo/".
+            client_transpiler.options.public_path = "/";
         }
 
         client_transpiler.setLog(this_transpiler.log);
@@ -1998,6 +1999,7 @@ pub const BundleV2 = struct {
             transpiler.options.inlining = config.minify.syntax;
             transpiler.options.source_map = config.source_map;
             transpiler.options.packages = config.packages;
+            transpiler.options.allow_unresolved = if (config.allow_unresolved) |*a| options.AllowUnresolved.fromStrings(a.keys()) else .all;
             transpiler.options.code_splitting = config.code_splitting;
             transpiler.options.emit_dce_annotations = config.emit_dce_annotations orelse !config.minify.whitespace;
             transpiler.options.ignore_dce_annotations = config.ignore_dce_annotations;
@@ -4209,13 +4211,18 @@ pub const BundleV2 = struct {
                 });
                 result.ast.import_records = import_records;
 
-                // Set is_export_star_target for barrel optimization
+                // Set is_export_star_target for barrel optimization.
+                // In dev server mode, source_index is not saved on JS import
+                // records, so fall back to resolving via the path map.
+                const path_to_source_index_map = this.pathToSourceIndexMap(result.ast.target);
                 for (result.ast.export_star_import_records) |star_record_idx| {
                     if (star_record_idx < import_records.len) {
                         const star_ir = import_records.slice()[star_record_idx];
-                        if (star_ir.source_index.isValid()) {
-                            graph.input_files.items(.flags)[star_ir.source_index.get()].is_export_star_target = true;
-                        }
+                        const resolved_index = if (star_ir.source_index.isValid())
+                            star_ir.source_index.get()
+                        else
+                            path_to_source_index_map.getPath(&star_ir.path) orelse continue;
+                        graph.input_files.items(.flags)[resolved_index].is_export_star_target = true;
                     }
                 }
 

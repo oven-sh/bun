@@ -302,6 +302,10 @@ public:
     Structure* CommonJSModuleObjectStructure() const { return m_commonJSModuleObjectStructure.getInitializedOnMainThread(this); }
     Structure* JSSocketAddressDTOStructure() const { return m_JSSocketAddressDTOStructure.getInitializedOnMainThread(this); }
     Structure* JSReactElementStructure() const { return m_JSReactElementStructure.getInitializedOnMainThread(this); }
+    Structure* JSMarkdownListItemMetaStructure() const { return m_JSMarkdownListItemMetaStructure.getInitializedOnMainThread(this); }
+    Structure* JSMarkdownListMetaStructure() const { return m_JSMarkdownListMetaStructure.getInitializedOnMainThread(this); }
+    Structure* JSMarkdownCellMetaStructure() const { return m_JSMarkdownCellMetaStructure.getInitializedOnMainThread(this); }
+    Structure* JSMarkdownLinkMetaStructure() const { return m_JSMarkdownLinkMetaStructure.getInitializedOnMainThread(this); }
     Structure* ImportMetaObjectStructure() const { return m_importMetaObjectStructure.getInitializedOnMainThread(this); }
     Structure* ImportMetaBakeObjectStructure() const { return m_importMetaBakeObjectStructure.getInitializedOnMainThread(this); }
     Structure* AsyncContextFrameStructure() const { return m_asyncBoundFunctionStructure.getInitializedOnMainThread(this); }
@@ -597,6 +601,10 @@ public:
     V(private, LazyPropertyOfGlobalObject<Structure>, m_commonJSModuleObjectStructure)                       \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_JSSocketAddressDTOStructure)                         \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_JSReactElementStructure)                             \
+    V(private, LazyPropertyOfGlobalObject<Structure>, m_JSMarkdownListItemMetaStructure)                     \
+    V(private, LazyPropertyOfGlobalObject<Structure>, m_JSMarkdownListMetaStructure)                         \
+    V(private, LazyPropertyOfGlobalObject<Structure>, m_JSMarkdownCellMetaStructure)                         \
+    V(private, LazyPropertyOfGlobalObject<Structure>, m_JSMarkdownLinkMetaStructure)                         \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_memoryFootprintStructure)                            \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_requireFunctionUnbound)                               \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_requireResolveFunctionUnbound)                        \

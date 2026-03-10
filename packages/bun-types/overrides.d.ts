@@ -15676,3 +15676,15 @@ declare global {
   }
   var BigInt64Array: BigInt64ArrayConstructor;
 }
+
+// BigUint64Array additional types
+declare global {
+  interface BigUint64ArrayConstructor {
+    new(length?: number): BigUint64Array;
+    new(array: ArrayLike<bigint> | ArrayBufferLike): BigUint64Array;
+    new(buffer: ArrayBufferLike, byteOffset?: number, length?: number): BigUint64Array;
+    readonly prototype: BigUint64Array;
+    BYTES_PER_ELEMENT: number;
+  }
+  var BigUint64Array: BigUint64ArrayConstructor;
+}

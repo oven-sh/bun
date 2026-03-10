@@ -15706,3 +15706,21 @@ declare global {
   var escape: (string: string) => string;
   var unescape: (string: string) => string;
 }
+
+// Worker API additional types
+declare global {
+  class Worker extends EventTarget {
+    constructor(url: string | URL, options?: WorkerOptions);
+    postMessage(message: any, transfer?: any[]): void;
+    terminate(): void;
+    onmessage: ((this: Worker, ev: MessageEvent) => any) | null;
+    onmessageerror: ((this: Worker, ev: MessageEvent) => any) | null;
+    onerror: ((this: Worker, ev: ErrorEvent) => any) | null;
+  }
+  
+  interface WorkerOptions {
+    type?: "classic" | "module";
+    credentials?: RequestCredentials;
+    name?: string;
+  }
+}

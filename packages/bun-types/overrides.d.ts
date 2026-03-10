@@ -16266,3 +16266,39 @@ declare global {
     type ReadonlyDict<T> = { readonly [key: string]: T | undefined };
   }
 }
+
+// NodeJS.ErrnoException additional types
+declare global {
+  namespace NodeJS {
+    interface ErrnoException extends Error {
+      errno?: number;
+      code?: string;
+      path?: string;
+      syscall?: string;
+      stack?: string;
+    }
+    
+    interface TypedArray extends ArrayBufferView {}
+    interface ArrayBufferView {
+      buffer: ArrayBuffer;
+      byteLength: number;
+      byteOffset: number;
+    }
+    
+    interface CallSite {
+      getThis(): any;
+      getTypeName(): string | null;
+      getFunction(): Function | undefined;
+      getFunctionName(): string | null;
+      getMethodName(): string | null;
+      getFileName(): string | null;
+      getLineNumber(): number | null;
+      getColumnNumber(): number | null;
+      getEvalOrigin(): string | undefined;
+      isToplevel(): boolean;
+      isEval(): boolean;
+      isNative(): boolean;
+      isConstructor(): boolean;
+    }
+  }
+}

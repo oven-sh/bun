@@ -354,28 +354,14 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
   // ─── features.json ───
   // Run the built bun with features.mjs to dump its feature flags.
   // Env vars match cmake's (BuildBun.cmake ~1462).
-  //
-  // Linux+ASAN: wrap in `setarch <arch> -R` to disable ASLR — same quirk
-  // as emitSmokeTest in bun.ts (ASAN shadow memory layout conflicts with
-  // ELF_ET_DYN_BASE on some kernels, see sanitizers/856).
+  // No setarch wrapper — cmake doesn't use one for features.mjs either
+  // (only for the --revision smoke test).
   console.log("Generating features.json...");
-  const featuresEnv = {
+  run([exe, resolve(cfg.cwd, "scripts", "features.mjs")], buildDir, {
     BUN_GARBAGE_COLLECTOR_LEVEL: "1",
     BUN_DEBUG_QUIET_LOGS: "1",
     BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
-  };
-  const featuresCmd = [exe, resolve(cfg.cwd, "scripts", "features.mjs")];
-  if (cfg.linux && cfg.asan) {
-    const arch = cfg.x64 ? "x86_64" : "aarch64";
-    // Try setarch first; fall back to direct if setarch is missing/fails.
-    try {
-      run(["setarch", arch, "-R", ...featuresCmd], buildDir, featuresEnv);
-    } catch {
-      run(featuresCmd, buildDir, featuresEnv);
-    }
-  } else {
-    run(featuresCmd, buildDir, featuresEnv);
-  }
+  });
 
   // ─── link-metadata.json ───
   // Version/webkit/zig info for debugging. Env vars match cmake

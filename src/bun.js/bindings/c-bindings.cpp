@@ -384,6 +384,18 @@ extern "C" ssize_t pwritev2(int fd, const struct iovec* iov, int iovcnt,
 #endif
 
 extern "C" void Bun__onExit();
+
+#if OS(WINDOWS)
+/// Flush the C runtime stdout/stderr buffers. Called before TerminateProcess
+/// which, unlike ExitProcess, does not run CRT teardown and therefore would
+/// otherwise lose any buffered output.
+extern "C" void Bun__flushCStdio()
+{
+    fflush(stdout);
+    fflush(stderr);
+}
+#endif
+
 extern "C" int32_t bun_stdio_tty[3];
 #if !OS(WINDOWS)
 static termios termios_to_restore_later[3];

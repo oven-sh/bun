@@ -93,6 +93,10 @@ pub fn runExitCallbacks() void {
     on_exit_callbacks.items.len = 0;
 }
 
+/// Flush the C runtime stdout/stderr buffers. Must be called before
+/// TerminateProcess on Windows because it skips CRT teardown.
+pub extern "c" fn Bun__flushCStdio() void;
+
 var is_exiting = std.atomic.Value(bool).init(false);
 export fn bun_is_exiting() c_int {
     return @intFromBool(isExiting());
@@ -130,6 +134,10 @@ pub fn exit(code: u32) noreturn {
             // TerminateProcess skips DLL cleanup entirely, matching the
             // behavior on Linux where quick_exit() also skips library
             // teardown. Bun's own cleanup has already run via Bun__onExit().
+            //
+            // TerminateProcess does not run CRT teardown, so we must
+            // explicitly flush the C stdio buffers to avoid losing output.
+            Bun__flushCStdio();
             const rc = std.os.windows.kernel32.TerminateProcess(
                 std.os.windows.kernel32.GetCurrentProcess(),
                 code,

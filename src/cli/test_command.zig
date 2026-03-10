@@ -1211,8 +1211,8 @@ pub const CommandLineReporter = struct {
                     avg.lines /= avg_count;
                     avg.stmts /= avg_count;
 
-                    // Check if average coverage is below threshold
-                    if (avg.functions < base_fraction.functions or avg.lines < base_fraction.lines or avg.stmts < base_fraction.stmts) {
+                    // Check if average coverage is below threshold (stmts excluded, consistent with per-file check)
+                    if (avg.functions < base_fraction.functions or avg.lines < base_fraction.lines) {
                         failing = true;
                     }
                 }

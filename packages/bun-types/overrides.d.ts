@@ -16082,3 +16082,28 @@ declare global {
     };
   }
 }
+
+// Intl.DisplayNames additional types
+declare global {
+  namespace Intl {
+    type DisplayNamesFallback = "code" | "none";
+    
+    interface DisplayNamesOptions {
+      localeMatcher?: "lookup" | "best fit";
+      style?: "narrow" | "short" | "long";
+      type?: "language" | "region" | "script" | "currency";
+      fallback?: DisplayNamesFallback;
+      languageDisplay?: "dialect" | "standard";
+    }
+    
+    interface DisplayNames {
+      of(code: string): string | undefined;
+      resolvedOptions(): ResolvedDisplayNamesOptions;
+    }
+    
+    var DisplayNames: {
+      new(locales: string | string[], options: DisplayNamesOptions): DisplayNames;
+      supportedLocalesOf(locales: string | string[], options?: DisplayNamesOptions): string[];
+    };
+  }
+}

@@ -436,8 +436,16 @@ function ClientRequest(input, options, cb) {
             if (buf.length > headerSizeLimit) {
               detachListeners();
               upgradeSocket.destroy();
-              this.emit("error", new Error(`Parse Error: Header size exceeds ${headerSizeLimit} bytes`));
-              resolve();
+              this[kClearTimeout]();
+              const err = new Error(`Parse Error: Header size exceeds ${headerSizeLimit} bytes`);
+              if (softFail) {
+                reject(err);
+              } else if (!this.destroyed) {
+                this.emit("error", err);
+                resolve();
+              } else {
+                resolve();
+              }
               return;
             }
 

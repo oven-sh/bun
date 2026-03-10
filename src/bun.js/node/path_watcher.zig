@@ -159,9 +159,9 @@ pub const PathWatcherManager = struct {
         for (events) |event| {
             if (event.index >= file_paths.len) continue;
 
-            // Skip entries pending eviction — their file_path may be a dangling
-            // pointer if _decrementPathRefNoLock freed the string after remove()
-            // queued the eviction but before flushEvictions() ran.
+            // Skip entries pending eviction — these watches have been logically
+            // removed, so processing events for them could trigger callbacks
+            // for paths the user has stopped watching.
             const dominated = std.mem.indexOfScalar(
                 Watcher.WatchItemIndex,
                 ctx.evict_list[0..ctx.evict_list_i],

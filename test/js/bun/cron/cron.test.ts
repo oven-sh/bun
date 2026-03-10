@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { unlinkSync, writeFileSync } from "node:fs";
 
 const crontabPath = Bun.which("crontab");
-const hasCrontab = !!crontabPath;
+const hasCrontab = !!crontabPath && isLinux;
 
 function readCrontab(): string {
   const result = Bun.spawnSync({

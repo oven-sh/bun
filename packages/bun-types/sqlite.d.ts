@@ -554,6 +554,140 @@ declare module "bun:sqlite" {
     ): Database;
 
     /**
+     * Register a user-defined scalar function.
+     *
+     * Matches the `better-sqlite3` API for compatibility.
+     *
+     * @param name The name of the function to register in SQL
+     * @param callback The JavaScript function to call
+     * @returns The database instance (for chaining)
+     *
+     * @example
+     * ```ts
+     * const db = new Database(":memory:");
+     * db.function("add2", (a, b) => a + b);
+     * db.prepare("SELECT add2(1, 2)").pluck().get(); // => 3
+     * ```
+     *
+     * @example
+     * ```ts
+     * // With options
+     * db.function("upper", { deterministic: true }, (s) => s.toUpperCase());
+     * ```
+     */
+    function(name: string, callback: (...args: any[]) => any): this;
+    function(
+      name: string,
+      options: {
+        /**
+         * If `true`, the function accepts any number of arguments.
+         * Otherwise, the number of arguments is determined by `callback.length`.
+         */
+        varargs?: boolean;
+        /**
+         * If `true`, SQLite may cache results for the same inputs (optimization).
+         */
+        deterministic?: boolean;
+        /**
+         * If `true`, the function can only be called from top-level SQL,
+         * not from VIEWs, TRIGGERs, CHECK constraints, or DEFAULT clauses.
+         */
+        directOnly?: boolean;
+        /**
+         * If `true`, integer arguments are passed as `BigInt` instead of `number`.
+         */
+        safeIntegers?: boolean;
+      },
+      callback: (...args: any[]) => any,
+    ): this;
+
+    /**
+     * Register a user-defined aggregate function.
+     *
+     * Matches the `better-sqlite3` API for compatibility.
+     *
+     * @param name The name of the aggregate function to register in SQL
+     * @param options Configuration for the aggregate function
+     * @returns The database instance (for chaining)
+     *
+     * @example
+     * ```ts
+     * const db = new Database(":memory:");
+     *
+     * db.aggregate("addAll", {
+     *   start: 0,
+     *   step: (total, nextValue) => total + nextValue,
+     * });
+     *
+     * db.exec("CREATE TABLE expenses (dollars REAL)");
+     * db.exec("INSERT INTO expenses VALUES (10), (20), (30)");
+     * db.prepare("SELECT addAll(dollars) FROM expenses").pluck().get(); // => 60
+     * ```
+     *
+     * @example
+     * ```ts
+     * // With result transformation
+     * db.aggregate("getAverage", {
+     *   start: () => [],
+     *   step: (array, nextValue) => { array.push(nextValue); },
+     *   result: (array) => array.reduce((a, b) => a + b, 0) / array.length,
+     * });
+     * ```
+     *
+     * @example
+     * ```ts
+     * // As a window function (with inverse)
+     * db.aggregate("addAll", {
+     *   start: 0,
+     *   step: (total, nextValue) => total + nextValue,
+     *   inverse: (total, droppedValue) => total - droppedValue,
+     * });
+     * ```
+     */
+    aggregate<T = any>(
+      name: string,
+      options: {
+        /**
+         * The initial accumulator value. If a function, it's called to
+         * produce a fresh initial value for each aggregate invocation.
+         */
+        start?: T | (() => T);
+        /**
+         * Called once per row. Return the new accumulator value.
+         * If `undefined` is returned, the accumulator is not replaced
+         * (useful for in-place mutations like pushing to an array).
+         */
+        step: (total: T, ...values: any[]) => T | void;
+        /**
+         * Optional. Transforms the final accumulator value before
+         * returning it as the SQL result.
+         */
+        result?: (total: T) => any;
+        /**
+         * Optional. If provided, the aggregate can be used as a window function.
+         * Called when a row is removed from the window.
+         */
+        inverse?: (total: T, ...dropped: any[]) => T | void;
+        /**
+         * If `true`, the function accepts any number of arguments per row.
+         */
+        varargs?: boolean;
+        /**
+         * If `true`, SQLite may cache results for the same inputs.
+         */
+        deterministic?: boolean;
+        /**
+         * If `true`, the function can only be called from top-level SQL.
+         */
+        directOnly?: boolean;
+        /**
+         * If `true`, integer arguments are passed as `BigInt` instead of `number`.
+         */
+        safeIntegers?: boolean;
+      },
+    ): this;
+
+    /**
      * See `sqlite3_file_control` for more information.
      * @link https://www.sqlite.org/c3ref/file_control.html
      */

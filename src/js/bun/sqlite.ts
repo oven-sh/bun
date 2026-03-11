@@ -122,6 +122,26 @@ interface CppSQL {
   fcntl(handle: TODO, ...args: TODO[]): TODO;
   close(handle: TODO, throwOnError: boolean): void;
   setCustomSQLite(path: string): void;
+  createFunction(
+    handle: TODO,
+    name: string,
+    nArgs: number,
+    flags: number,
+    callback: Function,
+    safeIntegers: boolean,
+  ): void;
+  createAggregate(
+    handle: TODO,
+    name: string,
+    nArgs: number,
+    flags: number,
+    stepFn: Function,
+    resultFn: Function | null,
+    startValue: any,
+    startIsFunction: boolean,
+    inverseFn: Function | null,
+    safeIntegers: boolean,
+  ): void;
 }
 
 let SQL: CppSQL;
@@ -485,6 +505,89 @@ class Database implements SqliteTypes.Database {
     }
 
     return SQL.setCustomSQLite(path);
+  }
+
+  function(name, optionsOrCallback?, callback?) {
+    if (typeof name !== "string") {
+      throw new TypeError("Expected function name to be a string");
+    }
+
+    let fn;
+    let options;
+
+    if (typeof optionsOrCallback === "function") {
+      fn = optionsOrCallback;
+      options = {};
+    } else if (typeof optionsOrCallback === "object" && optionsOrCallback !== null) {
+      options = optionsOrCallback;
+      fn = callback;
+    } else if (optionsOrCallback === undefined || optionsOrCallback === null) {
+      fn = callback;
+      options = {};
+    } else {
+      throw new TypeError("Expected second argument to be a function or options object");
+    }
+
+    if (typeof fn !== "function") {
+      throw new TypeError("Expected callback to be a function");
+    }
+
+    if (!SQL) {
+      initializeSQL();
+    }
+
+    const nArgs = options.varargs ? -1 : fn.length;
+    let flags = 0;
+    if (options.deterministic) flags |= 0x000000800; // SQLITE_DETERMINISTIC
+    if (options.directOnly) flags |= 0x000080000; // SQLITE_DIRECTONLY
+
+    SQL.createFunction(this.#handle, name, nArgs, flags, fn, !!options.safeIntegers);
+    return this;
+  }
+
+  aggregate(name, options?) {
+    if (typeof name !== "string") {
+      throw new TypeError("Expected aggregate name to be a string");
+    }
+
+    if (typeof options !== "object" || options === null) {
+      throw new TypeError("Expected options to be an object");
+    }
+
+    const step = options.step;
+    if (typeof step !== "function") {
+      throw new TypeError("Expected step to be a function");
+    }
+
+    if (!SQL) {
+      initializeSQL();
+    }
+
+    // Determine nArgs from step function (minus 1 for the accumulator parameter)
+    const nArgs = options.varargs ? -1 : step.length > 0 ? step.length - 1 : 0;
+    let flags = 0;
+    if (options.deterministic) flags |= 0x000000800; // SQLITE_DETERMINISTIC
+    if (options.directOnly) flags |= 0x000080000; // SQLITE_DIRECTONLY
+
+    const resultFn = typeof options.result === "function" ? options.result : null;
+    const inverseFn = typeof options.inverse === "function" ? options.inverse : null;
+
+    let startValue = options.start !== undefined ? options.start : null;
+    const startIsFunction = typeof startValue === "function";
+
+    SQL.createAggregate(
+      this.#handle,
+      name,
+      nArgs,
+      flags,
+      step,
+      resultFn,
+      startValue,
+      startIsFunction,
+      inverseFn,
+      !!options.safeIntegers,
+    );
+    return this;
   }
 
   fileControl(_cmd, _arg) {

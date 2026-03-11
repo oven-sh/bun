@@ -83,10 +83,13 @@ console.log(JSON.stringify(result));
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+    if (exitCode !== 0) {
+      throw new Error(`Child process exited with code ${exitCode}\nstderr: ${stderr}\nstdout: ${stdout}`);
+    }
+
     const result = JSON.parse(stdout.trim());
     expect(result.openProtocol).toBe(PROTOCOL);
     expect(result.liveProtocol).toBe(PROTOCOL);
-    expect(exitCode).toBe(0);
   } finally {
     server.close();
   }

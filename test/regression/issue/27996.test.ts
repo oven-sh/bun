@@ -26,6 +26,11 @@ process.send(server.port);
 `,
       });
 
+      let portResolve: (port: number) => void;
+      const portPromise = new Promise<number>(r => {
+        portResolve = r;
+      });
+
       await using proc = Bun.spawn({
         cmd: [bunExe(), "--smol", "server.ts"],
         cwd: dir,
@@ -37,12 +42,12 @@ process.send(server.port);
         },
       });
 
-      let portResolve: (port: number) => void;
-      const portPromise = new Promise<number>(r => {
-        portResolve = r;
-      });
-
-      const port = await portPromise;
+      const port = await Promise.race([
+        portPromise,
+        proc.exited.then(() => {
+          throw new Error("child exited before sending port");
+        }),
+      ]);
       const baseUrl = `http://localhost:${port}`;
 
       // Fetch the HTML page to discover asset URLs
@@ -83,6 +88,7 @@ process.send(server.port);
       }
 
       proc.kill();
+      await proc.exited;
     });
   }
 });

@@ -272,13 +272,32 @@ describe("WebSocket strict RFC 6455 subprotocol handling", () => {
     ws.binaryType = "arraybuffer";
 
     let protocolAtOpen = "";
+    let settled = false;
+
+    const resolveOnce = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+
+    const rejectOnce = (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    };
 
     try {
       ws.onopen = () => {
         protocolAtOpen = ws.protocol;
       };
 
-      ws.onerror = reject;
+      ws.onerror = event => {
+        rejectOnce(new Error(`unexpected error event: ${event.type}`));
+      };
+
+      ws.onclose = event => {
+        rejectOnce(new Error(`unexpected close: ${event.code} ${event.reason} (protocolAtOpen=${protocolAtOpen})`));
+      };
 
       ws.onmessage = event => {
         try {
@@ -286,17 +305,17 @@ describe("WebSocket strict RFC 6455 subprotocol handling", () => {
           expect(protocolAtOpen).toBe(protocol);
           expect(event.data).toBeInstanceOf(ArrayBuffer);
           expect((event.data as ArrayBuffer).byteLength).toBe(payload.length);
-          resolve();
+          resolveOnce();
         } catch (error) {
-          reject(error);
+          rejectOnce(error);
         } finally {
-          ws.close();
+          ws.terminate();
         }
       };
 
       await promise;
     } finally {
-      ws.close();
+      ws.terminate();
     }
   });
 });

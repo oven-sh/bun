@@ -20,11 +20,6 @@ virtual_machine: *VirtualMachine = undefined,
 waker: ?Waker = null,
 forever_timer: ?*uws.Timer = null,
 deferred_tasks: DeferredTaskQueue = .{},
-/// On POSIX the canonical handle lives in `vm.event_loop_handle`, but that
-/// pointer is temporarily swapped by SpawnSyncEventLoop.  Each EventLoop
-/// caches its *own* handle here so `wakeup()` always targets the correct
-/// uws loop, even while spawnSync is active.
-cached_loop: ?*uws.Loop = null,
 uws_loop: if (Environment.isWindows) ?*uws.Loop else void = if (Environment.isWindows) null,
 
 debug: Debug = .{},
@@ -525,23 +520,13 @@ pub fn tick(this: *EventLoop) void {
     this.global.handleRejectedPromises();
 }
 
-pub fn tickWithoutJS(this: *EventLoop) void {
-    const ctx = this.virtual_machine;
-    this.tickConcurrent();
-
-    while (this.tickWithCount(ctx) > 0) {
-        this.tickConcurrent();
-    }
-}
-
 /// Tick the task queue without draining microtasks afterward.
 /// Used by SpawnSyncEventLoop to process I/O completion tasks (pipe read/write,
 /// process exit) without running user JavaScript via the global microtask queue.
 ///
-/// `tickWithoutJS` is a misnomer — `tickQueueWithCount` unconditionally calls
-/// `drainMicrotasksWithGlobal` after every task (Task.zig:528), which drains the
-/// shared JSC microtask queue and can execute arbitrary user JS. This variant
-/// sets a flag to suppress that drain.
+/// `tickQueueWithCount` unconditionally calls `drainMicrotasksWithGlobal` after
+/// every task (Task.zig), which drains the shared JSC microtask queue and can
+/// execute arbitrary user JS. This method sets a flag to suppress that drain.
 pub fn tickTasksOnly(this: *EventLoop) void {
     this.tickConcurrent();
 
@@ -614,14 +599,6 @@ pub fn ensureWaker(this: *EventLoop) void {
         // _ = actual.addPostHandler(*jsc.EventLoop, this, jsc.EventLoop.afterUSocketsTick);
         // _ = actual.addPreHandler(*jsc.VM, this.virtual_machine.jsc_vm, jsc.VM.drainMicrotasks);
     }
-    // Cache this EventLoop's own loop handle so wakeup() works correctly
-    // even when vm.event_loop_handle is temporarily swapped (e.g. spawnSync).
-    if (this.cached_loop == null) {
-        this.cached_loop = if (comptime Environment.isWindows)
-            this.uws_loop
-        else
-            this.virtual_machine.event_loop_handle;
-    }
     if (comptime Environment.isWindows) {
         if (this.uws_loop == null) {
             this.uws_loop = bun.uws.Loop.get();
@@ -636,13 +613,6 @@ pub fn performGC(this: *EventLoop) void {
 }
 
 pub fn wakeup(this: *EventLoop) void {
-    // Use cached_loop (per-EventLoop) rather than vm.event_loop_handle
-    // (per-VM, may be temporarily swapped by SpawnSyncEventLoop).
-    // This ensures wakeups always target the correct uws loop.
-    if (this.cached_loop) |loop| {
-        loop.wakeup();
-        return;
-    }
     if (comptime Environment.isWindows) {
         if (this.uws_loop) |loop| {
             loop.wakeup();

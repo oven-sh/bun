@@ -63,7 +63,6 @@ pub fn init(self: *SpawnSyncEventLoop, vm: *jsc.VirtualMachine) void {
         .tasks = jsc.EventLoop.Queue.init(bun.default_allocator),
         .global = vm.global,
         .virtual_machine = vm,
-        .cached_loop = loop,
         .uws_loop = if (bun.Environment.isWindows) self.uws_loop else {},
     };
 

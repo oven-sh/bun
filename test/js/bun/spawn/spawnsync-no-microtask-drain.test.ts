@@ -1,9 +1,6 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
-const isWindows = process.platform === "win32";
-const shell = isWindows ? ["cmd.exe", "/c"] : ["/bin/sh", "-c"];
-
 // Regression test: microtasks must not drain during Bun.spawnSync.
 //
 // Root cause: tickQueueWithCount (Task.zig) unconditionally calls
@@ -17,8 +14,6 @@ const shell = isWindows ? ["cmd.exe", "/c"] : ["/bin/sh", "-c"];
 // during the isolated loop tick.
 
 test("microtasks do not drain inside spawnSync", async () => {
-  const sleepCmd = isWindows ? "ping -n 1 127.0.0.1 >nul" : "sleep 0.01";
-
   using dir = tempDir("spawnsync-microtask", {
     "repro.js": `
 const cp = require('node:child_process')
@@ -26,7 +21,7 @@ const cp = require('node:child_process')
 let inSync = false
 let hit = null
 
-const p = cp.spawn(${JSON.stringify(shell[0])}, [${JSON.stringify(shell[1])}, 'echo x'], {
+const p = cp.spawn(process.execPath, ['-e', 'console.log("x")'], {
   stdio: ['ignore', 'pipe', 'ignore'],
 })
 
@@ -41,7 +36,7 @@ while (performance.now() < end) {
 }
 
 inSync = true
-Bun.spawnSync({ cmd: [${JSON.stringify(shell[0])}, ${JSON.stringify(shell[1])}, ${JSON.stringify(sleepCmd)}], maxBuffer: 1048576 })
+Bun.spawnSync({ cmd: [process.execPath, '-e', 'Bun.sleepSync(10)'], maxBuffer: 1048576 })
 inSync = false
 
 await new Promise(r => p.on('close', r))
@@ -75,7 +70,7 @@ console.log('OK: microtask did not drain inside spawnSync')
 
 test("spawnSync still works correctly with maxBuffer", () => {
   const result = Bun.spawnSync({
-    cmd: [...shell, isWindows ? "echo hello" : "echo hello"],
+    cmd: [bunExe(), "-e", "console.log('hello')"],
     maxBuffer: 1048576,
   });
 
@@ -85,7 +80,7 @@ test("spawnSync still works correctly with maxBuffer", () => {
 
 test("spawnSync with timeout still works", () => {
   const result = Bun.spawnSync({
-    cmd: [...shell, isWindows ? "ping -n 100 127.0.0.1 >nul" : "sleep 10"],
+    cmd: [bunExe(), "-e", "Bun.sleepSync(10000)"],
     timeout: 100,
   });
 

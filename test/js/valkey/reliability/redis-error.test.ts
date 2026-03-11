@@ -1,5 +1,37 @@
 import { RedisClient } from "bun";
 import { expect, test } from "bun:test";
+import { createServer } from "node:net";
+
+async function getUnusedPort() {
+  const server = createServer();
+
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Failed to allocate TCP port");
+  }
+
+  const { port } = address;
+
+  await new Promise<void>((resolve, reject) => {
+    server.close(error => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
+  });
+
+  return port;
+}
 
 test("should expose Bun.RedisError as a runtime constructor", () => {
   expect(typeof Bun.RedisError).toBe("function");
@@ -33,7 +65,8 @@ test("should propagate exceptions from options while constructing Bun.RedisError
 });
 
 test("should throw Bun.RedisError for connection failures", async () => {
-  const client = new RedisClient("redis://localhost:12345", {
+  const port = await getUnusedPort();
+  const client = new RedisClient(`redis://127.0.0.1:${port}`, {
     connectionTimeout: 100,
     autoReconnect: false,
   });

@@ -353,6 +353,22 @@ export const bunOnlyFlags: Flag[] = [
     lang: "cxx",
     desc: "C++23 standard (MSVC flag for clang-cl)",
   },
+  // C standard: gnu17 on unix (cmake: C_STANDARD 17 with C_EXTENSIONS
+  // default ON → -std=gnu17). Can't go to C23 — MSVC doesn't support it.
+  // Most .c files are usockets/llhttp which would compile fine without,
+  // but explicit is better than compiler-default drift.
+  {
+    flag: "-std=gnu17",
+    when: c => c.unix,
+    lang: "c",
+    desc: "C17 with GNU extensions (matches cmake's C_STANDARD 17 + default C_EXTENSIONS)",
+  },
+  {
+    flag: "/std:c17",
+    when: c => c.windows,
+    lang: "c",
+    desc: "C17 standard (MSVC-mode flag for clang-cl; no GNU extensions in MSVC mode)",
+  },
 
   // ─── Sanitizers (bun only — deps would break with -Werror + UBSan) ───
   // Note: -fsanitize=address is in globalFlags (deps need ABI consistency).

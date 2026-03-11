@@ -402,6 +402,37 @@ static void destroyUserDefinedFunctionData(void* ptr)
     delete static_cast<UserDefinedFunctionData*>(ptr);
 }
 
+// Helper to extract an error message from a pending exception, clear the
+// exception, and forward it to SQLite via sqlite3_result_error.
+// Must be called while the exception is still pending (before clearing).
+static void propagateExceptionToSQLite(JSGlobalObject* globalObject, VM& vm, ThrowScope& scope, sqlite3_context* ctx, const char* fallbackMessage)
+{
+    JSC::Exception* exception = scope.exception();
+    // Grab the value while the exception is still rooted by the VM.
+    JSValue errorValue = exception->value();
+    // Now clear so that we can safely re-enter JS for toString conversion.
+    if (!scope.tryClearException()) {
+        // Termination exception — can't clear, just set a generic error.
+        sqlite3_result_error(ctx, "Terminated", -1);
+        return;
+    }
+
+    auto* errorString = errorValue.toStringOrNull(globalObject);
+    if (errorString && !scope.exception()) {
+        auto utf8 = errorString->view(globalObject)->utf8();
+        if (!scope.exception()) {
+            sqlite3_result_error(ctx, utf8.data(), utf8.length());
+        } else {
+            (void)scope.tryClearException();
+            sqlite3_result_error(ctx, fallbackMessage, -1);
+        }
+    } else {
+        if (scope.exception())
+            (void)scope.tryClearException();
+        sqlite3_result_error(ctx, fallbackMessage, -1);
+    }
+}
+
 static void scalarFunctionCallback(sqlite3_context* ctx, int argc, sqlite3_value** argv)
 {
     auto* data = static_cast<UserDefinedFunctionData*>(sqlite3_user_data(ctx));
@@ -413,8 +444,7 @@ static void scalarFunctionCallback(sqlite3_context* ctx, int argc, sqlite3_value
     for (int i = 0; i < argc; i++) {
         args.append(sqliteValueToJS(globalObject, argv[i], data->safeIntegers));
         if (scope.exception()) {
-            (void)scope.tryClearException();
-            sqlite3_result_error(ctx, "Failed to convert argument", -1);
+            propagateExceptionToSQLite(globalObject, vm, scope, ctx, "Failed to convert argument");
             return;
         }
     }
@@ -423,45 +453,32 @@ static void scalarFunctionCallback(sqlite3_context* ctx, int argc, sqlite3_value
     JSValue result = call(globalObject, data->scalarFn.get(), callData, jsUndefined(), args);
 
     if (scope.exception()) {
-        JSC::Exception* exception = scope.exception();
-        (void)scope.tryClearException();
-        JSValue errorValue = exception->value();
-        auto* errorString = errorValue.toStringOrNull(globalObject);
-        if (errorString) {
-            auto utf8 = errorString->view(globalObject)->utf8();
-            sqlite3_result_error(ctx, utf8.data(), utf8.length());
-        } else {
-            sqlite3_result_error(ctx, "User-defined function threw an error", -1);
-        }
-        if (scope.exception())
-            (void)scope.tryClearException();
+        propagateExceptionToSQLite(globalObject, vm, scope, ctx, "User-defined function threw an error");
         return;
     }
 
     jsValueToSQLiteResult(globalObject, ctx, result);
     if (scope.exception())
-        (void)scope.tryClearException();
+        propagateExceptionToSQLite(globalObject, vm, scope, ctx, "Failed to convert return value");
 }
 
+// Returns the start value for an aggregate. Caller must check for exceptions
+// on the ThrowScope after calling this — if the start function throws, the
+// exception will be pending on the VM.
 static JSValue getAggregateStartValue(UserDefinedFunctionData* data)
 {
-    auto* globalObject = data->globalObject.get();
-    auto& vm = getVM(globalObject);
-
     if (data->startIsFunction) {
-        auto scope = DECLARE_THROW_SCOPE(vm);
+        auto* globalObject = data->globalObject.get();
+        // No scope here — the caller's ThrowScope will see the exception.
         auto callData = getCallData(asObject(data->startValue.get()));
-        JSValue result = call(globalObject, asObject(data->startValue.get()), callData, jsUndefined(), MarkedArgumentBuffer());
-        if (scope.exception()) {
-            (void)scope.tryClearException();
-            return jsNull();
-        }
-        return result;
+        return call(globalObject, asObject(data->startValue.get()), callData, jsUndefined(), MarkedArgumentBuffer());
     }
     return data->startValue.get();
 }
 
-static AggregateContext* getOrInitAggregateContext(sqlite3_context* ctx, UserDefinedFunctionData* data)
+// Returns nullptr on OOM. Also propagates start-function exceptions to SQLite
+// and returns nullptr in that case, so the caller can just `return`.
+static AggregateContext* getOrInitAggregateContext(sqlite3_context* ctx, UserDefinedFunctionData* data, ThrowScope& scope)
 {
     auto* aggCtx = static_cast<AggregateContext*>(sqlite3_aggregate_context(ctx, sizeof(AggregateContext)));
     if (!aggCtx)
@@ -470,6 +487,10 @@ static AggregateContext* getOrInitAggregateContext(sqlite3_context* ctx, UserDef
         auto* globalObject = data->globalObject.get();
         auto& vm = getVM(globalObject);
         JSValue start = getAggregateStartValue(data);
+        if (scope.exception()) {
+            propagateExceptionToSQLite(globalObject, vm, scope, ctx, "Aggregate start function threw an error");
+            return nullptr;
+        }
         aggCtx->accumulatorIndex = data->allocAccumulator(vm, start);
         aggCtx->initialized = true;
     }
@@ -483,9 +504,11 @@ static void aggregateStepCallback(sqlite3_context* ctx, int argc, sqlite3_value*
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* aggCtx = getOrInitAggregateContext(ctx, data);
+    auto* aggCtx = getOrInitAggregateContext(ctx, data, scope);
     if (!aggCtx) {
-        sqlite3_result_error_nomem(ctx);
+        // Either OOM (already reported) or start function threw (already propagated).
+        if (!scope.exception())
+            sqlite3_result_error_nomem(ctx);
         return;
     }
 
@@ -496,8 +519,7 @@ static void aggregateStepCallback(sqlite3_context* ctx, int argc, sqlite3_value*
     for (int i = 0; i < argc; i++) {
         args.append(sqliteValueToJS(globalObject, argv[i], data->safeIntegers));
         if (scope.exception()) {
-            (void)scope.tryClearException();
-            sqlite3_result_error(ctx, "Failed to convert argument", -1);
+            propagateExceptionToSQLite(globalObject, vm, scope, ctx, "Failed to convert argument");
             return;
         }
     }
@@ -506,18 +528,7 @@ static void aggregateStepCallback(sqlite3_context* ctx, int argc, sqlite3_value*
     JSValue result = call(globalObject, data->stepFn.get(), callData, jsUndefined(), args);
 
     if (scope.exception()) {
-        JSC::Exception* exception = scope.exception();
-        (void)scope.tryClearException();
-        JSValue errorValue = exception->value();
-        auto* errorString = errorValue.toStringOrNull(globalObject);
-        if (errorString) {
-            auto utf8 = errorString->view(globalObject)->utf8();
-            sqlite3_result_error(ctx, utf8.data(), utf8.length());
-        } else {
-            sqlite3_result_error(ctx, "Aggregate step function threw an error", -1);
-        }
-        if (scope.exception())
-            (void)scope.tryClearException();
+        propagateExceptionToSQLite(globalObject, vm, scope, ctx, "Aggregate step function threw an error");
         return;
     }
 
@@ -540,8 +551,12 @@ static void aggregateFinalCallback(sqlite3_context* ctx)
     if (aggCtx && aggCtx->initialized) {
         accumulator = data->accumulators[aggCtx->accumulatorIndex].value.get();
     } else {
-        // No rows were processed - use start value
+        // No rows were processed — use start value
         accumulator = getAggregateStartValue(data);
+        if (scope.exception()) {
+            propagateExceptionToSQLite(globalObject, vm, scope, ctx, "Aggregate start function threw an error");
+            return;
+        }
     }
 
     JSValue result;
@@ -552,19 +567,7 @@ static void aggregateFinalCallback(sqlite3_context* ctx)
         result = call(globalObject, data->resultFn.get(), callData, jsUndefined(), args);
 
         if (scope.exception()) {
-            JSC::Exception* exception = scope.exception();
-            (void)scope.tryClearException();
-            JSValue errorValue = exception->value();
-            auto* errorString = errorValue.toStringOrNull(globalObject);
-            if (errorString) {
-                auto utf8 = errorString->view(globalObject)->utf8();
-                sqlite3_result_error(ctx, utf8.data(), utf8.length());
-            } else {
-                sqlite3_result_error(ctx, "Aggregate result function threw an error", -1);
-            }
-            if (scope.exception())
-                (void)scope.tryClearException();
-            // Still clean up
+            propagateExceptionToSQLite(globalObject, vm, scope, ctx, "Aggregate result function threw an error");
             if (aggCtx && aggCtx->initialized)
                 data->freeAccumulator(aggCtx->accumulatorIndex);
             return;
@@ -575,7 +578,7 @@ static void aggregateFinalCallback(sqlite3_context* ctx)
 
     jsValueToSQLiteResult(globalObject, ctx, result);
     if (scope.exception())
-        (void)scope.tryClearException();
+        propagateExceptionToSQLite(globalObject, vm, scope, ctx, "Failed to convert return value");
 
     // Clean up accumulator
     if (aggCtx && aggCtx->initialized)
@@ -597,6 +600,10 @@ static void windowValueCallback(sqlite3_context* ctx)
         accumulator = data->accumulators[aggCtx->accumulatorIndex].value.get();
     } else {
         accumulator = getAggregateStartValue(data);
+        if (scope.exception()) {
+            propagateExceptionToSQLite(globalObject, vm, scope, ctx, "Aggregate start function threw an error");
+            return;
+        }
     }
 
     JSValue result;
@@ -607,18 +614,7 @@ static void windowValueCallback(sqlite3_context* ctx)
         result = call(globalObject, data->resultFn.get(), callData, jsUndefined(), args);
 
         if (scope.exception()) {
-            JSC::Exception* exception = scope.exception();
-            (void)scope.tryClearException();
-            JSValue errorValue = exception->value();
-            auto* errorString = errorValue.toStringOrNull(globalObject);
-            if (errorString) {
-                auto utf8 = errorString->view(globalObject)->utf8();
-                sqlite3_result_error(ctx, utf8.data(), utf8.length());
-            } else {
-                sqlite3_result_error(ctx, "Window value function threw an error", -1);
-            }
-            if (scope.exception())
-                (void)scope.tryClearException();
+            propagateExceptionToSQLite(globalObject, vm, scope, ctx, "Window value function threw an error");
             return;
         }
     } else {
@@ -627,8 +623,8 @@ static void windowValueCallback(sqlite3_context* ctx)
 
     jsValueToSQLiteResult(globalObject, ctx, result);
     if (scope.exception())
-        (void)scope.tryClearException();
-    // Do NOT free accumulator here - window value is not final
+        propagateExceptionToSQLite(globalObject, vm, scope, ctx, "Failed to convert return value");
+    // Do NOT free accumulator here — window value is not final
 }
 
 // For window functions: remove a row from the window
@@ -639,9 +635,10 @@ static void windowInverseCallback(sqlite3_context* ctx, int argc, sqlite3_value*
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* aggCtx = getOrInitAggregateContext(ctx, data);
+    auto* aggCtx = getOrInitAggregateContext(ctx, data, scope);
     if (!aggCtx) {
-        sqlite3_result_error_nomem(ctx);
+        if (!scope.exception())
+            sqlite3_result_error_nomem(ctx);
         return;
     }
 
@@ -652,8 +649,7 @@ static void windowInverseCallback(sqlite3_context* ctx, int argc, sqlite3_value*
     for (int i = 0; i < argc; i++) {
         args.append(sqliteValueToJS(globalObject, argv[i], data->safeIntegers));
         if (scope.exception()) {
-            (void)scope.tryClearException();
-            sqlite3_result_error(ctx, "Failed to convert argument", -1);
+            propagateExceptionToSQLite(globalObject, vm, scope, ctx, "Failed to convert argument");
             return;
         }
     }
@@ -662,18 +658,7 @@ static void windowInverseCallback(sqlite3_context* ctx, int argc, sqlite3_value*
     JSValue result = call(globalObject, data->inverseFn.get(), callData, jsUndefined(), args);
 
     if (scope.exception()) {
-        JSC::Exception* exception = scope.exception();
-        (void)scope.tryClearException();
-        JSValue errorValue = exception->value();
-        auto* errorString = errorValue.toStringOrNull(globalObject);
-        if (errorString) {
-            auto utf8 = errorString->view(globalObject)->utf8();
-            sqlite3_result_error(ctx, utf8.data(), utf8.length());
-        } else {
-            sqlite3_result_error(ctx, "Window inverse function threw an error", -1);
-        }
-        if (scope.exception())
-            (void)scope.tryClearException();
+        propagateExceptionToSQLite(globalObject, vm, scope, ctx, "Window inverse function threw an error");
         return;
     }
 

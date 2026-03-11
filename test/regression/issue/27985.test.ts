@@ -145,7 +145,7 @@ describe("GitHub issue #27985: mTLS rejectUnauthorized enforcement", () => {
         expect.unreachable();
       } catch (err: any) {
         // Connection should fail because server rejects the rogue cert
-        expect(err).toBeDefined();
+        expect(err.code).toMatch(/CERT|SSL|TLS|ECONNRESET/i);
       }
     });
   });

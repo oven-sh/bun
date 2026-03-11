@@ -504,6 +504,11 @@ namespace uWS
             return ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')) || c == '-';
         }
 
+        /* RFC 9110 Section 5.5: optional whitespace (OWS) is SP or HTAB */
+        static inline bool isHTTPHeaderValueWhitespace(unsigned char c) {
+            return c == ' ' || c == '\t';
+        }
+
         static inline int isHTTPorHTTPSPrefixForProxies(char *data, char *end) {
             // We can check 8 because:
             // 1. If it's "http://" that's 7 bytes, and it's supposed to at least have a trailing slash.
@@ -566,8 +571,10 @@ namespace uWS
 
 
             bool isHTTPMethod = (__builtin_expect(data[1] == '/', 1));
-            bool isConnect = !isHTTPMethod && (isHTTPorHTTPSPrefixForProxies(data + 1, end) == 1 || ((data - start) == 7 && memcmp(start, "CONNECT", 7) == 0));
-            if (isHTTPMethod || isConnect) [[likely]] {
+            bool isConnect = !isHTTPMethod && ((data - start) == 7 && memcmp(start, "CONNECT", 7) == 0);
+            /* Also accept proxy-style absolute URLs (http://... or https://...) as valid request targets */
+            bool isProxyStyleURL = !isHTTPMethod && !isConnect && data[0] == 32 && isHTTPorHTTPSPrefixForProxies(data + 1, end) == 1;
+            if (isHTTPMethod || isConnect || isProxyStyleURL) [[likely]] {
                 header.key = {start, (size_t) (data - start)};
                 data++;
                 if(!isValidMethod(header.key, useStrictMethodValidation)) {
@@ -719,7 +726,8 @@ namespace uWS
 
             /* Check for empty headers (no headers, just \r\n) */
             if (postPaddedBuffer[0] == '\r' && postPaddedBuffer[1] == '\n') {
-                /* Valid request with no headers */
+                /* Valid request with no headers - write null terminator like the normal path */
+                headers[1].key = std::string_view(nullptr, 0);
                 return HttpParserResult::success((unsigned int) ((postPaddedBuffer + 2) - start));
             }
 
@@ -772,13 +780,13 @@ namespace uWS
                     /* Store this header, it is valid */
                     headers->value = std::string_view(preliminaryValue, (size_t) (postPaddedBuffer - preliminaryValue));
                     postPaddedBuffer += 2;
-                    /* Trim trailing whitespace (SP, HTAB) */
-                    while (headers->value.length() && headers->value.back() < 33) {
+                    /* Trim trailing whitespace (SP, HTAB) per RFC 9110 Section 5.5 */
+                    while (headers->value.length() && isHTTPHeaderValueWhitespace(headers->value.back())) {
                         headers->value.remove_suffix(1);
                     }
 
-                    /* Trim initial whitespace (SP, HTAB) */
-                    while (headers->value.length() && headers->value.front() < 33) {
+                    /* Trim initial whitespace (SP, HTAB) per RFC 9110 Section 5.5 */
+                    while (headers->value.length() && isHTTPHeaderValueWhitespace(headers->value.front())) {
                         headers->value.remove_prefix(1);
                     }
 

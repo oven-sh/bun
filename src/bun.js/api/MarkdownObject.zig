@@ -464,8 +464,8 @@ const ParseRenderer = struct {
         const entry = self.#stack.pop().?;
         const g = self.#globalObject;
 
-        // Determine HTML tag name
-        const type_str: []const u8 = blockTypeName(block_type, entry.data);
+        // Determine HTML tag index for cached string
+        const tag_index = getBlockTypeTag(block_type, entry.data);
 
         // For headings, compute slug before counting props
         const slug: ?[]const u8 = if (block_type == .h) self.#heading_tracker.leaveHeading(bun.default_allocator) else null;
@@ -496,7 +496,7 @@ const ParseRenderer = struct {
 
         // Build React element — use component override as type if set
         const component = self.getBlockComponent(block_type, entry.data);
-        const type_val: JSValue = if (component != .zero) component else try bun.String.createUTF8ForJS(g, type_str);
+        const type_val: JSValue = if (component != .zero) component else getCachedTagString(g, tag_index);
 
         const props = JSValue.createEmptyObject(g, props_count);
         self.#marked_args.append(props);
@@ -572,7 +572,7 @@ const ParseRenderer = struct {
         const entry = self.#stack.pop().?;
         const g = self.#globalObject;
 
-        const type_str: []const u8 = spanTypeName(span_type);
+        const tag_index = getSpanTypeTag(span_type);
 
         // Count props fields: always children (or alt for img) + metadata
         var props_count: usize = 1; // children (or alt for img)
@@ -592,7 +592,7 @@ const ParseRenderer = struct {
 
         // Build React element: { $$typeof, type, key, ref, props }
         const component = self.getSpanComponent(span_type);
-        const type_val: JSValue = if (component != .zero) component else try bun.String.createUTF8ForJS(g, type_str);
+        const type_val: JSValue = if (component != .zero) component else getCachedTagString(g, tag_index);
 
         const props = JSValue.createEmptyObject(g, props_count);
         self.#marked_args.append(props);
@@ -675,7 +675,7 @@ const ParseRenderer = struct {
         switch (text_type) {
             .br => {
                 const br_component = self.#components.br;
-                const br_type: JSValue = if (br_component != .zero) br_component else try bun.String.createUTF8ForJS(g, "br");
+                const br_type: JSValue = if (br_component != .zero) br_component else getCachedTagString(g, .br);
                 const empty_props = JSValue.createEmptyObject(g, 0);
                 self.#marked_args.append(empty_props);
                 const obj = self.createElement(br_type, empty_props);
@@ -704,53 +704,6 @@ const ParseRenderer = struct {
                 try parent.children.push(g, str);
             },
         }
-    }
-
-    // ========================================
-    // Type name mappings
-    // ========================================
-
-    fn blockTypeName(block_type: md.BlockType, data: u32) []const u8 {
-        return switch (block_type) {
-            .h => switch (data) {
-                1 => "h1",
-                2 => "h2",
-                3 => "h3",
-                4 => "h4",
-                5 => "h5",
-                else => "h6",
-            },
-            .p => "p",
-            .quote => "blockquote",
-            .ul => "ul",
-            .ol => "ol",
-            .li => "li",
-            .code => "pre",
-            .hr => "hr",
-            .html => "html",
-            .table => "table",
-            .thead => "thead",
-            .tbody => "tbody",
-            .tr => "tr",
-            .th => "th",
-            .td => "td",
-            .doc => "div",
-        };
-    }
-
-    fn spanTypeName(span_type: md.SpanType) []const u8 {
-        return switch (span_type) {
-            .em => "em",
-            .strong => "strong",
-            .a => "a",
-            .img => "img",
-            .code => "code",
-            .del => "del",
-            .latexmath => "math",
-            .latexmath_display => "math",
-            .wikilink => "a",
-            .u => "u",
-        };
     }
 };
 
@@ -806,8 +759,12 @@ const JsCallbackRenderer = struct {
 
     const StackEntry = struct {
         buffer: std.ArrayListUnmanaged(u8) = .{},
+        block_type: md.BlockType = .doc,
         data: u32 = 0,
         flags: u32 = 0,
+        /// For ul/ol: number of li children seen so far (next li's index).
+        /// For li: this item's 0-based index within its parent list.
+        child_index: u32 = 0,
         detail: md.SpanDetail = .{},
     };
 
@@ -900,7 +857,22 @@ const JsCallbackRenderer = struct {
         if (block_type == .h) {
             self.#heading_tracker.enterHeading();
         }
-        try self.#stack.append(self.#allocator, .{ .data = data, .flags = flags });
+
+        // For li: record its 0-based index within the parent list, then
+        // increment the parent's counter so the next sibling gets index+1.
+        var child_index: u32 = 0;
+        if (block_type == .li and self.#stack.items.len > 0) {
+            const parent = &self.#stack.items[self.#stack.items.len - 1];
+            child_index = parent.child_index;
+            parent.child_index += 1;
+        }
+
+        try self.#stack.append(self.#allocator, .{
+            .block_type = block_type,
+            .data = data,
+            .flags = flags,
+            .child_index = child_index,
+        });
     }
 
     fn leaveBlockImpl(ptr: *anyopaque, block_type: md.BlockType, _: u32) bun.JSError!void {
@@ -1033,6 +1005,30 @@ const JsCallbackRenderer = struct {
     // Metadata object creation
     // ========================================
 
+    /// Walks the stack to count enclosing ul/ol blocks. Called during leave,
+    /// so the top entry is the block itself (skip it for li, count it for ul/ol's
+    /// own depth which excludes self).
+    fn countListDepth(self: *JsCallbackRenderer) u32 {
+        var depth: u32 = 0;
+        // Skip the top entry (self) — we want enclosing lists only.
+        const len = self.#stack.items.len;
+        if (len < 2) return 0;
+        for (self.#stack.items[0 .. len - 1]) |entry| {
+            if (entry.block_type == .ul or entry.block_type == .ol) depth += 1;
+        }
+        return depth;
+    }
+
+    /// Returns the parent ul/ol entry for the current li (top of stack).
+    /// Returns null if the stack shape is unexpected.
+    fn parentList(self: *JsCallbackRenderer) ?*const StackEntry {
+        const len = self.#stack.items.len;
+        if (len < 2) return null;
+        const parent = &self.#stack.items[len - 2];
+        if (parent.block_type == .ul or parent.block_type == .ol) return parent;
+        return null;
+    }
+
     fn createBlockMeta(self: *JsCallbackRenderer, block_type: md.BlockType, data: u32, flags: u32) bun.JSError!?JSValue {
         const g = self.#globalObject;
         switch (block_type) {
@@ -1047,15 +1043,10 @@ const JsCallbackRenderer = struct {
                 return obj;
             },
             .ol => {
-                const obj = JSValue.createEmptyObject(g, 2);
-                obj.put(g, ZigString.static("ordered"), .true);
-                obj.put(g, ZigString.static("start"), JSValue.jsNumber(data));
-                return obj;
+                return BunMarkdownMeta__createList(g, true, JSValue.jsNumber(data), self.countListDepth());
             },
             .ul => {
-                const obj = JSValue.createEmptyObject(g, 1);
-                obj.put(g, ZigString.static("ordered"), .false);
-                return obj;
+                return BunMarkdownMeta__createList(g, false, .js_undefined, self.countListDepth());
             },
             .code => {
                 if (flags & md.BLOCK_FENCED_CODE != 0) {
@@ -1070,21 +1061,31 @@ const JsCallbackRenderer = struct {
             },
             .th, .td => {
                 const alignment = md.types.alignmentFromData(data);
-                if (md.types.alignmentName(alignment)) |align_str| {
-                    const obj = JSValue.createEmptyObject(g, 1);
-                    obj.put(g, ZigString.static("align"), try bun.String.createUTF8ForJS(g, align_str));
-                    return obj;
-                }
-                return null;
+                const align_js = if (md.types.alignmentName(alignment)) |align_str|
+                    try bun.String.createUTF8ForJS(g, align_str)
+                else
+                    JSValue.js_undefined;
+                return BunMarkdownMeta__createCell(g, align_js);
             },
             .li => {
+                // The li entry is still on top of the stack; parent ul/ol is at len-2.
+                const len = self.#stack.items.len;
+                const item_index = if (len > 1) self.#stack.items[len - 1].child_index else 0;
+                const parent = self.parentList();
+                const is_ordered = parent != null and parent.?.block_type == .ol;
+                // countListDepth() includes the immediate parent list; subtract it
+                // so that items in a top-level list report depth 0.
+                const enclosing = self.countListDepth();
+                const depth: u32 = if (enclosing > 0) enclosing - 1 else 0;
                 const task_mark = md.types.taskMarkFromData(data);
-                if (task_mark != 0) {
-                    const obj = JSValue.createEmptyObject(g, 1);
-                    obj.put(g, ZigString.static("checked"), JSValue.jsBoolean(md.types.isTaskChecked(task_mark)));
-                    return obj;
-                }
-                return null;
+
+                const start_js = if (is_ordered) JSValue.jsNumber(parent.?.data) else JSValue.js_undefined;
+                const checked_js = if (task_mark != 0)
+                    JSValue.jsBoolean(md.types.isTaskChecked(task_mark))
+                else
+                    JSValue.js_undefined;
+
+                return BunMarkdownMeta__createListItem(g, item_index, depth, is_ordered, start_js, checked_js);
             },
             else => return null,
         }
@@ -1094,14 +1095,18 @@ const JsCallbackRenderer = struct {
         const g = self.#globalObject;
         switch (span_type) {
             .a => {
-                const obj = JSValue.createEmptyObject(g, 2);
-                obj.put(g, ZigString.static("href"), try bun.String.createUTF8ForJS(g, detail.href));
-                if (detail.title.len > 0) {
-                    obj.put(g, ZigString.static("title"), try bun.String.createUTF8ForJS(g, detail.title));
-                }
-                return obj;
+                const href = try bun.String.createUTF8ForJS(g, detail.href);
+                const title = if (detail.title.len > 0)
+                    try bun.String.createUTF8ForJS(g, detail.title)
+                else
+                    JSValue.js_undefined;
+                return BunMarkdownMeta__createLink(g, href, title);
             },
             .img => {
+                // Image meta shares shape with link (src/href are both the first
+                // field). We use a separate cached structure would require a
+                // second slot, so just fall back to the generic path here —
+                // images are rare enough that it doesn't matter.
                 const obj = JSValue.createEmptyObject(g, 2);
                 obj.put(g, ZigString.static("src"), try bun.String.createUTF8ForJS(g, detail.href));
                 if (detail.title.len > 0) {
@@ -1123,6 +1128,97 @@ fn extractLanguage(src_text: []const u8, info_beg: u32) []const u8 {
     }
     if (lang_end > info_beg) return src_text[info_beg..lang_end];
     return "";
+}
+
+// Cached tag string indices - must match BunMarkdownTagStrings.h
+const TagIndex = enum(u8) {
+    h1 = 0,
+    h2 = 1,
+    h3 = 2,
+    h4 = 3,
+    h5 = 4,
+    h6 = 5,
+    p = 6,
+    blockquote = 7,
+    ul = 8,
+    ol = 9,
+    li = 10,
+    pre = 11,
+    hr = 12,
+    html = 13,
+    table = 14,
+    thead = 15,
+    tbody = 16,
+    tr = 17,
+    th = 18,
+    td = 19,
+    div = 20,
+    em = 21,
+    strong = 22,
+    a = 23,
+    img = 24,
+    code = 25,
+    del = 26,
+    math = 27,
+    u = 28,
+    br = 29,
+};
+
+extern fn BunMarkdownTagStrings__getTagString(*jsc.JSGlobalObject, u8) JSValue;
+
+// Fast-path meta-object constructors using cached Structures (see
+// BunMarkdownMeta.cpp). Each constructs via putDirectOffset so the
+// resulting objects share a single Structure and stay monomorphic.
+extern fn BunMarkdownMeta__createListItem(*jsc.JSGlobalObject, u32, u32, bool, JSValue, JSValue) JSValue;
+extern fn BunMarkdownMeta__createList(*jsc.JSGlobalObject, bool, JSValue, u32) JSValue;
+extern fn BunMarkdownMeta__createCell(*jsc.JSGlobalObject, JSValue) JSValue;
+extern fn BunMarkdownMeta__createLink(*jsc.JSGlobalObject, JSValue, JSValue) JSValue;
+
+fn getCachedTagString(globalObject: *jsc.JSGlobalObject, tag: TagIndex) JSValue {
+    return BunMarkdownTagStrings__getTagString(globalObject, @intFromEnum(tag));
+}
+
+fn getBlockTypeTag(block_type: md.BlockType, data: u32) TagIndex {
+    return switch (block_type) {
+        .h => switch (data) {
+            1 => .h1,
+            2 => .h2,
+            3 => .h3,
+            4 => .h4,
+            5 => .h5,
+            else => .h6,
+        },
+        .p => .p,
+        .quote => .blockquote,
+        .ul => .ul,
+        .ol => .ol,
+        .li => .li,
+        .code => .pre,
+        .hr => .hr,
+        .html => .html,
+        .table => .table,
+        .thead => .thead,
+        .tbody => .tbody,
+        .tr => .tr,
+        .th => .th,
+        .td => .td,
+        .doc => .div,
+    };
+}
+
+fn getSpanTypeTag(span_type: md.SpanType) TagIndex {
+    return switch (span_type) {
+        .em => .em,
+        .strong => .strong,
+        .a => .a,
+        .img => .img,
+        .code => .code,
+        .del => .del,
+        .latexmath => .math,
+        .latexmath_display => .math,
+        .wikilink => .a,
+        .u => .u,
+    };
 }
 
 const std = @import("std");

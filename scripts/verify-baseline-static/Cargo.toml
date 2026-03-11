@@ -1,0 +1,13 @@
+[package]
+name = "verify-baseline-static"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+iced-x86 = { version = "1.21", default-features = false, features = ["decoder", "std", "instr_info"] }
+object = { version = "0.36", default-features = false, features = ["read", "std", "elf", "pe"] }
+pdb = "0.8"
+
+[profile.release]
+lto = true
+strip = true

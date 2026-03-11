@@ -976,20 +976,14 @@ pub const FormData = struct {
     }
 
     pub const Field = struct {
-        /// Offset into the input buffer for the value (binary-safe, no null-termination).
-        value_off: u32 = 0,
-        /// Length of the value (binary-safe, no null-termination).
-        value_len: u32 = 0,
+        /// Raw slice into the input buffer. Not using `bun.Semver.String` because
+        /// file bodies are binary data that can contain null bytes, which
+        /// Semver.String's inline storage treats as terminators.
+        value: []const u8 = "",
         filename: bun.Semver.String = .{},
         content_type: bun.Semver.String = .{},
         is_file: bool = false,
         zero_count: u8 = 0,
-
-        /// Get the value slice from the buffer.
-        pub fn valueSlice(self: Field, buf: []const u8) []const u8 {
-            if (self.value_len == 0) return "";
-            return buf[self.value_off..][0..self.value_len];
-        }
 
         pub const Entry = union(enum) {
             field: Field,
@@ -1097,7 +1091,7 @@ pub const FormData = struct {
             form: *jsc.DOMFormData,
 
             pub fn onEntry(wrap: *@This(), name: bun.Semver.String, field: Field, buf: []const u8) void {
-                const value_str = field.valueSlice(buf);
+                const value_str = field.value;
                 var key = jsc.ZigString.initUTF8(name.slice(buf));
 
                 if (field.is_file) {
@@ -1287,9 +1281,7 @@ pub const FormData = struct {
             if (strings.endsWithComptime(body, "\r\n")) {
                 body = body[0 .. body.len - 2];
             }
-            // Store offset and length directly to preserve binary data with null bytes
-            field.value_off = @truncate(@intFromPtr(body.ptr) - @intFromPtr(input.ptr));
-            field.value_len = @truncate(body.len);
+            field.value = body;
             field.filename = filename orelse .{};
             field.is_file = is_file;
 

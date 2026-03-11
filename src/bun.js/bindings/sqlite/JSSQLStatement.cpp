@@ -270,50 +270,118 @@ using namespace JSC;
 // User-Defined Functions support
 /* ******************************************************************************** */
 
-// Data attached to each registered user-defined function via sqlite3_user_data().
-// Freed by the destroy callback when the function is unregistered or the DB is closed.
-struct UserDefinedFunctionData {
-    // Scalar function callback
-    Strong<JSObject> scalarFn;
-    // Aggregate step callback
-    Strong<JSObject> stepFn;
-    // Aggregate result callback (optional)
-    Strong<JSObject> resultFn;
-    // Window inverse callback (optional)
-    Strong<JSObject> inverseFn;
-    // Start value or start function for aggregate
-    Strong<Unknown> startValue;
-    // Global object
-    Strong<JSGlobalObject> globalObject;
-    bool safeIntegers = false;
-    bool startIsFunction = false;
+// GC-managed object that holds all JS references for a user-defined function.
+// WriteBarrier<> fields are traced by visitChildren, so no Strong<> handles
+// are needed for individual callbacks or accumulators.
+class JSUserDefinedFunction final : public JSDestructibleObject {
+public:
+    using Base = JSDestructibleObject;
+    static constexpr DestructionMode needsDestruction = NeedsDestruction;
 
-    // Per-group accumulator management for aggregates
-    struct AccumulatorSlot {
-        Strong<Unknown> value;
-    };
-    Vector<AccumulatorSlot> accumulators;
-    Vector<size_t> freeSlots;
+    WriteBarrier<JSObject> m_scalarFn;
+    WriteBarrier<JSObject> m_stepFn;
+    WriteBarrier<JSObject> m_resultFn;
+    WriteBarrier<JSObject> m_inverseFn;
+    WriteBarrier<Unknown> m_startValue;
+    bool m_safeIntegers = false;
+    bool m_startIsFunction = false;
+
+    // Per-group accumulator management for aggregates.
+    // Each slot holds one group's current accumulator value.
+    Vector<WriteBarrier<Unknown>> m_accumulators;
+    Vector<size_t> m_freeSlots;
 
     size_t allocAccumulator(VM& vm, JSValue initial)
     {
         size_t idx;
-        if (!freeSlots.isEmpty()) {
-            idx = freeSlots.takeLast();
-            accumulators[idx].value.set(vm, initial);
+        if (!m_freeSlots.isEmpty()) {
+            idx = m_freeSlots.takeLast();
+            m_accumulators[idx].set(vm, this, initial);
         } else {
-            idx = accumulators.size();
-            accumulators.append({ Strong<Unknown>(vm, initial) });
+            idx = m_accumulators.size();
+            m_accumulators.append(WriteBarrier<Unknown>());
+            m_accumulators.last().set(vm, this, initial);
         }
         return idx;
     }
 
     void freeAccumulator(size_t idx)
     {
-        accumulators[idx].value.clear();
-        freeSlots.append(idx);
+        m_accumulators[idx].clear();
+        m_freeSlots.append(idx);
+    }
+
+    static JSUserDefinedFunction* create(VM& vm, JSGlobalObject* globalObject, Structure* structure)
+    {
+        auto* obj = new (NotNull, allocateCell<JSUserDefinedFunction>(vm)) JSUserDefinedFunction(vm, structure);
+        obj->finishCreation(vm);
+        return obj;
+    }
+
+    static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
+    {
+        return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    }
+
+    DECLARE_INFO;
+    DECLARE_VISIT_CHILDREN;
+
+    template<typename, SubspaceAccess mode>
+    static GCClient::IsoSubspace* subspaceFor(VM& vm)
+    {
+        return subspaceForImpl<JSUserDefinedFunction, UseCustomHeapCellType::No>(
+            vm,
+            [](auto& spaces) { return spaces.m_clientSubspaceForJSUserDefinedFunction.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSUserDefinedFunction = std::forward<decltype(space)>(space); },
+            [](auto& spaces) { return spaces.m_subspaceForJSUserDefinedFunction.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSUserDefinedFunction = std::forward<decltype(space)>(space); });
+    }
+
+    static void destroy(JSCell* cell)
+    {
+        static_cast<JSUserDefinedFunction*>(cell)->~JSUserDefinedFunction();
+    }
+
+private:
+    JSUserDefinedFunction(VM& vm, Structure* structure)
+        : Base(vm, structure)
+    {
     }
 };
+
+const ClassInfo JSUserDefinedFunction::s_info = { "UserDefinedFunction"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSUserDefinedFunction) };
+
+template<typename Visitor>
+void JSUserDefinedFunction::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = jsCast<JSUserDefinedFunction*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+
+    visitor.append(thisObject->m_scalarFn);
+    visitor.append(thisObject->m_stepFn);
+    visitor.append(thisObject->m_resultFn);
+    visitor.append(thisObject->m_inverseFn);
+    visitor.append(thisObject->m_startValue);
+
+    for (auto& acc : thisObject->m_accumulators)
+        visitor.append(acc);
+}
+
+DEFINE_VISIT_CHILDREN(JSUserDefinedFunction);
+
+// Thin pointer wrapper that SQLite owns via sqlite3_user_data / xDestroy.
+// Holds a single Strong<> to prevent the GC object from being collected.
+struct UDFPointer {
+    Strong<JSUserDefinedFunction> prevent_gc;
+
+    JSUserDefinedFunction* get() const { return prevent_gc.get(); }
+};
+
+static void destroyUDFPointer(void* ptr)
+{
+    delete static_cast<UDFPointer*>(ptr);
+}
 
 // Per-group context allocated by sqlite3_aggregate_context()
 struct AggregateContext {
@@ -397,11 +465,6 @@ static void jsValueToSQLiteResult(JSGlobalObject* globalObject, sqlite3_context*
     }
 }
 
-static void destroyUserDefinedFunctionData(void* ptr)
-{
-    delete static_cast<UserDefinedFunctionData*>(ptr);
-}
-
 // Helper to extract an error message from a pending exception, clear the
 // exception, and forward it to SQLite via sqlite3_result_error.
 // Must be called while the exception is still pending (before clearing).
@@ -433,24 +496,29 @@ static void propagateExceptionToSQLite(JSGlobalObject* globalObject, VM& vm, Thr
     }
 }
 
+static JSUserDefinedFunction* udfFromCtx(sqlite3_context* ctx)
+{
+    return static_cast<UDFPointer*>(sqlite3_user_data(ctx))->get();
+}
+
 static void scalarFunctionCallback(sqlite3_context* ctx, int argc, sqlite3_value** argv)
 {
-    auto* data = static_cast<UserDefinedFunctionData*>(sqlite3_user_data(ctx));
-    auto* globalObject = data->globalObject.get();
+    auto* udf = udfFromCtx(ctx);
+    auto* globalObject = udf->globalObject();
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     MarkedArgumentBuffer args;
     for (int i = 0; i < argc; i++) {
-        args.append(sqliteValueToJS(globalObject, argv[i], data->safeIntegers));
+        args.append(sqliteValueToJS(globalObject, argv[i], udf->m_safeIntegers));
         if (scope.exception()) {
             propagateExceptionToSQLite(globalObject, vm, scope, ctx, "Failed to convert argument");
             return;
         }
     }
 
-    auto callData = getCallData(data->scalarFn.get());
-    JSValue result = call(globalObject, data->scalarFn.get(), callData, jsUndefined(), args);
+    auto callData = getCallData(udf->m_scalarFn.get());
+    JSValue result = call(globalObject, udf->m_scalarFn.get(), callData, jsUndefined(), args);
 
     if (scope.exception()) {
         propagateExceptionToSQLite(globalObject, vm, scope, ctx, "User-defined function threw an error");
@@ -465,33 +533,30 @@ static void scalarFunctionCallback(sqlite3_context* ctx, int argc, sqlite3_value
 // Returns the start value for an aggregate. Caller must check for exceptions
 // on the ThrowScope after calling this — if the start function throws, the
 // exception will be pending on the VM.
-static JSValue getAggregateStartValue(UserDefinedFunctionData* data)
+static JSValue getAggregateStartValue(JSUserDefinedFunction* udf)
 {
-    if (data->startIsFunction) {
-        auto* globalObject = data->globalObject.get();
-        // No scope here — the caller's ThrowScope will see the exception.
-        auto callData = getCallData(asObject(data->startValue.get()));
-        return call(globalObject, asObject(data->startValue.get()), callData, jsUndefined(), MarkedArgumentBuffer());
+    if (udf->m_startIsFunction) {
+        auto* globalObject = udf->globalObject();
+        auto callData = getCallData(asObject(udf->m_startValue.get()));
+        return call(globalObject, asObject(udf->m_startValue.get()), callData, jsUndefined(), MarkedArgumentBuffer());
     }
-    return data->startValue.get();
+    return udf->m_startValue.get();
 }
 
-// Returns nullptr on OOM. Also propagates start-function exceptions to SQLite
-// and returns nullptr in that case, so the caller can just `return`.
-static AggregateContext* getOrInitAggregateContext(sqlite3_context* ctx, UserDefinedFunctionData* data, ThrowScope& scope)
+static AggregateContext* getOrInitAggregateContext(sqlite3_context* ctx, JSUserDefinedFunction* udf, ThrowScope& scope)
 {
     auto* aggCtx = static_cast<AggregateContext*>(sqlite3_aggregate_context(ctx, sizeof(AggregateContext)));
     if (!aggCtx)
         return nullptr;
     if (!aggCtx->initialized) {
-        auto* globalObject = data->globalObject.get();
+        auto* globalObject = udf->globalObject();
         auto& vm = getVM(globalObject);
-        JSValue start = getAggregateStartValue(data);
+        JSValue start = getAggregateStartValue(udf);
         if (scope.exception()) {
             propagateExceptionToSQLite(globalObject, vm, scope, ctx, "Aggregate start function threw an error");
             return nullptr;
         }
-        aggCtx->accumulatorIndex = data->allocAccumulator(vm, start);
+        aggCtx->accumulatorIndex = udf->allocAccumulator(vm, start);
         aggCtx->initialized = true;
     }
     return aggCtx;
@@ -499,49 +564,47 @@ static AggregateContext* getOrInitAggregateContext(sqlite3_context* ctx, UserDef
 
 static void aggregateStepCallback(sqlite3_context* ctx, int argc, sqlite3_value** argv)
 {
-    auto* data = static_cast<UserDefinedFunctionData*>(sqlite3_user_data(ctx));
-    auto* globalObject = data->globalObject.get();
+    auto* udf = udfFromCtx(ctx);
+    auto* globalObject = udf->globalObject();
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* aggCtx = getOrInitAggregateContext(ctx, data, scope);
+    auto* aggCtx = getOrInitAggregateContext(ctx, udf, scope);
     if (!aggCtx) {
-        // Either OOM (already reported) or start function threw (already propagated).
         if (!scope.exception())
             sqlite3_result_error_nomem(ctx);
         return;
     }
 
-    JSValue accumulator = data->accumulators[aggCtx->accumulatorIndex].value.get();
+    JSValue accumulator = udf->m_accumulators[aggCtx->accumulatorIndex].get();
 
     MarkedArgumentBuffer args;
     args.append(accumulator);
     for (int i = 0; i < argc; i++) {
-        args.append(sqliteValueToJS(globalObject, argv[i], data->safeIntegers));
+        args.append(sqliteValueToJS(globalObject, argv[i], udf->m_safeIntegers));
         if (scope.exception()) {
             propagateExceptionToSQLite(globalObject, vm, scope, ctx, "Failed to convert argument");
             return;
         }
     }
 
-    auto callData = getCallData(data->stepFn.get());
-    JSValue result = call(globalObject, data->stepFn.get(), callData, jsUndefined(), args);
+    auto callData = getCallData(udf->m_stepFn.get());
+    JSValue result = call(globalObject, udf->m_stepFn.get(), callData, jsUndefined(), args);
 
     if (scope.exception()) {
         propagateExceptionToSQLite(globalObject, vm, scope, ctx, "Aggregate step function threw an error");
         return;
     }
 
-    // If step returns undefined, don't replace the accumulator (allows mutation in place)
     if (!result.isUndefined()) {
-        data->accumulators[aggCtx->accumulatorIndex].value.set(vm, result);
+        udf->m_accumulators[aggCtx->accumulatorIndex].set(vm, udf, result);
     }
 }
 
 static void aggregateFinalCallback(sqlite3_context* ctx)
 {
-    auto* data = static_cast<UserDefinedFunctionData*>(sqlite3_user_data(ctx));
-    auto* globalObject = data->globalObject.get();
+    auto* udf = udfFromCtx(ctx);
+    auto* globalObject = udf->globalObject();
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -549,10 +612,9 @@ static void aggregateFinalCallback(sqlite3_context* ctx)
     JSValue accumulator;
 
     if (aggCtx && aggCtx->initialized) {
-        accumulator = data->accumulators[aggCtx->accumulatorIndex].value.get();
+        accumulator = udf->m_accumulators[aggCtx->accumulatorIndex].get();
     } else {
-        // No rows were processed — use start value
-        accumulator = getAggregateStartValue(data);
+        accumulator = getAggregateStartValue(udf);
         if (scope.exception()) {
             propagateExceptionToSQLite(globalObject, vm, scope, ctx, "Aggregate start function threw an error");
             return;
@@ -560,16 +622,16 @@ static void aggregateFinalCallback(sqlite3_context* ctx)
     }
 
     JSValue result;
-    if (data->resultFn.get()) {
+    if (udf->m_resultFn.get()) {
         MarkedArgumentBuffer args;
         args.append(accumulator);
-        auto callData = getCallData(data->resultFn.get());
-        result = call(globalObject, data->resultFn.get(), callData, jsUndefined(), args);
+        auto callData = getCallData(udf->m_resultFn.get());
+        result = call(globalObject, udf->m_resultFn.get(), callData, jsUndefined(), args);
 
         if (scope.exception()) {
             propagateExceptionToSQLite(globalObject, vm, scope, ctx, "Aggregate result function threw an error");
             if (aggCtx && aggCtx->initialized)
-                data->freeAccumulator(aggCtx->accumulatorIndex);
+                udf->freeAccumulator(aggCtx->accumulatorIndex);
             return;
         }
     } else {
@@ -580,16 +642,14 @@ static void aggregateFinalCallback(sqlite3_context* ctx)
     if (scope.exception())
         propagateExceptionToSQLite(globalObject, vm, scope, ctx, "Failed to convert return value");
 
-    // Clean up accumulator
     if (aggCtx && aggCtx->initialized)
-        data->freeAccumulator(aggCtx->accumulatorIndex);
+        udf->freeAccumulator(aggCtx->accumulatorIndex);
 }
 
-// For window functions: get current value without finalizing
 static void windowValueCallback(sqlite3_context* ctx)
 {
-    auto* data = static_cast<UserDefinedFunctionData*>(sqlite3_user_data(ctx));
-    auto* globalObject = data->globalObject.get();
+    auto* udf = udfFromCtx(ctx);
+    auto* globalObject = udf->globalObject();
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -597,9 +657,9 @@ static void windowValueCallback(sqlite3_context* ctx)
     JSValue accumulator;
 
     if (aggCtx && aggCtx->initialized) {
-        accumulator = data->accumulators[aggCtx->accumulatorIndex].value.get();
+        accumulator = udf->m_accumulators[aggCtx->accumulatorIndex].get();
     } else {
-        accumulator = getAggregateStartValue(data);
+        accumulator = getAggregateStartValue(udf);
         if (scope.exception()) {
             propagateExceptionToSQLite(globalObject, vm, scope, ctx, "Aggregate start function threw an error");
             return;
@@ -607,11 +667,11 @@ static void windowValueCallback(sqlite3_context* ctx)
     }
 
     JSValue result;
-    if (data->resultFn.get()) {
+    if (udf->m_resultFn.get()) {
         MarkedArgumentBuffer args;
         args.append(accumulator);
-        auto callData = getCallData(data->resultFn.get());
-        result = call(globalObject, data->resultFn.get(), callData, jsUndefined(), args);
+        auto callData = getCallData(udf->m_resultFn.get());
+        result = call(globalObject, udf->m_resultFn.get(), callData, jsUndefined(), args);
 
         if (scope.exception()) {
             propagateExceptionToSQLite(globalObject, vm, scope, ctx, "Window value function threw an error");
@@ -624,38 +684,36 @@ static void windowValueCallback(sqlite3_context* ctx)
     jsValueToSQLiteResult(globalObject, ctx, result);
     if (scope.exception())
         propagateExceptionToSQLite(globalObject, vm, scope, ctx, "Failed to convert return value");
-    // Do NOT free accumulator here — window value is not final
 }
 
-// For window functions: remove a row from the window
 static void windowInverseCallback(sqlite3_context* ctx, int argc, sqlite3_value** argv)
 {
-    auto* data = static_cast<UserDefinedFunctionData*>(sqlite3_user_data(ctx));
-    auto* globalObject = data->globalObject.get();
+    auto* udf = udfFromCtx(ctx);
+    auto* globalObject = udf->globalObject();
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* aggCtx = getOrInitAggregateContext(ctx, data, scope);
+    auto* aggCtx = getOrInitAggregateContext(ctx, udf, scope);
     if (!aggCtx) {
         if (!scope.exception())
             sqlite3_result_error_nomem(ctx);
         return;
     }
 
-    JSValue accumulator = data->accumulators[aggCtx->accumulatorIndex].value.get();
+    JSValue accumulator = udf->m_accumulators[aggCtx->accumulatorIndex].get();
 
     MarkedArgumentBuffer args;
     args.append(accumulator);
     for (int i = 0; i < argc; i++) {
-        args.append(sqliteValueToJS(globalObject, argv[i], data->safeIntegers));
+        args.append(sqliteValueToJS(globalObject, argv[i], udf->m_safeIntegers));
         if (scope.exception()) {
             propagateExceptionToSQLite(globalObject, vm, scope, ctx, "Failed to convert argument");
             return;
         }
     }
 
-    auto callData = getCallData(data->inverseFn.get());
-    JSValue result = call(globalObject, data->inverseFn.get(), callData, jsUndefined(), args);
+    auto callData = getCallData(udf->m_inverseFn.get());
+    JSValue result = call(globalObject, udf->m_inverseFn.get(), callData, jsUndefined(), args);
 
     if (scope.exception()) {
         propagateExceptionToSQLite(globalObject, vm, scope, ctx, "Window inverse function threw an error");
@@ -663,7 +721,7 @@ static void windowInverseCallback(sqlite3_context* ctx, int argc, sqlite3_value*
     }
 
     if (!result.isUndefined()) {
-        data->accumulators[aggCtx->accumulatorIndex].value.set(vm, result);
+        udf->m_accumulators[aggCtx->accumulatorIndex].set(vm, udf, result);
     }
 }
 
@@ -2300,24 +2358,26 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementCreateFunction, (JSC::JSGlobalObject * le
     bool safeIntegers = callFrame->argumentCount() > 5 && callFrame->argument(5).toBoolean(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    auto* data = new UserDefinedFunctionData();
-    data->scalarFn.set(vm, callback);
-    data->globalObject.set(vm, lexicalGlobalObject);
-    data->safeIntegers = safeIntegers;
+    Structure* udfStructure = JSUserDefinedFunction::createStructure(vm, lexicalGlobalObject, jsNull());
+    auto* udf = JSUserDefinedFunction::create(vm, lexicalGlobalObject, udfStructure);
+    udf->m_scalarFn.set(vm, udf, callback);
+    udf->m_safeIntegers = safeIntegers;
+
+    auto* ptr = new UDFPointer { Strong<JSUserDefinedFunction>(vm, udf) };
 
     int rc = sqlite3_create_function_v2(
         db,
         nameUtf8.data(),
         nArgs,
         SQLITE_UTF8 | flags,
-        data,
+        ptr,
         scalarFunctionCallback,
         nullptr,
         nullptr,
-        destroyUserDefinedFunctionData);
+        destroyUDFPointer);
 
     if (rc != SQLITE_OK) {
-        delete data;
+        delete ptr;
         throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, db));
         return {};
     }
@@ -2406,47 +2466,47 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementCreateAggregateFunction, (JSC::JSGlobalOb
     bool safeIntegers = callFrame->argumentCount() > 9 && callFrame->argument(9).toBoolean(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    auto* data = new UserDefinedFunctionData();
-    data->stepFn.set(vm, stepFn);
+    Structure* udfStructure = JSUserDefinedFunction::createStructure(vm, lexicalGlobalObject, jsNull());
+    auto* udf = JSUserDefinedFunction::create(vm, lexicalGlobalObject, udfStructure);
+    udf->m_stepFn.set(vm, udf, stepFn);
     if (resultFn)
-        data->resultFn.set(vm, resultFn);
-    data->startValue.set(vm, startValueJS);
-    data->startIsFunction = startIsFunction;
+        udf->m_resultFn.set(vm, udf, resultFn);
+    udf->m_startValue.set(vm, udf, startValueJS);
+    udf->m_startIsFunction = startIsFunction;
     if (inverseFn)
-        data->inverseFn.set(vm, inverseFn);
-    data->globalObject.set(vm, lexicalGlobalObject);
-    data->safeIntegers = safeIntegers;
+        udf->m_inverseFn.set(vm, udf, inverseFn);
+    udf->m_safeIntegers = safeIntegers;
+
+    auto* ptr = new UDFPointer { Strong<JSUserDefinedFunction>(vm, udf) };
 
     int rc;
     if (inverseFn) {
-        // Register as a window function
         rc = sqlite3_create_window_function(
             db,
             nameUtf8.data(),
             nArgs,
             SQLITE_UTF8 | flags,
-            data,
+            ptr,
             aggregateStepCallback,
             aggregateFinalCallback,
             windowValueCallback,
             windowInverseCallback,
-            destroyUserDefinedFunctionData);
+            destroyUDFPointer);
     } else {
-        // Register as a regular aggregate
         rc = sqlite3_create_function_v2(
             db,
             nameUtf8.data(),
             nArgs,
             SQLITE_UTF8 | flags,
-            data,
+            ptr,
             nullptr,
             aggregateStepCallback,
             aggregateFinalCallback,
-            destroyUserDefinedFunctionData);
+            destroyUDFPointer);
     }
 
     if (rc != SQLITE_OK) {
-        delete data;
+        delete ptr;
         throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, db));
         return {};
     }

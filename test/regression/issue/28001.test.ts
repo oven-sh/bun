@@ -34,6 +34,8 @@ const mapUrl = jsSrc.replace(/\\.js$/, ".js.map");
 const mapResp = await fetch(new URL(mapUrl, server.url));
 
 console.log(JSON.stringify({
+  jsStatus: jsResp.status,
+  jsLength: jsText.length,
   hasSourceMappingURL: jsText.includes("sourceMappingURL"),
   sourceMapHeader: jsResp.headers.get("sourcemap"),
   mapStatus: mapResp.status,
@@ -54,6 +56,10 @@ server.stop();
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   const result = JSON.parse(stdout.trim());
+
+  // Verify the JS bundle was actually served
+  expect(result.jsStatus).toBe(200);
+  expect(result.jsLength).toBeGreaterThan(0);
 
   // In production mode, the JS should NOT contain a sourceMappingURL
   expect(result.hasSourceMappingURL).toBe(false);
@@ -94,9 +100,26 @@ const jsSrc = htmlText.match(/<script[^>]+src="([^"]+)"/)?.[1];
 const jsResp = await fetch(new URL(jsSrc, server.url));
 const jsText = await jsResp.text();
 
+// Fetch the source map to verify it's actually served
+const sourceMapHeader = jsResp.headers.get("sourcemap");
+let mapStatus = 0;
+let mapHasVersion = false;
+if (sourceMapHeader) {
+  const mapResp = await fetch(new URL(sourceMapHeader, server.url));
+  mapStatus = mapResp.status;
+  if (mapResp.ok) {
+    const mapJson = await mapResp.json();
+    mapHasVersion = mapJson.version === 3;
+  }
+}
+
 console.log(JSON.stringify({
+  jsStatus: jsResp.status,
+  jsLength: jsText.length,
   hasSourceMappingURL: jsText.includes("sourceMappingURL"),
-  sourceMapHeader: jsResp.headers.get("sourcemap"),
+  sourceMapHeader,
+  mapStatus,
+  mapHasVersion,
 }));
 
 server.stop();
@@ -115,11 +138,19 @@ server.stop();
 
   const result = JSON.parse(stdout.trim());
 
+  // Verify the JS bundle was actually served
+  expect(result.jsStatus).toBe(200);
+  expect(result.jsLength).toBeGreaterThan(0);
+
   // In development mode, the JS SHOULD contain a sourceMappingURL
   expect(result.hasSourceMappingURL).toBe(true);
 
   // The SourceMap header should be present
   expect(result.sourceMapHeader).not.toBeNull();
+
+  // The source map file should be accessible and valid
+  expect(result.mapStatus).toBe(200);
+  expect(result.mapHasVersion).toBe(true);
 
   expect(exitCode).toBe(0);
 });

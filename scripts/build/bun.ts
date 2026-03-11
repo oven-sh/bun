@@ -30,7 +30,7 @@ import { generateDepVersionsHeader } from "./depVersionsHeader.ts";
 import { allDeps } from "./deps/index.ts";
 import { zstd } from "./deps/zstd.ts";
 import { assert } from "./error.ts";
-import { bunIncludes, computeFlags, extraFlagsFor } from "./flags.ts";
+import { bunIncludes, computeFlags, extraFlagsFor, linkDepends } from "./flags.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { Ninja } from "./ninja.ts";
 import { quote, slash } from "./shell.ts";
@@ -353,6 +353,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   const exe = link(n, cfg, exeName, [...allObjects, ...zigObjects, ...windowsRes], {
     libs: depLibs,
     flags: [...flags.ldflags, ...systemLibs(cfg), ...manifestLinkFlags(cfg)],
+    implicitInputs: linkImplicitInputs(cfg),
   });
 
   // ─── Step 8: post-link (strip + dsymutil) ───
@@ -491,6 +492,7 @@ function emitLinkOnly(n: Ninja, cfg: Config): BunOutput {
   const exe = link(n, cfg, exeName, [archive, zigObj, ...windowsRes], {
     libs: depLibs,
     flags: [...flags.ldflags, ...systemLibs(cfg), ...manifestLinkFlags(cfg)],
+    implicitInputs: linkImplicitInputs(cfg),
   });
 
   // Strip + smoke test — same as full mode.
@@ -715,6 +717,16 @@ function manifestLinkFlags(cfg: Config): string[] {
   if (!cfg.windows) return [];
   const manifest = resolve(cfg.cwd, "src/bun.exe.manifest");
   return [`/MANIFEST:EMBED`, `/MANIFESTINPUT:${manifest}`];
+}
+
+/**
+ * Files the linker reads via ldflags that ninja should track for relinking
+ * (symbol lists, linker script, manifest). CMake's LINK_DEPENDS equivalent.
+ */
+function linkImplicitInputs(cfg: Config): string[] {
+  const files = linkDepends(cfg);
+  if (cfg.windows) files.push(resolve(cfg.cwd, "src/bun.exe.manifest"));
+  return files;
 }
 
 // ───────────────────────────────────────────────────────────────────────────

@@ -693,6 +693,8 @@ export const linkerFlags: Flag[] = [
   },
 
   // ─── Symbols / exports ───
+  // These reference files on disk — linkDepends() lists the same paths
+  // so ninja relinks when they change (cmake's LINK_DEPENDS equivalent).
   {
     flag: c => `/DEF:${slash(join(c.cwd, "src/symbols.def"))}`,
     when: c => c.windows,
@@ -714,6 +716,17 @@ export const linkerFlags: Flag[] = [
     desc: "Dynamic symbol list + version script",
   },
 ];
+
+/**
+ * Files the linker reads via flags above. Return as implicit inputs so
+ * ninja relinks when exported symbols / version script change.
+ * CMake tracks these via set_target_properties LINK_DEPENDS.
+ */
+export function linkDepends(cfg: Config): string[] {
+  if (cfg.windows) return [join(cfg.cwd, "src/symbols.def")];
+  if (cfg.darwin) return [join(cfg.cwd, "src/symbols.txt")];
+  return [join(cfg.cwd, "src/symbols.dyn"), join(cfg.cwd, "src/linker.lds")];
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // STRIP FLAGS

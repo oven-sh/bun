@@ -340,8 +340,12 @@ export interface LinkOpts {
   libs: string[];
   /** Linker flags. */
   flags: string[];
-  /** Exported-symbols file path (platform-specific format). */
-  symbolsFile?: string;
+  /**
+   * Files the link reads that aren't in $in — symbol lists (symbols.def,
+   * symbols.txt, symbols.dyn), linker scripts (linker.lds), manifests.
+   * Editing these should trigger relink (cmake's LINK_DEPENDS equivalent).
+   */
+  implicitInputs?: string[];
   /** Output linker map to this path (for debugging symbol bloat). */
   linkerMapOutput?: string;
 }
@@ -368,6 +372,9 @@ export function link(n: Ninja, cfg: Config, out: string, objects: string[], opts
     },
   };
   if (implicitOutputs.length > 0) node.implicitOutputs = implicitOutputs;
+  if (opts.implicitInputs !== undefined && opts.implicitInputs.length > 0) {
+    node.implicitInputs = opts.implicitInputs;
+  }
   n.build(node);
 
   return absOut;

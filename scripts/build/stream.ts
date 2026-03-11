@@ -238,14 +238,21 @@ function main(): void {
     decodeZigProgress(child.stdio[3] as NodeJS.ReadableStream, text => write(prefix + text + "\n"));
   }
 
+  // writeSync for final messages: out.write() is async; process.exit()
+  // terminates before the WriteStream buffer flushes. Sync write ensures
+  // the last line actually reaches the terminal on error paths.
+  const writeFinal = (text: string): void => {
+    writeSync(outFd, lead + prefix + text);
+  };
+
   child.on("error", err => {
-    write(`${prefix}spawn failed: ${err.message}\n`);
+    writeFinal(`spawn failed: ${err.message}\n`);
     process.exit(127);
   });
 
   child.on("close", (code, signal) => {
     if (signal) {
-      write(`${prefix}killed by ${signal}\n`);
+      writeFinal(`killed by ${signal}\n`);
       process.exit(1);
     }
     process.exit(code ?? 1);

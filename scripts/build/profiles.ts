@@ -61,11 +61,15 @@ export const profiles = {
     lto: false,
   },
 
-  /** Release + assertions. */
+  /**
+   * Release + assertions + logs. RelWithDebInfo → zig gets ReleaseSafe
+   * (runtime safety checks), matching the old cmake build:assert script.
+   */
   "release-assertions": {
-    buildType: "Release",
+    buildType: "RelWithDebInfo",
     webkit: "prebuilt",
     assertions: true,
+    logs: true,
     lto: false,
   },
 

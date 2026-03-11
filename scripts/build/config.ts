@@ -358,8 +358,12 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // Zig ASAN follows ASAN unless explicitly overridden
   const zigAsan = partial.zigAsan ?? asan;
 
-  // Assertions: default on in debug
-  const assertions = partial.assertions ?? debug;
+  // Assertions: default on in debug OR asan. ASAN coupling is ABI-critical:
+  // the -asan WebKit prebuilt is built with ASSERT_ENABLED=1, which gates
+  // struct fields (RefCountDebugger etc). If bun's C++ isn't also compiled
+  // with ASSERT_ENABLED=1, the struct layouts mismatch → crashes. CMake's
+  // build:asan always set ENABLE_ASSERTIONS=ON for this reason.
+  const assertions = partial.assertions ?? (debug || asan);
 
   // LTO: default on only for CI release linux non-asan non-assertions
   const ltoDefault = release && linux && ci && !assertions && !asan;

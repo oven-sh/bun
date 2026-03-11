@@ -108,7 +108,8 @@ console.log(favicon);
                 "isEntry": true,
                 "headers": {
                   "etag": "14Q4Q7Mm8TM",
-                  "content-type": "text/javascript;charset=utf-8"
+                  "content-type": "text/javascript;charset=utf-8",
+                  "cache-control": "public, max-age=31536000"
                 }
               },
               {
@@ -128,7 +129,8 @@ console.log(favicon);
                 "isEntry": true,
                 "headers": {
                   "etag": "0k_h5oYVQlA",
-                  "content-type": "text/css;charset=utf-8"
+                  "content-type": "text/css;charset=utf-8",
+                  "cache-control": "public, max-age=31536000"
                 }
               },
               {
@@ -138,7 +140,8 @@ console.log(favicon);
                 "isEntry": false,
                 "headers": {
                   "etag": "fFLOVvPDEZc",
-                  "content-type": "image/png"
+                  "content-type": "image/png",
+                  "cache-control": "public, max-age=31536000"
                 }
               }
             ]
@@ -286,6 +289,7 @@ console.log("About manifest:", aboutHtml);
             "files": [
               {
                 "headers": {
+                  "cache-control": "public, max-age=31536000",
                   "content-type": "text/javascript;charset=utf-8",
                   "etag": "18fAEMlKmOw",
                 },
@@ -306,6 +310,7 @@ console.log("About manifest:", aboutHtml);
               },
               {
                 "headers": {
+                  "cache-control": "public, max-age=31536000",
                   "content-type": "text/css;charset=utf-8",
                   "etag": "6qg2qb7a2qo",
                 },
@@ -321,6 +326,7 @@ console.log("About manifest:", aboutHtml);
             "files": [
               {
                 "headers": {
+                  "cache-control": "public, max-age=31536000",
                   "content-type": "text/javascript;charset=utf-8",
                   "etag": "-3e3gOCTAZg",
                 },
@@ -341,6 +347,7 @@ console.log("About manifest:", aboutHtml);
               },
               {
                 "headers": {
+                  "cache-control": "public, max-age=31536000",
                   "content-type": "text/css;charset=utf-8",
                   "etag": "DE8kdBXWhVg",
                 },

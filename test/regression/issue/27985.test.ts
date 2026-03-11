@@ -13,17 +13,21 @@ const validClientCert = readFileSync(join(fixturesDir, "agent1-cert.pem"), "utf8
 const rogueClientKey = readFileSync(join(fixturesDir, "agent3-key.pem"), "utf8");
 const rogueClientCert = readFileSync(join(fixturesDir, "agent3-cert.pem"), "utf8");
 
-type TLSResult = { type: "accepted"; status: string } | { type: "rejected"; error: string };
+type TLSResult =
+  | { type: "accepted"; status: string }
+  | { type: "rejected"; error: string; secureConnected: boolean };
 
 /**
  * Connect to a TLS server and send an HTTP request.
  * Returns "accepted" with the HTTP status if we get a response,
  * or "rejected" if the connection is closed/errored before responding.
+ * The secureConnected flag indicates whether the TLS handshake completed.
  */
 function connectAndRequest(port: number, clientCert?: { key: string; cert: string }, servername?: string): Promise<TLSResult> {
   const { promise, resolve } = Promise.withResolvers<TLSResult>();
   let resolved = false;
   let data = "";
+  let secureConnected = false;
 
   const done = (result: TLSResult) => {
     if (resolved) return;
@@ -33,6 +37,7 @@ function connectAndRequest(port: number, clientCert?: { key: string; cert: strin
   };
 
   const socket = tls.connect({ host: "localhost", port, servername, ca, key: clientCert?.key, cert: clientCert?.cert, checkServerIdentity: () => undefined }, () => {
+    secureConnected = true;
     socket.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
   });
 
@@ -40,16 +45,16 @@ function connectAndRequest(port: number, clientCert?: { key: string; cert: strin
 
   socket.on("end", () => {
     const status = data.match(/HTTP\/1\.1 (\d+)/)?.[1];
-    done(status ? { type: "accepted", status } : { type: "rejected", error: "closed without response" });
+    done(status ? { type: "accepted", status } : { type: "rejected", error: "closed without response", secureConnected });
   });
 
   socket.on("error", (err: any) => {
-    done({ type: "rejected", error: err.code ?? err.message });
+    done({ type: "rejected", error: err.code ?? err.message, secureConnected });
   });
 
   socket.on("close", () => {
     const status = data.match(/HTTP\/1\.1 (\d+)/)?.[1];
-    done(status ? { type: "accepted", status } : { type: "rejected", error: "closed" });
+    done(status ? { type: "accepted", status } : { type: "rejected", error: "closed", secureConnected });
   });
 
   return promise;
@@ -94,7 +99,7 @@ describe("GitHub issue #27985: mTLS rejectUnauthorized enforcement", () => {
         const result = await connectAndRequest(server.port, { key: rogueClientKey, cert: rogueClientCert });
         console.log(`  >> attempt ${i + 1}/30:`, JSON.stringify(result));
         expect(result.type).toBe("rejected");
-      }
+        }
     });
   });
 

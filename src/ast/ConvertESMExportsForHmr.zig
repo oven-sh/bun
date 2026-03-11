@@ -309,11 +309,11 @@ fn deduplicatedImport(
         ir.flags.is_unused = true;
 
         const stmt = ctx.stmts.items[gop.value_ptr.stmt_index].data.s_import;
-        // The surviving record may have been marked is_unused by barrel
+        // The surviving record may have been marked is_barrel_deferred by barrel
         // optimization (when the first export-from statement's exports
         // were all deferred). Since we are merging new items into it,
-        // clear is_unused so the import is actually emitted.
-        p.import_records.items[stmt.import_record_index].flags.is_unused = false;
+        // clear is_barrel_deferred so the import is actually emitted.
+        p.import_records.items[stmt.import_record_index].flags.is_barrel_deferred = false;
 
         if (items.len > 0) {
             if (stmt.items.len == 0) {

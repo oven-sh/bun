@@ -583,50 +583,17 @@ pub const LinkerContext = struct {
             defer trace2.end();
 
             // Tree shaking: Each entry point marks all files reachable from itself.
-            // Dynamic-import entry points are deferred so that orphan chunks whose
-            // only import() call sites were DCE'd are not emitted.
+            // Skip dynamic-import entries — they become live only if a live part
+            // transitively depends on them (via part.dependencies).
             for (entry_points) |entry_point| {
                 if (entry_point_kinds[entry_point] == .dynamic_import) continue;
-                c.markFileLiveForTreeShaking(
-                    entry_point,
-                    side_effects,
-                    parts,
-                    import_records,
-                    entry_point_kinds,
-                    css_reprs,
-                );
+                c.markFileLiveForTreeShaking(entry_point, side_effects, parts, import_records, entry_point_kinds, css_reprs);
             }
-
-            // Fixpoint: promote dynamic-import entries that a live part references.
-            // Promoting a target marks its parts live, which may enable further
-            // promotions (transitive import() chains). On completion, demote any
-            // remaining .dynamic_import entries to .none so they are not treated as
-            // entry points (no chunk emitted, isExternalDynamicImport returns false).
+            // Demote dynamic-import entries that were never reached by
+            // tree-shaking (their import() call was in dead code).
             if (c.graph.code_splitting) {
-                var promoted = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(c.allocator(), c.graph.files.len);
-                defer promoted.deinit(c.allocator());
-
-                var changed = true;
-                while (changed) {
-                    changed = false;
-                    for (c.graph.reachable_files) |source_index| {
-                        const id = source_index.get();
-                        for (parts[id].slice()) |part| {
-                            if (!part.is_live) continue;
-                            for (part.import_record_indices.slice()) |import_record_index| {
-                                const record = import_records[id].at(import_record_index);
-                                if (record.kind != .dynamic or !record.source_index.isValid()) continue;
-                                const target = record.source_index.get();
-                                if (entry_point_kinds[target] != .dynamic_import or promoted.isSet(target)) continue;
-                                promoted.set(target);
-                                c.markFileLiveForTreeShaking(target, side_effects, parts, import_records, entry_point_kinds, css_reprs);
-                                changed = true;
-                            }
-                        }
-                    }
-                }
                 for (entry_points) |ep| {
-                    if (entry_point_kinds[ep] == .dynamic_import and !promoted.isSet(ep))
+                    if (entry_point_kinds[ep] == .dynamic_import and !c.graph.live_dynamic_import_targets.isSet(ep))
                         entry_point_kinds[ep] = .none;
                 }
             }
@@ -1226,7 +1193,7 @@ pub const LinkerContext = struct {
     ) !bool {
         const record = ast.import_records.at(import_record_index);
         // Barrel optimization: deferred import records should be dropped
-        if (record.flags.is_unused) {
+        if (record.flags.is_unused or record.flags.is_barrel_deferred) {
             return true;
         }
         // Is this an external import?
@@ -1888,6 +1855,16 @@ pub const LinkerContext = struct {
                 css_reprs,
             );
         }
+
+        // Follow dynamic imports — if this part is live and contains an
+        // import() call, the target file must be live too.
+        for (part.import_record_indices.slice()) |iri| {
+            const rec = import_records[source_index].at(iri);
+            if (rec.kind == .dynamic and rec.source_index.isValid()) {
+                c.graph.live_dynamic_import_targets.set(rec.source_index.get());
+                c.markFileLiveForTreeShaking(rec.source_index.get(), side_effects, parts, import_records, entry_point_kinds, css_reprs);
+            }
+        }
     }
 
     pub fn matchImportWithExport(
@@ -2384,7 +2361,7 @@ pub const LinkerContext = struct {
         }
 
         // Barrel optimization: deferred import records point to empty ASTs
-        if (record.flags.is_unused) {
+        if (record.flags.is_unused or record.flags.is_barrel_deferred) {
             return .{
                 .value = .{},
                 .status = .external,

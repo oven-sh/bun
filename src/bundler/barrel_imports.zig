@@ -30,7 +30,7 @@ fn resolveBarrelExport(alias: []const u8, named_exports: JSAst.NamedExports, nam
 }
 
 /// Analyze a parsed file to determine if it's a barrel and mark unneeded
-/// import records as is_unused so they won't be resolved. Runs BEFORE resolution.
+/// import records as is_barrel_deferred so they won't be resolved. Runs BEFORE resolution.
 ///
 /// A file qualifies as a barrel if:
 /// 1. It has `sideEffects: false` or is in `optimize_imports`, AND
@@ -149,14 +149,14 @@ fn applyBarrelOptimizationImpl(this: *BundleV2, parse_result: *ParseTask.Result)
         }
     }
 
-    // Mark unneeded named re-export records as is_unused.
+    // Mark unneeded named re-export records as barrel-deferred.
     var has_deferrals = false;
     export_iter = named_exports.iterator();
     while (export_iter.next()) |entry| {
         if (named_imports.get(entry.value_ptr.ref)) |imp| {
             if (!needed_records.contains(imp.import_record_index)) {
                 if (imp.import_record_index < ast.import_records.len) {
-                    ast.import_records.slice()[imp.import_record_index].flags.is_unused = true;
+                    ast.import_records.slice()[imp.import_record_index].flags.is_barrel_deferred = true;
                     has_deferrals = true;
                 }
             }
@@ -190,12 +190,12 @@ fn applyBarrelOptimizationImpl(this: *BundleV2, parse_result: *ParseTask.Result)
     }
 }
 
-/// Clear is_unused on a deferred barrel record. Returns true if the record was un-deferred.
+/// Clear is_barrel_deferred on a deferred barrel record. Returns true if the record was un-deferred.
 fn unDeferRecord(import_records: *ImportRecord.List, record_idx: u32) bool {
     if (record_idx >= import_records.len) return false;
     const rec = &import_records.slice()[record_idx];
-    if (rec.flags.is_internal or !rec.flags.is_unused) return false;
-    rec.flags.is_unused = false;
+    if (rec.flags.is_internal or !rec.flags.is_barrel_deferred) return false;
+    rec.flags.is_barrel_deferred = false;
     return true;
 }
 
@@ -436,7 +436,7 @@ pub fn scheduleBarrelDeferredImports(this: *BundleV2, result: *ParseTask.Result.
 
         if (item.is_star) {
             for (barrel_ir.slice(), 0..) |rec, idx| {
-                if (rec.flags.is_unused and !rec.flags.is_internal) {
+                if (rec.flags.is_barrel_deferred and !rec.flags.is_internal) {
                     if (unDeferRecord(barrel_ir, @intCast(idx))) {
                         try barrels_to_resolve.put(barrels_to_resolve_alloc, barrel_idx, {});
                     }

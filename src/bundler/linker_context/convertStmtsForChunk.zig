@@ -131,7 +131,7 @@ pub fn convertStmtsForChunk(
                     const record = ast.import_records.at(s.import_record_index);
 
                     // Barrel optimization: deferred export * records should be dropped
-                    if (record.flags.is_unused) {
+                    if (record.flags.is_unused or record.flags.is_barrel_deferred) {
                         continue;
                     }
 

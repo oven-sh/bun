@@ -60,7 +60,9 @@ pub fn convertStmtsForChunkForDevServer(
             const record = ast.import_records.mut(st.import_record_index);
             if (record.path.is_disabled) continue;
 
-            if (record.flags.is_unused) {
+            if (record.flags.is_unused) continue;
+
+            if (record.flags.is_barrel_deferred) {
                 // Barrel optimization: this import was deferred (unused submodule).
                 // Don't add to dep array, but declare the namespace ref as an
                 // empty object so body code referencing it doesn't throw.

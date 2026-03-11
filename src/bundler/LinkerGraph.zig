@@ -4,6 +4,7 @@ const debug = Output.scoped(.LinkerGraph, .visible);
 
 files: File.List = .{},
 files_live: BitSet = undefined,
+live_dynamic_import_targets: BitSet = undefined,
 entry_points: EntryPoint.List = .{},
 symbols: js_ast.Symbol.Map = .{},
 
@@ -39,6 +40,7 @@ pub fn init(allocator: std.mem.Allocator, file_count: usize) !LinkerGraph {
     return LinkerGraph{
         .allocator = allocator,
         .files_live = try BitSet.initEmpty(allocator, file_count),
+        .live_dynamic_import_targets = try BitSet.initEmpty(allocator, file_count),
     };
 }
 
@@ -232,6 +234,10 @@ pub fn load(
     try this.files.setCapacity(this.allocator, sources.len);
     this.files.zero();
     this.files_live = try BitSet.initEmpty(
+        this.allocator,
+        sources.len,
+    );
+    this.live_dynamic_import_targets = try BitSet.initEmpty(
         this.allocator,
         sources.len,
     );

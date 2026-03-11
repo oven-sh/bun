@@ -3433,16 +3433,11 @@ pub const BundleV2 = struct {
                 import_record.source_index = Index.runtime;
             }
 
-            // For non-dev-server builds, barrel-deferred records need their
-            // source_index cleared so they don't get linked. For dev server,
-            // skip this — is_unused is also set by ConvertESMExportsForHmr
-            // deduplication, and clearing those source_indices breaks module
-            // identity (e.g., __esModule on ESM namespace objects).
-            if (import_record.flags.is_unused and this.transpiler.options.dev_server == null) {
+            if (import_record.flags.is_barrel_deferred) {
                 import_record.source_index = Index.invalid;
             }
 
-            estimated_resolve_queue_count += @as(usize, @intFromBool(!(import_record.flags.is_internal or import_record.flags.is_unused or import_record.source_index.isValid())));
+            estimated_resolve_queue_count += @as(usize, @intFromBool(!(import_record.flags.is_internal or import_record.flags.is_unused or import_record.flags.is_barrel_deferred or import_record.source_index.isValid())));
         }
         var resolve_queue = ResolveQueue.init(this.allocator());
         bun.handleOom(resolve_queue.ensureTotalCapacity(@intCast(estimated_resolve_queue_count)));
@@ -3458,6 +3453,7 @@ pub const BundleV2 = struct {
             if (
             // Don't resolve TypeScript types
             import_record.flags.is_unused or
+                import_record.flags.is_barrel_deferred or
 
                 // Don't resolve the runtime
                 import_record.flags.is_internal or

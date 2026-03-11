@@ -2,7 +2,8 @@ import { RedisClient } from "bun";
 import { expect, test } from "bun:test";
 
 test("should expose Bun.RedisError as a runtime constructor", () => {
-  expect(Bun.RedisError).toBe(Bun.RedisError);
+  expect(typeof Bun.RedisError).toBe("function");
+  expect(Bun.RedisError.name).toBe("RedisError");
   expect(Bun.RedisError.prototype.constructor).toBe(Bun.RedisError);
 
   const cause = new Error("root cause");

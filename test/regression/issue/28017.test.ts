@@ -23,9 +23,9 @@ test("fs.stat *Ms properties preserve sub-millisecond precision", async () => {
     expect(Number.isInteger(s.atimeMs)).toBe(false);
     expect(Number.isInteger(s.mtimeMs)).toBe(false);
 
-    // Verify the values match what we set (within floating-point tolerance)
+    // Verify the values match what we set (within microsecond tolerance)
     const expectedMs = fractionalTime * 1000; // 1700000000123.456
-    expect(s.atimeMs).toBeCloseTo(expectedMs, 0);
-    expect(s.mtimeMs).toBeCloseTo(expectedMs, 0);
+    expect(s.atimeMs).toBeCloseTo(expectedMs, 3);
+    expect(s.mtimeMs).toBeCloseTo(expectedMs, 3);
   }
 });

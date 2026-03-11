@@ -17,17 +17,22 @@ describe("fs.glob matches dot files with explicit dot patterns", () => {
     return dir;
   }
 
-  async function collectAsync(pattern: string): Promise<string[]> {
+  interface GlobOptions {
+    cwd?: string;
+    exclude?: ((ent: string) => boolean) | string[];
+  }
+
+  async function collectAsync(pattern: string, options?: GlobOptions): Promise<string[]> {
     const results: string[] = [];
-    for await (const match of asyncGlob(pattern)) {
+    for await (const match of asyncGlob(pattern, options)) {
       results.push(match);
     }
     return results.sort();
   }
 
-  function collectSync(pattern: string): string[] {
+  function collectSync(pattern: string, options?: GlobOptions): string[] {
     const results: string[] = [];
-    for (const match of globSync(pattern)) {
+    for (const match of globSync(pattern, options)) {
       results.push(match);
     }
     return results.sort();
@@ -65,6 +70,16 @@ describe("fs.glob matches dot files with explicit dot patterns", () => {
     const basenames = results.map(r => basename(r));
     expect(basenames).toContain(".hidden");
     expect(basenames).toContain(".hidden2");
+  });
+
+  test("fs.glob with cwd option and relative dot pattern", async () => {
+    using dir = setup();
+    const cwd = String(dir);
+    const results = await collectAsync(".*", { cwd });
+    const basenames = results.map(r => basename(r));
+    expect(basenames).toContain(".hidden");
+    expect(basenames).toContain(".hidden2");
+    expect(basenames).toContain(".hidden-dir");
   });
 
   test("Bun.Glob with .* pattern and dot:false should match dot files", () => {

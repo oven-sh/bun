@@ -1204,6 +1204,7 @@ fn runWithSourceCode(
     var opts = js_parser.Parser.Options.init(task.jsx, loader);
     opts.bundle = true;
     opts.warn_about_unbundled_modules = false;
+    opts.allow_unresolved = &transpiler.options.allow_unresolved;
     opts.macro_context = &transpiler.macro_context.?;
     opts.package_version = task.package_version;
 

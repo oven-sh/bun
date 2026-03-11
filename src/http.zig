@@ -34,6 +34,49 @@ const log = Output.scoped(.fetch, .visible);
 
 pub var temp_hostname: [8192]u8 = undefined;
 
+/// Returns the hostname to use for TLS SNI and certificate verification.
+/// Priority: tls_props.server_name > client.hostname > client.url.hostname
+/// The Host header value (client.hostname) may contain a port suffix which
+/// must be stripped because it is not part of the DNS name in certificates.
+fn getTlsHostname(client: *const HTTPClient, allowProxyUrl: bool) []const u8 {
+    if (allowProxyUrl) {
+        if (client.http_proxy) |proxy| {
+            return proxy.hostname;
+        }
+    }
+    // Prefer the explicit TLS server_name (e.g. from Node.js servername option)
+    if (client.tls_props) |props| {
+        if (props.get().server_name) |sn| {
+            const sn_slice = bun.sliceTo(sn, 0);
+            if (sn_slice.len > 0) return sn_slice;
+        }
+    }
+    // client.hostname comes from the Host header and may include ":port"
+    if (client.hostname) |host| {
+        return stripPortFromHost(host);
+    }
+    return client.url.hostname;
+}
+
+/// Strips an optional port suffix from a host string (e.g. "example.com:443" -> "example.com").
+/// Handles IPv6 bracket notation correctly (e.g. "[::1]:443" -> "[::1]").
+fn stripPortFromHost(host: []const u8) []const u8 {
+    if (host.len == 0) return host;
+    // IPv6 with brackets: "[::1]:port"
+    if (host[0] == '[') {
+        if (std.mem.lastIndexOfScalar(u8, host, ']')) |bracket| {
+            // Return everything up to and including ']'
+            return host[0 .. bracket + 1];
+        }
+        return host;
+    }
+    // IPv4 or hostname: find last colon
+    if (std.mem.lastIndexOfScalar(u8, host, ':')) |colon| {
+        return host[0..colon];
+    }
+    return host;
+}
+
 pub fn checkServerIdentity(
     client: *HTTPClient,
     comptime is_ssl: bool,
@@ -45,6 +88,7 @@ pub fn checkServerIdentity(
     if (client.flags.reject_unauthorized) {
         if (BoringSSL.SSL_get_peer_cert_chain(sslPtr)) |cert_chain| {
             if (BoringSSL.sk_X509_value(cert_chain, 0)) |x509| {
+                const hostname = getTlsHostname(client, allowProxyUrl);
 
                 // check if we need to report the error (probably to `checkServerIdentity` was informed from JS side)
                 // this is the slow path
@@ -55,13 +99,6 @@ pub fn checkServerIdentity(
                     var cert_ptr = cert.ptr;
                     const result_size = BoringSSL.i2d_X509(x509, &cert_ptr);
                     assert(result_size == cert_size);
-
-                    var hostname = client.hostname orelse client.url.hostname;
-                    if (allowProxyUrl) {
-                        if (client.http_proxy) |proxy| {
-                            hostname = proxy.hostname;
-                        }
-                    }
 
                     client.state.certificate_info = .{
                         .cert = cert,
@@ -80,14 +117,6 @@ pub fn checkServerIdentity(
                 } else {
                     // we check with native code if the cert is valid
                     // fast path
-
-                    var hostname = client.hostname orelse client.url.hostname;
-                    if (allowProxyUrl) {
-                        if (client.http_proxy) |proxy| {
-                            hostname = proxy.hostname;
-                        }
-                    }
-
                     if (bun.BoringSSL.checkX509ServerIdentity(x509, hostname)) {
                         return true;
                     }
@@ -149,10 +178,7 @@ pub fn onOpen(
     if (comptime is_ssl) {
         var ssl_ptr: *BoringSSL.SSL = @ptrCast(socket.getNativeHandle());
         if (!ssl_ptr.isInitFinished()) {
-            var _hostname = client.hostname orelse client.url.hostname;
-            if (client.http_proxy) |proxy| {
-                _hostname = proxy.hostname;
-            }
+            const _hostname = getTlsHostname(client, client.http_proxy != null);
 
             var hostname: [:0]const u8 = "";
             var hostname_needs_free = false;
@@ -481,7 +507,7 @@ progress_node: ?*Progress.Node = null,
 flags: Flags = Flags{},
 
 state: InternalState = .{},
-tls_props: ?*SSLConfig = null,
+tls_props: ?SSLConfig.SharedPtr = null,
 /// The custom SSL context used for this request (null = default context).
 /// Set by HTTPThread.connect() when using custom TLS configs.
 custom_ssl_ctx: ?*NewHTTPContext(true) = null,
@@ -518,11 +544,9 @@ pub fn deinit(this: *HTTPClient) void {
         this.proxy_tunnel = null;
         tunnel.detachAndDeref();
     }
-    // Release our reference on the interned SSLConfig
-    if (this.tls_props) |config| {
-        config.deref();
-        this.tls_props = null;
-    }
+    // Release our strong ref on the interned SSLConfig
+    if (this.tls_props) |*tls| tls.deinit();
+    this.tls_props = null;
     this.unix_socket_path.deinit();
     this.unix_socket_path = jsc.ZigString.Slice.empty;
 }
@@ -1454,7 +1478,7 @@ pub fn closeAndFail(this: *HTTPClient, err: anyerror, comptime is_ssl: bool, soc
 fn startProxyHandshake(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket, start_payload: []const u8) void {
     log("startProxyHandshake", .{});
     // if we have options we pass them (ca, reject_unauthorized, etc) otherwise use the default
-    const ssl_options = if (this.tls_props != null) this.tls_props.?.* else jsc.API.ServerConfig.SSLConfig.zero;
+    const ssl_options = if (this.tls_props) |tls| tls.get().* else jsc.API.ServerConfig.SSLConfig.zero;
     ProxyTunnel.start(this, is_ssl, socket, ssl_options, start_payload);
 }
 

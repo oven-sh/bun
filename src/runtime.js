@@ -315,8 +315,13 @@ export var __decorateElement = (array, flags, name, decorators, target, extra) =
 
 export var __esm = (fn, res) => () => (fn && (res = fn((fn = 0))), res);
 
-// This is used for JSX inlining with React.
+// These are used for JSX inlining with React.
+// $$typeof is kept for backwards compatibility
 export var $$typeof = /* @__PURE__ */ Symbol.for("react.element");
+// $$typeof_18 is for React 18 and earlier (uses "react.element")
+export var $$typeof_18 = /* @__PURE__ */ Symbol.for("react.element");
+// $$typeof_19 is for React 19+ (uses "react.transitional.element")
+export var $$typeof_19 = /* @__PURE__ */ Symbol.for("react.transitional.element");
 
 export var __jsonParse = /* @__PURE__ */ a => JSON.parse(a);
 

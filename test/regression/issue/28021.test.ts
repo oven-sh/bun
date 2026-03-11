@@ -104,6 +104,8 @@ describe("fs.glob matches dot files with explicit dot patterns", () => {
     using dir = setup();
     const cwd = String(dir);
     const results = Array.from(new Bun.Glob("*").scanSync({ cwd, dot: false }));
+    expect(results).toContain("visible");
+    expect(results).toContain("visible2");
     expect(results.every(r => !r.startsWith("."))).toBe(true);
   });
 

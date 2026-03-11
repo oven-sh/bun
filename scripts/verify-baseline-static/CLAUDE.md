@@ -265,8 +265,9 @@ See `src/main.rs:94-135` and `src/aarch64.rs`:
   `BSR` ≠ `LZCNT` for nonzero inputs and LLVM never emits it for Nehalem.)
 - **XGETBV** (x64) — needed by every AVX gate; a stray one SIGILLs at
   startup so the emulator catches it trivially.
-- **ENDBR64/CET_IBT** (x64) — NOP-encoded on pre-CET by design. CET_SS
-  (shadow-stack) is NOT ignored — WRSSD etc. are not hint-space.
+- **ENDBR64 (CET_IBT), RDSSP/INCSSP (CET_SS hint-space subset)** (x64) —
+  NOP-encoded on pre-CET by design. The rest of CET_SS (WRSSD/RSTORSSP/
+  SETSSBSY etc.) IS flagged — dedicated opcode slots that #UD on pre-CET.
 - **PACIASP/AUTIASP/BTI** (aarch64) — HINT-space, architecturally NOP on
   pre-PAC CPUs. (`LDRAA`/`LDRAB` are _not_ HINT-space and _are_ reported.)
 - **3DNow!, SMM, Cyrix, VIA** (x64) — no toolchain targeting x86-64 emits

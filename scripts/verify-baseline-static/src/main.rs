@@ -138,6 +138,20 @@ fn is_harmless_on_nehalem(insn: &Instruction) -> bool {
         return true;
     }
 
+    // RDSSP/INCSSP encode in hint/NOP space (f3 0f 1e /1 and f3 0f ae /5) and
+    // execute as multi-byte NOPs on pre-CET CPUs. MSVC's __longjmp_internal
+    // unconditionally calls rdsspq to probe whether shadow-stack is active:
+    // on a CET CPU it reads SSP, on Nehalem it NOPs and the subsequent cmp
+    // sees whatever was in rax (code then branches to non-shadow path).
+    // The rest of CET_SS (WRSSD/RSTORSSP/SETSSBSY/etc.) is NOT hint-space
+    // and remains flagged.
+    if matches!(
+        insn.mnemonic(),
+        Mnemonic::Rdsspd | Mnemonic::Rdsspq | Mnemonic::Incsspd | Mnemonic::Incsspq
+    ) {
+        return true;
+    }
+
     false
 }
 

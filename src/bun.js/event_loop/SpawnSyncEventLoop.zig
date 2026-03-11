@@ -63,6 +63,7 @@ pub fn init(self: *SpawnSyncEventLoop, vm: *jsc.VirtualMachine) void {
         .tasks = jsc.EventLoop.Queue.init(bun.default_allocator),
         .global = vm.global,
         .virtual_machine = vm,
+        .cached_loop = loop,
         .uws_loop = if (bun.Environment.isWindows) self.uws_loop else {},
     };
 
@@ -81,7 +82,7 @@ pub fn deinit(this: *SpawnSyncEventLoop) void {
             timer.stop();
             timer.unref();
             this.uv_timer = null;
-            libuv.uv_close(@alignCast(@ptrCast(timer)), @ptrCast(&onCloseUVTimer));
+            libuv.uv_close(@ptrCast(@alignCast(timer)), @ptrCast(&onCloseUVTimer));
         }
     }
 
@@ -163,7 +164,7 @@ pub fn tickWithTimeout(this: *SpawnSyncEventLoop, timeout: ?*const bun.timespec)
         }
     }
 
-    this.event_loop.tickWithoutJS();
+    this.event_loop.tickTasksOnly();
 
     const did_timeout = this.did_timeout;
     this.did_timeout = false;

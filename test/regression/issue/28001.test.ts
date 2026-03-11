@@ -16,7 +16,7 @@ function blah () {
 }`,
     "server.js": `
 import homepage from './index.html'
-const server = Bun.serve({
+using server = Bun.serve({
   port: 0,
   routes: { '/': homepage },
   development: false
@@ -40,8 +40,6 @@ console.log(JSON.stringify({
   sourceMapHeader: jsResp.headers.get("sourcemap"),
   mapStatus: mapResp.status,
 }));
-
-server.stop();
 `,
   });
 
@@ -86,7 +84,7 @@ function blah () {
 }`,
     "server.js": `
 import homepage from './index.html'
-const server = Bun.serve({
+using server = Bun.serve({
   port: 0,
   routes: { '/': homepage },
   development: { hmr: false }
@@ -105,7 +103,7 @@ const sourceMapHeader = jsResp.headers.get("sourcemap");
 let mapStatus = 0;
 let mapHasVersion = false;
 if (sourceMapHeader) {
-  const mapResp = await fetch(new URL(sourceMapHeader, server.url));
+  const mapResp = await fetch(new URL(sourceMapHeader, jsResp.url));
   mapStatus = mapResp.status;
   if (mapResp.ok) {
     const mapJson = await mapResp.json();
@@ -121,8 +119,6 @@ console.log(JSON.stringify({
   mapStatus,
   mapHasVersion,
 }));
-
-server.stop();
 `,
   });
 

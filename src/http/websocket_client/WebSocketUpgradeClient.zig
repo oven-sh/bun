@@ -829,7 +829,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                                 if (!this.subprotocols.contains(protocol)) break :brk false;
 
                                 if (this.outgoing_websocket) |ws| {
-                                    var protocol_str = bun.String.init(protocol);
+                                    var protocol_str = bun.String.cloneLatin1(protocol);
                                     defer protocol_str.deref();
                                     ws.setProtocol(&protocol_str);
                                 }

@@ -374,8 +374,13 @@ pub fn handleHandshake(this: *MySQLConnection, comptime Context: type, reader: N
     // Store server info
     this.#server_version = try handshake.server_version.toOwned();
     this.#connection_id = handshake.connection_id;
-    // this.capabilities = handshake.capability_flags;
-    this.#capabilities = Capabilities.getDefaultCapabilities(this.#ssl_mode != .disable, this.#database.len > 0);
+    // Negotiate capabilities: only request capabilities that the server also supports.
+    // Per MySQL protocol, the client MUST intersect its desired capabilities with the
+    // server's advertised capabilities. This ensures features like CLIENT_DEPRECATE_EOF
+    // are only used when the server actually supports them (critical for MySQL-compatible
+    // databases like StarRocks, TiDB, SingleStore, etc.).
+    this.#capabilities = Capabilities.getDefaultCapabilities(this.#ssl_mode != .disable, this.#database.len > 0)
+        .intersect(handshake.capability_flags);
 
     // Override with utf8mb4 instead of using server's default
     this.#character_set = CharacterSet.default;
@@ -387,6 +392,7 @@ pub fn handleHandshake(this: *MySQLConnection, comptime Context: type, reader: N
         \\   Connection ID:  {d}
         \\   Character Set:  {d} ({s})
         \\   Server Capabilities:   [ {f} ] 0x{x:0>8}
+        \\   Negotiated Capabilities: [ {f} ] 0x{x:0>8}
         \\   Status Flags:   [ {f} ]
         \\
     , .{
@@ -394,6 +400,8 @@ pub fn handleHandshake(this: *MySQLConnection, comptime Context: type, reader: N
         this.#connection_id,
         this.#character_set,
         this.#character_set.label(),
+        handshake.capability_flags,
+        handshake.capability_flags.toInt(),
         this.#capabilities,
         this.#capabilities.toInt(),
         this.#status_flags,
@@ -859,6 +867,13 @@ pub fn handlePreparedStatement(this: *MySQLConnection, comptime Context: type, r
     statement.ref();
     defer statement.deref();
     if (statement.statement_id > 0) {
+        // In legacy protocol (CLIENT_DEPRECATE_EOF not negotiated), the server sends
+        // intermediate EOF packets between param definitions and column definitions,
+        // and after column definitions. Skip these EOF packets.
+        if (!this.#capabilities.CLIENT_DEPRECATE_EOF and @as(PacketType, @enumFromInt(first_byte)) == .EOF) {
+            this.checkIfPreparedStatementIsDone(statement);
+            return;
+        }
         if (statement.params_received < statement.params.len) {
             var column = ColumnDefinition41{};
             defer column.deinit();
@@ -1036,10 +1051,28 @@ fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: NewRe
                 try statement.columns[statement.columns_received].decode(reader);
                 statement.columns_received += 1;
             } else {
+                // Legacy protocol (CLIENT_DEPRECATE_EOF not negotiated): EOF packets
+                // delimit sections of the result set. We must handle the intermediate
+                // EOF (between column definitions and row data) and the final EOF
+                // (after all rows) differently.
+                if (packet_type == .EOF and !this.#capabilities.CLIENT_DEPRECATE_EOF) {
+                    if (!statement.execution_flags.columns_eof_received) {
+                        // Intermediate EOF between column definitions and row data - skip it
+                        var eof = EOFPacket{};
+                        try eof.decode(reader);
+                        statement.execution_flags.columns_eof_received = true;
+                        return;
+                    }
+                    // Final EOF after all row data - terminates the result set
+                    var eof = EOFPacket{};
+                    try eof.decode(reader);
+                    this.handleResultSetOK(request, statement, eof.status_flags, 0, 0);
+                    return;
+                }
+
                 if (packet_type == .OK or packet_type == .EOF) {
                     if (request.isSimple() or packet_type == .EOF) {
-                        // if we are using the text protocol for sure this is a OK packet otherwise will be OK packet with 0xFE code
-                        // If is not simple and is EOF this is actually a OK packet but with the flag EOF
+                        // CLIENT_DEPRECATE_EOF mode: OK packet (possibly with 0xFE header)
                         try ok.decode(reader);
                         defer ok.deinit();
 
@@ -1070,6 +1103,7 @@ const AuthSwitchRequest = @import("./protocol/AuthSwitchRequest.zig");
 const AuthSwitchResponse = @import("./protocol/AuthSwitchResponse.zig");
 const Capabilities = @import("./Capabilities.zig");
 const ColumnDefinition41 = @import("./protocol/ColumnDefinition41.zig");
+const EOFPacket = @import("./protocol/EOFPacket.zig");
 const HandshakeResponse41 = @import("./protocol/HandshakeResponse41.zig");
 const HandshakeV10 = @import("./protocol/HandshakeV10.zig");
 const JSMySQLConnection = @import("./js/JSMySQLConnection.zig");

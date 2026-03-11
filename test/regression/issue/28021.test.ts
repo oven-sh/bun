@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { tempDir } from "harness";
 import { globSync, mkdirSync, writeFileSync } from "node:fs";
 import { glob as asyncGlob } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 describe("fs.glob matches dot files with explicit dot patterns", () => {
   function setup() {
@@ -36,14 +36,14 @@ describe("fs.glob matches dot files with explicit dot patterns", () => {
   test("wildcard * should NOT match dot files", async () => {
     using dir = setup();
     const results = await collectAsync(join(String(dir), "*"));
-    expect(results.every(r => !r.includes("/."))).toBe(true);
+    expect(results.every(r => !basename(r).startsWith("."))).toBe(true);
     expect(results.length).toBeGreaterThanOrEqual(2);
   });
 
   test(".* pattern should match dot files (async)", async () => {
     using dir = setup();
     const results = await collectAsync(join(String(dir), ".*"));
-    const basenames = results.map(r => r.split("/").pop()!);
+    const basenames = results.map(r => basename(r));
     expect(basenames).toContain(".hidden");
     expect(basenames).toContain(".hidden2");
     expect(basenames).toContain(".hidden-dir");
@@ -52,7 +52,7 @@ describe("fs.glob matches dot files with explicit dot patterns", () => {
   test(".* pattern should match dot files (sync)", () => {
     using dir = setup();
     const results = collectSync(join(String(dir), ".*"));
-    const basenames = results.map(r => r.split("/").pop()!);
+    const basenames = results.map(r => basename(r));
     expect(basenames).toContain(".hidden");
     expect(basenames).toContain(".hidden2");
     expect(basenames).toContain(".hidden-dir");
@@ -62,7 +62,7 @@ describe("fs.glob matches dot files with explicit dot patterns", () => {
     using dir = setup();
     const results = await collectAsync(join(String(dir), ".h*"));
     expect(results.length).toBeGreaterThanOrEqual(2);
-    const basenames = results.map(r => r.split("/").pop()!);
+    const basenames = results.map(r => basename(r));
     expect(basenames).toContain(".hidden");
     expect(basenames).toContain(".hidden2");
   });

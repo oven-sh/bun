@@ -31,7 +31,7 @@ import { streamPath } from "./stream.ts";
  * Override via `--zig-commit=<hash>` to test a new compiler.
  * From https://github.com/oven-sh/zig releases.
  */
-export const ZIG_COMMIT = "81c44b35be777de2c775b3bcee297c67b024951a";
+export const ZIG_COMMIT = "c031cbebf5b063210473ff5204a24ebfb2492c72";
 
 // ───────────────────────────────────────────────────────────────────────────
 // Target/optimize/CPU computation

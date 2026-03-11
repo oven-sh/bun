@@ -777,12 +777,12 @@ export const stripFlags: Flag[] = [
     desc: "Remove unwind/exception sections (we compile with -fno-exceptions; these come from lolhtml etc., built with panic=abort)",
   },
   {
-    // Only safe when LTO linked with --no-eh-frame-hdr. Without that,
-    // stripping .eh_frame leaves dangling PT_GNU_EH_FRAME → _Unwind_Find_FDE crash.
     // musl: no eh_frame handling differences, but CMake gates on NOT musl so we do too.
+    // Strip only runs on plain release (shouldStrip gates debug/asan/valgrind/assertions)
+    // which in CI always has LTO on — in practice paired with --no-eh-frame-hdr.
     flag: ["-R", ".eh_frame", "-R", ".gcc_except_table"],
-    when: c => c.linux && c.abi !== "musl" && c.lto,
-    desc: "Remove unwind sections (LTO-only — paired with --no-eh-frame-hdr link flag)",
+    when: c => c.linux && c.abi !== "musl",
+    desc: "Remove unwind sections (GNU strip required — llvm-strip leaves [LOAD #2 [R]])",
   },
 ];
 

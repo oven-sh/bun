@@ -3,7 +3,7 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "4a6a32c32c11ffb9f5a94c310b10f50130bfe6de";
+export const WEBKIT_VERSION = "00e825523d549a556d75985f486e4954af6ab8c7";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.
@@ -53,6 +53,11 @@ import { type Dependency, type NestedCmakeBuild, type Source, depBuildDir, depSo
 function prebuiltSuffix(cfg: Config): string {
   let s = "";
   if (cfg.linux && cfg.abi === "musl") s += "-musl";
+  // Baseline WebKit artifacts (-march=nehalem, /arch:SSE2 ICU) exist for
+  // Linux amd64 (glibc + musl) and Windows amd64. No baseline variant for
+  // arm64 or macOS. Suffix order matches the release asset names:
+  // bun-webkit-linux-amd64-musl-baseline-lto.tar.gz
+  if (cfg.baseline && cfg.x64) s += "-baseline";
   if (cfg.debug) s += "-debug";
   else if (cfg.lto) s += "-lto";
   if (cfg.asan) s += "-asan";

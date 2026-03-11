@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 import { createServer } from "node:net";
 
 async function getUnusedPort() {
-  const server = createServer();
+  await using server = createServer();
 
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
@@ -18,19 +18,7 @@ async function getUnusedPort() {
     throw new Error("Failed to allocate TCP port");
   }
 
-  const { port } = address;
-
-  await new Promise<void>((resolve, reject) => {
-    server.close(error => {
-      if (error) {
-        reject(error);
-        return;
-      }
-      resolve();
-    });
-  });
-
-  return port;
+  return address.port;
 }
 
 test("should expose Bun.RedisError as a runtime constructor", () => {

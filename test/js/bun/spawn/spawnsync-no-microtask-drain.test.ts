@@ -1,21 +1,24 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
+const isWindows = process.platform === "win32";
+const shell = isWindows ? ["cmd.exe", "/c"] : ["/bin/sh", "-c"];
+
 // Regression test: microtasks must not drain during Bun.spawnSync.
 //
 // Root cause: tickQueueWithCount (Task.zig) unconditionally calls
 // drainMicrotasksWithGlobal after every task. The SpawnSyncEventLoop's
 // isolated EventLoop shares the same JSC VM/GlobalObject, so draining
 // microtasks on it would drain the global microtask queue, executing
-// user JavaScript during spawnSync. The fix uses tickTasksOnly() which
-// suppresses microtask draining via suppress_microtask_drain.
+// user JavaScript during spawnSync.
 //
-// The waiter thread (Linux-only, forced via BUN_FEATURE_FLAG_FORCE_WAITER_THREAD)
-// uses a shared completion queue. When the async child exits during the busy-wait,
-// its ResultTask gets enqueued. Then during spawnSync's isolated event loop tick,
-// the microtask drain would run the queueMicrotask callback.
+// On POSIX the trigger is the waiter thread's shared completion queue;
+// on Windows it's libuv's uv_run() firing uv_process exit callbacks inline
+// during the isolated loop tick.
 
-test("microtasks do not drain inside spawnSync with waiter thread", async () => {
+test("microtasks do not drain inside spawnSync", async () => {
+  const sleepCmd = isWindows ? "ping -n 1 127.0.0.1 >nul" : "sleep 0.01";
+
   using dir = tempDir("spawnsync-microtask", {
     "repro.js": `
 const cp = require('node:child_process')
@@ -23,7 +26,7 @@ const cp = require('node:child_process')
 let inSync = false
 let hit = null
 
-const p = cp.spawn('/bin/sh', ['-c', 'echo x'], {
+const p = cp.spawn(${JSON.stringify(shell[0])}, [${JSON.stringify(shell[1])}, 'echo x'], {
   stdio: ['ignore', 'pipe', 'ignore'],
 })
 
@@ -31,14 +34,14 @@ queueMicrotask(() => {
   if (inSync) hit = new Error('microtask drained inside spawnSync').stack
 })
 
-// Busy-block main loop so Waitpid thread reaps \`p\` before we enter spawnSync
+// Busy-block main loop so the async child is reaped before we enter spawnSync
 const end = performance.now() + 150
 while (performance.now() < end) {
   /* busy */
 }
 
 inSync = true
-Bun.spawnSync({ cmd: ['/bin/sh', '-c', 'sleep 0.01'], maxBuffer: 1048576 })
+Bun.spawnSync({ cmd: [${JSON.stringify(shell[0])}, ${JSON.stringify(shell[1])}, ${JSON.stringify(sleepCmd)}], maxBuffer: 1048576 })
 inSync = false
 
 await new Promise(r => p.on('close', r))
@@ -56,6 +59,7 @@ console.log('OK: microtask did not drain inside spawnSync')
     cwd: String(dir),
     env: {
       ...bunEnv,
+      // Force waiter thread on Linux to trigger the race reliably
       BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1",
     },
     stdout: "pipe",
@@ -71,7 +75,7 @@ console.log('OK: microtask did not drain inside spawnSync')
 
 test("spawnSync still works correctly with maxBuffer", () => {
   const result = Bun.spawnSync({
-    cmd: ["/bin/sh", "-c", "echo hello"],
+    cmd: [...shell, isWindows ? "echo hello" : "echo hello"],
     maxBuffer: 1048576,
   });
 
@@ -81,7 +85,7 @@ test("spawnSync still works correctly with maxBuffer", () => {
 
 test("spawnSync with timeout still works", () => {
   const result = Bun.spawnSync({
-    cmd: ["/bin/sh", "-c", "sleep 10"],
+    cmd: [...shell, isWindows ? "ping -n 100 127.0.0.1 >nul" : "sleep 10"],
     timeout: 100,
   });
 

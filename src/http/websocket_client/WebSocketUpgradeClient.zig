@@ -54,6 +54,10 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         // to the shared SSL context from C++.
         custom_ssl_ctx: ?*uws.SocketContext = null,
 
+        // Expected Sec-WebSocket-Accept value for handshake validation per RFC 6455 §4.2.2.
+        // This is base64(SHA-1(Sec-WebSocket-Key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")).
+        expected_accept: [28]u8 = .{0} ** 28,
+
         const State = enum {
             initializing,
             reading,
@@ -133,7 +137,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 }
             }
 
-            const body = buildRequestBody(
+            const request_result = buildRequestBody(
                 vm,
                 pathname,
                 ssl,
@@ -143,6 +147,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 extra_headers,
                 if (target_authorization) |auth| auth.slice() else null,
             ) catch return null;
+            const body = request_result.body;
 
             // Build proxy state if using proxy
             // The CONNECT request is built using local variables for proxy_authorization and proxy_headers
@@ -209,6 +214,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 .input_body_buf = if (using_proxy) connect_request else body,
                 .state = .initializing,
                 .proxy = proxy_state,
+                .expected_accept = request_result.expected_accept,
                 .subprotocols = brk: {
                     var subprotocols = bun.StringSet.init(bun.default_allocator);
                     var it = bun.http.HeaderValueIterator.init(protocol_for_subprotocols.slice());
@@ -926,7 +932,10 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 return;
             }
 
-            // TODO: check websocket_accept_header.value
+            if (!std.mem.eql(u8, websocket_accept_header.value, &this.expected_accept)) {
+                this.terminate(ErrorCode.mismatch_websocket_accept_header);
+                return;
+            }
 
             const overflow_len = remain_buf.len;
             var overflow: []u8 = &.{};
@@ -1179,6 +1188,11 @@ fn buildConnectRequest(
     return buf.toOwnedSlice();
 }
 
+const BuildRequestResult = struct {
+    body: []u8,
+    expected_accept: [28]u8,
+};
+
 fn buildRequestBody(
     vm: *jsc.VirtualMachine,
     pathname: *const jsc.ZigString,
@@ -1188,7 +1202,7 @@ fn buildRequestBody(
     client_protocol: *const jsc.ZigString,
     extra_headers: NonUTF8Headers,
     target_authorization: ?[]const u8,
-) std.mem.Allocator.Error![]u8 {
+) std.mem.Allocator.Error!BuildRequestResult {
     const allocator = vm.allocator;
 
     // Check for user overrides
@@ -1235,6 +1249,11 @@ fn buildRequestBody(
         // Generate a new key if user key is invalid or not provided
         break :blk std.base64.standard.Encoder.encode(&encoded_buf, &vm.rareData().nextUUID().bytes);
     };
+
+    // Compute the expected Sec-WebSocket-Accept value per RFC 6455 §4.2.2:
+    // base64(SHA-1(Sec-WebSocket-Key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))
+    const expected_accept = computeAcceptValue(key);
+
     const protocol = if (user_protocol) |p| p.slice() else client_protocol.slice();
 
     const pathname_ = pathname.toSlice(allocator);
@@ -1287,7 +1306,26 @@ fn buildRequestBody(
 
     // Build request with user overrides
     if (user_host) |h| {
-        return try std.fmt.allocPrint(
+        return .{
+            .body = try std.fmt.allocPrint(
+                allocator,
+                "GET {s} HTTP/1.1\r\n" ++
+                    "Host: {f}\r\n" ++
+                    "Connection: Upgrade\r\n" ++
+                    "Upgrade: websocket\r\n" ++
+                    "Sec-WebSocket-Version: 13\r\n" ++
+                    "Sec-WebSocket-Extensions: permessage-deflate; client_max_window_bits\r\n" ++
+                    "{f}" ++
+                    "{s}" ++
+                    "\r\n",
+                .{ pathname_.slice(), h, pico_headers, extra_headers_buf.items },
+            ),
+            .expected_accept = expected_accept,
+        };
+    }
+
+    return .{
+        .body = try std.fmt.allocPrint(
             allocator,
             "GET {s} HTTP/1.1\r\n" ++
                 "Host: {f}\r\n" ++
@@ -1298,23 +1336,24 @@ fn buildRequestBody(
                 "{f}" ++
                 "{s}" ++
                 "\r\n",
-            .{ pathname_.slice(), h, pico_headers, extra_headers_buf.items },
-        );
-    }
+            .{ pathname_.slice(), host_fmt, pico_headers, extra_headers_buf.items },
+        ),
+        .expected_accept = expected_accept,
+    };
+}
 
-    return try std.fmt.allocPrint(
-        allocator,
-        "GET {s} HTTP/1.1\r\n" ++
-            "Host: {f}\r\n" ++
-            "Connection: Upgrade\r\n" ++
-            "Upgrade: websocket\r\n" ++
-            "Sec-WebSocket-Version: 13\r\n" ++
-            "Sec-WebSocket-Extensions: permessage-deflate; client_max_window_bits\r\n" ++
-            "{f}" ++
-            "{s}" ++
-            "\r\n",
-        .{ pathname_.slice(), host_fmt, pico_headers, extra_headers_buf.items },
-    );
+/// Compute the expected Sec-WebSocket-Accept value per RFC 6455 §4.2.2:
+/// base64(SHA-1(key ++ "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))
+fn computeAcceptValue(key: []const u8) [28]u8 {
+    const websocket_guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+    var hasher = bun.sha.Hashers.SHA1.init();
+    hasher.update(key);
+    hasher.update(websocket_guid);
+    var hash: bun.sha.Hashers.SHA1.Digest = undefined;
+    hasher.final(&hash);
+    var result: [28]u8 = undefined;
+    _ = bun.base64.encode(&result, &hash);
+    return result;
 }
 
 const log = Output.scoped(.WebSocketUpgradeClient, .visible);

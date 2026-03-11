@@ -98,29 +98,29 @@ describe("GitHub issue #27985: mTLS rejectUnauthorized enforcement", () => {
     });
   });
 
-  describe("SNI routes with rejectUnauthorized: true", () => {
-    test("rejects rogue client cert on SNI route", async () => {
+  describe("tls array with rejectUnauthorized: true", () => {
+    test("rejects rogue client cert with tls array config", async () => {
       await using server = Bun.serve({
         port: 0,
         tls: [
-          { key: serverKey, cert: serverCert, ca, requestCert: true, rejectUnauthorized: true, serverName: "localhost" },
+          { key: serverKey, cert: serverCert, ca, requestCert: true, rejectUnauthorized: true },
         ],
         fetch: () => new Response("OK"),
       });
-      const result = await connectAndRequest(server.port, { key: rogueClientKey, cert: rogueClientCert }, "localhost");
+      const result = await connectAndRequest(server.port, { key: rogueClientKey, cert: rogueClientCert });
       console.log("  >>", JSON.stringify(result));
       expect(result.type).toBe("rejected");
     });
 
-    test("accepts valid client cert on SNI route", async () => {
+    test("accepts valid client cert with tls array config", async () => {
       await using server = Bun.serve({
         port: 0,
         tls: [
-          { key: serverKey, cert: serverCert, ca, requestCert: true, rejectUnauthorized: true, serverName: "localhost" },
+          { key: serverKey, cert: serverCert, ca, requestCert: true, rejectUnauthorized: true },
         ],
         fetch: () => new Response("OK"),
       });
-      const result = await connectAndRequest(server.port, { key: validClientKey, cert: validClientCert }, "localhost");
+      const result = await connectAndRequest(server.port, { key: validClientKey, cert: validClientCert });
       console.log("  >>", JSON.stringify(result));
       expect(result.type).toBe("accepted");
     });

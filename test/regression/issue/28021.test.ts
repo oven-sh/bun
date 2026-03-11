@@ -70,7 +70,7 @@ describe("fs.glob matches dot files with explicit dot patterns", () => {
   test("Bun.Glob with .* pattern and dot:false should match dot files", () => {
     using dir = setup();
     const cwd = String(dir);
-    const results = Array.from(new Bun.Glob(".*").scanSync({ cwd, onlyFiles: false })).sort();
+    const results = Array.from(new Bun.Glob(".*").scanSync({ cwd, dot: false, onlyFiles: false })).sort();
     expect(results).toContain(".hidden");
     expect(results).toContain(".hidden2");
     expect(results).toContain(".hidden-dir");
@@ -79,7 +79,7 @@ describe("fs.glob matches dot files with explicit dot patterns", () => {
   test("Bun.Glob with .h* pattern and dot:false should match dot files", () => {
     using dir = setup();
     const cwd = String(dir);
-    const results = Array.from(new Bun.Glob(".h*").scanSync({ cwd, onlyFiles: false })).sort();
+    const results = Array.from(new Bun.Glob(".h*").scanSync({ cwd, dot: false, onlyFiles: false })).sort();
     expect(results).toContain(".hidden");
     expect(results).toContain(".hidden2");
     expect(results).toContain(".hidden-dir");
@@ -88,14 +88,14 @@ describe("fs.glob matches dot files with explicit dot patterns", () => {
   test("Bun.Glob with * and dot:false should NOT match dot files", () => {
     using dir = setup();
     const cwd = String(dir);
-    const results = Array.from(new Bun.Glob("*").scanSync({ cwd }));
+    const results = Array.from(new Bun.Glob("*").scanSync({ cwd, dot: false }));
     expect(results.every(r => !r.startsWith("."))).toBe(true);
   });
 
   test("Bun.Glob with literal .hidden and dot:false should match", () => {
     using dir = setup();
     const cwd = String(dir);
-    const results = Array.from(new Bun.Glob(".hidden").scanSync({ cwd }));
+    const results = Array.from(new Bun.Glob(".hidden").scanSync({ cwd, dot: false }));
     expect(results).toContain(".hidden");
   });
 });

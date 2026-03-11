@@ -90,6 +90,7 @@ Structure* createRedisErrorStructure(VM& vm, JSGlobalObject* globalObject)
 
 JSObject* createRedisErrorInstance(VM& vm, JSGlobalObject* globalObject, JSValue message, ASCIILiteral code, JSValue options)
 {
+    auto scope = DECLARE_THROW_SCOPE(vm);
     Structure* structure;
     if (auto* zigGlobal = jsDynamicCast<Zig::GlobalObject*>(globalObject)) {
         structure = zigGlobal->m_RedisErrorStructure.getInitializedOnMainThread(globalObject);
@@ -98,6 +99,7 @@ JSObject* createRedisErrorInstance(VM& vm, JSGlobalObject* globalObject, JSValue
     }
 
     auto* error = ErrorInstance::create(globalObject, structure, message, options, nullptr, RuntimeType::TypeNothing, ErrorType::Error, true);
+    RETURN_IF_EXCEPTION(scope, nullptr);
     error->putDirect(
         vm,
         WebCore::builtinNames(vm).codePublicName(),
@@ -131,7 +133,9 @@ JSC_DEFINE_HOST_FUNCTION(functionRedisErrorConstructor, (JSGlobalObject * global
         }
     }
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(createRedisErrorInstance(vm, globalObject, message, code, options)));
+    auto* error = createRedisErrorInstance(vm, globalObject, message, code, options);
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, JSValue::encode(error));
 }
 
 JSObject* createRedisErrorConstructor(VM& vm, JSGlobalObject* globalObject)

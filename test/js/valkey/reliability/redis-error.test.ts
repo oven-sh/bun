@@ -18,6 +18,19 @@ test("should expose Bun.RedisError as a runtime constructor", () => {
   expect(error.cause).toBe(cause);
 });
 
+test("should propagate exceptions from options while constructing Bun.RedisError", () => {
+  const thrown = new Error("boom");
+
+  expect(() => {
+    new Bun.RedisError("Connection closed", {
+      code: "ERR_REDIS_CONNECTION_CLOSED",
+      get cause() {
+        throw thrown;
+      },
+    });
+  }).toThrow(thrown);
+});
+
 test("should throw Bun.RedisError for connection failures", async () => {
   const client = new RedisClient("redis://localhost:12345", {
     connectionTimeout: 100,

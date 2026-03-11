@@ -47,10 +47,10 @@ const NEHALEM_ALLOWED: &[CpuidFeature] = &[
     // Classic integer/system.
     CpuidFeature::TSC,
     CpuidFeature::MSR,
-    CpuidFeature::CX8,    // CMPXCHG8B
-    CpuidFeature::SEP,    // SYSENTER/SYSEXIT
-    CpuidFeature::CLFSH,  // CLFLUSH
-    CpuidFeature::FXSR,   // FXSAVE/FXRSTOR
+    CpuidFeature::CX8,   // CMPXCHG8B
+    CpuidFeature::SEP,   // SYSENTER/SYSEXIT
+    CpuidFeature::CLFSH, // CLFLUSH
+    CpuidFeature::FXSR,  // FXSAVE/FXRSTOR
     CpuidFeature::SYSCALL,
     CpuidFeature::RDTSCP, // Nehalem has this (K8 introduced it, Intel added in Nehalem)
     // LAHF/SAHF in 64-bit: iced doesn't tag these with a distinct feature
@@ -78,13 +78,17 @@ const NEHALEM_ALLOWED: &[CpuidFeature] = &[
     CpuidFeature::SMX,
     // Multi-byte NOP. Architectural since P6, iced tags it separately.
     CpuidFeature::MULTIBYTENOP,
-    // CET (Control-flow Enforcement) was designed for backward compat:
-    // ENDBR64/ENDBR32 and the shadow-stack insns occupy the hint/NOP
-    // encoding space and execute as NOPs on pre-CET CPUs. Compilers
+    // CET IBT (ENDBR64/ENDBR32) was designed for backward compat: the
+    // indirect-branch-tracking insns occupy the multi-byte-NOP encoding
+    // space (f3 0f 1e xx) and execute as NOPs on pre-CET CPUs. Compilers
     // emit ENDBR64 at every function entry when -fcf-protection is on
     // (glibc's crt*.o is built this way). Harmless on Nehalem.
+    //
+    // CET_SS is NOT in this list: WRSSD/WRSSQ/RSTORSSP/SETSSBSY etc. use
+    // dedicated opcode slots that #UD on pre-CET hardware. No compiler
+    // emits them without explicit shadow-stack enablement, but they're
+    // not NOP-safe.
     CpuidFeature::CET_IBT,
-    CpuidFeature::CET_SS,
 ];
 
 /// Instructions that iced classifies as post-Nehalem but are actually safe
@@ -92,11 +96,10 @@ const NEHALEM_ALLOWED: &[CpuidFeature] = &[
 /// feature bits, this is about specific instructions whose encoding falls
 /// back gracefully.
 fn is_harmless_on_nehalem(insn: &Instruction) -> bool {
-    // TZCNT/LZCNT encode as REP BSF/BSR. On pre-BMI1 CPUs the REP prefix
-    // is ignored and they execute as BSF/BSR. The only semantic difference
-    // is input==0: BSF/BSR leave the destination unchanged (architecturally
-    // undefined, but all real silicon preserves it), whereas TZCNT/LZCNT
-    // write the operand width.
+    // TZCNT encodes as REP BSF. On pre-BMI1 CPUs the REP prefix is ignored
+    // and it executes as plain BSF. For nonzero inputs TZCNT(x)==BSF(x);
+    // the only difference is input==0 (BSF leaves dest undefined/preserved,
+    // TZCNT writes the operand width).
     //
     // LLVM targeting -march=nehalem emits TZCNT anyway, but always with a
     // preload of the operand width into the destination register first:
@@ -109,8 +112,12 @@ fn is_harmless_on_nehalem(insn: &Instruction) -> bool {
     // compiler-emitted. Hand-written asm that uses TZCNT without preloading
     // would be a real bug, but none exists in the current dependency set.
     //
-    // (For @clz LLVM doesn't even bother with LZCNT — emits plain BSR+XOR.)
-    if matches!(insn.mnemonic(), Mnemonic::Tzcnt | Mnemonic::Lzcnt) {
+    // LZCNT is NOT whitelisted: it encodes as REP BSR, and LZCNT(x) !=
+    // BSR(x) for nonzero x (one counts leading zeros, the other returns
+    // highest-set-bit index). LLVM never emits LZCNT for @clz on
+    // -march=nehalem — it uses BSR+XOR instead — so if LZCNT appears it's
+    // a leak to flag.
+    if insn.mnemonic() == Mnemonic::Tzcnt {
         return true;
     }
 
@@ -153,11 +160,24 @@ fn is_impossible_feature(feat: CpuidFeature) -> bool {
     use CpuidFeature as F;
     matches!(
         feat,
-        F::D3NOW | F::D3NOWEXT | F::CYRIX_D3NOW | F::SMM | F::CYRIX_SMM
-            | F::CYRIX_SMINT | F::CYRIX_SMINT_0F7E | F::CYRIX_SHR | F::CYRIX_DDI
-            | F::CYRIX_EMMI | F::CYRIX_DMI | F::CYRIX_FPU
-            | F::PADLOCK_ACE | F::PADLOCK_PHE | F::PADLOCK_PMM | F::PADLOCK_RNG
-            | F::PADLOCK_GMI | F::PADLOCK_UNDOC
+        F::D3NOW
+            | F::D3NOWEXT
+            | F::CYRIX_D3NOW
+            | F::SMM
+            | F::CYRIX_SMM
+            | F::CYRIX_SMINT
+            | F::CYRIX_SMINT_0F7E
+            | F::CYRIX_SHR
+            | F::CYRIX_DDI
+            | F::CYRIX_EMMI
+            | F::CYRIX_DMI
+            | F::CYRIX_FPU
+            | F::PADLOCK_ACE
+            | F::PADLOCK_PHE
+            | F::PADLOCK_PMM
+            | F::PADLOCK_RNG
+            | F::PADLOCK_GMI
+            | F::PADLOCK_UNDOC
     )
 }
 
@@ -250,13 +270,15 @@ fn build_symbol_table(file: &object::File) -> Vec<Sym> {
         iter.filter(|s| {
             matches!(s.kind(), SymbolKind::Text | SymbolKind::Unknown)
                 && matches!(s.section(), SymbolSection::Section(_))
-                && s.name().map(|n| {
-                    // Drop anonymous section markers and ARM EABI mapping
-                    // symbols ($x = A64 code, $d = data, $t = Thumb). They're
-                    // zero-size markers at code/data transitions and would
-                    // otherwise shadow the real function at the same address.
-                    !n.is_empty() && !n.starts_with('$')
-                }).unwrap_or(false)
+                && s.name()
+                    .map(|n| {
+                        // Drop anonymous section markers and ARM EABI mapping
+                        // symbols ($x = A64 code, $d = data, $t = Thumb). They're
+                        // zero-size markers at code/data transitions and would
+                        // otherwise shadow the real function at the same address.
+                        !n.is_empty() && !n.starts_with('$')
+                    })
+                    .unwrap_or(false)
         })
         .filter_map(|s| Some((s.address(), s.size(), s.name().ok()?.to_owned())))
         .collect()
@@ -319,8 +341,8 @@ fn build_symbol_table(file: &object::File) -> Vec<Sym> {
 fn build_symbol_table_pdb(pdb_path: &Path, file: &object::File) -> Result<Vec<Sym>, String> {
     let f = std::fs::File::open(pdb_path)
         .map_err(|e| format!("opening pdb {}: {}", pdb_path.display(), e))?;
-    let mut pdb = pdb::PDB::open(f)
-        .map_err(|e| format!("parsing pdb {}: {}", pdb_path.display(), e))?;
+    let mut pdb =
+        pdb::PDB::open(f).map_err(|e| format!("parsing pdb {}: {}", pdb_path.display(), e))?;
 
     let address_map = pdb
         .address_map()
@@ -352,10 +374,15 @@ fn build_symbol_table_pdb(pdb_path: &Path, file: &object::File) -> Result<Vec<Sy
     // We also collect each module's object-file name while iterating, for use
     // in pass 3 below. Section contributions (pass 3) reference modules by
     // index into this same ordering.
-    let dbi = pdb.debug_information().map_err(|e| format!("pdb dbi: {e}"))?;
+    let dbi = pdb
+        .debug_information()
+        .map_err(|e| format!("pdb dbi: {e}"))?;
     let mut module_names: Vec<String> = Vec::new();
     let mut modules = dbi.modules().map_err(|e| format!("pdb modules: {e}"))?;
-    while let Some(module) = modules.next().map_err(|e| format!("pdb modules.next: {e}"))? {
+    while let Some(module) = modules
+        .next()
+        .map_err(|e| format!("pdb modules.next: {e}"))?
+    {
         // The linker records the full build-machine path:
         //   D:\build\release\foo.lib     (archive, all members collapsed)
         //   C:\...\libucrt.lib           (CRT archive)
@@ -374,14 +401,20 @@ fn build_symbol_table_pdb(pdb_path: &Path, file: &object::File) -> Result<Vec<Sy
         else {
             continue;
         };
-        let mut syms = info.symbols().map_err(|e| format!("pdb module symbols: {e}"))?;
+        let mut syms = info
+            .symbols()
+            .map_err(|e| format!("pdb module symbols: {e}"))?;
         while let Some(sym) = syms.next().map_err(|e| format!("pdb sym iter: {e}"))? {
             // S_LPROC32 (local/static) and S_GPROC32 (global) both land in
             // SymbolData::Procedure. .len is the real function body length
             // in bytes — no gap-synthesis needed for these.
             let parsed: Result<pdb::SymbolData, _> = sym.parse();
-            let Ok(pdb::SymbolData::Procedure(p)) = parsed else { continue };
-            let Some(rva) = p.offset.to_rva(&address_map) else { continue };
+            let Ok(pdb::SymbolData::Procedure(p)) = parsed else {
+                continue;
+            };
+            let Some(rva) = p.offset.to_rva(&address_map) else {
+                continue;
+            };
             let va = image_base + u64::from(rva.0);
             if !in_text(va) {
                 continue;
@@ -403,8 +436,12 @@ fn build_symbol_table_pdb(pdb_path: &Path, file: &object::File) -> Result<Vec<Sy
     let mut iter = global_syms.iter();
     while let Some(sym) = iter.next().map_err(|e| format!("pdb iter: {e}"))? {
         let parsed: Result<pdb::SymbolData, _> = sym.parse();
-        let Ok(pdb::SymbolData::Public(p)) = parsed else { continue };
-        let Some(rva) = p.offset.to_rva(&address_map) else { continue };
+        let Ok(pdb::SymbolData::Public(p)) = parsed else {
+            continue;
+        };
+        let Some(rva) = p.offset.to_rva(&address_map) else {
+            continue;
+        };
         let va = image_base + u64::from(rva.0);
         if !in_text(va) {
             continue;
@@ -431,7 +468,11 @@ fn build_symbol_table_pdb(pdb_path: &Path, file: &object::File) -> Result<Vec<Sy
             addr.saturating_add(size)
         } else {
             let next_sym = raw.get(i + 1).map(|r| r.0).unwrap_or(u64::MAX);
-            let sec_end = section_ends.iter().copied().find(|&e| e > addr).unwrap_or(u64::MAX);
+            let sec_end = section_ends
+                .iter()
+                .copied()
+                .find(|&e| e > addr)
+                .unwrap_or(u64::MAX);
             next_sym.min(sec_end)
         };
         if end > addr {
@@ -453,11 +494,20 @@ fn build_symbol_table_pdb(pdb_path: &Path, file: &object::File) -> Result<Vec<Sy
     // Multiple contributions from the same library collapse to one allowlist
     // entry. Unlike the .pdata-RVA approach this replaces, the result doesn't
     // churn when addresses shift.
+    // Collect gap-fillers into a scratch vec so symbol_for() keeps operating
+    // on the sorted pass-1/2 table. Pushing directly into `syms` mid-iteration
+    // would break the binary search invariant.
+    let mut gap_fillers: Vec<Sym> = Vec::new();
     let mut contribs = dbi
         .section_contributions()
         .map_err(|e| format!("pdb section_contributions: {e}"))?;
-    while let Some(c) = contribs.next().map_err(|e| format!("pdb contrib iter: {e}"))? {
-        let Some(rva) = c.offset.to_rva(&address_map) else { continue };
+    while let Some(c) = contribs
+        .next()
+        .map_err(|e| format!("pdb contrib iter: {e}"))?
+    {
+        let Some(rva) = c.offset.to_rva(&address_map) else {
+            continue;
+        };
         let begin = image_base + u64::from(rva.0);
         let end = begin + u64::from(c.size);
         if c.size == 0 || !in_text(begin) {
@@ -474,9 +524,13 @@ fn build_symbol_table_pdb(pdb_path: &Path, file: &object::File) -> Result<Vec<Sy
             .map(String::as_str)
             .filter(|s| !s.is_empty())
             .unwrap_or("unknown");
-        syms.push(Sym { addr: begin, end, name: format!("<lib:{lib}>") });
+        gap_fillers.push(Sym {
+            addr: begin,
+            end,
+            name: format!("<lib:{lib}>"),
+        });
     }
-    // Re-sort after the gap-filling inserts so symbol_for() stays correct.
+    syms.extend(gap_fillers);
     syms.sort_by_key(|s| s.addr);
 
     Ok(syms)
@@ -516,7 +570,10 @@ fn load_allowlist_into(path: &Path, out: &mut Allowlist) -> Result<(), String> {
     let text = match fs::read_to_string(path) {
         Ok(t) => t,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            eprintln!("note: allowlist not found at {}, treating as empty", path.display());
+            eprintln!(
+                "note: allowlist not found at {}, treating as empty",
+                path.display()
+            );
             return Ok(());
         }
         Err(e) => return Err(format!("reading allowlist {}: {}", path.display(), e)),
@@ -532,7 +589,11 @@ fn load_allowlist_into(path: &Path, out: &mut Allowlist) -> Result<(), String> {
             None => (line, None),
             Some((s, rest)) => {
                 let inner = rest.strip_suffix(']').ok_or_else(|| {
-                    format!("{}:{}: unclosed '[' in feature list", path.display(), lineno + 1)
+                    format!(
+                        "{}:{}: unclosed '[' in feature list",
+                        path.display(),
+                        lineno + 1
+                    )
                 })?;
                 let feats: HashSet<String> = inner
                     .split(',')
@@ -621,16 +682,15 @@ fn record(
     };
     let entry = bucket.entry(raw_sym).or_default();
     entry.features.insert(feature);
-    entry.hits.push(Hit { ip, mnemonic, feature });
+    entry.hits.push(Hit {
+        ip,
+        mnemonic,
+        feature,
+    });
 }
 
 /// x64 decode + classify. iced provides exact per-instruction CpuidFeature.
-fn scan_x86_64(
-    bytes: &[u8],
-    sec_addr: u64,
-    syms: &[Sym],
-    allowlist: &Allowlist,
-) -> ScanResult {
+fn scan_x86_64(bytes: &[u8], sec_addr: u64, syms: &[Sym], allowlist: &Allowlist) -> ScanResult {
     let mut violations = Buckets::new();
     let mut allowlisted = Buckets::new();
     let mut total_insns = 0u64;
@@ -649,8 +709,8 @@ fn scan_x86_64(
         total_insns += 1;
 
         let feats = insn.cpuid_features();
-        let Some(bad_feat) = feats.iter().copied().find(|f| !is_allowed(*f)) else { continue };
-        if is_impossible_feature(bad_feat) {
+        // Fast path: no post-baseline features at all (the common case).
+        if feats.iter().copied().all(is_allowed) {
             continue;
         }
         if is_harmless_on_nehalem(&insn) {
@@ -662,11 +722,32 @@ fn scan_x86_64(
         // accessor. Leak the Debug repr once per hit — tiny volume (tens of
         // thousands of hits max, each a few bytes; a KB or so for a full scan).
         let mnem: &'static str = Box::leak(format!("{:?}", insn.mnemonic()).into_boxed_str());
-        let feat: &'static str = Box::leak(format!("{:?}", bad_feat).into_boxed_str());
-        record(insn.ip(), mnem, feat, syms, allowlist, &mut violations, &mut allowlisted);
+        // Record EVERY post-baseline feature, not just the first one found.
+        // Multi-feature instructions (e.g. VPCLMULQDQ requires AVX+PCLMULQDQ)
+        // must check each feature against the ceiling independently — if the
+        // ceiling says [AVX] but PCLMULQDQ is also required, that's a violation.
+        for bad_feat in feats.iter().copied().filter(|f| !is_allowed(*f)) {
+            if is_impossible_feature(bad_feat) {
+                continue;
+            }
+            let feat: &'static str = Box::leak(format!("{:?}", bad_feat).into_boxed_str());
+            record(
+                insn.ip(),
+                mnem,
+                feat,
+                syms,
+                allowlist,
+                &mut violations,
+                &mut allowlisted,
+            );
+        }
     }
 
-    ScanResult { violations, allowlisted, total_insns }
+    ScanResult {
+        violations,
+        allowlisted,
+        total_insns,
+    }
 }
 
 /// ARM EABI mapping symbols tell us where inline data lives inside .text.
@@ -695,7 +776,9 @@ fn aarch64_data_ranges(file: &object::File) -> Vec<(u64, u64)> {
     let mut marks: Vec<(u64, bool)> = file
         .symbols()
         .filter_map(|s| {
-            let SymbolSection::Section(idx) = s.section() else { return None };
+            let SymbolSection::Section(idx) = s.section() else {
+                return None;
+            };
             if !text_sections.contains(&idx) {
                 return None;
             }
@@ -766,7 +849,9 @@ fn scan_aarch64(
         }
         let w = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
         total_insns += 1;
-        let Some(feat) = aarch64::classify(w) else { continue };
+        let Some(feat) = aarch64::classify(w) else {
+            continue;
+        };
         record(
             ip,
             aarch64::rough_mnemonic(w, feat),
@@ -778,7 +863,11 @@ fn scan_aarch64(
         );
     }
 
-    ScanResult { violations, allowlisted, total_insns }
+    ScanResult {
+        violations,
+        allowlisted,
+        total_insns,
+    }
 }
 
 struct Args {
@@ -831,7 +920,11 @@ fn parse_args() -> Result<Args, String> {
         let guess = binary.with_extension("pdb");
         guess.exists().then_some(guess)
     });
-    Ok(Args { binary, allowlists, pdb })
+    Ok(Args {
+        binary,
+        allowlists,
+        pdb,
+    })
 }
 
 fn run() -> Result<bool, String> {
@@ -841,8 +934,8 @@ fn run() -> Result<bool, String> {
         load_allowlist_into(path, &mut allowlist)?;
     }
 
-    let data = fs::read(&args.binary)
-        .map_err(|e| format!("reading {}: {}", args.binary.display(), e))?;
+    let data =
+        fs::read(&args.binary).map_err(|e| format!("reading {}: {}", args.binary.display(), e))?;
     let file = object::File::parse(&*data)
         .map_err(|e| format!("parsing {}: {}", args.binary.display(), e))?;
 
@@ -945,7 +1038,12 @@ fn run() -> Result<bool, String> {
         for (sym, rep) in &violations {
             let mut feats: Vec<_> = rep.features.iter().copied().collect();
             feats.sort();
-            println!("  {}  [{}]  ({} insns)", sym, feats.join(", "), rep.hits.len());
+            println!(
+                "  {}  [{}]  ({} insns)",
+                sym,
+                feats.join(", "),
+                rep.hits.len()
+            );
             // Show first few instructions so the developer can quickly verify
             // with objdump. Full dump would be noisy for big asm kernels.
             for h in rep.hits.iter().take(3) {
@@ -965,9 +1063,18 @@ fn run() -> Result<bool, String> {
             total_allowed_insns += rep.hits.len();
             let mut feats: Vec<_> = rep.features.iter().copied().collect();
             feats.sort();
-            println!("  {}  [{}]  ({} insns)", sym, feats.join(", "), rep.hits.len());
+            println!(
+                "  {}  [{}]  ({} insns)",
+                sym,
+                feats.join(", "),
+                rep.hits.len()
+            );
         }
-        println!("  -- {} symbols, {} instructions total", allowlisted.len(), total_allowed_insns);
+        println!(
+            "  -- {} symbols, {} instructions total",
+            allowlisted.len(),
+            total_allowed_insns
+        );
         println!();
     }
 
@@ -983,7 +1090,10 @@ fn run() -> Result<bool, String> {
         .chain(violations.keys())
         .map(|s| canonicalize_symbol(s))
         .collect();
-    let mut stale: Vec<_> = allowlist.keys().filter(|k| !hit_canon.contains(*k)).collect();
+    let mut stale: Vec<_> = allowlist
+        .keys()
+        .filter(|k| !hit_canon.contains(*k))
+        .collect();
     stale.sort();
     if !stale.is_empty() {
         println!("STALE ALLOWLIST ENTRIES (no matching symbol found — remove these?):");
@@ -996,7 +1106,11 @@ fn run() -> Result<bool, String> {
     // ------- Summary -------
     let total_violation_insns: usize = violations.values().map(|r| r.hits.len()).sum();
     println!("SUMMARY:");
-    println!("  violations:  {} symbols, {} instructions", violations.len(), total_violation_insns);
+    println!(
+        "  violations:  {} symbols, {} instructions",
+        violations.len(),
+        total_violation_insns
+    );
     println!("  allowlisted: {} symbols", allowlisted.len());
     println!("  stale allowlist entries: {}", stale.len());
 

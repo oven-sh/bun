@@ -107,7 +107,7 @@ pub fn classify(w: u32) -> Option<Feature> {
     //   swp   : f8208041  ldadd : f8200041  stadd : f820003f  ldapr : f8bfc020
     //   ldraa (PAC, must NOT match): f8200420 → [10]=1, excluded
     //   ldaprb:                      38bfc020 → size differs but pattern holds
-    if w & 0x3B200C00 == 0x38200000 {
+    if w & 0x3F200C00 == 0x38200000 {
         // RCPC sub-match: Rs=11111, o3=1, opc=100 (bits [20:12]=0xBFC >> 2).
         if w & 0x001FFC00 == 0x001FC000 {
             return Some(Feature::Rcpc);
@@ -161,6 +161,10 @@ pub fn classify(w: u32) -> Option<Feature> {
     //   - PACIASP/AUTIASP/BTI and other hint-form PAC: HINT-space (d503xxxx),
     //     architecturally defined to NOP on CPUs that don't recognize the
     //     specific op2:CRm. Safe everywhere.
+    //   - ARMv8 Crypto Extension (AESE/AESD/SHA1*/SHA256*/PMULL): post-baseline
+    //     (+aes/+sha2 not in armv8-a+crc). Every known emitter (BoringSSL) is
+    //     runtime-dispatched via getauxval(AT_HWCAP). Add a Feature::Crypto
+    //     variant if an unconditional use ever shows up.
     //   - FP16 arithmetic: genuinely post-v8.0 but the encoding overlaps the
     //     NEON space in a way that requires tracking the `size` field across
     //     many opcode families. Deferred until it shows up in a real scan.
@@ -177,19 +181,35 @@ pub fn rough_mnemonic(w: u32, feat: Feature) -> &'static str {
         Feature::Rcpc => "ldapr",
         Feature::Jscvt => "fjcvtzs",
         Feature::PacNonHint => {
-            if w & 0x00800000 != 0 { "ldrab" } else { "ldraa" }
+            if w & 0x00800000 != 0 {
+                "ldrab"
+            } else {
+                "ldraa"
+            }
         }
         Feature::DotProd => {
-            if w & 0x20000000 != 0 { "udot" } else { "sdot" }
+            if w & 0x20000000 != 0 {
+                "udot"
+            } else {
+                "sdot"
+            }
         }
         Feature::Rdm => {
-            if w & 0x00000800 != 0 { "sqrdmlsh" } else { "sqrdmlah" }
+            if w & 0x00000800 != 0 {
+                "sqrdmlsh"
+            } else {
+                "sqrdmlah"
+            }
         }
         Feature::Lse => {
             // CAS family vs atomic-memory-op family.
             if w & 0x3F207C00 == 0x08207C00 {
-                // CASP has [31]=0; CASB/CASH/CAS/CASX vary by size.
-                if w & 0x80000000 == 0 && w & 0x40000000 != 0 { "casp" } else { "cas" }
+                // Bit[23] discriminates: CASP has [23]=0, CAS has [23]=1.
+                if w & 0x00800000 == 0 {
+                    "casp"
+                } else {
+                    "cas"
+                }
             } else {
                 // Atomic memory ops: o3[15] + opc[14:12] picks the operation.
                 match (w >> 12) & 0xF {
@@ -291,8 +311,8 @@ mod tests {
         assert_eq!(classify(0xc8dffc20), None); // ldar (v8.0 acquire)
         assert_eq!(classify(0xc89ffc20), None); // stlr (v8.0 release)
         assert_eq!(classify(0xd65f03c0), None); // ret
-        // Regression: stxp with Rt2=xzr collided with CAS ([14:10]=11111).
-        // Found in libpas (pas_segregated_page_construct).
+                                                // Regression: stxp with Rt2=xzr collided with CAS ([14:10]=11111).
+                                                // Found in libpas (pas_segregated_page_construct).
         assert_eq!(classify(0xc8297d1f), None); // stxp w9, xzr, xzr, [x8]
         assert_eq!(classify(0xc87f251f), None); // ldxp xzr, x9, [x8]
     }

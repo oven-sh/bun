@@ -77,9 +77,11 @@ instead of stack-frame setup, it's a table. Allowlist the symbol.
 
 **x64:**
 
-- **ENDBR64 / CET** — NOP-compatible on pre-CET CPUs by design.
-- **TZCNT/LZCNT** — LLVM preloads the destination with operand-width so the
-  REP-BSF fallback on pre-BMI1 CPUs gives identical results.
+- **ENDBR64 / CET_IBT** — NOP-compatible on pre-CET CPUs by design.
+- **TZCNT** — LLVM preloads the destination with operand-width so the
+  REP-BSF fallback on pre-BMI1 CPUs gives identical results. (LZCNT is
+  **not** ignored: `BSR` and `LZCNT` produce different results, and LLVM
+  never emits LZCNT for `-march=nehalem`.)
 - **XGETBV** — every AVX-dispatch path calls this, always after
   `if (CPUID.OSXSAVE)`. A stray one would SIGILL at startup; the emulator
   test catches that trivially.

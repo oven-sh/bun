@@ -35,9 +35,9 @@ check — together they catch most things; neither alone is bulletproof.
   separation undecidable (`README.md:53-59`). aarch64 is more reliable
   (fixed-width words, `$d` mapping symbols mark data), but a missing mapping
   symbol can still hide a hit.
-- Instructions deliberately ignored (TZCNT/LZCNT/XGETBV on x64, hint-space
-  PAC/BTI on aarch64) could theoretically be misused; we assume the compiler's
-  idiom is the only one.
+- Instructions deliberately ignored (TZCNT/XGETBV on x64, hint-space PAC/BTI
+  on aarch64) could theoretically be misused; we assume the compiler's idiom
+  is the only one.
 
 **Can report false violations:**
 
@@ -260,11 +260,13 @@ forms across CI runs, allowlist both.
 
 See `src/main.rs:94-135` and `src/aarch64.rs`:
 
-- **TZCNT/LZCNT** (x64) — decode as REP BSF/BSR on pre-BMI1; LLVM preloads
-  dest with operand-width so results are identical.
+- **TZCNT** (x64) — decodes as REP BSF on pre-BMI1; LLVM preloads dest with
+  operand-width so the `src==0` case matches. (LZCNT is NOT ignored —
+  `BSR` ≠ `LZCNT` for nonzero inputs and LLVM never emits it for Nehalem.)
 - **XGETBV** (x64) — needed by every AVX gate; a stray one SIGILLs at
   startup so the emulator catches it trivially.
-- **ENDBR64/CET** (x64) — NOP-encoded on pre-CET by design.
+- **ENDBR64/CET_IBT** (x64) — NOP-encoded on pre-CET by design. CET_SS
+  (shadow-stack) is NOT ignored — WRSSD etc. are not hint-space.
 - **PACIASP/AUTIASP/BTI** (aarch64) — HINT-space, architecturally NOP on
   pre-PAC CPUs. (`LDRAA`/`LDRAB` are _not_ HINT-space and _are_ reported.)
 - **3DNow!, SMM, Cyrix, VIA** (x64) — no toolchain targeting x86-64 emits

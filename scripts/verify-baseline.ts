@@ -194,7 +194,7 @@ if (await Bun.file(staticChecker).exists()) {
   } else if (code === 1) {
     // Pull just the VIOLATIONS block for the annotation — full stdout is in the log.
     const m = stdout.match(/^VIOLATIONS[^\n]*\n([\s\S]*?)\n(?:ALLOWLISTED|STALE|SUMMARY)/m);
-    staticViolations = m ? m[1].trimEnd() : stdout;
+    staticViolations = m ? m[1].trim() : stdout;
     console.log(`    FAIL: static scan found post-baseline instructions outside the allowlist (${elapsed}s)`);
     instructionFailures++;
     failedTests.push("Static instruction scan");
@@ -295,7 +295,9 @@ if (instructionFailures > 0) {
 }
 
 if (otherFailures > 0) {
-  console.log("    Some tests failed for reasons unrelated to CPU instructions.");
+  console.log(
+    `    Baseline verification passed with ${otherFailures} non-instruction warning(s) on ${config.cpuDesc}.`,
+  );
+} else {
+  console.log(`    All baseline verification passed on ${config.cpuDesc}.`);
 }
-
-console.log(`    All baseline verification passed on ${config.cpuDesc}.`);

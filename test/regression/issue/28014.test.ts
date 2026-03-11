@@ -15,8 +15,10 @@ test("WebSocket.protocol should not mutate after receiving frames", async () => 
 
   const server = net.createServer(socket => {
     let buf = Buffer.alloc(0);
+    let upgraded = false;
     socket.on("error", () => {});
     socket.on("data", chunk => {
+      if (upgraded) return;
       buf = Buffer.concat([buf, chunk]);
       const end = buf.indexOf("\r\n\r\n");
       if (end === -1) return;
@@ -38,6 +40,7 @@ test("WebSocket.protocol should not mutate after receiving frames", async () => 
         `Sec-WebSocket-Protocol: ${PROTOCOL}\r\n` +
         "\r\n";
 
+      upgraded = true;
       socket.write(response);
       socket.write(frameHeader);
       socket.write(payload);

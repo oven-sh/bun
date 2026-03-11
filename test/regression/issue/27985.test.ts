@@ -20,7 +20,7 @@ type TLSResult = { type: "accepted"; status: string } | { type: "rejected"; erro
  * Returns "accepted" with the HTTP status if we get a response,
  * or "rejected" if the connection is closed/errored before responding.
  */
-function connectAndRequest(port: number, clientCert?: { key: string; cert: string }): Promise<TLSResult> {
+function connectAndRequest(port: number, clientCert?: { key: string; cert: string }, servername?: string): Promise<TLSResult> {
   const { promise, resolve } = Promise.withResolvers<TLSResult>();
   let resolved = false;
   let data = "";
@@ -32,7 +32,7 @@ function connectAndRequest(port: number, clientCert?: { key: string; cert: strin
     resolve(result);
   };
 
-  const socket = tls.connect({ host: "localhost", port, ca, key: clientCert?.key, cert: clientCert?.cert, checkServerIdentity: () => undefined }, () => {
+  const socket = tls.connect({ host: "localhost", port, servername, ca, key: clientCert?.key, cert: clientCert?.cert, checkServerIdentity: () => undefined }, () => {
     socket.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
   });
 
@@ -88,11 +88,11 @@ describe("GitHub issue #27985: mTLS rejectUnauthorized enforcement", () => {
       expect(result.type).toBe("rejected");
     });
 
-    test("deterministically rejects 10 rogue requests", async () => {
+    test("deterministically rejects 30 rogue requests", async () => {
       await using server = createMTLSServer(true);
-      for (let i = 0; i < 10; i++) {
+      for (let i = 0; i < 30; i++) {
         const result = await connectAndRequest(server.port, { key: rogueClientKey, cert: rogueClientCert });
-        console.log(`  >> attempt ${i + 1}/10:`, JSON.stringify(result));
+        console.log(`  >> attempt ${i + 1}/30:`, JSON.stringify(result));
         expect(result.type).toBe("rejected");
       }
     });
@@ -107,7 +107,7 @@ describe("GitHub issue #27985: mTLS rejectUnauthorized enforcement", () => {
         ],
         fetch: () => new Response("OK"),
       });
-      const result = await connectAndRequest(server.port, { key: rogueClientKey, cert: rogueClientCert });
+      const result = await connectAndRequest(server.port, { key: rogueClientKey, cert: rogueClientCert }, "localhost");
       console.log("  >>", JSON.stringify(result));
       expect(result.type).toBe("rejected");
     });
@@ -120,7 +120,7 @@ describe("GitHub issue #27985: mTLS rejectUnauthorized enforcement", () => {
         ],
         fetch: () => new Response("OK"),
       });
-      const result = await connectAndRequest(server.port, { key: validClientKey, cert: validClientCert });
+      const result = await connectAndRequest(server.port, { key: validClientKey, cert: validClientCert }, "localhost");
       console.log("  >>", JSON.stringify(result));
       expect(result.type).toBe("accepted");
     });

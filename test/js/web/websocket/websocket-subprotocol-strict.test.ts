@@ -60,6 +60,77 @@ describe("WebSocket strict RFC 6455 subprotocol handling", () => {
     };
   }
 
+  async function createSplitFrameServer(
+    protocol: string,
+    payload: Buffer,
+  ): Promise<{ port: number; [Symbol.asyncDispose]: () => Promise<void> }> {
+    const server = net.createServer();
+    let port: number;
+
+    await new Promise<void>(resolve => {
+      server.listen(0, () => {
+        port = (server.address() as any).port;
+        resolve();
+      });
+    });
+
+    server.on("connection", socket => {
+      let requestData = "";
+      let upgraded = false;
+
+      socket.on("error", () => {});
+
+      socket.on("data", data => {
+        if (upgraded) return;
+
+        requestData += data.toString("latin1");
+
+        if (!requestData.includes("\r\n\r\n")) {
+          return;
+        }
+
+        upgraded = true;
+
+        const lines = requestData.split("\r\n");
+        let websocketKey = "";
+
+        for (const line of lines) {
+          if (line.startsWith("Sec-WebSocket-Key:")) {
+            websocketKey = line.split(":")[1].trim();
+            break;
+          }
+        }
+
+        const acceptKey = crypto
+          .createHash("sha1")
+          .update(websocketKey + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
+          .digest("base64");
+
+        const response = [
+          "HTTP/1.1 101 Switching Protocols",
+          "Upgrade: websocket",
+          "Connection: Upgrade",
+          `Sec-WebSocket-Accept: ${acceptKey}`,
+          `Sec-WebSocket-Protocol: ${protocol}`,
+          "\r\n",
+        ].join("\r\n");
+
+        socket.write(response);
+
+        const frameHeader = Buffer.from([0x82, 0x7e, payload.length >> 8, payload.length & 0xff]);
+        socket.write(frameHeader);
+        socket.write(payload);
+      });
+    });
+
+    return {
+      port: port!,
+      [Symbol.asyncDispose]: async () => {
+        server.close();
+      },
+    };
+  }
+
   async function expectConnectionFailure(port: number, protocols: string[], expectedCode = 1002) {
     const { promise: closePromise, resolve: resolveClose } = Promise.withResolvers();
 
@@ -187,5 +258,45 @@ describe("WebSocket strict RFC 6455 subprotocol handling", () => {
   it("should handle protocol with dots", async () => {
     await using server = await createTestServer(["Sec-WebSocket-Protocol: com.example.chat"]);
     await expectConnectionSuccess(server.port, ["com.example.chat", "other"], "com.example.chat");
+  });
+
+  it("should keep protocol stable after receiving a split frame", async () => {
+    const protocol = "v1.kernel.websocket.jupyter.org";
+    // 178 bytes fully overwrote the negotiated protocol string before the fix.
+    const payload = Buffer.alloc(178, "A");
+
+    await using server = await createSplitFrameServer(protocol, payload);
+
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    const ws = new WebSocket(`ws://localhost:${server.port}`, [protocol]);
+    ws.binaryType = "arraybuffer";
+
+    let protocolAtOpen = "";
+
+    try {
+      ws.onopen = () => {
+        protocolAtOpen = ws.protocol;
+      };
+
+      ws.onerror = reject;
+
+      ws.onmessage = event => {
+        try {
+          expect(ws.protocol).toBe(protocol);
+          expect(protocolAtOpen).toBe(protocol);
+          expect(event.data).toBeInstanceOf(ArrayBuffer);
+          expect((event.data as ArrayBuffer).byteLength).toBe(payload.length);
+          resolve();
+        } catch (error) {
+          reject(error);
+        } finally {
+          ws.close();
+        }
+      };
+
+      await promise;
+    } finally {
+      ws.close();
+    }
   });
 });

@@ -28,6 +28,7 @@
 #include "JSDOMExceptionHandling.h"
 #include <openssl/err.h>
 #include "ErrorCode.h"
+#include "RedisError.h"
 #include "ErrorStackTrace.h"
 #include "KeyObject.h"
 
@@ -188,6 +189,11 @@ static ErrorCodeCache* errorCache(Zig::GlobalObject* globalObject)
     return static_cast<ErrorCodeCache*>(globalObject->nodeErrorCache());
 }
 
+static bool isRedisErrorName(WTF::ASCIILiteral name)
+{
+    return name == "RedisError"_s;
+}
+
 // clang-format on
 static Structure* createErrorStructure(JSC::VM& vm, JSGlobalObject* globalObject, JSC::ErrorType type, WTF::ASCIILiteral name, WTF::ASCIILiteral code)
 {
@@ -200,6 +206,15 @@ JSObject* ErrorCodeCache::createError(VM& vm, Zig::GlobalObject* globalObject, E
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* cache = errorCache(globalObject);
     const auto& data = errors[static_cast<size_t>(code)];
+    if (isRedisErrorName(data.name)) {
+        auto* createdError = Bun::createRedisErrorInstance(vm, globalObject, message, data.code, options);
+        if (auto* thrown_exception = scope.exception()) [[unlikely]] {
+            (void)scope.tryClearException();
+            return jsCast<JSObject*>(thrown_exception->value());
+        }
+        return createdError;
+    }
+
     if (!cache->internalField(static_cast<unsigned>(code))) {
         auto* structure = createErrorStructure(vm, globalObject, data.type, data.name, data.code);
         cache->internalField(static_cast<unsigned>(code)).set(vm, cache, structure);
@@ -234,6 +249,10 @@ JSObject* createError(VM& vm, JSC::JSGlobalObject* globalObject, ErrorCode code,
 
 JSObject* createError(VM& vm, JSC::JSGlobalObject* globalObject, ErrorCode code, JSValue message)
 {
+    const auto& data = errors[static_cast<size_t>(code)];
+    if (isRedisErrorName(data.name))
+        return Bun::createRedisErrorInstance(vm, globalObject, message, data.code);
+
     if (auto* zigGlobalObject = jsDynamicCast<Zig::GlobalObject*>(globalObject))
         return createError(vm, zigGlobalObject, code, message, jsUndefined());
 

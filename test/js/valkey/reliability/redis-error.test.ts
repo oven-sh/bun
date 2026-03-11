@@ -44,6 +44,7 @@ test("should throw Bun.RedisError for connection failures", async () => {
   } catch (error) {
     expect(error).toBeInstanceOf(Bun.RedisError);
     expect(error).toBeInstanceOf(Error);
+    expect(error.code).toBe("ERR_REDIS_CONNECTION_CLOSED");
   } finally {
     client.close();
   }

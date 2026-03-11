@@ -93,6 +93,8 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
         expect(error).toBeInstanceOf(Bun.RedisError);
         expect(error.code).toBe("ERR_REDIS_CONNECTION_TIMEOUT");
         expect(error.message).toBe("Connection timeout reached after 2ms");
+      } finally {
+        await client.close();
       }
     });
 

@@ -933,6 +933,17 @@ function emitNestedCmake(
   args.push(`-DCMAKE_EXPORT_COMPILE_COMMANDS=ON`);
   args.push(`-DBUILD_SHARED_LIBS=OFF`);
 
+  // Windows MSVC runtime: CMP0091 NEW (CMake 3.15+) uses this property
+  // instead of injecting /MD into CMAKE_<LANG>_FLAGS_<CONFIG>. Without
+  // setting it, CMake defaults to MultiThreadedDLL and appends -MD after
+  // our /MT in CMAKE_C_FLAGS, poisoning vendor libs with
+  // /DEFAULTLIB:msvcrt.lib → link fails with CRT conflict or worse,
+  // silently pulls in the dynamic CRT.
+  if (cfg.windows) {
+    const rt = cfg.debug ? "MultiThreadedDebug" : "MultiThreaded";
+    args.push(`-DCMAKE_MSVC_RUNTIME_LIBRARY=${rt}`);
+  }
+
   // Compiler flags — GLOBAL flags only. These are the dep-safe subset:
   // CPU target, optimization level, debug info, visibility, sections.
   // NO -Werror, NO bun-specific constexpr limits.

@@ -7,172 +7,117 @@
 
 #if OS(DARWIN)
 
-#include <dlfcn.h>
+#include "DarwinFrameworks.h"
 #include <pthread.h>
-#include <string.h>
-
-// We dlopen CoreFoundation at runtime to avoid link-time ObjC dependency.
-// Use void* for all CF types to avoid conflicting with system typedefs.
-static constexpr unsigned int kCFStringEncodingUTF8_ = 0x08000100;
 
 extern "C" int Bun__setProcessTitle(const char* title)
 {
-    // Function pointers loaded via dlopen. Initialize to nullptr so cleanup
-    // is safe if dlopen fails before dlsym.
-    void* (*pCFStringCreateWithCString)(void*, const char*, unsigned int) = nullptr;
-    void (*pCFRelease)(void*) = nullptr;
-    void* (*pCFBundleGetBundleWithIdentifier)(void*) = nullptr;
-    void* (*pCFBundleGetDataPointerForName)(void*, void*) = nullptr;
-    void* (*pCFBundleGetFunctionPointerForName)(void*, void*) = nullptr;
-    void* (*pLSGetCurrentApplicationASN)(void) = nullptr;
-    int (*pLSSetApplicationInformationItem)(int, void*, void*, void*, void**) = nullptr;
-    void* (*pCFBundleGetInfoDictionary)(void*) = nullptr;
-    void* (*pCFBundleGetMainBundle)(void) = nullptr;
-    void* (*pLSApplicationCheckIn)(int, void*) = nullptr;
-    void (*pLSSetApplicationLaunchServicesServerConnectionStatus)(uint64_t, void*) = nullptr;
+    auto* fw = DarwinFrameworks::get();
+    if (!fw)
+        goto fallback;
 
-    void* application_services_handle = NULL;
-    void* core_foundation_handle = NULL;
-    void* launch_services_bundle;
-    void** display_name_key;
-    void* asn;
-    int err;
+    {
+        void* launch_services_bundle;
+        void** display_name_key;
+        void* asn;
+        int err = -1;
 
-    // Track created CF objects for cleanup.
-    void* cfLaunchServicesId = NULL;
-    void* cfGetASN = NULL;
-    void* cfSetInfo = NULL;
-    void* cfDisplayNameKey = NULL;
-    void* cfCheckIn = NULL;
-    void* cfSetConnStatus = NULL;
-    void* cfTitle = NULL;
+        // LaunchServices function pointers resolved from the bundle.
+        void* (*pLSGetCurrentApplicationASN)(void) = nullptr;
+        int (*pLSSetApplicationInformationItem)(int, void*, void*, void*, void**) = nullptr;
+        void* (*pLSApplicationCheckIn)(int, void*) = nullptr;
+        void (*pLSSetApplicationLaunchServicesServerConnectionStatus)(uint64_t, void*) = nullptr;
 
-    err = -1;
-    application_services_handle = dlopen(
-        "/System/Library/Frameworks/ApplicationServices.framework/"
-        "Versions/A/ApplicationServices",
-        RTLD_LAZY | RTLD_LOCAL);
-    core_foundation_handle = dlopen(
-        "/System/Library/Frameworks/CoreFoundation.framework/"
-        "Versions/A/CoreFoundation",
-        RTLD_LAZY | RTLD_LOCAL);
+        // Track created CF objects for cleanup.
+        void* cfLaunchServicesId = nullptr;
+        void* cfGetASN = nullptr;
+        void* cfSetInfo = nullptr;
+        void* cfDisplayNameKey = nullptr;
+        void* cfCheckIn = nullptr;
+        void* cfSetConnStatus = nullptr;
+        void* cfTitle = nullptr;
 
-    if (application_services_handle == NULL || core_foundation_handle == NULL)
-        goto out;
+        cfLaunchServicesId = fw->createCFString("com.apple.LaunchServices");
+        launch_services_bundle = fw->CFBundleGetBundleWithIdentifier(cfLaunchServicesId);
 
-    *(void**)(&pCFStringCreateWithCString) = dlsym(core_foundation_handle, "CFStringCreateWithCString");
-    *(void**)(&pCFRelease) = dlsym(core_foundation_handle, "CFRelease");
-    *(void**)(&pCFBundleGetBundleWithIdentifier) = dlsym(core_foundation_handle, "CFBundleGetBundleWithIdentifier");
-    *(void**)(&pCFBundleGetDataPointerForName) = dlsym(core_foundation_handle, "CFBundleGetDataPointerForName");
-    *(void**)(&pCFBundleGetFunctionPointerForName) = dlsym(core_foundation_handle, "CFBundleGetFunctionPointerForName");
+        if (!launch_services_bundle)
+            goto out;
 
-    if (pCFStringCreateWithCString == NULL
-        || pCFRelease == NULL
-        || pCFBundleGetBundleWithIdentifier == NULL
-        || pCFBundleGetDataPointerForName == NULL
-        || pCFBundleGetFunctionPointerForName == NULL) {
-        goto out;
+        cfGetASN = fw->createCFString("_LSGetCurrentApplicationASN");
+        *(void**)(&pLSGetCurrentApplicationASN) = fw->CFBundleGetFunctionPointerForName(
+            launch_services_bundle, cfGetASN);
+
+        if (!pLSGetCurrentApplicationASN)
+            goto out;
+
+        cfSetInfo = fw->createCFString("_LSSetApplicationInformationItem");
+        *(void**)(&pLSSetApplicationInformationItem) = fw->CFBundleGetFunctionPointerForName(
+            launch_services_bundle, cfSetInfo);
+
+        if (!pLSSetApplicationInformationItem)
+            goto out;
+
+        cfDisplayNameKey = fw->createCFString("_kLSDisplayNameKey");
+        display_name_key = (void**)fw->CFBundleGetDataPointerForName(
+            launch_services_bundle, cfDisplayNameKey);
+
+        if (!display_name_key || !*display_name_key)
+            goto out;
+
+        cfCheckIn = fw->createCFString("_LSApplicationCheckIn");
+        *(void**)(&pLSApplicationCheckIn) = fw->CFBundleGetFunctionPointerForName(
+            launch_services_bundle, cfCheckIn);
+
+        if (!pLSApplicationCheckIn)
+            goto out;
+
+        cfSetConnStatus = fw->createCFString("_LSSetApplicationLaunchServicesServerConnectionStatus");
+        *(void**)(&pLSSetApplicationLaunchServicesServerConnectionStatus) = fw->CFBundleGetFunctionPointerForName(
+            launch_services_bundle, cfSetConnStatus);
+
+        if (!pLSSetApplicationLaunchServicesServerConnectionStatus)
+            goto out;
+
+        pLSSetApplicationLaunchServicesServerConnectionStatus(0, NULL);
+
+        // Check into LaunchServices process manager.
+        pLSApplicationCheckIn(-2,
+            fw->CFBundleGetInfoDictionary(fw->CFBundleGetMainBundle()));
+
+        asn = pLSGetCurrentApplicationASN();
+
+        if (!asn)
+            goto out;
+
+        cfTitle = fw->createCFString(title);
+        if (pLSSetApplicationInformationItem(-2, asn, *display_name_key,
+                cfTitle, NULL)
+            != 0) {
+            goto out;
+        }
+
+        err = 0;
+
+    out:
+        // Always set the pthread name regardless of LaunchServices success.
+        // pthread_setname_np works independently and is useful on headless macOS
+        // (CI, SSH, Docker) where LaunchServices is unavailable.
+        pthread_setname_np(title);
+
+        fw->releaseCF(cfLaunchServicesId);
+        fw->releaseCF(cfGetASN);
+        fw->releaseCF(cfSetInfo);
+        fw->releaseCF(cfDisplayNameKey);
+        fw->releaseCF(cfCheckIn);
+        fw->releaseCF(cfSetConnStatus);
+        fw->releaseCF(cfTitle);
+
+        return err;
     }
 
-#define S(s) pCFStringCreateWithCString(NULL, (s), kCFStringEncodingUTF8_)
-
-    cfLaunchServicesId = S("com.apple.LaunchServices");
-    launch_services_bundle = pCFBundleGetBundleWithIdentifier(cfLaunchServicesId);
-
-    if (launch_services_bundle == NULL)
-        goto out;
-
-    cfGetASN = S("_LSGetCurrentApplicationASN");
-    *(void**)(&pLSGetCurrentApplicationASN) = pCFBundleGetFunctionPointerForName(
-        launch_services_bundle, cfGetASN);
-
-    if (pLSGetCurrentApplicationASN == NULL)
-        goto out;
-
-    cfSetInfo = S("_LSSetApplicationInformationItem");
-    *(void**)(&pLSSetApplicationInformationItem) = pCFBundleGetFunctionPointerForName(
-        launch_services_bundle, cfSetInfo);
-
-    if (pLSSetApplicationInformationItem == NULL)
-        goto out;
-
-    cfDisplayNameKey = S("_kLSDisplayNameKey");
-    display_name_key = (void**)pCFBundleGetDataPointerForName(
-        launch_services_bundle, cfDisplayNameKey);
-
-    if (display_name_key == NULL || *display_name_key == NULL)
-        goto out;
-
-    *(void**)(&pCFBundleGetInfoDictionary) = dlsym(core_foundation_handle, "CFBundleGetInfoDictionary");
-    *(void**)(&pCFBundleGetMainBundle) = dlsym(core_foundation_handle, "CFBundleGetMainBundle");
-
-    if (pCFBundleGetInfoDictionary == NULL || pCFBundleGetMainBundle == NULL)
-        goto out;
-
-    cfCheckIn = S("_LSApplicationCheckIn");
-    *(void**)(&pLSApplicationCheckIn) = pCFBundleGetFunctionPointerForName(
-        launch_services_bundle, cfCheckIn);
-
-    if (pLSApplicationCheckIn == NULL)
-        goto out;
-
-    cfSetConnStatus = S("_LSSetApplicationLaunchServicesServerConnectionStatus");
-    *(void**)(&pLSSetApplicationLaunchServicesServerConnectionStatus) = pCFBundleGetFunctionPointerForName(
-        launch_services_bundle, cfSetConnStatus);
-
-    if (pLSSetApplicationLaunchServicesServerConnectionStatus == NULL)
-        goto out;
-
-    pLSSetApplicationLaunchServicesServerConnectionStatus(0, NULL);
-
-    // Check into LaunchServices process manager.
-    pLSApplicationCheckIn(-2,
-        pCFBundleGetInfoDictionary(pCFBundleGetMainBundle()));
-
-    asn = pLSGetCurrentApplicationASN();
-
-    if (asn == NULL)
-        goto out;
-
-    cfTitle = S(title);
-    if (pLSSetApplicationInformationItem(-2, asn, *display_name_key,
-            cfTitle, NULL)
-        != 0) {
-        goto out;
-    }
-
-    err = 0;
-
-#undef S
-
-out:
-    // Always set the pthread name regardless of LaunchServices success.
-    // pthread_setname_np works independently and is useful on headless macOS
-    // (CI, SSH, Docker) where LaunchServices is unavailable.
+fallback:
     pthread_setname_np(title);
-    if (pCFRelease != NULL) {
-        if (cfLaunchServicesId != NULL)
-            pCFRelease(cfLaunchServicesId);
-        if (cfGetASN != NULL)
-            pCFRelease(cfGetASN);
-        if (cfSetInfo != NULL)
-            pCFRelease(cfSetInfo);
-        if (cfDisplayNameKey != NULL)
-            pCFRelease(cfDisplayNameKey);
-        if (cfCheckIn != NULL)
-            pCFRelease(cfCheckIn);
-        if (cfSetConnStatus != NULL)
-            pCFRelease(cfSetConnStatus);
-        if (cfTitle != NULL)
-            pCFRelease(cfTitle);
-    }
-
-    if (core_foundation_handle != NULL)
-        dlclose(core_foundation_handle);
-    if (application_services_handle != NULL)
-        dlclose(application_services_handle);
-
-    return err;
+    return -1;
 }
 
 #elif OS(LINUX)

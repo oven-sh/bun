@@ -123,8 +123,6 @@ extern "C" ssize_t posix_spawn_bun(
     sigset_t blockall, oldmask;
     int res = 0, cs = 0;
 
-#if OS(DARWIN)
-    // On macOS, we use fork() which requires a self-pipe trick to detect exec failures.
     // Create a pipe for child-to-parent error communication.
     // The write end has O_CLOEXEC so it's automatically closed on successful exec.
     // If exec fails, child writes errno to the pipe.
@@ -134,28 +132,24 @@ extern "C" ssize_t posix_spawn_bun(
     }
     // Set cloexec on write end so it closes on successful exec
     fcntl(errpipe[1], F_SETFD, FD_CLOEXEC);
-#endif
 
     sigfillset(&blockall);
     sigprocmask(SIG_SETMASK, &blockall, &oldmask);
     pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &cs);
 
 #if OS(LINUX)
-    // On Linux, use vfork() for performance. The parent is suspended until
-    // the child calls exec or _exit, so we can detect exec failure via the
-    // child's exit status without needing the self-pipe trick.
-    // While POSIX restricts vfork children to only calling _exit() or exec*(),
-    // Linux's vfork() is more permissive and allows the setup we need
-    // (setsid, ioctl, dup2, etc.) before exec.
-    volatile int child_errno = 0;
-    pid_t child = vfork();
+    // On Linux, use fork() instead of vfork(). vfork() suspends the parent until
+    // the child calls exec or _exit, which changes observable process spawn timing
+    // (e.g., a second spawn() call won't start until the first child has exec'd).
+    // This differs from Node.js behavior and breaks patterns like piping between
+    // concurrently spawned processes (e.g., ps ax | grep ssh).
+    pid_t child = fork();
 #else
-    // On macOS, we must use fork() because vfork() is more strictly enforced.
-    // This code path should only be used for PTY spawns on macOS.
+    // On macOS, this code path is only used for PTY spawns.
+    // For non-PTY spawns, macOS uses system posix_spawn (kernel fast-path).
     pid_t child = fork();
 #endif
 
-#if OS(DARWIN)
     const auto childFailed = [&]() -> ssize_t {
         int err = errno;
         // Write errno to pipe so parent can read it
@@ -167,18 +161,6 @@ extern "C" ssize_t posix_spawn_bun(
         // should never be reached
         return -1;
     };
-#else
-    const auto childFailed = [&]() -> ssize_t {
-        // With vfork(), we share memory with the parent, so we can communicate
-        // the error directly via a volatile variable. The parent will see this
-        // value after we call _exit().
-        child_errno = errno;
-        rawExit(127);
-
-        // should never be reached
-        return -1;
-    };
-#endif
 
     const auto startChild = [&]() -> ssize_t {
         sigset_t childmask = oldmask;
@@ -294,22 +276,44 @@ extern "C" ssize_t posix_spawn_bun(
     };
 
     if (child == 0) {
-#if OS(DARWIN)
         // Close read end in child
         close(errpipe[0]);
-#endif
         return startChild();
     }
 
-#if OS(DARWIN)
-    // macOS fork() path: use self-pipe trick to detect exec failure
     // Parent: close write end
     close(errpipe[1]);
 
     if (child != -1) {
-        // Try to read error from child. The pipe read end is blocking.
-        // - If exec succeeds: write end closes due to O_CLOEXEC, read() returns 0
-        // - If exec fails: child writes errno, then exits, read() returns sizeof(int)
+#if OS(LINUX)
+        // On Linux, do a non-blocking read to avoid suspending the parent.
+        // This matches Node.js/libuv behavior where spawn() returns immediately
+        // after fork(), allowing concurrent process creation.
+        // If exec hasn't completed yet, we return the PID immediately.
+        // If exec fails later, the child exits with code 127.
+        fcntl(errpipe[0], F_SETFL, fcntl(errpipe[0], F_GETFL) | O_NONBLOCK);
+
+        int child_err = 0;
+        ssize_t n = read(errpipe[0], &child_err, sizeof(child_err));
+        close(errpipe[0]);
+
+        if (n == sizeof(child_err)) {
+            // Exec already failed - child wrote errno before we got here
+            waitpid(child, NULL, 0);
+            res = child_err;
+        } else {
+            // Either exec succeeded (n == 0), or exec hasn't happened yet
+            // (n == -1 && errno == EAGAIN). In both cases, return the PID.
+            // If exec later fails, the child exits with status 127.
+            res = 0;
+            if (pid) {
+                *pid = child;
+            }
+        }
+#else
+        // On macOS (PTY spawns only), use blocking read for exec error detection.
+        // This is acceptable because PTY spawns don't typically need concurrent
+        // process creation, and macOS uses system posix_spawn for non-PTY spawns.
         int child_err = 0;
         ssize_t n;
 
@@ -338,32 +342,12 @@ extern "C" ssize_t posix_spawn_bun(
             waitpid(child, NULL, 0);
             res = (n == -1) ? errno : EIO;
         }
+#endif
     } else {
         // fork() failed
         close(errpipe[0]);
         res = errno;
     }
-#else
-    // Linux vfork() path: parent resumes after child calls exec or _exit
-    // We can detect exec failure via the volatile child_errno variable
-    if (child != -1) {
-        if (child_errno != 0) {
-            // Child failed to exec - it set child_errno and called _exit()
-            // Reap the zombie child process
-            wait4(child, NULL, 0, NULL);
-            res = child_errno;
-        } else {
-            // Exec succeeded
-            res = 0;
-            if (pid) {
-                *pid = child;
-            }
-        }
-    } else {
-        // vfork() failed
-        res = errno;
-    }
-#endif
 
     sigprocmask(SIG_SETMASK, &oldmask, 0);
     pthread_setcancelstate(cs, 0);

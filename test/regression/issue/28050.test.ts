@@ -13,7 +13,9 @@ test("process.title setter updates OS process title on Linux", async () => {
       // On Linux, prctl(PR_SET_NAME) is limited to 16 chars including null.
       // Read /proc/self/comm to verify the OS-level title was set.
       const fs = require("fs");
-      const comm = fs.readFileSync("/proc/self/comm", "utf8").trim();
+      const comm = process.platform === "linux"
+        ? fs.readFileSync("/proc/self/comm", "utf8").trim()
+        : null;
       console.log(JSON.stringify({ comm, jsTitle: process.title }));
       `,
     ],

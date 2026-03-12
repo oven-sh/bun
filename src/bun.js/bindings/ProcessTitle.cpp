@@ -28,6 +28,7 @@ extern "C" int Bun__setProcessTitle(const char* title)
 {
     // Function pointers loaded via dlopen.
     CFStringRef (*pCFStringCreateWithCString)(CFAllocatorRef, const char*, CFStringEncoding);
+    void (*pCFRelease)(CFTypeRef);
     CFBundleRef (*pCFBundleGetBundleWithIdentifier)(CFStringRef);
     void* (*pCFBundleGetDataPointerForName)(CFBundleRef, CFStringRef);
     void* (*pCFBundleGetFunctionPointerForName)(CFBundleRef, CFStringRef);
@@ -45,6 +46,15 @@ extern "C" int Bun__setProcessTitle(const char* title)
     CFTypeRef asn;
     int err;
 
+    // Track created CFStringRef objects for cleanup.
+    CFStringRef cfLaunchServicesId = NULL;
+    CFStringRef cfGetASN = NULL;
+    CFStringRef cfSetInfo = NULL;
+    CFStringRef cfDisplayNameKey = NULL;
+    CFStringRef cfCheckIn = NULL;
+    CFStringRef cfSetConnStatus = NULL;
+    CFStringRef cfTitle = NULL;
+
     err = -1;
     application_services_handle = dlopen(
         "/System/Library/Frameworks/ApplicationServices.framework/"
@@ -59,11 +69,13 @@ extern "C" int Bun__setProcessTitle(const char* title)
         goto out;
 
     *(void**)(&pCFStringCreateWithCString) = dlsym(core_foundation_handle, "CFStringCreateWithCString");
+    *(void**)(&pCFRelease) = dlsym(core_foundation_handle, "CFRelease");
     *(void**)(&pCFBundleGetBundleWithIdentifier) = dlsym(core_foundation_handle, "CFBundleGetBundleWithIdentifier");
     *(void**)(&pCFBundleGetDataPointerForName) = dlsym(core_foundation_handle, "CFBundleGetDataPointerForName");
     *(void**)(&pCFBundleGetFunctionPointerForName) = dlsym(core_foundation_handle, "CFBundleGetFunctionPointerForName");
 
     if (pCFStringCreateWithCString == NULL
+        || pCFRelease == NULL
         || pCFBundleGetBundleWithIdentifier == NULL
         || pCFBundleGetDataPointerForName == NULL
         || pCFBundleGetFunctionPointerForName == NULL) {
@@ -72,25 +84,29 @@ extern "C" int Bun__setProcessTitle(const char* title)
 
 #define S(s) pCFStringCreateWithCString(NULL, (s), kCFStringEncodingUTF8)
 
-    launch_services_bundle = pCFBundleGetBundleWithIdentifier(S("com.apple.LaunchServices"));
+    cfLaunchServicesId = S("com.apple.LaunchServices");
+    launch_services_bundle = pCFBundleGetBundleWithIdentifier(cfLaunchServicesId);
 
     if (launch_services_bundle == NULL)
         goto out;
 
+    cfGetASN = S("_LSGetCurrentApplicationASN");
     *(void**)(&pLSGetCurrentApplicationASN) = pCFBundleGetFunctionPointerForName(
-        launch_services_bundle, S("_LSGetCurrentApplicationASN"));
+        launch_services_bundle, cfGetASN);
 
     if (pLSGetCurrentApplicationASN == NULL)
         goto out;
 
+    cfSetInfo = S("_LSSetApplicationInformationItem");
     *(void**)(&pLSSetApplicationInformationItem) = pCFBundleGetFunctionPointerForName(
-        launch_services_bundle, S("_LSSetApplicationInformationItem"));
+        launch_services_bundle, cfSetInfo);
 
     if (pLSSetApplicationInformationItem == NULL)
         goto out;
 
+    cfDisplayNameKey = S("_kLSDisplayNameKey");
     display_name_key = (CFStringRef*)pCFBundleGetDataPointerForName(
-        launch_services_bundle, S("_kLSDisplayNameKey"));
+        launch_services_bundle, cfDisplayNameKey);
 
     if (display_name_key == NULL || *display_name_key == NULL)
         goto out;
@@ -101,15 +117,16 @@ extern "C" int Bun__setProcessTitle(const char* title)
     if (pCFBundleGetInfoDictionary == NULL || pCFBundleGetMainBundle == NULL)
         goto out;
 
+    cfCheckIn = S("_LSApplicationCheckIn");
     *(void**)(&pLSApplicationCheckIn) = pCFBundleGetFunctionPointerForName(
-        launch_services_bundle, S("_LSApplicationCheckIn"));
+        launch_services_bundle, cfCheckIn);
 
     if (pLSApplicationCheckIn == NULL)
         goto out;
 
+    cfSetConnStatus = S("_LSSetApplicationLaunchServicesServerConnectionStatus");
     *(void**)(&pLSSetApplicationLaunchServicesServerConnectionStatus) = pCFBundleGetFunctionPointerForName(
-        launch_services_bundle,
-        S("_LSSetApplicationLaunchServicesServerConnectionStatus"));
+        launch_services_bundle, cfSetConnStatus);
 
     if (pLSSetApplicationLaunchServicesServerConnectionStatus == NULL)
         goto out;
@@ -125,8 +142,9 @@ extern "C" int Bun__setProcessTitle(const char* title)
     if (asn == NULL)
         goto out;
 
+    cfTitle = S(title);
     if (pLSSetApplicationInformationItem(-2, asn, *display_name_key,
-            S(title), NULL)
+            cfTitle, NULL)
         != noErr) {
         goto out;
     }
@@ -138,6 +156,23 @@ extern "C" int Bun__setProcessTitle(const char* title)
 #undef S
 
 out:
+    if (pCFRelease != NULL) {
+        if (cfLaunchServicesId != NULL)
+            pCFRelease(cfLaunchServicesId);
+        if (cfGetASN != NULL)
+            pCFRelease(cfGetASN);
+        if (cfSetInfo != NULL)
+            pCFRelease(cfSetInfo);
+        if (cfDisplayNameKey != NULL)
+            pCFRelease(cfDisplayNameKey);
+        if (cfCheckIn != NULL)
+            pCFRelease(cfCheckIn);
+        if (cfSetConnStatus != NULL)
+            pCFRelease(cfSetConnStatus);
+        if (cfTitle != NULL)
+            pCFRelease(cfTitle);
+    }
+
     if (core_foundation_handle != NULL)
         dlclose(core_foundation_handle);
     if (application_services_handle != NULL)

@@ -351,7 +351,13 @@ pub const StatWatcher = struct {
     /// If the scheduler is not using this, free instantly, otherwise mark for being freed.
     pub fn finalize(this: *StatWatcher) void {
         log("Finalize\n", .{});
-        this.closed = true;
+        // Clean up all JS-thread-sensitive state now, while we're on the JS thread.
+        // close() clears last_jsvalue, unrefs poll_ref, and sets closed=true.
+        // We must also fully free the HandleSet Impl via deinit(), because the
+        // scheduler's WorkPool thread may later call deref() -> deinit() from
+        // a non-JS thread, and HandleSet is not thread-safe.
+        this.close();
+        this.last_jsvalue.deinit();
         this.scheduler.deref();
         this.deref(); // but don't deinit until the scheduler drops its reference
     }

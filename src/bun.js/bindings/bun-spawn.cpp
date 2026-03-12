@@ -152,6 +152,10 @@ extern "C" ssize_t posix_spawn_bun(
 
     const auto childFailed = [&]() -> ssize_t {
         int err = errno;
+        // Ignore SIGPIPE before writing to the error pipe. With fork() and
+        // non-blocking reads, the parent may have already closed the read end,
+        // which would generate SIGPIPE and kill the child before rawExit(127).
+        signal(SIGPIPE, SIG_IGN);
         // Write errno to pipe so parent can read it
         (void)write(errpipe[1], &err, sizeof(err));
         close(errpipe[1]);
@@ -295,20 +299,30 @@ extern "C" ssize_t posix_spawn_bun(
 
         int child_err = 0;
         ssize_t n = read(errpipe[0], &child_err, sizeof(child_err));
+        int read_errno = errno;
         close(errpipe[0]);
 
         if (n == sizeof(child_err)) {
             // Exec already failed - child wrote errno before we got here
             waitpid(child, NULL, 0);
             res = child_err;
-        } else {
-            // Either exec succeeded (n == 0), or exec hasn't happened yet
-            // (n == -1 && errno == EAGAIN). In both cases, return the PID.
+        } else if (n == 0) {
+            // Exec succeeded - pipe write end closed via O_CLOEXEC
+            res = 0;
+            if (pid) {
+                *pid = child;
+            }
+        } else if (n == -1 && (read_errno == EAGAIN || read_errno == EWOULDBLOCK)) {
+            // Exec hasn't happened yet - return PID immediately.
             // If exec later fails, the child exits with status 127.
             res = 0;
             if (pid) {
                 *pid = child;
             }
+        } else {
+            // Unexpected read error or partial read - treat as parent-side error
+            waitpid(child, NULL, 0);
+            res = (n == -1) ? read_errno : EIO;
         }
 #else
         // On macOS (PTY spawns only), use blocking read for exec error detection.

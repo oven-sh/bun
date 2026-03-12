@@ -15,6 +15,7 @@
 
 #if OS(LINUX)
 #include <sys/syscall.h>
+#include <poll.h>
 #endif
 
 extern char** environ;
@@ -290,39 +291,60 @@ extern "C" ssize_t posix_spawn_bun(
 
     if (child != -1) {
 #if OS(LINUX)
-        // On Linux, do a non-blocking read to avoid suspending the parent.
-        // This matches Node.js/libuv behavior where spawn() returns immediately
-        // after fork(), allowing concurrent process creation.
-        // If exec hasn't completed yet, we return the PID immediately.
-        // If exec fails later, the child exits with code 127.
-        fcntl(errpipe[0], F_SETFL, fcntl(errpipe[0], F_GETFL) | O_NONBLOCK);
+        // On Linux, use poll() with a short timeout to detect exec errors
+        // without blocking indefinitely like vfork() did. This catches fast
+        // failures (ENOENT, EACCES, bad cwd) while still allowing the parent
+        // to return for concurrent process creation patterns.
+        //
+        // The 50ms timeout is a maximum - poll returns immediately once exec
+        // succeeds (O_CLOEXEC closes the pipe) or fails (child writes errno).
+        // For typical spawns of small binaries, this completes in <5ms.
+        // The timeout only matters for very large binaries where fork()'s COW
+        // page table setup delays the child's execution. Unlike vfork() which
+        // blocked indefinitely, this bounded wait preserves concurrency for
+        // patterns like `ps ax | grep ssh`.
+        {
+            struct pollfd pfd = { .fd = errpipe[0], .events = POLLIN, .revents = 0 };
+            int poll_res = poll(&pfd, 1, 50);
 
-        int child_err = 0;
-        ssize_t n = read(errpipe[0], &child_err, sizeof(child_err));
-        int read_errno = errno;
-        close(errpipe[0]);
+            int child_err = 0;
+            ssize_t n;
 
-        if (n == sizeof(child_err)) {
-            // Exec already failed - child wrote errno before we got here
-            waitpid(child, NULL, 0);
-            res = child_err;
-        } else if (n == 0) {
-            // Exec succeeded - pipe write end closed via O_CLOEXEC
-            res = 0;
-            if (pid) {
-                *pid = child;
+            if (poll_res > 0) {
+                // Pipe is readable: either exec error data or EOF (exec succeeded)
+                n = read(errpipe[0], &child_err, sizeof(child_err));
+            } else {
+                // Timeout (poll_res == 0) or poll error (poll_res == -1):
+                // exec still in progress. Return PID immediately.
+                // If exec later fails, the child exits with status 127.
+                n = -1;
+                errno = EAGAIN;
             }
-        } else if (n == -1 && (read_errno == EAGAIN || read_errno == EWOULDBLOCK)) {
-            // Exec hasn't happened yet - return PID immediately.
-            // If exec later fails, the child exits with status 127.
-            res = 0;
-            if (pid) {
-                *pid = child;
+
+            int read_errno = errno;
+            close(errpipe[0]);
+
+            if (n == sizeof(child_err)) {
+                // Exec already failed - child wrote errno before timeout
+                waitpid(child, NULL, 0);
+                res = child_err;
+            } else if (n == 0) {
+                // Exec succeeded - pipe write end closed via O_CLOEXEC
+                res = 0;
+                if (pid) {
+                    *pid = child;
+                }
+            } else if (n == -1 && (read_errno == EAGAIN || read_errno == EWOULDBLOCK)) {
+                // Exec still in progress after timeout - return PID
+                res = 0;
+                if (pid) {
+                    *pid = child;
+                }
+            } else {
+                // Unexpected read error or partial read
+                waitpid(child, NULL, 0);
+                res = (n == -1) ? read_errno : EIO;
             }
-        } else {
-            // Unexpected read error or partial read - treat as parent-side error
-            waitpid(child, NULL, 0);
-            res = (n == -1) ? read_errno : EIO;
         }
 #else
         // On macOS (PTY spawns only), use blocking read for exec error detection.

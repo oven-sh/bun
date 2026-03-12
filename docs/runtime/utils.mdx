@@ -894,16 +894,16 @@ Slice a string by visible column width, preserving ANSI escape codes. Like `Stri
 import { sliceAnsi } from "bun";
 
 // Plain text slicing (works like String.prototype.slice)
-sliceAnsi("hello world", 0, 5);  // "hello"
+sliceAnsi("hello world", 0, 5); // "hello"
 sliceAnsi("hello world", 6, 11); // "world"
 
 // Preserves ANSI color codes
 sliceAnsi("\x1b[31mhello\x1b[39m", 1, 4); // "\x1b[31mell\x1b[39m"
 
 // Negative indices work like String.prototype.slice
-sliceAnsi("hello", -2);      // "lo"
-sliceAnsi("hello", 0, -1);   // "hell"
-sliceAnsi("hello", -3, -1);  // "ll"
+sliceAnsi("hello", -2); // "lo"
+sliceAnsi("hello", 0, -1); // "hell"
+sliceAnsi("hello", -3, -1); // "ll"
 ```
 
 ### CJK and full-width characters
@@ -912,25 +912,25 @@ CJK (Chinese, Japanese, Korean) characters are counted as width 2, matching how 
 
 ```ts
 // CJK characters (width 2 each)
-Bun.sliceAnsi("你好世界", 0, 4);  // "你好" (2 chars × 2 width = 4)
-Bun.sliceAnsi("你好世界", 4, 8);  // "世界"
+Bun.sliceAnsi("你好世界", 0, 4); // "你好" (2 chars × 2 width = 4)
+Bun.sliceAnsi("你好世界", 4, 8); // "世界"
 
 // Mixed ASCII and CJK
-Bun.sliceAnsi("a你b好c", 0, 1);  // "a"
-Bun.sliceAnsi("a你b好c", 1, 3);  // "你" (width 2)
-Bun.sliceAnsi("a你b好c", 3, 4);  // "b"
+Bun.sliceAnsi("a你b好c", 0, 1); // "a"
+Bun.sliceAnsi("a你b好c", 1, 3); // "你" (width 2)
+Bun.sliceAnsi("a你b好c", 3, 4); // "b"
 
 // Japanese text
-Bun.sliceAnsi("日本語テスト", 0, 4);  // "日本"
+Bun.sliceAnsi("日本語テスト", 0, 4); // "日本"
 
 // Korean text
-Bun.sliceAnsi("한국어", 0, 2);  // "한"
-Bun.sliceAnsi("한국어", 2, 4);  // "국"
-Bun.sliceAnsi("한국어", 4, 6);  // "어"
+Bun.sliceAnsi("한국어", 0, 2); // "한"
+Bun.sliceAnsi("한국어", 2, 4); // "국"
+Bun.sliceAnsi("한국어", 4, 6); // "어"
 
 // Colored CJK text (styles preserved)
-Bun.sliceAnsi("\x1b[31m你好\x1b[39m世界", 0, 4);  // "\x1b[31m你好\x1b[39m"
-Bun.sliceAnsi("\x1b[31m你好\x1b[39m世界", 2, 6);  // "\x1b[31m好\x1b[39m世"
+Bun.sliceAnsi("\x1b[31m你好\x1b[39m世界", 0, 4); // "\x1b[31m你好\x1b[39m"
+Bun.sliceAnsi("\x1b[31m你好\x1b[39m世界", 2, 6); // "\x1b[31m好\x1b[39m世"
 ```
 
 ### Emoji handling
@@ -939,23 +939,23 @@ Emoji and grapheme clusters are handled correctly, never splitting multi-codepoi
 
 ```ts
 // Basic emoji (width 2)
-Bun.sliceAnsi("👋hello", 0, 2);  // "👋"
-Bun.sliceAnsi("👋hello", 2, 7);  // "hello"
+Bun.sliceAnsi("👋hello", 0, 2); // "👋"
+Bun.sliceAnsi("👋hello", 2, 7); // "hello"
 
 // Emoji with skin tone modifier (single grapheme, width 2)
-Bun.sliceAnsi("👋🏽hello", 0, 2);  // "👋🏽"
+Bun.sliceAnsi("👋🏽hello", 0, 2); // "👋🏽"
 
 // Flag emoji (regional indicators, width 2)
-Bun.sliceAnsi("🇺🇸hello", 0, 2);  // "🇺🇸"
+Bun.sliceAnsi("🇺🇸hello", 0, 2); // "🇺🇸"
 
 // ZWJ family emoji (width 2, never split)
-Bun.sliceAnsi("👨‍👩‍👧‍👦hello", 0, 2);  // "👨‍👩‍👧‍👦"
-Bun.sliceAnsi("👨‍👩‍👧‍👦hello", 2, 7);  // "hello"
+Bun.sliceAnsi("👨‍👩‍👧‍👦hello", 0, 2); // "👨‍👩‍👧‍👦"
+Bun.sliceAnsi("👨‍👩‍👧‍👦hello", 2, 7); // "hello"
 
 // Multiple emoji
-Bun.sliceAnsi("👋🎉🚀", 0, 2);  // "👋"
-Bun.sliceAnsi("👋🎉🚀", 2, 4);  // "🎉"
-Bun.sliceAnsi("👋🎉🚀", 4, 6);  // "🚀"
+Bun.sliceAnsi("👋🎉🚀", 0, 2); // "👋"
+Bun.sliceAnsi("👋🎉🚀", 2, 4); // "🎉"
+Bun.sliceAnsi("👋🎉🚀", 4, 6); // "🚀"
 ```
 
 ### Text truncation with ellipsis
@@ -964,14 +964,14 @@ Use the `ellipsis` option to add an ellipsis when content is cut. This makes `Bu
 
 ```ts
 // Truncate from end
-Bun.sliceAnsi("unicorn", 0, 4, "…");      // "uni…"
-Bun.sliceAnsi("unicorn", 0, 4, "...");    // "u..."
+Bun.sliceAnsi("unicorn", 0, 4, "…"); // "uni…"
+Bun.sliceAnsi("unicorn", 0, 4, "..."); // "u..."
 
 // Truncate from start (negative index)
-Bun.sliceAnsi("unicorn", -4, undefined, "…");  // "…orn"
+Bun.sliceAnsi("unicorn", -4, undefined, "…"); // "…orn"
 
 // The ellipsis counts against the visible-width budget
-Bun.sliceAnsi("hello world", 0, 8, "…");  // "hello w…" (7 chars + 1 ellipsis = 8)
+Bun.sliceAnsi("hello world", 0, 8, "…"); // "hello w…" (7 chars + 1 ellipsis = 8)
 
 // Ellipsis inherits active styles (colors, bold, etc.)
 Bun.sliceAnsi("\x1b[31mhello world\x1b[39m", 0, 6, "…");
@@ -984,19 +984,19 @@ Negative indices count from the end of the string, just like `String.prototype.s
 
 ```ts
 // Negative start
-Bun.sliceAnsi("hello world", -5);      // "world"
-Bun.sliceAnsi("hello world", -11);     // "hello world"
+Bun.sliceAnsi("hello world", -5); // "world"
+Bun.sliceAnsi("hello world", -11); // "hello world"
 
 // Negative end
-Bun.sliceAnsi("hello world", 0, -6);   // "hello"
-Bun.sliceAnsi("hello world", 0, -1);   // "hello worl"
+Bun.sliceAnsi("hello world", 0, -6); // "hello"
+Bun.sliceAnsi("hello world", 0, -1); // "hello worl"
 
 // Both negative
-Bun.sliceAnsi("hello world", -5, -1);  // "worl"
+Bun.sliceAnsi("hello world", -5, -1); // "worl"
 
 // Works with CJK (remember: width 2 per character)
-Bun.sliceAnsi("你好世界", -4);          // "世界"
-Bun.sliceAnsi("你好世界", 0, -4);       // "你好"
+Bun.sliceAnsi("你好世界", -4); // "世界"
+Bun.sliceAnsi("你好世界", 0, -4); // "你好"
 ```
 
 ### Options

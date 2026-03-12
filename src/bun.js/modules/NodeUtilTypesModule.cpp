@@ -14,6 +14,10 @@
 #include <JavaScriptCore/ErrorPrototype.h>
 #include <JavaScriptCore/GeneratorFunctionPrototype.h>
 #include <JavaScriptCore/JSArrayBuffer.h>
+#include <JavaScriptCore/JSWeakMap.h>
+#include <JavaScriptCore/JSWeakSet.h>
+#include <JavaScriptCore/WeakMapImpl.h>
+#include <JavaScriptCore/WeakMapImplInlines.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include "ZigGeneratedClasses.h"
 #include "JSKeyObject.h"
@@ -461,12 +465,58 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsEventTarget,
     return JSValue::encode(jsBoolean(cell->inherits<WebCore::JSEventTarget>()));
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunctionGetWeakMapEntries,
+    (JSC::JSGlobalObject * globalObject,
+        JSC::CallFrame* callframe))
+{
+    if (callframe->argumentCount() < 1)
+        return JSValue::encode(constructEmptyArray(globalObject, nullptr, 0));
+
+    JSValue value = callframe->uncheckedArgument(0);
+    if (!value.isCell() || value.asCell()->type() != JSWeakMapType)
+        return JSValue::encode(constructEmptyArray(globalObject, nullptr, 0));
+
+    JSWeakMap* weakMap = jsCast<JSWeakMap*>(value.asCell());
+    MarkedArgumentBuffer snapshot;
+    weakMap->takeSnapshot(snapshot);
+
+    // takeSnapshot returns interleaved [key, value, key, value, ...]
+    size_t size = snapshot.size();
+    JSArray* result = constructEmptyArray(globalObject, nullptr, size);
+    for (size_t i = 0; i < size; ++i) {
+        result->putDirectIndex(globalObject, i, snapshot.at(i));
+    }
+    return JSValue::encode(result);
+}
+JSC_DEFINE_HOST_FUNCTION(jsFunctionGetWeakSetEntries,
+    (JSC::JSGlobalObject * globalObject,
+        JSC::CallFrame* callframe))
+{
+    if (callframe->argumentCount() < 1)
+        return JSValue::encode(constructEmptyArray(globalObject, nullptr, 0));
+
+    JSValue value = callframe->uncheckedArgument(0);
+    if (!value.isCell() || value.asCell()->type() != JSWeakSetType)
+        return JSValue::encode(constructEmptyArray(globalObject, nullptr, 0));
+
+    JSWeakSet* weakSet = jsCast<JSWeakSet*>(value.asCell());
+    MarkedArgumentBuffer snapshot;
+    weakSet->takeSnapshot(snapshot);
+
+    size_t size = snapshot.size();
+    JSArray* result = constructEmptyArray(globalObject, nullptr, size);
+    for (size_t i = 0; i < size; ++i) {
+        result->putDirectIndex(globalObject, i, snapshot.at(i));
+    }
+    return JSValue::encode(result);
+}
+
 namespace Zig {
 
 // Hardcoded module "node:util/types"
 DEFINE_NATIVE_MODULE_NOINLINE(NodeUtilTypes)
 {
-    INIT_NATIVE_MODULE(44);
+    INIT_NATIVE_MODULE(46);
 
     putNativeFn(Identifier::fromString(vm, "isExternal"_s), jsFunctionIsExternal);
     putNativeFn(Identifier::fromString(vm, "isDate"_s), jsFunctionIsDate);
@@ -512,6 +562,8 @@ DEFINE_NATIVE_MODULE_NOINLINE(NodeUtilTypes)
     putNativeFn(Identifier::fromString(vm, "isKeyObject"_s), jsFunctionIsKeyObject);
     putNativeFn(Identifier::fromString(vm, "isCryptoKey"_s), jsFunctionIsCryptoKey);
     putNativeFn(Identifier::fromString(vm, "isEventTarget"_s), jsFunctionIsEventTarget);
+    putNativeFn(Identifier::fromString(vm, "getWeakMapEntries"_s), jsFunctionGetWeakMapEntries);
+    putNativeFn(Identifier::fromString(vm, "getWeakSetEntries"_s), jsFunctionGetWeakSetEntries);
 
     RETURN_NATIVE_MODULE();
 }

@@ -197,6 +197,8 @@ const {
   isSetIterator,
   isWeakMap,
   isWeakSet,
+  getWeakMapEntries,
+  getWeakSetEntries,
   isRegExp,
   isDate,
   isTypedArray,
@@ -2718,9 +2720,8 @@ function previewEntries(val, isIterator = false) {
     // perhaps we should add support for other iterators in the future? (e.g. ArrayIterator and StringIterator)
     else throw new Error("previewEntries(): Invalid iterator received");
   }
-  // TODO(bun): are there any JSC APIs for viewing the contents of these in JS?
-  if (isWeakMap(val)) return [];
-  if (isWeakSet(val)) return [];
+  if (isWeakMap(val)) return getWeakMapEntries(val);
+  if (isWeakSet(val)) return getWeakSetEntries(val);
   else throw new Error("previewEntries(): Invalid object received");
 }
 function internalGetConstructorName(val) {

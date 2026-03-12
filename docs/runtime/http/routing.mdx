@@ -218,9 +218,13 @@ You can send part of a file using the [`slice(start, end)`](https://developer.mo
 ```ts
 Bun.serve({
   fetch(req) {
+    const bigFile = Bun.file("./big-video.mp4");
+
     // parse `Range` header (supports "bytes=N-M" and "bytes=N-" forms)
-    const [startStr = "0", endStr] = req.headers
-      .get("Range") // "bytes=0-100"
+    const range = req.headers.get("Range");
+    if (!range) return new Response(bigFile);
+
+    const [startStr = "0", endStr] = range
       .split("=") // ["bytes", "0-100"]
       .at(-1) // "0-100"
       .split("-"); // ["0", "100"]
@@ -229,8 +233,6 @@ Bun.serve({
     // Range end is inclusive, but slice() end is exclusive
     const end = endStr ? Number(endStr) + 1 : undefined;
 
-    // return a slice of the file
-    const bigFile = Bun.file("./big-video.mp4");
     return new Response(bigFile.slice(start, end));
   },
 });

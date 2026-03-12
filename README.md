@@ -70,13 +70,13 @@ docker run --rm --init --ulimit memlock=-1:-1 oven/bun
 
 ### Upgrade
 
-To upgrade to the latest version of Bun, run:
+To upgrade to the latest version of Bun, run this command:
 
 ```sh
 bun upgrade
 ```
 
-Bun automatically releases a canary build on every commit to `main`. To upgrade to the latest canary build, run:
+Bun automatically releases a canary build on every commit to `main`. To upgrade to the latest canary build, run this command:
 
 ```sh
 bun upgrade --canary

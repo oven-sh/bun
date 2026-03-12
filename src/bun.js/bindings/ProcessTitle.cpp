@@ -140,13 +140,15 @@ extern "C" int Bun__setProcessTitle(const char* title)
         goto out;
     }
 
-    // Also set the pthread name (shows in debuggers, limited to 64 chars).
-    pthread_setname_np(title);
     err = 0;
 
 #undef S
 
 out:
+    // Always set the pthread name regardless of LaunchServices success.
+    // pthread_setname_np works independently and is useful on headless macOS
+    // (CI, SSH, Docker) where LaunchServices is unavailable.
+    pthread_setname_np(title);
     if (pCFRelease != NULL) {
         if (cfLaunchServicesId != NULL)
             pCFRelease(cfLaunchServicesId);

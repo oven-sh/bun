@@ -205,9 +205,10 @@ describe("fs.watchFile", () => {
   // WorkPool thread can call deinit(), otherwise HandleSet::deallocate() runs
   // on the WorkPool thread and corrupts the GC handle linked list.
   test("no crash when native handle is GC'd without close()", async () => {
-    const dir = tempDirWithFiles("watchfile-gc", Object.fromEntries(
-      Array.from({ length: 50 }, (_, i) => [`file-${i}.txt`, `data-${i}`]),
-    ));
+    const dir = tempDirWithFiles(
+      "watchfile-gc",
+      Object.fromEntries(Array.from({ length: 50 }, (_, i) => [`file-${i}.txt`, `data-${i}`])),
+    );
 
     const fixture = /* js */ `
       const fs = require("fs");

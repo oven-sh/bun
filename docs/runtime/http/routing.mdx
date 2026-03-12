@@ -218,7 +218,7 @@ You can send part of a file using the [`slice(start, end)`](https://developer.mo
 ```ts
 Bun.serve({
   fetch(req) {
-    // parse `Range` header
+    // parse `Range` header (supports "bytes=N-M" and "bytes=N-" forms)
     const [startStr = "0", endStr] = req.headers
       .get("Range") // "bytes=0-100"
       .split("=") // ["bytes", "0-100"]

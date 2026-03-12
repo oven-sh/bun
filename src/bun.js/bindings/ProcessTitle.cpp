@@ -11,49 +11,40 @@
 #include <pthread.h>
 #include <string.h>
 
-// Minimal CoreFoundation type stubs — we dlopen everything at runtime.
-typedef const void* CFTypeRef;
-typedef const void* CFStringRef;
-typedef const void* CFAllocatorRef;
-typedef const void* CFBundleRef;
-typedef const void* CFDictionaryRef;
-typedef const void* CFArrayRef;
-typedef unsigned int CFStringEncoding;
-typedef long CFIndex;
-typedef int OSStatus;
-static constexpr CFStringEncoding kCFStringEncodingUTF8 = 0x08000100;
-static constexpr OSStatus noErr = 0;
+// We dlopen CoreFoundation at runtime to avoid link-time ObjC dependency.
+// Use void* for all CF types to avoid conflicting with system typedefs.
+static constexpr unsigned int kCFStringEncodingUTF8_ = 0x08000100;
 
 extern "C" int Bun__setProcessTitle(const char* title)
 {
     // Function pointers loaded via dlopen.
-    CFStringRef (*pCFStringCreateWithCString)(CFAllocatorRef, const char*, CFStringEncoding);
-    void (*pCFRelease)(CFTypeRef);
-    CFBundleRef (*pCFBundleGetBundleWithIdentifier)(CFStringRef);
-    void* (*pCFBundleGetDataPointerForName)(CFBundleRef, CFStringRef);
-    void* (*pCFBundleGetFunctionPointerForName)(CFBundleRef, CFStringRef);
-    CFTypeRef (*pLSGetCurrentApplicationASN)(void);
-    OSStatus (*pLSSetApplicationInformationItem)(int, CFTypeRef, CFStringRef, CFStringRef, CFDictionaryRef*);
-    CFDictionaryRef (*pCFBundleGetInfoDictionary)(CFBundleRef);
-    CFBundleRef (*pCFBundleGetMainBundle)(void);
-    CFDictionaryRef (*pLSApplicationCheckIn)(int, CFDictionaryRef);
+    void* (*pCFStringCreateWithCString)(void*, const char*, unsigned int);
+    void (*pCFRelease)(void*);
+    void* (*pCFBundleGetBundleWithIdentifier)(void*);
+    void* (*pCFBundleGetDataPointerForName)(void*, void*);
+    void* (*pCFBundleGetFunctionPointerForName)(void*, void*);
+    void* (*pLSGetCurrentApplicationASN)(void);
+    int (*pLSSetApplicationInformationItem)(int, void*, void*, void*, void**);
+    void* (*pCFBundleGetInfoDictionary)(void*);
+    void* (*pCFBundleGetMainBundle)(void);
+    void* (*pLSApplicationCheckIn)(int, void*);
     void (*pLSSetApplicationLaunchServicesServerConnectionStatus)(uint64_t, void*);
 
     void* application_services_handle;
     void* core_foundation_handle;
-    CFBundleRef launch_services_bundle;
-    CFStringRef* display_name_key;
-    CFTypeRef asn;
+    void* launch_services_bundle;
+    void** display_name_key;
+    void* asn;
     int err;
 
-    // Track created CFStringRef objects for cleanup.
-    CFStringRef cfLaunchServicesId = NULL;
-    CFStringRef cfGetASN = NULL;
-    CFStringRef cfSetInfo = NULL;
-    CFStringRef cfDisplayNameKey = NULL;
-    CFStringRef cfCheckIn = NULL;
-    CFStringRef cfSetConnStatus = NULL;
-    CFStringRef cfTitle = NULL;
+    // Track created CF objects for cleanup.
+    void* cfLaunchServicesId = NULL;
+    void* cfGetASN = NULL;
+    void* cfSetInfo = NULL;
+    void* cfDisplayNameKey = NULL;
+    void* cfCheckIn = NULL;
+    void* cfSetConnStatus = NULL;
+    void* cfTitle = NULL;
 
     err = -1;
     application_services_handle = dlopen(
@@ -82,7 +73,7 @@ extern "C" int Bun__setProcessTitle(const char* title)
         goto out;
     }
 
-#define S(s) pCFStringCreateWithCString(NULL, (s), kCFStringEncodingUTF8)
+#define S(s) pCFStringCreateWithCString(NULL, (s), kCFStringEncodingUTF8_)
 
     cfLaunchServicesId = S("com.apple.LaunchServices");
     launch_services_bundle = pCFBundleGetBundleWithIdentifier(cfLaunchServicesId);
@@ -105,7 +96,7 @@ extern "C" int Bun__setProcessTitle(const char* title)
         goto out;
 
     cfDisplayNameKey = S("_kLSDisplayNameKey");
-    display_name_key = (CFStringRef*)pCFBundleGetDataPointerForName(
+    display_name_key = (void**)pCFBundleGetDataPointerForName(
         launch_services_bundle, cfDisplayNameKey);
 
     if (display_name_key == NULL || *display_name_key == NULL)
@@ -145,7 +136,7 @@ extern "C" int Bun__setProcessTitle(const char* title)
     cfTitle = S(title);
     if (pLSSetApplicationInformationItem(-2, asn, *display_name_key,
             cfTitle, NULL)
-        != noErr) {
+        != 0) {
         goto out;
     }
 

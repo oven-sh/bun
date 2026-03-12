@@ -794,7 +794,15 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                                 break :getter;
                             }
 
-                            var fetch_headers_to_use: *WebCore.FetchHeaders = headers_value.as(WebCore.FetchHeaders) orelse brk: {
+                            const maybe_fetch_headers_to_use: ?*WebCore.FetchHeaders = if (headers_value.as(WebCore.FetchHeaders)) |fetch_headers| brk: {
+                                // Clone caller-owned Headers so we can remove websocket-specific
+                                // headers without mutating the original Headers instance.
+                                if (try fetch_headers.cloneThis(globalThis)) |cloned_headers| {
+                                    fetch_headers_to_deref = cloned_headers;
+                                    break :brk cloned_headers;
+                                }
+                                break :brk null;
+                            } else brk: {
                                 if (headers_value.isObject()) {
                                     if (try WebCore.FetchHeaders.createFromJS(globalThis, headers_value)) |fetch_headers| {
                                         fetch_headers_to_deref = fetch_headers;
@@ -802,7 +810,9 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                                     }
                                 }
                                 break :brk null;
-                            } orelse {
+                            };
+
+                            var fetch_headers_to_use: *WebCore.FetchHeaders = maybe_fetch_headers_to_use orelse {
                                 if (!globalThis.hasException()) {
                                     return globalThis.throwInvalidArguments("upgrade options.headers must be a Headers or an object", .{});
                                 }
@@ -815,10 +825,14 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
                             if (fetch_headers_to_use.fastGet(.SecWebSocketProtocol)) |protocol| {
                                 sec_websocket_protocol = protocol;
+                                // Remove from headers so it's not written twice (once here and once by upgrade())
+                                fetch_headers_to_use.fastRemove(.SecWebSocketProtocol);
                             }
 
                             if (fetch_headers_to_use.fastGet(.SecWebSocketExtensions)) |protocol| {
                                 sec_websocket_extensions = protocol;
+                                // Remove from headers so it's not written twice (once here and once by upgrade())
+                                fetch_headers_to_use.fastRemove(.SecWebSocketExtensions);
                             }
                             if (nodeHttpResponse.raw_response) |raw_response| {
                                 // we must write the status first so that 200 OK isn't written
@@ -925,7 +939,15 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                             break :getter;
                         }
 
-                        fetch_headers_to_use = headers_value.as(WebCore.FetchHeaders) orelse brk: {
+                        const maybe_fetch_headers_to_use: ?*WebCore.FetchHeaders = if (headers_value.as(WebCore.FetchHeaders)) |fetch_headers| brk: {
+                            // Clone caller-owned Headers so we can remove websocket-specific
+                            // headers without mutating the original Headers instance.
+                            if (try fetch_headers.cloneThis(globalThis)) |cloned_headers| {
+                                fetch_headers_to_deref = cloned_headers;
+                                break :brk cloned_headers;
+                            }
+                            break :brk null;
+                        } else brk: {
                             if (headers_value.isObject()) {
                                 if (try WebCore.FetchHeaders.createFromJS(globalThis, headers_value)) |fetch_headers| {
                                     fetch_headers_to_deref = fetch_headers;
@@ -933,7 +955,9 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                                 }
                             }
                             break :brk null;
-                        } orelse {
+                        };
+
+                        fetch_headers_to_use = maybe_fetch_headers_to_use orelse {
                             if (!globalThis.hasException()) {
                                 return globalThis.throwInvalidArguments("upgrade options.headers must be a Headers or an object", .{});
                             }

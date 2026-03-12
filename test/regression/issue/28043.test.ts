@@ -28,8 +28,7 @@ test("child_process spawn pipe between two processes works", async () => {
       });
 
       grep.on('close', (code) => {
-        process.stdout.write(output);
-        process.exit(code ?? 1);
+        process.stdout.write(output, () => process.exit(code ?? 1));
       });
       `,
     ],
@@ -61,8 +60,7 @@ test("child_process spawn stdin.write and stdin.end work correctly", async () =>
       });
 
       grep.on('close', (code) => {
-        process.stdout.write(output);
-        process.exit(code ?? 1);
+        process.stdout.write(output, () => process.exit(code ?? 1));
       });
 
       grep.stdin.write('hello world\\n');
@@ -101,8 +99,7 @@ test("child_process spawn exec failure is observable", async () => {
       });
 
       child.on('close', (code) => {
-        process.stdout.write('exit:' + code + '\\n');
-        process.exit(0);
+        process.stdout.write('exit:' + code + '\\n', () => process.exit(0));
       });
       `,
     ],

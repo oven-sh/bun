@@ -770,6 +770,10 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
                 var sec_websocket_protocol = ZigString.Empty;
                 var sec_websocket_extensions = ZigString.Empty;
+                var sec_websocket_protocol_owned = ZigString.Slice.empty;
+                defer sec_websocket_protocol_owned.deinit();
+                var sec_websocket_extensions_owned = ZigString.Slice.empty;
+                defer sec_websocket_extensions_owned.deinit();
 
                 if (optional) |opts| {
                     getter: {
@@ -833,13 +837,17 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                             }
 
                             if (fetch_headers_to_use.fastGet(.SecWebSocketProtocol)) |protocol| {
-                                sec_websocket_protocol = protocol;
+                                // Copy before fastRemove() so upgrade() never reads freed header storage.
+                                sec_websocket_protocol_owned = bun.handleOom(protocol.toSliceClone(bun.default_allocator));
+                                sec_websocket_protocol = sec_websocket_protocol_owned.toZigString();
                                 // Remove from headers so it's not written twice (once here and once by upgrade())
                                 fetch_headers_to_use.fastRemove(.SecWebSocketProtocol);
                             }
 
                             if (fetch_headers_to_use.fastGet(.SecWebSocketExtensions)) |protocol| {
-                                sec_websocket_extensions = protocol;
+                                // Copy before fastRemove() so upgrade() never reads freed header storage.
+                                sec_websocket_extensions_owned = bun.handleOom(protocol.toSliceClone(bun.default_allocator));
+                                sec_websocket_extensions = sec_websocket_extensions_owned.toZigString();
                                 // Remove from headers so it's not written twice (once here and once by upgrade())
                                 fetch_headers_to_use.fastRemove(.SecWebSocketExtensions);
                             }
@@ -913,6 +921,8 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             }
 
             var data_value = jsc.JSValue.zero;
+            var sec_websocket_protocol_owned = ZigString.Slice.empty;
+            defer sec_websocket_protocol_owned.deinit();
 
             // If we created or cloned a Headers object, we need to free it.
             var fetch_headers_to_deref: ?*WebCore.FetchHeaders = null;
@@ -986,7 +996,9 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                         }
 
                         if (fetch_headers_to_use.?.fastGet(.SecWebSocketProtocol)) |protocol| {
-                            sec_websocket_protocol = protocol;
+                            // Copy before fastRemove() below so the later upgrade() uses stable memory.
+                            sec_websocket_protocol_owned = bun.handleOom(protocol.toSliceClone(bun.default_allocator));
+                            sec_websocket_protocol = sec_websocket_protocol_owned.toZigString();
                         }
 
                         if (fetch_headers_to_use.?.fastGet(.SecWebSocketExtensions)) |protocol| {

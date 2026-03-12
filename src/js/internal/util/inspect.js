@@ -197,8 +197,6 @@ const {
   isSetIterator,
   isWeakMap,
   isWeakSet,
-  getWeakMapEntries,
-  getWeakSetEntries,
   isRegExp,
   isDate,
   isTypedArray,
@@ -206,6 +204,9 @@ const {
   isNumberObject,
   isBooleanObject,
 } = require("node:util/types");
+
+const getWeakMapEntries = $newCppFunction("NodeUtilTypesModule.cpp", "jsFunctionGetWeakMapEntries", 1);
+const getWeakSetEntries = $newCppFunction("NodeUtilTypesModule.cpp", "jsFunctionGetWeakSetEntries", 1);
 
 //! temp workaround to apply is{BigInt,Symbol}Object fix
 const isBoxedPrimitive = val => isBigIntObject(val) || isSymbolObject(val) || _native_isBoxedPrimitive(val);

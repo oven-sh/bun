@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { inspect } from "node:util";
 
 test("inspect(weakSet, { showHidden: true }) shows entries", () => {
@@ -61,4 +62,30 @@ test("inspect(weakSet, { showHidden: true, maxArrayLength: 0 }) shows remaining 
   const weakSet = new WeakSet([obj, obj2]);
 
   expect(inspect(weakSet, { showHidden: true, maxArrayLength: 0 })).toBe("WeakSet { ... 2 more items }");
+});
+
+test("console.log(weakSet) shows items unknown", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", `const weakSet = new WeakSet([{a:1}]); console.log(weakSet);`],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout.trim()).toBe("WeakSet { <items unknown> }");
+  expect(exitCode).toBe(0);
+});
+
+test("console.log(weakMap) shows items unknown", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", `const weakMap = new WeakMap([[{a:1}, 'v']]); console.log(weakMap);`],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout.trim()).toBe("WeakMap { <items unknown> }");
+  expect(exitCode).toBe(0);
 });

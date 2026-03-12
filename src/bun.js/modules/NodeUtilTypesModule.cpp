@@ -516,7 +516,7 @@ namespace Zig {
 // Hardcoded module "node:util/types"
 DEFINE_NATIVE_MODULE_NOINLINE(NodeUtilTypes)
 {
-    INIT_NATIVE_MODULE(46);
+    INIT_NATIVE_MODULE(44);
 
     putNativeFn(Identifier::fromString(vm, "isExternal"_s), jsFunctionIsExternal);
     putNativeFn(Identifier::fromString(vm, "isDate"_s), jsFunctionIsDate);
@@ -562,8 +562,6 @@ DEFINE_NATIVE_MODULE_NOINLINE(NodeUtilTypes)
     putNativeFn(Identifier::fromString(vm, "isKeyObject"_s), jsFunctionIsKeyObject);
     putNativeFn(Identifier::fromString(vm, "isCryptoKey"_s), jsFunctionIsCryptoKey);
     putNativeFn(Identifier::fromString(vm, "isEventTarget"_s), jsFunctionIsEventTarget);
-    putNativeFn(Identifier::fromString(vm, "getWeakMapEntries"_s), jsFunctionGetWeakMapEntries);
-    putNativeFn(Identifier::fromString(vm, "getWeakSetEntries"_s), jsFunctionGetWeakSetEntries);
 
     RETURN_NATIVE_MODULE();
 }

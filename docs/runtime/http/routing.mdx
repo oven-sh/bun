@@ -221,14 +221,14 @@ Bun.serve({
     // parse `Range` header
     const [start = 0, end = Infinity] = req.headers
       .get("Range") // Range: bytes=0-100
-      .split("=") // ["Range: bytes", "0-100"]
+      .split("=") // ["bytes", "0-100"]
       .at(-1) // "0-100"
       .split("-") // ["0", "100"]
       .map(Number); // [0, 100]
 
     // return a slice of the file
     const bigFile = Bun.file("./big-video.mp4");
-    return new Response(bigFile.slice(start, end));
+    return new Response(bigFile.slice(start, end + 1));
   },
 });
 ```

@@ -759,7 +759,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
                 var data_value = jsc.JSValue.zero;
 
-                // if we converted a HeadersInit to a Headers object, we need to free it
+                // If we created or cloned a Headers object, we need to free it.
                 var fetch_headers_to_deref: ?*WebCore.FetchHeaders = null;
 
                 defer {
@@ -794,14 +794,8 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                                 break :getter;
                             }
 
-                            const maybe_fetch_headers_to_use: ?*WebCore.FetchHeaders = if (headers_value.as(WebCore.FetchHeaders)) |fetch_headers| brk: {
-                                // Clone caller-owned Headers so we can remove websocket-specific
-                                // headers without mutating the original Headers instance.
-                                if (try fetch_headers.cloneThis(globalThis)) |cloned_headers| {
-                                    fetch_headers_to_deref = cloned_headers;
-                                    break :brk cloned_headers;
-                                }
-                                break :brk null;
+                            var fetch_headers_to_use: *WebCore.FetchHeaders = if (headers_value.as(WebCore.FetchHeaders)) |fetch_headers| brk: {
+                                break :brk fetch_headers;
                             } else brk: {
                                 if (headers_value.isObject()) {
                                     if (try WebCore.FetchHeaders.createFromJS(globalThis, headers_value)) |fetch_headers| {
@@ -810,9 +804,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                                     }
                                 }
                                 break :brk null;
-                            };
-
-                            var fetch_headers_to_use: *WebCore.FetchHeaders = maybe_fetch_headers_to_use orelse {
+                            } orelse {
                                 if (!globalThis.hasException()) {
                                     return globalThis.throwInvalidArguments("upgrade options.headers must be a Headers or an object", .{});
                                 }
@@ -821,6 +813,23 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
                             if (globalThis.hasException()) {
                                 return error.JSError;
+                            }
+
+                            if (fetch_headers_to_deref == null and
+                                (fetch_headers_to_use.fastGet(.SecWebSocketProtocol) != null or
+                                    fetch_headers_to_use.fastGet(.SecWebSocketExtensions) != null))
+                            {
+                                // Clone caller-owned Headers only when websocket-specific headers
+                                // need to be stripped before writing the upgrade response.
+                                fetch_headers_to_use = if (try fetch_headers_to_use.cloneThis(globalThis)) |cloned_headers| brk: {
+                                    fetch_headers_to_deref = cloned_headers;
+                                    break :brk cloned_headers;
+                                } else {
+                                    if (globalThis.hasException()) {
+                                        return error.JSError;
+                                    }
+                                    return globalThis.throwOutOfMemory();
+                                };
                             }
 
                             if (fetch_headers_to_use.fastGet(.SecWebSocketProtocol)) |protocol| {
@@ -905,7 +914,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
             var data_value = jsc.JSValue.zero;
 
-            // if we converted a HeadersInit to a Headers object, we need to free it
+            // If we created or cloned a Headers object, we need to free it.
             var fetch_headers_to_deref: ?*WebCore.FetchHeaders = null;
 
             defer {
@@ -940,13 +949,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                         }
 
                         const maybe_fetch_headers_to_use: ?*WebCore.FetchHeaders = if (headers_value.as(WebCore.FetchHeaders)) |fetch_headers| brk: {
-                            // Clone caller-owned Headers so we can remove websocket-specific
-                            // headers without mutating the original Headers instance.
-                            if (try fetch_headers.cloneThis(globalThis)) |cloned_headers| {
-                                fetch_headers_to_deref = cloned_headers;
-                                break :brk cloned_headers;
-                            }
-                            break :brk null;
+                            break :brk fetch_headers;
                         } else brk: {
                             if (headers_value.isObject()) {
                                 if (try WebCore.FetchHeaders.createFromJS(globalThis, headers_value)) |fetch_headers| {
@@ -966,6 +969,20 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
                         if (globalThis.hasException()) {
                             return error.JSError;
+                        }
+
+                        if (fetch_headers_to_deref == null and fetch_headers_to_use.?.fastGet(.SecWebSocketProtocol) != null) {
+                            // Clone caller-owned Headers only when we need to strip the
+                            // protocol header before writing the upgrade response.
+                            fetch_headers_to_use = if (try fetch_headers_to_use.?.cloneThis(globalThis)) |cloned_headers| brk: {
+                                fetch_headers_to_deref = cloned_headers;
+                                break :brk cloned_headers;
+                            } else {
+                                if (globalThis.hasException()) {
+                                    return error.JSError;
+                                }
+                                return globalThis.throwOutOfMemory();
+                            };
                         }
 
                         if (fetch_headers_to_use.?.fastGet(.SecWebSocketProtocol)) |protocol| {

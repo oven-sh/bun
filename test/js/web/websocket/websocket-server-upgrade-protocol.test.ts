@@ -38,21 +38,23 @@ function getClientProtocols(req: Request): string[] {
 }
 
 async function expectNegotiatedProtocol(port: number, clientProtocols: string[], expectedProtocol: string) {
+  const { promise: openPromise, resolve: resolveOpen, reject } = Promise.withResolvers<void>();
   const ws = new WebSocket(`ws://localhost:${port}`, clientProtocols);
 
-  await new Promise<void>((resolve, reject) => {
-    ws.onopen = () => {
-      expect(ws.protocol).toBe(expectedProtocol);
-      ws.close();
-      resolve();
-    };
+  try {
+    ws.onopen = () => resolveOpen();
     ws.onerror = reject;
     ws.onclose = event => {
       if (event.code === 1002 && event.reason === "Mismatch client protocol") {
         reject(new Error("Connection failed with 'Mismatch client protocol'"));
       }
     };
-  });
+
+    await openPromise;
+    expect(ws.protocol).toBe(expectedProtocol);
+  } finally {
+    ws.terminate();
+  }
 }
 
 async function readUpgradeResponse(port: number, clientProtocols: string[]) {

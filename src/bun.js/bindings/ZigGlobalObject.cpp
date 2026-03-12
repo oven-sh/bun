@@ -124,6 +124,7 @@
 #include "JSSink.h"
 #include "JSSocketAddressDTO.h"
 #include "JSReactElement.h"
+#include "BunMarkdownMeta.h"
 #include "JSSQLStatement.h"
 #include "JSStringDecoder.h"
 #include "JSTextEncoder.h"
@@ -1061,9 +1062,7 @@ JSC_DEFINE_HOST_FUNCTION(functionQueueMicrotask,
 
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     JSC::JSValue asyncContext = globalObject->m_asyncContextData.get()->getInternalField(0);
-    auto function = globalObject->performMicrotaskFunction();
 #if ASSERT_ENABLED
-    ASSERT_WITH_MESSAGE(function, "Invalid microtask function");
     ASSERT_WITH_MESSAGE(!callback.isEmpty(), "Invalid microtask callback");
 #endif
 
@@ -1071,10 +1070,8 @@ JSC_DEFINE_HOST_FUNCTION(functionQueueMicrotask,
         asyncContext = JSC::jsUndefined();
     }
 
-    // BunPerformMicrotaskJob accepts a variable number of arguments (up to: performMicrotask, job, asyncContext, arg0, arg1).
-    // The runtime inspects argumentCount to determine which arguments are present, so callers may pass only the subset they need.
-    // Here we pass: function, callback, asyncContext.
-    JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::BunPerformMicrotaskJob, 0, globalObject, function, callback, asyncContext };
+    // BunPerformMicrotaskJob: callback, asyncContext
+    JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::BunPerformMicrotaskJob, 0, globalObject, callback, asyncContext };
     globalObject->vm().queueMicrotask(WTF::move(task));
 
     return JSC::JSValue::encode(JSC::jsUndefined());
@@ -1554,63 +1551,6 @@ extern "C" napi_env ZigGlobalObject__makeNapiEnvForFFI(Zig::GlobalObject* global
     return globalObject->makeNapiEnvForFFI();
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunctionPerformMicrotask, (JSGlobalObject * globalObject, CallFrame* callframe))
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-
-    auto job = callframe->argument(0);
-    if (!job || job.isUndefinedOrNull()) [[unlikely]] {
-        return JSValue::encode(jsUndefined());
-    }
-
-    auto callData = JSC::getCallData(job);
-    MarkedArgumentBuffer arguments;
-
-    if (callData.type == CallData::Type::None) [[unlikely]] {
-        return JSValue::encode(jsUndefined());
-    }
-
-    JSValue result;
-    WTF::NakedPtr<JSC::Exception> exceptionPtr;
-
-    JSValue restoreAsyncContext = {};
-    InternalFieldTuple* asyncContextData = nullptr;
-    auto setAsyncContext = callframe->argument(1);
-    if (!setAsyncContext.isUndefined()) {
-        asyncContextData = globalObject->m_asyncContextData.get();
-        restoreAsyncContext = asyncContextData->getInternalField(0);
-        asyncContextData->putInternalField(vm, 0, setAsyncContext);
-    }
-
-    size_t argCount = callframe->argumentCount();
-    switch (argCount) {
-    case 3: {
-        arguments.append(callframe->uncheckedArgument(2));
-        break;
-    }
-    case 4: {
-        arguments.append(callframe->uncheckedArgument(2));
-        arguments.append(callframe->uncheckedArgument(3));
-        break;
-    }
-    default:
-        break;
-    }
-
-    JSC::profiledCall(globalObject, ProfilingReason::API, job, callData, jsUndefined(), arguments, exceptionPtr);
-
-    if (asyncContextData) {
-        asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
-    }
-
-    if (auto* exception = exceptionPtr.get()) {
-        Bun__reportUnhandledError(globalObject, JSValue::encode(exception));
-    }
-
-    return JSValue::encode(jsUndefined());
-}
-
 JSC_DEFINE_HOST_FUNCTION(jsFunctionPerformMicrotaskVariadic, (JSGlobalObject * globalObject, CallFrame* callframe))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -1863,6 +1803,23 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(Bun::JSReactElement::createStructure(init.vm, init.owner));
         });
 
+    m_JSMarkdownListItemMetaStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            init.set(Bun::MarkdownMeta::createListItemMetaStructure(init.vm, init.owner));
+        });
+    m_JSMarkdownListMetaStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            init.set(Bun::MarkdownMeta::createListMetaStructure(init.vm, init.owner));
+        });
+    m_JSMarkdownCellMetaStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            init.set(Bun::MarkdownMeta::createCellMetaStructure(init.vm, init.owner));
+        });
+    m_JSMarkdownLinkMetaStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            init.set(Bun::MarkdownMeta::createLinkMetaStructure(init.vm, init.owner));
+        });
+
     m_JSSQLStatementStructure.initLater(
         [](const Initializer<Structure>& init) {
             init.set(WebCore::createJSSQLStatementStructure(init.owner));
@@ -1940,11 +1897,6 @@ void GlobalObject::finishCreation(VM& vm)
             scope.assertNoExceptionExceptTermination();
             init.set(subclassStructure);
         });
-    m_performMicrotaskFunction.initLater(
-        [](const Initializer<JSFunction>& init) {
-            init.set(JSFunction::create(init.vm, init.owner, 4, "performMicrotask"_s, jsFunctionPerformMicrotask, ImplementationVisibility::Public));
-        });
-
     m_performMicrotaskVariadicFunction.initLater(
         [](const Initializer<JSFunction>& init) {
             init.set(JSFunction::create(init.vm, init.owner, 4, "performMicrotaskVariadic"_s, jsFunctionPerformMicrotaskVariadic, ImplementationVisibility::Public));
@@ -2064,6 +2016,30 @@ void GlobalObject::finishCreation(VM& vm)
             RELEASE_ASSERT(offset == 2);
             structure = Structure::addPropertyTransition(init.vm, structure, Identifier::fromString(init.vm, "error"_s), 0, offset);
             RELEASE_ASSERT(offset == 3);
+            init.set(structure);
+        });
+
+    this->m_pathParsedObjectStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            // { root, dir, base, ext, name } — path.parse() result
+            Structure* structure = init.owner->structureCache().emptyObjectStructureForPrototype(
+                init.owner, init.owner->objectPrototype(), 5);
+            PropertyOffset offset;
+            structure = Structure::addPropertyTransition(init.vm, structure,
+                Identifier::fromString(init.vm, "root"_s), 0, offset);
+            RELEASE_ASSERT(offset == 0);
+            structure = Structure::addPropertyTransition(init.vm, structure,
+                Identifier::fromString(init.vm, "dir"_s), 0, offset);
+            RELEASE_ASSERT(offset == 1);
+            structure = Structure::addPropertyTransition(init.vm, structure,
+                Identifier::fromString(init.vm, "base"_s), 0, offset);
+            RELEASE_ASSERT(offset == 2);
+            structure = Structure::addPropertyTransition(init.vm, structure,
+                Identifier::fromString(init.vm, "ext"_s), 0, offset);
+            RELEASE_ASSERT(offset == 3);
+            structure = Structure::addPropertyTransition(init.vm, structure,
+                init.vm.propertyNames->name, 0, offset);
+            RELEASE_ASSERT(offset == 4);
             init.set(structure);
         });
 
@@ -2492,6 +2468,7 @@ JSC_DEFINE_CUSTOM_GETTER(getConsoleConstructor, (JSGlobalObject * globalObject, 
     if (returnedException) {
         auto scope = DECLARE_THROW_SCOPE(vm);
         throwException(globalObject, scope, returnedException.get());
+        return {};
     }
     console->putDirect(vm, property, result, 0);
     return JSValue::encode(result);

@@ -5502,7 +5502,12 @@ pub const NodeFS = struct {
                     .path = args.path.slice(),
                 } };
 
-            var buf = bun.span(req.ptrAs([*:0]u8));
+            const result_ptr: ?[*:0]u8 = req.ptrAs(?[*:0]u8);
+            var buf = bun.span(result_ptr orelse return .{ .err = Syscall.Error{
+                .errno = @intFromEnum(bun.sys.E.NOENT),
+                .syscall = .realpath,
+                .path = args.path.slice(),
+            } });
 
             if (variant == .emulated) {
                 // remove the trailing slash
@@ -6576,7 +6581,7 @@ pub const NodeFS = struct {
                 const wbuf = bun.os_path_buffer_pool.get();
                 defer bun.os_path_buffer_pool.put(wbuf);
                 const len = bun.windows.GetFinalPathNameByHandleW(handle.cast(), wbuf, wbuf.len, 0);
-                if (len == 0) {
+                if (len == 0 or len >= wbuf.len) {
                     return ret.errnoSysP(0, .copyfile, this.osPathIntoSyncErrorBuf(dest)) orelse dst_enoent_maybe;
                 }
                 const flags = if (stat_ & windows.FILE_ATTRIBUTE_DIRECTORY != 0)

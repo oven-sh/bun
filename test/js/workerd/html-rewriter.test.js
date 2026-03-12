@@ -109,13 +109,22 @@ describe("HTMLRewriter", () => {
     await gcTick();
     let content;
     {
+      using contentServer = Bun.serve({
+        port: 0,
+        fetch(req) {
+          return new Response("<h1>Hello from content server</h1>", {
+            headers: { "Content-Type": "text/html" },
+          });
+        },
+      });
+
       using server = Bun.serve({
         port: 0,
         fetch(req) {
           return new HTMLRewriter()
             .on("div", {
               async element(element) {
-                content = await fetch("https://www.example.com/").then(res => res.text());
+                content = await fetch(`http://localhost:${contentServer.port}/`).then(res => res.text());
                 element.setInnerContent(content, { html: true });
               },
             })

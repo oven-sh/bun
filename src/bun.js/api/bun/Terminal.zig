@@ -698,8 +698,7 @@ pub fn setRawMode(
 
     if (comptime Environment.isPosix) {
         // Use the existing TTY mode function
-        const mode: c_int = if (enabled) 1 else 0;
-        const tty_result = Bun__ttySetMode(this.master_fd.cast(), mode);
+        const tty_result = bun.tty.setMode(this.master_fd.cast(), if (enabled) .raw else .normal);
         if (tty_result != 0) {
             return globalObject.throw("Failed to set raw mode", .{});
         }
@@ -708,9 +707,6 @@ pub fn setRawMode(
     this.flags.raw_mode = enabled;
     return .js_undefined;
 }
-
-extern fn Bun__ttySetMode(fd: c_int, mode: c_int) c_int;
-
 /// POSIX termios struct for terminal flags manipulation
 const Termios = if (Environment.isPosix) std.posix.termios else void;
 

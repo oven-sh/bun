@@ -184,6 +184,8 @@ pub const build_only_params = [_]ParamType{
     clap.parseParam("--splitting                      Enable code splitting") catch unreachable,
     clap.parseParam("--public-path <STR>              A prefix to be appended to any import paths in bundled code") catch unreachable,
     clap.parseParam("-e, --external <STR>...          Exclude module from transpilation (can use * wildcards). ex: -e react") catch unreachable,
+    clap.parseParam("--allow-unresolved <STR>...      Allow unresolved dynamic import()/require() specifiers matching these glob patterns. Use '<empty>' for opaque specifiers. Default is '*' (allow all).") catch unreachable,
+    clap.parseParam("--reject-unresolved              Fail the build on any dynamic import()/require() specifier that cannot be resolved at build time.") catch unreachable,
     clap.parseParam("--packages <STR>                 Add dependencies to bundle or keep them external. \"external\", \"bundle\" is supported. Defaults to \"bundle\".") catch unreachable,
     clap.parseParam("--entry-naming <STR>             Customize entry point filenames. Defaults to \"[dir]/[name].[ext]\"") catch unreachable,
     clap.parseParam("--chunk-naming <STR>             Customize chunk filenames. Defaults to \"[name]-[hash].[ext]\"") catch unreachable,
@@ -220,6 +222,7 @@ pub const test_only_params = [_]ParamType{
     clap.parseParam("--timeout <NUMBER>               Set the per-test timeout in milliseconds, default is 5000.") catch unreachable,
     clap.parseParam("-u, --update-snapshots           Update snapshot files") catch unreachable,
     clap.parseParam("--rerun-each <NUMBER>            Re-run each test file <NUMBER> times, helps catch certain bugs") catch unreachable,
+    clap.parseParam("--retry <NUMBER>                 Default retry count for all tests, overridden by per-test { retry: N }") catch unreachable,
     clap.parseParam("--todo                           Include tests that are marked with \"test.todo()\"") catch unreachable,
     clap.parseParam("--only                           Run only tests that are marked with \"test.only()\" or \"describe.only()\"") catch unreachable,
     clap.parseParam("--pass-with-no-tests             Exit with code 0 when no tests are found") catch unreachable,
@@ -566,6 +569,18 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                     Global.exit(1);
                 };
             }
+        }
+        if (args.option("--retry")) |retry_count| {
+            if (retry_count.len > 0) {
+                ctx.test_options.retry = std.fmt.parseInt(u32, retry_count, 10) catch |e| {
+                    Output.prettyErrorln("<r><red>error<r>: --retry expects a number: {s}", .{@errorName(e)});
+                    Global.exit(1);
+                };
+            }
+        }
+        if (ctx.test_options.retry != 0 and ctx.test_options.repeat_count != 0) {
+            Output.prettyErrorln("<r><red>error<r>: --retry cannot be used with --rerun-each", .{});
+            Global.exit(1);
         }
         if (args.option("--test-name-pattern")) |namePattern| {
             ctx.test_options.test_filter_pattern = namePattern;
@@ -1015,6 +1030,21 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 externals[i] = external;
             }
             opts.external = externals;
+        }
+
+        if (args.flag("--reject-unresolved") and args.options("--allow-unresolved").len > 0) {
+            Output.prettyErrorln("<r><red>error<r>: --reject-unresolved and --allow-unresolved cannot be used together", .{});
+            Global.crash();
+        } else if (args.flag("--reject-unresolved")) {
+            ctx.bundler_options.allow_unresolved = &.{};
+        } else if (args.options("--allow-unresolved").len > 0) {
+            const raw = args.options("--allow-unresolved");
+            var allow = try allocator.alloc([]const u8, raw.len);
+            for (raw, 0..) |val, i| {
+                // "<empty>" sentinel represents the empty-string pattern (for matching opaque specifiers)
+                allow[i] = if (strings.eqlComptime(val, "<empty>")) "" else val;
+            }
+            ctx.bundler_options.allow_unresolved = allow;
         }
 
         if (args.option("--packages")) |packages| {

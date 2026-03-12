@@ -6,7 +6,7 @@ import { serve } from "bun";
 
 describe("server.upgrade() with custom Sec-WebSocket-Protocol", () => {
   test("should work when selecting the first protocol", async () => {
-    const server = serve({
+    using server = serve({
       hostname: "localhost",
       port: 0,
       fetch(req, server) {
@@ -41,12 +41,10 @@ describe("server.upgrade() with custom Sec-WebSocket-Protocol", () => {
         }
       };
     });
-
-    server.stop();
   });
 
   test("should work when selecting the second protocol", async () => {
-    const server = serve({
+    using server = serve({
       hostname: "localhost",
       port: 0,
       fetch(req, server) {
@@ -82,12 +80,10 @@ describe("server.upgrade() with custom Sec-WebSocket-Protocol", () => {
         }
       };
     });
-
-    server.stop();
   });
 
   test("should work when selecting any protocol from the list", async () => {
-    const server = serve({
+    using server = serve({
       hostname: "localhost",
       port: 0,
       fetch(req, server) {
@@ -125,12 +121,10 @@ describe("server.upgrade() with custom Sec-WebSocket-Protocol", () => {
         }
       };
     });
-
-    server.stop();
   });
 
   test("should work with other custom headers alongside Sec-WebSocket-Protocol", async () => {
-    const server = serve({
+    using server = serve({
       hostname: "localhost",
       port: 0,
       fetch(req, server) {
@@ -168,7 +162,5 @@ describe("server.upgrade() with custom Sec-WebSocket-Protocol", () => {
         }
       };
     });
-
-    server.stop();
   });
 });

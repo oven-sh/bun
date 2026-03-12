@@ -233,7 +233,7 @@ pub const PathWatcherManager = struct {
 
                     for (affected) |changed_name_| {
                         const changed_name: []const u8 = bun.asByteSlice(changed_name_.?);
-                        if (changed_name.len == 0 or changed_name[0] == '~' or changed_name[0] == '.') continue;
+                        if (changed_name.len == 0) continue;
 
                         const file_path_without_trailing_slash = std.mem.trimRight(u8, file_path, std.fs.path.sep_str);
 
@@ -411,12 +411,22 @@ pub const PathWatcherManager = struct {
         ) bun.sys.Maybe(void) {
             if (Environment.isWindows) @compileError("use win_watcher.zig");
 
+            // For non-recursive watches, the directory-level inotify watch
+            // (set up by _addDirectory → main_watcher.addDirectory) is sufficient.
+            // inotify on a directory reports IN_MODIFY/IN_CREATE/IN_DELETE etc.
+            // with the child filename, so we don't need per-file watches.
+            // This matches libuv/Node.js behavior, which never opens individual
+            // files inside a watched directory.
+            if (!watcher.recursive) return .success;
+
+            // For recursive watches, enumerate entries to discover subdirectories.
+            // We only need to recurse into subdirectories — individual files are
+            // already covered by their parent directory's inotify watch.
             const manager = this.manager;
             const path = this.path;
             const fd = path.fd;
             var iter = fd.stdDir().iterate();
 
-            // now we iterate over all files and directories
             while (iter.next() catch |err| {
                 return .{
                     .err = .{
@@ -431,6 +441,13 @@ pub const PathWatcherManager = struct {
                     },
                 };
             }) |entry| {
+                // Only recurse into subdirectories — skip regular files.
+                // Allow .sym_link (symlinks to directories) and .unknown
+                // (common on NFS/FUSE) to be probed by _fdFromAbsolutePathZ
+                // which determines the real type.
+                if (entry.kind != .directory and entry.kind != .sym_link and entry.kind != .unknown) continue;
+                if (watcher.isClosed()) break;
+
                 var parts = [2]string{ path.path, entry.name };
                 const entry_path = Path.joinAbsStringBuf(
                     Fs.FileSystem.instance.topLevelDirWithoutTrailingSlash(),
@@ -444,13 +461,36 @@ pub const PathWatcherManager = struct {
 
                 const child_path = switch (manager._fdFromAbsolutePathZ(entry_path_z)) {
                     .result => |result| result,
-                    .err => |e| return .{ .err = e },
+                    .err => |e| {
+                        // Skip entries we can't open — permission errors, dangling
+                        // symlinks, circular symlinks, or races with deletion.
+                        if (e.errno == @intFromEnum(bun.sys.E.ACCES) or
+                            e.errno == @intFromEnum(bun.sys.E.PERM) or
+                            e.errno == @intFromEnum(bun.sys.E.NOENT) or
+                            e.errno == @intFromEnum(bun.sys.E.LOOP))
+                        {
+                            continue;
+                        }
+                        return .{ .err = e };
+                    },
                 };
+
+                // For .unknown entries that turned out to be files after
+                // probing, release the ref — only directories need
+                // recursive inotify watches. Only close the fd if we
+                // are the sole owner; if shared with another watcher,
+                // let the last owner close it via _decrementPathRefNoLock.
+                if (child_path.is_file) {
+                    if (child_path.refs <= 1) child_path.fd.close();
+                    manager._decrementPathRef(entry_path_z);
+                    continue;
+                }
 
                 {
                     watcher.mutex.lock();
                     defer watcher.mutex.unlock();
                     watcher.file_paths.append(bun.default_allocator, child_path.path) catch |err| {
+                        if (child_path.refs <= 1) child_path.fd.close();
                         manager._decrementPathRef(entry_path_z);
                         return switch (err) {
                             error.OutOfMemory => .{ .err = .{
@@ -461,28 +501,14 @@ pub const PathWatcherManager = struct {
                     };
                 }
 
-                // we need to call this unlocked
-                if (child_path.is_file) {
-                    switch (manager.main_watcher.addFile(
-                        child_path.fd,
-                        child_path.path,
-                        child_path.hash,
-                        options.Loader.file,
-                        .invalid,
-                        null,
-                        false,
-                    )) {
-                        .err => |err| return .{ .err = err },
-                        .result => {},
-                    }
-                } else {
-                    if (watcher.recursive and !watcher.isClosed()) {
-                        // this may trigger another thread with is desired when available to watch long trees
-                        switch (manager._addDirectory(watcher, child_path)) {
-                            .err => |err| return .{ .err = err.withPath(child_path.path) },
-                            .result => {},
-                        }
-                    }
+                // Recurse into subdirectory — this adds an inotify watch on the
+                // subdir and schedules another DirectoryRegisterTask for its children.
+                // On error, don't close the fd or decrement the ref here — the fd
+                // may already be in the watchlist, and the path is in watcher.file_paths.
+                // Cleanup happens in unregisterWatcher during watcher close.
+                switch (manager._addDirectory(watcher, child_path)) {
+                    .err => |err| return .{ .err = err.withPath(child_path.path) },
+                    .result => {},
                 }
             }
             return .success;

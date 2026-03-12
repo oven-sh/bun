@@ -1931,7 +1931,7 @@ test("no assertion failures 3", () => {
     ],
     [
       class // Random { // comments /* */ are part of the toString() result
-        äß /**/
+      äß /**/
         extends /*{*/ TypeError {},
       "[class äß extends TypeError]",
     ],

@@ -58,14 +58,10 @@ extern "C" int Bun__setProcessTitle(const char* title)
     if (application_services_handle == NULL || core_foundation_handle == NULL)
         goto out;
 
-    *(void**)(&pCFStringCreateWithCString) =
-        dlsym(core_foundation_handle, "CFStringCreateWithCString");
-    *(void**)(&pCFBundleGetBundleWithIdentifier) =
-        dlsym(core_foundation_handle, "CFBundleGetBundleWithIdentifier");
-    *(void**)(&pCFBundleGetDataPointerForName) =
-        dlsym(core_foundation_handle, "CFBundleGetDataPointerForName");
-    *(void**)(&pCFBundleGetFunctionPointerForName) =
-        dlsym(core_foundation_handle, "CFBundleGetFunctionPointerForName");
+    *(void**)(&pCFStringCreateWithCString) = dlsym(core_foundation_handle, "CFStringCreateWithCString");
+    *(void**)(&pCFBundleGetBundleWithIdentifier) = dlsym(core_foundation_handle, "CFBundleGetBundleWithIdentifier");
+    *(void**)(&pCFBundleGetDataPointerForName) = dlsym(core_foundation_handle, "CFBundleGetDataPointerForName");
+    *(void**)(&pCFBundleGetFunctionPointerForName) = dlsym(core_foundation_handle, "CFBundleGetFunctionPointerForName");
 
     if (pCFStringCreateWithCString == NULL
         || pCFBundleGetBundleWithIdentifier == NULL
@@ -76,22 +72,19 @@ extern "C" int Bun__setProcessTitle(const char* title)
 
 #define S(s) pCFStringCreateWithCString(NULL, (s), kCFStringEncodingUTF8)
 
-    launch_services_bundle =
-        pCFBundleGetBundleWithIdentifier(S("com.apple.LaunchServices"));
+    launch_services_bundle = pCFBundleGetBundleWithIdentifier(S("com.apple.LaunchServices"));
 
     if (launch_services_bundle == NULL)
         goto out;
 
-    *(void**)(&pLSGetCurrentApplicationASN) =
-        pCFBundleGetFunctionPointerForName(
-            launch_services_bundle, S("_LSGetCurrentApplicationASN"));
+    *(void**)(&pLSGetCurrentApplicationASN) = pCFBundleGetFunctionPointerForName(
+        launch_services_bundle, S("_LSGetCurrentApplicationASN"));
 
     if (pLSGetCurrentApplicationASN == NULL)
         goto out;
 
-    *(void**)(&pLSSetApplicationInformationItem) =
-        pCFBundleGetFunctionPointerForName(
-            launch_services_bundle, S("_LSSetApplicationInformationItem"));
+    *(void**)(&pLSSetApplicationInformationItem) = pCFBundleGetFunctionPointerForName(
+        launch_services_bundle, S("_LSSetApplicationInformationItem"));
 
     if (pLSSetApplicationInformationItem == NULL)
         goto out;
@@ -102,25 +95,21 @@ extern "C" int Bun__setProcessTitle(const char* title)
     if (display_name_key == NULL || *display_name_key == NULL)
         goto out;
 
-    *(void**)(&pCFBundleGetInfoDictionary) =
-        dlsym(core_foundation_handle, "CFBundleGetInfoDictionary");
-    *(void**)(&pCFBundleGetMainBundle) =
-        dlsym(core_foundation_handle, "CFBundleGetMainBundle");
+    *(void**)(&pCFBundleGetInfoDictionary) = dlsym(core_foundation_handle, "CFBundleGetInfoDictionary");
+    *(void**)(&pCFBundleGetMainBundle) = dlsym(core_foundation_handle, "CFBundleGetMainBundle");
 
     if (pCFBundleGetInfoDictionary == NULL || pCFBundleGetMainBundle == NULL)
         goto out;
 
-    *(void**)(&pLSApplicationCheckIn) =
-        pCFBundleGetFunctionPointerForName(
-            launch_services_bundle, S("_LSApplicationCheckIn"));
+    *(void**)(&pLSApplicationCheckIn) = pCFBundleGetFunctionPointerForName(
+        launch_services_bundle, S("_LSApplicationCheckIn"));
 
     if (pLSApplicationCheckIn == NULL)
         goto out;
 
-    *(void**)(&pLSSetApplicationLaunchServicesServerConnectionStatus) =
-        pCFBundleGetFunctionPointerForName(
-            launch_services_bundle,
-            S("_LSSetApplicationLaunchServicesServerConnectionStatus"));
+    *(void**)(&pLSSetApplicationLaunchServicesServerConnectionStatus) = pCFBundleGetFunctionPointerForName(
+        launch_services_bundle,
+        S("_LSSetApplicationLaunchServicesServerConnectionStatus"));
 
     if (pLSSetApplicationLaunchServicesServerConnectionStatus == NULL)
         goto out;
@@ -137,7 +126,8 @@ extern "C" int Bun__setProcessTitle(const char* title)
         goto out;
 
     if (pLSSetApplicationInformationItem(-2, asn, *display_name_key,
-            S(title), NULL) != noErr) {
+            S(title), NULL)
+        != noErr) {
         goto out;
     }
 

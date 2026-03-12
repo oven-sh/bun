@@ -352,6 +352,15 @@ pub const StatWatcher = struct {
     pub fn finalize(this: *StatWatcher) void {
         log("Finalize\n", .{});
         this.closed = true;
+        // Clean up JS-thread-bound resources now, while we're still on the JS
+        // thread. If we defer this to deinit(), the WorkPool thread may be the
+        // one that triggers it, and calling HandleSet::deallocate() from a
+        // non-JS thread corrupts the HandleSet linked list (GH-28027).
+        if (this.persistent) {
+            this.persistent = false;
+        }
+        this.poll_ref.unref(this.ctx);
+        this.last_jsvalue.deinit();
         this.scheduler.deref();
         this.deref(); // but don't deinit until the scheduler drops its reference
     }

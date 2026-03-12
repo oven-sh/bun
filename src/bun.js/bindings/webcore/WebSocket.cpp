@@ -292,6 +292,18 @@ void WebSocket::setExtensionsFromDeflateParams(const PerMessageDeflateParams* de
     m_extensions = extensions.toString();
 }
 
+void WebSocket::setUpgradeResponse(uint16_t upgradeStatusCode, const String& upgradeStatusMessage)
+{
+    m_upgradeStatusCode = upgradeStatusCode;
+    m_upgradeStatusMessage = upgradeStatusMessage;
+    m_upgradeHeaders.clear();
+}
+
+void WebSocket::appendUpgradeHeader(const String& name, const String& value)
+{
+    m_upgradeHeaders.append({ name, value });
+}
+
 ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url)
 {
     return create(context, url, Vector<String> {}, std::nullopt);
@@ -427,6 +439,12 @@ size_t WebSocket::memoryCost() const
     cost += m_url.string().sizeInBytes();
     cost += m_subprotocol.sizeInBytes();
     cost += m_extensions.sizeInBytes();
+    cost += m_upgradeStatusMessage.sizeInBytes();
+    cost += m_upgradeHeaders.capacity() * sizeof(std::pair<String, String>);
+    for (const auto& [name, value] : m_upgradeHeaders) {
+        cost += name.sizeInBytes();
+        cost += value.sizeInBytes();
+    }
 
     if (m_connectedWebSocketKind == ConnectedWebSocketKind::Client) {
         cost += Bun__WebSocketClient__memoryCost(m_connectedWebSocket.client);
@@ -1747,6 +1765,16 @@ extern "C" void WebSocket__didConnect(WebCore::WebSocket* webSocket, us_socket_t
 extern "C" void WebSocket__setUpgradeStatusCode(WebCore::WebSocket* webSocket, uint16_t upgradeStatusCode)
 {
     webSocket->setUpgradeStatusCode(upgradeStatusCode);
+}
+
+extern "C" void WebSocket__setUpgradeResponse(WebCore::WebSocket* webSocket, uint16_t upgradeStatusCode, BunString* upgradeStatusMessage)
+{
+    webSocket->setUpgradeResponse(upgradeStatusCode, upgradeStatusMessage->transferToWTFString());
+}
+
+extern "C" void WebSocket__appendUpgradeHeader(WebCore::WebSocket* webSocket, BunString* name, BunString* value)
+{
+    webSocket->appendUpgradeHeader(name->transferToWTFString(), value->transferToWTFString());
 }
 
 extern "C" void WebSocket__didConnectWithTunnel(WebCore::WebSocket* webSocket, void* tunnel, char* bufferedData, size_t len, const PerMessageDeflateParams* deflate_params)

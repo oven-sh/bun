@@ -23,7 +23,17 @@ pub const CppWebSocket = opaque {
         buffered_len: usize,
         deflate_params: ?*const WebSocketDeflate.Params,
     ) void;
+    extern fn WebSocket__setUpgradeResponse(
+        websocket_context: *CppWebSocket,
+        upgrade_status_code: u16,
+        upgrade_status_message: *bun.String,
+    ) void;
     extern fn WebSocket__setUpgradeStatusCode(websocket_context: *CppWebSocket, upgrade_status_code: u16) void;
+    extern fn WebSocket__appendUpgradeHeader(
+        websocket_context: *CppWebSocket,
+        name: *bun.String,
+        value: *bun.String,
+    ) void;
     extern fn WebSocket__didAbruptClose(websocket_context: *CppWebSocket, reason: ErrorCode) void;
     extern fn WebSocket__didClose(websocket_context: *CppWebSocket, code: u16, reason: *const bun.String) void;
     extern fn WebSocket__didReceiveText(websocket_context: *CppWebSocket, clone: bool, text: *const jsc.ZigString) void;
@@ -76,6 +86,18 @@ pub const CppWebSocket = opaque {
         loop.enter();
         defer loop.exit();
         WebSocket__setUpgradeStatusCode(this, upgrade_status_code);
+    }
+    pub fn setUpgradeResponse(this: *CppWebSocket, upgrade_status_code: u16, upgrade_status_message: *bun.String) void {
+        const loop = jsc.VirtualMachine.get().eventLoop();
+        loop.enter();
+        defer loop.exit();
+        WebSocket__setUpgradeResponse(this, upgrade_status_code, upgrade_status_message);
+    }
+    pub fn appendUpgradeHeader(this: *CppWebSocket, name: *bun.String, value: *bun.String) void {
+        const loop = jsc.VirtualMachine.get().eventLoop();
+        loop.enter();
+        defer loop.exit();
+        WebSocket__appendUpgradeHeader(this, name, value);
     }
     extern fn WebSocket__incrementPendingActivity(websocket_context: *CppWebSocket) void;
     extern fn WebSocket__decrementPendingActivity(websocket_context: *CppWebSocket) void;

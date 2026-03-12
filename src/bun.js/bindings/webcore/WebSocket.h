@@ -144,6 +144,10 @@ public:
 
     uint16_t upgradeStatusCode() const { return m_upgradeStatusCode; }
     void setUpgradeStatusCode(uint16_t upgradeStatusCode) { m_upgradeStatusCode = upgradeStatusCode; }
+    const String& upgradeStatusMessage() const { return m_upgradeStatusMessage; }
+    const Vector<std::pair<String, String>>& upgradeHeaders() const { return m_upgradeHeaders; }
+    void setUpgradeResponse(uint16_t upgradeStatusCode, const String& upgradeStatusMessage);
+    void appendUpgradeHeader(const String& name, const String& value);
 
     ScriptExecutionContext* scriptExecutionContext() const final;
 
@@ -253,6 +257,8 @@ private:
     void* m_upgradeClient { nullptr };
     ConnectionType m_connectionType { ConnectionType::Plain };
     uint16_t m_upgradeStatusCode { 0 };
+    String m_upgradeStatusMessage;
+    Vector<std::pair<String, String>> m_upgradeHeaders;
     bool m_rejectUnauthorized { false };
     AnyWebSocket m_connectedWebSocket { nullptr };
     ConnectedWebSocketKind m_connectedWebSocketKind { ConnectedWebSocketKind::None };

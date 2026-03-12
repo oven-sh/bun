@@ -116,6 +116,11 @@ function normalizeData(data, opts) {
 
 // https://github.com/oven-sh/bun/issues/11866
 let WebSocket;
+let webSocketInternalBinding;
+
+function getWebSocketInternalBinding() {
+  return (webSocketInternalBinding ??= $cpp("JSWebSocket.cpp", "createWebSocketInternalBinding"));
+}
 
 /**
  * @link https://github.com/websockets/ws/blob/master/doc/ws.md#class-websocket
@@ -274,12 +279,12 @@ class BunWebSocket extends EventEmitter {
   }
 
   #createUpgradeResponse(defaultStatusCode) {
-    const statusCode = this.#ws.upgradeStatusCode || defaultStatusCode;
-    return {
-      statusCode,
-      statusMessage: http.STATUS_CODES[statusCode] || "",
-      headers: {},
-    };
+    const response = getWebSocketInternalBinding().getUpgradeResponse(this.#ws);
+    if (response.statusCode === 0) {
+      response.statusCode = this.#ws.upgradeStatusCode || defaultStatusCode;
+      response.statusMessage ||= http.STATUS_CODES[response.statusCode] || "";
+    }
+    return response;
   }
 
   #createUnexpectedResponseRequest() {
@@ -299,7 +304,7 @@ class BunWebSocket extends EventEmitter {
       if (this.listenerCount("upgrade") > 0) {
         this.emit("upgrade", this.#createUpgradeResponse(101));
       }
-      this.emit("open", event);
+      this.emit("open");
     });
   }
 

@@ -759,7 +759,19 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             var deflate_result = DeflateNegotiationResult{};
 
             if (this.outgoing_websocket) |ws| {
-                ws.setUpgradeStatusCode(@intCast(response.status_code));
+                var status_message = bun.String.cloneLatin1(response.status);
+                defer status_message.deref();
+                ws.setUpgradeResponse(@intCast(response.status_code), &status_message);
+
+                for (response.headers.list) |header| {
+                    var header_name = bun.String.cloneLatin1(header.name);
+                    defer header_name.deref();
+
+                    var header_value = bun.String.cloneLatin1(header.value);
+                    defer header_value.deref();
+
+                    ws.appendUpgradeHeader(&header_name, &header_value);
+                }
             }
 
             if (response.status_code != 101) {

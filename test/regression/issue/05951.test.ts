@@ -1,153 +1,185 @@
 import { test, expect, describe } from "bun:test";
+import { once } from "node:events";
 import { bunEnv, bunExe } from "harness";
-import { WebSocketServer } from "ws";
 
-describe.concurrent("ws upgrade and unexpected-response events", () => {
+function createUpgradeServer() {
+  return Bun.serve({
+    port: 0,
+    fetch(req, server) {
+      if (
+        server.upgrade(req, {
+          headers: {
+            "X-Upgrade-Test": "upgrade-response",
+          },
+        })
+      ) {
+        return;
+      }
+
+      return new Response("Expected websocket upgrade", { status: 400 });
+    },
+    websocket: {
+      message() {},
+    },
+  });
+}
+
+function createUnexpectedResponseServer(statusCode = 400) {
+  return Bun.serve({
+    port: 0,
+    fetch() {
+      return new Response("Unexpected websocket upgrade", {
+        status: statusCode,
+        headers: {
+          "X-Bun-Test": "unexpected-response",
+        },
+      });
+    },
+  });
+}
+
+describe("ws upgrade and unexpected-response events", () => {
   test("ws WebSocket should not emit warnings for upgrade event", async () => {
-    const server = new WebSocketServer({ port: 0 });
-    const port = (server.address() as any).port;
+    await using server = createUpgradeServer();
 
-    try {
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          `import WebSocket from "ws";
-          const ws = new WebSocket("ws://localhost:${port}");
-          ws.on("upgrade", () => {});
-          ws.on("open", () => ws.close());`,
-        ],
-        env: bunEnv,
-        stderr: "pipe",
-      });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `import WebSocket from "ws";
+        const ws = new WebSocket("ws://127.0.0.1:${server.port}");
+        ws.on("upgrade", () => {});
+        ws.on("open", () => ws.close());
+        ws.on("close", () => process.exit(0));
+        ws.on("error", error => {
+          console.error(error.message);
+          process.exit(1);
+        });`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-      expect(stderr).not.toContain("'upgrade' event is not implemented");
-      expect(exitCode).toBe(0);
-    } finally {
-      server.close();
-    }
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
+    expect(stderr).not.toContain("'upgrade' event is not implemented");
+    expect(exitCode).toBe(0);
   });
 
-  test("ws WebSocket should not emit warnings for unexpected-response event", async () => {
-    const server = new WebSocketServer({ port: 0 });
-    const port = (server.address() as any).port;
+  test("ws WebSocket should emit unexpected-response with a real response object", async () => {
+    await using server = createUnexpectedResponseServer(400);
+    const WebSocket = (await import("ws")).default;
+    const ws = new WebSocket(`ws://127.0.0.1:${server.port}`);
 
-    try {
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          `import WebSocket from "ws";
-          const ws = new WebSocket("ws://localhost:${port}");
-          ws.on("unexpected-response", () => {});
-          ws.on("open", () => ws.close());`,
-        ],
-        env: bunEnv,
-        stderr: "pipe",
+    await new Promise<void>((resolve, reject) => {
+      let sawUnexpectedResponse = false;
+
+      ws.on("unexpected-response", (_request, response) => {
+        sawUnexpectedResponse = true;
+        expect(response.statusCode).toBe(400);
+        expect(response.statusMessage).toBe("Bad Request");
+        expect(response.headers["x-bun-test"]).toBe("unexpected-response");
       });
 
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-      expect(stderr).not.toContain("'unexpected-response' event is not implemented");
-      expect(exitCode).toBe(0);
-    } finally {
-      server.close();
-    }
+      ws.on("open", () => reject(new Error("Unexpected open event")));
+      ws.on("error", () => {});
+      ws.on("close", () => {
+        if (!sawUnexpectedResponse) {
+          reject(new Error("Expected unexpected-response before close"));
+          return;
+        }
+
+        resolve();
+      });
+    });
   });
 
-  test("ws WebSocket should emit upgrade event before open event", async () => {
-    const server = new WebSocketServer({ port: 0 });
-    const port = (server.address() as any).port;
+  test("ws WebSocket should emit upgrade before open without changing open listener arguments", async () => {
+    await using server = createUpgradeServer();
+    const WebSocket = (await import("ws")).default;
+    const ws = new WebSocket(`ws://127.0.0.1:${server.port}`);
+    const events: string[] = [];
 
-    try {
-      const WebSocket = (await import("ws")).default;
-      const ws = new WebSocket(`ws://localhost:${port}`);
-
-      let upgradeEmitted = false;
-      let openEmitted = false;
-
-      ws.on("upgrade", () => {
-        upgradeEmitted = true;
-        expect(openEmitted).toBe(false);
+    await new Promise<void>((resolve, reject) => {
+      ws.on("open", (...args) => {
+        events.push("open");
+        expect(events).toEqual(["upgrade", "open"]);
+        expect(args).toHaveLength(0);
+        ws.close();
+        resolve();
       });
 
-      await new Promise<void>((resolve, reject) => {
-        ws.on("open", () => {
-          openEmitted = true;
-          expect(upgradeEmitted).toBe(true);
-          ws.close();
-          resolve();
-        });
-        ws.on("error", reject);
+      ws.on("upgrade", response => {
+        events.push("upgrade");
+        expect(response.statusCode).toBe(101);
       });
-    } finally {
-      server.close();
-    }
+
+      ws.on("error", reject);
+    });
+  });
+
+  test("ws WebSocket should keep open once() payload empty when upgrade listeners are active", async () => {
+    await using server = createUpgradeServer();
+    const WebSocket = (await import("ws")).default;
+    const ws = new WebSocket(`ws://127.0.0.1:${server.port}`);
+
+    ws.on("upgrade", response => {
+      expect(response.statusCode).toBe(101);
+    });
+
+    const openArgs = await once(ws, "open");
+    expect(openArgs).toEqual([]);
+
+    ws.close();
+    await once(ws, "close");
   });
 
   test("ws WebSocket upgrade event should provide response object with status code", async () => {
-    const server = new WebSocketServer({ port: 0 });
-    const port = (server.address() as any).port;
+    await using server = createUpgradeServer();
+    const WebSocket = (await import("ws")).default;
+    const ws = new WebSocket(`ws://127.0.0.1:${server.port}`);
 
-    try {
-      const WebSocket = (await import("ws")).default;
-      const ws = new WebSocket(`ws://localhost:${port}`);
-
-      await new Promise<void>((resolve, reject) => {
-        ws.on("upgrade", response => {
-          expect(response.statusCode).toBe(101);
-          expect(response.statusMessage).toBe("Switching Protocols");
-          expect(typeof response.headers).toBe("object");
-        });
-        ws.on("open", () => {
-          ws.close();
-          resolve();
-        });
-        ws.on("error", reject);
+    await new Promise<void>((resolve, reject) => {
+      ws.on("upgrade", response => {
+        expect(response.statusCode).toBe(101);
+        expect(response.statusMessage).toBe("Switching Protocols");
+        expect(response.headers["x-upgrade-test"]).toBe("upgrade-response");
       });
-    } finally {
-      server.close();
-    }
+      ws.on("open", () => {
+        ws.close();
+        resolve();
+      });
+      ws.on("error", reject);
+    });
   });
 
   test("ws WebSocket should work without upgrade listener", async () => {
-    const server = new WebSocketServer({ port: 0 });
-    const port = (server.address() as any).port;
+    await using server = createUpgradeServer();
+    const WebSocket = (await import("ws")).default;
+    const ws = new WebSocket(`ws://127.0.0.1:${server.port}`);
 
-    try {
-      const WebSocket = (await import("ws")).default;
-      const ws = new WebSocket(`ws://localhost:${port}`);
-
-      await new Promise<void>((resolve, reject) => {
-        ws.on("open", () => {
-          ws.close();
-          resolve();
-        });
-        ws.on("error", reject);
+    await new Promise<void>((resolve, reject) => {
+      ws.on("open", () => {
+        ws.close();
+        resolve();
       });
-    } finally {
-      server.close();
-    }
+      ws.on("error", reject);
+    });
   });
 
   test("native WebSocket should expose upgradeStatusCode property", async () => {
-    const server = new WebSocketServer({ port: 0 });
-    const port = (server.address() as any).port;
+    await using server = createUpgradeServer();
+    const ws = new WebSocket(`ws://127.0.0.1:${server.port}`);
 
-    try {
-      const ws = new WebSocket(`ws://localhost:${port}`);
-
-      await new Promise<void>((resolve, reject) => {
-        ws.addEventListener("open", () => {
-          expect(ws.upgradeStatusCode).toBe(101);
-          expect(typeof ws.upgradeStatusCode).toBe("number");
-          ws.close();
-          resolve();
-        });
-        ws.addEventListener("error", reject);
+    await new Promise<void>((resolve, reject) => {
+      ws.addEventListener("open", () => {
+        expect(ws.upgradeStatusCode).toBe(101);
+        expect(typeof ws.upgradeStatusCode).toBe("number");
+        ws.close();
+        resolve();
       });
-    } finally {
-      server.close();
-    }
+      ws.addEventListener("error", reject);
+    });
   });
 });

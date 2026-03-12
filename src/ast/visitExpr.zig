@@ -1357,6 +1357,10 @@ pub fn VisitExpr(
                         p.log.addRangeDebug(p.source, r, "This call to \"require\" will not be bundled because it has multiple arguments") catch unreachable;
                     }
 
+                    if (e_.args.len >= 1) {
+                        bun.handleOom(p.checkDynamicSpecifier(e_.args.slice()[0], e_.target.loc, "require()"));
+                    }
+
                     if (p.options.features.allow_runtime) {
                         p.recordUsageOfRuntimeRequire();
                     }
@@ -1387,6 +1391,10 @@ pub fn VisitExpr(
                             },
                             else => {},
                         }
+                    }
+
+                    if (e_.args.len >= 1) {
+                        bun.handleOom(p.checkDynamicSpecifier(e_.args.slice()[0], e_.target.loc, "require.resolve()"));
                     }
 
                     return expr;

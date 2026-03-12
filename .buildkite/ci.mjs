@@ -634,13 +634,20 @@ function getVerifyBaselineStep(platform, options) {
   const emulator = getEmulatorBinary(platform);
   const jitStressFlag = hasWebKitChanges(options) ? " --jit-stress" : "";
 
+  // Scan bun-profile, not bun. The stripped binary has no .symtab (ELF) and
+  // no companion .pdb (PE) — the static scanner would emit <no-symbol@addr>
+  // for everything and none of the allowlist entries would match. bun-profile
+  // has identical .text so violation results are the same, just attributable.
+  const profileDir = `${triplet}-profile`;
+  const profileExe = os === "windows" ? "bun-profile.exe" : "bun-profile";
+
   const setupCommands =
     os === "windows"
       ? [
           `echo Downloading build artifacts...`,
-          `buildkite-agent artifact download ${triplet}.zip . --step ${targetKey}-build-bun`,
-          `echo Extracting ${triplet}.zip...`,
-          `tar -xf ${triplet}.zip`,
+          `buildkite-agent artifact download ${profileDir}.zip . --step ${targetKey}-build-bun`,
+          `echo Extracting ${profileDir}.zip...`,
+          `tar -xf ${profileDir}.zip`,
           `echo Downloading Intel SDE...`,
           `curl.exe -fsSL -o sde.tar.xz "${SDE_URL}"`,
           `echo Extracting Intel SDE...`,
@@ -649,9 +656,9 @@ function getVerifyBaselineStep(platform, options) {
           `ren sde-external-${SDE_VERSION}-win sde-external`,
         ]
       : [
-          `buildkite-agent artifact download '*.zip' . --step ${targetKey}-build-bun`,
-          `unzip -o '${triplet}.zip'`,
-          `chmod +x ${triplet}/bun`,
+          `buildkite-agent artifact download '${profileDir}.zip' . --step ${targetKey}-build-bun`,
+          `unzip -o '${profileDir}.zip'`,
+          `chmod +x ${profileDir}/${profileExe}`,
         ];
 
   return {
@@ -664,7 +671,8 @@ function getVerifyBaselineStep(platform, options) {
     timeout_in_minutes: hasWebKitChanges(options) ? 30 : 10,
     command: [
       ...setupCommands,
-      `bun scripts/verify-baseline.ts --binary ${triplet}/${os === "windows" ? "bun.exe" : "bun"} --emulator ${emulator}${jitStressFlag}`,
+      `cargo build --release --manifest-path scripts/verify-baseline-static/Cargo.toml`,
+      `bun scripts/verify-baseline.ts --binary ${profileDir}/${profileExe} --emulator ${emulator}${jitStressFlag}`,
     ],
   };
 }

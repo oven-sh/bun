@@ -17,21 +17,22 @@ static constexpr unsigned int kCFStringEncodingUTF8_ = 0x08000100;
 
 extern "C" int Bun__setProcessTitle(const char* title)
 {
-    // Function pointers loaded via dlopen.
-    void* (*pCFStringCreateWithCString)(void*, const char*, unsigned int);
-    void (*pCFRelease)(void*);
-    void* (*pCFBundleGetBundleWithIdentifier)(void*);
-    void* (*pCFBundleGetDataPointerForName)(void*, void*);
-    void* (*pCFBundleGetFunctionPointerForName)(void*, void*);
-    void* (*pLSGetCurrentApplicationASN)(void);
-    int (*pLSSetApplicationInformationItem)(int, void*, void*, void*, void**);
-    void* (*pCFBundleGetInfoDictionary)(void*);
-    void* (*pCFBundleGetMainBundle)(void);
-    void* (*pLSApplicationCheckIn)(int, void*);
-    void (*pLSSetApplicationLaunchServicesServerConnectionStatus)(uint64_t, void*);
+    // Function pointers loaded via dlopen. Initialize to nullptr so cleanup
+    // is safe if dlopen fails before dlsym.
+    void* (*pCFStringCreateWithCString)(void*, const char*, unsigned int) = nullptr;
+    void (*pCFRelease)(void*) = nullptr;
+    void* (*pCFBundleGetBundleWithIdentifier)(void*) = nullptr;
+    void* (*pCFBundleGetDataPointerForName)(void*, void*) = nullptr;
+    void* (*pCFBundleGetFunctionPointerForName)(void*, void*) = nullptr;
+    void* (*pLSGetCurrentApplicationASN)(void) = nullptr;
+    int (*pLSSetApplicationInformationItem)(int, void*, void*, void*, void**) = nullptr;
+    void* (*pCFBundleGetInfoDictionary)(void*) = nullptr;
+    void* (*pCFBundleGetMainBundle)(void) = nullptr;
+    void* (*pLSApplicationCheckIn)(int, void*) = nullptr;
+    void (*pLSSetApplicationLaunchServicesServerConnectionStatus)(uint64_t, void*) = nullptr;
 
-    void* application_services_handle;
-    void* core_foundation_handle;
+    void* application_services_handle = NULL;
+    void* core_foundation_handle = NULL;
     void* launch_services_bundle;
     void** display_name_key;
     void* asn;

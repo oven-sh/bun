@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 test.skipIf(process.platform !== "linux")("process.title setter updates OS process title on Linux", async () => {
-  const customTitle = "bun-test-28050";
+  const customTitle = "bun-test-28050-long";
 
   await using proc = Bun.spawn({
     cmd: [

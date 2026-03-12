@@ -81,3 +81,43 @@ test("child_process spawn stdin.write and stdin.end work correctly", async () =>
   expect(stdout.trim()).toBe("hello world");
   expect(exitCode).toBe(0);
 });
+
+test("child_process spawn exec failure is observable", async () => {
+  // With fork() + non-blocking errpipe, exec failures may be caught
+  // synchronously (if the child fails before the parent reads) or
+  // asynchronously (child exits with code 127). Either way, the failure
+  // must be observable to the user.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const { spawn } = require('node:child_process');
+
+      const child = spawn('/nonexistent_binary_28043');
+
+      child.on('error', (err) => {
+        process.stdout.write('error:' + err.code + '\\n');
+      });
+
+      child.on('close', (code) => {
+        process.stdout.write('exit:' + code + '\\n');
+        process.exit(0);
+      });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // The failure must be observable: either via 'error' event (ENOENT) if
+  // the errpipe caught it synchronously, or via exit code 127 if the child
+  // failed exec asynchronously after the parent returned.
+  const hasError = stdout.includes("error:ENOENT");
+  const hasExit127 = stdout.includes("exit:127");
+  expect(hasError || hasExit127).toBe(true);
+  expect(exitCode).toBe(0);
+});

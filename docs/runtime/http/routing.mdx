@@ -219,16 +219,19 @@ You can send part of a file using the [`slice(start, end)`](https://developer.mo
 Bun.serve({
   fetch(req) {
     // parse `Range` header
-    const [start = 0, end = Infinity] = req.headers
-      .get("Range") // Range: bytes=0-100
+    const [startStr = "0", endStr] = req.headers
+      .get("Range") // "bytes=0-100"
       .split("=") // ["bytes", "0-100"]
       .at(-1) // "0-100"
-      .split("-") // ["0", "100"]
-      .map(Number); // [0, 100]
+      .split("-"); // ["0", "100"]
+
+    const start = Number(startStr);
+    // Range end is inclusive, but slice() end is exclusive
+    const end = endStr ? Number(endStr) + 1 : undefined;
 
     // return a slice of the file
     const bigFile = Bun.file("./big-video.mp4");
-    return new Response(bigFile.slice(start, end + 1));
+    return new Response(bigFile.slice(start, end));
   },
 });
 ```

@@ -426,12 +426,6 @@ pub const EncodeIntoResult = struct {
     written: u32 = 0,
 };
 pub fn allocateLatin1IntoUTF8(allocator: std.mem.Allocator, latin1_: []const u8) ![]u8 {
-    if (comptime bun.FeatureFlags.latin1_is_now_ascii) {
-        var out = try allocator.alloc(u8, latin1_.len);
-        @memcpy(out[0..latin1_.len], latin1_);
-        return out;
-    }
-
     const list = try std.array_list.Managed(u8).initCapacity(allocator, latin1_.len);
     var foo = try allocateLatin1IntoUTF8WithList(list, 0, latin1_);
     return try foo.toOwnedSlice();
@@ -685,13 +679,6 @@ pub fn copyLatin1IntoUTF8(buf_: []u8, latin1_: []const u8) EncodeIntoResult {
 }
 
 pub fn copyLatin1IntoUTF8StopOnNonASCII(buf_: []u8, latin1_: []const u8, comptime stop: bool) EncodeIntoResult {
-    if (comptime bun.FeatureFlags.latin1_is_now_ascii) {
-        const to_copy = @as(u32, @truncate(@min(buf_.len, latin1_.len)));
-        @memcpy(buf_[0..to_copy], latin1_[0..to_copy]);
-
-        return .{ .written = to_copy, .read = to_copy };
-    }
-
     var buf = buf_;
     var latin1 = latin1_;
 

@@ -46,7 +46,7 @@ macro(optionx variable type description)
   set(${variable}_PREVIEW -D${variable})
 
   if(DEFINED ENV{${variable}})
-    set(${variable} $ENV{${variable}} CACHE ${${variable}_TYPE} ${description} FORCE)
+    set(${variable} "$ENV{${variable}}" CACHE ${${variable}_TYPE} ${description} FORCE)
     set(${variable}_SOURCE "environment variable")
     set(${variable}_PREVIEW ${variable})
   endif()
@@ -434,7 +434,7 @@ function(register_command)
   endif()
 
   # SKIP_CODEGEN: Skip commands that use BUN_EXECUTABLE if all outputs exist
-  # This is used for Windows ARM64 builds where x64 bun crashes under emulation
+  # Useful for bootstrapping new platforms where bun may not be available
   if(SKIP_CODEGEN AND CMD_EXECUTABLE STREQUAL "${BUN_EXECUTABLE}")
     set(ALL_OUTPUTS_EXIST TRUE)
     foreach(output ${CMD_OUTPUTS})
@@ -456,7 +456,7 @@ function(register_command)
       endif()
       return()
     else()
-      message(FATAL_ERROR "SKIP_CODEGEN: Cannot skip ${CMD_TARGET} - missing outputs. Run codegen on x64 first.")
+      message(FATAL_ERROR "SKIP_CODEGEN: Cannot skip ${CMD_TARGET} - missing outputs.")
     endif()
   endif()
 
@@ -784,7 +784,7 @@ function(register_cmake_command)
 
   set(MAKE_EFFECTIVE_ARGS -B${MAKE_BUILD_PATH} ${CMAKE_ARGS})
 
-  set(setFlags GENERATOR BUILD_TYPE)
+  set(setFlags GENERATOR BUILD_TYPE MSVC_RUNTIME_LIBRARY)
   set(appendFlags C_FLAGS CXX_FLAGS LINKER_FLAGS STATIC_LINKER_FLAGS EXE_LINKER_FLAGS SHARED_LINKER_FLAGS MODULE_LINKER_FLAGS)
   set(specialFlags POSITION_INDEPENDENT_CODE)
   set(flags ${setFlags} ${appendFlags} ${specialFlags})
@@ -831,13 +831,6 @@ function(register_cmake_command)
     list(APPEND MAKE_EFFECTIVE_ARGS "-DCMAKE_${flag}=${MAKE_${flag}}")
   endforeach()
 
-  # Workaround for CMake 4.1.0 bug: Force correct machine type for Windows ARM64
-  # Use toolchain file and set CMP0197 policy to prevent duplicate /machine: flags
-  if(WIN32 AND CMAKE_SYSTEM_PROCESSOR MATCHES "ARM64|aarch64|AARCH64")
-    list(APPEND MAKE_EFFECTIVE_ARGS "-DCMAKE_TOOLCHAIN_FILE=${CWD}/cmake/toolchains/windows-aarch64.cmake")
-    list(APPEND MAKE_EFFECTIVE_ARGS "-DCMAKE_POLICY_DEFAULT_CMP0197=NEW")
-    list(APPEND MAKE_EFFECTIVE_ARGS "-DCMAKE_PROJECT_INCLUDE=${CWD}/cmake/arm64-static-lib-fix.cmake")
-  endif()
 
   if(DEFINED FRESH)
     list(APPEND MAKE_EFFECTIVE_ARGS --fresh)

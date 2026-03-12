@@ -766,19 +766,13 @@ pub extern fn napi_type_tag_object(env: napi_env, _: napi_value, _: [*c]const na
 pub extern fn napi_check_object_type_tag(env: napi_env, _: napi_value, _: [*c]const napi_type_tag, _: *bool) napi_status;
 
 // do nothing for both of these
-pub export fn napi_open_callback_scope(env_: napi_env, _: napi_value, _: *anyopaque, _: *anyopaque) napi_status {
+pub export fn napi_open_callback_scope(_: napi_env, _: napi_value, _: *anyopaque, _: *anyopaque) napi_status {
     log("napi_open_callback_scope", .{});
-    const env = env_ orelse {
-        return envIsNull();
-    };
-    return env.ok();
+    return @intFromEnum(NapiStatus.ok);
 }
-pub export fn napi_close_callback_scope(env_: napi_env, _: *anyopaque) napi_status {
+pub export fn napi_close_callback_scope(_: napi_env, _: *anyopaque) napi_status {
     log("napi_close_callback_scope", .{});
-    const env = env_ orelse {
-        return envIsNull();
-    };
-    return env.ok();
+    return @intFromEnum(NapiStatus.ok);
 }
 pub extern fn napi_throw(env: napi_env, @"error": napi_value) napi_status;
 pub extern fn napi_throw_error(env: napi_env, code: [*c]const u8, msg: [*c]const u8) napi_status;

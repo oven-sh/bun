@@ -67,6 +67,15 @@ route_bundles: ArrayListUnmanaged(RouteBundle),
 graph_safety_lock: bun.safety.ThreadLock,
 client_graph: IncrementalGraph(.client),
 server_graph: IncrementalGraph(.server),
+/// Barrel files with deferred (is_unused) import records. These files must
+/// be re-parsed on every incremental build because the set of needed exports
+/// may have changed. Populated by applyBarrelOptimization.
+barrel_files_with_deferrals: bun.StringArrayHashMapUnmanaged(void) = .{},
+/// Accumulated barrel export requests across all builds. Maps barrel file
+/// path → set of export names that have been requested. This ensures that
+/// when a barrel is re-parsed in an incremental build, exports requested
+/// by non-stale files (from previous builds) are still kept.
+barrel_needed_exports: bun.StringArrayHashMapUnmanaged(bun.StringHashMapUnmanaged(void)) = .{},
 /// State populated during bundling and hot updates. Often cleared
 incremental_result: IncrementalResult,
 /// Quickly retrieve a framework route's index from its entry point file. These
@@ -616,6 +625,23 @@ pub fn deinit(dev: *DevServer) void {
         },
         .server_graph = dev.server_graph.deinit(),
         .client_graph = dev.client_graph.deinit(),
+        .barrel_files_with_deferrals = {
+            for (dev.barrel_files_with_deferrals.keys()) |key| {
+                alloc.free(key);
+            }
+            dev.barrel_files_with_deferrals.deinit(alloc);
+        },
+        .barrel_needed_exports = {
+            var it = dev.barrel_needed_exports.iterator();
+            while (it.next()) |entry| {
+                var inner = entry.value_ptr.*;
+                var inner_it = inner.keyIterator();
+                while (inner_it.next()) |k| alloc.free(k.*);
+                inner.deinit(alloc);
+                alloc.free(entry.key_ptr.*);
+            }
+            dev.barrel_needed_exports.deinit(alloc);
+        },
         .assets = dev.assets.deinit(alloc),
         .incremental_result = useAllFields(IncrementalResult, .{
             .had_adjusted_edges = {},
@@ -2192,6 +2218,7 @@ pub fn finalizeBundle(
 ) bun.JSError!void {
     assert(dev.magic == .valid);
     var had_sent_hmr_event = false;
+
     defer {
         var heap = bv2.graph.heap;
         bv2.deinitWithoutFreeingArena();
@@ -3070,6 +3097,11 @@ const CacheEntry = struct {
 };
 
 pub fn isFileCached(dev: *DevServer, path: []const u8, side: bake.Graph) ?CacheEntry {
+    // Barrel files with deferred records must always be re-parsed so the
+    // barrel optimization can evaluate updated requested_exports.
+    if (dev.barrel_files_with_deferrals.contains(path))
+        return null;
+
     dev.graph_safety_lock.lock();
     defer dev.graph_safety_lock.unlock();
 

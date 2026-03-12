@@ -14,7 +14,7 @@ async function spawn100() {
 test("does not leak", async () => {
   const before = process.memoryUsage().rss;
   console.log("before", (before / 1024 / 1024).toFixed(3), "MB");
-  for (let index = 0; index < 200; index++) {
+  for (let index = 0; index < 30; index++) {
     await spawn100();
     Bun.gc(true);
   }

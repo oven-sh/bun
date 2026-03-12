@@ -792,13 +792,14 @@ pub const Interpreter = struct {
         out_parser: *?bun.shell.Parser,
         out_lex_result: *?shell.LexResult,
     ) !ast.Script {
+        const jsobjs_len: u32 = @intCast(jsobjs.len);
         const lex_result = brk: {
             if (bun.strings.isAllASCII(script)) {
-                var lexer = bun.shell.LexerAscii.new(arena_allocator, script, jsstrings_to_escape);
+                var lexer = bun.shell.LexerAscii.new(arena_allocator, script, jsstrings_to_escape, jsobjs_len);
                 try lexer.lex();
                 break :brk lexer.get_result();
             }
-            var lexer = bun.shell.LexerUnicode.new(arena_allocator, script, jsstrings_to_escape);
+            var lexer = bun.shell.LexerUnicode.new(arena_allocator, script, jsstrings_to_escape, jsobjs_len);
             try lexer.lex();
             break :brk lexer.get_result();
         };
@@ -1154,7 +1155,7 @@ pub const Interpreter = struct {
         _ = callframe; // autofix
 
         if (this.setupIOBeforeRun().asErr()) |e| {
-            defer this.#deinitFromExec();
+            defer this.#derefRootShellAndIOIfNeeded(true);
             const shellerr = bun.shell.ShellErr.newSys(e);
             return try throwShellErr(&shellerr, .{ .js = globalThis.bunVM().event_loop });
         }

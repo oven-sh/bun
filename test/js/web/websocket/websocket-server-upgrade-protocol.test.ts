@@ -1,5 +1,5 @@
 // Test for https://github.com/oven-sh/bun/issues/25773
-// Verifies that server.upgrade() works correctly with custom Sec-WebSocket-Protocol header
+// Verifies that server.upgrade() preserves websocket-specific headers without duplicates
 
 import { describe, expect, test } from "bun:test";
 import { serve } from "bun";
@@ -10,9 +10,9 @@ type UpgradeHeaders = Headers | Record<string, string>;
 const headerVariants = [
   {
     label: "plain object",
-    makeHeaders(protocol: string, extraHeaders?: Record<string, string>): UpgradeHeaders {
+    makeHeaders(webSocketHeaders: Record<string, string>, extraHeaders?: Record<string, string>): UpgradeHeaders {
       return {
-        "Sec-WebSocket-Protocol": protocol,
+        ...webSocketHeaders,
         ...extraHeaders,
       };
     },
@@ -20,9 +20,9 @@ const headerVariants = [
   },
   {
     label: "Headers instance",
-    makeHeaders(protocol: string, extraHeaders?: Record<string, string>): UpgradeHeaders {
+    makeHeaders(webSocketHeaders: Record<string, string>, extraHeaders?: Record<string, string>): UpgradeHeaders {
       return new Headers({
-        "Sec-WebSocket-Protocol": protocol,
+        ...webSocketHeaders,
         ...extraHeaders,
       });
     },
@@ -30,11 +30,16 @@ const headerVariants = [
   },
 ] as const;
 
-function getClientProtocols(req: Request): string[] {
+function getRequestHeaderValues(req: Request, headerName: string): string[] {
   return req.headers
-    .get("Sec-WebSocket-Protocol")
+    .get(headerName)
     ?.split(",")
-    .map(protocol => protocol.trim()) || [];
+    .map(value => value.trim())
+    .filter(Boolean) || [];
+}
+
+function getClientProtocols(req: Request): string[] {
+  return getRequestHeaderValues(req, "Sec-WebSocket-Protocol");
 }
 
 async function expectNegotiatedProtocol(port: number, clientProtocols: string[], expectedProtocol: string) {
@@ -57,7 +62,16 @@ async function expectNegotiatedProtocol(port: number, clientProtocols: string[],
   }
 }
 
-async function readUpgradeResponse(port: number, clientProtocols: string[]) {
+async function readUpgradeResponse(
+  port: number,
+  {
+    clientProtocols = [],
+    clientExtensions = [],
+  }: {
+    clientProtocols?: string[];
+    clientExtensions?: string[];
+  } = {},
+) {
   const key = Buffer.from("0123456789abcdef").toString("base64");
 
   return await new Promise<string>((resolve, reject) => {
@@ -74,19 +88,26 @@ async function readUpgradeResponse(port: number, clientProtocols: string[]) {
     };
 
     socket.on("connect", () => {
-      socket.write(
-        [
-          "GET / HTTP/1.1",
-          `Host: localhost:${port}`,
-          "Upgrade: websocket",
-          "Connection: Upgrade",
-          `Sec-WebSocket-Key: ${key}`,
-          "Sec-WebSocket-Version: 13",
-          `Sec-WebSocket-Protocol: ${clientProtocols.join(", ")}`,
-          "",
-          "",
-        ].join("\r\n"),
-      );
+      const requestLines = [
+        "GET / HTTP/1.1",
+        `Host: localhost:${port}`,
+        "Upgrade: websocket",
+        "Connection: Upgrade",
+        `Sec-WebSocket-Key: ${key}`,
+        "Sec-WebSocket-Version: 13",
+      ];
+
+      if (clientProtocols.length > 0) {
+        requestLines.push(`Sec-WebSocket-Protocol: ${clientProtocols.join(", ")}`);
+      }
+
+      if (clientExtensions.length > 0) {
+        requestLines.push(`Sec-WebSocket-Extensions: ${clientExtensions.join(", ")}`);
+      }
+
+      requestLines.push("", "");
+
+      socket.write(requestLines.join("\r\n"));
     });
 
     socket.on("data", chunk => {
@@ -129,7 +150,9 @@ describe("server.upgrade() with custom Sec-WebSocket-Protocol", () => {
         port: 0,
         fetch(req, server) {
           const protocols = getClientProtocols(req);
-          const headers = makeHeaders(protocols[0]);
+          const headers = makeHeaders({
+            "Sec-WebSocket-Protocol": protocols[0],
+          });
 
           server.upgrade(req, { headers });
 
@@ -158,7 +181,9 @@ describe("server.upgrade() with custom Sec-WebSocket-Protocol", () => {
         port: 0,
         fetch(req, server) {
           const protocols = getClientProtocols(req);
-          const headers = makeHeaders(protocols[1] || protocols[0]);
+          const headers = makeHeaders({
+            "Sec-WebSocket-Protocol": protocols[1] || protocols[0],
+          });
 
           server.upgrade(req, { headers });
 
@@ -188,7 +213,9 @@ describe("server.upgrade() with custom Sec-WebSocket-Protocol", () => {
         fetch(req, server) {
           const protocols = getClientProtocols(req);
           const selected = protocols.find(protocol => protocol === "chat");
-          const headers = makeHeaders(selected!);
+          const headers = makeHeaders({
+            "Sec-WebSocket-Protocol": selected!,
+          });
 
           server.upgrade(req, { headers });
 
@@ -217,9 +244,10 @@ describe("server.upgrade() with custom Sec-WebSocket-Protocol", () => {
         port: 0,
         fetch(req, server) {
           const protocols = getClientProtocols(req);
-          const headers = makeHeaders(protocols[0], {
-            "X-Custom-Header": "custom-value",
-          });
+          const headers = makeHeaders(
+            { "Sec-WebSocket-Protocol": protocols[0] },
+            { "X-Custom-Header": "custom-value" },
+          );
 
           server.upgrade(req, { headers });
 
@@ -233,7 +261,9 @@ describe("server.upgrade() with custom Sec-WebSocket-Protocol", () => {
         },
       });
 
-      const response = await readUpgradeResponse(server.port, ["test-protocol"]);
+      const response = await readUpgradeResponse(server.port, {
+        clientProtocols: ["test-protocol"],
+      });
 
       expect(response.startsWith("HTTP/1.1 101 Switching Protocols")).toBe(true);
       expect(getHeaderValues(response, "Sec-WebSocket-Protocol")).toEqual(["test-protocol"]);
@@ -241,6 +271,51 @@ describe("server.upgrade() with custom Sec-WebSocket-Protocol", () => {
 
       if (preservesOriginalHeaders) {
         expect(protocolHeaderAfterUpgrade).toBe("test-protocol");
+      }
+    });
+  }
+});
+
+describe("server.upgrade() with custom Sec-WebSocket-Extensions", () => {
+  for (const { label, makeHeaders, preservesOriginalHeaders } of headerVariants) {
+    test(`${label}: should preserve websocket extensions without duplicates`, async () => {
+      let extensionHeaderAfterUpgrade: string | null = null;
+
+      using server = serve({
+        hostname: "localhost",
+        port: 0,
+        fetch(req, server) {
+          const [extension = "permessage-deflate"] = getRequestHeaderValues(req, "Sec-WebSocket-Extensions");
+          const headers = makeHeaders(
+            { "Sec-WebSocket-Extensions": extension },
+            { "X-Custom-Header": "custom-value" },
+          );
+
+          server.upgrade(req, { headers });
+
+          if (headers instanceof Headers) {
+            extensionHeaderAfterUpgrade = headers.get("Sec-WebSocket-Extensions");
+          }
+        },
+        websocket: {
+          perMessageDeflate: true,
+          open(ws) {},
+          close(ws) {},
+        },
+      });
+
+      const response = await readUpgradeResponse(server.port, {
+        clientExtensions: ["permessage-deflate"],
+      });
+      const extensionHeaderValues = getHeaderValues(response, "Sec-WebSocket-Extensions");
+
+      expect(response.startsWith("HTTP/1.1 101 Switching Protocols")).toBe(true);
+      expect(extensionHeaderValues).toHaveLength(1);
+      expect(extensionHeaderValues[0]).toContain("permessage-deflate");
+      expect(getHeaderValues(response, "X-Custom-Header")).toEqual(["custom-value"]);
+
+      if (preservesOriginalHeaders) {
+        expect(extensionHeaderAfterUpgrade).toBe("permessage-deflate");
       }
     });
   }

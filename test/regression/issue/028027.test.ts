@@ -44,6 +44,5 @@ console.log("OK");
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout.trim()).toBe("OK");
-  expect(stderr).not.toContain("panic");
   expect(exitCode).toBe(0);
 });

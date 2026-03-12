@@ -7,16 +7,6 @@ inputs:
     description: "The version of bun to install: 'latest', 'canary', 'bun-v1.2.0', etc."
     default: latest
     required: false
-  baseline:
-    type: boolean
-    description: "Whether to use the baseline version of bun."
-    default: false
-    required: false
-  download-url:
-    type: string
-    description: "The base URL to download bun from."
-    default: "https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases"
-    required: false
 
 runs:
   using: composite
@@ -24,28 +14,30 @@ runs:
     - name: Setup Bun
       shell: bash
       run: |
-        case "$(uname -s)" in
-          Linux*)  os=linux;;
-          Darwin*) os=darwin;;
-          *)       os=windows;;
-        esac
-        case "$(uname -m)" in
-          arm64 | aarch64)  arch=aarch64;;
-          *)                arch=x64;;
-        esac
-        case "${{ inputs.baseline }}" in
-          true | 1) target="bun-${os}-${arch}-baseline";;
-          *)        target="bun-${os}-${arch}";;
-        esac
+        proto='https'
+        hostname='github.com'
+        owner='oven-sh'
+        repo='bun'
+        branch='main'
+        filepath='src/cli/install.sh'
+        base_url="${proto}://${hostname}${port:+:${port-}}/${owner}/${repo}"
+
+        release_args=()
         case "${{ inputs.bun-version }}" in
-          latest) release="latest";;
-          canary) release="canary";;
-          *)      release="bun-v${{ inputs.bun-version }}";;
+          latest) ;;
+          canary) release_args=("canary");;
+          bun-v*) release_args=("${{ inputs.bun-version }}");;
+          *)      release_args=("bun-v${{ inputs.bun-version }}");;
         esac
-        curl -LO "${{ inputs.download-url }}/${release}/${target}.zip" --retry 5
-        unzip ${target}.zip
-        mkdir -p ${{ runner.temp }}/.bun/bin
-        mv ${target}/bun* ${{ runner.temp }}/.bun/bin/
-        chmod +x ${{ runner.temp }}/.bun/bin/*
-        ln -fs ${{ runner.temp }}/.bun/bin/bun ${{ runner.temp }}/.bun/bin/bunx
-        echo "${{ runner.temp }}/.bun/bin" >> ${GITHUB_PATH}
+
+        case "${tag-}${branch-}${commit-}" in
+          [a-f0-9]*[a-f0-9]) specifier="${commit}";;
+          bun-v*) specifier="refs/tags/${tag}";;
+          *) specifier="refs/heads/${branch}";;
+        esac
+
+        install_script_url="${base_url}/raw/${specifier}/${filepath}"
+
+        curl -fsSLo "${{ runner.temp }}/install.sh" "${install_script_url}"
+        SHELL=sh BUN_INSTALL=/usr/local bash "${{ runner.temp }}/install.sh" "${release_args[@]}"
+        rm -v -f "${{ runner.temp }}/install.sh"

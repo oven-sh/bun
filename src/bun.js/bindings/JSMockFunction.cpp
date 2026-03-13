@@ -35,6 +35,7 @@ BUN_DECLARE_HOST_FUNCTION(JSMock__jsRestoreAllMocks);
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsClearAllMocks);
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsSpyOn);
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsMockFn);
+BUN_DECLARE_HOST_FUNCTION(JSMock__jsMocked);
 
 #define CHECK_IS_MOCK_FUNCTION(thisValue)                                                              \
     if (!thisObject) [[unlikely]] {                                                                    \
@@ -1473,6 +1474,11 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsClearAllMocks, (JSC::JSGlobalObject * globalO
 {
     JSMock__clearAllMocks(jsCast<Zig::GlobalObject*>(globalObject));
     return JSValue::encode(jsUndefined());
+}
+
+BUN_DEFINE_HOST_FUNCTION(JSMock__jsMocked, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
+{
+    return JSValue::encode(callframe->argument(0));
 }
 
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))

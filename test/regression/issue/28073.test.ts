@@ -3,6 +3,17 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
+async function runBun(cwd: string, ...args: string[]) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...args],
+    cwd,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(await proc.exited).toBe(0);
+}
+
 describe("issue #28073 - bun update preserves catalog references", () => {
   test("default catalog: bun update preserves catalog: in devDependencies", async () => {
     using dir = tempDir("28073-default-catalog", {
@@ -26,25 +37,8 @@ describe("issue #28073 - bun update preserves catalog references", () => {
       }),
     });
 
-    // Install first
-    await using installProc = Bun.spawn({
-      cmd: [bunExe(), "install"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    expect(await installProc.exited).toBe(0);
-
-    // Run bun update
-    await using updateProc = Bun.spawn({
-      cmd: [bunExe(), "update"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    expect(await updateProc.exited).toBe(0);
+    await runBun(String(dir), "install");
+    await runBun(String(dir), "update");
 
     const rootPkg = await file(join(String(dir), "package.json")).json();
 
@@ -71,7 +65,7 @@ describe("issue #28073 - bun update preserves catalog references", () => {
             "is-odd": "^3.0.0",
           },
         },
-        devDependencies: {
+        dependencies: {
           "is-odd": "catalog:tools",
         },
       }),
@@ -84,28 +78,13 @@ describe("issue #28073 - bun update preserves catalog references", () => {
       }),
     });
 
-    await using installProc = Bun.spawn({
-      cmd: [bunExe(), "install"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    expect(await installProc.exited).toBe(0);
-
-    await using updateProc = Bun.spawn({
-      cmd: [bunExe(), "update"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    expect(await updateProc.exited).toBe(0);
+    await runBun(String(dir), "install");
+    await runBun(String(dir), "update");
 
     const rootPkg = await file(join(String(dir), "package.json")).json();
 
     // The catalog:tools reference must be preserved
-    expect(rootPkg.devDependencies["is-odd"]).toBe("catalog:tools");
+    expect(rootPkg.dependencies["is-odd"]).toBe("catalog:tools");
 
     // The named catalog section should be updated with a valid semver pin, not the seeded value
     expect(rootPkg.catalogs.tools["is-odd"]).not.toBe("^3.0.0");
@@ -138,23 +117,8 @@ describe("issue #28073 - bun update preserves catalog references", () => {
       }),
     });
 
-    await using installProc = Bun.spawn({
-      cmd: [bunExe(), "install"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    expect(await installProc.exited).toBe(0);
-
-    await using updateProc = Bun.spawn({
-      cmd: [bunExe(), "update", "-r"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    expect(await updateProc.exited).toBe(0);
+    await runBun(String(dir), "install");
+    await runBun(String(dir), "update", "-r");
 
     const rootPkg = await file(join(String(dir), "package.json")).json();
 

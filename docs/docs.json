@@ -149,6 +149,7 @@
             "pages": [
               "/runtime/secrets",
               "/runtime/console",
+              "/runtime/toml",
               "/runtime/yaml",
               "/runtime/markdown",
               "/runtime/json5",

@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
-import { unlinkSync, writeFileSync } from "node:fs";
+import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir } from "harness";
+import { existsSync, unlinkSync, writeFileSync } from "node:fs";
 
 const crontabPath = Bun.which("crontab");
 const hasCrontab = !!crontabPath && isLinux;
 const hasSchtasks = isWindows;
+const hasLaunchctl = isMacOS;
 
 function readCrontab(): string {
   const result = Bun.spawnSync({
@@ -365,6 +366,119 @@ describe.skipIf(!hasSchtasks)("cron removal (Windows)", () => {
 
   test("removing non-existent task resolves without error", async () => {
     const result = await Bun.cron.remove("test-win-nonexistent");
+    expect(result).toBeUndefined();
+  });
+});
+
+// ==========================================================================
+// Registration & Removal (macOS — launchd)
+// ==========================================================================
+
+const plistDir = `${process.env.HOME}/Library/LaunchAgents`;
+
+function plistPath(title: string): string {
+  return `${plistDir}/bun.cron.${title}.plist`;
+}
+
+function queryLaunchdJob(title: string): boolean {
+  const result = Bun.spawnSync({
+    cmd: ["/bin/launchctl", "print", `gui/${process.getuid!()}/bun.cron.${title}`],
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  return result.exitCode === 0;
+}
+
+function removeLaunchdJob(title: string) {
+  Bun.spawnSync({
+    cmd: ["/bin/launchctl", "bootout", `gui/${process.getuid!()}/bun.cron.${title}`],
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+  try {
+    unlinkSync(plistPath(title));
+  } catch {}
+}
+
+describe.skipIf(!hasLaunchctl)("cron registration (macOS)", () => {
+  test("registers a launchd plist and bootstraps it", async () => {
+    using dir = tempDir("bun-cron-test", {
+      "job.ts": `export default { scheduled() {} };`,
+    });
+    try {
+      await Bun.cron(`${dir}/job.ts`, "* * * * *", "test-mac-reg");
+      const plist = await Bun.file(plistPath("test-mac-reg")).text();
+      expect(plist).toContain("bun.cron.test-mac-reg");
+      expect(plist).toContain("StartCalendarInterval");
+      expect(plist).toContain("--cron-title=test-mac-reg");
+      expect(queryLaunchdJob("test-mac-reg")).toBe(true);
+    } finally {
+      removeLaunchdJob("test-mac-reg");
+    }
+  });
+
+  test("returns a promise that resolves", async () => {
+    using dir = tempDir("bun-cron-test", {
+      "job.ts": `export default { scheduled() {} };`,
+    });
+    try {
+      const result = await Bun.cron(`${dir}/job.ts`, "* * * * *", "test-mac-promise");
+      expect(result).toBeUndefined();
+    } finally {
+      removeLaunchdJob("test-mac-promise");
+    }
+  });
+
+  test("replaces existing job with same title", async () => {
+    using dir = tempDir("bun-cron-test", {
+      "job.ts": `export default { scheduled() {} };`,
+    });
+    try {
+      await Bun.cron(`${dir}/job.ts`, "0 * * * *", "test-mac-replace");
+      await Bun.cron(`${dir}/job.ts`, "30 2 * * 1", "test-mac-replace");
+      const plist = await Bun.file(plistPath("test-mac-replace")).text();
+      expect(plist).toContain("--cron-period=30 2 * * 1");
+      expect(queryLaunchdJob("test-mac-replace")).toBe(true);
+    } finally {
+      removeLaunchdJob("test-mac-replace");
+    }
+  });
+
+  test("plist contains correct CalendarInterval XML", async () => {
+    using dir = tempDir("bun-cron-test", {
+      "job.ts": `export default { scheduled() {} };`,
+    });
+    try {
+      await Bun.cron(`${dir}/job.ts`, "30 2 * * 1", "test-mac-cal");
+      const plist = await Bun.file(plistPath("test-mac-cal")).text();
+      // Should have Minute=30, Hour=2, Weekday=1
+      expect(plist).toContain("<key>Minute</key>");
+      expect(plist).toContain("<integer>30</integer>");
+      expect(plist).toContain("<key>Hour</key>");
+      expect(plist).toContain("<integer>2</integer>");
+      expect(plist).toContain("<key>Weekday</key>");
+      expect(plist).toContain("<integer>1</integer>");
+    } finally {
+      removeLaunchdJob("test-mac-cal");
+    }
+  });
+});
+
+describe.skipIf(!hasLaunchctl)("cron removal (macOS)", () => {
+  test("removes a launchd job and deletes the plist", async () => {
+    using dir = tempDir("bun-cron-test", {
+      "job.ts": `export default { scheduled() {} };`,
+    });
+    await Bun.cron(`${dir}/job.ts`, "* * * * *", "test-mac-rm");
+    expect(queryLaunchdJob("test-mac-rm")).toBe(true);
+
+    await Bun.cron.remove("test-mac-rm");
+    expect(queryLaunchdJob("test-mac-rm")).toBe(false);
+    expect(existsSync(plistPath("test-mac-rm"))).toBe(false);
+  });
+
+  test("removing non-existent job resolves without error", async () => {
+    const result = await Bun.cron.remove("test-mac-nonexistent");
     expect(result).toBeUndefined();
   });
 });

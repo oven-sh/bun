@@ -62,7 +62,7 @@
 /test.ts
 /test.zig
 /testdir
-build
+/build/
 build.ninja
 bun-binary
 bun-mimalloc

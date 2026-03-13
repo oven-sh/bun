@@ -359,6 +359,9 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
                         // Accept the existing entry instead of deleting and retrying,
                         // which would cause ENOENT for other processes/threads that
                         // have already resolved this cache path.
+                        //
+                        // Clean up our orphaned temp extraction since it won't be used.
+                        tmpdir.deleteTree(tmpname) catch {};
                     },
                     else => {
                         log.addErrorFmt(
@@ -413,28 +416,28 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
     // We return a resolved absolute absolute file path to the cache dir.
     // To get that directory, we open the directory again.
     var final_dir = open_cache_dir: {
-        // On Windows, a concurrent install may be moving a directory into this
-        // location at the same moment. Retry a few times to handle the brief
-        // window where the target is not yet visible after an atomic move.
-        if (comptime Environment.isWindows) {
-            var open_retries: u8 = 0;
-            while (open_retries < 3) : (open_retries += 1) {
-                break :open_cache_dir bun.openDir(cache_dir, folder_name) catch {
+        const max_open_attempts: u8 = if (comptime Environment.isWindows) 4 else 1;
+        var open_attempt: u8 = 0;
+        while (true) {
+            break :open_cache_dir bun.openDir(cache_dir, folder_name) catch |err| {
+                open_attempt += 1;
+                // On Windows, a concurrent install may be moving a directory
+                // into this location at the same moment. Retry a few times to
+                // handle the brief window where the target is not yet visible.
+                if (open_attempt < max_open_attempts) {
                     std.Thread.sleep(100 * std.time.ns_per_ms);
                     continue;
-                };
-            }
+                }
+                log.addErrorFmt(
+                    null,
+                    logger.Loc.Empty,
+                    bun.default_allocator,
+                    "failed to verify cache dir for \"{s}\": {s}",
+                    .{ name, @errorName(err) },
+                ) catch unreachable;
+                return error.InstallFailed;
+            };
         }
-        break :open_cache_dir bun.openDir(cache_dir, folder_name) catch |err| {
-            log.addErrorFmt(
-                null,
-                logger.Loc.Empty,
-                bun.default_allocator,
-                "failed to verify cache dir for \"{s}\": {s}",
-                .{ name, @errorName(err) },
-            ) catch unreachable;
-            return error.InstallFailed;
-        };
     };
     defer final_dir.close();
     // and get the fd path

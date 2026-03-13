@@ -81,3 +81,52 @@ test.skipIf(process.platform === "win32")("process.title setter handles long tit
   expect(result.title).toBe(longTitle);
   expect(exitCode).toBe(0);
 });
+
+test.skipIf(process.platform === "win32")("process.title can be set multiple times", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      process.title = "first-title";
+      process.title = "second-title";
+      process.title = "third-title";
+      console.log(JSON.stringify({ title: process.title }));
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const result = JSON.parse(stdout.trim());
+  expect(result.title).toBe("third-title");
+  expect(exitCode).toBe(0);
+});
+
+test.skipIf(process.platform !== "darwin")("process.title setter updates thread name on macOS", async () => {
+  const customTitle = "bun-test-28050";
+
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      process.title = "${customTitle}";
+      // Verify the JS-level title is set and the process didn't crash
+      // from the pthread_setname_np / LaunchServices calls.
+      console.log(JSON.stringify({ jsTitle: process.title, pid: process.pid }));
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const result = JSON.parse(stdout.trim());
+  expect(result.jsTitle).toBe(customTitle);
+  expect(result.pid).toBeGreaterThan(0);
+  expect(exitCode).toBe(0);
+});

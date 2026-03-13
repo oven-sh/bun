@@ -138,7 +138,7 @@ pub fn doReadFile(this: *Blob, comptime Function: anytype, global: *JSGlobalObje
         promise_value.ensureStillAlive();
         handler.promise.strong.set(global, promise_value);
 
-        read_file.ReadFileUV.start(handler.globalThis.bunVM().uvLoop(), this.store.?, this.offset, this.size, Handler, handler);
+        read_file.ReadFileUV.start(handler.globalThis.bunVM().eventLoop(), this.store.?, this.offset, this.size, Handler, handler);
 
         return promise_value;
     }
@@ -180,7 +180,7 @@ pub fn NewInternalReadFileHandler(comptime Context: type, comptime Function: any
 pub fn doReadFileInternal(this: *Blob, comptime Handler: type, ctx: Handler, comptime Function: anytype, global: *JSGlobalObject) void {
     if (Environment.isWindows) {
         const ReadFileHandler = NewInternalReadFileHandler(Handler, Function);
-        return read_file.ReadFileUV.start(libuv.Loop.get(), this.store.?, this.offset, this.size, ReadFileHandler, ctx);
+        return read_file.ReadFileUV.start(global.bunVM().eventLoop(), this.store.?, this.offset, this.size, ReadFileHandler, ctx);
     }
     const file_read = read_file.ReadFile.createWithCtx(
         bun.default_allocator,
@@ -3159,7 +3159,7 @@ pub fn getStat(this: *Blob, globalThis: *jsc.JSGlobalObject, callback: *jsc.Call
                             .encoded_slice = switch (path_like) {
                                 // it's already converted to utf8
                                 .encoded_slice => |slice| try slice.toOwned(bun.default_allocator),
-                                else => try ZigString.init(path_like.slice()).toSliceClone(bun.default_allocator),
+                                else => try ZigString.fromUTF8(path_like.slice()).toSliceClone(bun.default_allocator),
                             },
                         },
                     }, globalThis.bunVM());
@@ -3214,6 +3214,13 @@ pub fn resolveSize(this: *Blob) void {
 
                 this.offset = @min(store_size, offset);
                 this.size = store_size -| offset;
+                return;
+            }
+
+            // For non-seekable files (pipes, FIFOs), the size is genuinely
+            // unknown — leave it as max_size so that stream readers don't
+            // treat it as an empty file.
+            if (store.data.file.seekable != null and store.data.file.seekable.? == false) {
                 return;
             }
         }

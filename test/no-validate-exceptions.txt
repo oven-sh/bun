@@ -161,3 +161,4 @@ test/js/web/urlpattern/urlpattern.test.ts
 
 # TODO: jsc
 test/js/bun/jsonl/jsonl-parse.test.ts
+test/regression/issue/isArray-proxy-crash.test.ts

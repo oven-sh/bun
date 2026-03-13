@@ -1187,6 +1187,10 @@ pub const LinkerContext = struct {
         ast: *const JSAst,
     ) !bool {
         const record = ast.import_records.at(import_record_index);
+        // Barrel optimization: deferred import records should be dropped
+        if (record.flags.is_unused) {
+            return true;
+        }
         // Is this an external import?
         if (!record.source_index.isValid()) {
             // Keep the "import" statement if import statements are supported
@@ -1683,6 +1687,25 @@ pub const LinkerContext = struct {
                 if (record.source_index.isValid()) {
                     c.markFileLiveForTreeShaking(
                         other_source_index,
+                        side_effects,
+                        parts,
+                        import_records,
+                        entry_point_kinds,
+                        css_reprs,
+                    );
+                }
+            }
+            return;
+        }
+
+        // HTML files can reference non-JS/CSS assets (favicons, images, etc.)
+        // via .url kind import records. Follow all import records for HTML files
+        // so these assets are marked live and included in the manifest.
+        if (c.parse_graph.input_files.items(.loader)[source_index] == .html) {
+            for (import_records[source_index].slice()) |*record| {
+                if (record.source_index.isValid()) {
+                    c.markFileLiveForTreeShaking(
+                        record.source_index.get(),
                         side_effects,
                         parts,
                         import_records,
@@ -2316,6 +2339,14 @@ pub const LinkerContext = struct {
         // Is this an external file?
         const record: *const ImportRecord = import_records.at(named_import.import_record_index);
         if (!record.source_index.isValid()) {
+            return .{
+                .value = .{},
+                .status = .external,
+            };
+        }
+
+        // Barrel optimization: deferred import records point to empty ASTs
+        if (record.flags.is_unused) {
             return .{
                 .value = .{},
                 .status = .external,

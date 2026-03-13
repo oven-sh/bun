@@ -476,7 +476,8 @@ class BunWebSocket extends EventEmitter {
     if (typeof data === "number") data = data.toString();
 
     try {
-      this.#ws.ping(data);
+      if (data === undefined) this.#ws.ping();
+      else this.#ws.ping(data);
     } catch (error) {
       if (typeof cb === "function") {
         cb(error);
@@ -505,7 +506,8 @@ class BunWebSocket extends EventEmitter {
     if (typeof data === "number") data = data.toString();
 
     try {
-      this.#ws.pong(data);
+      if (data === undefined) this.#ws.pong();
+      else this.#ws.pong(data);
     } catch (error) {
       if (typeof cb === "function") {
         cb(error);
@@ -905,7 +907,8 @@ class BunWebSocketMocked extends EventEmitter {
     if (typeof data === "number") data = data.toString();
 
     try {
-      this.#ws.ping(data);
+      if (data === undefined) this.#ws.ping();
+      else this.#ws.ping(data);
     } catch (error) {
       if (typeof cb === "function") cb(error);
       return;
@@ -930,7 +933,8 @@ class BunWebSocketMocked extends EventEmitter {
     if (typeof data === "number") data = data.toString();
 
     try {
-      this.#ws.pong(data);
+      if (data === undefined) this.#ws.pong();
+      else this.#ws.pong(data);
     } catch (error) {
       if (typeof cb === "function") cb(error);
       return;

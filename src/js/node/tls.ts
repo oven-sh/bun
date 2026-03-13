@@ -656,11 +656,15 @@ TLSSocket.prototype.setSession = function setSession(session) {
 };
 
 TLSSocket.prototype.getPeerCertificate = function getPeerCertificate(abbreviated) {
-  const cert =
-    arguments.length < 1 ? this._handle?.getPeerCertificate?.() : this._handle?.getPeerCertificate?.(abbreviated);
-  if (cert) {
-    return translatePeerCertificate(cert);
+  if (this._handle) {
+    const cert =
+      arguments.length < 1 ? this._handle.getPeerCertificate?.() : this._handle.getPeerCertificate?.(abbreviated);
+    if (cert) {
+      return translatePeerCertificate(cert);
+    }
+    return {};
   }
+  return null;
 };
 
 TLSSocket.prototype.getCertificate = function getCertificate() {

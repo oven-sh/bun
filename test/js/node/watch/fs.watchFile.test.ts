@@ -201,49 +201,60 @@ describe("fs.watchFile", () => {
   }, 20000);
 
   // https://github.com/oven-sh/bun/issues/28027
-  // Must run in a subprocess: on an unpatched build this segfaults the runtime.
-  // StatWatcher uses ThreadSafeRefCount so deinit() can run on the WorkPool
-  // thread; that path must never touch HandleSet (which is JS-thread-only).
-  test("no crash when GC races WorkPool deref after unwatchFile", async () => {
+  // The old code held a jsc.Strong (last_jsvalue) and relied on an indirect
+  // chain to keep the JS wrapper alive. finalize() did not clear the Strong,
+  // so when the WorkPool scheduler later called deref() -> deinit(),
+  // HandleSet::deallocate() ran on a non-JS thread and corrupted the GC
+  // handle linked list -> segfault in visitStrongHandles.
+  //
+  // The unwatchFile path cannot reproduce this: close() sets closed=true
+  // before GC, so the scheduler derefs first and deinit() runs on the JS
+  // thread. Only the _handle=null path (no close) forces finalize() to be
+  // the one that sets closed=true, guaranteeing the WorkPool deref is last.
+  //
+  // Windows-only: the corruption is real UB on all platforms but was only
+  // observed to manifest as a crash on Windows (20 attempts on macOS with
+  // 200 watchers and 20 GC cycles never crashed).
+  test.skipIf(!isWindows)("no crash when finalize() races WorkPool deinit", async () => {
     const dir = tempDirWithFiles(
       "watchfile-gc",
-      Object.fromEntries(Array.from({ length: 50 }, (_, i) => [`file-${i}.txt`, `data-${i}`])),
+      Object.fromEntries(Array.from({ length: 50 }, (_, i) => [`f${i}.txt`, `d`])),
     );
 
     const fixture = /* js */ `
       const fs = require("fs");
       const path = require("path");
       const dir = ${JSON.stringify(dir)};
-      const files = Array.from({ length: 50 }, (_, i) => path.join(dir, "file-" + i + ".txt"));
 
-      // Create watchers. Each native StatWatcher strong-refs its JS wrapper
-      // and is ref'd by the scheduler's WorkPool queue.
-      for (const f of files) fs.watchFile(f, { interval: 5 }, () => {});
+      // unref(): release poll_ref so the fixed build can exit naturally
+      // even though JSRef keeps wrappers alive and closed is never set.
+      // _handle = null: disconnect the native wrapper from JS without
+      // calling close(). On the broken build, finalize() is now the only
+      // path that can set closed=true.
+      for (let i = 0; i < 50; i++) {
+        const w = fs.watchFile(path.join(dir, "f" + i + ".txt"), { interval: 5 }, () => {});
+        w.unref();
+        w._handle = null;
+      }
 
-      // Let initial stat tasks complete and watchers enter the scheduler queue.
+      // Let initial stat tasks complete: initialStatSuccessOnMainThread
+      // runs on the JS thread, allocates the Strong (last_jsvalue.set), and
+      // appends the watcher to the scheduler queue (ref_count now 2:
+      // construction + scheduler). Idle GC may also run during this sleep.
       await Bun.sleep(100);
 
-      // unwatchFile -> stop() -> _handle.close(): downgrades JSRef to weak
-      // (HandleSet dealloc on JS thread) and sets closed=true. The scheduler
-      // still holds a native ref and may have restats in flight. The JS
-      // wrapper is now collectable.
-      for (const f of files) fs.unwatchFile(f);
-
-      // Force GC: finalize() runs on JS thread (JSRef: .weak -> .finalized,
-      // no HandleSet touch). Concurrently, the WorkPool thread's scheduler
-      // loop sees closed=true and calls deref() -> deinit(). On an unpatched
-      // build, deinit() called Strong.deinit() -> HandleSet::deallocate()
-      // from the WorkPool thread, corrupting the GC handle list. Now the
-      // JSRef is .finalized so deinit() is a no-op.
+      // On the broken build: finalize() sets closed=true, deref (2->1).
+      // Timer fires, workPoolCallback sees closed=true, deref on WorkPool
+      // (1->0), deinit() calls last_jsvalue.deinit() on the WorkPool thread.
+      // On the fixed build: JSRef initStrong keeps wrappers rooted, none of
+      // this runs, the GC calls below are no-ops.
       Bun.gc(true);
-      await Bun.sleep(50);
+      await Bun.sleep(200);
       Bun.gc(true);
-      await Bun.sleep(50);
+      await Bun.sleep(100);
       Bun.gc(true);
 
       console.log("OK");
-      // Natural exit: close() unref'd poll_ref, scheduler drops all refs,
-      // event loop drains. Hanging here means cleanup is broken.
     `;
 
     await using proc = Bun.spawn({

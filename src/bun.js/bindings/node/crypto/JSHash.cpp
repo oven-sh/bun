@@ -334,7 +334,7 @@ JSC_DEFINE_HOST_FUNCTION(constructHash, (JSC::JSGlobalObject * globalObject, JSC
         }
     }
 
-    if (md == nullptr) [[unlikely]] {
+    if (md == nullptr && zigHasher == nullptr) [[unlikely]] {
         throwCryptoError(globalObject, scope, ERR_get_error(), "Digest method not supported"_s);
         return {};
     }

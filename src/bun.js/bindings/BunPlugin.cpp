@@ -756,9 +756,24 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
                             exportSnapshotObject = snapshot;
 
                         } else {
-                            // if it's not an object, I guess we just set the default export?
+                            // Non-object return — override just the default export.
+                            // Snapshot the original default so it can be restored on scope end.
+                            JSObject* defaultSnapshot = constructEmptyObject(globalObject, globalObject->objectPrototype(), 1);
+                            {
+                                auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+                                JSValue originalDefault = moduleNamespaceObject->get(globalObject, vm.propertyNames->defaultKeyword);
+                                if (topExceptionScope.exception()) [[unlikely]] {
+                                    (void)topExceptionScope.tryClearException();
+                                    originalDefault = jsUndefined();
+                                }
+                                defaultSnapshot->putDirect(vm, vm.propertyNames->defaultKeyword, originalDefault, 0);
+                            }
+
                             moduleNamespaceObject->overrideExportValue(globalObject, vm.propertyNames->defaultKeyword, exportsValue);
                             RETURN_IF_EXCEPTION(scope, {});
+
+                            patchedNamespaceObject = moduleNamespaceObject;
+                            exportSnapshotObject = defaultSnapshot;
                         }
 
                         // TODO: do we need to handle intermediate loading state here?

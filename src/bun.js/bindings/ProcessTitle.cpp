@@ -134,10 +134,11 @@ extern "C" int Bun__setProcessTitle(const char* title)
 
 #elif OS(WINDOWS)
 
-// On Windows, process.title is handled by libuv via uv_set_process_title.
-extern "C" int Bun__setProcessTitle(const char*)
+#include <uv.h>
+
+extern "C" int Bun__setProcessTitle(const char* title)
 {
-    return 0;
+    return uv_set_process_title(title);
 }
 
 #else

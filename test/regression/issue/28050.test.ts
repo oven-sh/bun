@@ -38,7 +38,7 @@ test.skipIf(process.platform !== "linux")("process.title setter updates OS proce
   expect(exitCode).toBe(0);
 });
 
-test.skipIf(process.platform === "win32")("process.title setter handles empty string", async () => {
+test("process.title setter handles empty string", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -59,7 +59,7 @@ test.skipIf(process.platform === "win32")("process.title setter handles empty st
   expect(exitCode).toBe(0);
 });
 
-test.skipIf(process.platform === "win32")("process.title setter handles long titles", async () => {
+test("process.title setter handles long titles", async () => {
   const longTitle = Buffer.alloc(256, "a").toString();
 
   await using proc = Bun.spawn({
@@ -82,7 +82,7 @@ test.skipIf(process.platform === "win32")("process.title setter handles long tit
   expect(exitCode).toBe(0);
 });
 
-test.skipIf(process.platform === "win32")("process.title can be set multiple times", async () => {
+test("process.title can be set multiple times", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

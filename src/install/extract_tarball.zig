@@ -420,7 +420,7 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
             var open_retries: u8 = 0;
             while (open_retries < 3) : (open_retries += 1) {
                 break :open_cache_dir bun.openDir(cache_dir, folder_name) catch {
-                    std.time.sleep(100 * std.time.ns_per_ms);
+                    std.Thread.sleep(100 * std.time.ns_per_ms);
                     continue;
                 };
             }

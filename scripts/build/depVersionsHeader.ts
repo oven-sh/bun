@@ -12,7 +12,7 @@
  * Source: cmake/tools/GenerateDependencyVersions.cmake
  */
 
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import type { Config } from "./config.ts";
 import { allDeps } from "./deps/index.ts";
@@ -75,27 +75,15 @@ function computeVersions(cfg: Config): [string, string][] {
   // more precise (the commit IS what we ship) and stays in sync.
   versions.push(["ZIG", cfg.zigCommit]);
 
-  // ─── Semantic versions extracted from vendor headers ───
-  // These can fail if the dep isn't fetched yet — omit on failure.
-  const libdeflate = extractVersion(
-    resolve(cfg.vendorDir, "libdeflate", "libdeflate.h"),
-    /LIBDEFLATE_VERSION_STRING\s+"([^"]+)"/,
-  );
-  if (libdeflate !== undefined) versions.push(["LIBDEFLATE_VERSION", libdeflate]);
-
-  const zlib = extractVersion(resolve(cfg.vendorDir, "zlib", "zlib.h"), /ZLIB_VERSION\s+"([^"]+)"/);
-  if (zlib !== undefined) versions.push(["ZLIB_VERSION", zlib]);
+  // NOTE: cmake's GenerateDependencyVersions.cmake also extracted semantic
+  // versions (LIBDEFLATE_VERSION="1.19", ZLIB_VERSION="1.2.8") from vendor
+  // headers. Those macros were never consumed — BunProcess.cpp only reads
+  // the _HASH (commit) macros for process.versions. The extraction is also
+  // a chicken-and-egg: it runs at configure time but vendor headers exist
+  // only after fetch, so on a clean checkout the header content flips on
+  // the second configure → spurious rebuild. Dropping the dead code.
 
   return versions;
-}
-
-function extractVersion(headerPath: string, regex: RegExp): string | undefined {
-  if (!existsSync(headerPath)) return undefined;
-  try {
-    return readFileSync(headerPath, "utf8").match(regex)?.[1];
-  } catch {
-    return undefined;
-  }
 }
 
 /**

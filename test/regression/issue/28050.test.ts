@@ -105,7 +105,7 @@ test("process.title can be set multiple times", async () => {
   expect(exitCode).toBe(0);
 });
 
-test.skipIf(process.platform !== "darwin")("process.title setter updates thread name on macOS", async () => {
+test.skipIf(process.platform !== "darwin")("process.title setter works on macOS", async () => {
   const customTitle = "bun-test-28050";
 
   await using proc = Bun.spawn({
@@ -114,8 +114,6 @@ test.skipIf(process.platform !== "darwin")("process.title setter updates thread 
       "-e",
       `
       process.title = "${customTitle}";
-      // Verify the JS-level title is set and the process didn't crash
-      // from the pthread_setname_np / LaunchServices calls.
       console.log(JSON.stringify({ jsTitle: process.title, pid: process.pid }));
       `,
     ],

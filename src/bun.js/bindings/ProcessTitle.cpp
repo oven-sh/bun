@@ -8,7 +8,6 @@
 #if OS(DARWIN)
 
 #include "DarwinFrameworks.h"
-#include <pthread.h>
 
 extern "C" int Bun__setProcessTitle(const char* title)
 {
@@ -99,11 +98,6 @@ extern "C" int Bun__setProcessTitle(const char* title)
         err = 0;
 
     out:
-        // Always set the pthread name regardless of LaunchServices success.
-        // pthread_setname_np works independently and is useful on headless macOS
-        // (CI, SSH, Docker) where LaunchServices is unavailable.
-        pthread_setname_np(title);
-
         fw->releaseCF(cfLaunchServicesId);
         fw->releaseCF(cfGetASN);
         fw->releaseCF(cfSetInfo);
@@ -116,7 +110,6 @@ extern "C" int Bun__setProcessTitle(const char* title)
     }
 
 fallback:
-    pthread_setname_np(title);
     return -1;
 }
 

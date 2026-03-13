@@ -109,6 +109,11 @@ fn messageWithTypeAndLevel_(
         return;
     }
 
+    // When --silent is passed to `bun test`, suppress all console output from tests.
+    if (bun.jsc.Jest.Jest.runner != null and CLI.get().test_options.silent) {
+        return;
+    }
+
     // Lock/unlock a mutex incase two JS threads are console.log'ing at the same time
     // We do this the slightly annoying way to avoid assigning a pointer
     if (level == .Warning or level == .Error or message_type == .Assert) {

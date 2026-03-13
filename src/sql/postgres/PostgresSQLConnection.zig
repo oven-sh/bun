@@ -1090,7 +1090,17 @@ pub fn canPrepareQuery(noalias this: *const @This()) bool {
     return this.flags.is_ready_for_query and !this.flags.waiting_to_prepare and this.pipelined_requests == 0;
 }
 
-pub fn advance(this: *PostgresSQLConnection) void {
+/// Process pending requests and flush. Called from the enqueue path when
+/// unnamed prepared statements with params skip writeQuery+Sync and need
+/// advance() to send everything atomically on an idle connection.
+pub fn advanceAndFlush(this: *PostgresSQLConnection) void {
+    if (!this.flags.has_backpressure and this.flags.is_ready_for_query) {
+        this.advance();
+        this.flushData();
+    }
+}
+
+fn advance(this: *PostgresSQLConnection) void {
     var offset: usize = 0;
     debug("advance", .{});
     defer {

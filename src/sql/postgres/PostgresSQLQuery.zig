@@ -494,13 +494,8 @@ pub fn doRun(this: *PostgresSQLQuery, globalObject: *jsc.JSGlobalObject, callfra
     } else {
         connection.resetConnectionTimeout();
         // For unnamed prepared statements with params, we skip writeQuery+Sync
-        // in the enqueue path and let advance() handle it atomically. Since
-        // nothing was written, registerAutoFlusher won't trigger (empty buffer),
-        // so call advance() directly to process the pending request.
-        if (connection.flags.is_ready_for_query) {
-            connection.advance();
-            connection.flushData();
-        }
+        // in the enqueue path and let advance() handle it atomically.
+        connection.advanceAndFlush();
     }
     return .js_undefined;
 }

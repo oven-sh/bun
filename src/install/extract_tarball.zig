@@ -356,6 +356,7 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
                     switch (err.getErrno()) {
                         .NOTEMPTY, .PERM, .BUSY, .EXIST => {
                             dir_to_move.close();
+                            defer tmpdir.deleteTree(tmpname) catch {};
 
                             // The install cache is write-once. If another process already created this
                             // directory, prefer the existing entry instead of deleting and replacing it.
@@ -372,7 +373,6 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
                                 return error.InstallFailed;
                             };
                             existing_dir.close();
-                            tmpdir.deleteTree(tmpname) catch {};
                             break :publish_to_cache;
                         },
                         else => {},

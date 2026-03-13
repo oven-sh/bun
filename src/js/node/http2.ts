@@ -85,13 +85,13 @@ const kSettingNames = {
 };
 
 const kSettingIds: Record<number, string> = {
-  0x1: 'headerTableSize',
-  0x2: 'enablePush',
-  0x3: 'maxConcurrentStreams',
-  0x4: 'initialWindowSize',
-  0x5: 'maxFrameSize',
-  0x6: 'maxHeaderListSize',
-  0x8: 'enableConnectProtocol',
+  0x1: "headerTableSize",
+  0x2: "enablePush",
+  0x3: "maxConcurrentStreams",
+  0x4: "initialWindowSize",
+  0x5: "maxFrameSize",
+  0x6: "maxHeaderListSize",
+  0x8: "enableConnectProtocol",
 };
 
 const kDefaultSettings = {
@@ -107,95 +107,95 @@ const kDefaultSettings = {
 
 function throwSettingRangeError(name: string, value: any) {
   const err = new RangeError(`Invalid value for setting "${name}": ${value}`);
-  (err as any).code = 'ERR_HTTP2_INVALID_SETTING_VALUE';
+  (err as any).code = "ERR_HTTP2_INVALID_SETTING_VALUE";
   throw err;
 }
 
 function throwSettingTypeError(name: string, value: any) {
   const err = new TypeError(`Invalid value for setting "${name}": ${value}`);
-  (err as any).code = 'ERR_HTTP2_INVALID_SETTING_VALUE';
+  (err as any).code = "ERR_HTTP2_INVALID_SETTING_VALUE";
   throw err;
 }
 
 function validateSettings(settings: any) {
-  if (typeof settings !== 'object' || settings === null) {
+  if (typeof settings !== "object" || settings === null) {
     throw $ERR_INVALID_ARG_TYPE("settings", "object", settings);
   }
 
   if (settings.headerTableSize !== undefined) {
     const v = settings.headerTableSize;
-    if (typeof v !== 'number' || v < 0 || v > kMaxInt || Number.isNaN(v)) {
-      throwSettingRangeError('headerTableSize', v);
+    if (typeof v !== "number" || v < 0 || v > kMaxInt || Number.isNaN(v)) {
+      throwSettingRangeError("headerTableSize", v);
     }
   }
 
   if (settings.enablePush !== undefined) {
     const v = settings.enablePush;
-    if (typeof v !== 'boolean') {
-      throwSettingTypeError('enablePush', v);
+    if (typeof v !== "boolean") {
+      throwSettingTypeError("enablePush", v);
     }
   }
 
   if (settings.initialWindowSize !== undefined) {
     const v = settings.initialWindowSize;
-    if (typeof v !== 'number' || v < 0 || v > kMaxInt || Number.isNaN(v)) {
-      throwSettingRangeError('initialWindowSize', v);
+    if (typeof v !== "number" || v < 0 || v > kMaxInt || Number.isNaN(v)) {
+      throwSettingRangeError("initialWindowSize", v);
     }
   }
 
   if (settings.maxFrameSize !== undefined) {
     const v = settings.maxFrameSize;
-    if (typeof v !== 'number' || v < 16384 || v > 16777215 || Number.isNaN(v)) {
-      throwSettingRangeError('maxFrameSize', v);
+    if (typeof v !== "number" || v < 16384 || v > 16777215 || Number.isNaN(v)) {
+      throwSettingRangeError("maxFrameSize", v);
     }
   }
 
   if (settings.maxConcurrentStreams !== undefined) {
     const v = settings.maxConcurrentStreams;
-    if (typeof v !== 'number' || v < 0 || v > kMaxInt || Number.isNaN(v)) {
-      throwSettingRangeError('maxConcurrentStreams', v);
+    if (typeof v !== "number" || v < 0 || v > kMaxInt || Number.isNaN(v)) {
+      throwSettingRangeError("maxConcurrentStreams", v);
     }
   }
 
   if (settings.maxHeaderListSize !== undefined) {
     const v = settings.maxHeaderListSize;
-    if (typeof v !== 'number' || v < 0 || v > kMaxInt || Number.isNaN(v)) {
-      throwSettingRangeError('maxHeaderListSize', v);
+    if (typeof v !== "number" || v < 0 || v > kMaxInt || Number.isNaN(v)) {
+      throwSettingRangeError("maxHeaderListSize", v);
     }
   }
 
   if (settings.maxHeaderSize !== undefined) {
     const v = settings.maxHeaderSize;
-    if (typeof v !== 'number' || v < 0 || v > kMaxInt || Number.isNaN(v)) {
-      throwSettingRangeError('maxHeaderSize', v);
+    if (typeof v !== "number" || v < 0 || v > kMaxInt || Number.isNaN(v)) {
+      throwSettingRangeError("maxHeaderSize", v);
     }
   }
 
   if (settings.enableConnectProtocol !== undefined) {
     const v = settings.enableConnectProtocol;
-    if (typeof v !== 'boolean') {
-      throwSettingTypeError('enableConnectProtocol', v);
+    if (typeof v !== "boolean") {
+      throwSettingTypeError("enableConnectProtocol", v);
     }
   }
 
   if (settings.customSettings !== undefined) {
     const cs = settings.customSettings;
-    if (typeof cs !== 'object' || cs === null) {
-      throwSettingRangeError('customSettings', cs);
+    if (typeof cs !== "object" || cs === null) {
+      throwSettingRangeError("customSettings", cs);
     }
     const keys = Object.keys(cs);
     if (keys.length > MAX_ADDITIONAL_SETTINGS) {
-      const err = new Error('Number of custom settings exceeds MAX_ADDITIONAL_SETTINGS');
-      (err as any).code = 'ERR_HTTP2_TOO_MANY_CUSTOM_SETTINGS';
+      const err = new Error("Number of custom settings exceeds MAX_ADDITIONAL_SETTINGS");
+      (err as any).code = "ERR_HTTP2_TOO_MANY_CUSTOM_SETTINGS";
       throw err;
     }
     for (const key of keys) {
       const id = Number(key);
-      if (!Number.isInteger(id) || id < 0 || id > 0xFFFF) {
+      if (!Number.isInteger(id) || id < 0 || id > 0xffff) {
         throwSettingRangeError(key, cs[key]);
       }
       const val = cs[key];
-      if (typeof val !== 'number' || val < 0 || val > kMaxInt || !Number.isFinite(val)) {
+      if (typeof val !== "number" || val < 0 || val > kMaxInt || !Number.isFinite(val)) {
         throwSettingRangeError(key, val);
       }
     }
@@ -267,8 +267,8 @@ function getUnpackedSettings(buf?: any, options?: any): any {
   const data = Buffer.isBuffer(buf) ? buf : Buffer.from(buf.buffer, buf.byteOffset, buf.byteLength);
 
   if (data.length % 6 !== 0) {
-    const err = new RangeError('Packed settings length must be a multiple of six');
-    (err as any).code = 'ERR_HTTP2_INVALID_PACKED_SETTINGS_LENGTH';
+    const err = new RangeError("Packed settings length must be a multiple of six");
+    (err as any).code = "ERR_HTTP2_INVALID_PACKED_SETTINGS_LENGTH";
     throw err;
   }
 
@@ -282,14 +282,14 @@ function getUnpackedSettings(buf?: any, options?: any): any {
 
     const name = kSettingIds[type];
     if (name) {
-      if (name === 'enablePush') {
+      if (name === "enablePush") {
         settings[name] = value !== 0;
-      } else if (name === 'enableConnectProtocol') {
+      } else if (name === "enableConnectProtocol") {
         settings[name] = value !== 0;
       } else {
         settings[name] = value;
       }
-      if (name === 'maxHeaderListSize') {
+      if (name === "maxHeaderListSize") {
         settings.maxHeaderSize = value;
       }
     } else {

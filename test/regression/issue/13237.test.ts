@@ -1,15 +1,10 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, realpathSync } from "fs";
-import { tmpdir } from "os";
+import { tempDir } from "harness";
 import { join } from "path";
 
-function makeTempDir() {
-  return mkdtempSync(join(realpathSync.native(tmpdir()), "issue-13237-"));
-}
-
 test("Bun.write with new Response(req.body) does not hang", async () => {
-  const dir = makeTempDir();
-  const outFile = join(dir, "test.txt");
+  using dir = tempDir("issue-13237-", {});
+  const outFile = join(String(dir), "test.txt");
 
   await using server = Bun.serve({
     port: 0,
@@ -29,8 +24,8 @@ test("Bun.write with new Response(req.body) does not hang", async () => {
 });
 
 test("Bun.write with new Response(ReadableStream) does not hang", async () => {
-  const dir = makeTempDir();
-  const outFile = join(dir, "test.txt");
+  using dir = tempDir("issue-13237-", {});
+  const outFile = join(String(dir), "test.txt");
 
   const stream = new ReadableStream({
     start(controller) {
@@ -44,8 +39,8 @@ test("Bun.write with new Response(ReadableStream) does not hang", async () => {
 });
 
 test("Bun.write with new Response(req.body) after accessing req.body does not hang", async () => {
-  const dir = makeTempDir();
-  const outFile = join(dir, "test.txt");
+  using dir = tempDir("issue-13237-", {});
+  const outFile = join(String(dir), "test.txt");
 
   await using server = Bun.serve({
     port: 0,

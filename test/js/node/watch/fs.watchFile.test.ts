@@ -1,5 +1,5 @@
 import { pathToFileURL } from "bun";
-import { isWindows, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
 import fs from "node:fs";
 import path from "path";
 
@@ -199,4 +199,56 @@ describe("fs.watchFile", () => {
       EventEmitter.defaultMaxListeners = defaultMaxListeners;
     }
   }, 20000);
+
+  // https://github.com/oven-sh/bun/issues/28027
+  // Must run in a subprocess: on an unpatched build this segfaults the runtime.
+  // StatWatcher uses ThreadSafeRefCount so deinit() can run on the WorkPool
+  // thread; that path must never touch HandleSet (which is JS-thread-only).
+  test("no crash when native handle is GC'd without close()", async () => {
+    const dir = tempDirWithFiles(
+      "watchfile-gc",
+      Object.fromEntries(Array.from({ length: 50 }, (_, i) => [`file-${i}.txt`, `data-${i}`])),
+    );
+
+    const fixture = /* js */ `
+      const fs = require("fs");
+      const path = require("path");
+      const dir = ${JSON.stringify(dir)};
+
+      // Create watchers and disconnect native handles without calling close().
+      // The native StatWatcher holds a strong self-ref (JSRef) while active, so
+      // the wrapper stays rooted regardless of _handle being nulled. This used
+      // to crash when finalize() raced with the WorkPool thread's deref().
+      for (let i = 0; i < 50; i++) {
+        const w = fs.watchFile(path.join(dir, "file-" + i + ".txt"), { interval: 5 }, () => {});
+        w._handle = null;
+      }
+
+      // Wait for initial stat tasks to complete and watchers to enter scheduler.
+      await Bun.sleep(100);
+
+      // Force GC a few times while the scheduler is actively re-statting from
+      // the WorkPool thread. On an unpatched build, cross-thread HandleSet
+      // access corrupts the GC's handle linked list and segfaults here.
+      Bun.gc(true);
+      await Bun.sleep(200);
+      Bun.gc(true);
+      await Bun.sleep(100);
+      Bun.gc(true);
+
+      console.log("OK");
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("OK");
+    expect(exitCode).toBe(0);
+  });
 });

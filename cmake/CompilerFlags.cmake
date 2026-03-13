@@ -40,6 +40,13 @@ endif()
 
 # --- MSVC runtime ---
 if(WIN32)
+  # CMP0091 NEW (Policies.cmake) makes CMake use this property instead of
+  # injecting /MD into CMAKE_<LANG>_FLAGS_<CONFIG>. Without it, CMake defaults
+  # to MultiThreadedDLL and appends -MD after our /MT, poisoning vendor libs
+  # with /DEFAULTLIB:msvcrt.lib. Set it explicitly so the property matches the
+  # raw /MT flags below.
+  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
   register_compiler_flags(
     DESCRIPTION "Use static MSVC runtime"
     /MTd ${DEBUG}

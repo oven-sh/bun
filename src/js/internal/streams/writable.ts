@@ -4,6 +4,29 @@
 
 "use strict";
 
+const kSync = 1 << 9;
+const kFinalCalled = 1 << 10;
+const kNeedDrain = 1 << 11;
+const kEnding = 1 << 12;
+const kFinished = 1 << 13;
+const kDecodeStrings = 1 << 14;
+const kWriting = 1 << 15;
+const kBufferProcessing = 1 << 16;
+const kPrefinished = 1 << 17;
+const kAllBuffers = 1 << 18;
+const kAllNoop = 1 << 19;
+const kOnFinished = 1 << 20;
+const kHasWritable = 1 << 21;
+const kWritable = 1 << 22;
+const kCorked = 1 << 23;
+const kDefaultUTF8Encoding = 1 << 24;
+const kWriteCb = 1 << 25;
+const kExpectWriteCb = 1 << 26;
+const kAfterWriteTickInfo = 1 << 27;
+const kAfterWritePending = 1 << 28;
+const kBuffered = 1 << 29;
+const kEnded = 1 << 30;
+
 const EE = require("node:events");
 const { Stream } = require("internal/streams/legacy");
 const destroyImpl = require("internal/streams/destroy");
@@ -54,29 +77,6 @@ const kDefaultEncodingValue = Symbol("kDefaultEncodingValue");
 const kWriteCbValue = Symbol("kWriteCbValue");
 const kAfterWriteTickInfoValue = Symbol("kAfterWriteTickInfoValue");
 const kBufferedValue = Symbol("kBufferedValue");
-
-const kSync = 1 << 9;
-const kFinalCalled = 1 << 10;
-const kNeedDrain = 1 << 11;
-const kEnding = 1 << 12;
-const kFinished = 1 << 13;
-const kDecodeStrings = 1 << 14;
-const kWriting = 1 << 15;
-const kBufferProcessing = 1 << 16;
-const kPrefinished = 1 << 17;
-const kAllBuffers = 1 << 18;
-const kAllNoop = 1 << 19;
-const kOnFinished = 1 << 20;
-const kHasWritable = 1 << 21;
-const kWritable = 1 << 22;
-const kCorked = 1 << 23;
-const kDefaultUTF8Encoding = 1 << 24;
-const kWriteCb = 1 << 25;
-const kExpectWriteCb = 1 << 26;
-const kAfterWriteTickInfo = 1 << 27;
-const kAfterWritePending = 1 << 28;
-const kBuffered = 1 << 29;
-const kEnded = 1 << 30;
 
 // TODO(benjamingr) it is likely slower to do it this way than with free functions
 function makeBitMapDescriptor(bit) {
@@ -423,15 +423,17 @@ function _write(stream, chunk, encoding, cb?) {
     throw $ERR_STREAM_NULL_VALUES();
   }
 
-  if ((state[kState] & kObjectMode) === 0) {
+  const stateInt = state[kState];
+
+  if ((stateInt & kObjectMode) === 0) {
     if (!encoding) {
-      encoding = (state[kState] & kDefaultUTF8Encoding) !== 0 ? "utf8" : state.defaultEncoding;
+      encoding = (stateInt & kDefaultUTF8Encoding) !== 0 ? "utf8" : state.defaultEncoding;
     } else if (encoding !== "buffer" && !Buffer.isEncoding(encoding)) {
       throw $ERR_UNKNOWN_ENCODING(encoding);
     }
 
     if (typeof chunk === "string") {
-      if ((state[kState] & kDecodeStrings) !== 0) {
+      if ((stateInt & kDecodeStrings) !== 0) {
         chunk = Buffer.from(chunk, encoding);
         encoding = "buffer";
       }
@@ -446,9 +448,9 @@ function _write(stream, chunk, encoding, cb?) {
   }
 
   let err;
-  if ((state[kState] & kEnding) !== 0) {
+  if ((stateInt & kEnding) !== 0) {
     err = $ERR_STREAM_WRITE_AFTER_END();
-  } else if ((state[kState] & kDestroyed) !== 0) {
+  } else if ((stateInt & kDestroyed) !== 0) {
     err = $ERR_STREAM_DESTROYED("write");
   }
 
@@ -504,42 +506,46 @@ Writable.prototype.setDefaultEncoding = function setDefaultEncoding(encoding) {
 // in the queue, and wait our turn.  Otherwise, call _write
 // If we return false, then we need a drain event, so set that flag.
 function writeOrBuffer(stream, state, chunk, encoding, callback) {
-  const len = (state[kState] & kObjectMode) !== 0 ? 1 : chunk.length;
+  let stateInt = state[kState];
+  const len = (stateInt & kObjectMode) !== 0 ? 1 : chunk.length;
 
   state.length += len;
 
-  if ((state[kState] & (kWriting | kErrored | kCorked | kConstructed)) !== kConstructed) {
-    if ((state[kState] & kBuffered) === 0) {
-      state[kState] |= kBuffered;
+  if ((stateInt & (kWriting | kErrored | kCorked | kConstructed)) !== kConstructed) {
+    if ((stateInt & kBuffered) === 0) {
+      stateInt |= kBuffered;
       state[kBufferedValue] = [];
     }
 
     state[kBufferedValue].push({ chunk, encoding, callback });
-    if ((state[kState] & kAllBuffers) !== 0 && encoding !== "buffer") {
-      state[kState] &= ~kAllBuffers;
+    if ((stateInt & kAllBuffers) !== 0 && encoding !== "buffer") {
+      stateInt &= ~kAllBuffers;
     }
-    if ((state[kState] & kAllNoop) !== 0 && callback !== nop) {
-      state[kState] &= ~kAllNoop;
+    if ((stateInt & kAllNoop) !== 0 && callback !== nop) {
+      stateInt &= ~kAllNoop;
     }
   } else {
     state.writelen = len;
     if (callback !== nop) {
       state.writecb = callback;
     }
-    state[kState] |= kWriting | kSync | kExpectWriteCb;
+    stateInt |= kWriting | kSync | kExpectWriteCb;
+    state[kState] = stateInt;
     stream._write(chunk, encoding, state.onwrite);
-    state[kState] &= ~kSync;
+    stateInt &= ~kSync;
   }
 
   const ret = state.length < state.highWaterMark || state.length === 0;
 
   if (!ret) {
-    state[kState] |= kNeedDrain;
+    stateInt |= kNeedDrain;
   }
+
+  state[kState] = stateInt;
 
   // Return false if errored or destroyed in order to break
   // any synchronous while(stream.write(data)) loops.
-  return ret && (state[kState] & (kDestroyed | kErrored)) === 0;
+  return ret && (stateInt & (kDestroyed | kErrored)) === 0;
 }
 
 function doWrite(stream, state, writev, len, chunk, encoding, cb) {
@@ -547,11 +553,13 @@ function doWrite(stream, state, writev, len, chunk, encoding, cb) {
   if (cb !== nop) {
     state.writecb = cb;
   }
-  state[kState] |= kWriting | kSync | kExpectWriteCb;
-  if ((state[kState] & kDestroyed) !== 0) state.onwrite($ERR_STREAM_DESTROYED("write"));
+  let stateInt = (state[kState] |= kWriting | kSync | kExpectWriteCb);
+  if ((stateInt & kDestroyed) !== 0) state.onwrite($ERR_STREAM_DESTROYED("write"));
   else if (writev) stream._writev(chunk, state.onwrite);
   else stream._write(chunk, encoding, state.onwrite);
-  state[kState] &= ~kSync;
+  stateInt &= ~kSync;
+
+  state[kState] = stateInt;
 }
 
 function onwriteError(stream, state, er, cb) {
@@ -1061,11 +1069,11 @@ ObjectDefineProperties(Writable.prototype, {
   writableAborted: {
     __proto__: null,
     get: function () {
-      const state = this._writableState;
+      const state = this._writableState[kState];
       return (
-        (state[kState] & (kHasWritable | kWritable)) !== kHasWritable &&
-        (state[kState] & (kDestroyed | kErrored)) !== 0 &&
-        (state[kState] & kFinished) === 0
+        (state & (kHasWritable | kWritable)) !== kHasWritable &&
+        (state & (kDestroyed | kErrored)) !== 0 &&
+        (state & kFinished) === 0
       );
     },
   },

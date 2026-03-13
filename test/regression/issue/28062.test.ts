@@ -67,6 +67,7 @@ async function resetProject(projectDir: string) {
   await Promise.all([
     rm(join(projectDir, "node_modules"), { recursive: true, force: true }),
     rm(join(projectDir, "bun.lock"), { force: true }),
+    rm(join(projectDir, "bun.lockb"), { force: true }),
     rm(join(projectDir, "package-lock.json"), { force: true }),
   ]);
 }

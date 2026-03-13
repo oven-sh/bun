@@ -1090,7 +1090,7 @@ pub fn canPrepareQuery(noalias this: *const @This()) bool {
     return this.flags.is_ready_for_query and !this.flags.waiting_to_prepare and this.pipelined_requests == 0;
 }
 
-fn advance(this: *PostgresSQLConnection) void {
+pub fn advance(this: *PostgresSQLConnection) void {
     var offset: usize = 0;
     debug("advance", .{});
     defer {

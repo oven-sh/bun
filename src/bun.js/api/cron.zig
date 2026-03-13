@@ -854,7 +854,11 @@ fn spawnCmdGeneric(comptime Self: type, this: *Self, argv: anytype, stdin_opt: b
     const envp: [*:null]?[*:0]const u8 = if (comptime bun.Environment.isPosix)
         @ptrCast(@constCast(std.c.environ))
     else
-        @ptrCast(&[_:null]?[*:0]const u8{});
+        @ptrCast((jsc.VirtualMachine.get().transpiler.env.map.createNullDelimitedEnvMap(bun.default_allocator) catch {
+            this.setErr("Failed to create environment block", .{});
+            this.finish();
+            return;
+        }).ptr);
     var spawned = (bun.spawn.spawnProcess(&spawn_options, @ptrCast(argv), envp) catch {
         this.setErr("Failed to spawn process", .{});
         this.finish();

@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 import { unlinkSync, writeFileSync } from "node:fs";
 
 const crontabPath = Bun.which("crontab");
 const hasCrontab = !!crontabPath && isLinux;
+const hasSchtasks = isWindows;
 
 function readCrontab(): string {
   const result = Bun.spawnSync({
@@ -96,10 +97,10 @@ describe("Bun.cron API", () => {
 });
 
 // ==========================================================================
-// Registration (Linux only — uses crontab)
+// Registration (Linux — crontab)
 // ==========================================================================
 
-describe.skipIf(!hasCrontab)("cron registration", () => {
+describe.skipIf(!hasCrontab)("cron registration (Linux)", () => {
   test("accepts valid cron expressions", async () => {
     using _restore = saveCrontabState();
     using dir = tempDir("bun-cron-test", {
@@ -225,7 +226,7 @@ describe.skipIf(!hasCrontab)("cron registration", () => {
 // Removal
 // ==========================================================================
 
-describe.skipIf(!hasCrontab)("cron removal", () => {
+describe.skipIf(!hasCrontab)("cron removal (Linux)", () => {
   test("removes an existing cron entry", async () => {
     using _restore = saveCrontabState();
     using dir = tempDir("bun-cron-test", {
@@ -284,6 +285,87 @@ describe.skipIf(!hasCrontab)("cron removal", () => {
     crontab = readCrontab();
     expect(crontab).toContain("# bun-cron: rm-reregister");
     expect(crontab).toContain("30 6 * * *");
+  });
+});
+
+// ==========================================================================
+// Registration & Removal (Windows — schtasks)
+// ==========================================================================
+
+function querySchtask(title: string): string | null {
+  const result = Bun.spawnSync({
+    cmd: ["schtasks", "/query", "/tn", `bun-cron-${title}`, "/fo", "LIST"],
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  return result.exitCode === 0 ? result.stdout.toString() : null;
+}
+
+function deleteSchtask(title: string) {
+  Bun.spawnSync({
+    cmd: ["schtasks", "/delete", "/tn", `bun-cron-${title}`, "/f"],
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+}
+
+describe.skipIf(!hasSchtasks)("cron registration (Windows)", () => {
+  test("registers a scheduled task via schtasks", async () => {
+    using dir = tempDir("bun-cron-test", {
+      "job.ts": `export default { scheduled() {} };`,
+    });
+    try {
+      await Bun.cron(`${dir}/job.ts`, "* * * * *", "test-win-reg");
+      const info = querySchtask("test-win-reg");
+      expect(info).not.toBeNull();
+      expect(info).toContain("bun-cron-test-win-reg");
+    } finally {
+      deleteSchtask("test-win-reg");
+    }
+  });
+
+  test("returns a promise that resolves", async () => {
+    using dir = tempDir("bun-cron-test", {
+      "job.ts": `export default { scheduled() {} };`,
+    });
+    try {
+      const result = await Bun.cron(`${dir}/job.ts`, "* * * * *", "test-win-promise");
+      expect(result).toBeUndefined();
+    } finally {
+      deleteSchtask("test-win-promise");
+    }
+  });
+
+  test("replaces existing task with same title", async () => {
+    using dir = tempDir("bun-cron-test", {
+      "job.ts": `export default { scheduled() {} };`,
+    });
+    try {
+      await Bun.cron(`${dir}/job.ts`, "0 * * * *", "test-win-replace");
+      await Bun.cron(`${dir}/job.ts`, "30 2 * * 1", "test-win-replace");
+      const info = querySchtask("test-win-replace");
+      expect(info).not.toBeNull();
+    } finally {
+      deleteSchtask("test-win-replace");
+    }
+  });
+});
+
+describe.skipIf(!hasSchtasks)("cron removal (Windows)", () => {
+  test("removes an existing scheduled task", async () => {
+    using dir = tempDir("bun-cron-test", {
+      "job.ts": `export default { scheduled() {} };`,
+    });
+    await Bun.cron(`${dir}/job.ts`, "* * * * *", "test-win-rm");
+    expect(querySchtask("test-win-rm")).not.toBeNull();
+
+    await Bun.cron.remove("test-win-rm");
+    expect(querySchtask("test-win-rm")).toBeNull();
+  });
+
+  test("removing non-existent task resolves without error", async () => {
+    const result = await Bun.cron.remove("test-win-nonexistent");
+    expect(result).toBeUndefined();
   });
 });
 
